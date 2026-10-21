@@ -48,16 +48,17 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     try policy.validate()
     return try await perform { db in
       try db.transaction {
-        try Self.checkKeyCapacity(db)
         let old = try Self.loadKey(db, id)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        let revoking = old.enabled && !enabled
+        try Self.checkKeyCapacity(db, revocation: revoking)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1, enabled: enabled,
           policy: policy, createdAtUnixSeconds: old.createdAtUnixSeconds)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
           [.text(try Self.encodeKey(key)), .text(id)])
-        try Self.auditKey(db, key: key, action: "update")
+        try Self.auditKey(db, key: key, action: revoking ? "disable" : "update")
         return key
       }
     }
@@ -153,9 +154,10 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     String(decoding: try JSONEncoder().encode(key), as: UTF8.self)
   }
   private static func checkKeyCapacity(
-    _ db: SQLiteConnection, creating: Bool = false, events: Int64 = 1
+    _ db: SQLiteConnection, creating: Bool = false, revocation: Bool = false
   ) throws {
-    guard try db.scalar("SELECT COUNT(*) FROM key_events") <= 4096 - events else {
+    let limit: Int64 = revocation ? 4352 : 4096
+    guard try db.scalar("SELECT COUNT(*) FROM key_events") < limit else {
       throw ExecutionError.capacity
     }
     if creating, try db.scalar("SELECT COUNT(*) FROM managed_keys") >= 256 {

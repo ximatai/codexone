@@ -292,6 +292,16 @@ def main():
                     status, listing = call(ports['admin'], 'GET', '/api/keys')
                     assert status == 200 and 'secret' not in json.dumps(listing) and 'digest' not in json.dumps(listing)
                     assert listing['nextCursor'] is None
+                    # Capacity injection simulates a full historical audit without paid or external traffic.
+                    with sqlite3.connect(db_path) as db:
+                        remaining = 4096 - db.execute('SELECT COUNT(*) FROM key_events').fetchone()[0]
+                        db.execute("WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO key_events SELECT 'capacity-'||i,?,1,'synthetic',1,'{}' FROM n", (remaining, empty['id']))
+                    assert update(ports['admin'], empty, enabled=True)[0] == 503
+                    status, revoked = update(ports['admin'], empty, enabled=False)
+                    assert status == 200 and not revoked['key']['enabled']
+                    assert call(ports['data'], 'GET', '/v1/models', token=empty_secret)[0] == 401
+                    assert update(ports['admin'], revoked['key'], enabled=False)[0] == 503
+                    assert call(ports['data'], 'GET', '/health/ready', token=None)[0] == 200
                     with sqlite3.connect(db_path) as db:
                         assert db.execute('PRAGMA user_version').fetchone()[0] == 2
                         assert db.execute('SELECT COUNT(*) FROM key_events').fetchone()[0] >= 4

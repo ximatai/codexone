@@ -155,9 +155,17 @@ private func keyAdmission(
     "DROP TRIGGER fail_audit; WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4095) INSERT INTO key_events SELECT 'audit-'||i,'k',1,'synthetic',1,'{}' FROM n"
   )
   await #expect(throws: ExecutionError.capacity) {
-    try await store.updateKey(id: "k", revision: 1, enabled: false, policy: key.policy)
+    try await store.updateKey(id: "k", revision: 1, enabled: true, policy: key.policy)
   }
   #expect(try await store.authenticateKey(digest: digest).revision == 1)
+  let disabled = try await store.updateKey(id: "k", revision: 1, enabled: false, policy: key.policy)
+  #expect(!disabled.enabled)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.authenticateKey(digest: digest)
+  }
+  await #expect(throws: ExecutionError.capacity) {
+    try await store.updateKey(id: "k", revision: 2, enabled: false, policy: key.policy)
+  }
   await store.close()
 }
 
@@ -252,4 +260,40 @@ private func keyAdmission(
   let b = try config.makePolicy(token: nil, key: second)
   #expect(a.policyVersion != b.policyVersion)
   #expect(a.pricingVersion == b.pricingVersion && a.owner.namespace == b.owner.namespace)
+}
+
+@Test func fullOrdinaryAuditStillAllowsEveryExistingKeyToBeRevoked() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let policy = try keyPolicy()
+  for index in 0..<256 {
+    _ = try await store.createKey(
+      id: "k\(index)", principal: "p",
+      digest: keyDigest("synthetic-public-revocation-token-\(index)"), policy: policy)
+  }
+  try rawSQL(
+    path,
+    "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<3840) INSERT INTO key_events SELECT 'audit-'||i,'k0',1,'synthetic',1,'{}' FROM n"
+  )
+  await #expect(throws: ExecutionError.capacity) {
+    try await store.rotateKey(id: "k0", revision: 1, digest: keyDigest("synthetic-rotated-token"))
+  }
+  for index in 0..<256 {
+    let key = try await store.updateKey(
+      id: "k\(index)", revision: 1, enabled: false, policy: policy)
+    #expect(!key.enabled && key.revision == 2)
+  }
+  await #expect(throws: ExecutionError.capacity) {
+    try await store.updateKey(id: "k0", revision: 2, enabled: true, policy: policy)
+  }
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.authenticateKey(digest: keyDigest("synthetic-public-revocation-token-255"))
+  }
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  #expect(try await reopened.listKeys(after: nil).allSatisfy { !$0.enabled })
+  await reopened.close()
 }
