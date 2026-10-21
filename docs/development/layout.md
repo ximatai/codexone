@@ -1,31 +1,37 @@
 # 目录与依赖约定
 
+起始组织方案如下；逻辑职责与实际 Swift targets 一起通过垂直切片验证，可据新证据调整，不为维护空树而保留目录。
+
 ```text
-AGENTS.md / README.md / STATUS.md / HANDOFF.md
-Sources/                 后端逻辑模块，首个切片再确定 Swift targets
-  CodexOne/              进程组装与入口
-  Domain/                身份、策略、状态和值类型
-  Application/           执行/管理用例和事务边界
-  Protocol/              有界解析、事件/对象/usage 分类
-  Transport/             NIO 生命周期、HTTP/WS、背压
-  Upstream/              订阅适配器、身份/凭证协议
-  Persistence/           事务、账本、归属、缓存库
-  ControlPlane/          Vapor API、安全会话
-  Runtime/               启动恢复、监督、最终化、关闭
-Tests/                   Unit / Integration / Contract / EndToEnd / Fixtures
-web/                     独立前端包，待正式初始化
-  src/                   React/TS 源码
-  tests/                 管理流程、类型和 UI 验证
-deploy/                  OCI/Compose/反代模板，尚未实现
-scripts/                 文档检查，后续构建与测试入口
-.github/                 贡献说明；CI 待首个可执行包后引入
-docs/                    产品、规范、架构、ADR、变更与证据
+Sources/
+  CodexOne/                      可执行入口与组装
+  CodexOneCore/
+    Domain/                      身份、策略、状态、值类型
+    Application/                 执行/管理/恢复用例，外部 I/O 端口
+  CodexOneAdapters/
+    Downstream/                  客户端 wire 校验/编码
+    Transport/                   NIO 生命周期、HTTP/WS、背压
+    Upstream/                    提供者 wire、认证、证据提取
+    Persistence/                 核心事务与可降级缓存存储
+    ControlPlane/                Vapor 管理 DTO/认证/路由
+  CodexOneRuntime/                启动恢复、有限任务监督、关闭
+Tests/
+  CodexOneCoreTests/
+  CodexOneAdaptersTests/
+  CodexOneRuntimeTests/
+  CodexOneEndToEndTests/
+web/
+  src/                           按账号、Key、用量、恢复等实际能力聚合
+  tests/                         跨能力管理流程/浏览器验证
+deploy/                          OCI/Compose/反代及发行维护
+scripts/                         文档、构建、验证入口
+docs/                            产品、规范、架构、ADR、变更、历史证据
 ```
 
-这些是逻辑目录，不强制九个库 target 或跨进程服务。M1 只激活所需模块，不给空目录补假实现。
+四个 Swift 名称是初始 target 建议；Core/Adapters/Runtime 为库，CodexOne 为入口。Core 不依赖 Vapor/NIO/SQL，Adapters 与 Runtime 分别依赖 Core，入口组装三者。边界类型和 owner 见 [ownership](../architecture/ownership.md)。只有真实需求才拆新 target；测试 target 名与路径对应，Unit/Integration/Contract 为 target 内分组，fixture 按 SwiftPM resources 显式声明。
 
-Domain 不依赖框架；Application 依赖 Domain 及外部 I/O 端口；Protocol/Upstream/Transport/Persistence 实现边界；ControlPlane 经应用用例读写；Runtime/入口组装依赖，不把全部热路径串行在全局 actor。UI 通过管理 API，不直读 DB。
+Core 内部按 Execution、Identity、Governance、Recovery 等实际业务增长，不先创建完整业务空树。Adapters 的提供者 DTO 不与客户端 DTO 或前端 API DTO 共用，避免大量 optional 变成通用协议包。跨层传小型应用命令和证据，不传 channel/SQL row/Vapor Request。
 
-测试 fixture 不得含凭证或真实用户正文；合成消息可公开。源码注释解释不变量和取舍，不重复代码。文件随能力增长拆分，拒绝按未来扩展预建大量协议。
+前端采用 feature 聚合 UI、hooks/API 映射与局部测试；shared 只接收实际复用内容，API 客户端集中遵守管理契约。组件库、生成工具按实际需求选择，不预建横切 services/types 大杂烩。管理契约先明确 ID、时间、用量单位、错误、继承和 secret write-only 字段，并验证同源/代理、CSRF 与会话。
 
-Package.swift、Package.resolved、web/package.json 和包锁尚不存在；创建时记录实际版本、命令和 Linux 支持范围，禁止照搬实验 lock 后声称生产兼容。
+Package.swift、锁文件和前端包配置应记录实际版本及支持范围，不从原型拷贝后宣称产品兼容。可运行命令和实现进度只见 [STATUS](../../STATUS.md)。

@@ -1,3 +1,3 @@
 # 贡献入口
 
-先读根 AGENTS.md、docs/governance.md 和 STATUS.md。行为变更先提案，PR 聚焦一个能力，提供实际验证、规范影响与数据/恢复影响；UI 变更附可审阅截图。当前没有远程或 CI，不能虚构检查通过。凭证与真实用户数据不得作为 fixture；发布/部署不由提交自动授权。
+先读根 AGENTS、docs/governance 和 STATUS。行为变更先提案，PR 聚焦单一能力，提供对应规范与实际验证；UI 附关键流程截图。不得虚构 CI 通过，凭证与真实用户内容不得作 fixture。推送/发布/部署按用户授权。

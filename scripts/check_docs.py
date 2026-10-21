@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check project documentation structure without network or runtime dependencies."""
+import os
 import re
 import sys
 from pathlib import Path
@@ -13,30 +14,34 @@ REQUIRED = (
     'docs/architecture/ARCHITECTURE-SYNTHESIS.md',
     'docs/decisions/README.md', 'docs/plans/roadmap.md',
     'docs/development/layout.md', 'docs/development/verification.md',
-    'docs/changes/foundation-runtime/proposal.md',
-    'docs/changes/foundation-runtime/tasks.md', 'docs/evidence/README.md',
+    'docs/architecture/ownership.md', 'docs/specs/execution-lifecycle.md',
+    'docs/specs/recovery-contract.md', 'docs/evidence/README.md',
 )
-DIRECTORIES = (
-    'Sources/CodexOne', 'Sources/Domain', 'Sources/Application',
-    'Sources/Protocol', 'Sources/Transport', 'Sources/Upstream',
-    'Sources/Persistence', 'Sources/ControlPlane', 'Sources/Runtime',
-    'Tests/Unit', 'Tests/Integration', 'Tests/Contract',
-    'Tests/EndToEnd', 'Tests/Fixtures', 'web/src', 'web/tests', 'deploy',
-)
+# Logical/target directories evolve with implementation; validate stable
+# documentation contracts, not the initial placeholder tree or a task name.
+EXCLUDED_DIRECTORIES = {
+    '.git', '.build', '.swiftpm', 'node_modules', 'dist', 'coverage',
+    '.tmp', 'artifacts', '__pycache__', '.venv',
+}
+
+
+def markdown_files():
+    for directory, subdirs, names in os.walk(ROOT):
+        subdirs[:] = sorted(name for name in subdirs
+                            if name not in EXCLUDED_DIRECTORIES)
+        for name in sorted(names):
+            if name.endswith('.md'):
+                yield Path(directory) / name
+
+
 errors = []
 for name in REQUIRED:
     if not (ROOT / name).is_file():
         errors.append(f'Missing required file: {name}')
-for name in DIRECTORIES:
-    if not (ROOT / name).is_dir():
-        errors.append(f'Missing logical directory: {name}')
-
 checked = 0
 snapshots = 0
-for path in sorted(ROOT.rglob('*.md')):
+for path in markdown_files():
     rel = path.relative_to(ROOT)
-    if '.git' in rel.parts:
-        continue
     # Original prototype documents reference its own source layout. Preserve
     # these snapshots verbatim; provenance explicitly identifies this boundary.
     historical = rel.as_posix().startswith('docs/evidence/prototype/')
@@ -80,6 +85,7 @@ if changes.exists():
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     sys.exit(1)
-print(f'PASS: {checked} Markdown documents, required entries, logical directories and change artifacts.')
+print(f'PASS: {checked} Markdown documents, required entries, local links and change artifacts.')
 print(f'Historical prototype snapshots preserved: {snapshots}; their source-layout links are excluded.')
+print('Dependency/build directories excluded; logical source directories are not frozen.')
 print('Scope: local file links only; no anchor, remote URL, code, protocol or runtime validation.')

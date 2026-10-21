@@ -1,6 +1,6 @@
 # 持久执行基础垂直切片
 
-状态：planned，尚未开始实现。日期：2026-10-21。
+任务提案日期：2026-10-21。进度以根 STATUS 与本变更 tasks 为准。
 
 ## 目标
 
@@ -16,10 +16,14 @@
 
 ## 设计与验收
 
-确定正式 Swift 工具链/target、依赖锁、SQLite 显式条件事务及隔离 DB 执行；事务/单次结束/故障恢复先于管理功能。先验证同余额并发准入、dispatch 前 intent、ID 未提交不暴露、结算重入/迟到证据、DB 不可写、进程 kill 后 pending/exposure 恢复。测试不得仅调用 helper，至少贯穿正式应用用例和真实临时 SQLite。
+依据 layout/ownership 确定少量正式 Swift targets、依赖锁、owner 与端口、SQLite 业务原子命令及核心执行配额；事务/单次结束/故障恢复先于管理功能。先验证同余额并发准入、dispatch 前 intent、ID 未提交不暴露、结算重入/迟到证据、DB 不可写、进程 kill 后 pending/exposure 恢复。测试不得仅调用 helper，至少贯穿正式应用用例和真实临时 SQLite。
 
 在依赖及运行入口存在后建立实际 build/test 命令与 Linux 无凭证 CI，记录版本和结果。不得把历史实验 CI 作为本包通过依据。
 
 ## 数据与回退
 
 初始 schema 仅合成数据，无生产迁移；schema 必须版本化且实例锁覆盖服务与迁移。fixtures 可重建但不作为未来生产回退契约。无真实凭证、正文或图片落库；缓存独立设计已在规范中定义，下一阶段再实现。
+
+## 前置设计核对
+
+参考 [owner 表](../../architecture/ownership.md) 验证单向依赖/关闭路径；将 [RC-1](../../specs/recovery-contract.md) 列为前置本地契约验证计划，重型缓存之前证明客户端可用性。M1 不因此扩成完整恢复服务；遇到契约不可行及时沟通，不偷增公共 API。

@@ -1,7 +1,9 @@
-# M1 任务（尚未实现）
+# M1 任务
 
 - [ ] 阅读 STATUS、架构及 U02/U04/U05、I04、O01/O02/O05，核实文档/目录状态。
 - [ ] 确定并记录正式 Swift 工具链、初始 target 和 SQLite 驱动；依据真实 API 做小验证，锁依赖与许可证。
+- [ ] 将 owner/端口与最小 target 图落实到真实依赖；验证 Runtime/Adapters 不循环 import，不预建通用 repository。
+- [ ] 制定 RC-1 的本地 HTTP 契约验证和目标客户端核对计划，缓存建设前暴露可行性困难。
 - [ ] 建立 Package.swift、最小进程配置/启动/关闭与严格并发构建；按需激活逻辑模块。
 - [ ] 建立版本化 SQLite schema、连接 pragma 校验、实例锁和事务端口，不跨网络等待持事务。
 - [ ] 实现合成适配器及准入 → intent → ID 绑定提交 → 暴露 → 最终化应用路径。

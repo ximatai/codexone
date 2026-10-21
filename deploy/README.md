@@ -1,3 +1,3 @@
-# 发行部署
+# 发行与部署
 
-首发目标 Linux amd64 OCI/Compose，CI 编译。当前没有 Dockerfile/Compose 或可部署镜像；不得直接把实验容器暴露公网。模板需覆盖非 root、data/secret、SSE/WS 反代、健康检查、备份及回退。任何 Ali 操作另需明确授权。
+OCI/Compose/反代模板在此管理；镜像由 CI 编译，运行约束及恢复契约见 [operations](../docs/specs/operations.md)。安装/升级/备份/回退脚本必须有对应验收。可用产物和验证见 [STATUS](../STATUS.md)，Ali 或其他部署操作依用户授权执行。

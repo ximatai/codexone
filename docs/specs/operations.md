@@ -1,5 +1,7 @@
 # 持久化与运行规范
 
+工作草案：条款作为实现与验收基线；遇到可行性或更优方案可按治理流程修订。进度只见 STATUS。
+
 - O01：首版必须单节点/单进程、本地可靠磁盘 SQLite，不支持网络共享盘或多写实例；WAL、synchronous=FULL、外键和 busy timeout 必须逐连接初始化/验证。阻塞 DB 工作不得在网络 event loop 执行，不得跨流式持有事务。
 - O02：启动必须校验 schema、密钥、实例锁并恢复 intent/pending/exposure/auth_uncertain，再开放对应准入；数据库不可写必须停止新准入。最终化失败不得因 pending 标记没写成功而丢已持久 intent。
 - O03：迁移、restore、密钥维护与服务必须共用实例锁；兼容性检查/备份成功后方可迁移。旧快照恢复必须维护态、披露缺失区间、冻结受影响窗口并经审计重建额度基线，不得自动恢复旧余额后 ready。
@@ -8,3 +10,35 @@
 - O06：首发支持 Linux amd64 OCI/Compose；CI 构建镜像，运行时不需要编译器或 Node。ARM/systemd 必须独立验收后才能声明支持；反代须验证 SSE/WS、大小/超时和可信头。
 - O07：指标必须低基数，不以 request/Key/response ID 做 label；普通日志不得存正文/图片/秘密。必须观测队列、取消回收、RSS/FD/task、DB/WAL、未知暴露和缓存降级。
 - O08：发布必须给源码/镜像可追溯标识、配置契约、升级/备份/回退证据。健康探测不得调用付费模型；账号耗尽不能触发 liveness 重启循环。
+
+## O09：持久与恢复细则
+
+首版显式设置 WAL + `synchronous=FULL`；所有连接初始化并读回验证 `foreign_keys=ON`、synchronous、busy_timeout，数据库初始化验证 WAL。使用有限繁忙重试与专用有限 DB 线程池；不在 NIO event loop 执行阻塞 I/O，不跨流式持有事务。FULL 的持久性以磁盘/文件系统正确执行同步为前提，不承诺抵御失信硬件。[synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous)、[foreign keys](https://www.sqlite.org/foreignkeys.html#fk_enable)
+
+启动扫描所有旧 boot 的 held/dispatch_intent/unfinalized：确定未 dispatch 的可释放，其余默认 pending，重建其 exposure 占用；同时处理未完成 refresh_intent 为 auth_uncertain，完成后才发布路由快照。不能因 pending 标记未写成功而丢掉。正常进程崩溃恢复与主机掉电/存储故障分开验收；kill -9 仅证明前者。FULL 不允许作为未测掉电恢复的证据。
+
+实例锁由服务、migration、restore 和密钥维护命令共同使用；离线迁移无法取得锁立即非零退出，不能旁路在线服务。命令先校验二进制与 schema 兼容范围，备份成功后迁移；失败回滚事务或保留 maintenance 状态、输出明确修复指引，数据面不得 ready。服务只做兼容检查，不自动执行破坏性迁移。
+
+恢复旧快照总进入 `maintenance -> restored_unreconciled -> ready`：恢复工具记录快照时间、来源和恢复时刻，展示缺失区间；扫描快照内活动项，且明确快照之后的已执行项可能完全缺失。管理员选择并审计恢复后的额度基线（默认冻结受影响窗口/重发新窗口额度，不自动复活旧余额）后才启用准入。在线数据库完整性正确不代表快照缺口已核对。
+
+建议初始保留 profile（可运营调整，需公开）：binding/歧义与过期 tombstone 保留至承诺续接窗口结束；已完成 request/attempt 诊断 30 天、审计 90 天；账本与未结项不做普通 TTL，按显式归档/导出政策压缩。首发续接窗口按所选后端契约公布，不能仅套用公开 API 天数；本地过期即 fail-closed，并告知“上游可能仍有对象、本地窗口已结束”。没有 tombstone 的完全未知 ID 同样不自由调度。
+
+启动时为 binding 索引与待核对记录预留磁盘；低空间先暂停报表/新备份/可选聚合、清理允许过期诊断并告警，到安全阈值停止新准入，保留结算空间。监测 WAL/checkpoint、长读事务、DB busy、备份大小与空闲空间；备份不能无限占满 data volume。在线备份用 SQLite backup API 等一致性流程，不仅复制 .sqlite 而漏 WAL。[Backup API](https://www.sqlite.org/backup.html)
+
+## O10：安全与观测细则
+
+本地 Key 高熵、不可逆验证存储、首次显示一次；principal 与 Key 分开以支持轮换。权限覆盖端点/模型/工具/图片/pool/对象范围/大小/速率/并发。普通撤销默认停止新请求与新 WS turn，在途完成；紧急撤销关闭在途并保留结算，操作前展示影响。管理 session 独立、HttpOnly/Secure/SameSite、CSRF/Origin 校验、一次性初始化秘密；不把普通 Key 当管理员认证。
+
+凭证使用认证加密和 key version，主密钥来自独立只读 secret；数据库、镜像、浏览器与日志不含明文。密钥轮换先加入新 active key，旧 key 保持 decrypt-only；分页再加密带 CAS/checkpoint，可中断恢复；完成后验证所有当前密文可解及备份清单所需版本。只有对应旧备份已重加密或明确销毁、恢复演练通过、无存量引用时才能删除旧 key；仅“线上轮完”不能销毁备份依赖。
+
+上游 origin/端口/解析 IP 允许策略、TLS 验证、禁重定向、可信代理范围防 SSRF 与头伪造。自定义私网 origin 需管理员显式配置；用户图片 URL 不由网关默认抓取。请求/事件、分片累计、解压字节、multipart 总量均有硬限制；WS 压缩首版默认关闭。
+
+普通日志、指标及审计不记录正文/图片/凭证/签名 URL；正文仅允许进入 §9.1 的加密恢复缓存，不能混入诊断日志；诊断显示阶段时间线、归属选择理由、策略与计价版本、取消与释放时间、pending 原因。管理台围绕身份、Key/策略、请求/会话、用量/待核对、备份与配置，不扩展成通用控制平台。
+
+swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/responseID 做 label。重点观察队列字节、写等待、task/FD/RSS、取消释放、刷新、未知暴露、账本/DB 和 WAL。完整 tracing exporter 可延期，不承诺未验证 SDK 支持。关键审计/账本可靠保存，非关键统计有界采样。
+
+## O11：发行与容量验收细则
+
+镜像必须非 root、版本化配置、独立 data/secret 挂载，公布可追溯镜像/源码标识与校验和；只读根文件系统及运行所需可写挂载须实际验证。反代须覆盖 SSE 不缓冲、WS Upgrade、长连接期限、大小限制与可信头。ready 必须校验密钥/schema/恢复准入，live 只验证进程健康，容量耗尽不能导致重启循环。
+
+候选容量目标是 Linux 客户端断连至本地上游资源释放 p99 ≤2 秒；正式指标与默认值需基于实际硬件、负载、HTTP keepalive、WS 和图片峰值证据确定并允许修订。资源回稳须测 RSS/FD/task/队列，进程 kill 与系统/存储故障需独立证据；不把 socket 释放包装成上游停止执行或收费。
