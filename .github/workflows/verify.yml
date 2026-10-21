@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install verification prerequisite
-        run: apt-get update && apt-get install -y --no-install-recommends python3
+        run: apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev
       - name: Verify Swift modules and executable lifecycle
         run: ./scripts/verify.sh --backend
   frontend:

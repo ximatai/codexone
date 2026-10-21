@@ -10,6 +10,7 @@ import signal
 import socket
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 
 
@@ -143,6 +144,46 @@ def main():
         finally:
             release(failed)
     print("PASS: partial startup failure terminates and releases the peer listener")
+
+    # Real gateway startup holds the same instance lock as maintenance and recovers before listening.
+    with tempfile.TemporaryDirectory(prefix="codexone-state-") as directory:
+        configured = subprocess.Popen([binary], env=environment(CODEXONE_DATA_DIRECTORY=directory), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        configured_ports = {}
+        try:
+            startup_output = b""
+            deadline = time.monotonic() + 15
+            with selectors.DefaultSelector() as selector:
+                selector.register(configured.stdout, selectors.EVENT_READ)
+                while len(configured_ports) < 2 and time.monotonic() < deadline:
+                    assert configured.poll() is None, "Configured gateway exited early"
+                    for key, _ in selector.select(timeout=0.2):
+                        startup_output += os.read(key.fd, 8192)
+                        assert len(startup_output) < 128 * 1024
+                        for name, port in re.findall(rb"LISTENING (data|admin) 127\.0\.0\.1:(\d+)", startup_output):
+                            configured_ports[name.decode()] = int(port)
+            assert len(configured_ports) == 2
+            _, report = request(configured_ports["admin"], "GET", "/api/system")
+            assert report["ready"] is False
+            assert next(item for item in report["checks"] if item["name"] == "execution_store")["ready"] is True
+            locked = subprocess.run([binary], env=environment(CODEXONE_DATA_DIRECTORY=directory), capture_output=True, timeout=10)
+            assert locked.returncode != 0 and b"LISTENING" not in locked.stdout
+            assert directory.encode() not in locked.stdout + locked.stderr
+            configured.terminate()
+            assert configured.wait(timeout=8) == 0
+            for port in configured_ports.values():
+                assert_released(port)
+        finally:
+            release(configured)
+        # Lock is released on normal shutdown; persisted initialization is reusable.
+        recovered = subprocess.Popen([binary], env=environment(CODEXONE_DATA_DIRECTORY=directory), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(recovered.stdout, selectors.EVENT_READ)
+                assert selector.select(timeout=15)
+                assert b"LISTENING" in os.read(recovered.stdout.fileno(), 8192)
+        finally:
+            release(recovered)
+    print("PASS: configured SQLite startup, redacted lock rejection, shutdown and reopen")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ backend() {
   local backend_bin_dir
   backend_bin_dir="$(swift build --show-bin-path)"
   python3 scripts/verify_process.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_execution.py --binary "$backend_bin_dir/ExecutionProbe"
 }
 
 frontend() {

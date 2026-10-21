@@ -1,10 +1,12 @@
 public struct RuntimeConfiguration: Sendable, Equatable {
   public let dataPort: Int
   public let adminPort: Int
+  public let dataDirectory: String?
 
   public enum ConfigurationError: Error, Equatable {
     case invalidPort(String)
     case conflictingPorts
+    case invalidDataDirectory
   }
 
   public init(environment: [String: String]) throws {
@@ -17,6 +19,14 @@ public struct RuntimeConfiguration: Sendable, Equatable {
         throw ConfigurationError.invalidPort(key)
       }
       return port
+    }
+    if let path = environment["CODEXONE_DATA_DIRECTORY"] {
+      guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096 else {
+        throw ConfigurationError.invalidDataDirectory
+      }
+      dataDirectory = path
+    } else {
+      dataDirectory = nil
     }
     dataPort = try port("CODEXONE_DATA_PORT", fallback: 18080)
     adminPort = try port("CODEXONE_ADMIN_PORT", fallback: 18081)

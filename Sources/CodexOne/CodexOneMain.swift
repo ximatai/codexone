@@ -3,6 +3,7 @@ import CodexOneCore
 import CodexOneRuntime
 import Foundation
 import NIOPosix
+import ServiceLifecycle
 
 #if canImport(Darwin)
   import Darwin
@@ -19,6 +20,7 @@ struct CodexOneMain {
       let message: String
       switch error {
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
+      case .invalidDataDirectory: message = "Invalid data directory configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
       }
       FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -36,7 +38,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY (optional absolute path). Listeners are loopback-only."
       )
       return
     }
@@ -53,22 +55,43 @@ struct CodexOneMain {
       FileHandle.standardOutput.write(data + Data([10]))
       return
     }
+    let store: SQLiteExecutionStore?
+    if let directory = configuration.dataDirectory {
+      try FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700])
+      store = try await SQLiteExecutionStore.open(
+        path: directory + "/core.sqlite",
+        limits: .init(
+          requests: 10_000, active: 16, unresolved: 32, budgetMicros: 1_000_000_000))
+    } else {
+      store = nil
+    }
+    let finalizer = try store.map { try ExecutionFinalizer(store: $0) }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
-    let report = ReadinessReport.unconfigured
-    let runtime = GatewayRuntime(services: [
+    let report = ReadinessReport(checks: [
+      .init(name: "execution_store", ready: store != nil),
+      .init(name: "upstream_accounts", ready: false),
+      .init(name: "authorization", ready: false),
+    ])
+    var services: [any Service] = [
       DataPlaneService(group: group, port: configuration.dataPort, report: report) {
         announce("data", port: $0)
       },
       AdminService(group: group, port: configuration.adminPort, report: report) {
         announce("admin", port: $0)
       },
-    ])
+    ]
+    if let finalizer { services.insert(finalizer, at: 0) }
+    let runtime = GatewayRuntime(services: services)
     do {
       try await runtime.run()
     } catch {
+      await store?.close()
       try await group.shutdownGracefully()
       throw error
     }
+    await store?.close()
     try await group.shutdownGracefully()
   }
 

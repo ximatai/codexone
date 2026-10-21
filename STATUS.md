@@ -4,7 +4,9 @@
 
 ## 项目状态
 
-M0 本机验收与提交后 review 已完成；主 Agent 已修复默认请求日志泄露与状态请求无期限两个问题。M1 提案已建立，开发入口见 [持久执行任务](docs/changes/persistent-execution/tasks.md)。
+M0 本机验收与提交后 review/复审已完成；主 Agent 已修复默认请求日志泄露与状态请求无期限两个问题。M1 实现及本机验证已完成，待提交后的 subagent review/改进，任务入口见 [持久执行任务](docs/changes/persistent-execution/tasks.md)。
+
+- M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。使用合成身份，尚无业务协议转发。
 
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
@@ -21,6 +23,8 @@ swift run codexone
 ```
 
 环境变量 `CODEXONE_DATA_PORT` / `CODEXONE_ADMIN_PORT` 可指定端口，0 为临时端口；非零端口不得相同。无配置时也能启动健康入口，但不能代理生成。
+
+可选 `CODEXONE_DATA_DIRECTORY` 指向绝对数据目录，可初始化/恢复核心库并标记存储先决条件就绪；默认不创建持久库，配置存储也不会启用生成。Linux 构建需 `libsqlite3-dev`，macOS 使用系统 SQLite。
 
 前端（另一个终端；开发代理指向管理默认端口）：
 
@@ -44,13 +48,14 @@ npm run dev
 - 2026-10-21 文档范围同步：已按实际使用需求更新[里程碑](docs/plans/roadmap.md)及相关规范，首版替代验收覆盖 Desktop、图片编辑、额度统计、迁移及弱服务器。`python3 scripts/check_docs.py` 与 `git diff --check` 通过；本次仅改文档，未进行运行兼容/容量/迁移验收，未访问或改动 用户服务器。
 
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
-- 9 个 Swift 测试函数通过（其中无效配置含 7 个参数案例）：覆盖就绪、共享 DTO、HTTP/请求限制、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
+- 22 个 Swift 测试函数通过（其中无效配置含 7 个参数案例）：新增真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败，以及 finalizer 满载失败/移交/关闭；另覆盖就绪、共享 DTO、HTTP/请求限制、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
+- M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
 - Linux amd64 Swift 6.4 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖
 
-建立 SQLite 持久执行切片：版本化 schema、业务原子事务、准入 → intent → ID 归属屏障 → 幂等结算 → 重启 pending/exposure，使用真实临时库和故障路径验证。
+完成 M1 提交后 review、主 Agent 修复与复验，再进入 M2 单身份协议。Linux amd64 容器验证正在准备，不把本机测试当作远端 CI 通过。
 
-账号授权/刷新、账号池、Responses/SSE/WS/Images 转发、持久账本与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
+账号授权/刷新、账号池、Responses/SSE/WS/Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

@@ -17,3 +17,9 @@
 - E10：warmup、生成、后台执行不能混用生命周期或默认假设免费；只开放有独立契约和验收的模式。未知终态不能伪造成成功。
 
 运行 owner 与依赖位置见 [ownership](../architecture/ownership.md)，能力与重试规则见 [protocol](protocol.md)。
+
+## E11：最小持久执行命令
+
+执行协调在准入前同步取得最终化 ticket；准入原子写入 dispatch intent、身份、Key 归属、窗口、策略及计价版本和估算预留，再调用一次上游操作。任何无法证明未执行的失败保守归为 unknown，不透明重放。最终化移交不等待连接，worker 失败关闭新准入，由已持久 intent 承担重启责任。
+
+用量证据是带唯一 ID 与递增 revision 的单 attempt 累计快照，不是可相加的事件。相同 ID/revision 的不同内容拒绝；较新证据不可减少已有计数或将 complete 降为 partial，较旧快照不可超过已知新快照。partial/unavailable 保留未知暴露；complete 结算后仍接受可信的较新累计用量，不重复扣收旧快照。金额始终为估算，不等于 token 或订阅余额。

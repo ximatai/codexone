@@ -16,11 +16,14 @@ let package = Package(
     .package(url: "https://github.com/swift-server/swift-service-lifecycle.git", exact: "2.13.0"),
   ],
   targets: [
+    .systemLibrary(
+      name: "CSQLite",
+      providers: [.apt(["libsqlite3-dev"]), .brew(["sqlite3"])]),
     .target(name: "CodexOneCore"),
     .target(
       name: "CodexOneAdapters",
       dependencies: [
-        "CodexOneCore",
+        "CodexOneCore", "CSQLite",
         .product(name: "Vapor", package: "vapor"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -41,12 +44,16 @@ let package = Package(
         "CodexOneCore", "CodexOneAdapters", "CodexOneRuntime",
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       ]),
+    .executableTarget(
+      name: "ExecutionProbe", dependencies: ["CodexOneCore", "CodexOneAdapters"],
+      path: "Tests/Support/ExecutionProbe"),
     .testTarget(name: "CodexOneCoreTests", dependencies: ["CodexOneCore"]),
     .testTarget(
       name: "CodexOneAdaptersTests",
       dependencies: [
-        "CodexOneCore", "CodexOneAdapters",
+        "CodexOneCore", "CodexOneAdapters", "CSQLite",
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOEmbedded", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -55,7 +62,7 @@ let package = Package(
     .testTarget(
       name: "CodexOneRuntimeTests",
       dependencies: [
-        "CodexOneRuntime",
+        "CodexOneRuntime", "CodexOneAdapters", "CodexOneCore",
         .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       ]),
     .testTarget(

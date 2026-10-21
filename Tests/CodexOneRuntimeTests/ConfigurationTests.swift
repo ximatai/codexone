@@ -21,3 +21,12 @@ func invalidConfigurationIsRejectedWithoutEchoingRawValue(_ value: String) {
     try RuntimeConfiguration(environment: ["CODEXONE_DATA_PORT": value])
   }
 }
+
+@Test func dataDirectoryValidationNeverEchoesRawPaths() throws {
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidDataDirectory) {
+    try RuntimeConfiguration(environment: ["CODEXONE_DATA_DIRECTORY": "relative-private-value"])
+  }
+  #expect(
+    try RuntimeConfiguration(environment: ["CODEXONE_DATA_DIRECTORY": "/synthetic/data"])
+      .dataDirectory == "/synthetic/data")
+}
