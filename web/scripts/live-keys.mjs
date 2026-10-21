@@ -90,6 +90,22 @@ try {
   await expect(page.getByRole("alert")).toContainText("记录已被其他操作修改");
   await expect(edit).toHaveCount(0);
   assert((await admin("/api/keys")).keys[0].limits.requests === 4, "Conflict overwrote authoritative policy");
+  // A second conflict whose synchronization fails must retain uncertainty, not claim a refresh.
+  key = (await admin("/api/keys")).keys[0];
+  await admin("/api/keys/" + key.id, "PUT", { revision: key.revision, enabled: true, models: key.models, limits: { ...key.limits, requests: 5 } });
+  await row.getByRole("button", { name: "编辑", exact: true }).click();
+  edit = page.getByRole("dialog", { name: "编辑密钥权限" });
+  await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
+  await page.route("**/api/keys", route => route.request().method() === "GET" ? route.abort() : route.fallback(), { times: 1 });
+  await edit.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("alert")).toContainText("刷新未完成");
+  await expect(page.getByRole("alert")).not.toContainText("列表已刷新");
+  await expect(row.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "创建 API Key", exact: true })).toBeDisabled();
+  assert((await admin("/api/keys")).keys[0].limits.requests === 5, "Failed synchronization overwrote policy");
+  await page.getByRole("button", { name: "刷新列表", exact: true }).click();
+  await expect(row.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
+  await expect(row).toContainText("5 / 日");
   stage = "edit effective policy";
   await row.getByRole("button", { name: "编辑", exact: true }).click();
   edit = page.getByRole("dialog", { name: "编辑密钥权限" });

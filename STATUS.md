@@ -72,6 +72,6 @@ M2 保留 Desktop 界面验收与恢复契约两项缺口，不标完成。2026-
 
 M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 Linux 完整验证（45 个 Swift 测试及全部脚本，单并发、2 CPU/2500 MiB 本地模拟容器）。同一受控上游上的 Key 创建/轮换/禁用/模型范围/本地限额、HTTP/WS 当前权限与事务复核已实现；轮换不重置标识/计数。主 Agent 根据 review 提醒进一步为撤销预留审计：普通 4096 条、总 4352 条，预留仅用于实际禁用，保证全部 256 个现存 Key 仍可撤销。改进 9e78921 已复审，macOS 与同提交 Linux 完整后端 46 测试及全部脚本均通过。
 
-管理 API 独立认证；NIO 有界管理入口把完整请求交 Vapor 路由。浏览器 session/CSRF、启动静态安全快照及 Key 业务界面已实现，本机后端完整验证、前端与真实 Chrome 操作通过；自我复盘后待提交 review 和同快照 Linux 验证。配置见[托管 Key](docs/development/key-governance.md)，证据见[Key 治理](docs/changes/key-governance/verification.md)和[管理界面](docs/changes/key-management-ui/verification.md)。随后继续账号接入/加密凭证/刷新、调度和额度；M3 整体未完成，无真实账号调用。
+管理 API 独立认证；NIO 有界管理入口把完整请求交 Vapor 路由。浏览器 session/CSRF、启动静态安全快照及 Key 业务界面 aa28016 已实现，本机后端完整验证、前端与真实 Chrome 操作通过。独立 review 发现 CAS 后刷新断网仍谎报成功的 P2，主 Agent 已修复并补真实浏览器回归、重新通过构建与 15 个测试；待复审及 Linux 验证收敛。配置见[托管 Key](docs/development/key-governance.md)，证据见[Key 治理](docs/changes/key-governance/verification.md)和[管理界面](docs/changes/key-management-ui/verification.md)。随后继续账号接入/加密凭证/刷新、调度和额度；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面目前只覆盖 Key，未覆盖账号、额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

@@ -125,19 +125,21 @@ export function KeyManagement() {
   function clearPrivateState() {
     setKeys([]); setModels([]); setCreated(null); setEditing(null); setRotating(null); setCredential(""); setNotice("");
   }
-  async function reload(signal: AbortSignal) {
+  async function reload(signal: AbortSignal): Promise<boolean> {
     const sequence = ++readSequence.current;
     setLoading(true); setError("");
     try {
       const active = await api.fetchSession(signal);
       const [entries, options] = await Promise.all([api.fetchKeys(signal), api.fetchOptions(signal)]);
-      if (signal.aborted || sequence !== readSequence.current) return;
+      if (signal.aborted || sequence !== readSequence.current) return false;
       setSession(active); setKeys(entries); setModels(options); setUnavailable(false); setUncertain(false);
+      return true;
     } catch (failure) {
-      if (signal.aborted || sequence !== readSequence.current) return;
+      if (signal.aborted || sequence !== readSequence.current) return false;
       if (failure instanceof api.ManagementError && failure.status === 401) { setSession(null); clearPrivateState(); }
       else if (failure instanceof api.ManagementError && failure.status === 404) { setUnavailable(true); setSession(null); clearPrivateState(); }
       else setError(message(failure));
+      return false;
     } finally {
       if (!signal.aborted && sequence === readSequence.current) { setLoading(false); setChecking(false); }
     }
@@ -188,7 +190,15 @@ export function KeyManagement() {
     } catch (failure) {
       if (signal.aborted) return false;
       if (failure instanceof api.ManagementError && failure.status === 401) { setSession(null); clearPrivateState(); }
-      else if (failure instanceof api.ManagementError && failure.status === 409) { setEditing(null); setRotating(null); await reload(signal); }
+      else if (failure instanceof api.ManagementError && failure.status === 409) {
+        setEditing(null); setRotating(null);
+        const refreshed = await reload(signal);
+        if (!signal.aborted) {
+          if (!refreshed) setUncertain(true);
+          setError(refreshed ? message(failure) : "记录已被其他操作修改，刷新未完成。请重新连接并核对列表后再操作。");
+        }
+        return false;
+      }
       else if (!(failure instanceof api.ManagementError) || failure.status === 0 || failure.status >= 500) { setUncertain(true); setEditing(null); setRotating(null); }
       if (!signal.aborted) setError(message(failure, true));
       return false;
