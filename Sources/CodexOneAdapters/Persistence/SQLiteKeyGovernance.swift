@@ -70,12 +70,12 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try db.transaction {
         try Self.checkKeyCapacity(db)
         let old = try Self.loadKey(db, id)
-        guard old.enabled, old.revision == revision, revision < 1_000_000,
+        guard old.revision == revision, revision < 1_000_000,
           try db.scalar("SELECT COUNT(*) FROM managed_keys WHERE digest=?", [.text(digest)]) == 0
         else { throw ExecutionError.conflict }
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
-          enabled: true, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds)
+          enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds)
         try db.write(
           "UPDATE managed_keys SET digest=?,metadata_json=? WHERE id=?",
           [.text(digest), .text(try Self.encodeKey(key)), .text(id)])

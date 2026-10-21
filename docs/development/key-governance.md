@@ -1,6 +1,6 @@
 # 托管 Key 配置与本机管理
 
-此切片在一个受控上游上管理多个主体/Key。它不提供账号 OAuth/池、订阅余额或浏览器会话；阶段进度只见 [STATUS](../../STATUS.md)。权限、用量和管理契约见 I12、U12、A10。
+此切片在一个受控上游上管理多个主体/Key，提供独立管理 API 与同源会话。账号 OAuth/池和订阅余额另按其切片实现；阶段进度只见 [STATUS](../../STATUS.md)。权限、用量和管理契约见 I12、U12、A10/A11。
 
 ## 配置与升级
 
@@ -19,6 +19,16 @@ codexone --migrate
 ## 管理命令契约
 
 仅 loopback 管理端口；请求使用独立管理员 `Authorization: Bearer …`，不接受数据 Key。请求应由本机管理客户端发出，不带 Cookie、Origin、Sec-Fetch-Site；此入口不允许跨源调用，也不构成浏览器登录。不要将真实认证头写入 shell 历史或公开诊断。
+
+## 浏览器管理
+
+先在 `web` 运行 `npm run build`，把 `CODEXONE_WEB_DIRECTORY` 设置为构建产物目录的绝对路径。例如 `/opt/codexone/web` 只放 index.html 和 assets 内 JS/CSS；不指向状态或凭证目录。启动加载安全快照，文件更新须重启。`--check-config` 也校验静态目录与公开 origin，不打开 DB 或监听端口。
+
+打开实际管理地址，选择“访问密钥”，使用独立管理员文件中的凭证登录。浏览器只在登录正文发送一次原文，以 HttpOnly/Secure/SameSite=Strict Cookie 维持最多 30 分钟的内存会话；不保存到 localStorage/sessionStorage。默认使用 `http://127.0.0.1:<管理端口>`，须用支持 loopback 安全 Cookie 的浏览器。远程反代必须配置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=https://admin.example`，保持同源、转发正确 Host（公开 authority 或实际 loopback authority），不得依赖 X-Forwarded-* 推导来源。HTTP 仅允许 loopback，不修改 Cookie 安全属性。
+
+创建时显式选择模型和本地限额。编辑使用 revision；冲突后核对刷新列表再修改。禁用 Key 可以先轮换并保存新凭证，再显式启用，轮换保持当前启用状态与计数。一次性秘密关闭/离开/登出或五分钟后清除；响应丢失无法找回原文，核对后显式轮换。写入结果未知不会自动重发；登出失败显示待重试，不能据页面已清空推导服务端会话已撤销。
+
+同源会话为 `POST/GET/DELETE /api/session`；变更请求需精确可信 Origin 和 `X-CodexOne-CSRF`，不得混用 Bearer。模型选项为认证后的 `GET /api/keys/options`。服务重启清除所有 session；修改管理员文件后须重启。无管理员配置时仅概览可用，Key 登录明确不可用。
 
 | 请求 | JSON / 返回 |
 |---|---|
@@ -41,3 +51,5 @@ python3 scripts/verify_keys.py --binary .build/debug/codexone
 ```
 
 使用私有临时状态和公开合成管理员凭证，数据 Key 仅在测试内存中生成/使用。覆盖独立认证、Origin/Cookie 拒绝、同主体轮换/跨主体拒绝、已连 WS 撤销、限额与重启、迁移和 DB/WAL/输出无原文；不代表 Desktop、真实账号、浏览器管理界面或生产部署验收。
+
+`python3 scripts/verify_admin.py --binary .build/debug/codexone` 验证会话 API、安全头、静态路径及禁用轮换；纳入后端统一验证。构建前后端后，`python3 scripts/verify_admin_ui.py --binary .build/debug/codexone` 用本机 Chrome 的独立临时上下文操作真实 UI/API 与合成上游，截图屏蔽秘密。它不使用个人浏览器状态或真实账号，也不替代 Desktop 验收。纯前端状态/契约测试仍通过统一 web 验证入口运行。

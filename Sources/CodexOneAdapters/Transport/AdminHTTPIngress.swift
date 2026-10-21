@@ -114,7 +114,9 @@ struct AdminHTTPIngress: Sendable {
     headers.replaceOrAdd(name: "content-length", value: String(body.count))
     headers.replaceOrAdd(name: "connection", value: "close")
     headers.replaceOrAdd(name: "cache-control", value: "no-store")
-    headers.replaceOrAdd(name: "content-type", value: "application/json; charset=utf-8")
+    if headers.first(name: "content-type") == nil {
+      headers.add(name: "content-type", value: "application/json; charset=utf-8")
+    }
     try await outbound.write(.head(.init(version: .http1_1, status: status, headers: headers)))
     try await outbound.write(.body(.byteBuffer(ByteBuffer(data: body))))
     try await outbound.write(.end(nil))

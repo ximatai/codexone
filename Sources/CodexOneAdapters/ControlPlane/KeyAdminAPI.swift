@@ -4,18 +4,30 @@ import Foundation
 import Synchronization
 import Vapor
 
-/// Headless loopback management only. Browser sessions/CSRF are a separate product slice.
+/// Independent administrator authentication for headless requests and protected browser sessions.
 public struct KeyAdminAPI: Sendable {
   private let digest: String
   private let store: any KeyGovernanceStore
+  private let sessions: AdminSessions
+  private let availableModels: [String]
   public static func load(
-    path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil
+    path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
+    publicOrigin: String? = nil, availableModels: [String] = []
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
-    return Self(digest: digest, store: store)
+    guard availableModels.count <= 32,
+      availableModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 })
+    else { throw ExecutionError.invalidCommand }
+    return Self(
+      digest: digest, store: store,
+      sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
+      availableModels: availableModels)
   }
-  public static func validateCredential(path: String, forbiddenDigest: String? = nil) async throws {
+  public static func validateCredential(
+    path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
+  ) async throws {
+    if let publicOrigin { _ = try AdminSessions.canonicalOrigin(publicOrigin) }
     guard try await loadDigest(path) != forbiddenDigest else { throw ExecutionError.invalidCommand }
   }
   private static func loadDigest(_ path: String) async throws -> String {
@@ -31,8 +43,33 @@ public struct KeyAdminAPI: Sendable {
       }
     }
   }
+  func bind(port: Int) { sessions.bind(port: port) }
   func register(_ app: Application) {
-    let routes = app.grouped("api", "keys").grouped(KeyAdminGuard(digest: digest))
+    let api = app.grouped("api").grouped(AdminFailureMiddleware())
+    let routes = api.grouped("keys").grouped(KeyAdminGuard(digest: digest, sessions: sessions))
+    api.post("session") { request async throws -> Response in
+      let document = try Self.body(request, allowed: ["secret"])
+      guard let secret = document["secret"]?.string else { throw ExecutionError.invalidCommand }
+      let created = try sessions.login(secret: secret, headers: request.headers)
+      let response = try Self.response(
+        .object(["authenticated": .bool(true), "csrf": .string(created.csrf)]))
+      response.headers.add(
+        name: "set-cookie", value: Self.cookie(created.token, age: created.maximumAge))
+      return response
+    }
+    api.get("session") { request async throws -> Response in
+      let csrf = try sessions.authorize(request.headers, mutation: false)
+      return try Self.response(.object(["authenticated": .bool(true), "csrf": .string(csrf)]))
+    }
+    api.delete("session") { request async throws -> Response in
+      try sessions.logout(request.headers)
+      let response = try Self.response(.object(["authenticated": .bool(false)]))
+      response.headers.add(name: "set-cookie", value: Self.cookie("", age: 0))
+      return response
+    }
+    routes.get("options") { _ async throws -> Response in
+      try Self.response(.object(["models": .array(availableModels.map { .string($0) })]))
+    }
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
       guard query.count <= 1, query.allSatisfy({ $0.name == "after" && $0.value != nil }) else {
@@ -76,6 +113,10 @@ public struct KeyAdminAPI: Sendable {
       return try Self.response(
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
+  }
+  private static func cookie(_ token: String, age: Int) -> String {
+    AdminSessions.cookieName + "=" + token
+      + "; Path=/; Max-Age=\(age); HttpOnly; Secure; SameSite=Strict"
   }
   private static func body(_ request: Request, allowed: Set<String>) throws -> JSONValue {
     guard request.headers["content-type"].count == 1,
@@ -139,19 +180,28 @@ private struct UpdateKeyDTO: Decodable {
 }
 private struct KeyAdminGuard: AsyncMiddleware {
   let digest: String
-  private let capacity = KeyAdminCapacity()
-  init(digest: String) { self.digest = digest }
+  let sessions: AdminSessions
   func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
-    do {
-      guard capacity.reserve() else { throw GatewayProtocolError(503, "management_capacity") }
-      defer { capacity.release() }
+    if !request.headers["authorization"].isEmpty {
       guard request.headers["origin"].isEmpty, request.headers["sec-fetch-site"].isEmpty,
         request.headers["cookie"].isEmpty
-      else { throw GatewayProtocolError(403, "browser_session_unavailable") }
+      else { throw GatewayProtocolError(403, "mixed_browser_credentials") }
       let supplied = try bearerDigest(request.headers["authorization"])
       guard zip(supplied.utf8, digest.utf8).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 else {
         throw ExecutionError.unauthorized
       }
+    } else {
+      _ = try sessions.authorize(request.headers, mutation: request.method != .GET)
+    }
+    return try await next.respond(to: request)
+  }
+}
+private struct AdminFailureMiddleware: AsyncMiddleware {
+  private let capacity = KeyAdminCapacity()
+  func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
+    do {
+      guard capacity.reserve() else { throw GatewayProtocolError(503, "management_capacity") }
+      defer { capacity.release() }
       return try await next.respond(to: request)
     } catch {
       let status: Int

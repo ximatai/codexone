@@ -1,0 +1,40 @@
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { KeyManagement } from "./KeyManagement";
+import * as api from "./api";
+vi.mock("./api", async (original) => ({ ...(await original<typeof api>()), fetchSession: vi.fn(), fetchKeys: vi.fn(), fetchOptions: vi.fn(), createKey: vi.fn() }));
+const key: api.ManagedKey = { id: "key-1", principal: "team", revision: 1, enabled: true, models: ["synthetic-text"],
+  limits: { requests: 10, active: 2, unresolved: 4, budgetMicros: 1000, unresolvedMicros: 1000 }, createdAtUnixSeconds: 1 };
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); });
+it("clears one-time secrets on expiry and ignores a late clipboard completion", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([]);
+  vi.mocked(api.fetchOptions).mockResolvedValue(["synthetic-text"]);
+  vi.mocked(api.createKey).mockResolvedValue({ key, secret: "synthetic-one-time-secret" });
+  let copied: (() => void) | undefined;
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => new Promise<void>((resolve) => { copied = resolve; })) } });
+  const view = render(<KeyManagement />);
+  await screen.findByText("尚未创建密钥。先选择主体和模型权限，再发放凭证。");
+  fireEvent.change(screen.getByLabelText("主体标识"), { target: { value: "team" } });
+  fireEvent.click(screen.getByLabelText("synthetic-text"));
+  vi.useFakeTimers();
+  await act(async () => { fireEvent.click(screen.getByText("创建 API Key")); });
+  expect(screen.getByLabelText("新 API Key")).toHaveValue("synthetic-one-time-secret");
+  fireEvent.click(screen.getByText("复制凭证"));
+  await act(async () => { vi.advanceTimersByTime(300_000); });
+  expect(screen.queryByLabelText("新 API Key")).not.toBeInTheDocument();
+  await act(async () => { copied?.(); });
+  expect(screen.queryByText("已复制")).not.toBeInTheDocument();
+  view.unmount();
+});
+it("cancels owned reads when leaving the page", async () => {
+  let read: AbortSignal | undefined;
+  vi.mocked(api.fetchSession).mockImplementation((signal) => { read = signal; return new Promise(() => {}); });
+  const view = render(<KeyManagement />);
+  await waitFor(() => expect(read).toBeDefined());
+  view.unmount();
+  expect(read?.aborted).toBe(true);
+  expect(api.fetchKeys).not.toHaveBeenCalled();
+});

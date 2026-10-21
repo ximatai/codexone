@@ -17,6 +17,7 @@ backend() {
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_compaction_stream.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_keys.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_admin.py --binary "$backend_bin_dir/codexone"
 }
 
 frontend() {

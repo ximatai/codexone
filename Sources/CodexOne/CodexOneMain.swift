@@ -21,6 +21,8 @@ struct CodexOneMain {
       switch error {
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
       case .invalidIdentityConfiguration: message = "Invalid single-identity configuration."
+      case .invalidAdminOrigin: message = "Invalid public admin origin configuration."
+      case .invalidWebDirectory: message = "Invalid admin web directory configuration."
       case .invalidAdminTokenFile: message = "Invalid admin credential configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
@@ -40,7 +42,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE (optional absolute paths). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
@@ -65,10 +67,17 @@ struct CodexOneMain {
     if identityConfiguration?.managedKeys == true, configuration.adminTokenFile == nil {
       throw RuntimeConfiguration.ConfigurationError.invalidAdminTokenFile
     }
+    let webBundle: AdminWebBundle?
+    if let directory = configuration.webDirectory {
+      webBundle = try await AdminWebBundle.load(path: directory)
+    } else {
+      webBundle = nil
+    }
     if arguments == ["--check-config"] {
       if let path = configuration.adminTokenFile {
         try await KeyAdminAPI.validateCredential(
-          path: path, forbiddenDigest: identityConfiguration?.keySHA256)
+          path: path, forbiddenDigest: identityConfiguration?.keySHA256,
+          publicOrigin: configuration.adminPublicOrigin)
       }
       let data = try JSONSerialization.data(
         withJSONObject: [
@@ -93,7 +102,9 @@ struct CodexOneMain {
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
-        path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256)
+        path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256,
+        publicOrigin: configuration.adminPublicOrigin,
+        availableModels: identityConfiguration?.models.map(\.id) ?? [])
     } else {
       keyAdmin = nil
     }
@@ -128,7 +139,7 @@ struct CodexOneMain {
               name: "authorization",
               ready: identityConfiguration != nil && finalizer?.isAccepting == true),
           ])
-        }, keys: keyAdmin
+        }, keys: keyAdmin, webBundle: webBundle
       ) {
         announce("admin", port: $0)
       })

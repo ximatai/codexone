@@ -15,8 +15,18 @@
 
 ## A10：本机 Key 管理 API
 
-仅在配置独立管理员凭证文件时提供 `/api/keys` 的创建/有界分页、更新及轮换命令。文件按 owner/权限/类型和容量校验；管理员 Bearer 与普通 Key 分离，不接受 `co1_` 数据 Key 格式或复用 legacy Key 摘要。此入口仅 loopback、无 cookie/session，不启用 CORS；携 Origin、Sec-Fetch-Site 或 Cookie 的请求明确拒绝，不能作为浏览器管理会话验收。后续 UI session 继续遵守 I07/A06。
+仅在配置独立管理员凭证文件时提供 `/api/keys` 的创建/有界分页、更新及轮换命令。文件按 owner/权限/类型和容量校验；管理员 Bearer 与普通 Key 分离，不接受 `co1_` 数据 Key 格式或复用 legacy Key 摘要。此入口仅 loopback、不启用 CORS。无浏览器管理客户端可用独立 Bearer，但该分支拒绝 Origin、Sec-Fetch-Site 和 Cookie；浏览器按 A11 使用 session，混合两种认证明确拒绝。
 
 输入/输出 DTO 与领域对象分离：时间为 Unix UTC 秒，金额为微单位估算，limits 字段包括 requests/active/unresolved/budgetMicros/unresolvedMicros。创建/轮换仅在成功响应返回一次 secret，列表与普通更新不返回原文或摘要；若成功响应丢失，应查询元数据后显式轮换，不能找回旧原文。更新/轮换携 revision，冲突返回 409；未知字段拒绝。错误 envelope 仅含安全 code/message/request_id，响应 no-store。
 
 管理入口最多 32 个连接，Key 管理用例最多 16 个并发，另受数据库普通队列容量约束。NIO 在进入 Vapor 路由前收齐正文：最多 8 KiB，从接受连接开始绝对读取期限 10 秒，超时关闭连接、不派发用例，持续小片段不能延长期限，不保证超时 JSON envelope。单请求响应关闭连接，输出最多 1 MiB、写入期限 5 秒。Key 总数最多 256，列表按 ID 每页最多 64。普通变更最多消耗 4096 条审计；另预留 256 条供 enabled→disabled 的真实撤销，总上限 4352。普通容量满后禁止创建/启用/轮换及重复禁用，因此不会消耗新撤销位置，所有现存活动 Key 仍可各禁用一次并持久审计。审计记录动作、revision、UTC 时间和非秘密权限快照；不删除历史。此临时容量边界须在后续诊断/保留策略切片收敛，不代表长期容量验收。
+
+## A11：同源管理会话与静态界面
+
+`POST /api/session` 仅接受独立管理员 secret 和可信浏览器来源，返回一次 CSRF 证明并设置 `__Host-codexone_admin`：HttpOnly、Secure、SameSite=Strict、Path=/、Max-Age=1800、无 Domain。`GET` 获取当前证明，`DELETE` 校验后撤销并清 Cookie。session 由管理服务持有，最多 16 个、绝对寿命 30 分钟，访问时清理过期记录；只保存 token 摘要和内存 CSRF，重启失效。重新登录可替换当前 session，旧/过期 Cookie 不得造成无法重新登录。管理员文件更换须重启生效。
+
+所有浏览器请求严格校验 Host；变更须同时有精确可信 Origin 和 CSRF，读请求有 Origin 时也须一致。Sec-Fetch-Site 若提供只接受 same-origin，重复/混合认证和重复 Cookie 拒绝。默认 origin 来自实际 loopback 监听端口；反代须显式配置公开 HTTPS origin，不信任任意转发头，不从请求 Host 推导来源。HTTP 仅允许 loopback；不为兼容浏览器降低安全 Cookie 属性。
+
+`GET /api/keys/options` 提供配置的模型 ID 供表单选择，不含上游指导或凭证。Key 界面显式选择模型与五类治理限额，不把它们称为订阅余额；本切片不代表图片权限或账号池已交付。创建/轮换成功后原文仅保留在当前页面内存，关闭、离开、登出或五分钟后清除，不写浏览器持久存储。CAS 冲突刷新并由用户重新确认；写入结果未知不自动重试，刷新核对后才能继续；登出未确认须清本页秘密并明确提供重试。
+
+可选静态目录只在启动时读取为不可变快照，允许 index.html（64 KiB）及 assets 下最多 32 个 JS/CSS（各 1 MiB、总计含 index 最多 4 MiB）。目录及文件须由进程用户或 root 持有、不可被 group/other 写；拒绝 symlink、非普通文件、硬链接及未知资产类型。仅服务精确路径，不回退任意文件或提供数据目录。HTML/资产设置 no-store、nosniff、禁止 frame/referrer 和仅同源脚本/样式/连接的 CSP；API 复用 A10 的容量与安全错误。

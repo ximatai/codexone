@@ -7,6 +7,7 @@ public struct AdminService: Service {
   private let group: any EventLoopGroup
   private let port: Int
   private let keys: KeyAdminAPI?
+  private let webBundle: AdminWebBundle?
   private let reportProvider: @Sendable () -> ReadinessReport
   private let onBound: @Sendable (Int) -> Void
 
@@ -20,8 +21,10 @@ public struct AdminService: Service {
   public init(
     group: any EventLoopGroup, port: Int,
     reportProvider: @escaping @Sendable () -> ReadinessReport, keys: KeyAdminAPI? = nil,
+    webBundle: AdminWebBundle? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.webBundle = webBundle
     self.keys = keys
     self.group = group
     self.port = port
@@ -46,10 +49,26 @@ public struct AdminService: Service {
       let body = try JSONEncoder().encode(SystemStatusResponse(report: reportProvider()))
       return Self.response(HTTPReply(status: 200, body: body))
     }
+    if let webBundle {
+      app.get { _ -> Response in try Self.assetResponse(webBundle.asset(path: "/")) }
+      app.get("index.html") { _ -> Response in
+        try Self.assetResponse(webBundle.asset(path: "/index.html"))
+      }
+      app.get("assets", ":name") { request -> Response in
+        try Self.assetResponse(
+          webBundle.asset(path: "/assets/" + (request.parameters.get("name") ?? "")))
+      }
+    }
     keys?.register(app)
     do {
       try await app.asyncBoot()
-      try await AdminHTTPIngress(group: group, port: port, app: app, onBound: onBound).run()
+      try await AdminHTTPIngress(
+        group: group, port: port, app: app,
+        onBound: { boundPort in
+          keys?.bind(port: boundPort)
+          onBound(boundPort)
+        }
+      ).run()
     } catch {
       try await app.asyncShutdown()
       throw error
@@ -57,6 +76,18 @@ public struct AdminService: Service {
     try await app.asyncShutdown()
   }
 
+  private static func assetResponse(_ asset: AdminWebBundle.Asset?) throws -> Response {
+    guard let asset else { throw Abort(.notFound) }
+    return Response(
+      status: .ok,
+      headers: [
+        "content-type": asset.contentType, "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer", "x-frame-options": "DENY",
+        "content-security-policy":
+          "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      ], body: .init(data: asset.data))
+  }
   private static func response(_ reply: HTTPReply) -> Response {
     var headers = HTTPHeaders()
     headers.add(name: "content-type", value: "application/json; charset=utf-8")

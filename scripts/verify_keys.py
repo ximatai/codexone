@@ -6,6 +6,7 @@ import http.client
 from http.server import ThreadingHTTPServer
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 import sqlite3
@@ -66,6 +67,7 @@ def shutdown(process, root, secrets):
         output = process.stdout.read(131072)
         assert len(output) < 131072 and str(root).encode() not in output
         assert all(secret.encode() not in output for secret in secrets + [ADMIN])
+        assert re.search(rb"(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}", output) is None
         assert process.returncode == 0
     finally:
         stop(process)
