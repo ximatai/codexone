@@ -36,6 +36,18 @@ python3 scripts/verify_protocol.py --binary .build/debug/codexone --web-smoke
 
 ## WebSocket 传输
 
-配置 `upstreamTransport: "websocket"`，base URL 仍用可信 HTTP(S) origin；握手路径为其 `/responses`，HTTPS 使用系统信任与主机名校验。原生下游支持两个前缀的 GET `/responses`，支持默认 lane 与最多 32 个命名 lane，同 lane FIFO、最多 16 个跨 lane 在途 turn；当前拒绝 generate:false 和未支持控制。原生连接在首个有效 create 后使用固定上游 socket；HTTP 桥接每执行新建 socket，不能由桥接成功推导 store=false 跨请求续接可用。无自动重连/重放。
+配置 `upstreamTransport: "websocket"`，base URL 仍用可信 HTTP(S) origin；握手路径为其 `/responses`，HTTPS 使用系统信任与主机名校验。原生下游支持两个前缀的 GET `/responses`，支持默认 lane 与最多 32 个命名 lane，同 lane FIFO、最多 16 个跨 lane 在途 turn；generate:false 作为独立 warmup 执行，未支持控制仍拒绝。原生连接在首个有效 create 后使用固定上游 socket；HTTP 桥接每执行新建 socket，不能由桥接成功推导 store=false 跨请求续接可用。无自动重连/重放。
 
-`verify_websocket.py` 使用 Python 标准库实现有界合成 RFC6455 客户端/上游，纳入后端统一验证；验证帧 masking/分片/ping、延迟建连、同连接续接、FIFO、桥接 JSON/SSE、EOF/断开取消、DB 屏障失败和未完成握手关闭。预热、压缩与 Desktop 验收仍需后续切片。
+`verify_websocket.py` 使用 Python 标准库实现有界合成 RFC6455 客户端/上游，纳入后端统一验证；验证帧 masking/分片/ping、延迟建连、同连接续接、FIFO、桥接 JSON/SSE、EOF/断开取消、DB 屏障失败和未完成握手关闭。预热/压缩已有合成验证，Desktop 实际兼容仍需单独验收。
+
+## 上下文与实际 CLI 检查
+
+`verify_context.py` 已纳入统一后端验证：加密推理、独立 compact 及完整输出窗口续接、命名空间/custom 客户端工具、伪造/跨主体/变更身份引用发送前拒绝；DB/WAL 只留上下文指纹。warmup 的无用量终态仍 unknown，执行模式随 admission JSON 保存，旧记录缺失模式按 generation。
+
+可选实际客户端检查（本机需安装 Codex CLI，CI 不因此依赖个人客户端）：
+
+```sh
+python3 scripts/verify_client.py --binary .build/debug/codexone
+```
+
+脚本创建私有临时客户端目录与空工作目录，在只读 sandbox 下使用合成上游，并显式关闭未支持的内置 web_search。客户端仅执行 `/bin/sh` 的固定 printf，不用登录 shell，网关不执行工具。此脚本验证 HTTP/SSE 文本、函数往返及加密推理回传；不代表 Desktop、真实订阅或所有客户端版本通过，不修改个人配置。

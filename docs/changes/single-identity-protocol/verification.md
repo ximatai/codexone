@@ -59,3 +59,13 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 新增真实 socket 回归连续三次验证：A 的三个 item 屏障事件后跟终态，B 无终态即 EOF，最终 A settled 且用量保留、B unknown 且无伪造零用量。非法提供者 lane 返回 server_error；原有隔离/重复终态回归保持。283af6c 的独立 Linux 完整后端验证已通过（35 个 Swift 测试及六组 WS 场景），不包含本次修复；修复快照须单独验证。
 
 修复工作树在 2026-10-22 macOS 完整后端验证通过（35 个 Swift 测试及七组 WS 场景）；验证时独立暂存了尚未接通的客户端模式准备工作，未将该准备代码混入修复快照。
+
+4fcb003 的两项命名 lane 修复已复审通过，reviewer 重跑七组 WS socket 场景；同快照 Linux amd64 完整后端验证通过（35 个 Swift 测试及全部脚本），未 OOM。
+
+## 执行模式、上下文与实际 CLI
+
+2026-10-22 macOS arm64/Swift 6.4：完整后端验证通过（37 个 Swift 测试函数及真实进程/socket/SIGKILL 脚本）。generation/warmup/compact 保存到 admission JSON，旧记录缺失模式兼容读取为 generation。WS generate:false 无生成输出，缺失 usage 仍 unknown，response ID 可在原 socket 继续；HTTP 两个前缀的 compact 原样返回窗口，保留已有归属、新 ID/类型隔离上下文 SHA-256 指纹先绑定，不把 compact ID 用作 response ID。reasoning、命名空间/custom 工具与结果续接通过；伪造/跨主体/变更身份的私有上下文在发送前拒绝，DB/WAL 不含原始不透明内容。
+
+实际 Codex CLI 0.163.0 经网关完成文本/本地 exec_command 函数往返/最终回答及 encrypted reasoning 回传；两个 attempt 均持久 settled，脚本退出 0。仅临时 CODEX_HOME/空目录、只读 sandbox、固定 printf、无真实账号；客户端显式禁用本阶段未支持的内置 web_search，网关不静默删声明。自我复盘定位客户端给新 inline 消息/结果分配的本地 ID，规范化移除后发送，显式对象/调用/加密上下文引用继续查归属；另允许客户端 reasoning content:null 的序列化形式，非空内容仍类型校验。fixture 含可信 total_tokens，避免不完整 fixture 诱发客户端重试。
+
+范围：实际 CLI 证据为 HTTP/SSE 文本与工具往返，原生 WS/warmup/compact 仍是合成 socket 验证；不是 Desktop、真实订阅、生产反代或恢复读取验收。未改前端产品；需继续模型元数据/指定 Desktop 与恢复契约收敛。此执行模式/上下文切片待提交后独立 review 与 Linux 验证。

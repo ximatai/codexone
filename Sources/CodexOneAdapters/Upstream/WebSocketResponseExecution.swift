@@ -11,7 +11,7 @@ extension HTTPResponseExecution {
     }
     try peer.beginTurn(lane: lane)
     try await gateway.execute(
-      model: request.model, references: request.references, requestID: requestID
+      model: request.model, references: request.references, requestID: requestID, mode: request.mode
     ) { context in
       try peer.attachEvidence(lane: lane) { event in
         if let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model) {
@@ -23,6 +23,7 @@ extension HTTPResponseExecution {
         var create = request.document.object!
         create.removeValue(forKey: "stream")
         create["type"] = .string("response.create")
+        if request.mode == .warmup { create["generate"] = .bool(false) }
         if !lane.isEmpty { create["stream_id"] = .string(lane) }
         try await peer.send(.object(create))
         var total = 0
@@ -48,8 +49,18 @@ extension HTTPResponseExecution {
           {
             try context.observeUsage(evidence)
           }
+          if request.mode == .warmup {
+            guard
+              [
+                "response.created", "response.in_progress", "response.completed", "response.failed",
+                "response.incomplete",
+              ].contains(event["type"]?.string ?? ""),
+              event["response"]?["output"] == nil || event["response"]?["output"]?.array == []
+            else { throw GatewayProtocolError(502, "invalid_upstream_warmup") }
+          }
           let observation = try ProviderObservation(
-            event: event, model: model, functionNames: request.functionNames)
+            event: event, model: model, functionNames: request.functionNames,
+            customToolNames: request.customToolNames)
           for object in observation.bindings { try await context.bind(object) }
           if request.streaming {
             try await emit(event)
@@ -70,6 +81,11 @@ func webSocketCreate(_ data: Data) throws -> ResponseRequest {
   else { throw GatewayProtocolError(400, "unsupported_websocket_control") }
   _ = try webSocketLane(.object(document))
   document.removeValue(forKey: "stream_id")
+  let generate = document.removeValue(forKey: "generate")
+  guard generate == nil || generate?.bool != nil else {
+    throw GatewayProtocolError(400, "unsupported_websocket_control")
+  }
   document["stream"] = .bool(true)
-  return try ResponseRequest(data: JSONValue.object(document).data())
+  return try ResponseRequest(
+    data: JSONValue.object(document).data(), mode: generate?.bool == false ? .warmup : .generation)
 }

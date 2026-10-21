@@ -120,6 +120,8 @@ class Provider(BaseHTTPRequestHandler):
                     assert previous.startswith(f'resp_{connection}_'), 'Connection context was switched'
                 response = {'id': f'resp_{connection}_{index}', 'status': 'completed', 'output': [],
                             'usage': {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}}
+                if create.get('generate') is False:
+                    response['usage'] = None
                 lane = {'stream_id': create['stream_id']} if 'stream_id' in create else {}
                 if create['input'] == 'invalid-upstream-lane':
                     lane = {'stream_id': 'invalid lane'}
@@ -262,6 +264,18 @@ def main():
                     assert events[-1]['error']['code'] == 'invalid_upstream_lane'
                     assert events[-1]['error']['type'] == 'server_error'
                 print('PASS: one lane EOF cannot erase another queued terminal; malformed provider lane is a server error')
+                with dial(ports['data']) as downstream:
+                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'warmup', 'generate': False})
+                    assert events[-1]['type'] == 'response.completed' and events[-1]['response']['output'] == []
+                    assert latest(db, 'unknown') is None
+                    with sqlite3.connect(db) as connection:
+                        mode = json.loads(connection.execute('SELECT admission_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])['mode']
+                    assert mode == 'warmup'
+                    previous = events[-1]['response']['id']
+                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'post-warmup', 'previous_response_id': previous})
+                    assert events[-1]['type'] == 'response.completed'
+                    assert latest(db, 'settled')['inputTokens'] == 5
+                print('PASS: WS generate:false has its own persisted mode; absent usage stays unknown; warmup response can continue on the same socket')
                 for streaming in (False, True):
                     status, body = connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'bridge', 'stream': streaming})
                     assert status == 200 and b'completed' in body

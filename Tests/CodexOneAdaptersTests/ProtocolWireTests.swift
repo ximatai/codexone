@@ -1,3 +1,4 @@
+import CodexOneCore
 import Foundation
 import Testing
 
@@ -210,4 +211,37 @@ import Testing
       for await cancelled in tasks { #expect(cancelled) }
     }
   }
+}
+
+@Test func inlineClientLabelsAreNormalizedWhilePrivateReferencesRemainExplicit() throws {
+  let request = try ResponseRequest(
+    data: Data(
+      #"{"model":"synthetic","input":[{"type":"message","id":"local-new-message","role":"user","content":"synthetic"},{"type":"function_call_output","id":"local-new-result","call_id":"owned-call","output":"synthetic"},{"type":"item_reference","id":"owned-item"}]}"#
+        .utf8))
+  #expect(request.document["input"]?.array?[0]["id"] == nil)
+  #expect(request.document["input"]?.array?[1]["id"] == nil)
+  #expect(request.references.contains(.init(type: "function_call", rawID: "owned-call")))
+  #expect(request.references.contains(.init(type: "item", rawID: "owned-item")))
+  #expect(!request.references.contains(.init(type: "item", rawID: "local-new-message")))
+  for raw in [
+    #"{"model":"synthetic","input":[{"role":"user","content":"synthetic","encrypted_content":"unverified-private"}]}"#,
+    #"{"model":"synthetic","input":[{"type":"reasoning","encrypted_content":"synthetic","file_id":"unverified-private"}]}"#,
+    #"{"model":"synthetic","input":"synthetic","tools":[{"type":"namespace","name":"ns","tools":[{"type":"web_search"}]}]}"#,
+  ] { #expect(throws: (any Error).self) { try ResponseRequest(data: Data(raw.utf8)) } }
+}
+
+@Test func clientExecutionModesAreExplicitAndLegacyAdmissionsRemainGeneration() throws {
+  let warmup = try webSocketCreate(
+    Data(#"{"type":"response.create","model":"synthetic","input":[],"generate":false}"#.utf8))
+  #expect(warmup.mode == .warmup)
+  #expect(warmup.document["generate"] == nil)
+  #expect(throws: (any Error).self) {
+    try ResponseRequest(data: Data(#"{"model":"synthetic","input":[],"generate":false}"#.utf8))
+  }
+  let admission = try JSONDecoder().decode(
+    CodexOneCore.ExecutionAdmission.self,
+    from: Data(
+      #"{"attempt":"legacy","owner":{"principal":"p","key":"k","namespace":"n","identity":"i"},"window":"w","policyVersion":"p","pricingVersion":"p","reservedMicros":0}"#
+        .utf8))
+  #expect(admission.executionMode == .generation && admission.mode == nil)
 }

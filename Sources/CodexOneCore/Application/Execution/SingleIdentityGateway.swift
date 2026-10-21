@@ -37,6 +37,7 @@ public struct SingleIdentityGateway: Sendable {
   }
   public func execute(
     model: String, references: [ObjectBinding], requestID: String? = nil,
+    mode: ExecutionMode = .generation,
     operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
     guard policy.models.contains(model), references.count <= 32 else { throw ExecutionError.denied }
@@ -54,7 +55,7 @@ public struct SingleIdentityGateway: Sendable {
       attempt: UUID().uuidString, owner: policy.owner,
       window: "utc-day-\(day)", policyVersion: policy.policyVersion,
       pricingVersion: policy.pricingVersion,
-      reservedMicros: policy.reservedMicros, requestID: requestID)
+      reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode)
     try await coordinator.execute(admission, operation: operation)
   }
 }

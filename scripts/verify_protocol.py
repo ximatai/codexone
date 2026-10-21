@@ -32,21 +32,41 @@ class Upstream(BaseHTTPRequestHandler):
         with self.server.guard:
             self.server.calls += 1
             index = self.server.calls
-        assert self.path == "/v1/responses"
+        assert self.path in ("/v1/responses", "/v1/responses/compact")
         assert self.headers.get("Authorization") is None
         # Incoming client credentials and arbitrary headers must never reach the provider.
         assert self.headers.get("X-Synthetic-Secret") is None
         prompt = payload.get("input")
+        if self.path == "/v1/responses/compact":
+            response = {"id": f"cmp_{index}", "object": "response.compaction", "created_at": 1,
+                        "output": [{"role": "user", "content": "synthetic retained message"},
+                                   {"type": "compaction", "id": f"cmp_item_{index}", "encrypted_content": f"synthetic-compact-cipher-{index}"}],
+                        "usage": {"input_tokens": 5, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 0}}}
+            if isinstance(payload.get("input"), list) and payload["input"]:
+                response["output"].insert(1, payload["input"][0])
+            body = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         tool = prompt == "tool"
         item = ({"id": f"fc_{index}", "type": "function_call", "call_id": f"call_{index}",
                  "name": "local_tool", "arguments": "{}"} if tool else
                 {"id": f"msg_{index}", "type": "message", "role": "assistant",
                  "content": [{"type": "output_text", "text": "synthetic output", "annotations": []}]})
+        if prompt == "tool-namespace":
+            item = {"id": f"fc_{index}", "type": "function_call", "call_id": f"call_{index}", "namespace": "synthetic_ns", "name": "local_tool", "arguments": "{}"}
+        if prompt == "tool-custom":
+            item = {"id": f"ctc_{index}", "type": "custom_tool_call", "call_id": f"call_{index}", "name": "local_custom", "input": "synthetic custom input"}
         if prompt == "bad-object":
             item["type"] = "unverified_private_object"
         response = {"id": f"resp_{index}", "object": "response", "status": "completed", "model": payload["model"],
                     "output": [item], "usage": {"input_tokens": 5, "output_tokens": 3,
                                                   "input_tokens_details": {"cached_tokens": 0}}}
+        if prompt == "reasoning":
+            response["output"].insert(0, {"id": f"rs_{index}", "type": "reasoning", "summary": [], "encrypted_content": f"synthetic-reasoning-cipher-{index}"})
         try:
             if payload.get("stream"):
                 self.send_response(200)

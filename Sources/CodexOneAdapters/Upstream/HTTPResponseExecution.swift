@@ -16,6 +16,9 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    guard request.mode == .generation else {
+      throw GatewayProtocolError(400, "unsupported_execution_mode")
+    }
     if configuration.upstreamTransport == "websocket" {
       try await webSocket.run { peer in
         try await execute(request, requestID: requestID, peer: peer, emit: emit)
@@ -26,7 +29,7 @@ struct HTTPResponseExecution: Sendable {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
     try await gateway.execute(
-      model: request.model, references: request.references, requestID: requestID
+      model: request.model, references: request.references, requestID: requestID, mode: request.mode
     ) { context in
       try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
         var upstream = HTTPClientRequest(url: configuration.upstreamBaseURL + "/responses")
@@ -68,7 +71,8 @@ struct HTTPResponseExecution: Sendable {
                 try context.observeUsage(evidence)
               }
               let observation = try ProviderObservation(
-                event: event, model: model, functionNames: request.functionNames)
+                event: event, model: model, functionNames: request.functionNames,
+                customToolNames: request.customToolNames)
               for object in observation.bindings { try await context.bind(object) }
               terminal = observation.terminal
               try await emit(event)
@@ -100,7 +104,8 @@ struct HTTPResponseExecution: Sendable {
             "type": .string("response." + status!), "response": document,
           ])
           let observation = try ProviderObservation(
-            event: event, model: model, functionNames: request.functionNames)
+            event: event, model: model, functionNames: request.functionNames,
+            customToolNames: request.customToolNames)
           for object in observation.bindings { try await context.bind(object) }
           try await emit(document)
         }

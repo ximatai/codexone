@@ -51,7 +51,7 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 ## P13：受控单身份 HTTP 配置契约
 
-单身份 Key 先验证，再由应用层按模型与每个引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体或未知执行字段；客户端函数工具名称与返回调用匹配，不接受未经声明的工具或对象类型。
+单身份 Key 先验证，再由应用层按模型与每个引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体或未知执行字段；客户端 function/custom 工具按 type/namespace/name 与返回调用匹配，namespace 只组织客户端工具，不开放内置检索或服务端执行；不接受未经声明的工具或对象类型。
 
 文本 HTTP 切片的请求体为 512 KiB、JSON 深度 64、输入项 256、工具 64、引用 32；上游 JSON 为 256 KiB，单 SSE 事件 256 KiB、累计流 8 MiB。连接最多 32，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒、读取 30 秒、发送至响应体消费/输出的单调总期限默认 120 秒（可信配置可缩短至 1—120 秒），下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
 
@@ -61,8 +61,16 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 ## P14：单身份 WS 连接与 lane
 
-配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。此切片不开放 generate:false 或未支持控制；预热与压缩仍按 P11/E10 后续验收，不从合成 WS 切片推导完整客户端支持。
+配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。未支持控制明确拒绝；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
 
 帧/聚合 512 KiB，单上游事件 256 KiB、累计执行 8 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/1 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求读取空闲 120 秒、连接寿命最多 1 小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
 HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 在入队前验证当前 turn 的 created/response ID/item 关联，并通过已准入 attempt 注册的同步证据 sink 观察终态用量，其他 lane 失败不得清除已接收/分类的可信用量；轮外事件、重复终态/response ID 关闭连接，不得将旧事件用于新 attempt。单连接最多 256 个响应、单轮最多 256 个 item。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
+
+## P15：客户端上下文与前台模式
+
+完整 inline 消息及 function/custom tool 结果中的 id 为客户端本地关联标签，发送上游前移除；正文、工具 call_id 和显式引用保持。显式 item_reference、previous_response_id、函数调用/推理对象 ID 仍按归属查验，不能用完整消息中的本地 ID 触发上游对象读取。reasoning.encrypted_content include 可用；加密推理/压缩内容按 I11 指纹归属，在准入前校验。
+
+WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪，不把 compaction ID 当 previous_response_id；保留的已有引用沿原归属，新引用先绑定，再整体返回。压缩请求沿文本 512 KiB、输出 256 KiB/256 项、总期限及失败语义；未支持模式/输入不发送。
+
+兼容的客户端 metadata 只允许有界字符串字典；stream_options 仅 include_usage。文本/推理内容分类型校验，不透传未经分类的文件引用、注解或嵌套对象。客户端须显式关闭本阶段未支持的内置 web_search；网关不静默删掉工具声明以制造兼容结果。

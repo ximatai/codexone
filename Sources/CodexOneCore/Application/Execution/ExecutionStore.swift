@@ -19,6 +19,8 @@ public struct ExecutionOwner: Sendable, Equatable, Codable {
   }
 }
 
+public enum ExecutionMode: String, Sendable, Codable { case generation, warmup, compact }
+
 public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let attempt: String
   public let owner: ExecutionOwner
@@ -28,9 +30,13 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   /// Operational estimate, not a worst-case bound or subscription balance.
   public let reservedMicros: Int64
   public let requestID: String?
+  /// Missing in older admission JSON; interpreted as generation without rewriting history.
+  public let mode: ExecutionMode?
+  public var executionMode: ExecutionMode { mode ?? .generation }
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
-    pricingVersion: String, reservedMicros: Int64, requestID: String? = nil
+    pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
+    mode: ExecutionMode? = nil
   ) {
     self.attempt = attempt
     self.owner = owner
@@ -39,6 +45,7 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
     self.pricingVersion = pricingVersion
     self.reservedMicros = reservedMicros
     self.requestID = requestID
+    self.mode = mode
   }
 }
 

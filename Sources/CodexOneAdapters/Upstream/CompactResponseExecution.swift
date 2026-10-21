@@ -1,0 +1,77 @@
+import AsyncHTTPClient
+import CodexOneCore
+import Foundation
+import NIOCore
+import NIOHTTP1
+
+extension HTTPResponseExecution {
+  func compact(
+    _ request: ResponseRequest, requestID: String,
+    emit: @escaping @Sendable (JSONValue) async throws -> Void
+  ) async throws {
+    guard request.mode == .compact,
+      let model = configuration.models.first(where: { $0.id == request.model })
+    else { throw GatewayProtocolError(403, "model_not_allowed") }
+    try await gateway.execute(
+      model: request.model, references: request.references, requestID: requestID, mode: .compact
+    ) { context in
+      try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+        var upstream = HTTPClientRequest(url: configuration.upstreamBaseURL + "/responses/compact")
+        upstream.method = .POST
+        upstream.headers = ["content-type": "application/json", "accept": "application/json"]
+        if let token { upstream.headers.add(name: "authorization", value: "Bearer " + token) }
+        upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
+        let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
+        guard response.status == .ok else {
+          throw GatewayProtocolError(
+            response.status == .tooManyRequests ? 429 : 502, "upstream_compact_rejected")
+        }
+        guard
+          response.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json")
+            == true
+        else { throw GatewayProtocolError(502, "invalid_upstream_content_type") }
+        let body = try await response.body.collect(upTo: 262_144)
+        let document: JSONValue
+        do { document = try JSONValue.decode(Data(body.readableBytesView)) } catch {
+          throw GatewayProtocolError(502, "invalid_upstream_response")
+        }
+        guard document["object"]?.string == "response.compaction" else {
+          throw GatewayProtocolError(502, "invalid_upstream_compaction")
+        }
+        if let evidence = try ProviderObservation.usage(document["usage"], model: model) {
+          try context.observeUsage(evidence)
+        }
+        guard let output = document["output"]?.array, output.count <= 256,
+          document.object?.keys.allSatisfy({
+            ["id", "object", "created_at", "output", "usage"].contains($0)
+          }) == true
+        else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+        if let id = document["id"] {
+          guard let id = id.string, !id.isEmpty, id.utf8.count <= 256 else {
+            throw GatewayProtocolError(502, "invalid_upstream_compaction")
+          }
+          try await context.bind(.init(type: "compaction", rawID: id))
+        }
+        var functions = Set<String>()
+        var custom = Set<String>()
+        for item in request.document["input"]?.array ?? [] {
+          if let name = item["name"]?.string {
+            let key = try ClientTools.key(name: name, namespace: item["namespace"]?.string)
+            if item["type"]?.string == "function_call" { functions.insert(key) }
+            if item["type"]?.string == "custom_tool_call" { custom.insert(key) }
+          }
+        }
+        for item in output {
+          let bindings = try ProviderObservation.itemBindings(
+            item, functionNames: functions, customToolNames: custom, retained: true)
+          for binding in bindings where !request.references.contains(binding) {
+            try await context.bind(binding)
+          }
+        }
+        // The canonical compacted window is returned intact; it is not a generated response ID.
+        try await emit(document)
+      }
+      return nil
+    }
+  }
+}

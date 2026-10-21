@@ -293,7 +293,8 @@ public struct SingleIdentityDataService: Service {
       throw GatewayProtocolError(404, "not_found")
     }
     let endpoint = String(path.dropFirst(prefix.count))
-    guard endpoint == "/models" || endpoint == "/responses" else {
+    guard endpoint == "/models" || endpoint == "/responses" || endpoint == "/responses/compact"
+    else {
       throw GatewayProtocolError(404, "not_found")
     }
     guard executor.configuration.accepts(head.headers["authorization"]) else {
@@ -309,14 +310,21 @@ public struct SingleIdentityDataService: Service {
       try await writer.json(.object(["object": .string("list"), "data": .array(models)]))
       return
     }
-    guard endpoint == "/responses", head.method == .POST else {
+    guard ["/responses", "/responses/compact"].contains(endpoint), head.method == .POST else {
       throw GatewayProtocolError(405, "method_not_allowed")
     }
     guard head.headers["content-type"].count == 1,
       head.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json") == true,
       head.headers["content-encoding"].isEmpty
     else { throw GatewayProtocolError(415, "unsupported_content_type") }
-    let request = try ResponseRequest(data: body)
+    let request = try ResponseRequest(
+      data: body, mode: endpoint == "/responses/compact" ? .compact : .generation)
+    if request.mode == .compact {
+      try await executor.compact(request, requestID: writer.requestID) { document in
+        try await writer.json(document)
+      }
+      return
+    }
     await writer.setStreaming(request.streaming)
     try await executor.execute(request, requestID: writer.requestID) { document in
       if request.streaming {
