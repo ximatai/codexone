@@ -115,3 +115,5 @@ b3ad1f1 复审通过，原 P1 闭环；reviewer 独立运行三个实际 CLI 模
 macOS arm64/Swift 6.4 完整后端（38 个 Swift 测试与全部脚本）通过。实际 CLI 0.163.0 的 HTTP 直连、HTTP→WS 桥接均完成工具往返（上游 WS 分别 0/2 个）；原生 WS 使用一个上游 socket，generate:false 一次、generation 两次，previous_response_id 严格依次指向预热响应和首个函数调用响应。所配指导被采用，两个生成与可信零用量预热均持久 settled；预热零值只来自此合成上游明确证据，不推广为真实免费。fixture 的上下文记录有界，明确检查原生路径未落入两个桥接连接；HTTP 故障 probe 与缺 profile 模式仍独立限定为 HTTP。
 
 范围：这是实际 CLI 及合成上游的传输/工具/正常续接证据，仍不是 Desktop UI、真实订阅、实际 CLI compact 或断线输出读取验收。此次切片待提交后独立 review、Linux 快照复验。
+
+de0957a 复审通过；reviewer 独立运行三种 CLI 传输、HTTP retry/缺 profile 两模式和九组 WS socket，全部通过，无新增阻塞问题。相同提交 Linux amd64/Swift 6.4 本地模拟容器单并发完整后端退出 0（38 个 Swift 测试及全部脚本），2 CPU/2500 MiB；未访问真实上游、不代表 Desktop 或弱宿主容量验收。

@@ -55,7 +55,7 @@ npm run dev
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
 - 2026-10-22 独立 Linux amd64/Swift 6.4 本地 Docker 验证通过（快照 8184adb，模拟执行）：单并发后端完整检查、26 Swift 测试及进程/权限/四个 SIGKILL 场景。首次双并发因约 2.8 GiB Docker VM 内存不足 OOM；未改全局设置。此结果不代表弱服务器容量验收。
-- 2026-10-22 M2 Linux amd64/Swift 6.4 本地容器完整验证通过至 b3ad1f1（38 Swift 测试、进程故障、九组 HTTP/SSE、WS/context 及 profile 场景），单并发、2 CPU/2500 MiB。macOS 实际 CLI 0.163.0 通过明确模型指导的目录采用、HTTP/SSE 文本/函数结果与加密推理回传、缺 profile fallback 和 EOF 新执行检查；独立临时配置，无真实账号。
+- 2026-10-22 M2 Linux amd64/Swift 6.4 本地容器完整验证通过至 de0957a（38 Swift 测试、进程故障、九组 HTTP/SSE、九组 WS/context 及 profile 场景），单并发、2 CPU/2500 MiB。macOS 实际 CLI 0.163.0 通过明确模型指导的目录采用、HTTP/SSE 文本/函数结果与加密推理回传、缺 profile fallback、EOF 新执行，以及直连/桥接/原生 WS 区分检查；独立临时配置，无真实账号。
 - Linux amd64 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖
@@ -64,8 +64,10 @@ M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接�
 
 模型目录提供白名单的 OpenAI 视图；全部模型有明确 profile 才同时提供同集合的 Codex 视图。顺序/策略版本 P2 和空指导清空客户端基线的 P1 已关闭：显式非空 catalog.baseInstructions，不自动编写/复制默认提示。缺 profile 的 Codex 目录请求返回 503，客户端仍可能 fallback，不能当目录验收通过。b3ad1f1 复审、macOS/Linux 完整后端和实际 CLI 三模式均通过。EOF 后原 attempt 保持 unknown，不能当原输出恢复；[恢复契约证据](docs/evidence/client-recovery.md)已记录。
 
-实际 CLI 传输补充：发现可选扩展提议被拒造成 WS 握手失败并静默 HTTP fallback，已改为忽略提议、不协商压缩，RSV 仍拒绝。macOS 完整后端及 CLI 0.163.0 直连/桥接/原生三路径通过；原生同一 socket 一次预热、两次生成及 previous_response_id 连续链已核实，均持久结算。该切片待提交后 review/Linux，不代表 Desktop 或实际 CLI compact 已通过。
+实际 CLI 传输补充：发现可选扩展提议被拒造成 WS 握手失败并自动 HTTP fallback，已改为忽略提议、不协商压缩，RSV 仍拒绝。de0957a 已复审并通过 macOS/Linux 完整后端，reviewer 独立重跑三传输 CLI 与九组 WS。原生同一 socket 一次预热、两次生成及 previous_response_id 连续链已核实，均持久结算；不代表 Desktop 或实际 CLI compact 已通过。
 
-Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。下一步取得可执行的 Desktop 验收路径；已向用户保留问题：是否允许保留这项缺口先推进独立 M3 工作，尚未答复，不以等待时间当作同意。代码已提交，无未提交工作；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
+下一项 M2 实现：核实所选 CLI 远程压缩实际使用 compaction_trigger v2，独立 /responses/compact 尚不能覆盖。正在准备普通 Responses 流上的 v2 压缩支持，保留 compact 模式统计、指纹屏障及完整用量，详见变更提案/任务。
+
+Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。继续推进当前 M2 可独立实现项，并取得可执行的 Desktop 验收路径；已向用户保留问题：是否允许保留这项缺口先推进独立 M3 工作，尚未答复，不以等待时间当作同意。WS 切片代码已提交，v2 压缩准备中；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
