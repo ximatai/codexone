@@ -19,6 +19,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let upstreamBaseURL: String
   public let upstreamTokenFile: String?
   public let reservedMicros: Int64
+  public let executionTimeoutSeconds: Int?
 
   public static func load(path: String) async throws -> SingleIdentityConfiguration {
     try await withCheckedThrowingContinuation { continuation in
@@ -50,6 +51,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           && (0...500_000_000).contains($0.outputMicrosPerMillion)
       }),
       (0...1_000_000_000_000).contains(reservedMicros),
+      (1...120).contains(executionTimeoutSeconds ?? 120),
       let url = URLComponents(string: upstreamBaseURL), url.user == nil, url.password == nil,
       url.query == nil, url.fragment == nil,
       url.path == "/v1" || url.path == "/backend-api/codex"
@@ -94,6 +96,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "identity": .string(identity),
           "models": .array(models.map(\.id).sorted().map { .string($0) }),
           "reservation": .number(Decimal(reservedMicros)),
+          "executionTimeoutSeconds": .number(Decimal(executionTimeoutSeconds ?? 120)),
         ])))
     return try .init(
       owner: .init(

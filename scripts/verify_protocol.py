@@ -56,6 +56,25 @@ class Upstream(BaseHTTPRequestHandler):
                 created = {"type": "response.created", "response": {**response, "status": "in_progress", "output": [], "usage": None}}
                 self.wfile.write(("data: " + json.dumps(created) + "\n\n").encode())
                 self.wfile.flush()
+                if prompt == "dribble":
+                    for _ in range(80):
+                        self.wfile.write(b'data: {"type":"response.output_text.delta","delta":"x"}\n\n')
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                    return
+                if prompt == "private-part":
+                    part = {"type": "response.content_part.done", "item_id": f"msg_{index}",
+                            "part": {"type": "output_text", "text": "synthetic", "annotations":
+                                     [{"type": "file_citation", "file_id": "private-synthetic-file"}]}}
+                    self.wfile.write(("data: " + json.dumps(part) + "\n\n").encode())
+                    self.wfile.flush()
+                    return
+                if prompt in ("bad-tail", "large-tail"):
+                    terminal = ("data: " + json.dumps({"type": "response.completed", "response": response}) + "\n\n").encode()
+                    tail = b'data: {bad json}\n\n' if prompt == "bad-tail" else b'data: ' + b'x' * 262_150 + b'\n\n'
+                    self.wfile.write(terminal + tail)
+                    self.wfile.flush()
+                    return
                 if prompt == "stall":
                     self.server.stalled.set()
                     self.connection.settimeout(6)
@@ -174,7 +193,7 @@ def main():
             configuration = directory / "identity.json"
             configuration.write_text(json.dumps({"principal": "synthetic-principal", "keyID": "synthetic-key",
                 "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(), "namespace": "synthetic-provider",
-                "identity": "synthetic-account", "reservedMicros": 10,
+                "identity": "synthetic-account", "reservedMicros": 10, "executionTimeoutSeconds": 2,
                 "models": [{"id": "synthetic-text", "inputMicrosPerMillion": 1000000, "outputMicrosPerMillion": 1000000}],
                 "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1"}))
             configuration.chmod(0o600)
@@ -211,6 +230,19 @@ def main():
                 assert status == 200 and b"response.completed" in body and b"[DONE]" in body
                 assert latest(db_path, "settled")["estimatedMicros"] == 8
                 print("PASS: function result ownership, continuation and SSE terminal usage")
+                for prompt in ("bad-tail", "large-tail"):
+                    status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": prompt, "stream": True})
+                    assert status == 200 and b"response.completed" in body and b"[DONE]" in body
+                    assert latest(db_path, "settled")["inputTokens"] == 5
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-part", "stream": True})
+                assert status == 200 and b"private-synthetic-file" not in body and b"unsupported_upstream_object" in body
+                assert latest(db_path, "unknown") is None
+                began = time.monotonic()
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "dribble", "stream": True})
+                assert status == 200 and b"execution_deadline_exceeded" in body and b"[DONE]" not in body
+                assert 1 <= time.monotonic() - began < 4
+                assert latest(db_path, "unknown") is None
+                print("PASS: terminal evidence survives malformed/oversized coalesced tails; private parts blocked; progressing streams obey total deadline")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "abrupt", "stream": True})
                 assert status == 200 and b"execution_indeterminate" in body and b"[DONE]" not in body
                 assert latest(db_path, "unknown") is None

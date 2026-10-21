@@ -58,10 +58,8 @@ struct ProviderObservation: Sendable {
         }
         bindings.append(.init(type: "item", rawID: id))
       }
-      if let part = event["part"],
-        !["output_text", "refusal", "summary_text"].contains(part["type"]?.string ?? "")
-      {
-        throw GatewayProtocolError(502, "unsupported_upstream_event")
+      if let part = event["part"] {
+        try Self.validatePart(part, allowSummary: true)
       }
     } else {
       throw GatewayProtocolError(502, "unsupported_upstream_event")
@@ -89,17 +87,10 @@ struct ProviderObservation: Sendable {
     }
     var bindings: [ObjectBinding] = [.init(type: "item", rawID: id)]
     if type == "message" {
-      guard let content = item["content"]?.array, content.count <= 128,
-        content.allSatisfy({ part in
-          let type = part["type"]?.string
-          let text = type == "output_text" ? part["text"]?.string : part["refusal"]?.string
-          return ["output_text", "refusal"].contains(type ?? "") && text != nil
-            && (part["annotations"] == nil || part["annotations"]?.array == [])
-            && part.object?.keys.allSatisfy({
-              ["type", "text", "refusal", "annotations", "logprobs"].contains($0)
-            }) == true
-        })
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      guard let content = item["content"]?.array, content.count <= 128 else {
+        throw GatewayProtocolError(502, "unsupported_upstream_object")
+      }
+      for part in content { try Self.validatePart(part, allowSummary: false) }
     }
     if type == "function_call" {
       guard let name = item["name"]?.string, functionNames.contains(name),
@@ -109,10 +100,30 @@ struct ProviderObservation: Sendable {
       }
       bindings.append(.init(type: "function_call", rawID: call))
     }
+    if let summary = item["summary"] {
+      guard type == "reasoning", let parts = summary.array, parts.count <= 128 else {
+        throw GatewayProtocolError(502, "unsupported_upstream_object")
+      }
+      for part in parts { try Self.validatePart(part, allowSummary: true) }
+    }
     if item["encrypted_content"] != nil {
       throw GatewayProtocolError(502, "unsupported_upstream_object")
     }
     return bindings
+  }
+
+  private static func validatePart(_ part: JSONValue, allowSummary: Bool) throws {
+    let type = part["type"]?.string ?? ""
+    let allowedTypes =
+      allowSummary ? ["output_text", "refusal", "summary_text"] : ["output_text", "refusal"]
+    let text = type == "refusal" ? part["refusal"]?.string : part["text"]?.string
+    guard allowedTypes.contains(type), text != nil,
+      part["annotations"] == nil || part["annotations"]?.array == [],
+      part["logprobs"] == nil || part["logprobs"] == .null || part["logprobs"]?.array == [],
+      part.object?.keys.allSatisfy({
+        ["type", "text", "refusal", "annotations", "logprobs"].contains($0)
+      }) == true
+    else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
   }
 
   static func usage(_ value: JSONValue?, model: SingleIdentityConfiguration.Model) throws

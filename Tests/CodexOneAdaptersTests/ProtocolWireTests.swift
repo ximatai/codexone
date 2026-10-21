@@ -9,22 +9,24 @@ import Testing
     "event: response.output_text.delta\r\ndata: {\"type\":\"response.output_text.delta\",\r\ndata: \"delta\":\"合成文本\"}\r\n\r\n"
       .utf8)
   var events: [JSONValue] = []
-  for byte in wire { events += try decoder.append(Data([byte])) }
-  #expect(events.count == 1)
+  for byte in wire { if let event = try decoder.append(byte) { events.append(event) } }
+  try #require(events.count == 1)
   #expect(events[0]["delta"]?.string == "合成文本")
   try decoder.finish()
   #expect(!decoder.sawDone)
-  _ = try decoder.append(Data("data: [DONE]\n\n".utf8))
+  for byte in "data: [DONE]\n\n".utf8 { _ = try decoder.append(byte) }
   #expect(decoder.sawDone)
-  #expect(throws: (any Error).self) { try decoder.append(Data("data: {}\n\n".utf8)) }
+  #expect(throws: (any Error).self) {
+    for byte in "data: {}\n\n".utf8 { _ = try decoder.append(byte) }
+  }
 }
 
 @Test func incompleteAndOversizedEventsAreRejected() throws {
   var incomplete = SSEDecoder()
-  _ = try incomplete.append(Data("data: {\"type\":\"response.completed\"}".utf8))
+  for byte in "data: {\"type\":\"response.completed\"}".utf8 { _ = try incomplete.append(byte) }
   #expect(throws: (any Error).self) { try incomplete.finish() }
   var oversized = SSEDecoder()
-  #expect(throws: (any Error).self) { try oversized.append(Data(repeating: 65, count: 262_145)) }
+  #expect(throws: (any Error).self) { for _ in 0..<262_149 { _ = try oversized.append(65) } }
 }
 
 @Test func deepJSONAndUnverifiedExecutionControlsFailBeforeDispatch() throws {
@@ -85,4 +87,26 @@ import Testing
   #expect(cachedOnly?.inputTokens == 3)
   #expect(cachedOnly?.cachedTokens == 3)
   #expect(cachedOnly?.completeness == .partial)
+}
+
+@Test func streamingAndTerminalPartsRejectUnboundNestedReferences() throws {
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
+  for eventType in [
+    "response.content_part.added", "response.content_part.done",
+    "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+  ] {
+    for nested in ["annotations", "logprobs", "private_object"] {
+      let part: JSONValue = .object([
+        "type": .string("output_text"), "text": .string("synthetic"),
+        nested: .array([.object(["file_id": .string("synthetic-private-file")])]),
+      ])
+      let event: JSONValue = .object([
+        "type": .string(eventType), "item_id": .string("synthetic-item"), "part": part,
+      ])
+      #expect(throws: (any Error).self) {
+        try ProviderObservation(event: event, model: model, functionNames: [])
+      }
+    }
+  }
 }

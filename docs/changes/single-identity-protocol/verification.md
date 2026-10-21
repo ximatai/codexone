@@ -11,3 +11,11 @@
 范围：此记录只证明 HTTP 文本/客户端函数工具的合成闭环；不是完整 M2、Desktop、原生 WS/桥接、预热/压缩、真实订阅或生产反代验收。M1 Linux 验证仅适用于其独立快照，未冒充此切片的 Linux 结果。
 
 协议依据：[官方 WebSocket 模式与恢复](https://developers.openai.com/api/docs/guides/websocket-mode)、[官方自定义 provider 配置](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)。官方 API 文档不等于订阅后端或指定 Desktop 版本已经兼容。
+
+## HTTP 切片提交后 review 修复
+
+提交 035adb8 后独立 subagent review 找到三项 P1：单 chunk 的后续解析错误吞掉此前事件、流式 part 绕过 annotations 检查、AHC 的请求 deadline 仅覆盖响应头。主 Agent 亲自改为逐字节识别并立即交付完整事件，终态后停止读取；流式/终态内容复用验证，拒绝非空 annotations、未支持嵌套字段和非空 logprobs；单调任务期限覆盖完整操作，超时取消并等待子任务退出。配置可将默认 120 秒缩短到 1—120 秒，并进入策略版本。
+
+2026-10-22 macOS 完整后端验证通过（32 个 Swift 测试函数）；真实 socket 新增终态与无效 JSON/超限尾部同次写入、私有 file citation 被拒绝、持续有进展但无终态的 SSE 在 2 秒总期限终止并保存 unknown。已有取消、屏障失败、用量、SIGKILL 检查仍通过。
+
+独立 Linux amd64 容器对 035adb8 的验证未通过：CRLF 分片测试返回零事件，后续索引越界使测试进程退出。原因是原 Data 搜索/删除依赖了跨平台索引行为；同一逐事件重写移除了该依赖，并将测试前置计数改为 require。修复快照的 Linux 结果须另行记录，不将旧快照失败写为通过。
