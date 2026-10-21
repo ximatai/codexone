@@ -2,7 +2,7 @@ import Foundation
 
 public enum ExecutionError: Error, Sendable, Equatable {
   case invalidCommand, capacity, denied, conflict, unknownAttempt, unknownObject, ambiguousObject
-  case storageUnavailable, incompatibleSchema, instanceLocked, closed
+  case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence
 }
 
 /// Trusted application identity; never populated directly from client claims.
@@ -61,7 +61,6 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
 /// Each observation is a cumulative snapshot for one attempt, not an additive event.
 public struct UsageEvidence: Sendable, Equatable, Codable {
   public enum Completeness: String, Sendable, Codable { case partial, complete }
-  public let id: String
   public let revision: Int64
   public let inputTokens: Int64
   public let outputTokens: Int64
@@ -70,10 +69,9 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
   public let estimatedMicros: Int64
   public let completeness: Completeness
   public init(
-    id: String, revision: Int64, inputTokens: Int64, outputTokens: Int64,
+    revision: Int64, inputTokens: Int64, outputTokens: Int64,
     cachedTokens: Int64, images: Int64, estimatedMicros: Int64, completeness: Completeness
   ) {
-    self.id = id
     self.revision = revision
     self.inputTokens = inputTokens
     self.outputTokens = outputTokens

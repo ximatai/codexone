@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import selectors
+import stat
 import subprocess
 import tempfile
 
@@ -19,7 +20,7 @@ def line(process):
 
 def start(binary, path):
     process = subprocess.Popen([binary, str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, env={"PATH": os.defpath}, bufsize=0)
+                               stderr=subprocess.DEVNULL, env={"PATH": os.defpath}, bufsize=0, umask=0o022)
     try:
         assert line(process) == "ready"
         return process
@@ -48,9 +49,12 @@ def main():
     binary = str(args.binary.resolve())
     for phase in ("before_intent", "after_intent", "after_binding", "after_settlement"):
         with tempfile.TemporaryDirectory(prefix="codexone-synthetic-") as directory:
+            os.chmod(directory, 0o755)
             path = Path(directory) / "core.sqlite"
             process = start(binary, path)
             try:
+                for suffix in ("", ".lock", "-wal", "-shm"):
+                    assert stat.S_IMODE(Path(str(path) + suffix).stat().st_mode) == 0o600
                 if phase != "before_intent":
                     assert command(process, "admit") == "admitted"
                 if phase in ("after_binding", "after_settlement"):
@@ -61,8 +65,15 @@ def main():
                 assert process.wait(timeout=5) != 0
             finally:
                 dispose(process)
+            # Tighten legacy permissive files before any recovery/readiness work.
+            for suffix in ("", ".lock", "-wal", "-shm"):
+                candidate = Path(str(path) + suffix)
+                if candidate.exists():
+                    os.chmod(candidate, 0o644)
             recovered = start(binary, path)
             try:
+                for suffix in ("", ".lock", "-wal", "-shm"):
+                    assert stat.S_IMODE(Path(str(path) + suffix).stat().st_mode) == 0o600
                 expected = "absent" if phase == "before_intent" else "settled" if phase == "after_settlement" else "unknown"
                 assert command(recovered, "snapshot") == expected
                 assert command(recovered, "resolve") == ("owned" if phase in ("after_binding", "after_settlement") else "absent")

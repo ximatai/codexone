@@ -91,13 +91,15 @@ public final class ExecutionFinalizer: Service, FinalizationSink, Sendable {
         do {
           try await store.finalize(
             attempt: item.finalization.attempt, evidence: item.finalization.evidence)
+        } catch ExecutionError.staleEvidence {
+          // A newer cumulative truth is already durable beyond the retired watermark.
         } catch {
           // Durable intent is the recovery record; never depend on writing another pending marker.
           state.withLock {
             $0.failed = true
             $0.accepting = false
           }
-          throw ExecutionError.storageUnavailable
+          throw error
         }
         let finished = state.withLock { value in
           value.tickets.removeValue(forKey: item.ticket)

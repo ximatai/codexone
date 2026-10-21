@@ -22,4 +22,6 @@
 
 执行协调在准入前同步取得最终化 ticket；准入原子写入 dispatch intent、身份、Key 归属、窗口、策略及计价版本和估算预留，再调用一次上游操作。任何无法证明未执行的失败保守归为 unknown，不透明重放。最终化移交不等待连接，worker 失败关闭新准入，由已持久 intent 承担重启责任。
 
-用量证据是带唯一 ID 与递增 revision 的单 attempt 累计快照，不是可相加的事件。相同 ID/revision 的不同内容拒绝；较新证据不可减少已有计数或将 complete 降为 partial，较旧快照不可超过已知新快照。partial/unavailable 保留未知暴露；complete 结算后仍接受可信的较新累计用量，不重复扣收旧快照。金额始终为估算，不等于 token 或订阅余额。
+用量证据是以 (attempt, revision) 唯一标识、revision 递增的单 attempt 累计快照，不是可相加的事件。保留范围内相同 revision 的不同内容拒绝；较新证据不可减少已有计数或将 complete 降为 partial，较旧快照不可超过已知新快照。partial/unavailable 保留未知暴露；complete 结算后仍接受可信的较新累计用量，不重复扣收旧快照。金额始终为估算，不等于 token 或订阅余额。
+
+最新累计真相独立保留，历史证据最多保留最近 128 条并持久推进压缩水位；历史容量不能阻止新终态或可信迟到用量入账。水位以内的旧 revision 明确返回 staleEvidence，不修改账本。执行上下文在输出下游前可记录单个有界可信累计快照；后续输出失败、绑定失败或取消仍移交该快照，不用 nil 覆盖已知用量。

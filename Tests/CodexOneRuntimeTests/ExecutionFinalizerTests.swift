@@ -180,3 +180,72 @@ func saturatedFinalizerFailureStopsAdmissionWithoutWaitingOnConnection() async t
   #expect(try await recovered.snapshot(attempt: "a").state == .unknown)
   await recovered.close()
 }
+
+@Test(.timeLimit(.minutes(1))) func observedUsageSurvivesLaterTransportOrCancellationErrors()
+  async throws
+{
+  let dbPath = try path()
+  defer {
+    try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: dbPath, limits: limits)
+  let finalizer = try ExecutionFinalizer(store: store, capacity: 2)
+  let worker = Task { try await finalizer.run() }
+  try await waitFor { finalizer.isAccepting }
+  let coordinator = ExecutionCoordinator(store: store, finalizer: finalizer)
+  for complete in [false, true] {
+    let id = complete ? "complete" : "partial"
+    await #expect(throws: CancellationError.self) {
+      try await coordinator.execute(command(id)) { context in
+        let observed = UsageEvidence(
+          revision: 1, inputTokens: 15, outputTokens: 4, cachedTokens: 0,
+          images: 0, estimatedMicros: 20, completeness: complete ? .complete : .partial)
+        try context.observeUsage(observed)
+        try context.observeUsage(observed)
+        throw CancellationError()
+      }
+    }
+    try await waitFor { finalizer.outstanding == 0 }
+    let snapshot = try await store.snapshot(attempt: id)
+    #expect(snapshot.usage?.inputTokens == 15)
+    #expect(snapshot.state == (complete ? .settled : .unknown))
+  }
+  finalizer.stopAccepting()
+  try await worker.value
+  await store.close()
+}
+
+@Test(.timeLimit(.minutes(1))) func staleFinalizationCannotUndoNewerTruthOrStopWorker() async throws
+{
+  let dbPath = try path()
+  defer {
+    try? FileManager.default.removeItem(atPath: (dbPath as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: dbPath, limits: limits)
+  try await store.admit(command("a"))
+  for revision in 1...130 {
+    try await store.finalize(
+      attempt: "a",
+      evidence: .init(
+        revision: Int64(revision), inputTokens: Int64(revision),
+        outputTokens: 0, cachedTokens: 0, images: 0, estimatedMicros: Int64(revision),
+        completeness: .complete))
+  }
+  let finalizer = try ExecutionFinalizer(store: store, capacity: 1)
+  let worker = Task { try await finalizer.run() }
+  try await waitFor { finalizer.isAccepting }
+  let ticket = try finalizer.reserve()
+  finalizer.handoff(
+    ticket,
+    finalization: .init(
+      attempt: "a",
+      evidence: .init(
+        revision: 1, inputTokens: 1,
+        outputTokens: 0, cachedTokens: 0, images: 0, estimatedMicros: 1, completeness: .complete)))
+  try await waitFor { finalizer.outstanding == 0 }
+  #expect(!finalizer.hasFailed)
+  #expect(try await store.snapshot(attempt: "a").usage?.estimatedMicros == 130)
+  finalizer.stopAccepting()
+  try await worker.value
+  await store.close()
+}

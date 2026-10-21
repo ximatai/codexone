@@ -225,8 +225,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           return
         }
         let existing = try db.rows(
-          "SELECT payload FROM evidence WHERE attempt=? AND (id=? OR revision=?)",
-          [.text(attempt), .text(evidence.id), .number(evidence.revision)]
+          "SELECT payload FROM evidence WHERE attempt=? AND revision=?",
+          [.text(attempt), .number(evidence.revision)]
         ) { String(cString: sqlite3_column_text($0, 0)) }
         if let existing = existing.first {
           guard try decode(UsageEvidence.self, existing) == evidence else {
@@ -234,8 +234,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           }
           return
         }
-        guard try db.scalar("SELECT COUNT(*) FROM evidence WHERE attempt=?", [.text(attempt)]) < 128
-        else { throw ExecutionError.capacity }
+        let floor = try db.scalar(
+          "SELECT evidence_floor FROM attempts WHERE id=?", [.text(attempt)])
+        guard evidence.revision > floor else { throw ExecutionError.staleEvidence }
         if let old = snapshot.usage, evidence.revision > old.revision {
           guard evidence.inputTokens >= old.inputTokens, evidence.outputTokens >= old.outputTokens,
             evidence.cachedTokens >= old.cachedTokens, evidence.images >= old.images,
@@ -253,11 +254,20 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           }
         }
         try db.write(
-          "INSERT INTO evidence VALUES(?,?,?,?)",
+          "INSERT INTO evidence VALUES(?,?,?)",
           [
-            .text(attempt), .text(evidence.id), .number(evidence.revision),
+            .text(attempt), .number(evidence.revision),
             .text(try encode(evidence)),
           ])
+        if try db.scalar("SELECT COUNT(*) FROM evidence WHERE attempt=?", [.text(attempt)]) > 128 {
+          let retired = try db.scalar(
+            "SELECT MIN(revision) FROM evidence WHERE attempt=?", [.text(attempt)])
+          try db.write(
+            "DELETE FROM evidence WHERE attempt=? AND revision=?",
+            [.text(attempt), .number(retired)])
+          try db.write(
+            "UPDATE attempts SET evidence_floor=? WHERE id=?", [.number(retired), .text(attempt)])
+        }
         if snapshot.usage == nil || evidence.revision > snapshot.usage!.revision {
           try db.write(
             "UPDATE attempts SET state=?,usage_json=?,estimated=? WHERE id=?",
@@ -309,7 +319,6 @@ private func validate(_ value: ExecutionAdmission) throws {
   }
 }
 private func validate(_ value: UsageEvidence) throws {
-  try validateStrings([value.id])
   guard
     [
       value.revision, value.inputTokens, value.outputTokens, value.cachedTokens, value.images,

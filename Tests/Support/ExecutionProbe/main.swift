@@ -29,7 +29,7 @@ import Foundation
           try await store.finalize(
             attempt: "attempt",
             evidence: .init(
-              id: "usage", revision: 1,
+              revision: 1,
               inputTokens: 10, outputTokens: 5, cachedTokens: 0, images: 0, estimatedMicros: 30,
               completeness: .complete))
           emit("settled")

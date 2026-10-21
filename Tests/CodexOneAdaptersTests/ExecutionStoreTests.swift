@@ -21,11 +21,11 @@ func admission(
     window: window, policyVersion: "policy-v1", pricingVersion: "price-v1", reservedMicros: reserved
   )
 }
-func usage(_ id: String = "usage1", revision: Int64 = 1, amount: Int64 = 12, complete: Bool = true)
+func usage(revision: Int64 = 1, amount: Int64 = 12, complete: Bool = true)
   -> UsageEvidence
 {
   .init(
-    id: id, revision: revision, inputTokens: amount, outputTokens: amount, cachedTokens: 0,
+    revision: revision, inputTokens: amount, outputTokens: amount, cachedTokens: 0,
     images: 0, estimatedMicros: amount, completeness: complete ? .complete : .partial)
 }
 func rawSQL(_ path: String, _ sql: String) throws {
@@ -100,17 +100,17 @@ func rawSQL(_ path: String, _ sql: String) throws {
   try await store.finalize(attempt: "a", evidence: usage(complete: false))
   #expect(try await store.snapshot(attempt: "a").state == .unknown)
   try await store.finalize(attempt: "a", evidence: nil)
-  try await store.finalize(attempt: "a", evidence: usage("usage2", revision: 2, amount: 30))
-  try await store.finalize(attempt: "a", evidence: usage("usage2", revision: 2, amount: 30))
+  try await store.finalize(attempt: "a", evidence: usage(revision: 2, amount: 30))
+  try await store.finalize(attempt: "a", evidence: usage(revision: 2, amount: 30))
   try await store.finalize(attempt: "a", evidence: usage(complete: false))
-  try await store.finalize(attempt: "a", evidence: usage("late", revision: 3, amount: 110))
+  try await store.finalize(attempt: "a", evidence: usage(revision: 3, amount: 110))
   #expect(try await store.snapshot(attempt: "a").usage?.estimatedMicros == 110)
   #expect(try await store.snapshot(attempt: "a").state == .settled)
   await #expect(throws: ExecutionError.conflict) {
-    try await store.finalize(attempt: "a", evidence: usage("late", revision: 3, amount: 111))
+    try await store.finalize(attempt: "a", evidence: usage(revision: 3, amount: 111))
   }
   await #expect(throws: ExecutionError.conflict) {
-    try await store.finalize(attempt: "a", evidence: usage("bad", revision: 4, amount: 10))
+    try await store.finalize(attempt: "a", evidence: usage(revision: 4, amount: 10))
   }
   await #expect(throws: ExecutionError.denied) { try await store.admit(admission("b")) }
   await store.close()
@@ -229,4 +229,64 @@ func rawSQL(_ path: String, _ sql: String) throws {
   try await store.finalize(attempt: "a", evidence: usage(amount: 0))
   try await store.admit(admission("b", principal: "other", window: "next", reserved: 1))
   await store.close()
+}
+
+@Test func compactedEvidenceStillAcceptsFinalAndLateTruth() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  try await store.admit(admission("a"))
+  for revision in 1...128 {
+    try await store.finalize(
+      attempt: "a",
+      evidence: usage(revision: Int64(revision), amount: Int64(revision), complete: false))
+  }
+  try await store.finalize(attempt: "a", evidence: usage(revision: 129, amount: 129))
+  try await store.finalize(attempt: "a", evidence: usage(revision: 130, amount: 150))
+  #expect(try await store.snapshot(attempt: "a").state == .settled)
+  #expect(try await store.snapshot(attempt: "a").usage?.estimatedMicros == 150)
+  try await store.finalize(attempt: "a", evidence: usage(revision: 130, amount: 150))
+  await #expect(throws: ExecutionError.staleEvidence) {
+    try await store.finalize(attempt: "a", evidence: usage(revision: 1, amount: 1, complete: false))
+  }
+  await #expect(throws: ExecutionError.conflict) {
+    try await store.finalize(attempt: "a", evidence: usage(revision: 130, amount: 151))
+  }
+  await store.close()
+  let recovered = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  #expect(try await recovered.snapshot(attempt: "a").usage?.estimatedMicros == 150)
+  await #expect(throws: ExecutionError.staleEvidence) {
+    try await recovered.finalize(
+      attempt: "a", evidence: usage(revision: 1, amount: 1, complete: false))
+  }
+  await recovered.close()
+  var db: OpaquePointer?
+  #expect(sqlite3_open(path, &db) == SQLITE_OK)
+  defer { sqlite3_close(db) }
+  var statement: OpaquePointer?
+  #expect(
+    sqlite3_prepare_v2(db, "SELECT COUNT(*), MIN(revision) FROM evidence", -1, &statement, nil)
+      == SQLITE_OK)
+  defer { sqlite3_finalize(statement) }
+  #expect(sqlite3_step(statement) == SQLITE_ROW)
+  #expect(sqlite3_column_int64(statement, 0) == 128)
+  #expect(sqlite3_column_int64(statement, 1) == 3)
+}
+
+@Test func rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  try rawSQL(
+    path,
+    "PRAGMA journal_mode=DELETE; CREATE TABLE legacy(id INTEGER); INSERT INTO legacy VALUES(42)")
+  let original = try Data(contentsOf: URL(fileURLWithPath: path))
+  await #expect(throws: ExecutionError.incompatibleSchema) {
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  }
+  #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == original)
+  #expect(!FileManager.default.fileExists(atPath: path + "-wal"))
 }
