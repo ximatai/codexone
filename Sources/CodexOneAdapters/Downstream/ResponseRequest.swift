@@ -17,9 +17,9 @@ struct ResponseRequest: Sendable {
   let functionNames: Set<String>
   let customToolNames: Set<String>
   let mode: ExecutionMode
+  let streamCompaction: Bool
   let document: JSONValue
   init(data: Data, mode: ExecutionMode = .generation) throws {
-    self.mode = mode
     guard data.count <= 524_288 else { throw GatewayProtocolError(413, "request_too_large") }
     let document: JSONValue
     do { document = try JSONValue.decode(data) } catch {
@@ -144,11 +144,12 @@ struct ResponseRequest: Sendable {
       else { throw GatewayProtocolError(400, "unsupported_include") }
     }
     guard let input = fields["input"] else { throw GatewayProtocolError(400, "invalid_input") }
+    var streamCompaction = false
     if input.string == nil {
       guard let items = input.array, items.count <= 256 else {
         throw GatewayProtocolError(400, "invalid_input")
       }
-      for item in items {
+      for (index, item) in items.enumerated() {
         guard let object = item.object else { throw GatewayProtocolError(400, "invalid_input") }
         let type = object["type"]?.string ?? "message"
         if let declared = object["type"], declared.string == nil {
@@ -166,6 +167,11 @@ struct ResponseRequest: Sendable {
           }
         }
         switch type {
+        case "compaction_trigger":
+          guard mode == .generation, !streamCompaction, index == items.count - 1,
+            object.count == 1
+          else { throw GatewayProtocolError(400, "unsupported_compaction_trigger") }
+          streamCompaction = true
         case "message":
           guard let role = object["role"]?.string,
             ["user", "assistant", "system", "developer"].contains(role),
@@ -240,6 +246,7 @@ struct ResponseRequest: Sendable {
           "custom_tool_call_output": ["name", "output", "call_id", "namespace"],
           "reasoning": ["summary", "content", "encrypted_content"],
           "compaction": ["encrypted_content"],
+          "compaction_trigger": [],
           "item_reference": [],
         ]
         let allowedItem = fieldsByType[type, default: []].union(["type", "id", "status"])
@@ -261,7 +268,12 @@ struct ResponseRequest: Sendable {
           guard let id = idValue.string, !id.isEmpty, id.utf8.count <= 256 else {
             throw GatewayProtocolError(400, "invalid_reference")
           }
-          if !["message", "function_call_output", "custom_tool_call_output"].contains(type) {
+          let completeContext =
+            ["reasoning", "compaction"].contains(type)
+            && object["encrypted_content"]?.string != nil
+          if !["message", "function_call_output", "custom_tool_call_output"].contains(type)
+            && !completeContext
+          {
             references.append(.init(type: "item", rawID: id))
           }
         }
@@ -274,6 +286,8 @@ struct ResponseRequest: Sendable {
       throw GatewayProtocolError(400, "too_many_references")
     }
     self.references = uniqueReferences
+    self.streamCompaction = streamCompaction
+    self.mode = streamCompaction ? .compact : mode
     // Inline message/result IDs are local client correlation labels, not provider references.
     // Remove them at the boundary so a guessed ID cannot make an inline item retrieve private state.
     var upstreamFields = fields
@@ -282,7 +296,10 @@ struct ResponseRequest: Sendable {
         items.map { item in
           var object = item.object!
           let type = object["type"]?.string ?? "message"
-          if ["message", "function_call_output", "custom_tool_call_output"].contains(type) {
+          if ["message", "function_call_output", "custom_tool_call_output"].contains(type)
+            || (["reasoning", "compaction"].contains(type)
+              && object["encrypted_content"]?.string != nil)
+          {
             object.removeValue(forKey: "id")
           }
           return .object(object)

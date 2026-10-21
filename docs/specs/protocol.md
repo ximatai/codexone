@@ -71,7 +71,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 ## P15：客户端上下文与前台模式
 
-完整 inline 消息及 function/custom tool 结果中的 id 为客户端本地关联标签，发送上游前移除；正文、工具 call_id 和显式引用保持。显式 item_reference、previous_response_id、函数调用/推理对象 ID 仍按归属查验，不能用完整消息中的本地 ID 触发上游对象读取。reasoning.encrypted_content include 可用；加密推理/压缩内容按 I11 指纹归属，在准入前校验。
+完整 inline 消息及 function/custom tool 结果中的 id 为客户端本地关联标签，发送上游前移除；正文、工具 call_id 和显式引用保持。携完整 encrypted_content 的 reasoning/compaction 以 I11 类型指纹证明正文归属，发送前也移除客户端本地 id，不要求该标签已在上游绑定。显式 item_reference、previous_response_id、函数 call_id 和无完整内容的 reasoning ID 仍按归属查验；不能用本地标签触发上游私有读取。reasoning.encrypted_content include 可用，正文指纹在准入前校验，篡改/跨主体仍拒绝。
 
 WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪，不把 compaction ID 当 previous_response_id；保留的已有引用沿原归属，新引用先绑定，再整体返回；压缩窗口内的工具调用/结果必须来自已授权输入 call_id，不能创建新客户端工具执行。压缩请求沿文本 512 KiB、输出 256 KiB/256 项、总期限及失败语义；未支持模式/输入不发送。
 
@@ -84,3 +84,11 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 可信本地 profile 可限定展示名称、说明、上下文窗口、推理选项及模型基础指导。baseInstructions 是权威模型指导，客户端采用后会替换自己的默认指导，不能仅为目录解码提供空字符串；管理员须为目标模型/版本明确配置完整指导。网关不复制/发明客户端默认提示。当前切片只声明文本输入、无内置搜索；shell_type 选择客户端 unified_exec，工具仍遵守其 sandbox。目录不授予额外权限，不证明提供者已支持这些能力。
 
 配置顺序决定 priority，目录内容、指导与顺序进入策略版本；计价版本只包含模型 ID/费率，指导不进入核心持久库。实际版本须显式发现并采用目录和已配置指导，不得以 fallback 元数据下的生成成功充当目录验收。
+
+## P17：Responses 流式压缩 v2
+
+普通 /responses 的输入可含单个末尾 `{"type":"compaction_trigger"}`；该控制无 ID/状态/附加 payload，不与 generate:false 或独立 /responses/compact 混用。它使用 compact 执行模式与相同授权/准入/用量/归属屏障，传输仍走普通 HTTP JSON/SSE、桥接或原生 WS，不改路由为独立压缩端点。
+
+对应输出允许 compaction 项无对象 ID，以非空 encrypted_content 的类型指纹先持久绑定，再暴露完整内容。仅 output_item.added 阶段允许缺失/空的未完成内容；done 必须完整。流式成功必须恰好一个 compaction done，与终态窗口中唯一 compaction 的内容/已提供 ID 一致，output_index 关联有界；JSON 成功窗口同样只接受一个完整项。不得在压缩中创建新的客户端工具调用；未支持对象及不一致窗口明确失败，已经观察到的可信用量继续结算。终态缺失保持 unknown，不把 added 或 done 当作执行完成。
+
+普通 Responses 的压缩响应 ID 属于该执行的 response，可按归属用作 previous_response_id；它与独立 compact 返回的 compaction 操作 ID 不同。客户端自行重建后续窗口，完整加密上下文按 P15/I11 验证；网关不自动补正文或重放执行。[CLI 0.163.0 实现依据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/compact_remote_v2.rs)

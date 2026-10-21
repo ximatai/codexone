@@ -66,7 +66,7 @@ M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接�
 
 实际 CLI 传输补充：发现可选扩展提议被拒造成 WS 握手失败并自动 HTTP fallback，已改为忽略提议、不协商压缩，RSV 仍拒绝。de0957a 已复审并通过 macOS/Linux 完整后端，reviewer 独立重跑三传输 CLI 与九组 WS。原生同一 socket 一次预热、两次生成及 previous_response_id 连续链已核实，均持久结算；不代表 Desktop 或实际 CLI compact 已通过。
 
-下一项 M2 实现：核实所选 CLI 远程压缩实际使用 compaction_trigger v2，独立 /responses/compact 尚不能覆盖。正在准备普通 Responses 流上的 v2 压缩支持，保留 compact 模式统计、指纹屏障及完整用量，详见变更提案/任务。
+M2 v2 压缩切片：支持普通 Responses 上的末尾 compaction_trigger，仍按 compact 统计并执行指纹屏障；完整 encrypted_content 的客户端本地 ID 在归属校验后移除，无正文/显式引用仍严格查 ID。macOS 完整后端 38 个 Swift 测试及新 HTTP/SSE/WS 故障脚本通过；实际 CLI 0.163.0 三传输均完成工具、v2 压缩和下一请求，原文不进核心库。该切片待提交后 review/Linux，不代表 Desktop 或断线恢复读取验收。
 
 Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。继续推进当前 M2 可独立实现项，并取得可执行的 Desktop 验收路径；已向用户保留问题：是否允许保留这项缺口先推进独立 M3 工作，尚未答复，不以等待时间当作同意。WS 切片代码已提交，v2 压缩准备中；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 

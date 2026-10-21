@@ -59,6 +59,8 @@ CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key
 
 同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../evidence/client-recovery.md)。
 
+加 `--compact-v2`，显式配置所选 CLI 的 remote_compaction=v2，并仅在临时测试配置中将自动压缩阈值设为 1，验证工具结果后的真实 compaction_trigger、压缩项与后续输入。可分别与三种 `--transport` 组合；要求恰好一次 compact、完整指纹绑定、无本地标签向上游透传、模式/用量及连接数量正确。阈值和合成零压缩用量只用于可控 fixture，不是生产配置或真实免费假设。无凭证 `verify_compaction_stream.py` 已纳入后端统一检查，覆盖 JSON/SSE/原生 WS、缺失/重复/不一致窗口、部分 EOF、混用控制、跨主体与 DB 屏障失败。
+
 加 `--without-profile` 验证缺 profile 的目录失败可能使 CLI fallback 后仍生成；这项成功表示如实观察降级，不表示该配置通过 Codex 目录验收。
 
 完整 profile 配置下，模型目录同时提供 OpenAI `data` 和 Codex `models`，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。

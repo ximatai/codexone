@@ -33,7 +33,7 @@
 
 reasoning/compaction 的 encrypted_content 在对外输出前将类型隔离的 SHA-256 指纹绑定到主体/命名空间/身份，输入必须解析为已有归属；核心只保存指纹与对象 ID，不保存正文/密文内容。命名空间/自定义工具仍是客户端执行工具，按声明的 type/namespace/name 验证返回调用，网关不执行工具；首版内置检索关闭不因客户端默认声明而开放，客户端兼容配置需显式禁用该能力。
 
-实际 CLI 首轮为完整 inline 的用户/开发者消息生成本地 ID；将这些都当作已有上游引用会阻断正常首次执行。对完整消息、function/custom tool 结果在发送前移除其本地 id，避免猜测 ID 被提供者解释为私有读取；正文、工具 call_id 和显式 item_reference 不改写。assistant 的完整纯文本消息也走 inline 语义；需要保留上游对象身份时必须通过显式引用。reasoning/compaction 的 id/指纹及工具 call_id 仍查归属，不能借本地 ID 绕过。验证覆盖首次请求、本地工具结果回传、伪造上下文与跨主体引用。
+实际 CLI 首轮为完整 inline 的用户/开发者消息生成本地 ID；将这些都当作已有上游引用会阻断正常首次执行。对完整消息、function/custom tool 结果在发送前移除其本地 id，避免猜测 ID 被提供者解释为私有读取；正文、工具 call_id 和显式 item_reference 不改写。assistant 的完整纯文本消息也走 inline 语义；需要保留上游对象身份时必须通过显式引用。reasoning/compaction 的完整内容查类型指纹归属，无完整内容的 reasoning ID 及工具 call_id 仍查对象归属；不能借本地 ID 绕过。验证覆盖首次请求、本地工具结果回传、伪造上下文与跨主体引用。
 
 ## 模型目录与 Desktop 验收准备
 
@@ -46,3 +46,13 @@ reasoning/compaction 的 encrypted_content 在对外输出前将类型隔离的 
 ## 实际 CLI 原生 WS 握手
 
 实际 CLI 0.163.0 会提供 WebSocket extensions offer；原握手因任何 offer 均拒绝，导致客户端反复失败后回退 HTTP，单纯 CLI 最终回答成功会掩盖原生路径缺失。改为忽略扩展提议、不返回扩展协商头，继续严格拒绝未协商 RSV 帧；不引入压缩实现。子协议仍未支持，不静默接受其语义。验证实际 CLI 的直连/桥接/原生三路径，使用上游连接复用及持久 attempt 检查区分回退；合成 socket 覆盖有 offer 的成功握手、RSV 故障与既有取消/关闭边界。Desktop 验收仍独立保留。
+
+## 所选客户端的远程压缩 v2
+
+官方 CLI rust-v0.163.0 的 provider capabilities 远程压缩为 v2：在普通 Responses 输入中发送无 payload 的 compaction_trigger，接收流式 compaction 输出，由客户端重建窗口；独立 /responses/compact 的合成通过不足以覆盖此路径。补充支持单个末尾 trigger，归类为 compact 执行模式但仍走普通 HTTP/SSE/WS 端点；不把它错路由到独立端点，不允许与 warmup 或独立 compact 混用。
+
+trigger 本身不能携带 ID/正文/私有参数。其余输入继续查当前归属。v2 输出的 compaction encrypted_content（可无对象 ID）先持久绑定类型指纹，再暴露；仅 added 阶段允许空/缺失未完成内容，done/完成窗口必须有完整不透明内容，成功终态只接受一个 compaction。压缩不得生成新的客户端工具调用；未支持对象仍拒绝，已知用量先记录。保留现有请求/事件/队列/截止时间与身份边界；无 schema 改动，compact 统计兼容既有模式。
+
+验收覆盖三传输上的 trigger/结果/续接、无 ID 与部分 added、缺失/重复/伪造/跨主体上下文、输出绑定失败和用量保留；另用明确版本 CLI 显式启用 v2 能力和受控阈值观察真正压缩/后续请求，不用 fixture 自己发请求冒充客户端支持。Desktop 仍需独立实测。
+
+实际 CLI 在接收无 ID compaction 后会给本地持久项分配 ID，续接时该 ID 并非上游已绑定对象。对于携完整 encrypted_content 的 reasoning/compaction，已授权的类型隔离指纹才是正文归属证明，转发前移除其本地 id，避免被上游解释成私有读取；不再额外要求该本地标签已有绑定。没有完整内容的 reasoning ID 仍严格查归属，显式 item_reference 不改变。伪造/跨主体的内容指纹照常在准入前拒绝，不允许仅凭标签伪造上下文。

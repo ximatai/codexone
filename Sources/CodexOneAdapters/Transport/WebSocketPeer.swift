@@ -157,7 +157,9 @@ struct WebSocketPeer: Sendable {
   private let inbox: WebSocketInbox
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
-  func beginTurn(lane: String = "") throws { try turns?.begin(lane: lane) }
+  func beginTurn(lane: String = "", compaction: Bool = false) throws {
+    try turns?.begin(lane: lane, compaction: compaction)
+  }
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
   {
     try turns?.attachEvidence(lane: lane, handler: handler)

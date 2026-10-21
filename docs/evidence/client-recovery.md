@@ -10,6 +10,7 @@
 | 同版本 HTTP/SSE，response.created 后无终态 EOF | CLI 显示 Reconnecting，再 POST responses；两个持久 attempt 分别 unknown、settled | 客户端重连可能产生新执行，不是读取先前输出，也不能自动释放原预留 |
 | 网关原生 WS 合成 socket | 同 socket 的 previous_response_id、warmup、跨 lane 归属及完整窗口续接 | 协议实现证据，不是实际客户端断线恢复 |
 | Codex CLI 0.163.0 原生 WS | 一次 warmup、两个生成，previous_response_id 依次指向预热及函数调用响应，共用一个上游 socket | 正常连接内的实际 CLI 续接；不证明断线后的输出读取或 Desktop UI |
+| 同版本 remote_compaction=v2，三传输 | 工具结果后实际触发普通 Responses 上的 compaction_trigger，重建窗口携完整 compaction 后继续生成 | 正常压缩与主动后续生成；不是重读旧执行或自动补回断线输出 |
 | Desktop 26.1016.51333（21161，内置 CLI 0.163.0-alpha.11） | Computer Use 明确禁止控制 com.openai.codex，未绕过 | 无实际 Desktop 操作/恢复结论；CLI 不能替代它 |
 
 CLI 检查入口为 `scripts/verify_client.py`，加 `--retry-probe` 验证 EOF 后新执行。使用公开合成 Key、临时 CODEX_HOME/空目录与只读 sandbox；provider 重试上限 1，不触碰真实账号。probe 第一执行不返回工具调用，避免把重复工具执行引入本次实验。

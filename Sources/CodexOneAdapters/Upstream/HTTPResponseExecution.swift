@@ -16,7 +16,7 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    guard request.mode == .generation else {
+    guard request.mode == .generation || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
     if configuration.upstreamTransport == "websocket" {
@@ -56,6 +56,7 @@ struct HTTPResponseExecution: Sendable {
             throw GatewayProtocolError(502, "invalid_upstream_content_type")
           }
           var decoder = SSEDecoder()
+          var compaction = StreamCompaction()
           var terminal = false
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
@@ -73,7 +74,9 @@ struct HTTPResponseExecution: Sendable {
               let observation = try ProviderObservation(
                 event: event, model: model, functionNames: request.functionNames,
                 customToolNames: request.customToolNames,
-                expectedPreviousResponseID: request.document["previous_response_id"]?.string)
+                expectedPreviousResponseID: request.document["previous_response_id"]?.string,
+                allowCompaction: request.streamCompaction)
+              if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
               terminal = observation.terminal
               try await emit(event)
@@ -107,7 +110,8 @@ struct HTTPResponseExecution: Sendable {
           let observation = try ProviderObservation(
             event: event, model: model, functionNames: request.functionNames,
             customToolNames: request.customToolNames,
-            expectedPreviousResponseID: request.document["previous_response_id"]?.string)
+            expectedPreviousResponseID: request.document["previous_response_id"]?.string,
+            allowCompaction: request.streamCompaction)
           for object in observation.bindings { try await context.bind(object) }
           try await emit(document)
         }

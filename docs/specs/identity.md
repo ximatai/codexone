@@ -32,4 +32,4 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 ## I11：不透明推理/压缩上下文
 
-提供者返回 reasoning/compaction encrypted_content 时，在暴露前持久绑定“内容类型 + SHA-256 指纹”的 principal/namespace/identity/attempt 归属；核心库只保存指纹和对象 ID，不保存加密正文内容。输入的对应内容必须匹配已有归属，类型变换、篡改、跨主体或身份变化均在发送前拒绝；指纹归属不是提供者仍保有上下文的保证。带已知 ID 但无 encrypted_content 的 reasoning 仍须校验对象归属；compaction 需要完整不透明内容，不能只用压缩操作 ID 续接。
+提供者返回 reasoning/compaction encrypted_content 时，在暴露前持久绑定“内容类型 + SHA-256 指纹”的 principal/namespace/identity/attempt 归属；核心库只保存指纹和对象 ID，不保存加密正文内容。输入的对应内容必须匹配已有归属，类型变换、篡改、跨主体或身份变化均在发送前拒绝；指纹归属不是提供者仍保有上下文的保证。携完整内容时以正文指纹查归属并移除客户端本地 id，不用标签触发上游私有读取；无 encrypted_content 的 reasoning 仍须校验对象 ID 归属。compaction 需要完整不透明内容，不能只用压缩操作 ID 续接。

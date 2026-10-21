@@ -318,7 +318,7 @@ public struct SingleIdentityDataService: Service {
     else { throw GatewayProtocolError(415, "unsupported_content_type") }
     let request = try ResponseRequest(
       data: body, mode: endpoint == "/responses/compact" ? .compact : .generation)
-    if request.mode == .compact {
+    if endpoint == "/responses/compact" {
       try await executor.compact(request, requestID: writer.requestID) { document in
         try await writer.json(document)
       }

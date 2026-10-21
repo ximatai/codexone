@@ -19,7 +19,8 @@ struct ProviderObservation: Sendable {
 
   init(
     event: JSONValue, model: SingleIdentityConfiguration.Model, functionNames: Set<String>,
-    customToolNames: Set<String> = [], expectedPreviousResponseID: String? = nil
+    customToolNames: Set<String> = [], expectedPreviousResponseID: String? = nil,
+    allowCompaction: Bool = false
   )
     throws
   {
@@ -75,19 +76,26 @@ struct ProviderObservation: Sendable {
         else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
       }
       bindings.append(.init(type: "response", rawID: id))
+      if allowCompaction, type == "response.completed" {
+        guard let output = response["output"]?.array,
+          output.filter({ $0["type"]?.string == "compaction" }).count == 1
+        else { throw GatewayProtocolError(502, "invalid_upstream_compaction") }
+      }
       if let output = response["output"]?.array {
         guard output.count <= 16 else {
           throw GatewayProtocolError(502, "upstream_output_too_large")
         }
         for item in output {
           bindings += try Self.itemBindings(
-            item, functionNames: functionNames, customToolNames: customToolNames)
+            item, functionNames: functionNames, customToolNames: customToolNames,
+            allowCompaction: allowCompaction)
         }
       }
       if terminal { usage = try Self.usage(response["usage"], model: model) }
     } else if itemEvents.contains(type), let item = event["item"] {
       bindings += try Self.itemBindings(
-        item, functionNames: functionNames, customToolNames: customToolNames)
+        item, functionNames: functionNames, customToolNames: customToolNames,
+        allowCompaction: allowCompaction, partialCompaction: type == "response.output_item.added")
     } else if Self.transparentEvents.contains(type) {
       if let id = event["item_id"]?.string {
         guard !id.isEmpty, id.utf8.count <= 256 else {
@@ -108,14 +116,18 @@ struct ProviderObservation: Sendable {
 
   static func itemBindings(
     _ item: JSONValue, functionNames: Set<String>, customToolNames: Set<String> = [],
-    retained: Bool = false
+    retained: Bool = false, allowCompaction: Bool = false, partialCompaction: Bool = false
   ) throws -> [ObjectBinding] {
     let type = item["type"]?.string ?? (retained && item["role"] != nil ? "message" : "")
     guard
       ["message", "function_call", "custom_tool_call", "reasoning"].contains(type)
+        || allowCompaction && type == "compaction"
         || retained
           && ["compaction", "function_call_output", "custom_tool_call_output"].contains(type)
     else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+    guard !allowCompaction || !["function_call", "custom_tool_call"].contains(type) else {
+      throw GatewayProtocolError(502, "unsupported_upstream_object")
+    }
     let fields: [String: Set<String>] = [
       "message": ["role", "content", "phase"],
       "function_call": ["name", "namespace", "arguments", "call_id"],
@@ -150,7 +162,7 @@ struct ProviderObservation: Sendable {
         throw GatewayProtocolError(502, "invalid_upstream_response")
       }
       bindings.append(.init(type: "item", rawID: id))
-    } else if !retained {
+    } else if !retained && !(allowCompaction && type == "compaction") {
       throw GatewayProtocolError(502, "invalid_upstream_response")
     }
     if type == "message" {
@@ -208,6 +220,12 @@ struct ProviderObservation: Sendable {
       for part in parts { try Self.validatePart(part, allowSummary: true) }
     }
     if ["reasoning", "compaction"].contains(type) {
+      if type == "compaction", allowCompaction, partialCompaction,
+        item["encrypted_content"] == nil || item["encrypted_content"] == .null
+          || item["encrypted_content"] == .string("")
+      {
+        return bindings
+      }
       do {
         if let binding = try opaqueContext(item["encrypted_content"], kind: type) {
           bindings.append(binding)

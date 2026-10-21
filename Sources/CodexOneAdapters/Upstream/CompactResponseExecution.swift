@@ -9,7 +9,7 @@ extension HTTPResponseExecution {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    guard request.mode == .compact,
+    guard request.mode == .compact, !request.streamCompaction,
       let model = configuration.models.first(where: { $0.id == request.model })
     else { throw GatewayProtocolError(403, "model_not_allowed") }
     try await gateway.execute(

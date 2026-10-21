@@ -15,6 +15,7 @@ backend() {
   python3 scripts/verify_protocol.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_compaction_stream.py --binary "$backend_bin_dir/codexone"
 }
 
 frontend() {

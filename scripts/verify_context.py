@@ -55,7 +55,8 @@ def main():
                     status, body = connect(port, 'POST', prefix + '/responses/compact', continuation)
                     assert status == 200
                     compact = json.loads(body)
-                    assert compact['object'] == 'response.compaction' and len(compact['output']) == 3 and compact['output'][1] == original[0]
+                    assert compact['object'] == 'response.compaction' and len(compact['output']) == 3
+                    assert compact['output'][1] == {key: value for key, value in original[0].items() if key != 'id'}
                     assert latest(db_path, 'settled')['estimatedMicros'] == 8
                     status, _body = connect(port, 'POST', prefix + '/responses', {'model': 'synthetic-text', 'input': compact['output'] + [{'role': 'user', 'content': 'continue compacted window'}]})
                     assert status == 200

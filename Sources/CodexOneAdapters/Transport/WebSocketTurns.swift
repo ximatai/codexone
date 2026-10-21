@@ -11,6 +11,8 @@ final class WebSocketTurns: Sendable {
     struct Lane {
       var phase = Phase.idle
       var items = Set<String>()
+      var anonymousCompactions = Set<Int>()
+      var compaction = false
       var evidence: (@Sendable (JSONValue) throws -> Void)?
     }
     var lanes: [String: Lane] = [:]
@@ -19,7 +21,7 @@ final class WebSocketTurns: Sendable {
   }
   private let state = Mutex(State())
   func close() { state.withLock { $0.closed = true } }
-  func begin(lane: String = "") throws {
+  func begin(lane: String = "", compaction: Bool = false) throws {
     try state.withLock { value in
       guard !value.closed, value.responses.count < 256 else {
         throw GatewayProtocolError(502, "invalid_upstream_turn")
@@ -40,6 +42,8 @@ final class WebSocketTurns: Sendable {
       guard active < 16 else { throw GatewayProtocolError(503, "websocket_turn_capacity") }
       value.lanes[lane]!.phase = .awaitingCreated
       value.lanes[lane]!.items.removeAll(keepingCapacity: true)
+      value.lanes[lane]!.anonymousCompactions.removeAll(keepingCapacity: true)
+      value.lanes[lane]!.compaction = compaction
     }
   }
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
@@ -90,10 +94,20 @@ final class WebSocketTurns: Sendable {
           }
         }
         if let item = event["item"] {
-          guard let itemID = item["id"]?.string, !itemID.isEmpty, itemID.utf8.count <= 256,
-            current.items.count < 256 || current.items.contains(itemID)
-          else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
-          current.items.insert(itemID)
+          if current.compaction, item["type"]?.string == "compaction", item["id"] == nil {
+            guard ["response.output_item.added", "response.output_item.done"].contains(type),
+              let index = event["output_index"]?.integer, (0..<256).contains(index),
+              current.items.count + current.anonymousCompactions.count < 256
+                || current.anonymousCompactions.contains(Int(index))
+            else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+            current.anonymousCompactions.insert(Int(index))
+          } else {
+            guard let itemID = item["id"]?.string, !itemID.isEmpty, itemID.utf8.count <= 256,
+              current.items.count + current.anonymousCompactions.count < 256
+                || current.items.contains(itemID)
+            else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+            current.items.insert(itemID)
+          }
         }
         if ProviderObservation.transparentEvents.contains(type), event["item_id"] == nil {
           throw GatewayProtocolError(502, "invalid_upstream_turn")

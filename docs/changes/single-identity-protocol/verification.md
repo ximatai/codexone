@@ -117,3 +117,17 @@ macOS arm64/Swift 6.4 完整后端（38 个 Swift 测试与全部脚本）通过
 范围：这是实际 CLI 及合成上游的传输/工具/正常续接证据，仍不是 Desktop UI、真实订阅、实际 CLI compact 或断线输出读取验收。此次切片待提交后独立 review、Linux 快照复验。
 
 de0957a 复审通过；reviewer 独立运行三种 CLI 传输、HTTP retry/缺 profile 两模式和九组 WS socket，全部通过，无新增阻塞问题。相同提交 Linux amd64/Swift 6.4 本地模拟容器单并发完整后端退出 0（38 个 Swift 测试及全部脚本），2 CPU/2500 MiB；未访问真实上游、不代表 Desktop 或弱宿主容量验收。
+
+## Responses 压缩 v2 与实际客户端
+
+2026-10-22：对照官方 rust-v0.163.0 provider capabilities 与 compact_remote_v2，选定 remote_compaction=v2。先用实际 CLI/临时配置复现：一次工具调用后 compaction_trigger 被当前网关 unsupported_input 拒绝，不能用独立 compact 成功证明此路径。
+
+主 Agent 支持普通 Responses 上单个末尾无 payload trigger，仍使用 compact 准入/用量模式；独立端点与 warmup 不混用。无 ID compaction 按内容类型指纹绑定；added 的空内容不会伪造指纹，done/终态保持内容、已提供 ID、索引及唯一性校验，拒绝压缩中的新工具调用。原生 WS 的匿名压缩项仅在该模式按有界 output_index 关联。请求/内存/任务寿命上限不扩大，无 schema 变化。
+
+首轮实际压缩成功后，CLI 会给无上游 ID 的 compaction 分配本地标签，续接因额外 ID 查询失败。改为完整 reasoning/compaction 按已授权正文指纹校验，转发前去掉本地 id；无正文的 reasoning ID 及显式引用继续查对象归属。既有独立 compact 回归据此比较规范化后的上游窗口（仅本地标签移除，内容不丢弃），不声称网关重建正文。
+
+macOS arm64/Swift 6.4 完整后端 38 个 Swift 测试与全部脚本通过；新增 verify_compaction_stream 纳入统一验证：HTTP JSON/SSE、HTTP→WS 及原生 WS；无 ID/部分 added、后续本地 ID 去除、缺失/重复/不一致终态与缺 done、提前 EOF、新工具禁止、无 trigger 的压缩输出禁止、无效控制不 dispatch、JSON 绑定失败不暴露且已知用量保留。跨 principal/变更 identity 重启拒绝；核心 DB/WAL 无原始密文。额外故障/guard 增补后定向构建与 context/v2 另验。
+
+实际 CLI 0.163.0 在三个 transport 上均以测试阈值 1 完成工具、一次 v2 compact 及下一生成输入的 opaque 回传；compact 与 generation 分开持久记录，所有可信用量 settled。原生 WS 共用一个上游连接且有一次预热；HTTP 桥接三次操作使用三个连接，排除回退误判。标准三传输及 HTTP retry/缺 profile 五组复验保持。fixture 给预热/压缩明确完整零计数，仅为合成证据，不代表真实免费。指导与 opaque 原文不进入核心库。
+
+范围：实际 CLI 的 v2 压缩/续接已验，未操作 Desktop、真实订阅、生产反代或恢复读取。此切片待提交后 review 与同快照 Linux 验证。

@@ -235,6 +235,17 @@ import Testing
     Data(#"{"type":"response.create","model":"synthetic","input":[],"generate":false}"#.utf8))
   #expect(warmup.mode == .warmup)
   #expect(warmup.document["generate"] == nil)
+  let compact = try ResponseRequest(
+    data: Data(#"{"model":"synthetic","input":[{"type":"compaction_trigger"}],"stream":true}"#.utf8)
+  )
+  #expect(compact.mode == .compact && compact.streamCompaction && compact.streaming)
+  for mode in [ExecutionMode.warmup, .compact] {
+    #expect(throws: (any Error).self) {
+      try ResponseRequest(
+        data: Data(#"{"model":"synthetic","input":[{"type":"compaction_trigger"}]}"#.utf8),
+        mode: mode)
+    }
+  }
   #expect(throws: (any Error).self) {
     try ResponseRequest(data: Data(#"{"model":"synthetic","input":[],"generate":false}"#.utf8))
   }
