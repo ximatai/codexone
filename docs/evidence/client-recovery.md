@@ -6,7 +6,7 @@
 
 | 路径 | 已验证行为 | 可推导范围 |
 |---|---|---|
-| Codex CLI 0.163.0 HTTP/SSE，私有临时配置 | 文本/函数结果/加密推理完整窗口回传，目录显式发现，无 metadata fallback | 正常客户端上下文可继续作为新生成输入 |
+| Codex CLI 0.163.0 HTTP/SSE，私有临时配置 | 文本/函数结果/加密推理完整窗口回传，采用明确的合成模型指导，无 metadata fallback | 正常客户端上下文可继续作为新生成输入；不等于保留客户端默认指导 |
 | 同版本 HTTP/SSE，response.created 后无终态 EOF | CLI 显示 Reconnecting，再 POST responses；两个持久 attempt 分别 unknown、settled | 客户端重连可能产生新执行，不是读取先前输出，也不能自动释放原预留 |
 | 网关原生 WS 合成 socket | 同 socket 的 previous_response_id、warmup、跨 lane 归属及完整窗口续接 | 协议实现证据，不是实际客户端断线恢复 |
 | Desktop 26.1016.51333（21161，内置 CLI 0.163.0-alpha.11） | Computer Use 明确禁止控制 com.openai.codex，未绕过 | 无实际 Desktop 操作/恢复结论；CLI 不能替代它 |

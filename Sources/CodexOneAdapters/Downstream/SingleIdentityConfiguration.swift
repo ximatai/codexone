@@ -17,6 +17,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let contextWindow: Int?
     public let reasoningEfforts: [String]?
     public let defaultReasoningEffort: String?
+    public let baseInstructions: String?
   }
   public let principal: String
   public let keyID: String
@@ -65,6 +66,10 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
         return (catalog.displayName?.utf8.count ?? 1) > 0
           && (catalog.displayName?.utf8.count ?? 0) <= 128
           && (catalog.description?.utf8.count ?? 0) <= 1024
+          && (catalog.baseInstructions == nil
+            || (!(catalog.baseInstructions?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              ?? true)
+              && (catalog.baseInstructions?.utf8.count ?? 0) <= 32_768))
           && (4096...131_072).contains(catalog.contextWindow ?? 32_768)
           && efforts.count <= 8 && Set(efforts).count == efforts.count
           && efforts.allSatisfy({
@@ -123,7 +128,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     let policy = digest(
       try encoder.encode(
         JSONValue.object([
-          "protocolVersion": .string("m2-context-1"),
+          "protocolVersion": .string("m2-catalog-2"),
           "principal": .string(principal), "namespace": .string(namespace), "scope": .string(scope),
           "identity": .string(identity),
           "models": .array(models.map(\.id).sorted().map { .string($0) }),

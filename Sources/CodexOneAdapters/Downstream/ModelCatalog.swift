@@ -1,12 +1,23 @@
 import Foundation
 
 /// Both directory forms use the same effective model set. Metadata does not grant capabilities.
-func modelCatalog(_ models: [SingleIdentityConfiguration.Model]) -> JSONValue {
+func modelCatalog(_ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false)
+  throws -> JSONValue
+{
   let api = models.map { model in
     JSONValue.object([
       "id": .string(model.id), "object": .string("model"),
       "owned_by": .string("configured-provider"),
     ])
+  }
+  guard
+    models.allSatisfy({
+      guard let instructions = $0.catalog?.baseInstructions else { return false }
+      return !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    })
+  else {
+    if requireCodexProfile { throw GatewayProtocolError(503, "model_catalog_unavailable") }
+    return .object(["object": .string("list"), "data": .array(api)])
   }
   let codex = models.enumerated().map { index, model in
     let metadata = model.catalog
@@ -14,8 +25,8 @@ func modelCatalog(_ models: [SingleIdentityConfiguration.Model]) -> JSONValue {
     var entry: [String: JSONValue] = [
       "slug": .string(model.id), "display_name": .string(metadata?.displayName ?? model.id),
       "description": .string(metadata?.description ?? "Configured text model"),
-      // The released CLI still requires the legacy catalog field.
-      "base_instructions": .string(""),
+      // An explicit authoritative profile must not silently clear the client's base guidance.
+      "base_instructions": .string(metadata!.baseInstructions!),
       "supported_reasoning_levels": .array(
         (metadata?.reasoningEfforts ?? []).map { effort in
           .object(["effort": .string(effort), "description": .string(effort)])

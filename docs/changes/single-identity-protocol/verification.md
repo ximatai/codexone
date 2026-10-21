@@ -93,3 +93,13 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 实际 CLI 显式启用 api_key_model_discovery、设置 model_catalog_url 后，发现原目录缺少 released CLI 必需的 legacy base_instructions，导致 JSON Data 解码错误并 fallback。补入空字符串（与官方无 instructions template 时的 legacy 序列化一致）后，CLI 0.163.0 成功使用目录，无 fallback 提示，并完成文本/函数往返与两次 settled；可选脚本新增无 fallback 断言。未往模型目录注入自定义系统提示；Desktop 仍未验收。
 
 新增实际 CLI `--retry-probe`：提供者先暴露 response ID 后无终态 EOF，客户端显示 Reconnecting 并发出第二次 POST；原 attempt unknown/usage 缺失，第二 attempt settled/可信用量。它证明这条“重连”路径产生新执行，不是已有输出读取；未让工具在失败轮执行。客户端与读取契约结论见[证据](../../evidence/client-recovery.md)，M5 仍缺少实际 Desktop 可用读取路径，不预设私有接口或后台自动重放。
+
+### 权威模型指导修正
+
+3bb73ea 复审发现 P1：空 base_instructions 导致实际 CLI 默认 developer 指导从约 20510 字符降为 2872，基础指导大部分丢失；合成 provider 不依据提示推理，故工具往返成功未覆盖此语义。原空字段方案撤回，不再将“无 fallback”单独视为目录契约成功。
+
+主 Agent 改为显式权威 profile：所有有效模型配置非空 catalog.baseInstructions 才提供完整 Codex 目录；缺 profile 的 client_version 目录请求明确 503，普通 OpenAI data 保持，客户端仍可能自行 fallback。管理员明确承担目标模型/版本的指导选择，网关不固化客户端内部提示。单模型 32 KiB、整个配置 64 KiB；指导进入策略摘要但不进计价/owner/核心持久库。新增真实 socket 有/无/重复/编码/畸形值查询验证、配置及指纹回归，实际 CLI 须确认所配合成指导进入 developer 输入；不是“保留原客户端默认提示”的结论。此修复工作树待完整验证、提交和复审。
+
+2026-10-22 macOS 完整后端 38 个 Swift 测试与全部脚本通过；CLI 0.163.0 标准、without-profile、retry-probe 三模式通过。明确 profile 的 developer 输入存在所配合成指导且无 fallback，核心 DB/WAL 不含指导；缺 profile 能观察到 fallback 后生成；EOF 后新执行保持 unknown/settled 区分。增补混合 profile 集合与未授权目录请求后另跑定向回归，未据此宣称 Desktop 已完成。
+
+3bb73ea 的 Linux amd64 完整后端验证已退出 0（38 个 Swift 测试及全部脚本），不包含本次 P1 修复，不能据此关闭该问题。

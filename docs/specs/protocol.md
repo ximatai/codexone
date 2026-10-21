@@ -77,6 +77,8 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 
 ## P16：受控模型目录
 
-两个路径的 GET /models 同时返回 OpenAI data 与 Codex models，来自同一有效白名单。可信本地配置可限定展示名称、说明、上下文窗口及推理选项；目录声明不授予模型/工具权限，也不代表提供者能力已验收。当前单身份切片只声明文本输入、无内置搜索；shell_type 选择客户端 unified_exec，工具仍由客户端执行并遵守其 sandbox。
+两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均显式配置非空 baseInstructions 时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。
 
-配置顺序决定目录 priority，目录内容与顺序进入准入策略版本；计价版本只包含模型 ID/费率。返回已发布客户端要求的空 legacy base_instructions，不分发自定义系统提示。实际版本须显式发现并采用目录，不得以 fallback 元数据下的生成成功充当目录验收。
+可信本地 profile 可限定展示名称、说明、上下文窗口、推理选项及模型基础指导。baseInstructions 是权威模型指导，客户端采用后会替换自己的默认指导，不能仅为目录解码提供空字符串；管理员须为目标模型/版本明确配置完整指导。网关不复制/发明客户端默认提示。当前切片只声明文本输入、无内置搜索；shell_type 选择客户端 unified_exec，工具仍遵守其 sandbox。目录不授予额外权限，不证明提供者已支持这些能力。
+
+配置顺序决定 priority，目录内容、指导与顺序进入策略版本；计价版本只包含模型 ID/费率，指导不进入核心持久库。实际版本须显式发现并采用目录和已配置指导，不得以 fallback 元数据下的生成成功充当目录验收。

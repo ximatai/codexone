@@ -9,7 +9,11 @@
     {
       "id": "synthetic-text",
       "inputMicrosPerMillion": 1000000,
-      "outputMicrosPerMillion": 1000000
+      "outputMicrosPerMillion": 1000000,
+      "catalog": {
+        "displayName": "Synthetic local fixture",
+        "baseInstructions": "Synthetic fixture coding guidance: follow the user request and execute only the requested local test command."
+      }
     }
   ],
   "upstreamBaseURL": "http://127.0.0.1:19090/v1"

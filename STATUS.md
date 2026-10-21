@@ -62,7 +62,7 @@ npm run dev
 
 M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，原始 8c82e72 Linux 完整通过；提交后 review 发现的 compact 可选字段嵌套对象问题已修复并回归，复审通过，修复快照 614edef 的 Linux amd64 完整验证亦通过。
 
-模型目录提供同一白名单的 OpenAI/Codex 视图及有界配置；3257aee review 发现的顺序/策略版本 P2 已亲自修复，macOS 完整后端 38 个 Swift 测试与全部脚本通过。实际 CLI 显式发现目录后暴露 legacy base_instructions 缺失，补齐后目录采用、文本/函数往返均通过，无 fallback；修复待复审/Linux。EOF 探针证明 CLI Reconnecting 发起新的生成，原 attempt 保持 unknown，不能当作原输出恢复；[恢复契约证据](docs/evidence/client-recovery.md)已记录。
+模型目录提供白名单的 OpenAI 视图；全部模型有明确 profile 才同时提供同集合的 Codex 视图。3257aee review 的顺序/策略版本 P2 已修；3bb73ea 复审发现空 base_instructions 清空大部分客户端默认指导的 P1，已亲自改为显式非空 catalog.baseInstructions，不自动编写/复制默认提示。缺 profile 的 Codex 目录请求返回 503，客户端仍可能 fallback，不能当目录验收通过。macOS 完整后端 38 个 Swift 测试与脚本、实际 CLI 采用所配指导/缺 profile 降级/EOF 新执行三种模式通过；P1 修复待提交复审/Linux。3bb73ea Linux 完整通过不包含该 P1 修复。EOF 后原 attempt 保持 unknown，不能当原输出恢复；[恢复契约证据](docs/evidence/client-recovery.md)已记录。
 
 Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。下一步完成目录修复复审与 Linux，再处理这些明确的客户端验收边界；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 

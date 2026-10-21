@@ -215,11 +215,46 @@ def web_smoke(port, state):
                    env={"PATH": os.environ.get("PATH", os.defpath)}, check=True, timeout=30)
 
 
+def verify_model_profiles(binary):
+    for supplied in (False, True):
+        with tempfile.TemporaryDirectory(prefix="codexone-catalog-") as temporary:
+            root = Path(temporary)
+            model = {"id": "synthetic-text", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0}
+            if supplied:
+                model["catalog"] = {"baseInstructions": "Explicit synthetic fixture guidance"}
+            config = root / "identity.json"
+            config.write_text(json.dumps({"principal": "p", "keyID": "k", "namespace": "synthetic", "identity": "i",
+                "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(), "reservedMicros": 0,
+                "models": [model], "upstreamBaseURL": "http://127.0.0.1:9/v1"}))
+            config.chmod(0o600)
+            process, ports = start(binary, config, root)
+            try:
+                for prefix in ("/v1", "/backend-api/codex"):
+                    assert connect(ports["data"], "GET", prefix + "/models?client_version=0.163.0", authorization=False)[0] == 401
+                    for query in ("", "?client_version_extra=1", "?foo=client_version", "?client_version%00=1"):
+                        status, body = connect(ports["data"], "GET", prefix + "/models" + query)
+                        document = json.loads(body)
+                        assert status == 200 and document["data"][0]["id"] == "synthetic-text"
+                        assert ("models" in document) == supplied
+                    for query in ("?client_version=0.163.0", "?client_version", "?client_version=1&client_version=2",
+                                  "?%63lient_version=1", "?client_version=%ZZ"):
+                        status, body = connect(ports["data"], "GET", prefix + "/models" + query)
+                        if supplied:
+                            assert status == 200 and json.loads(body)["models"][0]["base_instructions"]
+                        else:
+                            assert status == 503 and b"model_catalog_unavailable" in body and b'"models"' not in body
+                assert not sqlite3.connect(root / "state/core.sqlite").execute("SELECT 1 FROM attempts").fetchall()
+            finally:
+                stop(process)
+    print("PASS: Codex catalog requires explicit complete profiles; parsed version queries select view, not authorization; OpenAI model list remains available")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--web-smoke", action="store_true")
     args = parser.parse_args()
+    verify_model_profiles(str(args.binary.resolve()))
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
     upstream.daemon_threads = True
     upstream.guard = threading.Lock()
@@ -235,7 +270,8 @@ def main():
             configuration.write_text(json.dumps({"principal": "synthetic-principal", "keyID": "synthetic-key",
                 "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(), "namespace": "synthetic-provider",
                 "identity": "synthetic-account", "reservedMicros": 10, "executionTimeoutSeconds": 2,
-                "models": [{"id": "synthetic-text", "inputMicrosPerMillion": 1000000, "outputMicrosPerMillion": 1000000}],
+                "models": [{"id": "synthetic-text", "inputMicrosPerMillion": 1000000, "outputMicrosPerMillion": 1000000,
+                            "catalog": {"baseInstructions": "Explicit synthetic fixture guidance"}}],
                 "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1"}))
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, directory)

@@ -14,7 +14,7 @@
 | keySHA256 | 高熵 Bearer Key 的 SHA-256 小写十六进制；文件不存原始客户端 Key |
 | namespace / identity | 可信配置的提供者命名空间前缀与身份标识 |
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
-| models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—131072，默认 32768）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；价格指纹不含这些展示元数据 |
+| models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—131072，默认 32768）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；Codex 目录还需非空 baseInstructions 权威指导，容量与替换语义见下；不改变价格指纹 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
@@ -53,8 +53,10 @@ python3 scripts/verify_client.py --binary .build/debug/codexone
 
 脚本创建私有临时客户端目录与空工作目录，在只读 sandbox 下使用合成上游，并显式关闭未支持的内置 web_search。客户端仅执行 `/bin/sh` 的固定 printf，不用登录 shell，网关不执行工具。此脚本验证 HTTP/SSE 文本、函数往返及加密推理回传；不代表 Desktop、真实订阅或所有客户端版本通过，不修改个人配置。
 
-CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。验证脚本要求客户端不出现 metadata fallback。目录包含该已发布版本要求的空 legacy base_instructions，不由网关分发自定义系统提示。
+CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。所有有效模型须显式配置 `catalog.baseInstructions`（非空，≤32768 UTF-8 字节），它会成为权威基础指导并替换客户端默认指导，须针对目标模型/版本维护；网关不生成默认提示。整个私有配置文件仍限 64 KiB，多模型长 profile 可能触及总容量。未配置完整 profile 时不返回 Codex models，带 client_version 的目录请求返回 503；这不能阻止客户端自己 fallback。验证脚本要求无 metadata fallback，且合成上游 developer 输入包含所配指导。
 
 同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../evidence/client-recovery.md)。
 
-模型目录同时提供 OpenAI `data` 和 Codex `models` 形式，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。
+加 `--without-profile` 验证缺 profile 的目录失败可能使 CLI fallback 后仍生成；这项成功表示如实观察降级，不表示该配置通过 Codex 目录验收。
+
+完整 profile 配置下，模型目录同时提供 OpenAI `data` 和 Codex `models`，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。

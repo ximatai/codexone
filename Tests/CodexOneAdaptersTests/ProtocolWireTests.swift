@@ -274,23 +274,42 @@ import Testing
   let detailed = try configuration([
     "displayName": "Synthetic fixture", "contextWindow": 65536,
     "reasoningEfforts": ["low", "high"], "defaultReasoningEffort": "low",
+    "baseInstructions": "Explicit synthetic coding guidance",
   ])
   let first = try basic.makePolicy(token: nil)
   let second = try detailed.makePolicy(token: nil)
   #expect(first.owner == second.owner)
   #expect(first.pricingVersion == second.pricingVersion)
   #expect(first.policyVersion != second.policyVersion)
+  let profileA = try configuration(["baseInstructions": "Explicit profile A"]).makePolicy(
+    token: nil)
+  let profileB = try configuration(["baseInstructions": "Explicit profile B"]).makePolicy(
+    token: nil)
+  #expect(profileA.owner == profileB.owner)
+  #expect(profileA.pricingVersion == profileB.pricingVersion)
+  #expect(profileA.policyVersion != profileB.policyVersion)
   let ordered = try configuration(nil, reversed: false).makePolicy(token: nil)
   let reordered = try configuration(nil, reversed: true).makePolicy(token: nil)
   #expect(ordered.owner == reordered.owner)
   #expect(ordered.pricingVersion == reordered.pricingVersion)
   #expect(ordered.policyVersion != reordered.policyVersion)
-  let directory = modelCatalog(detailed.models)
+  #expect(try modelCatalog(basic.models)["models"] == nil)
+  let partial =
+    detailed.models + [
+      SingleIdentityConfiguration.Model(
+        id: "unconfigured", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
+    ]
+  #expect(try modelCatalog(partial)["data"]?.array?.count == 2)
+  #expect(try modelCatalog(partial)["models"] == nil)
+  #expect(throws: (any Error).self) {
+    try modelCatalog(basic.models, requireCodexProfile: true)
+  }
+  let directory = try modelCatalog(detailed.models, requireCodexProfile: true)
   #expect(directory["data"]?.array?.count == 1)
   #expect(directory["data"]?.array?.first?["id"]?.string == "synthetic")
   let entry = try #require(directory["models"]?.array?.first)
   #expect(entry["slug"]?.string == "synthetic")
-  #expect(entry["base_instructions"]?.string == "")
+  #expect(entry["base_instructions"]?.string == "Explicit synthetic coding guidance")
   #expect(entry["display_name"]?.string == "Synthetic fixture")
   #expect(entry["context_window"] == .number(65536))
   #expect(entry["auto_compact_token_limit"] == .number(49152))
@@ -300,5 +319,6 @@ import Testing
     ["contextWindow": 4095], ["contextWindow": 131073], ["displayName": ""],
     ["reasoningEfforts": ["high", "high"]], ["reasoningEfforts": ["invented"]],
     ["reasoningEfforts": ["low"], "defaultReasoningEffort": "high"],
+    ["baseInstructions": " \n"], ["baseInstructions": String(repeating: "x", count: 32769)],
   ] { #expect(throws: (any Error).self) { try configuration(invalid) } }
 }

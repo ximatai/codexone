@@ -13,6 +13,8 @@ import tempfile
 import threading
 from verify_protocol import TOKEN, start, stop, latest
 
+GUIDANCE = 'Synthetic fixture coding guidance: follow the user request and execute only the requested local test command.'
+
 
 class Provider(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -26,6 +28,9 @@ class Provider(BaseHTTPRequestHandler):
         document = json.loads(self.rfile.read(length))
         assert self.path == '/v1/responses' and document['model'] == 'synthetic-text'
         assert self.headers.get('Authorization') is None
+        has_guidance = any(item.get('role') == 'developer' and GUIDANCE in json.dumps(item.get('content'))
+                           for item in document.get('input', []))
+        assert has_guidance == self.server.profile_supplied, 'Configured authoritative model guidance was not adopted'
         with self.server.guard:
             self.server.calls += 1
             index = self.server.calls
@@ -67,6 +72,7 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--codex', default='codex')
     parser.add_argument('--retry-probe', action='store_true', help='Show that a client reconnect creates a new execution after EOF')
+    parser.add_argument('--without-profile', action='store_true', help='Verify that directory failure can still cause client fallback')
     args = parser.parse_args()
     codex = shutil.which(args.codex)
     assert codex is not None, 'Codex CLI is required for this optional check'
@@ -76,6 +82,7 @@ def main():
     server.guard = threading.Lock()
     server.calls = 0
     server.retry_probe = args.retry_probe
+    server.profile_supplied = not args.without_profile
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -85,7 +92,8 @@ def main():
             configuration.write_text(json.dumps({'principal': 'synthetic-principal', 'keyID': 'synthetic-key',
                 'keySHA256': hashlib.sha256(TOKEN.encode()).hexdigest(), 'namespace': 'synthetic-provider',
                 'identity': 'synthetic-account', 'reservedMicros': 10,
-                'models': [{'id': 'synthetic-text', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
+                'models': [{'id': 'synthetic-text', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000,
+                            'catalog': {'baseInstructions': GUIDANCE} if server.profile_supplied else None}],
                 'upstreamBaseURL': f'http://127.0.0.1:{server.server_port}/v1'}))
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, root)
@@ -117,11 +125,14 @@ request_max_retries = 0
                 events = [json.loads(line) for line in result.stdout.splitlines() if line.startswith(b'{')]
                 assert result.returncode == 0, {'exit': result.returncode, 'event_types': [event.get('type') for event in events], 'errors': [event.get('message', '')[:350] for event in events if event.get('type') == 'error'], 'provider_calls': server.calls}
                 assert b'synthetic client acceptance' in result.stdout and server.calls == 2
-                assert b'Model metadata for' not in result.stdout + result.stderr, 'Client failed to use the configured model catalog'
+                metadata_fallback = b'Model metadata for' in result.stdout + result.stderr
+                assert metadata_fallback == args.without_profile, 'Unexpected model catalog acceptance/fallback'
                 assert any(event.get('type') == 'turn.completed' for event in events)
                 latest(root / 'state/core.sqlite', 'settled')
                 with sqlite3.connect(root / 'state/core.sqlite') as db:
                     rows = db.execute('SELECT state,usage_json FROM attempts ORDER BY rowid').fetchall()
+                for file in (root / 'state').glob('core.sqlite*'):
+                    assert GUIDANCE.encode() not in file.read_bytes(), 'Model guidance leaked into core storage'
                 if args.retry_probe:
                     assert [state for state, _ in rows] == ['unknown', 'settled'] and rows[0][1] is None
                     assert b'Reconnecting' in result.stdout
@@ -129,7 +140,10 @@ request_max_retries = 0
                 else:
                     assert len(rows) == 2 and all(state == 'settled' for state, _ in rows)
                     assert all(json.loads(usage)['inputTokens'] == 5 for _, usage in rows)
-                    print(f'PASS: {version} configured model catalog without fallback; actual text/client function/result loop; two durable settlements; private temporary client state')
+                    if args.without_profile:
+                        print(f'PASS: {version} unavailable Codex catalog can cause client fallback and generation; explicitly not accepted as model catalog compatibility')
+                    else:
+                        print(f'PASS: {version} explicit authoritative model guidance adopted without fallback; actual text/client function/result loop; two durable settlements; private temporary client state')
             finally:
                 stop(process)
     finally:
