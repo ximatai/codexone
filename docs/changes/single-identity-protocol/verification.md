@@ -103,3 +103,5 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 2026-10-22 macOS 完整后端 38 个 Swift 测试与全部脚本通过；CLI 0.163.0 标准、without-profile、retry-probe 三模式通过。明确 profile 的 developer 输入存在所配合成指导且无 fallback，核心 DB/WAL 不含指导；缺 profile 能观察到 fallback 后生成；EOF 后新执行保持 unknown/settled 区分。增补混合 profile 集合与未授权目录请求后另跑定向回归，未据此宣称 Desktop 已完成。
 
 3bb73ea 的 Linux amd64 完整后端验证已退出 0（38 个 Swift 测试及全部脚本），不包含本次 P1 修复，不能据此关闭该问题。
+
+b3ad1f1 复审通过，原 P1 闭环；reviewer 独立运行三个实际 CLI 模式、目录 Swift 定向测试、九组 HTTP/SSE 检查均通过，无新增阻塞问题。同提交 Linux amd64/Swift 6.4 单并发完整后端验证退出 0，38 个 Swift 测试及全部进程/执行/HTTP/WS/context 脚本通过（2 CPU/2500 MiB，本地模拟容器）。未运行远程 CI、未操作 Desktop、未访问真实上游；不是弱服务器容量验收。独立桌面测试临时目录已清理，未改个人客户端配置。

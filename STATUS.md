@@ -50,20 +50,20 @@ npm run dev
 - 2026-10-21 文档范围同步：已按实际使用需求更新[里程碑](docs/plans/roadmap.md)及相关规范，首版替代验收覆盖 Desktop、图片编辑、额度统计、迁移及弱服务器。`python3 scripts/check_docs.py` 与 `git diff --check` 通过；本次仅改文档，未进行运行兼容/容量/迁移验收，未访问或改动 用户服务器。
 
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
-- 37 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：新增真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
+- 38 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
 - M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
 - 2026-10-22 独立 Linux amd64/Swift 6.4 本地 Docker 验证通过（快照 8184adb，模拟执行）：单并发后端完整检查、26 Swift 测试及进程/权限/四个 SIGKILL 场景。首次双并发因约 2.8 GiB Docker VM 内存不足 OOM；未改全局设置。此结果不代表弱服务器容量验收。
-- 2026-10-22 M2 Linux amd64 本地容器完整验证通过至 4fcb003（35 Swift 测试、进程故障、七组 WS socket 场景）；模式/上下文及修复快照 614edef 的 Linux 完整验证亦通过（37 个 Swift 测试）。macOS 实际 CLI 0.163.0 通过网关的 HTTP/SSE 文本/函数结果与加密推理回传；独立临时配置，无真实账号。
+- 2026-10-22 M2 Linux amd64/Swift 6.4 本地容器完整验证通过至 b3ad1f1（38 Swift 测试、进程故障、九组 HTTP/SSE、WS/context 及 profile 场景），单并发、2 CPU/2500 MiB。macOS 实际 CLI 0.163.0 通过明确模型指导的目录采用、HTTP/SSE 文本/函数结果与加密推理回传、缺 profile fallback 和 EOF 新执行检查；独立临时配置，无真实账号。
 - Linux amd64 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖
 
-M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，原始 8c82e72 Linux 完整通过；提交后 review 发现的 compact 可选字段嵌套对象问题已修复并回归，复审通过，修复快照 614edef 的 Linux amd64 完整验证亦通过。
+M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。各切片提交后 review 的问题均已亲自修复、复验及复审；详细范围和验证账见[单身份协议](docs/changes/single-identity-protocol/verification.md)。
 
-模型目录提供白名单的 OpenAI 视图；全部模型有明确 profile 才同时提供同集合的 Codex 视图。3257aee review 的顺序/策略版本 P2 已修；3bb73ea 复审发现空 base_instructions 清空大部分客户端默认指导的 P1，已亲自改为显式非空 catalog.baseInstructions，不自动编写/复制默认提示。缺 profile 的 Codex 目录请求返回 503，客户端仍可能 fallback，不能当目录验收通过。macOS 完整后端 38 个 Swift 测试与脚本、实际 CLI 采用所配指导/缺 profile 降级/EOF 新执行三种模式通过；P1 修复待提交复审/Linux。3bb73ea Linux 完整通过不包含该 P1 修复。EOF 后原 attempt 保持 unknown，不能当原输出恢复；[恢复契约证据](docs/evidence/client-recovery.md)已记录。
+模型目录提供白名单的 OpenAI 视图；全部模型有明确 profile 才同时提供同集合的 Codex 视图。顺序/策略版本 P2 和空指导清空客户端基线的 P1 已关闭：显式非空 catalog.baseInstructions，不自动编写/复制默认提示。缺 profile 的 Codex 目录请求返回 503，客户端仍可能 fallback，不能当目录验收通过。b3ad1f1 复审、macOS/Linux 完整后端和实际 CLI 三模式均通过。EOF 后原 attempt 保持 unknown，不能当原输出恢复；[恢复契约证据](docs/evidence/client-recovery.md)已记录。
 
-Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。下一步完成目录修复复审与 Linux，再处理这些明确的客户端验收边界；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
+Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。下一步取得可执行的 Desktop 验收路径；已向用户保留问题：是否允许保留这项缺口先推进独立 M3 工作，尚未答复，不以等待时间当作同意。代码已提交，无未提交工作；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
