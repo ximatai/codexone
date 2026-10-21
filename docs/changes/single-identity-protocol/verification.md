@@ -87,3 +87,9 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 2026-10-22：模型目录从同一有效模型集合产生 OpenAI `data` 与 Codex `models` 两种视图；参考官方 rust-v0.163.0 `ModelInfo` 字段，提供有界可选展示/上下文/推理配置，当前明确仅文本且无内置搜索。元数据改变更新 policyVersion，价格版本只由 ID/费率产生。新增 Swift 测试验证边界、无效配置及指纹分离；HTTP 两个路由的目录类型另有 socket 回归。macOS 完整后端 38 个 Swift 测试与全部脚本通过；目录断言增补后定向 HTTP/CLI 另验。
 
 安装的 Desktop 为 26.1016.51333（21161），内置 CLI 0.163.0-alpha.11，与 Homebrew CLI 0.163.0 分别记录。已准备临时 CODEX_HOME/userData、空工作目录与本地合成上游，并以系统 sandbox 验证 loopback 可用、外部连接 EPERM；隔离 Desktop 进程启动后已退出，未执行 UI 验收。Computer Use 返回明确限制：`Computer Use is not allowed to use the app 'com.openai.codex' for safety reasons.` 未绕过该限制，未操作个人实例；不声称 Desktop 模型选择或操作闭环通过。完整 Desktop 仍是 M2 未完成出口。
+
+3257aee review 发现 P2：配置数组顺序影响目录 priority，但 catalogVersion 先按 ID 排序，未记录这项外部变化。主 Agent 改为保留有序 models 计算目录摘要，新增两模型反序回归：policyVersion 改变，owner/pricingVersion 不变；reviewer 已独立运行确认。
+
+实际 CLI 显式启用 api_key_model_discovery、设置 model_catalog_url 后，发现原目录缺少 released CLI 必需的 legacy base_instructions，导致 JSON Data 解码错误并 fallback。补入空字符串（与官方无 instructions template 时的 legacy 序列化一致）后，CLI 0.163.0 成功使用目录，无 fallback 提示，并完成文本/函数往返与两次 settled；可选脚本新增无 fallback 断言。未往模型目录注入自定义系统提示；Desktop 仍未验收。
+
+新增实际 CLI `--retry-probe`：提供者先暴露 response ID 后无终态 EOF，客户端显示 Reconnecting 并发出第二次 POST；原 attempt unknown/usage 缺失，第二 attempt settled/可信用量。它证明这条“重连”路径产生新执行，不是已有输出读取；未让工具在失败轮执行。客户端与读取契约结论见[证据](../../evidence/client-recovery.md)，M5 仍缺少实际 Desktop 可用读取路径，不预设私有接口或后台自动重放。

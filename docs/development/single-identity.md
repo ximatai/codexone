@@ -53,4 +53,8 @@ python3 scripts/verify_client.py --binary .build/debug/codexone
 
 脚本创建私有临时客户端目录与空工作目录，在只读 sandbox 下使用合成上游，并显式关闭未支持的内置 web_search。客户端仅执行 `/bin/sh` 的固定 printf，不用登录 shell，网关不执行工具。此脚本验证 HTTP/SSE 文本、函数往返及加密推理回传；不代表 Desktop、真实订阅或所有客户端版本通过，不修改个人配置。
 
+CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。验证脚本要求客户端不出现 metadata fallback。目录包含该已发布版本要求的空 legacy base_instructions，不由网关分发自定义系统提示。
+
+同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../evidence/client-recovery.md)。
+
 模型目录同时提供 OpenAI `data` 和 Codex `models` 形式，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。

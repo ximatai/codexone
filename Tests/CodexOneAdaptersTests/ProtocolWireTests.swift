@@ -247,15 +247,22 @@ import Testing
 }
 
 @Test func modelDirectoryUsesAuthorizedSetAndSeparatesMetadataFromPricing() throws {
-  func configuration(_ catalog: [String: Any]?) throws -> SingleIdentityConfiguration {
+  func configuration(_ catalog: [String: Any]?, reversed: Bool? = nil) throws
+    -> SingleIdentityConfiguration
+  {
     var model: [String: Any] = [
       "id": "synthetic", "inputMicrosPerMillion": 2, "outputMicrosPerMillion": 3,
     ]
     model["catalog"] = catalog
+    var models = [model]
+    if let reversed {
+      models.append(["id": "second", "inputMicrosPerMillion": 4, "outputMicrosPerMillion": 5])
+      if reversed { models.reverse() }
+    }
     let value: [String: Any] = [
       "principal": "p", "keyID": "k", "namespace": "synthetic", "identity": "i",
       "keySHA256": String(repeating: "a", count: 64), "reservedMicros": 10,
-      "models": [model], "upstreamBaseURL": "http://127.0.0.1:12345/v1",
+      "models": models, "upstreamBaseURL": "http://127.0.0.1:12345/v1",
     ]
     let result = try JSONDecoder().decode(
       SingleIdentityConfiguration.self,
@@ -273,11 +280,17 @@ import Testing
   #expect(first.owner == second.owner)
   #expect(first.pricingVersion == second.pricingVersion)
   #expect(first.policyVersion != second.policyVersion)
+  let ordered = try configuration(nil, reversed: false).makePolicy(token: nil)
+  let reordered = try configuration(nil, reversed: true).makePolicy(token: nil)
+  #expect(ordered.owner == reordered.owner)
+  #expect(ordered.pricingVersion == reordered.pricingVersion)
+  #expect(ordered.policyVersion != reordered.policyVersion)
   let directory = modelCatalog(detailed.models)
   #expect(directory["data"]?.array?.count == 1)
   #expect(directory["data"]?.array?.first?["id"]?.string == "synthetic")
   let entry = try #require(directory["models"]?.array?.first)
   #expect(entry["slug"]?.string == "synthetic")
+  #expect(entry["base_instructions"]?.string == "")
   #expect(entry["display_name"]?.string == "Synthetic fixture")
   #expect(entry["context_window"] == .number(65536))
   #expect(entry["auto_compact_token_limit"] == .number(49152))

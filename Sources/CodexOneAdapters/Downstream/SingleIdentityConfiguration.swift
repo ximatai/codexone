@@ -127,7 +127,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "principal": .string(principal), "namespace": .string(namespace), "scope": .string(scope),
           "identity": .string(identity),
           "models": .array(models.map(\.id).sorted().map { .string($0) }),
-          "catalogVersion": .string(digest(try encoder.encode(models.sorted { $0.id < $1.id }))),
+          "catalogVersion": .string(digest(try encoder.encode(models))),
           "reservation": .number(Decimal(reservedMicros)),
           "executionTimeoutSeconds": .number(Decimal(executionTimeoutSeconds ?? 120)),
           "transport": .string(upstreamTransport ?? "http"),

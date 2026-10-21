@@ -1,5 +1,7 @@
 # 技术选择的验证依据
 
+- [明确版本客户端续接与恢复契约](client-recovery.md)：正常续接、EOF 重连和输出读取的证据边界。
+
 原型来源：[ximatai/codexone](https://github.com/ximatai/codexone)，参考提交 `3af8a52fe131b81cbe1a5ca043eaf14e7cbe9bb5`。依据限于该原型及对应测试环境，不能推导正式项目已实现或通过。
 
 - macOS 与 Linux amd64 合成传输/协议验证支持 Swift/NIO 数据面方向；Vapor 高层 HTTP 的静默断连对照存在缺口，因此应掌握 channel 生命周期。

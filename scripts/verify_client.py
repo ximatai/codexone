@@ -31,17 +31,19 @@ class Provider(BaseHTTPRequestHandler):
             index = self.server.calls
         assert index <= 2, 'Synthetic client unexpectedly repeated a turn'
         assert not any(tool['type'] == 'web_search' for tool in document.get('tools', []))
-        if index == 1:
+        retry_probe = self.server.retry_probe
+        if index == 1 and not retry_probe:
             item = {'type': 'function_call', 'id': 'fc_synthetic_cli', 'name': 'exec_command',
                     'call_id': 'call_synthetic_cli', 'arguments': json.dumps({'cmd': 'printf synthetic-tool-success', 'shell': '/bin/sh', 'login': False, 'max_output_tokens': 64})}
         else:
             results = [item for item in document['input'] if item.get('type') == 'function_call_output']
-            assert any(item['call_id'] == 'call_synthetic_cli' and 'synthetic-tool-success' in item['output'] for item in results)
-            assert any(item.get('type') == 'reasoning' and item.get('encrypted_content') == 'synthetic-cli-reasoning-cipher' for item in document['input'])
+            if not retry_probe:
+                assert any(item['call_id'] == 'call_synthetic_cli' and 'synthetic-tool-success' in item['output'] for item in results)
+                assert any(item.get('type') == 'reasoning' and item.get('encrypted_content') == 'synthetic-cli-reasoning-cipher' for item in document['input'])
             item = {'type': 'message', 'id': 'msg_synthetic_cli', 'role': 'assistant', 'phase': 'final_answer',
                     'status': 'completed', 'content': [{'type': 'output_text', 'text': 'synthetic client acceptance', 'annotations': []}]}
         items = [item]
-        if index == 1:
+        if index == 1 and not retry_probe:
             items.insert(0, {'type': 'reasoning', 'id': 'rs_synthetic_cli', 'summary': [], 'encrypted_content': 'synthetic-cli-reasoning-cipher'})
         response = {'id': f'resp_synthetic_cli_{index}', 'object': 'response', 'model': 'synthetic-text',
                     'status': 'completed', 'output': items, 'usage': {'input_tokens': 5, 'output_tokens': 3,
@@ -49,6 +51,9 @@ class Provider(BaseHTTPRequestHandler):
         events = [{'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'output': [], 'usage': None}}]
         events += [{'type': 'response.output_item.done', 'output_index': index, 'item': item} for index, item in enumerate(items)]
         events.append({'type': 'response.completed', 'response': response})
+        if retry_probe and index == 1:
+            # A response ID was exposed; the provider then closes without a terminal or usage.
+            events = events[:1]
         body = ''.join('data: ' + json.dumps(event) + '\n\n' for event in events).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
@@ -61,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--codex', default='codex')
+    parser.add_argument('--retry-probe', action='store_true', help='Show that a client reconnect creates a new execution after EOF')
     args = parser.parse_args()
     codex = shutil.which(args.codex)
     assert codex is not None, 'Codex CLI is required for this optional check'
@@ -69,6 +75,7 @@ def main():
     server.daemon_threads = True
     server.guard = threading.Lock()
     server.calls = 0
+    server.retry_probe = args.retry_probe
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -90,27 +97,39 @@ def main():
                 (client / 'config.toml').write_text(f'''model_provider = "synthetic"
 model = "synthetic-text"
 web_search = "disabled"
+[features]
+api_key_model_discovery = true
 [model_providers.synthetic]
 name = "Synthetic local fixture"
 base_url = "http://127.0.0.1:{ports['data']}/v1"
+model_catalog_url = "http://127.0.0.1:{ports['data']}/v1/models"
 wire_api = "responses"
 env_key = "CODEXONE_SYNTHETIC_CLIENT_KEY"
 requires_openai_auth = false
+stream_max_retries = 1
+request_max_retries = 0
 ''')
                 result = subprocess.run([codex, 'exec', '--ephemeral', '--skip-git-repo-check', '--json', '--sandbox', 'read-only',
+                    'Return synthetic client acceptance without tools.' if args.retry_probe else
                     'Use exec_command once to print synthetic-tool-success, then report synthetic client acceptance.'],
                     cwd=work, env={'PATH': os.defpath, 'CODEX_HOME': str(client), 'CODEXONE_SYNTHETIC_CLIENT_KEY': TOKEN},
                     capture_output=True, timeout=40)
                 events = [json.loads(line) for line in result.stdout.splitlines() if line.startswith(b'{')]
                 assert result.returncode == 0, {'exit': result.returncode, 'event_types': [event.get('type') for event in events], 'errors': [event.get('message', '')[:350] for event in events if event.get('type') == 'error'], 'provider_calls': server.calls}
                 assert b'synthetic client acceptance' in result.stdout and server.calls == 2
+                assert b'Model metadata for' not in result.stdout + result.stderr, 'Client failed to use the configured model catalog'
                 assert any(event.get('type') == 'turn.completed' for event in events)
                 latest(root / 'state/core.sqlite', 'settled')
                 with sqlite3.connect(root / 'state/core.sqlite') as db:
-                    rows = db.execute('SELECT state,usage_json FROM attempts').fetchall()
-                assert len(rows) == 2 and all(state == 'settled' for state, _ in rows)
-                assert all(json.loads(usage)['inputTokens'] == 5 for _, usage in rows)
-                print(f'PASS: {version} actual text/client function/result loop through gateway; two durable settlements; private temporary client state')
+                    rows = db.execute('SELECT state,usage_json FROM attempts ORDER BY rowid').fetchall()
+                if args.retry_probe:
+                    assert [state for state, _ in rows] == ['unknown', 'settled'] and rows[0][1] is None
+                    assert b'Reconnecting' in result.stdout
+                    print(f'PASS: {version} reconnect after exposed response ID/EOF creates a second execution; first remains unknown, second settled; no output-recovery claim')
+                else:
+                    assert len(rows) == 2 and all(state == 'settled' for state, _ in rows)
+                    assert all(json.loads(usage)['inputTokens'] == 5 for _, usage in rows)
+                    print(f'PASS: {version} configured model catalog without fallback; actual text/client function/result loop; two durable settlements; private temporary client state')
             finally:
                 stop(process)
     finally:

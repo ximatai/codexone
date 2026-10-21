@@ -14,6 +14,8 @@ func modelCatalog(_ models: [SingleIdentityConfiguration.Model]) -> JSONValue {
     var entry: [String: JSONValue] = [
       "slug": .string(model.id), "display_name": .string(metadata?.displayName ?? model.id),
       "description": .string(metadata?.description ?? "Configured text model"),
+      // The released CLI still requires the legacy catalog field.
+      "base_instructions": .string(""),
       "supported_reasoning_levels": .array(
         (metadata?.reasoningEfforts ?? []).map { effort in
           .object(["effort": .string(effort), "description": .string(effort)])
