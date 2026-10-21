@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import NIOWebSocket
 import ServiceLifecycle
 import Synchronization
 
@@ -37,7 +38,8 @@ public struct SingleIdentityDataService: Service {
       configuration: .init(
         redirectConfiguration: .disallow, timeout: .init(connect: .seconds(5), read: .seconds(30))))
     let executor = HTTPResponseExecution(
-      client: client, configuration: configuration, token: token,
+      client: client, webSocket: .init(group: group, configuration: configuration, token: token),
+      configuration: configuration, token: token,
       report: {
         .init(checks: [
           .init(name: "execution_store", ready: store.isAvailable),
@@ -47,7 +49,7 @@ public struct SingleIdentityDataService: Service {
       },
       gateway: .init(
         policy: try configuration.makePolicy(token: token), store: store, finalizer: finalizer))
-    let capacity = ProtocolConnectionCapacity(limit: 32)
+    let channels = ProtocolChannels(limit: 32)
     do {
       let server = try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -59,35 +61,78 @@ public struct SingleIdentityDataService: Service {
           host: "127.0.0.1", port: port,
           serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 8)
         ) {
-          channel -> EventLoopFuture<NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>>
-          in
-          guard capacity.acquire() else {
+          channel -> EventLoopFuture<EventLoopFuture<NegotiatedProtocol>> in
+          guard channels.register(channel) else {
             return channel.close().flatMapThrowing { throw ExecutionError.capacity }
           }
-          channel.closeFuture.whenComplete { _ in capacity.release() }
-          return channel.pipeline.configureHTTPServerPipeline(withPipeliningAssistance: false)
-            .flatMapThrowing {
-              try NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>(
-                wrappingChannelSynchronously: channel,
-                configuration: .init(backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4))
-              )
-            }.flatMapError { error in
-              channel.close().flatMapThrowing { throw error }
+          let timeout = channel.eventLoop.scheduleTask(in: .seconds(10)) {
+            channel.close(promise: nil)
+          }
+          let upgrader = NIOTypedWebSocketServerUpgrader<NegotiatedProtocol>(
+            maxFrameSize: 524_288,
+            shouldUpgrade: { channel, head in
+              let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
+              let allowed =
+                head.method == .GET
+                && ["/v1/responses", "/backend-api/codex/responses"].contains(path)
+                && configuration.upstreamTransport == "websocket"
+                && configuration.accepts(head.headers["authorization"])
+                && head.headers["sec-websocket-extensions"].isEmpty
+                && head.headers["sec-websocket-protocol"].isEmpty
+              return channel.eventLoop.makeSucceededFuture(allowed ? HTTPHeaders() : nil)
+            },
+            upgradePipelineHandler: { channel, _ in
+              channel.eventLoop.makeCompletedFuture {
+                .webSocket(try configureWebSocket(channel, client: false))
+              }
+            })
+          var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(
+            upgradeConfiguration: .init(
+              upgraders: [upgrader],
+              notUpgradingCompletionHandler: { channel in
+                channel.eventLoop.makeCompletedFuture {
+                  .http(
+                    try NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>(
+                      wrappingChannelSynchronously: channel,
+                      configuration: .init(
+                        backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4))))
+                }
+              }))
+          pipeline.enablePipelining = false
+          return channel.pipeline.configureUpgradableHTTPServerPipeline(configuration: pipeline)
+            .map { future in
+              future.whenComplete { _ in timeout.cancel() }
+              return future.flatMapError { error in
+                channel.close().flatMapThrowing { throw error }
+              }
+            }
+            .flatMapError { error in
+              timeout.cancel()
+              return channel.close().flatMapThrowing { throw error }
             }
         }
       onBound(server.channel.localAddress!.port!)
       try await cancelWhenGracefulShutdown {
         do {
-          try await server.executeThenClose { inbound in
-            try await withThrowingDiscardingTaskGroup { tasks in
-              for try await connection in inbound {
-                tasks.addTask {
-                  do { try await Self.serve(connection, executor: executor) } catch {
-                    try? await connection.channel.close().get()
+          try await withTaskCancellationHandler {
+            try await server.executeThenClose { inbound in
+              try await withThrowingDiscardingTaskGroup { tasks in
+                for try await connection in inbound {
+                  tasks.addTask {
+                    do {
+                      switch try await connection.get() {
+                      case .http(let socket): try await Self.serve(socket, executor: executor)
+                      case .webSocket(let socket):
+                        try await Self.serveWebSocket(socket, executor: executor)
+                      }
+                    } catch {}
+
                   }
                 }
               }
             }
+          } onCancel: {
+            channels.close()
           }
         } catch {
           // Closing an async listener reports its cancellation; requested shutdown is not startup failure.
@@ -95,10 +140,51 @@ public struct SingleIdentityDataService: Service {
         }
       }
     } catch {
+      await channels.shutdown()
       try await client.shutdown()
       throw error
     }
+    await channels.shutdown()
     try await client.shutdown()
+  }
+
+  private static func serveWebSocket(_ socket: ProtocolWebSocket, executor: HTTPResponseExecution)
+    async throws
+  {
+    try await WebSocketPeer.run(socket, client: false) { downstream in
+      // The serial lane is the first WS slice; named lanes are explicitly rejected until multiplexing is verified.
+      let first = try await withExecutionDeadline(seconds: 10) {
+        try webSocketCreate(await downstream.next())
+      }
+      guard executor.configuration.models.contains(where: { $0.id == first.model }) else {
+        throw GatewayProtocolError(403, "model_not_allowed")
+      }
+      try await executor.webSocket.run { upstream in
+        var request = first
+        while !Task.isCancelled {
+          let requestID = UUID().uuidString
+          do {
+            try await executor.execute(request, requestID: requestID, peer: upstream) { event in
+              try await downstream.send(event)
+            }
+          } catch {
+            try? await downstream.send(
+              .object([
+                "type": .string("error"),
+                "error": .object([
+                  "code": .string(
+                    (error as? GatewayProtocolError)?.code ?? "execution_indeterminate"),
+                  "message": .string("Gateway request failed."), "request_id": .string(requestID),
+                ]),
+              ]))
+            throw error
+          }
+          request = try await withExecutionDeadline(seconds: 60) {
+            try webSocketCreate(await downstream.next())
+          }
+        }
+      }
+    }
   }
 
   private static func serve(
@@ -222,18 +308,9 @@ public struct SingleIdentityDataService: Service {
   }
 }
 
-private final class ProtocolConnectionCapacity: Sendable {
-  private let used = Mutex(0)
-  private let limit: Int
-  init(limit: Int) { self.limit = limit }
-  func acquire() -> Bool {
-    used.withLock { value in
-      guard value < limit else { return false }
-      value += 1
-      return true
-    }
-  }
-  func release() { used.withLock { $0 -= 1 } }
+private enum NegotiatedProtocol: Sendable {
+  case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>)
+  case webSocket(ProtocolWebSocket)
 }
 
 private actor ProtocolResponseWriter {

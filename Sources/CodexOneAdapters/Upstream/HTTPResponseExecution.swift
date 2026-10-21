@@ -6,6 +6,7 @@ import NIOHTTP1
 
 struct HTTPResponseExecution: Sendable {
   let client: HTTPClient
+  let webSocket: WebSocketUpstream
   let configuration: SingleIdentityConfiguration
   let token: String?
   let report: @Sendable () -> ReadinessReport
@@ -15,6 +16,12 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    if configuration.upstreamTransport == "websocket" {
+      try await webSocket.run { peer in
+        try await execute(request, requestID: requestID, peer: peer, emit: emit)
+      }
+      return
+    }
     guard let model = configuration.models.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
@@ -104,17 +111,17 @@ struct HTTPResponseExecution: Sendable {
 }
 
 /// The client's header deadline does not cover streaming body consumption.
-func withExecutionDeadline(
+func withExecutionDeadline<Value: Sendable>(
   seconds: Int,
-  operation: @escaping @Sendable () async throws -> Void
-) async throws {
-  try await withThrowingTaskGroup(of: Void.self) { group in
+  operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
+  try await withThrowingTaskGroup(of: Value.self) { group in
     group.addTask { try await operation() }
     group.addTask {
       try await Task.sleep(for: .seconds(seconds))
       throw GatewayProtocolError(504, "execution_deadline_exceeded")
     }
     defer { group.cancelAll() }
-    try await group.next()
+    return try await group.next()!
   }
 }

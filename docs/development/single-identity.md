@@ -15,6 +15,7 @@
 | namespace / identity | 可信配置的提供者命名空间前缀与身份标识 |
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
+| upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
 | executionTimeoutSeconds | 可选 1—120 秒，默认 120；覆盖发送、响应体消费、屏障及输出，超时不重发，已有证据仍结算 |
 | upstreamTokenFile | 可选独立运行时访问凭证文件；与配置同样校验 owner/权限/类型，最多 16 KiB，不写入核心库或日志 |
@@ -32,3 +33,9 @@ python3 scripts/verify_protocol.py --binary .build/debug/codexone --web-smoke
 ```
 
 使用本机 Chrome 的独立临时上下文，构建后的 UI 连接真实临时网关管理 API，验证正常、存储失败及刷新，并将合成桌面截图放入被 Git 忽略的 `artifacts/single-identity-ui/`。这只是验证用静态服务器，不属于发行 Web 服务。
+
+## WebSocket 首个切片
+
+配置 `upstreamTransport: "websocket"`，base URL 仍用可信 HTTP(S) origin；握手路径为其 `/responses`，HTTPS 使用系统信任与主机名校验。原生下游支持两个前缀的 GET `/responses`，只允许默认串行 lane；当前拒绝 stream_id、generate:false 和未支持控制。原生连接在首个有效 create 后使用固定上游 socket；HTTP 桥接每执行新建 socket，不能由桥接成功推导 store=false 跨请求续接可用。无自动重连/重放。
+
+`verify_websocket.py` 使用 Python 标准库实现有界合成 RFC6455 客户端/上游，纳入后端统一验证；验证帧 masking/分片/ping、延迟建连、同连接续接、FIFO、桥接 JSON/SSE、EOF/断开取消、DB 屏障失败和未完成握手关闭。原生命名 lane、预热、压缩与 Desktop 验收仍需后续切片。

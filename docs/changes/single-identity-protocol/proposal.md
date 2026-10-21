@@ -20,3 +20,9 @@
 官方 WebSocket 契约区分 connection-local cache、previous_response_id 及完整/压缩 input；连接关闭不保证上游续接仍可用。缓存正文不自动等价于 Desktop 消费已有输出。需核实客户端是否存在安全的读取/恢复动作，不自行发明私有协议或自动重新执行来伪装恢复。
 
 真实 Desktop、订阅账号及反代的最终验收不能由合成测试代替。实现和无凭证验证自主推进；缺少授权或无法确认的业务边界记录在 STATUS，不虚构通过，不改动旧服务。变更不迁移旧库或旧 Key；非空 schema 变化沿用显式备份/迁移约束。
+
+## WS 实现切片
+
+先交付默认串行 lane 与 HTTP→WS JSON/SSE 桥接，再扩展命名 lane/预热/压缩。首个切片明确拒绝 stream_id 与未支持控制，不宣称完整 M2。HTTP 上游模式不开放原生 WS；配置 websocket 模式后，原生连接绑定单个上游 socket，HTTP 桥接每执行使用独立上游 socket，不保证跨 HTTP 请求的 store=false 连接缓存。连接关闭或协议错误不重连重放。
+
+握手只本地认证/容量检查，首个可解析且允许模型的 create 才连接固定上游。原始 accepted/connecting channel 在协议协商前即纳入 owner，关闭时包含未完成握手；一个 reader/一个串行 writer。帧及聚合 512 KiB，队列 4 条/1 MiB，单 producer 取得空间后才继续读取；拥塞 5 秒、首 create 10 秒、下轮空闲 60 秒、连接寿命 1 小时。WS 终态仍先观察用量、绑定再发送；终态与 EOF 同到达时排空已有事件，不以 TCP 关闭抹去证据。
