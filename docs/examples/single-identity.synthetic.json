@@ -1,0 +1,16 @@
+{
+  "principal": "synthetic-principal",
+  "keyID": "synthetic-key",
+  "keySHA256": "b3bfd45f7551ec74d71be2e4939d96e731795a984dfcf8952888e831d94aff6c",
+  "namespace": "synthetic-provider",
+  "identity": "synthetic-account",
+  "reservedMicros": 10,
+  "models": [
+    {
+      "id": "synthetic-text",
+      "inputMicrosPerMillion": 1000000,
+      "outputMicrosPerMillion": 1000000
+    }
+  ],
+  "upstreamBaseURL": "http://127.0.0.1:19090/v1"
+}

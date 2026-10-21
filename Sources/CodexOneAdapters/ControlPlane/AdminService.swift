@@ -6,16 +6,24 @@ import Vapor
 public struct AdminService: Service {
   private let group: any EventLoopGroup
   private let port: Int
-  private let report: ReadinessReport
+  private let reportProvider: @Sendable () -> ReadinessReport
   private let onBound: @Sendable (Int) -> Void
 
   public init(
     group: any EventLoopGroup, port: Int, report: ReadinessReport,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.init(group: group, port: port, reportProvider: { report }, onBound: onBound)
+  }
+
+  public init(
+    group: any EventLoopGroup, port: Int,
+    reportProvider: @escaping @Sendable () -> ReadinessReport,
+    onBound: @escaping @Sendable (Int) -> Void = { _ in }
+  ) {
     self.group = group
     self.port = port
-    self.report = report
+    self.reportProvider = reportProvider
     self.onBound = onBound
   }
 
@@ -28,15 +36,15 @@ public struct AdminService: Service {
     app.middleware = .init()
     app.middleware.use(BootstrapErrorMiddleware())
     app.routes.defaultMaxBodySize = "4kb"
-    let router = HealthRouter(report: report)
     for path in ["live", "ready"] {
       app.get("health", PathComponent(stringLiteral: path)) { _ -> Response in
-        let reply = router.reply(method: "GET", uri: "/health/\(path)")
+        let reply = HealthRouter(report: reportProvider()).reply(
+          method: "GET", uri: "/health/\(path)")
         return Self.response(reply)
       }
     }
     app.get("api", "system") { _ -> Response in
-      let body = try JSONEncoder().encode(SystemStatusResponse(report: report))
+      let body = try JSONEncoder().encode(SystemStatusResponse(report: reportProvider()))
       return Self.response(HTTPReply(status: 200, body: body))
     }
     do {

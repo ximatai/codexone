@@ -117,6 +117,7 @@ func finalizerCapacityIsReservedBeforeDispatchAndDuplicatesDoNotLeak() async thr
 }
 
 private final class HeldFailingStore: ExecutionStore, Sendable {
+  var isAvailable: Bool { base.isAvailable }
   let base: any ExecutionStore
   let entered: AsyncStream<Void>
   let enteredContinuation: AsyncStream<Void>.Continuation

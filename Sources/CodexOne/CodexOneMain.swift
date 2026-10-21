@@ -20,6 +20,7 @@ struct CodexOneMain {
       let message: String
       switch error {
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
+      case .invalidIdentityConfiguration: message = "Invalid single-identity configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
       }
@@ -38,7 +39,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY (optional absolute path). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY and CODEXONE_IDENTITY_CONFIG (optional absolute paths). Listeners are loopback-only."
       )
       return
     }
@@ -46,6 +47,12 @@ struct CodexOneMain {
       throw CommandError.unsupportedArguments
     }
     let configuration = try RuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
+    let identityConfiguration: SingleIdentityConfiguration?
+    if let path = configuration.identityConfigurationPath {
+      identityConfiguration = try await SingleIdentityConfiguration.load(path: path)
+    } else {
+      identityConfiguration = nil
+    }
     if arguments == ["--check-config"] {
       let data = try JSONSerialization.data(
         withJSONObject: [
@@ -71,17 +78,37 @@ struct CodexOneMain {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
     let report = ReadinessReport(checks: [
       .init(name: "execution_store", ready: store != nil),
-      .init(name: "upstream_accounts", ready: false),
-      .init(name: "authorization", ready: false),
+      .init(name: "upstream_accounts", ready: identityConfiguration != nil),
+      .init(name: "authorization", ready: identityConfiguration != nil),
     ])
-    var services: [any Service] = [
-      DataPlaneService(group: group, port: configuration.dataPort, report: report) {
-        announce("data", port: $0)
-      },
-      AdminService(group: group, port: configuration.adminPort, report: report) {
+    var services: [any Service] = []
+    if let identityConfiguration, let store, let finalizer {
+      services.append(
+        try SingleIdentityDataService(
+          group: group, port: configuration.dataPort,
+          configuration: identityConfiguration, store: store, finalizer: finalizer
+        ) { announce("data", port: $0) })
+    } else {
+      services.append(
+        DataPlaneService(group: group, port: configuration.dataPort, report: report) {
+          announce("data", port: $0)
+        })
+    }
+    services.append(
+      AdminService(
+        group: group, port: configuration.adminPort,
+        reportProvider: {
+          .init(checks: [
+            .init(name: "execution_store", ready: store?.isAvailable == true),
+            .init(name: "upstream_accounts", ready: identityConfiguration != nil),
+            .init(
+              name: "authorization",
+              ready: identityConfiguration != nil && finalizer?.isAccepting == true),
+          ])
+        }
+      ) {
         announce("admin", port: $0)
-      },
-    ]
+      })
     if let finalizer { services.insert(finalizer, at: 0) }
     let runtime = GatewayRuntime(services: services)
     do {

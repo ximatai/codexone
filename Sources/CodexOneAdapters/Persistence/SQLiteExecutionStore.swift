@@ -10,6 +10,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let limits: ExecutionLimits
   private let gate = Mutex((regular: 0, critical: 0, closing: false, failed: false))
 
+  public var isAvailable: Bool { gate.withLock { !$0.closing && !$0.failed } }
+
   init(connection: SQLiteConnection, limits: ExecutionLimits) {
     self.connection = connection
     self.limits = limits
@@ -310,10 +312,11 @@ private func validateStrings(_ values: [String]) throws {
   }
 }
 private func validate(_ value: ExecutionAdmission) throws {
-  try validateStrings([
-    value.attempt, value.owner.principal, value.owner.key, value.owner.namespace,
-    value.owner.identity, value.window, value.policyVersion, value.pricingVersion,
-  ])
+  try validateStrings(
+    [
+      value.attempt, value.owner.principal, value.owner.key, value.owner.namespace,
+      value.owner.identity, value.window, value.policyVersion, value.pricingVersion,
+    ] + (value.requestID.map { [$0] } ?? []))
   guard (0...1_000_000_000_000).contains(value.reservedMicros) else {
     throw ExecutionError.invalidCommand
   }

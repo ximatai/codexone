@@ -27,9 +27,10 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let pricingVersion: String
   /// Operational estimate, not a worst-case bound or subscription balance.
   public let reservedMicros: Int64
+  public let requestID: String?
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
-    pricingVersion: String, reservedMicros: Int64
+    pricingVersion: String, reservedMicros: Int64, requestID: String? = nil
   ) {
     self.attempt = attempt
     self.owner = owner
@@ -37,6 +38,7 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
     self.policyVersion = policyVersion
     self.pricingVersion = pricingVersion
     self.reservedMicros = reservedMicros
+    self.requestID = requestID
   }
 }
 
@@ -105,6 +107,7 @@ public struct ObjectBinding: Sendable, Equatable, Codable {
 
 /// Business commands are each one local transaction. No network call may occur inside them.
 public protocol ExecutionStore: Sendable {
+  var isAvailable: Bool { get }
   func admit(_ command: ExecutionAdmission) async throws
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
@@ -124,6 +127,7 @@ public struct Finalization: Sendable {
 
 /// Reservation happens synchronously before entering an actor mailbox or creating work.
 public protocol FinalizationSink: Sendable {
+  var isAccepting: Bool { get }
   func reserve() throws -> UUID
   func canExecute(_ ticket: UUID) -> Bool
   func abandon(_ ticket: UUID)
