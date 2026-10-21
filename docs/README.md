@@ -6,6 +6,7 @@
 | [规范](specs/README.md) | 必须实现和验收的行为 |
 | [架构](architecture/ARCHITECTURE.md) | 模块、状态机、数据流及恢复设计 |
 | [意见汇总](architecture/ARCHITECTURE-SYNTHESIS.md) | 独立设计/评审与最终取舍 |
+| [中长期架构与目录审查](reviews/2026-10-21-architecture-and-layout.md) | 独立建议，尚未实施，不替代当前规范 |
 | [ADR](decisions/README.md) | 已接受的长期决策 |
 | [路线](plans/roadmap.md) | 按验收闭环推进的里程碑 |
 | [开发目录](development/layout.md) | 文件位置、依赖方向 |
