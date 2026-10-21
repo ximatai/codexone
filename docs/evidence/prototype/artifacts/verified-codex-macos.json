@@ -1,0 +1,279 @@
+{
+  "date": "2026-10-21",
+  "scope": "local real Codex CLI and direct real upstream; no Ali changes",
+  "client": "codex-cli 0.163.0",
+  "model": "gpt-6.1-sol",
+  "runtime": {
+    "system": "Darwin",
+    "machine": "arm64"
+  },
+  "runs": {
+    "http": {
+      "scope": "live Codex and real upstream",
+      "runtime": {
+        "system": "Darwin",
+        "machine": "arm64"
+      },
+      "tests": [
+        {
+          "name": "real CLI basic response",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI persisted session resume",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI shell call and tool-output roundtrip",
+          "status": "passed"
+        }
+      ],
+      "client": "codex-cli 0.163.0",
+      "transport": "http",
+      "model": "gpt-6.1-sol",
+      "evidence": {
+        "gateway_transfers": [
+          {
+            "maxQueuedBytes": 0,
+            "terminalTransitions": 1,
+            "downstreamBytes": 88022,
+            "kind": "responses-http",
+            "phase": "completed",
+            "downstreamClosed": true,
+            "upstreamBytes": 88022
+          },
+          {
+            "maxQueuedBytes": 0,
+            "terminalTransitions": 1,
+            "downstreamBytes": 89100,
+            "kind": "responses-http",
+            "phase": "completed",
+            "downstreamClosed": true,
+            "upstreamBytes": 89100
+          },
+          {
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamBytes": 96590,
+            "downstreamClosed": true,
+            "maxQueuedBytes": 0,
+            "upstreamBytes": 96590,
+            "terminalTransitions": 1
+          },
+          {
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamBytes": 87582,
+            "downstreamClosed": true,
+            "maxQueuedBytes": 0,
+            "upstreamBytes": 87582,
+            "terminalTransitions": 1
+          }
+        ]
+      },
+      "status": "passed"
+    },
+    "websocket": {
+      "scope": "live Codex and real upstream",
+      "runtime": {
+        "system": "Darwin",
+        "machine": "arm64"
+      },
+      "tests": [
+        {
+          "name": "real CLI basic response",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI persisted session resume",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI shell call and tool-output roundtrip",
+          "status": "passed"
+        }
+      ],
+      "client": "codex-cli 0.163.0",
+      "transport": "websocket",
+      "model": "gpt-6.1-sol",
+      "evidence": {
+        "gateway_transfers": [
+          {
+            "terminalTransitions": 1,
+            "downstreamBytes": 170961,
+            "maxQueuedBytes": 48541,
+            "kind": "responses-websocket",
+            "upstreamBytes": 170961,
+            "downstreamClosed": false,
+            "phase": "closed"
+          },
+          {
+            "phase": "closed",
+            "terminalTransitions": 1,
+            "maxQueuedBytes": 48541,
+            "kind": "responses-websocket",
+            "downstreamBytes": 268692,
+            "downstreamClosed": false,
+            "upstreamBytes": 268692
+          },
+          {
+            "kind": "responses-websocket",
+            "downstreamBytes": 170510,
+            "downstreamClosed": false,
+            "upstreamBytes": 170510,
+            "maxQueuedBytes": 48533,
+            "terminalTransitions": 1,
+            "phase": "closed"
+          }
+        ]
+      },
+      "status": "passed"
+    },
+    "v2_auto_compaction": {
+      "scope": "live Codex and real upstream",
+      "runtime": {
+        "system": "Darwin",
+        "machine": "arm64"
+      },
+      "tests": [
+        {
+          "name": "real CLI basic response",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI persisted session resume",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI shell call and tool-output roundtrip",
+          "status": "passed"
+        },
+        {
+          "name": "real CLI long input",
+          "status": "passed",
+          "prompt_bytes": 131214
+        },
+        {
+          "name": "real CLI remote V2 auto-compaction and continuation",
+          "status": "passed",
+          "compaction_record_kinds": {
+            "compacted:": 1
+          }
+        }
+      ],
+      "client": "codex-cli 0.163.0",
+      "transport": "http",
+      "model": "gpt-6.1-sol",
+      "evidence": {
+        "gateway_transfers": [
+          {
+            "upstreamBytes": 87737,
+            "terminalTransitions": 1,
+            "maxQueuedBytes": 0,
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamClosed": true,
+            "downstreamBytes": 87737
+          },
+          {
+            "upstreamBytes": 88247,
+            "terminalTransitions": 1,
+            "maxQueuedBytes": 0,
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamClosed": true,
+            "downstreamBytes": 88247
+          },
+          {
+            "upstreamBytes": 88276,
+            "terminalTransitions": 1,
+            "maxQueuedBytes": 0,
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamClosed": true,
+            "downstreamBytes": 88276
+          },
+          {
+            "upstreamBytes": 100273,
+            "terminalTransitions": 1,
+            "maxQueuedBytes": 0,
+            "phase": "completed",
+            "kind": "responses-http",
+            "downstreamClosed": true,
+            "downstreamBytes": 100273
+          },
+          {
+            "phase": "completed",
+            "terminalTransitions": 1,
+            "downstreamBytes": 87923,
+            "upstreamBytes": 87923,
+            "maxQueuedBytes": 0,
+            "kind": "responses-http",
+            "downstreamClosed": true
+          },
+          {
+            "phase": "completed",
+            "terminalTransitions": 1,
+            "downstreamBytes": 89263,
+            "upstreamBytes": 89263,
+            "maxQueuedBytes": 0,
+            "kind": "responses-http",
+            "downstreamClosed": true
+          },
+          {
+            "phase": "completed",
+            "terminalTransitions": 1,
+            "downstreamBytes": 95962,
+            "upstreamBytes": 95962,
+            "maxQueuedBytes": 0,
+            "kind": "responses-http",
+            "downstreamClosed": true
+          }
+        ]
+      },
+      "status": "passed"
+    },
+    "image_and_legacy_compact_diagnostic": {
+      "scope": "live Codex and real upstream",
+      "runtime": {
+        "system": "Darwin",
+        "machine": "arm64"
+      },
+      "tests": [
+        {
+          "name": "real CLI generated PNG",
+          "status": "passed",
+          "image_bytes": 1190878,
+          "item_types": [
+            "",
+            "agent_message",
+            "command_execution"
+          ]
+        },
+        {
+          "name": "native Images request traversed Swift relay",
+          "status": "passed"
+        }
+      ],
+      "client": "codex-cli 0.163.0",
+      "transport": "http",
+      "model": "gpt-6.1-sol",
+      "status": "failed",
+      "error": "AssertionError: real compact endpoint returned 404"
+    }
+  },
+  "generated_png": {
+    "bytes": 1190878,
+    "sha256": "72b5eb202fdefe69efd108750ff377ef67e4e4bb978358a2f5ae44527aeb23f8",
+    "dimensions": [
+      1254,
+      1254
+    ]
+  },
+  "notes": [
+    "Image diagnostic verified a PNG and a completed native Images upstream request before the subsequent legacy compact probe returned 404. The diagnostic failure is retained.",
+    "CLI image extension requires a compatible provider declaration. CLI JSON did not emit an image-specific item, so evidence combines a real PNG with Images endpoint telemetry.",
+    "Remote V2 capability was explicitly configured; one persisted compacted record and marker-preserving continuation were observed.",
+    "Two ports, bounded laboratory payload sizes; no production account pool, retry strategy, token refresh or metering."
+  ]
+}

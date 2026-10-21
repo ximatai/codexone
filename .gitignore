@@ -1,0 +1,28 @@
+# Secrets and local state
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+*.p12
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+# Tool/build outputs
+.build/
+.swiftpm/
+node_modules/
+web/dist/
+coverage/
+artifacts/
+!docs/evidence/prototype/artifacts/
+.DS_Store
+*.log
+.tmp/

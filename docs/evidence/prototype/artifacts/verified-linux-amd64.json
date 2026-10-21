@@ -1,0 +1,168 @@
+{
+  "tests": [
+    {
+      "name": "SSE incremental UTF-8 and unknown fields",
+      "status": "passed",
+      "seconds": 0.505,
+      "detail": {
+        "events": 30,
+        "first_byte_ms": 3.1
+      }
+    },
+    {
+      "name": "Upstream error transparency",
+      "status": "passed",
+      "seconds": 0.002,
+      "detail": "429, Retry-After and error body preserved"
+    },
+    {
+      "name": "Multipart binary preservation",
+      "status": "passed",
+      "seconds": 0.019,
+      "detail": {
+        "bytes": 2097307,
+        "mode": "bounded-buffer, not streaming multipart"
+      }
+    },
+    {
+      "name": "Image JSON envelope preservation",
+      "status": "passed",
+      "seconds": 0.002,
+      "detail": "Synthetic image envelope only; no image generated"
+    },
+    {
+      "name": "WebSocket ordering, preconnect queue and binary",
+      "status": "passed",
+      "seconds": 0.018,
+      "detail": {
+        "ordered_text_messages": 100,
+        "binary_bytes": 524288,
+        "telemetry": {
+          "upstreamBytes": 524878,
+          "phase": "closed",
+          "maxQueuedBytes": 524288,
+          "terminalTransitions": 1,
+          "kind": "websocket",
+          "downstreamBytes": 524878,
+          "downstreamClosed": false
+        }
+      }
+    },
+    {
+      "name": "Fragmented WebSocket aggregate limit",
+      "status": "passed",
+      "seconds": 0.011,
+      "detail": {
+        "frame_bytes": 65536,
+        "aggregate_attempt_bytes": 2228224,
+        "telemetry": {
+          "upstreamBytes": 0,
+          "phase": "closed",
+          "maxQueuedBytes": 0,
+          "terminalTransitions": 1,
+          "kind": "websocket",
+          "downstreamBytes": 0,
+          "downstreamClosed": false
+        }
+      }
+    },
+    {
+      "name": "Upstream WebSocket close propagates",
+      "status": "passed",
+      "seconds": 0.003,
+      "detail": {
+        "upstreamBytes": 0,
+        "phase": "closed",
+        "maxQueuedBytes": 14,
+        "terminalTransitions": 1,
+        "kind": "websocket",
+        "downstreamBytes": 0,
+        "downstreamClosed": false
+      }
+    },
+    {
+      "name": "Active SSE client disconnect cleanup",
+      "status": "passed",
+      "seconds": 0.053,
+      "detail": {
+        "maxQueuedBytes": 0,
+        "downstreamBytes": 25,
+        "terminalTransitions": 1,
+        "downstreamClosed": true,
+        "upstreamBytes": 25,
+        "kind": "nio-http",
+        "phase": "cancelled-or-failed"
+      }
+    },
+    {
+      "name": "Quiet upstream client disconnect cleanup under 2s",
+      "status": "passed",
+      "seconds": 0.052,
+      "detail": {
+        "cleanup_ms": 51.12,
+        "telemetry": {
+          "terminalTransitions": 1,
+          "maxQueuedBytes": 0,
+          "downstreamBytes": 22,
+          "downstreamClosed": true,
+          "upstreamBytes": 22,
+          "kind": "nio-http",
+          "phase": "cancelled-or-failed"
+        }
+      }
+    },
+    {
+      "name": "Disconnect before upstream response headers",
+      "status": "passed",
+      "seconds": 0.052,
+      "detail": {
+        "cleanup_ms": 1.31,
+        "telemetry": {
+          "terminalTransitions": 1,
+          "maxQueuedBytes": 0,
+          "downstreamBytes": 0,
+          "downstreamClosed": true,
+          "upstreamBytes": 0,
+          "kind": "nio-http",
+          "phase": "cancelled-or-failed"
+        }
+      }
+    },
+    {
+      "name": "Slow HTTP reader bounds buffering",
+      "status": "passed",
+      "seconds": 1.012,
+      "detail": {
+        "rss_baseline_kib": 41440,
+        "rss_sample_kib": 41448,
+        "gateway_upstream_bytes_before_cancel": 2910750,
+        "offered_bytes": 268435456
+      }
+    },
+    {
+      "name": "50 concurrent streams finalize once",
+      "status": "passed",
+      "seconds": 0.166,
+      "detail": {
+        "simultaneous_streams": 50
+      }
+    },
+    {
+      "name": "HTTPS and WSS through HTTP CONNECT",
+      "status": "passed",
+      "seconds": 0.122,
+      "detail": {
+        "connect_tunnels": 2,
+        "tls_verification": "explicit local CA, verification enabled"
+      }
+    }
+  ],
+  "passed": 13,
+  "failed": 0,
+  "scope": "local fixtures; no production, paid API or real billing",
+  "runtime": {
+    "system": "Linux",
+    "machine": "x86_64"
+  },
+  "http_transport": "nio"
+}
