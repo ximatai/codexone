@@ -131,3 +131,9 @@ macOS arm64/Swift 6.4 完整后端 38 个 Swift 测试与全部脚本通过；�
 实际 CLI 0.163.0 在三个 transport 上均以测试阈值 1 完成工具、一次 v2 compact 及下一生成输入的 opaque 回传；compact 与 generation 分开持久记录，所有可信用量 settled。原生 WS 共用一个上游连接且有一次预热；HTTP 桥接三次操作使用三个连接，排除回退误判。标准三传输及 HTTP retry/缺 profile 五组复验保持。fixture 给预热/压缩明确完整零计数，仅为合成证据，不代表真实免费。指导与 opaque 原文不进入核心库。
 
 范围：实际 CLI 的 v2 压缩/续接已验，未操作 Desktop、真实订阅、生产反代或恢复读取。此切片待提交后 review 与同快照 Linux 验证。
+
+### v2 提交后 review 修复
+
+8d3f5f8 的 Linux amd64/Swift 6.4 本地模拟容器完整后端退出 0（38 个 Swift 测试及全部脚本，单并发、2 CPU/2500 MiB）。独立 reviewer 运行 v2 合成脚本及三传输实际 CLI 压缩均通过，但实际 socket 故障复现 P2：added/done 的 output_index=7 与终态唯一项实际位置 0 不一致仍被接受。
+
+主 Agent 亲自按保存索引检查终态数组范围及对应项，再核对完整指纹/ID；HTTP/SSE（HTTP 和 WS 上游）及原生下游 WS 增加错位回归，拒绝 invalid_upstream_compaction 且可信终态用量仍结算。macOS 完整后端 38 个 Swift 测试及全部脚本通过；最终按索引取值整理后重新构建，v2 合成脚本及三传输实际 CLI 压缩均通过。修复待提交后复审与同快照 Linux 验证，不扩大 Desktop 或恢复验收结论。

@@ -30,11 +30,12 @@ struct StreamCompaction {
         throw GatewayProtocolError(502, "invalid_upstream_compaction")
       }
       let items = output.filter { $0["type"]?.string == "compaction" }
-      guard items.count == 1, completed != nil,
-        objectID == nil || items[0]["id"]?.string == objectID
+      guard items.count == 1, completed != nil, let index,
+        output.indices.contains(Int(index)), output[Int(index)]["type"]?.string == "compaction"
       else { throw GatewayProtocolError(502, "invalid_upstream_compaction") }
-      let final = try fingerprint(items[0])
-      guard completed == final else {
+      let item = output[Int(index)]
+      let final = try fingerprint(item)
+      guard completed == final, objectID == nil || item["id"]?.string == objectID else {
         throw GatewayProtocolError(502, "invalid_upstream_compaction")
       }
     }

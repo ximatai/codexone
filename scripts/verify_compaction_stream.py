@@ -57,6 +57,10 @@ class Provider(BaseHTTPRequestHandler):
                                    'name': 'local_tool', 'arguments': '{}'}]
         if 'partial-eof' not in serialized:
             events.append({'type': 'response.completed', 'response': response})
+        if 'wrong-position' in serialized:
+            for event in events:
+                if event.get('item', {}).get('type') == 'compaction':
+                    event['output_index'] = 7
         return events
 
     def do_POST(self):
@@ -146,7 +150,7 @@ def main():
                     status, body = connect(ports['data'], 'POST', '/v1/responses', request())
                     assert status == 200 and b'response.completed' in body and b'[DONE]' in body
                     latest(db_path, 'settled')
-                    for fault in ('duplicate-window', 'mismatched-window', 'missing-window', 'missing-done', 'new-tool'):
+                    for fault in ('duplicate-window', 'mismatched-window', 'missing-window', 'missing-done', 'wrong-position', 'new-tool'):
                         value = request(fault)
                         value['tools'] = [{'type': 'function', 'name': 'local_tool'}]
                         status, body = connect(ports['data'], 'POST', '/v1/responses', value)
@@ -188,6 +192,10 @@ def main():
                     forged = {'model': 'synthetic-text', 'input': [{'type': 'compaction', 'encrypted_content': 'synthetic-v2-forged'}]}
                     assert connect(ports['data'], 'POST', '/v1/responses', forged)[0] == 400 and provider.calls == count
                     if transport == 'websocket':
+                        with dial(ports['data']) as downstream:
+                            events = turn(downstream, request('wrong-position'))
+                            assert events[-1]['type'] == 'error' and events[-1]['error']['code'] == 'invalid_upstream_compaction'
+                        assert latest(db_path, 'settled')['inputTokens'] == 5
                         with dial(ports['data'], extension_offer=True) as downstream:
                             events = turn(downstream, request())
                             assert events[-1]['type'] == 'response.completed'

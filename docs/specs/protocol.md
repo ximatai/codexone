@@ -89,6 +89,6 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 
 普通 /responses 的输入可含单个末尾 `{"type":"compaction_trigger"}`；该控制无 ID/状态/附加 payload，不与 generate:false 或独立 /responses/compact 混用。它使用 compact 执行模式与相同授权/准入/用量/归属屏障，传输仍走普通 HTTP JSON/SSE、桥接或原生 WS，不改路由为独立压缩端点。
 
-对应输出允许 compaction 项无对象 ID，以非空 encrypted_content 的类型指纹先持久绑定，再暴露完整内容。仅 output_item.added 阶段允许缺失/空的未完成内容；done 必须完整。流式成功必须恰好一个 compaction done，与终态窗口中唯一 compaction 的内容/已提供 ID 一致，output_index 关联有界；JSON 成功窗口同样只接受一个完整项。不得在压缩中创建新的客户端工具调用；未支持对象及不一致窗口明确失败，已经观察到的可信用量继续结算。终态缺失保持 unknown，不把 added 或 done 当作执行完成。
+对应输出允许 compaction 项无对象 ID，以非空 encrypted_content 的类型指纹先持久绑定，再暴露完整内容。仅 output_item.added 阶段允许缺失/空的未完成内容；done 必须完整。流式成功必须恰好一个 compaction done，与终态窗口中唯一 compaction 的内容/已提供 ID 一致，output_index 关联有界且必须对应终态 output 数组中该项的实际位置；JSON 成功窗口同样只接受一个完整项。不得在压缩中创建新的客户端工具调用；未支持对象及不一致窗口明确失败，已经观察到的可信用量继续结算。终态缺失保持 unknown，不把 added 或 done 当作执行完成。
 
 普通 Responses 的压缩响应 ID 属于该执行的 response，可按归属用作 previous_response_id；它与独立 compact 返回的 compaction 操作 ID 不同。客户端自行重建后续窗口，完整加密上下文按 P15/I11 验证；网关不自动补正文或重放执行。[CLI 0.163.0 实现依据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/compact_remote_v2.rs)
