@@ -70,8 +70,8 @@ M2 v2 压缩切片：支持普通 Responses 上的末尾 compaction_trigger，�
 
 M2 保留 Desktop 界面验收与恢复契约两项缺口，不标完成。2026-10-22 用户明确允许先推进不依赖它们的 M3；Computer Use 禁止控制 com.openai.codex 的限制不绕过，CLI 证据不替代 UI。恢复缓存仍须实际可使用的读取契约。
 
-M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 Linux 完整验证（45 个 Swift 测试及全部脚本，单并发、2 CPU/2500 MiB 本地模拟容器）。同一受控上游上的 Key 创建/轮换/禁用/模型范围/本地限额、HTTP/WS 当前权限与事务复核已实现；轮换不重置标识/计数。主 Agent 根据 review 提醒进一步为撤销预留审计：普通 4096 条、总 4352 条，预留仅用于实际禁用，保证全部 256 个现存 Key 仍可撤销。此改进 macOS 完整后端 46 测试及全部脚本通过，待提交后复审与 Linux 复验。
+M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 Linux 完整验证（45 个 Swift 测试及全部脚本，单并发、2 CPU/2500 MiB 本地模拟容器）。同一受控上游上的 Key 创建/轮换/禁用/模型范围/本地限额、HTTP/WS 当前权限与事务复核已实现；轮换不重置标识/计数。主 Agent 根据 review 提醒进一步为撤销预留审计：普通 4096 条、总 4352 条，预留仅用于实际禁用，保证全部 256 个现存 Key 仍可撤销。改进 9e78921 已复审，macOS 与同提交 Linux 完整后端 46 测试及全部脚本均通过。
 
-最小本机管理 API 已独立认证；NIO 有界管理入口把完整请求交 Vapor 路由。现有概览经真实 Chrome/API 正常/失败/刷新验证并查看两张桌面截图，不当作 Key 业务 UI。配置见[托管 Key](docs/development/key-governance.md)，证据见[Key 治理](docs/changes/key-governance/verification.md)。下一切片为浏览器管理 session/CSRF 与 Key 界面，随后继续账号接入/加密凭证/刷新、调度和额度；M3 整体未完成，无真实账号调用。
+最小本机管理 API 已独立认证；NIO 有界管理入口把完整请求交 Vapor 路由。现有概览经真实 Chrome/API 正常/失败/刷新验证并查看两张桌面截图，不当作 Key 业务 UI。配置见[托管 Key](docs/development/key-governance.md)，证据见[Key 治理](docs/changes/key-governance/verification.md)。正在推进[浏览器管理 session/CSRF 与 Key 界面](docs/changes/key-management-ui/proposal.md)，随后继续账号接入/加密凭证/刷新、调度和额度；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、浏览器管理会话/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
