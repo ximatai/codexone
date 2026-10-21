@@ -128,7 +128,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     let policy = digest(
       try encoder.encode(
         JSONValue.object([
-          "protocolVersion": .string("m2-catalog-2"),
+          "protocolVersion": .string("m2-ws-offer-1"),
           "principal": .string(principal), "namespace": .string(namespace), "scope": .string(scope),
           "identity": .string(identity),
           "models": .array(models.map(\.id).sorted().map { .string($0) }),

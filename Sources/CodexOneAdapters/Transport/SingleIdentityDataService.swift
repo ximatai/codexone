@@ -77,8 +77,8 @@ public struct SingleIdentityDataService: Service {
                 && ["/v1/responses", "/backend-api/codex/responses"].contains(path)
                 && configuration.upstreamTransport == "websocket"
                 && configuration.accepts(head.headers["authorization"])
-                && head.headers["sec-websocket-extensions"].isEmpty
                 && head.headers["sec-websocket-protocol"].isEmpty
+              // Decline extension offers by omitting negotiation headers; RSV remains forbidden.
               return channel.eventLoop.makeSucceededFuture(allowed ? HTTPHeaders() : nil)
             },
             upgradePipelineHandler: { channel, _ in

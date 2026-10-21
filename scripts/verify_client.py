@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Optional actual Codex CLI smoke through the gateway using private temp state and synthetic I/O."""
 import argparse
+import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -12,6 +13,7 @@ import subprocess
 import tempfile
 import threading
 from verify_protocol import TOKEN, start, stop, latest
+from verify_websocket import receive, send
 
 GUIDANCE = 'Synthetic fixture coding guidance: follow the user request and execute only the requested local test command.'
 
@@ -26,11 +28,70 @@ class Provider(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', '0'))
         assert 0 <= length <= 524288
         document = json.loads(self.rfile.read(length))
-        assert self.path == '/v1/responses' and document['model'] == 'synthetic-text'
+        assert self.path == '/v1/responses'
         assert self.headers.get('Authorization') is None
+        events = self.response_events(document)
+        body = ''.join('data: ' + json.dumps(event) + '\n\n' for event in events).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        assert self.path == '/v1/responses' and self.headers.get('Authorization') is None
+        assert self.headers.get('Upgrade', '').lower() == 'websocket'
+        key = self.headers['Sec-WebSocket-Key']
+        accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+        self.send_response(101)
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', accept)
+        self.end_headers()
+        self.close_connection = True
+        self.connection.settimeout(10)
+        with self.server.guard:
+            self.server.connections += 1
+        try:
+            while True:
+                opcode, data = receive(self.connection, masked=True)
+                if opcode == 8:
+                    return
+                if opcode == 9:
+                    send(self.connection, data, opcode=10)
+                    continue
+                assert opcode == 1
+                document = json.loads(data)
+                assert document['type'] == 'response.create'
+                for event in self.response_events(document):
+                    send(self.connection, event)
+                if self.server.retry_probe and self.server.calls == 1:
+                    return
+        except (EOFError, ConnectionError, TimeoutError):
+            return
+
+    def response_events(self, document):
+        assert document['model'] == 'synthetic-text'
         has_guidance = any(item.get('role') == 'developer' and GUIDANCE in json.dumps(item.get('content'))
                            for item in document.get('input', []))
+        contexts = getattr(self, 'contexts', {})
+        if document.get('previous_response_id') in contexts:
+            has_guidance = has_guidance or contexts[document['previous_response_id']]
         assert has_guidance == self.server.profile_supplied, 'Configured authoritative model guidance was not adopted'
+        with self.server.guard:
+            self.server.predecessors.append(document.get('previous_response_id'))
+        if document.get('generate') is False:
+            with self.server.guard:
+                self.server.warmups += 1
+                warmup = self.server.warmups
+            assert warmup <= 1, 'Unexpected repeated client prewarm'
+            response = {'id': f'resp_synthetic_cli_warmup_{warmup}', 'object': 'response',
+                        'model': 'synthetic-text', 'status': 'in_progress', 'output': [], 'usage': None}
+            contexts[response['id']] = has_guidance
+            self.contexts = contexts
+            return [{'type': 'response.created', 'response': response}, {'type': 'response.completed', 'response': {
+                **response, 'status': 'completed', 'usage': {'input_tokens': 0, 'output_tokens': 0,
+                'total_tokens': 0, 'input_tokens_details': {'cached_tokens': 0}}}}]
         with self.server.guard:
             self.server.calls += 1
             index = self.server.calls
@@ -44,7 +105,8 @@ class Provider(BaseHTTPRequestHandler):
             results = [item for item in document['input'] if item.get('type') == 'function_call_output']
             if not retry_probe:
                 assert any(item['call_id'] == 'call_synthetic_cli' and 'synthetic-tool-success' in item['output'] for item in results)
-                assert any(item.get('type') == 'reasoning' and item.get('encrypted_content') == 'synthetic-cli-reasoning-cipher' for item in document['input'])
+                assert (any(item.get('type') == 'reasoning' and item.get('encrypted_content') == 'synthetic-cli-reasoning-cipher' for item in document['input'])
+                        or document.get('previous_response_id') == 'resp_synthetic_cli_1')
             item = {'type': 'message', 'id': 'msg_synthetic_cli', 'role': 'assistant', 'phase': 'final_answer',
                     'status': 'completed', 'content': [{'type': 'output_text', 'text': 'synthetic client acceptance', 'annotations': []}]}
         items = [item]
@@ -59,12 +121,9 @@ class Provider(BaseHTTPRequestHandler):
         if retry_probe and index == 1:
             # A response ID was exposed; the provider then closes without a terminal or usage.
             events = events[:1]
-        body = ''.join('data: ' + json.dumps(event) + '\n\n' for event in events).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        contexts[response['id']] = has_guidance
+        self.contexts = contexts
+        return events
 
 
 def main():
@@ -73,7 +132,10 @@ def main():
     parser.add_argument('--codex', default='codex')
     parser.add_argument('--retry-probe', action='store_true', help='Show that a client reconnect creates a new execution after EOF')
     parser.add_argument('--without-profile', action='store_true', help='Verify that directory failure can still cause client fallback')
+    parser.add_argument('--transport', choices=('http', 'bridge', 'websocket'), default='http')
     args = parser.parse_args()
+    if args.transport != 'http' and (args.retry_probe or args.without_profile):
+        parser.error('--retry-probe and --without-profile currently cover HTTP only')
     codex = shutil.which(args.codex)
     assert codex is not None, 'Codex CLI is required for this optional check'
     version = subprocess.check_output([codex, '--version'], text=True, timeout=10).strip()
@@ -81,6 +143,9 @@ def main():
     server.daemon_threads = True
     server.guard = threading.Lock()
     server.calls = 0
+    server.connections = 0
+    server.warmups = 0
+    server.predecessors = []
     server.retry_probe = args.retry_probe
     server.profile_supplied = not args.without_profile
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -95,6 +160,10 @@ def main():
                 'models': [{'id': 'synthetic-text', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000,
                             'catalog': {'baseInstructions': GUIDANCE} if server.profile_supplied else None}],
                 'upstreamBaseURL': f'http://127.0.0.1:{server.server_port}/v1'}))
+            if args.transport != 'http':
+                value = json.loads(configuration.read_text())
+                value['upstreamTransport'] = 'websocket'
+                configuration.write_text(json.dumps(value))
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, root)
             try:
@@ -114,6 +183,7 @@ model_catalog_url = "http://127.0.0.1:{ports['data']}/v1/models"
 wire_api = "responses"
 env_key = "CODEXONE_SYNTHETIC_CLIENT_KEY"
 requires_openai_auth = false
+supports_websockets = {'true' if args.transport == 'websocket' else 'false'}
 stream_max_retries = 1
 request_max_retries = 0
 ''')
@@ -131,6 +201,8 @@ request_max_retries = 0
                 latest(root / 'state/core.sqlite', 'settled')
                 with sqlite3.connect(root / 'state/core.sqlite') as db:
                     rows = db.execute('SELECT state,usage_json FROM attempts ORDER BY rowid').fetchall()
+                    modes = [json.loads(row[0]).get('mode', 'generation') for row in db.execute('SELECT admission_json FROM attempts ORDER BY rowid')]
+                assert modes.count('warmup') == server.warmups and modes.count('generation') == 2
                 for file in (root / 'state').glob('core.sqlite*'):
                     assert GUIDANCE.encode() not in file.read_bytes(), 'Model guidance leaked into core storage'
                 if args.retry_probe:
@@ -138,12 +210,15 @@ request_max_retries = 0
                     assert b'Reconnecting' in result.stdout
                     print(f'PASS: {version} reconnect after exposed response ID/EOF creates a second execution; first remains unknown, second settled; no output-recovery claim')
                 else:
-                    assert len(rows) == 2 and all(state == 'settled' for state, _ in rows)
-                    assert all(json.loads(usage)['inputTokens'] == 5 for _, usage in rows)
+                    assert len(rows) == 2 + server.warmups and all(state == 'settled' for state, _ in rows)
+                    assert sum(json.loads(usage)['inputTokens'] for _, usage in rows) == 10
+                    assert server.connections == {'http': 0, 'bridge': 2, 'websocket': 1}[args.transport], {'error': 'Unexpected transport fallback or socket reuse', 'connections': server.connections, 'warmups': server.warmups}
+                    if args.transport == 'websocket':
+                        assert server.warmups == 1 and server.predecessors == [None, 'resp_synthetic_cli_warmup_1', 'resp_synthetic_cli_1'], 'Expected same-socket prewarm and incremental continuation'
                     if args.without_profile:
                         print(f'PASS: {version} unavailable Codex catalog can cause client fallback and generation; explicitly not accepted as model catalog compatibility')
                     else:
-                        print(f'PASS: {version} explicit authoritative model guidance adopted without fallback; actual text/client function/result loop; two durable settlements; private temporary client state')
+                        print(f'PASS: {version} {args.transport}; explicit model guidance adopted; text/client function/result loop; {server.warmups} warmups; durable settlements; private temporary state')
             finally:
                 stop(process)
     finally:

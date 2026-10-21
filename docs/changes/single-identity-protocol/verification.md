@@ -105,3 +105,13 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 3bb73ea 的 Linux amd64 完整后端验证已退出 0（38 个 Swift 测试及全部脚本），不包含本次 P1 修复，不能据此关闭该问题。
 
 b3ad1f1 复审通过，原 P1 闭环；reviewer 独立运行三个实际 CLI 模式、目录 Swift 定向测试、九组 HTTP/SSE 检查均通过，无新增阻塞问题。同提交 Linux amd64/Swift 6.4 单并发完整后端验证退出 0，38 个 Swift 测试及全部进程/执行/HTTP/WS/context 脚本通过（2 CPU/2500 MiB，本地模拟容器）。未运行远程 CI、未操作 Desktop、未访问真实上游；不是弱服务器容量验收。独立桌面测试临时目录已清理，未改个人客户端配置。
+
+## 实际 CLI 的三种传输与扩展提议
+
+2026-10-22：新增 `verify_client.py --transport http|bridge|websocket`。先前只检查 CLI 最终回答无法区分回退；本次未修复时，开启客户端 WS 仍观测到两个上游连接，CLI debug 明确记录 Handshake not finished 后 falling back to HTTP。独立临时 loopback 观察只统计握手方法/认证匹配布尔/扩展存在，不打印认证头或正文，定位为 CLI 提供可选压缩扩展、网关拒绝任何提议导致失败。
+
+主 Agent 改为忽略提议且不协商扩展，RSV guard 保持；新增真实 socket 验证 offer 可握手但无 extensions 响应头，RSV1 帧关闭且无上游连接/attempt，带 offer 的正常分片/ping/续接及既有故障继续通过。协议策略版本相应更新，无 schema 变化。
+
+macOS arm64/Swift 6.4 完整后端（38 个 Swift 测试与全部脚本）通过。实际 CLI 0.163.0 的 HTTP 直连、HTTP→WS 桥接均完成工具往返（上游 WS 分别 0/2 个）；原生 WS 使用一个上游 socket，generate:false 一次、generation 两次，previous_response_id 严格依次指向预热响应和首个函数调用响应。所配指导被采用，两个生成与可信零用量预热均持久 settled；预热零值只来自此合成上游明确证据，不推广为真实免费。fixture 的上下文记录有界，明确检查原生路径未落入两个桥接连接；HTTP 故障 probe 与缺 profile 模式仍独立限定为 HTTP。
+
+范围：这是实际 CLI 及合成上游的传输/工具/正常续接证据，仍不是 Desktop UI、真实订阅、实际 CLI compact 或断线输出读取验收。此次切片待提交后独立 review、Linux 快照复验。

@@ -26,10 +26,10 @@ def exact(sock, size):
     return bytes(data)
 
 
-def send(sock, value, *, masked=False, opcode=1, fin=True):
+def send(sock, value, *, masked=False, opcode=1, fin=True, rsv1=False):
     data = json.dumps(value).encode() if not isinstance(value, bytes) else value
     assert len(data) <= 524288
-    header = bytes([(128 if fin else 0) | opcode])
+    header = bytes([(128 if fin else 0) | (64 if rsv1 else 0) | opcode])
     flag = 128 if masked else 0
     if len(data) < 126:
         header += bytes([flag | len(data)])
@@ -60,11 +60,12 @@ def receive(sock, *, masked=False):
     return first & 15, data
 
 
-def dial(port, path='/v1/responses', authorized=True):
+def dial(port, path='/v1/responses', authorized=True, extension_offer=False):
     sock = socket.create_connection(('127.0.0.1', port), timeout=5)
     key = base64.b64encode(os.urandom(16)).decode()
     auth = 'Authorization: Bearer ' + TOKEN + '\r\n' if authorized else ''
-    sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + '\r\n').encode())
+    extensions = 'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n' if extension_offer else ''
+    sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + extensions + '\r\n').encode())
     header = bytearray()
     while not header.endswith(b'\r\n\r\n'):
         header.extend(exact(sock, 1))
@@ -72,6 +73,7 @@ def dial(port, path='/v1/responses', authorized=True):
     assert b' 101 ' in header, header[:100]
     expected = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
     assert expected.lower() in header.lower()
+    assert b'sec-websocket-extensions:' not in header.lower()
     return sock
 
 
@@ -193,8 +195,18 @@ def main():
             process, ports = start(str(args.binary.resolve()), config, directory)
             db = directory / 'state/core.sqlite'
             try:
+                with dial(ports['data'], extension_offer=True) as downstream:
+                    send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'forbidden compression'}, masked=True, rsv1=True)
+                    try:
+                        assert receive(downstream)[0] == 8
+                    except (EOFError, ConnectionResetError):
+                        pass
+                assert provider.connections == 0
+                with sqlite3.connect(db) as connection:
+                    assert connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == 0
+                print('PASS: extension offer is declined without negotiation; unnegotiated RSV frames close before dispatch')
                 # A local handshake must not open a provider socket.
-                with dial(ports['data']) as downstream:
+                with dial(ports['data'], extension_offer=True) as downstream:
                     time.sleep(0.05)
                     assert provider.connections == 0
                     send(downstream, b'synthetic-ping', masked=True, opcode=9)

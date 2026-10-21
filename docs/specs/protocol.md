@@ -67,6 +67,8 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 在入队前验证当前 turn 的 created/response ID/item 关联，并通过已准入 attempt 注册的同步证据 sink 观察终态用量，其他 lane 失败不得清除已接收/分类的可信用量；轮外事件、重复终态/response ID 关闭连接，不得将旧事件用于新 attempt。单连接最多 256 个响应、单轮最多 256 个 item。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
 
+下游 WebSocket 扩展提议可以存在，网关忽略提议且不返回扩展协商头；没有实现压缩，不接受未协商 RSV 帧。不能因客户端提供可选压缩提议而拒绝整个握手并将 HTTP fallback 误算为原生 WS 成功。未支持的子协议仍拒绝。实际客户端检查须分别证明直连、桥接与原生连接行为，而非仅最终回答成功。
+
 ## P15：客户端上下文与前台模式
 
 完整 inline 消息及 function/custom tool 结果中的 id 为客户端本地关联标签，发送上游前移除；正文、工具 call_id 和显式引用保持。显式 item_reference、previous_response_id、函数调用/推理对象 ID 仍按归属查验，不能用完整消息中的本地 ID 触发上游对象读取。reasoning.encrypted_content include 可用；加密推理/压缩内容按 I11 指纹归属，在准入前校验。

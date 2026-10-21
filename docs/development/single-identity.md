@@ -41,6 +41,8 @@ python3 scripts/verify_protocol.py --binary .build/debug/codexone --web-smoke
 
 `verify_websocket.py` 使用 Python 标准库实现有界合成 RFC6455 客户端/上游，纳入后端统一验证；验证帧 masking/分片/ping、延迟建连、同连接续接、FIFO、桥接 JSON/SSE、EOF/断开取消、DB 屏障失败和未完成握手关闭。预热/压缩已有合成验证，Desktop 实际兼容仍需单独验收。
 
+下游提供 permessage-deflate 等扩展提议时，网关不协商扩展，保持普通无压缩帧；RSV 位仍拒绝。提议本身不导致握手失败。可选实际 CLI 脚本的 `--transport http|bridge|websocket` 分别检查客户端 HTTP/上游 HTTP、客户端 HTTP/上游 WS、客户端原生 WS；上游连接数量及执行记录用于防止把 HTTP 回退误算原生成功。
+
 ## 上下文与实际 CLI 检查
 
 `verify_context.py` 已纳入统一后端验证：加密推理、独立 compact 及完整输出窗口续接、命名空间/custom 客户端工具、伪造/跨主体/变更身份引用发送前拒绝；DB/WAL 只留上下文指纹。warmup 的无用量终态仍 unknown，执行模式随 admission JSON 保存，旧记录缺失模式按 generation。
