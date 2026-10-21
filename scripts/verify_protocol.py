@@ -162,10 +162,12 @@ def connect(port, method, path, payload=None, *, authorization=True):
     return status, body
 
 
-def start(binary, configuration, directory):
-    process = subprocess.Popen([binary], env={"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
-                               "CODEXONE_DATA_DIRECTORY": str(directory / "state"), "CODEXONE_IDENTITY_CONFIG": str(configuration)},
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def start(binary, configuration, directory, *, admin_token_file=None):
+    environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
+                               "CODEXONE_DATA_DIRECTORY": str(directory / "state"), "CODEXONE_IDENTITY_CONFIG": str(configuration)}
+    if admin_token_file is not None:
+        environment["CODEXONE_ADMIN_TOKEN_FILE"] = str(admin_token_file)
+    process = subprocess.Popen([binary], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         ports = {}
         output = b""

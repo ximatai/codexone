@@ -17,7 +17,7 @@ final class SQLiteConnection: @unchecked Sendable {
     case number(Int64)
   }
 
-  init(path: String) throws {
+  init(path: String, migrating: Bool = false) throws {
     guard path != ":memory:", !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
     let canonical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     lockFD = try Self.secureFile(canonical + ".lock", create: true)
@@ -28,7 +28,8 @@ final class SQLiteConnection: @unchecked Sendable {
     }
     do {
       // Existing data must pass compatibility checks before changing journal mode or schema.
-      let file = try Self.secureFile(canonical, create: true)
+      let file = try Self.secureFile(canonical, create: !migrating)
+      guard file >= 0 else { throw ExecutionError.storageUnavailable }
       close(file)
       // Existing WAL/SHM can predate a tightened main-file mode.
       for suffix in ["-wal", "-shm"] {
@@ -48,20 +49,23 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      guard version == 0 || version == 1 else { throw ExecutionError.incompatibleSchema }
+      guard version == 0 || version == 2 || (migrating && version == 1) else {
+        throw ExecutionError.incompatibleSchema
+      }
       if version == 0 {
         guard try scalar("SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'") == 0
         else {
           throw ExecutionError.incompatibleSchema
         }
       } else {
-        for (table, expected) in Self.columns {
+        for (table, expected) in Self.columns + (version == 2 ? Self.keyColumns : []) {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
           }
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
+      if migrating, version != 1 && version != 2 { throw ExecutionError.incompatibleSchema }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
@@ -74,7 +78,20 @@ final class SQLiteConnection: @unchecked Sendable {
       if version == 0 {
         try transaction {
           try exec(Self.schema)
-          try exec("PRAGMA user_version=1")
+          try exec(Self.keySchema)
+          try exec("PRAGMA user_version=2")
+        }
+      }
+      if version == 1 {
+        guard
+          try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
+            "ok"
+          ]
+        else { throw ExecutionError.storageUnavailable }
+        try backupBeforeUpgrade(canonical)
+        try transaction {
+          try exec(Self.keySchema)
+          try exec("PRAGMA user_version=2")
         }
       }
       guard
@@ -201,6 +218,47 @@ final class SQLiteConnection: @unchecked Sendable {
     );
     CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK(id=1), limits_json TEXT NOT NULL);
     """
+
+  static let keySchema = """
+    CREATE TABLE managed_keys (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, metadata_json TEXT NOT NULL);
+    CREATE TABLE key_events (id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES managed_keys(id),
+      revision INTEGER NOT NULL, action TEXT NOT NULL, at_epoch INTEGER NOT NULL, metadata_json TEXT NOT NULL);
+    CREATE INDEX attempts_key ON attempts(key_id,window_id);
+    """
+  private static let keyColumns: [(String, [String])] = [
+    ("managed_keys", ["id", "digest", "metadata_json"]),
+    ("key_events", ["id", "key_id", "revision", "action", "at_epoch", "metadata_json"]),
+  ]
+
+  private func backupBeforeUpgrade(_ path: String) throws {
+    let destination = path + ".pre-v2-" + UUID().uuidString + ".sqlite"
+    let partial = destination + ".partial"
+    let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
+    guard fd >= 0 else { throw ExecutionError.storageUnavailable }
+    defer { close(fd) }
+    var target: OpaquePointer?
+    guard
+      sqlite3_open_v2(partial, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nil)
+        == SQLITE_OK
+    else {
+      if let target { sqlite3_close_v2(target) }
+      throw ExecutionError.storageUnavailable
+    }
+    defer { sqlite3_close_v2(target) }
+    guard let copy = sqlite3_backup_init(target, "main", handle, "main") else {
+      throw ExecutionError.storageUnavailable
+    }
+    let step = sqlite3_backup_step(copy, -1)
+    let finish = sqlite3_backup_finish(copy)
+    guard step == SQLITE_DONE, finish == SQLITE_OK, fsync(fd) == 0 else {
+      throw ExecutionError.storageUnavailable
+    }
+    guard rename(partial, destination) == 0 else { throw ExecutionError.storageUnavailable }
+    let parent = open((destination as NSString).deletingLastPathComponent, O_RDONLY | O_CLOEXEC)
+    guard parent >= 0 else { throw ExecutionError.storageUnavailable }
+    defer { close(parent) }
+    guard fsync(parent) == 0 else { throw ExecutionError.storageUnavailable }
+  }
 
   private static let columns: [(String, [String])] = [
     (

@@ -6,7 +6,8 @@ extension HTTPResponseExecution {
     _ request: ResponseRequest, requestID: String, peer: WebSocketPeer, lane: String = "",
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    guard let model = configuration.models.first(where: { $0.id == request.model }) else {
+    guard let gateway else { throw ExecutionError.unauthorized }
+    guard let model = effectiveModels.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)

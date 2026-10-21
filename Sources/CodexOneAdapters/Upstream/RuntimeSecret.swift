@@ -9,7 +9,7 @@ import Foundation
 
 /// External runtime injection only; the gateway never saves or refreshes this short-lived credential.
 func readPrivateData(_ path: String, maximum: Int) throws -> Data {
-  let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+  let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
   guard descriptor >= 0 else { throw ExecutionError.invalidCommand }
   defer { close(descriptor) }
   var info = stat()

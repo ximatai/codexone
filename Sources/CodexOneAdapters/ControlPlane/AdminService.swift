@@ -6,6 +6,7 @@ import Vapor
 public struct AdminService: Service {
   private let group: any EventLoopGroup
   private let port: Int
+  private let keys: KeyAdminAPI?
   private let reportProvider: @Sendable () -> ReadinessReport
   private let onBound: @Sendable (Int) -> Void
 
@@ -18,9 +19,10 @@ public struct AdminService: Service {
 
   public init(
     group: any EventLoopGroup, port: Int,
-    reportProvider: @escaping @Sendable () -> ReadinessReport,
+    reportProvider: @escaping @Sendable () -> ReadinessReport, keys: KeyAdminAPI? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.keys = keys
     self.group = group
     self.port = port
     self.reportProvider = reportProvider
@@ -30,12 +32,9 @@ public struct AdminService: Service {
   public func run() async throws {
     // Start the server directly: ServiceGroup is the only signal owner.
     let app = try await Application.make(.production, .shared(group))
-    app.http.server.configuration.hostname = "127.0.0.1"
-    app.http.server.configuration.port = port
-    app.http.server.configuration.shutdownTimeout = .seconds(2)
     app.middleware = .init()
     app.middleware.use(BootstrapErrorMiddleware())
-    app.routes.defaultMaxBodySize = "4kb"
+    app.routes.defaultMaxBodySize = "8kb"
     for path in ["live", "ready"] {
       app.get("health", PathComponent(stringLiteral: path)) { _ -> Response in
         let reply = HealthRouter(report: reportProvider()).reply(
@@ -47,22 +46,14 @@ public struct AdminService: Service {
       let body = try JSONEncoder().encode(SystemStatusResponse(report: reportProvider()))
       return Self.response(HTTPReply(status: 200, body: body))
     }
+    keys?.register(app)
     do {
       try await app.asyncBoot()
-      try await app.server.start(address: nil)
-      onBound(app.http.server.shared.localAddress!.port!)
-      let closed = AsyncStream<Void> { continuation in
-        app.server.onShutdown.whenComplete { _ in continuation.finish() }
-      }
-      await cancelWhenGracefulShutdown {
-        for await _ in closed {}
-      }
+      try await AdminHTTPIngress(group: group, port: port, app: app, onBound: onBound).run()
     } catch {
-      await app.server.shutdown()
       try await app.asyncShutdown()
       throw error
     }
-    await app.server.shutdown()
     try await app.asyncShutdown()
   }
 

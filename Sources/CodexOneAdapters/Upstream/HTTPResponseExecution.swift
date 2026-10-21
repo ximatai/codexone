@@ -10,12 +10,24 @@ struct HTTPResponseExecution: Sendable {
   let configuration: SingleIdentityConfiguration
   let token: String?
   let report: @Sendable () -> ReadinessReport
-  let gateway: SingleIdentityGateway
+  let access: DataPlaneAuthorization
+  let gateway: SingleIdentityGateway?
+  let effectiveModels: [SingleIdentityConfiguration.Model]
+
+  func authorized(_ digest: String?) async throws -> Self {
+    let policy = try await access.policy(digest)
+    return Self(
+      client: client, webSocket: webSocket, configuration: configuration, token: token,
+      report: report, access: access,
+      gateway: .init(policy: policy, store: access.store, finalizer: access.finalizer),
+      effectiveModels: configuration.models.filter { policy.models.contains($0.id) })
+  }
 
   func execute(
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    guard let gateway else { throw ExecutionError.unauthorized }
     guard request.mode == .generation || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
@@ -25,7 +37,7 @@ struct HTTPResponseExecution: Sendable {
       }
       return
     }
-    guard let model = configuration.models.first(where: { $0.id == request.model }) else {
+    guard let model = effectiveModels.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
     try await gateway.execute(

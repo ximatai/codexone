@@ -2,7 +2,7 @@ import Foundation
 
 public enum ExecutionError: Error, Sendable, Equatable {
   case invalidCommand, capacity, denied, conflict, unknownAttempt, unknownObject, ambiguousObject
-  case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence
+  case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence, unauthorized
 }
 
 /// Trusted application identity; never populated directly from client claims.
@@ -31,12 +31,14 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let reservedMicros: Int64
   public let requestID: String?
   /// Missing in older admission JSON; interpreted as generation without rewriting history.
+  public let model: String?
+  public let keyRevision: Int64?
   public let mode: ExecutionMode?
   public var executionMode: ExecutionMode { mode ?? .generation }
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
-    mode: ExecutionMode? = nil
+    mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil
   ) {
     self.attempt = attempt
     self.owner = owner
@@ -46,6 +48,8 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
     self.reservedMicros = reservedMicros
     self.requestID = requestID
     self.mode = mode
+    self.keyRevision = keyRevision
+    self.model = model
   }
 }
 

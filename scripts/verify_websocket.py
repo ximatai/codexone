@@ -60,10 +60,10 @@ def receive(sock, *, masked=False):
     return first & 15, data
 
 
-def dial(port, path='/v1/responses', authorized=True, extension_offer=False):
+def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN):
     sock = socket.create_connection(('127.0.0.1', port), timeout=5)
     key = base64.b64encode(os.urandom(16)).decode()
-    auth = 'Authorization: Bearer ' + TOKEN + '\r\n' if authorized else ''
+    auth = 'Authorization: Bearer ' + token + '\r\n' if authorized else ''
     extensions = 'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n' if extension_offer else ''
     sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + extensions + '\r\n').encode())
     header = bytearray()

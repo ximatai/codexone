@@ -1,0 +1,17 @@
+# 验证记录
+
+## 2026-10-22：Key 治理实现与自我复盘
+
+主 Agent 亲自实现 Core Key 策略/事务端口、SQLite v2、管理 API 及 HTTP/原生 WS 授权；未拆新 target、未加依赖。现有 DB 普通/关键队列隔离保持，准入同事务复核 Key revision/enabled/principal/model 与 Key/主体/身份/全局限额，未知暴露仍跨窗口。管理 API 单独认证、仅非浏览器 loopback；没有交付浏览器登录或 UI，不能视为 A01/I07 全部完成。
+
+自我复盘修正轮换语义：保留 Key 标识/主体和历史计数，仅替换摘要/递增版本，避免更换标识重置限额；审计保存非秘密策略快照。新 admission 存模型/Key revision，旧 JSON 缺失保持不可用。管理命令未知字段拒绝，管理员拒绝数据 Key 格式及 legacy 摘要复用；请求正文有独立 8 KiB/10 秒边界、16 个并发位置，超时/认证失败关闭连接。
+
+实际慢速正文实验否定了只在 Vapor handler 上设置超时的方案：路由返回超时后，底层仍可能持续读未完成正文，socket 在 13 秒观察期限内未关闭。撤回该方案，改为 NIO 有界管理入口先收齐正文再交 Vapor 路由；32 个连接、接受后 10 秒绝对读取期限、8 KiB 正文、1 MiB/5 秒输出，单请求后关闭。每连接任务由服务结构化组拥有，关闭先停止/关闭连接再 await，再关闭 Vapor 应用；没有挂在路由外的正文 collect Future。慢速小片段持续发送也必须约 10 秒 EOF，未进入用例，不假定 408 envelope。
+
+已有 v1 普通启动拒绝，显式离线 --migrate 先取得实例锁、校验原 schema/完整性，使用 SQLite Backup API 产生私有一致性快照并同步，再事务建表。备份部分文件标 .partial；失败不伪装成功备份。原表/intent/binding 不改写，后续正常启动恢复 unknown。测试包含在新建表之后发生的索引冲突，确认事务回滚、源 user_version 保持 1，排除后重试成功。不是完整升级/恢复产品或掉电验收。
+
+真实 SQLite 测试涵盖旧授权准入失败、禁用/主体不符、更新 CAS 竞争、Key active/unknown 竞争与重启、轮换保持归属/请求限额、审计写入失败回滚和审计满拒绝、不自动升级 v1、实例锁、快照权限和 intent 保持。真实管理/数据 HTTP 与 RFC6455 检查独立管理员认证、Origin/Sec-Fetch/Cookie 拒绝、目录/执行交集、跨主体请求无 dispatch、同主体轮换续接、在途普通撤销后结算、已连 WS 权限更新/撤销、日请求限额和重启、DB/WAL/输出不含原始 Key/管理员秘密；HTTP→WS 也走实际桥接执行。测试只使用临时私有目录、公开合成管理员和内存中新建数据 Key，无账号、个人配置或外部生成调用。
+
+macOS arm64/Swift 6.4 完整后端退出 0：45 个 Swift 测试及全部进程/执行/HTTP/SSE/WS/context/v2/Key 脚本通过。真实 socket 还验证 32 个空闲连接后额外连接被关闭、释放后能继续服务；持续小片段正文约 10 秒 EOF/RESET，不进路由，超过 8 KiB 为 413。最后将私有凭证文件打开加 O_NONBLOCK，防止 FIFO 在 fstat 拒绝之前阻塞；重新构建并重跑 Key/进程脚本均通过，凭证 FIFO 的 --check-config 在 3 秒以内失败且脱敏。此处 45 是 Swift 测试函数数，socket 场景另计。
+
+现有前端生产构建的服务概览通过 `verify_protocol.py --web-smoke` 用独立 Chrome 连接真实临时管理 API，正常/存储失败/刷新均通过，两张桌面截图已查看；未改前端产品，不代表新 Key 管理界面或 Desktop 客户端验收。差异/新增文件检查未发现已知私人路径或连接标识；原文不进核心库和输出由实际 socket 另验。此切片待提交后独立 review 与亲自修复复验；M2 Desktop UI 和恢复契约仍为未完成项，未推进其实现。

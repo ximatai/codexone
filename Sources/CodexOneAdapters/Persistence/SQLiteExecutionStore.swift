@@ -56,8 +56,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     }
   }
 
+  /// Offline, instance-locked upgrade; a consistent private backup precedes any schema change.
+  public static func migrate(path: String) async throws {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, any Error>) in
+      DispatchQueue.global(qos: .utility).async {
+        do {
+          let connection = try SQLiteConnection(path: path, migrating: true)
+          connection.shutdown()
+          continuation.resume()
+        } catch { continuation.resume(throwing: error) }
+      }
+    }
+  }
+
   /// Queue capacity is acquired before dispatch; finalization has its own reserved slots.
-  private func perform<T: Sendable>(
+  func perform<T: Sendable>(
     critical: Bool = false, admission: Bool = false,
     _ body: @escaping @Sendable (SQLiteConnection) throws -> T
   ) async throws -> T {
@@ -113,6 +127,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
           throw ExecutionError.capacity
         }
+        try Self.checkKeyAdmission(db, command)
         // Lifetime unresolved/active exposure survives window rotation. Budget/request totals belong to the admission window.
         for (scope, parameters) in [
           ("1=1", [SQLiteConnection.Value]()),
@@ -316,7 +331,7 @@ private func validate(_ value: ExecutionAdmission) throws {
     [
       value.attempt, value.owner.principal, value.owner.key, value.owner.namespace,
       value.owner.identity, value.window, value.policyVersion, value.pricingVersion,
-    ] + (value.requestID.map { [$0] } ?? []))
+    ] + (value.requestID.map { [$0] } ?? []) + (value.model.map { [$0] } ?? []))
   guard (0...1_000_000_000_000).contains(value.reservedMicros) else {
     throw ExecutionError.invalidCommand
   }

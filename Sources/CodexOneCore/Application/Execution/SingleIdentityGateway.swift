@@ -6,15 +6,17 @@ public struct SingleIdentityPolicy: Sendable {
   public let reservedMicros: Int64
   public let policyVersion: String
   public let pricingVersion: String
+  public let keyRevision: Int64?
   public init(
     owner: ExecutionOwner, models: Set<String>, reservedMicros: Int64, policyVersion: String,
-    pricingVersion: String
+    pricingVersion: String, keyRevision: Int64? = nil
   ) throws {
     guard [policyVersion, pricingVersion].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
-      !models.isEmpty, models.count <= 32,
+      models.count <= 32,
       models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       (0...1_000_000_000_000).contains(reservedMicros)
     else { throw ExecutionError.invalidCommand }
+    self.keyRevision = keyRevision
     self.owner = owner
     self.models = models
     self.reservedMicros = reservedMicros
@@ -55,7 +57,8 @@ public struct SingleIdentityGateway: Sendable {
       attempt: UUID().uuidString, owner: policy.owner,
       window: "utc-day-\(day)", policyVersion: policy.policyVersion,
       pricingVersion: policy.pricingVersion,
-      reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode)
+      reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
+      keyRevision: policy.keyRevision, model: model)
     try await coordinator.execute(admission, operation: operation)
   }
 }

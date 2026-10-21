@@ -47,8 +47,8 @@ public struct SingleIdentityDataService: Service {
           .init(name: "authorization", ready: finalizer.isAccepting),
         ])
       },
-      gateway: .init(
-        policy: try configuration.makePolicy(token: token), store: store, finalizer: finalizer))
+      access: .init(configuration: configuration, token: token, store: store, finalizer: finalizer),
+      gateway: nil, effectiveModels: [])
     let channels = ProtocolChannels(limit: 32)
     do {
       let server = try await ServerBootstrap(group: group)
@@ -76,14 +76,22 @@ public struct SingleIdentityDataService: Service {
                 head.method == .GET
                 && ["/v1/responses", "/backend-api/codex/responses"].contains(path)
                 && configuration.upstreamTransport == "websocket"
-                && configuration.accepts(head.headers["authorization"])
                 && head.headers["sec-websocket-protocol"].isEmpty
               // Decline extension offers by omitting negotiation headers; RSV remains forbidden.
-              return channel.eventLoop.makeSucceededFuture(allowed ? HTTPHeaders() : nil)
+              guard allowed else { return channel.eventLoop.makeSucceededFuture(nil) }
+              return channel.eventLoop.makeFutureWithTask {
+                do {
+                  _ = try await executor.access.policy(
+                    executor.access.digest(head.headers["authorization"]))
+                  return HTTPHeaders()
+                } catch { return nil }
+              }
             },
-            upgradePipelineHandler: { channel, _ in
+            upgradePipelineHandler: { channel, head in
               channel.eventLoop.makeCompletedFuture {
-                .webSocket(try configureWebSocket(channel, client: false))
+                .webSocket(
+                  try configureWebSocket(channel, client: false),
+                  try executor.access.digest(head.headers["authorization"]))
               }
             })
           var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(
@@ -122,8 +130,8 @@ public struct SingleIdentityDataService: Service {
                     do {
                       switch try await connection.get() {
                       case .http(let socket): try await Self.serve(socket, executor: executor)
-                      case .webSocket(let socket):
-                        try await Self.serveWebSocket(socket, executor: executor)
+                      case .webSocket(let socket, let digest):
+                        try await Self.serveWebSocket(socket, executor: executor, digest: digest)
                       }
                     } catch {}
 
@@ -148,13 +156,16 @@ public struct SingleIdentityDataService: Service {
     try await client.shutdown()
   }
 
-  private static func serveWebSocket(_ socket: ProtocolWebSocket, executor: HTTPResponseExecution)
+  private static func serveWebSocket(
+    _ socket: ProtocolWebSocket, executor: HTTPResponseExecution, digest: String?
+  )
     async throws
   {
     try await WebSocketPeer.run(socket, client: false) { downstream in
       let firstData = try await withExecutionDeadline(seconds: 10) { try await downstream.next() }
       let first = try webSocketCreate(firstData)
-      guard executor.configuration.models.contains(where: { $0.id == first.model }) else {
+      let authorized = try await executor.authorized(digest)
+      guard authorized.effectiveModels.contains(where: { $0.id == first.model }) else {
         throw GatewayProtocolError(403, "model_not_allowed")
       }
       try await executor.webSocket.run { upstream in
@@ -181,7 +192,8 @@ public struct SingleIdentityDataService: Service {
                   let requestID = UUID().uuidString
                   do {
                     let request = try webSocketCreate(data)
-                    try await executor.execute(
+                    let current = try await executor.authorized(digest)
+                    try await current.execute(
                       request, requestID: requestID, peer: upstream, lane: lane
                     ) { event in
                       try await downstream.send(event)
@@ -297,16 +309,15 @@ public struct SingleIdentityDataService: Service {
     else {
       throw GatewayProtocolError(404, "not_found")
     }
-    guard executor.configuration.accepts(head.headers["authorization"]) else {
-      throw GatewayProtocolError(401, "invalid_api_key")
-    }
+    let executor = try await executor.authorized(
+      executor.access.digest(head.headers["authorization"]))
     if endpoint == "/models", head.method == .GET {
       let codexDirectory =
         URLComponents(string: head.uri)?.queryItems?.contains {
           $0.name == "client_version"
         } == true
       try await writer.json(
-        modelCatalog(executor.configuration.models, requireCodexProfile: codexDirectory))
+        modelCatalog(executor.effectiveModels, requireCodexProfile: codexDirectory))
       return
     }
     guard ["/responses", "/responses/compact"].contains(endpoint), head.method == .POST else {
@@ -338,7 +349,7 @@ public struct SingleIdentityDataService: Service {
 
 private enum NegotiatedProtocol: Sendable {
   case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>)
-  case webSocket(ProtocolWebSocket)
+  case webSocket(ProtocolWebSocket, String?)
 }
 
 private actor ProtocolResponseWriter {

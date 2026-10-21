@@ -33,3 +33,9 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 ## I11：不透明推理/压缩上下文
 
 提供者返回 reasoning/compaction encrypted_content 时，在暴露前持久绑定“内容类型 + SHA-256 指纹”的 principal/namespace/identity/attempt 归属；核心库只保存指纹和对象 ID，不保存加密正文内容。输入的对应内容必须匹配已有归属，类型变换、篡改、跨主体或身份变化均在发送前拒绝；指纹归属不是提供者仍保有上下文的保证。携完整内容时以正文指纹查归属并移除客户端本地 id，不用标签触发上游私有读取；无 encrypted_content 的 reasoning 仍须校验对象 ID 归属。compaction 需要完整不透明内容，不能只用压缩操作 ID 续接。
+
+## I12：受控上游的托管 Key
+
+显式 managedKeys 模式不接受 legacy Key 回退。Key 创建使用系统随机 256 bit，原文仅在创建/轮换响应显示一次；核心库只存 SHA-256、稳定 principal/Key 标识和版本化权限。普通 Key 不得访问管理命令。轮换保持 Key 标识、主体、计数和归属，只替换验证材料并递增 revision；旧凭证立即失效。策略更新/禁用/轮换使用 revision CAS，不能修改既有 Key 的 principal。
+
+每个 HTTP 请求及原生 WS 新 turn 读取当前授权；目录与执行使用 Key 模型范围和受控上游配置的交集，没有路由时目录为空。持久准入再次检查 Key enabled、revision、principal、模型及限额；旧授权快照不能在撤销后准入。普通撤销不主动取消已准入执行，既有用量仍结算；紧急撤销的在途关闭另按 I05 实现。此模式不证明已具备账号池、托管上游刷新或恢复读取。

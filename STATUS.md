@@ -11,7 +11,7 @@ M0、M1 本机验收与提交后 review/修复/复审已完成。M1 共关闭五
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
 - React/TS/Vite 服务概览，按 feature 聚合 UI/API/测试；Vitest/Testing Library 与 Playwright，前后端共用健康契约样例。Node 22.23.0，npm lock 固定依赖。
-- 本地分支 `codex/single-identity-protocol`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
+- 本地分支 `codex/account-governance`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
 
 ## 运行与检查
 
@@ -50,7 +50,7 @@ npm run dev
 - 2026-10-21 文档范围同步：已按实际使用需求更新[里程碑](docs/plans/roadmap.md)及相关规范，首版替代验收覆盖 Desktop、图片编辑、额度统计、迁移及弱服务器。`python3 scripts/check_docs.py` 与 `git diff --check` 通过；本次仅改文档，未进行运行兼容/容量/迁移验收，未访问或改动 用户服务器。
 
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
-- 38 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
+- 45 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。新增托管 Key 的 CAS/撤销/轮换与限额连续性、审计回滚/容量、v1 显式迁移/快照/中途失败及权限/计价指纹区分。
 - M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
@@ -68,6 +68,8 @@ M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接�
 
 M2 v2 压缩切片：支持普通 Responses 上的末尾 compaction_trigger，仍按 compact 统计并执行指纹屏障；完整 encrypted_content 的客户端本地 ID 在归属校验后移除，无正文/显式引用仍严格查 ID。macOS 完整后端 38 个 Swift 测试及新 HTTP/SSE/WS 故障脚本通过；实际 CLI 0.163.0 三传输均完成工具、v2 压缩和下一请求，原文不进核心库。独立 review 的终态索引一致性 P2 已亲自修复，fcd3a5e 复审及同提交 Linux 完整验证通过。另用 Desktop 内置 CLI 0.163.0-alpha.11 独立运行标准/压缩三传输及 HTTP retry/缺 profile 共八组检查通过；这不代表 Desktop UI 或断线恢复读取验收。
 
-Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。M2 仍保留 Desktop 和可使用的输出读取契约两个验收缺口；不能把这一阶段标为完成后直接宣称 M3—M6 已进入验收。当前 M2 的可独立实现项及 review 修复已收敛，下一步需可执行的 Desktop 验收路径或明确调整阶段顺序；已向用户保留问题：是否允许保留这项缺口先推进独立 M3 工作，尚未答复，不以等待时间当作同意。WS 与 v2 压缩代码及修复已提交、复审，未留未提交代码；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
+M2 保留 Desktop 界面验收与恢复契约两项缺口，不标完成。2026-10-22 用户明确允许先推进不依赖它们的 M3；Computer Use 禁止控制 com.openai.codex 的限制不绕过，CLI 证据不替代 UI。恢复缓存仍须实际可使用的读取契约。
+
+M3 多主体/Key 治理首个切片已实现，待提交后 review：同一受控上游上的持久 Key 创建、轮换、禁用、模型范围和本地限额；轮换保留标识及计数，目录/执行共用策略，事务准入复核撤销/版本/模型，原生 WS 每 turn 重新授权。最小本机管理 API 与数据 Key 分离，浏览器 session/UI 尚未交付；NIO 有界管理入口将完整小请求交给 Vapor 路由。macOS 完整后端 45 测试与全部脚本通过，新增真实 HTTP/WS 的撤销/隔离/限额/重启、慢正文及连接容量检查通过；最后收紧私有文件为非阻塞打开后重新构建并复跑 Key/进程验证，FIFO 凭证路径快速拒绝。现有概览经 Chrome 连接真实管理 API 的正常/失败/刷新检查通过并查看两张桌面截图，不当作 Key 管理 UI。配置和命令见[托管 Key](docs/development/key-governance.md)，提案与验证见[Key 治理](docs/changes/key-governance/proposal.md)。后续继续账号接入/加密凭证/刷新、调度、额度及管理 UI；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

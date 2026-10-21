@@ -2,6 +2,8 @@
 
 全局进度和可运行入口见 [STATUS](../../STATUS.md)，协议与兼容目标见 [protocol](../specs/protocol.md)。
 
+多个主体/Key 使用显式 [托管 Key 模式](key-governance.md)，不与下述 legacy 单 Key 字段混用；上游注入与协议限制仍相同。
+
 ## 本地配置
 
 `CODEXONE_IDENTITY_CONFIG` 指向单身份 JSON 文件，必须同时配置 `CODEXONE_DATA_DIRECTORY`。两个路径均为绝对路径；配置文件必须为当前用户拥有、其他用户不可读写的常规文件，不接受符号链接，最多 64 KiB。`--check-config` 先校验配置和外部运行时凭证，但不建库、不监听、不调用上游；输出仅包含安全的监听参数。

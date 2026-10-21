@@ -19,3 +19,9 @@
 ## U11：执行模式与历史记录
 
 持久 admission 区分 generation、warmup、compact；历史 JSON 缺失 mode 按 generation 解释，不改写旧记录。预热/压缩必须可独立统计，不混充普通生成次数；三者均计入本地请求/并发/预算与未知暴露治理。用量完整度继续按可信字段解释，预热或压缩成功返回不等于零消耗，缺失证据保留 unknown。
+
+## U12：Key 本地治理窗口
+
+托管 Key 的 requests/budgetMicros 按 UTC 日准入窗口计数；active、unresolved 和 unresolvedMicros 跨窗口、重启保持。三种执行模式均占用请求计数；缺失可信完整用量的执行继续占用未知暴露。Key 限制与原有全局/主体/身份限制在同一事务内共同生效，不能仅在传输层计数；轮换不重置 Key 限额。管理员可显式调整限额，但不能以此修改已发生的账本事实。
+
+新 admission 保存模型及 Key revision；历史记录缺失字段时标为不可用，不猜测模型或改写旧记录。金额仍是估算费用，Key 的日预算不是订阅余额或真实消耗硬上界。

@@ -3,12 +3,14 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let adminPort: Int
   public let dataDirectory: String?
   public let identityConfigurationPath: String?
+  public let adminTokenFile: String?
 
   public enum ConfigurationError: Error, Equatable {
     case invalidPort(String)
     case conflictingPorts
     case invalidDataDirectory
     case invalidIdentityConfiguration
+    case invalidAdminTokenFile
   }
 
   public init(environment: [String: String]) throws {
@@ -37,6 +39,16 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       identityConfigurationPath = path
     } else {
       identityConfigurationPath = nil
+    }
+    if let path = environment["CODEXONE_ADMIN_TOKEN_FILE"] {
+      guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096,
+        dataDirectory != nil
+      else {
+        throw ConfigurationError.invalidAdminTokenFile
+      }
+      adminTokenFile = path
+    } else {
+      adminTokenFile = nil
     }
     dataPort = try port("CODEXONE_DATA_PORT", fallback: 18080)
     adminPort = try port("CODEXONE_ADMIN_PORT", fallback: 18081)
