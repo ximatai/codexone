@@ -60,7 +60,8 @@ extension HTTPResponseExecution {
           }
           let observation = try ProviderObservation(
             event: event, model: model, functionNames: request.functionNames,
-            customToolNames: request.customToolNames)
+            customToolNames: request.customToolNames,
+            expectedPreviousResponseID: request.document["previous_response_id"]?.string)
           for object in observation.bindings { try await context.bind(object) }
           if request.streaming {
             try await emit(event)

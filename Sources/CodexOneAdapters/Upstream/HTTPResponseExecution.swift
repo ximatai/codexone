@@ -72,7 +72,8 @@ struct HTTPResponseExecution: Sendable {
               }
               let observation = try ProviderObservation(
                 event: event, model: model, functionNames: request.functionNames,
-                customToolNames: request.customToolNames)
+                customToolNames: request.customToolNames,
+                expectedPreviousResponseID: request.document["previous_response_id"]?.string)
               for object in observation.bindings { try await context.bind(object) }
               terminal = observation.terminal
               try await emit(event)
@@ -105,7 +106,8 @@ struct HTTPResponseExecution: Sendable {
           ])
           let observation = try ProviderObservation(
             event: event, model: model, functionNames: request.functionNames,
-            customToolNames: request.customToolNames)
+            customToolNames: request.customToolNames,
+            expectedPreviousResponseID: request.document["previous_response_id"]?.string)
           for object in observation.bindings { try await context.bind(object) }
           try await emit(document)
         }

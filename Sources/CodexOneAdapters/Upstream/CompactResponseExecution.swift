@@ -41,11 +41,17 @@ extension HTTPResponseExecution {
         if let evidence = try ProviderObservation.usage(document["usage"], model: model) {
           try context.observeUsage(evidence)
         }
+        try ProviderObservation.validateUsageContainer(document["usage"])
         guard let output = document["output"]?.array, output.count <= 256,
           document.object?.keys.allSatisfy({
             ["id", "object", "created_at", "output", "usage"].contains($0)
           }) == true
         else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+        if let created = document["created_at"] {
+          guard let value = created.integer, value >= 0 else {
+            throw GatewayProtocolError(502, "invalid_upstream_compaction")
+          }
+        }
         if let id = document["id"] {
           guard let id = id.string, !id.isEmpty, id.utf8.count <= 256 else {
             throw GatewayProtocolError(502, "invalid_upstream_compaction")
@@ -65,6 +71,10 @@ extension HTTPResponseExecution {
           let bindings = try ProviderObservation.itemBindings(
             item, functionNames: functions, customToolNames: custom, retained: true)
           for binding in bindings where !request.references.contains(binding) {
+            // Compaction may retain prior calls; it cannot invent a new client tool execution.
+            guard binding.type != "function_call" else {
+              throw GatewayProtocolError(502, "unsupported_upstream_object")
+            }
             try await context.bind(binding)
           }
         }

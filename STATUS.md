@@ -60,7 +60,7 @@ npm run dev
 
 ## 下一步与未覆盖
 
-M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，待提交后 review 和独立 Linux 验证。
+M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，原始 8c82e72 Linux 完整通过；提交后 review 发现的 compact 可选字段嵌套对象问题已修复并回归，待复审与修复快照 Linux 验证。
 
 下一步收敛模型元数据、明确版本 Desktop 与恢复契约；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 

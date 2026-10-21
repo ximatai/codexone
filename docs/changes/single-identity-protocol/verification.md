@@ -69,3 +69,13 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 实际 Codex CLI 0.163.0 经网关完成文本/本地 exec_command 函数往返/最终回答及 encrypted reasoning 回传；两个 attempt 均持久 settled，脚本退出 0。仅临时 CODEX_HOME/空目录、只读 sandbox、固定 printf、无真实账号；客户端显式禁用本阶段未支持的内置 web_search，网关不静默删声明。自我复盘定位客户端给新 inline 消息/结果分配的本地 ID，规范化移除后发送，显式对象/调用/加密上下文引用继续查归属；另允许客户端 reasoning content:null 的序列化形式，非空内容仍类型校验。fixture 含可信 total_tokens，避免不完整 fixture 诱发客户端重试。
 
 范围：实际 CLI 证据为 HTTP/SSE 文本与工具往返，原生 WS/warmup/compact 仍是合成 socket 验证；不是 Desktop、真实订阅、生产反代或恢复读取验收。未改前端产品；需继续模型元数据/指定 Desktop 与恢复契约收敛。此执行模式/上下文切片待提交后独立 review 与 Linux 验证。
+
+### 上下文切片提交后 review 修复
+
+8c82e72 独立 review 发现 P1：compact 的 retained 工具结果 name/namespace 未校验类型，嵌套 file_id 可透传。主 Agent 亲自补齐输入/输出公共 status/name/namespace、compact created_at 标量约束，以及按内容 part 类型限定字段，拒绝在 output_text 的无关 refusal 字段等位置夹带对象。compact 工具结果只能保留已授权输入 call_id，不能凭压缩操作创建新客户端工具执行。继续在输出分类前观察可信用量。
+
+复盘同时收紧 usage 容器为数值/一层数值明细，已知计数先观察后因未支持嵌套元数据拒绝输出；提供者 error 不原样转发，未知 previous_response_id 不能作为响应元数据泄漏，已授权 previous_response_id 回显保持。纯文本 refusal 可在后续完整 inline 消息中继续，而非输出支持/输入拒绝。
+
+2026-10-22 macOS 完整后端（37 个 Swift 测试及所有脚本）和实际 CLI 往返验证通过；额外 previous_response_id 关联改动后重新构建并运行 HTTP/context/实际 CLI 定向回归。真实 socket 五类 compact 嵌套对象故障、usage 私有元数据、原始 provider error/未知 previous ID 均不暴露，且有效 5/3 用量仍 settled。
+
+8c82e72 的独立 Linux amd64 完整后端验证通过（37 个 Swift 测试及上下文/预热新脚本）；不包含本次 review 修复，修复快照须另验。模型目录准备已独立暂存，未混入修复验证/提交。

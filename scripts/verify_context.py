@@ -70,11 +70,19 @@ def main():
                     result_type = 'custom_tool_call_output' if call['type'] == 'custom_tool_call' else 'function_call_output'
                     status, _body = connect(port, 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': [call, {'type': result_type, 'id': 'client-local-result', 'call_id': call['call_id'], 'output': 'synthetic result'}]})
                     assert status == 200
+                status, body = connect(port, 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'tool', 'tools': [{'type': 'function', 'name': 'local_tool'}]})
+                assert status == 200
+                prior_call = json.loads(body)['output'][0]
+                for fault in ('namespace', 'name', 'status', 'created', 'part'):
+                    status, body = connect(port, 'POST', '/v1/responses/compact', {'model': 'synthetic-text', 'input': [prior_call], 'instructions': 'synthetic-invalid-' + fault})
+                    assert status == 502 and b'private-synthetic-file' not in body
+                    assert latest(db_path, 'settled')['inputTokens'] == 5
+                print('PASS: malformed compact result scalars and inactive part fields cannot expose nested private objects; known usage remains settled')
                 with sqlite3.connect(db_path) as db:
                     contexts = db.execute("SELECT object_type,raw_id FROM bindings WHERE object_type LIKE 'context_%'").fetchall()
                     assert contexts and all(len(raw) == 64 and 'synthetic' not in raw for _, raw in contexts)
                     modes = [json.loads(row[0]).get('mode') for row in db.execute('SELECT admission_json FROM attempts')]
-                    assert modes.count('compact') == 2 and all(mode in ('generation', 'compact') for mode in modes)
+                    assert modes.count('compact') == 7 and all(mode in ('generation', 'compact') for mode in modes)
                 print('PASS: encrypted reasoning and canonical compact windows continue; forged context rejected; namespaces/custom tools; typed context fingerprints only')
             finally:
                 stop(process)

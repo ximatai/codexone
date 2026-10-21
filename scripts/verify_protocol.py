@@ -44,6 +44,16 @@ class Upstream(BaseHTTPRequestHandler):
                         "usage": {"input_tokens": 5, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 0}}}
             if isinstance(payload.get("input"), list) and payload["input"]:
                 response["output"].insert(1, payload["input"][0])
+            fault = payload.get("instructions", "")
+            if fault.startswith("synthetic-invalid-"):
+                result = {"type": "function_call_output", "call_id": payload["input"][0]["call_id"], "output": "synthetic"}
+                if fault == "synthetic-invalid-created":
+                    response["created_at"] = {"file_id": "private-synthetic-file"}
+                elif fault == "synthetic-invalid-part":
+                    response["output"].insert(0, {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "synthetic", "refusal": {"file_id": "private-synthetic-file"}}]})
+                else:
+                    result[fault.removeprefix("synthetic-invalid-")] = {"file_id": "private-synthetic-file"}
+                    response["output"].insert(0, result)
             body = json.dumps(response).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -60,11 +70,22 @@ class Upstream(BaseHTTPRequestHandler):
             item = {"id": f"fc_{index}", "type": "function_call", "call_id": f"call_{index}", "namespace": "synthetic_ns", "name": "local_tool", "arguments": "{}"}
         if prompt == "tool-custom":
             item = {"id": f"ctc_{index}", "type": "custom_tool_call", "call_id": f"call_{index}", "name": "local_custom", "input": "synthetic custom input"}
+        if prompt == "refusal":
+            item["content"] = [{"type": "refusal", "refusal": "synthetic refusal"}]
         if prompt == "bad-object":
             item["type"] = "unverified_private_object"
         response = {"id": f"resp_{index}", "object": "response", "status": "completed", "model": payload["model"],
                     "output": [item], "usage": {"input_tokens": 5, "output_tokens": 3,
                                                   "input_tokens_details": {"cached_tokens": 0}}}
+        if payload.get("previous_response_id"):
+            response["previous_response_id"] = payload["previous_response_id"]
+        if prompt == "foreign-previous":
+            response["previous_response_id"] = "private-synthetic-unbound-response"
+        if prompt == "private-usage":
+            response["usage"]["metadata"] = {"file_id": "private-synthetic-file"}
+        if prompt == "provider-error":
+            response["status"] = "failed"
+            response["error"] = {"code": "synthetic", "message": "private-synthetic-provider-error"}
         if prompt == "reasoning":
             response["output"].insert(0, {"id": f"rs_{index}", "type": "reasoning", "summary": [], "encrypted_content": f"synthetic-reasoning-cipher-{index}"})
         try:
@@ -270,6 +291,15 @@ def main():
                 assert status == 502 and b"resp_" not in body
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 print("PASS: EOF remains unknown; known usage survives rejected provider objects without ID exposure")
+                for prompt in ("private-usage", "provider-error", "foreign-previous"):
+                    status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": prompt})
+                    assert status == 502 and b"private-synthetic" not in body
+                    assert latest(db_path, "settled")["inputTokens"] == 5
+                print("PASS: malformed usage metadata and raw provider errors are not exposed; trusted counters remain settled")
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "refusal"})
+                assert status == 200
+                refused = json.loads(body)["output"]
+                assert connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": refused + [{"role": "user", "content": "continue"}]})[0] == 200
                 connection = http.client.HTTPConnection("127.0.0.1", port, timeout=8)
                 connection.request("POST", "/v1/responses", body=json.dumps({"model": "synthetic-text", "input": "stall", "stream": True}),
                                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + TOKEN})

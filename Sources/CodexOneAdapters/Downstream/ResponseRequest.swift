@@ -151,6 +151,20 @@ struct ResponseRequest: Sendable {
       for item in items {
         guard let object = item.object else { throw GatewayProtocolError(400, "invalid_input") }
         let type = object["type"]?.string ?? "message"
+        if let declared = object["type"], declared.string == nil {
+          throw GatewayProtocolError(400, "unsupported_input")
+        }
+        if let status = object["status"], status != .null {
+          guard
+            ["in_progress", "completed", "incomplete", "failed", "cancelled"].contains(
+              status.string ?? "")
+          else { throw GatewayProtocolError(400, "unsupported_input") }
+        }
+        if let name = object["name"], name != .null {
+          guard let name = name.string, (try? ClientTools.key(name: name)) != nil else {
+            throw GatewayProtocolError(400, "unsupported_input")
+          }
+        }
         switch type {
         case "message":
           guard let role = object["role"]?.string,
@@ -159,15 +173,17 @@ struct ResponseRequest: Sendable {
           else { throw GatewayProtocolError(400, "invalid_input") }
           if content.string == nil {
             guard let parts = content.array, parts.count <= 128,
-              parts.allSatisfy({
-                ["input_text", "output_text"].contains($0["type"]?.string ?? "")
-                  && $0["text"]?.string != nil
-                  && ($0["annotations"] == nil || $0["annotations"]?.array == [])
-                  && ($0["logprobs"] == nil || $0["logprobs"] == .null
-                    || $0["logprobs"]?.array == [])
-                  && $0.object?.keys.allSatisfy({
-                    ["type", "text", "annotations", "logprobs"].contains($0)
-                  }) == true
+              parts.allSatisfy({ part in
+                let type = part["type"]?.string ?? ""
+                let keys: Set<String> =
+                  type == "refusal"
+                  ? ["type", "refusal"] : ["type", "text", "annotations", "logprobs"]
+                return ["input_text", "output_text", "refusal"].contains(type)
+                  && (type == "refusal" ? part["refusal"]?.string : part["text"]?.string) != nil
+                  && (part["annotations"] == nil || part["annotations"]?.array == [])
+                  && (part["logprobs"] == nil || part["logprobs"] == .null
+                    || part["logprobs"]?.array == [])
+                  && part.object?.keys.allSatisfy(keys.contains) == true
               })
             else {
               throw GatewayProtocolError(400, "unsupported_input")
