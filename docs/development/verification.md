@@ -23,3 +23,9 @@ python3 scripts/check_docs.py
 此文件维护检查定义及前提，实际可运行入口、覆盖/未覆盖与最新结果只在 STATUS 维护。不要运行不存在的命令或把模板写成已通过；文档检查不需安装 Swift/npm 依赖。
 
 实际报告必须包含命令、平台、结果、覆盖与未覆盖场景。kill -9 不等于掉电测试，Mac 不等于 Linux，缓存重播不等于上游恢复，CLI 成功不等于账号池隔离或财务正确。
+
+## 测试框架与入口职责
+
+Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。
+
+前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。依赖安装/浏览器准备与可运行命令查根 STATUS，CI 使用锁文件，测试默认不读账号/外部上游。

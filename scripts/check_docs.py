@@ -20,7 +20,7 @@ REQUIRED = (
 # documentation contracts, not the initial placeholder tree or a task name.
 EXCLUDED_DIRECTORIES = {
     '.git', '.build', '.swiftpm', 'node_modules', 'dist', 'coverage',
-    '.tmp', 'artifacts', '__pycache__', '.venv',
+    '.tmp', 'artifacts', '__pycache__', '.venv', 'test-results', 'playwright-report',
 }
 
 

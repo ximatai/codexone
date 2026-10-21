@@ -25,3 +25,7 @@ artifacts/
 .DS_Store
 *.log
 .tmp/
+web/test-results/
+web/playwright-report/
+__pycache__/
+*.py[cod]
