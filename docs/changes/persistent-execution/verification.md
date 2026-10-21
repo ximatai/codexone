@@ -17,3 +17,5 @@ finalizer 验证：ticket 在准入前取容量、准入失败不 dispatch 并�
 2026-10-21 主 Agent 再次运行 `./scripts/verify.sh --backend` 全通过，26 个 Swift 测试函数。新增 128 partial → 第 129 complete → 更高迟到用量、压缩水位重开/重复/冲突、观察 complete/partial 后取消仍入账、过时最终化不停止 worker、拒绝旧库前后字节一致；进程验证在 umask 022 与既有 0755 目录检查 DB/lock/WAL/SHM 为 0600，并验证旧 0644 文件重开收紧。初始“新建库0600”的描述在首次 review 时尚未成立，以本次实际权限回归为准。
 
 6590ce7 复审确认四项修复有效；reviewer 实际运行 7 个相关 Swift 回归、网关进程/权限与四个 SIGKILL 场景通过。另发现空库识别中的 SQL LIKE 下划线通配符会错误忽略 `sqlitex` 用户表。主 Agent 改为字面下划线的 GLOB 模式；`swift test -j 4 --filter rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal` 的 legacy/sqlitex 两个参数案例均通过，拒绝前后数据库字节不变。
+
+5e2aea5 最终复审：reviewer 重跑 legacy/sqlitex 两例通过，五项可操作问题全部关闭，本机合成执行/真实 SQLite/进程故障范围可进入 M2。Linux amd64 验证仍在进行，未将其或真实客户端计入完成证据。

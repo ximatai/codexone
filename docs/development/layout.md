@@ -30,6 +30,8 @@ docs/                            产品、规范、架构、共识决策、变�
 
 四个 Swift 名称对应编译边界；Core/Adapters/Runtime 为库，CodexOne 为入口。Core 不依赖 Vapor/NIO/SQL，Adapters 与 Runtime 分别依赖 Core，入口组装三者。边界类型和 owner 见 [ownership](../architecture/ownership.md)。只有真实需求才拆新 target；测试 target 名与路径对应，Unit/Integration/Contract 为 target 内分组，fixture 按 SwiftPM resources 显式声明。
 
+`CSQLite` 是适配器的系统库桥接，不向 Core 暴露 SQL 类型。`Tests/Support/ExecutionProbe` 是合成子进程故障测试入口，不属于网关公开命令面或发行程序。
+
 Core 内部按 Execution、Identity、Governance、Recovery 等实际业务增长，不先创建完整业务空树。Adapters 的提供者 DTO 不与客户端 DTO 或前端 API DTO 共用，避免大量 optional 变成通用协议包。跨层传小型应用命令和证据，不传 channel/SQL row/Vapor Request。
 
 前端采用 feature 聚合 UI、hooks/API 映射与局部测试；shared 只接收实际复用内容，API 客户端集中遵守管理契约。组件库、生成工具按实际需求选择，不预建横切 services/types 大杂烩。管理契约先明确 ID、时间、用量单位、错误、继承和 secret write-only 字段，并验证同源/代理、CSRF 与会话。

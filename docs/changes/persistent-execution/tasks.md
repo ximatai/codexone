@@ -6,4 +6,4 @@
 - [x] Runtime 有界 finalizer 与专用 DB 容量，关闭/失败责任可回收。
 - [x] 真实库、竞争、不可写、迁移及 kill 重启故障验证。
 - [x] 规范同步、自我复盘、全量验证与实现提交。
-- [ ] 提交后 subagent review，主 Agent 修复复验与提交。
+- [x] 提交后 subagent review，主 Agent 修复复验与提交。

@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-M0 本机验收与提交后 review/复审已完成。M1 实现提交后的四项 review 问题已由主 Agent 修复并完成本机复验，待复审；任务入口见 [持久执行任务](docs/changes/persistent-execution/tasks.md)。
+M0、M1 本机验收与提交后 review/修复/复审已完成。M1 共关闭五项 review 问题，复审确认可进入 M2；验证范围见 [持久执行记录](docs/changes/persistent-execution/verification.md)。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。使用合成身份，尚无业务协议转发。
 
@@ -56,6 +56,6 @@ npm run dev
 
 ## 下一步与未覆盖
 
-完成 M1 修复提交后的复审，再进入 M2 单身份协议。Linux amd64 容器正在独立构建验证，不把本机测试当作远端 CI 通过。
+进入 M2 单身份协议，先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。Linux amd64 容器正在独立构建验证，不把本机测试当作远端 CI 通过。
 
 账号授权/刷新、账号池、Responses/SSE/WS/Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
