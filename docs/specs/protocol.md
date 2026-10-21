@@ -1,6 +1,6 @@
 # 协议与执行规范
 
-- P01：网关必须经统一数据入口支持选定 Codex 客户端契约的 HTTP JSON/SSE、WS Responses 及独立 Images generation；端点/别名/斜杠/错误 envelope 必须有显式契约测试，不能任意后缀转发。
+- P01：网关必须经统一数据入口支持选定 Codex 客户端契约的 HTTP JSON/SSE、WS Responses 及独立 Images generation/edits；端点/别名/斜杠/错误 envelope 必须有显式契约测试，不能任意后缀转发。
 - P02：允许组合必须按后端、客户端版本、端点、传输、模式、工具记录；background 及未支持控制/对象服务必须在 dispatch 前拒绝。warmup 与 compact 只有独立生命周期契约验证后开放，不得默认禁用核心客户端依赖再宣称兼容。
 - P03：WS 必须先本地认证，再由首个有效 create 串行完成身份绑定；连接期间不得更换上游身份。后续 lane 必须符合该身份及当前授权；同 lane FIFO，跨 lane 总容量有限。
 - P04：每个上游 WS 必须单 reader、串行 writer，控制分片/聚合大小、队列字节及条目，入口须在创建任务或入 actor mailbox 前取得容量。整连接拥塞必须有期限/关闭及每 turn 最终化路径。
@@ -17,12 +17,13 @@
 |---|---|
 | HTTP `POST /v1/responses` | foreground、普通 JSON/SSE；`background=true` 明确 400，不改写为 false |
 | WS `/v1/responses` | `response.create`，default/named lane；同 lane FIFO、跨 lane 受控并行；整个连接同上游身份 |
-| WS `generate:false` | 单独 warmup 状态机；仅在首发适配器声明并经夹具验证后开放，不作为普通生成统计 |
+| WS `generate:false` | 首版 Desktop 预热契约必验；单独 warmup 状态机，经适配器声明及验证后开放，不作为普通生成统计 |
 | 文本与客户端 function tools | 支持所选 Codex 契约；网关不执行用户函数/CLI；每次客户端提交工具结果是新 turn |
 | 图片输入/Responses image tool | 分别授权、限制和计量；仅开放已验证的模型与参数组合 |
 | 独立 Images generation | 首版必含 `/images/generations`，兼容配置只增加经验证路径别名，不做任意后缀转发 |
-| compact | 首版客户端兼容测试若依赖则作为单独前台模式实现；输出先分类，含私有引用需绑定；无法支持的后端明确拒绝 |
-| conversation、远端 MCP、内置检索/容器、文件上传/读取、图片 edits | 首版关闭，直到归属、成本及生命周期有独立契约；不是“普通工具透传” |
+| compact | 首版 Desktop 压缩契约必验，作为单独前台模式实现；输出先分类，含私有引用需绑定；其他未支持的后端明确拒绝 |
+| 独立 Images edits | 首版支持已验证 Desktop 的参考图编辑；输入格式/图片与 mask 组合、参数和返回/流式事件列入契约，不能泛化为全部 Images 功能 |
+| conversation、远端 MCP、内置检索/容器、通用文件上传/读取 | 首版关闭，直到归属、成本及生命周期有独立契约；不是“普通工具透传” |
 | 后台任务、steering、未实现的取消/控制事件 | 首版拒绝；只允许经过契约验证的 turn 级取消，否则采用连接级关闭策略 |
 | GET/delete/cancel response | 不承诺公共对象服务；仅适配器拥有且不暴露给客户的核对接口可内部使用 |
 
@@ -35,3 +36,15 @@
 排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
 网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。HTTP 提交前可回 4xx/429/502/503/504；提交后仅协议错误事件或异常关闭。WS 握手后不可返回 HTTP 状态响应；lane 错误服从执行生命周期规范的 FIFO。失败不伪装成功、EOF 不视为终态。
+
+## P11：Desktop 与现有接入兼容
+
+首版必须以明确版本的 Codex Desktop 为主要真实客户端，CLI 为补充；允许清单必须覆盖实际使用的模型选择/目录、HTTP JSON/SSE、WS、连接预热、压缩、工具结果提交和续接。仅 CLI 成功不得表示 Desktop 通过；warmup/compact 不得在首版替代验收中整体标为可选而跳过。具体模型、参数与客户端版本由验收矩阵声明，未验证组合明确拒绝。
+
+必须验证标准 `/v1` 入口与现有 `/backend-api/codex` 前缀下的 responses（HTTP/WS）、models、responses/compact、images/generations 和 images/edits 等价路径，记录斜杠、认证、错误及模型元数据行为；不要求复制无关旧 API。HTTP 下游直连 HTTP 上游、HTTP 下游桥接 WS 上游及原生 WS 路径均须有外部行为验证。实现可复用或替换旧桥接设计，但不得因连接复用改变身份、重试与结算约束，也不得通过客户端全量改成另一传输来跳过验收。能力协商头只能表示能力，不得替代本地 Key 授权。
+
+## P12：有边界的图片生成与编辑
+
+Images generation/edits 是下游产品入口；上游可通过已验证的 Responses 图片工具适配，不要求提供者具有同名 Images 端点。必须明确输入输出映射、模型/参数、错误 envelope、使用量与终态含义，不能依赖对话模型名称推导生成权限或硬编码唯一编程模型。
+
+edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入（含适用的 multipart）、返回格式及流式行为；图片数量、类型、解码尺寸、multipart/掩码与输出均有界，未支持组合在 dispatch 前拒绝。直接提交的图片数据无需先开通公共文件上传/读取；不得默认抓取任意远端 URL。编辑与生成复用图片能力判定和执行治理，视觉输入仍单独判定。客户端对已完成编辑主动发出下一次编辑属于新执行；网关不得将断线恢复自动变为重新编辑。

@@ -6,7 +6,7 @@
 
 自托管的 Codex/Responses 网关，以身份隔离、协议连续性、可解释治理与故障恢复为重点。采用 Swift 模块化单体：NIO 数据面、Vapor 管理面、AHC 上游，SQLite 单节点；管理台 TS/React/Vite 静态 SPA，Linux amd64 OCI/Compose。理由见 [共识决策](../decisions/README.md)，实验依据见 [evidence](../evidence/README.md)。
 
-原型的 Linux CI 和 macOS 真实 CLI 结果只属于原型，不能推导本项目通过。CLI 是外部测试客户端，服务器直接调用上游。原型特殊配置与双入口限制不作为生产默认。
+原型的 Linux CI 和 macOS 真实 CLI 结果只属于原型，不能推导本项目通过。正式产品以 Desktop 为主要兼容验收对象，CLI 是补充外部测试客户端，服务器直接调用上游。原型特殊配置与双入口限制不作为生产默认。
 
 ## 模块与依赖
 
@@ -43,7 +43,7 @@ flowchart TD
 
 管理台按账号、Key/策略、用量/请求、恢复/运维能力聚合。最小管理 API 先明确错误、ID、日期、单位、继承和 secret write-only 契约，前端不复制后端领域模型。管理同源/代理与认证边界在首个管理入口验证；见 [control-plane](../specs/control-plane.md)。
 
-镜像由 CI 构建，弱服务器只运行；安全维护、恢复演练和容量证据属于发行验收，见 operations。路线是 [实施目标](../plans/roadmap.md)，执行顺序可随依赖和实验调整。
+镜像由 CI 构建，弱服务器只运行；安全维护、恢复演练和容量证据属于发行验收，见 operations。路线是 [项目里程碑](../plans/roadmap.md)，执行顺序可随依赖和实验调整。
 
 ## 演进触发
 

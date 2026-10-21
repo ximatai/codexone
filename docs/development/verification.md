@@ -14,11 +14,11 @@ python3 scripts/check_docs.py
 |---|---|
 | Swift 基础 | 锁定工具链/依赖，严格并发编译、格式及有意义的单元测试 |
 | 持久化 | 准入竞争、幂等结算、DB 不可写、kill 重启 pending/exposure、迁移/锁 |
-| 协议 | HTTP/SSE/WS/Images 的真实 socket 产品入口、ID 屏障、lane/取消/错误 envelope |
+| 协议 | HTTP/SSE/WS/桥接、Images generation/edits 的真实 socket 入口、标准/现有前缀、ID 屏障、lane/取消/错误 envelope |
 | 缓存 | TTL/多级容量、加密、恢复契约、删除竞态、restore generation、备份排除 |
-| 前端 | 类型/lint、权限表单及诊断流程、浏览器渲染截图与关键交互 |
-| 发行 | Linux amd64 无凭证 CI、镜像非 root、升级/备份/恢复/回退、长压资源回稳 |
-| 真实兼容 | 显式授权账号与 CLI 版本、脱敏结果；不拿 fixture 当 live 证据 |
+| 前端 | 类型/lint、权限表单、订阅额度/重置、按 Key 统计/趋势与错误筛选、浏览器截图与关键交互 |
+| 发行 | Linux amd64 无凭证 CI、镜像非 root、弱服务器混合长压及低磁盘、升级/备份/恢复/回退与旧服务替代演练 |
+| 真实兼容 | 显式授权账号与明确 Desktop 版本为主、CLI 补充；模型目录/文本/工具/预热/压缩/续接/出图/编辑逐项验证，不拿 fixture 当 live 证据 |
 
 此文件维护检查定义及前提，实际可运行入口、覆盖/未覆盖与最新结果只在 STATUS 维护。不要运行不存在的命令或把模板写成已通过；文档检查不需安装 Swift/npm 依赖。
 
@@ -29,3 +29,11 @@ python3 scripts/check_docs.py
 Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。
 
 前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。依赖安装/浏览器准备与可运行命令查根 STATUS，CI 使用锁文件，测试默认不读账号/外部上游。
+
+## 首版替代验收记录要求
+
+按 P11/P12、U10、C11、O13/O14 和 [里程碑归属](../plans/roadmap.md) 制作每次发行的验收矩阵，注明客户端/版本、模型/参数、端点/别名、传输/上游路径、用例与预期、实际结果及未覆盖项。合成失败测试与明确授权的真实 Desktop 流程分别报告；预热不是定时付费唤醒，图片编辑不是通用文件服务。旧服务 HTTP 200 或历史日志只能帮助确定基线，不能证明新实现结果等价。
+
+额度验收覆盖主/次窗口、重置、观测失败/陈旧；统计验证跨 Key 隔离、时间边界、完整度、迟到更新及错误筛选。恢复验收逐项给出已知/未知执行、已有输出读取及客户端动作；不自动重执行是约束，不能据此省略实际兼容比较。
+
+迁移演练使用独立数据目录与测试反代，验证账号身份、Key 保留/换发、域名/配置变化、存量会话和切回旧服务后的数据/凭证处理；不把首次安装成功视为迁移通过。容量验收记录参考宿主及共存负载、限制、持续时间、并发/大小包络与资源峰值/回稳，具体门槛见 O14；真实 Ali 切换必须另经授权。

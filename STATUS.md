@@ -39,6 +39,8 @@ npm run dev
 
 ## 最新验证与范围
 
+- 2026-10-21 文档范围同步：已按实际使用需求更新[里程碑](docs/plans/roadmap.md)及相关规范，首版替代验收覆盖 Desktop、图片编辑、额度统计、迁移及弱服务器。`python3 scripts/check_docs.py` 与 `git diff --check` 通过；本次仅改文档，未进行运行兼容/容量/迁移验收，未访问或改动 Ali。
+
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
 - 9 个 Swift 测试函数通过（其中无效配置含 7 个参数案例）：覆盖就绪、共享 DTO、HTTP/请求限制、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
 - 进程检查通过：脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
