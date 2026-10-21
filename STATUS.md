@@ -4,10 +4,12 @@
 
 ## 项目状态
 
+M0 本机验收与提交后 review 已完成；主 Agent 已修复默认请求日志泄露与状态请求无期限两个问题。M1 提案已建立，开发入口见 [持久执行任务](docs/changes/persistent-execution/tasks.md)。
+
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
 - React/TS/Vite 服务概览，按 feature 聚合 UI/API/测试；Vitest/Testing Library 与 Playwright，前后端共用健康契约样例。Node 22.23.0，npm lock 固定依赖。
-- 本地分支 `codex/bootstrap-runtime`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
+- 本地分支 `codex/persistent-execution`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
 
 ## 运行与检查
 
@@ -43,8 +45,8 @@ npm run dev
 
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
 - 9 个 Swift 测试函数通过（其中无效配置含 7 个参数案例）：覆盖就绪、共享 DTO、HTTP/请求限制、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。
-- 进程检查通过：脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
-- 前端类型/生产构建、8 个组件/API 测试、2 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动及失败重试，不冒充完整真实上游端到端。
+- 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
+- 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
 - Linux amd64 Swift 6.4 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖

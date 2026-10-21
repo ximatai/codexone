@@ -25,6 +25,8 @@ public struct AdminService: Service {
     app.http.server.configuration.hostname = "127.0.0.1"
     app.http.server.configuration.port = port
     app.http.server.configuration.shutdownTimeout = .seconds(2)
+    app.middleware = .init()
+    app.middleware.use(BootstrapErrorMiddleware())
     app.routes.defaultMaxBodySize = "4kb"
     let router = HealthRouter(report: report)
     for path in ["live", "ready"] {
@@ -63,5 +65,20 @@ public struct AdminService: Service {
     return Response(
       status: .init(statusCode: reply.status), headers: headers,
       body: .init(data: reply.body))
+  }
+}
+
+// Bootstrap errors contain no request path, header, body, or framework reason.
+private struct BootstrapErrorMiddleware: AsyncMiddleware {
+  func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
+    do {
+      return try await next.respond(to: request)
+    } catch {
+      let status = (error as? any AbortError)?.status ?? .internalServerError
+      return Response(
+        status: status,
+        headers: ["content-type": "application/json", "cache-control": "no-store"],
+        body: .init(string: #"{"error":{"code":"request_failed","message":"Request failed."}}"#))
+    }
   }
 }

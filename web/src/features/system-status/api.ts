@@ -19,7 +19,8 @@ export function parseSystemStatus(value: unknown): SystemStatus {
 }
 
 export async function fetchSystemStatus(signal: AbortSignal): Promise<SystemStatus> {
-  const response = await fetch("/api/system", { signal, headers: { Accept: "application/json" } });
+  const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+  const response = await fetch("/api/system", { signal: boundedSignal, headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error("Service unavailable");
   return parseSystemStatus(await response.json());
 }

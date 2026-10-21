@@ -34,7 +34,7 @@ def release(process):
 def request(port, method, path, body=None):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
     try:
-        connection.request(method, path, body=body)
+        connection.request(method, path, body=body, headers={"X-Synthetic-Secret": "synthetic-header-marker"})
         response = connection.getresponse()
         return response.status, json.loads(response.read())
     finally:
@@ -88,6 +88,9 @@ def main():
         assert status == 503 and body["error"]["code"] == "gateway_not_configured"
         assert request(ports["data"], "POST", "/v1/responses", "x" * 5000)[0] == 413
         print("PASS: actual HTTP health, readiness, management contract, unavailable execution and body bound")
+        for port in ports.values():
+            assert request(port, "GET", "/synthetic-private-marker%0Asecond-line?secret=synthetic-query")[0] == 404
+        assert request(ports["admin"], "POST", "/synthetic-private-marker", "synthetic-body-marker")[0] == 404
         partials = []
         keep_alive = http.client.HTTPConnection("127.0.0.1", ports["data"], timeout=3)
         try:
@@ -116,6 +119,11 @@ def main():
             for partial in partials:
                 partial.close()
             keep_alive.close()
+        output += process.stdout.read()
+        assert b"synthetic-private-marker" not in output
+        assert b"synthetic-query" not in output
+        assert b"synthetic-header-marker" not in output
+        assert b"synthetic-body-marker" not in output
         for port in ports.values():
             assert_released(port)
         print("PASS: SIGTERM closes idle and incomplete requests, exits and releases both ports")
