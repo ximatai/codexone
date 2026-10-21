@@ -50,7 +50,7 @@ final class SQLiteConnection: @unchecked Sendable {
       let version = try scalar("PRAGMA user_version")
       guard version == 0 || version == 1 else { throw ExecutionError.incompatibleSchema }
       if version == 0 {
-        guard try scalar("SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") == 0
+        guard try scalar("SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'") == 0
         else {
           throw ExecutionError.incompatibleSchema
         }

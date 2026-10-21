@@ -15,3 +15,5 @@ finalizer 验证：ticket 在准入前取容量、准入失败不 dispatch 并�
 700e846 的 subagent review 找到四项：历史证据容量会拒收最终用量；操作抛错会丢此前观察用量；数据库默认文件权限可能为 0644；非空未版本化旧库被拒绝前已改 journal 模式。主 Agent 全部修复并同步规范：累计证据以 (attempt, revision) 标识，独立保留最新真相、最近 128 条历史及持久压缩水位；水位以内旧证据明确 staleEvidence，worker 不因已过时最终化停服。执行上下文保留单个有界可信快照，失败也移交，移交后封闭本地观察入口。兼容检查先于 journal 修改，校验 v1 表结构；DB/lock/WAL/SHM 原子安全创建或收紧为 0600，拒绝不安全文件类型/归属/硬链接。
 
 2026-10-21 主 Agent 再次运行 `./scripts/verify.sh --backend` 全通过，26 个 Swift 测试函数。新增 128 partial → 第 129 complete → 更高迟到用量、压缩水位重开/重复/冲突、观察 complete/partial 后取消仍入账、过时最终化不停止 worker、拒绝旧库前后字节一致；进程验证在 umask 022 与既有 0755 目录检查 DB/lock/WAL/SHM 为 0600，并验证旧 0644 文件重开收紧。初始“新建库0600”的描述在首次 review 时尚未成立，以本次实际权限回归为准。
+
+6590ce7 复审确认四项修复有效；reviewer 实际运行 7 个相关 Swift 回归、网关进程/权限与四个 SIGKILL 场景通过。另发现空库识别中的 SQL LIKE 下划线通配符会错误忽略 `sqlitex` 用户表。主 Agent 改为字面下划线的 GLOB 模式；`swift test -j 4 --filter rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal` 的 legacy/sqlitex 两个参数案例均通过，拒绝前后数据库字节不变。

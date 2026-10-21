@@ -275,14 +275,16 @@ func rawSQL(_ path: String, _ sql: String) throws {
   #expect(sqlite3_column_int64(statement, 1) == 3)
 }
 
-@Test func rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal() async throws {
+@Test(arguments: ["legacy", "sqlitex"])
+func rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal(_ table: String) async throws {
   let path = try temporaryExecutionPath()
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
   try rawSQL(
     path,
-    "PRAGMA journal_mode=DELETE; CREATE TABLE legacy(id INTEGER); INSERT INTO legacy VALUES(42)")
+    "PRAGMA journal_mode=DELETE; CREATE TABLE \(table)(id INTEGER); INSERT INTO \(table) VALUES(42)"
+  )
   let original = try Data(contentsOf: URL(fileURLWithPath: path))
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
