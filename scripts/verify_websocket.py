@@ -121,10 +121,20 @@ class Provider(BaseHTTPRequestHandler):
                 response = {'id': f'resp_{connection}_{index}', 'status': 'completed', 'output': [],
                             'usage': {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}}
                 lane = {'stream_id': create['stream_id']} if 'stream_id' in create else {}
+                if create['input'] == 'invalid-upstream-lane':
+                    lane = {'stream_id': 'invalid lane'}
                 send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}, **lane})
-                if create['input'] == 'multi-slow':
+                if create['input'] in ('multi-slow', 'mixed-known'):
                     pending = (lane, response)
                     continue
+                if create['input'] == 'mixed-unknown':
+                    assert pending is not None
+                    for item_index in range(3):
+                        item = {'id': f'msg_{connection}_{index}_{item_index}', 'type': 'message', 'role': 'assistant',
+                                'content': [{'type': 'output_text', 'text': 'synthetic queue', 'annotations': []}]}
+                        send(self.connection, {'type': 'response.output_item.added', 'item': item, **pending[0]})
+                    send(self.connection, {'type': 'response.completed', 'response': pending[1], **pending[0]})
+                    return
                 time.sleep(0.02)
                 send(self.connection, {'type': 'response.completed', 'response': response, **lane})
                 if create['input'] == 'multi-fast' and pending:
@@ -220,6 +230,38 @@ def main():
                     assert [lane for lane, _ in completed] == ['lane_b', 'lane_a', 'lane_a']
                     assert len(set(response for _, response in completed)) == 3
                 print('PASS: a blocked lane permits another lane to complete; same-lane queued turns stay FIFO with response ownership')
+                for _ in range(3):
+                    with sqlite3.connect(db) as connection:
+                        mark = connection.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0]
+                    with dial(ports['data']) as downstream:
+                        send(downstream, {'type': 'response.create', 'stream_id': 'known', 'model': 'synthetic-text', 'input': 'mixed-known'}, masked=True)
+                        assert json.loads(receive(downstream)[1])['type'] == 'response.created'
+                        send(downstream, {'type': 'response.create', 'stream_id': 'unknown', 'model': 'synthetic-text', 'input': 'mixed-unknown'}, masked=True)
+                        try:
+                            for _ in range(12):
+                                opcode, _data = receive(downstream)
+                                if opcode == 8:
+                                    break
+                        except (EOFError, ConnectionResetError):
+                            pass
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        with sqlite3.connect(db) as connection:
+                            rows = connection.execute('SELECT state,usage_json FROM attempts WHERE rowid>?', (mark,)).fetchall()
+                        if len(rows) == 2 and all(state != 'intent' for state, _ in rows):
+                            break
+                        time.sleep(0.02)
+                    assert sorted(state for state, _ in rows) == ['settled', 'unknown'], rows
+                    for state, usage in rows:
+                        if state == 'settled':
+                            assert json.loads(usage)['inputTokens'] == 5
+                        else:
+                            assert usage is None
+                with dial(ports['data']) as downstream:
+                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'invalid-upstream-lane'})
+                    assert events[-1]['error']['code'] == 'invalid_upstream_lane'
+                    assert events[-1]['error']['type'] == 'server_error'
+                print('PASS: one lane EOF cannot erase another queued terminal; malformed provider lane is a server error')
                 for streaming in (False, True):
                     status, body = connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'bridge', 'stream': streaming})
                     assert status == 200 and b'completed' in body

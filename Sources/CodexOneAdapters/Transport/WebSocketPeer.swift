@@ -158,6 +158,11 @@ struct WebSocketPeer: Sendable {
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
   func beginTurn(lane: String = "") throws { try turns?.begin(lane: lane) }
+  func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
+  {
+    try turns?.attachEvidence(lane: lane, handler: handler)
+  }
+  func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
   func send(_ value: JSONValue) async throws { try await writer.send(value.data()) }
 

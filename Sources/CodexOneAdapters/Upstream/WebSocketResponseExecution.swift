@@ -13,6 +13,12 @@ extension HTTPResponseExecution {
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID
     ) { context in
+      try peer.attachEvidence(lane: lane) { event in
+        if let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model) {
+          try context.observeUsage(evidence)
+        }
+      }
+      defer { peer.detachEvidence(lane: lane) }
       try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
         var create = request.document.object!
         create.removeValue(forKey: "stream")

@@ -11,6 +11,7 @@ final class WebSocketTurns: Sendable {
     struct Lane {
       var phase = Phase.idle
       var items = Set<String>()
+      var evidence: (@Sendable (JSONValue) throws -> Void)?
     }
     var lanes: [String: Lane] = [:]
     var responses = Set<String>()
@@ -41,12 +42,26 @@ final class WebSocketTurns: Sendable {
       value.lanes[lane]!.items.removeAll(keepingCapacity: true)
     }
   }
+  func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
+  {
+    try state.withLock { value in
+      guard !value.closed, var current = value.lanes[lane], case .awaitingCreated = current.phase,
+        current.evidence == nil
+      else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+      current.evidence = handler
+      value.lanes[lane] = current
+    }
+  }
+  func detachEvidence(lane: String) { state.withLock { $0.lanes[lane]?.evidence = nil } }
   @discardableResult func observe(_ data: Data) throws -> String {
     let event: JSONValue
     do { event = try JSONValue.decode(data) } catch {
       throw GatewayProtocolError(502, "invalid_upstream_event")
     }
-    let lane = try webSocketLane(event)
+    let lane: String
+    do { lane = try webSocketLane(event) } catch {
+      throw GatewayProtocolError(502, "invalid_upstream_lane")
+    }
     try state.withLock { value in
       guard !value.closed, let type = event["type"]?.string else {
         throw GatewayProtocolError(502, "invalid_upstream_turn")
@@ -92,6 +107,8 @@ final class WebSocketTurns: Sendable {
           guard event["response"]?["id"]?.string == id else {
             throw GatewayProtocolError(502, "invalid_upstream_turn")
           }
+          // Preserve classified evidence before any other lane can cancel queued delivery.
+          try current.evidence?(event)
           current.phase = .idle
         }
       }

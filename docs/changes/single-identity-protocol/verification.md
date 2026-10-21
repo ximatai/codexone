@@ -51,3 +51,11 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 2026-10-22 使用本机 Codex CLI 0.163.0，在独立临时 CODEX_HOME/空工作目录和只读 sandbox 下，指向无凭证 loopback 合成 provider；未读取个人客户端配置、未接真实上游。fixture 补齐终态 usage.total_tokens 后，CLI 文本 turn 正常结束且退出 0。探测发现客户端会提交 client_metadata、reasoning.encrypted_content include、namespace 工具及 web_search 声明；这些仍是网关待实现/验证能力，fixture 成功不等于 CodexOne 已兼容。此前 fixture 缺少必要 usage 字段使客户端重试，未用于任何通过声明。
 
 已对照 [0.163.0 请求定义](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-api/src/common.rs)、[客户端 SSE 解析](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-api/src/sse/responses.rs) 和 [模型元数据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/protocol/src/openai_models.rs) 核实字段，后续实现仍需通过网关的实际客户端测试；不能通过静默删除工具来伪装兼容。
+
+### 命名 lane 提交后 review 修复
+
+283af6c 独立 review 发现 P1：B 的 EOF 失败会取消 A，使 A 已入队但尚在等待持久屏障的终态用量被丢弃；另 P2：非法上游 stream_id 被错误归为客户端 400。主 Agent 将每个已准入 attempt 的同步可信证据 sink 注册到唯一 reader 的当前 lane，归属验证后在入队前观察终态用量；解除注册与最终化顺序受连接/执行 owner 管理，取消输出不再丢弃已分类证据。下游对象仍必须先持久绑定。上游 lane 解析边界将错误转为 502 invalid_upstream_lane。
+
+新增真实 socket 回归连续三次验证：A 的三个 item 屏障事件后跟终态，B 无终态即 EOF，最终 A settled 且用量保留、B unknown 且无伪造零用量。非法提供者 lane 返回 server_error；原有隔离/重复终态回归保持。283af6c 的独立 Linux 完整后端验证已通过（35 个 Swift 测试及六组 WS 场景），不包含本次修复；修复快照须单独验证。
+
+修复工作树在 2026-10-22 macOS 完整后端验证通过（35 个 Swift 测试及七组 WS 场景）；验证时独立暂存了尚未接通的客户端模式准备工作，未将该准备代码混入修复快照。

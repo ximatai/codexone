@@ -59,6 +59,6 @@ npm run dev
 
 ## 下一步与未覆盖
 
-M2 开发中，HTTP/SSE 切片已通过本机后端及真实管理界面联调，提交后 review 的三项 P1 及 Linux CRLF 差异已修复、复审与修复快照 Linux 完整验证通过；原生 WS 默认串行 lane 与 HTTP→WS 桥接已通过本机完整回归，提交后 review 的轮次隔离/错误分类问题已修复、复审及 Linux 完整回归通过；命名 lane 已通过本机完整回归，待提交后 review 与 Linux 验证，下一步预热/压缩与客户端兼容。入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。M1 独立 Linux 验证已完成，不把本地容器测试当作远端 CI 通过。
+M2 开发中，HTTP/SSE 切片已通过本机后端及真实管理界面联调，提交后 review 的三项 P1 及 Linux CRLF 差异已修复、复审与修复快照 Linux 完整验证通过；原生 WS 默认串行 lane 与 HTTP→WS 桥接已通过本机完整回归，提交后 review 的轮次隔离/错误分类问题已修复、复审及 Linux 完整回归通过；命名 lane 提交后 review 发现跨 lane 取消丢终态证据及错误归类，已修复并通过本机完整回归，待复审及修复快照 Linux 验证；原始快照 Linux 完整验证通过，下一步预热/压缩与客户端兼容。入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。M1 独立 Linux 验证已完成，不把本地容器测试当作远端 CI 通过。
 
 账号授权/刷新、账号池、WS 预热/压缩与 Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 串行/HTTP 桥接合成闭环已实现，尚未完成 M2 整体或真实客户端验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
