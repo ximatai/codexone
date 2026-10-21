@@ -30,7 +30,8 @@ struct SSEDecoder {
       throw GatewayProtocolError(502, "invalid_upstream_event")
     }
     buffer.removeAll(keepingCapacity: true)
-    let lines = text.components(separatedBy: "\n").map {
+    let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n").map
+    {
       $0.hasSuffix("\r") ? String($0.dropLast()) : $0
     }
     let payload = lines.filter { $0.hasPrefix("data:") }.map { line in

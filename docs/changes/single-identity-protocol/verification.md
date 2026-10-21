@@ -18,4 +18,4 @@
 
 2026-10-22 macOS 完整后端验证通过（32 个 Swift 测试函数）；真实 socket 新增终态与无效 JSON/超限尾部同次写入、私有 file citation 被拒绝、持续有进展但无终态的 SSE 在 2 秒总期限终止并保存 unknown。已有取消、屏障失败、用量、SIGKILL 检查仍通过。
 
-独立 Linux amd64 容器对 035adb8 的验证未通过：CRLF 分片测试返回零事件，后续索引越界使测试进程退出。原因是原 Data 搜索/删除依赖了跨平台索引行为；同一逐事件重写移除了该依赖，并将测试前置计数改为 require。修复快照的 Linux 结果须另行记录，不将旧快照失败写为通过。
+独立 Linux amd64 容器对 035adb8 的验证未通过：CRLF 分片测试返回零事件，后续索引越界使测试进程退出。测试前置计数已改为 require，避免失败后再次越界。e32696a 的逐事件重写仍在 Linux 返回零事件；进一步最小复现确认 Linux Foundation 的 components(separatedBy: "\n") 不拆开 CRLF，先将完整 CRLF 规范化为 LF 后再分行。修复快照的 Linux 结果须另行记录，不将旧快照失败写为通过。
