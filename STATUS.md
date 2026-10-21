@@ -11,7 +11,7 @@ M0、M1 本机验收与提交后 review/修复/复审已完成。M1 共关闭五
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
 - React/TS/Vite 服务概览，按 feature 聚合 UI/API/测试；Vitest/Testing Library 与 Playwright，前后端共用健康契约样例。Node 22.23.0，npm lock 固定依赖。
-- 本地分支 `codex/persistent-execution`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
+- 本地分支 `codex/single-identity-protocol`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
 
 ## 运行与检查
 
@@ -56,6 +56,6 @@ npm run dev
 
 ## 下一步与未覆盖
 
-进入 M2 单身份协议，先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。Linux amd64 容器正在独立构建验证，不把本机测试当作远端 CI 通过。
+M2 开发中，入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。Linux amd64 容器正在独立构建验证，不把本机测试当作远端 CI 通过。
 
 账号授权/刷新、账号池、Responses/SSE/WS/Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
