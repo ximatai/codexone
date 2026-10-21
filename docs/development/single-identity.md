@@ -14,6 +14,7 @@
 | keySHA256 | 高熵 Bearer Key 的 SHA-256 小写十六进制；文件不存原始客户端 Key |
 | namespace / identity | 可信配置的提供者命名空间前缀与身份标识 |
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
+| models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—131072，默认 32768）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；价格指纹不含这些展示元数据 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
@@ -51,3 +52,5 @@ python3 scripts/verify_client.py --binary .build/debug/codexone
 ```
 
 脚本创建私有临时客户端目录与空工作目录，在只读 sandbox 下使用合成上游，并显式关闭未支持的内置 web_search。客户端仅执行 `/bin/sh` 的固定 printf，不用登录 shell，网关不执行工具。此脚本验证 HTTP/SSE 文本、函数往返及加密推理回传；不代表 Desktop、真实订阅或所有客户端版本通过，不修改个人配置。
+
+模型目录同时提供 OpenAI `data` 和 Codex `models` 形式，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。

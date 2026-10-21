@@ -246,6 +246,9 @@ def main():
                 for prefix in ("/v1", "/backend-api/codex"):
                     status, body = connect(port, "GET", prefix + "/models")
                     assert status == 200 and json.loads(body)["data"][0]["id"] == "synthetic-text"
+                    catalog = json.loads(body)["models"]
+                    assert len(catalog) == 1 and catalog[0]["slug"] == "synthetic-text"
+                    assert catalog[0]["input_modalities"] == ["text"] and not catalog[0]["supports_search_tool"]
                     assert connect(port, "GET", prefix + "/models", authorization=False)[0] == 401
                     status, body = connect(port, "POST", prefix + "/responses", {"model": "synthetic-text", "input": "text"})
                     assert status == 200 and json.loads(body)["status"] == "completed"

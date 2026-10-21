@@ -55,13 +55,13 @@ npm run dev
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
 - 2026-10-22 独立 Linux amd64/Swift 6.4 本地 Docker 验证通过（快照 8184adb，模拟执行）：单并发后端完整检查、26 Swift 测试及进程/权限/四个 SIGKILL 场景。首次双并发因约 2.8 GiB Docker VM 内存不足 OOM；未改全局设置。此结果不代表弱服务器容量验收。
-- 2026-10-22 M2 Linux amd64 本地容器完整验证通过至 4fcb003（35 Swift 测试、进程故障、七组 WS socket 场景）；新模式/上下文切片 Linux 结果另验。macOS 实际 CLI 0.163.0 通过网关的 HTTP/SSE 文本/函数结果与加密推理回传；独立临时配置，无真实账号。
+- 2026-10-22 M2 Linux amd64 本地容器完整验证通过至 4fcb003（35 Swift 测试、进程故障、七组 WS socket 场景）；模式/上下文及修复快照 614edef 的 Linux 完整验证亦通过（37 个 Swift 测试）。macOS 实际 CLI 0.163.0 通过网关的 HTTP/SSE 文本/函数结果与加密推理回传；独立临时配置，无真实账号。
 - Linux amd64 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖
 
-M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，原始 8c82e72 Linux 完整通过；提交后 review 发现的 compact 可选字段嵌套对象问题已修复并回归，待复审与修复快照 Linux 验证。
+M2 开发中：HTTP JSON/SSE、原生 WS 默认/命名 lane、HTTP→WS 桥接，以及 warmup/compact、加密上下文指纹归属和客户端 namespace/custom 工具的合成闭环已实现。HTTP/WS 提交后 review 发现的问题均已亲自修复并复审，Linux 完整验证覆盖至 4fcb003；新增模式/上下文切片及实际 CLI 往返已通过本机验证，原始 8c82e72 Linux 完整通过；提交后 review 发现的 compact 可选字段嵌套对象问题已修复并回归，复审通过，修复快照 614edef 的 Linux amd64 完整验证亦通过。
 
-下一步收敛模型元数据、明确版本 Desktop 与恢复契约；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
+模型目录已提供同一白名单的 OpenAI/Codex 视图及有界配置，macOS 完整后端 38 个 Swift 测试与脚本通过，待提交后 review。Desktop 26.1016.51333 的隔离验证已准备，但 Computer Use 明确禁止控制 com.openai.codex，实际 UI 闭环未验收，未绕过限制。下一步核实恢复契约与目录独立 review；入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。不把本地容器当作远端 CI、CLI 当作 Desktop 或合成上游当作真实订阅验收。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

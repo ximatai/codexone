@@ -301,13 +301,7 @@ public struct SingleIdentityDataService: Service {
       throw GatewayProtocolError(401, "invalid_api_key")
     }
     if endpoint == "/models", head.method == .GET {
-      let models = executor.configuration.models.map { model in
-        JSONValue.object([
-          "id": .string(model.id), "object": .string("model"),
-          "owned_by": .string("configured-provider"),
-        ])
-      }
-      try await writer.json(.object(["object": .string("list"), "data": .array(models)]))
+      try await writer.json(modelCatalog(executor.configuration.models))
       return
     }
     guard ["/responses", "/responses/compact"].contains(endpoint), head.method == .POST else {

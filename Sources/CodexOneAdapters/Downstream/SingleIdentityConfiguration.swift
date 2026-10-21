@@ -9,6 +9,14 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let id: String
     public let inputMicrosPerMillion: Int64
     public let outputMicrosPerMillion: Int64
+    public var catalog: Catalog? = nil
+  }
+  public struct Catalog: Sendable, Codable {
+    public let displayName: String?
+    public let description: String?
+    public let contextWindow: Int?
+    public let reasoningEfforts: [String]?
+    public let defaultReasoningEffort: String?
   }
   public let principal: String
   public let keyID: String
@@ -51,6 +59,20 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           && (0...500_000_000).contains($0.inputMicrosPerMillion)
           && (0...500_000_000).contains($0.outputMicrosPerMillion)
       }),
+      models.allSatisfy({ model in
+        guard let catalog = model.catalog else { return true }
+        let efforts = catalog.reasoningEfforts ?? []
+        return (catalog.displayName?.utf8.count ?? 1) > 0
+          && (catalog.displayName?.utf8.count ?? 0) <= 128
+          && (catalog.description?.utf8.count ?? 0) <= 1024
+          && (4096...131_072).contains(catalog.contextWindow ?? 32_768)
+          && efforts.count <= 8 && Set(efforts).count == efforts.count
+          && efforts.allSatisfy({
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains($0)
+          })
+          && (catalog.defaultReasoningEffort == nil
+            || efforts.contains(catalog.defaultReasoningEffort!))
+      }),
       (0...1_000_000_000_000).contains(reservedMicros),
       (1...120).contains(executionTimeoutSeconds ?? 120),
       ["http", "websocket"].contains(upstreamTransport ?? "http"),
@@ -90,7 +112,14 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       try JSONEncoder().encode([upstreamBaseURL, "responses", identity, token ?? "synthetic"]))
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    let pricing = try encoder.encode(models.sorted { $0.id < $1.id })
+    let pricing = try encoder.encode(
+      models.sorted { $0.id < $1.id }.map { model in
+        JSONValue.object([
+          "id": .string(model.id),
+          "inputMicrosPerMillion": .number(Decimal(model.inputMicrosPerMillion)),
+          "outputMicrosPerMillion": .number(Decimal(model.outputMicrosPerMillion)),
+        ])
+      })
     let policy = digest(
       try encoder.encode(
         JSONValue.object([
@@ -98,6 +127,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "principal": .string(principal), "namespace": .string(namespace), "scope": .string(scope),
           "identity": .string(identity),
           "models": .array(models.map(\.id).sorted().map { .string($0) }),
+          "catalogVersion": .string(digest(try encoder.encode(models.sorted { $0.id < $1.id }))),
           "reservation": .number(Decimal(reservedMicros)),
           "executionTimeoutSeconds": .number(Decimal(executionTimeoutSeconds ?? 120)),
           "transport": .string(upstreamTransport ?? "http"),

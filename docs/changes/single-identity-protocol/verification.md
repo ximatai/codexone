@@ -79,3 +79,11 @@ fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swif
 2026-10-22 macOS 完整后端（37 个 Swift 测试及所有脚本）和实际 CLI 往返验证通过；额外 previous_response_id 关联改动后重新构建并运行 HTTP/context/实际 CLI 定向回归。真实 socket 五类 compact 嵌套对象故障、usage 私有元数据、原始 provider error/未知 previous ID 均不暴露，且有效 5/3 用量仍 settled。
 
 8c82e72 的独立 Linux amd64 完整后端验证通过（37 个 Swift 测试及上下文/预热新脚本）；不包含本次 review 修复，修复快照须另验。模型目录准备已独立暂存，未混入修复验证/提交。
+
+614edef 复审通过，reviewer 重跑 context 三组与 HTTP/SSE 八组；原 P1 闭环。相同提交的 Linux amd64/Swift 6.4 单并发完整后端验证退出 0，37 个 Swift 测试及全部进程/执行/HTTP/WS/context 脚本通过。模型目录准备未包含在此快照。
+
+## 模型目录与 Desktop 验证边界
+
+2026-10-22：模型目录从同一有效模型集合产生 OpenAI `data` 与 Codex `models` 两种视图；参考官方 rust-v0.163.0 `ModelInfo` 字段，提供有界可选展示/上下文/推理配置，当前明确仅文本且无内置搜索。元数据改变更新 policyVersion，价格版本只由 ID/费率产生。新增 Swift 测试验证边界、无效配置及指纹分离；HTTP 两个路由的目录类型另有 socket 回归。macOS 完整后端 38 个 Swift 测试与全部脚本通过；目录断言增补后定向 HTTP/CLI 另验。
+
+安装的 Desktop 为 26.1016.51333（21161），内置 CLI 0.163.0-alpha.11，与 Homebrew CLI 0.163.0 分别记录。已准备临时 CODEX_HOME/userData、空工作目录与本地合成上游，并以系统 sandbox 验证 loopback 可用、外部连接 EPERM；隔离 Desktop 进程启动后已退出，未执行 UI 验收。Computer Use 返回明确限制：`Computer Use is not allowed to use the app 'com.openai.codex' for safety reasons.` 未绕过该限制，未操作个人实例；不声称 Desktop 模型选择或操作闭环通过。完整 Desktop 仍是 M2 未完成出口。

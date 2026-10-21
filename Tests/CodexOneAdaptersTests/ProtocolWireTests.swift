@@ -245,3 +245,47 @@ import Testing
         .utf8))
   #expect(admission.executionMode == .generation && admission.mode == nil)
 }
+
+@Test func modelDirectoryUsesAuthorizedSetAndSeparatesMetadataFromPricing() throws {
+  func configuration(_ catalog: [String: Any]?) throws -> SingleIdentityConfiguration {
+    var model: [String: Any] = [
+      "id": "synthetic", "inputMicrosPerMillion": 2, "outputMicrosPerMillion": 3,
+    ]
+    model["catalog"] = catalog
+    let value: [String: Any] = [
+      "principal": "p", "keyID": "k", "namespace": "synthetic", "identity": "i",
+      "keySHA256": String(repeating: "a", count: 64), "reservedMicros": 10,
+      "models": [model], "upstreamBaseURL": "http://127.0.0.1:12345/v1",
+    ]
+    let result = try JSONDecoder().decode(
+      SingleIdentityConfiguration.self,
+      from: JSONSerialization.data(withJSONObject: value))
+    try result.validate()
+    return result
+  }
+  let basic = try configuration(nil)
+  let detailed = try configuration([
+    "displayName": "Synthetic fixture", "contextWindow": 65536,
+    "reasoningEfforts": ["low", "high"], "defaultReasoningEffort": "low",
+  ])
+  let first = try basic.makePolicy(token: nil)
+  let second = try detailed.makePolicy(token: nil)
+  #expect(first.owner == second.owner)
+  #expect(first.pricingVersion == second.pricingVersion)
+  #expect(first.policyVersion != second.policyVersion)
+  let directory = modelCatalog(detailed.models)
+  #expect(directory["data"]?.array?.count == 1)
+  #expect(directory["data"]?.array?.first?["id"]?.string == "synthetic")
+  let entry = try #require(directory["models"]?.array?.first)
+  #expect(entry["slug"]?.string == "synthetic")
+  #expect(entry["display_name"]?.string == "Synthetic fixture")
+  #expect(entry["context_window"] == .number(65536))
+  #expect(entry["auto_compact_token_limit"] == .number(49152))
+  #expect(entry["input_modalities"] == .array([.string("text")]))
+  #expect(entry["supports_search_tool"] == .bool(false))
+  for invalid: [String: Any] in [
+    ["contextWindow": 4095], ["contextWindow": 131073], ["displayName": ""],
+    ["reasoningEfforts": ["high", "high"]], ["reasoningEfforts": ["invented"]],
+    ["reasoningEfforts": ["low"], "defaultReasoningEffort": "high"],
+  ] { #expect(throws: (any Error).self) { try configuration(invalid) } }
+}
