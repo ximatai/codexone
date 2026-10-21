@@ -11,11 +11,10 @@ REQUIRED = (
     'README.md', 'AGENTS.md', 'STATUS.md', 'HANDOFF.md', 'LICENSE',
     'docs/README.md', 'docs/governance.md', 'docs/requirements/product.md',
     'docs/specs/README.md', 'docs/architecture/ARCHITECTURE.md',
-    'docs/architecture/ARCHITECTURE-SYNTHESIS.md',
     'docs/decisions/README.md', 'docs/plans/roadmap.md',
     'docs/development/layout.md', 'docs/development/verification.md',
     'docs/architecture/ownership.md', 'docs/specs/execution-lifecycle.md',
-    'docs/specs/recovery-contract.md', 'docs/evidence/README.md',
+    'docs/evidence/README.md',
 )
 # Logical/target directories evolve with implementation; validate stable
 # documentation contracts, not the initial placeholder tree or a task name.
@@ -39,15 +38,8 @@ for name in REQUIRED:
     if not (ROOT / name).is_file():
         errors.append(f'Missing required file: {name}')
 checked = 0
-snapshots = 0
 for path in markdown_files():
     rel = path.relative_to(ROOT)
-    # Original prototype documents reference its own source layout. Preserve
-    # these snapshots verbatim; provenance explicitly identifies this boundary.
-    historical = rel.as_posix().startswith('docs/evidence/prototype/')
-    if historical and path.name != 'MANIFEST.md':
-        snapshots += 1
-        continue
     text = path.read_text(encoding='utf-8')
     if not text.strip() or not text.endswith('\n'):
         errors.append(f'Empty file or missing final newline: {rel}')
@@ -74,7 +66,7 @@ for path in markdown_files():
 changes = ROOT / 'docs/changes'
 if changes.exists():
     for change in changes.iterdir():
-        if not change.is_dir() or change.name in ('_template', 'archive'):
+        if not change.is_dir():
             continue
         for name in ('proposal.md', 'tasks.md'):
             if not (change / name).is_file():
@@ -86,6 +78,5 @@ if errors:
     print('\n'.join(errors), file=sys.stderr)
     sys.exit(1)
 print(f'PASS: {checked} Markdown documents, required entries, local links and change artifacts.')
-print(f'Historical prototype snapshots preserved: {snapshots}; their source-layout links are excluded.')
 print('Dependency/build directories excluded; logical source directories are not frozen.')
 print('Scope: local file links only; no anchor, remote URL, code, protocol or runtime validation.')

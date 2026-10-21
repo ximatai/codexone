@@ -1,19 +1,19 @@
-# 文档导航与事实来源
+# 文档导航
+
+只维护目标、共识方案和执行约定。讨论稿、候选协议、历史评审及完成后的过程记录由 Git 历史追溯，不与正式文档并排保留。共识是推进依据，允许凭新证据沟通调整。
 
 | 文档 | 用途 |
 |---|---|
-| [产品范围](requirements/product.md) | 用户、目标、首版范围与非目标 |
-| [规范](specs/README.md) | 必须实现和验收的行为 |
-| [架构](architecture/ARCHITECTURE.md) | 模块、状态机、数据流及恢复设计 |
-| [意见汇总](architecture/ARCHITECTURE-SYNTHESIS.md) | 独立设计/评审与最终取舍 |
-| [中长期架构与目录审查](reviews/2026-10-21-architecture-and-layout.md) | 有日期的独立意见，不替代规范 |
-| [ADR](decisions/README.md) | 已接受的长期决策 |
-| [路线](plans/roadmap.md) | 按验收闭环推进的里程碑 |
-| [运行责任](architecture/ownership.md) | owner、端口、核心/缓存资源边界 |
-| [开发目录](development/layout.md) | 文件位置、依赖方向 |
-| [验证约定](development/verification.md) | 当前可运行命令与未来验收要求 |
-| [治理](governance.md) | 文档、变更、贡献与发布规则 |
-| [变更记录](changes/README.md) | 提案、任务和带日期验证记录 |
-| [证据](evidence/README.md) | 历史验证范围与可移植快照 |
+| [产品目标](requirements/product.md) | 服务对象、首版范围、验收目标 |
+| [架构](architecture/ARCHITECTURE.md) | 技术组织与依赖方向 |
+| [运行责任](architecture/ownership.md) | 任务 owner、事务、核心/缓存边界 |
+| [规范](specs/README.md) | 行为与安全约束 |
+| [共识决策](decisions/README.md) | 已采用方案及必要理由 |
+| [开发目录](development/layout.md) | 文件归属与构建边界 |
+| [验证要求](development/verification.md) | 各层验收定义 |
+| [实施目标](plans/roadmap.md) | 按能力闭环推进 |
+| [治理](governance.md) | 状态、协作、变更与清理规则 |
+| [变更约定](changes/README.md) | 实现前提案与任务格式 |
+| [验证依据](evidence/README.md) | 技术选择依据及其适用范围 |
 
-全局进度、可运行命令、远程与最新验证统一见根 STATUS，不在本索引和目录说明复制。产品和技术方案为可演进工作草案。README 是入口，不堆叠规范；规范文件只放可验收要求，动机写 ADR/架构。设计/评审原稿和原型资料是历史快照，其中已被最终决定取代的建议不能重新当作当前需求。
+全局状态只见根 STATUS；本导航和 README 不维护实现阶段或测试进度。

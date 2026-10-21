@@ -25,7 +25,7 @@ web/
   tests/                         跨能力管理流程/浏览器验证
 deploy/                          OCI/Compose/反代及发行维护
 scripts/                         文档、构建、验证入口
-docs/                            产品、规范、架构、ADR、变更、历史证据
+docs/                            产品、规范、架构、共识决策、变更约定
 ```
 
 四个 Swift 名称是初始 target 建议；Core/Adapters/Runtime 为库，CodexOne 为入口。Core 不依赖 Vapor/NIO/SQL，Adapters 与 Runtime 分别依赖 Core，入口组装三者。边界类型和 owner 见 [ownership](../architecture/ownership.md)。只有真实需求才拆新 target；测试 target 名与路径对应，Unit/Integration/Contract 为 target 内分组，fixture 按 SwiftPM resources 显式声明。

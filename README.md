@@ -4,7 +4,7 @@
 
 ## 文档入口
 
-- [产品方向与范围草案](docs/requirements/product.md)
+- [产品目标与范围](docs/requirements/product.md)
 - [架构设计](docs/architecture/ARCHITECTURE.md) · [技术决策](docs/decisions/README.md)
 - [能力规范](docs/specs/README.md) · [目录与依赖](docs/development/layout.md)
 - [开发与验证](docs/development/verification.md) · [项目治理](docs/governance.md)

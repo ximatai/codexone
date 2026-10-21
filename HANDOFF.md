@@ -4,8 +4,8 @@
 
 1. 读 [AGENTS](AGENTS.md)，检查 `git status --short --branch`。
 2. 读 [STATUS](STATUS.md)：实现进度、验证结果、可运行入口、阻塞、远程承接和下一步以此为准。
-3. 按任务读 [产品草案](docs/requirements/product.md)、[规范索引](docs/specs/README.md)、[架构](docs/architecture/ARCHITECTURE.md) 和相关 ADR；不要求顺读全部历史评审。
-4. 进入 STATUS 指向的变更提案/任务，核实实际文件，再开始工作。
+3. 按任务读 [产品目标](docs/requirements/product.md)、[规范索引](docs/specs/README.md)、[架构](docs/architecture/ARCHITECTURE.md) 和共识决策。
+4. 按 STATUS 的下一步核实实际文件；需要行为变更时依治理建立提案/任务。
 
 ## 工作原则
 
