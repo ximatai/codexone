@@ -137,3 +137,9 @@ macOS arm64/Swift 6.4 完整后端 38 个 Swift 测试与全部脚本通过；�
 8d3f5f8 的 Linux amd64/Swift 6.4 本地模拟容器完整后端退出 0（38 个 Swift 测试及全部脚本，单并发、2 CPU/2500 MiB）。独立 reviewer 运行 v2 合成脚本及三传输实际 CLI 压缩均通过，但实际 socket 故障复现 P2：added/done 的 output_index=7 与终态唯一项实际位置 0 不一致仍被接受。
 
 主 Agent 亲自按保存索引检查终态数组范围及对应项，再核对完整指纹/ID；HTTP/SSE（HTTP 和 WS 上游）及原生下游 WS 增加错位回归，拒绝 invalid_upstream_compaction 且可信终态用量仍结算。macOS 完整后端 38 个 Swift 测试及全部脚本通过；最终按索引取值整理后重新构建，v2 合成脚本及三传输实际 CLI 压缩均通过。修复待提交后复审与同快照 Linux 验证，不扩大 Desktop 或恢复验收结论。
+
+fcd3a5e 复审通过，原 P2 闭环，无新增阻塞问题。reviewer 独立运行 v2 三组合成及实际 CLI 原生 WS 压缩检查均通过，未代替主 Agent 修复。主 Agent 另用 Desktop 所带 CLI 0.163.0-alpha.11 独立执行三传输 v2 压缩及下一请求，均通过；原生有一次 warmup 且单上游连接。此为独立命令行测试，仍未操作被 Computer Use 禁止的 Desktop UI。
+
+同一 Desktop 内置 CLI 的标准三传输、HTTP retry-probe 及 without-profile 五组也通过；连同 v2 共八组。EOF 后新 attempt 与原 unknown 分开，目录失败后的 fallback 不视为目录验收成功。没有修改客户端安装或个人配置，没有真实账号/外部生成调用。
+
+fcd3a5e 同提交 Linux amd64/Swift 6.4 本地模拟容器完整后端验证退出 0：38 个 Swift 测试、全部进程/执行/HTTP/SSE/WS/context/v2 脚本通过；单并发、2 CPU/2500 MiB。与 macOS、两版本实际 CLI 证据分开记录，未推导远端 CI、弱宿主容量或 Desktop UI 验收。
