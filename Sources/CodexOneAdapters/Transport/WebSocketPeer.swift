@@ -34,28 +34,35 @@ func configureWebSocket(_ channel: any Channel, client: Bool) throws -> Protocol
     configuration: .init(backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4)))
 }
 
-/// One waiter and a byte/count-bounded queue; producer never creates a task or actor mailbox entry.
-private final class WebSocketInbox: Sendable {
+/// One producer; named queues share count/byte limits before any task or actor mailbox entry.
+final class WebSocketInbox: Sendable {
   private struct State {
-    var queue: [Data] = []
+    var queues: [String: [Data]] = [:]
     var bytes = 0
-    var waiter: CheckedContinuation<Data, any Error>?
-    var producer: (Int, CheckedContinuation<Void, any Error>)?
+    var count = 0
+    var waiters: [String: CheckedContinuation<Data, any Error>] = [:]
+    var producer: (lane: String, bytes: Int, continuation: CheckedContinuation<Void, any Error>)?
     var error: (any Error)?
+    func hasSpace(lane: String, bytes: Int) -> Bool {
+      (queues[lane]?.count ?? 0) < 4 && count < 64 && bytes <= 1_048_576 - self.bytes
+    }
   }
   private let state = Mutex(State())
-  func push(_ data: Data) async throws {
+  func push(_ data: Data, lane: String = "") async throws {
     while true {
       let pushed = try state.withLock { value -> Bool in
         if let error = value.error { throw error }
-        if let waiter = value.waiter {
-          value.waiter = nil
+        if let waiter = value.waiters.removeValue(forKey: lane) {
           waiter.resume(returning: data)
           return true
         }
-        guard value.queue.count < 4, data.count <= 1_048_576 - value.bytes else { return false }
-        value.queue.append(data)
+        guard value.hasSpace(lane: lane, bytes: data.count) else { return false }
+        guard value.queues[lane] != nil || value.queues.count < 33 else {
+          throw ExecutionError.capacity
+        }
+        value.queues[lane, default: []].append(data)
         value.bytes += data.count
+        value.count += 1
         return true
       }
       if pushed { return }
@@ -65,10 +72,12 @@ private final class WebSocketInbox: Sendable {
           state.withLock { value in
             if let error = value.error {
               continuation.resume(throwing: error)
-            } else if value.queue.count < 4, data.count <= 1_048_576 - value.bytes {
+            } else if value.hasSpace(lane: lane, bytes: data.count) {
               continuation.resume()
+            } else if value.producer != nil {
+              continuation.resume(throwing: ExecutionError.conflict)
             } else {
-              value.producer = (data.count, continuation)
+              value.producer = (lane, data.count, continuation)
             }
           }
         }
@@ -78,40 +87,40 @@ private final class WebSocketInbox: Sendable {
     }
   }
   func finish(_ error: any Error, discard: Bool = false) {
-    let waiter = state.withLock { value in
+    state.withLock { value in
       if value.error == nil { value.error = error }
       if discard {
-        value.queue.removeAll()
+        value.queues.removeAll()
         value.bytes = 0
+        value.count = 0
       }
-      let waiter = value.waiter
-      value.waiter = nil
-      value.producer?.1.resume(throwing: error)
+      for waiter in value.waiters.values { waiter.resume(throwing: error) }
+      value.waiters.removeAll()
+      value.producer?.continuation.resume(throwing: error)
       value.producer = nil
-      return waiter
     }
-    waiter?.resume(throwing: error)
   }
-  func next() async throws -> Data {
+  func next(lane: String = "") async throws -> Data {
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         state.withLock { value in
-          if !value.queue.isEmpty {
-            let data = value.queue.removeFirst()
+          if value.queues[lane]?.isEmpty == false {
+            let data = value.queues[lane]!.removeFirst()
             value.bytes -= data.count
-            if let producer = value.producer, value.queue.count < 4,
-              producer.0 <= 1_048_576 - value.bytes
+            value.count -= 1
+            if let producer = value.producer,
+              value.hasSpace(lane: producer.lane, bytes: producer.bytes)
             {
               value.producer = nil
-              producer.1.resume()
+              producer.continuation.resume()
             }
             continuation.resume(returning: data)
           } else if let error = value.error {
             continuation.resume(throwing: error)
-          } else if value.waiter != nil {
+          } else if value.waiters[lane] != nil || value.waiters.count >= 33 {
             continuation.resume(throwing: ExecutionError.conflict)
           } else {
-            value.waiter = continuation
+            value.waiters[lane] = continuation
           }
         }
       }
@@ -148,8 +157,8 @@ struct WebSocketPeer: Sendable {
   private let inbox: WebSocketInbox
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
-  func beginTurn() throws { try turns?.begin() }
-  func next() async throws -> Data { try await inbox.next() }
+  func beginTurn(lane: String = "") throws { try turns?.begin(lane: lane) }
+  func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
   func send(_ value: JSONValue) async throws { try await writer.send(value.data()) }
 
   static func run(
@@ -174,11 +183,14 @@ struct WebSocketPeer: Sendable {
                 guard String(data: data, encoding: .utf8) != nil else {
                   throw GatewayProtocolError(400, "invalid_websocket_text")
                 }
-                try turns?.observe(data)
-                try await withExecutionDeadline(seconds: 5) { try await inbox.push(data) }
+                let lane = try turns?.observe(data) ?? ""
+                try await withExecutionDeadline(seconds: 5) {
+                  try await inbox.push(data, lane: lane)
+                }
               case .ping: try await writer.send(data, opcode: .pong)
               case .pong: break
               case .connectionClose:
+                turns?.close()
                 try? await writer.send(data, opcode: .connectionClose)
                 inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
                 return !client

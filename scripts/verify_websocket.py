@@ -95,6 +95,7 @@ class Provider(BaseHTTPRequestHandler):
         with self.server.guard:
             self.server.connections += 1
             connection = self.server.connections
+        pending = None
         try:
             while True:
                 opcode, data = receive(self.connection, masked=True)
@@ -119,9 +120,17 @@ class Provider(BaseHTTPRequestHandler):
                     assert previous.startswith(f'resp_{connection}_'), 'Connection context was switched'
                 response = {'id': f'resp_{connection}_{index}', 'status': 'completed', 'output': [],
                             'usage': {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}}
-                send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}})
+                lane = {'stream_id': create['stream_id']} if 'stream_id' in create else {}
+                send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}, **lane})
+                if create['input'] == 'multi-slow':
+                    pending = (lane, response)
+                    continue
                 time.sleep(0.02)
-                send(self.connection, {'type': 'response.completed', 'response': response})
+                send(self.connection, {'type': 'response.completed', 'response': response, **lane})
+                if create['input'] == 'multi-fast' and pending:
+                    time.sleep(0.1)
+                    send(self.connection, {'type': 'response.completed', 'response': pending[1], **pending[0]})
+                    pending = None
                 if create['input'] == 'duplicate-terminal':
                     send(self.connection, {'type': 'response.completed', 'response': response})
                 if create['input'] == 'trailing-event':
@@ -196,6 +205,21 @@ def main():
                         if event['type'] == 'response.completed':
                             ids.append(int(event['response']['id'].rsplit('_', 1)[1]))
                     assert len(ids) == 2 and ids[1] == ids[0] + 1
+                with dial(ports['data']) as downstream:
+                    send(downstream, {'type': 'response.create', 'stream_id': 'lane_a', 'model': 'synthetic-text', 'input': 'multi-slow'}, masked=True)
+                    first = json.loads(receive(downstream)[1])
+                    assert first['stream_id'] == 'lane_a' and first['type'] == 'response.created'
+                    send(downstream, {'type': 'response.create', 'stream_id': 'lane_a', 'model': 'synthetic-text', 'input': 'queued-next'}, masked=True)
+                    send(downstream, {'type': 'response.create', 'stream_id': 'lane_b', 'model': 'synthetic-text', 'input': 'multi-fast'}, masked=True)
+                    completed = []
+                    for _ in range(5):
+                        event = json.loads(receive(downstream)[1])
+                        assert event['type'] != 'error', event
+                        if event['type'] == 'response.completed':
+                            completed.append((event['stream_id'], event['response']['id']))
+                    assert [lane for lane, _ in completed] == ['lane_b', 'lane_a', 'lane_a']
+                    assert len(set(response for _, response in completed)) == 3
+                print('PASS: a blocked lane permits another lane to complete; same-lane queued turns stay FIFO with response ownership')
                 for streaming in (False, True):
                     status, body = connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'bridge', 'stream': streaming})
                     assert status == 200 and b'completed' in body

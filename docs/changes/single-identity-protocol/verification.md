@@ -37,3 +37,17 @@ fd58f92 独立 review 发现 P1：共享 inbox 中终态后的残留可跨 turn�
 2026-10-22 macOS 完整后端验证通过（33 个 Swift 测试函数），新增真实 socket 终态后旧 delta、重复终态与未知引用分类回归：旧事件不进入下一轮，核心账本只新增一条已结算 attempt，拒绝请求不发送 provider create。此前 EOF、取消、屏障与进程故障仍通过。
 
 fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swift 测试及所有新增 WS socket 场景），并未包含上述 review 修复；修复提交仍需复审和独立 Linux 验证。
+
+0b21057 的轮次隔离与错误分类已由独立 reviewer 复审通过（并重跑 5 组 WS socket 场景）；同快照的 Linux amd64 完整后端验证通过，33 个 Swift 测试及所有进程/故障/socket 脚本通过，无 OOM。
+
+## 命名 lane
+
+2026-10-22 macOS arm64：主 Agent 实现并复盘，完整后端统一验证通过（35 个 Swift 测试函数）。命名 lane 的状态、response/item 关联及入站队列隔离；请求调度/peer 队列各自共享 64 条/1 MiB，每 lane 最多 4 条、一个 producer 等待空间，最多 32 个命名 lane 加默认 lane、16 个在途 turn。所有 worker 为连接的结构化子任务，任一协议/容量失败按整连接关闭并逐执行最终化。
+
+新增真实 socket 场景：lane A 的 provider 故意等 lane B 才发终态，B 能独立完成；A 的第二个请求仍在首轮之后执行，三条 response ID 互异。新增容量/归属及共享字节队列取消验证，先前重复终态/旧事件不跨轮回归仍通过。自我复盘将任务组的主调度改为等待“下一条请求或子 worker 失败”，避免 reader 在等待下游请求时不能及时感知 lane worker 失败。此提交仍待独立 review 与 Linux 验证。
+
+## 客户端契约探测（非网关验收）
+
+2026-10-22 使用本机 Codex CLI 0.163.0，在独立临时 CODEX_HOME/空工作目录和只读 sandbox 下，指向无凭证 loopback 合成 provider；未读取个人客户端配置、未接真实上游。fixture 补齐终态 usage.total_tokens 后，CLI 文本 turn 正常结束且退出 0。探测发现客户端会提交 client_metadata、reasoning.encrypted_content include、namespace 工具及 web_search 声明；这些仍是网关待实现/验证能力，fixture 成功不等于 CodexOne 已兼容。此前 fixture 缺少必要 usage 字段使客户端重试，未用于任何通过声明。
+
+已对照 [0.163.0 请求定义](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-api/src/common.rs)、[客户端 SSE 解析](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-api/src/sse/responses.rs) 和 [模型元数据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/protocol/src/openai_models.rs) 核实字段，后续实现仍需通过网关的实际客户端测试；不能通过静默删除工具来伪装兼容。

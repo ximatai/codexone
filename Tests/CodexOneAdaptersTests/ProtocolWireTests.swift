@@ -142,3 +142,72 @@ import Testing
   turns.close()
   #expect(throws: (any Error).self) { try turns.begin() }
 }
+
+@Test func namedWebSocketLanesAreIsolatedAndBounded() throws {
+  let turns = WebSocketTurns()
+  func observe(_ type: String, lane: String, id: String) throws {
+    try turns.observe(
+      JSONValue.object([
+        "type": .string(type), "stream_id": .string(lane), "response": .object(["id": .string(id)]),
+      ]).data())
+  }
+  for index in 0..<16 { try turns.begin(lane: "lane_\(index)") }
+  #expect(throws: (any Error).self) { try turns.begin(lane: "lane_16") }
+  try observe("response.created", lane: "lane_0", id: "synthetic_0")
+  #expect(throws: (any Error).self) {
+    try observe("response.completed", lane: "lane_1", id: "synthetic_0")
+  }
+  try observe("response.completed", lane: "lane_0", id: "synthetic_0")
+  try turns.begin(lane: "lane_16")
+  for invalid in ["", "bad lane", "é", String(repeating: "a", count: 257)] {
+    #expect(throws: (any Error).self) {
+      try webSocketLane(.object(["stream_id": .string(invalid)]))
+    }
+  }
+  let names = WebSocketTurns()
+  for index in 0..<32 {
+    try names.begin(lane: "lane_\(index)")
+    let id = "synthetic_\(index)"
+    try names.observe(
+      JSONValue.object([
+        "type": .string("response.created"), "stream_id": .string("lane_\(index)"),
+        "response": .object(["id": .string(id)]),
+      ]).data())
+    try names.observe(
+      JSONValue.object([
+        "type": .string("response.completed"), "stream_id": .string("lane_\(index)"),
+        "response": .object(["id": .string(id)]),
+      ]).data())
+  }
+  #expect(throws: (any Error).self) { try names.begin(lane: "lane_32") }
+}
+
+@Test func webSocketQueuesShareByteCapacityAndCancellationWakesAllLanes() async throws {
+  let inbox = WebSocketInbox()
+  let block = Data(repeating: 65, count: 524_288)
+  try await inbox.push(block, lane: "first")
+  try await inbox.push(block, lane: "second")
+  try await withExecutionDeadline(seconds: 2) {
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      tasks.addTask { try await inbox.push(block, lane: "third") }
+      #expect(try await inbox.next(lane: "second") == block)
+      try await tasks.waitForAll()
+    }
+  }
+  #expect(try await inbox.next(lane: "first") == block)
+  #expect(try await inbox.next(lane: "third") == block)
+  try await withExecutionDeadline(seconds: 2) {
+    await withTaskGroup(of: Bool.self) { tasks in
+      for lane in ["first", "second"] {
+        tasks.addTask {
+          do {
+            _ = try await inbox.next(lane: lane)
+            return false
+          } catch { return true }
+        }
+      }
+      tasks.cancelAll()
+      for await cancelled in tasks { #expect(cancelled) }
+    }
+  }
+}

@@ -59,10 +59,10 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 配置与文件安全说明见 [单身份配置](../development/single-identity.md)。Desktop、WS、预热、压缩的最终兼容验收仍按 P11，不能从 HTTP 合成结果推导。
 
-## P14：单身份 WS 串行切片
+## P14：单身份 WS 连接与 lane
 
-配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；默认 lane 串行 FIFO，不重连重放。此切片不开放 stream_id、generate:false 或未支持控制；命名 lane、预热与压缩仍按 P11/E07/E10 后续验收，不从串行切片推导完整支持。
+配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。此切片不开放 generate:false 或未支持控制；预热与压缩仍按 P11/E10 后续验收，不从合成 WS 切片推导完整客户端支持。
 
-帧/聚合 512 KiB，单上游事件 256 KiB、累计执行 8 MiB；每 peer 入站队列最多 4 条/1 MiB，另持有一个有界 producer 消息，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、下轮空闲 60 秒、连接寿命最多 1 小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
+帧/聚合 512 KiB，单上游事件 256 KiB、累计执行 8 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/1 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求读取空闲 120 秒、连接寿命最多 1 小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
 HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 在入队前验证当前 turn 的 created/response ID/item 关联；轮外事件、重复终态/response ID 关闭连接，不得将旧事件用于新 attempt。单连接最多 256 个响应、单轮最多 256 个 item。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。

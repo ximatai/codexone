@@ -152,31 +152,56 @@ public struct SingleIdentityDataService: Service {
     async throws
   {
     try await WebSocketPeer.run(socket, client: false) { downstream in
-      // The serial lane is the first WS slice; named lanes are explicitly rejected until multiplexing is verified.
-      let first = try await withExecutionDeadline(seconds: 10) {
-        try webSocketCreate(await downstream.next())
-      }
+      let firstData = try await withExecutionDeadline(seconds: 10) { try await downstream.next() }
+      let first = try webSocketCreate(firstData)
       guard executor.configuration.models.contains(where: { $0.id == first.model }) else {
         throw GatewayProtocolError(403, "model_not_allowed")
       }
       try await executor.webSocket.run { upstream in
-        var request = first
-        while !Task.isCancelled {
-          let requestID = UUID().uuidString
-          do {
-            try await executor.execute(request, requestID: requestID, peer: upstream) { event in
-              try await downstream.send(event)
+        let commands = WebSocketInbox()
+        defer { commands.finish(CancellationError(), discard: true) }
+        try await withThrowingTaskGroup(of: Data?.self) { lanes in
+          defer { lanes.cancelAll() }
+          var known = Set<String>()
+          lanes.addTask { firstData }
+          while let result = try await lanes.next(), let data = result {
+            let lane = try webSocketLane(JSONValue.decode(data))
+            let fresh = !known.contains(lane)
+            guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
+              throw GatewayProtocolError(503, "websocket_lane_capacity")
             }
-          } catch {
-            try? await downstream.send(
-              .object([
-                "type": .string("error"),
-                "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
-              ]))
-            throw error
-          }
-          request = try await withExecutionDeadline(seconds: 60) {
-            try webSocketCreate(await downstream.next())
+            try await withExecutionDeadline(seconds: 5) { [data] in
+              try await commands.push(data, lane: lane)
+            }
+            if fresh {
+              known.insert(lane)
+              lanes.addTask {
+                while !Task.isCancelled {
+                  let data = try await commands.next(lane: lane)
+                  let requestID = UUID().uuidString
+                  do {
+                    let request = try webSocketCreate(data)
+                    try await executor.execute(
+                      request, requestID: requestID, peer: upstream, lane: lane
+                    ) { event in
+                      try await downstream.send(event)
+                    }
+                  } catch {
+                    var envelope: [String: JSONValue] = [
+                      "type": .string("error"),
+                      "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
+                    ]
+                    if !lane.isEmpty { envelope["stream_id"] = .string(lane) }
+                    try? await downstream.send(.object(envelope))
+                    throw error
+                  }
+                }
+                return nil
+              }
+            }
+            lanes.addTask {
+              try await withExecutionDeadline(seconds: 120) { try await downstream.next() }
+            }
           }
         }
       }
