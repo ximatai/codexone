@@ -19,3 +19,9 @@ finalizer 验证：ticket 在准入前取容量、准入失败不 dispatch 并�
 6590ce7 复审确认四项修复有效；reviewer 实际运行 7 个相关 Swift 回归、网关进程/权限与四个 SIGKILL 场景通过。另发现空库识别中的 SQL LIKE 下划线通配符会错误忽略 `sqlitex` 用户表。主 Agent 改为字面下划线的 GLOB 模式；`swift test -j 4 --filter rejectedLegacySchemaDoesNotMutateDatabaseContentsOrJournal` 的 legacy/sqlitex 两个参数案例均通过，拒绝前后数据库字节不变。
 
 5e2aea5 最终复审：reviewer 重跑 legacy/sqlitex 两例通过，五项可操作问题全部关闭，本机合成执行/真实 SQLite/进程故障范围可进入 M2。Linux amd64 验证仍在进行，未将其或真实客户端计入完成证据。
+
+## Linux 独立验证
+
+2026-10-22，Docker Desktop 本地 Linux amd64（arm64 宿主上的模拟执行），Swift 6.4 noble 镜像，独立源码快照 8184adb 与 Linux 构建目录。首次 2 并发在约 2.8 GiB Docker VM 中 OOM 终止；重试为单并发、2 CPU、2500 MiB 容器限制，`CODEXONE_BUILD_JOBS=1 ./scripts/verify.sh --backend` 全通过：架构/格式/构建、26 个 Swift 测试函数、网关实际 HTTP/锁/信号/权限/关闭重开，以及四个 SIGKILL 屏障恢复场景。
+
+这是独立 Linux 构建/运行证据，不是远端 GitHub CI、弱服务器混合容量或主机掉电验收。未调整 Docker 全局设置、未访问用户服务器或真实账号。

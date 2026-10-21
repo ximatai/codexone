@@ -1,12 +1,12 @@
 # 当前状态
 
-更新时间：2026-10-21（Asia/Shanghai）。唯一全局状态入口。
+更新时间：2026-10-22（Asia/Shanghai）。唯一全局状态入口。
 
 ## 项目状态
 
 M0、M1 本机验收与提交后 review/修复/复审已完成。M1 共关闭五项 review 问题，复审确认可进入 M2；验证范围见 [持久执行记录](docs/changes/persistent-execution/verification.md)。
 
-- M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。使用合成身份，尚无业务协议转发。
+- M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 工作树正在接通业务协议，尚未完成阶段验收。
 
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
@@ -52,10 +52,11 @@ npm run dev
 - M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、9 个组件/API 测试、3 个 Playwright Chrome 155.0.8059.85 测试通过；浏览器 API 为合成拦截，涵盖桌面/移动、失败重试及真实浏览器 10 秒超时后重试；桌面正常/超时截图已人工查看，不冒充完整真实上游端到端。
-- Linux amd64 Swift 6.4 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
+- 2026-10-22 独立 Linux amd64/Swift 6.4 本地 Docker 验证通过（快照 8184adb，模拟执行）：单并发后端完整检查、26 Swift 测试及进程/权限/四个 SIGKILL 场景。首次双并发因约 2.8 GiB Docker VM 内存不足 OOM；未改全局设置。此结果不代表弱服务器容量验收。
+- Linux amd64 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
 
 ## 下一步与未覆盖
 
-M2 开发中，入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。Linux amd64 容器正在独立构建验证，不把本机测试当作远端 CI 通过。
+M2 开发中，入口见[单身份协议任务](docs/changes/single-identity-protocol/tasks.md)。先接通持久执行与无凭证合成 HTTP/SSE/WS 路径，再验收明确版本客户端。M1 独立 Linux 验证已完成，不把本地容器测试当作远端 CI 通过。
 
-账号授权/刷新、账号池、Responses/SSE/WS/Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
+账号授权/刷新、账号池、WS/Images 转发、完整管理账本查询与恢复缓存、管理认证/业务界面、生产镜像及长期容量均未实现；HTTP JSON/SSE 正在工作树内开发，尚未完成 M2 验收；不能从健康入口或骨架测试推导已支持。具体加密库、UI 组件与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
