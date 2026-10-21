@@ -29,3 +29,11 @@
 自我复盘：Bootstrap initializer 必须在协议配置后返回内部 future，不能等待握手完成再注册 TCP；补入协议协商前的 channel owner。上游 EOF 由单 reader 排空已收事件再通知消费端，避免 closeFuture 抢先清空终态。队列满时单 producer 有界等待并停止读取，拥塞超时后统一结束；不因普通突发超过四事件立即丢弃执行。HTTPS/WSS 代码启用系统证书及主机名校验，未接触真实上游，尚无真实 TLS/客户端验收。
 
 范围：只验收默认串行 lane，当前拒绝命名 lane/预热，压缩尚未实现；HTTP 桥接每次新 socket，不保证 store=false 跨 HTTP 续接。无前端产品修改；此前管理概览真实浏览器联调记录仍只覆盖 HTTP 切片。此 WS 快照待提交后独立 review 与 Linux 验证。
+
+### WS 提交后 review 修复
+
+fd58f92 独立 review 发现 P1：共享 inbox 中终态后的残留可跨 turn，重复旧终态甚至使下一 attempt 错误结算；另 P2：WS 丢失确定的准入拒绝分类。主 Agent 亲自增加由唯一 reader 驱动的 idle/awaitingCreated/active 状态机，在用量观察前验证 created、当前 response ID、item 引用及终态；禁止重复/轮外事件，最多 256 个响应/轮内对象后结束连接，拒绝旧 response ID 复用。共享脱敏错误映射恢复 unknownObject/quota/capacity 分类。
+
+2026-10-22 macOS 完整后端验证通过（33 个 Swift 测试函数），新增真实 socket 终态后旧 delta、重复终态与未知引用分类回归：旧事件不进入下一轮，核心账本只新增一条已结算 attempt，拒绝请求不发送 provider create。此前 EOF、取消、屏障与进程故障仍通过。
+
+fd58f92 的独立 Linux amd64 本地容器完整后端验证通过（32 个 Swift 测试及所有新增 WS socket 场景），并未包含上述 review 修复；修复提交仍需复审和独立 Linux 验证。

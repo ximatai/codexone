@@ -171,11 +171,7 @@ public struct SingleIdentityDataService: Service {
             try? await downstream.send(
               .object([
                 "type": .string("error"),
-                "error": .object([
-                  "code": .string(
-                    (error as? GatewayProtocolError)?.code ?? "execution_indeterminate"),
-                  "message": .string("Gateway request failed."), "request_id": .string(requestID),
-                ]),
+                "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
               ]))
             throw error
           }
@@ -382,26 +378,8 @@ private actor ProtocolResponseWriter {
     ended = true
   }
   func fail(_ error: any Error) async throws {
-    let mapped: GatewayProtocolError
-    if let error = error as? GatewayProtocolError {
-      mapped = error
-    } else if let error = error as? ExecutionError {
-      switch error {
-      case .denied: mapped = .init(429, "quota_or_policy_denied")
-      case .unknownObject, .ambiguousObject: mapped = .init(400, "unknown_or_ambiguous_object")
-      case .capacity: mapped = .init(503, "capacity_exceeded")
-      default: mapped = .init(503, "execution_indeterminate")
-      }
-    } else {
-      mapped = .init(502, "execution_indeterminate")
-    }
-    let envelope = JSONValue.object([
-      "error": .object([
-        "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
-        "code": .string(mapped.code),
-        "message": .string("Gateway request failed."), "request_id": .string(requestID),
-      ])
-    ])
+    let mapped = protocolFailure(error)
+    let envelope = protocolErrorEnvelope(error, requestID: requestID)
     if !started {
       try await json(envelope, status: mapped.status)
     } else if streaming && !ended {

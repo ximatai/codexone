@@ -110,3 +110,35 @@ import Testing
     }
   }
 }
+
+@Test func webSocketTurnStateRejectsUncorrelatedAndRepeatedProviderEvents() throws {
+  func event(_ type: String, id: String) throws -> Data {
+    try JSONValue.object(["type": .string(type), "response": .object(["id": .string(id)])]).data()
+  }
+  let turns = WebSocketTurns()
+  try turns.begin()
+  #expect(throws: (any Error).self) {
+    try turns.observe(event("response.completed", id: "synthetic-first"))
+  }
+  try turns.observe(event("response.created", id: "synthetic-first"))
+  #expect(throws: (any Error).self) {
+    try turns.observe(event("response.completed", id: "synthetic-other"))
+  }
+  #expect(throws: (any Error).self) {
+    try turns.observe(
+      JSONValue.object([
+        "type": .string("response.output_text.delta"), "delta": .string("synthetic-unbound"),
+      ]).data())
+  }
+  try turns.observe(event("response.completed", id: "synthetic-first"))
+  #expect(throws: (any Error).self) {
+    try turns.observe(event("response.completed", id: "synthetic-first"))
+  }
+  try turns.begin()
+  #expect(throws: (any Error).self) {
+    try turns.observe(event("response.created", id: "synthetic-first"))
+  }
+  try turns.observe(event("response.created", id: "synthetic-second"))
+  turns.close()
+  #expect(throws: (any Error).self) { try turns.begin() }
+}

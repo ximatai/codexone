@@ -147,6 +147,8 @@ actor WebSocketWriter {
 struct WebSocketPeer: Sendable {
   private let inbox: WebSocketInbox
   let writer: WebSocketWriter
+  private let turns: WebSocketTurns?
+  func beginTurn() throws { try turns?.begin() }
   func next() async throws -> Data { try await inbox.next() }
   func send(_ value: JSONValue) async throws { try await writer.send(value.data()) }
 
@@ -160,6 +162,7 @@ struct WebSocketPeer: Sendable {
     defer { lifetime.cancel() }
     try await socket.executeThenClose { inbound, outbound in
       let inbox = WebSocketInbox()
+      let turns = client ? WebSocketTurns() : nil
       let writer = WebSocketWriter(writer: outbound, channel: socket.channel, client: client)
       try await withThrowingTaskGroup(of: Bool.self) { tasks in
         tasks.addTask {
@@ -171,6 +174,7 @@ struct WebSocketPeer: Sendable {
                 guard String(data: data, encoding: .utf8) != nil else {
                   throw GatewayProtocolError(400, "invalid_websocket_text")
                 }
+                try turns?.observe(data)
                 try await withExecutionDeadline(seconds: 5) { try await inbox.push(data) }
               case .ping: try await writer.send(data, opcode: .pong)
               case .pong: break
@@ -182,11 +186,12 @@ struct WebSocketPeer: Sendable {
               }
             }
           } catch { inbox.finish(error) }
+          turns?.close()
           inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
           return !client
         }
         tasks.addTask {
-          try await operation(.init(inbox: inbox, writer: writer))
+          try await operation(.init(inbox: inbox, writer: writer, turns: turns))
           return true
         }
         tasks.addTask {
@@ -199,6 +204,7 @@ struct WebSocketPeer: Sendable {
           return !client
         }
         defer {
+          turns?.close()
           inbox.finish(CancellationError())
           socket.channel.close(promise: nil)
           tasks.cancelAll()

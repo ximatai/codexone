@@ -9,6 +9,7 @@ extension HTTPResponseExecution {
     guard let model = configuration.models.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
+    try peer.beginTurn()
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID
     ) { context in

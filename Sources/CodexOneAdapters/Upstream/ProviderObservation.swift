@@ -7,20 +7,21 @@ struct ProviderObservation: Sendable {
   let usage: UsageEvidence?
   let terminal: Bool
 
+  static let transparentEvents: Set<String> = [
+    "response.output_text.delta", "response.output_text.done",
+    "response.function_call_arguments.delta", "response.function_call_arguments.done",
+    "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
+    "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+    "response.content_part.added", "response.content_part.done", "response.refusal.delta",
+    "response.refusal.done",
+  ]
+
   init(event: JSONValue, model: SingleIdentityConfiguration.Model, functionNames: Set<String>)
     throws
   {
     guard let type = event["type"]?.string else {
       throw GatewayProtocolError(502, "unsupported_upstream_event")
     }
-    let transparent: Set<String> = [
-      "response.output_text.delta", "response.output_text.done",
-      "response.function_call_arguments.delta", "response.function_call_arguments.done",
-      "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
-      "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
-      "response.content_part.added", "response.content_part.done", "response.refusal.delta",
-      "response.refusal.done",
-    ]
     let responseEvents: Set<String> = [
       "response.created", "response.in_progress", "response.completed", "response.failed",
       "response.incomplete",
@@ -51,7 +52,7 @@ struct ProviderObservation: Sendable {
       if terminal { usage = try Self.usage(response["usage"], model: model) }
     } else if itemEvents.contains(type), let item = event["item"] {
       bindings += try Self.itemBindings(item, functionNames: functionNames)
-    } else if transparent.contains(type) {
+    } else if Self.transparentEvents.contains(type) {
       if let id = event["item_id"]?.string {
         guard !id.isEmpty, id.utf8.count <= 256 else {
           throw GatewayProtocolError(502, "invalid_upstream_response")

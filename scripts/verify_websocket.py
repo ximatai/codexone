@@ -122,6 +122,10 @@ class Provider(BaseHTTPRequestHandler):
                 send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}})
                 time.sleep(0.02)
                 send(self.connection, {'type': 'response.completed', 'response': response})
+                if create['input'] == 'duplicate-terminal':
+                    send(self.connection, {'type': 'response.completed', 'response': response})
+                if create['input'] == 'trailing-event':
+                    send(self.connection, {'type': 'response.output_text.delta', 'delta': 'OLD_TURN_TRAILING_SYNTHETIC'})
                 if create['input'] == 'terminal-eof':
                     return
         except (EOFError, ConnectionResetError, BrokenPipeError, TimeoutError):
@@ -201,6 +205,30 @@ def main():
                     events = turn(downstream, {'model': 'synthetic-text', 'input': 'terminal-eof'})
                     assert events[-1]['type'] == 'response.completed'
                     assert latest(db, 'settled')['inputTokens'] == 5
+                for prompt in ('duplicate-terminal', 'trailing-event'):
+                    with sqlite3.connect(db) as connection:
+                        before = connection.execute('SELECT count(*) FROM attempts WHERE state="settled"').fetchone()[0]
+                    with dial(ports['data']) as downstream:
+                        events = turn(downstream, {'model': 'synthetic-text', 'input': prompt})
+                        assert events[-1]['type'] == 'response.completed'
+                        time.sleep(0.1)
+                        try:
+                            events = turn(downstream, {'model': 'synthetic-text', 'input': 'new-turn'})
+                            assert events[-1]['type'] == 'error'
+                            assert 'OLD_TURN_TRAILING_SYNTHETIC' not in json.dumps(events)
+                        except (EOFError, BrokenPipeError, ConnectionResetError):
+                            pass
+                    latest(db, 'settled')
+                    with sqlite3.connect(db) as connection:
+                        after = connection.execute('SELECT count(*) FROM attempts WHERE state="settled"').fetchone()[0]
+                    assert after == before + 1, 'An old terminal settled a different turn'
+                with dial(ports['data']) as downstream:
+                    count = provider.calls
+                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'unknown-ref', 'previous_response_id': 'unknown-synthetic-response'})
+                    assert events[-1]['error']['code'] == 'unknown_or_ambiguous_object'
+                    assert events[-1]['error']['type'] == 'invalid_request_error'
+                    assert provider.calls == count
+                print('PASS: duplicate terminals and trailing events cannot cross turns or settle a new attempt; rejection errors preserve classification')
                 status, body = connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'abrupt', 'stream': True})
                 assert status in (200, 502) and b'completed' not in body
                 assert latest(db, 'unknown') is None
