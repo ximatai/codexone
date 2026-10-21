@@ -11,7 +11,7 @@
 | [共识决策](decisions/README.md) | 已采用方案及必要理由 |
 | [开发目录](development/layout.md) | 文件归属与构建边界 |
 | [验证要求](development/verification.md) | 各层验收定义 |
-| [实施目标](plans/roadmap.md) | 按能力闭环推进 |
+| [项目里程碑](plans/roadmap.md) | 阶段目标、重点、边界与验收出口 |
 | [治理](governance.md) | 状态、协作、变更与清理规则 |
 | [变更约定](changes/README.md) | 实现前提案与任务格式 |
 | [验证依据](evidence/README.md) | 技术选择依据及其适用范围 |
