@@ -297,3 +297,53 @@ func refreshOwnerSanitizesProviderErrorsAndParticipatesInRuntimeShutdown() async
     await fixture.close()
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func dispatchRefreshJoinsManagementGenerationAfterIntentWithoutReplayingOrphan() async throws {
+  let f = try await RefreshFixture.make()
+  let initial = f.accounts[0]
+  let account = try await f.store.setAccountMode(
+    id: initial.id, revision: initial.revision, mode: .enabled)
+  let provider = RefreshProviderProbe()
+  let service = try AccountRefreshSupervisor(application: f.app, provider: provider)
+  let owner = Task { try await service.run() }
+  defer { owner.cancel() }
+  try await awaitRefreshCondition { service.isAccepting }
+  let management = Task {
+    try await service.refreshAccount(id: account.id, revision: account.revision)
+  }
+  try await awaitRefreshCondition { await provider.counts.calls == 1 }
+  let pending = try await f.store.accountCredential(id: account.id).account
+  #expect(
+    pending.revision > account.revision && pending.credentialVersion == account.credentialVersion)
+  let route = Task { try await service.refreshForDispatch(account: pending) }
+  try await awaitRefreshCondition { service.waitingRequests == 2 }
+  let cancelled = Task { try await service.refreshForDispatch(account: pending) }
+  try await awaitRefreshCondition { service.waitingRequests == 3 }
+  cancelled.cancel()
+  await #expect(throws: AccountRefreshError.closed) { try await cancelled.value }
+  let wrongGeneration = try ManagedAccount(
+    id: pending.id, namespace: pending.namespace, revision: pending.revision,
+    credentialVersion: pending.credentialVersion + 1, mode: pending.mode,
+    authorization: pending.authorization, refreshIntent: pending.refreshIntent,
+    createdAtUnixSeconds: pending.createdAtUnixSeconds)
+  await #expect(throws: AccountRefreshError.conflict) {
+    try await service.refreshForDispatch(account: wrongGeneration)
+  }
+  await #expect(throws: AccountRefreshError.conflict) {
+    try await service.refreshAccount(id: pending.id, revision: pending.revision)
+  }
+  await provider.release()
+  #expect(try await management.value.credentialVersion == 2)
+  #expect(try await route.value.credentialVersion == 2)
+  try await awaitRefreshCondition { service.outstandingIdentities == 0 }
+  let current = try await f.store.accountCredential(id: account.id).account
+  let orphan = try await f.app.beginRefresh(id: current.id, revision: current.revision)
+  await #expect(throws: AccountRefreshError.conflict) {
+    try await service.refreshForDispatch(account: orphan.account)
+  }
+  #expect(await provider.counts.calls == 1)
+  service.stopAccepting()
+  try await owner.value
+  await f.close()
+}

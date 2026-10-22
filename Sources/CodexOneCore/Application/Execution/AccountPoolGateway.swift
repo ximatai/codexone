@@ -5,14 +5,16 @@ public struct AccountPoolGateway: Sendable {
   private let policy: AccountPoolPolicy
   private let store: any AccountRoutingStore
   private let credentials: AccountCredentials
+  private let refresher: (any AccountDispatchRefreshing)?
   private let coordinator: ExecutionCoordinator
   public init(
     policy: AccountPoolPolicy, store: any AccountRoutingStore, credentials: AccountCredentials,
-    finalizer: any FinalizationSink
+    finalizer: any FinalizationSink, refresher: (any AccountDispatchRefreshing)? = nil
   ) {
     self.policy = policy
     self.store = store
     self.credentials = credentials
+    self.refresher = refresher
     coordinator = ExecutionCoordinator(store: store, finalizer: finalizer)
   }
   public func execute(
@@ -26,24 +28,42 @@ public struct AccountPoolGateway: Sendable {
         let affinity = try await store.resolveAccountAffinity(
           principal: policy.key.principal, references: references, connection: connection)
         var works: [AccountRouteIdentity: AccountDispatchWork] = [:]
-        var expired = false
+        var refreshable: [ManagedAccount] = []
         for account in try await store.listAccounts(after: nil) {
           try Task.checkCancellation()
           let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
           guard affinity == nil || affinity == identity,
-            account.authorization == .ready,
+            account.authorization == .ready || account.authorization == .refreshing,
             account.mode == .enabled || (account.mode == .draining && affinity == identity)
           else { continue }
+          if account.authorization == .refreshing {
+            refreshable.append(account)
+            continue
+          }
           do {
             let work = try await credentials.prepareDispatch(
               id: account.id, continuation: affinity == identity)
             works[identity] = work
-          } catch AccountDispatchError.refreshRequired { expired = true } catch AccountDispatchError
+          } catch AccountDispatchError.refreshRequired {
+            refreshable.append(account)
+          } catch AccountDispatchError
             .unavailable
           { continue }
         }
+        if works.isEmpty, let account = refreshable.sorted(by: { $0.id < $1.id }).first,
+          let refresher
+        {
+          _ = try await refresher.refreshForDispatch(account: account)
+          try Task.checkCancellation()
+          let work = try await credentials.prepareDispatch(
+            id: account.id, continuation: affinity?.id == account.id)
+          let identity = try AccountRouteIdentity(
+            id: work.account.id, namespace: work.account.namespace)
+          works[identity] = work
+        }
         guard !works.isEmpty else {
-          throw expired ? AccountDispatchError.refreshRequired : AccountDispatchError.unavailable
+          throw refreshable.isEmpty
+            ? AccountDispatchError.unavailable : AccountDispatchError.refreshRequired
         }
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let day = Int64(Date().timeIntervalSince1970 / 86_400)

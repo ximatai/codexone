@@ -4,7 +4,9 @@ import ServiceLifecycle
 import Synchronization
 
 /// Owns bounded, shared refresh work. Request cancellation never owns the provider task.
-public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendable {
+public final class AccountRefreshSupervisor: Service, AccountRefreshing, AccountDispatchRefreshing,
+  Sendable
+{
   private struct Job: Sendable {
     let id: String
     let revision: Int64
@@ -20,6 +22,7 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendabl
   }
   private struct Entry {
     let job: Job
+    var credentialVersion: Int64?
     var waiters: [UUID: RefreshWaiter]
   }
   private struct State {
@@ -68,31 +71,58 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendabl
     guard ManagedAccount.validID(id), (1...1_000_000).contains(revision) else {
       throw AccountRefreshError.invalidCommand
     }
+    return try await wait(id: id, revision: revision, credentialVersion: nil, mayStart: true)
+  }
+  public func refreshForDispatch(account: ManagedAccount) async throws -> ManagedAccount {
+    guard account.mode != .disabled,
+      account.authorization == .ready || account.authorization == .refreshing
+    else { throw AccountRefreshError.unavailable }
+    return try await wait(
+      id: account.id, revision: account.revision, credentialVersion: account.credentialVersion,
+      mayStart: account.authorization == .ready)
+  }
+  private func wait(id: String, revision: Int64, credentialVersion: Int64?, mayStart: Bool)
+    async throws -> ManagedAccount
+  {
     let waiter = RefreshWaiter()
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { result in
         waiter.install(result)
-        enqueue(id: id, revision: revision, waiter: waiter)
+        enqueue(
+          id: id, revision: revision, credentialVersion: credentialVersion, mayStart: mayStart,
+          waiter: waiter)
       }
     } onCancel: {
       waiter.finish(.failure(.closed))
       self.removeWaiter(id: id, waiter: waiter.id)
     }
   }
-  private func enqueue(id: String, revision: Int64, waiter: RefreshWaiter) {
+  private func enqueue(
+    id: String, revision: Int64, credentialVersion: Int64?, mayStart: Bool, waiter: RefreshWaiter
+  ) {
     let failure: AccountRefreshError? = state.withLock { value in
       guard !waiter.isFinished else { return nil }
       guard value.accepting else { return .closed }
       guard value.waiters < maximumWaiters else { return .capacity }
       if var existing = value.jobs[id] {
-        guard existing.job.revision == revision else { return .conflict }
+        if let credentialVersion {
+          if let ownedVersion = existing.credentialVersion {
+            guard ownedVersion == credentialVersion else { return .conflict }
+          } else {
+            guard existing.job.revision == revision else { return .conflict }
+          }
+        } else {
+          guard existing.job.revision == revision else { return .conflict }
+        }
         guard existing.waiters.count < perIdentity else { return .capacity }
         existing.waiters[waiter.id] = waiter
         value.jobs[id] = existing
       } else {
+        guard mayStart else { return .conflict }
         guard value.jobs.count < identities else { return .capacity }
         let job = Job(id: id, revision: revision)
-        value.jobs[id] = Entry(job: job, waiters: [waiter.id: waiter])
+        value.jobs[id] = Entry(
+          job: job, credentialVersion: credentialVersion, waiters: [waiter.id: waiter])
         switch continuation.yield(job) {
         case .enqueued: break
         default:
@@ -173,6 +203,12 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendabl
       guard isAccepting else { throw AccountRefreshError.closed }
       let owned = try await application.beginRefresh(id: job.id, revision: job.revision)
       work = owned
+      state.withLock { value in
+        if var entry = value.jobs[job.id] {
+          entry.credentialVersion = owned.account.credentialVersion
+          value.jobs[job.id] = entry
+        }
+      }
       try Task.checkCancellation()
       guard isAccepting else { throw AccountRefreshError.closed }
       let verified = try await boundedRefresh(owned, stop: job.stop)

@@ -23,4 +23,13 @@ f488da5 独立 review 无需修复或阻塞，reviewer 独立运行新增四项�
 
 实际 Core 池用例使用受监督 finalizer：一个执行保持在途时另一个选择其他账号；第二执行观察部分用量后失败，仅调用一次并最终 unknown，已观察用量保留；已有 response 续接回原账号。所有收尾容量占满时，准备闭包调用数为零；过期 access 返回需要刷新且未执行生成，ticket 无泄漏。复盘提取共用 SQL 准入事务与 Core 收尾所有权，避免两个入口出现不同治理或 orphan intent。
 
-本切片没有把 HTTP/WS 数据面连接池用例；过期/正在刷新候选与共享刷新 owner 的衔接、健康/额度仍待后续实现。无真实订阅或额度调用，也没有新增前端/浏览器验收声明。macOS arm64 / Swift 6.4 完整 `./scripts/verify.sh --backend` 通过，92 个 Swift 测试函数及全部脚本；提交后 review 与 Linux 结果待对应快照补记。
+本切片没有把 HTTP/WS 数据面连接池用例；过期/正在刷新候选与共享刷新 owner 的衔接、健康/额度仍待后续实现。无真实订阅或额度调用，也没有新增前端/浏览器验收声明。macOS arm64 / Swift 6.4 完整 `./scripts/verify.sh --backend` 通过，92 个 Swift 测试函数及全部脚本；6074b3d 独立 review 无阻塞，reviewer 七项定向回归通过；同快照 Linux amd64 / Swift 6.4 本地单并发完整后端 92 测试及全部脚本通过，exit 0，2 CPU/2500 MiB，容器已回收。
+
+
+## 2026-10-22 · 共享刷新的路由衔接
+
+主 Agent 亲自实现和复盘，新增四项真实 SQLite/Runtime 回归通过。管理刷新已经持久 begin intent 后，路由携当前更高 revision/同 credential version 仍加入同一工作；错误版本及用更新 revision 伪装管理重试拒绝。取消一个路由等待者不会取消共享 provider；独立持久 refreshing 而无 Service owner 的状态拒绝且不会再请求 provider。
+
+实际池用例中两个过期账号只刷新一个；两个请求共享一次刷新，取消一个立即归还无 intent 的执行 ticket，另一个在新凭证提交后唯一派发，另账号版本不变。明确重新授权失败及未知失败分别保留 requires_auth/auth_uncertain，不向第二账号刷新，也没有生成调用。刷新期间账号禁用或 Key 撤销后，已接受刷新照实提交新版本，但执行重新检查后拒绝，操作闭包调用为零。旧管理单飞和取消测试继续通过。provider 为无凭证合成端口实现，此处不声称真实网络/TLS/订阅验收。
+
+macOS arm64 / Swift 6.4 完整后端 96 测试及全部脚本通过；提交后 review 与同快照 Linux 待补记。HTTP/WS 接入、健康/额度仍未完成。

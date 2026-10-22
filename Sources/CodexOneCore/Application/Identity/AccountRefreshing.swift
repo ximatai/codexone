@@ -22,3 +22,8 @@ public enum AccountRefreshError: Error, Sendable, Equatable {
 public protocol AccountRefreshing: Sendable {
   func refreshAccount(id: String, revision: Int64) async throws -> ManagedAccount
 }
+
+/// Internal routing join by credential generation, distinct from management revision CAS.
+public protocol AccountDispatchRefreshing: Sendable {
+  func refreshForDispatch(account: ManagedAccount) async throws -> ManagedAccount
+}
