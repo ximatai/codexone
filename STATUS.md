@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。
+M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，Linux 候选安装/升级闭环已完成本机实现与验收，M6 整体仍未完成。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 的协议实现和 M3 的账号/权限/观测进度见下方，Desktop 与恢复缺口继续保留。
 
@@ -45,6 +45,8 @@ npm run dev
 ./scripts/verify.sh --web --chrome
 ```
 
+Linux amd64 候选构建、私有初始化与受控安装入口见 [Linux 安装](docs/development/linux-installation.md)。安装后用 `python3 compose-install.py <command>`，不要绕过入口使用裸 Compose；可用 `python3 scripts/verify_installation.py --image <candidate> --browser` 验证实际镜像与 Chrome 管理操作。
+
 实际管理 UI 的合成端到端检查（先完成后端及 web 生产构建）：
 
 ```sh
@@ -56,6 +58,16 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 `--chrome` 使用本机已安装 Chrome 的全新临时上下文，不使用用户浏览数据。标准 Chromium 路径先在 web 下执行 `npx playwright install chromium --only-shell`，再执行 `./scripts/verify.sh --web`（从仓库根目录）；无参数执行全部验证。各层检查定义见 [verification](docs/development/verification.md)。
 
 ## 最新验证与范围
+
+2026-10-22，M5 契约复核与独立 M6 候选安装阶段出口：
+
+- 实际 CLI 0.163.0 隔离 EOF 探针再次证明 reconnect 产生新生成（原 unknown、新 settled）；公开 GET response/消费位置协议不足以证明目标 Codex/订阅读取可用。M5 未实现正文缓存，未改变 unknown、重试或退款语义。见[契约证据](docs/changes/recovery-contract-audit/verification.md)。
+- macOS arm64：私有初始化、0700/0600、覆盖/链接/输入拒绝、实际二进制配置及秘密权限拒绝通过；Linux amd64 的 root 初始化/显式非 root 归属亦通过。受控 launcher 直接接收污染环境仍固定私有 file/env/project/image/volume，实际安装与升级均通过该入口。
+- Linux amd64 / Swift 6.4.1：多阶段 OCI release 构建及无网络实际 HTTP/SSE/WS/Images 失败路径通过；运行二进制 SHA-256 `b323209f9302e4ae36a0de4732f1a016e359fb1e522fe1649cf8e929e42cd675` 与 socket 验证产物一致。工具链基底固定 digest，附源码 revision、许可证与生产依赖 notices；CI 候选工作流仅定义，未远程运行。
+- 实际本地 Linux OCI/Compose：非 root/只读/能力清零、私有本地卷、配置拒绝、live/ready、SPA/session/CSRF/Key、在线实例锁、v5 普通启动拒绝、私有一致性备份/显式幂等迁移、重启数据保留、优雅退出均通过；目录读取失败和归属不符均拒绝且不改已有数据。macOS 共享 bind 的 flock 不可靠，默认 data 因此选 Linux Engine 本地卷，不能以共享盘通过冒充锁验收。
+- 实际打包 SPA 的 Chrome 1440 大屏登录、发 Key、关闭一次性秘密、刷新持久与登出通过，截图已查看；隔离 curl relay 不是实际 TLS/Nginx 验收。Swift/前端产品源码未变，沿用 M4 完整测试证据，不重复全集。
+
+集中 review 修复了宿主 Compose 覆盖导致误选安装的问题；命令、失败取舍与复审证据见[候选验证](docs/changes/linux-distribution/verification.md)。验证均为本机合成资料，没有真实账号调用、额度消耗、推送、发布或用户服务器部署。候选产物保存在忽略的 `artifacts/linux-candidate/`，包含镜像/精确源码归档、标识和 SHA256SUMS；仅为本机候选。
 
 2026-10-22，M4 本地合成阶段出口通过：
 
@@ -90,6 +102,8 @@ M3 已完成以下本地合成闭环：
 
 M4 已接续并完成原有修改：独立权限/图片模型映射、schema v6 离线备份迁移、Images generation/edits JSON/multipart/SSE 与 Responses 图片工具，复用 HTTP/桥接/native WS 执行、归属和用量；管理权限与统计可操作。代码与本地合成出口完成，图片与压缩组合明确拒绝。
 
-下一步是明确版本 Desktop 图片/参考图/连续主动编辑与真实订阅兼容验收；授权/控制能力不足时保留该缺口，不自动进入依赖它的阶段。M5 仍受 M2 恢复读取契约约束，不能自行发明恢复协议或以缓存已有正文替代客户端验收。
+M5：恢复读取契约仍不充分，详见[恢复证据](docs/evidence/client-recovery.md)。需要明确版本客户端的已有输出读取轨迹、消费位置、权限与工具风险，或明确采纳产品范围调整；没有据此新增私有协议或无人可用的正文库。Desktop 图片/参考图/连续主动编辑与真实订阅兼容继续保留，CLI/合成上游不能替代。
 
-Desktop 界面验收、恢复读取契约和真实订阅兼容仍明确保留；真实 Images 兼容、恢复缓存、生产镜像/弱服务器容量、升级/迁移/回退替代演练尚未交付。GitHub 无凭证 CI 定义存在，但尚未远程运行；无远程承接或推送。首版整体未完成。
+M6 已交付第一个独立闭环：Linux amd64 可追溯 OCI 候选、私有初始化与受控 Compose、真实安装/管理/显式升级备份、候选 CI 定义与操作文档。下一项是独立的真实本地 TLS 反代业务闭环：按安装模板验收 SSE/WS、取消、负载大小与超时，然后推进低磁盘/弱服务器混合负载，以及旧快照维护态、责任区间与基线核对。旧服务替代切换/回退及真实账号接入须按授权边界独立演练。
+
+Desktop 界面、真实订阅/Images 兼容、M5 恢复缓存、目标弱服务器容量、完整恢复/回退与旧服务替代尚未验收；M2/M4/M5/M6 完整里程碑与首版整体均不标完成。GitHub 无凭证 CI/候选工作流尚未远程运行；无远程承接、推送、发布或部署。

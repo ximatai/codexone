@@ -9,6 +9,7 @@
 - Chrome 大屏 1440：加载镜像内 SPA，经 curl relay 到实际容器 API，完成登录、Secure/HttpOnly/Strict cookie、创建/清除一次性凭证、刷新保留与登出；无持久浏览器秘密、无运行时/CSP 错误。截图 `artifacts/installation-ui/desktop.png` 已查看，只有合成资料、凭证控件遮罩，不入库。HTTPS route fulfillment 不证明真实 TLS/Nginx。
 - 自查后 `python3 scripts/verify_installation.py --image codexone:m6-candidate` 定向回归通过：额外注入 init-data 的目录读取失败，非零退出且不改非空卷归属；补齐父目录同步、nocopy 与私有卷结束清理。未再运行未改变的浏览器/协议全集。
 - 集中 review 发现真实交付命令仍受宿主 Compose 环境覆盖，测试 helper 清理变量导致假通过。主 Agent 交付 `compose-install.py`，固定私有文件/env/project、清理环境覆盖，并让全部安装流程使用该入口。污染 FILE/project/image/volume/UID/origin 的环境直接进入 launcher，配置仍绑定本安装；切换安装的命令行参数被拒绝。macOS 实际配置与 `python3 scripts/verify_installation.py --image codexone:m6-candidate` 实际 Linux 安装/迁移定向回归通过。首次参数保护误拒容器内 `find -print`，按 Compose run/exec 的 service 边界修正后通过；未重跑未改变的浏览器/协议。
+- 集中 review 原环境覆盖问题已由两位 reviewer 定向确认关闭；后端 reviewer 额外发现 `logs -f` 被参数保护误拒，主 Agent 修复并以实际入口日志 follow、污染环境/配置隔离及 host binary 定向回归通过，reviewer 复审确认关闭。Linux root initializer 另确认新 launcher 随私有文件以目标 UID/0600 交付。
 - 候选 CI YAML 语法通过；工作流仅阶段出口手动触发，源码构建、合成验证、归档/校验和及上传候选，无 registry 登录/推送。尚未远程运行。文档/依赖方向检查通过；Swift Sources/Tests 与前端产品代码未变，沿用 M4 已通过的 152 项 Swift、35 项前端及浏览器证据，不重复全量。
 
 失败及取舍：首次公共依赖下载遇 TLS/长等待，复用同锁文件、已检查无凭证配置的 29 个公共仓库缓存；共享 2 CPU/约 2.8 GiB Docker VM 并发构建响应迟滞，中止后改串行，均不算通过。实际镜像检查抓到 npm 传递依赖许可证缺失，补 `--all` 后通过。macOS 共享 bind 最小 flock 探针在同/跨容器均错误取得第二把锁，Linux 本地 volume 均正确拒绝，因此 data 改为本地卷；空卷 copy-up 的属主重置由 nocopy 解决。保留这些失败，不把共享目录验收等同 Linux 本地磁盘。
