@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@mantine/core";
+import styles from "./accounts.module.css";
 import { ManagementError } from "../../shared/management";
 import type { Account } from "./api";
 import {
@@ -85,7 +87,9 @@ export function AccountObservability({
   disabled,
   onObserve,
   onUnauthorized,
+  inDetails = false,
 }: {
+  inDetails?: boolean;
   account: Account;
   now: number;
   disabled: boolean;
@@ -94,7 +98,7 @@ export function AccountObservability({
 }) {
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(inDetails);
   const [details, setDetails] = useState<Snapshot | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -124,7 +128,7 @@ export function AccountObservability({
   const health = value?.health;
   const current = Math.max(now, performance.now());
   return (
-    <div className="account-observability">
+    <div className={styles.observation}>
       <span
         className={
           health?.authenticationRejected || health?.cooldownCount
@@ -153,20 +157,24 @@ export function AccountObservability({
           上游额度报告受限，请查看窗口详情
         </small>
       )}
-      <button
-        className="text-button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? "收起额度与健康" : "额度与健康详情"}
-      </button>
+      {!inDetails && (
+        <Button
+          variant="subtle"
+          className="text-button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "收起额度与健康" : "额度与健康详情"}
+        </Button>
+      )}
       {expanded && (
         <div
           className="quota-details"
           role="region"
           aria-label={`${account.id} 额度与健康`}
         >
-          <button
+          <Button
+            variant="default"
             disabled={
               disabled ||
               failed ||
@@ -177,20 +185,25 @@ export function AccountObservability({
             onClick={onObserve}
           >
             读取上游额度
-          </button>
+          </Button>
           {!details && !failed ? (
             <p role="status">正在读取观测详情…</p>
           ) : failed ? (
             <p role="alert">
               详情读取失败。
-              <button onClick={() => setRetry(retry + 1)}>重试详情</button>
+              <Button variant="subtle" onClick={() => setRetry(retry + 1)}>
+                重试详情
+              </Button>
             </p>
           ) : (
             details && (
               <>
-                <p className="subtle">
-                  订阅账号的上游窗口；与本地 Key 限额、估算费用相互独立。
-                </p>
+                <details>
+                  <summary>窗口口径</summary>
+                  <p className="subtle">
+                    订阅账号的上游窗口；与本地 Key 限额、估算费用相互独立。
+                  </p>
+                </details>
                 <LimitStatus value={base} />
                 <div className="quota-windows">
                   <Window title="主窗口" value={base?.primary ?? null} />

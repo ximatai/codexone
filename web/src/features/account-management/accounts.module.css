@@ -1,0 +1,27 @@
+.workspace {
+  min-width: 0;
+}
+.id {
+  overflow-wrap: anywhere;
+  font-family: var(--mantine-font-family-monospace);
+}
+
+.observation {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+}
+.observation p {
+  margin: 0;
+}
+.observation small {
+  font-size: 12px;
+}
+.observation :global(.quota-details) {
+  margin-top: 4px;
+}
+.observation summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #627069;
+}

@@ -82,7 +82,7 @@ try {
   stage = "authorize";
   await finishAuthorization("发起账号授权");
   await expect(page.getByText("已禁用", { exact: true })).toBeVisible();
-  await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
+  await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   await capture("account-desktop.png");
   let account = (await admin()).accounts[0];
   const id = account.id;
@@ -104,7 +104,7 @@ try {
   assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("status")).toContainText("管理会话已更新");
+  await expect(page.getByText(/管理会话已更新/).first()).toBeVisible();
   stage = "conflict";
   await admin("/api/accounts/" + id, "PUT", { revision: account.revision, mode: "draining" });
   await page.getByRole("button", { name: "禁用", exact: true }).click();
@@ -131,16 +131,17 @@ try {
   await expect(page.getByText("已禁用", { exact: true })).toBeVisible();
   assert.equal((await admin()).accounts[0].revision, account.revision + 1);
   stage = "rejected-refresh";
+  await page.getByRole("button", { name: "额度与健康详情", exact: true }).click();
   await fixture({ mode: "reject" });
   await page.getByRole("button", { name: "刷新授权", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("上游授权已失效");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
-  await expect(page.getByText("需要重新授权", { exact: true })).toBeVisible();
+  await expect(page.getByText("需要重新授权", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "刷新授权", exact: true })).toBeDisabled();
   await capture("reauthorize-desktop.png");
   stage = "reauthorize";
   await finishAuthorization("重新授权");
-  await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
+  await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   account = (await admin()).accounts[0];
   assert.equal(account.id, id); assert.equal(account.credentialVersion, 2); assert.equal(account.mode, "disabled");
   await capture("reauthorized-desktop.png");
@@ -149,7 +150,7 @@ try {
   await expect(page.getByRole("button", { name: "读取上游额度", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
-  await expect(page.getByText("主窗口已用 25%", { exact: true })).toBeVisible();
+  await expect(page.getByText("主窗口已用 25%", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("progressbar", { name: "次窗口已用比例", exact: true }).first()).toHaveAttribute("value", "45");
   const observed = (await admin()).accounts[0].observability.quota.observedAtUnixSeconds;
   await capture("quota-desktop.png");
@@ -157,14 +158,14 @@ try {
   await fixture({ quota_mode: "fail" });
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.locator(".warning-banner")).toContainText("本次额度读取失败");
-  await expect(page.getByText("主窗口已用 25%", { exact: true })).toBeVisible();
+  await expect(page.getByText("主窗口已用 25%", { exact: true }).first()).toBeVisible();
   const failedQuota = (await admin()).accounts[0].observability.quota;
   assert.equal(failedQuota.observedAtUnixSeconds, observed);
   assert.equal(failedQuota.failure, "unavailable");
   await capture("quota-failure-desktop.png");
   stage = "quota-stale";
   await page.clock.fastForward(310_000);
-  await expect(page.getByText("额度观测已陈旧 · 最近读取失败", { exact: true })).toBeVisible();
+  await expect(page.getByText("额度观测已陈旧 · 最近读取失败", { exact: true }).first()).toBeVisible();
   await fixture({ quota_mode: "ok" });
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
@@ -174,15 +175,16 @@ try {
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.getByText("上游允许使用：否 · 已达窗口限额：是", { exact: true })).toBeVisible();
   await expect(page.getByText("上游额度报告受限，请查看窗口详情", { exact: true })).toBeVisible();
-  await expect(page.getByText("主窗口已用 25%", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("主窗口已用 25%", { exact: true }).first()).toHaveCount(0);
   await capture("quota-restricted-desktop.png");
+  await page.getByRole("dialog", { name: "账号详情", exact: true }).getByRole("button", { name: "关闭", exact: true }).click();
   stage = "logout";
   await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.continue());
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("登出尚未确认");
   await expect(page.getByRole("heading", { name: "登出状态待确认", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重试登出", exact: true })).toBeEnabled();
-  await expect(page.getByText("授权有效", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("授权有效", { exact: true }).first()).toHaveCount(0);
   await expect(page.getByRole("button", { name: "重新读取账号", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "启用", exact: true })).toHaveCount(0);
   await page.unroute("**/api/session");
@@ -191,7 +193,7 @@ try {
   stage = "committed-logout-response-loss";
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
   await page.getByRole("button", { name: "登录管理台", exact: true }).click();
-  await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
+  await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   await page.route("**/api/session", async route => {
     if (route.request().method() === "DELETE") { await route.fetch(); await route.abort(); }
     else await route.continue();
@@ -205,7 +207,7 @@ try {
   stage = "expired-detail-clears-page-and-late-flow";
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
   await page.getByRole("button", { name: "登录管理台", exact: true }).click();
-  await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
+  await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   let releaseFlow, markPrepared, markDelivered;
   const flowHeld = new Promise(resolve => { releaseFlow = resolve; });
   const flowPrepared = new Promise(resolve => { markPrepared = resolve; });
@@ -222,19 +224,20 @@ try {
   stage = "expired-detail-wait-for-clear";
   await page.getByRole("button", { name: "额度与健康详情", exact: true }).click();
   await expect(page.getByRole("heading", { name: "管理员登录", exact: true })).toBeVisible();
-  await expect(page.getByText("授权有效", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("授权有效", { exact: true }).first()).toHaveCount(0);
   await expect(page.getByRole("button", { name: "额度与健康详情", exact: true })).toHaveCount(0);
   stage = "expired-detail-release-old-response";
   releaseFlow(); await flowDelivered; await page.unroute("**/api/accounts/authorization");
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
   await page.getByRole("button", { name: "登录管理台", exact: true }).click();
-  await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
+  await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "发起账号授权", exact: true })).toBeEnabled();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
   assert.deepEqual(errors, []);
   console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; passive quota GET, failure retention/staleness/recovery; private storage and large-screen captures");
-} catch {
+} catch (error) {
+  console.error("Account assertion line=" + (error?.stack?.match(/live-accounts\.mjs:(\d+)/)?.[1] ?? "unknown") + "; class=" + error?.name);
   await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
   console.error(`Browser account check failed at stage: ${stage}; private diagnostics excluded.`);
   process.exitCode = 1;

@@ -202,3 +202,40 @@ it("cannot revive a late old-owner flow after a detail 401 and a new login", asy
   expect(screen.queryByLabelText("2. 粘贴完整回调地址")).toBeNull();
   expect(document.body.innerHTML).not.toContain("synthetic-old-owner");
 });
+
+it("keeps reconciliation available inside an authorization drawer after its read fails", async () => {
+  vi.mocked(api.beginAuthorization).mockResolvedValue({
+    flowID: "flow",
+    authorizationURL: "https://auth.openai.com/oauth/authorize?state=synthetic",
+    expiresInSeconds: 600,
+  });
+  setup();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  vi.mocked(api.fetchAccounts).mockRejectedValueOnce(
+    new Error("synthetic read failure"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  await screen.findByText(/账号读取失败/);
+  expect(screen.getByRole("button", { name: "验证并保存" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
+  await waitFor(() =>
+    expect(screen.getByLabelText("2. 粘贴完整回调地址")).toBeEnabled(),
+  );
+  expect(api.beginAuthorization).toHaveBeenCalledTimes(1);
+});
+it("cancels the detail read when its drawer closes", async () => {
+  let signal: AbortSignal | undefined;
+  vi.mocked(observations.fetchObservation).mockImplementation((_id, value) => {
+    signal = value;
+    return new Promise(() => {});
+  });
+  setup();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  await waitFor(() => expect(signal).toBeDefined());
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  await waitFor(() => expect(signal?.aborted).toBe(true));
+});
