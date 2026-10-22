@@ -37,3 +37,9 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 授权码交换使用 PKCE S256 和 Form grant，刷新使用 JSON grant。初次登录核对 nonce、ID audience、issuer、期限，以及 ID/access 的 subject 和订阅 account 一致性。后续刷新必须保持同一 namespace；缺省刷新 token 或 ID token 只能在新 access 已通过身份核对后沿用。这里的声明可信度来自固定 token 端点的直接可信传输，不是 JWT 签名验证器，禁止把任意上传 JWT 交给已验证导入路径。调用者仍须拥有有界、过期、一次性消费的 state/nonce/verifier 流程；本层不提供公开授权入口。
 
 [官方认证说明](https://developers.openai.com/codex/auth)描述 ChatGPT 登录与自动刷新，但不承诺内部 token wire 稳定。此适配仍需真实订阅独立验收；合成测试不消耗真实额度，也不能证明生产 TLS/实际账号兼容。
+
+## 授权流程 owner
+
+`AccountAuthorizationSupervisor` 注入 Core `AccountAuthorizationProvider` 和凭证用例；订阅 adapter 通过协议桥接，不使 Runtime 依赖 HTTP/加密框架。开始返回 flow ID、登录地址和剩余秒数，完成只接受同一 owner 的一次性回调；重新授权另携带账号 id/revision。容量、期限和取消语义见 I16。flow ID 不是认证凭证，必须同时核对管理 owner。
+
+远程部署的最小 code-flow 操作由后续界面引导：在管理员自己的浏览器打开登录地址，再粘贴最终回调地址；本 owner 不在远端占用操作者的 localhost 端口，也不宣称已有 device-flow 支持。公开 API、session 注入及生产主密钥组装仍由后续切片接入，不允许凭测试通过直接触发真实授权。

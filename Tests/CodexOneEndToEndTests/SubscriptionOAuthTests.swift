@@ -63,6 +63,7 @@ private final class OAuthServer: Sendable {
     var plan: OAuthPlan
     var calls = 0
     var invalidRequests = 0
+    var expectedVerifier: String? = oauthVerifier
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let state: OAuthServerShared
@@ -160,7 +161,9 @@ private final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
         && fields["grant_type"] == "authorization_code"
         && fields["code"]?.hasPrefix("synthetic-code") == true
         && fields["code"]?.hasSuffix("+/=") == true
-        && fields["code_verifier"] == oauthVerifier
+        && (fields["code_verifier"] == state.mutex.withLock { $0.expectedVerifier }
+          || (state.mutex.withLock { $0.expectedVerifier } == nil
+            && (43...128).contains(fields["code_verifier"]?.utf8.count ?? 0)))
         && fields["redirect_uri"] == SubscriptionOAuthProvider.callbackURI
     }
     guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: String] else {
@@ -504,6 +507,43 @@ func realOAuthLoginRequiresExpectedNonceAudienceAndCurrentMatchingClaims() async
       await #expect(throws: AccountRefreshError.unavailable) { try await h.login() }
       #expect(h.server.counts.calls == 1 && h.server.counts.invalid == 0)
       #expect(try await h.store.listAccounts().isEmpty)
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func authorizationOwnerPersistsOnlyAfterRealSocketVerification()
+  async throws
+{
+  try await withOAuth { h in
+    let service = try AccountAuthorizationSupervisor(application: h.app, provider: h.provider)
+    let owner = Task { try await service.run() }
+    do {
+      try await awaitOAuth { await service.isAccepting }
+      let flow = try await service.begin(owner: "synthetic-session", target: .create)
+      let query = try #require(URLComponents(string: flow.authorizationURL)?.queryItems)
+      let nonce = try #require(query.first(where: { $0.name == "nonce" })?.value)
+      let state = try #require(query.first(where: { $0.name == "state" })?.value)
+      h.server.state.mutex.withLock { $0.expectedVerifier = nil }
+      h.server.set(.reply(try oauthTokens(nonce: nonce)))
+      let url =
+        SubscriptionOAuthProvider.callbackURI + "?state=" + state
+        + "&code=synthetic-code%2B%2F%3D"
+      let account = try await service.complete(
+        owner: "synthetic-session", flowID: flow.flowID, callbackURL: url)
+      #expect(account.authorization == .ready && account.mode == .disabled)
+      #expect(h.server.counts.calls == 1 && h.server.counts.invalid == 0)
+      #expect(try await h.store.listAccounts().count == 1)
+      await #expect(throws: AccountRefreshError.conflict) {
+        try await service.complete(
+          owner: "synthetic-session", flowID: flow.flowID, callbackURL: url)
+      }
+      #expect(h.server.counts.calls == 1)
+      owner.cancel()
+      try await owner.value
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      throw error
     }
   }
 }

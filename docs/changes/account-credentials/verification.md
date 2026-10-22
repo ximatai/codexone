@@ -39,3 +39,13 @@ e7c200a 独立 review 未发现需修复或阻塞问题。reviewer 核对 waiter
 上游明确 invalid_grant 或已知 refresh_token 失效代码且无新 token 时持久化 requires_auth；其余不明失败持久化 auth_uncertain，二者均不能再次自动刷新。真实 SQLite trigger 注入结束审计写失败：保持原 refreshing intent 与旧版本，向调用者报告 storageUnavailable，不能谎报需要重新授权已成功落盘。身份核对已关闭 intent 时，外层重复失败标记的 CAS 冲突不误报存储故障。日志和 DB/WAL 不包含合成明文 token/主密钥。
 
 这是传输/身份验证切片，尚无公开初次授权 owner、账号管理 API/UI、生产主密钥组装或账号池；不宣称真实订阅兼容、生产 TLS、Desktop 或恢复契约已验收。提交后 review 与 Linux 结果待本切片提交后记录。
+
+55502bf 独立 review 未发现需修复或阻塞问题；reviewer 独立运行六个 realOAuth 真实 socket 测试、requires_auth 持久回归及 Runtime 脱敏共八项通过。该精确快照 Linux amd64 / Swift 6.4 本地容器完整后端通过：73 测试和全部脚本，exit 0，单并发、2 CPU/2500 MiB，容器已回收。不是远端 CI、弱服务器或真实订阅验收。
+
+## 2026-10-22 · 初次授权流程 owner 切片
+
+主 Agent 实现 Core 授权端口、Runtime owner 与订阅 adapter 桥接。macOS arm64 / Swift 6.4 完整后端检查通过（77 个 Swift 测试及全部脚本）；随后增加一项实际 socket 贯通测试并重建、全量 Swift 测试 78 项通过。前端未改动，未重复声称浏览器验收。
+
+四组 owner 测试使用真实加密/SQLite，覆盖 session 隔离/错误 owner 不消费、八流程及四并行容量、无效回调先消费且零 POST、单调期限、请求取消/总期限/Service 关闭后活动调用归零、已消费流程不能重放、容量拒绝后仍可继续、创建默认禁用、重新授权 revision CAS/模式保留及 namespace 变化拒绝。第五个贯通用例经真实 HTTP 适配器和合成 NIO socket，用开始流程生成的 nonce 完成验证并加密入库；相同 flow 重放没有第二次 POST。
+
+初次授权代码未开放管理入口，不调用真实认证服务。callback/state/verifier 只在内存传递，公开结果只有登录地址/流程标识和安全账号元数据。提交后 review 待进行；生产组装、账号管理 UI 和账号池未完成。

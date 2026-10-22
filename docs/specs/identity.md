@@ -69,3 +69,11 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 刷新先校验已保存可信 ID 的范围（可过期，仅作身份基线）与命名空间，再请求新 token；新 access 必须证明同一 subject/account，双方有 user 声明时也须一致。新 ID 若提供须校验 audience/当前有效期及相同范围；ID/refresh 字段缺省仅可在新 access 范围已确认后保留原值，显式 null/空字段拒绝。expires_in 如提供须为有效正整数，生效期限取其与 access exp 的较早值。身份缺失/冲突、过期、畸形或网络不明均不能发布 ready。
 
 明确 400/401 且无任何新 token 字段的 invalid_grant，或已识别的 refresh_token_expired/reused/invalidated，返回安全的需要重新授权结果并事务写 requires_auth；其他错误/矛盾字段保持 auth_uncertain。服务器错误 prose 不进入日志/DTO，也不用于恢复判断。结束标记提交失败返回存储失败并留下原 intent；重复/过时结束的 CAS 冲突不能冒充存储故障。账号管理流程、具体提供者兼容与池路由另行验收，不能把固定 endpoint 解析或 HTTP 200 作为完整接入证明。
+
+## I16：初次授权流程责任
+
+管理授权流程绑定已认证管理 session 的不透明 owner（独立 headless 管理凭证也有独立 owner），state/nonce/PKCE verifier 只驻留内存。最多 8 个流程含在途工作、最多 4 个并行完成；待授权期限最长 10 分钟，用单调时钟判断。完成调用有最长 30 秒总期限。管理员输入固定 localhost:1455/auth/callback URL，校验 scheme/host/port/path、state、单个 code，拒绝认证信息、fragment、重复或未知参数；可忽略有界 scope。回调正文、授权码和 verifier 不进入日志或公开 DTO。
+
+正确 owner 取得待授权流程后，在解析回调及任何 token POST 之前一次性消费；错误 owner 不得消费。容量拒绝不消费尚未派发的流程。失败、过期、请求取消或响应丢失不自动恢复/重放，只能核对账号列表或开始新的授权流程。请求的结构化任务拥有交换；Service 停止先拒绝新流程，取消并等待全部在途交换和已开始的原子持久操作，不留下后台任务。尚未开始的凭证提交在停止后拒绝。
+
+初次账号生成内部 ID 并以 disabled/ready 保存；明确启用是后续独立管理动作。重新授权绑定 id/revision，保持相同 namespace 和最新 CAS；不能把另一订阅账号原地覆盖，失败不改变原有身份/凭证版本。此契约不授权读取个人缓存或调用真实账号，具体产品入口和真实订阅验收另行记录。
