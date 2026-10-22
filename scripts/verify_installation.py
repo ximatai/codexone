@@ -279,6 +279,28 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                     (root / 'secrets/master').write_text(original_master)
                     select_image(incompatible_image)
                     run([*compose, 'run', '--rm', 'gateway', '--check-config'])
+                    # The old binary has a generic safe startup error. Positively control
+                    # its complete startup under the same config/UID/volume/secret mounts.
+                    control = run([*compose, 'run', '--rm', '--no-deps', '-d',
+                                   '--env', 'CODEXONE_DATA_DIRECTORY=/var/lib/codexone/schema-control',
+                                   'gateway']).stdout.decode().strip()
+                    assert re.fullmatch('[0-9a-f]{12,64}', control)
+                    saved_name = name
+                    try:
+                        name = control
+                        deadline = time.monotonic() + 25
+                        while time.monotonic() < deadline:
+                            try:
+                                if request('/health/live')[0] == 200: break
+                            except AssertionError: pass
+                            time.sleep(0.2)
+                        else: raise AssertionError('Old schema rejection lacks a successful startup control')
+                        assert maintenance('sqlite3', ['-readonly', '/var/lib/codexone/schema-control/core.sqlite', 'PRAGMA user_version;']).stdout.strip() == b'6'
+                        assert maintenance('stat', ['-c', '%a:%u:%g', '/var/lib/codexone/schema-control/core.sqlite']).stdout == maintenance('stat', ['-c', '%a:%u:%g', database]).stdout
+                    finally:
+                        run(['docker', 'stop', '--time', '10', control], ok=False, timeout=20)
+                        run(['docker', 'rm', '--force', control], ok=False)
+                        name = saved_name
                     rejected = run([*compose, 'run', '--rm', 'gateway'], ok=False, timeout=20)
                     assert rejected.returncode != 0 and b'LISTENING' not in rejected.stdout + rejected.stderr
                     assert truth() == before_switch
@@ -313,7 +335,10 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                 else: raise AssertionError('Upgrade did not restore current v8 observation')
                 assert truth() == before_switch
                 run([*compose, 'stop'], timeout=40)
-                print('PASS: actual distinct compatible v8 rollback/re-upgrade and incompatible schema rejection retain same-volume Key and unknown obligation')
+                checks = []
+                if previous_image: checks.append('distinct compatible v8 rollback/re-upgrade')
+                if incompatible_image: checks.append('old v6 positive startup control and v8 rejection')
+                print('PASS: ' + '; '.join(checks) + '; same-volume Key and unknown obligation retained')
             # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
             fixture_sql = "BEGIN IMMEDIATE; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
             assert maintenance('sqlite3', [database, fixture_sql]).stdout.strip() == b'ok'

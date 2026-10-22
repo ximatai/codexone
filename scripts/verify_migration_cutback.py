@@ -48,6 +48,14 @@ def database(path):
         connection.close()
 
 
+def execution_truth(connection):
+    return {
+        'attempts': connection.execute('SELECT * FROM attempts ORDER BY id').fetchall(),
+        'evidence': connection.execute('SELECT * FROM evidence ORDER BY attempt,revision').fetchall(),
+        'bindings': connection.execute('SELECT * FROM bindings ORDER BY principal,namespace,identity,object_type,raw_id').fetchall(),
+    }
+
+
 def call(port, token, prompt='synthetic', prefix='/v1'):
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
     try:
@@ -193,16 +201,15 @@ def verify(binary, previous_binary=None):
                 if previous_binary:
                     assert hashlib.sha256(Path(binary).read_bytes()).digest() != hashlib.sha256(Path(previous_binary).read_bytes()).digest()
                     with database(f.root / 'state/core.sqlite') as db:
-                        durable = db.execute('SELECT id,state,admission_json,usage_json,reserved,estimated FROM attempts ORDER BY rowid').fetchall()
-                        bindings = db.execute('SELECT * FROM bindings ORDER BY principal,object_type,raw_id').fetchall()
+                        durable = execution_truth(db)
+                        assert db.execute("SELECT COUNT(*) FROM evidence JOIN attempts ON evidence.attempt=attempts.id WHERE attempts.state='settled'").fetchone()[0] > 0
                     for executable in (previous_binary, binary):
                         f.process, peer_ports = start(executable, f.config, f.root, admin_token_file=f.admin, web_directory=f.web_directory)
                         assert api_call(peer_ports['data'], 'GET', '/v1/models', token=fresh)[0] == 200
                         assert call(peer_ports['data'], fresh)[0] == 429
                         assert f.provider.calls == before + 2
                         with database(f.root / 'state/core.sqlite') as db:
-                            assert db.execute('SELECT id,state,admission_json,usage_json,reserved,estimated FROM attempts ORDER BY rowid').fetchall() == durable
-                            assert db.execute('SELECT * FROM bindings ORDER BY principal,object_type,raw_id').fetchall() == bindings
+                            assert execution_truth(db) == durable
                         shutdown(f.process, f.root, f.secrets); f.process = None
                     print('PASS: distinct actual compatible binary rollback/re-upgrade preserves genuine settled/unknown evidence, object ownership and exhausted Key quota without dispatch')
                 stable_new_hash = hashlib.sha256((f.root / 'state/core.sqlite').read_bytes()).digest()
