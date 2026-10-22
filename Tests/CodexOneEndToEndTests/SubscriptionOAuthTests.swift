@@ -1,5 +1,6 @@
 import CodexOneCore
 import CodexOneRuntime
+import Crypto
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -64,6 +65,7 @@ private final class OAuthServer: Sendable {
     var calls = 0
     var invalidRequests = 0
     var expectedVerifier: String? = oauthVerifier
+    var expectedChallenge: String?
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let state: OAuthServerShared
@@ -163,7 +165,11 @@ private final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
         && fields["code"]?.hasSuffix("+/=") == true
         && (fields["code_verifier"] == state.mutex.withLock { $0.expectedVerifier }
           || (state.mutex.withLock { $0.expectedVerifier } == nil
-            && (43...128).contains(fields["code_verifier"]?.utf8.count ?? 0)))
+            && state.mutex.withLock { $0.expectedChallenge }
+              == SubscriptionOAuthProvider.base64URL(
+                Data(
+                  SHA256.hash(
+                    data: Data((fields["code_verifier"] ?? "").utf8))))))
         && fields["redirect_uri"] == SubscriptionOAuthProvider.callbackURI
     }
     guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: String] else {
@@ -523,7 +529,11 @@ func realOAuthLoginRequiresExpectedNonceAudienceAndCurrentMatchingClaims() async
       let query = try #require(URLComponents(string: flow.authorizationURL)?.queryItems)
       let nonce = try #require(query.first(where: { $0.name == "nonce" })?.value)
       let state = try #require(query.first(where: { $0.name == "state" })?.value)
-      h.server.state.mutex.withLock { $0.expectedVerifier = nil }
+      let challenge = try #require(query.first(where: { $0.name == "code_challenge" })?.value)
+      h.server.state.mutex.withLock {
+        $0.expectedVerifier = nil
+        $0.expectedChallenge = challenge
+      }
       h.server.set(.reply(try oauthTokens(nonce: nonce)))
       let url =
         SubscriptionOAuthProvider.callbackURI + "?state=" + state

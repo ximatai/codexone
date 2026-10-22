@@ -78,6 +78,6 @@ M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 
 
 Runtime 有界单飞 owner e7c200a 已实现并通过 macOS/Linux 完整后端 66 测试及全部脚本，含真实 ServiceLifecycle 关闭和 SQLite 状态复核；独立 review 无阻塞并重跑 6 个定向回归通过。具体订阅 OAuth HTTP 适配器已实现并通过 macOS 完整后端 73 测试及全部脚本：固定可信端点、PKCE code exchange、稳定身份等价性、刷新及真实合成 socket 的取消/总期限/重定向/容量/持久失败路径。55502bf 独立 review 无阻塞，reviewer 八项定向验证及同快照 Linux 完整后端 73 测试/全部脚本通过；不代表真实订阅或生产 TLS 验收。
 
-初次授权 Runtime owner 与订阅桥接已实现：八流程/四并行、session owner 绑定、10 分钟期限和一次性消费、取消/关闭等待、重新授权 namespace/CAS。macOS 完整后端 77 测试和全部脚本通过，新增实际 socket 贯通后全量 Swift 78 测试通过，正进入提交后 review。此层尚未提供公开账号管理入口、生产主密钥组装或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
+初次授权 Runtime owner 与订阅桥接已实现：八流程/四并行、session owner 绑定、10 分钟期限和一次性消费、取消/关闭等待、重新授权 namespace/CAS。macOS 完整后端 77 测试和全部脚本通过，新增实际 socket 贯通后全量 Swift 78 测试通过，0be1012 独立 review 无阻塞，五项定向验证通过；主 Agent 进一步补充实际 verifier/challenge S256 一致性验证并通过。此层尚未提供公开账号管理入口、生产主密钥组装或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面目前只覆盖 Key，未覆盖账号、额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

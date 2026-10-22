@@ -49,3 +49,5 @@ e7c200a 独立 review 未发现需修复或阻塞问题。reviewer 核对 waiter
 四组 owner 测试使用真实加密/SQLite，覆盖 session 隔离/错误 owner 不消费、八流程及四并行容量、无效回调先消费且零 POST、单调期限、请求取消/总期限/Service 关闭后活动调用归零、已消费流程不能重放、容量拒绝后仍可继续、创建默认禁用、重新授权 revision CAS/模式保留及 namespace 变化拒绝。第五个贯通用例经真实 HTTP 适配器和合成 NIO socket，用开始流程生成的 nonce 完成验证并加密入库；相同 flow 重放没有第二次 POST。
 
 初次授权代码未开放管理入口，不调用真实认证服务。callback/state/verifier 只在内存传递，公开结果只有登录地址/流程标识和安全账号元数据。提交后 review 待进行；生产组装、账号管理 UI 和账号池未完成。
+
+0be1012 独立 review 无阻塞，reviewer 独立运行四项 owner 测试及实际 socket 贯通共五项通过。主 Agent 采纳非阻塞建议，增强贯通 server：对收到的 verifier 计算 S256 并与开始流程 URL 的 challenge 比对，不再仅检查 verifier 长度。增强后的真实 socket 定向测试重新构建并通过；未改产品行为。
