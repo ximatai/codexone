@@ -20,6 +20,7 @@ vi.mock("./api", async (original) => ({
   fetchKeys: vi.fn(),
   fetchOptions: vi.fn(),
   createKey: vi.fn(),
+  updateKey: vi.fn(),
 }));
 const key: api.ManagedKey = {
   id: "key-1",
@@ -146,5 +147,38 @@ it("creates an image-only key without granting vision or a conversation model", 
     imageModels: ["synthetic-image"],
   });
   expect(vi.mocked(api.createKey).mock.calls[0][0].visionInput).not.toBe(true);
+  view.unmount();
+});
+
+it("edits retained key limits when the current model directory is empty", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([key]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: [],
+    imageModels: [],
+  });
+  vi.mocked(api.updateKey).mockResolvedValue({
+    ...key,
+    revision: 2,
+    limits: { ...key.limits, requests: 5 },
+  });
+  const view = render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  expect(screen.getByLabelText("synthetic-text")).toBeChecked();
+  fireEvent.click(screen.getByText("本地治理限额"));
+  fireEvent.change(screen.getByLabelText("每日请求（UTC）"), {
+    target: { value: "5" },
+  });
+  expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(api.updateKey).toHaveBeenCalled());
+  expect(vi.mocked(api.updateKey).mock.calls[0][3]).toMatchObject({
+    requests: 5,
+  });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "保存修改" }),
+    ).not.toBeInTheDocument(),
+  );
   view.unmount();
 });

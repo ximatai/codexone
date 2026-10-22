@@ -225,7 +225,9 @@ export function KeyEditor({
           </Button>
           <Button
             type="submit"
-            disabled={disabled || (!models.length && !imageModels.length)}
+            disabled={
+              disabled || (!entry && !models.length && !imageModels.length)
+            }
           >
             {entry ? "保存修改" : "创建 API Key"}
           </Button>
