@@ -12,12 +12,6 @@ enum ResponsesSource: Sendable {
     case .pool(let config, _, _, _, _): config.responses
     }
   }
-  var supportsNativeWebSocket: Bool {
-    switch self {
-    case .single: true
-    case .pool: false
-    }
-  }
   var tokenFile: String? {
     switch self {
     case .single(let config): config.upstreamTokenFile
@@ -41,6 +35,7 @@ enum ResponsesGateway: Sendable {
   case pool(AccountPoolGateway, SubscriptionOAuthProvider, SubscriptionDataTarget)
   func execute(
     model: String, references: [ObjectBinding], requestID: String, mode: ExecutionMode,
+    connection: AccountRouteIdentity? = nil,
     operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
@@ -50,7 +45,8 @@ enum ResponsesGateway: Sendable {
       ) { context in try await operation(context, nil) }
     case .pool(let gateway, let provider, let target):
       try await gateway.execute(
-        model: model, references: references, requestID: requestID, mode: mode
+        model: model, references: references, connection: connection, requestID: requestID,
+        mode: mode
       ) { context, work in
         try await operation(context, provider.dataAccess(work: work, target: target))
       }

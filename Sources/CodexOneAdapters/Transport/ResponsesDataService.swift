@@ -124,7 +124,6 @@ public struct ResponsesDataService: Service {
                 head.method == .GET
                 && ["/v1/responses", "/backend-api/codex/responses"].contains(path)
                 && configuration.upstreamTransport == "websocket"
-                && source.supportsNativeWebSocket
                 && head.headers["sec-websocket-protocol"].isEmpty
               // Decline extension offers by omitting negotiation headers; RSV remains forbidden.
               guard allowed else { return channel.eventLoop.makeSucceededFuture(nil) }
@@ -217,53 +216,84 @@ public struct ResponsesDataService: Service {
       guard authorized.effectiveModels.contains(where: { $0.id == first.model }) else {
         throw GatewayProtocolError(403, "model_not_allowed")
       }
-      try await executor.webSocket.run { upstream in
-        let commands = WebSocketInbox()
-        defer { commands.finish(CancellationError(), discard: true) }
-        try await withThrowingTaskGroup(of: Data?.self) { lanes in
-          defer { lanes.cancelAll() }
-          var known = Set<String>()
-          lanes.addTask { firstData }
-          while let result = try await lanes.next(), let data = result {
-            let lane = try webSocketLane(JSONValue.decode(data))
-            let fresh = !known.contains(lane)
-            guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
-              throw GatewayProtocolError(503, "websocket_lane_capacity")
-            }
-            try await withExecutionDeadline(seconds: 5) { [data] in
-              try await commands.push(data, lane: lane)
-            }
-            if fresh {
-              known.insert(lane)
-              lanes.addTask {
-                while !Task.isCancelled {
-                  let data = try await commands.next(lane: lane)
-                  let requestID = UUID().uuidString
-                  do {
-                    let request = try webSocketCreate(data)
-                    let current = try await executor.authorized(digest)
-                    try await current.execute(
-                      request, requestID: requestID, peer: upstream, lane: lane
-                    ) { event in
-                      try await downstream.send(event)
-                    }
-                  } catch {
-                    var envelope: [String: JSONValue] = [
-                      "type": .string("error"),
-                      "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
-                    ]
-                    if !lane.isEmpty { envelope["stream_id"] = .string(lane) }
-                    try? await downstream.send(.object(envelope))
-                    throw error
+      if case .pool = authorized.gateway {
+        try await PoolWebSocketSession.run(
+          downstream: downstream, firstData: firstData, first: first,
+          executor: authorized, digest: digest)
+      } else {
+        try await executor.webSocket.run { upstream in
+          try await serveTurns(
+            downstream: downstream, upstream: upstream, firstData: firstData,
+            executor: executor, digest: digest)
+        }
+      }
+    }
+  }
+
+  static func serveTurns(
+    downstream: WebSocketPeer, upstream: WebSocketPeer, firstData: Data,
+    executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
+  ) async throws {
+    let commands = WebSocketInbox()
+    defer { commands.finish(CancellationError(), discard: true) }
+    try await withThrowingTaskGroup(of: Data?.self) { lanes in
+      defer { lanes.cancelAll() }
+      var known = Set<String>()
+      lanes.addTask { firstData }
+      while let result = try await lanes.next(), let data = result {
+        let lane = try webSocketLane(JSONValue.decode(data))
+        let fresh = !known.contains(lane)
+        guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
+          throw GatewayProtocolError(503, "websocket_lane_capacity")
+        }
+        try await withExecutionDeadline(seconds: 5) { [data] in
+          try await commands.push(data, lane: lane)
+        }
+        if fresh {
+          known.insert(lane)
+          let firstTurn = known.count == 1 ? initial : nil
+          lanes.addTask {
+            var pending = firstTurn
+            while !Task.isCancelled {
+              let data = try await commands.next(lane: lane)
+              let initialTurn = pending
+              pending = nil
+              let requestID = initialTurn?.requestID ?? UUID().uuidString
+              do {
+                let request = try webSocketCreate(data)
+                if let initialTurn {
+                  guard
+                    let model = executor.effectiveModels.first(where: { $0.id == request.model })
+                  else {
+                    throw GatewayProtocolError(403, "model_not_allowed")
+                  }
+                  try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
+                  try await executor.exchange(
+                    request, context: initialTurn.context, model: model, peer: upstream, lane: lane
+                  ) { event in try await downstream.send(event) }
+                  initialTurn.start.finishTurn()
+                } else {
+                  let current = try await executor.authorized(digest)
+                  try await current.execute(
+                    request, requestID: requestID, peer: upstream, lane: lane
+                  ) { event in
+                    try await downstream.send(event)
                   }
                 }
-                return nil
+              } catch {
+                initialTurn?.start.close(error)
+                if initialTurn == nil {
+                  try? await sendWebSocketError(
+                    error, requestID: requestID, lane: lane, to: downstream)
+                }
+                throw error
               }
             }
-            lanes.addTask {
-              try await withExecutionDeadline(seconds: 120) { try await downstream.next() }
-            }
+            return nil
           }
+        }
+        lanes.addTask {
+          try await withExecutionDeadline(seconds: 120) { try await downstream.next() }
         }
       }
     }

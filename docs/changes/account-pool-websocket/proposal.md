@@ -6,7 +6,7 @@
 
 私有池配置增加明确的 upstreamTransport：http（默认）或 websocket，其他值仍拒绝；固定生产 origin/可信认证装配不变。传输进入策略摘要，价格摘要不受传输选择影响。HTTP 模式继续拒绝 native WS，websocket 模式提供桥接与原生入口，模型目录/Key 范围不因传输改变。
 
-先验收独立请求的 HTTP→WS 桥接，再启用原生连接 owner。桥接切片中即使选择 websocket，上游采用 WS，但池的下游 native 升级仍拒绝；不能在连接固定身份未接入时套用旧单身份连接循环。
+以桥接和原生连接身份固定构成一个可操作的池 WS 业务闭环，阶段内定向验证，出口集中 review 和完整跨平台检查。池的下游 native 升级只在连接固定身份已接入的 websocket 配置下启用，HTTP 配置继续拒绝。
 
 ## 所有权与执行边界
 

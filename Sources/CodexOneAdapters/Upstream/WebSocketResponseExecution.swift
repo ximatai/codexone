@@ -10,13 +10,14 @@ extension HTTPResponseExecution {
     guard let model = effectiveModels.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
+    if case .pool = gateway, connection == nil {
+      throw GatewayProtocolError(503, "pool_websocket_unavailable")
+    }
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     try await gateway.execute(
-      model: request.model, references: request.references, requestID: requestID, mode: request.mode
-    ) { context, authorization in
-      guard authorization == nil else {
-        throw GatewayProtocolError(503, "pool_websocket_unavailable")
-      }
+      model: request.model, references: request.references, requestID: requestID,
+      mode: request.mode, connection: connection
+    ) { context, _ in
       try await exchange(
         request, context: context, model: model, peer: peer, lane: lane, emit: emit)
       return nil

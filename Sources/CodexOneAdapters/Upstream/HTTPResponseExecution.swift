@@ -12,14 +12,21 @@ struct HTTPResponseExecution: Sendable {
   let report: @Sendable () async -> ReadinessReport
   let access: DataPlaneAuthorization
   let gateway: ResponsesGateway?
+  var connection: AccountRouteIdentity? = nil
   let effectiveModels: [SingleIdentityConfiguration.Model]
+
+  func pinned(to identity: AccountRouteIdentity) -> Self {
+    var copy = self
+    copy.connection = identity
+    return copy
+  }
 
   func authorized(_ digest: String?) async throws -> Self {
     let policy = try await access.policy(digest)
     return Self(
       client: client, webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
-      gateway: try access.gateway(policy),
+      gateway: try access.gateway(policy), connection: connection,
       effectiveModels: configuration.models.filter { policy.models.contains($0.id) })
   }
 
@@ -39,9 +46,11 @@ struct HTTPResponseExecution: Sendable {
         model: request.model, references: request.references, requestID: requestID,
         mode: request.mode
       ) { context, authorization in
-        try await webSocket.authorized(authorization).run { peer in
-          try peer.beginTurn(compaction: request.streamCompaction)
-          try await exchange(request, context: context, model: model, peer: peer, emit: emit)
+        try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+          try await webSocket.authorized(authorization).run { peer in
+            try peer.beginTurn(compaction: request.streamCompaction)
+            try await exchange(request, context: context, model: model, peer: peer, emit: emit)
+          }
         }
         return nil
       }

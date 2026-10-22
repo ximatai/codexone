@@ -24,9 +24,26 @@ private final class PoolHTTPState: Sendable {
     var expected: [String: String] = [:]
     var calls: [Call] = []
     var invalid = 0
+    var upgrades = 0
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let value = Mutex(State())
+}
+private final class SilentUpgradeHandler: ChannelInboundHandler, @unchecked Sendable {
+  typealias InboundIn = ByteBuffer
+  let state: PoolHTTPState
+  var seen = false
+  init(_ state: PoolHTTPState) { self.state = state }
+  func channelActive(context: ChannelHandlerContext) {
+    state.value.withLock { $0.channels[ObjectIdentifier(context.channel)] = context.channel }
+    context.fireChannelActive()
+  }
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    if !seen {
+      seen = true
+      state.value.withLock { $0.upgrades += 1 }
+    }
+  }
 }
 private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHandler,
   @unchecked Sendable
@@ -47,7 +64,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
   }
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     switch unwrapInboundIn(data) {
-    case .head(let head): self.head = head
+    case .head(let head):
+      self.head = head
     case .body(let bytes): body.append(contentsOf: bytes.readableBytesView)
     case .end:
       do {
@@ -140,7 +158,10 @@ private struct PoolHTTPHarness {
   let alice: String
   let bob: String
   var calls: [PoolHTTPState.Call] { state.value.withLock { $0.calls } }
-  static func open(_ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http")
+  static func open(
+    _ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http",
+    executionTimeout: Int = 5, handshake: String? = nil
+  )
     async throws -> Self
   {
     let state = PoolHTTPState()
@@ -164,19 +185,33 @@ private struct PoolHTTPHarness {
     }
     let listener = try await ServerBootstrap(group: oauth.group).childChannelInitializer {
       channel in
+      channel.closeFuture.whenComplete { _ in
+        _ = state.value.withLock { $0.channels.removeValue(forKey: ObjectIdentifier(channel)) }
+      }
       let http = PoolHTTPHandler(state)
+      if handshake == "stall" {
+        return channel.pipeline.addHandler(SilentUpgradeHandler(state))
+      }
       if transport == "websocket" {
         let upgrader = NIOWebSocketServerUpgrader(
           maxFrameSize: 524_288,
           shouldUpgrade: { channel, head in
             let account = head.headers.first(name: "chatgpt-account-id") ?? ""
             state.value.withLock { value in
+              value.upgrades += 1
               if head.headers["authorization"]
                 != (value.expected[account].map { ["Bearer " + $0] } ?? [])
                 || !head.headers["x-client-private"].isEmpty
               {
                 value.invalid += 1
               }
+            }
+            if handshake == "delay" {
+              let scheduled = channel.eventLoop.scheduleTask(in: .milliseconds(700)) {
+                Optional(HTTPHeaders())
+              }
+              channel.closeFuture.whenComplete { _ in scheduled.cancel() }
+              return scheduled.futureResult
             }
             return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
           },
@@ -204,7 +239,8 @@ private struct PoolHTTPHarness {
             "outputMicrosPerMillion": 1_000_000,
           ]
         ],
-        "reservedMicros": 1, "executionTimeoutSeconds": 5, "upstreamTransport": transport,
+        "reservedMicros": 1, "executionTimeoutSeconds": executionTimeout,
+        "upstreamTransport": transport,
       ]))
     let store: SQLiteExecutionStore
     if wrongMaster {
@@ -520,6 +556,7 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         context.close(promise: nil)
         return
       }
+      if request["input"]?.string == "stallbody" { return }
       var document: [String: JSONValue] = [
         "id": .string("synthetic-ws-\(count)"), "object": .string("response"),
         "model": .string("synthetic-text"), "status": .string("in_progress"), "output": .array([]),
@@ -601,5 +638,318 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
       try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
     }
     #expect(unknown == 1)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolHTTPWebSocketBridgeDeadlineIncludesHandshakeAndBodyWithoutReconnecting() async throws {
+  for handshake in ["stall", "delay"] {
+    try await withOAuth(timeout: 3000) { oauth in
+      let h = try await PoolHTTPHarness.open(
+        oauth, transport: "websocket", executionTimeout: 1, handshake: handshake)
+      do {
+        let started = ContinuousClock.now
+        let result = try await h.request("hold")
+        #expect(result.0 == 504)
+        #expect(
+          try JSONValue.decode(result.1)["error"]?["code"]?.string == "execution_deadline_exceeded")
+        #expect(started.duration(to: .now) < .milliseconds(2500))
+        try await awaitOAuth(handshake + "-released") {
+          h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
+        }
+        #expect(h.state.value.withLock { $0.upgrades } == 1)
+        #expect(h.calls.count == (handshake == "stall" ? 0 : 1))
+        let unknown = try await h.store.perform {
+          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+        }
+        let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+        #expect(unknown == 1 && total == 1)
+      } catch {
+        await h.close()
+        throw error
+      }
+      await h.close()
+    }
+  }
+}
+
+/// Each command is one bounded line to an independent RFC6455 client. Blocking pipe
+/// reads live on Dispatch, never on Swift's cooperative executor.
+private final class PoolWSClient: @unchecked Sendable {
+  let process = Process()
+  let input = Pipe()
+  let output = Pipe()
+  private let closed = Mutex(false)
+  private let exited = DispatchSemaphore(value: 0)
+  init(_ h: PoolHTTPHarness, key: String? = nil) throws {
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = [
+      "python3", "scripts/verify_pool_ws_client.py", String(h.port), key ?? h.alice,
+    ]
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    process.terminationHandler = { [exited] _ in exited.signal() }
+    try process.run()
+  }
+  func read() async throws -> JSONValue {
+    try await withCheckedThrowingContinuation { continuation in
+      DispatchQueue.global().async { [self] in
+        do {
+          var data = Data()
+          while data.count < 4096 {
+            guard let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty
+            else {
+              throw ExecutionError.closed
+            }
+            if byte == Data([10]) {
+              continuation.resume(returning: try JSONValue.decode(data))
+              return
+            }
+            data.append(byte)
+          }
+          throw ExecutionError.capacity
+        } catch { continuation.resume(throwing: error) }
+      }
+    }
+  }
+  func command(_ value: [String: JSONValue] = [:]) async throws -> JSONValue {
+    var data = try JSONValue.object(value).data()
+    data.append(10)
+    try input.fileHandleForWriting.write(contentsOf: data)
+    return try await read()
+  }
+  func close() {
+    guard
+      closed.withLock({ value in
+        if value { return false }
+        value = true
+        return true
+      })
+    else { return }
+    try? input.fileHandleForWriting.close()
+    if process.isRunning { process.terminate() }
+    #expect(exited.wait(timeout: .now() + 6) == .success)
+    try? output.fileHandleForReading.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketPinsAllLanesAndFinalizesEachTurnWhileConnectionLives() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    #expect(try await client.read()["ready"]?.bool == true)
+    let warmup = try await client.command(["generate": .bool(false)])
+    let id = try #require(warmup["response"]?["id"]?.string)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.state.value.withLock { $0.channels.count } == 1)
+    #expect(
+      try await client.command(["previous_response_id": .string(id)])["type"]?.string
+        == "response.completed")
+    #expect(try await client.command(["op": .string("multi")])["lanes"]?.integer == 2)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.count == 4 && Set(h.calls.map(\.account)).count == 1)
+    #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
+    let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+    #expect(total == 4)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() async throws {
+  for mutation in ["disabled", "draining", "key"] {
+    try await withPoolHTTP(transport: "websocket") { h in
+      let client = try PoolWSClient(h)
+      defer { client.close() }
+      _ = try await client.read()
+      let first = try await client.command()
+      let id = try #require(first["response"]?["id"]?.string)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let selected = try #require(h.calls.first?.account).replacingOccurrences(
+        of: "synthetic-", with: "")
+      let account = try #require(try await h.store.listAccounts().first { $0.id == selected })
+      if mutation == "key" {
+        let key = try #require(try await h.store.listKeys(after: nil).first { $0.id == "alice" })
+        _ = try await h.store.updateKey(
+          id: key.id, revision: key.revision, enabled: false, policy: key.policy)
+      } else {
+        _ = try await h.store.setAccountMode(
+          id: account.id, revision: account.revision,
+          mode: mutation == "draining" ? .draining : .disabled)
+      }
+      if mutation == "draining" {
+        #expect(
+          try await client.command(["previous_response_id": .string(id)])["type"]?.string
+            == "response.completed")
+      }
+      if mutation == "draining" {
+        #expect(try await client.command()["type"]?.string == "response.completed")
+        let drained = try #require(try await h.store.listAccounts().first { $0.id == selected })
+        _ = try await h.store.setAccountMode(
+          id: drained.id, revision: drained.revision, mode: .disabled)
+      }
+      let result = try await client.command()
+      #expect(result["type"]?.string == "error")
+      try await awaitOAuth {
+        h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
+      }
+      #expect(h.calls.count == (mutation == "draining" ? 3 : 1))
+      #expect(h.state.value.withLock { $0.upgrades } == 1)
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketRejectsCrossPrincipalAndCrossAccountReferencesBeforeDispatch() async throws
+{
+  try await withPoolHTTP(transport: "websocket") { h in
+    let original = try PoolWSClient(h)
+    defer { original.close() }
+    _ = try await original.read()
+    let first = try await original.command()
+    let id = try #require(first["response"]?["id"]?.string)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let accountName = try #require(h.calls.first?.account)
+    let other = try #require(
+      try await h.store.listAccounts().first { "synthetic-" + $0.id != accountName })
+    _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
+    let foreign = try PoolWSClient(h, key: h.bob)
+    defer { foreign.close() }
+    _ = try await foreign.read()
+    #expect(
+      try await foreign.command(["previous_response_id": .string(id)])["type"]?.string == "error")
+    #expect(h.calls.count == 1 && h.state.value.withLock { $0.upgrades } == 1)
+    _ = try await h.store.setAccountMode(id: other.id, revision: other.revision + 1, mode: .enabled)
+    // An independent in-flight turn occupies the original identity, so the HTTP
+    // request balances to the other account and creates an incompatible reference.
+    _ = try await original.command(["op": .string("send"), "input": .string("hold")])
+    try await awaitOAuth { h.calls.count == 2 }
+    let independent = try await h.request()
+    let otherID = try #require(JSONValue.decode(independent.1)["id"]?.string)
+    #expect(h.calls.last?.account != accountName)
+    _ = try await original.command(["op": .string("receive")])
+    _ = try await original.command(["op": .string("receive")])
+    #expect(
+      try await original.command(["previous_response_id": .string(otherID)])["type"]?.string
+        == "error")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.count == 3 && h.state.value.withLock { $0.upgrades } == 2)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketAbortAndHandshakeDeadlineLeaveOneUnknownAndNoOwner() async throws {
+  for handshake in ["abort", "stall", "delay"] {
+    try await withOAuth(timeout: 3000) { oauth in
+      let h = try await PoolHTTPHarness.open(
+        oauth, transport: "websocket", executionTimeout: 1,
+        handshake: handshake == "abort" ? nil : handshake)
+      do {
+        let client = try PoolWSClient(h)
+        defer { client.close() }
+        _ = try await client.read()
+        let started = ContinuousClock.now
+        let result = try await client.command([
+          "input": .string(handshake == "abort" ? "abort" : "hold")
+        ])
+        #expect(result["type"]?.string == "error")
+        if handshake != "abort" {
+          #expect(result["error"]?["code"]?.string == "execution_deadline_exceeded")
+          #expect(started.duration(to: .now) < .milliseconds(2500))
+        }
+        try await awaitOAuth {
+          h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
+        }
+        #expect(h.state.value.withLock { $0.upgrades } == 1)
+        #expect(h.calls.count == (handshake == "stall" ? 0 : 1))
+        let unknown = try await h.store.perform {
+          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+        }
+        let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+        #expect(unknown == 1 && total == 1)
+      } catch {
+        await h.close()
+        throw error
+      }
+      await h.close()
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketDisconnectAndRuntimeCancellationCloseOwnedHandshakeAndTurn() async throws {
+  for handshake in [true, false] {
+    for shutdown in [true, false] {
+      try await withOAuth(timeout: 3000) { oauth in
+        let h = try await PoolHTTPHarness.open(
+          oauth, transport: "websocket", handshake: handshake ? "stall" : nil)
+        do {
+          let client = try PoolWSClient(h)
+          defer { client.close() }
+          _ = try await client.read()
+          _ = try await client.command(["op": .string("send"), "input": .string("stallbody")])
+          try await awaitOAuth {
+            h.state.value.withLock { $0.upgrades == 1 && (handshake || $0.calls.count == 1) }
+          }
+          if shutdown {
+            h.owner.cancel()
+            _ = await h.owner.result
+          } else {
+            client.close()
+          }
+          try await awaitOAuth {
+            h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
+          }
+          let ledger: SQLiteExecutionStore
+          if shutdown {
+            // Forced parent cancellation may stop the finalizer before its write.
+            // Prove the durable intent becomes unknown on a real cold reopen.
+            await h.store.close()
+            ledger = try await SQLiteExecutionStore.open(
+              path: oauth.root.appendingPathComponent("core.sqlite").path, limits: h.store.limits)
+          } else {
+            ledger = h.store
+          }
+          let unknown = try await ledger.perform {
+            try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+          }
+          if shutdown { await ledger.close() }
+          #expect(unknown == 1 && h.state.value.withLock { $0.upgrades } == 1)
+        } catch {
+          await h.close()
+          throw error
+        }
+        await h.close()
+      }
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketRefreshesPinnedIdentityWithoutOpeningAnotherSession() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    _ = try await client.command()
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let selected = try #require(h.calls.first?.account).replacingOccurrences(
+      of: "synthetic-", with: "")
+    let work = try await h.oauth.app.prepareDispatch(id: selected, continuation: true)
+    _ = try await h.oauth.app.reauthorizeVerified(
+      id: selected, revision: work.account.revision, namespace: work.account.namespace,
+      credential: AccountCredential(
+        accessToken: work.credential.accessToken, refreshToken: work.credential.refreshToken,
+        idToken: work.credential.idToken, expiresAtUnixSeconds: 1))
+    h.oauth.server.set(
+      .reply(
+        try oauthTokens(
+          account: "synthetic-" + selected, subject: "synthetic-user-" + selected)))
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.oauth.server.counts.calls == 3)
+    #expect(h.calls.count == 2 && Set(h.calls.map(\.account)).count == 1)
+    #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
   }
 }
