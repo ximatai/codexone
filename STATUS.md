@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，Linux 候选安装/升级闭环已完成本机实现与验收，M6 整体仍未完成。
+M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，Linux 候选安装/升级及真实本地 TLS 反代/HTTPS 管理闭环已完成本机实现与验收，M6 整体仍未完成。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 的协议实现和 M3 的账号/权限/观测进度见下方，Desktop 与恢复缺口继续保留。
 
@@ -47,6 +47,8 @@ npm run dev
 
 Linux amd64 候选构建、私有初始化与受控安装入口见 [Linux 安装](docs/development/linux-installation.md)。安装后用 `python3 compose-install.py <command>`，不要绕过入口使用裸 Compose；可用 `python3 scripts/verify_installation.py --image <candidate> --browser` 验证实际镜像与 Chrome 管理操作。
 
+真实本地 TLS/Nginx 与 HTTPS 管理检查：`python3 scripts/verify_tls_proxy.py --binary .build/debug/codexone --browser`（需本机 Nginx/OpenSSL/Chrome 和生产 SPA）。隔离 Linux release、证书与超时边界见 [TLS 反代](docs/development/tls-proxy.md)。
+
 实际管理 UI 的合成端到端检查（先完成后端及 web 生产构建）：
 
 ```sh
@@ -59,6 +61,15 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-22，M6 真实本地 TLS 反代/HTTPS 管理阶段出口通过：
+
+- 交付完整数据/管理 TLS server 示例和共用 snippets；保持两类入口隔离、管理 Host/Origin 含端口，清除 forwarded 伪造，关闭生成自动重试、SSE 缓冲/gzip 与普通敏感 URI 日志。
+- macOS arm64 debug / Nginx 1.31.7、Linux amd64 release / Nginx 1.24.0：真实 CA 链/主机名正反校验、两个数据前缀、JSON/逐事件 SSE、WSS 连续 turn/HTTP→WS 桥接、下游取消与超时关闭上游、unknown 保留与无重放、请求大小、半截上传、认证/CSRF/管理隔离通过。Linux 使用候选镜像 SPA，非 root/只读/无外部网络容器，release 二进制与前阶段相同；不是目标弱服务器容量证据。
+- Chrome 大屏直接 HTTPS/Nginx 登录、Key 创建/关闭秘密/刷新保留、禁用持久化、登出失效通过，截图已查看；没有 relay/response fulfillment。临时进程仅接受本次叶证书 SPKI pin，链/主机名另由 socket 验证，不改系统信任；不证明公共 CA 或用户实际域名配置。
+- 集中 review 完成：修复 Nginx 异常退出使后续 owner 清理被跳过的问题，立即注册各 owner、独立进程组回收 worker；macOS 文件写失败/master SIGKILL 定向回归、Linux 完整 TLS（含故障回收）通过，复审确认关闭。Swift/前端产品代码未变，不重复已通过的全集。
+
+命令、版本、失败记录和限制见 [TLS 验证](docs/changes/local-tls-proxy/verification.md)。候选 CI 已加入 Linux TLS 检查，但尚未远程运行；没有真实账号调用、额度消耗、推送、发布或用户服务部署。
+
 2026-10-22，M5 契约复核与独立 M6 候选安装阶段出口：
 
 - 实际 CLI 0.163.0 隔离 EOF 探针再次证明 reconnect 产生新生成（原 unknown、新 settled）；公开 GET response/消费位置协议不足以证明目标 Codex/订阅读取可用。M5 未实现正文缓存，未改变 unknown、重试或退款语义。见[契约证据](docs/changes/recovery-contract-audit/verification.md)。
@@ -67,7 +78,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 - 实际本地 Linux OCI/Compose：非 root/只读/能力清零、私有本地卷、配置拒绝、live/ready、SPA/session/CSRF/Key、在线实例锁、v5 普通启动拒绝、私有一致性备份/显式幂等迁移、重启数据保留、优雅退出均通过；目录读取失败和归属不符均拒绝且不改已有数据。macOS 共享 bind 的 flock 不可靠，默认 data 因此选 Linux Engine 本地卷，不能以共享盘通过冒充锁验收。
 - 实际打包 SPA 的 Chrome 1440 大屏登录、发 Key、关闭一次性秘密、刷新持久与登出通过，截图已查看；隔离 curl relay 不是实际 TLS/Nginx 验收。Swift/前端产品源码未变，沿用 M4 完整测试证据，不重复全集。
 
-集中 review 修复了宿主 Compose 覆盖导致误选安装的问题；命令、失败取舍与复审证据见[候选验证](docs/changes/linux-distribution/verification.md)。验证均为本机合成资料，没有真实账号调用、额度消耗、推送、发布或用户服务器部署。候选产物保存在忽略的 `artifacts/linux-candidate/`，包含镜像/精确源码归档、标识和 SHA256SUMS；仅为本机候选。
+集中 review 修复了宿主 Compose 覆盖导致误选安装的问题；命令、失败取舍与复审证据见[候选验证](docs/changes/linux-distribution/verification.md)。验证均为本机合成资料，没有真实账号调用、额度消耗、推送、发布或用户服务器部署。候选产物保存在忽略的 `artifacts/linux-candidate/`，包含镜像/精确源码归档、标识和 SHA256SUMS；仅为本机候选。该归档对应安装阶段提交 `3e03130`；本阶段 TLS 配置与验证以当前源码为准。
 
 2026-10-22，M4 本地合成阶段出口通过：
 
@@ -104,11 +115,11 @@ M4 已接续并完成原有修改：独立权限/图片模型映射、schema v6 
 
 M5：恢复读取契约仍不充分，详见[恢复证据](docs/evidence/client-recovery.md)。需要明确版本客户端的已有输出读取轨迹、消费位置、权限与工具风险，或明确采纳产品范围调整；没有据此新增私有协议或无人可用的正文库。Desktop 图片/参考图/连续主动编辑与真实订阅兼容继续保留，CLI/合成上游不能替代。
 
-M6 已交付第一个独立闭环：Linux amd64 可追溯 OCI 候选、私有初始化与受控 Compose、真实安装/管理/显式升级备份、候选 CI 定义与操作文档。下一项是独立的真实本地 TLS 反代业务闭环：按安装模板验收 SSE/WS、取消、负载大小与超时，并实际操作 HTTPS 管理台。
+M6 已交付两个独立闭环：Linux amd64 可追溯 OCI 候选、私有初始化与受控 Compose、真实安装/管理/显式升级备份，以及真实本地 TLS/Nginx 与 HTTPS 管理操作。下一项是可维护数据与密钥：先落实独立备份、旧快照恢复维护态、缺失执行区间和审计额度基线核对/安全回退，再完成主密钥版本维护及备份依赖；本地 TLS 通过不替代用户实际域名/证书部署验收。
 
 2026-10-22 计划复盘校准：M6 剩余项同时包含实现和验收，不能理解为只需再跑测试。当前命令入口只有配置检查/迁移，尚无旧快照 restore/reconcile 维护流程；账号密文有单主密钥标识，但尚无 active/decrypt-only 多版本轮换与可恢复再加密流程。低磁盘分级退让/停止准入/结算预留，以及运行资源与 WAL 的容量观测，也须落实并验证。依据 O03/O04/O09/O10/O14，后续按业务闭环推进：
 
-1. 真实本地 TLS 反代与 HTTPS 管理操作，交付可使用的对外接入。
+1. 真实本地 TLS 反代与 HTTPS 管理操作：本地阶段出口已完成，证据见上；用户实际部署仍单独验收。
 2. 可维护数据与密钥：独立备份/恢复、维护态、缺失执行区间及审计额度基线核对、兼容二进制回退；补齐主密钥版本维护和备份解密依赖。不能用已有迁移前备份替代这些能力。
 3. 低磁盘保护与必要运行观测，证明拒绝新工作时仍保住核心执行责任与结算，并覆盖 WAL/备份空间不足。
 4. 在可解释的目标宿主约束下集中进行混合负载、图片峰值、断流、长压和资源回稳验收。M5 缓存未实现时只验证现有能力，含缓存的完整 O14 出口仍保留。
