@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Real SPA + test-only runtime assembly + synthetic OAuth; never a personal account/profile."""
+import argparse
+import base64
+import hashlib
+import html
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import re
+import selectors
+import subprocess
+import tempfile
+import threading
+import time
+from urllib.parse import parse_qs, urlencode, urlsplit
+
+CLIENT = 'app_EMoamEEZ73f0CkXaXp7hrann'
+ADMIN = 'synthetic-account-ui-admin-' + 'a' * 32
+
+def encoded(value):
+    return base64.urlsafe_b64encode(value).decode().rstrip('=')
+
+def jwt(claims):
+    return '.'.join([encoded(json.dumps({'alg': 'RS256'}).encode()), encoded(json.dumps(claims).encode()), encoded(b'synthetic-signature')])
+
+class SyntheticOAuth(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    def log_message(self, *args):
+        pass
+    def reply(self, body, status=200, content_type='application/json'):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(data)
+    def do_GET(self):
+        query = parse_qs(urlsplit(self.path).query)
+        assert urlsplit(self.path).path == '/oauth/authorize'
+        callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
+        self.reply(('<!doctype html><html lang="zh"><title>合成订阅登录</title><h1>合成订阅授权</h1><a href="' + html.escape(callback, quote=True) + '">复制合成回调地址</a></html>').encode(), content_type='text/html; charset=utf-8')
+    def do_POST(self):
+        size = int(self.headers.get('content-length', '0'))
+        assert 0 < size <= 65536
+        raw = self.rfile.read(size)
+        if self.path == '/__fixture':
+            value = json.loads(raw)
+            with self.server.guard:
+                self.server.control.update(value)
+            return self.reply({'ok': True})
+        assert self.path == '/oauth/token'
+        if self.headers.get('content-type') == 'application/x-www-form-urlencoded':
+            value = {key: values[0] for key, values in parse_qs(raw.decode()).items()}
+        else:
+            value = json.loads(raw)
+        with self.server.guard:
+            self.server.calls += 1
+            control = self.server.control.copy()
+        assert value['client_id'] == CLIENT
+        if value['grant_type'] == 'authorization_code':
+            assert value['code'] == 'synthetic-code+/='
+            assert value['redirect_uri'] == 'http://localhost:1455/auth/callback'
+            assert encoded(hashlib.sha256(value['code_verifier'].encode()).digest()) == control['challenge']
+        else:
+            assert value['grant_type'] == 'refresh_token' and value['refresh_token'].startswith('synthetic-refresh-')
+            if control.get('mode') == 'reject':
+                return self.reply({'error': 'invalid_grant'}, status=400)
+        scope = {'chatgpt_account_id': 'synthetic-account', 'chatgpt_user_id': 'synthetic-user'}
+        common = {'iss': 'https://auth.openai.com', 'sub': 'synthetic-subject', 'exp': int(time.time()) + 3600,
+                  'https://api.openai.com/auth': scope}
+        tokens = {'access_token': jwt(common), 'id_token': jwt(dict(common, aud=CLIENT, nonce=control['nonce'])),
+                  'refresh_token': 'synthetic-refresh-' + str(self.server.calls), 'token_type': 'Bearer', 'expires_in': 3600}
+        with self.server.guard:
+            self.server.issued.extend(tokens[key] for key in ['access_token', 'id_token', 'refresh_token'])
+        self.reply(tokens)
+
+def verify(binary):
+    root = Path(__file__).resolve().parents[1]
+    provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticOAuth)
+    provider.daemon_threads = True
+    provider.guard = threading.Lock()
+    provider.control = {}
+    provider.calls = 0
+    provider.issued = []
+    threading.Thread(target=provider.serve_forever, daemon=True).start()
+    try:
+        with tempfile.TemporaryDirectory(prefix='codexone-account-ui-') as temporary:
+            work = Path(temporary)
+            for name, value in [('admin', ADMIN), ('master', '6b' * 32)]:
+                (work / name).write_text(value)
+                (work / name).chmod(0o600)
+            process = subprocess.Popen([binary, '--account-admin-ui', str(work), str(root / 'web/dist'), str(provider.server_port)],
+                                       env={'PATH': os.defpath}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            output = b''
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    deadline = time.monotonic() + 10
+                    while b'ADMIN_PORT ' not in output:
+                        assert time.monotonic() < deadline and process.poll() is None, 'Synthetic UI assembly did not start'
+                        if selector.select(.1):
+                            chunk = os.read(process.stdout.fileno(), 4096)
+                            assert chunk
+                            output += chunk
+                port = int(re.search(rb'ADMIN_PORT (\d+)', output)[1])
+                result = subprocess.run(['node', str(root / 'web/scripts/live-accounts.mjs'), str(port), str(provider.server_port), str(root / 'artifacts/account-management-ui')],
+                                        input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=120,
+                                        env={'PATH': os.environ.get('PATH', os.defpath)})
+                browser_output = result.stdout + result.stderr
+                assert len(browser_output) < 65536 and ADMIN.encode() not in browser_output and str(work).encode() not in browser_output
+                assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', browser_output) is None
+                assert result.returncode == 0, 'Browser account verification failed; private inputs excluded: ' + browser_output.decode()
+                print(browser_output.decode(), end='')
+                with provider.guard:
+                    issued = list(provider.issued)
+                    assert provider.calls == 3
+                for file in (work / 'state').glob('core.sqlite*'):
+                    assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32])
+            finally:
+                process.terminate()
+                try:
+                    output += process.communicate(timeout=10)[0]
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                    raise AssertionError('Synthetic UI assembly failed to stop')
+                assert process.returncode == 0
+                assert len(output) < 65536 and ADMIN.encode() not in output and str(work).encode() not in output
+                assert all(value.encode() not in output for value in provider.issued)
+    finally:
+        provider.shutdown()
+        provider.server_close()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--binary', type=Path, required=True)
+    verify(str(parser.parse_args().binary.resolve()))

@@ -49,3 +49,10 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 生产入口组装固定 authority provider、初次授权与共享刷新 Service，并把 Core 端口注入 `AccountAdminAPI`；未配置主密钥时不注册账号路由。认证与 body 契约见 A12，具体运行进度见 STATUS。GET/PUT `/api/accounts`、POST refresh 与一次性 authorization 路径复用既有管理 session 或独立 Bearer；浏览器不能混用两种认证。刷新和重新授权不会自动启用初次 disabled 的账号，模式/授权状态需分别核对。
 
 账号 API 本身不创建数据面账号池，enabled 表示管理策略，是否可路由还须通过后续池准入和授权状态复核；不能把列表 ready 当作已有请求执行成功。
+
+
+## 浏览器操作与合成装配
+
+控制台的“订阅账号”复用管理 session；未配置账号主密钥时提示安全配置尚未开启。初次与重新授权采用 I16 的 code-flow；新窗口完成登录后，将最终回调地址粘贴到隐藏输入，再一次性提交。前端不会自行探测或访问 localhost callback 服务，不保存浏览器本地/会话存储；取消和超时应重新开始流程。未知 mutation 或 CAS 冲突先读列表核对，不能直接重发。
+
+`ExecutionProbe --account-admin-ui` 是测试可执行文件的专用合成组装，生产 codexone 没有该参数或认证地址覆盖。它启动真实管理 API、Runtime owner、AES/SQLite 与显式合成 loopback OAuth。浏览器脚本允许访问临时管理 origin 和合成登录页，拒绝其他地址；只读取合成回调链接而不访问真实 localhost callback 端口。截图输入掩码，日志与 DB/WAL 核对无合成 token/主密钥原文；不替代真实订阅或 Desktop 验收。

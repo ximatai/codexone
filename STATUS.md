@@ -43,6 +43,13 @@ npm run dev
 ./scripts/verify.sh --web --chrome
 ```
 
+实际管理 UI 的合成端到端检查（先完成后端及 web 生产构建）：
+
+```sh
+python3 scripts/verify_admin_ui.py --binary .build/debug/codexone
+python3 scripts/verify_account_admin_ui.py --binary .build/debug/ExecutionProbe
+```
+
 `--chrome` 使用本机已安装 Chrome 的全新临时上下文，不使用用户浏览数据。标准 Chromium 路径先在 web 下执行 `npx playwright install chromium --only-shell`，再执行 `./scripts/verify.sh --web`（从仓库根目录）；无参数执行全部验证。各层检查定义见 [verification](docs/development/verification.md)。
 
 ## 最新验证与范围
@@ -53,7 +60,7 @@ npm run dev
 - 80 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。包括托管 Key 的 CAS/撤销/轮换与限额连续性、审计回滚/容量及满普通审计后全部 256 个 Key 仍可撤销；管理 session 来源/CSRF/过期/容量/重启与静态快照/文件安全边界；账号凭证 AEAD/主密钥文件、刷新 CAS/禁用/提交回滚/重启/审计结束预留及 v1/v2 显式升级；Runtime 共享刷新等待者取消/容量/并行/期限/关闭与故障 DB 停止新刷新。
 - M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
-- 前端类型/生产构建、15 个组件/API 测试及 3 个概览 Playwright Chrome 155.0.8059.85 测试通过；概览 API 为合成拦截。新增真实 Chrome 接生产 SPA/临时网关/合成上游的 Key 操作检查：安全 Cookie 登录、创建/复制/清除、模型与限额实际执行、CAS、禁用轮换不重置计数、读取失败重试、已提交但响应丢失后的核对和登出失败重试；登录/编辑/列表大屏截图已查看。没有使用个人浏览状态或真实账号，不能代替 Desktop 验收。
+- 前端类型/生产构建、20 个组件/API 测试及 3 个概览 Playwright Chrome 155.0.8059.85 测试通过；概览 API 为合成拦截。新增真实 Chrome 接生产 SPA/临时网关/合成上游的 Key 操作检查：安全 Cookie 登录、创建/复制/清除、模型与限额实际执行、CAS、禁用轮换不重置计数、读取失败重试、已提交但响应丢失后的核对和登出失败重试；登录/编辑/列表大屏截图已查看。没有使用个人浏览状态或真实账号，不能代替 Desktop 验收。
 - 2026-10-22 独立 Linux amd64/Swift 6.4 本地 Docker 验证通过（快照 8184adb，模拟执行）：单并发后端完整检查、26 Swift 测试及进程/权限/四个 SIGKILL 场景。首次双并发因约 2.8 GiB Docker VM 内存不足 OOM；未改全局设置。此结果不代表弱服务器容量验收。
 - 2026-10-22 M2 Linux amd64/Swift 6.4 本地容器完整验证通过至 fcd3a5e（38 Swift 测试、进程故障、九组 HTTP/SSE、九组 WS、context、profile 及 v2 压缩场景），单并发、2 CPU/2500 MiB。macOS 实际 CLI 0.163.0 通过明确模型指导的目录采用、HTTP/SSE 文本/函数结果与加密推理回传、缺 profile fallback、EOF 新执行，以及直连/桥接/原生 WS 区分检查；独立临时配置，无真实账号。
 - Linux amd64 与配套 Chromium 的无凭证 GitHub CI 定义已建立，尚未远程运行。未访问真实账号/上游、未部署。
@@ -78,6 +85,6 @@ M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 
 
 Runtime 有界单飞 owner e7c200a 已实现并通过 macOS/Linux 完整后端 66 测试及全部脚本，含真实 ServiceLifecycle 关闭和 SQLite 状态复核；独立 review 无阻塞并重跑 6 个定向回归通过。具体订阅 OAuth HTTP 适配器已实现并通过 macOS 完整后端 73 测试及全部脚本：固定可信端点、PKCE code exchange、稳定身份等价性、刷新及真实合成 socket 的取消/总期限/重定向/容量/持久失败路径。55502bf 独立 review 无阻塞，reviewer 八项定向验证及同快照 Linux 完整后端 73 测试/全部脚本通过；不代表真实订阅或生产 TLS 验收。
 
-初次授权 Runtime owner 与订阅桥接已实现：八流程/四并行、session owner 绑定、10 分钟期限和一次性消费、取消/关闭等待、重新授权 namespace/CAS。macOS 完整后端 77 测试和全部脚本通过，新增实际 socket 贯通后全量 Swift 78 测试通过，0be1012 独立 review 无阻塞，五项定向验证通过；主 Agent 进一步补充实际 verifier/challenge S256 一致性验证并通过。账号管理 API 与生产主密钥组装已实现，macOS 完整后端 80 测试及全部脚本通过，d4fb93e 独立 review 无阻塞，同快照 Linux 完整后端 80 测试/全部脚本通过；主 Agent 补实际管理断开后授权继续收尾的 socket 回归并通过。支持列表/模式 CAS、共享刷新与初次/重新授权，复用现有管理认证/CSRF，配置检查拒绝密钥复用且不建库。尚未提供账号 UI 或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
+初次授权 Runtime owner 与订阅桥接已实现：八流程/四并行、session owner 绑定、10 分钟期限和一次性消费、取消/关闭等待、重新授权 namespace/CAS。macOS 完整后端 77 测试和全部脚本通过，新增实际 socket 贯通后全量 Swift 78 测试通过，0be1012 独立 review 无阻塞，五项定向验证通过；主 Agent 进一步补充实际 verifier/challenge S256 一致性验证并通过。账号管理 API 与生产主密钥组装已实现，macOS 完整后端 80 测试及全部脚本通过，d4fb93e 独立 review 无阻塞，同快照 Linux 完整后端 80 测试/全部脚本通过；主 Agent 补实际管理断开后授权继续收尾的 socket 回归并通过。支持列表/模式 CAS、共享刷新与初次/重新授权，复用现有管理认证/CSRF，配置检查拒绝密钥复用且不建库。账号 UI 已实现，类型/构建/20 组件/API 测试、3 概览 Chrome 及实际账号/Key 全流程通过，正在进行提交后 review；新增测试专用合成组装，不提供生产认证地址覆盖。账号池路由仍未实现，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
 
-账号可操作授权界面/真实订阅验收、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面目前只覆盖 Key，未覆盖账号、额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。恢复客户端契约仍须进一步核实并验证，遇到困难/更优方案及时沟通。
+真实订阅验收、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面覆盖 Key 与账号授权/策略，尚未覆盖额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。恢复客户端契约仍须进一步核实并验证，遇到困难/更优方案及时沟通。

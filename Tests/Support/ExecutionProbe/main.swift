@@ -6,6 +6,13 @@ import Foundation
 @main struct ExecutionProbe {
   static func main() async {
     do {
+      if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--account-admin-ui",
+        let port = Int(CommandLine.arguments[4])
+      {
+        try await runAccountAdminUI(
+          root: CommandLine.arguments[2], web: CommandLine.arguments[3], oauthPort: port)
+        return
+      }
       guard CommandLine.arguments.count == 2 else { throw ExecutionError.invalidCommand }
       let store = try await SQLiteExecutionStore.open(
         path: CommandLine.arguments[1],

@@ -71,3 +71,13 @@ dialog p { font-size: 14px; }
 dialog .key-id { max-width: none; overflow-wrap: anywhere; white-space: normal; }
 input.secret-value { font: 12px ui-monospace, monospace; letter-spacing: -.02em; }
 @media (max-width: 900px) { .keys-grid { grid-template-columns: 1fr; } .key-create { max-width: 520px; } }
+
+.accounts-grid { display: grid; grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); align-items: start; gap: 24px; }
+.authorization-flow { border-top: 1px solid #dce3dd; margin-top: 24px; padding-top: 12px; }
+.authorization-flow strong { font-size: 14px; }
+.authorization-link { color: #245842; font-size: 14px; text-underline-offset: 4px; }
+.account-modes { margin-top: 12px; gap: 12px; }
+.account-row-actions { display: grid; gap: 12px; justify-content: start; }
+.state-ready { color: #276146; }
+.state-attention { color: #92562e; }
+@media (max-width: 1050px) { .accounts-grid { grid-template-columns: 1fr; } }

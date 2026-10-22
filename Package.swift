@@ -54,7 +54,12 @@ let package = Package(
         .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       ]),
     .executableTarget(
-      name: "ExecutionProbe", dependencies: ["CodexOneCore", "CodexOneAdapters"],
+      name: "ExecutionProbe",
+      dependencies: [
+        "CodexOneCore", "CodexOneAdapters", "CodexOneRuntime",
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+      ],
       path: "Tests/Support/ExecutionProbe"),
     .testTarget(name: "CodexOneCoreTests", dependencies: ["CodexOneCore"]),
     .testTarget(

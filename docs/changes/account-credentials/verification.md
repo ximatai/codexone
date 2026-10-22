@@ -69,3 +69,16 @@ PKCE 增强复审指出 fixture 的可选值比较会把“缺 verifier”和“
 d4fb93e 独立 review 无阻塞；reviewer 独立运行三项 Swift 定向测试及完整 verify_admin.py 通过。该精确快照 Linux amd64 / Swift 6.4 本地容器完整后端 80 测试及全部脚本通过，exit 0，单并发、2 CPU/2500 MiB，容器已回收；不是远端 CI/容量。
 
 主 Agent 采纳 review 的 HTTP 断开补证建议：合成 token endpoint 延迟回复，真实管理连接在 POST 已派发且原凭证仍 requires_auth 时关闭；授权 Service 继续收到一次可信响应并原子完成重新授权，管理员之后 GET 看到原 id/模式和 v2 ready，提供者总调用数没有增加。该实际 socket 定向测试重建通过。明确区分 HTTP 断开与 Swift 任务取消，不凭管理连接断开声称回滚；全服务停止仍由 Service 取消并等待在途工作。
+
+
+22828b1 独立只读复审确认 HTTP 断开证据与契约一致，无新增问题。
+
+## 2026-10-22 · 账号管理界面切片
+
+主 Agent 实现并自我复盘，macOS arm64 / Swift 6.4 / Chrome 155.0.8059.85。`./scripts/verify.sh --backend` 完整通过：80 Swift 测试、全部进程/协议脚本；测试专用 Probe 的新增模式没有改变既有进程/SIGKILL 入口。`./scripts/verify.sh --web --chrome` 通过：类型、生产构建、20 组件/API 测试及 3 概览 Chrome 测试。新增组件/API 用例验证未知写入后只有成功读取才能解锁、失败回调清除且不重发、离开页面忽略迟到结果、范围/分页和意外授权地址拒绝、授权请求期限与安全错误。
+
+`python3 scripts/verify_account_admin_ui.py --binary <ExecutionProbe>` 接生产 SPA/真实 Runtime/管理 socket/合成 OAuth：登录失败与成功、取消流程、打开合成新窗口、PKCE/code 校验后入库、默认禁用、启用、外部更新造成 CAS 冲突、已提交但响应丢失后禁止重复变更、读取失败不解锁、刷新 invalid_grant、同 id 重新授权且保持模式/更新凭证版本，以及登出均通过。成功授权只调用两次合成 token endpoint，另一次合成刷新明确拒绝；脚本断言总数三次，没有自动重放。网络白名单阻止其他浏览地址，未打开真实 localhost callback 服务，无个人浏览配置/真实账号。
+
+`python3 scripts/verify_admin_ui.py --binary <codexone>` 在新构建上重跑既有 Key 操作全流程通过。共享管理请求/session 客户端移入实际复用的 shared 模块，Key 的十秒默认期限保留，账号交换/刷新采用三十五秒客户端期限覆盖服务端三十秒上限。新 UI 的登录/空列表/账号/需要重新授权/重新授权完成 1440×1000 截图保存于忽略目录，主 Agent 已查看账号和失效状态大屏图，未见溢出或遮挡。截图隐藏所有密码输入与授权链接；DOM、local/sessionStorage、日志与真实 DB/WAL 未出现合成凭证/主密钥原文。浏览器初轮因状态文本与操作按钮同单元格造成精确选择不匹配，已将状态独立为 span 后完整重跑通过，不把该初轮失败写成通过。
+
+账号池路由、订阅额度/按 Key 统计、真实订阅及 M2 两项缺口仍未完成。本界面提交后 review 待进行。
