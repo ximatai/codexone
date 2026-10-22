@@ -64,3 +64,8 @@ PKCE 增强复审指出 fixture 的可选值比较会把“缺 verifier”和“
 独立配置测试覆盖主密钥依赖持久存储/管理员、加载实际私有文件、拒绝与管理员 hex 大小写变体或数据 Key 摘要复用。生产进程脚本验证配置成功、权限/格式/复用失败均不创建 check-only 数据库，不打印路径或凭证；组装后的账号空列表与错误 state 一次消费后冲突。此脚本仅产生授权 URL，错误 state 在任何 token POST 前拒绝，不连接真实认证服务。所有成功授权仍由显式合成 loopback 工厂注入；没有新增任意认证地址运行参数。
 
 未改前端，账号 UI 与池路由仍未完成。本切片提交后 review 待进行；不能把生产组装启动或合成授权成功当作真实订阅/额度验收。
+
+
+d4fb93e 独立 review 无阻塞；reviewer 独立运行三项 Swift 定向测试及完整 verify_admin.py 通过。该精确快照 Linux amd64 / Swift 6.4 本地容器完整后端 80 测试及全部脚本通过，exit 0，单并发、2 CPU/2500 MiB，容器已回收；不是远端 CI/容量。
+
+主 Agent 采纳 review 的 HTTP 断开补证建议：合成 token endpoint 延迟回复，真实管理连接在 POST 已派发且原凭证仍 requires_auth 时关闭；授权 Service 继续收到一次可信响应并原子完成重新授权，管理员之后 GET 看到原 id/模式和 v2 ready，提供者总调用数没有增加。该实际 socket 定向测试重建通过。明确区分 HTTP 断开与 Swift 任务取消，不凭管理连接断开声称回滚；全服务停止仍由 Service 取消并等待在途工作。

@@ -14,6 +14,7 @@ private let oauthNonce = String(repeating: "n", count: 43)
 private let oauthVerifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 private enum OAuthPlan: Sendable {
   case reply(Data, type: String = "application/json", status: Int = 200)
+  case replyAfterDelay(Data)
   case redirect(String)
   case headersStall, bodyDrip, oversized, abort
 }
@@ -130,6 +131,11 @@ private final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
       switch plan {
       case .reply(let data, let type, let status):
         reply(context, data: data, type: type, status: status)
+      case .replyAfterDelay(let data):
+        let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+        timer = context.eventLoop.scheduleTask(in: .milliseconds(500)) { [self] in
+          reply(bound.value, data: data)
+        }
       case .redirect(let location): reply(context, data: Data(), status: 307, location: location)
       case .headersStall: break
       case .bodyDrip:
@@ -594,7 +600,7 @@ private struct AccountAdminClient: Sendable {
 @Test(.timeLimit(.minutes(1))) func accountManagementUsesRealAuthGuardsAndVerifiedSocketFlows()
   async throws
 {
-  try await withOAuth { h in
+  try await withOAuth(timeout: 3000) { h in
     let secret = "synthetic-admin-secret-" + String(repeating: "a", count: 32)
     let path = h.root.appendingPathComponent("admin")
     try Data(secret.utf8).write(to: path)
@@ -702,18 +708,33 @@ private struct AccountAdminClient: Sendable {
       let restartChallenge = try #require(
         restartQuery.first(where: { $0.name == "code_challenge" })?.value)
       h.server.state.mutex.withLock { $0.expectedChallenge = restartChallenge }
-      h.server.set(.reply(try oauthTokens(nonce: restartNonce)))
-      let reauthorized = try await client.call(
-        "POST", "/api/accounts/authorization/" + restartID,
-        body: .object([
-          "callbackURL": .string(
-            SubscriptionOAuthProvider.callbackURI + "?state=" + restartState
-              + "&code=synthetic-code%2B%2F%3D")
-        ]),
-        headers: browser)
-      #expect(reauthorized.0 == 200 && reauthorized.1["account"]?["id"]?.string == id)
-      #expect(reauthorized.1["account"]?["credentialVersion"]?.integer == 2)
-      #expect(reauthorized.1["account"]?["mode"]?.string == "enabled")
+      h.server.set(.replyAfterDelay(try oauthTokens(nonce: restartNonce)))
+      let completionBody = try JSONValue.object([
+        "callbackURL": .string(
+          SubscriptionOAuthProvider.callbackURI + "?state=" + restartState
+            + "&code=synthetic-code%2B%2F%3D")
+      ]).data()
+      let connection = try await ClientBootstrap(group: h.group).connect(
+        host: "127.0.0.1", port: client.port
+      ).get()
+      var wire =
+        "POST /api/accounts/authorization/" + restartID
+        + " HTTP/1.1\r\nHost: 127.0.0.1:\(client.port)\r\nContent-Type: application/json\r\nContent-Length: \(completionBody.count)\r\nCookie: "
+        + cookie + "\r\nOrigin: " + origin + "\r\nX-CodexOne-CSRF: " + csrf
+        + "\r\nConnection: close\r\n\r\n"
+      wire += String(decoding: completionBody, as: UTF8.self)
+      try await connection.writeAndFlush(ByteBuffer(string: wire)).get()
+      try await awaitOAuth { h.server.counts.calls == 3 }
+      #expect(try await h.store.accountCredential(id: id).account.authorization == .requiresAuth)
+      try await connection.close().get()
+      // A detached HTTP response is not a rollback; the Service still owns the accepted operation.
+      try await awaitOAuth {
+        try await h.store.accountCredential(id: id).account.credentialVersion == 2
+      }
+      let reauthorized = try await client.call("GET", "/api/accounts", headers: browser)
+      let final = try #require(reauthorized.1["accounts"]?.array?.first)
+      #expect(reauthorized.0 == 200 && final["id"]?.string == id)
+      #expect(final["authorization"]?.string == "ready" && final["mode"]?.string == "enabled")
       #expect(h.server.counts.calls == 3 && h.server.counts.invalid == 0)
       _ = try await client.call("DELETE", "/api/session", headers: browser)
       #expect(try await client.call("GET", "/api/accounts", headers: browser).0 == 401)
