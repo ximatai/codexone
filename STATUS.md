@@ -50,7 +50,7 @@ npm run dev
 - 2026-10-21 文档范围同步：已按实际使用需求更新[里程碑](docs/plans/roadmap.md)及相关规范，首版替代验收覆盖 Desktop、图片编辑、额度统计、迁移及弱服务器。`python3 scripts/check_docs.py` 与 `git diff --check` 通过；本次仅改文档，未进行运行兼容/容量/迁移验收，未访问或改动 用户服务器。
 
 - 本机 macOS arm64 / Swift 6.4：后端统一验证通过，含模块边界、严格格式、构建、四个 Swift Testing targets，以及真实进程/HTTP/端口检查。
-- 52 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。包括托管 Key 的 CAS/撤销/轮换与限额连续性、审计回滚/容量及满普通审计后全部 256 个 Key 仍可撤销、v1 显式迁移/快照/中途失败及权限/计价指纹区分；管理 session 来源/CSRF/过期/容量/重启与静态快照/文件安全边界。
+- 60 个 Swift 测试函数通过（其中无效配置含 7 个参数案例，旧库拒绝含 2 个参数案例）：真实 SQLite 竞争/幂等/超额/跨窗口暴露/实例锁/schema/事务及只读失败、128 条后最终用量及压缩水位，以及 finalizer 满载失败/移交/关闭、观察用量后取消和过时最终化；另覆盖就绪、共享 DTO、HTTP/请求限制、模型 profile/策略指纹、配置、子服务失败、父取消和真实 HTTP 关闭后重新绑定。包括托管 Key 的 CAS/撤销/轮换与限额连续性、审计回滚/容量及满普通审计后全部 256 个 Key 仍可撤销；管理 session 来源/CSRF/过期/容量/重启与静态快照/文件安全边界；账号凭证 AEAD/主密钥文件、刷新 CAS/禁用/提交回滚/重启/审计结束预留及 v1/v2 显式升级。
 - M1 真实子进程 SIGKILL 在 intent 前后、绑定后及结算后重启通过，验证 unknown/归属/预留及重复结算；不是掉电或 Linux 验证。配置存储的真实网关启动/锁冲突/脱敏错误/关闭重开通过。
 - 进程检查通过：合成路径/查询/请求头/正文不进入输出、脱敏配置拒绝、两个入口 live/ready、未配置生成拒绝、请求体限制、SIGTERM 关闭空闲 keepalive 和未完成请求/释放端口、部分启动失败收敛。
 - 前端类型/生产构建、15 个组件/API 测试及 3 个概览 Playwright Chrome 155.0.8059.85 测试通过；概览 API 为合成拦截。新增真实 Chrome 接生产 SPA/临时网关/合成上游的 Key 操作检查：安全 Cookie 登录、创建/复制/清除、模型与限额实际执行、CAS、禁用轮换不重置计数、读取失败重试、已提交但响应丢失后的核对和登出失败重试；登录/编辑/列表大屏截图已查看。没有使用个人浏览状态或真实账号，不能代替 Desktop 验收。
@@ -74,6 +74,6 @@ M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 
 
 管理 API 独立认证；NIO 有界管理入口把完整请求交 Vapor 路由。浏览器 session/CSRF、启动静态安全快照及 Key 业务界面 aa28016 已实现，本机后端完整验证、前端与真实 Chrome 操作通过。独立 review 发现 CAS 后刷新断网仍谎报成功的 P2，主 Agent 亲自以 3e9e010 修复并补真实浏览器回归、通过构建与 15 个测试，复审关闭；无其他阻塞问题。aa28016 同快照 Linux 完整后端 52 测试及全部脚本通过（修复未改后端），本地单并发模拟容器，非远端 CI/容量验收。配置见[托管 Key](docs/development/key-governance.md)，证据见[Key 治理](docs/changes/key-governance/verification.md)和[管理界面](docs/changes/key-management-ui/verification.md)。
 
-正在推进[账号凭证与刷新持久屏障](docs/changes/account-credentials/proposal.md)：先认证加密/独立主密钥，再原子状态与重启验证，之后接可信提供者、Runtime 单飞与账号池。M3 整体未完成，无真实账号调用。
+正在推进[账号凭证与刷新持久屏障](docs/changes/account-credentials/proposal.md)：AES-256-GCM 信封、独立主密钥加载、Core 凭证用例和 SQLite v3 原子刷新/CAS 已实现。新增真实进程在 intent 前/后及完成后 SIGKILL，重启分别保持旧 ready、auth_uncertain、新版本 ready；后端完整 60 测试和全部脚本通过。该切片尚待提交后 review/Linux 验证，不提供公开账号导入、Runtime 单飞或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者、Runtime 单飞与账号池；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面目前只覆盖 Key，未覆盖账号、额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。

@@ -1,8 +1,8 @@
 # 任务
 
-- [ ] 带用途/身份/版本 AAD 的有界 AES-GCM 信封与独立主密钥读取。
-- [ ] 账号元数据/密文/refresh_intent 原子命令与显式 schema 迁移。
-- [ ] 刷新开始/提交 CAS、部分失败和重启 auth_uncertain 验证。
+- [x] 带用途/身份/版本 AAD 的有界 AES-GCM 信封与独立主密钥读取。
+- [x] 账号元数据/密文/refresh_intent 原子命令与显式 schema 迁移。
+- [x] 刷新开始/提交 CAS、部分失败和重启 auth_uncertain 验证。
 - [ ] Runtime 有界单飞、等待者取消与关闭责任。
 - [ ] 可信提供者授权/身份等价性/刷新适配与合成 socket 验证。
 - [ ] 管理入口与可操作界面，错误/禁用/重新授权流程。

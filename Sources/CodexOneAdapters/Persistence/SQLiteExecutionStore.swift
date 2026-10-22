@@ -48,6 +48,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             }
             // All intents belonged to the previous owner, whose instance lock is now ours.
             try connection.write("UPDATE attempts SET state='unknown' WHERE state='intent'")
+            try Self.recoverAccountRefreshes(connection)
           }
           continuation.resume(
             returning: SQLiteExecutionStore(connection: connection, limits: limits))

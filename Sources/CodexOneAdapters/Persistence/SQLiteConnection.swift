@@ -49,7 +49,7 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      guard version == 0 || version == 2 || (migrating && version == 1) else {
+      guard version == 0 || version == 3 || (migrating && [1, 2].contains(version)) else {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -58,14 +58,16 @@ final class SQLiteConnection: @unchecked Sendable {
           throw ExecutionError.incompatibleSchema
         }
       } else {
-        for (table, expected) in Self.columns + (version == 2 ? Self.keyColumns : []) {
+        for (table, expected) in Self.columns + (version >= 2 ? Self.keyColumns : [])
+          + (version == 3 ? Self.accountColumns : [])
+        {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
           }
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, version != 1 && version != 2 { throw ExecutionError.incompatibleSchema }
+      if migrating, ![1, 2, 3].contains(version) { throw ExecutionError.incompatibleSchema }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
@@ -79,10 +81,11 @@ final class SQLiteConnection: @unchecked Sendable {
         try transaction {
           try exec(Self.schema)
           try exec(Self.keySchema)
-          try exec("PRAGMA user_version=2")
+          try exec(Self.accountSchema)
+          try exec("PRAGMA user_version=3")
         }
       }
-      if version == 1 {
+      if [1, 2].contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -90,8 +93,9 @@ final class SQLiteConnection: @unchecked Sendable {
         else { throw ExecutionError.storageUnavailable }
         try backupBeforeUpgrade(canonical)
         try transaction {
-          try exec(Self.keySchema)
-          try exec("PRAGMA user_version=2")
+          if version == 1 { try exec(Self.keySchema) }
+          try exec(Self.accountSchema)
+          try exec("PRAGMA user_version=3")
         }
       }
       guard
@@ -230,8 +234,29 @@ final class SQLiteConnection: @unchecked Sendable {
     ("key_events", ["id", "key_id", "revision", "action", "at_epoch", "metadata_json"]),
   ]
 
+  static let accountSchema = """
+    CREATE TABLE accounts (id TEXT PRIMARY KEY, namespace TEXT NOT NULL UNIQUE,
+      revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 1000000),
+      credential_version INTEGER NOT NULL CHECK(credential_version BETWEEN 1 AND 1000000),
+      mode TEXT NOT NULL CHECK(mode IN ('enabled','draining','disabled')),
+      authorization TEXT NOT NULL CHECK(authorization IN ('ready','refreshing','requires_auth','auth_uncertain')),
+      sealed_credential TEXT NOT NULL, refresh_intent TEXT, created_at_epoch INTEGER NOT NULL);
+    CREATE TABLE account_events (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+      revision INTEGER NOT NULL, action TEXT NOT NULL, metadata_json TEXT NOT NULL, at_epoch INTEGER NOT NULL);
+    """
+  private static let accountColumns: [(String, [String])] = [
+    (
+      "accounts",
+      [
+        "id", "namespace", "revision", "credential_version", "mode", "authorization",
+        "sealed_credential", "refresh_intent", "created_at_epoch",
+      ]
+    ),
+    ("account_events", ["id", "account_id", "revision", "action", "metadata_json", "at_epoch"]),
+  ]
+
   private func backupBeforeUpgrade(_ path: String) throws {
-    let destination = path + ".pre-v2-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v3-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

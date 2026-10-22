@@ -41,3 +41,13 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 轮换保留当前 enabled 状态，禁用时可以先保存新凭证再显式启用；不得为轮换短暂激活旧凭证。禁用状态的轮换仍使用普通审计容量，不消耗撤销预留。
 
 每个 HTTP 请求及原生 WS 新 turn 读取当前授权；目录与执行使用 Key 模型范围和受控上游配置的交集，没有路由时目录为空。持久准入再次检查 Key enabled、revision、principal、模型及限额；旧授权快照不能在撤销后准入。普通撤销不主动取消已准入执行，既有用量仍结算；紧急撤销的在途关闭另按 I05 实现。此模式不证明已具备账号池、托管上游刷新或恢复读取。
+
+## I13：凭证信封与刷新状态原子命令
+
+凭证信封采用 AES-256-GCM，格式 v1，独立私有文件提供 32 字节随机主密钥（64 个十六进制字符）；key ID 为该密钥 SHA-256 的前 128 bit，仅用于版本选择。每次随机 nonce，AAD 绑定固定用途/格式、key ID、identity、namespace 与 credential version。原文仅为瞬时应用值，不进入公开 DTO/日志；access/refresh/id token 总计最多 32 KiB、单项最多 16 KiB，信封最多 48 KiB。未知格式、非规范 base64、篡改、错误密钥/身份/版本均拒绝。首个实现不提供主密钥原地轮换或丢失后恢复。
+
+账号身份 namespace 不可原地修改且唯一；初次保存已验证凭证时模式为 disabled，授权状态 ready 不等于路由已启用。模式 enabled/draining/disabled 与授权 ready/refreshing/requires_auth/auth_uncertain 分离。刷新开始按管理 revision CAS 持久刷新 intent，随后才可调用上游；结束按 credential version + intent CAS 原子写新密文/版本和 ready，保留刷新期间最新模式。过时/重复完成不能覆盖新凭证或重新启用已禁用账号。提供者身份变化、刷新不明或本地提交失败进入 auth_uncertain；无法写标记时已持久 intent 仍禁止自动恢复 ready。重启在同一启动事务内把所有 refreshing 归纳为 auth_uncertain，不能自动重用旧 refresh token。
+
+每库最多 64 个账号；普通账号审计 4096 条，另预留 64 条供非 disabled→disabled 的真实禁用，总上限 4160。开始刷新须同时为开始和一次结束预留审计空间；普通操作、禁用和重启恢复都计入未完成刷新所需空间，不能占掉其结束位置。结束记录走核心 critical 队列。审计保留安全状态快照、revision、动作和 UTC 秒，不保存凭证原文/摘要或信封。没有删除历史或人工恢复 ready 的旁路。
+
+上述原子端口只接受可信适配器验证后的身份/凭证，不是本地 JWT 导入或公开管理接口；提供者验证、Runtime 单飞、账号选择及实际路由接入需各自验收。状态进度见 STATUS，不从密码学或数据库测试推导真实账号可用。
