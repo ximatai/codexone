@@ -45,10 +45,10 @@ import Testing
     for file in try FileManager.default.contentsOfDirectory(
       at: h.root, includingPropertiesForKeys: nil)
     where file.lastPathComponent.hasPrefix("core.sqlite") {
-      let data = try Data(contentsOf: file)
-      #expect(!data.contains(Data(login.credential.accessToken.utf8)))
-      #expect(!data.contains(Data(login.credential.refreshToken.utf8)))
-      #expect(!data.contains(Data(String(repeating: "5a", count: 32).utf8)))
+      let data = try Data(contentsOf: file, options: .mappedIfSafe)
+      #expect(data.range(of: Data(login.credential.accessToken.utf8)) == nil)
+      #expect(data.range(of: Data(login.credential.refreshToken.utf8)) == nil)
+      #expect(data.range(of: Data(String(repeating: "5a", count: 32).utf8)) == nil)
     }
   }
 }

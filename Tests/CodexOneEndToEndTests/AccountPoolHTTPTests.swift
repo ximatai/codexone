@@ -1048,7 +1048,9 @@ func poolHTTPExplicitProviderStatusesPersistHealthAndStopNewDispatchWithoutRepla
       for file in try FileManager.default.contentsOfDirectory(
         at: h.oauth.root, includingPropertiesForKeys: nil)
       where file.lastPathComponent.hasPrefix("core.sqlite") {
-        #expect(try !Data(contentsOf: file).contains(Data("synthetic-private-status-marker".utf8)))
+        #expect(
+          try Data(contentsOf: file, options: .mappedIfSafe).range(
+            of: Data("synthetic-private-status-marker".utf8)) == nil)
       }
     }
   }

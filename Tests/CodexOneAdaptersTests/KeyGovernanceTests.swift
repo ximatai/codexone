@@ -150,23 +150,29 @@ private func keyAdmission(
   }
   #expect(try await store.authenticateKey(digest: digest) == key)
   #expect(try await store.listKeys(after: nil).count == 1)
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await store.updateKey(id: "k", revision: 1, enabled: true, policy: key.policy)
+  }
+  await store.close()
   try rawSQL(
     path,
     "DROP TRIGGER fail_audit; WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4095) INSERT INTO key_events SELECT 'audit-'||i,'k',1,'synthetic',1,'{}' FROM n"
   )
+  let recovered = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   await #expect(throws: ExecutionError.capacity) {
-    try await store.updateKey(id: "k", revision: 1, enabled: true, policy: key.policy)
+    try await recovered.updateKey(id: "k", revision: 1, enabled: true, policy: key.policy)
   }
-  #expect(try await store.authenticateKey(digest: digest).revision == 1)
-  let disabled = try await store.updateKey(id: "k", revision: 1, enabled: false, policy: key.policy)
+  #expect(try await recovered.authenticateKey(digest: digest).revision == 1)
+  let disabled = try await recovered.updateKey(
+    id: "k", revision: 1, enabled: false, policy: key.policy)
   #expect(!disabled.enabled)
   await #expect(throws: ExecutionError.unauthorized) {
-    try await store.authenticateKey(digest: digest)
+    try await recovered.authenticateKey(digest: digest)
   }
   await #expect(throws: ExecutionError.capacity) {
-    try await store.updateKey(id: "k", revision: 2, enabled: false, policy: key.policy)
+    try await recovered.updateKey(id: "k", revision: 2, enabled: false, policy: key.policy)
   }
-  await store.close()
+  await recovered.close()
 }
 
 @Test func explicitV1MigrationPreservesIntentBindingsAndPrivateConsistentBackup() async throws {
