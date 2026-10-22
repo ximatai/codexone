@@ -26,13 +26,13 @@ CI 的 Linux candidate 工作流在阶段出口手动触发，构建、合成安
 
 ## 新安装
 
-以下占位值须替换。目标目录必须不存在；初始化拒绝覆盖现有目录或链接。默认运行 UID/GID 为执行初始化的非 root 用户；root 初始化时必须显式给出非 root `--uid` 和 `--gid`。运行用户须能访问本地数据盘。
+以下占位值须替换。安装目录放在源码 checkout 外，且必须不存在；初始化拒绝覆盖现有目录或链接。默认运行 UID/GID 为执行初始化的非 root 用户；root 初始化时必须显式给出非 root `--uid` 和 `--gid`。运行用户须能访问本地数据盘。
 
 ```sh
-python3 deploy/init-install.py ./private-install \
+python3 deploy/init-install.py ../codexone-private \
   --image sha256:REPLACE_WITH_LOCAL_IMAGE_ID \
   --origin https://admin.example.invalid
-cd private-install
+cd ../codexone-private
 docker compose run --rm gateway --check-config
 docker compose up -d
 docker compose ps

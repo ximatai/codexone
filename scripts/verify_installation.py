@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Private initialization and optional actual OCI runtime checks, without real accounts."""
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 import re
 import subprocess
+import sqlite3
 import tempfile
 import uuid
 
@@ -105,13 +107,14 @@ def verify_runtime(image, browser=False):
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
     assert re.fullmatch('[0-9a-f]{40}', identifier['Config']['Labels']['org.opencontainers.image.revision'])
-    name = 'codexone-install-' + uuid.uuid4().hex[:12]
+    project = 'codexone-install-' + uuid.uuid4().hex[:12]
+    name = project
     with tempfile.TemporaryDirectory(prefix='codexone-oci-') as temporary:
         root = Path(temporary) / 'install'
         _, uid, _ = initialize(root, identifier['Id'])
         # TemporaryDirectory itself is private; only the bind mounts are visible to the runtime UID.
         admin = (root / 'secrets/admin').read_text()
-        compose = ['docker', 'compose', '--project-directory', str(root), '--project-name', name]
+        compose = ['docker', 'compose', '--project-directory', str(root), '--project-name', project]
         secrets = [admin, (root / 'secrets/master').read_text()]
         def request(path, *, body=None, token=None, headers=None, response_headers=False):
             settings = ['url = ' + json.dumps('http://127.0.0.1:18081' + path)]
@@ -153,6 +156,13 @@ def verify_runtime(image, browser=False):
             assert all(option in host['Tmpfs']['/tmp'] for option in ('noexec', 'nosuid'))
             mounts = {mount['Destination']: mount for mount in running['Mounts']}
             assert mounts['/var/lib/codexone']['RW'] and not mounts['/run/codexone']['RW']
+            process = run(['docker', 'exec', name, 'cat', '/proc/1/status']).stdout.decode()
+            status_fields = dict(line.split(':', 1) for line in process.splitlines() if ':' in line)
+            assert status_fields['NoNewPrivs'].strip() == '1'
+            assert int(status_fields['CapEff'], 16) == 0 and int(status_fields['CapBnd'], 16) == 0
+            health = identifier['Config']['Healthcheck']['Test']
+            assert health[0] == 'CMD-SHELL' and len(health) == 2 and '/health/live' in health[1]
+            run(['docker', 'exec', name, 'sh', '-c', health[1]])
             assert request('/health/ready')[0] == 503
             status, html = request('/'); assert status == 200
             asset = re.search(rb'/assets/[^" ]+\.js', html); assert asset
@@ -185,13 +195,41 @@ def verify_runtime(image, browser=False):
             run(['docker', 'exec', name, 'test', '-s', '/opt/codexone/LICENSE'])
             assert run(['docker', 'exec', name, 'sh', '-c', 'command -v swift || command -v node || command -v python3'], ok=False).returncode != 0
             assert run(['docker', 'exec', name, 'touch', '/opt/codexone/forbidden'], ok=False).returncode != 0
+            assert run(['docker', 'exec', name, 'touch', '/run/codexone/forbidden'], ok=False).returncode != 0
             run(['docker', 'exec', name, 'touch', '/tmp/synthetic-writable'])
             locked = run([*compose, 'run', '--rm', 'gateway', '--migrate'], ok=False)
             assert locked.returncode != 0
             run([*compose, 'stop'], timeout=40)
             state = json.loads(run(['docker', 'inspect', name]).stdout)[0]
             assert state['State']['ExitCode'] == 0 and not state['State']['OOMKilled'] and state['RestartCount'] == 0
+            database = root / 'data/core.sqlite'
+            # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
+            with closing(sqlite3.connect(database)) as db:
+                db.execute("UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels')")
+                db.execute('PRAGMA user_version=5')
+                db.commit()
+                assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+            before_legacy = run(['docker', 'logs', name])
+            run([*compose, 'start'])
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                legacy = json.loads(run(['docker', 'inspect', name]).stdout)[0]['State']
+                if not legacy['Running']: break
+                time.sleep(0.2)
+            assert not legacy['Running'] and legacy['ExitCode'] == 1 and not legacy['OOMKilled']
+            after_legacy = run(['docker', 'logs', name])
+            assert after_legacy.stdout.startswith(before_legacy.stdout) and after_legacy.stderr.startswith(before_legacy.stderr)
+            rejected_logs = after_legacy.stdout[len(before_legacy.stdout):] + after_legacy.stderr[len(before_legacy.stderr):]
+            assert b'LISTENING' not in rejected_logs and b'Service startup or shutdown failed.' in rejected_logs
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
+            run([*compose, 'run', '--rm', 'gateway', '--migrate'])
+            backups = list((root / 'data').glob('core.sqlite.pre-v6-*.sqlite'))
+            assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
+            for path, version in ((backups[0], 5), (database, 6)):
+                with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+                    assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+                    assert db.execute('PRAGMA user_version').fetchone()[0] == version
+                    assert db.execute('SELECT id FROM managed_keys').fetchall() == [(key_id,)]
             run([*compose, 'start'])
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
@@ -201,6 +239,8 @@ def verify_runtime(image, browser=False):
                 except AssertionError: pass
                 time.sleep(0.2)
             assert status == 200 and key_id in [key['id'] for key in json.loads(body)['keys']]
+            legacy_key = next(key for key in json.loads(body)['keys'] if key['id'] == key_id)
+            assert not legacy_key['visionInput'] and not legacy_key['imageGeneration'] and not legacy_key['imageModels']
             if browser:
                 result = run(['node', str(REPO / 'web/scripts/install-image-ui.mjs')], timeout=90, ok=False,
                     data=json.dumps({'container': name, 'credential': admin,
@@ -215,7 +255,11 @@ def verify_runtime(image, browser=False):
             assert str(root).encode() not in logs
         finally:
             run([*compose, 'down', '--timeout', '30'], ok=False, timeout=40)
-    print('PASS: actual amd64 OCI/Compose private installation, SPA/auth/Key persistence, non-root/read-only runtime, liveness/readiness, lock, migration and graceful restart')
+            # A timed-out `compose run` can outlive its CLI. Remove only this owned project.
+            leftovers = run(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project]).stdout.decode().splitlines()
+            assert len(leftovers) <= 8 and all(re.fullmatch('[0-9a-f]{12,64}', item) for item in leftovers)
+            if leftovers: run(['docker', 'rm', '--force', *leftovers])
+    print('PASS: actual amd64 OCI/Compose private installation, SPA/auth/Key persistence, non-root/read-only runtime, liveness/readiness, lock, v5 backup migration/legacy denial and graceful restart')
 
 
 def main():
