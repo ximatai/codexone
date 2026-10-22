@@ -17,6 +17,8 @@
 !web/src/**
 !web/tests/
 !web/tests/**
+!web/licenses/
+!web/licenses/**
 !deploy/
 !deploy/Dockerfile
 !scripts/
