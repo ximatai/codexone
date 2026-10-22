@@ -28,6 +28,12 @@ struct ClientTools: Sendable {
       var custom = Set<String>()
       for tool in tools {
         count += 1
+        if tool["type"]?.string == "image_generation" {
+          guard namespace == nil, count <= 64 else {
+            throw GatewayProtocolError(400, "unsupported_tools")
+          }
+          continue  // Validated against the deployment mapping by ResponseRequest.
+        }
         guard count <= 64, let name = tool["name"]?.string else {
           throw GatewayProtocolError(400, "unsupported_tools")
         }

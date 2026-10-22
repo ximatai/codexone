@@ -1,15 +1,27 @@
 import Foundation
 
 /// Both directory forms use the same effective model set. Metadata does not grant capabilities.
-func modelCatalog(_ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false)
+func modelCatalog(
+  _ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false,
+  images: [ImageConfiguration.Model] = []
+)
   throws -> JSONValue
 {
-  let api = models.map { model in
-    JSONValue.object([
-      "id": .string(model.id), "object": .string("model"),
-      "owned_by": .string("configured-provider"),
-    ])
-  }
+  let api =
+    models.map { model in
+      JSONValue.object([
+        "id": .string(model.id), "object": .string("model"),
+        "owned_by": .string("configured-provider"),
+        "vision_input": .bool(model.visionInput == true),
+        "image_generation": .bool(model.imageGeneration == true),
+      ])
+    }
+    + images.map {
+      .object([
+        "id": .string($0.id), "object": .string("model"),
+        "owned_by": .string("configured-provider"), "image_generation": .bool(true),
+      ])
+    }
   guard
     models.allSatisfy({
       guard let instructions = $0.catalog?.baseInstructions else { return false }
@@ -37,7 +49,9 @@ func modelCatalog(_ models: [SingleIdentityConfiguration.Model], requireCodexPro
       "truncation_policy": .object(["mode": .string("tokens"), "limit": .number(10_000)]),
       "context_window": .number(Decimal(context)), "max_context_window": .number(Decimal(context)),
       "auto_compact_token_limit": .number(Decimal(context * 3 / 4)),
-      "experimental_supported_tools": .array([]), "input_modalities": .array([.string("text")]),
+      "experimental_supported_tools": .array([]),
+      "input_modalities": .array(
+        model.visionInput == true ? [.string("text"), .string("image")] : [.string("text")]),
       "supports_search_tool": .bool(false), "include_apps_usage_instructions": .bool(false),
       "include_skills_usage_instructions": .bool(false),
       "include_plugin_usage_instructions": .bool(false),

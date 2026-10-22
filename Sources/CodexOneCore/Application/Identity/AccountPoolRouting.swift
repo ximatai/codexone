@@ -21,13 +21,13 @@ public struct AccountPoolPolicy: Sendable {
     key: ManagedKey, models: Set<String>, reservedMicros: Int64, policyVersion: String,
     pricingVersion: String
   ) throws {
-    guard key.enabled, models.count <= 32,
+    guard key.enabled, models.count <= 48,
       models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       [policyVersion, pricingVersion].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       (0...1_000_000_000_000).contains(reservedMicros)
     else { throw ExecutionError.invalidCommand }
     self.key = key
-    self.models = models.intersection(key.policy.models)
+    self.models = models.intersection(key.policy.authorizedModels)
     self.reservedMicros = reservedMicros
     self.policyVersion = policyVersion
     self.pricingVersion = pricingVersion
@@ -51,17 +51,21 @@ public struct AccountPoolAdmission: Sendable {
   public let mode: ExecutionMode
   public let references: [ObjectBinding]
   public let connection: AccountRouteIdentity?
+  public let requirements: ExecutionRequirements
   public let candidates: [AccountRouteCandidate]
   public init(
     attempt: String, policy: AccountPoolPolicy, model: String, window: String, requestID: String?,
     mode: ExecutionMode, references: [ObjectBinding], connection: AccountRouteIdentity?,
-    candidates: [AccountRouteCandidate]
+    candidates: [AccountRouteCandidate], requirements: ExecutionRequirements = .init()
   ) throws {
     guard !attempt.isEmpty, attempt.utf8.count <= 256, !window.isEmpty, window.utf8.count <= 256,
-      policy.models.contains(model), references.count <= 32, (1...64).contains(candidates.count),
+      policy.models.contains(model),
+      policy.key.policy.allows(model: model, requirements: requirements), references.count <= 32,
+      (1...64).contains(candidates.count),
       Set(candidates.map(\.identity)).count == candidates.count,
       Set(candidates.map(\.identity.id)).count == candidates.count
     else { throw ExecutionError.invalidCommand }
+    self.requirements = requirements
     self.attempt = attempt
     self.policy = policy
     self.model = model
@@ -80,7 +84,8 @@ public struct AccountPoolAdmission: Sendable {
         namespace: candidate.identity.namespace, identity: candidate.identity.id),
       window: window, policyVersion: policy.policyVersion, pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
-      keyRevision: policy.key.revision, model: model, accountSnapshot: candidate.snapshot)
+      keyRevision: policy.key.revision, model: model, accountSnapshot: candidate.snapshot,
+      requirements: requirements)
   }
 }
 public struct PreparedAccountPoolAdmission: Sendable, CustomStringConvertible,

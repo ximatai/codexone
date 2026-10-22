@@ -129,7 +129,10 @@ struct CodexOneMain {
         path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256,
         publicOrigin: configuration.adminPublicOrigin,
         availableModels: poolConfiguration?.models.map(\.id) ?? identityConfiguration?.models.map(
-          \.id) ?? [], usage: usageReader.map { UsageAdminAPI(querying: $0) })
+          \.id) ?? [],
+        imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?
+          .imageGeneration?.models.map(\.id) ?? [],
+        usage: usageReader.map { UsageAdminAPI(querying: $0) })
     } else {
       keyAdmin = nil
     }

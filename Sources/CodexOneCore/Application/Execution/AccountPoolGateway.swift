@@ -20,9 +20,12 @@ public struct AccountPoolGateway: Sendable {
   public func execute(
     model: String, references: [ObjectBinding], connection: AccountRouteIdentity? = nil,
     requestID: String? = nil, mode: ExecutionMode = .generation,
+    requirements: ExecutionRequirements = .init(),
     operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
-    guard policy.models.contains(model), references.count <= 32 else { throw ExecutionError.denied }
+    guard policy.models.contains(model),
+      policy.key.policy.allows(model: model, requirements: requirements), references.count <= 32
+    else { throw ExecutionError.denied }
     try await coordinator.executeAccountPool(
       preparing: {
         let affinity = try await store.resolveAccountAffinity(
@@ -73,7 +76,7 @@ public struct AccountPoolGateway: Sendable {
         let command = try AccountPoolAdmission(
           attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
           requestID: requestID, mode: mode, references: references, connection: connection,
-          candidates: candidates)
+          candidates: candidates, requirements: requirements)
         return try PreparedAccountPoolAdmission(command: command, credentials: works)
       }, operation: operation)
   }

@@ -13,6 +13,8 @@ struct GatewayProtocolError: Error, Sendable {
 }
 
 struct ResponseRequest: Sendable {
+  var requirements = ExecutionRequirements()
+  var admissionModel: String { requirements.route == .images ? requirements.imageModel! : model }
   let model: String
   let streaming: Bool
   let references: [ObjectBinding]
@@ -21,8 +23,12 @@ struct ResponseRequest: Sendable {
   let mode: ExecutionMode
   let streamCompaction: Bool
   let document: JSONValue
-  init(data: Data, mode: ExecutionMode = .generation) throws {
-    guard data.count <= 524_288 else { throw GatewayProtocolError(413, "request_too_large") }
+  init(data: Data, mode: ExecutionMode = .generation, imageConfiguration: ImageConfiguration? = nil)
+    throws
+  {
+    guard data.count <= ImageLimits.requestBytes else {
+      throw GatewayProtocolError(413, "request_too_large")
+    }
     let document: JSONValue
     do { document = try JSONValue.decode(data) } catch {
       throw GatewayProtocolError(400, "invalid_json")
@@ -115,6 +121,14 @@ struct ResponseRequest: Sendable {
         }
       }
     }
+    let imageTools =
+      fields["tools"]?.array?.filter { $0["type"]?.string == "image_generation" } ?? []
+    guard imageTools.count <= 1, imageTools.isEmpty || mode == .generation else {
+      throw GatewayProtocolError(400, "unsupported_tools")
+    }
+    let imageTool = try imageTools.first.map {
+      try ImageToolRequest($0, configuration: imageConfiguration, host: model)
+    }
     let tools = try ClientTools(fields["tools"])
     self.functionNames = tools.functions
     self.customToolNames = tools.custom
@@ -128,6 +142,8 @@ struct ResponseRequest: Sendable {
         guard ["auto", "none", "required"].contains(mode) else {
           throw GatewayProtocolError(400, "unsupported_tools")
         }
+      } else if choice == .object(["type": .string("image_generation")]), imageTool != nil {
+        // The only built-in tool enabled in this slice.
       } else {
         guard let name = choice["name"]?.string,
           choice["namespace"] == nil || choice["namespace"]?.string != nil,
@@ -147,6 +163,11 @@ struct ResponseRequest: Sendable {
     }
     guard let input = fields["input"] else { throw GatewayProtocolError(400, "invalid_input") }
     var streamCompaction = false
+    var visionInput = false
+    var imageBytes = 0
+    var imagePixels = 0
+    var imageCount = 0
+    var firstImage: ImagePayload?
     if input.string == nil {
       guard let items = input.array, items.count <= 256 else {
         throw GatewayProtocolError(400, "invalid_input")
@@ -180,9 +201,32 @@ struct ResponseRequest: Sendable {
             let content = object["content"]
           else { throw GatewayProtocolError(400, "invalid_input") }
           if content.string == nil {
-            guard let parts = content.array, parts.count <= 128,
+            guard let parts = content.array, parts.count <= 128 else {
+              throw GatewayProtocolError(400, "unsupported_input")
+            }
+            for part in parts where part["type"]?.string == "input_image" {
+              guard role == "user",
+                part.object?.keys.allSatisfy({ ["type", "image_url", "detail"].contains($0) })
+                  == true,
+                let url = part["image_url"]?.string,
+                part["detail"] == nil
+                  || ["auto", "low", "high", "original"].contains(part["detail"]?.string ?? "")
+              else { throw GatewayProtocolError(400, "invalid_image") }
+              let image = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
+              imageBytes += image.bytes.count
+              imagePixels += image.width * image.height
+              imageCount += 1
+              guard imageBytes <= ImageLimits.totalImageBytes, imagePixels <= 33_554_432,
+                imageCount <= 4
+              else { throw GatewayProtocolError(413, "image_input_too_large") }
+              if firstImage == nil { firstImage = image }
+              visionInput = true
+            }
+            guard
+
               parts.allSatisfy({ part in
                 let type = part["type"]?.string ?? ""
+                if type == "input_image" { return true }
                 let keys: Set<String> =
                   type == "refusal"
                   ? ["type", "refusal"] : ["type", "text", "annotations", "logprobs"]
@@ -232,6 +276,10 @@ struct ResponseRequest: Sendable {
               })
             else { throw GatewayProtocolError(400, "unsupported_input") }
           }
+        case "image_generation_call":
+          guard imageTool != nil, let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256
+          else { throw GatewayProtocolError(400, "invalid_reference") }
+          references.append(.init(type: "item", rawID: id))
         case "item_reference":
           guard let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256 else {
             throw GatewayProtocolError(400, "invalid_reference")
@@ -250,6 +298,7 @@ struct ResponseRequest: Sendable {
           "compaction": ["encrypted_content"],
           "compaction_trigger": [],
           "item_reference": [],
+          "image_generation_call": [],
         ]
         let allowedItem = fieldsByType[type, default: []].union(["type", "id", "status"])
         guard object.keys.allSatisfy(allowedItem.contains) else {
@@ -287,6 +336,24 @@ struct ResponseRequest: Sendable {
     guard uniqueReferences.count <= 32 else {
       throw GatewayProtocolError(400, "too_many_references")
     }
+    if let mask = imageTool?.document["input_image_mask"] {
+      guard mask.object?.count == 1, let url = mask["image_url"]?.string, let firstImage else {
+        throw GatewayProtocolError(400, "invalid_mask")
+      }
+      let payload = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
+      guard imageBytes + payload.bytes.count <= ImageLimits.totalImageBytes else {
+        throw GatewayProtocolError(413, "image_input_too_large")
+      }
+      try payload.validateMask(for: firstImage)
+    }
+    guard data.count <= 524_288 || visionInput || imageTool != nil else {
+      throw GatewayProtocolError(413, "request_too_large")
+    }
+    guard !(streamCompaction || mode == .compact) || (!visionInput && imageTool == nil) else {
+      throw GatewayProtocolError(400, "unsupported_image_compaction")
+    }
+    requirements = try .init(
+      route: .conversation, visionInput: visionInput, imageModel: imageTool?.model.id)
     self.references = uniqueReferences
     self.streamCompaction = streamCompaction
     self.mode = streamCompaction ? .compact : mode
@@ -306,6 +373,10 @@ struct ResponseRequest: Sendable {
           }
           return .object(object)
         })
+    }
+    if let imageTool, let declarations = fields["tools"]?.array {
+      upstreamFields["tools"] = .array(
+        declarations.map { $0["type"]?.string == "image_generation" ? imageTool.document : $0 })
     }
     self.document = .object(upstreamFields)
   }

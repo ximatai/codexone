@@ -6,12 +6,14 @@ struct ResponsesConfiguration: Sendable {
   let upstreamBaseURL: String
   let executionTimeoutSeconds: Int?
   let upstreamTransport: String?
+  var imageGeneration: ImageConfiguration? = nil
 }
 extension SingleIdentityConfiguration {
   var responses: ResponsesConfiguration {
     .init(
       models: models, upstreamBaseURL: upstreamBaseURL,
-      executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: upstreamTransport)
+      executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: upstreamTransport,
+      imageGeneration: imageGeneration)
   }
 }
 func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throws {

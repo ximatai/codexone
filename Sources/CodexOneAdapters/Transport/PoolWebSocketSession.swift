@@ -74,7 +74,7 @@ enum PoolWebSocketSession {
           do {
             try await gateway.execute(
               model: first.model, references: first.references, requestID: requestID,
-              mode: first.mode
+              mode: first.mode, requirements: first.requirements
             ) { context, authorization in
               guard let authorization else { throw ExecutionError.invalidCommand }
               try await withExecutionDeadline(

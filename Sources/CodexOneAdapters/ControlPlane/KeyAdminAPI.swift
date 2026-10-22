@@ -10,20 +10,22 @@ public struct KeyAdminAPI: Sendable {
   private let store: any KeyGovernanceStore
   private let sessions: AdminSessions
   private let availableModels: [String]
+  private let imageModels: [String]
   private let usage: UsageAdminAPI?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
-    publicOrigin: String? = nil, availableModels: [String] = [], usage: UsageAdminAPI? = nil
+    publicOrigin: String? = nil, availableModels: [String] = [], imageModels: [String] = [],
+    usage: UsageAdminAPI? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
-    guard availableModels.count <= 32,
-      availableModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 })
+    guard availableModels.count <= 32, imageModels.count <= 16,
+      (availableModels + imageModels).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 })
     else { throw ExecutionError.invalidCommand }
     return Self(
       digest: digest, store: store,
       sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
-      availableModels: availableModels, usage: usage)
+      availableModels: availableModels, imageModels: imageModels, usage: usage)
   }
   public static func validateCredential(
     path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
@@ -72,7 +74,11 @@ public struct KeyAdminAPI: Sendable {
       return response
     }
     routes.get("options") { _ async throws -> Response in
-      try Self.response(.object(["models": .array(availableModels.map { .string($0) })]))
+      try Self.response(
+        .object([
+          "models": .array(availableModels.map { .string($0) }),
+          "imageModels": .array(imageModels.map { .string($0) }),
+        ]))
     }
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
@@ -130,7 +136,12 @@ public struct KeyAdminAPI: Sendable {
     else { throw ExecutionError.invalidCommand }
     guard let buffer = request.body.data else { throw ExecutionError.invalidCommand }
     let document = try JSONValue.decode(Data(buffer.readableBytesView))
-    guard let object = document.object, Set(object.keys) == allowed else {
+    let optional: Set<String> =
+      allowed.contains("limits") ? ["visionInput", "imageGeneration", "imageModels"] : []
+    guard let object = document.object,
+      Set(object.keys).subtracting(optional) == allowed
+        && Set(object.keys).isSubset(of: allowed.union(optional))
+    else {
       throw ExecutionError.invalidCommand
     }
     if let limits = document["limits"] {
@@ -145,6 +156,9 @@ public struct KeyAdminAPI: Sendable {
       "id": .string(key.id), "principal": .string(key.principal),
       "revision": .number(Decimal(key.revision)),
       "enabled": .bool(key.enabled), "models": .array(key.policy.models.map { .string($0) }),
+      "visionInput": .bool(key.policy.visionInput),
+      "imageGeneration": .bool(key.policy.imageGeneration),
+      "imageModels": .array(key.policy.imageModels.map { .string($0) }),
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
         "requests": .number(Decimal(key.policy.limits.requests)),
@@ -176,11 +190,21 @@ private struct KeyLimitsDTO: Decodable {
 }
 private struct CreateKeyDTO: Decodable {
   let principal: String, models: [String], limits: KeyLimitsDTO
-  func policy() throws -> KeyPolicy { try .init(models: models, limits: limits.value) }
+  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
+  func policy() throws -> KeyPolicy {
+    try .init(
+      models: models, limits: limits.value, visionInput: visionInput ?? false,
+      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
+  }
 }
 private struct UpdateKeyDTO: Decodable {
   let revision: Int64, enabled: Bool, models: [String], limits: KeyLimitsDTO
-  func policy() throws -> KeyPolicy { try .init(models: models, limits: limits.value) }
+  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
+  func policy() throws -> KeyPolicy {
+    try .init(
+      models: models, limits: limits.value, visionInput: visionInput ?? false,
+      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
+  }
 }
 private struct KeyAdminGuard: AsyncMiddleware {
   let digest: String

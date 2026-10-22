@@ -68,7 +68,9 @@ public struct ResponsesDataService: Service {
       if provider.isAccepting && refresher.isAccepting {
         accounts =
           (try? await credentials.hasLocallyRoutableAccount(
-            models: Set(configuration.models.map(\.id)))) == true
+            models: Set(
+              configuration.models.map(\.id)
+                + (configuration.imageGeneration?.models.map(\.id) ?? [])))) == true
       } else {
         accounts = false
       }
@@ -82,7 +84,9 @@ public struct ResponsesDataService: Service {
 
   public func run() async throws {
     if let health = store as? any AccountHealthStore {
-      try await health.configureHealthModels(Set(configuration.models.map(\.id)))
+      try await health.configureHealthModels(
+        Set(
+          configuration.models.map(\.id) + (configuration.imageGeneration?.models.map(\.id) ?? [])))
     }
     let token = try source.tokenFile.map { try readRuntimeSecret($0) }
     var pool = HTTPClient.Configuration.ConnectionPool(
@@ -102,7 +106,7 @@ public struct ResponsesDataService: Service {
       report: { await readiness() },
       access: .init(source: source, token: token, store: store, finalizer: finalizer),
       gateway: nil, effectiveModels: [])
-    let channels = ProtocolChannels(limit: 32)
+    let channels = ProtocolChannels(limit: 8)
     do {
       let server = try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -122,7 +126,7 @@ public struct ResponsesDataService: Service {
             channel.close(promise: nil)
           }
           let upgrader = NIOTypedWebSocketServerUpgrader<NegotiatedProtocol>(
-            maxFrameSize: 524_288,
+            maxFrameSize: ImageLimits.requestBytes,
             shouldUpgrade: { channel, head in
               let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
               let allowed =
@@ -216,10 +220,10 @@ public struct ResponsesDataService: Service {
   {
     try await WebSocketPeer.run(socket, client: false) { downstream in
       let firstData = try await withExecutionDeadline(seconds: 10) { try await downstream.next() }
-      let first = try webSocketCreate(firstData)
+      let first = try webSocketCreate(
+        firstData, imageConfiguration: executor.configuration.imageGeneration)
       let authorized = try await executor.authorized(digest)
-      guard authorized.effectiveModels.contains(where: { $0.id == first.model }) else {
-        let error = GatewayProtocolError(403, "model_not_allowed")
+      do { _ = try authorized.executionModel(first) } catch {
         await authorized.recordRejection(first, requestID: UUID().uuidString, error: error)
         throw error
       }
@@ -268,14 +272,11 @@ public struct ResponsesDataService: Service {
               let requestID = initialTurn?.requestID ?? UUID().uuidString
               var requested: ResponseRequest?
               do {
-                let request = try webSocketCreate(data)
+                let request = try webSocketCreate(
+                  data, imageConfiguration: executor.configuration.imageGeneration)
                 requested = request
                 if let initialTurn {
-                  guard
-                    let model = executor.effectiveModels.first(where: { $0.id == request.model })
-                  else {
-                    throw GatewayProtocolError(403, "model_not_allowed")
-                  }
+                  let model = try executor.executionModel(request)
                   try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
                   try await executor.exchange(
                     request, context: initialTurn.context, model: model, peer: upstream, lane: lane
@@ -333,8 +334,19 @@ public struct ResponsesDataService: Service {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
                   head = next
+                  let path = String(next.uri.split(separator: "?", maxSplits: 1).first ?? "")
+                  if !["/health/live", "/health/ready"].contains(path) {
+                    _ = try await executor.access.policy(
+                      executor.access.digest(next.headers["authorization"]))
+                  }
+                  if let length = next.headers.first(name: "content-length"),
+                    Int(length).map({ $0 < 0 || $0 > ImageLimits.requestBytes }) ?? true
+                  {
+                    throw GatewayProtocolError(413, "request_too_large")
+                  }
                 case .body(let bytes):
-                  guard head != nil, bytes.readableBytes <= 524_288 - body.count else {
+                  guard head != nil, bytes.readableBytes <= ImageLimits.requestBytes - body.count
+                  else {
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   body.append(contentsOf: bytes.readableBytesView)
@@ -396,7 +408,9 @@ public struct ResponsesDataService: Service {
       throw GatewayProtocolError(404, "not_found")
     }
     let endpoint = String(path.dropFirst(prefix.count))
-    guard endpoint == "/models" || endpoint == "/responses" || endpoint == "/responses/compact"
+    guard
+      endpoint == "/models" || endpoint == "/responses" || endpoint == "/responses/compact"
+        || endpoint == "/images/generations" || endpoint == "/images/edits"
     else {
       throw GatewayProtocolError(404, "not_found")
     }
@@ -408,7 +422,32 @@ public struct ResponsesDataService: Service {
           $0.name == "client_version"
         } == true
       try await writer.json(
-        modelCatalog(executor.effectiveModels, requireCodexProfile: codexDirectory))
+        modelCatalog(
+          executor.effectiveModels, requireCodexProfile: codexDirectory,
+          images: executor.effectiveImageModels))
+      return
+    }
+    if ["/images/generations", "/images/edits"].contains(endpoint) {
+      guard head.method == .POST else { throw GatewayProtocolError(405, "method_not_allowed") }
+      guard head.headers["content-type"].count == 1, head.headers["content-encoding"].isEmpty else {
+        throw GatewayProtocolError(415, "unsupported_content_type")
+      }
+      let request = try ImagesRequest(
+        data: body, contentType: head.headers.first(name: "content-type")!,
+        editing: endpoint == "/images/edits", configuration: executor.configuration.imageGeneration)
+      await writer.setStreaming(request.streaming)
+      try await executor.execute(request.response, requestID: writer.requestID) { document in
+        if let mapped = try imageReply(
+          document, streaming: request.streaming, editing: request.editing)
+        {
+          if request.streaming {
+            try await writer.event(mapped)
+          } else {
+            try await writer.json(mapped)
+          }
+        }
+      }
+      if request.streaming { try await writer.finishStream() }
       return
     }
     guard ["/responses", "/responses/compact"].contains(endpoint), head.method == .POST else {
@@ -419,7 +458,8 @@ public struct ResponsesDataService: Service {
       head.headers["content-encoding"].isEmpty
     else { throw GatewayProtocolError(415, "unsupported_content_type") }
     let request = try ResponseRequest(
-      data: body, mode: endpoint == "/responses/compact" ? .compact : .generation)
+      data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
+      imageConfiguration: executor.configuration.imageGeneration)
     if endpoint == "/responses/compact" {
       try await executor.compact(request, requestID: writer.requestID) { document in
         try await writer.json(document)

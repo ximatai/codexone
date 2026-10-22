@@ -2,12 +2,14 @@ import Foundation
 
 /// Deliver each event before consuming later bytes: transport chunking cannot erase prior evidence.
 struct SSEDecoder {
+  var maximumEventBytes = 262_144
+  var maximumTotalBytes = 8_388_608
   private var buffer: [UInt8] = []
   private var total = 0
   private(set) var sawDone = false
 
   mutating func append(_ byte: UInt8) throws -> JSONValue? {
-    guard total < 8_388_608 else {
+    guard total < maximumTotalBytes else {
       throw GatewayProtocolError(502, "upstream_response_too_large")
     }
     total += 1
@@ -18,12 +20,12 @@ struct SSEDecoder {
     } else if buffer.suffix(2).elementsEqual([10, 10]) {
       delimiter = 2
     } else {
-      guard buffer.count <= 262_148 else {
+      guard buffer.count <= maximumEventBytes + 4 else {
         throw GatewayProtocolError(502, "upstream_event_too_large")
       }
       return nil
     }
-    guard buffer.count - delimiter <= 262_144 else {
+    guard buffer.count - delimiter <= maximumEventBytes else {
       throw GatewayProtocolError(502, "upstream_event_too_large")
     }
     guard let text = String(bytes: buffer.dropLast(delimiter), encoding: .utf8) else {

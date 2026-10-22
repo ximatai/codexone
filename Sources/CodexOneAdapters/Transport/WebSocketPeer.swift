@@ -28,7 +28,7 @@ func configureWebSocket(_ channel: any Channel, client: Bool) throws -> Protocol
     WebSocketWireGuard(masked: !client),
     NIOWebSocketFrameAggregator(
       minNonFinalFragmentSize: 1, maxAccumulatedFrameCount: 1024,
-      maxAccumulatedFrameSize: 524_288))
+      maxAccumulatedFrameSize: ImageLimits.eventBytes))
   return try .init(
     wrappingChannelSynchronously: channel,
     configuration: .init(backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4)))
@@ -44,7 +44,7 @@ final class WebSocketInbox: Sendable {
     var producer: (lane: String, bytes: Int, continuation: CheckedContinuation<Void, any Error>)?
     var error: (any Error)?
     func hasSpace(lane: String, bytes: Int) -> Bool {
-      (queues[lane]?.count ?? 0) < 4 && count < 64 && bytes <= 1_048_576 - self.bytes
+      (queues[lane]?.count ?? 0) < 4 && count < 64 && bytes <= ImageLimits.eventBytes - self.bytes
     }
   }
   private let state = Mutex(State())
@@ -140,7 +140,7 @@ actor WebSocketWriter {
     self.client = client
   }
   func send(_ data: Data, opcode: WebSocketOpcode = .text) async throws {
-    guard data.count <= 524_288 else {
+    guard data.count <= ImageLimits.eventBytes else {
       throw GatewayProtocolError(413, "websocket_message_too_large")
     }
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {

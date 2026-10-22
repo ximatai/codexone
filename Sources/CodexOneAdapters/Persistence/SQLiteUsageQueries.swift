@@ -67,7 +67,7 @@ extension SQLiteUsageReader {
         COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0),
         SUM(json_extract(usage_json,'$.inputTokens')),SUM(json_extract(usage_json,'$.outputTokens')),
         SUM(json_extract(usage_json,'$.cachedTokens')),SUM(json_extract(usage_json,'$.images')),
-        SUM(json_extract(usage_json,'$.estimatedMicros')) FROM attempts WHERE \(attempts.sql)
+        SUM(json_extract(usage_json,'$.estimatedMicros')),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')) FROM attempts WHERE \(attempts.sql)
       """, attempts.values
     ) { row in
       UsageTotals(
@@ -106,9 +106,9 @@ extension SQLiteUsageReader {
         json_extract(outcome_json,'$.failure') failure,json_extract(usage_json,'$.completeness') completeness,
         json_extract(usage_json,'$.inputTokens') input_tokens,json_extract(usage_json,'$.outputTokens') output_tokens,
         json_extract(usage_json,'$.cachedTokens') cached_tokens,json_extract(usage_json,'$.images') images,
-        json_extract(usage_json,'$.estimatedMicros') estimated_micros FROM attempts WHERE \(attempts.sql)
+        json_extract(usage_json,'$.estimatedMicros') estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens FROM attempts WHERE \(attempts.sql)
       UNION ALL
-      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL
+      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
         FROM request_diagnostics WHERE \(rejected.sql))
       """
     var values = attempts.values + rejected.values
@@ -158,6 +158,7 @@ extension SQLiteUsageReader {
     return try .init(
       inputTokens: number(offset), outputTokens: number(offset + 1),
       cachedTokens: number(offset + 2), images: number(offset + 3),
-      estimatedMicros: number(offset + 4))
+      estimatedMicros: number(offset + 4), imageInputTokens: number(offset + 5),
+      imageOutputTokens: number(offset + 6))
   }
 }

@@ -53,7 +53,7 @@ struct WebSocketUpstream: Sendable {
               }
               let observed = UpstreamUpgradeStatus()
               let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
-                maxFrameSize: 524_288,
+                maxFrameSize: ImageLimits.eventBytes,
                 upgradePipelineHandler: { channel, _ in
                   channel.pipeline.removeHandler(observed).flatMap {
                     channel.eventLoop.makeCompletedFuture {

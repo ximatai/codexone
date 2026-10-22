@@ -4,7 +4,7 @@ import Foundation
 
 extension SQLiteExecutionStore: AccountHealthStore {
   public func configureHealthModels(_ models: Set<String>) async throws {
-    guard models.count <= 32, models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }) else {
+    guard models.count <= 48, models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }) else {
       throw ExecutionError.invalidCommand
     }
     try await perform { db in
@@ -31,7 +31,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
   public func hasHealthyModel(id: String, credentialVersion: Int64, models: Set<String>)
     async throws -> Bool
   {
-    guard models.count <= 32, models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }) else {
+    guard models.count <= 48, models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }) else {
       throw ExecutionError.invalidCommand
     }
     return try await perform { db in

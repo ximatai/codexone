@@ -1,6 +1,6 @@
 import { ManagementError, request } from "../../shared/management";
 export interface UsageFilters { start: string; end: string; key: string; model: string; mode: string; failure: string; state: string; failedOnly: boolean }
-export interface Metrics { inputTokens: string | null; outputTokens: string | null; cachedTokens: string | null; images: string | null; estimatedMicros: string | null }
+export interface Metrics { imageInputTokens?: string | null; imageOutputTokens?: string | null; inputTokens: string | null; outputTokens: string | null; cachedTokens: string | null; images: string | null; estimatedMicros: string | null }
 export interface UsageReport {
   startUnixSeconds: number; endUnixSeconds: number;
   totals: { admitted: number; recordedRejections: number; inFlight: number; unknown: number; complete: number; partial: number; unavailable: number; failed: number; cancelled: number; historicalWithoutTime: number; unresolvedExposureMicros: string; metrics: Metrics };
@@ -17,7 +17,7 @@ function text(value: unknown, maximum = 256): string { if (typeof value !== "str
 function nullableText(value: unknown, maximum = 256): string | null { return value === null ? null : text(value, maximum); }
 function metric(value: unknown): string | null { if (value === null) return null; if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,18})$/.test(value) || BigInt(value) > 9223372036854775807n) throw invalid(); return value; }
 function requiredMetric(value: unknown): string { const result = metric(value); if (result === null) throw invalid(); return result; }
-function metrics(raw: unknown): Metrics { const value = object(raw); return { inputTokens: metric(value.inputTokens), outputTokens: metric(value.outputTokens), cachedTokens: metric(value.cachedTokens), images: metric(value.images), estimatedMicros: metric(value.estimatedMicros) }; }
+function metrics(raw: unknown): Metrics { const value = object(raw); return { imageInputTokens: metric(value.imageInputTokens ?? null), imageOutputTokens: metric(value.imageOutputTokens ?? null), inputTokens: metric(value.inputTokens), outputTokens: metric(value.outputTokens), cachedTokens: metric(value.cachedTokens), images: metric(value.images), estimatedMicros: metric(value.estimatedMicros) }; }
 function oneOf(value: unknown, values: string[]): string { if (typeof value !== "string" || !values.includes(value)) throw invalid(); return value; }
 function optionalEnum(value: unknown, values: string[]): string | null { return value === null ? null : oneOf(value, values); }
 export function parseUsage(raw: unknown): UsageReport {
@@ -48,5 +48,5 @@ export async function fetchUsage(filters: UsageFilters, cursor: string | null, s
 export async function fetchUsageOptions(signal?: AbortSignal): Promise<UsageOptions> {
   const value = object(await request("/api/usage/options", { signal }));
   function list(raw: unknown, maximum: number, length: number) { if (!Array.isArray(raw) || raw.length > maximum) throw invalid(); const result = raw.map(item => text(item, length)); if (new Set(result).size !== result.length) throw invalid(); return result; }
-  return { keys: list(value.keys, 256, 256), models: list(value.models, 32, 128), failures: list(value.failures, 32, 64) };
+  return { keys: list(value.keys, 256, 256), models: list(value.models, 48, 128), failures: list(value.failures, 32, 64) };
 }

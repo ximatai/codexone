@@ -23,6 +23,12 @@ enum ResponsesSource: Sendable {
 enum ResponsesPolicy: Sendable {
   case single(SingleIdentityPolicy)
   case pool(AccountPoolPolicy)
+  var capabilities: KeyPolicy? {
+    switch self {
+    case .single(let policy): policy.capabilities
+    case .pool(let policy): policy.key.policy
+    }
+  }
   var keyID: String {
     switch self {
     case .single(let policy): policy.owner.key
@@ -41,20 +47,21 @@ enum ResponsesGateway: Sendable {
   case pool(AccountPoolGateway, SubscriptionOAuthProvider, SubscriptionDataTarget)
   func execute(
     model: String, references: [ObjectBinding], requestID: String, mode: ExecutionMode,
-    connection: AccountRouteIdentity? = nil,
+    connection: AccountRouteIdentity? = nil, requirements: ExecutionRequirements = .init(),
     operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
     case .single(let gateway):
       try await gateway.execute(
-        model: model, references: references, requestID: requestID, mode: mode
+        model: model, references: references, requestID: requestID, mode: mode,
+        requirements: requirements
       ) { context in
         try await observeExecution(context) { try await operation(context, nil) }
       }
     case .pool(let gateway, let provider, let target):
       try await gateway.execute(
         model: model, references: references, connection: connection, requestID: requestID,
-        mode: mode
+        mode: mode, requirements: requirements
       ) { context, work in
         try await observeExecution(context) {
           try await operation(context, provider.dataAccess(work: work, target: target))

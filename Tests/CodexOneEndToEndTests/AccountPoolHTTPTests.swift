@@ -14,6 +14,20 @@ import Testing
   import FoundationNetworking
 #endif
 
+private let poolImageBase64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=="
+private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
+  guard
+    request["tools"]?.array?.contains(where: { $0["type"]?.string == "image_generation" }) == true
+  else { return .array([]) }
+  return .array([
+    .object([
+      "id": .string("ig_pool_\(count)"), "type": .string("image_generation_call"),
+      "status": .string("completed"), "result": .string(poolImageBase64),
+      "usage": .object(["input_tokens": .number(2), "output_tokens": .number(3)]),
+    ])
+  ])
+}
 private final class PoolHTTPState: Sendable {
   struct Call: Sendable {
     let account: String
@@ -108,7 +122,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         var document: [String: JSONValue] = [
           "id": .string("synthetic-response-\(count)"),
           "object": .string(compact ? "response.compaction" : "response"), "created_at": .number(1),
-          "output": .array([]),
+          "output": poolImageOutput(request, count: count),
           "usage": .object([
             "input_tokens": .number(2), "output_tokens": .number(1), "total_tokens": .number(3),
             "input_tokens_details": .object(["cached_tokens": .number(0)]),
@@ -195,7 +209,7 @@ private struct PoolHTTPHarness {
   var calls: [PoolHTTPState.Call] { state.value.withLock { $0.calls } }
   static func open(
     _ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http",
-    executionTimeout: Int = 5, handshake: String? = nil
+    executionTimeout: Int = 5, handshake: String? = nil, images: Bool = false
   )
     async throws -> Self
   {
@@ -216,7 +230,10 @@ private struct PoolHTTPHarness {
     for (id, token) in [("alice", alice), ("bob", bob)] {
       _ = try await oauth.store.createKey(
         id: id, principal: id, digest: keyDigest(token),
-        policy: KeyPolicy(models: ["synthetic-text"], limits: limits))
+        policy: KeyPolicy(
+          models: images && id == "alice" ? [] : ["synthetic-text"], limits: limits,
+          visionInput: images, imageGeneration: images,
+          imageModels: images ? ["synthetic-image"] : []))
     }
     let listener = try await ServerBootstrap(group: oauth.group).childChannelInitializer {
       channel in
@@ -272,12 +289,24 @@ private struct PoolHTTPHarness {
       from: JSONSerialization.data(withJSONObject: [
         "models": [
           [
-            "id": "synthetic-text", "inputMicrosPerMillion": 1_000_000,
+            "id": "synthetic-text", "visionInput": images, "imageGeneration": images,
+            "inputMicrosPerMillion": 1_000_000,
             "outputMicrosPerMillion": 1_000_000,
           ]
         ],
         "reservedMicros": 1, "executionTimeoutSeconds": executionTimeout,
         "upstreamTransport": transport,
+        "imageGeneration": images
+          ? [
+            "defaultModel": "synthetic-image",
+            "models": [
+              [
+                "id": "synthetic-image", "hostModel": "synthetic-text", "sizePolicy": "fixed1536",
+                "supportsTransparency": true, "supportsInputFidelity": true,
+                "inputMicrosPerMillion": 1_000_000, "outputMicrosPerMillion": 1_000_000,
+              ]
+            ],
+          ] : NSNull(),
       ]))
     let store: SQLiteExecutionStore
     if wrongMaster {
@@ -606,6 +635,7 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
       ]
       document["status"] = .string(
         request["input"]?.string == "terminal-failed" ? "failed" : "completed")
+      document["output"] = poolImageOutput(request, count: count)
       document["usage"] = .object([
         "input_tokens": .number(2), "output_tokens": .number(1),
         "input_tokens_details": .object(["cached_tokens": .number(0)]),
@@ -1129,5 +1159,85 @@ func poolUsageCollectsNativeWarmupAndFailedTerminalAcrossNativeAndBridgedWebSock
       throw error
     }
     await reader.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async throws {
+  for transport in ["http", "websocket"] {
+    try await withOAuth(timeout: 3000) { oauth in
+      let h = try await PoolHTTPHarness.open(oauth, transport: transport, images: true)
+      do {
+        func post(_ path: String, _ body: JSONValue, key: String? = nil) async throws -> (
+          Int, JSONValue
+        ) {
+          var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/" + path)!)
+          request.httpMethod = "POST"
+          request.httpBody = try body.data()
+          request.setValue("application/json", forHTTPHeaderField: "content-type")
+          request.setValue("Bearer " + (key ?? h.alice), forHTTPHeaderField: "authorization")
+          let session = URLSession(configuration: .ephemeral)
+          defer { session.invalidateAndCancel() }
+          let (data, response) = try await session.data(for: request)
+          return ((response as! HTTPURLResponse).statusCode, try JSONValue.decode(data))
+        }
+        let generated = try await post(
+          "images/generations", .object(["prompt": .string("synthetic pool image")]))
+        #expect(
+          generated.0 == 200
+            && generated.1["data"]?.array?.first?["b64_json"]?.string == poolImageBase64)
+        try await awaitOAuth { h.finalizer.outstanding == 0 }
+        let imagesOnly = try await post(
+          "responses", .object(["model": .string("synthetic-text"), "input": .string("synthetic")]))
+        #expect(imagesOnly.0 == 403 && h.calls.count == 1)
+        let key = try #require(try await h.store.listKeys(after: nil).first { $0.id == "alice" })
+        _ = try await h.store.updateKey(
+          id: key.id, revision: key.revision, enabled: true,
+          policy: .init(
+            models: ["synthetic-text"], limits: key.policy.limits, visionInput: true,
+            imageGeneration: true, imageModels: ["synthetic-image"]))
+        let tool: JSONValue = .object([
+          "model": .string("synthetic-text"), "input": .string("synthetic"),
+          "tools": .array([.object(["type": .string("image_generation")])]),
+        ])
+        let first = try await post("responses", tool)
+        #expect(first.0 == 200)
+        let id = try #require(first.1["id"]?.string)
+        var follow = tool.object!
+        follow["previous_response_id"] = .string(id)
+        #expect(try await post("responses", .object(follow)).0 == 200)
+        #expect(
+          h.calls.suffix(2).map(\.account).allSatisfy { $0 == h.calls[h.calls.count - 2].account })
+        let count = h.calls.count
+        #expect(try await post("responses", .object(follow), key: h.bob).0 != 200)
+        #expect(h.calls.count == count)
+        if transport == "websocket" {
+          let client = try PoolWSClient(h)
+          defer { client.close() }
+          _ = try await client.read()
+          let native = try await client.command(["tools": tool["tools"]!])
+          #expect(native["type"]?.string == "response.completed")
+          let responseID = try #require(native["response"]?["id"]?.string)
+          #expect(
+            try await client.command([
+              "tools": tool["tools"]!, "previous_response_id": .string(responseID),
+            ])["type"]?.string == "response.completed")
+          #expect(
+            h.calls.suffix(2).map(\.account).allSatisfy { $0 == h.calls[h.calls.count - 2].account }
+          )
+        }
+        try await awaitOAuth { h.finalizer.outstanding == 0 }
+        let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+        #expect(total == h.calls.count && h.state.value.withLock { $0.invalid == 0 })
+        let usage = try await h.store.perform {
+          try $0.scalar("SELECT SUM(json_extract(usage_json,'$.images')) FROM attempts")
+        }
+        #expect(usage == total)
+      } catch {
+        await h.close()
+        throw error
+      }
+      await h.close()
+    }
   }
 }

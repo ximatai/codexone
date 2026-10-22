@@ -5,7 +5,7 @@ export const failures: Record<string, string> = { authentication_rejected: "上�
 const modes: Record<string, string> = { generation: "生成", warmup: "预热", compact: "压缩" };
 const states: Record<string, string> = { intent: "在途", unknown: "用量未结", settled: "用量已结" };
 const outcomes: Record<string, string> = { succeeded: "成功返回", failed: "失败", cancelled: "取消" };
-function number(value: string | null, lower = false) { return value === null ? "不可用" : (lower ? "≥ " : "") + BigInt(value).toLocaleString("zh-CN"); }
+function number(value: string | null | undefined, lower = false) { return value == null ? "不可用" : (lower ? "≥ " : "") + BigInt(value).toLocaleString("zh-CN"); }
 function utc(value: number) { return new Date(value * 1000).toISOString().replace("T", " ").replace(".000Z", " UTC"); }
 function Trend({ report }: { report: api.UsageReport }) {
   const daily = report.buckets.length > 168;
@@ -73,8 +73,8 @@ export function UsageOverview({ selection, paused, onUnauthorized }: { selection
       <p className="field-hint">当前结果：{applied?.start} 至 {applied?.end}（UTC） · {applied?.key || "全部 Key"}{stale ? " · 上次成功快照" : ""}</p>
       <p className="field-hint" aria-label="当前结果筛选">结果筛选：模型 {applied?.model || "全部"} · 模式 {applied?.mode ? modes[applied.mode] : "全部"} · 错误 {applied?.failure ? failures[applied.failure] ?? "其他异常" : "全部"} · 用量状态 {applied?.state ? states[applied.state] : "全部"} · {applied?.failedOnly ? "仅异常结果" : "全部结果"}</p>
       <div className="usage-summary"><div><span>已准入执行</span><strong>{report.totals.admitted.toLocaleString()}</strong><small>生成 / 预热 / 压缩</small></div><div><span>已记录准入前拒绝</span><strong>{report.totals.recordedRejections.toLocaleString()}</strong><small>未启动执行</small></div><div><span>区间用量未结</span><strong>{(report.totals.inFlight + report.totals.unknown).toLocaleString()}</strong><small>{report.totals.inFlight} 在途 · {report.totals.unknown} unknown</small></div><div><span>用量完整度</span><strong>{report.totals.complete} 完整</strong><small>{report.totals.partial} 部分 · {report.totals.unavailable} 不可用</small></div></div>
-      <div className="usage-metrics">{([["inputTokens", "输入 token"], ["outputTokens", "输出 token"], ["cachedTokens", "缓存 token"], ["images", "图片"], ["estimatedMicros", "估算费用（微单位）"]] as const).map(([field, title]) => <div key={field}><span>{title}</span><strong>{report.totals.admitted === 0 ? "—" : number(report.totals.metrics[field], incomplete)}</strong></div>)}</div>
-      <p className="field-hint">{incomplete ? "含不完整/缺失证据：数值只表示已观测下界，未知部分无法量化，不能当零。" : "费用按部署价格估算，不是订阅余额、实际账单或绝对消耗上界。"} 图片计数为已观测值，不代表已开通图片能力。</p>
+      <div className="usage-metrics">{([["inputTokens", "输入 token"], ["outputTokens", "输出 token"], ["cachedTokens", "缓存 token"], ["images", "图片"], ["imageInputTokens", "图片工具输入 token"], ["imageOutputTokens", "图片工具输出 token"], ["estimatedMicros", "估算费用（微单位）"]] as const).map(([field, title]) => <div key={field}><span>{title}</span><strong>{report.totals.admitted === 0 ? "—" : number(report.totals.metrics[field], incomplete)}</strong></div>)}</div>
+      <p className="field-hint">{incomplete ? "含不完整/缺失证据：数值只表示已观测下界，未知部分无法量化，不能当零。" : "费用按部署价格估算，不是订阅余额、实际账单或绝对消耗上界。"} 图片工具 token 与宿主响应 token 分别统计，不相加；缺失工具证据显示不可用。</p>
       <p className="governance-note">{report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}全时间治理暴露（不受其他筛选影响）：{report.lifetimeGovernance.inFlight} 在途、{report.lifetimeGovernance.unknown} unknown，保留 {number(report.lifetimeGovernance.exposureMicros)} 微单位。运营预留不是未知实际费用上界，时间区间改变不会释放它。</p>
       {report.totals.historicalWithoutTime > 0 && <p className="warning-banner">另有 {report.totals.historicalWithoutTime} 条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用全时间治理暴露。</p>}
       <Trend report={report} />

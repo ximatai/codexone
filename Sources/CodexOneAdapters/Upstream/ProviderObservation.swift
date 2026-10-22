@@ -20,7 +20,7 @@ struct ProviderObservation: Sendable {
   init(
     event: JSONValue, model: SingleIdentityConfiguration.Model, functionNames: Set<String>,
     customToolNames: Set<String> = [], expectedPreviousResponseID: String? = nil,
-    allowCompaction: Bool = false
+    allowCompaction: Bool = false, allowImages: Bool = false
   )
     throws
   {
@@ -42,7 +42,11 @@ struct ProviderObservation: Sendable {
       guard response["background"]?.bool != true,
         response["conversation"] == nil || response["conversation"] == .null,
         response["prompt"] == nil || response["prompt"] == .null,
-        response["tools"] == nil || (try? ClientTools(response["tools"])) != nil
+        response["tools"] == nil
+          || ((try? ClientTools(response["tools"])) != nil
+            && (allowImages
+              || !(response["tools"]?.array?.contains { $0["type"]?.string == "image_generation" }
+                ?? false)))
       else {
         throw GatewayProtocolError(502, "unsupported_upstream_object")
       }
@@ -88,14 +92,32 @@ struct ProviderObservation: Sendable {
         for item in output {
           bindings += try Self.itemBindings(
             item, functionNames: functionNames, customToolNames: customToolNames,
-            allowCompaction: allowCompaction)
+            allowCompaction: allowCompaction, allowImages: allowImages)
         }
       }
       if terminal { usage = try Self.usage(response["usage"], model: model) }
     } else if itemEvents.contains(type), let item = event["item"] {
       bindings += try Self.itemBindings(
         item, functionNames: functionNames, customToolNames: customToolNames,
-        allowCompaction: allowCompaction, partialCompaction: type == "response.output_item.added")
+        allowCompaction: allowCompaction, partialCompaction: type == "response.output_item.added",
+        allowImages: allowImages)
+    } else if type.hasPrefix("response.image_generation_call."), allowImages {
+      guard
+        [
+          "response.image_generation_call.in_progress", "response.image_generation_call.generating",
+          "response.image_generation_call.completed",
+          "response.image_generation_call.partial_image",
+        ].contains(type),
+        let id = event["item_id"]?.string, !id.isEmpty, id.utf8.count <= 256
+      else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+      if type.hasSuffix("partial_image") {
+        guard let index = event["partial_image_index"]?.integer, (0...2).contains(index),
+          let encoded = event["partial_image_b64"]?.string,
+          encoded.utf8.count <= ImageLimits.eventBytes,
+          let data = Data(base64Encoded: encoded), data.base64EncodedString() == encoded
+        else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+      }
+      bindings.append(.init(type: "item", rawID: id))
     } else if Self.transparentEvents.contains(type) {
       if let id = event["item_id"]?.string {
         guard !id.isEmpty, id.utf8.count <= 256 else {
@@ -116,11 +138,13 @@ struct ProviderObservation: Sendable {
 
   static func itemBindings(
     _ item: JSONValue, functionNames: Set<String>, customToolNames: Set<String> = [],
-    retained: Bool = false, allowCompaction: Bool = false, partialCompaction: Bool = false
+    retained: Bool = false, allowCompaction: Bool = false, partialCompaction: Bool = false,
+    allowImages: Bool = false
   ) throws -> [ObjectBinding] {
     let type = item["type"]?.string ?? (retained && item["role"] != nil ? "message" : "")
     guard
       ["message", "function_call", "custom_tool_call", "reasoning"].contains(type)
+        || allowImages && type == "image_generation_call"
         || allowCompaction && type == "compaction"
         || retained
           && ["compaction", "function_call_output", "custom_tool_call_output"].contains(type)
@@ -129,6 +153,10 @@ struct ProviderObservation: Sendable {
       throw GatewayProtocolError(502, "unsupported_upstream_object")
     }
     let fields: [String: Set<String>] = [
+      "image_generation_call": [
+        "result", "revised_prompt", "size", "quality", "background", "output_format", "usage",
+        "action",
+      ],
       "message": ["role", "content", "phase"],
       "function_call": ["name", "namespace", "arguments", "call_id"],
       "custom_tool_call": ["name", "namespace", "input", "call_id"],
@@ -164,6 +192,15 @@ struct ProviderObservation: Sendable {
       bindings.append(.init(type: "item", rawID: id))
     } else if !retained && !(allowCompaction && type == "compaction") {
       throw GatewayProtocolError(502, "invalid_upstream_response")
+    }
+    if type == "image_generation_call" {
+      if item["status"]?.string == "completed" { _ = try imageResult(item) }
+      try Self.validateUsageContainer(item["usage"])
+      for key in ["revised_prompt", "size", "quality", "background", "output_format", "action"] {
+        if let value = item[key], value.string == nil {
+          throw GatewayProtocolError(502, "invalid_upstream_image")
+        }
+      }
     }
     if type == "message" {
       guard let role = item["role"]?.string,

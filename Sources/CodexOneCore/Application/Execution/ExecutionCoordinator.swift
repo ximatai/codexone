@@ -43,7 +43,8 @@ private final class UsageObservation: Sendable {
     guard
       [
         evidence.revision, evidence.inputTokens, evidence.outputTokens, evidence.cachedTokens,
-        evidence.images, evidence.estimatedMicros,
+        evidence.images, evidence.estimatedMicros, evidence.imageInputTokens ?? 0,
+        evidence.imageOutputTokens ?? 0,
       ].allSatisfy({ (0...1_000_000_000_000).contains($0) }),
       evidence.cachedTokens <= evidence.inputTokens
     else { throw ExecutionError.invalidCommand }
@@ -59,6 +60,8 @@ private final class UsageObservation: Sendable {
         guard later.inputTokens >= earlier.inputTokens, later.outputTokens >= earlier.outputTokens,
           later.cachedTokens >= earlier.cachedTokens, later.images >= earlier.images,
           later.estimatedMicros >= earlier.estimatedMicros,
+          (later.imageInputTokens ?? 0) >= (earlier.imageInputTokens ?? 0),
+          (later.imageOutputTokens ?? 0) >= (earlier.imageOutputTokens ?? 0),
           earlier.completeness != .complete || later.completeness == .complete
         else { throw ExecutionError.conflict }
         if evidence.revision < previous.revision { return }

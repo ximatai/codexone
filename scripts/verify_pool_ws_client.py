@@ -13,7 +13,7 @@ def event(sock):
 
 def create(command, lane=None):
     value = {"type": "response.create", "model": "synthetic-text", "input": command.get("input", "synthetic")}
-    for field in ("previous_response_id", "generate"):
+    for field in ("previous_response_id", "generate", "tools"):
         if field in command:
             value[field] = command[field]
     if lane:

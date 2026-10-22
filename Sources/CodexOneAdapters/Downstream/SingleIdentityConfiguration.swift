@@ -10,6 +10,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let inputMicrosPerMillion: Int64
     public let outputMicrosPerMillion: Int64
     public var catalog: Catalog? = nil
+    public var visionInput: Bool? = nil
+    public var imageGeneration: Bool? = nil
   }
   public struct Catalog: Sendable, Codable {
     public let displayName: String?
@@ -22,6 +24,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let principal: String?
   public let keyID: String?
   public let keySHA256: String?
+  public let imageGeneration: ImageConfiguration?
   public let managedKeys: Bool?
   public let namespace: String
   public let identity: String
@@ -50,6 +53,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
 
   public func validate() throws {
     try validateResponseModels(models)
+    try imageGeneration?.validate(hosts: models)
     guard
       [namespace, identity].allSatisfy({
         !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0)
@@ -101,7 +105,18 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     guard (managedKeys == true) == (key != nil),
       let principal = key?.principal ?? principal, let keyID = key?.id ?? keyID
     else { throw ExecutionError.unauthorized }
+    let allModels = models
     let models = models.filter { key == nil || key!.policy.models.contains($0.id) }
+    let capabilities =
+      try key?.policy
+      ?? KeyPolicy(
+        models: allModels.map(\.id),
+        limits: .init(
+          requests: 1_000_000, active: 16, unresolved: 16, budgetMicros: 1_000_000_000_000),
+        visionInput: allModels.contains { $0.visionInput == true },
+        imageGeneration: imageGeneration != nil,
+        imageModels: imageGeneration?.models.map(\.id) ?? [])
+    let imageModels = imageGeneration?.effective(for: capabilities) ?? []
     // M2 cannot attest credential equivalence yet: token/origin changes get a fresh namespace.
     // M3 will preserve stable identity only after provider-verified refresh equivalence.
     func digest(_ data: Data) -> String {
@@ -123,7 +138,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     let policy = digest(
       try encoder.encode(
         JSONValue.object([
-          "protocolVersion": .string("m2-compaction-v2-1"),
+          "protocolVersion": .string("m4-image-capabilities-1"),
+          "images": .string(digest(try encoder.encode(imageGeneration))),
           "keyPolicyVersion": keyPolicyVersion.map { .string($0) } ?? .null,
           "keyRevision": key.map { .number(Decimal($0.revision)) } ?? .null,
           "principal": .string(principal), "namespace": .string(namespace), "scope": .string(scope),
@@ -137,7 +153,9 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     return try .init(
       owner: .init(
         principal: principal, key: keyID, namespace: namespace + ":" + scope, identity: identity),
-      models: Set(models.map(\.id)), reservedMicros: reservedMicros, policyVersion: policy,
-      pricingVersion: digest(pricing), keyRevision: key?.revision)
+      models: Set(models.map(\.id) + imageModels.map(\.id)), reservedMicros: reservedMicros,
+      policyVersion: policy,
+      pricingVersion: digest(pricing + (try encoder.encode(imageGeneration))),
+      keyRevision: key?.revision, capabilities: capabilities)
   }
 }

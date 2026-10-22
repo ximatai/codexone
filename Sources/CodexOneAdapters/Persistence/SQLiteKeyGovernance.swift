@@ -101,7 +101,9 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     guard key.enabled, key.revision == revision, key.principal == command.owner.principal else {
       throw ExecutionError.unauthorized
     }
-    guard let model = command.model, key.policy.models.contains(model) else {
+    guard let model = command.model,
+      key.policy.allows(model: model, requirements: command.executionRequirements)
+    else {
       throw ExecutionError.unauthorized
     }
     let limits = key.policy.limits

@@ -1,0 +1,53 @@
+// Actual production SPA with a synthetic gateway. Credentials travel over stdin only.
+import { chromium, expect } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import assert from "node:assert/strict";
+const adminPort = Number(process.argv[2]), dataPort = Number(process.argv[3]), output = resolve(process.argv[4]);
+assert([adminPort, dataPort].every(x => Number.isInteger(x) && x > 0 && x <= 65535));
+let input = ""; for await (const chunk of process.stdin) { input += chunk; assert(input.length < 4096); }
+const { credential } = JSON.parse(input);
+const origin = `http://127.0.0.1:${adminPort}`;
+const browser = await chromium.launch({ channel: "chrome", headless: true });
+try {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1100 } });
+  await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  const page = await context.newPage();
+  await page.goto(origin);
+  await page.getByRole("button", { name: "访问密钥", exact: true }).click();
+  await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
+  await page.getByRole("button", { name: "登录管理台" }).click();
+  const form = page.locator("form.key-create");
+  await form.getByLabel("主体标识").fill("browser-images");
+  await form.getByLabel("图片生成与参考图编辑", { exact: true }).check();
+  await form.getByLabel("synthetic-image", { exact: true }).check();
+  await form.getByRole("button", { name: "创建 API Key" }).click();
+  const secret = await page.getByLabel("新 API Key", { exact: true }).inputValue();
+  await page.getByRole("button", { name: "我已保存，关闭" }).click();
+  const row = page.getByRole("row").filter({ hasText: "browser-images" });
+  await expect(row).toContainText("视觉输入：关闭 · 图片生成：允许");
+  const data = async (path, body) => fetch(`http://127.0.0.1:${dataPort}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: "Bearer " + secret, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const directory = await (await data("/v1/models")).json();
+  assert.deepEqual(directory.data.map(x => x.id), ["synthetic-image"]);
+  assert((await data("/v1/images/generations", { prompt: "synthetic browser image" })).status === 200);
+  assert((await data("/v1/responses", { model: "synthetic-host", input: "synthetic" })).status === 403);
+  await row.getByRole("button", { name: "编辑", exact: true }).click();
+  const edit = page.getByRole("dialog", { name: "编辑密钥权限" });
+  await edit.getByLabel("视觉输入", { exact: true }).check();
+  await edit.getByLabel("图片生成与参考图编辑", { exact: true }).uncheck();
+  await edit.getByLabel("synthetic-host", { exact: true }).check();
+  await edit.getByRole("button", { name: "保存修改" }).click();
+  await expect(edit).not.toBeVisible();
+  await expect(row).toContainText("视觉输入：允许 · 图片生成：关闭");
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg==";
+  assert((await data("/v1/responses", { model: "synthetic-host", input: [{ role: "user", content: [{ type: "input_image", image_url: image }] }] })).status === 200);
+  assert((await data("/v1/images/generations", { prompt: "synthetic denied" })).status !== 200);
+  await row.getByRole("button", { name: "用量", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "用量与请求诊断", exact: true })).toBeVisible();
+  await expect(page.getByText("图片工具输入 token", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await mkdir(output, { recursive: true });
+  assert(!(await page.content()).includes(secret) && !(await page.content()).includes(credential));
+  await page.screenshot({ path: resolve(output, "image-permissions-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator("input.secret-value")] });
+  console.log("PASS: actual Chrome image-only Key, catalog/generation, edit independent permissions, vision allowed with generation disabled, tool usage display");
+} finally { await browser.close(); }

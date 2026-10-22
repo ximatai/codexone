@@ -11,7 +11,7 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
   Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
   vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
   vi.mocked(api.fetchKeys).mockResolvedValue([]);
-  vi.mocked(api.fetchOptions).mockResolvedValue(["synthetic-text"]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({ models: ["synthetic-text"], imageModels: [] });
   vi.mocked(api.createKey).mockResolvedValue({ key, secret: "synthetic-one-time-secret" });
   let copied: (() => void) | undefined;
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(() => new Promise<void>((resolve) => { copied = resolve; })) } });
@@ -37,4 +37,20 @@ it("cancels owned reads when leaving the page", async () => {
   view.unmount();
   expect(read?.aborted).toBe(true);
   expect(api.fetchKeys).not.toHaveBeenCalled();
+});
+it("creates an image-only key without granting vision or a conversation model", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({ models: ["synthetic-host"], imageModels: ["synthetic-image"] });
+  vi.mocked(api.createKey).mockResolvedValue({ key: { ...key, models: [], imageGeneration: true, imageModels: ["synthetic-image"] }, secret: "synthetic-once" });
+  const view = render(<KeyManagement />);
+  await screen.findByText("尚未创建密钥。先选择主体和模型权限，再发放凭证。");
+  fireEvent.change(screen.getByLabelText("主体标识"), { target: { value: "images-team" } });
+  fireEvent.click(screen.getByLabelText("图片生成与参考图编辑"));
+  fireEvent.click(screen.getByLabelText("synthetic-image"));
+  fireEvent.click(screen.getByText("创建 API Key"));
+  await waitFor(() => expect(api.createKey).toHaveBeenCalled());
+  expect(vi.mocked(api.createKey).mock.calls[0][0]).toMatchObject({ principal: "images-team", models: [], imageGeneration: true, imageModels: ["synthetic-image"] });
+  expect(vi.mocked(api.createKey).mock.calls[0][0].visionInput).not.toBe(true);
+  view.unmount();
 });

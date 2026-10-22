@@ -34,14 +34,17 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let model: String?
   public let keyRevision: Int64?
   public let accountSnapshot: AccountDispatchSnapshot?
+  public let requirements: ExecutionRequirements?
+  public var executionRequirements: ExecutionRequirements { requirements ?? .init() }
   public let mode: ExecutionMode?
   public var executionMode: ExecutionMode { mode ?? .generation }
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
     mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil,
-    accountSnapshot: AccountDispatchSnapshot? = nil
+    accountSnapshot: AccountDispatchSnapshot? = nil, requirements: ExecutionRequirements? = nil
   ) {
+    self.requirements = requirements
     self.accountSnapshot = accountSnapshot
     self.attempt = attempt
     self.owner = owner
@@ -81,13 +84,18 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
   public let inputTokens: Int64
   public let outputTokens: Int64
   public let cachedTokens: Int64
+  public let imageInputTokens: Int64?
+  public let imageOutputTokens: Int64?
   public let images: Int64
   public let estimatedMicros: Int64
   public let completeness: Completeness
   public init(
     revision: Int64, inputTokens: Int64, outputTokens: Int64,
-    cachedTokens: Int64, images: Int64, estimatedMicros: Int64, completeness: Completeness
+    cachedTokens: Int64, images: Int64, estimatedMicros: Int64, completeness: Completeness,
+    imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil
   ) {
+    self.imageInputTokens = imageInputTokens
+    self.imageOutputTokens = imageOutputTokens
     self.revision = revision
     self.inputTokens = inputTokens
     self.outputTokens = outputTokens

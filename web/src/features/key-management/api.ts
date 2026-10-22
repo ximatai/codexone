@@ -14,10 +14,13 @@ export interface ManagedKey {
   revision: number;
   enabled: boolean;
   models: string[];
+  visionInput?: boolean; imageGeneration?: boolean; imageModels?: string[];
   limits: KeyLimits;
   createdAtUnixSeconds: number;
 }
-export interface KeyDraft { principal: string; models: string[]; limits: KeyLimits }
+export interface ImagePermissions { visionInput?: boolean; imageGeneration?: boolean; imageModels?: string[] }
+export interface KeyDraft extends ImagePermissions { principal: string; models: string[]; limits: KeyLimits }
+export interface KeyOptions { models: string[]; imageModels: string[] }
 export interface KeyCreated { key: ManagedKey; secret: string }
 
 function record(value: unknown): Record<string, unknown> {
@@ -34,6 +37,7 @@ function boundedNumber(value: unknown, minimum = 1, maximum = 1_000_000_000_000)
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) throw new ManagementError(0, "invalid_response");
   return value;
 }
+function boolean(value: unknown): boolean { if (typeof value !== "boolean") throw new ManagementError(0, "invalid_response"); return value; }
 export function parseKey(value: unknown): ManagedKey {
   const data = record(value);
   if (typeof data.id !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(data.id)
@@ -43,7 +47,10 @@ export function parseKey(value: unknown): ManagedKey {
   return {
     id: data.id, principal: data.principal, enabled: data.enabled,
     revision: boundedNumber(data.revision, 1, 1_000_000),
-    createdAtUnixSeconds: boundedNumber(data.createdAtUnixSeconds, 0), models: models(data.models),
+    createdAtUnixSeconds: boundedNumber(data.createdAtUnixSeconds, 0), models: models(data.models, data.imageGeneration === true),
+    visionInput: data.visionInput === undefined ? false : boolean(data.visionInput),
+    imageGeneration: data.imageGeneration === undefined ? false : boolean(data.imageGeneration),
+    imageModels: models(data.imageModels ?? [], true),
     limits: {
       requests: boundedNumber(limits.requests), active: boundedNumber(limits.active), unresolved: boundedNumber(limits.unresolved),
       budgetMicros: boundedNumber(limits.budgetMicros), unresolvedMicros: boundedNumber(limits.unresolvedMicros),
@@ -55,7 +62,7 @@ function parseCreated(value: unknown): KeyCreated {
   if (typeof data.secret !== "string" || !/^co1_[A-Za-z0-9_-]{43}$/.test(data.secret)) throw new ManagementError(0, "invalid_response");
   return { key: parseKey(data.key), secret: data.secret };
 }
-export async function fetchOptions(signal?: AbortSignal): Promise<string[]> { return models(record(await request("/api/keys/options", { signal })).models, true); }
+export async function fetchOptions(signal?: AbortSignal): Promise<KeyOptions> { const value = record(await request("/api/keys/options", { signal })); return { models: models(value.models, true), imageModels: models(value.imageModels ?? [], true) }; }
 export async function fetchKeys(signal?: AbortSignal): Promise<ManagedKey[]> {
   let after: string | null = null;
   const result = new Map<string, ManagedKey>();
@@ -72,8 +79,8 @@ export async function fetchKeys(signal?: AbortSignal): Promise<ManagedKey[]> {
 export async function createKey(draft: KeyDraft, csrf: string, signal?: AbortSignal): Promise<KeyCreated> {
   return parseCreated(await request("/api/keys", { method: "POST", body: draft, csrf, signal }));
 }
-export async function updateKey(key: ManagedKey, enabled: boolean, allowedModels: string[], limits: KeyLimits, csrf: string, signal?: AbortSignal): Promise<ManagedKey> {
-  return parseKey(record(await request("/api/keys/" + encodeURIComponent(key.id), { method: "PUT", body: { revision: key.revision, enabled, models: allowedModels, limits }, csrf, signal })).key);
+export async function updateKey(key: ManagedKey, enabled: boolean, allowedModels: string[], limits: KeyLimits, csrf: string, signal?: AbortSignal, capabilities: ImagePermissions = key): Promise<ManagedKey> {
+  return parseKey(record(await request("/api/keys/" + encodeURIComponent(key.id), { method: "PUT", body: { revision: key.revision, enabled, models: allowedModels, limits, visionInput: capabilities.visionInput ?? false, imageGeneration: capabilities.imageGeneration ?? false, imageModels: capabilities.imageModels ?? [] }, csrf, signal })).key);
 }
 export async function rotateKey(key: ManagedKey, csrf: string, signal?: AbortSignal): Promise<KeyCreated> {
   return parseCreated(await request("/api/keys/" + encodeURIComponent(key.id) + "/rotate", { method: "POST", body: { revision: key.revision }, csrf, signal }));

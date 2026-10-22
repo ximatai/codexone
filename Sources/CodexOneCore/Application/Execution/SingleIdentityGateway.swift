@@ -6,16 +6,19 @@ public struct SingleIdentityPolicy: Sendable {
   public let reservedMicros: Int64
   public let policyVersion: String
   public let pricingVersion: String
+  public let capabilities: KeyPolicy?
   public let keyRevision: Int64?
   public init(
     owner: ExecutionOwner, models: Set<String>, reservedMicros: Int64, policyVersion: String,
-    pricingVersion: String, keyRevision: Int64? = nil
+    pricingVersion: String, keyRevision: Int64? = nil, capabilities: KeyPolicy? = nil
   ) throws {
     guard [policyVersion, pricingVersion].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
-      models.count <= 32,
+      models.count <= 48,
       models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       (0...1_000_000_000_000).contains(reservedMicros)
     else { throw ExecutionError.invalidCommand }
+    try capabilities?.validate()
+    self.capabilities = capabilities
     self.keyRevision = keyRevision
     self.owner = owner
     self.models = models
@@ -39,10 +42,16 @@ public struct SingleIdentityGateway: Sendable {
   }
   public func execute(
     model: String, references: [ObjectBinding], requestID: String? = nil,
-    mode: ExecutionMode = .generation,
+    mode: ExecutionMode = .generation, requirements: ExecutionRequirements = .init(),
     operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
-    guard policy.models.contains(model), references.count <= 32 else { throw ExecutionError.denied }
+    try requirements.validate()
+    let allowed =
+      policy.capabilities?.allows(model: model, requirements: requirements)
+      ?? (requirements == .init())
+    guard allowed, policy.models.contains(model), references.count <= 32 else {
+      throw ExecutionError.denied
+    }
     for reference in references {
       let owner = try await store.resolve(
         principal: policy.owner.principal, object: reference, namespace: policy.owner.namespace)
@@ -58,7 +67,7 @@ public struct SingleIdentityGateway: Sendable {
       window: "utc-day-\(day)", policyVersion: policy.policyVersion,
       pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
-      keyRevision: policy.keyRevision, model: model)
+      keyRevision: policy.keyRevision, model: model, requirements: requirements)
     try await coordinator.execute(admission, operation: operation)
   }
 }

@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 
 public struct AccountPoolConfiguration: Sendable, Decodable {
+  public let imageGeneration: ImageConfiguration?
   public let models: [SingleIdentityConfiguration.Model]
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
@@ -17,10 +18,15 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     let values = try decoder.container(keyedBy: Field.self)
     guard
       values.allKeys.allSatisfy({
-        ["models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport"].contains(
+        [
+          "models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport",
+          "imageGeneration",
+        ].contains(
           $0.stringValue)
       })
     else { throw ExecutionError.invalidCommand }
+    imageGeneration = try values.decodeIfPresent(
+      ImageConfiguration.self, forKey: Field(stringValue: "imageGeneration")!)
     models = try values.decode(
       [SingleIdentityConfiguration.Model].self, forKey: Field(stringValue: "models")!)
     reservedMicros = try values.decode(Int64.self, forKey: Field(stringValue: "reservedMicros")!)
@@ -44,6 +50,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   }
   public func validate() throws {
     try validateResponseModels(models)
+    try imageGeneration?.validate(hosts: models)
     guard (0...1_000_000_000_000).contains(reservedMicros),
       (1...120).contains(executionTimeoutSeconds ?? 120),
       ["http", "websocket"].contains(upstreamTransport ?? "http")
@@ -53,16 +60,27 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     .init(
       models: models, upstreamBaseURL: SubscriptionOAuthProvider.dataOrigin,
       executionTimeoutSeconds: executionTimeoutSeconds,
-      upstreamTransport: upstreamTransport ?? "http")
+      upstreamTransport: upstreamTransport ?? "http", imageGeneration: imageGeneration)
   }
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     let effective = models.filter { key.policy.models.contains($0.id) }
-    let prices = effective.sorted { $0.id < $1.id }.map {
+    let imageModels = imageGeneration?.effective(for: key.policy) ?? []
+    var prices = effective.sorted { $0.id < $1.id }.map {
       JSONValue.object([
         "id": .string($0.id), "inputMicrosPerMillion": .number(Decimal($0.inputMicrosPerMillion)),
         "outputMicrosPerMillion": .number(Decimal($0.outputMicrosPerMillion)),
+      ])
+    }
+    prices += imageModels.sorted { $0.id < $1.id }.map { image in
+      let host = models.first { $0.id == image.hostModel }!
+      return JSONValue.object([
+        "id": .string(image.id), "hostModel": .string(host.id),
+        "inputMicrosPerMillion": .number(Decimal(image.inputMicrosPerMillion)),
+        "outputMicrosPerMillion": .number(Decimal(image.outputMicrosPerMillion)),
+        "hostInputMicrosPerMillion": .number(Decimal(host.inputMicrosPerMillion)),
+        "hostOutputMicrosPerMillion": .number(Decimal(host.outputMicrosPerMillion)),
       ])
     }
     let pricing = keyDigest(String(decoding: try encoder.encode(prices), as: UTF8.self))
@@ -70,11 +88,13 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       String(
         decoding: try encoder.encode(
           JSONValue.object([
-            "protocolVersion": .string("m3-pool-observability-1"), "key": .string(key.id),
+            "protocolVersion": .string("m4-image-capabilities-1"), "key": .string(key.id),
             "principal": .string(key.principal),
             "keyRevision": .number(Decimal(key.revision)),
             "keyPolicy": .string(
               keyDigest(String(decoding: try encoder.encode(key.policy), as: UTF8.self))),
+            "imageConfiguration": .string(
+              keyDigest(String(decoding: try encoder.encode(imageGeneration), as: UTF8.self))),
             "catalog": .string(
               keyDigest(String(decoding: try encoder.encode(effective), as: UTF8.self))),
             "pricing": .string(pricing),
@@ -83,7 +103,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
             "timeout": .number(Decimal(executionTimeoutSeconds ?? 120)),
           ])), as: UTF8.self))
     return try .init(
-      key: key, models: Set(effective.map(\.id)), reservedMicros: reservedMicros,
+      key: key, models: Set(effective.map(\.id) + imageModels.map(\.id)),
+      reservedMicros: reservedMicros,
       policyVersion: policy, pricingVersion: pricing)
   }
 }

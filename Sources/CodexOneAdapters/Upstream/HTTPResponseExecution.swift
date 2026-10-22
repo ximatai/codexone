@@ -14,6 +14,7 @@ struct HTTPResponseExecution: Sendable {
   let gateway: ResponsesGateway?
   var connection: AccountRouteIdentity? = nil
   var currentKeyID: String? = nil
+  var effectiveImageModels: [ImageConfiguration.Model] = []
   let effectiveModels: [SingleIdentityConfiguration.Model]
 
   func pinned(to identity: AccountRouteIdentity) -> Self {
@@ -28,7 +29,29 @@ struct HTTPResponseExecution: Sendable {
       client: client, webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
       gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
-      effectiveModels: configuration.models.filter { policy.models.contains($0.id) })
+      effectiveImageModels: policy.capabilities.map {
+        configuration.imageGeneration?.effective(for: $0) ?? []
+      } ?? [],
+      effectiveModels: configuration.models.filter { policy.models.contains($0.id) }.map { model in
+        var model = model
+        model.visionInput = model.visionInput == true && policy.capabilities?.visionInput == true
+        model.imageGeneration =
+          model.imageGeneration == true && policy.capabilities?.imageGeneration == true
+        return model
+      })
+  }
+
+  func executionModel(_ request: ResponseRequest) throws -> SingleIdentityConfiguration.Model {
+    let models = request.requirements.route == .images ? configuration.models : effectiveModels
+    guard let model = models.first(where: { $0.id == request.model }),
+      !request.requirements.visionInput || model.visionInput == true,
+      request.requirements.imageModel == nil
+        || (model.imageGeneration == true
+          && effectiveImageModels.contains {
+            $0.id == request.requirements.imageModel && $0.hostModel == request.model
+          })
+    else { throw GatewayProtocolError(403, "model_not_allowed") }
+    return model
   }
 
   func execute(
@@ -48,13 +71,11 @@ struct HTTPResponseExecution: Sendable {
     guard request.mode == .generation || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
-    guard let model = effectiveModels.first(where: { $0.id == request.model }) else {
-      throw GatewayProtocolError(403, "model_not_allowed")
-    }
+    let model = try executionModel(request)
     if configuration.upstreamTransport == "websocket" {
       try await gateway.execute(
-        model: request.model, references: request.references, requestID: requestID,
-        mode: request.mode
+        model: request.admissionModel, references: request.references, requestID: requestID,
+        mode: request.mode, requirements: request.requirements
       ) { context, authorization in
         try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
           try await webSocket.authorized(authorization).run { peer in
@@ -67,7 +88,8 @@ struct HTTPResponseExecution: Sendable {
       return
     }
     try await gateway.execute(
-      model: request.model, references: request.references, requestID: requestID, mode: request.mode
+      model: request.admissionModel, references: request.references, requestID: requestID,
+      mode: request.mode, requirements: request.requirements
     ) { context, authorization in
       try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
         var upstream = HTTPClientRequest(
@@ -97,7 +119,11 @@ struct HTTPResponseExecution: Sendable {
           else {
             throw GatewayProtocolError(502, "invalid_upstream_content_type")
           }
-          var decoder = SSEDecoder()
+          var decoder = SSEDecoder(
+            maximumEventBytes: request.requirements.imageModel == nil
+              ? 262_144 : ImageLimits.eventBytes,
+            maximumTotalBytes: request.requirements.imageModel == nil
+              ? 8_388_608 : ImageLimits.responseBytes)
           var compaction = StreamCompaction()
           var terminal = false
           readUpstream: for try await chunk in response.body {
@@ -107,17 +133,18 @@ struct HTTPResponseExecution: Sendable {
               guard !terminal else { throw GatewayProtocolError(502, "event_after_terminal") }
               // Trusted usage must survive later binding/output failures.
               if ["response.completed", "response.failed", "response.incomplete"].contains(
-                event["type"]?.string ?? ""),
-                let evidence = try ProviderObservation.usage(
-                  event["response"]?["usage"], model: model)
+                event["type"]?.string ?? "")
               {
-                try context.observeUsage(evidence)
+                try request.observeUsage(
+                  event["response"], context: context, model: model,
+                  configuration: configuration.imageGeneration)
               }
               let observation = try ProviderObservation(
                 event: event, model: model, functionNames: request.functionNames,
                 customToolNames: request.customToolNames,
                 expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-                allowCompaction: request.streamCompaction)
+                allowCompaction: request.streamCompaction,
+                allowImages: request.requirements.imageModel != nil)
               if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
@@ -135,7 +162,8 @@ struct HTTPResponseExecution: Sendable {
           else {
             throw GatewayProtocolError(502, "invalid_upstream_content_type")
           }
-          let body = try await response.body.collect(upTo: 262_144)
+          let body = try await response.body.collect(
+            upTo: request.requirements.imageModel == nil ? 262_144 : ImageLimits.eventBytes)
           let document: JSONValue
           do {
             document = try JSONValue.decode(Data(body.readableBytesView))
@@ -144,9 +172,8 @@ struct HTTPResponseExecution: Sendable {
           guard ["completed", "failed", "incomplete"].contains(status ?? "") else {
             throw GatewayProtocolError(502, "execution_indeterminate")
           }
-          if let evidence = try ProviderObservation.usage(document["usage"], model: model) {
-            try context.observeUsage(evidence)
-          }
+          try request.observeUsage(
+            document, context: context, model: model, configuration: configuration.imageGeneration)
           let event = JSONValue.object([
             "type": .string("response." + status!), "response": document,
           ])
@@ -154,7 +181,8 @@ struct HTTPResponseExecution: Sendable {
             event: event, model: model, functionNames: request.functionNames,
             customToolNames: request.customToolNames,
             expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-            allowCompaction: request.streamCompaction)
+            allowCompaction: request.streamCompaction,
+            allowImages: request.requirements.imageModel != nil)
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
           try await emit(document)

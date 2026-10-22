@@ -1,7 +1,7 @@
 import { UsageOverview } from "../usage/UsageOverview";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as api from "./api";
-import type { AdminSession, KeyCreated, KeyDraft, KeyLimits, ManagedKey } from "./api";
+import type { AdminSession, KeyCreated, KeyDraft, KeyLimits, ManagedKey, ImagePermissions } from "./api";
 
 type LimitDraft = Record<keyof KeyLimits, string>;
 const defaults: KeyLimits = { requests: 1000, active: 4, unresolved: 8, budgetMicros: 1_000_000, unresolvedMicros: 1_000_000 };
@@ -58,17 +58,27 @@ function PolicyFields({ available, selected, retained = [], limits, disabled, on
     <p className="field-hint">本地治理阈值不代表订阅余额。预热、压缩也计入请求；未知用量不会按零结算。</p>
   </>;
 }
-function CreateForm({ models, disabled, submit }: { models: string[]; disabled: boolean; submit: (draft: KeyDraft) => Promise<boolean> }) {
+function ImageFields({ available, value, disabled, change }: { available: string[]; value: ImagePermissions; disabled: boolean; change: (value: ImagePermissions) => void }) {
+  return <fieldset disabled={disabled} className="model-fieldset"><legend>图片能力</legend>
+    <label className="model-choice"><input type="checkbox" checked={value.visionInput ?? false} onChange={e => change({ ...value, visionInput: e.target.checked })} />视觉输入</label>
+    <label className="model-choice"><input type="checkbox" checked={value.imageGeneration ?? false} onChange={e => change({ ...value, imageGeneration: e.target.checked })} />图片生成与参考图编辑</label>
+    <p className="field-hint">视觉输入用于对话看图；生成与编辑共用独立权限。Responses 图片工具还需对话模型授权。</p>
+    <div className="model-choices">{[...new Set([...available, ...(value.imageModels ?? [])])].map(model => <label className="model-choice" key={model}><input type="checkbox" checked={value.imageModels?.includes(model) ?? false} disabled={!value.imageGeneration} onChange={e => change({ ...value, imageModels: e.target.checked ? [...(value.imageModels ?? []), model] : value.imageModels?.filter(x => x !== model) })} />{model}{!available.includes(model) && <small>未配置，可取消授权</small>}</label>)}</div>
+    {available.length === 0 && <p className="field-hint">部署尚未配置图片模型。</p>}
+  </fieldset>;
+}
+function CreateForm({ models, imageModels, disabled, submit }: { models: string[]; imageModels: string[]; disabled: boolean; submit: (draft: KeyDraft) => Promise<boolean> }) {
   const [principal, setPrincipal] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [capabilities, setCapabilities] = useState<ImagePermissions>({});
   const [limits, setLimits] = useState(() => limitDraft(defaults));
   const [error, setError] = useState("");
   async function create(event: FormEvent) {
     event.preventDefault();
     const parsed = parsedLimits(limits);
-    if (!/^[A-Za-z0-9._-]{1,64}$/.test(principal) || selected.length === 0 || !parsed) { setError("请填写有效主体、选择模型，并填写正整数限额。"); return; }
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(principal) || (selected.length === 0 && !capabilities.imageGeneration) || (capabilities.imageGeneration && !capabilities.imageModels?.length) || !parsed) { setError("请填写有效主体、选择模型，并填写正整数限额。"); return; }
     setError("");
-    if (await submit({ principal, models: selected, limits: parsed })) { setPrincipal(""); setSelected([]); setLimits(limitDraft(defaults)); }
+    if (await submit({ principal, models: selected, limits: parsed, ...capabilities })) { setPrincipal(""); setSelected([]); setCapabilities({}); setLimits(limitDraft(defaults)); }
   }
   return <form className="panel key-create" onSubmit={(event) => { void create(event); }}>
     <h2>创建密钥</h2><p className="field-hint">主体用于隔离会话；创建后不可修改。</p>
@@ -76,27 +86,30 @@ function CreateForm({ models, disabled, submit }: { models: string[]; disabled: 
       disabled={disabled} onChange={(event) => setPrincipal(event.target.value)} /></label>
     <PolicyFields available={models} selected={selected} limits={limits} disabled={disabled}
       onSelected={setSelected} onLimit={(field, value) => setLimits((old) => ({ ...old, [field]: value }))} />
+    <ImageFields available={imageModels} value={capabilities} disabled={disabled} change={setCapabilities} />
     {error && <p role="alert" className="error-text">{error}</p>}
-    <button disabled={disabled || models.length === 0}>创建 API Key</button>
+    <button disabled={disabled || (models.length === 0 && imageModels.length === 0)}>创建 API Key</button>
   </form>;
 }
-function EditForm({ entry, models, disabled, close, save }: {
-  entry: ManagedKey; models: string[]; disabled: boolean; close: () => void;
-  save: (models: string[], limits: KeyLimits) => Promise<boolean>;
+function EditForm({ entry, models, imageModels, disabled, close, save }: {
+  entry: ManagedKey; models: string[]; imageModels: string[]; disabled: boolean; close: () => void;
+  save: (models: string[], limits: KeyLimits, capabilities: ImagePermissions) => Promise<boolean>;
 }) {
   const [selected, setSelected] = useState(entry.models);
+  const [capabilities, setCapabilities] = useState<ImagePermissions>(entry);
   const [limits, setLimits] = useState(() => limitDraft(entry.limits));
   const [error, setError] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
     const parsed = parsedLimits(limits);
-    if (selected.length === 0 || !parsed) { setError("请选择至少一个模型，并填写正整数限额。"); return; }
-    setError(""); await save(selected, parsed);
+    if ((selected.length === 0 && !capabilities.imageGeneration) || (capabilities.imageGeneration && !capabilities.imageModels?.length) || !parsed) { setError("请选择至少一个模型，并填写正整数限额。"); return; }
+    setError(""); await save(selected, parsed, capabilities);
   }
   return <form onSubmit={(event) => { void submit(event); }}>
     <p>主体 <strong>{entry.principal}</strong><br /><small className="subtle key-id">{entry.id}</small></p>
     <PolicyFields available={models} selected={selected} retained={entry.models} limits={limits} disabled={disabled}
       onSelected={setSelected} onLimit={(field, value) => setLimits((old) => ({ ...old, [field]: value }))} />
+    <ImageFields available={imageModels} value={capabilities} disabled={disabled} change={setCapabilities} />
     <p className="field-hint">创建于 {new Date(entry.createdAtUnixSeconds * 1000).toLocaleString("zh-CN", { timeZone: "UTC" })} UTC。修改只影响新的执行。</p>
     {error && <p role="alert" className="error-text">{error}</p>}
     <div className="actions"><button disabled={disabled}>保存修改</button><button type="button" className="secondary" disabled={disabled} onClick={close}>取消</button></div>
@@ -116,6 +129,7 @@ export function KeyManagement() {
   const [credential, setCredential] = useState("");
   const [keys, setKeys] = useState<ManagedKey[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [imageModels, setImageModels] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<ManagedKey | null>(null);
@@ -126,7 +140,7 @@ export function KeyManagement() {
   const lifetime = useRef<AbortController | null>(null);
   const readSequence = useRef(0);
   function clearPrivateState() {
-    setShowUsage(false); setUsageSelection(null); setKeys([]); setModels([]); setCreated(null); setEditing(null); setRotating(null); setCredential(""); setNotice("");
+    setShowUsage(false); setUsageSelection(null); setKeys([]); setModels([]); setImageModels([]); setCreated(null); setEditing(null); setRotating(null); setCredential(""); setNotice("");
   }
   async function reload(signal: AbortSignal): Promise<boolean> {
     const sequence = ++readSequence.current;
@@ -135,7 +149,7 @@ export function KeyManagement() {
       const active = await api.fetchSession(signal);
       const [entries, options] = await Promise.all([api.fetchKeys(signal), api.fetchOptions(signal)]);
       if (signal.aborted || sequence !== readSequence.current) return false;
-      setSession(active); setKeys(entries); setModels(options); setUnavailable(false); setUncertain(false);
+      setSession(active); setKeys(entries); setModels(options.models); setImageModels(options.imageModels); setUnavailable(false); setUncertain(false);
       return true;
     } catch (failure) {
       if (signal.aborted || sequence !== readSequence.current) return false;
@@ -216,7 +230,7 @@ export function KeyManagement() {
   }
   const disabled = busy || loading || uncertain;
   return <section className="key-management">
-    <div className="intro"><span className="eyebrow">访问控制</span><h1>访问密钥</h1><p>按主体发放对话模型权限，独立设置本地治理限额。</p></div>
+    <div className="intro"><span className="eyebrow">访问控制</span><h1>访问密钥</h1><p>按主体发放对话与图片权限，独立设置本地治理限额。</p></div>
     {checking ? <div className="panel" role="status">正在验证管理会话…</div> : unavailable ? <div className="panel"><h2>管理入口尚未启用</h2><p>请联系部署管理员后刷新。</p><button onClick={() => { const signal = lifetime.current?.signal; if (signal) void reload(signal); }}>重新连接</button></div> : !session ? <form className="panel login-panel" onSubmit={(event) => { void signIn(event); }}>
       <h2>管理登录</h2><p>使用部署时配置的管理员凭证。普通 API Key 无法登录。</p>
       <label className="text-field">管理员凭证<input type="password" autoComplete="off" required value={credential} disabled={busy}
@@ -233,12 +247,12 @@ export function KeyManagement() {
       </div></div>
       {error && <p role="alert" className="error-banner">{error}</p>}{notice && <p role="status" className="success-banner">{notice}</p>}
       {!logoutUnconfirmed && <div className="keys-grid">
-        <CreateForm models={models} disabled={disabled} submit={(draft) => mutate((csrf, signal) => api.createKey(draft, csrf, signal), "密钥已创建，请保存一次性凭证。")} />
+        <CreateForm models={models} imageModels={imageModels} disabled={disabled} submit={(draft) => mutate((csrf, signal) => api.createKey(draft, csrf, signal), "密钥已创建，请保存一次性凭证。")} />
         <div className="panel key-list"><div className="panel-heading"><h2>已发放密钥</h2><span className="subtle">{keys.length} 个</span></div>
           <p className="field-hint">轮换保留主体、标识与限额。禁用停止新请求，已开始的执行仍会结算。</p>
           {keys.length === 0 ? <p className="empty-state">尚未创建密钥。先选择主体和模型权限，再发放凭证。</p> : <div className="table-scroll"><table><thead><tr><th>主体 / 标识</th><th>对话模型</th><th>状态</th><th>本地限制</th><th>操作</th></tr></thead><tbody>
             {keys.map((key) => <tr key={key.id}><td><strong>{key.principal}</strong><small className="key-id" title={key.id}>{key.id}</small></td>
-              <td><div className="model-tags">{key.models.map((model) => <span className="model-tag" key={model}>{model}</span>)}</div></td>
+              <td><div className="model-tags">{key.models.map((model) => <span className="model-tag" key={model}>{model}</span>)}</div><small>视觉输入：{key.visionInput ? "允许" : "关闭"} · 图片生成：{key.imageGeneration ? "允许" : "关闭"}</small>{key.imageGeneration && <small>{key.imageModels?.join("、")}</small>}</td>
               <td><span className={key.enabled ? "good" : "subtle"}>{key.enabled ? "启用" : "禁用"}</span></td>
               <td><span>{key.limits.requests.toLocaleString()} / 日</span><small>{key.limits.active} 并发 · {key.limits.unresolved} 未结</small></td>
               <td><div className="row-actions"><button className="text-button" disabled={disabled} onClick={() => { setUsageSelection(previous => ({ keyID: key.id, sequence: (previous?.sequence ?? 0) + 1 })); setShowUsage(true); }}>用量</button><button className="text-button" disabled={disabled} onClick={() => setEditing(key)}>编辑</button>
@@ -250,8 +264,8 @@ export function KeyManagement() {
       </div>}
       {!logoutUnconfirmed && showUsage && <UsageOverview selection={usageSelection} paused={disabled} onUnauthorized={() => { ++readSequence.current; setSession(null); clearPrivateState(); setError("管理会话已结束，请重新登录。"); }} />}
     </>}
-    {editing && <Modal title="编辑密钥权限" onClose={() => { if (!busy) setEditing(null); }}><EditForm entry={editing} models={models} disabled={disabled}
-      close={() => setEditing(null)} save={(selected, limits) => mutate((csrf, signal) => api.updateKey(editing, editing.enabled, selected, limits, csrf, signal), "权限与限额已更新。")} /></Modal>}
+    {editing && <Modal title="编辑密钥权限" onClose={() => { if (!busy) setEditing(null); }}><EditForm entry={editing} models={models} imageModels={imageModels} disabled={disabled}
+      close={() => setEditing(null)} save={(selected, limits, capabilities) => mutate((csrf, signal) => api.updateKey(editing, editing.enabled, selected, limits, csrf, signal, capabilities), "权限与限额已更新。")} /></Modal>}
     {rotating && <Modal title="轮换 API Key" onClose={() => { if (!busy) setRotating(null); }}><p><strong>{rotating.principal}</strong> 的旧凭证将立即失效。标识、主体和已有计数保持，{rotating.enabled ? "Key 仍保持启用。" : "Key 仍保持禁用。"}</p>
       <p>新凭证只显示一次，请保存后更新客户端。</p><div className="actions"><button disabled={disabled} onClick={() => { void mutate((csrf, signal) => api.rotateKey(rotating, csrf, signal), "凭证已轮换，旧凭证失效。"); }}>确认轮换</button><button className="secondary" disabled={busy} onClick={() => setRotating(null)}>取消</button></div></Modal>}
     {created && <Modal title="保存一次性凭证" onClose={() => setCreated(null)}><p>主体 <strong>{created.key.principal}</strong> · {created.key.enabled ? "已启用" : "当前禁用，启用后才可访问"}</p>

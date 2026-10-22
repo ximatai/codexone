@@ -276,6 +276,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           guard evidence.inputTokens >= old.inputTokens, evidence.outputTokens >= old.outputTokens,
             evidence.cachedTokens >= old.cachedTokens, evidence.images >= old.images,
             evidence.estimatedMicros >= old.estimatedMicros,
+            (evidence.imageInputTokens ?? 0) >= (old.imageInputTokens ?? 0),
+            (evidence.imageOutputTokens ?? 0) >= (old.imageOutputTokens ?? 0),
             old.completeness != .complete || evidence.completeness == .complete
           else { throw ExecutionError.conflict }
         }
@@ -283,6 +285,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           guard evidence.inputTokens <= old.inputTokens, evidence.outputTokens <= old.outputTokens,
             evidence.cachedTokens <= old.cachedTokens, evidence.images <= old.images,
             evidence.estimatedMicros <= old.estimatedMicros,
+            (evidence.imageInputTokens ?? 0) <= (old.imageInputTokens ?? 0),
+            (evidence.imageOutputTokens ?? 0) <= (old.imageOutputTokens ?? 0),
             evidence.completeness != .complete || old.completeness == .complete
           else {
             throw ExecutionError.conflict
@@ -346,6 +350,13 @@ private func validateStrings(_ values: [String], maximum: Int = 256) throws {
   }
 }
 func validateAdmission(_ value: ExecutionAdmission) throws {
+  try value.executionRequirements.validate()
+  guard
+    value.executionRequirements.route != .images
+      || value.executionRequirements.imageModel == value.model
+  else {
+    throw ExecutionError.invalidCommand
+  }
   try validateStrings(
     [
       value.attempt, value.owner.principal, value.owner.key,
@@ -366,7 +377,7 @@ private func validate(_ value: UsageEvidence) throws {
   guard
     [
       value.revision, value.inputTokens, value.outputTokens, value.cachedTokens, value.images,
-      value.estimatedMicros,
+      value.estimatedMicros, value.imageInputTokens ?? 0, value.imageOutputTokens ?? 0,
     ].allSatisfy({ (0...1_000_000_000_000).contains($0) }), value.cachedTokens <= value.inputTokens
   else { throw ExecutionError.invalidCommand }
 }
