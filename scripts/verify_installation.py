@@ -275,10 +275,14 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                 before_switch = truth()
                 current_binary = maintenance('sha256sum', ['/usr/local/bin/codexone']).stdout.split()[0]
                 if incompatible_image:
+                    # Prove schema rejection, not rejection of the newer keyring format.
+                    (root / 'secrets/master').write_text(original_master)
                     select_image(incompatible_image)
+                    run([*compose, 'run', '--rm', 'gateway', '--check-config'])
                     rejected = run([*compose, 'run', '--rm', 'gateway'], ok=False, timeout=20)
                     assert rejected.returncode != 0 and b'LISTENING' not in rejected.stdout + rejected.stderr
                     assert truth() == before_switch
+                    (root / 'secrets/master').write_text(keyring)
                 if previous_image:
                     previous_id = select_image(previous_image)
                     assert previous_id != identifier['Id'], 'Rollback requires a distinct actual image'
