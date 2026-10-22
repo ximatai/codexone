@@ -1,6 +1,6 @@
 # 当前状态
 
-更新时间：2026-10-22（Asia/Shanghai）。唯一全局状态入口。
+更新时间：2026-10-23（Asia/Shanghai）。唯一全局状态入口。
 
 ## 项目状态
 
@@ -10,7 +10,7 @@ M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界�
 
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
-- React/TS/Vite 服务概览，按 feature 聚合 UI/API/测试；Vitest/Testing Library 与 Playwright，前后端共用健康契约样例。Node 22.23.0，npm lock 固定依赖。
+- React19/TS7/Vite8 管理工作区，Mantine9/Router8、共享会话owner，独立密钥治理与用量路由；Query5/Zod4只读用量与表单试点，Oxlint/Prettier、Vitest/Testing Library 与 Playwright。Node 22.23.0，npm lock 固定依赖。
 - 本地分支 `codex/account-governance`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
 
 ## 运行与检查
@@ -30,13 +30,15 @@ swift run codexone
 
 可选 `CODEXONE_DATA_DIRECTORY` 指向绝对数据目录，可初始化/恢复核心库并标记存储先决条件就绪；默认不创建持久库，配置存储也不会启用生成。Linux 构建需 `libsqlite3-dev`，macOS 使用系统 SQLite。
 
-前端（另一个终端；开发代理指向管理默认端口）：
+前端（另一个终端；固定 http://127.0.0.1:5179，开发代理指向管理默认端口18081）：
 
 ```sh
 cd web
 npm ci --ignore-scripts --no-audit --no-fund
 npm run dev
 ```
+
+使用开发代理登录时，后端启动需显式设置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=http://127.0.0.1:5179`，并配置管理凭证。浏览器须使用相同的127.0.0.1地址；切换域名或端口需同时调整受信origin与代理，不能通过改写Origin或放宽CSRF绕过。生产SPA由管理入口同源提供。
 
 仓库根目录验证：
 
@@ -66,6 +68,12 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 有界混合容量：`python3 scripts/verify_capacity.py --image codexone:v8-candidate --duration 600 --output artifacts/capacity-run-001`（显式长耗时、每配置600秒、新输出目录）；定向故障保护和环境前提见[容量演练](docs/development/capacity.md)。
 
 ## 最新验证与范围
+
+2026-10-23，前端管理工作区优化：本地阶段出口通过。实现 `4be9f5b`、编辑回归修复 `fa3b82a`、许可打包修正 `fa509c2` / `5eefe37`，集中review及复审关闭。
+
+密钥列表→创建/编辑抽屉→独立用量路由已可操作；共享会话清除私有视图、跨导航保留未知写锁，秘密不进入URL/持久缓存/Query。保持严格CSP，移除重复登录和不必要的副标题；账号沿用业务控制逻辑并接入共享会话，全面组件迁移留待后续。较大管理资源暴露的提前关闭问题已改为等待最终flush，保留大小/期限边界。
+
+macOS完整前端40项/3项Chrome、review后4项Key定向回归、Swift175项、真实管理API/1MiB并发慢读及断开、实际密钥/用量/账号/图片和HTTPS操作通过。Linux amd64优化程序、静态构建、真实管理API/大资源socket、新测试镜像安装迁移/持久化/重启及Chrome操作通过；未重复未改动的Linux协议全集。阶段证据见[管理工作区验证](docs/changes/admin-workspace/verification.md)。新测试候选为 `codexone:admin-workspace`，来源 `5eefe37`，现有v8归档候选未替换；下一前端闭环是账号列表→授权详情→额度观测的组件和交互统一。Desktop、真实订阅、M5、O14和目标宿主缺口继续保留。
 
 2026-10-22，M6 当前混合容量包络阶段出口通过（脚本 `5679307`，review 修复 `5e74039`）：
 
