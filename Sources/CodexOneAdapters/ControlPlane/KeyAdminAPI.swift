@@ -12,10 +12,11 @@ public struct KeyAdminAPI: Sendable {
   private let availableModels: [String]
   private let imageModels: [String]
   private let usage: UsageAdminAPI?
+  private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
     publicOrigin: String? = nil, availableModels: [String] = [], imageModels: [String] = [],
-    usage: UsageAdminAPI? = nil
+    usage: UsageAdminAPI? = nil, storageMonitoring: (any StorageMonitoring)? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
@@ -25,7 +26,8 @@ public struct KeyAdminAPI: Sendable {
     return Self(
       digest: digest, store: store,
       sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
-      availableModels: availableModels, imageModels: imageModels, usage: usage)
+      availableModels: availableModels, imageModels: imageModels, usage: usage,
+      storageMonitoring: storageMonitoring)
   }
   public static func validateCredential(
     path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
@@ -53,6 +55,20 @@ public struct KeyAdminAPI: Sendable {
     let routes = api.grouped("keys").grouped(guardMiddleware)
     accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
     usage?.register(api.grouped("usage").grouped(guardMiddleware))
+    if let storageMonitoring {
+      api.grouped("runtime").grouped(guardMiddleware).get("storage") { _ async throws -> Response in
+        let observation = storageMonitoring.storageObservation
+        var object =
+          try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation))
+          as! [String: Any]
+        object["admissionAllowed"] = observation.admissionAllowed
+        object["optionalWorkAllowed"] = observation.optionalWorkAllowed
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return Response(
+          status: .ok, headers: ["content-type": "application/json", "cache-control": "no-store"],
+          body: .init(data: data))
+      }
+    }
     api.post("session") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["secret"])
       guard let secret = document["secret"]?.string else { throw ExecutionError.invalidCommand }

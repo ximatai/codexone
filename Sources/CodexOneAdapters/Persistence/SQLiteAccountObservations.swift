@@ -18,7 +18,7 @@ extension SQLiteExecutionStore: AccountObservationStore {
       throw ExecutionError.invalidCommand
     }
     if case .success(let quota) = result { try quota.validate() }
-    return try await perform { db in
+    return try await perform(optional: true) { db in
       try db.transaction {
         let current = try Self.loadAccount(db, account.id).account
         guard current.namespace == account.namespace,

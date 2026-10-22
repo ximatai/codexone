@@ -22,7 +22,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     try Self.validateKeyID(principal)
     try Self.validateDigest(digest)
     try policy.validate()
-    return try await perform { db in
+    return try await perform(optional: true) { db in
       try db.transaction {
         try Self.checkKeyCapacity(db, creating: true)
         guard
@@ -46,11 +46,14 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   {
     try Self.validateKeyID(id)
     try policy.validate()
-    return try await perform { db in
+    return try await perform(optional: enabled, essential: !enabled) { [storage] db in
       try db.transaction {
         let old = try Self.loadKey(db, id)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
         let revoking = old.enabled && !enabled
+        guard storage.snapshot.optionalWorkAllowed || revoking else {
+          throw ExecutionError.storagePressure
+        }
         try Self.checkKeyCapacity(db, revocation: revoking)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1, enabled: enabled,
@@ -66,7 +69,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   public func rotateKey(id: String, revision: Int64, digest: String) async throws -> ManagedKey {
     try Self.validateKeyID(id)
     try Self.validateDigest(digest)
-    return try await perform { db in
+    return try await perform(optional: true) { db in
       try db.transaction {
         try Self.checkKeyCapacity(db)
         let old = try Self.loadKey(db, id)

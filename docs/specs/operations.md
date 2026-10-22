@@ -21,7 +21,7 @@
 
 绑定保留期须覆盖公布的续接窗口，过期/歧义对象不得自由调度；账本与未结项不做普通 TTL。诊断/审计的保留期及磁盘水位依据容量与恢复需要确定并公开，不把候选数值作为承诺。
 
-启动时为 binding 索引与待核对记录预留磁盘；低空间先暂停报表/新备份/可选聚合、清理允许过期诊断并告警，到安全阈值停止新准入，保留结算空间。监测 WAL/checkpoint、长读事务、DB busy、备份大小与空闲空间；备份不能无限占满 data volume。在线备份用 SQLite backup API 等一致性流程，不仅复制 .sqlite 而漏 WAL。[Backup API](https://www.sqlite.org/backup.html)
+启动时为 binding 索引与待核对记录预留磁盘；低空间先暂停报表/新备份/可选聚合、清理允许过期诊断并告警，到安全阈值停止新准入，保留结算空间。空间分级采用真实用户可用空间、物理结算储备及 WAL；新准入必须在 writer 队列最后复核，可选查询/写入先退让，撤销权限及既有绑定/结算/刷新收尾保留。单一 Runtime 监测 owner 有界采样/零等待 checkpoint，容量拒绝不导致进程重启；真实核心写失败依赖 intent 恢复。具体默认水位/滞回及观测边界见[存储压力](../development/storage-pressure.md)。监测 WAL/checkpoint、长读事务、DB busy、备份大小与空闲空间；备份不能无限占满 data volume。在线备份用 SQLite backup API 等一致性流程，不仅复制 .sqlite 而漏 WAL。[Backup API](https://www.sqlite.org/backup.html)
 
 ## O10：安全与观测细则
 

@@ -18,6 +18,7 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? ExecutionError {
     switch error {
     case .unauthorized: return .init(401, "invalid_api_key")
+    case .storagePressure: return .init(503, "storage_pressure")
     case .maintenanceRequired: return .init(503, "maintenance_required")
     case .denied: return .init(429, "quota_or_policy_denied")
     case .unknownObject, .ambiguousObject: return .init(400, "unknown_or_ambiguous_object")

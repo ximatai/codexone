@@ -39,7 +39,7 @@ codexone --key-status
 codexone --resume-reencryption
 ```
 
-续作须使用原 job 的 target 作为 active，并保留解密当前混合版本所需旧 key。不能改 active 后把原 job 冒充另一轮；先完成，再开始新一轮。相同已完成 job 的续作幂等。未完成 job 禁止制作新完成备份和其他维护审计写入，避免消耗保留容量；原 pre-job bundle 保持独立可恢复。硬盘不可写时继续拒绝服务，完整低磁盘分级保护另见 STATUS。
+续作须使用原 job 的 target 作为 active，并保留解密当前混合版本所需旧 key。不能改 active 后把原 job 冒充另一轮；先完成，再开始新一轮。相同已完成 job 的续作幂等。未完成 job 禁止制作新完成备份和其他维护审计写入，避免消耗保留容量；原 pre-job bundle 保持独立可恢复。硬盘不可写时继续拒绝服务；页前空间预算、储备与水位见[存储压力](storage-pressure.md)，不能用再加密侵占关键收尾余量。
 
 ## 旧备份依赖与恢复演练
 

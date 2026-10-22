@@ -80,6 +80,9 @@ public enum SQLiteKeyMaintenance {
         checkpoint = old
       }
       while !checkpoint.complete {
+        try StorageCapacity.require(
+          (path as NSString).deletingLastPathComponent, additionalBytes: 8 * 1024 * 1024,
+          optional: true)
         let current = checkpoint
         checkpoint = try db.transaction {
           guard try db.reencryptionCheckpoint() == current else { throw ExecutionError.conflict }

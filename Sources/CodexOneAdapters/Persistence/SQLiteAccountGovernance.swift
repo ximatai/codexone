@@ -33,7 +33,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     try Self.validateAccountID(id)
     try Self.validateAccountEnvelope(envelope)
     _ = try AccountCredentialContext(identity: id, namespace: namespace, version: 1)
-    return try await perform { db in
+    return try await perform(optional: true) { db in
       try db.transaction {
         try Self.checkAccountCapacity(db)
         guard try db.scalar("SELECT COUNT(*) FROM accounts") < 64 else {
@@ -72,11 +72,17 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     -> ManagedAccount
   {
     try Self.validateAccountID(id)
-    return try await perform { db in
+    return try await perform(optional: mode == .enabled, essential: mode != .enabled) {
+      [storage] db in
       try db.transaction {
         let stored = try Self.loadAccount(db, id)
         let old = stored.account
         guard old.revision == revision else { throw ExecutionError.conflict }
+        let restricting =
+          (old.mode == .enabled && mode != .enabled) || (old.mode == .draining && mode == .disabled)
+        guard storage.snapshot.optionalWorkAllowed || restricting else {
+          throw ExecutionError.storagePressure
+        }
         try Self.checkAccountCapacity(db, disabling: old.mode != .disabled && mode == .disabled)
         let account = try Self.nextAccount(old, mode: mode)
         try Self.saveAccount(db, account, envelope: stored.envelope)
@@ -152,7 +158,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
   ) async throws -> ManagedAccount {
     try Self.validateAccountID(id)
     try Self.validateAccountEnvelope(envelope)
-    return try await perform { db in
+    return try await perform(optional: true) { db in
       try db.transaction {
         let old = try Self.loadAccount(db, id).account
         guard old.revision == revision, old.namespace == namespace,

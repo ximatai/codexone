@@ -112,9 +112,12 @@ public protocol AccountQuotaObserving: Sendable {
   func observeAccount(id: String) async throws -> AccountQuotaObservation
 }
 public protocol AccountObservationStore: AccountGovernanceStore {
+  var allowsOptionalStorageWork: Bool { get }
   func quotaObservation(id: String) async throws -> AccountQuotaObservation
   func recordQuotaObservation(
     account: ManagedAccount, atUnixSeconds: Int64,
     result: Result<SubscriptionQuota, QuotaObservationFailure>
   ) async throws -> AccountQuotaObservation
 }
+
+extension AccountObservationStore { public var allowsOptionalStorageWork: Bool { true } }

@@ -52,10 +52,17 @@ public enum SQLiteSnapshotMaintenance {
     let record = try db.restoreRecord()
     guard record == nil || record?.baseline != nil else { throw ExecutionError.denied }
     let keys = try verifyCredentials(db, protection)
+    let snapshotBytes = try db.scalar("PRAGMA page_count") * db.scalar("PRAGMA page_size")
+    try StorageCapacity.require(
+      (destination as NSString).deletingLastPathComponent,
+      additionalBytes: snapshotBytes + 8 * 1024 * 1024, optional: true)
+    try StorageCapacity.require(
+      (db.filePath as NSString).deletingLastPathComponent, additionalBytes: 8 * 1024 * 1024,
+      optional: true)
     guard mkdir(destination, 0o700) == 0 else { throw ExecutionError.conflict }
     try privateDirectory(destination)
     let partial = destination + "/snapshot.sqlite.partial"
-    try copy(db, to: partial)
+    try copy(db, to: partial, optional: true)
     let hash = try fingerprint(partial)
     let generation = try db.rows("SELECT generation FROM maintenance_state WHERE id=1") {
       String(cString: sqlite3_column_text($0, 0))
@@ -102,6 +109,10 @@ public enum SQLiteSnapshotMaintenance {
       let previous = try source.restoreRecord()
       guard previous == nil || previous?.baseline != nil else { throw ExecutionError.denied }
       let directory = (path as NSString).deletingLastPathComponent
+      try StorageCapacity.require(
+        FileManager.default.fileExists(atPath: directory)
+          ? directory : (directory as NSString).deletingLastPathComponent,
+        additionalBytes: manifest.databaseBytes + 8 * 1024 * 1024)
       if mkdir(directory, 0o700) != 0 && errno != EEXIST { throw ExecutionError.storageUnavailable }
       try privateDirectory(directory)
       try syncParent((directory as NSString).deletingLastPathComponent)
@@ -329,10 +340,15 @@ public enum SQLiteSnapshotMaintenance {
     }
     return required.sorted()
   }
-  private static func copy(_ source: SQLiteConnection, to path: String) throws {
+  private static func copy(_ source: SQLiteConnection, to path: String, optional: Bool = false)
+    throws
+  {
     let pageSize = try source.scalar("PRAGMA page_size")
     let pages = try source.scalar("PRAGMA page_count")
     guard pageSize > 0, pages <= 1_073_741_824 / pageSize else { throw ExecutionError.capacity }
+    try StorageCapacity.require(
+      (path as NSString).deletingLastPathComponent,
+      additionalBytes: pages * pageSize + 8 * 1024 * 1024, optional: optional)
     let fd = try newFile(path)
     defer { close(fd) }
     var target: OpaquePointer?
@@ -351,8 +367,17 @@ public enum SQLiteSnapshotMaintenance {
     guard let transfer = sqlite3_backup_init(target, "main", source.handle, "main") else {
       throw ExecutionError.storageUnavailable
     }
-    let step = sqlite3_backup_step(transfer, -1)
+    var finished = false
+    defer { if !finished { sqlite3_backup_finish(transfer) } }
+    var step: Int32
+    repeat {
+      try StorageCapacity.require(
+        (path as NSString).deletingLastPathComponent, additionalBytes: 2 * 1024 * 1024,
+        optional: optional)
+      step = sqlite3_backup_step(transfer, 128)
+    } while step == SQLITE_OK
     let finish = sqlite3_backup_finish(transfer)
+    finished = true
     guard step == SQLITE_DONE, finish == SQLITE_OK,
       sqlite3_exec(target, "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;", nil, nil, nil)
         == SQLITE_OK,

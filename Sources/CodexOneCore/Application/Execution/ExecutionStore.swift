@@ -1,6 +1,7 @@
 import Foundation
 
 public enum ExecutionError: Error, Sendable, Equatable {
+  case storagePressure
   case invalidCommand, capacity, denied, conflict, unknownAttempt, unknownObject, ambiguousObject
   case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence, unauthorized,
     maintenanceRequired

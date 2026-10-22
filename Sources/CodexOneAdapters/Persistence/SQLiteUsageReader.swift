@@ -77,13 +77,19 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     try Task.checkCancellation()
     guard
       gate.withLock({ value in
-        guard value.accepting && !value.active && primary.isAvailable else { return false }
+        guard value.accepting && !value.active && primary.allowsOptionalStorageWork else {
+          return false
+        }
         value.active = true
         return true
       })
     else { throw ExecutionError.capacity }
-    defer { gate.withLock { $0.active = false } }
-    let budget = UsageReadBudget()
+    primary.usageActivity.withLock { $0 = true }
+    defer {
+      gate.withLock { $0.active = false }
+      primary.usageActivity.withLock { $0 = false }
+    }
+    let budget = UsageReadBudget(optionalAllowed: { self.primary.allowsOptionalStorageWork })
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { result in
         queue.async { [connection] in
@@ -123,5 +129,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
 private final class UsageReadBudget: Sendable {
   let cancelled = Mutex(false)
   private let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-  var shouldStop: Bool { cancelled.withLock { $0 } || ContinuousClock.now >= deadline }
+  private let optionalAllowed: @Sendable () -> Bool
+  init(optionalAllowed: @escaping @Sendable () -> Bool) { self.optionalAllowed = optionalAllowed }
+  var shouldStop: Bool {
+    cancelled.withLock { $0 } || !optionalAllowed() || ContinuousClock.now >= deadline
+  }
 }

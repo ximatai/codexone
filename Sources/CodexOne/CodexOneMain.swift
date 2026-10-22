@@ -39,6 +39,10 @@ struct CodexOneMain {
       FileHandle.standardError.write(
         Data("Restored databases require managed Keys or account-pool configuration.\n".utf8))
       exit(1)
+    } catch ExecutionError.storagePressure {
+      FileHandle.standardError.write(
+        Data("Insufficient storage headroom; free space and retry offline.\n".utf8))
+      exit(1)
     } catch KeyMaintenanceError.incompleteReencryption {
       FileHandle.standardError.write(
         Data(
@@ -257,7 +261,7 @@ struct CodexOneMain {
           \.id) ?? [],
         imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?
           .imageGeneration?.models.map(\.id) ?? [],
-        usage: usageReader.map { UsageAdminAPI(querying: $0) })
+        usage: usageReader.map { UsageAdminAPI(querying: $0) }, storageMonitoring: store)
     } else {
       keyAdmin = nil
     }
@@ -272,6 +276,7 @@ struct CodexOneMain {
         name: "authorization", ready: (identityConfiguration != nil || poolConfiguration != nil)),
     ])
     var services: [any Service] = []
+    if let store { services.append(StorageMonitor(storage: store)) }
     let accountAdmin: AccountAdminAPI?
     var poolDataService: ResponsesDataService?
     if let credentialProtection, let store {

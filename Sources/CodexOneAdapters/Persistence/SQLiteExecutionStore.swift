@@ -9,20 +9,30 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let connection: SQLiteConnection
   let path: String
   let usageReaderGate = Mutex(false)
+  let usageActivity = Mutex(false)
+  let storage: SQLiteStorageGuard
+  public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
   let limits: ExecutionLimits
   private let restoration: RestoreRecord?
   public var hasRestoredSnapshot: Bool { restoration != nil }
   public var isAdmissionReady: Bool {
-    isAvailable && (restoration?.allowsAdmission(at: Int64(Date().timeIntervalSince1970)) ?? true)
+    isAvailable && storage.snapshot.admissionAllowed
+      && (restoration?.allowsAdmission(at: Int64(Date().timeIntervalSince1970)) ?? true)
   }
-  private let gate = Mutex((regular: 0, critical: 0, closing: false, failed: false))
+  private let gate = Mutex(
+    (
+      regular: 0, critical: 0, closing: false, failed: false, recentWait: UInt64(0),
+      maxWait: UInt64(0)
+    ))
 
   public var isAvailable: Bool { gate.withLock { !$0.closing && !$0.failed } }
 
   init(
     connection: SQLiteConnection, limits: ExecutionLimits, path: String,
-    restoration: RestoreRecord? = nil
-  ) {
+    restoration: RestoreRecord? = nil, storage: SQLiteStorageGuard? = nil
+  ) throws {
+    self.storage = try storage ?? SQLiteStorageGuard(path: path, policy: .standard)
+    if storage == nil { try self.storage.refresh(connection, maintenance: false) }
     self.path = path
     self.restoration = restoration
     self.connection = connection
@@ -32,6 +42,13 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public static func open(path: String, limits: ExecutionLimits) async throws
     -> SQLiteExecutionStore
   {
+    try await open(
+      path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available)
+  }
+  package static func open(
+    path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
+    available: @escaping @Sendable (String) throws -> Int64
+  ) async throws -> SQLiteExecutionStore {
     guard
       [
         limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
@@ -49,6 +66,10 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           guard try connection.reencryptionCheckpoint()?.complete != false else {
             throw KeyMaintenanceError.incompleteReencryption
           }
+          let storage = try SQLiteStorageGuard(
+            path: path, policy: storagePolicy, available: available)
+          try storage.refresh(connection, maintenance: true)
+          try storage.prepare(connection, admission: false, optional: false, essential: true)
           try connection.transaction {
             let json = try encode(limits)
             let existing = try connection.rows("SELECT limits_json FROM metadata WHERE id=1") {
@@ -64,14 +85,17 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             // All intents belonged to the previous owner, whose instance lock is now ours.
             try connection.write("UPDATE attempts SET state='unknown' WHERE state='intent'")
             try Self.recoverAccountRefreshes(connection)
-            try connection.write(
-              "DELETE FROM request_diagnostics WHERE at_epoch<?",
-              [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
+            if storage.snapshot.optionalWorkAllowed {
+              try connection.write(
+                "DELETE FROM request_diagnostics WHERE at_epoch<?",
+                [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
+            }
           }
+          try storage.refresh(connection, maintenance: false)
           continuation.resume(
-            returning: SQLiteExecutionStore(
+            returning: try SQLiteExecutionStore(
               connection: connection, limits: limits, path: path,
-              restoration: try connection.restoreRecord()))
+              restoration: try connection.restoreRecord(), storage: storage))
         } catch { continuation.resume(throwing: error) }
       }
     }
@@ -93,10 +117,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
 
   /// Queue capacity is acquired before dispatch; finalization has its own reserved slots.
   func perform<T: Sendable>(
-    critical: Bool = false, admission: Bool = false,
+    critical: Bool = false, admission: Bool = false, optional: Bool = false,
+    essential: Bool = false,
     _ body: @escaping @Sendable (SQLiteConnection) throws -> T
   ) async throws -> T {
     return try await withCheckedThrowingContinuation { continuation in
+      let enqueuedAt = DispatchTime.now().uptimeNanoseconds
       let accepted = gate.withLock { state in
         guard !state.closing else { return false }
         if critical {
@@ -108,8 +134,20 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         }
         // Enqueue under the gate so close cannot overtake an already accepted command.
         queue.async { [self] in
+          let wait = (DispatchTime.now().uptimeNanoseconds - enqueuedAt) / 1000
+          gate.withLock {
+            $0.recentWait = wait
+            $0.maxWait = max($0.maxWait, wait)
+          }
           let result = Result {
-            if admission && gate.withLock({ $0.failed }) { throw ExecutionError.storageUnavailable }
+            if (admission || optional) && gate.withLock({ $0.failed }) {
+              throw ExecutionError.storageUnavailable
+            }
+            if admission || optional || essential || critical {
+              try storage.prepare(
+                connection, admission: admission, optional: optional,
+                essential: essential || critical)
+            }
             return try body(connection)
           }
           gate.withLock { state in
@@ -224,7 +262,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
 
   public func bind(attempt: String, object: ObjectBinding) async throws {
     try validateStrings([attempt, object.type, object.rawID])
-    try await perform { db in
+    try await perform(essential: true) { db in
       try db.transaction {
         let snapshot = try Self.load(db, attempt)
         guard snapshot.state == .intent else { throw ExecutionError.conflict }
@@ -419,5 +457,34 @@ func encode<T: Encodable>(_ value: T) throws -> String {
 func decode<T: Decodable>(_ type: T.Type, _ value: String) throws -> T {
   do { return try JSONDecoder().decode(type, from: Data(value.utf8)) } catch {
     throw ExecutionError.storageUnavailable
+  }
+}
+
+extension SQLiteExecutionStore: StorageMonitoring {
+  public var storageObservation: StorageObservation {
+    var observation = storage.snapshot
+    gate.withLock { state in
+      observation.coreAvailable = !state.closing && !state.failed
+      observation.regularQueued = state.regular
+      observation.criticalQueued = state.critical
+      observation.recentQueueWaitMicros = state.recentWait
+      observation.maximumQueueWaitMicros = state.maxWait
+    }
+    observation.usageReaderActive = usageActivity.withLock { $0 }
+    return observation
+  }
+  public func maintainStorage() async throws {
+    try await perform { [self] db in
+      guard isAvailable else { throw ExecutionError.storageUnavailable }
+      try storage.refresh(db, maintenance: true)
+      // Only expired diagnostics are eligible, with bounded work and spare space above admission.
+      if storage.snapshot.pressure == .degraded,
+        (storage.snapshot.availableBytes ?? 0) > storage.policy.stopBytes + 8 * 1024 * 1024
+      {
+        try db.write(
+          "DELETE FROM request_diagnostics WHERE request_id IN (SELECT request_id FROM request_diagnostics WHERE at_epoch<? ORDER BY at_epoch LIMIT 100)",
+          [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
+      }
+    }
   }
 }

@@ -71,6 +71,10 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
     }
   }
   private func enqueue(id: String, waiter: QuotaWaiter?) {
+    guard store.allowsOptionalStorageWork else {
+      waiter?.finish(.failure(QuotaObservationFailure.capacity))
+      return
+    }
     let error: QuotaObservationFailure? = state.withLock { value in
       guard value.accepting else { return .closed }
       if let waiter {
@@ -140,6 +144,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
         group.addTask {
           while self.isAccepting && !Task.isCancelled {
             do {
+              guard self.store.allowsOptionalStorageWork else { throw ExecutionError.capacity }
               let accounts = try await self.store.listAccounts(after: nil)
               guard accounts.count <= 64 else { throw ExecutionError.capacity }
               for account in accounts
@@ -183,6 +188,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
   private func execute(_ job: Job) async throws {
     do {
       guard isAccepting, !Task.isCancelled else { throw QuotaObservationFailure.closed }
+      guard store.allowsOptionalStorageWork else { throw ExecutionError.capacity }
       let account = try await store.accountCredential(id: job.id).account
       let manual = state.withLock { $0.entries[job.id]?.manual == true }
       if account.mode == .disabled && !manual {

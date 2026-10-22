@@ -13,6 +13,7 @@ final class SQLiteConnection: @unchecked Sendable {
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
   private var readOnly = false
+  let filePath: String
   enum Value: Sendable {
     case text(String)
     case number(Int64)
@@ -22,6 +23,7 @@ final class SQLiteConnection: @unchecked Sendable {
   init(path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false)
     throws
   {
+    filePath = path
     guard path != ":memory:", !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
     let canonical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     lockFD = try Self.secureFile(canonical + ".lock", create: true)
@@ -143,6 +145,7 @@ final class SQLiteConnection: @unchecked Sendable {
   /// The already locked primary store owns this one read-only WAL connection.
   init(readOnlyPath: String) throws {
     readOnly = true
+    filePath = readOnlyPath
     guard let resolved = readOnlyPath.withCString({ realpath($0, nil) }) else {
       throw ExecutionError.storageUnavailable
     }
@@ -353,6 +356,10 @@ final class SQLiteConnection: @unchecked Sendable {
   ]
 
   private func backupBeforeUpgrade(_ path: String) throws {
+    try StorageCapacity.require(
+      (path as NSString).deletingLastPathComponent,
+      additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
+      optional: true)
     let destination = path + ".pre-v8-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
@@ -370,8 +377,17 @@ final class SQLiteConnection: @unchecked Sendable {
     guard let copy = sqlite3_backup_init(target, "main", handle, "main") else {
       throw ExecutionError.storageUnavailable
     }
-    let step = sqlite3_backup_step(copy, -1)
+    var finished = false
+    defer { if !finished { sqlite3_backup_finish(copy) } }
+    var step: Int32
+    repeat {
+      try StorageCapacity.require(
+        (path as NSString).deletingLastPathComponent, additionalBytes: 2 * 1024 * 1024,
+        optional: true)
+      step = sqlite3_backup_step(copy, 128)
+    } while step == SQLITE_OK
     let finish = sqlite3_backup_finish(copy)
+    finished = true
     guard step == SQLITE_DONE, finish == SQLITE_OK, fsync(fd) == 0 else {
       throw ExecutionError.storageUnavailable
     }

@@ -7,7 +7,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
     guard models.count <= 48, models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }) else {
       throw ExecutionError.invalidCommand
     }
-    try await perform { db in
+    try await perform(essential: true) { db in
       try db.transaction {
         let existing = try db.rows("SELECT model FROM health_models") {
           String(cString: sqlite3_column_text($0, 0))

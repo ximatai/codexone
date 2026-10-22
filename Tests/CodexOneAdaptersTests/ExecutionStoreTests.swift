@@ -201,7 +201,7 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await original.close()
   let connection = try SQLiteConnection(path: path)
   try connection.exec("PRAGMA query_only=ON")
-  let store = SQLiteExecutionStore(connection: connection, limits: syntheticLimits, path: path)
+  let store = try SQLiteExecutionStore(connection: connection, limits: syntheticLimits, path: path)
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await store.finalize(attempt: "a", evidence: usage())
   }

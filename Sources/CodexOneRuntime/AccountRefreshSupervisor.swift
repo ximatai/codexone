@@ -274,7 +274,7 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Account
     guard let error = error as? ExecutionError else { return .unavailable }
     switch error {
     case .invalidCommand: return .invalidCommand
-    case .capacity: return .capacity
+    case .capacity, .storagePressure: return .capacity
     case .closed: return .closed
     case .conflict: return .conflict
     default: return .storageUnavailable
