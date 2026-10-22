@@ -99,3 +99,9 @@ Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备�
 池用例在没有有效 access 候选时，才按 ID 稳定顺序选一个合格的过期/正在刷新身份加入刷新 owner；带归属仅选该身份。单个执行至多一次刷新等待，不因失败切换其他账号刷新。管理入口仍按原 revision 加入；内部路由按 credential version 加入已公布版本的现存工作，因此 begin intent 增加 revision 后仍可共享。尚未公布版本的管理工作仅允许相同原 revision 加入；不同代际或无进程 owner 的 refreshing 状态拒绝，不能重放持久未知 intent。
 
 请求取消移除自己的刷新等待者并释放尚无生成 intent 的执行 ticket，共享刷新仍由 Service 收尾。刷新完成必须重新读取/解密凭证并走同一原子准入，普通禁用、Key 撤销和额度变化不得被刷新结果覆盖。
+
+## I19：订阅数据认证的可信范围
+
+数据认证只接收 Core 从可信密文准备的 work，核对 ID 基线与当前 access 的 subject/account、固定 namespace、快照版本/revision/实际访问期限。ID 基线可以过期，access 不可过期；没有 ID、范围变化或不一致均拒绝。只产生 Bearer 与 chatgpt-account-id，不从下游同名头决定提供者账号，不提供组织/项目覆盖。这是可信保存值的范围复核，不是任意 JWT 的签名验证或上传入口。
+
+生产数据 origin 固定，须匹配生产认证 realm；显式合成目标仅允许 loopback 有效端口并匹配合成 realm。生产凭证/namespace 不允许转发至合成目标，合成凭证也不允许发往生产目标。认证头驻留内存、description/debugDescription 脱敏，不进入编码 DTO、持久库或诊断。

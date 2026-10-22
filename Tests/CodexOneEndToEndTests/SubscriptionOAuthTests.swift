@@ -747,3 +747,86 @@ private struct AccountAdminClient: Sendable {
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func subscriptionDataAccessUsesVerifiedScopeAndSeparatesSyntheticTargets() async throws {
+  try await withOAuth { h in
+    let login = try await h.login()
+    var account = try await h.app.importVerified(
+      id: "account", namespace: login.namespace, credential: login.credential)
+    account = try await h.store.setAccountMode(
+      id: account.id, revision: account.revision, mode: .enabled)
+    let work = try await h.app.prepareDispatch(id: account.id, continuation: false)
+    let access = try h.provider.dataAccess(work: work, target: .syntheticLoopback(port: 12345))
+    #expect(access.baseURL == "http://127.0.0.1:12345/backend-api/codex")
+    #expect(access.headers["authorization"] == ["Bearer " + login.credential.accessToken])
+    #expect(access.headers["chatgpt-account-id"] == ["synthetic-workspace"])
+    #expect(access.headers.count == 2)
+    #expect(String(reflecting: access) == "SubscriptionDataAccess(redacted)")
+    #expect(throws: AccountDispatchError.unavailable) { try h.provider.dataAccess(work: work) }
+    for port in [0, 65536] {
+      #expect(throws: AccountDispatchError.unavailable) {
+        try h.provider.dataAccess(work: work, target: .syntheticLoopback(port: port))
+      }
+    }
+    let production = try SubscriptionOAuthProvider(group: h.group)
+    #expect(throws: AccountDispatchError.unavailable) {
+      try production.dataAccess(work: work, target: .syntheticLoopback(port: 12345))
+    }
+    #expect(throws: AccountDispatchError.unavailable) { try production.dataAccess(work: work) }
+    let claims = try SubscriptionClaims.idToken(
+      #require(login.credential.idToken), nonce: nil, requireCurrent: false)
+    let productionNamespace = try production.identityNamespace(claims)
+    let productionAccount = try await h.app.importVerified(
+      id: "production-fixture", namespace: productionNamespace, credential: login.credential)
+    _ = try await h.store.setAccountMode(
+      id: productionAccount.id, revision: productionAccount.revision, mode: .enabled)
+    let productionWork = try await h.app.prepareDispatch(
+      id: productionAccount.id, continuation: false)
+    let productionAccess = try production.dataAccess(work: productionWork)
+    #expect(productionAccess.baseURL == "https://chatgpt.com/backend-api/codex")
+    #expect(throws: AccountDispatchError.unavailable) {
+      try production.dataAccess(work: productionWork, target: .syntheticLoopback(port: 12345))
+    }
+    #expect(h.server.counts.calls == 1)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func subscriptionDataAccessRejectsChangedScopeAndAcceptsExpiredTrustedIDBaseline() async throws {
+  for mode in ["account", "subject", "namespace", "expired-id", "expired-access", "missing-id"] {
+    try await withOAuth { h in
+      let login = try await h.login()
+      let now = Int64(Date().timeIntervalSince1970)
+      let data = try oauthTokens(
+        subject: mode == "subject" ? "other-subject" : "synthetic-user",
+        accessExpiry: mode == "expired-access" ? now - 1 : now + 3600,
+        accessAccount: mode == "account" ? "other-account" : nil,
+        idExpiry: mode == "expired-id" ? now - 1 : now + 3600)
+      let tokens = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+      // Seal a deliberately inconsistent fixture to prove dispatch fails before sending any data.
+      let credential = try AccountCredential(
+        accessToken: #require(tokens["access_token"] as? String), refreshToken: "synthetic-refresh",
+        idToken: mode == "missing-id" ? nil : login.credential.idToken,
+        expiresAtUnixSeconds: now + 3600)
+      let id = mode == "expired-id" ? tokens["id_token"] as? String : credential.idToken
+      let stored = try AccountCredential(
+        accessToken: credential.accessToken, refreshToken: credential.refreshToken, idToken: id,
+        expiresAtUnixSeconds: credential.expiresAtUnixSeconds)
+      var account = try await h.app.importVerified(
+        id: "account", namespace: mode == "namespace" ? "synthetic/other" : login.namespace,
+        credential: stored)
+      account = try await h.store.setAccountMode(
+        id: account.id, revision: account.revision, mode: .enabled)
+      let work = try await h.app.prepareDispatch(id: account.id, continuation: false)
+      if mode == "expired-id" {
+        _ = try h.provider.dataAccess(work: work, target: .syntheticLoopback(port: 12345))
+      } else {
+        #expect(throws: AccountDispatchError.unavailable) {
+          try h.provider.dataAccess(work: work, target: .syntheticLoopback(port: 12345))
+        }
+      }
+      #expect(h.server.counts.calls == 1)
+    }
+  }
+}

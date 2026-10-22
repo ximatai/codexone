@@ -31,3 +31,9 @@ Core 持有当前 Key 策略与有界候选凭证；先获取既有 finalizer ti
 有效 access 候选存在时直接选择，不主动刷新全部账号；仅无可用 work 时，按账号 ID 的稳定顺序选择一个过期/正在刷新的合格身份，调用同一有界刷新 owner 并重新准备。带归属只等该身份。单次请求至多加入或发起一次刷新，失败不切换其他账号轮流消耗刷新令牌；仍无生成 intent。请求取消仅移除该等待者，finalizer ticket 同时释放，已接受刷新由既有 owner 完成。
 
 管理刷新维持原 revision CAS。路由使用内部观察的 credential version 加入同一账号的现存工作，允许 begin intent 已使管理 revision 增加后仍安全加入；已知不同 credential version 拒绝。管理先入队尚未公布工作版本时，仅完全相同原 revision 可加入，否则返回冲突，不凭未知 intent 创建新刷新。ready 才可新建工作，refreshing 且没有本进程 owner 不重放；重启仍按 uncertain 恢复。账号模式变化/禁用、Key 撤销及额度在刷新后的最终准入继续复核。
+
+## 订阅数据凭证装配
+
+把持久账号 work 接到数据传输之前，适配器须重新核对已保存可信 ID 基线、当前 access 的 subject/account、固定 namespace 与实际访问期限；只从该可信范围产生 Bearer 和 chatgpt-account-id，不接受下游同名头或组织/项目覆盖。此解析只消费 Core 从可信密文准备的 work，不扩展成 JWT 导入或通用签名验证器。认证头仅为瞬时值，description/debugDescription 脱敏，不编码或持久化。
+
+生产目标固定为 chatgpt.com/backend-api/codex，必须匹配生产认证 realm；显式合成工厂仅允许 loopback 端口且须来自合成 realm，禁止将生产命名空间/凭证转发到测试地址。两类目标均无地址运行时覆盖。协议头依据 OpenAI Codex 公共实现的 [bearer auth provider](https://github.com/openai/codex/blob/main/codex-rs/model-provider/src/bearer_auth_provider.rs) 核实；该实现是兼容证据，不承诺内部订阅协议长期稳定。

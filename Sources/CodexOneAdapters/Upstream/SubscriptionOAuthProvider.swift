@@ -161,7 +161,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     return VerifiedSubscriptionLogin(
       namespace: try identityNamespace(identity), credential: credential)
   }
-  private func identityNamespace(_ claims: SubscriptionClaims) throws -> String {
+  func identityNamespace(_ claims: SubscriptionClaims) throws -> String {
     // Fixed data origin/protocol; no caller-controlled organization/project routing headers.
     let value = [
       Self.dataOrigin, "codex-subscription", realm, Self.clientID, claims.subject, claims.account,

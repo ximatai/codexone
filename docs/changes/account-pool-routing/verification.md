@@ -32,4 +32,11 @@ f488da5 独立 review 无需修复或阻塞，reviewer 独立运行新增四项�
 
 实际池用例中两个过期账号只刷新一个；两个请求共享一次刷新，取消一个立即归还无 intent 的执行 ticket，另一个在新凭证提交后唯一派发，另账号版本不变。明确重新授权失败及未知失败分别保留 requires_auth/auth_uncertain，不向第二账号刷新，也没有生成调用。刷新期间账号禁用或 Key 撤销后，已接受刷新照实提交新版本，但执行重新检查后拒绝，操作闭包调用为零。旧管理单飞和取消测试继续通过。provider 为无凭证合成端口实现，此处不声称真实网络/TLS/订阅验收。
 
-macOS arm64 / Swift 6.4 完整后端 96 测试及全部脚本通过；提交后 review 与同快照 Linux 待补记。HTTP/WS 接入、健康/额度仍未完成。
+macOS arm64 / Swift 6.4 完整后端 96 测试及全部脚本通过；6c33cad 独立 review 无阻塞，reviewer 四项新增回归通过；同快照 Linux amd64 / Swift 6.4 单并发完整后端 96 测试及全部脚本通过，exit 0，2 CPU/2500 MiB，容器已回收。HTTP/WS 接入、健康/额度仍未完成。
+
+
+## 2026-10-22 · 订阅数据认证装配
+
+主 Agent 实现两项回归，实际合成 OAuth socket 登录后保存/启用/解密 work，再检查临时 Bearer/account 头与脱敏表示。生产和合成 realm/namespace 互换、生产 work 送合成目标、无效 loopback 端口均拒绝；生产 origin 仅在不发网络的合成可信存储 fixture 上检查固定值。另一项覆盖 access 的账号/subject/namespace 变化、缺 ID、过期 access 拒绝及过期可信 ID 基线仍允许；验证阶段没有发送任何数据生成请求，OAuth POST 次数始终为一次。
+
+协议认证头依据 OpenAI Codex 公共 bearer auth provider 核实，未复制架构或实现；纯范围/装配验收不代表数据传输、生产 TLS 或真实订阅通过。macOS arm64 / Swift 6.4 完整后端 98 测试及全部脚本通过；提交后 review 与同快照 Linux 待补记。
