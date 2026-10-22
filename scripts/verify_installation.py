@@ -119,7 +119,7 @@ def verify_initializer(binary):
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
-def verify_runtime(image, browser=False):
+def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None):
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
@@ -213,6 +213,9 @@ def verify_runtime(image, browser=False):
             assert run(['docker', 'exec', name, 'id', '-u']).stdout.strip() == str(uid).encode()
             manifest = json.loads(run(['docker', 'exec', name, 'cat', '/opt/release.json']).stdout)
             assert manifest['revision'] == identifier['Config']['Labels']['org.opencontainers.image.revision']
+            assert manifest['schemaVersion'] == 8
+            storage_status, storage_body = request('/api/runtime/storage', token=admin)
+            assert storage_status == 200 and json.loads(storage_body)['reserveTargetBytes'] == 64 * 1024 * 1024
             licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/swift', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
             pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
             assert set(licenses) == {pin['identity'] for pin in pins}
@@ -242,7 +245,61 @@ def verify_runtime(image, browser=False):
             run([*compose, 'stop'], timeout=40)
             state = json.loads(run(['docker', 'inspect', name]).stdout)[0]
             assert state['State']['ExitCode'] == 0 and not state['State']['OOMKilled'] and state['RestartCount'] == 0
+            run([*compose, 'run', '--rm', 'gateway', '--key-status'])
+            run([*compose, 'run', '--rm', 'gateway', '--backup', '/var/lib/codexone/installation-bundle'])
+            run([*compose, 'run', '--rm', 'gateway', '--verify-backup', '/var/lib/codexone/installation-bundle'])
             database = '/var/lib/codexone/core.sqlite'
+            if previous_image or incompatible_image:
+                # Preserve the same local volume and secrets; never use schema edits for rollback.
+                manifest_path = root / '.env'
+                original_manifest = manifest_path.read_text()
+                def select_image(reference):
+                    inspected = json.loads(run(['docker', 'image', 'inspect', reference]).stdout)[0]
+                    assert inspected['Architecture'] == 'amd64' and inspected['Os'] == 'linux'
+                    manifest_path.write_text(re.sub(r'^CODEXONE_IMAGE=.*$', 'CODEXONE_IMAGE=' + inspected['Id'], original_manifest, flags=re.MULTILINE))
+                    return inspected['Id']
+                def truth():
+                    return maintenance('sqlite3', ['-readonly', database,
+                        "PRAGMA user_version; SELECT id||':'||digest||':'||metadata_json FROM managed_keys ORDER BY id; SELECT id||':'||state||':'||reserved||':'||estimated FROM attempts ORDER BY id;"]).stdout
+                # A synthetic unresolved obligation must survive compatible binaries and rejection.
+                maintenance('sqlite3', [database,
+                    "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json) VALUES('synthetic-rollback-obligation','synthetic','synthetic','synthetic','synthetic','synthetic','1','1',17,'unknown','{}');"])
+                before_switch = truth()
+                current_binary = maintenance('sha256sum', ['/usr/local/bin/codexone']).stdout.split()[0]
+                if incompatible_image:
+                    select_image(incompatible_image)
+                    rejected = run([*compose, 'run', '--rm', 'gateway'], ok=False, timeout=20)
+                    assert rejected.returncode != 0 and b'LISTENING' not in rejected.stdout + rejected.stderr
+                    assert truth() == before_switch
+                if previous_image:
+                    previous_id = select_image(previous_image)
+                    assert previous_id != identifier['Id'], 'Rollback requires a distinct actual image'
+                    assert maintenance('sha256sum', ['/usr/local/bin/codexone']).stdout.split()[0] != current_binary, 'Rollback requires a distinct binary'
+                    run([*compose, 'run', '--rm', 'gateway', '--key-status'])
+                    run([*compose, 'up', '-d'])
+                    name = run([*compose, 'ps', '-q', 'gateway']).stdout.decode().strip()
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        try:
+                            if request('/api/keys', token=admin)[0] == 200: break
+                        except AssertionError: pass
+                        time.sleep(0.2)
+                    else: raise AssertionError('Compatible rollback did not become manageable')
+                    assert truth() == before_switch
+                    run([*compose, 'stop'], timeout=40)
+                manifest_path.write_text(original_manifest)
+                run([*compose, 'up', '-d'])
+                name = run([*compose, 'ps', '-q', 'gateway']).stdout.decode().strip()
+                deadline = time.monotonic() + 25
+                while time.monotonic() < deadline:
+                    try:
+                        if request('/api/runtime/storage', token=admin)[0] == 200: break
+                    except AssertionError: pass
+                    time.sleep(0.2)
+                else: raise AssertionError('Upgrade did not restore current v8 observation')
+                assert truth() == before_switch
+                run([*compose, 'stop'], timeout=40)
+                print('PASS: actual distinct compatible v8 rollback/re-upgrade and incompatible schema rejection retain same-volume Key and unknown obligation')
             # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
             fixture_sql = "BEGIN IMMEDIATE; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
             assert maintenance('sqlite3', [database, fixture_sql]).stdout.strip() == b'ok'
@@ -309,10 +366,11 @@ def verify_runtime(image, browser=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true')
+    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image')
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
     verify_initializer(args.binary)
-    if args.image: verify_runtime(args.image, args.browser)
+    if args.previous_image or args.incompatible_image: assert args.image
+    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image)
 
 if __name__ == '__main__': main()

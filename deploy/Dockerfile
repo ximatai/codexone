@@ -27,7 +27,7 @@ COPY Tests/ Tests/
 ARG BUILD_JOBS=1
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
-      -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
+      -Xswiftc -driver-batch-size-limit -Xswiftc 16 -Xswiftc -no-whole-module-optimization \
     && mkdir /output && cp .build/release/codexone /output/codexone
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     mkdir /output/licenses && cd .build/checkouts \
@@ -37,10 +37,14 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
 FROM backend AS verification
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/*
-COPY scripts/verify_protocol.py scripts/verify_websocket.py scripts/verify_images.py scripts/verify_keys.py /build/scripts/
+COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
     && python3 scripts/verify_websocket.py --binary /output/codexone \
-    && python3 scripts/verify_images.py --binary /output/codexone
+    && python3 scripts/verify_images.py --binary /output/codexone \
+    && python3 scripts/verify_key_maintenance.py --binary /output/codexone \
+    && python3 scripts/verify_snapshot_restore.py --binary /output/codexone \
+    && python3 scripts/verify_storage_pressure.py --binary /output/codexone \
+    && python3 scripts/verify_migration_cutback.py --binary /output/codexone
 
 FROM ${SWIFT_RUNTIME_IMAGE} AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
@@ -57,7 +61,7 @@ LABEL org.opencontainers.image.title="CodexOne" \
 RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
     && test "${#SOURCE_REVISION}" = 40 \
     && case "${VERSION}" in *[!A-Za-z0-9._-]*|'') exit 1;; esac \
-    && printf '{"revision":"%s","version":"%s"}\n' "$SOURCE_REVISION" "$VERSION" > /opt/release.json
+    && printf '{"revision":"%s","version":"%s","schemaVersion":8}\n' "$SOURCE_REVISION" "$VERSION" > /opt/release.json
 COPY --from=backend /output/codexone /usr/local/bin/codexone
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE

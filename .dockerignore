@@ -24,3 +24,4 @@
 !scripts/verify_websocket.py
 !scripts/verify_images.py
 !scripts/verify_keys.py
+!scripts/*.py

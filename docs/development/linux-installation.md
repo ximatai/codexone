@@ -18,7 +18,7 @@ docker image inspect codexone:candidate --format '{{.Id}}'
 
 `--browser` 使用临时 Chrome 上下文实际操作镜像中的 SPA 和管理 API，经隔离 curl relay 转发 HTTPS 路由以检查浏览器 cookie；它不证明宿主 TLS/Nginx 配置。截图仅含合成资料，凭证控件遮罩，保存在忽略的 artifacts 目录。
 
-镜像标签和 `/opt/release.json` 保存源码 revision/version；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images 与失败路径，之后组装运行层。运行层没有编译器、Node、Python 或源码测试。
+镜像标签和 `/opt/release.json` 保存源码 revision/version，release manifest 另声明 schemaVersion=8；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；Swift release 保留 `-O`，单并发并关闭 whole-module optimization 以减少单次编译峰值（不代表运行容量）；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images、快照/主密钥/存储观测及合成迁移切回失败路径，之后组装运行层。运行层没有编译器、Node、Python 或源码测试。
 
 项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
 
@@ -63,3 +63,16 @@ python3 compose-install.py up -d
 data 卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME；普通 `python3 compose-install.py down` 保留卷。升级不得使用 `down -v` 或删除卷，数据和迁移备份均在卷内；不能用新的空卷冒充已有数据升级。迁移与在线服务共用实例锁；须先停服。普通启动拒绝不兼容旧 schema；显式迁移先产生私有一致性备份，再升级。保留迁移输出所指版本对应的主密钥和备份。新增安装目录不能替代已有安装；不要重新生成主密钥覆盖现有密文依赖。
 
 同 schema 的兼容二进制回退与恢复旧库是两回事。恢复旧快照可能丢失新区间的已执行项，不得直接复制旧库后重启接单；O03/O04 要求维护态、披露缺失区间和审计额度基线。显式旧快照恢复与审计核对使用[核心快照维护](snapshot-maintenance.md)，不能用迁移前单文件备份替代完成 bundle。迁移失败保持停止，检查私有资料并保留源库；不要自动重试覆盖或通过删除 data 绕过问题。旧服务替代、弱服务器混合容量和真实客户端兼容按 [验收定义](verification.md) 独立执行，具体交付状态只查 [STATUS](../../STATUS.md)。
+
+## 当前候选的回退演练
+
+```sh
+python3 scripts/verify_installation.py --image codexone:candidate \
+  --previous-image codexone:rollback-peer --incompatible-image codexone:old-v6 --browser
+```
+
+所有镜像须实际存在；脚本解析不可变 ID，并要求兼容 peer 的实际二进制摘要与当前版本不同。peer 应为受信、已经验证兼容当前 schema/信封/配置的旧版本，不能把同一二进制换 tag 冒充回退。安装演练在同一 Engine 本地卷保留 Key/未知责任，以真实前一 v8 启动、再升级恢复当前观测；旧 v6 必须在监听前拒绝，账本保持。它不承诺任意同 schema 版本皆兼容，亦不允许向旧 schema 改版本号。
+
+实际运维回退先暂停入口/收敛并停服，保存新库一致性 bundle 与全部解密依赖；在私有 `.env` 仅替换已验兼容的不可变镜像引用，保留原卷和原 secrets，运行 `--check-config` 后启动并检查。schema 不兼容时停止，不运行旧版本 migration 或删除新库。恢复旧快照须走维护态流程；合成旧服务转换与新增用量核对见[迁移切回](migration-cutback.md)。
+
+发行候选归档应保留精确源码 revision/归档、镜像 ID、实际二进制 SHA-256 和整体 SHA256SUMS。校验标签与真实产物，不因流水线模板存在便声明远端运行成功。
