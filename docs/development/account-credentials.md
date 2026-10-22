@@ -16,7 +16,7 @@
 
 `beginRefresh` 先验证/解密当前版本，再持久刷新 intent，返回的 work 才可交给上游。`finishVerifiedRefresh` 校验同一 namespace，按新版本加密并原子完成；提供者身份不符、密文提交失败或其他不明结果尝试写 auth_uncertain，无法落盘时保留 intent。旧 work 不能重复提交或覆盖新版本。刷新期间更改模式不取消持久责任，完成保留最新 disabled/draining 状态。
 
-SQLite v3 的账号/事件与既有执行/Key 在同一核心库，复用普通有界队列；结束刷新使用 critical 配额。普通审计容量同时计算未完成刷新的一次结束预留，另为全部账号真实禁用预留位置。普通启动在同一事务内恢复执行 unknown 和刷新 auth_uncertain；任一步失败不发布 store。迁移命令不提前恢复状态，流程见 [operations](../specs/operations.md)。
+SQLite v3 引入的账号/事件与既有执行/Key 在同一核心库；v4 增加 dispatch 准入语义屏障，复用普通有界队列；结束刷新使用 critical 配额。普通审计容量同时计算未完成刷新的一次结束预留，另为全部账号真实禁用预留位置。普通启动在同一事务内恢复执行 unknown 和刷新 auth_uncertain；任一步失败不发布 store。迁移命令不提前恢复状态，流程见 [operations](../specs/operations.md)。
 
 ## 共享刷新寿命
 
@@ -56,3 +56,10 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 控制台的“订阅账号”复用管理 session；未配置账号主密钥时提示安全配置尚未开启。初次与重新授权采用 I16 的 code-flow；新窗口完成登录后，将最终回调地址粘贴到隐藏输入，再一次性提交。前端不会自行探测或访问 localhost callback 服务，不保存浏览器本地/会话存储；取消和超时应重新开始流程。未知 mutation 或 CAS 冲突先读列表核对，不能直接重发。
 
 `ExecutionProbe --account-admin-ui` 是测试可执行文件的专用合成组装，生产 codexone 没有该参数或认证地址覆盖。它启动真实管理 API、Runtime owner、AES/SQLite 与显式合成 loopback OAuth。浏览器脚本允许访问临时管理 origin 和合成登录页，拒绝其他地址；只读取合成回调链接而不访问真实 localhost callback 端口。截图输入掩码，日志与 DB/WAL 核对无合成 token/主密钥原文；不替代真实订阅或 Desktop 验收。
+
+
+## Dispatch 准备与持久快照
+
+`AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
+
+v4 不是自动升级。已有 v1/v2/v3 须停服显式 migrate，备份保存源版本与未恢复 intent；v4 普通启动才完成 unknown/uncertain 恢复。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。

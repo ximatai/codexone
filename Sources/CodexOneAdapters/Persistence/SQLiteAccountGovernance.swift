@@ -3,6 +3,28 @@ import CodexOneCore
 import Foundation
 
 extension SQLiteExecutionStore: AccountGovernanceStore {
+  static func checkAccountAdmission(_ db: SQLiteConnection, _ command: ExecutionAdmission) throws {
+    guard let snapshot = command.accountSnapshot else {
+      // Matching managed identities cannot fall back to the legacy admission contract.
+      guard
+        try db.scalar(
+          "SELECT COUNT(*) FROM accounts WHERE id=? AND namespace=?",
+          [
+            .text(command.owner.identity), .text(command.owner.namespace),
+          ]) == 0
+      else { throw ExecutionError.invalidCommand }
+      return
+    }
+    let account = try loadAccount(db, command.owner.identity).account
+    guard account.namespace == command.owner.namespace,
+      account.revision == snapshot.revision,
+      account.credentialVersion == snapshot.credentialVersion
+    else { throw ExecutionError.conflict }
+    guard account.authorization == .ready,
+      account.mode == .enabled || (account.mode == .draining && snapshot.continuation),
+      snapshot.accessExpiresAtUnixSeconds > Int64(Date().timeIntervalSince1970)
+    else { throw ExecutionError.denied }
+  }
   public func createVerifiedAccount(id: String, namespace: String, envelope: String) async throws
     -> ManagedAccount
   {

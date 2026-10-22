@@ -39,6 +39,25 @@ public struct AccountCredentials: Sendable {
       id: id, revision: revision, namespace: namespace,
       envelope: protection.seal(credential, context: context))
   }
+  /// Preparation is not a lease: the store must atomically recheck snapshot at admission.
+  public func prepareDispatch(id: String, continuation: Bool) async throws -> AccountDispatchWork {
+    let stored = try await store.accountCredential(id: id)
+    let account = stored.account
+    guard account.authorization == .ready,
+      account.mode == .enabled || (account.mode == .draining && continuation)
+    else { throw AccountDispatchError.unavailable }
+    let context = try AccountCredentialContext(
+      identity: id, namespace: account.namespace, version: account.credentialVersion)
+    let credential = try protection.open(stored.envelope, context: context)
+    guard credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
+      throw AccountDispatchError.refreshRequired
+    }
+    return try AccountDispatchWork(
+      account: account, credential: credential,
+      snapshot: AccountDispatchSnapshot(
+        revision: account.revision, credentialVersion: account.credentialVersion,
+        accessExpiresAtUnixSeconds: credential.expiresAtUnixSeconds, continuation: continuation))
+  }
   public func beginRefresh(id: String, revision: Int64) async throws -> AccountRefreshWork {
     let old = try await store.accountCredential(id: id)
     guard old.account.revision == revision, old.account.authorization == .ready else {

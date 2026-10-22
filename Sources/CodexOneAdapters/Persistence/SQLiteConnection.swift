@@ -49,7 +49,7 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      guard version == 0 || version == 3 || (migrating && [1, 2].contains(version)) else {
+      guard version == 0 || version == 4 || (migrating && [1, 2, 3].contains(version)) else {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -59,7 +59,7 @@ final class SQLiteConnection: @unchecked Sendable {
         }
       } else {
         for (table, expected) in Self.columns + (version >= 2 ? Self.keyColumns : [])
-          + (version == 3 ? Self.accountColumns : [])
+          + (version >= 3 ? Self.accountColumns : [])
         {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -67,7 +67,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, ![1, 2, 3].contains(version) { throw ExecutionError.incompatibleSchema }
+      if migrating, ![1, 2, 3, 4].contains(version) { throw ExecutionError.incompatibleSchema }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
@@ -82,10 +82,10 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.schema)
           try exec(Self.keySchema)
           try exec(Self.accountSchema)
-          try exec("PRAGMA user_version=3")
+          try exec("PRAGMA user_version=4")
         }
       }
-      if [1, 2].contains(version) {
+      if [1, 2, 3].contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -94,8 +94,8 @@ final class SQLiteConnection: @unchecked Sendable {
         try backupBeforeUpgrade(canonical)
         try transaction {
           if version == 1 { try exec(Self.keySchema) }
-          try exec(Self.accountSchema)
-          try exec("PRAGMA user_version=3")
+          if version < 3 { try exec(Self.accountSchema) }
+          try exec("PRAGMA user_version=4")
         }
       }
       guard
@@ -256,7 +256,7 @@ final class SQLiteConnection: @unchecked Sendable {
   ]
 
   private func backupBeforeUpgrade(_ path: String) throws {
-    let destination = path + ".pre-v3-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v4-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

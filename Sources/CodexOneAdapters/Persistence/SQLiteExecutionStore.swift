@@ -128,6 +128,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
           throw ExecutionError.capacity
         }
+        try Self.checkAccountAdmission(db, command)
         try Self.checkKeyAdmission(db, command)
         // Lifetime unresolved/active exposure survives window rotation. Budget/request totals belong to the admission window.
         for (scope, parameters) in [
@@ -333,6 +334,12 @@ private func validate(_ value: ExecutionAdmission) throws {
       value.attempt, value.owner.principal, value.owner.key, value.owner.namespace,
       value.owner.identity, value.window, value.policyVersion, value.pricingVersion,
     ] + (value.requestID.map { [$0] } ?? []) + (value.model.map { [$0] } ?? []))
+  if let account = value.accountSnapshot {
+    _ = try AccountDispatchSnapshot(
+      revision: account.revision, credentialVersion: account.credentialVersion,
+      accessExpiresAtUnixSeconds: account.accessExpiresAtUnixSeconds,
+      continuation: account.continuation)
+  }
   guard (0...1_000_000_000_000).contains(value.reservedMicros) else {
     throw ExecutionError.invalidCommand
   }

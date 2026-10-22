@@ -33,13 +33,16 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   /// Missing in older admission JSON; interpreted as generation without rewriting history.
   public let model: String?
   public let keyRevision: Int64?
+  public let accountSnapshot: AccountDispatchSnapshot?
   public let mode: ExecutionMode?
   public var executionMode: ExecutionMode { mode ?? .generation }
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
-    mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil
+    mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil,
+    accountSnapshot: AccountDispatchSnapshot? = nil
   ) {
+    self.accountSnapshot = accountSnapshot
     self.attempt = attempt
     self.owner = owner
     self.window = window

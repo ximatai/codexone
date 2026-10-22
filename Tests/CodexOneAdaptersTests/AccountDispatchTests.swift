@@ -1,0 +1,200 @@
+import CSQLite
+import CodexOneCore
+import Foundation
+import Testing
+
+@testable import CodexOneAdapters
+
+private struct DispatchFixture {
+  let path: String
+  let store: SQLiteExecutionStore
+  let app: AccountCredentials
+  let account: ManagedAccount
+  static func make(mode: AccountMode = .enabled, expires: Int64 = 2_000_000_000) async throws
+    -> Self
+  {
+    let path = try temporaryExecutionPath()
+    let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    let app = AccountCredentials(
+      store: store,
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)))
+    var account = try await app.importVerified(
+      id: "managed-account", namespace: "synthetic/managed-account",
+      credential: AccountCredential(
+        accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: nil,
+        expiresAtUnixSeconds: expires))
+    if mode != .disabled {
+      account = try await store.setAccountMode(
+        id: account.id, revision: account.revision, mode: mode)
+    }
+    return Self(path: path, store: store, app: app, account: account)
+  }
+  func close() async {
+    await store.close()
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+}
+private func dispatchAdmission(
+  _ id: String, work: AccountDispatchWork, snapshot: AccountDispatchSnapshot? = nil,
+  keyRevision: Int64? = nil
+) -> ExecutionAdmission {
+  .init(
+    attempt: id,
+    owner: .init(
+      principal: "p", key: "key", namespace: work.account.namespace, identity: work.account.id),
+    window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
+    keyRevision: keyRevision, model: "synthetic-text", accountSnapshot: snapshot ?? work.snapshot)
+}
+
+@Test func preparedDispatchCannotSurviveDisableRefreshReauthorizationOrExpiry() async throws {
+  for change in ["disable", "refresh", "reauthorize", "expiry"] {
+    let f = try await DispatchFixture.make(
+      expires: change == "expiry" ? Int64(Date().timeIntervalSince1970) + 2 : 2_000_000_000)
+    let work = try await f.app.prepareDispatch(id: f.account.id, continuation: false)
+    let snapshot = work.snapshot
+    switch change {
+    case "disable":
+      _ = try await f.store.setAccountMode(
+        id: f.account.id, revision: f.account.revision, mode: .disabled)
+    case "refresh":
+      _ = try await f.app.beginRefresh(id: f.account.id, revision: f.account.revision)
+    case "reauthorize":
+      _ = try await f.app.reauthorizeVerified(
+        id: f.account.id, revision: f.account.revision, namespace: f.account.namespace,
+        credential: AccountCredential(
+          accessToken: "synthetic-new-access", refreshToken: "synthetic-new-refresh", idToken: nil,
+          expiresAtUnixSeconds: 2_000_000_000))
+    default:
+      try await Task.sleep(for: .milliseconds(2100))
+    }
+    await #expect(throws: change == "expiry" ? ExecutionError.denied : ExecutionError.conflict) {
+      try await f.store.admit(dispatchAdmission("stale", work: work, snapshot: snapshot))
+    }
+    await #expect(throws: ExecutionError.unknownAttempt) {
+      try await f.store.snapshot(attempt: "stale")
+    }
+    await f.close()
+  }
+}
+
+@Test func managedDispatchRequiresSnapshotReadyModeAffinityAndCurrentAccess() async throws {
+  for mode: AccountMode in [.enabled, .draining, .disabled] {
+    let f = try await DispatchFixture.make(mode: mode)
+    if mode != .enabled {
+      await #expect(throws: AccountDispatchError.unavailable) {
+        try await f.app.prepareDispatch(id: f.account.id, continuation: false)
+      }
+    }
+    if mode == .disabled {
+      await #expect(throws: AccountDispatchError.unavailable) {
+        try await f.app.prepareDispatch(id: f.account.id, continuation: true)
+      }
+    } else {
+      let work = try await f.app.prepareDispatch(id: f.account.id, continuation: mode == .draining)
+      #expect(String(reflecting: work) == "AccountDispatchWork(redacted)")
+      let valid = dispatchAdmission("valid", work: work)
+      let unguarded = ExecutionAdmission(
+        attempt: "unguarded", owner: valid.owner, window: "w", policyVersion: "1",
+        pricingVersion: "1",
+        reservedMicros: 1)
+      await #expect(throws: ExecutionError.invalidCommand) { try await f.store.admit(unguarded) }
+      if mode == .draining {
+        let unbound = try AccountDispatchSnapshot(
+          revision: work.snapshot.revision, credentialVersion: work.snapshot.credentialVersion,
+          accessExpiresAtUnixSeconds: work.snapshot.accessExpiresAtUnixSeconds, continuation: false)
+        await #expect(throws: ExecutionError.denied) {
+          try await f.store.admit(dispatchAdmission("unbound", work: work, snapshot: unbound))
+        }
+      }
+      try await f.store.admit(valid)
+      let persisted = try await f.store.snapshot(attempt: "valid")
+      #expect(persisted.admission.accountSnapshot == work.snapshot)
+      let bytes = try JSONEncoder().encode(persisted)
+      #expect(!bytes.contains(Data(work.credential.accessToken.utf8)))
+      #expect(!bytes.contains(Data(work.credential.refreshToken.utf8)))
+    }
+    await f.close()
+  }
+  let expired = try await DispatchFixture.make(expires: 1)
+  await #expect(throws: AccountDispatchError.refreshRequired) {
+    try await expired.app.prepareDispatch(id: expired.account.id, continuation: false)
+  }
+  #expect(try await expired.store.listAccounts().first?.authorization == .ready)
+  await expired.close()
+}
+
+@Test func managedAccountAndKeySnapshotsAreCheckedInOneAdmissionTransaction() async throws {
+  let f = try await DispatchFixture.make()
+  let key = try await f.store.createKey(
+    id: "key", principal: "p", digest: String(repeating: "a", count: 64),
+    policy: KeyPolicy(models: ["synthetic-text"], limits: syntheticLimits))
+  let work = try await f.app.prepareDispatch(id: f.account.id, continuation: false)
+  let disabled = try await f.store.updateKey(
+    id: key.id, revision: key.revision, enabled: false, policy: key.policy)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await f.store.admit(dispatchAdmission("revoked-key", work: work, keyRevision: key.revision))
+  }
+  await #expect(throws: ExecutionError.unknownAttempt) {
+    try await f.store.snapshot(attempt: "revoked-key")
+  }
+  let enabled = try await f.store.updateKey(
+    id: disabled.id, revision: disabled.revision, enabled: true, policy: disabled.policy)
+  try await f.store.admit(dispatchAdmission("current", work: work, keyRevision: enabled.revision))
+  #expect(try await f.store.snapshot(attempt: "current").admission.accountSnapshot == work.snapshot)
+  _ = try await f.store.setAccountMode(
+    id: f.account.id, revision: f.account.revision, mode: .disabled)
+  // Ordinary disable prevents new work, but cannot erase responsibility for an admitted execution.
+  try await f.store.bind(
+    attempt: "current", object: .init(type: "response", rawID: "synthetic-response"))
+  try await f.store.finalize(
+    attempt: "current",
+    evidence: .init(
+      revision: 1, inputTokens: 1, outputTokens: 1, cachedTokens: 0, images: 0,
+      estimatedMicros: 1, completeness: .complete))
+  #expect(try await f.store.snapshot(attempt: "current").state == .settled)
+
+  await f.close()
+}
+
+@Test func v3ExplicitMigrationBacksUpPendingTruthBeforeV4StartupRecovery() async throws {
+  let f = try await DispatchFixture.make()
+  try await f.store.admit(admission("historical"))
+  _ = try await f.app.beginRefresh(id: f.account.id, revision: f.account.revision)
+  await f.store.close()
+  try rawSQL(f.path, "PRAGMA user_version=3")
+  await #expect(throws: ExecutionError.incompatibleSchema) {
+    try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  }
+  try await SQLiteExecutionStore.migrate(path: f.path)
+  let directory = (f.path as NSString).deletingLastPathComponent
+  let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
+    $0.contains(".pre-v4-") && $0.hasSuffix(".sqlite")
+  }
+  #expect(backups.count == 1)
+  var db: OpaquePointer?
+  #expect(sqlite3_open(directory + "/" + backups[0], &db) == SQLITE_OK)
+  var statement: OpaquePointer?
+  #expect(
+    sqlite3_prepare_v2(
+      db,
+      "SELECT (SELECT user_version FROM pragma_user_version), (SELECT state FROM attempts WHERE id='historical'), (SELECT authorization FROM accounts WHERE id='managed-account')",
+      -1, &statement, nil) == SQLITE_OK)
+  #expect(sqlite3_step(statement) == SQLITE_ROW)
+  #expect(sqlite3_column_int64(statement, 0) == 3)
+  #expect(String(cString: sqlite3_column_text(statement, 1)) == "intent")
+  #expect(String(cString: sqlite3_column_text(statement, 2)) == "refreshing")
+  sqlite3_finalize(statement)
+  sqlite3_close(db)
+  let reopened = try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  #expect(try await reopened.snapshot(attempt: "historical").state == .unknown)
+  #expect(try await reopened.snapshot(attempt: "historical").admission.accountSnapshot == nil)
+  #expect(
+    try await reopened.accountCredential(id: f.account.id).account.authorization == .authUncertain)
+  await reopened.close()
+  try await SQLiteExecutionStore.migrate(path: f.path)
+  #expect(
+    try FileManager.default.contentsOfDirectory(atPath: directory).filter {
+      $0.contains(".pre-v4-") && $0.hasSuffix(".sqlite")
+    }.count == 1)
+  await f.close()
+}
