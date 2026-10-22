@@ -105,3 +105,5 @@ Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备�
 数据认证只接收 Core 从可信密文准备的 work，核对 ID 基线与当前 access 的 subject/account、固定 namespace、快照版本/revision/实际访问期限。ID 基线可以过期，access 不可过期；没有 ID、范围变化或不一致均拒绝。只产生 Bearer 与 chatgpt-account-id，不从下游同名头决定提供者账号，不提供组织/项目覆盖。这是可信保存值的范围复核，不是任意 JWT 的签名验证或上传入口。
 
 生产数据 origin 固定，须匹配生产认证 realm；显式合成目标仅允许 loopback 有效端口并匹配合成 realm。生产凭证/namespace 不允许转发至合成目标，合成凭证也不允许发往生产目标。认证头驻留内存、description/debugDescription 脱敏，不进入编码 DTO、持久库或诊断。
+
+池 readiness 在本地至多逐个检查 64 个候选的当前模式/授权状态与 AEAD 可解密性；不发网络、不缓存明文、不改账号状态。错误主密钥或全部候选解密失败时不得就绪；结构完整但 AEAD 校验失败的单个候选可跳过，其他合格账号仍可派发，关键存储故障仍停止执行。合法可解密的过期 access 可等待已就绪的刷新 owner，不因过期本身变为 requires_auth。

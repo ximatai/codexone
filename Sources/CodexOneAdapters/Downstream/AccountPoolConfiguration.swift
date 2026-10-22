@@ -52,8 +52,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    let effective = models.filter { key.policy.models.contains($0.id) }.sorted { $0.id < $1.id }
-    let prices = effective.map {
+    let effective = models.filter { key.policy.models.contains($0.id) }
+    let prices = effective.sorted { $0.id < $1.id }.map {
       JSONValue.object([
         "id": .string($0.id), "inputMicrosPerMillion": .number(Decimal($0.inputMicrosPerMillion)),
         "outputMicrosPerMillion": .number(Decimal($0.outputMicrosPerMillion)),

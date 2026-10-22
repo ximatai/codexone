@@ -64,14 +64,9 @@ public struct ResponsesDataService: Service {
     let accounts: Bool
     switch source {
     case .single: accounts = true
-    case .pool(_, _, let refresher, let provider, _):
-      if provider.isAccepting && refresher.isAccepting,
-        let routing = store as? any AccountRoutingStore,
-        let current = try? await routing.listAccounts(after: nil)
-      {
-        accounts = current.contains {
-          $0.mode == .enabled && ($0.authorization == .ready || $0.authorization == .refreshing)
-        }
+    case .pool(_, let credentials, let refresher, let provider, _):
+      if provider.isAccepting && refresher.isAccepting {
+        accounts = (try? await credentials.hasLocallyRoutableAccount()) == true
       } else {
         accounts = false
       }

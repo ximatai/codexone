@@ -48,7 +48,10 @@ public struct AccountPoolGateway: Sendable {
             refreshable.append(account)
           } catch AccountDispatchError
             .unavailable
-          { continue }
+          { continue } catch ExecutionError.invalidCommand {
+            // Isolate a credential that fails local decryption; DB failures still abort the pool.
+            continue
+          }
         }
         if works.isEmpty, let account = refreshable.sorted(by: { $0.id < $1.id }).first,
           let refresher

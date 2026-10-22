@@ -42,3 +42,40 @@ import Testing
     }
   }
 }
+
+@Test func poolCatalogOrderAndGuidanceChangePolicyWithoutChangingPricing() throws {
+  let ids = ["synthetic-a", "synthetic-b"]
+  let key = ManagedKey(
+    id: "key", principal: "p", revision: 1, enabled: true,
+    policy: try KeyPolicy(models: ids, limits: syntheticLimits), createdAtUnixSeconds: 1)
+  func configuration(_ ids: [String], guidance: String = "Synthetic approved guidance") throws
+    -> AccountPoolConfiguration
+  {
+    try JSONDecoder().decode(
+      AccountPoolConfiguration.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "reservedMicros": 1,
+        "models": ids.map {
+          [
+            "id": $0, "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1,
+            "catalog": ["baseInstructions": guidance],
+          ]
+        },
+      ]))
+  }
+  let first = try configuration(ids)
+  let reversed = try configuration(ids.reversed())
+  let changed = try configuration(ids, guidance: "Changed synthetic guidance")
+  let originalPolicy = try first.policy(key: key)
+  for alternative in [reversed, changed] {
+    let policy = try alternative.policy(key: key)
+    #expect(policy.policyVersion != originalPolicy.policyVersion)
+    #expect(policy.pricingVersion == originalPolicy.pricingVersion)
+    #expect(policy.models == originalPolicy.models)
+  }
+  let originalCatalog = try modelCatalog(first.models, requireCodexProfile: true)
+  let reversedCatalog = try modelCatalog(reversed.models, requireCodexProfile: true)
+  #expect(originalCatalog["data"]?.array?.first?["id"]?.string == ids[0])
+  #expect(reversedCatalog["data"]?.array?.first?["id"]?.string == ids[1])
+  #expect(try configuration(ids).policy(key: key).policyVersion == originalPolicy.policyVersion)
+}

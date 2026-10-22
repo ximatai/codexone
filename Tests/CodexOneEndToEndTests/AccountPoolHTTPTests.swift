@@ -128,6 +128,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, @unchecked Sendable 
 }
 private struct PoolHTTPHarness {
   let oauth: OAuthHarness
+  let store: SQLiteExecutionStore
   let listener: any Channel
   let state: PoolHTTPState
   let finalizer: ExecutionFinalizer
@@ -136,7 +137,7 @@ private struct PoolHTTPHarness {
   let alice: String
   let bob: String
   var calls: [PoolHTTPState.Call] { state.value.withLock { $0.calls } }
-  static func open(_ oauth: OAuthHarness) async throws -> Self {
+  static func open(_ oauth: OAuthHarness, wrongMaster: Bool = false) async throws -> Self {
     let state = PoolHTTPState()
     for id in ["a", "b"] {
       oauth.server.set(
@@ -167,11 +168,25 @@ private struct PoolHTTPHarness {
       from: Data(
         #"{"models":[{"id":"synthetic-text","inputMicrosPerMillion":1000000,"outputMicrosPerMillion":1000000}],"reservedMicros":1,"executionTimeoutSeconds":5}"#
           .utf8))
-    let finalizer = try ExecutionFinalizer(store: oauth.store)
+    let store: SQLiteExecutionStore
+    if wrongMaster {
+      await oauth.store.close()
+      store = try await SQLiteExecutionStore.open(
+        path: oauth.root.appendingPathComponent("core.sqlite").path, limits: limits)
+    } else {
+      store = oauth.store
+    }
+    let finalizer = try ExecutionFinalizer(store: store)
     let bound = Mutex(0)
+    let credentials =
+      wrongMaster
+      ? AccountCredentials(
+        store: store,
+        protection: try AccountCredentialCipher(hexKey: String(repeating: "7b", count: 32)))
+      : oauth.app
     let service = try ResponsesDataService(
-      group: oauth.group, port: 0, configuration: configuration, store: oauth.store,
-      finalizer: finalizer, credentials: oauth.app, refresher: oauth.supervisor,
+      group: oauth.group, port: 0, configuration: configuration, store: store,
+      finalizer: finalizer, credentials: credentials, refresher: oauth.supervisor,
       provider: oauth.provider, target: .syntheticLoopback(port: listener.localAddress!.port!)
     ) { port in bound.withLock { $0 = port } }
     let owner = Task {
@@ -179,7 +194,8 @@ private struct PoolHTTPHarness {
     }
     try await awaitOAuth { bound.withLock { $0 > 0 } && finalizer.isAccepting }
     return Self(
-      oauth: oauth, listener: listener, state: state, finalizer: finalizer, owner: owner,
+      oauth: oauth, store: store, listener: listener, state: state, finalizer: finalizer,
+      owner: owner,
       port: bound.withLock { $0 }, alice: alice, bob: bob)
   }
   func request(
@@ -202,9 +218,17 @@ private struct PoolHTTPHarness {
     let (data, response) = try await session.data(for: request)
     return ((response as! HTTPURLResponse).statusCode, data)
   }
+  func readiness() async throws -> (Int, Data) {
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let (body, response) = try await session.data(
+      from: URL(string: "http://127.0.0.1:\(port)/health/ready")!)
+    return ((response as! HTTPURLResponse).statusCode, body)
+  }
   func close() async {
     owner.cancel()
     _ = await owner.result
+    if store !== oauth.store { await store.close() }
     for channel in state.value.withLock({ Array($0.channels.values) }) {
       try? await channel.close().get()
     }
@@ -325,7 +349,8 @@ func poolHTTPDisableAndKeyRevocationRefuseContinuationWithoutSwitching() async t
     #expect(h.calls.count == 2 && h.calls.last?.account == selected)
     #expect(h.oauth.server.counts.calls == 3 && h.oauth.server.counts.invalid == 0)
     #expect(h.state.value.withLock { $0.invalid } == 0)
-    #expect(try await h.oauth.store.accountCredential(id: accountID).account.credentialVersion == 3)
+    #expect(
+      try await h.oauth.store.accountCredential(id: accountID).account.credentialVersion == 3)
   }
 }
 
@@ -345,7 +370,8 @@ func poolHTTPDownstreamCancellationReleasesExecutionAndLeavesUnknown() async thr
   }
 }
 
-@Test(.timeLimit(.minutes(1))) func poolHTTPPartialUsageRemainsUnknownWithoutDroppingObservedCosts()
+@Test(.timeLimit(.minutes(1)))
+func poolHTTPPartialUsageRemainsUnknownWithoutDroppingObservedCosts()
   async throws
 {
   try await withPoolHTTP { h in
@@ -356,5 +382,57 @@ func poolHTTPDownstreamCancellationReleasesExecutionAndLeavesUnknown() async thr
       try db.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown' AND estimated=2")
     }
     #expect(unknown == 1 && h.calls.count == 1)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolHTTPReadinessRejectsWrongMasterAndCorruptCiphertextWithoutChangingState() async throws {
+  try await withOAuth { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, wrongMaster: true)
+    do {
+      #expect(try await h.readiness().0 == 503)
+      #expect(try await h.request().0 == 503)
+      #expect(h.calls.isEmpty && oauth.server.counts.calls == 2)
+      #expect(try await h.store.listAccounts().allSatisfy { $0.authorization == .ready })
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
+  }
+  try await withPoolHTTP { h in
+    #expect(try await h.readiness().0 == 200)
+    for id in ["a", "b"] {
+      let stored = try await h.oauth.store.accountCredential(id: id)
+      let parts = stored.envelope.split(separator: ".")
+      var combined = try #require(Data(base64Encoded: String(parts[2])))
+      combined[0] ^= 1
+      let tampered = parts[0] + "." + parts[1] + "." + combined.base64EncodedString()
+      try await h.oauth.store.perform {
+        try $0.write(
+          "UPDATE accounts SET sealed_credential=? WHERE id=?", [.text(tampered), .text(id)])
+      }
+      #expect(try await h.readiness().0 == (id == "a" ? 200 : 503))
+      #expect(try await h.request().0 == (id == "a" ? 200 : 503))
+    }
+    #expect(h.calls.count == 1 && h.calls[0].account == "synthetic-b")
+    #expect(h.oauth.server.counts.calls == 2)
+    #expect(try await h.oauth.store.listAccounts().allSatisfy { $0.authorization == .ready })
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolHTTPReadinessAllowsDecryptableExpiredCredentialsForOwnedRefresh() async throws {
+  try await withPoolHTTP { h in
+    for account in try await h.oauth.store.listAccounts() {
+      let work = try await h.oauth.app.prepareDispatch(id: account.id, continuation: false)
+      _ = try await h.oauth.app.reauthorizeVerified(
+        id: account.id, revision: account.revision, namespace: account.namespace,
+        credential: AccountCredential(
+          accessToken: work.credential.accessToken, refreshToken: work.credential.refreshToken,
+          idToken: work.credential.idToken, expiresAtUnixSeconds: 1))
+    }
+    #expect(try await h.readiness().0 == 200)
+    #expect(h.calls.isEmpty && h.oauth.server.counts.calls == 2)
   }
 }

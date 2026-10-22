@@ -353,8 +353,13 @@ def main():
                 pending.sendall(b'GET /v1/responses HTTP/1.1\r\n')
                 process.terminate()
                 assert process.wait(timeout=8) == 0
-                assert pending.recv(1) == b''
-                pending.close()
+                try:
+                    assert pending.recv(1) == b''
+                except ConnectionResetError:
+                    # A close with an unread partial HTTP head may surface as TCP RST.
+                    pass
+                finally:
+                    pending.close()
                 output = process.stdout.read()
                 assert TOKEN.encode() not in output and temporary.encode() not in output
                 print('PASS: silent downstream close cancels provider; shutdown owns pending negotiations and releases sockets')

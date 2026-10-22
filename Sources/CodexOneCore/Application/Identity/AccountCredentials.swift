@@ -58,6 +58,29 @@ public struct AccountCredentials: Sendable {
         revision: account.revision, credentialVersion: account.credentialVersion,
         accessExpiresAtUnixSeconds: credential.expiresAtUnixSeconds, continuation: continuation))
   }
+  /// Bounded, local readiness evidence only. Expired access may still use the refresh owner.
+  public func hasLocallyRoutableAccount() async throws -> Bool {
+    let accounts = try await store.listAccounts(after: nil)
+    guard accounts.count <= 64 else { throw ExecutionError.capacity }
+    for account in accounts {
+      try Task.checkCancellation()
+      guard account.mode == .enabled,
+        account.authorization == .ready || account.authorization == .refreshing
+      else { continue }
+      do {
+        let stored = try await store.accountCredential(id: account.id)
+        guard stored.account.mode == .enabled,
+          stored.account.authorization == .ready || stored.account.authorization == .refreshing
+        else { continue }
+        let context = try AccountCredentialContext(
+          identity: stored.account.id,
+          namespace: stored.account.namespace, version: stored.account.credentialVersion)
+        _ = try protection.open(stored.envelope, context: context)
+        return true
+      } catch { continue }
+    }
+    return false
+  }
   public func beginRefresh(id: String, revision: Int64) async throws -> AccountRefreshWork {
     let old = try await store.accountCredential(id: id)
     guard old.account.revision == revision, old.account.authorization == .ready else {

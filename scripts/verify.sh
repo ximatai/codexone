@@ -7,7 +7,7 @@ backend() {
   python3 scripts/check_architecture.py
   swift format lint --strict --recursive Sources Tests Package.swift
   swift build -j "${CODEXONE_BUILD_JOBS:-4}"
-  swift test -j "${CODEXONE_BUILD_JOBS:-4}"
+  swift test --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
   local backend_bin_dir
   backend_bin_dir="$(swift build --show-bin-path)"
   python3 scripts/verify_process.py --binary "$backend_bin_dir/codexone"
