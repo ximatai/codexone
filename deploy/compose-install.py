@@ -25,6 +25,9 @@ def main():
         # Compose run/exec stop parsing flags at the service; its payload can
         # legitimately contain e.g. find's -print or another program's -p.
         selectors = arguments
+        if arguments and arguments[0] == 'logs':
+            # logs owns -f as --follow; --file remains a forbidden selector.
+            forbidden = tuple(flag for flag in forbidden if flag != '-f')
         if arguments and arguments[0] in ('run', 'exec'):
             for index, argument in enumerate(arguments[1:], 1):
                 if argument in ('gateway', 'init-data'):

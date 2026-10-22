@@ -79,6 +79,8 @@ def verify_initializer(binary):
             os.environ.update(pollution)
             launcher = ['python3', str(target / 'compose-install.py')]
             output = run([*launcher, 'config', '--format', 'json']).stdout
+            # No containers exist: legitimate follow syntax must reach Compose.
+            run([*launcher, 'logs', '-f', 'gateway'])
             for selector in ('--file=synthetic.yaml', '-fsynthetic.yaml', '--project-name', '-psynthetic'):
                 assert run([*launcher, 'config', selector], ok=False).returncode != 0
         finally:
