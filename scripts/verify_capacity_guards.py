@@ -42,7 +42,7 @@ def main():
                     original(command,ok,timeout);injected=True
                     raise subprocess.TimeoutExpired('synthetic-volume-create',timeout)
             if stage=='initializer' and command[:2]==['docker','run'] and 'CHOWN' in command:
-                # Leave an actual initialized-owner container running after losing the CLI result.
+                # Leave an actual owner-labelled initializer running after losing the CLI result.
                 held=command[:2]+['-d']+command[2:]
                 held[-1]='sleep 60'
                 original(held,ok,timeout);injected=True

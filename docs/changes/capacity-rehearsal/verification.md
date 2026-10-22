@@ -51,3 +51,5 @@ cgroup累计CPU约296.2/309.1秒，throttle累计约61.5/69.2秒；受1 CPU配�
 `python3 scripts/verify_capacity_guards.py --image codexone:v8-candidate --report artifacts/capacity-600/report.json`：两份真实长样本有实际recovery证据；删除回稳样本、时间陈旧、关键队列未清空均拒绝；真实Engine创建成功后注入volume CLI超时和仍运行initializer结果丢失，本次容器/卷全部回收。失败路径通过，不需重跑未改工作负载的600秒测量。
 
 修复后 `--duration 10 --transport both --output artifacts/capacity-review-regression` 完整通过：两配置的独立断流主体各恰有2个unknown/2单位预留/0完整证据，其他四主体派发项全settled；最新回稳DTO/队列/FD、无OOM/swap、正常停止和秘密日志检查通过。该短程是责任/失败保护回归，不替代600秒容量时长。
+
+两名subagent只读复审确认三项P2关闭，无新增发现。跨平台范围为macOS宿主驱动与实际Linux amd64候选/worker，架构检查通过；Swift/前端业务源码未改，沿用上一阶段175项Swift及前端完整/实际UI证据，不重复全集。文档检查、Python语法与提交隐私检查通过；无真实调用/推送/部署，阶段资源已清理。完整O14未完成。
