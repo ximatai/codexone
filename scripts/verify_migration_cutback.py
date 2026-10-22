@@ -66,7 +66,7 @@ def verify(binary):
         old = f.root / 'synthetic-legacy.sqlite'
         with database(old) as db:
             db.executescript('CREATE TABLE baseline(requests INTEGER,spent INTEGER,unknown_count INTEGER,unknown_micros INTEGER);'
-                             'INSERT INTO baseline VALUES(2,12,1,7);'
+                             'INSERT INTO baseline VALUES(97,980,1,7);'
                              'CREATE TABLE receipts(id INTEGER PRIMARY KEY,kind TEXT);'
                              "CREATE UNIQUE INDEX unique_cutback ON receipts(kind) WHERE kind='cutback-new-interval-reconciled';")
         old.chmod(0o600)
@@ -178,6 +178,9 @@ def verify(binary):
                 assert call(proxy.server_port, fresh, prompt='abrupt')[0] == 200
                 latest(f.root / 'state/core.sqlite', 'unknown')
                 assert f.provider.calls == before + 2
+                assert key['limits'] == limits
+                assert call(proxy.server_port, fresh)[0] == 429
+                assert f.provider.calls == before + 2
                 assert hashlib.sha256(old.read_bytes()).digest() == old_hash
                 # No old object ownership is imported and no new provider token is shared.
                 with database(f.root / 'state/core.sqlite') as db:
@@ -209,7 +212,7 @@ def verify(binary):
                 legacy_accepting.set()
                 route.switch(legacy.server_port)
                 assert call(proxy.server_port, fresh)[0] == 401
-                assert call(proxy.server_port, OLD_TOKEN)[0] == 200
+                assert call(proxy.server_port, OLD_TOKEN)[0] == 429
                 assert f.provider.calls == before + 2
                 with database(f.root / 'state/core.sqlite') as db:
                     assert db.execute('SELECT state,reserved,estimated FROM attempts ORDER BY rowid').fetchall() == rows

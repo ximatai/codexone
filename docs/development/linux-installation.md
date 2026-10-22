@@ -71,7 +71,7 @@ python3 scripts/verify_installation.py --image codexone:candidate \
   --previous-image codexone:rollback-peer --incompatible-image codexone:old-v6 --browser
 ```
 
-所有镜像须实际存在；脚本解析不可变 ID，并要求兼容 peer 的实际二进制摘要与当前版本不同。peer 应为受信、已经验证兼容当前 schema/信封/配置的旧版本，不能把同一二进制换 tag 冒充回退。安装演练在同一 Engine 本地卷保留 Key/未知责任，以真实前一 v8 启动、再升级恢复当前观测；旧 v6 必须在监听前拒绝，账本保持。它不承诺任意同 schema 版本皆兼容，亦不允许向旧 schema 改版本号。
+所有镜像须实际存在；脚本解析不可变 ID，并要求兼容 peer 的实际二进制摘要与当前版本不同。CI 的固定 v8 peer 保留旧 revision 的产品源码，使用当前 Package.swift 编译配置与 Dockerfile；本机 peer 同样只对旧构建 manifest 加入 Adapters 分文件 release 设置，并明确记录。peer 应为受信、已经验证兼容当前 schema/信封/配置的旧版本，不能把同一二进制换 tag 冒充回退。安装演练在同一 Engine 本地卷保留 Key/未知责任，以真实前一 v8 启动、再升级恢复当前观测；旧 v6 必须在监听前拒绝，账本保持。它不承诺任意同 schema 版本皆兼容，亦不允许向旧 schema 改版本号。
 
 实际运维回退先暂停入口/收敛并停服，保存新库一致性 bundle 与全部解密依赖；在私有 `.env` 仅替换已验兼容的不可变镜像引用，保留原卷和原 secrets，运行 `--check-config` 后启动并检查。schema 不兼容时停止，不运行旧版本 migration 或删除新库。恢复旧快照须走维护态流程；合成旧服务转换与新增用量核对见[迁移切回](migration-cutback.md)。
 

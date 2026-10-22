@@ -34,6 +34,8 @@ jobs:
           git fetch --no-tags origin "$baseline"
           mkdir "$RUNNER_TEMP/rollback-source"
           git archive "$baseline" | tar -x -C "$RUNNER_TEMP/rollback-source"
+          # Product sources remain at the old revision; use the bounded current build manifest.
+          cp Package.swift "$RUNNER_TEMP/rollback-source/Package.swift"
           docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$baseline" \
             -f deploy/Dockerfile -t codexone:rollback-peer "$RUNNER_TEMP/rollback-source"
       - name: Verify actual private installation and compatible rollback
