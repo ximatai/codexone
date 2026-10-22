@@ -5,7 +5,7 @@
 - [x] 有效 access 的 Core 池用例、原子归属交集/最少在途选择与有界 finalizer 所有权。
 - [x] 单飞刷新衔接：管理 revision 与路由 credential version 区分、等待者取消、失败不轮流刷新。
 - [x] 订阅数据认证的范围复核与生产/合成目标隔离。
-- [ ] HTTP JSON/SSE/压缩生产装配与真实合成 socket 验收。
+- [x] HTTP JSON/SSE/压缩生产装配与真实合成 socket 验收。
 - [ ] WS 身份固定与 HTTP→WS 桥接。
 - [ ] 隔离、容量、禁用、取消、未知执行和无重放的真实 socket 验收。
 - [ ] 健康/额度观测、按 Key 统计与管理解释。
