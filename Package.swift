@@ -37,6 +37,10 @@ let package = Package(
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOExtras", package: "swift-nio-extras"),
         .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+      ],
+      // Keep optimized per-file compilation bounded for the large adapter target.
+      swiftSettings: [
+        .unsafeFlags(["-no-whole-module-optimization"], .when(configuration: .release))
       ]),
     .target(
       name: "CodexOneRuntime",
