@@ -1,0 +1,24 @@
+# Linux Docker Engine only: loopback listeners stay on the host's loopback network.
+services:
+  gateway:
+    image: ${CODEXONE_IMAGE:?Set an immutable candidate image reference}
+    platform: linux/amd64
+    network_mode: host
+    user: "${CODEXONE_UID:?Run init-install.py}:${CODEXONE_GID:?Run init-install.py}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 768m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    volumes:
+      - ./data:/var/lib/codexone:rw
+      - ./secrets:/run/codexone:ro
+    environment:
+      CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json
+      CODEXONE_ACCOUNT_MASTER_KEY_FILE: /run/codexone/master
+      CODEXONE_ADMIN_TOKEN_FILE: /run/codexone/admin
+      CODEXONE_ADMIN_PUBLIC_ORIGIN: ${CODEXONE_ADMIN_PUBLIC_ORIGIN:?Set the exact HTTPS management origin}
+    restart: "no"
+    stop_grace_period: 30s

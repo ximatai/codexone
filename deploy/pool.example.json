@@ -1,0 +1,10 @@
+{
+  "models": [{
+    "id": "configure-model-before-use",
+    "inputMicrosPerMillion": 0,
+    "outputMicrosPerMillion": 0
+  }],
+  "reservedMicros": 1000000,
+  "executionTimeoutSeconds": 120,
+  "upstreamTransport": "http"
+}

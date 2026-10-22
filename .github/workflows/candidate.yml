@@ -1,0 +1,35 @@
+name: Linux candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build from locked source
+        run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -f deploy/Dockerfile -t codexone:candidate .
+      - name: Verify actual private installation
+        run: python3 scripts/verify_installation.py --image codexone:candidate
+      - name: Export candidate and checksum
+        run: |
+          mkdir artifacts
+          git archive --format=tar.gz --output=artifacts/source.tar.gz HEAD
+          docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
+          printf '%s\n' "$GITHUB_SHA" > artifacts/source-revision.txt
+          docker save codexone:candidate | gzip > artifacts/codexone-linux-amd64.tar.gz
+          cd artifacts
+          sha256sum codexone-linux-amd64.tar.gz source.tar.gz image-id.txt source-revision.txt > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codexone-linux-amd64-${{ github.sha }}
+          path: artifacts/
+          retention-days: 7
