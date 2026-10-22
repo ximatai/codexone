@@ -46,7 +46,9 @@ public struct AccountCredentialCipher: AccountCredentialProtection, Sendable,
     -> String
   {
     do {
-      let plaintext = try JSONEncoder().encode(Payload(credential))
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.withoutEscapingSlashes]
+      let plaintext = try encoder.encode(Payload(credential))
       guard plaintext.count <= 33_000 else { throw ExecutionError.invalidCommand }
       let box = try AES.GCM.seal(plaintext, using: key, authenticating: aad(context))
       guard let combined = box.combined else { throw ExecutionError.invalidCommand }

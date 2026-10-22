@@ -214,5 +214,17 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
     id: account.id, revision: uncertain.revision, namespace: account.namespace,
     credential: credential)
   #expect(fresh.authorization == .ready && fresh.credentialVersion == 2 && fresh.mode == .disabled)
+  let maximum = try AccountCredential(
+    accessToken: String(repeating: "/", count: 16_384),
+    refreshToken: String(repeating: "/", count: 16_384), idToken: nil,
+    expiresAtUnixSeconds: 2_000_000_000)
+  let secondWork = try await app.beginRefresh(id: fresh.id, revision: fresh.revision)
+  let finished = try await app.finishVerifiedRefresh(
+    secondWork, namespace: account.namespace, credential: maximum)
+  #expect(finished.authorization == .ready && finished.credentialVersion == 3)
+  let stored = try await store.accountCredential(id: account.id)
+  let context = try AccountCredentialContext(
+    identity: account.id, namespace: account.namespace, version: 3)
+  #expect(try cipher.open(stored.envelope, context: context).refreshToken == maximum.refreshToken)
   await store.close()
 }

@@ -63,12 +63,15 @@ private func syntheticCredential() throws -> AccountCredential {
       accessToken: String(repeating: "a", count: 16_384),
       refreshToken: String(repeating: "b", count: 16_384), idToken: "c", expiresAtUnixSeconds: 1)
   }
-  let maximum = try AccountCredential(
-    accessToken: String(repeating: "a", count: 16_384),
-    refreshToken: String(repeating: "b", count: 16_384), idToken: nil, expiresAtUnixSeconds: 1)
-  #expect(
-    try cipher.open(cipher.seal(maximum, context: context), context: context).accessToken
-      == maximum.accessToken)
+  for character in ["a", "/"] {
+    let maximum = try AccountCredential(
+      accessToken: String(repeating: character, count: 16_384),
+      refreshToken: String(repeating: character, count: 16_384), idToken: nil,
+      expiresAtUnixSeconds: 1)
+    let opened = try cipher.open(cipher.seal(maximum, context: context), context: context)
+    #expect(opened.accessToken == maximum.accessToken)
+    #expect(opened.refreshToken == maximum.refreshToken)
+  }
 }
 @Test func accountMasterKeyUsesIndependentPrivateFileValidation() async throws {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
