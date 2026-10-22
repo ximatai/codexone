@@ -9,3 +9,6 @@
 v3 构造保留执行 intent 与 refreshing 账号，普通启动明确拒绝；显式迁移生成私有 pre-v4 备份，真实打开备份验证源版本 3/intent/refreshing 均未提前恢复。v4 普通启动再变 unknown/auth_uncertain，历史 admission.accountSnapshot 为 nil，重复迁移没有第二个完成备份。旧 v1/v2 的 Key 保留/一致性备份和迁移中断事务回滚继续通过；进程脚本更新为 v4 并完整重跑，包括三组账号 SIGKILL。备份文件计数仅纳入完成的 .sqlite，不能把打开备份时产生的 WAL 辅助文件当额外备份。
 
 此切片只建立持久屏障，尚未把账号选择接入 HTTP/WS，continuation 由后续应用归属/连接核实，不由客户端提供。未测试真实订阅/额度/生产 TLS，不代表账号池可路由或 M3 整体完成。提交后 review 与 Linux 结果待对应提交完成后记录。
+
+
+f488da5 独立 review 无需修复或阻塞，reviewer 独立运行新增四项真实 SQLite 测试全部通过。该精确快照 Linux amd64 / Swift 6.4 本地单并发容器完整后端 84 测试与全部脚本通过，exit 0，2 CPU/2500 MiB，容器已回收。仅持久屏障验收，不推导选择器/传输或真实订阅。
