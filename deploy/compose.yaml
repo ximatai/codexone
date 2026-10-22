@@ -16,7 +16,11 @@ services:
     healthcheck:
       disable: true
     volumes:
-      - data:/var/lib/codexone:rw
+      - type: volume
+        source: data
+        target: /var/lib/codexone
+        volume:
+          nocopy: true
     environment:
       TARGET_UID: ${CODEXONE_UID:?Run init-install.py}
       TARGET_GID: ${CODEXONE_GID:?Run init-install.py}
@@ -29,8 +33,10 @@ services:
           [ "$$identifier" -le 2147483647 ] || exit 1
         done
         expected="$$TARGET_UID:$$TARGET_GID"
-        if [ "$$(stat -c %u:%g /var/lib/codexone)" != "$$expected" ]; then
-          if [ -n "$$(find /var/lib/codexone -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        actual="$$(stat -c %u:%g /var/lib/codexone)"
+        if [ "$$actual" != "$$expected" ]; then
+          entries="$$(find /var/lib/codexone -mindepth 1 -maxdepth 1 -print -quit)"
+          if [ -n "$$entries" ]; then
             echo 'Existing data volume ownership differs; offline maintenance is required.' >&2
             exit 1
           fi
@@ -50,7 +56,11 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m,mode=1777
     volumes:
-      - data:/var/lib/codexone:rw
+      - type: volume
+        source: data
+        target: /var/lib/codexone
+        volume:
+          nocopy: true
       - ./secrets:/run/codexone:ro
     environment:
       CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json

@@ -56,7 +56,7 @@ def initialize(destination, image, origin, pool, uid, gid):
                 raise ValueError('Unexpected installation symlink.')
             os.chown(path, uid, gid)
         os.chown(destination, uid, gid)
-        for directory in (destination / 'secrets', destination):
+        for directory in (destination / 'secrets', destination, destination.parent.resolve()):
             descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
                 os.fsync(descriptor)

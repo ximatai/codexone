@@ -86,6 +86,8 @@ def verify_initializer(binary):
         bootstrap = document['services']['init-data']
         assert bootstrap['user'] == '0:0' and bootstrap['network_mode'] == 'none' and bootstrap['read_only']
         assert len(bootstrap['volumes']) == 1 and bootstrap['volumes'][0]['type'] == 'volume'
+        assert bootstrap['volumes'][0]['volume']['nocopy']
+        assert next(mount for mount in config['volumes'] if mount['target'] == '/var/lib/codexone')['volume']['nocopy']
         assert config['depends_on']['init-data']['condition'] == 'service_completed_successfully'
         assert re.fullmatch('codexone-data-[0-9a-f]{24}', document['volumes']['data']['name'])
         assert config['image'] == IMAGE_ID
@@ -216,6 +218,13 @@ def verify_runtime(image, browser=False):
             assert run(['docker', 'exec', name, 'touch', '/run/codexone/forbidden'], ok=False).returncode != 0
             run(['docker', 'exec', name, 'touch', '/tmp/synthetic-writable'])
             wrong_uid = 10002 if uid != 10002 else 10003
+            fault = root / 'fault'; fault.mkdir(mode=0o700)
+            (fault / 'find').write_text("#!/bin/sh\necho 'Synthetic data listing failure' >&2\nexit 1\n")
+            (fault / 'find').chmod(0o755)
+            failed_listing = run([*compose, 'run', '--rm', '--no-deps', '--env', f'TARGET_UID={wrong_uid}',
+                '--env', 'PATH=/probe:/usr/bin:/bin', '--volume', f'{fault}:/probe:ro', 'init-data'], ok=False)
+            assert failed_listing.returncode != 0 and b'Synthetic data listing failure' in failed_listing.stdout + failed_listing.stderr
+            assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()
             refused_owner = run([*compose, 'run', '--rm', '--no-deps', '--env', f'TARGET_UID={wrong_uid}', 'init-data'], ok=False)
             assert refused_owner.returncode != 0 and b'Existing data volume ownership differs' in refused_owner.stderr + refused_owner.stdout
             assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()

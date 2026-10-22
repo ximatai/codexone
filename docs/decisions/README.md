@@ -8,6 +8,10 @@ Swift 6 严格并发，NIO 掌控数据面，Vapor 承担管理 API，AHC 调用
 
 依据：传输实验表明应显式控制 channel 生命周期；单体和 SQLite 适合小规模自托管，静态前端无需 Node 运行服务。代价是维护窄传输层，SQLite 不提供多写 HA，Swift 并发检查不能替代事务与生命周期验证。
 
+### 发行的数据卷与回环边界
+
+Linux Compose 使用 host network 保留网关的回环监听，由宿主 TLS 反代接入；不为容器包装扩大监听面。data 默认使用唯一命名的 Engine 本地 volume，显式 nocopy；秘密保留独立只读文件。依据是共享 bind 的最小 flock 探针不能维持实例互斥，而 Linux 本地卷可维持；空卷 copy-up 还会重置目录属主。初始化只为新空卷设置 UID/GID，既有非空卷归属不符或目录读取失败均拒绝；隔离的短命 root init 不挂秘密、不联网，gateway 保持非 root。代价是数据与迁移备份由 volume 管理，不能把删除卷或复制旧快照当作升级/回退；证据见[安装验证](../changes/linux-distribution/verification.md)。
+
 ## 兼容优先用量治理
 
 请求/并发硬限，token/图片按已知用量治理，金额估算；不要求所有订阅能力先证明严格消耗上界。限制并发与未知执行暴露，超预算停止新准入，明确披露可能超额。断线不等于未执行，不自动退款。
