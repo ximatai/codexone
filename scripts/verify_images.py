@@ -220,7 +220,24 @@ def main():
                     before = upstream.calls
                     status, body = request('images', '/v1/images/generations', {'prompt': 'synthetic binding failure'})
                     assert status == 503 and b'b64_json' not in body and upstream.calls == before + 1
-                    assert (latest(db, 'settled')['images'] == 1) if transport == 'http' else (latest(db, 'unknown') is None)
+                    # Core write failure can stop the monitor before finalization; restart must
+                    # recover a durable intent. The independent WS reader may already have
+                    # captured complete terminal evidence, which must stay settled instead.
+                    stop(process)
+                    process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin)
+                    with sqlite3.connect(db) as connection:
+                        attempt, state, evidence = connection.execute(
+                            "SELECT id,state,usage_json FROM attempts ORDER BY rowid DESC LIMIT 1").fetchone()
+                        assert connection.execute("SELECT COUNT(*) FROM bindings WHERE attempt=?", (attempt,)).fetchone()[0] == 0
+                    assert upstream.calls == before + 1, 'Restart replayed a failed binding request'
+                    assert state in ('settled', 'unknown'), 'Restart retained an unresolved intent'
+                    if state == 'settled':
+                        usage = json.loads(evidence)
+                        assert usage['completeness'] == 'complete'
+                        assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                        assert usage['inputTokens'] == 5 and usage['outputTokens'] == 7 and usage['estimatedMicros'] == 25
+                    else:
+                        assert transport == 'websocket' and evidence is None
                     print('PASS: Images JSON/SSE/multipart, active edits, permission/ownership, usage, failures and no replay via ' + transport)
                 finally: stop(process)
     finally:
