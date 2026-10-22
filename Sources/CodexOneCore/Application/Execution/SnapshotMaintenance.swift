@@ -48,6 +48,12 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
   public var minimumFreezeUntilUnixSeconds: Int64 {
     max(inheritedFreezeUntilUnixSeconds, (restoredUnixSeconds / 86400 + 1) * 86400)
   }
+  /// First attestation also freezes the UTC day when the operator actually reconciles.
+  public func minimumReconciliationFreeze(at now: Int64) -> Int64 {
+    max(
+      minimumFreezeUntilUnixSeconds, baseline?.freezeUntilUnixSeconds ?? ((now / 86400 + 1) * 86400)
+    )
+  }
   public var baselineRevision: Int64 = 0
   public var baseline: RestoreBaseline?
   public var reconciledUnixSeconds: Int64?
@@ -89,16 +95,16 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
     try proposed.validate()
     guard proposed.restoreID == id else { throw ExecutionError.conflict }
     if baseline == proposed { return self }
+    guard now >= restoredUnixSeconds, now <= 1_000_000_000_000 else {
+      throw ExecutionError.invalidCommand
+    }
     guard proposed.expectedRevision == baselineRevision,
       proposed.freezeUntilUnixSeconds
-        >= max(minimumFreezeUntilUnixSeconds, baseline?.freezeUntilUnixSeconds ?? 0),
+        >= minimumReconciliationFreeze(at: now),
       baselineRevision > 0
         || (proposed.missingUnresolvedRequests >= inheritedUnresolvedRequests
           && proposed.missingUnresolvedMicros >= inheritedUnresolvedMicros)
     else { throw ExecutionError.conflict }
-    guard now >= restoredUnixSeconds, now <= 1_000_000_000_000 else {
-      throw ExecutionError.invalidCommand
-    }
     var next = self
     next.baseline = proposed
     next.baselineRevision += 1

@@ -112,6 +112,17 @@ def main():
             assert not db.execute('SELECT * FROM bindings').fetchall()
             assert not json.loads(db.execute('SELECT metadata_json FROM managed_keys').fetchone()[0])['enabled']
             assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+        # A restored legacy static identity must fail before listeners, rather than claim readiness.
+        legacy = f.root / 'legacy.json'
+        legacy.write_text(json.dumps({**json.loads(f.config.read_text()), 'managedKeys': False,
+            'principal': 'synthetic-legacy', 'keyID': 'synthetic-legacy',
+            'keySHA256': hashlib.sha256(b'synthetic-legacy-secret').hexdigest()}))
+        legacy.chmod(0o600)
+        refused = subprocess.run([binary], env={'PATH': os.defpath,
+            'CODEXONE_DATA_DIRECTORY': str(state), 'CODEXONE_IDENTITY_CONFIG': str(legacy),
+            'CODEXONE_ADMIN_TOKEN_FILE': str(f.admin)}, capture_output=True, timeout=10)
+        assert refused.returncode != 0 and b'LISTENING' not in refused.stdout
+        assert b'Restored databases require managed Keys' in refused.stderr
         process, ports = start(binary, f.config, parent, admin_token_file=f.admin, web_directory=f.web_directory)
         try:
             assert ready(ports['admin']) == 503 and request(ports['data'], secret)[0] == 401

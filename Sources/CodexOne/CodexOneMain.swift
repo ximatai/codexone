@@ -35,6 +35,10 @@ struct CodexOneMain {
       FileHandle.standardError.write(
         Data("Incomplete restore target; preserve the backup and use a new empty target.\n".utf8))
       exit(1)
+    } catch SnapshotMaintenanceError.requiresManagedKeys {
+      FileHandle.standardError.write(
+        Data("Restored databases require managed Keys or account-pool configuration.\n".utf8))
+      exit(1)
     } catch is CommandError {
       FileHandle.standardError.write(Data("Unsupported arguments. Use --help.\n".utf8))
       exit(64)
@@ -110,7 +114,8 @@ struct CodexOneMain {
         }
         let report: [String: Any] = [
           "state": state, "restore": encoded ?? NSNull(),
-          "minimumFreezeUntilUnixSeconds": record?.minimumFreezeUntilUnixSeconds as Any?
+          "minimumFreezeUntilUnixSeconds": record?.minimumReconciliationFreeze(
+            at: Int64(Date().timeIntervalSince1970)) as Any?
             ?? NSNull(),
           "missingUnresolvedRequests": record?.unresolvedRequests ?? 0,
           "missingUnresolvedMicros": record?.unresolvedMicros ?? 0,
@@ -176,6 +181,12 @@ struct CodexOneMain {
           requests: 10_000, active: 16, unresolved: 32, budgetMicros: 1_000_000_000))
     } else {
       store = nil
+    }
+    if let store, store.hasRestoredSnapshot, let identityConfiguration,
+      identityConfiguration.managedKeys != true
+    {
+      await store.close()
+      throw SnapshotMaintenanceError.requiresManagedKeys
     }
     let usageReader: SQLiteUsageReader?
     if configuration.adminTokenFile != nil, let store {

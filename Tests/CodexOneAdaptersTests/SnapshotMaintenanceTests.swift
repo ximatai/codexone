@@ -231,3 +231,41 @@ private func privateSnapshotRoot() throws -> String {
     try await SQLiteSnapshotMaintenance.reconcile(path: next, baseline: drop)
   }
 }
+
+@Test func snapshotParentSyncFailurePreventsPublication() async throws {
+  let root = try privateSnapshotRoot()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let source = try await SQLiteExecutionStore.open(
+    path: root + "/core.sqlite", limits: syntheticLimits)
+  await source.close()
+  _ = try await SQLiteSnapshotMaintenance.backup(
+    path: root + "/core.sqlite", destination: root + "/bundle", protection: nil)
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await SQLiteSnapshotMaintenance.restore(
+      bundle: root + "/bundle", path: root + "/new/core.sqlite", protection: nil,
+      syncParent: { _ in throw ExecutionError.storageUnavailable })
+  }
+  #expect(try FileManager.default.contentsOfDirectory(atPath: root + "/new").isEmpty)
+}
+
+@Test func snapshotFirstReconciliationFreezesItsOwnUTCDay() throws {
+  let midnight: Int64 = 20000 * 86400
+  let record = RestoreRecord(
+    id: UUID().uuidString, backupID: UUID().uuidString,
+    snapshotUnixSeconds: midnight - 100, restoredUnixSeconds: midnight - 1,
+    inheritedUnresolvedRequests: 0, inheritedUnresolvedMicros: 0)
+  func baseline(_ cutoff: Int64) throws -> RestoreBaseline {
+    try RestoreBaseline(
+      restoreID: record.id, auditReference: "synthetic-midnight",
+      missingUnresolvedRequests: 0, missingUnresolvedMicros: 0, freezeUntilUnixSeconds: cutoff)
+  }
+  #expect(record.minimumReconciliationFreeze(at: midnight + 1) == midnight + 86400)
+  #expect(throws: ExecutionError.conflict) {
+    try record.reconciling(baseline(midnight), at: midnight + 1)
+  }
+  let reconciled = try record.reconciling(baseline(midnight + 86400), at: midnight + 1)
+  #expect(!reconciled.allowsAdmission(at: midnight + 2))
+  #expect(reconciled.minimumReconciliationFreeze(at: midnight + 172800) == midnight + 86400)
+  #expect(
+    try reconciled.reconciling(baseline(midnight + 86400), at: midnight + 172800) == reconciled)
+}

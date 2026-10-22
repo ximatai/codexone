@@ -11,6 +11,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let usageReaderGate = Mutex(false)
   let limits: ExecutionLimits
   private let restoration: RestoreRecord?
+  public var hasRestoredSnapshot: Bool { restoration != nil }
   public var isAdmissionReady: Bool {
     isAvailable && (restoration?.allowsAdmission(at: Int64(Date().timeIntervalSince1970)) ?? true)
   }

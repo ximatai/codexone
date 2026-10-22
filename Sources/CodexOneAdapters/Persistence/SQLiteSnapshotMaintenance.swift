@@ -10,7 +10,7 @@ import Foundation
   import Glibc
 #endif
 
-public enum SnapshotMaintenanceError: Error { case incompleteRestore }
+public enum SnapshotMaintenanceError: Error { case incompleteRestore, requiresManagedKeys }
 
 public struct SnapshotManifest: Codable, Sendable {
   public let format: Int
@@ -74,6 +74,14 @@ public enum SQLiteSnapshotMaintenance {
   public static func restore(bundle: String, path: String, protection: AccountCredentialCipher?)
     async throws -> RestoreRecord
   {
+    try await restore(bundle: bundle, path: path, protection: protection, syncParent: syncDirectory)
+  }
+
+  // Internal fault seam verifies parent-directory synchronization failures before any copied page.
+  static func restore(
+    bundle: String, path: String, protection: AccountCredentialCipher?,
+    syncParent: @escaping @Sendable (String) throws -> Void
+  ) async throws -> RestoreRecord {
     try await run {
       try privateDirectory(bundle)
       let manifest: SnapshotManifest = try JSONDecoder().decode(
@@ -114,6 +122,7 @@ public enum SQLiteSnapshotMaintenance {
       let directory = (path as NSString).deletingLastPathComponent
       if mkdir(directory, 0o700) != 0 && errno != EEXIST { throw ExecutionError.storageUnavailable }
       try privateDirectory(directory)
+      try syncParent((directory as NSString).deletingLastPathComponent)
       let targetLock = try lock(path + ".lock")
       defer { close(targetLock) }
       let entries = try FileManager.default.contentsOfDirectory(atPath: directory)
@@ -130,9 +139,10 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(path: staging, existingOnly: true)
+      let completedCopyAt = Int64(Date().timeIntervalSince1970)
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
-        snapshotUnixSeconds: manifest.createdUnixSeconds, restoredUnixSeconds: now,
+        snapshotUnixSeconds: manifest.createdUnixSeconds, restoredUnixSeconds: completedCopyAt,
         inheritedUnresolvedRequests: previous?.unresolvedRequests ?? 0,
         inheritedUnresolvedMicros: previous?.unresolvedMicros ?? 0,
         inheritedFreezeUntilUnixSeconds: previous?.baseline?.freezeUntilUnixSeconds ?? 0)
@@ -172,7 +182,8 @@ public enum SQLiteSnapshotMaintenance {
               "UPDATE managed_keys SET digest=?,metadata_json=? WHERE id=?",
               [.text(digest), .text(try encode(disabled)), .text(key.id)])
           }
-          try audit(target, action: "restored_unreconciled", record: encode(record), at: now)
+          try audit(
+            target, action: "restored_unreconciled", record: encode(record), at: completedCopyAt)
         }
         try target.exec("PRAGMA wal_checkpoint(TRUNCATE)")
         target.shutdown()
