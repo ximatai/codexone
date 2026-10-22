@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from http.cookies import SimpleCookie
 import re
+import secrets as random_secrets
 import subprocess
 import tempfile
 
@@ -261,9 +262,16 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                 def truth():
                     return maintenance('sqlite3', ['-readonly', database,
                         "PRAGMA user_version; SELECT id||':'||digest||':'||metadata_json FROM managed_keys ORDER BY id; SELECT id||':'||state||':'||reserved||':'||estimated FROM attempts ORDER BY id;"]).stdout
-                # A synthetic unresolved obligation must survive compatible binaries and rejection.
+                # Structural rollback sentinel, not an imported protocol execution.
+                # Real settled/unknown execution is covered by verify_migration_cutback.py.
                 maintenance('sqlite3', [database,
                     "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json) VALUES('synthetic-rollback-obligation','synthetic','synthetic','synthetic','synthetic','synthetic','1','1',17,'unknown','{}');"])
+                original_master = (root / 'secrets/master').read_text()
+                active_master = random_secrets.token_hex(32)
+                keyring = json.dumps({'format': 1, 'active': active_master, 'decryptOnly': [original_master]})
+                (root / 'secrets/master').write_text(keyring)
+                secrets.extend([active_master, keyring])
+                current_keys = json.loads(run([*compose, 'run', '--rm', 'gateway', '--key-status']).stdout)
                 before_switch = truth()
                 current_binary = maintenance('sha256sum', ['/usr/local/bin/codexone']).stdout.split()[0]
                 if incompatible_image:
@@ -275,7 +283,9 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                     previous_id = select_image(previous_image)
                     assert previous_id != identifier['Id'], 'Rollback requires a distinct actual image'
                     assert maintenance('sha256sum', ['/usr/local/bin/codexone']).stdout.split()[0] != current_binary, 'Rollback requires a distinct binary'
-                    run([*compose, 'run', '--rm', 'gateway', '--key-status'])
+                    rollback_keys = json.loads(run([*compose, 'run', '--rm', 'gateway', '--key-status']).stdout)
+                    assert rollback_keys['activeKeyID'] == current_keys['activeKeyID']
+                    assert rollback_keys['availableKeyIDs'] == current_keys['availableKeyIDs']
                     run([*compose, 'up', '-d'])
                     name = run([*compose, 'ps', '-q', 'gateway']).stdout.decode().strip()
                     deadline = time.monotonic() + 25
