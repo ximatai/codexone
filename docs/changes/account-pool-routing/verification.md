@@ -64,3 +64,5 @@ macOS arm64 / Swift 6.4 最终完整后端 109 测试和全部脚本通过。独
 原 HTTP 快照的 Linux 尝试未计通过：复用验证卷残留改名前文件导致输入错误，重新铺入干净源码后，独立夹具并行初始化又使 500 ms OAuth 登录超时。标准命令现显式串行独立 Swift case，各 case 内并发竞争/取消保持不变，不放宽期限断言；后续验证卷只保留编译缓存再铺快照。另实测未完成 HTTP 握手在正常退出后可用 TCP RST 表示关闭，WS 脚本同样接受 EOF/RST，仍要求进程 exit 0，超时或未关闭继续失败。修复的同快照 Linux 结果待实际完成补记。
 
 2d48696 复审关闭两项 P2，无新增阻塞；reviewer 独立重跑三项新增回归通过。该精确快照 Linux amd64 / Swift 6.4 本地单并发完整后端 109 测试及全部脚本通过，exit 0，2 CPU/2500 MiB；源码重铺仅保留编译缓存，容器已回收。此结果不关闭原生池 WS、健康/额度或真实订阅边界。
+
+M3 本地合成环境阶段出口：池 WS 的提交后 review/修复已关闭；账号健康/额度和按 Key 用量管理闭环通过实际浏览器与集中 review。195dfdd 后端在 macOS/Linux 完整 138 项及全部脚本通过，含已有隔离/容量/禁用/取消/unknown/无重放回归；具体证据见[账号观测](../account-observability/verification.md)与[池 WS](../account-pool-websocket/verification.md)。真实订阅、Desktop、恢复和长期容量未由此关闭。

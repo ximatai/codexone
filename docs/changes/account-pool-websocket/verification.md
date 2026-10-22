@@ -18,3 +18,5 @@
 定向命令 `swift test --no-parallel --filter 'poolNativeWebSocket|poolHTTPWebSocket'`：独立 Python RFC6455 客户端接真实服务/SQLite/NIO 合成上游，验证 warmup 后多轮/双 lane、首 ticket 归零而连接存活、draining 续接/disabled/Key 撤销、跨主体首轮拒绝不握手、跨账号引用拒绝、固定身份刷新不另连、断开/静默握手及正文超时/Runtime 强制取消收敛。强制父取消可能抢先结束 finalizer，实际冷重开验证 intent 恢复为 unknown；没有将内存 ticket 清空当结算完成。首轮失败仅一个 unknown，不换账号重放。
 
 自我复盘修正合成服务的 HTTP upgrade 解码暂停（静默握手改持续读取的原始 socket）与测试子进程重复 wait 的问题，未放宽 socket 释放或账本断言。macOS arm64 / Swift 6.4 九项定向测试通过，严格格式通过；提交后集中 review、主 Agent 修复复验及完整跨平台出口待完成。无前端变更，未新增 UI/真实账号/生产 TLS/恢复支持声明。
+
+阶段出口补记：c6bdf85 集中 review 无新增 P1/P2，原桥接握手总期限 P2 关闭，同快照 macOS 完整后端 119 项及全部脚本通过。后续账号观测闭环已包含此 WS 路径，195dfdd 后端在 macOS/Linux 完整 138 项及全部脚本通过，统一关闭平台出口；不重复运行旧桥接快照。具体平台/工具参数见[账号观测验证](../account-observability/verification.md)，未新增 Desktop 或真实订阅声明。
