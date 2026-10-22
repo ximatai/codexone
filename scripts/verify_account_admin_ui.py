@@ -38,6 +38,20 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
     def do_GET(self):
+        if self.path == '/backend-api/wham/usage':
+            with self.server.guard:
+                assert self.headers.get('Authorization', '').removeprefix('Bearer ') in self.server.issued
+                assert self.headers.get('ChatGPT-Account-Id') == 'synthetic-account'
+                assert self.headers.get('x-openai-codex-luna-reserve') is None
+                self.server.quota_calls += 1
+                mode = self.server.control.get('quota_mode', 'ok')
+            if mode == 'fail':
+                return self.reply({'error': 'synthetic-private-quota-marker'}, status=500)
+            return self.reply({'private_field': 'synthetic-private-quota-marker', 'rate_limit': {
+                'allowed': True, 'limit_reached': False,
+                'primary_window': {'used_percent': 25, 'limit_window_seconds': 18000, 'reset_at': int(time.time()) + 3600},
+                'secondary_window': {'used_percent': 45, 'limit_window_seconds': 604800, 'reset_at': int(time.time()) + 86400}},
+                'additional_rate_limits': [{'metered_feature': 'synthetic-extra', 'rate_limit': {'primary_window': {'used_percent': 10}}}]})
         query = parse_qs(urlsplit(self.path).query)
         assert urlsplit(self.path).path == '/oauth/authorize'
         callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
@@ -77,13 +91,14 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
             self.server.issued.extend(tokens[key] for key in ['access_token', 'id_token', 'refresh_token'])
         self.reply(tokens)
 
-def verify(binary):
+def verify(binary, usage=False):
     root = Path(__file__).resolve().parents[1]
     provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticOAuth)
     provider.daemon_threads = True
     provider.guard = threading.Lock()
     provider.control = {}
     provider.calls = 0
+    provider.quota_calls = 0
     provider.issued = []
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     try:
@@ -92,7 +107,7 @@ def verify(binary):
             for name, value in [('admin', ADMIN), ('master', '6b' * 32)]:
                 (work / name).write_text(value)
                 (work / name).chmod(0o600)
-            process = subprocess.Popen([binary, '--account-admin-ui', str(work), str(root / 'web/dist'), str(provider.server_port)],
+            process = subprocess.Popen([binary, '--usage-admin-ui' if usage else '--account-admin-ui', str(work), str(root / 'web/dist'), str(provider.server_port)],
                                        env={'PATH': os.defpath}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             output = b''
             try:
@@ -106,7 +121,7 @@ def verify(binary):
                             assert chunk
                             output += chunk
                 port = int(re.search(rb'ADMIN_PORT (\d+)', output)[1])
-                result = subprocess.run(['node', str(root / 'web/scripts/live-accounts.mjs'), str(port), str(provider.server_port), str(root / 'artifacts/account-management-ui')],
+                result = subprocess.run(['node', str(root / ('web/scripts/live-usage.mjs' if usage else 'web/scripts/live-accounts.mjs')), str(port), str(provider.server_port), str(root / ('artifacts/usage-ui' if usage else 'artifacts/account-management-ui'))],
                                         input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=120,
                                         env={'PATH': os.environ.get('PATH', os.defpath)})
                 browser_output = result.stdout + result.stderr
@@ -116,9 +131,9 @@ def verify(binary):
                 print(browser_output.decode(), end='')
                 with provider.guard:
                     issued = list(provider.issued)
-                    assert provider.calls == 3
+                    assert (provider.calls == 0 and provider.quota_calls == 0) if usage else (provider.calls == 3 and provider.quota_calls >= 3)
                 for file in (work / 'state').glob('core.sqlite*'):
-                    assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32])
+                    assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32, 'synthetic-private-quota-marker'])
             finally:
                 process.terminate()
                 try:
@@ -137,4 +152,6 @@ def verify(binary):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    verify(str(parser.parse_args().binary.resolve()))
+    parser.add_argument('--usage', action='store_true')
+    args = parser.parse_args()
+    verify(str(args.binary.resolve()), usage=args.usage)

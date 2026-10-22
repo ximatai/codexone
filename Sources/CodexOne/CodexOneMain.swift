@@ -117,13 +117,19 @@ struct CodexOneMain {
     } else {
       store = nil
     }
+    let usageReader: SQLiteUsageReader?
+    if configuration.adminTokenFile != nil, let store {
+      usageReader = try await store.makeUsageReader()
+    } else {
+      usageReader = nil
+    }
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
         path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256,
         publicOrigin: configuration.adminPublicOrigin,
         availableModels: poolConfiguration?.models.map(\.id) ?? identityConfiguration?.models.map(
-          \.id) ?? [])
+          \.id) ?? [], usage: usageReader.map { UsageAdminAPI(querying: $0) })
     } else {
       keyAdmin = nil
     }
@@ -146,9 +152,14 @@ struct CodexOneMain {
       let authorization = try AccountAuthorizationSupervisor(
         application: application, provider: provider)
       let refreshing = try AccountRefreshSupervisor(application: application, provider: provider)
+      let quota = try SubscriptionQuotaProvider(group: group, verifier: provider)
+      let observing = try AccountObservationSupervisor(
+        store: store, application: application, refresher: refreshing, provider: quota)
       services.append(provider)
+      services.append(quota)
       services.append(authorization)
       services.append(refreshing)
+      services.append(observing)
       if let poolConfiguration, let finalizer {
         poolDataService = try ResponsesDataService(
           group: group, port: configuration.dataPort,
@@ -157,7 +168,7 @@ struct CodexOneMain {
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
-        store: store, authorization: authorization, refreshing: refreshing)
+        store: store, authorization: authorization, refreshing: refreshing, observing: observing)
     } else {
       accountAdmin = nil
     }
@@ -200,10 +211,12 @@ struct CodexOneMain {
     do {
       try await runtime.run()
     } catch {
+      await usageReader?.close()
       await store?.close()
       try await group.shutdownGracefully()
       throw error
     }
+    await usageReader?.close()
     await store?.close()
     try await group.shutdownGracefully()
   }

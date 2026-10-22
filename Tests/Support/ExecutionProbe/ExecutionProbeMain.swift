@@ -6,11 +6,13 @@ import Foundation
 @main struct ExecutionProbe {
   static func main() async {
     do {
-      if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--account-admin-ui",
+      if CommandLine.arguments.count == 5,
+        ["--account-admin-ui", "--usage-admin-ui"].contains(CommandLine.arguments[1]),
         let port = Int(CommandLine.arguments[4])
       {
         try await runAccountAdminUI(
-          root: CommandLine.arguments[2], web: CommandLine.arguments[3], oauthPort: port)
+          root: CommandLine.arguments[2], web: CommandLine.arguments[3], oauthPort: port,
+          usageFixture: CommandLine.arguments[1] == "--usage-admin-ui")
         return
       }
       guard CommandLine.arguments.count == 2 else { throw ExecutionError.invalidCommand }

@@ -10,9 +10,10 @@ public struct KeyAdminAPI: Sendable {
   private let store: any KeyGovernanceStore
   private let sessions: AdminSessions
   private let availableModels: [String]
+  private let usage: UsageAdminAPI?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
-    publicOrigin: String? = nil, availableModels: [String] = []
+    publicOrigin: String? = nil, availableModels: [String] = [], usage: UsageAdminAPI? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
@@ -22,7 +23,7 @@ public struct KeyAdminAPI: Sendable {
     return Self(
       digest: digest, store: store,
       sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
-      availableModels: availableModels)
+      availableModels: availableModels, usage: usage)
   }
   public static func validateCredential(
     path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
@@ -49,6 +50,7 @@ public struct KeyAdminAPI: Sendable {
     let guardMiddleware = KeyAdminGuard(digest: digest, sessions: sessions)
     let routes = api.grouped("keys").grouped(guardMiddleware)
     accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
+    usage?.register(api.grouped("usage").grouped(guardMiddleware))
     api.post("session") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["secret"])
       guard let secret = document["secret"]?.string else { throw ExecutionError.invalidCommand }
@@ -213,6 +215,9 @@ private struct AdminFailureMiddleware: AsyncMiddleware {
       if let failure = error as? GatewayProtocolError {
         status = failure.status
         code = failure.code
+      } else if let failure = error as? QuotaObservationFailure {
+        status = 503
+        code = failure == .capacity ? "observation_capacity" : "observation_unavailable"
       } else if let failure = error as? AccountRefreshError {
         switch failure {
         case .invalidCommand:

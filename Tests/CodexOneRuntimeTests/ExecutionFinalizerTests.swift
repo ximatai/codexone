@@ -144,7 +144,8 @@ private final class HeldFailingStore: ExecutionStore, Sendable {
   func snapshot(attempt: String) async throws -> ExecutionSnapshot {
     try await base.snapshot(attempt: attempt)
   }
-  func finalize(attempt: String, evidence: UsageEvidence?) async throws {
+  func finalize(attempt: String, evidence: UsageEvidence?, outcome: ExecutionOutcome?) async throws
+  {
     enteredContinuation.yield(())
     for await _ in release { break }
     throw ExecutionError.storageUnavailable

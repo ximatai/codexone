@@ -9,6 +9,8 @@
 | 连接与 WS lane | Adapters/Transport | 每连接 supervisor，受总容量监督 | 调 Core 执行用例；拥有 channel，取消后关闭并 await 网络任务 |
 | finalizer | Core/Application 定义结算/合并规则 | Runtime 监督有限 worker 与预分配 ticket | worker 调核心用例，核心调事务端口；禁止反向等待连接 |
 | 刷新与身份验证 | Core/Application/Identity | Runtime AccountRefreshSupervisor 的有界队列/共享任务 | 通过上游/凭证端口执行；等待者取消不取消共享刷新，关闭信号取消网络并 await/收敛 intent |
+| 被动额度观察 | Core/Application 定义凭证/观察端口 | Runtime AccountObservationSupervisor 单飞有界工作；Adapters 独立 HTTP owner | 等待者取消不取消工作；关闭 await，提交核对身份/版本，不占刷新网络容量 |
+| 用量查询 | Core/Application/Usage 查询值与端口 | Adapters 单一只读 WAL reader/专用队列 | 一个在途快照、有总预算/取消；入口先关闭 reader 再关闭主库，不占 writer 队列 |
 | SQL 原子操作 | Core/Application 定义命令端口 | Adapters/Persistence 有界 DB 执行 | 一次命令一个事务；不跨网络持有，不向核心返回 SQL row |
 | 恢复授权与代际 | Core/Application/Recovery | Runtime 监督缓存 worker；Transport 只交内容 | 先查核心归属/当前策略，后调缓存端口；restore 用例协调新 generation/清理 |
 | 启动、drain、维护锁 | Core 定义所需端口/结果 | Runtime | 入口组装；启动恢复前不开放准入，关闭有顺序且有期限 |

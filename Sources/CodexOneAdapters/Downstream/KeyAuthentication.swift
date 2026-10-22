@@ -27,6 +27,7 @@ struct DataPlaneAuthorization: Sendable {
   let token: String?
   let store: any ExecutionStore
   let finalizer: any FinalizationSink
+  var diagnostics: (any ExecutionDiagnosticsStore)? { store as? any ExecutionDiagnosticsStore }
 
   func digest(_ headers: [String]) throws -> String? {
     if case .single(let configuration) = source, configuration.managedKeys != true {

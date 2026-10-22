@@ -151,17 +151,17 @@ def verify_migration(binary):
             stop(process)
         path = root / 'state/core.sqlite'
         with sqlite3.connect(path) as db:
-            db.executescript('DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; PRAGMA user_version=1;')
+            db.executescript('DROP TABLE request_diagnostics; DROP TABLE account_model_health; DROP TABLE health_models; DROP TABLE account_health; DROP TABLE account_quota; DROP INDEX attempts_created; DROP INDEX attempts_request; ALTER TABLE attempts DROP COLUMN request_id; ALTER TABLE attempts DROP COLUMN outcome_json; ALTER TABLE attempts DROP COLUMN created_at_epoch; DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; PRAGMA user_version=1;')
         refused = subprocess.run([binary], env=environment, capture_output=True, timeout=10)
         assert refused.returncode != 0 and str(root).encode() not in refused.stderr
         migrated = subprocess.run([binary, '--migrate'], env=environment, capture_output=True, timeout=10)
         assert migrated.returncode == 0 and str(root).encode() not in migrated.stdout + migrated.stderr
-        backups = list((root / 'state').glob('*.pre-v4-*.sqlite'))
+        backups = list((root / 'state').glob('*.pre-v5-*.sqlite'))
         assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
         with sqlite3.connect(backups[0]) as db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == 1
         with sqlite3.connect(path) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 4
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 5
         # check-config validates the independent administrator credential without creating a DB.
         admin = root / 'admin'
         admin.write_text(TOKEN)
@@ -305,7 +305,7 @@ def main():
                     assert update(ports['admin'], revoked['key'], enabled=False)[0] == 503
                     assert call(ports['data'], 'GET', '/health/ready', token=None)[0] == 200
                     with sqlite3.connect(db_path) as db:
-                        assert db.execute('PRAGMA user_version').fetchone()[0] == 4
+                        assert db.execute('PRAGMA user_version').fetchone()[0] == 5
                         assert db.execute('SELECT COUNT(*) FROM key_events').fetchone()[0] >= 4
                         assert db.execute("SELECT COUNT(*) FROM attempts WHERE state='settled'").fetchone()[0] >= 3
                 finally:

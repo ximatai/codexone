@@ -6,7 +6,7 @@ import { SystemOverview } from "./features/system-status/SystemOverview";
 export function App() {
   const [section, setSection] = useState<"overview" | "keys" | "accounts">("overview");
   return (
-    <main className={section !== "overview" ? "key-workspace" : undefined}>
+    <main className={section === "accounts" ? "key-workspace account-workspace" : section !== "overview" ? "key-workspace" : undefined}>
       <header>
         <span className="brand-mark" aria-hidden="true">C</span>
         <strong>CodexOne</strong>

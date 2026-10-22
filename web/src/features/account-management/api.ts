@@ -1,9 +1,10 @@
+import { parseObservability, type AccountObservability } from "./observation-api";
 import { ManagementError, request } from "../../shared/management";
 export type AccountMode = "enabled" | "draining" | "disabled";
 export type AccountAuthorization = "ready" | "refreshing" | "requires_auth" | "auth_uncertain";
 export interface Account {
   id: string; revision: number; credentialVersion: number; mode: AccountMode;
-  authorization: AccountAuthorization; createdAtUnixSeconds: number;
+  authorization: AccountAuthorization; createdAtUnixSeconds: number; observability?: AccountObservability;
 }
 export interface AuthorizationFlow { flowID: string; authorizationURL: string; expiresInSeconds: number }
 const invalid = () => new ManagementError(0, "invalid_response");
@@ -27,16 +28,19 @@ export function parseAccount(raw: unknown): Account {
     id: id(value.id), revision: integer(value.revision), credentialVersion: integer(value.credentialVersion),
     mode: value.mode as AccountMode, authorization: value.authorization as AccountAuthorization,
     createdAtUnixSeconds: integer(value.createdAtUnixSeconds, 1_000_000_000_000),
+    ...(value.observability === undefined ? {} : { observability: parseObservability(value.observability) }),
   };
 }
 export async function fetchAccounts(signal?: AbortSignal): Promise<Account[]> {
   const accounts = new Map<string, Account>();
   let after: string | null = null;
   for (let page = 0; page < 2; page++) {
+    const started = performance.now();
     const value = object(await request("/api/accounts" + (after ? "?after=" + encodeURIComponent(after) : ""), { signal }));
     if (!Array.isArray(value.accounts) || value.accounts.length > 64) throw invalid();
     for (const raw of value.accounts) {
       const account = parseAccount(raw);
+      if (account.observability) account.observability.receivedAt = started;
       if (accounts.has(account.id) || accounts.size >= 64) throw invalid();
       accounts.set(account.id, account);
     }

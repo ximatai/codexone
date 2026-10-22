@@ -58,8 +58,20 @@ public struct AccountCredentials: Sendable {
         revision: account.revision, credentialVersion: account.credentialVersion,
         accessExpiresAtUnixSeconds: credential.expiresAtUnixSeconds, continuation: continuation))
   }
+  /// Read-only observation may inspect a disabled account without granting dispatch.
+  public func prepareObservation(id: String) async throws -> AccountObservationWork {
+    let stored = try await store.accountCredential(id: id)
+    guard stored.account.authorization == .ready else { throw QuotaObservationFailure.unavailable }
+    let context = try AccountCredentialContext(
+      identity: id, namespace: stored.account.namespace, version: stored.account.credentialVersion)
+    let credential = try protection.open(stored.envelope, context: context)
+    guard credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
+      throw QuotaObservationFailure.refreshRequired
+    }
+    return AccountObservationWork(account: stored.account, credential: credential)
+  }
   /// Bounded, local readiness evidence only. Expired access may still use the refresh owner.
-  public func hasLocallyRoutableAccount() async throws -> Bool {
+  public func hasLocallyRoutableAccount(models: Set<String>? = nil) async throws -> Bool {
     let accounts = try await store.listAccounts(after: nil)
     guard accounts.count <= 64 else { throw ExecutionError.capacity }
     for account in accounts {
@@ -76,6 +88,13 @@ public struct AccountCredentials: Sendable {
           identity: stored.account.id,
           namespace: stored.account.namespace, version: stored.account.credentialVersion)
         _ = try protection.open(stored.envelope, context: context)
+        if let models, let health = store as? any AccountHealthStore {
+          guard
+            try await health.hasHealthyModel(
+              id: stored.account.id, credentialVersion: stored.account.credentialVersion,
+              models: models)
+          else { continue }
+        }
         return true
       } catch { continue }
     }

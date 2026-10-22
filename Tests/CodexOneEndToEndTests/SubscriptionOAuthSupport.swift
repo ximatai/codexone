@@ -67,6 +67,7 @@ final class OAuthServer: Sendable {
     var invalidRequests = 0
     var expectedVerifier: String? = oauthVerifier
     var expectedChallenge: String?
+    var quotaAuthorization: (String, String)?
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let state: OAuthServerShared
@@ -155,6 +156,15 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
     }
   }
   private func validateRequest() -> Bool {
+    if let head, head.method == .GET {
+      let expected = state.mutex.withLock { $0.quotaAuthorization }
+      return head.uri == "/backend-api/wham/usage" && body.isEmpty
+        && expected.map {
+          head.headers["authorization"] == ["Bearer " + $0.0]
+            && head.headers["chatgpt-account-id"] == [$0.1]
+        } == true
+        && head.headers["x-openai-codex-luna-reserve"].isEmpty
+    }
     guard let head, head.method == .POST, head.uri == "/oauth/token",
       head.headers["authorization"].isEmpty
     else { return false }

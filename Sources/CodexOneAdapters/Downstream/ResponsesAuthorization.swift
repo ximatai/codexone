@@ -23,6 +23,12 @@ enum ResponsesSource: Sendable {
 enum ResponsesPolicy: Sendable {
   case single(SingleIdentityPolicy)
   case pool(AccountPoolPolicy)
+  var keyID: String {
+    switch self {
+    case .single(let policy): policy.owner.key
+    case .pool(let policy): policy.key.id
+    }
+  }
   var models: Set<String> {
     switch self {
     case .single(let policy): policy.models
@@ -42,13 +48,17 @@ enum ResponsesGateway: Sendable {
     case .single(let gateway):
       try await gateway.execute(
         model: model, references: references, requestID: requestID, mode: mode
-      ) { context in try await operation(context, nil) }
+      ) { context in
+        try await observeExecution(context) { try await operation(context, nil) }
+      }
     case .pool(let gateway, let provider, let target):
       try await gateway.execute(
         model: model, references: references, connection: connection, requestID: requestID,
         mode: mode
       ) { context, work in
-        try await operation(context, provider.dataAccess(work: work, target: target))
+        try await observeExecution(context) {
+          try await operation(context, provider.dataAccess(work: work, target: target))
+        }
       }
     }
   }

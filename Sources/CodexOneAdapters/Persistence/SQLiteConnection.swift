@@ -12,9 +12,11 @@ import Foundation
 final class SQLiteConnection: @unchecked Sendable {
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
-  enum Value {
+  private var readOnly = false
+  enum Value: Sendable {
     case text(String)
     case number(Int64)
+    case null
   }
 
   init(path: String, migrating: Bool = false) throws {
@@ -49,7 +51,7 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      guard version == 0 || version == 4 || (migrating && [1, 2, 3].contains(version)) else {
+      guard version == 0 || version == 5 || (migrating && [1, 2, 3, 4].contains(version)) else {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -58,16 +60,25 @@ final class SQLiteConnection: @unchecked Sendable {
           throw ExecutionError.incompatibleSchema
         }
       } else {
-        for (table, expected) in Self.columns + (version >= 2 ? Self.keyColumns : [])
+        let expectedTables =
+          Self.columns.map { table, columns in
+            (
+              table,
+              columns
+                + (version >= 5 && table == "attempts"
+                  ? ["created_at_epoch", "outcome_json", "request_id"] : [])
+            )
+          } + (version >= 2 ? Self.keyColumns : [])
           + (version >= 3 ? Self.accountColumns : [])
-        {
+          + (version >= 5 ? Self.observationColumns : [])
+        for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
           }
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, ![1, 2, 3, 4].contains(version) { throw ExecutionError.incompatibleSchema }
+      if migrating, ![1, 2, 3, 4, 5].contains(version) { throw ExecutionError.incompatibleSchema }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
@@ -82,10 +93,11 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.schema)
           try exec(Self.keySchema)
           try exec(Self.accountSchema)
-          try exec("PRAGMA user_version=4")
+          try exec(Self.observationSchema)
+          try exec("PRAGMA user_version=5")
         }
       }
-      if [1, 2, 3].contains(version) {
+      if [1, 2, 3, 4].contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -95,7 +107,8 @@ final class SQLiteConnection: @unchecked Sendable {
         try transaction {
           if version == 1 { try exec(Self.keySchema) }
           if version < 3 { try exec(Self.accountSchema) }
-          try exec("PRAGMA user_version=4")
+          try exec(Self.observationSchema)
+          try exec("PRAGMA user_version=5")
         }
       }
       guard
@@ -104,6 +117,36 @@ final class SQLiteConnection: @unchecked Sendable {
         ]
       else {
         throw ExecutionError.storageUnavailable
+      }
+    } catch {
+      shutdown()
+      throw error
+    }
+  }
+
+  /// The already locked primary store owns this one read-only WAL connection.
+  init(readOnlyPath: String) throws {
+    readOnly = true
+    guard let resolved = readOnlyPath.withCString({ realpath($0, nil) }) else {
+      throw ExecutionError.storageUnavailable
+    }
+    let canonical = String(cString: resolved)
+    free(resolved)
+    guard
+      sqlite3_open_v2(
+        canonical, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_NOFOLLOW, nil)
+        == SQLITE_OK
+    else {
+      shutdown()
+      throw ExecutionError.storageUnavailable
+    }
+    do {
+      guard sqlite3_busy_timeout(handle, 50) == SQLITE_OK else {
+        throw ExecutionError.storageUnavailable
+      }
+      try exec("PRAGMA query_only=ON")
+      guard try scalar("PRAGMA user_version") == 5, try scalar("PRAGMA query_only") == 1 else {
+        throw ExecutionError.incompatibleSchema
       }
     } catch {
       shutdown()
@@ -174,6 +217,7 @@ final class SQLiteConnection: @unchecked Sendable {
           )
         }
       case .number(let number): result = sqlite3_bind_int64(statement, Int32(index + 1), number)
+      case .null: result = sqlite3_bind_null(statement, Int32(index + 1))
       }
       guard result == SQLITE_OK else { throw ExecutionError.storageUnavailable }
     }
@@ -182,6 +226,7 @@ final class SQLiteConnection: @unchecked Sendable {
       switch sqlite3_step(statement) {
       case SQLITE_ROW: result.append(try map(statement))
       case SQLITE_DONE: return result
+      case SQLITE_INTERRUPT where readOnly: throw ExecutionError.capacity
       default: throw ExecutionError.storageUnavailable
       }
     }
@@ -255,8 +300,33 @@ final class SQLiteConnection: @unchecked Sendable {
     ("account_events", ["id", "account_id", "revision", "action", "metadata_json", "at_epoch"]),
   ]
 
+  static let observationSchema = """
+    ALTER TABLE attempts ADD COLUMN created_at_epoch INTEGER;
+    ALTER TABLE attempts ADD COLUMN outcome_json TEXT;
+    ALTER TABLE attempts ADD COLUMN request_id TEXT;
+    CREATE INDEX attempts_request ON attempts(request_id);
+    CREATE INDEX attempts_created ON attempts(created_at_epoch,key_id);
+    CREATE TABLE account_quota (account_id TEXT PRIMARY KEY REFERENCES accounts(id), record_json TEXT NOT NULL CHECK(length(record_json)<=16384));
+    CREATE TABLE account_health (account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+      auth_rejected_version INTEGER, last_failure TEXT NOT NULL, at_epoch INTEGER NOT NULL);
+    CREATE TABLE health_models (model TEXT PRIMARY KEY);
+    CREATE TABLE account_model_health (account_id TEXT NOT NULL REFERENCES accounts(id),
+      model TEXT NOT NULL REFERENCES health_models(model) ON DELETE CASCADE,
+      until_epoch INTEGER NOT NULL, failure TEXT NOT NULL, PRIMARY KEY(account_id,model));
+    CREATE TABLE request_diagnostics (request_id TEXT PRIMARY KEY, at_epoch INTEGER NOT NULL,
+      key_id TEXT NOT NULL, model TEXT, mode TEXT NOT NULL, failure TEXT NOT NULL);
+    CREATE INDEX diagnostics_created ON request_diagnostics(at_epoch,request_id);
+    """
+  private static let observationColumns: [(String, [String])] = [
+    ("account_quota", ["account_id", "record_json"]),
+    ("account_health", ["account_id", "auth_rejected_version", "last_failure", "at_epoch"]),
+    ("health_models", ["model"]),
+    ("account_model_health", ["account_id", "model", "until_epoch", "failure"]),
+    ("request_diagnostics", ["request_id", "at_epoch", "key_id", "model", "mode", "failure"]),
+  ]
+
   private func backupBeforeUpgrade(_ path: String) throws {
-    let destination = path + ".pre-v4-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v5-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

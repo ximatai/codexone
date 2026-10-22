@@ -15,6 +15,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       else { throw ExecutionError.invalidCommand }
       return
     }
+    guard let model = command.model, !model.isEmpty else { throw ExecutionError.invalidCommand }
     let account = try loadAccount(db, command.owner.identity).account
     guard account.namespace == command.owner.namespace,
       account.revision == snapshot.revision,
@@ -24,6 +25,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       account.mode == .enabled || (account.mode == .draining && snapshot.continuation),
       snapshot.accessExpiresAtUnixSeconds > Int64(Date().timeIntervalSince1970)
     else { throw ExecutionError.denied }
+    try Self.checkAccountHealth(db, account: account, model: model)
   }
   public func createVerifiedAccount(id: String, namespace: String, envelope: String) async throws
     -> ManagedAccount
@@ -208,7 +210,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       bytes.base64EncodedString() == parts[2]
     else { throw ExecutionError.invalidCommand }
   }
-  private static func loadAccount(_ db: SQLiteConnection, _ id: String) throws
+  static func loadAccount(_ db: SQLiteConnection, _ id: String) throws
     -> StoredAccountCredential
   {
     guard

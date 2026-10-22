@@ -13,6 +13,7 @@ struct HTTPResponseExecution: Sendable {
   let access: DataPlaneAuthorization
   let gateway: ResponsesGateway?
   var connection: AccountRouteIdentity? = nil
+  var currentKeyID: String? = nil
   let effectiveModels: [SingleIdentityConfiguration.Model]
 
   func pinned(to identity: AccountRouteIdentity) -> Self {
@@ -26,11 +27,20 @@ struct HTTPResponseExecution: Sendable {
     return Self(
       client: client, webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
-      gateway: try access.gateway(policy), connection: connection,
+      gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
       effectiveModels: configuration.models.filter { policy.models.contains($0.id) })
   }
 
   func execute(
+    _ request: ResponseRequest, requestID: String,
+    emit: @escaping @Sendable (JSONValue) async throws -> Void
+  ) async throws {
+    do { try await executeHTTP(request, requestID: requestID, emit: emit) } catch {
+      await recordRejection(request, requestID: requestID, error: error)
+      throw error
+    }
+  }
+  private func executeHTTP(
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
@@ -77,10 +87,7 @@ struct HTTPResponseExecution: Sendable {
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
         let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
         guard response.status == .ok else {
-          if response.status == .tooManyRequests {
-            throw GatewayProtocolError(429, "upstream_rate_limited")
-          }
-          throw GatewayProtocolError(502, "upstream_rejected")
+          throw upstreamRejection(status: response.status, headers: response.headers)
         }
         if request.streaming {
           guard
@@ -113,6 +120,7 @@ struct HTTPResponseExecution: Sendable {
                 allowCompaction: request.streamCompaction)
               if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
+              try observeTerminalOutcome(event, context: context)
               terminal = observation.terminal
               try await emit(event)
               if terminal { break readUpstream }
@@ -148,12 +156,23 @@ struct HTTPResponseExecution: Sendable {
             expectedPreviousResponseID: request.document["previous_response_id"]?.string,
             allowCompaction: request.streamCompaction)
           for object in observation.bindings { try await context.bind(object) }
+          try observeTerminalOutcome(event, context: context)
           try await emit(document)
         }
       }
       return nil
     }
   }
+  func recordRejection(_ request: ResponseRequest?, requestID: String, error: any Error) async {
+    guard let currentKeyID, let diagnostics = access.diagnostics else { return }
+    let model = request.flatMap { request in
+      configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
+    }
+    try? await diagnostics.recordRejection(
+      requestID: requestID, keyID: currentKeyID,
+      model: model, mode: request?.mode ?? .generation, failure: executionFailure(error))
+  }
+
 }
 
 /// The client's header deadline does not cover streaming body consumption.

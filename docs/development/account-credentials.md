@@ -62,7 +62,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 `AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
 
-v4 不是自动升级。已有 v1/v2/v3 须停服显式 migrate，备份保存源版本与未恢复 intent；v4 普通启动才完成 unknown/uncertain 恢复。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
+当前 v5 不是自动升级。已有 v1/v2/v3/v4 须停服显式 migrate，备份保存源版本与未恢复 intent；v5 普通启动才完成 unknown/uncertain 恢复。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
 
 ## 订阅账号池的 HTTP 入口配置
 
@@ -88,3 +88,5 @@ HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 acce
 就绪检查会用当前主密钥和存储 context 本地打开候选密文，错误密钥或全部解密失败返回未就绪。单个结构完整但无法解密的账号不遮蔽其他合格账号；派发也跳过该候选，关键数据库故障仍拒绝。检查不改变授权状态或请求上游，可解密的过期 access 仍由共享刷新处理。
 
 `upstreamTransport` 缺省/`http` 使用 HTTP 上游，`websocket` 为每个 HTTP Responses 请求建立一次选中账号的 WS 上游；对下游仍提供 JSON/SSE。独立 compact 使用同一身份的 HTTP 路径，传输选择进入策略版本但不改变价格版本。选择 websocket 同时启用原生 WS：首 create 原子选账号并建立一次上游连接，所有 lane/后续 turn 固定该身份并逐轮检查权限，刷新不重连。首 turn 结束独立归还执行 ticket；断开、超时及关闭不换账号重放。
+
+账号页面可以展开额度与健康详情并手动读取。额度 GET 与授权刷新使用独立容量；主/次窗口保留提供者时长，五分钟后标陈旧，失败保留最后成功值。禁用账号不周期观察；有效凭证可手动读取，过期须先显式刷新。缺失字段不推算。具体边界见 [U10](../specs/usage.md) 和 [I20](../specs/identity.md)。

@@ -90,7 +90,8 @@ public final class ExecutionFinalizer: Service, FinalizationSink, Sendable {
       for await item in stream {
         do {
           try await store.finalize(
-            attempt: item.finalization.attempt, evidence: item.finalization.evidence)
+            attempt: item.finalization.attempt, evidence: item.finalization.evidence,
+            outcome: item.finalization.outcome)
         } catch ExecutionError.staleEvidence {
           // A newer cumulative truth is already durable beyond the retired watermark.
         } catch {

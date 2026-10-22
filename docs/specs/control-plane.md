@@ -34,7 +34,7 @@
 
 ## A12：账号管理与一次性授权入口
 
-配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 只有 id、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
+配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段只有 id、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
 
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权。POST `/authorization/:flowID` 只接受 callbackURL；DELETE 丢弃本 owner 尚未完成的流程。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。登录地址和流程信息仅当前响应可用，不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 
@@ -45,3 +45,12 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 
 账号界面重新读取先同步当前管理 session/CSRF；其他标签页替换 session 时清除旧 owner 的授权流程，后续写入使用新证明。登出一经发起即清本地账号、CSRF、提示和授权流程；未确认时仅提供重试登出，不允许读列表重新解锁变更。重试重新获取当前证明，401 可确认已退出，其他失败仍保持封闭；不得把请求失败当成 Cookie 已撤销。
+
+
+## A13：额度、健康与用量诊断界面
+
+账号列表含非秘密 observability 摘要；`GET /api/accounts/:id/observation` 返回有界窗口/健康详情，`POST /:id/observe` 只接受空 JSON 对象，复用 session/CSRF。主次窗口显示真实比例、时长、重置、观察及失败时间；附加标识不猜测模型含义。手动读取失败明确提示并保留上次成功值，不能显示已更新；五分钟陈旧随页面时间推进。认证拒绝与模型冷却分开解释，不展示 namespace/令牌/上游错误正文。
+
+`GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。
+
+访问密钥页面内嵌用量筛选、趋势与分页明细，点击某 Key 可直接查看；沿用原管理会话 owner。失败读取保留标注的上次成功筛选/快照，旧请求返回不能覆盖新选择；卸载、登出、会话失效清除私有界面。Key 登出开始即隐藏界面并重新取得当前 CSRF 再撤销；未确认只能重试登出，不允许读列表恢复操作。大屏优先实际操作验收。

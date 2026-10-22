@@ -126,14 +126,22 @@ public protocol ExecutionStore: Sendable {
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
     -> ExecutionOwner
-  func finalize(attempt: String, evidence: UsageEvidence?) async throws
+  func finalize(attempt: String, evidence: UsageEvidence?, outcome: ExecutionOutcome?) async throws
   func snapshot(attempt: String) async throws -> ExecutionSnapshot
+}
+
+extension ExecutionStore {
+  public func finalize(attempt: String, evidence: UsageEvidence?) async throws {
+    try await finalize(attempt: attempt, evidence: evidence, outcome: nil)
+  }
 }
 
 public struct Finalization: Sendable {
   public let attempt: String
   public let evidence: UsageEvidence?
-  public init(attempt: String, evidence: UsageEvidence?) {
+  public let outcome: ExecutionOutcome?
+  public init(attempt: String, evidence: UsageEvidence?, outcome: ExecutionOutcome? = nil) {
+    self.outcome = outcome
     self.attempt = attempt
     self.evidence = evidence
   }

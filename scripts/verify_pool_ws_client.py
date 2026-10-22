@@ -48,7 +48,7 @@ def main():
                     result = event(sock)
                     if result["type"] == "response.created":
                         result = event(sock)
-                        assert result["type"] == "response.completed"
+                        assert result["type"] in ["response.completed", "response.failed", "response.incomplete"]
             print(json.dumps(result), flush=True)
     finally:
         sock.close()

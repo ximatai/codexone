@@ -154,7 +154,10 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   let key = try await store.createKey(
     id: "key", principal: "p", digest: String(repeating: "a", count: 64), policy: policy)
   await store.close()
-  try rawSQL(path, "DROP TABLE account_events; DROP TABLE accounts; PRAGMA user_version=2")
+  try rawSQL(
+    path,
+    removeObservationSchema
+      + "DROP TABLE account_events; DROP TABLE accounts; PRAGMA user_version=2")
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   }

@@ -57,6 +57,7 @@ try {
     return url.origin === origin || (url.origin === oauthOrigin && url.pathname === "/oauth/authorize" && route.request().method() === "GET") ? route.continue() : route.abort();
   });
   page = await context.newPage();
+  await page.clock.install();
   const errors = [];
   page.on("pageerror", () => errors.push("page error"));
   page.on("console", entry => { if (/content security policy|refused to execute|refused to apply/i.test(entry.text())) errors.push("CSP rejection"); });
@@ -142,6 +143,31 @@ try {
   account = (await admin()).accounts[0];
   assert.equal(account.id, id); assert.equal(account.credentialVersion, 2); assert.equal(account.mode, "disabled");
   await capture("reauthorized-desktop.png");
+  stage = "quota-success";
+  await page.getByRole("button", { name: "额度与健康详情", exact: true }).click();
+  await expect(page.getByRole("button", { name: "读取上游额度", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
+  await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
+  await expect(page.getByText("主窗口已用 25%", { exact: true })).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "次窗口已用比例", exact: true }).first()).toHaveAttribute("value", "45");
+  const observed = (await admin()).accounts[0].observability.quota.observedAtUnixSeconds;
+  await capture("quota-desktop.png");
+  stage = "quota-failure-retains-value";
+  await fixture({ quota_mode: "fail" });
+  await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
+  await expect(page.locator(".warning-banner")).toContainText("本次额度读取失败");
+  await expect(page.getByText("主窗口已用 25%", { exact: true })).toBeVisible();
+  const failedQuota = (await admin()).accounts[0].observability.quota;
+  assert.equal(failedQuota.observedAtUnixSeconds, observed);
+  assert.equal(failedQuota.failure, "unavailable");
+  await capture("quota-failure-desktop.png");
+  stage = "quota-stale";
+  await page.clock.fastForward(310_000);
+  await expect(page.getByText("额度观测已陈旧 · 最近读取失败", { exact: true })).toBeVisible();
+  await fixture({ quota_mode: "ok" });
+  await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
+  await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
+  await expect(page.getByText("额度观测新鲜", { exact: true })).toBeVisible();
   stage = "logout";
   await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.continue());
   await page.getByRole("button", { name: "登出", exact: true }).click();
@@ -170,7 +196,7 @@ try {
   await expect(page.getByRole("heading", { name: "管理员登录", exact: true })).toBeVisible();
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
   assert.deepEqual(errors, []);
-  console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; private storage and large-screen captures");
+  console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; passive quota GET, failure retention/staleness/recovery; private storage and large-screen captures");
 } catch {
   await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
   console.error(`Browser account check failed at stage: ${stage}; private diagnostics excluded.`);

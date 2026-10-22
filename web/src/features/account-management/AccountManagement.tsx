@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as sessionAPI from "../../shared/management";
 import * as api from "./api";
+import { AccountObservability } from "./AccountObservability";
+import { observeAccount, observationNotice } from "./observation-api";
 import type { Account, AccountMode, AuthorizationFlow } from "./api";
 const modes = { enabled: "允许使用", draining: "排空中", disabled: "已禁用" };
 const authorization = { ready: "授权有效", refreshing: "正在刷新", requires_auth: "需要重新授权", auth_uncertain: "授权结果未知" };
@@ -23,7 +25,10 @@ export function AccountManagement() {
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNoticeValue] = useState("");
+  const [noticeTone, setNoticeTone] = useState("success");
+  const [clock, setClock] = useState(performance.now());
+  function setNotice(text: string, tone = "success") { setNoticeValue(text); setNoticeTone(tone); }
   const [flow, setFlow] = useState<(AuthorizationFlow & { accountID?: string }) | null>(null);
   const [callback, setCallback] = useState("");
   const [remaining, setRemaining] = useState(0);
@@ -59,9 +64,10 @@ export function AccountManagement() {
   }
   useEffect(() => {
     const abort = new AbortController(); controller.current = abort;
+    const timer = window.setInterval(() => setClock(performance.now()), 15000);
     const version = ++epoch.current;
     void read(version, abort.signal, true).finally(() => { if (current(version)) setChecking(false); });
-    return () => { ++epoch.current; abort.abort(); };
+    return () => { ++epoch.current; abort.abort(); window.clearInterval(timer); };
     // This effect owns the page's entire lifetime and request cancellation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -90,15 +96,18 @@ export function AccountManagement() {
     await read(version, controller.current?.signal);
     if (current(version)) setBusy(false);
   }
-  async function mutation(work: (csrf: string, signal?: AbortSignal) => Promise<unknown>, success: string) {
+  async function mutation<T>(work: (csrf: string, signal?: AbortSignal) => Promise<T>, success: string | ((result: T) => { text: string; warning: boolean })) {
     if (!session || busy || locked || logoutUnconfirmed) return;
     setBusy(true); setError(""); setNotice(""); const version = epoch.current;
     try {
-      await work(session.csrf, controller.current?.signal);
+      const result = await work(session.csrf, controller.current?.signal);
       if (!current(version)) return;
       setLocked(true);
       const refreshed = await read(version, controller.current?.signal);
-      if (refreshed === "same" && current(version)) setNotice(success);
+      if (refreshed === "same" && current(version)) {
+        const notice = typeof success === "string" ? { text: success, warning: false } : success(result);
+        setNotice(notice.text, notice.warning ? "warning" : "success");
+      }
     } catch (cause) {
       if (current(version)) {
         setLocked(true); setError(failure(cause));
@@ -149,7 +158,7 @@ export function AccountManagement() {
   return <section className="key-management account-management" aria-labelledby="accounts-heading">
     <div className="intro"><p className="eyebrow">SUBSCRIPTION ACCOUNTS</p><h1 id="accounts-heading">订阅账号</h1><p className="subtle">管理授权与使用策略。禁用保留历史归属，重新授权不会更换账号身份。</p></div>
     {error && <p role="alert" className="error-banner">{error}</p>}
-    {notice && <p role="status" className="success-banner">{notice}</p>}
+    {notice && <p role="status" className={noticeTone === "warning" ? "warning-banner" : "success-banner"}>{notice}</p>}
     {logoutUnconfirmed ? <div className="panel login-panel key-create"><h2>登出状态待确认</h2><p className="subtle field-hint">本页账号与授权信息已清除。确认退出前暂停管理操作。</p><button disabled={busy} onClick={() => void logout()}>重试登出</button></div> : !session ? <form className="panel login-panel key-create" onSubmit={(event) => void login(event)}>
       <h2>管理员登录</h2><p className="subtle field-hint">使用独立管理员凭证。凭证只用于本次登录，不保存在浏览器中。</p>
       <label className="text-field">管理员凭证<input type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} disabled={busy} required /></label>
@@ -168,11 +177,12 @@ export function AccountManagement() {
           </form>}
           {!flow && <p className="subtle field-hint">需要重新授权时，请使用右侧对应账号的操作。</p>}
         </div>
-        <div className="panel key-list"><h2>账号与授权状态</h2><p className="subtle field-hint">排空仅保留已有身份关联；授权结果未知时请重新授权，系统不会重复使用旧刷新令牌。</p>
-          {!accounts.length ? <p className="empty-state subtle">还没有订阅账号。从左侧发起授权。</p> : <div className="table-scroll"><table><thead><tr><th>账号</th><th>使用策略</th><th>授权</th><th>操作</th></tr></thead><tbody>{accounts.map((account) => <tr key={account.id}>
+        <div className="panel key-list"><h2>账号与授权状态</h2><p className="subtle field-hint">排空仅保留已有身份关联；授权结果未知时请重新授权。额度与健康为最近读取的快照，可重新读取同步。</p>
+          {!accounts.length ? <p className="empty-state subtle">还没有订阅账号。从左侧发起授权。</p> : <div className="table-scroll"><table><thead><tr><th>账号</th><th>使用策略</th><th>授权</th><th>额度与健康</th><th>操作</th></tr></thead><tbody>{accounts.map((account) => <tr key={account.id}>
             <td><div className="key-id" title={account.id}>{account.id}</div><small>凭证 v{account.credentialVersion} · 修订 {account.revision}</small></td>
             <td><span>{modes[account.mode]}</span><div className="row-actions account-modes">{(["enabled", "draining", "disabled"] as const).filter((mode) => mode !== account.mode).map((mode) => <button className="text-button" key={mode} disabled={busy || locked || !!flow} onClick={() => setMode(account, mode)}>{mode === "enabled" ? "启用" : mode === "draining" ? "排空" : "禁用"}</button>)}</div></td>
             <td><span className={account.authorization === "ready" ? "state-ready" : "state-attention"}>{authorization[account.authorization]}</span></td>
+            <td><AccountObservability account={account} now={clock} disabled={busy || locked || !!flow} onObserve={() => void mutation((csrf, signal) => observeAccount(account.id, csrf, signal), result => ({ text: observationNotice(result), warning: result.quota.failure !== null || result.quota.state === "unavailable" }))} /></td>
             <td><div className="account-row-actions"><button className="text-button" disabled={busy || locked || !!flow || account.authorization !== "ready"} onClick={() => void mutation((csrf, signal) => api.refreshAccount(account, csrf, signal), "授权刷新已完成。")}>刷新授权</button><button className="text-button" disabled={busy || locked || !!flow || account.authorization === "refreshing"} onClick={() => void begin(account)}>重新授权</button></div></td>
           </tr>)}</tbody></table></div>}
         </div>

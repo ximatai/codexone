@@ -66,7 +66,9 @@ public struct ResponsesDataService: Service {
     case .single: accounts = true
     case .pool(_, let credentials, let refresher, let provider, _):
       if provider.isAccepting && refresher.isAccepting {
-        accounts = (try? await credentials.hasLocallyRoutableAccount()) == true
+        accounts =
+          (try? await credentials.hasLocallyRoutableAccount(
+            models: Set(configuration.models.map(\.id)))) == true
       } else {
         accounts = false
       }
@@ -79,6 +81,9 @@ public struct ResponsesDataService: Service {
   }
 
   public func run() async throws {
+    if let health = store as? any AccountHealthStore {
+      try await health.configureHealthModels(Set(configuration.models.map(\.id)))
+    }
     let token = try source.tokenFile.map { try readRuntimeSecret($0) }
     var pool = HTTPClient.Configuration.ConnectionPool(
       idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 16)
@@ -214,7 +219,9 @@ public struct ResponsesDataService: Service {
       let first = try webSocketCreate(firstData)
       let authorized = try await executor.authorized(digest)
       guard authorized.effectiveModels.contains(where: { $0.id == first.model }) else {
-        throw GatewayProtocolError(403, "model_not_allowed")
+        let error = GatewayProtocolError(403, "model_not_allowed")
+        await authorized.recordRejection(first, requestID: UUID().uuidString, error: error)
+        throw error
       }
       if case .pool = authorized.gateway {
         try await PoolWebSocketSession.run(
@@ -224,7 +231,7 @@ public struct ResponsesDataService: Service {
         try await executor.webSocket.run { upstream in
           try await serveTurns(
             downstream: downstream, upstream: upstream, firstData: firstData,
-            executor: executor, digest: digest)
+            executor: authorized, digest: digest)
         }
       }
     }
@@ -259,8 +266,10 @@ public struct ResponsesDataService: Service {
               let initialTurn = pending
               pending = nil
               let requestID = initialTurn?.requestID ?? UUID().uuidString
+              var requested: ResponseRequest?
               do {
                 let request = try webSocketCreate(data)
+                requested = request
                 if let initialTurn {
                   guard
                     let model = executor.effectiveModels.first(where: { $0.id == request.model })
@@ -281,6 +290,9 @@ public struct ResponsesDataService: Service {
                   }
                 }
               } catch {
+                if let requested {
+                  await executor.recordRejection(requested, requestID: requestID, error: error)
+                }
                 initialTurn?.start.close(error)
                 if initialTurn == nil {
                   try? await sendWebSocketError(

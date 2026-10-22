@@ -9,6 +9,15 @@ extension HTTPResponseExecution {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    do { try await compactHTTP(request, requestID: requestID, emit: emit) } catch {
+      await recordRejection(request, requestID: requestID, error: error)
+      throw error
+    }
+  }
+  private func compactHTTP(
+    _ request: ResponseRequest, requestID: String,
+    emit: @escaping @Sendable (JSONValue) async throws -> Void
+  ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
     guard request.mode == .compact, !request.streamCompaction,
       let model = effectiveModels.first(where: { $0.id == request.model })
@@ -31,8 +40,7 @@ extension HTTPResponseExecution {
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
         let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
         guard response.status == .ok else {
-          throw GatewayProtocolError(
-            response.status == .tooManyRequests ? 429 : 502, "upstream_compact_rejected")
+          throw upstreamRejection(status: response.status, headers: response.headers, compact: true)
         }
         guard
           response.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json")

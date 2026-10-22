@@ -25,6 +25,7 @@ private final class PoolHTTPState: Sendable {
     var calls: [Call] = []
     var invalid = 0
     var upgrades = 0
+    var upgradeAccounts: [String] = []
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let value = Mutex(State())
@@ -51,9 +52,13 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
   let state: PoolHTTPState
+  let rejection: Int?
   var head: HTTPRequestHead?
   var body = Data()
-  init(_ state: PoolHTTPState) { self.state = state }
+  init(_ state: PoolHTTPState, rejection: Int? = nil) {
+    self.state = state
+    self.rejection = rejection
+  }
   func channelActive(context: ChannelHandlerContext) {
     state.value.withLock { $0.channels[ObjectIdentifier(context.channel)] = context.channel }
     context.fireChannelActive()
@@ -68,6 +73,10 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
       self.head = head
     case .body(let bytes): body.append(contentsOf: bytes.readableBytesView)
     case .end:
+      if head?.method == .GET, let rejection {
+        reject(context, status: rejection)
+        return
+      }
       do {
         let request = try JSONValue.decode(body)
         guard let head else { throw ExecutionError.invalidCommand }
@@ -84,6 +93,12 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
             .init(
               account: account, path: head.uri, previous: request["previous_response_id"]?.string))
           return value.calls.count
+        }
+        if let input = request["input"]?.string, input.hasPrefix("http"),
+          let status = Int(input.dropFirst(4))
+        {
+          reject(context, status: status)
+          return
         }
         if request["input"]?.string == "abort" {
           context.close(promise: nil)
@@ -103,7 +118,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           document["usage"] = .object(["input_tokens": .number(2)])
         }
         if !compact {
-          document["status"] = .string("completed")
+          document["status"] = .string(
+            request["input"]?.string == "terminal-failed" ? "failed" : "completed")
           document["model"] = .string("synthetic-text")
         }
         if let previous = request["previous_response_id"] {
@@ -113,7 +129,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         let bytes: Data
         if stream {
           let event = JSONValue.object([
-            "type": .string("response.completed"), "response": .object(document),
+            "type": .string("response." + (document["status"]?.string ?? "completed")),
+            "response": .object(document),
           ])
           bytes = Data(
             "event: response.completed\ndata: \(String(decoding: try event.data(), as: UTF8.self))\n\n"
@@ -146,6 +163,24 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
       } catch { context.close(promise: nil) }
     }
   }
+  private func reject(_ context: ChannelHandlerContext, status: Int) {
+    let body = ByteBuffer(string: "{\"error\":\"synthetic-private-status-marker\"}")
+    context.write(
+      wrapOutboundOut(
+        .head(
+          .init(
+            version: .http1_1, status: .init(statusCode: status),
+            headers: [
+              "content-type": "application/json", "content-length": String(body.readableBytes),
+              "retry-after": "60", "connection": "close",
+            ]))), promise: nil)
+    context.write(wrapOutboundOut(.body(.byteBuffer(body))), promise: nil)
+    let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+    context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
+      bound.value.close(promise: nil)
+    }
+  }
+
 }
 private struct PoolHTTPHarness {
   let oauth: OAuthHarness
@@ -188,7 +223,7 @@ private struct PoolHTTPHarness {
       channel.closeFuture.whenComplete { _ in
         _ = state.value.withLock { $0.channels.removeValue(forKey: ObjectIdentifier(channel)) }
       }
-      let http = PoolHTTPHandler(state)
+      let http = PoolHTTPHandler(state, rejection: Int(handshake ?? ""))
       if handshake == "stall" {
         return channel.pipeline.addHandler(SilentUpgradeHandler(state))
       }
@@ -199,6 +234,7 @@ private struct PoolHTTPHarness {
             let account = head.headers.first(name: "chatgpt-account-id") ?? ""
             state.value.withLock { value in
               value.upgrades += 1
+              value.upgradeAccounts.append(account)
               if head.headers["authorization"]
                 != (value.expected[account].map { ["Bearer " + $0] } ?? [])
                 || !head.headers["x-client-private"].isEmpty
@@ -206,6 +242,7 @@ private struct PoolHTTPHarness {
                 value.invalid += 1
               }
             }
+            if Int(handshake ?? "") != nil { return channel.eventLoop.makeSucceededFuture(nil) }
             if handshake == "delay" {
               let scheduled = channel.eventLoop.scheduleTask(in: .milliseconds(700)) {
                 Optional(HTTPHeaders())
@@ -567,13 +604,15 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
       var created: [String: JSONValue] = [
         "type": .string("response.created"), "response": .object(document),
       ]
-      document["status"] = .string("completed")
+      document["status"] = .string(
+        request["input"]?.string == "terminal-failed" ? "failed" : "completed")
       document["usage"] = .object([
         "input_tokens": .number(2), "output_tokens": .number(1),
         "input_tokens_details": .object(["cached_tokens": .number(0)]),
       ])
       var completed: [String: JSONValue] = [
-        "type": .string("response.completed"), "response": .object(document),
+        "type": .string("response." + (document["status"]?.string ?? "completed")),
+        "response": .object(document),
       ]
       if let lane = request["stream_id"] {
         created["stream_id"] = lane
@@ -951,5 +990,144 @@ func poolNativeWebSocketRefreshesPinnedIdentityWithoutOpeningAnotherSession() as
     #expect(h.oauth.server.counts.calls == 3)
     #expect(h.calls.count == 2 && Set(h.calls.map(\.account)).count == 1)
     #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolHTTPExplicitProviderStatusesPersistHealthAndStopNewDispatchWithoutReplaying() async throws
+{
+  for status in [401, 429, 503, 400] {
+    try await withPoolHTTP { h in
+      let response = try await h.request("http\(status)")
+      #expect(response.0 == (status == 429 ? 429 : 502))
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let selected = try #require(h.calls.first?.account).replacingOccurrences(
+        of: "synthetic-", with: "")
+      let health = try await h.store.accountHealth(id: selected)
+      #expect(health.authenticationRejected == (status == 401))
+      #expect(health.cooldowns.count == ([429, 503].contains(status) ? 1 : 0))
+      let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
+      _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
+      #expect(try await h.readiness().0 == (status == 400 ? 200 : 503))
+      #expect(try await h.request().0 == (status == 400 ? 200 : 503))
+      #expect(h.calls.count == (status == 400 ? 2 : 1))
+      let unknown = try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+      }
+      #expect(unknown == 1)
+      for file in try FileManager.default.contentsOfDirectory(
+        at: h.oauth.root, includingPropertiesForKeys: nil)
+      where file.lastPathComponent.hasPrefix("core.sqlite") {
+        #expect(try !Data(contentsOf: file).contains(Data("synthetic-private-status-marker".utf8)))
+      }
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolWebSocketUpgradeRejectionsClassifyHealthBeforeAnyCreateAndNeverReconnect() async throws {
+  for status in [401, 429, 503] {
+    try await withOAuth(timeout: 3000) { oauth in
+      let h = try await PoolHTTPHarness.open(
+        oauth, transport: "websocket", handshake: String(status))
+      do {
+        #expect(try await h.request().0 == (status == 429 ? 429 : 502))
+        try await awaitOAuth { h.finalizer.outstanding == 0 }
+        let selected = try #require(h.state.value.withLock { $0.upgradeAccounts.first })
+          .replacingOccurrences(of: "synthetic-", with: "")
+        let health = try await h.store.accountHealth(id: selected)
+        #expect(health.authenticationRejected == (status == 401))
+        #expect(health.cooldowns.count == (status == 401 ? 0 : 1))
+        let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
+        _ = try await h.store.setAccountMode(
+          id: other.id, revision: other.revision, mode: .disabled)
+        #expect(try await h.readiness().0 == 503)
+        #expect(try await h.request().0 == 503)
+        #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 1)
+        let unknown = try await h.store.perform {
+          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+        }
+        #expect(unknown == 1)
+      } catch {
+        await h.close()
+        throw error
+      }
+      await h.close()
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolUsageAutomaticallyCollectsHTTPModesFailuresAndPreAdmissionRejectionsWithoutDoubleCounting()
+  async throws
+{
+  try await withPoolHTTP { h in
+    let reader = try await h.store.makeUsageReader()
+    do {
+      let first = try await h.request()
+      let id = try #require(JSONValue.decode(first.1)["id"]?.string)
+      #expect(first.0 == 200)
+      #expect(try await h.request(stream: true).0 == 200)
+      #expect(try await h.request(compact: true).0 == 200)
+      #expect(try await h.request("terminal-failed").0 == 200)
+      #expect(try await h.request("abort").0 == 502)
+      let before = h.calls.count
+      #expect(try await h.request(previous: id, key: h.bob).0 != 200)
+      #expect(try await h.request(previous: "synthetic-missing").0 != 200)
+      #expect(try await h.request(key: "synthetic-unauthorized-key").0 == 401)
+      #expect(h.calls.count == before)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+      let report = try await reader.queryUsage(
+        .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
+      #expect(report.totals.admitted == 5 && report.totals.rejected == 2)
+      #expect(report.totals.complete == 4 && report.totals.unavailable == 1)
+      #expect(report.totals.failed == 2 && report.totals.unknown == 1)
+      #expect(report.totals.metrics.inputTokens == 8 && report.totals.metrics.outputTokens == 4)
+      #expect(report.rows.filter { $0.kind == .admitted && $0.mode == .compact }.count == 1)
+      #expect(report.rows.filter { $0.failure == .upstreamRejected }.count == 1)
+      #expect(report.rows.filter { $0.kind == .rejected && $0.keyID == "bob" }.count == 1)
+      #expect(report.rows.filter { $0.kind == .rejected && $0.keyID == "alice" }.count == 1)
+      #expect(report.rows.allSatisfy { $0.requestID != nil })
+      #expect(try await h.store.accountHealth(id: "a").cooldowns.isEmpty)
+      #expect(try await h.store.accountHealth(id: "b").cooldowns.isEmpty)
+    } catch {
+      await reader.close()
+      throw error
+    }
+    await reader.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolUsageCollectsNativeWarmupAndFailedTerminalAcrossNativeAndBridgedWebSockets() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let reader = try await h.store.makeUsageReader()
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    do {
+      #expect(try await client.read()["ready"]?.bool == true)
+      #expect(
+        try await client.command(["generate": .bool(false)])["type"]?.string == "response.completed"
+      )
+      #expect(
+        try await client.command(["input": .string("terminal-failed")])["type"]?.string
+          == "response.failed")
+      #expect(try await h.request("terminal-failed", stream: true).0 == 200)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+      let report = try await reader.queryUsage(
+        .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
+      #expect(
+        report.totals.admitted == 3 && report.totals.failed == 2 && report.totals.complete == 3)
+      #expect(report.rows.filter { $0.mode == .warmup }.count == 1)
+      #expect(report.totals.metrics.inputTokens == 6 && report.totals.rejected == 0)
+      #expect(try await h.store.accountHealth(id: "a").cooldowns.isEmpty)
+      #expect(try await h.store.accountHealth(id: "b").cooldowns.isEmpty)
+    } catch {
+      await reader.close()
+      throw error
+    }
+    await reader.close()
   }
 }

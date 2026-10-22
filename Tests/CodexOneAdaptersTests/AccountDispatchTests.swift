@@ -156,19 +156,20 @@ private func dispatchAdmission(
   await f.close()
 }
 
-@Test func v3ExplicitMigrationBacksUpPendingTruthBeforeV4StartupRecovery() async throws {
+@Test(arguments: [3, 4])
+func legacyExplicitMigrationBacksUpPendingTruthBeforeV5StartupRecovery(version: Int) async throws {
   let f = try await DispatchFixture.make()
   try await f.store.admit(admission("historical"))
   _ = try await f.app.beginRefresh(id: f.account.id, revision: f.account.revision)
   await f.store.close()
-  try rawSQL(f.path, "PRAGMA user_version=3")
+  try rawSQL(f.path, removeObservationSchema + "PRAGMA user_version=\(version)")
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
   }
   try await SQLiteExecutionStore.migrate(path: f.path)
   let directory = (f.path as NSString).deletingLastPathComponent
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v4-") && $0.hasSuffix(".sqlite")
+    $0.contains(".pre-v5-") && $0.hasSuffix(".sqlite")
   }
   #expect(backups.count == 1)
   var db: OpaquePointer?
@@ -180,7 +181,7 @@ private func dispatchAdmission(
       "SELECT (SELECT user_version FROM pragma_user_version), (SELECT state FROM attempts WHERE id='historical'), (SELECT authorization FROM accounts WHERE id='managed-account')",
       -1, &statement, nil) == SQLITE_OK)
   #expect(sqlite3_step(statement) == SQLITE_ROW)
-  #expect(sqlite3_column_int64(statement, 0) == 3)
+  #expect(sqlite3_column_int64(statement, 0) == version)
   #expect(String(cString: sqlite3_column_text(statement, 1)) == "intent")
   #expect(String(cString: sqlite3_column_text(statement, 2)) == "refreshing")
   sqlite3_finalize(statement)
@@ -194,7 +195,7 @@ private func dispatchAdmission(
   try await SQLiteExecutionStore.migrate(path: f.path)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-      $0.contains(".pre-v4-") && $0.hasSuffix(".sqlite")
+      $0.contains(".pre-v5-") && $0.hasSuffix(".sqlite")
     }.count == 1)
   await f.close()
 }

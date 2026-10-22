@@ -7,13 +7,15 @@ public struct AccountAdminAPI: Sendable {
   private let store: any AccountGovernanceStore
   private let authorization: any AccountAuthorizing
   private let refreshing: any AccountRefreshing
+  private let observing: (any AccountQuotaObserving)?
   public init(
     store: any AccountGovernanceStore, authorization: any AccountAuthorizing,
-    refreshing: any AccountRefreshing
+    refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil
   ) {
     self.store = store
     self.authorization = authorization
     self.refreshing = refreshing
+    self.observing = observing
   }
   func register(_ routes: any RoutesBuilder) {
     routes.get { request async throws -> Response in
@@ -22,11 +24,29 @@ public struct AccountAdminAPI: Sendable {
         throw ExecutionError.invalidCommand
       }
       let accounts = try await store.listAccounts(after: query.first?.value)
+      var metadata: [JSONValue] = []
+      for account in accounts {
+        var value = Self.metadata(account).object!
+        value["observability"] = try await observability(id: account.id, detail: false)
+        metadata.append(.object(value))
+      }
       return try Self.response(
         .object([
-          "accounts": .array(accounts.map(Self.metadata)),
+          "accounts": .array(metadata),
           "nextCursor": accounts.count == 64 ? .string(accounts.last!.id) : .null,
         ]))
+    }
+    routes.get(":id", "observation") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      return try await Self.response(
+        observability(id: request.parameters.get("id") ?? "", detail: true))
+    }
+    routes.post(":id", "observe") { request async throws -> Response in
+      _ = try Self.body(request, allowed: [])
+      guard let observing else { throw QuotaObservationFailure.closed }
+      let id = request.parameters.get("id") ?? ""
+      _ = try await observing.observeAccount(id: id)
+      return try await Self.response(observability(id: id, detail: true))
     }
     routes.put(":id") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision", "mode"])
@@ -86,6 +106,15 @@ public struct AccountAdminAPI: Sendable {
       await authorization.discard(owner: owner, flowID: request.parameters.get("flowID") ?? "")
       return try Self.response(.object(["discarded": .bool(true)]))
     }
+  }
+  private func observability(id: String, detail: Bool) async throws -> JSONValue {
+    guard let observations = store as? any AccountObservationStore,
+      let health = store as? any AccountHealthStore
+    else { throw ExecutionError.storageUnavailable }
+    let quota = try await observations.quotaObservation(id: id)
+    let status = try await health.accountHealth(id: id)
+    return accountObservationDTO(
+      quota, health: status, observing: observing?.isAccepting == true, detail: detail)
   }
   private static func metadata(_ account: ManagedAccount) -> JSONValue {
     .object([

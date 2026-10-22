@@ -7,12 +7,15 @@ import Synchronization
 public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let queue = DispatchQueue(label: "codexone.core-database")
   private let connection: SQLiteConnection
+  let path: String
+  let usageReaderGate = Mutex(false)
   let limits: ExecutionLimits
   private let gate = Mutex((regular: 0, critical: 0, closing: false, failed: false))
 
   public var isAvailable: Bool { gate.withLock { !$0.closing && !$0.failed } }
 
-  init(connection: SQLiteConnection, limits: ExecutionLimits) {
+  init(connection: SQLiteConnection, limits: ExecutionLimits, path: String) {
+    self.path = path
     self.connection = connection
     self.limits = limits
   }
@@ -49,9 +52,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             // All intents belonged to the previous owner, whose instance lock is now ours.
             try connection.write("UPDATE attempts SET state='unknown' WHERE state='intent'")
             try Self.recoverAccountRefreshes(connection)
+            try connection.write(
+              "DELETE FROM request_diagnostics WHERE at_epoch<?",
+              [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
           }
           continuation.resume(
-            returning: SQLiteExecutionStore(connection: connection, limits: limits))
+            returning: SQLiteExecutionStore(connection: connection, limits: limits, path: path))
         } catch { continuation.resume(throwing: error) }
       }
     }
@@ -174,14 +180,15 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     }
     try db.write(
       """
-      INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json)
-      VALUES(?,?,?,?,?,?,?,?,?,'intent',?)
+      INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,created_at_epoch,request_id)
+      VALUES(?,?,?,?,?,?,?,?,?,'intent',?,?,?)
       """,
       [
         .text(command.attempt), .text(command.owner.principal), .text(command.owner.key),
         .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
         .text(command.policyVersion), .text(command.pricingVersion),
         .number(command.reservedMicros), .text(try encode(command)),
+        .number(Int64(Date().timeIntervalSince1970)), command.requestID.map { .text($0) } ?? .null,
       ])
   }
 
@@ -236,12 +243,16 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     }
   }
 
-  public func finalize(attempt: String, evidence: UsageEvidence?) async throws {
+  public func finalize(attempt: String, evidence: UsageEvidence?, outcome: ExecutionOutcome? = nil)
+    async throws
+  {
     try validateStrings([attempt])
     if let evidence { try validate(evidence) }
+    try outcome?.validate()
     try await perform(critical: true) { db in
       try db.transaction {
         let snapshot = try Self.load(db, attempt)
+        if let outcome { try Self.recordOutcome(db, snapshot: snapshot, outcome: outcome) }
         guard let evidence else {
           if snapshot.state == .intent {
             try db.write("UPDATE attempts SET state='unknown' WHERE id=?", [.text(attempt)])
@@ -359,12 +370,12 @@ private func validate(_ value: UsageEvidence) throws {
     ].allSatisfy({ (0...1_000_000_000_000).contains($0) }), value.cachedTokens <= value.inputTokens
   else { throw ExecutionError.invalidCommand }
 }
-private func encode<T: Encodable>(_ value: T) throws -> String {
+func encode<T: Encodable>(_ value: T) throws -> String {
   let encoder = JSONEncoder()
   encoder.outputFormatting = [.sortedKeys]
   return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
-private func decode<T: Decodable>(_ type: T.Type, _ value: String) throws -> T {
+func decode<T: Decodable>(_ type: T.Type, _ value: String) throws -> T {
   do { return try JSONDecoder().decode(type, from: Data(value.utf8)) } catch {
     throw ExecutionError.storageUnavailable
   }

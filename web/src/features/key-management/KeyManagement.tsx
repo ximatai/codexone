@@ -1,3 +1,4 @@
+import { UsageOverview } from "../usage/UsageOverview";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as api from "./api";
 import type { AdminSession, KeyCreated, KeyDraft, KeyLimits, ManagedKey } from "./api";
@@ -103,6 +104,8 @@ function EditForm({ entry, models, disabled, close, save }: {
 }
 
 export function KeyManagement() {
+  const [showUsage, setShowUsage] = useState(false);
+  const [usageSelection, setUsageSelection] = useState<{ keyID: string; sequence: number } | null>(null);
   const [session, setSession] = useState<AdminSession | null>(null);
   const [checking, setChecking] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -123,7 +126,7 @@ export function KeyManagement() {
   const lifetime = useRef<AbortController | null>(null);
   const readSequence = useRef(0);
   function clearPrivateState() {
-    setKeys([]); setModels([]); setCreated(null); setEditing(null); setRotating(null); setCredential(""); setNotice("");
+    setShowUsage(false); setUsageSelection(null); setKeys([]); setModels([]); setCreated(null); setEditing(null); setRotating(null); setCredential(""); setNotice("");
   }
   async function reload(signal: AbortSignal): Promise<boolean> {
     const sequence = ++readSequence.current;
@@ -167,8 +170,8 @@ export function KeyManagement() {
   async function signOut() {
     const signal = lifetime.current?.signal;
     if (!signal || signal.aborted || !session) return;
-    setBusy(true); setError(""); clearPrivateState(); readSequence.current += 1;
-    try { await api.logout(session.csrf, signal); if (!signal.aborted) { setSession(null); setLogoutUnconfirmed(false); } }
+    setBusy(true); setLogoutUnconfirmed(true); setError(""); clearPrivateState(); readSequence.current += 1;
+    try { const fresh = await api.fetchSession(signal); await api.logout(fresh.csrf, signal); if (!signal.aborted) { setSession(null); setLogoutUnconfirmed(false); } }
     catch (failure) {
       if (signal.aborted) return;
       if (failure instanceof api.ManagementError && failure.status === 401) { setSession(null); setLogoutUnconfirmed(false); }
@@ -224,6 +227,7 @@ export function KeyManagement() {
       {error && <button type="button" className="secondary" disabled={busy || loading} onClick={() => { const signal = lifetime.current?.signal; if (signal) void reload(signal); }}>重新连接</button>}
     </form> : <>
       <div className="key-toolbar"><span className="badge">管理员会话</span><div className="actions">
+        {!logoutUnconfirmed && <button className="secondary" disabled={disabled} onClick={() => { setShowUsage(!showUsage); setUsageSelection(null); }}>{showUsage ? "收起用量与诊断" : "用量与请求诊断"}</button>}
         {!logoutUnconfirmed && <button className="secondary" disabled={busy || loading} onClick={() => { const signal = lifetime.current?.signal; if (signal) void reload(signal); }}>{loading ? "正在刷新…" : "刷新列表"}</button>}
         <button className="secondary" disabled={busy} onClick={() => { void signOut(); }}>{logoutUnconfirmed ? "重试登出" : "退出登录"}</button>
       </div></div>
@@ -237,13 +241,14 @@ export function KeyManagement() {
               <td><div className="model-tags">{key.models.map((model) => <span className="model-tag" key={model}>{model}</span>)}</div></td>
               <td><span className={key.enabled ? "good" : "subtle"}>{key.enabled ? "启用" : "禁用"}</span></td>
               <td><span>{key.limits.requests.toLocaleString()} / 日</span><small>{key.limits.active} 并发 · {key.limits.unresolved} 未结</small></td>
-              <td><div className="row-actions"><button className="text-button" disabled={disabled} onClick={() => setEditing(key)}>编辑</button>
+              <td><div className="row-actions"><button className="text-button" disabled={disabled} onClick={() => { setUsageSelection(previous => ({ keyID: key.id, sequence: (previous?.sequence ?? 0) + 1 })); setShowUsage(true); }}>用量</button><button className="text-button" disabled={disabled} onClick={() => setEditing(key)}>编辑</button>
                 <button className="text-button" disabled={disabled} onClick={() => setRotating(key)}>轮换</button>
                 <button className="text-button" disabled={disabled} onClick={() => { void mutate((csrf, signal) => api.updateKey(key, !key.enabled, key.models, key.limits, csrf, signal), key.enabled ? "密钥已禁用。" : "密钥已启用。"); }}>{key.enabled ? "禁用" : "启用"}</button></div></td>
             </tr>)}
           </tbody></table></div>}
         </div>
       </div>}
+      {!logoutUnconfirmed && showUsage && <UsageOverview selection={usageSelection} paused={disabled} onUnauthorized={() => { ++readSequence.current; setSession(null); clearPrivateState(); setError("管理会话已结束，请重新登录。"); }} />}
     </>}
     {editing && <Modal title="编辑密钥权限" onClose={() => { if (!busy) setEditing(null); }}><EditForm entry={editing} models={models} disabled={disabled}
       close={() => setEditing(null)} save={(selected, limits) => mutate((csrf, signal) => api.updateKey(editing, editing.enabled, selected, limits, csrf, signal), "权限与限额已更新。")} /></Modal>}

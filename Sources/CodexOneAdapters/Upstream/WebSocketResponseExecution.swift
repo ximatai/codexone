@@ -83,6 +83,7 @@ extension HTTPResponseExecution {
           allowCompaction: request.streamCompaction)
         if request.streamCompaction { try compaction.observe(event) }
         for object in observation.bindings { try await context.bind(object) }
+        try observeTerminalOutcome(event, context: context)
         if request.streaming {
           try await emit(event)
         } else if observation.terminal {

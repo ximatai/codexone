@@ -70,7 +70,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       String(
         decoding: try encoder.encode(
           JSONValue.object([
-            "protocolVersion": .string("m3-pool-http-1"), "key": .string(key.id),
+            "protocolVersion": .string("m3-pool-observability-1"), "key": .string(key.id),
             "principal": .string(key.principal),
             "keyRevision": .number(Decimal(key.revision)),
             "keyPolicy": .string(

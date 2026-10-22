@@ -181,3 +181,98 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   }
   await f.close()
 }
+
+@Test func accountHealthAtomicallyFiltersNewRequestsAndPinnedConnectionsUntilCredentialChanges()
+  async throws
+{
+  let f = try await RoutingFixture.make()
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("health-auth"))
+  let outcome = try ExecutionOutcome(
+    failure: .authenticationRejected, atUnixSeconds: Int64(Date().timeIntervalSince1970))
+  try await f.store.finalize(attempt: first.attempt, evidence: nil, outcome: outcome)
+  #expect(try await f.store.accountHealth(id: first.owner.identity).authenticationRejected)
+  let other = try await f.store.admitSelectingAccount(f.command("health-other"))
+  #expect(other.owner.identity != first.owner.identity)
+  try await f.store.finalize(attempt: other.attempt, evidence: routeUsage)
+  await #expect(throws: AccountDispatchError.unavailable) {
+    try await f.store.admitSelectingAccount(
+      f.command("health-pinned", connection: routeIdentity(first), continuation: true))
+  }
+  let work = try await f.app.prepareDispatch(id: first.owner.identity, continuation: true)
+  _ = try await f.app.reauthorizeVerified(
+    id: work.account.id, revision: work.account.revision,
+    namespace: work.account.namespace, credential: work.credential)
+  #expect(try await !f.store.accountHealth(id: first.owner.identity).authenticationRejected)
+  let resumed = try await f.store.admitSelectingAccount(
+    f.command("health-resumed", connection: routeIdentity(first), continuation: true))
+  #expect(resumed.owner.identity == first.owner.identity)
+  try await f.store.finalize(attempt: resumed.attempt, evidence: routeUsage)
+  // A late duplicate from the old credential cannot re-block the new generation.
+  try await f.store.finalize(attempt: first.attempt, evidence: nil, outcome: outcome)
+  #expect(try await !f.store.accountHealth(id: first.owner.identity).authenticationRejected)
+  await f.close()
+}
+
+@Test func accountModelCooldownIsDurableIdempotentAndIndependentOfLocalFailures() async throws {
+  let f = try await RoutingFixture.make()
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let failed = try await f.store.admitSelectingAccount(f.command("health-limited"))
+  let outcome = try ExecutionOutcome(
+    failure: .rateLimited, atUnixSeconds: Int64(Date().timeIntervalSince1970), cooldownSeconds: 60)
+  try await f.store.finalize(attempt: failed.attempt, evidence: nil, outcome: outcome)
+  let health = try await f.store.accountHealth(id: failed.owner.identity)
+  #expect(health.cooldowns.count == 1 && !health.authenticationRejected)
+  try await f.store.finalize(attempt: failed.attempt, evidence: nil, outcome: outcome)
+  #expect(try await f.store.accountHealth(id: failed.owner.identity) == health)
+  await #expect(throws: ExecutionError.conflict) {
+    try await f.store.finalize(
+      attempt: failed.attempt, evidence: nil,
+      outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: outcome.atUnixSeconds))
+  }
+  let candidate = try await f.command("health-healthy")
+  await f.store.close()
+  let reopened = try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  let healthy = try await reopened.admitSelectingAccount(candidate)
+  #expect(healthy.owner.identity != failed.owner.identity)
+  #expect(try await reopened.accountHealth(id: failed.owner.identity) == health)
+  try await reopened.finalize(
+    attempt: healthy.attempt, evidence: routeUsage,
+    outcome: .init(failure: .clientCancelled, atUnixSeconds: outcome.atUnixSeconds))
+  let local = try await reopened.accountHealth(id: healthy.owner.identity)
+  #expect(local.lastFailure == nil && local.cooldowns.isEmpty && !local.authenticationRejected)
+  // Removing a no-longer-supported scope cannot consume new scope capacity.
+  try await reopened.configureHealthModels(["another-synthetic-model"])
+  #expect(try await reopened.accountHealth(id: failed.owner.identity).cooldowns.isEmpty)
+  await reopened.close()
+  await f.close()
+}
+
+@Test func quotaFailurePreservesSuccessAndOldCredentialCannotOverwriteObservation() async throws {
+  let f = try await RoutingFixture.make()
+  let account = try await f.store.accountCredential(id: "a").account
+  let quota = try SubscriptionQuota(limits: [
+    .init(
+      id: "codex", allowed: true, limitReached: false,
+      primary: .init(usedPercent: 12.5, durationSeconds: 18000, resetsAtUnixSeconds: 2_000_000_000),
+      secondary: nil)
+  ])
+  let first = try await f.store.recordQuotaObservation(
+    account: account, atUnixSeconds: 1000, result: .success(quota))
+  #expect(first.isFresh(at: 1299) && !first.isFresh(at: 1300) && !first.isFresh(at: 999))
+  let failed = try await f.store.recordQuotaObservation(
+    account: account, atUnixSeconds: 1301, result: .failure(.unavailable))
+  #expect(
+    failed.quota == quota && failed.observedAtUnixSeconds == 1000
+      && failed.attemptedAtUnixSeconds == 1301)
+  let work = try await f.app.prepareDispatch(id: "a", continuation: false)
+  _ = try await f.app.reauthorizeVerified(
+    id: "a", revision: work.account.revision,
+    namespace: work.account.namespace, credential: work.credential)
+  await #expect(throws: ExecutionError.conflict) {
+    try await f.store.recordQuotaObservation(
+      account: account, atUnixSeconds: 1400, result: .success(quota))
+  }
+  #expect(try await f.store.quotaObservation(id: "a") == failed)
+  await f.close()
+}

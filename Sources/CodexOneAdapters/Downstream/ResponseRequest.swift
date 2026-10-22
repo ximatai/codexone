@@ -4,7 +4,9 @@ import Foundation
 struct GatewayProtocolError: Error, Sendable {
   let status: Int
   let code: String
-  init(_ status: Int, _ code: String) {
+  let cooldownSeconds: Int64?
+  init(_ status: Int, _ code: String, cooldownSeconds: Int64? = nil) {
+    self.cooldownSeconds = cooldownSeconds
     self.status = status
     self.code = code
   }

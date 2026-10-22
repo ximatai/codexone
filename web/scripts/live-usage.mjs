@@ -1,0 +1,116 @@
+import { chromium, expect } from "@playwright/test";
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+const port = Number(process.argv[2]), output = resolve(process.argv[4]);
+assert(Number.isInteger(port) && port > 0 && port <= 65535);
+let input = ""; for await (const chunk of process.stdin) { input += chunk; assert(input.length < 4096); }
+const { credential } = JSON.parse(input), origin = `http://127.0.0.1:${port}`;
+let browser, page, stage = "launch";
+const secrets = [credential];
+async function capture(name) {
+  const html = await page.content(); assert(secrets.every(value => !html.includes(value)));
+  await page.screenshot({ path: resolve(output, name), fullPage: true, mask: [page.locator('input[type="password"]')] });
+}
+async function login() {
+  await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
+  await expect(page.getByRole("button", { name: "刷新列表", exact: true })).toBeEnabled();
+}
+const panel = () => page.getByRole("region", { name: "用量与请求诊断", exact: true });
+async function query() {
+  await panel().getByRole("button", { name: "查询用量", exact: true }).click();
+  await expect(panel().getByRole("button", { name: "查询用量", exact: true })).toBeEnabled();
+}
+try {
+  browser = await chromium.launch({ channel: "chrome", headless: true });
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1080 } });
+  await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  page = await context.newPage(); const errors = [];
+  page.on("pageerror", () => errors.push("page error"));
+  page.on("console", entry => { if (/content security policy|refused to execute|refused to apply/i.test(entry.text())) errors.push("CSP rejection"); });
+  await mkdir(output, { recursive: true });
+  stage = "login"; await page.goto(origin);
+  await page.getByRole("button", { name: "访问密钥", exact: true }).click(); await login();
+  stage = "key-scoped-usage";
+  const alpha = page.getByRole("row").filter({ has: page.getByText("synthetic-alpha", { exact: true }).first() });
+  await alpha.getByRole("button", { name: "用量", exact: true }).click();
+  await expect(panel().getByLabel("Key 标识")).toHaveValue("synthetic-alpha");
+  await expect(panel().locator(".usage-summary").first()).toContainText("58 完整");
+  await expect(panel().locator(".usage-summary")).toContainText("1 部分 · 1 不可用");
+  await expect(panel().locator(".governance-note")).toContainText("2 unknown");
+  await expect(panel().locator(".usage-metrics")).toContainText("≥ 1,000,000,000,174");
+  await expect(panel().getByRole("row")).toHaveCount(51);
+  await capture("usage-desktop.png");
+  stage = "cursor";
+  const firstPage = await panel().locator("tbody tr").allTextContents();
+  await panel().getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(panel().getByText("第 2 页", { exact: true })).toBeVisible();
+  await expect(panel().locator("tbody tr")).toHaveCount(11);
+  assert((await panel().locator("tbody tr").allTextContents()).every(row => !firstPage.includes(row)));
+  await panel().getByRole("button", { name: "上一页", exact: true }).click();
+  await expect(panel().getByText("第 1 页", { exact: true })).toBeVisible();
+  stage = "key-isolation";
+  await panel().getByLabel("Key 标识").fill("synthetic-beta"); await query();
+  await expect(panel().locator("tbody tr")).toHaveCount(1);
+  await expect(panel().locator("tbody")).not.toContainText("synthetic-alpha");
+  stage = "mode-and-error";
+  await panel().getByLabel("Key 标识").fill("synthetic-alpha");
+  await panel().getByLabel("执行模式").selectOption("compact"); await query();
+  await expect(panel().locator("tbody tr")).toHaveCount(1);
+  await expect(panel().locator("tbody")).toContainText("压缩");
+  await panel().getByLabel("执行模式").selectOption("");
+  await panel().getByLabel("错误分类").selectOption("object_unavailable"); await query();
+  await expect(panel().locator("tbody tr")).toHaveCount(1);
+  await expect(panel().locator("tbody")).toContainText("准入前拒绝");
+  await panel().getByLabel("错误分类").selectOption("");
+  await panel().getByLabel("用量状态").selectOption("unknown"); await query();
+  await expect(panel().locator("tbody tr")).toHaveCount(2);
+  await expect(panel().locator("tbody")).toContainText("部分证据，下界");
+  await expect(panel().locator("tbody")).toContainText("不可用");
+  await capture("unknown-desktop.png");
+  stage = "utc-exclusive-end";
+  await panel().getByLabel("用量状态").selectOption("");
+  const today = new Date().toISOString().slice(0, 10), yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  await panel().getByLabel("起始日（UTC）").fill(yesterday); await panel().getByLabel("结束日（UTC）").fill(yesterday); await query();
+  await expect(panel().getByText("此筛选下没有已记录请求。", { exact: true })).toBeVisible();
+  await expect(panel().locator(".governance-note")).toContainText("2 unknown");
+  await panel().getByLabel("起始日（UTC）").fill(today); await panel().getByLabel("结束日（UTC）").fill(today); await query();
+  stage = "failed-read-retains-snapshot";
+  await page.route("**/api/usage?*", route => route.abort());
+  await panel().getByLabel("Key 标识").fill("synthetic-beta"); await query();
+  await expect(panel().getByRole("alert")).toContainText("上次成功快照");
+  await expect(panel().getByText(/当前结果/)).toContainText("synthetic-alpha · 上次成功快照");
+  await expect(panel().getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+  await capture("query-failure-desktop.png");
+  await page.unroute("**/api/usage?*"); await query();
+  await expect(panel().getByRole("alert")).toHaveCount(0);
+  await expect(panel().locator("tbody tr")).toHaveCount(1);
+  stage = "rotation-keeps-history";
+  await page.getByRole("row").filter({ has: page.getByText("synthetic-alpha", { exact: true }).first() }).getByRole("button", { name: "轮换", exact: true }).click();
+  await page.getByRole("button", { name: "确认轮换", exact: true }).click();
+  const secret = page.getByLabel("新 API Key", { exact: true }); await expect(secret).toBeVisible(); secrets.push(await secret.inputValue());
+  await page.getByRole("button", { name: "我已保存，关闭", exact: true }).click();
+  await page.getByRole("row").filter({ has: page.getByText("synthetic-alpha", { exact: true }).first() }).getByRole("button", { name: "用量", exact: true }).click();
+  await expect(panel().locator(".usage-summary")).toContainText("58 完整");
+  stage = "replaced-session-logout";
+  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
+  await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.continue());
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重试登出", exact: true })).toBeEnabled();
+  await expect(page.getByRole("heading", { name: "用量与请求诊断", exact: true })).toHaveCount(0);
+  await expect(page.getByText("synthetic-alpha", { exact: true })).toHaveCount(0);
+  await page.unroute("**/api/session"); await page.getByRole("button", { name: "重试登出", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "管理登录", exact: true })).toBeVisible();
+  stage = "expired-session-clears-statistics";
+  await login(); await page.getByRole("button", { name: "用量与请求诊断", exact: true }).click();
+  await expect(panel().getByText("请求明细", { exact: true })).toBeVisible();
+  await page.evaluate(async () => { const { csrf } = await (await fetch("/api/session")).json(); await fetch("/api/session", { method: "DELETE", headers: { "X-CodexOne-CSRF": csrf } }); });
+  await panel().getByRole("button", { name: "查询用量", exact: true }).click(); await expect(page.getByRole("heading", { name: "管理登录", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "用量与请求诊断", exact: true })).toHaveCount(0);
+  assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]); assert.deepEqual(errors, []);
+  console.log("PASS: actual Chrome usage UI + real read-only SQLite query API: Key/time/mode/error isolation, cursor, unknown/partial and lifetime exposure, rotation, failed read/retry, replaced-session logout and unauthorized clearing; synthetic query dataset, separate real-socket collector tests");
+} catch {
+  await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('input[aria-label="新 API Key"]')] }).catch(() => {});
+  console.error(`Browser usage check failed at stage: ${stage}; private diagnostics excluded.`); process.exitCode = 1;
+} finally { await browser?.close(); }

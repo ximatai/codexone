@@ -5,7 +5,7 @@ import Foundation
 import ServiceLifecycle
 import Testing
 
-private actor RefreshProviderProbe: AccountRefreshProvider {
+actor RefreshProviderProbe: AccountRefreshProvider {
   private let failAfterRelease: Bool
   private let namespaceOverride: String?
   init(failAfterRelease: Bool = false, namespaceOverride: String? = nil) {
@@ -42,7 +42,7 @@ private actor RefreshProviderProbe: AccountRefreshProvider {
     }
   }
 }
-private struct RefreshFixture {
+struct RefreshFixture {
   let root: URL
   let store: SQLiteExecutionStore
   let app: AccountCredentials
@@ -76,7 +76,7 @@ private struct RefreshFixture {
     try? FileManager.default.removeItem(at: root)
   }
 }
-private func awaitRefreshCondition(_ predicate: @Sendable () async throws -> Bool) async throws {
+func awaitRefreshCondition(_ predicate: @Sendable () async throws -> Bool) async throws {
   for _ in 0..<500 {
     if try await predicate() { return }
     try await Task.sleep(for: .milliseconds(5))

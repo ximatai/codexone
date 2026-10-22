@@ -110,6 +110,7 @@ enum PoolWebSocketSession {
         while try await tasks.next() != nil {}
       }
     } catch {
+      await executor.recordRejection(first, requestID: requestID, error: error)
       if start.claimError() {
         try? await sendWebSocketError(error, requestID: requestID, lane: lane, to: downstream)
       }

@@ -5,6 +5,7 @@ import NIOHTTP1
 import NIOPosix
 import NIOSSL
 import NIOWebSocket
+import Synchronization
 
 struct WebSocketUpstream: Sendable {
   let group: any EventLoopGroup
@@ -50,11 +51,14 @@ struct WebSocketUpstream: Sendable {
               } else if let token {
                 headers.add(name: "authorization", value: "Bearer " + token)
               }
+              let observed = UpstreamUpgradeStatus()
               let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
                 maxFrameSize: 524_288,
                 upgradePipelineHandler: { channel, _ in
-                  channel.eventLoop.makeCompletedFuture {
-                    try configureWebSocket(channel, client: true)
+                  channel.pipeline.removeHandler(observed).flatMap {
+                    channel.eventLoop.makeCompletedFuture {
+                      try configureWebSocket(channel, client: true)
+                    }
                   }
                 })
               var pipeline = NIOUpgradableHTTPClientPipelineConfiguration(
@@ -63,13 +67,19 @@ struct WebSocketUpstream: Sendable {
                     version: .http1_1, method: .GET, uri: url.path + "/responses", headers: headers),
                   upgraders: [upgrader],
                   notUpgradingCompletionHandler: { channel in
-                    channel.close().flatMapThrowing {
-                      throw GatewayProtocolError(502, "upstream_upgrade_rejected")
+                    let failure = observed.rejection
+                    return channel.close().flatMapThrowing {
+                      throw failure
                     }
                   }))
               pipeline.leftOverBytesStrategy = .forwardBytes
-              return try channel.pipeline.syncOperations.configureUpgradableHTTPClientPipeline(
-                configuration: pipeline)
+              let result = try channel.pipeline.syncOperations
+                .configureUpgradableHTTPClientPipeline(
+                  configuration: pipeline)
+              let handler = try channel.pipeline.syncOperations.handler(
+                type: NIOTypedHTTPClientUpgradeHandler<ProtocolWebSocket>.self)
+              try channel.pipeline.syncOperations.addHandler(observed, position: .before(handler))
+              return result
             }.map { future in
               future.whenComplete { _ in timeout.cancel() }
               return future
@@ -87,5 +97,24 @@ struct WebSocketUpstream: Sendable {
       throw error
     }
     await channels.shutdown()
+  }
+}
+
+/// Observe only normalized rejection metadata before the typed upgrader consumes the head.
+private final class UpstreamUpgradeStatus: ChannelInboundHandler, RemovableChannelHandler, Sendable
+{
+  typealias InboundIn = HTTPClientResponsePart
+  private let failure = Mutex<GatewayProtocolError?>(nil)
+  var rejection: GatewayProtocolError {
+    failure.withLock { $0 ?? .init(502, "upstream_upgrade_rejected") }
+  }
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    if case .head(let head) = unwrapInboundIn(data), head.status.code >= 200 {
+      let mapped = upstreamRejection(status: head.status, headers: head.headers)
+      failure.withLock {
+        $0 = mapped.code == "upstream_rejected" ? .init(502, "upstream_upgrade_rejected") : mapped
+      }
+    }
+    context.fireChannelRead(data)
   }
 }

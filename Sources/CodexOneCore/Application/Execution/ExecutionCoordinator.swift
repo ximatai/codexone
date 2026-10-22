@@ -1,3 +1,4 @@
+import Foundation
 import Synchronization
 
 public struct ExecutionContext: Sendable {
@@ -14,15 +15,28 @@ public struct ExecutionContext: Sendable {
   }
   /// Record trusted usage before writing to downstream; subsequent transport errors cannot erase it.
   public func observeUsage(_ evidence: UsageEvidence) throws { try observation.record(evidence) }
-  fileprivate func finishUsage() -> UsageEvidence? { observation.finish() }
+  public func observeOutcome(_ outcome: ExecutionOutcome) throws {
+    try outcome.validate()
+    try observation.recordOutcome(outcome)
+  }
+  fileprivate func finishObservation() -> (UsageEvidence?, ExecutionOutcome?) {
+    observation.finish()
+  }
 }
 
 private final class UsageObservation: Sendable {
-  private let latest = Mutex((evidence: UsageEvidence?.none, sealed: false))
-  func finish() -> UsageEvidence? {
+  private let latest = Mutex(
+    (evidence: UsageEvidence?.none, outcome: ExecutionOutcome?.none, sealed: false))
+  func recordOutcome(_ outcome: ExecutionOutcome) throws {
+    try latest.withLock { value in
+      guard !value.sealed else { throw ExecutionError.closed }
+      if value.outcome == nil { value.outcome = outcome }
+    }
+  }
+  func finish() -> (UsageEvidence?, ExecutionOutcome?) {
     latest.withLock { value in
       value.sealed = true
-      return value.evidence
+      return (value.evidence, value.outcome)
     }
   }
   func record(_ evidence: UsageEvidence) throws {
@@ -110,13 +124,25 @@ public struct ExecutionCoordinator: Sendable {
     }
     let context = ExecutionContext(admission: admitted.0, store: store)
     defer {
+      let (evidence, outcome) = context.finishObservation()
       finalizer.handoff(
-        ticket, finalization: .init(attempt: admitted.0.attempt, evidence: context.finishUsage()))
+        ticket,
+        finalization: .init(attempt: admitted.0.attempt, evidence: evidence, outcome: outcome))
     }
-    try Task.checkCancellation()
-    guard finalizer.canExecute(ticket) else { throw ExecutionError.capacity }
-    if let terminal = try await operation(context, admitted.1) {
-      try context.observeUsage(terminal)
+    do {
+      try Task.checkCancellation()
+      guard finalizer.canExecute(ticket) else { throw ExecutionError.capacity }
+      if let terminal = try await operation(context, admitted.1) {
+        try context.observeUsage(terminal)
+      }
+      try context.observeOutcome(
+        .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+    } catch {
+      let failure: ExecutionFailure =
+        Task.isCancelled || error is CancellationError ? .clientCancelled : .indeterminate
+      try? context.observeOutcome(
+        .init(failure: failure, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+      throw error
     }
   }
 }

@@ -8,13 +8,13 @@
 
 同时设置 `CODEXONE_ADMIN_TOKEN_FILE`，指向独立私有常规文件：当前用户所有、其他用户不可读写、无符号链接，内容为 32—512 字节高熵 ASCII Bearer。文件最多 16 KiB，值不能使用数据 Key 的 `co1_` 格式，也不能与 legacy Key 相同。使用安全随机工具自行生成并私密保存，勿写入仓库、命令行参数或浏览器存储。`--check-config` 校验两种配置/凭证，不建库、不调用上游、不显示路径或秘密。
 
-空数据目录初始化 schema v4。已有 v1/v2/v3 先停服，在原数据目录配置下运行：
+空数据目录初始化 schema v5。已有 v1/v2/v3/v4 先停服，在原数据目录配置下运行：
 
 ```sh
 codexone --migrate
 ```
 
-命令持同一实例锁；从 v1/v2/v3 升至 v4 时先产生 `core.sqlite.pre-v4-<随机标识>.sqlite` 私有一致性备份，再事务升级。保留备份并遵守维护/恢复流程，不能用文件复制遗漏 WAL。失败的 `.partial` 文件不算有效备份；不自动覆盖、删除旧备份。已有 v4 重复命令不降级。升级过程不恢复 intent，由下次普通启动处理。备份机制依据 [SQLite Backup API](https://www.sqlite.org/backup.html)。
+命令持同一实例锁；从 v1/v2/v3/v4 升至 v5 时先产生 `core.sqlite.pre-v5-<随机标识>.sqlite` 私有一致性备份，再事务升级。保留备份并遵守维护/恢复流程，不能用文件复制遗漏 WAL。失败的 `.partial` 文件不算有效备份；不自动覆盖、删除旧备份。已有 v5 重复命令不降级。升级过程不恢复 intent，由下次普通启动处理。备份机制依据 [SQLite Backup API](https://www.sqlite.org/backup.html)。
 
 ## 管理命令契约
 
@@ -53,3 +53,5 @@ python3 scripts/verify_keys.py --binary .build/debug/codexone
 使用私有临时状态和公开合成管理员凭证，数据 Key 仅在测试内存中生成/使用。覆盖独立认证、Origin/Cookie 拒绝、同主体轮换/跨主体拒绝、已连 WS 撤销、限额与重启、迁移和 DB/WAL/输出无原文；不代表 Desktop、真实账号、浏览器管理界面或生产部署验收。
 
 `python3 scripts/verify_admin.py --binary .build/debug/codexone` 验证会话 API、安全头、静态路径及禁用轮换；纳入后端统一验证。构建前后端后，`python3 scripts/verify_admin_ui.py --binary .build/debug/codexone` 用本机 Chrome 的独立临时上下文操作真实 UI/API 与合成上游，截图屏蔽秘密。它不使用个人浏览器状态或真实账号，也不替代 Desktop 验收。纯前端状态/契约测试仍通过统一 web 验证入口运行。
+
+按 Key 的用量与诊断通过管理台访问密钥页面进入，或使用同一管理员认证的 `/api/usage`；查询和估算口径见 [U10](../specs/usage.md)。读取接口不向普通数据 Key 开放。
