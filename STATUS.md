@@ -76,6 +76,8 @@ M3 多主体/Key 治理首个切片 f416278 已通过独立 review 与同提交 
 
 正在推进[账号凭证与刷新持久屏障](docs/changes/account-credentials/proposal.md)：AES-256-GCM 信封、独立主密钥加载、Core 凭证用例和 SQLite v3 原子刷新/CAS 已实现。新增真实进程在 intent 前/后及完成后 SIGKILL，重启分别保持旧 ready、auth_uncertain、新版本 ready；bace11b 的 macOS/Linux 完整后端 60 测试和全部脚本通过。独立 review 的 slash 转义膨胀 P2 已由主 Agent 以 98f9746 修复并复审关闭，同修复 Linux 重建/4 个定向测试/三组 SIGKILL 通过，无新增阻塞。
 
-Runtime 有界单飞 owner 已实现并通过本机完整后端 66 测试及全部脚本，含真实 ServiceLifecycle 关闭和 SQLite 状态复核；具体 provider 仅合成端口，待提交后 review/Linux 验证。此层不提供公开账号导入、可信提供者授权或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
+Runtime 有界单飞 owner e7c200a 已实现并通过 macOS/Linux 完整后端 66 测试及全部脚本，含真实 ServiceLifecycle 关闭和 SQLite 状态复核；独立 review 无阻塞并重跑 6 个定向回归通过。具体 provider 目前仅合成端口，正在接真实 HTTP 认证适配与合成 socket 验证。
+
+此层不提供公开账号导入、可信提供者授权或实际账号路由，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后接可信提供者与账号池；M3 整体未完成，无真实账号调用。
 
 账号授权/刷新、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面目前只覆盖 Key，未覆盖账号、额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。具体加密库与恢复客户端契约在相关切片选择并验证，遇到困难/更优方案及时沟通。
