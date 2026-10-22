@@ -38,6 +38,19 @@ jobs:
           cp Package.swift "$RUNNER_TEMP/rollback-source/Package.swift"
           docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$baseline" \
             -f deploy/Dockerfile -t codexone:rollback-peer "$RUNNER_TEMP/rollback-source"
+      - name: Verify real execution truth across the distinct compatible binary
+        run: |
+          peer_container="$(docker create codexone:rollback-peer)"
+          trap 'docker rm -f "$peer_container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$peer_container:/usr/local/bin/codexone" "$RUNNER_TEMP/rollback-codexone"
+          docker rm "$peer_container"
+          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
+            --tmpfs /tmp:rw,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/rollback-codexone,dst=/peer/codexone,readonly" \
+            --entrypoint python3 codexone:tls-base /test/scripts/verify_migration_cutback.py \
+            --binary /output/codexone --previous-binary /peer/codexone
       - name: Verify actual private installation and compatible rollback
         run: python3 scripts/verify_installation.py --image codexone:candidate --previous-image codexone:rollback-peer
       - name: Export candidate and checksum
