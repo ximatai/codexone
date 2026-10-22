@@ -9,13 +9,13 @@ COPY web/ ./
 RUN npm run build
 
 FROM swift:${SWIFT_VERSION}-noble AS backend
-ARG BUILD_JOBS=2
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
 COPY Tests/ Tests/
+ARG BUILD_JOBS=1
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
