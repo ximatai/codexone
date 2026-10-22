@@ -17,8 +17,8 @@ import threading
 import time
 
 from verify_admin import running_admin
-from verify_keys import create, shutdown
-from verify_protocol import latest
+from verify_keys import create, shutdown, call as api_call
+from verify_protocol import latest, start
 
 OLD_TOKEN = 'synthetic-legacy-client-token'
 
@@ -61,7 +61,7 @@ def call(port, token, prompt='synthetic', prefix='/v1'):
         connection.close()
 
 
-def verify(binary):
+def verify(binary, previous_binary=None):
     with running_admin(binary) as f:
         old = f.root / 'synthetic-legacy.sqlite'
         with database(old) as db:
@@ -190,6 +190,21 @@ def verify(binary):
                 with route.condition: route.paused = True
                 assert call(proxy.server_port, fresh)[0] == 503
                 shutdown(f.process, f.root, f.secrets); f.process = None
+                if previous_binary:
+                    assert hashlib.sha256(Path(binary).read_bytes()).digest() != hashlib.sha256(Path(previous_binary).read_bytes()).digest()
+                    with database(f.root / 'state/core.sqlite') as db:
+                        durable = db.execute('SELECT id,state,admission_json,usage_json,reserved,estimated FROM attempts ORDER BY rowid').fetchall()
+                        bindings = db.execute('SELECT * FROM bindings ORDER BY principal,object_type,raw_id').fetchall()
+                    for executable in (previous_binary, binary):
+                        f.process, peer_ports = start(executable, f.config, f.root, admin_token_file=f.admin, web_directory=f.web_directory)
+                        assert api_call(peer_ports['data'], 'GET', '/v1/models', token=fresh)[0] == 200
+                        assert call(peer_ports['data'], fresh)[0] == 429
+                        assert f.provider.calls == before + 2
+                        with database(f.root / 'state/core.sqlite') as db:
+                            assert db.execute('SELECT id,state,admission_json,usage_json,reserved,estimated FROM attempts ORDER BY rowid').fetchall() == durable
+                            assert db.execute('SELECT * FROM bindings ORDER BY principal,object_type,raw_id').fetchall() == bindings
+                        shutdown(f.process, f.root, f.secrets); f.process = None
+                    print('PASS: distinct actual compatible binary rollback/re-upgrade preserves genuine settled/unknown evidence, object ownership and exhausted Key quota without dispatch')
                 stable_new_hash = hashlib.sha256((f.root / 'state/core.sqlite').read_bytes()).digest()
                 # Cutback receipt explicitly adds every new request and unknown exposure.
                 missing = [row for row in rows if row[0] == 'unknown']
@@ -224,7 +239,9 @@ def verify(binary):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    verify(str(parser.parse_args().binary.resolve()))
+    parser.add_argument('--previous-binary', type=Path)
+    args = parser.parse_args()
+    verify(str(args.binary.resolve()), str(args.previous_binary.resolve()) if args.previous_binary else None)
 
 
 if __name__ == '__main__':
