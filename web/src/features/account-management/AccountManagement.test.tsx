@@ -2,8 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import { AccountManagement } from "./AccountManagement";
 import * as api from "./api";
+import * as observations from "./observation-api";
 import * as sessions from "../../shared/management";
 vi.mock("./api");
+vi.mock("./observation-api", async original => ({ ...await original<typeof observations>(), fetchObservation: vi.fn() }));
 vi.mock("../../shared/management", async (original) => ({ ...await original<typeof import("../../shared/management")>(), fetchSession: vi.fn() }));
 const account: api.Account = { id: "account", revision: 1, credentialVersion: 1, mode: "disabled", authorization: "ready", createdAtUnixSeconds: 1 };
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
@@ -81,4 +83,22 @@ it("refreshes replaced session proof and discards its old-owner authorization fl
   await waitFor(() => expect(screen.getByRole("button", { name: "启用" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "启用" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalledWith(account, "enabled", "new-synthetic-csrf", expect.any(AbortSignal)));
+});
+
+it("cannot revive a late old-owner flow after a detail 401 and a new login", async () => {
+  let finish!: (value: api.AuthorizationFlow) => void;
+  vi.mocked(api.beginAuthorization).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  vi.mocked(observations.fetchObservation).mockRejectedValueOnce(new sessions.ManagementError(401, "unauthorized"));
+  vi.spyOn(sessions, "login").mockResolvedValue({ csrf: "synthetic-new-proof" });
+  setup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  fireEvent.click(screen.getByRole("button", { name: "额度与健康详情" }));
+  await screen.findByRole("heading", { name: "管理员登录" });
+  await act(async () => { finish({ flowID: "old-flow", authorizationURL: "https://auth.openai.com/oauth/authorize?state=synthetic-old-owner", expiresInSeconds: 600 }); });
+  fireEvent.change(screen.getByLabelText("管理员凭证"), { target: { value: "synthetic-admin" } });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled());
+  expect(screen.queryByLabelText("2. 粘贴完整回调地址")).toBeNull();
+  expect(document.body.innerHTML).not.toContain("synthetic-old-owner");
 });

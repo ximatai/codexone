@@ -118,9 +118,10 @@ export function AccountManagement() {
     } finally { if (current(version)) setBusy(false); }
   }
   async function begin(account: Account | null) {
+    const version = epoch.current;
     await mutation(async (csrf, signal) => {
       const value = await api.beginAuthorization(account, csrf, signal);
-      if (signal?.aborted) return;
+      if (signal?.aborted || !current(version)) return;
       deadline.current = performance.now() + value.expiresInSeconds * 1000;
       setRemaining(value.expiresInSeconds); setFlow({ ...value, ...(account ? { accountID: account.id } : {}) });
     }, "授权流程已准备好，请在新窗口完成登录。");
