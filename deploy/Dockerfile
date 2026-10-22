@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
-ARG SWIFT_VERSION=6.4.1
-ARG NODE_VERSION=22.23.0
-FROM node:${NODE_VERSION}-bookworm-slim AS web
+ARG SWIFT_BUILD_IMAGE=swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
+ARG SWIFT_RUNTIME_IMAGE=swift:6.4.1-noble-slim@sha256:46c3f2b7b5f9ad083a941af264fec95b3dcd66e41885d6458606316c62e0d5c8
+ARG NODE_IMAGE=node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+FROM ${NODE_IMAGE} AS web
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
@@ -16,7 +17,7 @@ RUN set -eu; mkdir /licenses; npm ls --omit=dev --all --parseable > /tmp/runtime
         -exec cp --parents --target-directory="/licenses/$relative" -- {} +; \
     done < /tmp/runtime-dependencies
 
-FROM swift:${SWIFT_VERSION}-noble AS backend
+FROM ${SWIFT_BUILD_IMAGE} AS backend
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -41,7 +42,7 @@ RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone 
     && python3 scripts/verify_websocket.py --binary /output/codexone \
     && python3 scripts/verify_images.py --binary /output/codexone
 
-FROM swift:${SWIFT_VERSION}-noble-slim AS runtime
+FROM ${SWIFT_RUNTIME_IMAGE} AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
