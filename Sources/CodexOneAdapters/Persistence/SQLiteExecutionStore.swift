@@ -210,7 +210,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public func resolve(principal: String, object: ObjectBinding, namespace: String? = nil)
     async throws -> ExecutionOwner
   {
-    try validateStrings([principal, object.type, object.rawID] + (namespace.map { [$0] } ?? []))
+    try validateStrings([principal, object.type, object.rawID])
+    if let namespace { try validateStrings([namespace], maximum: 512) }
     return try await perform { db in
       var sql =
         "SELECT a.admission_json FROM bindings b JOIN attempts a ON a.id=b.attempt WHERE b.principal=? AND b.object_type=? AND b.raw_id=?"
@@ -323,17 +324,19 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   }
 }
 
-private func validateStrings(_ values: [String]) throws {
-  guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0) }) else {
+private func validateStrings(_ values: [String], maximum: Int = 256) throws {
+  guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= maximum && !$0.utf8.contains(0) })
+  else {
     throw ExecutionError.invalidCommand
   }
 }
 private func validate(_ value: ExecutionAdmission) throws {
   try validateStrings(
     [
-      value.attempt, value.owner.principal, value.owner.key, value.owner.namespace,
+      value.attempt, value.owner.principal, value.owner.key,
       value.owner.identity, value.window, value.policyVersion, value.pricingVersion,
     ] + (value.requestID.map { [$0] } ?? []) + (value.model.map { [$0] } ?? []))
+  try validateStrings([value.owner.namespace], maximum: 512)
   if let account = value.accountSnapshot {
     _ = try AccountDispatchSnapshot(
       revision: account.revision, credentialVersion: account.credentialVersion,

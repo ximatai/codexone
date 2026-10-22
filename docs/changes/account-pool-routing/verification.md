@@ -12,3 +12,6 @@ v3 构造保留执行 intent 与 refreshing 账号，普通启动明确拒绝；
 
 
 f488da5 独立 review 无需修复或阻塞，reviewer 独立运行新增四项真实 SQLite 测试全部通过。该精确快照 Linux amd64 / Swift 6.4 本地单并发容器完整后端 84 测试与全部脚本通过，exit 0，2 CPU/2500 MiB，容器已回收。仅持久屏障验收，不推导选择器/传输或真实订阅。
+
+
+主 Agent 后续自我复盘发现 namespace 边界不一致：可信凭证上下文允许 512 字节，旧准入/指定 namespace 的归属查询却混用 256 字节标识校验。亲自统一 namespace 上限至 512，其他标识保持 256（管理账号/Key 仍各自 64）。新增真实 Crypto/SQLite 最长 namespace 的准入、绑定、指定 namespace 读取与跨主体拒绝，以及 257 字节 attempt 继续拒绝。macOS 完整后端 85 测试与全部脚本通过；修复待提交后 review。

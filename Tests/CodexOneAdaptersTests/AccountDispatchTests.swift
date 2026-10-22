@@ -198,3 +198,34 @@ private func dispatchAdmission(
     }.count == 1)
   await f.close()
 }
+
+@Test func maximumManagedNamespaceCanAdmitBindAndResolveWithoutWideningOtherIDs() async throws {
+  let f = try await DispatchFixture.make()
+  let cipher = try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32))
+  let app = AccountCredentials(store: f.store, protection: cipher)
+  let namespace = "synthetic/" + String(repeating: "n", count: 502)
+  #expect(namespace.utf8.count == 512)
+  let account = try await app.importVerified(
+    id: "long-namespace", namespace: namespace,
+    credential: AccountCredential(
+      accessToken: "synthetic-long-access", refreshToken: "synthetic-long-refresh", idToken: nil,
+      expiresAtUnixSeconds: 2_000_000_000))
+  _ = try await f.store.setAccountMode(id: account.id, revision: account.revision, mode: .enabled)
+  let work = try await app.prepareDispatch(id: account.id, continuation: false)
+  try await f.store.admit(dispatchAdmission("long", work: work))
+  let object = ObjectBinding(type: "response", rawID: "synthetic-long-response")
+  try await f.store.bind(attempt: "long", object: object)
+  #expect(
+    try await f.store.resolve(principal: "p", object: object, namespace: namespace).identity
+      == account.id)
+  await #expect(throws: ExecutionError.unknownObject) {
+    try await f.store.resolve(principal: "other", object: object, namespace: namespace)
+  }
+  let invalid = ExecutionAdmission(
+    attempt: String(repeating: "a", count: 257),
+    owner: .init(principal: "p", key: "key", namespace: namespace, identity: account.id),
+    window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
+    accountSnapshot: work.snapshot)
+  await #expect(throws: ExecutionError.invalidCommand) { try await f.store.admit(invalid) }
+  await f.close()
+}
