@@ -47,10 +47,15 @@ jobs:
           docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
           printf '%s\n' "$GITHUB_SHA" > artifacts/source-revision.txt
           docker run --rm --platform linux/amd64 --network none --read-only --cap-drop ALL \
-            --entrypoint sha256sum codexone:candidate /usr/local/bin/codexone > artifacts/binary-sha256.txt
-          docker save codexone:candidate | gzip > artifacts/codexone-linux-amd64.tar.gz
+            --tmpfs /tmp:rw,nosuid,size=16m --entrypoint sha256sum codexone:candidate /usr/local/bin/codexone > artifacts/binary-sha256.txt
+          docker image inspect codexone:rollback-peer --format '{{.Id}}' > artifacts/rollback-image-id.txt
+          printf '%s\n' 06058077d2cfa988f094ff50265202cd0721f919 > artifacts/rollback-source-revision.txt
+          tar -czf artifacts/rollback-source.tar.gz -C "$RUNNER_TEMP/rollback-source" .
+          docker run --rm --platform linux/amd64 --network none --read-only --cap-drop ALL \
+            --tmpfs /tmp:rw,nosuid,size=16m --entrypoint sha256sum codexone:rollback-peer /usr/local/bin/codexone > artifacts/rollback-binary-sha256.txt
+          docker save codexone:candidate codexone:rollback-peer | gzip > artifacts/codexone-linux-amd64.tar.gz
           cd artifacts
-          sha256sum codexone-linux-amd64.tar.gz source.tar.gz image-id.txt source-revision.txt binary-sha256.txt > SHA256SUMS
+          sha256sum *.tar.gz *.txt > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codexone-linux-amd64-${{ github.sha }}
