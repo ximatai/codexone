@@ -51,15 +51,16 @@ try {
   page.on("console", entry => { if (/content security policy|refused to execute|refused to apply/i.test(entry.text())) errors.push("CSP error"); });
   stage = "login";
   await page.goto(origin);
-  await page.getByRole("button", { name: "访问密钥", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "管理登录" })).toBeVisible();
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "管理员登录" })).toBeVisible();
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
   await page.getByRole("button", { name: "登录管理台" }).click();
-  await expect(page.getByRole("heading", { name: "已发放密钥" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeEnabled();
   const cookie = (await context.cookies(origin)).find(item => item.name === "__Host-codexone_admin");
   assert(cookie?.secure && cookie.httpOnly && cookie.sameSite === "Strict");
   secrets.push(cookie.value);
   stage = "create and reload";
+  await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   await page.getByLabel("主体标识", { exact: true }).fill("browser-install");
   await page.getByRole("checkbox", { name: "configure-model-before-use", exact: true }).check();
   await page.getByRole("button", { name: "创建 API Key", exact: true }).click();
@@ -70,7 +71,7 @@ try {
   secrets.push(keySecret);
   await dialog.getByRole("button", { name: "我已保存，关闭" }).click();
   await page.reload();
-  await page.getByRole("button", { name: "访问密钥", exact: true }).click();
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await expect(page.getByRole("row").filter({ hasText: "browser-install" })).toBeVisible();
   assert(await page.evaluate(() => !localStorage.length && !sessionStorage.length));
   const html = await page.content();
@@ -81,7 +82,7 @@ try {
     mask: [page.locator('input[type="password"]'), page.locator("input.secret-value")] });
   stage = "logout";
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "管理登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "管理员登录" })).toBeVisible();
   assert(!(await context.cookies(origin)).some(item => item.name === "__Host-codexone_admin"));
   const logs = spawnSync("docker", ["logs", container], { timeout: 10000, maxBuffer: 65536 });
   assert(logs.status === 0 && secrets.every(secret => !Buffer.concat([logs.stdout, logs.stderr]).includes(Buffer.from(secret))));

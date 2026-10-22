@@ -35,33 +35,37 @@ async function capture(name) {
 try {
   browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  await context.route(url => url.origin !== origin, route => route.abort());
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: async value => { window.syntheticCopied = value; } } });
   });
   page = await context.newPage();
   const errors = [];
-  page.on("pageerror", () => errors.push("page error"));
+  page.on("requestfailed", request => { if (new URL(request.url()).pathname.startsWith("/assets/")) console.error("Asset failure stage=" + stage + "; type=" + request.resourceType()); });
+  page.on("response", response => { if (new URL(response.url()).pathname.startsWith("/assets/") && response.status() >= 400) console.error("Asset HTTP status=" + response.status()); });
+  page.on("pageerror", error => { errors.push("page error"); console.error("Browser exception class: " + error.name + "; stage=" + stage); });
   page.on("console", entry => { if (/content security policy|refused to execute|refused to apply/i.test(entry.text())) errors.push("CSP rejection"); });
   await mkdir(output, { recursive: true });
   stage = "login";
   await page.goto(origin);
-  await page.getByRole("button", { name: "访问密钥", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "管理登录" })).toBeVisible();
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "管理员登录" })).toBeVisible();
   await capture("login-desktop.png");
   await page.getByLabel("管理员凭证", { exact: true }).fill("synthetic-invalid-admin");
   await page.getByRole("button", { name: "登录管理台" }).click();
   await expect(page.getByRole("alert")).toContainText("管理员凭证无效");
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
   await page.getByRole("button", { name: "登录管理台" }).click();
-  await expect(page.getByRole("heading", { name: "已发放密钥" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeEnabled();
   const cookie = (await context.cookies(origin)).find(item => item.name === "__Host-codexone_admin");
   assert(cookie && cookie.secure && cookie.httpOnly && cookie.sameSite === "Strict", "Secure browser session not established");
   secrets.push(cookie.value);
   assert(await page.evaluate(() => localStorage.length === 0 && sessionStorage.length === 0), "Unexpected persistent browser storage");
   stage = "create and one-time secret";
+  await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   await page.getByLabel("主体标识", { exact: true }).fill("browser-team");
   await page.getByRole("checkbox", { name: "synthetic-text", exact: true }).check();
+  await page.getByText("本地治理限额", { exact: true }).click();
   await page.getByLabel("每日请求（UTC）", { exact: true }).fill("5");
   await page.getByRole("button", { name: "创建 API Key", exact: true }).click();
   let secretDialog = page.getByRole("dialog", { name: "保存一次性凭证" });
@@ -85,6 +89,7 @@ try {
   await admin("/api/keys/" + key.id, "PUT", { revision: key.revision, enabled: true, models: key.models, limits: { ...key.limits, requests: 4 } });
   await row.getByRole("button", { name: "编辑", exact: true }).click();
   let edit = page.getByRole("dialog", { name: "编辑密钥权限" });
+  await edit.getByText("本地治理限额", { exact: true }).click();
   await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
   await edit.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("alert")).toContainText("记录已被其他操作修改");
@@ -95,13 +100,14 @@ try {
   await admin("/api/keys/" + key.id, "PUT", { revision: key.revision, enabled: true, models: key.models, limits: { ...key.limits, requests: 5 } });
   await row.getByRole("button", { name: "编辑", exact: true }).click();
   edit = page.getByRole("dialog", { name: "编辑密钥权限" });
+  await edit.getByText("本地治理限额", { exact: true }).click();
   await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
   await page.route("**/api/keys", route => route.request().method() === "GET" ? route.abort() : route.fallback(), { times: 1 });
   await edit.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("alert")).toContainText("刷新未完成");
   await expect(page.getByRole("alert")).not.toContainText("列表已刷新");
   await expect(row.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "创建 API Key", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeDisabled();
   assert((await admin("/api/keys")).keys[0].limits.requests === 5, "Failed synchronization overwrote policy");
   await page.getByRole("button", { name: "刷新列表", exact: true }).click();
   await expect(row.getByRole("button", { name: "编辑", exact: true })).toBeEnabled();
@@ -111,6 +117,7 @@ try {
   edit = page.getByRole("dialog", { name: "编辑密钥权限" });
   await edit.getByRole("checkbox", { name: "synthetic-text", exact: true }).uncheck();
   await edit.getByRole("checkbox", { name: "synthetic-other", exact: true }).check();
+  await edit.getByText("本地治理限额", { exact: true }).click();
   await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
   await capture("edit-desktop.png");
   await edit.getByRole("button", { name: "保存修改" }).click();
@@ -119,23 +126,26 @@ try {
   assert((await data("/v1/responses", firstSecret, { model: "synthetic-text", input: "synthetic", stream: false })).status === 403);
   assert((await data("/v1/responses", firstSecret, { model: "synthetic-other", input: "synthetic", stream: false })).status === 200);
   stage = "disabled rotation and limits";
-  await row.getByRole("button", { name: "禁用", exact: true }).click();
-  await expect(row.getByRole("button", { name: "启用", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: /更多操作/ }).click();
+  await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   assert((await data("/v1/models", firstSecret)).status === 401);
-  await row.getByRole("button", { name: "轮换", exact: true }).click();
+  await row.getByRole("button", { name: /更多操作/ }).click();
+  await page.getByRole("menuitem", { name: "轮换", exact: true }).click();
   const rotation = page.getByRole("dialog", { name: "轮换 API Key" });
-  await expect(rotation).toContainText("Key 仍保持禁用");
+  await expect(rotation).toContainText("启用状态不变");
   await rotation.getByRole("button", { name: "确认轮换" }).click();
   secretDialog = page.getByRole("dialog", { name: "保存一次性凭证" });
   await expect(secretDialog).toBeVisible();
   const nextSecret = await secretDialog.getByLabel("新 API Key", { exact: true }).inputValue();
   assert(nextSecret !== firstSecret && /^co1_[A-Za-z0-9_-]{43}$/.test(nextSecret), "Rotation did not replace credential");
   secrets.push(nextSecret);
-  await expect(secretDialog).toContainText("当前禁用，启用后才可访问");
+  await expect(secretDialog).toContainText("当前禁用");
   await secretDialog.getByRole("button", { name: "我已保存，关闭" }).click();
   assert((await data("/v1/models", nextSecret)).status === 401);
-  await row.getByRole("button", { name: "启用", exact: true }).click();
-  await expect(row.getByRole("button", { name: "禁用", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: /更多操作/ }).click();
+  await page.getByRole("menuitem", { name: "启用", exact: true }).click();
+  await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   assert((await data("/v1/models", firstSecret)).status === 401);
   assert((await data("/v1/responses", nextSecret, { model: "synthetic-other", input: "synthetic", stream: false })).status === 200);
   assert((await data("/v1/responses", nextSecret, { model: "synthetic-other", input: "synthetic", stream: false })).status === 429, "Rotation reset request quota");
@@ -149,26 +159,31 @@ try {
   key = (await admin("/api/keys")).keys[0];
   let dropped = 0;
   await page.route("**/api/keys/" + key.id, async route => { await route.fetch(); dropped++; await route.abort(); }, { times: 1 });
-  await row.getByRole("button", { name: "禁用", exact: true }).click();
+  await row.getByRole("button", { name: /更多操作/ }).click();
+  await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("操作结果尚未确认");
-  await expect(page.getByRole("button", { name: "创建 API Key", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeDisabled();
   const authoritative = (await admin("/api/keys")).keys[0];
   assert(!authoritative.enabled && authoritative.revision === key.revision + 1 && dropped === 1, "Uncertain mutation replayed or failed to persist");
   await page.getByRole("button", { name: "刷新列表", exact: true }).click();
-  await expect(row.getByRole("button", { name: "启用", exact: true })).toBeEnabled();
+  await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   await capture("keys-desktop.png");
   stage = "logout retry";
-  await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.fallback(), { times: 1 });
+  let dropLogout = true;
+  await page.route("**/api/session", route => {
+    if (route.request().method() === "DELETE" && dropLogout) { dropLogout = false; return route.abort(); }
+    return route.fallback();
+  });
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("服务端登出尚未确认");
-  await expect(page.getByRole("heading", { name: "已发放密钥" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "访问密钥" })).toHaveCount(0);
   assert(await page.evaluate(async () => (await fetch("/api/session")).status === 200), "Fixture did not preserve unconfirmed session");
   await page.getByRole("button", { name: "重试登出", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "管理登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "管理员登录" })).toBeVisible();
   assert(!(await context.cookies(origin)).some(item => item.name === "__Host-codexone_admin"), "Logout left browser authority");
   await page.reload();
-  await page.getByRole("button", { name: "访问密钥", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "管理登录" })).toBeVisible();
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "管理员登录" })).toBeVisible();
   for (const file of await readdir(stateDirectory)) {
     if (!file.startsWith("core.sqlite")) continue;
     const bytes = await readFile(resolve(stateDirectory, file));
@@ -176,7 +191,8 @@ try {
   }
   assert(errors.length === 0, "Browser runtime or CSP error");
   console.log("PASS: real Chrome login, create/copy/clear, effective policy/CAS, disabled rotation/quota, read retry, lost mutation response and logout retry; no persistent browser secrets");
-} catch {
+} catch (error) {
+  console.error("Browser failure kind: " + error.name + "; first-frame=" + (String(error.stack).match(/live-keys\.mjs:(\d+)/)?.[1] ?? "assertion"));
   if (page) { try { await page.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator("input.secret-value")] }); } catch {} }
   console.error("FAIL: real management browser check at " + stage);
   process.exitCode = 1;

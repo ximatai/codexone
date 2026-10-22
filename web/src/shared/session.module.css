@@ -1,0 +1,14 @@
+.action {
+  position: absolute;
+  right: 0;
+  top: -59px;
+}
+.login {
+  max-width: 440px;
+  margin: 36px auto;
+}
+@media (max-width: 700px) {
+  .action {
+    top: -54px;
+  }
+}

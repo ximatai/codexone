@@ -37,3 +37,5 @@ Core 内部按 Execution、Identity、Governance、Recovery 等实际业务增�
 前端采用 feature 聚合 UI、hooks/API 映射与局部测试；shared 只接收实际复用内容，API 客户端集中遵守管理契约。组件库、生成工具按实际需求选择，不预建横切 services/types 大杂烩。管理契约先明确 ID、时间、用量单位、错误、继承和 secret write-only 字段，并验证同源/代理、CSRF 与会话。
 
 Package.swift、锁文件和前端包配置应记录实际版本及支持范围，不从原型拷贝后宣称产品兼容。可运行命令和实现进度只见 [STATUS](../../STATUS.md)。
+
+前端 `app/` 组装 hash 路由、主题和会话内 Query client；`shared/session` 是唯一管理会话与代际/未知范围锁 owner，`shared/management` 保留同源/CSRF/超时边界。feature 内分离表单/展示与实际复用控制hook，禁止页面重复维护登录。布局样式逐步采用CSS Modules，旧feature样式限定到其作用域，避免全局元素选择器污染Mantine。一次性秘密不进入通用缓存，账号授权流程仍由账号页面持有并在离开时清除。

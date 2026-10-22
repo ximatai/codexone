@@ -64,14 +64,14 @@ try {
   await mkdir(output, { recursive: true });
   stage = "login";
   await page.goto(origin);
-  await page.getByRole("button", { name: "订阅账号", exact: true }).click();
+  await page.getByRole("link", { name: "订阅账号", exact: true }).click();
   await expect(page.getByRole("heading", { name: "管理员登录", exact: true })).toBeVisible();
   await capture("login-desktop.png");
   await page.getByLabel("管理员凭证", { exact: true }).fill("synthetic-wrong-admin");
-  await page.getByRole("button", { name: "登录", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("登录失败");
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("管理员凭证无效");
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
   await expect(page.getByRole("button", { name: "发起账号授权", exact: true })).toBeEnabled();
   await capture("empty-desktop.png");
   stage = "cancel";
@@ -178,8 +178,8 @@ try {
   await capture("quota-restricted-desktop.png");
   stage = "logout";
   await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.continue());
-  await page.getByRole("button", { name: "登出", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("登出未确认");
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("登出尚未确认");
   await expect(page.getByRole("heading", { name: "登出状态待确认", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重试登出", exact: true })).toBeEnabled();
   await expect(page.getByText("授权有效", { exact: true })).toHaveCount(0);
@@ -190,21 +190,21 @@ try {
   await expect(page.getByRole("heading", { name: "管理员登录", exact: true })).toBeVisible();
   stage = "committed-logout-response-loss";
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
   await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
   await page.route("**/api/session", async route => {
     if (route.request().method() === "DELETE") { await route.fetch(); await route.abort(); }
     else await route.continue();
   });
-  await page.getByRole("button", { name: "登出", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("登出未确认");
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("登出尚未确认");
   await expect(page.getByRole("button", { name: "重试登出", exact: true })).toBeEnabled();
   await page.unroute("**/api/session");
   await page.getByRole("button", { name: "重试登出", exact: true }).click();
   await expect(page.getByRole("heading", { name: "管理员登录", exact: true })).toBeVisible();
   stage = "expired-detail-clears-page-and-late-flow";
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
   await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
   let releaseFlow, markPrepared, markDelivered;
   const flowHeld = new Promise(resolve => { releaseFlow = resolve; });
@@ -227,7 +227,7 @@ try {
   stage = "expired-detail-release-old-response";
   releaseFlow(); await flowDelivered; await page.unroute("**/api/accounts/authorization");
   await page.getByLabel("管理员凭证", { exact: true }).fill(credential);
-  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: "登录管理台", exact: true }).click();
   await expect(page.getByText("授权有效", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "发起账号授权", exact: true })).toBeEnabled();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);

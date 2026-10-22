@@ -69,7 +69,7 @@ struct AdminHTTPIngress: Sendable {
   }
   private func serve(_ connection: AdminConnection) async throws {
     defer { connection.deadline.cancel() }
-    try await connection.socket.executeThenClose { inbound, outbound in
+    try await connection.socket.executeThenClose { inbound, _ in
       var head: HTTPRequestHead?
       var body = ByteBuffer()
       for try await part in inbound {
@@ -82,7 +82,7 @@ struct AdminHTTPIngress: Sendable {
             try await write(
               status: .payloadTooLarge, headers: [:],
               body: Data(#"{"error":{"code":"request_too_large"}}"#.utf8),
-              channel: connection.socket.channel, outbound: outbound)
+              channel: connection.socket.channel)
             return
           }
           body.writeBuffer(&value)
@@ -98,7 +98,7 @@ struct AdminHTTPIngress: Sendable {
           }
           try await write(
             status: response.status, headers: response.headers, body: data,
-            channel: connection.socket.channel, outbound: outbound)
+            channel: connection.socket.channel)
           return
         }
       }
@@ -106,7 +106,7 @@ struct AdminHTTPIngress: Sendable {
   }
   private func write(
     status: HTTPResponseStatus, headers: HTTPHeaders, body: Data,
-    channel: any Channel, outbound: NIOAsyncChannelOutboundWriter<HTTPServerResponsePart>
+    channel: any Channel
   ) async throws {
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) { channel.close(promise: nil) }
     defer { deadline.cancel() }
@@ -117,9 +117,15 @@ struct AdminHTTPIngress: Sendable {
     if headers.first(name: "content-type") == nil {
       headers.add(name: "content-type", value: "application/json; charset=utf-8")
     }
-    try await outbound.write(.head(.init(version: .http1_1, status: status, headers: headers)))
-    try await outbound.write(.body(.byteBuffer(ByteBuffer(data: body))))
-    try await outbound.write(.end(nil))
+    let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+    // Async writer yield only queues writes. Await the final socket write before executeThenClose
+    // may close this connection; otherwise a large static asset can be truncated under pressure.
+    try await channel.eventLoop.flatSubmit {
+      channel.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
+      channel.write(
+        NIOAny(HTTPServerResponsePart.body(.byteBuffer(ByteBuffer(data: body)))), promise: nil)
+      return channel.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)))
+    }.get()
   }
 }
 private struct AdminConnection: Sendable {

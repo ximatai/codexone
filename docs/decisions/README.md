@@ -8,6 +8,10 @@ Swift 6 严格并发，NIO 掌控数据面，Vapor 承担管理 API，AHC 调用
 
 依据：传输实验表明应显式控制 channel 生命周期；单体和 SQLite 适合小规模自托管，静态前端无需 Node 运行服务。代价是维护窄传输层，SQLite 不提供多写 HA，Swift 并发检查不能替代事务与生命周期验证。
 
+### 管理台组件与状态基础
+
+保留React/Vite静态SPA和feature聚合，采用React Router hash路由、Mantine/表单和Zod；只读用量以TanStack Query做有界内存查询试点。理由是重复会话/表单/弹层已增加维护成本，当前无需新增Node运行服务。会话owner和业务不确定性仍显式维护，通用查询不接管秘密返回或自动重试。Mantine主题/CSP适配用静态CSS、禁用运行时样式注入和Zod JIT，不放宽安全头。TypeScript 7超出当前typescript-eslint peer范围，采用Oxlint的明确规则与Prettier，类型检查仍由锁定tsc承担，不强制安装不兼容依赖。代价是引入依赖/静态包体和少量CSP适配；页面按需加载、资产保持现有容量界限，更新时核对实际CSP和私有状态清理。
+
 ### 发行的数据卷与回环边界
 
 Linux Compose 使用 host network 保留网关的回环监听，由宿主 TLS 反代接入；不为容器包装扩大监听面。data 默认使用唯一命名的 Engine 本地 volume，显式 nocopy；秘密保留独立只读文件。依据是共享 bind 的最小 flock 探针不能维持实例互斥，而 Linux 本地卷可维持；空卷 copy-up 还会重置目录属主。初始化只为新空卷设置 UID/GID，既有非空卷归属不符或目录读取失败均拒绝；隔离的短命 root init 不挂秘密、不联网，gateway 保持非 root。代价是数据与迁移备份由 volume 管理，不能把删除卷或复制旧快照当作升级/回退；证据见[安装验证](../changes/linux-distribution/verification.md)。

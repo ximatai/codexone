@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": [
-      "ES2023",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
@@ -14,16 +10,7 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
-    "types": [
-      "vite/client",
-      "vitest/globals",
-      "node"
-    ]
+    "types": ["vite/client", "vitest/globals", "node"]
   },
-  "include": [
-    "src",
-    "tests",
-    "vite.config.ts",
-    "playwright.config.ts"
-  ]
+  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"]
 }

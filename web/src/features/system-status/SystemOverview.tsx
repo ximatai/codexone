@@ -36,11 +36,9 @@ export function SystemOverview() {
   }
 
   return (
-    <>
+    <div className="system-status">
       <section className="intro">
-        <p className="eyebrow">服务概览</p>
         <h1>连接与运行状态</h1>
-        <p>查看网关连接与服务准备情况。</p>
       </section>
       <section className="panel" aria-label="服务状态">
         {state.kind === "loading" && <p role="status">正在连接服务…</p>}
@@ -67,10 +65,12 @@ export function SystemOverview() {
                 </li>
               ))}
             </ul>
-            <button className="secondary" onClick={reload}>刷新状态</button>
+            <button className="secondary" onClick={reload}>
+              刷新状态
+            </button>
           </>
         )}
       </section>
-    </>
+    </div>
   );
 }

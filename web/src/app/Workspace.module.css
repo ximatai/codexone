@@ -1,0 +1,33 @@
+.workspace {
+  width: min(1440px, calc(100% - 64px));
+  margin: 0 auto;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 76px;
+  border-bottom: 1px solid #dce3dd;
+}
+.workspace > nav {
+  padding: 20px 0;
+}
+.workspace > nav a[aria-current="page"] {
+  background: #e6eee8;
+  color: #204c3f;
+}
+.workspace main {
+  position: relative;
+  padding: 34px 0 60px;
+}
+@media (max-width: 700px) {
+  .workspace {
+    width: calc(100% - 28px);
+  }
+  .workspace > nav {
+    padding-right: 80px;
+  }
+  .workspace > nav > div {
+    gap: 4px;
+  }
+}
