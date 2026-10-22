@@ -76,7 +76,7 @@ public struct ResponsesDataService: Service {
       }
     }
     return .init(checks: [
-      .init(name: "execution_store", ready: store.isAvailable),
+      .init(name: "execution_store", ready: store.isAdmissionReady),
       .init(name: "upstream_accounts", ready: accounts),
       .init(name: "authorization", ready: finalizer.isAccepting),
     ])

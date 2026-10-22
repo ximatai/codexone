@@ -10,12 +10,20 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let path: String
   let usageReaderGate = Mutex(false)
   let limits: ExecutionLimits
+  private let restoration: RestoreRecord?
+  public var isAdmissionReady: Bool {
+    isAvailable && (restoration?.allowsAdmission(at: Int64(Date().timeIntervalSince1970)) ?? true)
+  }
   private let gate = Mutex((regular: 0, critical: 0, closing: false, failed: false))
 
   public var isAvailable: Bool { gate.withLock { !$0.closing && !$0.failed } }
 
-  init(connection: SQLiteConnection, limits: ExecutionLimits, path: String) {
+  init(
+    connection: SQLiteConnection, limits: ExecutionLimits, path: String,
+    restoration: RestoreRecord? = nil
+  ) {
     self.path = path
+    self.restoration = restoration
     self.connection = connection
     self.limits = limits
   }
@@ -57,7 +65,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
           }
           continuation.resume(
-            returning: SQLiteExecutionStore(connection: connection, limits: limits, path: path))
+            returning: SQLiteExecutionStore(
+              connection: connection, limits: limits, path: path,
+              restoration: try connection.restoreRecord()))
         } catch { continuation.resume(throwing: error) }
       }
     }
@@ -134,6 +144,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     _ db: SQLiteConnection, _ command: ExecutionAdmission, limits: ExecutionLimits
   ) throws {
     try validateAdmission(command)
+    if let restored = try db.restoreRecord() {
+      let now = Int64(Date().timeIntervalSince1970)
+      guard restored.allowsAdmission(at: now), command.keyRevision != nil,
+        command.window == "utc-day-\(now / 86400)"
+      else { throw ExecutionError.maintenanceRequired }
+      let missingCount = restored.unresolvedRequests
+      let missingMicros = restored.unresolvedMicros
+      let existingCount = try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
+      let existingMicros = try db.scalar(
+        "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE state!='settled'")
+      guard missingCount < limits.unresolved, existingCount < limits.unresolved - missingCount,
+        missingMicros <= limits.unresolvedMicros,
+        command.reservedMicros <= limits.unresolvedMicros - missingMicros,
+        existingMicros <= limits.unresolvedMicros - missingMicros - command.reservedMicros
+      else { throw ExecutionError.denied }
+    }
     guard
       try db.scalar("SELECT COUNT(*) FROM attempts WHERE id=?", [.text(command.attempt)]) == 0
     else { throw ExecutionError.conflict }

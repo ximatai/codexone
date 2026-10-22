@@ -24,4 +24,4 @@ Images 流输出 `image_generation.partial_image` / `.completed`，编辑为 `im
 
 用量分别呈现宿主响应 token、图片工具输入/输出 token 与已观察图片数；工具 token 不加入宿主 token 总数。宿主和工具费率分别估算后相加。没有可信完整工具用量时保留 partial/unknown 和预留暴露，缺失指标为不可用，不填零；结果成功与用量结清分别解释。图片内容与 prompt 不写入核心库。
 
-schema v6 的离线迁移与备份见 [Key 治理](key-governance.md)。合成协议检查与实际 Desktop/真实订阅兼容是不同证据，后者须显式授权并逐项验收。
+图片权限语义自 schema v6 引入；当前 schema 的离线迁移与备份见 [Key 治理](key-governance.md)。合成协议检查与实际 Desktop/真实订阅兼容是不同证据，后者须显式授权并逐项验收。

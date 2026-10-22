@@ -183,14 +183,14 @@ private func keyAdmission(
   try rawSQL(
     path,
     removeObservationSchema
-      + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; PRAGMA user_version=1"
+      + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=1"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   }
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v6-")
+    $0.contains(".pre-v7-")
   }
   #expect(backups.count == 1)
   let backup = directory + "/" + backups[0]
@@ -223,7 +223,7 @@ private func keyAdmission(
   try rawSQL(
     path,
     removeObservationSchema
-      + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; PRAGMA user_version=1"
+      + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=1"
   )
   // An index name conflict occurs after both CREATE TABLE statements, inside the migration transaction.
   await #expect(throws: ExecutionError.storageUnavailable) {

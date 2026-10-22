@@ -19,7 +19,7 @@ final class SQLiteConnection: @unchecked Sendable {
     case null
   }
 
-  init(path: String, migrating: Bool = false) throws {
+  init(path: String, migrating: Bool = false, existingOnly: Bool = false) throws {
     guard path != ":memory:", !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
     let canonical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     lockFD = try Self.secureFile(canonical + ".lock", create: true)
@@ -29,8 +29,11 @@ final class SQLiteConnection: @unchecked Sendable {
       throw ExecutionError.instanceLocked
     }
     do {
+      if FileManager.default.fileExists(atPath: canonical + ".restore-pending") {
+        throw SnapshotMaintenanceError.incompleteRestore
+      }
       // Existing data must pass compatibility checks before changing journal mode or schema.
-      let file = try Self.secureFile(canonical, create: !migrating)
+      let file = try Self.secureFile(canonical, create: !migrating && !existingOnly)
       guard file >= 0 else { throw ExecutionError.storageUnavailable }
       close(file)
       // Existing WAL/SHM can predate a tightened main-file mode.
@@ -51,9 +54,11 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      guard version == 0 || version == 6 || (migrating && [1, 2, 3, 4, 5].contains(version)) else {
+      guard version == 0 || version == 7 || (migrating && [1, 2, 3, 4, 5, 6].contains(version))
+      else {
         throw ExecutionError.incompatibleSchema
       }
+      if existingOnly && version != 7 { throw ExecutionError.incompatibleSchema }
       if version == 0 {
         guard try scalar("SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'") == 0
         else {
@@ -71,6 +76,7 @@ final class SQLiteConnection: @unchecked Sendable {
           } + (version >= 2 ? Self.keyColumns : [])
           + (version >= 3 ? Self.accountColumns : [])
           + (version >= 5 ? Self.observationColumns : [])
+          + (version >= 7 ? Self.maintenanceColumns : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -78,7 +84,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, ![1, 2, 3, 4, 5, 6].contains(version) {
+      if migrating, ![1, 2, 3, 4, 5, 6, 7].contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
@@ -96,10 +102,11 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.keySchema)
           try exec(Self.accountSchema)
           try exec(Self.observationSchema)
-          try exec("PRAGMA user_version=6")
+          try exec(Self.maintenanceSchema)
+          try exec("PRAGMA user_version=7")
         }
       }
-      if [1, 2, 3, 4, 5].contains(version) {
+      if [1, 2, 3, 4, 5, 6].contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -110,7 +117,8 @@ final class SQLiteConnection: @unchecked Sendable {
           if version == 1 { try exec(Self.keySchema) }
           if version < 3 { try exec(Self.accountSchema) }
           if version < 5 { try exec(Self.observationSchema) }
-          try exec("PRAGMA user_version=6")
+          try exec(Self.maintenanceSchema)
+          try exec("PRAGMA user_version=7")
         }
       }
       guard
@@ -147,7 +155,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard try scalar("PRAGMA user_version") == 6, try scalar("PRAGMA query_only") == 1 else {
+      guard try scalar("PRAGMA user_version") == 7, try scalar("PRAGMA query_only") == 1 else {
         throw ExecutionError.incompatibleSchema
       }
     } catch {
@@ -327,8 +335,18 @@ final class SQLiteConnection: @unchecked Sendable {
     ("request_diagnostics", ["request_id", "at_epoch", "key_id", "model", "mode", "failure"]),
   ]
 
+  static let maintenanceSchema = """
+    CREATE TABLE maintenance_state (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL, restore_json TEXT);
+    INSERT INTO maintenance_state VALUES(1, lower(hex(randomblob(16))), NULL);
+    CREATE TABLE maintenance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, record_json TEXT NOT NULL, at_epoch INTEGER NOT NULL);
+    """
+  private static let maintenanceColumns: [(String, [String])] = [
+    ("maintenance_state", ["id", "generation", "restore_json"]),
+    ("maintenance_events", ["id", "action", "record_json", "at_epoch"]),
+  ]
+
   private func backupBeforeUpgrade(_ path: String) throws {
-    let destination = path + ".pre-v6-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v7-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

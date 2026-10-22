@@ -119,4 +119,4 @@ Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备�
 
 Runtime 额度 owner 统一手动/周期单飞，最多 64 个账号工作/64 个管理等待者/4 个网络工作，每项总期限 20 秒；HTTP owner 使用独立四容量、5 秒网络总期限和 64 KiB 响应上限，无重定向/重试/代理继承。周期 60 秒处理 enabled/draining 的 ready/refreshing 账号；禁用但有效的凭证仅手动观察，过期禁用凭证须先显式刷新。允许使用的过期凭证加入已有刷新 owner，不能建立另一套刷新语义。等待者取消只移除等待者；关闭停止接纳、取消并等待所有 owner。记录成功观察须仍是同一 namespace/version/ready，旧返回不能覆盖新授权，失败保留上次成功值。
 
-图片能力要求（路由、视觉输入、公开图片模型）随执行 admission 持久保存，SQLite 同事务复核当前 Key revision 与权限。schema v6 标记此语义；v1—v5 普通启动拒绝，显式离线私有备份后迁移，历史缺失能力要求的执行仍按纯对话解释。配置与权限细节见[图片配置](../development/images.md)和[Key 治理](../development/key-governance.md)。
+图片能力要求（路由、视觉输入、公开图片模型）随执行 admission 持久保存，SQLite 同事务复核当前 Key revision 与权限。此语义自 schema v6 引入，当前版本与显式离线迁移/备份见 [O16](operations.md)；历史缺失能力要求的执行仍按纯对话解释。配置与权限细节见[图片配置](../development/images.md)和[Key 治理](../development/key-governance.md)。

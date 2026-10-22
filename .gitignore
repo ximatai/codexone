@@ -17,6 +17,9 @@ secrets/
 *.sqlite3-shm
 *.sqlite.partial
 *.sqlite.lock
+*.sqlite.restore-pending
+*.sqlite.restoring.partial
+*.sqlite.restoring.partial.lock
 # Tool/build outputs
 .build/
 .swiftpm/

@@ -31,6 +31,10 @@ struct CodexOneMain {
       }
       FileHandle.standardError.write(Data((message + "\n").utf8))
       exit(78)
+    } catch SnapshotMaintenanceError.incompleteRestore {
+      FileHandle.standardError.write(
+        Data("Incomplete restore target; preserve the backup and use a new empty target.\n".utf8))
+      exit(1)
     } catch is CommandError {
       FileHandle.standardError.write(Data("Unsupported arguments. Use --help.\n".utf8))
       exit(64)
@@ -44,11 +48,19 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
-    guard arguments.isEmpty || arguments == ["--check-config"] || arguments == ["--migrate"] else {
+    let maintenance =
+      arguments == ["--maintenance-status"]
+      || (arguments.count == 2
+        && ["--backup", "--restore", "--reconcile-restored"].contains(arguments[0])
+        && arguments[1].hasPrefix("/"))
+    guard
+      arguments.isEmpty || arguments == ["--check-config"] || arguments == ["--migrate"]
+        || maintenance
+    else {
       throw CommandError.unsupportedArguments
     }
     let configuration = try RuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
@@ -58,6 +70,54 @@ struct CodexOneMain {
       }
       try await SQLiteExecutionStore.migrate(path: directory + "/core.sqlite")
       print("Schema migration completed; any pre-upgrade backup is beside the database.")
+      return
+    }
+    if maintenance {
+      guard let directory = configuration.dataDirectory else {
+        throw RuntimeConfiguration.ConfigurationError.invalidDataDirectory
+      }
+      let path = directory + "/core.sqlite"
+      let protection: AccountCredentialCipher?
+      if let keyFile = configuration.accountMasterKeyFile {
+        protection = try await AccountCredentialCipher.load(path: keyFile)
+      } else {
+        protection = nil
+      }
+      if arguments[0] == "--backup" {
+        let manifest = try await SQLiteSnapshotMaintenance.backup(
+          path: path, destination: arguments[1], protection: protection)
+        FileHandle.standardOutput.write(try JSONEncoder().encode(manifest) + Data([10]))
+      } else {
+        let record: RestoreRecord?
+        switch arguments[0] {
+        case "--restore":
+          record = try await SQLiteSnapshotMaintenance.restore(
+            bundle: arguments[1], path: path, protection: protection)
+        case "--reconcile-restored":
+          record = try await SQLiteSnapshotMaintenance.reconcileFile(
+            path: path, baselineFile: arguments[1])
+        default: record = try await SQLiteSnapshotMaintenance.status(path: path)
+        }
+        let state =
+          record == nil
+          ? "normal"
+          : record!.baseline == nil
+            ? "restored_unreconciled"
+            : record!.allowsAdmission(at: Int64(Date().timeIntervalSince1970))
+              ? "reconciled" : "frozen"
+        let encoded = try record.map {
+          try JSONSerialization.jsonObject(with: JSONEncoder().encode($0))
+        }
+        let report: [String: Any] = [
+          "state": state, "restore": encoded ?? NSNull(),
+          "minimumFreezeUntilUnixSeconds": record?.minimumFreezeUntilUnixSeconds as Any?
+            ?? NSNull(),
+          "missingUnresolvedRequests": record?.unresolvedRequests ?? 0,
+          "missingUnresolvedMicros": record?.unresolvedMicros ?? 0,
+        ]
+        FileHandle.standardOutput.write(
+          try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) + Data([10]))
+      }
       return
     }
     let identityConfiguration: SingleIdentityConfiguration?
@@ -196,7 +256,7 @@ struct CodexOneMain {
         reportProvider: {
           if let activePoolDataService { return await activePoolDataService.readiness() }
           return .init(checks: [
-            .init(name: "execution_store", ready: store?.isAvailable == true),
+            .init(name: "execution_store", ready: store?.isAdmissionReady == true),
             .init(
               name: "upstream_accounts",
               ready: (identityConfiguration != nil || poolConfiguration != nil)),

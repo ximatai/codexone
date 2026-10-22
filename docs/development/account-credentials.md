@@ -62,7 +62,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 `AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
 
-当前 v5 不是自动升级。已有 v1/v2/v3/v4 须停服显式 migrate，备份保存源版本与未恢复 intent；v5 普通启动才完成 unknown/uncertain 恢复。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
+当前 v7 不自动升级，已有 v1—v6 须停服显式 migrate，备份保存源版本与未恢复 intent；普通启动才完成 unknown/uncertain 恢复。旧快照恢复的 requires_auth、旧 Key 失效及维护门禁见[快照维护](snapshot-maintenance.md)。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
 
 ## 订阅账号池的 HTTP 入口配置
 

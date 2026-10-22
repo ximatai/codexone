@@ -2,7 +2,8 @@ import Foundation
 
 public enum ExecutionError: Error, Sendable, Equatable {
   case invalidCommand, capacity, denied, conflict, unknownAttempt, unknownObject, ambiguousObject
-  case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence, unauthorized
+  case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence, unauthorized,
+    maintenanceRequired
 }
 
 /// Trusted application identity; never populated directly from client claims.
@@ -130,6 +131,7 @@ public struct ObjectBinding: Sendable, Equatable, Codable {
 /// Business commands are each one local transaction. No network call may occur inside them.
 public protocol ExecutionStore: Sendable {
   var isAvailable: Bool { get }
+  var isAdmissionReady: Bool { get }
   func admit(_ command: ExecutionAdmission) async throws
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
@@ -139,6 +141,7 @@ public protocol ExecutionStore: Sendable {
 }
 
 extension ExecutionStore {
+  public var isAdmissionReady: Bool { isAvailable }
   public func finalize(attempt: String, evidence: UsageEvidence?) async throws {
     try await finalize(attempt: attempt, evidence: evidence, outcome: nil)
   }
