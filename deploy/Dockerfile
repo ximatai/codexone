@@ -16,7 +16,7 @@ WORKDIR /build
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
 COPY Tests/ Tests/
-RUN --mount=type=cache,target=/build/.build \
+RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
     && mkdir /output && cp .build/release/codexone /output/codexone
