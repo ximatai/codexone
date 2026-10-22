@@ -51,3 +51,5 @@ e7c200a 独立 review 未发现需修复或阻塞问题。reviewer 核对 waiter
 初次授权代码未开放管理入口，不调用真实认证服务。callback/state/verifier 只在内存传递，公开结果只有登录地址/流程标识和安全账号元数据。提交后 review 待进行；生产组装、账号管理 UI 和账号池未完成。
 
 0be1012 独立 review 无阻塞，reviewer 独立运行四项 owner 测试及实际 socket 贯通共五项通过。主 Agent 采纳非阻塞建议，增强贯通 server：对收到的 verifier 计算 S256 并与开始流程 URL 的 challenge 比对，不再仅检查 verifier 长度。增强后的真实 socket 定向测试重新构建并通过；未改产品行为。
+
+PKCE 增强复审指出 fixture 的可选值比较会把“缺 verifier”和“未设置固定 verifier”的 nil==nil 误当匹配。主 Agent 改为先要求非空 verifier，再显式选择固定 verifier 或 S256 challenge 分支，缺两种期望也拒绝。重建后原始实际 OAuth 刷新链和 owner 贯通两项测试通过。产品实现未受此 fixture 缺口影响。

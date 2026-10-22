@@ -159,17 +159,23 @@ private final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
       for item in URLComponents(string: "http://synthetic.invalid/?" + raw)?.queryItems ?? [] {
         fields[item.name] = item.value
       }
+      guard let verifier = fields["code_verifier"], !verifier.isEmpty else { return false }
+      let expected = state.mutex.withLock { ($0.expectedVerifier, $0.expectedChallenge) }
+      let verifierMatches: Bool
+      if let fixed = expected.0 {
+        verifierMatches = verifier == fixed
+      } else if let challenge = expected.1 {
+        verifierMatches =
+          SubscriptionOAuthProvider.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+          == challenge
+      } else {
+        verifierMatches = false
+      }
       return fields["client_id"] == SubscriptionOAuthProvider.clientID
         && fields["grant_type"] == "authorization_code"
         && fields["code"]?.hasPrefix("synthetic-code") == true
         && fields["code"]?.hasSuffix("+/=") == true
-        && (fields["code_verifier"] == state.mutex.withLock { $0.expectedVerifier }
-          || (state.mutex.withLock { $0.expectedVerifier } == nil
-            && state.mutex.withLock { $0.expectedChallenge }
-              == SubscriptionOAuthProvider.base64URL(
-                Data(
-                  SHA256.hash(
-                    data: Data((fields["code_verifier"] ?? "").utf8))))))
+        && verifierMatches
         && fields["redirect_uri"] == SubscriptionOAuthProvider.callbackURI
     }
     guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: String] else {
