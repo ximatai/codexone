@@ -438,7 +438,8 @@ public struct ResponsesDataService: Service {
       await writer.setStreaming(request.streaming)
       try await executor.execute(request.response, requestID: writer.requestID) { document in
         if let mapped = try imageReply(
-          document, streaming: request.streaming, editing: request.editing)
+          document, streaming: request.streaming, editing: request.editing,
+          options: request.response.document["tools"]?.array?.first)
         {
           if request.streaming {
             try await writer.event(mapped)

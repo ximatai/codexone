@@ -40,7 +40,7 @@ extension ResponseRequest {
       outputItems?.allSatisfy {
         ["message", "reasoning", "function_call", "custom_tool_call", "image_generation_call"]
           .contains($0["type"]?.string ?? "")
-      } == true
+      } == true && (!items.isEmpty || response?["status"]?.string == "completed")
     var knownInput = knownOutputItems
     var knownOutput = knownOutputItems
     var images: Int64 = 0

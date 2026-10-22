@@ -185,7 +185,7 @@ import Testing
 
 @Test func webSocketQueuesShareByteCapacityAndCancellationWakesAllLanes() async throws {
   let inbox = WebSocketInbox()
-  let block = Data(repeating: 65, count: 524_288)
+  let block = Data(repeating: 65, count: ImageLimits.eventBytes / 2)
   try await inbox.push(block, lane: "first")
   try await inbox.push(block, lane: "second")
   try await withExecutionDeadline(seconds: 2) {
@@ -332,4 +332,19 @@ import Testing
     ["reasoningEfforts": ["low"], "defaultReasoningEffort": "high"],
     ["baseInstructions": " \n"], ["baseInstructions": String(repeating: "x", count: 32769)],
   ] { #expect(throws: (any Error).self) { try configuration(invalid) } }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func webSocketQueueConcurrentCancellationAndFinishNeverResumeUnderItsLock() async throws {
+  for _ in 0..<64 {
+    let inbox = WebSocketInbox()
+    await withTaskGroup(of: Void.self) { tasks in
+      for index in 0..<8 {
+        tasks.addTask { _ = try? await inbox.next(lane: "synthetic-\(index)") }
+      }
+      tasks.addTask { inbox.finish(CancellationError(), discard: true) }
+      tasks.cancelAll()
+      await tasks.waitForAll()
+    }
+  }
 }

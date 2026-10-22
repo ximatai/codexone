@@ -115,6 +115,15 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     usage.inputTokens == 5 && usage.outputTokens == 7 && usage.imageInputTokens == 2
       && usage.imageOutputTokens == 3)
   #expect(usage.images == 1 && usage.estimatedMicros == 25 && usage.completeness == .complete)
+  for status in ["completed", "failed", "incomplete"] {
+    var empty = response.object!
+    empty["output"] = .array([])
+    empty["status"] = .string(status)
+    let zero = try #require(
+      try request.response.usage(.object(empty), model: model, configuration: config))
+    #expect(zero.completeness == (status == "completed" ? .complete : .partial))
+    #expect(zero.imageInputTokens == (status == "completed" ? 0 : nil))
+  }
   var missing = response.object!
   var noUsage = item.object!
   noUsage.removeValue(forKey: "usage")

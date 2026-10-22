@@ -50,36 +50,31 @@ final class WebSocketInbox: Sendable {
   private let state = Mutex(State())
   func push(_ data: Data, lane: String = "") async throws {
     while true {
-      let pushed = try state.withLock { value -> Bool in
+      let result = try state.withLock { value -> (Bool, CheckedContinuation<Data, any Error>?) in
         if let error = value.error { throw error }
-        if let waiter = value.waiters.removeValue(forKey: lane) {
-          waiter.resume(returning: data)
-          return true
-        }
-        guard value.hasSpace(lane: lane, bytes: data.count) else { return false }
+        if let waiter = value.waiters.removeValue(forKey: lane) { return (true, waiter) }
+        guard value.hasSpace(lane: lane, bytes: data.count) else { return (false, nil) }
         guard value.queues[lane] != nil || value.queues.count < 33 else {
           throw ExecutionError.capacity
         }
         value.queues[lane, default: []].append(data)
         value.bytes += data.count
         value.count += 1
-        return true
+        return (true, nil)
       }
-      if pushed { return }
+      result.1?.resume(returning: data)
+      if result.0 { return }
       try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation {
           (continuation: CheckedContinuation<Void, any Error>) in
-          state.withLock { value in
-            if let error = value.error {
-              continuation.resume(throwing: error)
-            } else if value.hasSpace(lane: lane, bytes: data.count) {
-              continuation.resume()
-            } else if value.producer != nil {
-              continuation.resume(throwing: ExecutionError.conflict)
-            } else {
-              value.producer = (lane, data.count, continuation)
-            }
+          let ready = state.withLock { value -> Result<Void, any Error>? in
+            if let error = value.error { return .failure(error) }
+            if value.hasSpace(lane: lane, bytes: data.count) { return .success(()) }
+            if value.producer != nil { return .failure(ExecutionError.conflict) }
+            value.producer = (lane, data.count, continuation)
+            return nil
           }
+          if let ready { continuation.resume(with: ready) }
         }
       } onCancel: {
         self.finish(CancellationError(), discard: true)
@@ -87,47 +82,56 @@ final class WebSocketInbox: Sendable {
     }
   }
   func finish(_ error: any Error, discard: Bool = false) {
-    state.withLock { value in
+    let pending = state.withLock { value in
       if value.error == nil { value.error = error }
       if discard {
         value.queues.removeAll()
         value.bytes = 0
         value.count = 0
       }
-      for waiter in value.waiters.values { waiter.resume(throwing: error) }
+      let waiters = Array(value.waiters.values)
+      let producer = value.producer?.continuation
       value.waiters.removeAll()
-      value.producer?.continuation.resume(throwing: error)
       value.producer = nil
+      return (waiters, producer)
     }
+    // Resuming can synchronously interact with task cancellation. Never do it under the inbox lock.
+    for waiter in pending.0 { waiter.resume(throwing: error) }
+    pending.1?.resume(throwing: error)
   }
   func next(lane: String = "") async throws -> Data {
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        state.withLock { value in
+        let ready = state.withLock {
+          value -> (Result<Data, any Error>?, CheckedContinuation<Void, any Error>?) in
           if value.queues[lane]?.isEmpty == false {
             let data = value.queues[lane]!.removeFirst()
             value.bytes -= data.count
             value.count -= 1
-            if let producer = value.producer,
-              value.hasSpace(lane: producer.lane, bytes: producer.bytes)
+            var producer: CheckedContinuation<Void, any Error>?
+            if let waiting = value.producer,
+              value.hasSpace(lane: waiting.lane, bytes: waiting.bytes)
             {
+              producer = waiting.continuation
               value.producer = nil
-              producer.continuation.resume()
             }
-            continuation.resume(returning: data)
-          } else if let error = value.error {
-            continuation.resume(throwing: error)
-          } else if value.waiters[lane] != nil || value.waiters.count >= 33 {
-            continuation.resume(throwing: ExecutionError.conflict)
-          } else {
-            value.waiters[lane] = continuation
+            return (.success(data), producer)
           }
+          if let error = value.error { return (.failure(error), nil) }
+          if value.waiters[lane] != nil || value.waiters.count >= 33 {
+            return (.failure(ExecutionError.conflict), nil)
+          }
+          value.waiters[lane] = continuation
+          return (nil, nil)
         }
+        ready.1?.resume()
+        if let result = ready.0 { continuation.resume(with: result) }
       }
     } onCancel: {
       self.finish(CancellationError(), discard: true)
     }
   }
+
 }
 
 actor WebSocketWriter {

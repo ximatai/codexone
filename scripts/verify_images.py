@@ -35,7 +35,7 @@ class Provider(BaseHTTPRequestHandler):
         tools = request.get('tools', [])
         image = any(t['type'] == 'image_generation' for t in tools) and request.get('tool_choice') != 'none' and request.get('input') != 'no-image'
         item = {'id': f'ig_{index}', 'type': 'image_generation_call', 'status': 'completed', 'result': PNG,
-                'usage': {'input_tokens': 2, 'output_tokens': 3}}
+                'usage': {'input_tokens': 2, 'output_tokens': 3, 'total_tokens': 5, 'input_tokens_details': {'text_tokens': 1, 'image_tokens': 1}}}
         prompt = request['input']
         if isinstance(prompt, list):
             prompt = next((part['text'] for row in prompt for part in row.get('content', []) if isinstance(part, dict) and part['type'] == 'input_text'), '')
@@ -50,6 +50,9 @@ class Provider(BaseHTTPRequestHandler):
             events += [{'type': 'response.output_item.added', 'item': {**item, 'status': 'in_progress', 'result': None}, **lane},
                        {'type': 'response.image_generation_call.partial_image', 'item_id': item['id'], 'partial_image_index': 0, 'partial_image_b64': PNG, **lane},
                        {'type': 'response.output_item.done', 'item': item, **lane}]
+        if prompt in ('failed-empty', 'incomplete-empty'):
+            response['status'] = 'failed' if prompt == 'failed-empty' else 'incomplete'
+            response['output'] = []
         if prompt == 'failed-after-item':
             response['status'] = 'failed'
         if prompt == 'invalid-output':
@@ -130,6 +133,12 @@ def main():
                         usage = latest(db, 'settled'); assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['estimatedMicros'] == 25
                         status, body = request('images', prefix + '/images/edits', {'prompt': 'synthetic edit', 'images': [{'image_url': URL}], 'mask': {'image_url': URL}, 'stream': True})
                         assert status == 200 and b'image_edit.partial_image' in body and b'image_edit.completed' in body
+                        for line in body.splitlines():
+                            if not line.startswith(b'data: ') or line[6:] == b'[DONE]': continue
+                            event = json.loads(line[6:])
+                            if event['type'] in ('image_edit.partial_image', 'image_edit.completed'):
+                                assert all(name in event for name in ('created_at', 'size', 'quality', 'background', 'output_format'))
+                                assert event['output_format'] == 'png' and event['created_at'] > 0
                         status, body = request('images', prefix + '/images/edits', {'prompt': 'next active edit', 'images': [{'image_url': URL}]})
                         assert status == 200
                     multipart = (b'--synthetic\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nsynthetic edit\r\n--synthetic\r\nContent-Disposition: form-data; name="image[]"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n' + base64.b64decode(PNG) + b'\r\n--synthetic--\r\n')
@@ -160,6 +169,10 @@ def main():
                         status, body = request('images', '/v1/images/generations', {'prompt': prompt, 'stream': True})
                         assert b'image_generation.completed' not in body, (prompt, status, body[:100])
                         assert upstream.calls == before + 1
+                    for prompt in ('failed-empty', 'incomplete-empty'):
+                        status, body = request('images', '/v1/images/generations', {'prompt': prompt, 'stream': True})
+                        assert b'image_generation.completed' not in body
+                        partial = latest(db, 'unknown'); assert partial['completeness'] == 'partial' and 'imageInputTokens' not in partial
                     status, _ = request('images', '/v1/images/generations', {'prompt': 'invalid-usage'})
                     assert status == 502
                     invalid_usage = latest(db, 'unknown'); assert invalid_usage['inputTokens'] == 5 and invalid_usage['estimatedMicros'] == 12
