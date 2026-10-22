@@ -17,7 +17,7 @@ try {
   browser = await chromium.launch({ channel: 'chrome', headless: true,
     args: ['--ignore-certificate-errors-spki-list=' + pin] });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: false });
-  await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  await context.route(url => url.origin !== origin, route => route.abort());
   page = await context.newPage();
   page.on('pageerror', () => errors.push('page error'));
   page.on('console', entry => { if (/content security policy|refused to execute|refused to apply/i.test(entry.text())) errors.push('CSP error'); });
@@ -51,11 +51,12 @@ try {
   const row = page.getByRole('row').filter({ hasText: 'tls-browser' });
   await expect(row).toBeVisible();
   stage = 'disable and persist';
-  await row.getByRole('button', { name: '禁用', exact: true }).click();
-  await expect(row.getByRole('button', { name: '启用', exact: true })).toBeVisible();
+  await row.getByRole('button', { name: 'tls-browser 更多操作', exact: true }).click();
+  await page.getByRole('menuitem', { name: '禁用', exact: true }).click();
+  await expect(row.getByText('禁用', { exact: true })).toBeVisible();
   await page.reload();
   await page.getByRole('link', { name: '访问密钥', exact: true }).click();
-  await expect(row.getByRole('button', { name: '启用', exact: true })).toBeVisible();
+  await expect(row.getByText('禁用', { exact: true })).toBeVisible();
   assert(await page.evaluate(() => !localStorage.length && !sessionStorage.length));
   const html = await page.content();
   assert(secrets.every(secret => !html.includes(secret)) && errors.length === 0);

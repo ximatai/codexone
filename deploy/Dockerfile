@@ -8,7 +8,9 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
-RUN set -eu; mkdir /licenses; npm ls --omit=dev --all --parseable > /tmp/runtime-dependencies; \
+COPY web/licenses/ /licenses/
+RUN node -e 'if (require("./node_modules/react-remove-scroll-bar/package.json").version !== "2.3.8") process.exit(1)'
+RUN set -eu; npm ls --omit=dev --all --parseable > /tmp/runtime-dependencies; \
     while IFS= read -r dependency; do \
       case "$dependency" in /build/web/node_modules/*) ;; *) continue ;; esac; \
       relative="${dependency#/build/web/node_modules/}"; mkdir -p "/licenses/$relative"; \
