@@ -86,8 +86,10 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     else { throw ExecutionError.capacity }
     primary.usageActivity.withLock { $0 = true }
     defer {
-      gate.withLock { $0.active = false }
-      primary.usageActivity.withLock { $0 = false }
+      gate.withLock {
+        $0.active = false
+        primary.usageActivity.withLock { $0 = false }
+      }
     }
     let budget = UsageReadBudget(optionalAllowed: { self.primary.allowsOptionalStorageWork })
     return try await withTaskCancellationHandler {

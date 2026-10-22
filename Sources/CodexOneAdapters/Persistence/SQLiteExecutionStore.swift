@@ -169,6 +169,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       gate.withLock { state in
         state.closing = true
         queue.async { [self] in
+          storage.shutdown()
           connection.shutdown()
           continuation.resume()
         }

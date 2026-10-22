@@ -38,7 +38,7 @@ final class SQLiteStorageGuard: @unchecked Sendable {
   let policy: StorageSpacePolicy
   private let directory: String
   private let path: String
-  private let fd: Int32
+  private var fd: Int32
   private let available: @Sendable (String) throws -> Int64
   private let view = Mutex(StorageObservation())
   var snapshot: StorageObservation { view.withLock { $0 } }
@@ -77,11 +77,17 @@ final class SQLiteStorageGuard: @unchecked Sendable {
       defer { close(parent) }
       guard fsync(parent) == 0 else { throw ExecutionError.storageUnavailable }
     } catch {
-      close(fd)
+      shutdown()
       throw error
     }
   }
-  deinit { close(fd) }
+  func shutdown() {
+    if fd >= 0 {
+      close(fd)
+      fd = -1
+    }
+  }
+  deinit { shutdown() }
   private func bytes(_ file: String, allowMissing: Bool = false) throws -> Int64 {
     var info = stat()
     if lstat(file, &info) != 0 {

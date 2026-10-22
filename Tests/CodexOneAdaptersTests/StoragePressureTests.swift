@@ -6,6 +6,10 @@ import Testing
 
 @testable import CodexOneAdapters
 
+#if canImport(Darwin)
+  import Darwin
+#endif
+
 private let mib: Int64 = 1_048_576
 private func pressurePolicy() throws -> StorageSpacePolicy {
   try .init(
@@ -226,4 +230,37 @@ private struct PressureFixture {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   }
   #expect(try Data(contentsOf: file) == original)
+}
+
+private func matchingReserveDescriptors(_ path: String) -> Int {
+  let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+  #if canImport(Darwin)
+    var count = 0
+    for descriptor in 0..<1024 {
+      var buffer = [CChar](repeating: 0, count: 4096)
+      if fcntl(Int32(descriptor), F_GETPATH, &buffer) == 0,
+        URL(
+          fileURLWithPath: String(
+            decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        ).resolvingSymlinksInPath().path == canonical
+      {
+        count += 1
+      }
+    }
+    return count
+  #else
+    return ((try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/fd")) ?? []).filter {
+      (try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/" + $0))
+        == canonical
+    }.count
+  #endif
+}
+
+@Test func closeReleasesPhysicalReserveDescriptorWhileStoreObjectRemainsReferenced() async throws {
+  let f = try await PressureFixture.make()
+  #expect(matchingReserveDescriptors(f.path + ".settlement-reserve") == 1)
+  await f.store.close()
+  #expect(matchingReserveDescriptors(f.path + ".settlement-reserve") == 0)
+  #expect(!f.store.storageObservation.coreAvailable)
+  await f.close()
 }
