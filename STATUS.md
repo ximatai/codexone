@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，Linux 候选安装/升级、真实本地 TLS 反代/HTTPS 管理，以及安全快照恢复/审计基线闭环已完成本机实现与验收；本轮跨平台出口证据见下，M6 整体仍未完成。
+M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，Linux 候选安装/升级、真实本地 TLS 反代/HTTPS 管理，以及安全快照恢复/审计基线和主密钥多版本维护闭环已完成本机实现与验收；本轮跨平台出口证据见下，M6 整体仍未完成。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 的协议实现和 M3 的账号/权限/观测进度见下方，Desktop 与恢复缺口继续保留。
 
@@ -47,7 +47,9 @@ npm run dev
 
 Linux amd64 候选构建、私有初始化与受控安装入口见 [Linux 安装](docs/development/linux-installation.md)。安装后用 `python3 compose-install.py <command>`，不要绕过入口使用裸 Compose；可用 `python3 scripts/verify_installation.py --image <candidate> --browser` 验证实际镜像与 Chrome 管理操作。
 
-安全备份/恢复入口：`codexone --backup ABSOLUTE_NEW_BUNDLE`、`--restore ABSOLUTE_BUNDLE`、`--maintenance-status`、`--reconcile-restored ABSOLUTE_BASELINE_JSON`；先停服，设置独立私有数据目录及原账号主密钥。旧 v1—v6 须显式迁移至 v7；恢复后只接受托管 Key/账号池配置，须换发 Key、重新授权账号并核对缺失区间。详细步骤及边界见[快照维护](docs/development/snapshot-maintenance.md)。
+安全备份/恢复入口：`codexone --backup ABSOLUTE_NEW_BUNDLE`、`--restore ABSOLUTE_BUNDLE`、`--maintenance-status`、`--reconcile-restored ABSOLUTE_BASELINE_JSON`；先停服，设置独立私有数据目录及原账号主密钥。旧 v1—v7 须显式迁移至 v8；恢复后只接受托管 Key/账号池配置，须换发 Key、重新授权账号并核对缺失区间。详细步骤及边界见[快照维护](docs/development/snapshot-maintenance.md)。
+
+主密钥维护入口：`--key-status`、`--reencrypt-credentials ABSOLUTE_NEW_BUNDLE`、`--resume-reencryption`、`--verify-backup ABSOLUTE_BUNDLE` 和 `--check-key-retirement ABSOLUTE_INVENTORY_JSON`。单 hex secret 仍兼容；新增 active/decrypt-only 私有 keyring。先停服并保留全部当前/历史解密依赖；步骤与清单边界见[主密钥维护](docs/development/master-key-maintenance.md)。
 
 真实本地 TLS/Nginx 与 HTTPS 管理检查：`python3 scripts/verify_tls_proxy.py --binary .build/debug/codexone --browser`（需本机 Nginx/OpenSSL/Chrome 和生产 SPA）。隔离 Linux release、证书与超时边界见 [TLS 反代](docs/development/tls-proxy.md)。
 
@@ -62,6 +64,16 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 `--chrome` 使用本机已安装 Chrome 的全新临时上下文，不使用用户浏览数据。标准 Chromium 路径先在 web 下执行 `npx playwright install chromium --only-shell`，再执行 `./scripts/verify.sh --web`（从仓库根目录）；无参数执行全部验证。各层检查定义见 [verification](docs/development/verification.md)。
 
 ## 最新验证与范围
+
+2026-10-22，M6 主密钥多版本/可恢复再加密/旧备份依赖阶段出口通过（实现 `f2423c5`，修复 `13bfe6c`）：
+
+- 私有有界 keyring：一个 active、最多七个 decrypt-only，保留单 hex 文件/v1 信封/AAD；新授权和刷新只写 active，旧版本按 key ID 解密，未知 key/上下文/篡改拒绝。全版本及整份紧凑 keyring 文本均执行管理员/已配置静态数据 Key 复用检查。
+- 离线同实例锁、先独立完成备份、每页八个账号的 CAS/密文/检查点同事务；页内 SQLite 写失败回滚，实际页提交后 SIGKILL 留混合版本，普通服务拒绝，原 active/完整解密 keyring 显式续作并复核后完成。凭证版本、账号授权和刷新 intent 不变，未冒充提供者刷新成功。
+- schema v8 防旧 v7 二进制忽略新检查点；v1—v7 显式备份迁移，已有 v7 完成 bundle 验证/显式恢复后 staging 升 v8，原源不变。实际旧 v7 可执行文件对照证明：同一合成库 v7 可启动、v8 在监听前拒绝；不证明兼容回退。
+- manifest 核对实际 schema 与实际 key ID 引用集合；候选 keyring 的退役检查覆盖全部当前密文、完整声明的保留 bundle/匹配恢复目标和原始 v7/v8 备份依赖，审计仅记录 ID/摘要/非秘密引用。完整清单、外部 raw 恢复审计、未知副本和销毁事实仍由操作者负责；原始 v1—v6 暂拒绝直接退役核对，不能因此丢弃旧 key。
+- 主 Agent 亲自实现和定向验证，集中 review 的维护入口复用、整文件复用及 manifest schema 三项 P2 已修复，两位 reviewer 复审关闭。macOS arm64 / Swift 6.4 完整后端脚本、Linux amd64 / Swift 6.4.1 同等完整后端检查均 exit 0：各 166 项 Swift 测试及全部后端脚本通过。Linux 本机无外部网络、2 CPU/2500 MiB、native 单并发，未 OOM；对应 `13bfe6c`，临时容器已回收。
+
+命令和限制见[主密钥维护](docs/development/master-key-maintenance.md)，证据见[验证账](docs/changes/master-key-maintenance/verification.md)。本阶段没有前端产品改动，不重复浏览器全集。全部合成资料，无真实账号调用、额度消耗、推送、发布或用户服务部署；Desktop、真实订阅、M5、低磁盘完整保护、目标容量与新 OCI/安装/兼容回退仍保留。
 
 2026-10-22，M6 安全快照恢复与审计基线阶段出口通过（实现 `7bd70ba`，review 修复 `704ebd5`）：
 
@@ -90,7 +102,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 - 实际本地 Linux OCI/Compose：非 root/只读/能力清零、私有本地卷、配置拒绝、live/ready、SPA/session/CSRF/Key、在线实例锁、v5 普通启动拒绝、私有一致性备份/显式幂等迁移、重启数据保留、优雅退出均通过；目录读取失败和归属不符均拒绝且不改已有数据。macOS 共享 bind 的 flock 不可靠，默认 data 因此选 Linux Engine 本地卷，不能以共享盘通过冒充锁验收。
 - 实际打包 SPA 的 Chrome 1440 大屏登录、发 Key、关闭一次性秘密、刷新持久与登出通过，截图已查看；隔离 curl relay 不是实际 TLS/Nginx 验收。Swift/前端产品源码未变，沿用 M4 完整测试证据，不重复全集。
 
-集中 review 修复了宿主 Compose 覆盖导致误选安装的问题；命令、失败取舍与复审证据见[候选验证](docs/changes/linux-distribution/verification.md)。验证均为本机合成资料，没有真实账号调用、额度消耗、推送、发布或用户服务器部署。候选产物保存在忽略的 `artifacts/linux-candidate/`，包含镜像/精确源码归档、标识和 SHA256SUMS；仅为本机候选。该归档对应安装阶段提交 `3e03130`；TLS 配置与本轮恢复流程以当前源码为准。该旧安装候选是 schema v6，不含本轮 v7 维护命令，不能用于验收新恢复能力；更新候选镜像及安装回归仍待后续发行出口。
+集中 review 修复了宿主 Compose 覆盖导致误选安装的问题；命令、失败取舍与复审证据见[候选验证](docs/changes/linux-distribution/verification.md)。验证均为本机合成资料，没有真实账号调用、额度消耗、推送、发布或用户服务器部署。候选产物保存在忽略的 `artifacts/linux-candidate/`，包含镜像/精确源码归档、标识和 SHA256SUMS；仅为本机候选。该归档对应安装阶段提交 `3e03130`；TLS 配置与本轮恢复流程以当前源码为准。该旧安装候选是 schema v6，不含当前 v8 恢复/主密钥维护能力；更新候选镜像及安装回归仍待后续发行出口。
 
 2026-10-22，M4 本地合成阶段出口通过：
 
@@ -127,16 +139,16 @@ M4 已接续并完成原有修改：独立权限/图片模型映射、schema v6 
 
 M5：恢复读取契约仍不充分，详见[恢复证据](docs/evidence/client-recovery.md)。需要明确版本客户端的已有输出读取轨迹、消费位置、权限与工具风险，或明确采纳产品范围调整；没有据此新增私有协议或无人可用的正文库。Desktop 图片/参考图/连续主动编辑与真实订阅兼容继续保留，CLI/合成上游不能替代。
 
-M6 已实现三个独立闭环：Linux amd64 可追溯 OCI 候选、私有初始化与受控 Compose、真实安装/管理/显式升级备份；真实本地 TLS/Nginx 与 HTTPS 管理操作；v7 独立备份、旧快照维护恢复、缺失执行区间和审计额度基线核对。下一项是主密钥 active/decrypt-only 多版本维护、可恢复再加密及备份依赖；兼容二进制回退演练、更新 v7 安装候选仍保留。本地 TLS 通过不替代用户实际域名/证书部署验收。
+M6 已实现四个独立闭环：Linux amd64 可追溯 OCI 候选/私有初始化/受控安装升级；真实本地 TLS/Nginx 与 HTTPS 管理操作；安全快照恢复、缺失区间和审计额度基线；active/decrypt-only 多版本主密钥、先备份的分页 CAS 再加密/显式续作及旧备份依赖核对。当前 schema v8，旧 v7 bundle 可验证/恢复并显式升级，不兼容旧二进制原地回退。下一项是低磁盘分级保护与必要运行观测，再更新安装候选、集中回退/迁移及容量演练；本地 TLS 通过不替代用户实际域名/证书部署验收。
 
-2026-10-22 计划复盘校准：M6 剩余项同时包含实现和验收，不能理解为只需再跑测试。当前已提供安全快照 backup/restore/status/reconcile 流程；账号密文及备份依赖仍是单主密钥，尚无 active/decrypt-only 多版本轮换与可恢复再加密流程。低磁盘分级退让/停止准入/结算预留，以及运行资源与 WAL 的容量观测，也须落实并验证。依据 O03/O04/O09/O10/O14，后续按业务闭环推进：
+2026-10-22 计划复盘校准：M6 剩余项同时包含实现和验收，不能理解为只需再跑测试。当前已提供安全快照 backup/restore/status/reconcile、多版本 keyring/可恢复再加密与旧备份解密依赖核对。完整清单、外部 raw 恢复审计和销毁事实仍须操作者负责，工具不能发现未知副本或证明外部审计。低磁盘分级退让/停止准入/结算预留，以及运行资源与 WAL 的容量观测，也须落实并验证。依据 O03/O04/O09/O10/O14，后续按业务闭环推进：
 
 1. 真实本地 TLS 反代与 HTTPS 管理操作：本地阶段出口已完成，证据见上；用户实际部署仍单独验收。
-2. 可维护数据与密钥：安全快照/旧快照维护态/缺失区间与审计基线已实现；接着完成主密钥版本维护、备份解密依赖和可恢复再加密，再补兼容二进制回退与更新安装候选。不能用已有迁移前备份替代这些能力。
+2. 可维护数据与密钥：安全快照/旧快照维护态/缺失区间与审计基线，以及主密钥多版本、备份依赖与可恢复再加密已实现。本地维护出口不替代完整二进制回退或旧服务切换演练。
 3. 低磁盘保护与必要运行观测，证明拒绝新工作时仍保住核心执行责任与结算，并覆盖 WAL/备份空间不足。
-4. 在可解释的目标宿主约束下集中进行混合负载、图片峰值、断流、长压和资源回稳验收。M5 缓存未实现时只验证现有能力，含缓存的完整 O14 出口仍保留。
+4. 更新包含当前 v8 能力的安装候选，集中验证安装/升级/兼容二进制回退及合成旧服务迁移/切回；在可解释的目标宿主约束下集中进行混合负载、图片峰值、断流、长压和资源回稳验收。M5 缓存未实现时只验证现有能力，含缓存的完整 O14 出口仍保留。
 5. 补齐 Desktop/真实订阅的明确版本兼容证据，解决 M5 可用读取路径或明确产品范围调整；这些缺口可先保留，但不能带入首版完成声明。没有新客户端证据时不重复同一恢复探针。
-6. 独立合成旧服务迁移/切回演练、远端 CI 与发行来源复现，最后在授权范围内安排真实接入/切换和发布。候选安装不等同旧服务可替代，现有授权不含推送/部署/真实额度调用。
+6. 远端 CI 与发行来源复现，最后在授权范围内安排真实接入/切换和发布。候选安装不等同旧服务可替代，现有授权不含推送/部署/真实额度调用。
 
 每个闭环由主 Agent 实现和定向验证，出口集中 review/修复/必要完整验证，前端实际操作验收。上述顺序不扩大 M7 范围；多架构、多管理员和多上游继续延期。
 
