@@ -7,7 +7,7 @@ import Synchronization
 public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let queue = DispatchQueue(label: "codexone.core-database")
   private let connection: SQLiteConnection
-  private let limits: ExecutionLimits
+  let limits: ExecutionLimits
   private let gate = Mutex((regular: 0, critical: 0, closing: false, failed: false))
 
   public var isAvailable: Bool { gate.withLock { !$0.closing && !$0.failed } }
@@ -119,66 +119,70 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   }
 
   public func admit(_ command: ExecutionAdmission) async throws {
-    try validate(command)
+    try validateAdmission(command)
     try await perform(admission: true) { [limits] db in
-      try db.transaction {
-        guard
-          try db.scalar("SELECT COUNT(*) FROM attempts WHERE id=?", [.text(command.attempt)]) == 0
-        else { throw ExecutionError.conflict }
-        guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
-          throw ExecutionError.capacity
-        }
-        try Self.checkAccountAdmission(db, command)
-        try Self.checkKeyAdmission(db, command)
-        // Lifetime unresolved/active exposure survives window rotation. Budget/request totals belong to the admission window.
-        for (scope, parameters) in [
-          ("1=1", [SQLiteConnection.Value]()),
-          ("principal=?", [.text(command.owner.principal)]),
-          (
-            "namespace=? AND identity=?",
-            [.text(command.owner.namespace), .text(command.owner.identity)]
-          ),
-        ] {
-          let counts = try db.rows(
-            """
-            SELECT COUNT(*), COALESCE(SUM(CASE WHEN state='intent' THEN 1 ELSE 0 END),0),
-            COALESCE(SUM(CASE WHEN state!='settled' THEN 1 ELSE 0 END),0)
-            FROM attempts WHERE \(scope)
-            """, parameters
-          ) { s in
-            (sqlite3_column_int64(s, 0), sqlite3_column_int64(s, 1), sqlite3_column_int64(s, 2))
-          }[0]
-          let requests = try db.scalar(
-            "SELECT COUNT(*) FROM attempts WHERE \(scope) AND window_id=?",
-            parameters + [.text(command.window)])
-          let exposure = try db.scalar(
-            "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE \(scope) AND window_id=?",
-            parameters + [.text(command.window)])
-          let unresolvedMicros = try db.scalar(
-            "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE \(scope) AND state!='settled'",
-            parameters)
-          guard command.reservedMicros <= limits.unresolvedMicros,
-            unresolvedMicros <= limits.unresolvedMicros - command.reservedMicros,
-            requests < limits.requests, counts.1 < limits.active, counts.2 < limits.unresolved,
-            command.reservedMicros <= limits.budgetMicros,
-            exposure <= limits.budgetMicros - command.reservedMicros
-          else {
-            throw ExecutionError.denied
-          }
-        }
-        try db.write(
-          """
-          INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json)
-          VALUES(?,?,?,?,?,?,?,?,?,'intent',?)
-          """,
-          [
-            .text(command.attempt), .text(command.owner.principal), .text(command.owner.key),
-            .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
-            .text(command.policyVersion), .text(command.pricingVersion),
-            .number(command.reservedMicros), .text(try encode(command)),
-          ])
+      try db.transaction { try Self.admitTransaction(db, command, limits: limits) }
+    }
+  }
+  static func admitTransaction(
+    _ db: SQLiteConnection, _ command: ExecutionAdmission, limits: ExecutionLimits
+  ) throws {
+    try validateAdmission(command)
+    guard
+      try db.scalar("SELECT COUNT(*) FROM attempts WHERE id=?", [.text(command.attempt)]) == 0
+    else { throw ExecutionError.conflict }
+    guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
+      throw ExecutionError.capacity
+    }
+    try Self.checkAccountAdmission(db, command)
+    try Self.checkKeyAdmission(db, command)
+    // Lifetime unresolved/active exposure survives window rotation. Budget/request totals belong to the admission window.
+    for (scope, parameters) in [
+      ("1=1", [SQLiteConnection.Value]()),
+      ("principal=?", [.text(command.owner.principal)]),
+      (
+        "namespace=? AND identity=?",
+        [.text(command.owner.namespace), .text(command.owner.identity)]
+      ),
+    ] {
+      let counts = try db.rows(
+        """
+        SELECT COUNT(*), COALESCE(SUM(CASE WHEN state='intent' THEN 1 ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN state!='settled' THEN 1 ELSE 0 END),0)
+        FROM attempts WHERE \(scope)
+        """, parameters
+      ) { s in
+        (sqlite3_column_int64(s, 0), sqlite3_column_int64(s, 1), sqlite3_column_int64(s, 2))
+      }[0]
+      let requests = try db.scalar(
+        "SELECT COUNT(*) FROM attempts WHERE \(scope) AND window_id=?",
+        parameters + [.text(command.window)])
+      let exposure = try db.scalar(
+        "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE \(scope) AND window_id=?",
+        parameters + [.text(command.window)])
+      let unresolvedMicros = try db.scalar(
+        "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE \(scope) AND state!='settled'",
+        parameters)
+      guard command.reservedMicros <= limits.unresolvedMicros,
+        unresolvedMicros <= limits.unresolvedMicros - command.reservedMicros,
+        requests < limits.requests, counts.1 < limits.active, counts.2 < limits.unresolved,
+        command.reservedMicros <= limits.budgetMicros,
+        exposure <= limits.budgetMicros - command.reservedMicros
+      else {
+        throw ExecutionError.denied
       }
     }
+    try db.write(
+      """
+      INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json)
+      VALUES(?,?,?,?,?,?,?,?,?,'intent',?)
+      """,
+      [
+        .text(command.attempt), .text(command.owner.principal), .text(command.owner.key),
+        .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
+        .text(command.policyVersion), .text(command.pricingVersion),
+        .number(command.reservedMicros), .text(try encode(command)),
+      ])
   }
 
   public func bind(attempt: String, object: ObjectBinding) async throws {
@@ -330,7 +334,7 @@ private func validateStrings(_ values: [String], maximum: Int = 256) throws {
     throw ExecutionError.invalidCommand
   }
 }
-private func validate(_ value: ExecutionAdmission) throws {
+func validateAdmission(_ value: ExecutionAdmission) throws {
   try validateStrings(
     [
       value.attempt, value.owner.principal, value.owner.key,

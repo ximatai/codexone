@@ -5,6 +5,7 @@
 | 责任 | 业务 owner / 类型位置 | Task/资源 owner | 调用与结束责任 |
 |---|---|---|---|
 | 准入、归属、结算、核对 | Core/Application（Domain 值类型） | 单次执行协调器；后台任务由 Runtime 监督 | 调事务端口，返回语义结果；不调用全局 Runtime 服务 |
+| 账号池选择 | Core/Application 的单次 AccountPoolGateway | 既有 finalizer ticket 先覆盖候选准备；无独立后台任务 | 调归属/原子选择端口；Adapters 在同一 DB 事务选择并准入，已准入只由 finalizer 收尾 |
 | 连接与 WS lane | Adapters/Transport | 每连接 supervisor，受总容量监督 | 调 Core 执行用例；拥有 channel，取消后关闭并 await 网络任务 |
 | finalizer | Core/Application 定义结算/合并规则 | Runtime 监督有限 worker 与预分配 ticket | worker 调核心用例，核心调事务端口；禁止反向等待连接 |
 | 刷新与身份验证 | Core/Application/Identity | Runtime AccountRefreshSupervisor 的有界队列/共享任务 | 通过上游/凭证端口执行；等待者取消不取消共享刷新，关闭信号取消网络并 await/收敛 intent |

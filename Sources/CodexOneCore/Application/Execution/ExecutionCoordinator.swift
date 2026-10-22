@@ -67,19 +67,56 @@ public struct ExecutionCoordinator: Sendable {
     _ command: ExecutionAdmission,
     operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
+    try await executeOwned(
+      admitting: {
+        try await store.admit(command)
+        return (command, ())
+      }, operation: { context, _ in try await operation(context) })
+  }
+
+  public func executeAccountPool(
+    preparing: @Sendable () async throws -> PreparedAccountPoolAdmission,
+    operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
+  ) async throws {
+    guard let routing = store as? any AccountRoutingStore else {
+      throw ExecutionError.invalidCommand
+    }
+    try await executeOwned(
+      admitting: {
+        let prepared = try await preparing()
+        let admission = try await routing.admitSelectingAccount(prepared.command)
+        // Never throw between committing intent and transferring it to the owned context.
+        let selected = prepared.credentials.first {
+          $0.key.id == admission.owner.identity && $0.key.namespace == admission.owner.namespace
+        }?.value
+        return (admission, selected)
+      },
+      operation: { context, work in
+        guard let work else { throw ExecutionError.storageUnavailable }
+        return try await operation(context, work)
+      })
+  }
+
+  private func executeOwned<Payload: Sendable>(
+    admitting: @Sendable () async throws -> (ExecutionAdmission, Payload),
+    operation: @Sendable (ExecutionContext, Payload) async throws -> UsageEvidence?
+  ) async throws {
     try Task.checkCancellation()
     let ticket = try finalizer.reserve()
-    do { try await store.admit(command) } catch {
+    let admitted: (ExecutionAdmission, Payload)
+    do { admitted = try await admitting() } catch {
       finalizer.abandon(ticket)
       throw error
     }
-    let context = ExecutionContext(admission: command, store: store)
+    let context = ExecutionContext(admission: admitted.0, store: store)
     defer {
       finalizer.handoff(
-        ticket, finalization: .init(attempt: command.attempt, evidence: context.finishUsage()))
+        ticket, finalization: .init(attempt: admitted.0.attempt, evidence: context.finishUsage()))
     }
     try Task.checkCancellation()
     guard finalizer.canExecute(ticket) else { throw ExecutionError.capacity }
-    if let terminal = try await operation(context) { try context.observeUsage(terminal) }
+    if let terminal = try await operation(context, admitted.1) {
+      try context.observeUsage(terminal)
+    }
   }
 }
