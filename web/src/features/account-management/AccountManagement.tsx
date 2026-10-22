@@ -15,6 +15,8 @@ function failure(error: unknown): string {
 export function AccountManagement() {
   const [session, setSession] = useState<sessionAPI.AdminSession | null>(null);
   const [checking, setChecking] = useState(true);
+  const [logoutUnconfirmed, setLogoutUnconfirmed] = useState(false);
+  const proof = useRef<string | null>(null);
   const [secret, setSecret] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [configured, setConfigured] = useState(true);
@@ -30,19 +32,26 @@ export function AccountManagement() {
   const deadline = useRef(0);
   function current(version: number) { return version === epoch.current && !controller.current?.signal.aborted; }
   function clearFlow() { setFlow(null); setCallback(""); setRemaining(0); }
-  async function read(version: number, signal?: AbortSignal) {
+  async function read(version: number, signal?: AbortSignal, quietUnauthorized = false) {
     try {
+      const fresh = await sessionAPI.fetchSession(signal);
+      if (!current(version)) return false;
+      const replaced = !!proof.current && proof.current !== fresh.csrf;
+      if (replaced) {
+        clearFlow(); setNotice("管理会话已更新，请重新发起需要的授权流程。");
+      }
+      proof.current = fresh.csrf; setSession(fresh);
       const list = await api.fetchAccounts(signal);
       if (!current(version)) return false;
       setAccounts(list); setConfigured(true); setLocked(false);
-      return true;
+      return replaced ? "replaced" : "same";
     } catch (cause) {
       if (current(version)) {
         setLocked(true);
         if (cause instanceof sessionAPI.ManagementError && cause.status === 404) {
           setConfigured(false); setError("");
         } else if (cause instanceof sessionAPI.ManagementError && cause.status === 401) {
-          setSession(null); setAccounts([]); clearFlow(); setError("管理会话已失效，请重新登录。");
+          proof.current = null; setSession(null); setAccounts([]); clearFlow(); setNotice(""); setError(quietUnauthorized ? "" : "管理会话已失效，请重新登录。");
         } else { setError("账号读取失败。重新读取成功前暂停变更。"); }
       }
       return false;
@@ -51,10 +60,7 @@ export function AccountManagement() {
   useEffect(() => {
     const abort = new AbortController(); controller.current = abort;
     const version = ++epoch.current;
-    void sessionAPI.fetchSession(abort.signal).then(async (value) => {
-      if (!current(version)) return;
-      setSession(value); await read(version, abort.signal);
-    }).catch(() => {}).finally(() => { if (current(version)) setChecking(false); });
+    void read(version, abort.signal, true).finally(() => { if (current(version)) setChecking(false); });
     return () => { ++epoch.current; abort.abort(); };
     // This effect owns the page's entire lifetime and request cancellation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -74,28 +80,30 @@ export function AccountManagement() {
     try {
       const signedIn = await sessionAPI.login(value, controller.current?.signal);
       if (!current(version)) return;
-      setSession(signedIn); await read(version, controller.current?.signal);
+      proof.current = signedIn.csrf; setSession(signedIn); await read(version, controller.current?.signal);
     } catch { if (current(version)) setError("登录失败，请检查管理员凭证和连接后重试。"); }
     finally { if (current(version)) setBusy(false); }
   }
   async function reread() {
+    if (logoutUnconfirmed) return;
     setBusy(true); setError(""); setNotice(""); const version = epoch.current;
     await read(version, controller.current?.signal);
     if (current(version)) setBusy(false);
   }
   async function mutation(work: (csrf: string, signal?: AbortSignal) => Promise<unknown>, success: string) {
-    if (!session || busy || locked) return;
+    if (!session || busy || locked || logoutUnconfirmed) return;
     setBusy(true); setError(""); setNotice(""); const version = epoch.current;
     try {
       await work(session.csrf, controller.current?.signal);
       if (!current(version)) return;
       setLocked(true);
-      if (await read(version, controller.current?.signal) && current(version)) setNotice(success);
+      const refreshed = await read(version, controller.current?.signal);
+      if (refreshed === "same" && current(version)) setNotice(success);
     } catch (cause) {
       if (current(version)) {
         setLocked(true); setError(failure(cause));
         if (cause instanceof sessionAPI.ManagementError && cause.status === 401) {
-          setSession(null); setAccounts([]); clearFlow(); setError("管理会话已失效，请重新登录。");
+          proof.current = null; setSession(null); setAccounts([]); clearFlow(); setNotice(""); setError("管理会话已失效，请重新登录。");
         }
       }
     } finally { if (current(version)) setBusy(false); }
@@ -119,13 +127,20 @@ export function AccountManagement() {
     await mutation((csrf, signal) => api.discardAuthorization(id, csrf, signal), "本次授权已取消。");
   }
   async function logout() {
-    if (!session || busy) return;
-    clearFlow(); setSecret(""); setBusy(true); setError(""); const version = epoch.current;
+    if (busy || (!session && !logoutUnconfirmed)) return;
+    clearFlow(); setSecret(""); setAccounts([]); setNotice(""); setSession(null); proof.current = null;
+    setLocked(true); setLogoutUnconfirmed(true); setBusy(true); setError(""); const version = epoch.current;
     try {
-      await sessionAPI.logout(session.csrf, controller.current?.signal);
-      if (current(version)) { setSession(null); setAccounts([]); setLocked(true); setNotice(""); }
-    } catch { if (current(version)) { setError("登出未确认，请再次登出。"); setLocked(true); } }
-    finally { if (current(version)) setBusy(false); }
+      const fresh = await sessionAPI.fetchSession(controller.current?.signal);
+      if (!current(version)) return;
+      await sessionAPI.logout(fresh.csrf, controller.current?.signal);
+      if (current(version)) setLogoutUnconfirmed(false);
+    } catch (cause) {
+      if (current(version)) {
+        if (cause instanceof sessionAPI.ManagementError && cause.status === 401) setLogoutUnconfirmed(false);
+        else setError("登出未确认，请再次登出。");
+      }
+    } finally { if (current(version)) setBusy(false); }
   }
   function setMode(account: Account, mode: AccountMode) {
     void mutation((csrf, signal) => api.setMode(account, mode, csrf, signal), "账号策略已更新。");
@@ -135,7 +150,7 @@ export function AccountManagement() {
     <div className="intro"><p className="eyebrow">SUBSCRIPTION ACCOUNTS</p><h1 id="accounts-heading">订阅账号</h1><p className="subtle">管理授权与使用策略。禁用保留历史归属，重新授权不会更换账号身份。</p></div>
     {error && <p role="alert" className="error-banner">{error}</p>}
     {notice && <p role="status" className="success-banner">{notice}</p>}
-    {!session ? <form className="panel login-panel key-create" onSubmit={(event) => void login(event)}>
+    {logoutUnconfirmed ? <div className="panel login-panel key-create"><h2>登出状态待确认</h2><p className="subtle field-hint">本页账号与授权信息已清除。确认退出前暂停管理操作。</p><button disabled={busy} onClick={() => void logout()}>重试登出</button></div> : !session ? <form className="panel login-panel key-create" onSubmit={(event) => void login(event)}>
       <h2>管理员登录</h2><p className="subtle field-hint">使用独立管理员凭证。凭证只用于本次登录，不保存在浏览器中。</p>
       <label className="text-field">管理员凭证<input type="password" autoComplete="off" value={secret} onChange={(event) => setSecret(event.target.value)} disabled={busy} required /></label>
       <button disabled={busy || !secret}>登录</button>
