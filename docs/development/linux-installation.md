@@ -48,7 +48,7 @@ gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止�
 
 ## TLS 反代
 
-[Nginx 模板](../../deploy/nginx.conf.example) 分开数据与管理 TLS server；证书、域名、可信接入和防火墙由宿主管理。map 放在 http 级别，管理 Host 保留公开 origin 的端口。数据路径关闭 SSE 缓冲、保留 WS Upgrade、设置有限大小与超时；反代限制须与模型/profile 相容。上线前必须通过真实反代的 SSE/WS/取消/大小/超时检查，模板不是这些行为的验收证据。服务不依赖未认证的 forwarded 头来授权。
+[Nginx TLS server 示例](../../deploy/nginx.conf.example) 与[数据片段](../../deploy/nginx-data.conf)、[管理片段](../../deploy/nginx-admin.conf) 配套使用；证书、域名、可信接入和防火墙由宿主管理。安装、限制解释和隔离的真实 TLS 验证命令见 [TLS 反代](tls-proxy.md)。map 放在 http 级别，管理 Host 保留公开 origin 的端口。数据路径关闭 SSE 缓冲、保留 WS Upgrade、禁止生成自动重试；上线前仍须按实际域名/证书/模型配置验收，不能仅复制模板便宣布用户部署通过。服务不依赖 forwarded 头来授权。
 
 ## 停止、升级与回退边界
 

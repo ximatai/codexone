@@ -16,9 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify optimized Linux binary with synthetic socket failures
-        run: docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
+        run: docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:tls-base .
       - name: Build from locked source
         run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -f deploy/Dockerfile -t codexone:candidate .
+      - name: Verify real local TLS reverse proxy
+        run: |
+          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
+          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
+            --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
+            codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
       - name: Verify actual private installation
         run: python3 scripts/verify_installation.py --image codexone:candidate
       - name: Export candidate and checksum
