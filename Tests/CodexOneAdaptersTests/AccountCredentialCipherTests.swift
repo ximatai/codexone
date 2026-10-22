@@ -147,6 +147,12 @@ private func syntheticCredential() throws -> AccountCredential {
   try write(["format": 1, "active": active, "decryptOnly": [old]])
   let ring = try await AccountCredentialCipher.load(path: file.path)
   #expect(ring.availableKeyIDs.count == 2)
+  let entireKeyring = try String(contentsOf: file, encoding: .utf8).trimmingCharacters(
+    in: .whitespacesAndNewlines)
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await AccountCredentialCipher.load(
+      path: file.path, forbiddenDigest: keyDigest(entireKeyring))
+  }
   try old.uppercased().write(to: admin, atomically: true, encoding: .utf8)
   try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: admin.path)
   await #expect(throws: ExecutionError.invalidCommand) {

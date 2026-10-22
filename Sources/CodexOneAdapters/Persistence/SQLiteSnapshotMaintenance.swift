@@ -216,7 +216,8 @@ public enum SQLiteSnapshotMaintenance {
         throw ExecutionError.invalidCommand
       }
       let source = try SQLiteConnection(readOnlyPath: snapshot)
-      guard try verifyCredentials(source, protection) == manifest.requiredKeyIDs,
+      guard try source.scalar("PRAGMA user_version") == Int64(manifest.schema),
+        try verifyCredentials(source, protection) == manifest.requiredKeyIDs,
         try source.rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) })
           == ["ok"],
         try source.scalar("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0

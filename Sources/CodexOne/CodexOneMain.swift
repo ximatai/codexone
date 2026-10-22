@@ -98,8 +98,15 @@ struct CodexOneMain {
       let path = directory + "/core.sqlite"
       let protection: AccountCredentialCipher?
       if let keyFile = configuration.accountMasterKeyFile {
+        let maintenanceIdentity: SingleIdentityConfiguration?
+        if let identityPath = configuration.identityConfigurationPath {
+          maintenanceIdentity = try await SingleIdentityConfiguration.load(path: identityPath)
+        } else {
+          maintenanceIdentity = nil
+        }
         protection = try await AccountCredentialCipher.load(
-          path: keyFile, adminCredentialPath: configuration.adminTokenFile)
+          path: keyFile, adminCredentialPath: configuration.adminTokenFile,
+          forbiddenDigest: maintenanceIdentity?.keySHA256)
       } else {
         protection = nil
       }

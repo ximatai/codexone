@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real private synthetic keyring/SQLite/CLI/SIGKILL maintenance; no provider calls."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,10 +19,11 @@ def private_json(path, value):
     path.write_text(json.dumps(value));path.chmod(0o600)
 
 
-def command(binary, state, admin, key, *args, ok=True):
-    result = subprocess.run([binary, *map(str, args)], capture_output=True, timeout=30,
-        env={'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(state),
-             'CODEXONE_ADMIN_TOKEN_FILE': str(admin), 'CODEXONE_ACCOUNT_MASTER_KEY_FILE': str(key)})
+def command(binary, state, admin, key, *args, ok=True, identity=None):
+    environment = {'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(state),
+             'CODEXONE_ADMIN_TOKEN_FILE': str(admin), 'CODEXONE_ACCOUNT_MASTER_KEY_FILE': str(key)}
+    if identity:environment['CODEXONE_IDENTITY_CONFIG'] = str(identity)
+    result = subprocess.run([binary, *map(str, args)], capture_output=True, timeout=30, env=environment)
     combined = result.stdout + result.stderr
     assert len(combined) < 32768 and str(state.parent).encode() not in combined
     assert all(secret not in combined for secret in [b'6a'*32, b'7b'*32, b'synthetic-access-1', b'synthetic-refresh-1'])
@@ -63,6 +65,19 @@ def verify(binary, probe):
         original_metadata = metadata(database)
         before = command(binary, state, admin, ring, '--key-status')
         assert len(before['requiredCurrentKeyIDs']) == 2 and before.get('checkpoint') is None
+        # Every maintenance path must reject reuse of active, decrypt-only, or the whole compact keyring.
+        identity = root/'identity.json'
+        for number, secret in enumerate(('7b'*32,'6a'*32,json.dumps(json.loads(ring.read_text()),separators=(',',':')))):
+            if number == 2:private_json(ring,json.loads(secret));ring.write_text(secret)
+            private_json(identity, {'principal':'synthetic','keyID':'synthetic','namespace':'synthetic',
+                'identity':'synthetic','reservedMicros':0,'keySHA256':hashlib.sha256(secret.encode()).hexdigest(),
+                'models':[{'id':'synthetic-text','inputMicrosPerMillion':0,'outputMicrosPerMillion':0,
+                           'catalog':{'baseInstructions':'Explicit synthetic guidance'}}],
+                'upstreamBaseURL':'http://127.0.0.1:9/v1'})
+            destination = root/('reuse-refused-'+str(number))
+            command(binary,state,admin,ring,'--reencrypt-credentials',destination,ok=False,identity=identity)
+            assert not destination.exists() and metadata(database) == original_metadata
+            assert command(binary,state,admin,ring,'--key-status').get('checkpoint') is None
         command(binary, state, admin, reduced, '--reencrypt-credentials', root/'missing-key', ok=False)
         assert not (root/'missing-key').exists()
         # The package-only probe calls the same maintenance implementation and pauses after a durable page.

@@ -217,3 +217,44 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
       == 1)
   db.shutdown()
 }
+
+@Test(arguments: [7, 8])
+func backupSchemaMislabelIsRejectedBeforeVerificationRetirementOrTargetCreation(actualSchema: Int)
+  async throws
+{
+  let root = try keyRoot()
+  defer { try? FileManager.default.removeItem(atPath: root) }
+  let path = root + "/core.sqlite"
+  try await seedKeys(path, count: 2)
+  let cipher = try AccountCredentialCipher(hexKey: keyOld)
+  _ = try await SQLiteSnapshotMaintenance.backup(
+    path: path, destination: root + "/bundle", protection: cipher)
+  if actualSchema == 7 { try rawSQL(root + "/bundle/snapshot.sqlite", "PRAGMA user_version=7") }
+  let hash = try SQLiteSnapshotMaintenance.fingerprint(root + "/bundle/snapshot.sqlite")
+  let file = URL(fileURLWithPath: root + "/bundle/manifest.json")
+  var manifest = try #require(
+    JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+  manifest["schema"] = actualSchema == 7 ? 8 : 7
+  manifest["databaseBytes"] = hash.0
+  manifest["databaseSHA256"] = hash.1
+  try JSONSerialization.data(withJSONObject: manifest).write(to: file)
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await SQLiteSnapshotMaintenance.verifyBackup(bundle: root + "/bundle", protection: cipher)
+  }
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await SQLiteSnapshotMaintenance.restore(
+      bundle: root + "/bundle", path: root + "/refused/core.sqlite", protection: cipher)
+  }
+  #expect(!FileManager.default.fileExists(atPath: root + "/refused"))
+  let inventory = URL(fileURLWithPath: root + "/inventory.json")
+  try JSONSerialization.data(withJSONObject: [
+    "format": 1, "inventoryComplete": true,
+    "auditReference": "synthetic-schema-mismatch", "retainedBackups": [root + "/bundle"],
+    "restoreDrills": [], "legacyDatabases": [],
+  ]).write(to: inventory)
+  try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: inventory.path)
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await SQLiteKeyMaintenance.checkRetirement(
+      path: path, protection: cipher, inventoryFile: inventory.path)
+  }
+}

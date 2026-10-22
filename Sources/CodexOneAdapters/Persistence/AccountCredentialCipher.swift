@@ -47,7 +47,11 @@ public struct AccountCredentialCipher: AccountCredentialProtection, Sendable,
           }
           let materials = [active] + old
           let admin = try adminCredentialPath.map { try readRuntimeSecret($0) }
-          guard admin?.lowercased() != text.lowercased() else {
+          guard admin?.lowercased() != text.lowercased(),
+            ![text, text.lowercased(), text.uppercased()].contains(where: {
+              keyDigest($0) == forbiddenDigest
+            })
+          else {
             throw ExecutionError.invalidCommand
           }
           for material in materials {
