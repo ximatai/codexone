@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 代码、集中 review 与本地合成环境阶段出口已完成，未宣称真实订阅或生产客户端验收。
+M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 的协议实现和 M3 的账号/权限/观测进度见下方，Desktop 与恢复缺口继续保留。
 
@@ -50,11 +50,21 @@ npm run dev
 ```sh
 python3 scripts/verify_admin_ui.py --binary .build/debug/codexone
 python3 scripts/verify_account_admin_ui.py --binary .build/debug/ExecutionProbe
+python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 ```
 
 `--chrome` 使用本机已安装 Chrome 的全新临时上下文，不使用用户浏览数据。标准 Chromium 路径先在 web 下执行 `npx playwright install chromium --only-shell`，再执行 `./scripts/verify.sh --web`（从仓库根目录）；无参数执行全部验证。各层检查定义见 [verification](docs/development/verification.md)。
 
 ## 最新验证与范围
+
+2026-10-22，M4 本地合成阶段出口通过：
+
+- macOS arm64 / Swift 6.4：完整后端脚本通过；最终用量/WS 关闭修复后的 152 项 Swift 测试、图片与 WS socket 回归及格式检查通过。
+- Linux amd64 / Swift 6.4.1：精确代码快照 `fd3e28d` 完整后端验证通过，152 项 Swift 测试及全部脚本、exit 0、无 OOM。独立 2 CPU / 2500 MiB 本地容器，单并发 native 引擎与缓存依赖；容器已回收。不是远端 CI 或弱服务器容量证据。
+- 前端完整类型/构建、35 项测试、3 项 Chrome 场景通过；实际 Chrome 管理操作验证仅图片 Key、独立视觉/生成授权、有效目录与用量呈现，大屏截图已查看。
+- 集中 review 及复审关闭：48 模型读写/DTO 容量、零工具调用与失败/不完整终态结算、有效宿主能力目录、畸形模型拒绝；主 Agent 还修复回归捕获的 WS 关闭锁反转并验证。
+
+配置与范围见[图片配置](docs/development/images.md)，命令/快照/失败记录见[图片验证](docs/changes/image-capability/verification.md)。全部是无凭证合成验证，没有真实调用、额度消耗、推送或部署。
 
 2026-10-22，M3 本地合成环境阶段出口通过：
 
@@ -78,6 +88,8 @@ M3 已完成以下本地合成闭环：
 
 运行与配置见[Key 治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)。旧版本先按文档停服迁移，保留独立主密钥；不能原地降级或用恢复旧库丢弃新执行责任。
 
-M4 图片能力已接续原有未提交成果，实现独立权限/模型映射、schema v6 显式迁移、Images generation/edits JSON/multipart/SSE 与 Responses 图片工具，共享 HTTP/桥接/原生 WS 的执行/归属/用量治理；管理权限与统计已可操作。macOS 定向 Swift 21 项、前端类型/生产构建及 34 项测试、合成真实 socket 和实际 Chrome 管理操作已通过，详见[图片验证](docs/changes/image-capability/verification.md)。集中 review 发现的两项 P1、两项 P2 已亲自修复，定向 Swift 22 项/前端 35 项与图片 socket 回归通过；完整前后端及 Linux 阶段出口尚未完成，不标 M4 完成。图片与压缩组合明确拒绝，图片历史压缩适配未验收。
+M4 已接续并完成原有修改：独立权限/图片模型映射、schema v6 离线备份迁移、Images generation/edits JSON/multipart/SSE 与 Responses 图片工具，复用 HTTP/桥接/native WS 执行、归属和用量；管理权限与统计可操作。代码与本地合成出口完成，图片与压缩组合明确拒绝。
 
-下一步复审 M4 修复并执行完整阶段出口。Desktop 界面验收、恢复读取契约和真实订阅兼容仍明确保留；真实 Images 兼容、恢复缓存、生产镜像/弱服务器容量、升级/迁移/回退替代演练尚未交付。GitHub 无凭证 CI 定义存在，但尚未远程运行；无远程承接或推送。首版整体未完成。
+下一步是明确版本 Desktop 图片/参考图/连续主动编辑与真实订阅兼容验收；授权/控制能力不足时保留该缺口，不自动进入依赖它的阶段。M5 仍受 M2 恢复读取契约约束，不能自行发明恢复协议或以缓存已有正文替代客户端验收。
+
+Desktop 界面验收、恢复读取契约和真实订阅兼容仍明确保留；真实 Images 兼容、恢复缓存、生产镜像/弱服务器容量、升级/迁移/回退替代演练尚未交付。GitHub 无凭证 CI 定义存在，但尚未远程运行；无远程承接或推送。首版整体未完成。
