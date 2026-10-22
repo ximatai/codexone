@@ -37,11 +37,16 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
 FROM backend AS verification
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/*
+# Test-only fixture executable; it is never copied into the runtime image.
+RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
+    swift build --force-resolved-versions --build-system native -c release --product ExecutionProbe -j ${BUILD_JOBS} \
+      -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
+    && cp .build/release/ExecutionProbe /output/ExecutionProbe
 COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
     && python3 scripts/verify_websocket.py --binary /output/codexone \
-    && python3 scripts/verify_images.py --binary /output/codexone \
-    && python3 scripts/verify_key_maintenance.py --binary /output/codexone \
+    && python3 scripts/verify_images.py --binary /output/codexone
+RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/codexone \
     && python3 scripts/verify_snapshot_restore.py --binary /output/codexone \
     && python3 scripts/verify_storage_pressure.py --binary /output/codexone \
     && python3 scripts/verify_migration_cutback.py --binary /output/codexone
