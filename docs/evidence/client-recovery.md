@@ -29,3 +29,7 @@ CLI 检查入口为 `scripts/verify_client.py`，加 `--retry-probe` 验证 EOF 
 现有证据不足以承诺 Desktop 原生透明恢复。M5 实现正文/图片缓存之前，仍须证明一种明确客户端版本实际可使用的读取路径，记录关联 ID、认证、消费位置与工具重复风险。独立管理台人工导出或新恢复客户端是可能的产品调整，尚未采纳，不能自行用私有协议替代原目标。
 
 下游断开、上游关闭、网关重启和对象过期分别验收；没有可信终态时保留 unknown。不得因为客户端显示 Reconnecting，就把新的模型/工具执行称作原输出恢复；也不得根据输入相同自行重放、合并、退款或跨身份重试。恢复范围调整按 C10/C11 和里程碑出口处理。
+
+## M5 复核
+
+同日再次执行 CLI 0.163.0 的隔离 EOF 探针，仍观察到 unknown + 新生成 settled。公开 Responses API 有 GET response/starting_after，但尚无目标 Codex 客户端读取它的证据，也没有订阅提供者等价性证明。复核命令、来源和结论见[契约核实](../changes/recovery-contract-audit/verification.md)。M5 不因标准 API 存在就通过 C10；后续只读证据或明确产品调整方可解除该边界。
