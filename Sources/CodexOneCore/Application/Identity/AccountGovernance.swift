@@ -69,7 +69,9 @@ public protocol AccountGovernanceStore: Sendable {
     -> StoredAccountCredential
   func finishAccountRefresh(id: String, credentialVersion: Int64, intent: String, envelope: String)
     async throws -> ManagedAccount
-  func failAccountRefresh(id: String, credentialVersion: Int64, intent: String) async throws
+  func failAccountRefresh(
+    id: String, credentialVersion: Int64, intent: String, authorizationRequired: Bool
+  ) async throws
     -> ManagedAccount
   func replaceVerifiedAccountCredential(
     id: String, revision: Int64, namespace: String, envelope: String

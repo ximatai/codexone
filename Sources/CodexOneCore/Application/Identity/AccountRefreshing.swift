@@ -16,7 +16,8 @@ public protocol AccountRefreshProvider: Sendable {
     -> VerifiedAccountRefresh
 }
 public enum AccountRefreshError: Error, Sendable, Equatable {
-  case invalidCommand, capacity, closed, conflict, unavailable, storageUnavailable
+  case invalidCommand, capacity, closed, conflict, unavailable, storageUnavailable,
+    authorizationRequired
 }
 public protocol AccountRefreshing: Sendable {
   func refreshAccount(id: String, revision: Int64) async throws -> ManagedAccount

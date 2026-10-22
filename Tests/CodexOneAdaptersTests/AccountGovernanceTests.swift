@@ -257,3 +257,34 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   #expect(try await store.accountCredential(id: account.id).account == account)
   await store.close()
 }
+
+@Test func authoritativeRefreshRejectionPersistsRequiresAuthUntilVerifiedReauthorization()
+  async throws
+{
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let (cipher, context, envelope) = try accountFixture()
+  let account = try await store.createVerifiedAccount(
+    id: context.identity, namespace: context.namespace, envelope: envelope)
+  let app = AccountCredentials(store: store, protection: cipher)
+  let work = try await app.beginRefresh(id: account.id, revision: account.revision)
+  let rejected = try await app.failRefresh(work, authorizationRequired: true)
+  #expect(rejected.authorization == .requiresAuth && rejected.credentialVersion == 1)
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  #expect(try await reopened.accountCredential(id: account.id).account == rejected)
+  let nextApp = AccountCredentials(store: reopened, protection: cipher)
+  await #expect(throws: ExecutionError.conflict) {
+    try await nextApp.beginRefresh(id: account.id, revision: rejected.revision)
+  }
+  let fresh = try cipher.open(envelope, context: context)
+  let restored = try await nextApp.reauthorizeVerified(
+    id: account.id, revision: rejected.revision, namespace: account.namespace, credential: fresh)
+  #expect(
+    restored.authorization == .ready && restored.credentialVersion == 2
+      && restored.refreshIntent == nil)
+  await reopened.close()
+}

@@ -46,7 +46,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 凭证信封采用 AES-256-GCM，格式 v1，独立私有文件提供 32 字节随机主密钥（64 个十六进制字符）；key ID 为该密钥 SHA-256 的前 128 bit，仅用于版本选择。每次随机 nonce，AAD 绑定固定用途/格式、key ID、identity、namespace 与 credential version。原文仅为瞬时应用值，不进入公开 DTO/日志；access/refresh/id token 总计最多 32 KiB、单项最多 16 KiB，信封最多 48 KiB。未知格式、非规范 base64、篡改、错误密钥/身份/版本均拒绝。首个实现不提供主密钥原地轮换或丢失后恢复。
 
-账号身份 namespace 不可原地修改且唯一；初次保存已验证凭证时模式为 disabled，授权状态 ready 不等于路由已启用。模式 enabled/draining/disabled 与授权 ready/refreshing/requires_auth/auth_uncertain 分离。刷新开始按管理 revision CAS 持久刷新 intent，随后才可调用上游；结束按 credential version + intent CAS 原子写新密文/版本和 ready，保留刷新期间最新模式。过时/重复完成不能覆盖新凭证或重新启用已禁用账号。提供者身份变化、刷新不明或本地提交失败进入 auth_uncertain；无法写标记时已持久 intent 仍禁止自动恢复 ready。重启在同一启动事务内把所有 refreshing 归纳为 auth_uncertain，不能自动重用旧 refresh token。
+账号身份 namespace 不可原地修改且唯一；初次保存已验证凭证时模式为 disabled，授权状态 ready 不等于路由已启用。模式 enabled/draining/disabled 与授权 ready/refreshing/requires_auth/auth_uncertain 分离。刷新开始按管理 revision CAS 持久刷新 intent，随后才可调用上游；结束按 credential version + intent CAS 原子写新密文/版本和 ready，保留刷新期间最新模式。过时/重复完成不能覆盖新凭证或重新启用已禁用账号。提供者身份变化、刷新不明或本地提交失败进入 auth_uncertain，可信端点明确拒绝且未返回新 token 时进入 requires_auth；两者都禁止自动重用旧 refresh token。无法写结束标记时返回本地状态提交失败，已持久 intent 仍禁止自动恢复 ready。重启在同一启动事务内把所有 refreshing 归纳为 auth_uncertain，不能根据未持久的上游结果推测状态。
 
 每库最多 64 个账号；普通账号审计 4096 条，另预留 64 条供非 disabled→disabled 的真实禁用，总上限 4160。开始刷新须同时为开始和一次结束预留审计空间；普通操作、禁用和重启恢复都计入未完成刷新所需空间，不能占掉其结束位置。结束记录走核心 critical 队列。审计保留安全状态快照、revision、动作和 UTC 秒，不保存凭证原文/摘要或信封。没有删除历史或人工恢复 ready 的旁路。
 
@@ -59,3 +59,13 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 单次提供者调用总期限默认 10 秒、配置上限 30 秒；超时取消并 await 网络工作后持久 auth_uncertain，禁止再发同一 token POST。底层提供者必须有自己的 I/O 边界并响应结构化取消；具体 HTTP 适配须另以真实 socket 验证，不能以等待 helper 证明协议关闭。外部错误只返回安全类型，不能透传提供者错误正文或凭证。
 
 优雅关闭先拒绝新等待者和工作，未开始的队列不再消耗令牌；已开始的网络收到 owner 停止信号，取消并 await 后收敛持久责任。已获得可信新凭证时应尽量完成本地提交，不因请求等待者离开丢弃结果。父取消也须等待网络与状态收敛，不留下独立 Task。数据库故障标志在原子开始刷新时复核，已失败的核心存储不能因随后可写就重新开始外部刷新；结束/保守标记仍可使用 critical 配额。
+
+## I15：订阅认证传输的可信来源
+
+首个订阅适配固定 HTTPS 认证 authority 和数据 origin/协议，不提供任意地址或组织/项目头覆盖。专用 AHC client 只用 HTTP/1、每连接一次请求、最多 4 个调用，禁止重定向、连接建立重试、压缩及代理继承；单次请求含正文总期限默认 10 秒、最大 30 秒，响应最多 64 KiB，由 Service 拥有和关闭。测试工厂只允许显式 127.0.0.1 合成端口，认证 realm 进入 namespace，不能借此铸造生产命名空间。
+
+授权码请求使用 form/PKCE，刷新使用独立 JSON 请求；state/nonce 和一次性消费必须由管理授权用例持有。ID/access 只在来自固定 token endpoint 的可信直接响应中解析：校验 issuer、ID audience/nonce/当前有效期、subject/account 范围及新 access 有效期，namespace 包含认证 realm、客户端、数据 origin/协议、subject 和 account。此路径以可信直接传输为来源，不是通用 JWT 签名验证器，禁止用于授权任意上传或本地缓存的 JWT。生产传输使用系统 TLS 验证，合成 HTTP 结果不等于真实订阅验收。
+
+刷新先校验已保存可信 ID 的范围（可过期，仅作身份基线）与命名空间，再请求新 token；新 access 必须证明同一 subject/account，双方有 user 声明时也须一致。新 ID 若提供须校验 audience/当前有效期及相同范围；ID/refresh 字段缺省仅可在新 access 范围已确认后保留原值，显式 null/空字段拒绝。expires_in 如提供须为有效正整数，生效期限取其与 access exp 的较早值。身份缺失/冲突、过期、畸形或网络不明均不能发布 ready。
+
+明确 400/401 且无任何新 token 字段的 invalid_grant，或已识别的 refresh_token_expired/reused/invalidated，返回安全的需要重新授权结果并事务写 requires_auth；其他错误/矛盾字段保持 auth_uncertain。服务器错误 prose 不进入日志/DTO，也不用于恢复判断。结束标记提交失败返回存储失败并留下原 intent；重复/过时结束的 CAS 冲突不能冒充存储故障。账号管理流程、具体提供者兼容与池路由另行验收，不能把固定 endpoint 解析或 HTTP 200 作为完整接入证明。

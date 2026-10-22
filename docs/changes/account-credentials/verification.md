@@ -29,3 +29,13 @@ bace11b 精确快照在 Linux amd64 / Swift 6.4 本地容器完整后端验证�
 资源由 Service 拥有，实际网络端口契约要求响应取消；这些睡眠/取消式合成 provider 测试不证明未来 AHC socket 的关闭、令牌 wire 或真实订阅授权。具体适配、生产组装与账号池仍待后续切片。
 
 e7c200a 独立 review 未发现需修复或阻塞问题。reviewer 核对 waiter install/cancel/enqueue 交错、容量、共享任务停止及关键写入，独立运行 5 个 Runtime 测试与故障 DB 门测试全部通过。该精确 Git 快照在 Linux amd64 / Swift 6.4 本地单并发容器完整后端验证通过：66 个 Swift 测试及全部脚本，exit 0，2 CPU/2500 MiB；容器已回收。未将合成 provider 测试当作真实认证网络验收。
+
+## 2026-10-22 · 可信订阅 HTTP 适配切片
+
+主 Agent 亲自实现与复盘。macOS arm64 / Swift 6.4，`./scripts/verify.sh --backend` 完整通过：73 个 Swift 测试函数及全部进程/协议脚本。新增六个真实 NIO HTTP socket 测试及一项持久状态测试；Runtime 原有用例扩展身份变化失败后不误报存储故障。没有真实账号、个人缓存、外部 token 请求或额度消耗。
+
+实际合成端点验证 PKCE 已知向量/Form 保留字符、ID/access scope 与 nonce/audience/期限、缺省刷新字段、一次持久版本提交、身份变化/畸形/超量/EOF/错误正文/空类型、重定向目的端零请求、四连接容量，以及等待响应头和持续滴流正文均服从总期限。取消与 Service 关闭后真实连接和活动请求归零；测试 server 关闭 pipelining read assistance，确保等待响应期间仍可观察客户端 FIN，不用计数 helper 代替实际关闭。合成与生产 namespace 隔离。
+
+上游明确 invalid_grant 或已知 refresh_token 失效代码且无新 token 时持久化 requires_auth；其余不明失败持久化 auth_uncertain，二者均不能再次自动刷新。真实 SQLite trigger 注入结束审计写失败：保持原 refreshing intent 与旧版本，向调用者报告 storageUnavailable，不能谎报需要重新授权已成功落盘。身份核对已关闭 intent 时，外层重复失败标记的 CAS 冲突不误报存储故障。日志和 DB/WAL 不包含合成明文 token/主密钥。
+
+这是传输/身份验证切片，尚无公开初次授权 owner、账号管理 API/UI、生产主密钥组装或账号池；不宣称真实订阅兼容、生产 TLS、Desktop 或恢复契约已验收。提交后 review 与 Linux 结果待本切片提交后记录。

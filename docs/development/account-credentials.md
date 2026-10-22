@@ -29,3 +29,11 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 ## 合成验证
 
 后端统一验证包含密码学/文件/SQLite 测试与 `scripts/verify_accounts.py`。后者控制独立 `ExecutionProbe`：在刷新 intent 前、intent 后及完成后真实 SIGKILL，再打开同一个临时库核对版本/状态、未知刷新不能再次开始、DB/WAL 不含 token 或主密钥。它不连接提供者、不读取个人登录文件，不证明真实刷新协议或账号池可路由；SIGKILL 也不是掉电验收。
+
+## 可信订阅 HTTP 适配
+
+`SubscriptionOAuthProvider` 自身是受监督 Service，启动时创建专用 HTTP client，停止时关闭并等待网络资源。生产 authority 固定；合成 loopback factory 仅供显式依赖注入，其 realm 参与 namespace，不能生成生产 namespace。容量、总期限、响应上限与失败分类见 [I15](../specs/identity.md)。不跟随重定向、不重试连接或刷新，不读取个人登录缓存。
+
+授权码交换使用 PKCE S256 和 Form grant，刷新使用 JSON grant。初次登录核对 nonce、ID audience、issuer、期限，以及 ID/access 的 subject 和订阅 account 一致性。后续刷新必须保持同一 namespace；缺省刷新 token 或 ID token 只能在新 access 已通过身份核对后沿用。这里的声明可信度来自固定 token 端点的直接可信传输，不是 JWT 签名验证器，禁止把任意上传 JWT 交给已验证导入路径。调用者仍须拥有有界、过期、一次性消费的 state/nonce/verifier 流程；本层不提供公开授权入口。
+
+[官方认证说明](https://developers.openai.com/codex/auth)描述 ChatGPT 登录与自动刷新，但不承诺内部 token wire 稳定。此适配仍需真实订阅独立验收；合成测试不消耗真实额度，也不能证明生产 TLS/实际账号兼容。

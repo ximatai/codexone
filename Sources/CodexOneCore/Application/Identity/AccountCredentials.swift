@@ -70,8 +70,11 @@ public struct AccountCredentials: Sendable {
       throw error
     }
   }
-  public func failRefresh(_ work: AccountRefreshWork) async throws -> ManagedAccount {
+  public func failRefresh(_ work: AccountRefreshWork, authorizationRequired: Bool = false)
+    async throws -> ManagedAccount
+  {
     try await store.failAccountRefresh(
-      id: work.account.id, credentialVersion: work.account.credentialVersion, intent: work.intent)
+      id: work.account.id, credentialVersion: work.account.credentialVersion, intent: work.intent,
+      authorizationRequired: authorizationRequired)
   }
 }

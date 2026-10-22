@@ -180,8 +180,16 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendabl
         owned, namespace: verified.namespace, credential: verified.credential)
       result = .success(finished)
     } catch {
-      if let work { _ = try? await application.failRefresh(work) }
-      result = .failure(!isAccepting || Task.isCancelled ? .closed : Self.safeError(error))
+      var failure = Self.safeError(error)
+      if let work {
+        do {
+          _ = try await application.failRefresh(
+            work, authorizationRequired: error as? AccountRefreshError == .authorizationRequired)
+        } catch ExecutionError.conflict {
+          // A use case may already have closed this intent, or a newer truth superseded it.
+        } catch { failure = .storageUnavailable }
+      }
+      result = .failure(!isAccepting || Task.isCancelled ? .closed : failure)
     }
     finish(job, result: result)
   }
@@ -195,7 +203,10 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Sendabl
           try Task.checkCancellation()
           return try await provider.refresh(
             credential: work.credential, namespace: work.account.namespace)
-        } catch { throw AccountRefreshError.unavailable }
+        } catch {
+          if let safe = error as? AccountRefreshError { throw safe }
+          throw AccountRefreshError.unavailable
+        }
       }
       group.addTask { [timeoutMilliseconds] in
         try await Task.sleep(for: .milliseconds(timeoutMilliseconds))

@@ -7,7 +7,11 @@ import Testing
 
 private actor RefreshProviderProbe: AccountRefreshProvider {
   private let failAfterRelease: Bool
-  init(failAfterRelease: Bool = false) { self.failAfterRelease = failAfterRelease }
+  private let namespaceOverride: String?
+  init(failAfterRelease: Bool = false, namespaceOverride: String? = nil) {
+    self.failAfterRelease = failAfterRelease
+    self.namespaceOverride = namespaceOverride
+  }
   private var released = false
   private var calls = 0
   private var active = 0
@@ -28,7 +32,7 @@ private actor RefreshProviderProbe: AccountRefreshProvider {
       while !released { try await Task.sleep(for: .milliseconds(5)) }
       if failAfterRelease { throw SyntheticProviderFailure() }
       return try VerifiedAccountRefresh(
-        namespace: namespace,
+        namespace: namespaceOverride ?? namespace,
         credential: .init(
           accessToken: "synthetic-new-access", refreshToken: "synthetic-new-refresh", idToken: nil,
           expiresAtUnixSeconds: 2_000_000_000))
@@ -255,9 +259,12 @@ private struct FailureDuringRefresh: Service {
 }
 @Test(.timeLimit(.minutes(1)))
 func refreshOwnerSanitizesProviderErrorsAndParticipatesInRuntimeShutdown() async throws {
-  for runtimeFailure in [false, true] {
+  for mode in ["provider-error", "runtime-stop", "identity-change"] {
+    let runtimeFailure = mode == "runtime-stop"
     let fixture = try await RefreshFixture.make()
-    let provider = RefreshProviderProbe(failAfterRelease: !runtimeFailure)
+    let provider = RefreshProviderProbe(
+      failAfterRelease: mode == "provider-error",
+      namespaceOverride: mode == "identity-change" ? "synthetic/other" : nil)
     let service = try AccountRefreshSupervisor(application: fixture.app, provider: provider)
     let owner = Task {
       if runtimeFailure {
@@ -276,11 +283,13 @@ func refreshOwnerSanitizesProviderErrorsAndParticipatesInRuntimeShutdown() async
     } else {
       try await awaitRefreshCondition { await provider.counts.active == 1 }
       await provider.release()
-      await #expect(throws: AccountRefreshError.unavailable) { try await caller.value }
+      let expected: AccountRefreshError = mode == "identity-change" ? .conflict : .unavailable
+      await #expect(throws: expected) { try await caller.value }
       service.stopAccepting()
       try await owner.value
     }
     #expect(await provider.counts.active == 0)
+    #expect(fixture.store.isAvailable)
     #expect(
       try await fixture.store.accountCredential(id: "account-0").account.authorization
         == .authUncertain)

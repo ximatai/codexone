@@ -100,7 +100,9 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       }
     }
   }
-  public func failAccountRefresh(id: String, credentialVersion: Int64, intent: String) async throws
+  public func failAccountRefresh(
+    id: String, credentialVersion: Int64, intent: String, authorizationRequired: Bool = false
+  ) async throws
     -> ManagedAccount
   {
     try Self.validateAccountID(id)
@@ -110,9 +112,13 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
         let stored = try Self.loadAccount(db, id)
         let old = stored.account
         try Self.matchRefresh(old, version: credentialVersion, intent: intent)
-        let account = try Self.nextAccount(old, authorization: .authUncertain, intent: intent)
+        let account = try Self.nextAccount(
+          old, authorization: authorizationRequired ? .requiresAuth : .authUncertain, intent: intent
+        )
         try Self.saveAccount(db, account, envelope: stored.envelope)
-        try Self.auditAccount(db, account, action: "refresh_uncertain")
+        try Self.auditAccount(
+          db, account, action: authorizationRequired ? "refresh_requires_auth" : "refresh_uncertain"
+        )
         return account
       }
     }

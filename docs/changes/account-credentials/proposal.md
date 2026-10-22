@@ -29,3 +29,5 @@ Runtime Service 拥有共享刷新，按 identity 合并相同 revision 的等�
 授权码路径使用 PKCE 与预期 nonce，由后续管理授权流程持有 state/期限/一次性消费；不以任意上传 JWT 作为已验证账号。只从固定 token endpoint 的可信直接响应建立身份，校验 issuer、ID token audience/nonce/有效期及稳定 subject/account 范围，namespace 绑定数据 origin、协议与认证 realm。刷新须比对已有可信身份和新 access token 的相同范围；新 ID token 若提供也须一致。缺少可确认范围、冲突或过期不自动发布 ready，不猜测身份等价。
 
 官方认证文档说明登录与自动刷新，但不提供该底层 token wire 的长期兼容承诺；实现与合成证据须明确区分真实订阅验收。不会读取个人登录缓存或调用真实认证服务来补齐此处证据。账号管理与真实授权仍按后续可操作切片验收，不把 HTTP 200 或解析成功当账号池交付。
+
+固定认证端点明确返回已识别的无新 token 授权拒绝（invalid_grant、已撤销/过期/重用的刷新令牌）时，将结束状态写为 requires_auth；网络/畸形/身份不符或其他不明结果仍为 auth_uncertain。两者都结束本次持久责任、禁止自动再用旧令牌，只有重新验证授权才能 ready；不把所有认证错误混称为未知，也不根据任意服务器 prose 决定状态。
