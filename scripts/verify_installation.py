@@ -189,10 +189,15 @@ def verify_runtime(image, browser=False):
             assert run(['docker', 'exec', name, 'id', '-u']).stdout.strip() == str(uid).encode()
             manifest = json.loads(run(['docker', 'exec', name, 'cat', '/opt/release.json']).stdout)
             assert manifest['revision'] == identifier['Config']['Labels']['org.opencontainers.image.revision']
-            licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
+            licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/swift', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
             pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
             assert set(licenses) == {pin['identity'] for pin in pins}
             run(['docker', 'exec', name, 'test', '-s', '/opt/codexone/LICENSE'])
+            npm_files = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/npm', '-type', 'f', '-size', '+0c', '-printf', '%P\n']).stdout.decode().splitlines()
+            npm_lock = json.loads((REPO / 'web/package-lock.json').read_text())['packages']
+            runtime_packages = {path.removeprefix('node_modules/') for path, entry in npm_lock.items()
+                if path.startswith('node_modules/') and not entry.get('dev') and not entry.get('devOptional')}
+            assert all(any(file.startswith(package + '/') for file in npm_files) for package in runtime_packages)
             assert run(['docker', 'exec', name, 'sh', '-c', 'command -v swift || command -v node || command -v python3'], ok=False).returncode != 0
             assert run(['docker', 'exec', name, 'touch', '/opt/codexone/forbidden'], ok=False).returncode != 0
             assert run(['docker', 'exec', name, 'touch', '/run/codexone/forbidden'], ok=False).returncode != 0

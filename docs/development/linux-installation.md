@@ -20,7 +20,7 @@ docker image inspect codexone:candidate --format '{{.Id}}'
 
 镜像标签和 `/opt/release.json` 保存源码 revision/version；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images 与失败路径，之后组装运行层。运行层没有编译器、Node、Python 或源码测试。
 
-项目 LICENSE 位于 `/opt/codexone/LICENSE`；依赖 checkouts 内提供的 LICENSE/NOTICE/COPYING 文件按包路径收集到 `/opt/codexone/licenses`，与最终二进制一同交付。
+项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
 
 CI 的 Linux candidate 工作流在阶段出口手动触发，构建、合成安装测试并上传带源码归档/标识、镜像 ID 和 SHA256SUMS 的候选包。它不登录 registry 或推送/发布。下载包后先核对校验和，再 `docker load --input codexone-linux-amd64.tar.gz`；校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 

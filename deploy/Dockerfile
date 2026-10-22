@@ -7,6 +7,14 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
+RUN set -eu; mkdir /licenses; npm ls --omit=dev --parseable > /tmp/runtime-dependencies; \
+    while IFS= read -r dependency; do \
+      case "$dependency" in /build/web/node_modules/*) ;; *) continue ;; esac; \
+      relative="${dependency#/build/web/node_modules/}"; mkdir -p "/licenses/$relative"; \
+      cd "$dependency"; \
+      find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
+        -exec cp --parents --target-directory="/licenses/$relative" -- {} +; \
+    done < /tmp/runtime-dependencies
 
 FROM swift:${SWIFT_VERSION}-noble AS backend
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev \
@@ -23,7 +31,7 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     mkdir /output/licenses && cd .build/checkouts \
     && find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
-       -exec cp --parents -- {} /output/licenses/ \;
+       -exec cp --parents --target-directory=/output/licenses -- {} +
 
 FROM backend AS verification
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \
@@ -52,7 +60,8 @@ RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
 COPY --from=backend /output/codexone /usr/local/bin/codexone
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
-COPY --from=backend /output/licenses/ /opt/codexone/licenses/
+COPY --from=backend /output/licenses/ /opt/codexone/licenses/swift/
+COPY --from=web /licenses/ /opt/codexone/licenses/npm/
 ENV CODEXONE_DATA_DIRECTORY=/var/lib/codexone \
     CODEXONE_WEB_DIRECTORY=/opt/codexone/web
 USER 10001:10001
