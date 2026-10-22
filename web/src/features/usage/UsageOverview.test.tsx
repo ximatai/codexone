@@ -19,16 +19,19 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
   fireEvent.click(screen.getByText("下一页"));
   await screen.findByText("第 2 页");
   expect(api.fetchUsage).toHaveBeenLastCalledWith(expect.anything(), "synthetic_cursor", expect.any(AbortSignal));
+  fireEvent.change(screen.getByLabelText("执行模式"), { target: { value: "compact" } });
   fireEvent.change(screen.getByLabelText("Key 标识"), { target: { value: "beta" } });
   vi.mocked(api.fetchUsage).mockRejectedValueOnce(new ManagementError(429, "usage_query_capacity"));
   fireEvent.click(screen.getByText("查询用量"));
   await screen.findByRole("alert");
   expect(screen.getByText(/当前结果/)).toHaveTextContent("全部 Key · 上次成功快照");
+  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("模式 全部");
   expect(screen.getByText("下一页")).toBeDisabled();
   fireEvent.click(screen.getByText("查询用量"));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(screen.getByText(/当前结果/)).toHaveTextContent("beta");
   expect(screen.getByText("第 1 页")).toBeVisible();
+  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("模式 压缩");
   view.unmount();
 });
 it("aborts stale ownership on Key selection, pause and unmount, and clears private data on unauthorized", async () => {

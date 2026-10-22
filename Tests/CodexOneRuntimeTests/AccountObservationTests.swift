@@ -1,6 +1,9 @@
 import CodexOneCore
 import CodexOneRuntime
+import Dispatch
 import Foundation
+import ServiceLifecycle
+import Synchronization
 import Testing
 
 @testable import CodexOneAdapters
@@ -218,5 +221,122 @@ func observationCommitFailureStopsTheOwnerAndReleasesEveryWaiter() async throws 
     await f.close()
     throw error
   }
+  await f.close()
+}
+
+/// Instrument the real store's capacity rejection; no synthetic scan success replaces SQLite.
+private actor ObservationScanStore: AccountObservationStore {
+  let base: SQLiteExecutionStore
+  var capacityRejections = 0
+  init(_ base: SQLiteExecutionStore) { self.base = base }
+  func listAccounts(after: String?) async throws -> [ManagedAccount] {
+    do { return try await base.listAccounts(after: after) } catch ExecutionError.capacity {
+      capacityRejections += 1
+      throw ExecutionError.capacity
+    }
+  }
+  func accountCredential(id: String) async throws -> StoredAccountCredential {
+    try await base.accountCredential(id: id)
+  }
+  func quotaObservation(id: String) async throws -> AccountQuotaObservation {
+    try await base.quotaObservation(id: id)
+  }
+  func recordQuotaObservation(
+    account: ManagedAccount, atUnixSeconds: Int64,
+    result: Result<SubscriptionQuota, QuotaObservationFailure>
+  ) async throws -> AccountQuotaObservation {
+    try await base.recordQuotaObservation(
+      account: account, atUnixSeconds: atUnixSeconds, result: result)
+  }
+  func createVerifiedAccount(id: String, namespace: String, envelope: String) async throws
+    -> ManagedAccount
+  {
+    try await base.createVerifiedAccount(id: id, namespace: namespace, envelope: envelope)
+  }
+  func setAccountMode(id: String, revision: Int64, mode: AccountMode) async throws -> ManagedAccount
+  {
+    try await base.setAccountMode(id: id, revision: revision, mode: mode)
+  }
+  func beginAccountRefresh(id: String, revision: Int64, intent: String) async throws
+    -> StoredAccountCredential
+  {
+    try await base.beginAccountRefresh(id: id, revision: revision, intent: intent)
+  }
+  func finishAccountRefresh(id: String, credentialVersion: Int64, intent: String, envelope: String)
+    async throws -> ManagedAccount
+  {
+    try await base.finishAccountRefresh(
+      id: id, credentialVersion: credentialVersion, intent: intent, envelope: envelope)
+  }
+  func failAccountRefresh(
+    id: String, credentialVersion: Int64, intent: String, authorizationRequired: Bool
+  ) async throws -> ManagedAccount {
+    try await base.failAccountRefresh(
+      id: id, credentialVersion: credentialVersion, intent: intent,
+      authorizationRequired: authorizationRequired)
+  }
+  func replaceVerifiedAccountCredential(
+    id: String, revision: Int64, namespace: String, envelope: String
+  ) async throws -> ManagedAccount {
+    try await base.replaceVerifiedAccountCredential(
+      id: id, revision: revision, namespace: namespace, envelope: envelope)
+  }
+}
+private final class ObservationSibling: Service, Sendable {
+  let active = Mutex(false)
+  func run() async throws {
+    active.withLock { $0 = true }
+    defer { active.withLock { $0 = false } }
+    try await gracefulShutdown()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func observationPeriodicScanYieldsToRealQueueCapacityAndResumesWithoutStoppingRuntime() async throws
+{
+  let f = try await RefreshFixture.make()
+  let first = f.accounts[0]
+  _ = try await f.store.setAccountMode(id: first.id, revision: first.revision, mode: .enabled)
+  let held = DispatchSemaphore(value: 0)
+  let rejected = Mutex(0)
+  let fillers = (0..<32).map { _ in
+    Task {
+      do {
+        try await f.store.perform { _ in _ = held.wait(timeout: .now() + 10) }
+      } catch ExecutionError.capacity { rejected.withLock { $0 += 1 } }
+    }
+  }
+  let provider = QuotaProviderProbe(released: true)
+  let scanned = ObservationScanStore(f.store)
+  let observer = try AccountObservationSupervisor(
+    store: scanned, application: f.app, refresher: UnusedObservationRefresh(), provider: provider,
+    intervalMilliseconds: 20)
+  let sibling = ObservationSibling()
+  var owner: Task<Void, any Error>?
+  do {
+    try await awaitRefreshCondition { rejected.withLock { $0 == 16 } }
+    owner = Task {
+      try await GatewayRuntime(services: [sibling, observer]).run(handleSignals: false)
+    }
+    try await awaitRefreshCondition { await scanned.capacityRejections > 0 }
+    #expect(observer.isAccepting && sibling.active.withLock { $0 })
+    for _ in 0..<16 { held.signal() }
+    for filler in fillers { try await filler.value }
+    try await awaitRefreshCondition { await provider.calls > 0 }
+    try await awaitRefreshCondition {
+      try await f.store.quotaObservation(id: first.id).quota != nil
+    }
+    #expect(observer.isAccepting && sibling.active.withLock { $0 } && f.store.isAvailable)
+  } catch {
+    for _ in 0..<16 { held.signal() }
+    for filler in fillers { _ = await filler.result }
+    owner?.cancel()
+    _ = await owner?.result
+    await f.close()
+    throw error
+  }
+  owner?.cancel()
+  _ = await owner?.result
+  #expect(!sibling.active.withLock { $0 })
   await f.close()
 }

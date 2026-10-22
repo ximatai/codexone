@@ -49,6 +49,8 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ## A13：额度、健康与用量诊断界面
 
+主/附加窗口的 allowed/limitReached 即使没有百分比也须显示，缺失明确未提供；额度报告受限与执行健康结论分开。失败查询保留的成功快照须列全日期、Key、模型、模式、错误、状态和仅异常口径，不能让当前表单冒充旧结果的筛选。
+
 账号列表含非秘密 observability 摘要；`GET /api/accounts/:id/observation` 返回有界窗口/健康详情，`POST /:id/observe` 只接受空 JSON 对象，复用 session/CSRF。主次窗口显示真实比例、时长、重置、观察及失败时间；附加标识不猜测模型含义。手动读取失败明确提示并保留上次成功值，不能显示已更新；五分钟陈旧随页面时间推进。认证拒绝与模型冷却分开解释，不展示 namespace/令牌/上游错误正文。
 
 `GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。

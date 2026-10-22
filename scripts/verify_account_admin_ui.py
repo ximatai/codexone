@@ -45,6 +45,8 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 assert self.headers.get('x-openai-codex-luna-reserve') is None
                 self.server.quota_calls += 1
                 mode = self.server.control.get('quota_mode', 'ok')
+            if mode == 'restricted':
+                return self.reply({'rate_limit': {'allowed': False, 'limit_reached': True}})
             if mode == 'fail':
                 return self.reply({'error': 'synthetic-private-quota-marker'}, status=500)
             return self.reply({'private_field': 'synthetic-private-quota-marker', 'rate_limit': {

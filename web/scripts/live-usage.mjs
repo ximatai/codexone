@@ -78,12 +78,14 @@ try {
   await panel().getByLabel("起始日（UTC）").fill(today); await panel().getByLabel("结束日（UTC）").fill(today); await query();
   stage = "failed-read-retains-snapshot";
   await page.route("**/api/usage?*", route => route.abort());
+  await panel().getByLabel("执行模式").selectOption("compact");
   await panel().getByLabel("Key 标识").fill("synthetic-beta"); await query();
   await expect(panel().getByRole("alert")).toContainText("上次成功快照");
   await expect(panel().getByText(/当前结果/)).toContainText("synthetic-alpha · 上次成功快照");
   await expect(panel().getByRole("button", { name: "下一页", exact: true })).toBeDisabled();
+  await expect(panel().getByLabel("当前结果筛选")).toContainText("模式 全部");
   await capture("query-failure-desktop.png");
-  await page.unroute("**/api/usage?*"); await query();
+  await page.unroute("**/api/usage?*"); await panel().getByLabel("执行模式").selectOption(""); await query();
   await expect(panel().getByRole("alert")).toHaveCount(0);
   await expect(panel().locator("tbody tr")).toHaveCount(1);
   stage = "rotation-keeps-history";

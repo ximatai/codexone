@@ -139,13 +139,18 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
           while self.isAccepting && !Task.isCancelled {
-            let accounts = try await self.store.listAccounts(after: nil)
-            guard accounts.count <= 64 else { throw ExecutionError.capacity }
-            for account in accounts
-            where account.mode != .disabled
-              && (account.authorization == .ready || account.authorization == .refreshing)
-            {
-              self.enqueue(id: account.id, waiter: nil)
+            do {
+              let accounts = try await self.store.listAccounts(after: nil)
+              guard accounts.count <= 64 else { throw ExecutionError.capacity }
+              for account in accounts
+              where account.mode != .disabled
+                && (account.authorization == .ready || account.authorization == .refreshing)
+              {
+                self.enqueue(id: account.id, waiter: nil)
+              }
+            } catch ExecutionError.capacity {
+              // Passive observation yields to ordinary DB pressure. Do not turn a
+              // recoverable queue rejection into a failure of the entire Runtime.
             }
             try await Task.sleep(for: .milliseconds(self.intervalMilliseconds))
           }
