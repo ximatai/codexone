@@ -120,7 +120,7 @@ def verify_initializer(binary):
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
-def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None):
+def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None):
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
@@ -352,7 +352,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             if browser:
                 result = run(['node', str(REPO / 'web/scripts/install-image-ui.mjs')], timeout=90, ok=False,
                     data=json.dumps({'container': name, 'credential': admin,
-                        'output': str(REPO / 'artifacts/installation-ui')}).encode())
+                        'output': str(browser_output or REPO / 'artifacts/installation-ui')}).encode())
                 output = result.stdout + result.stderr
                 assert all(secret.encode() not in output for secret in secrets)
                 print(output.decode(), end='')
@@ -380,11 +380,12 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image')
+    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--browser-output', type=Path)
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
+    if args.browser_output: assert args.browser, '--browser-output requires --browser'
     verify_initializer(args.binary)
     if args.previous_image or args.incompatible_image: assert args.image
-    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image)
+    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image, args.browser_output)
 
 if __name__ == '__main__': main()
