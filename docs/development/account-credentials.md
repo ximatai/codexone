@@ -66,7 +66,7 @@ v4 不是自动升级。已有 v1/v2/v3 须停服显式 migrate，备份保存�
 
 ## 订阅账号池的 HTTP 入口配置
 
-`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
+`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`、`upstreamTransport`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
 
 ```json
 {
@@ -86,3 +86,5 @@ v4 不是自动升级。已有 v1/v2/v3 须停服显式 migrate，备份保存�
 HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 access 时至多加入一个共享刷新，未知结果不重放；生成 intent 后也不换账号重发。账号不可用、需要刷新、授权失败或刷新冲突返回安全错误码，不包含提供者正文或账号秘密。池配置的 native WS 升级需要另行接入与验收，不能从 HTTP 结果推导支持。
 
 就绪检查会用当前主密钥和存储 context 本地打开候选密文，错误密钥或全部解密失败返回未就绪。单个结构完整但无法解密的账号不遮蔽其他合格账号；派发也跳过该候选，关键数据库故障仍拒绝。检查不改变授权状态或请求上游，可解密的过期 access 仍由共享刷新处理。
+
+`upstreamTransport` 缺省/`http` 使用 HTTP 上游，`websocket` 为每个 HTTP Responses 请求建立一次选中账号的 WS 上游；对下游仍提供 JSON/SSE。独立 compact 使用同一身份的 HTTP 路径，传输选择进入策略版本但不改变价格版本。当前池下游 native 升级仍拒绝，须完成连接身份固定后另行启用。

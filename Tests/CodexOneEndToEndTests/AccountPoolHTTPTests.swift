@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import NIOWebSocket
 import Synchronization
 import Testing
 
@@ -27,7 +28,9 @@ private final class PoolHTTPState: Sendable {
   }
   let value = Mutex(State())
 }
-private final class PoolHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
+private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHandler,
+  @unchecked Sendable
+{
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
   let state: PoolHTTPState
@@ -137,7 +140,9 @@ private struct PoolHTTPHarness {
   let alice: String
   let bob: String
   var calls: [PoolHTTPState.Call] { state.value.withLock { $0.calls } }
-  static func open(_ oauth: OAuthHarness, wrongMaster: Bool = false) async throws -> Self {
+  static func open(_ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http")
+    async throws -> Self
+  {
     let state = PoolHTTPState()
     for id in ["a", "b"] {
       oauth.server.set(
@@ -159,15 +164,48 @@ private struct PoolHTTPHarness {
     }
     let listener = try await ServerBootstrap(group: oauth.group).childChannelInitializer {
       channel in
-      channel.pipeline.configureHTTPServerPipeline().flatMap {
-        channel.pipeline.addHandler(PoolHTTPHandler(state))
+      let http = PoolHTTPHandler(state)
+      if transport == "websocket" {
+        let upgrader = NIOWebSocketServerUpgrader(
+          maxFrameSize: 524_288,
+          shouldUpgrade: { channel, head in
+            let account = head.headers.first(name: "chatgpt-account-id") ?? ""
+            state.value.withLock { value in
+              if head.headers["authorization"]
+                != (value.expected[account].map { ["Bearer " + $0] } ?? [])
+                || !head.headers["x-client-private"].isEmpty
+              {
+                value.invalid += 1
+              }
+            }
+            return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
+          },
+          upgradePipelineHandler: { channel, head in
+            channel.pipeline.removeHandler(http).flatMap {
+              channel.pipeline.addHandler(
+                PoolWebSocketHandler(
+                  state, account: head.headers.first(name: "chatgpt-account-id") ?? ""))
+            }
+          })
+        return channel.pipeline.configureHTTPServerPipeline(
+          withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
+        ).flatMap { channel.pipeline.addHandler(http) }
+      }
+      return channel.pipeline.configureHTTPServerPipeline().flatMap {
+        channel.pipeline.addHandler(http)
       }
     }.bind(host: "127.0.0.1", port: 0).get()
     let configuration = try JSONDecoder().decode(
       AccountPoolConfiguration.self,
-      from: Data(
-        #"{"models":[{"id":"synthetic-text","inputMicrosPerMillion":1000000,"outputMicrosPerMillion":1000000}],"reservedMicros":1,"executionTimeoutSeconds":5}"#
-          .utf8))
+      from: JSONSerialization.data(withJSONObject: [
+        "models": [
+          [
+            "id": "synthetic-text", "inputMicrosPerMillion": 1_000_000,
+            "outputMicrosPerMillion": 1_000_000,
+          ]
+        ],
+        "reservedMicros": 1, "executionTimeoutSeconds": 5, "upstreamTransport": transport,
+      ]))
     let store: SQLiteExecutionStore
     if wrongMaster {
       await oauth.store.close()
@@ -235,9 +273,11 @@ private struct PoolHTTPHarness {
     try? await listener.close().get()
   }
 }
-private func withPoolHTTP(_ operation: (PoolHTTPHarness) async throws -> Void) async throws {
+private func withPoolHTTP(
+  transport: String = "http", _ operation: (PoolHTTPHarness) async throws -> Void
+) async throws {
   try await withOAuth(timeout: 3000) { oauth in
-    let harness = try await PoolHTTPHarness.open(oauth)
+    let harness = try await PoolHTTPHarness.open(oauth, transport: transport)
     do { try await operation(harness) } catch {
       await harness.close()
       throw error
@@ -434,5 +474,132 @@ func poolHTTPReadinessAllowsDecryptableExpiredCredentialsForOwnedRefresh() async
     }
     #expect(try await h.readiness().0 == 200)
     #expect(h.calls.isEmpty && h.oauth.server.counts.calls == 2)
+  }
+}
+
+private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Sendable {
+  typealias InboundIn = WebSocketFrame
+  typealias OutboundOut = WebSocketFrame
+  let state: PoolHTTPState
+  let account: String
+  init(_ state: PoolHTTPState, account: String) {
+    self.state = state
+    self.account = account
+  }
+  func handlerAdded(context: ChannelHandlerContext) {
+    state.value.withLock { $0.channels[ObjectIdentifier(context.channel)] = context.channel }
+  }
+  func channelInactive(context: ChannelHandlerContext) {
+    _ = state.value.withLock { $0.channels.removeValue(forKey: ObjectIdentifier(context.channel)) }
+    context.fireChannelInactive()
+  }
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    let frame = unwrapInboundIn(data)
+    guard frame.opcode == .text else {
+      if frame.opcode == .ping {
+        context.writeAndFlush(
+          wrapOutboundOut(.init(fin: true, opcode: .pong, data: frame.unmaskedData)), promise: nil)
+      } else {
+        context.close(promise: nil)
+      }
+      return
+    }
+    do {
+      let request = try JSONValue.decode(Data(frame.unmaskedData.readableBytesView))
+      guard request["type"]?.string == "response.create" else {
+        throw ExecutionError.invalidCommand
+      }
+      let count = state.value.withLock { value in
+        value.calls.append(
+          .init(
+            account: account, path: "/backend-api/codex/responses",
+            previous: request["previous_response_id"]?.string))
+        return value.calls.count
+      }
+      if request["input"]?.string == "abort" {
+        context.close(promise: nil)
+        return
+      }
+      var document: [String: JSONValue] = [
+        "id": .string("synthetic-ws-\(count)"), "object": .string("response"),
+        "model": .string("synthetic-text"), "status": .string("in_progress"), "output": .array([]),
+      ]
+      if let previous = request["previous_response_id"] {
+        document["previous_response_id"] = previous
+      }
+      var created: [String: JSONValue] = [
+        "type": .string("response.created"), "response": .object(document),
+      ]
+      document["status"] = .string("completed")
+      document["usage"] = .object([
+        "input_tokens": .number(2), "output_tokens": .number(1),
+        "input_tokens_details": .object(["cached_tokens": .number(0)]),
+      ])
+      var completed: [String: JSONValue] = [
+        "type": .string("response.completed"), "response": .object(document),
+      ]
+      if let lane = request["stream_id"] {
+        created["stream_id"] = lane
+        completed["stream_id"] = lane
+      }
+      let bytes = try [created, completed].map { try JSONValue.object($0).data() }
+      let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+      let send: @Sendable () -> Void = { [self] in
+        for data in bytes {
+          bound.value.writeAndFlush(
+            wrapOutboundOut(.init(fin: true, opcode: .text, data: ByteBuffer(data: data))),
+            promise: nil)
+        }
+      }
+      if request["input"]?.string == "hold" {
+        _ = context.eventLoop.scheduleTask(in: .milliseconds(400), send)
+      } else {
+        send()
+      }
+    } catch { context.close(promise: nil) }
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func poolHTTPWebSocketBridgeUsesSelectedAccountForJSONSSEAndCompact()
+  async throws
+{
+  try await withPoolHTTP(transport: "websocket") { h in
+    let first = try await h.request()
+    #expect(first.0 == 200)
+    let id = try #require(JSONValue.decode(first.1)["id"]?.string)
+    let selected = try #require(h.calls.first?.account)
+    let continued = try await h.request(stream: true, previous: id)
+    #expect(continued.0 == 200 && h.calls.count == 2 && h.calls.last?.account == selected)
+    #expect(String(decoding: continued.1, as: UTF8.self).contains("response.completed"))
+    let before = h.calls.count
+    #expect(try await h.request(previous: id, key: h.bob).0 == 400)
+    #expect(h.calls.count == before)
+    #expect(try await h.request(compact: true).0 == 200)
+    #expect(h.state.value.withLock { $0.invalid } == 0)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let settled = try await h.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='settled'")
+    }
+    #expect(settled == 3)
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func poolHTTPWebSocketBridgeBalancesInflightAndNeverReplaysAnAbort()
+  async throws
+{
+  try await withPoolHTTP(transport: "websocket") { h in
+    let first = Task { try await h.request("hold") }
+    try await awaitOAuth { h.calls.count == 1 }
+    #expect(try await h.request().0 == 200)
+    #expect(try await first.value.0 == 200)
+    #expect(h.calls[0].account != h.calls[1].account)
+    let count = h.calls.count
+    #expect(try await h.request("abort").0 == 502)
+    #expect(h.calls.count == count + 1)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let unknown = try await h.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+    }
+    #expect(unknown == 1)
   }
 }

@@ -6,6 +6,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   public let models: [SingleIdentityConfiguration.Model]
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
+  public let upstreamTransport: String?
   private struct Field: CodingKey {
     let stringValue: String
     let intValue: Int? = nil
@@ -16,7 +17,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     let values = try decoder.container(keyedBy: Field.self)
     guard
       values.allKeys.allSatisfy({
-        ["models", "reservedMicros", "executionTimeoutSeconds"].contains($0.stringValue)
+        ["models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport"].contains(
+          $0.stringValue)
       })
     else { throw ExecutionError.invalidCommand }
     models = try values.decode(
@@ -24,6 +26,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     reservedMicros = try values.decode(Int64.self, forKey: Field(stringValue: "reservedMicros")!)
     executionTimeoutSeconds = try values.decodeIfPresent(
       Int.self, forKey: Field(stringValue: "executionTimeoutSeconds")!)
+    upstreamTransport = try values.decodeIfPresent(
+      String.self, forKey: Field(stringValue: "upstreamTransport")!)
     try validate()
   }
   public static func load(path: String) async throws -> Self {
@@ -41,13 +45,15 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   public func validate() throws {
     try validateResponseModels(models)
     guard (0...1_000_000_000_000).contains(reservedMicros),
-      (1...120).contains(executionTimeoutSeconds ?? 120)
+      (1...120).contains(executionTimeoutSeconds ?? 120),
+      ["http", "websocket"].contains(upstreamTransport ?? "http")
     else { throw ExecutionError.invalidCommand }
   }
   var responses: ResponsesConfiguration {
     .init(
       models: models, upstreamBaseURL: SubscriptionOAuthProvider.dataOrigin,
-      executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: "http")
+      executionTimeoutSeconds: executionTimeoutSeconds,
+      upstreamTransport: upstreamTransport ?? "http")
   }
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
@@ -73,6 +79,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
               keyDigest(String(decoding: try encoder.encode(effective), as: UTF8.self))),
             "pricing": .string(pricing),
             "reservation": .number(Decimal(reservedMicros)),
+            "transport": .string(upstreamTransport ?? "http"),
             "timeout": .number(Decimal(executionTimeoutSeconds ?? 120)),
           ])), as: UTF8.self))
     return try .init(

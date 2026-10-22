@@ -10,9 +10,13 @@ struct WebSocketUpstream: Sendable {
   let group: any EventLoopGroup
   let configuration: ResponsesConfiguration
   let token: String?
+  var authorization: SubscriptionDataAccess? = nil
+  func authorized(_ authorization: SubscriptionDataAccess?) -> Self {
+    Self(group: group, configuration: configuration, token: token, authorization: authorization)
+  }
 
   func run(operation: @escaping @Sendable (WebSocketPeer) async throws -> Void) async throws {
-    let url = URLComponents(string: configuration.upstreamBaseURL)!
+    let url = URLComponents(string: authorization?.baseURL ?? configuration.upstreamBaseURL)!
     let host = url.host!
     let tls = url.scheme == "https"
     let tlsContext = try tls ? NIOSSLContext(configuration: .makeClientConfiguration()) : nil
@@ -39,7 +43,13 @@ struct WebSocketUpstream: Sendable {
                   NIOSSLClientHandler(context: tlsContext, serverHostname: host))
               }
               var headers: HTTPHeaders = ["host": url.port.map { host + ":" + String($0) } ?? host]
-              if let token { headers.add(name: "authorization", value: "Bearer " + token) }
+              if let authorization {
+                for header in authorization.headers {
+                  headers.add(name: header.name, value: header.value)
+                }
+              } else if let token {
+                headers.add(name: "authorization", value: "Bearer " + token)
+              }
               let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
                 maxFrameSize: 524_288,
                 upgradePipelineHandler: { channel, _ in

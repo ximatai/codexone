@@ -124,6 +124,7 @@ public struct ResponsesDataService: Service {
                 head.method == .GET
                 && ["/v1/responses", "/backend-api/codex/responses"].contains(path)
                 && configuration.upstreamTransport == "websocket"
+                && source.supportsNativeWebSocket
                 && head.headers["sec-websocket-protocol"].isEmpty
               // Decline extension offers by omitting negotiation headers; RSV remains forbidden.
               guard allowed else { return channel.eventLoop.makeSucceededFuture(nil) }

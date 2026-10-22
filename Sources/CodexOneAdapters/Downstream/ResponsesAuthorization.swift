@@ -12,6 +12,12 @@ enum ResponsesSource: Sendable {
     case .pool(let config, _, _, _, _): config.responses
     }
   }
+  var supportsNativeWebSocket: Bool {
+    switch self {
+    case .single: true
+    case .pool: false
+    }
+  }
   var tokenFile: String? {
     switch self {
     case .single(let config): config.upstreamTokenFile

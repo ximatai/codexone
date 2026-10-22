@@ -17,68 +17,78 @@ extension HTTPResponseExecution {
       guard authorization == nil else {
         throw GatewayProtocolError(503, "pool_websocket_unavailable")
       }
-      try peer.attachEvidence(lane: lane) { event in
-        if let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model) {
+      try await exchange(
+        request, context: context, model: model, peer: peer, lane: lane, emit: emit)
+      return nil
+    }
+  }
+
+  /// Performs one prepared wire turn under an already durable, owned execution context.
+  func exchange(
+    _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
+    peer: WebSocketPeer, lane: String = "",
+    emit: @escaping @Sendable (JSONValue) async throws -> Void
+  ) async throws {
+    try peer.attachEvidence(lane: lane) { event in
+      if let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model) {
+        try context.observeUsage(evidence)
+      }
+    }
+    defer { peer.detachEvidence(lane: lane) }
+    try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+      var create = request.document.object!
+      create.removeValue(forKey: "stream")
+      create["type"] = .string("response.create")
+      if request.mode == .warmup { create["generate"] = .bool(false) }
+      if !lane.isEmpty { create["stream_id"] = .string(lane) }
+      try await peer.send(.object(create))
+      var total = 0
+      var compaction = StreamCompaction()
+      while true {
+        let data = try await peer.next(lane: lane)
+        guard data.count <= 8_388_608 - total else {
+          throw GatewayProtocolError(502, "upstream_response_too_large")
+        }
+        total += data.count
+        guard data.count <= 262_144 else {
+          throw GatewayProtocolError(502, "upstream_event_too_large")
+        }
+        let event: JSONValue
+        do { event = try JSONValue.decode(data) } catch {
+          throw GatewayProtocolError(502, "invalid_upstream_event")
+        }
+        guard try webSocketLane(event) == lane else {
+          throw GatewayProtocolError(502, "invalid_upstream_lane")
+        }
+        if ["response.completed", "response.failed", "response.incomplete"].contains(
+          event["type"]?.string ?? ""),
+          let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model)
+        {
           try context.observeUsage(evidence)
         }
-      }
-      defer { peer.detachEvidence(lane: lane) }
-      try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
-        var create = request.document.object!
-        create.removeValue(forKey: "stream")
-        create["type"] = .string("response.create")
-        if request.mode == .warmup { create["generate"] = .bool(false) }
-        if !lane.isEmpty { create["stream_id"] = .string(lane) }
-        try await peer.send(.object(create))
-        var total = 0
-        var compaction = StreamCompaction()
-        while true {
-          let data = try await peer.next(lane: lane)
-          guard data.count <= 8_388_608 - total else {
-            throw GatewayProtocolError(502, "upstream_response_too_large")
-          }
-          total += data.count
-          guard data.count <= 262_144 else {
-            throw GatewayProtocolError(502, "upstream_event_too_large")
-          }
-          let event: JSONValue
-          do { event = try JSONValue.decode(data) } catch {
-            throw GatewayProtocolError(502, "invalid_upstream_event")
-          }
-          guard try webSocketLane(event) == lane else {
-            throw GatewayProtocolError(502, "invalid_upstream_lane")
-          }
-          if ["response.completed", "response.failed", "response.incomplete"].contains(
-            event["type"]?.string ?? ""),
-            let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model)
-          {
-            try context.observeUsage(evidence)
-          }
-          if request.mode == .warmup {
-            guard
-              [
-                "response.created", "response.in_progress", "response.completed", "response.failed",
-                "response.incomplete",
-              ].contains(event["type"]?.string ?? ""),
-              event["response"]?["output"] == nil || event["response"]?["output"]?.array == []
-            else { throw GatewayProtocolError(502, "invalid_upstream_warmup") }
-          }
-          let observation = try ProviderObservation(
-            event: event, model: model, functionNames: request.functionNames,
-            customToolNames: request.customToolNames,
-            expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-            allowCompaction: request.streamCompaction)
-          if request.streamCompaction { try compaction.observe(event) }
-          for object in observation.bindings { try await context.bind(object) }
-          if request.streaming {
-            try await emit(event)
-          } else if observation.terminal {
-            try await emit(event["response"]!)
-          }
-          if observation.terminal { break }
+        if request.mode == .warmup {
+          guard
+            [
+              "response.created", "response.in_progress", "response.completed", "response.failed",
+              "response.incomplete",
+            ].contains(event["type"]?.string ?? ""),
+            event["response"]?["output"] == nil || event["response"]?["output"]?.array == []
+          else { throw GatewayProtocolError(502, "invalid_upstream_warmup") }
         }
+        let observation = try ProviderObservation(
+          event: event, model: model, functionNames: request.functionNames,
+          customToolNames: request.customToolNames,
+          expectedPreviousResponseID: request.document["previous_response_id"]?.string,
+          allowCompaction: request.streamCompaction)
+        if request.streamCompaction { try compaction.observe(event) }
+        for object in observation.bindings { try await context.bind(object) }
+        if request.streaming {
+          try await emit(event)
+        } else if observation.terminal {
+          try await emit(event["response"]!)
+        }
+        if observation.terminal { break }
       }
-      return nil
     }
   }
 }

@@ -31,14 +31,21 @@ struct HTTPResponseExecution: Sendable {
     guard request.mode == .generation || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
-    if configuration.upstreamTransport == "websocket" {
-      try await webSocket.run { peer in
-        try await execute(request, requestID: requestID, peer: peer, emit: emit)
-      }
-      return
-    }
     guard let model = effectiveModels.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
+    }
+    if configuration.upstreamTransport == "websocket" {
+      try await gateway.execute(
+        model: request.model, references: request.references, requestID: requestID,
+        mode: request.mode
+      ) { context, authorization in
+        try await webSocket.authorized(authorization).run { peer in
+          try peer.beginTurn(compaction: request.streamCompaction)
+          try await exchange(request, context: context, model: model, peer: peer, emit: emit)
+        }
+        return nil
+      }
+      return
     }
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID, mode: request.mode
