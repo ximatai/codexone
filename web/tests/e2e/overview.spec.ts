@@ -27,16 +27,17 @@ test("connection failure provides a working retry", async ({ page }) => {
 
 test("a stalled service times out and the user can retry", async ({ page }, testInfo) => {
   test.setTimeout(25_000);
-  let calls = 0;
+  let stalled = true;
   await page.route("**/api/system", (route) => {
-    calls += 1;
-    if (calls > 1) return route.fulfill({ contentType: "application/json", body: fixture });
-    // Leave the first request unanswered to exercise the browser timeout.
+    if (!stalled) return route.fulfill({ contentType: "application/json", body: fixture });
+    // StrictMode may abort/reissue the initial read. Stall all initial reads
+    // until the user sees the timeout, instead of mistaking reissue for retry.
   });
   await page.goto("/");
   await expect(page.getByRole("status")).toBeVisible();
   await expect(page.getByRole("alert")).toBeVisible({ timeout: 12_000 });
   await page.screenshot({ path: testInfo.outputPath("timeout-retry-desktop.png"), fullPage: true });
+  stalled = false;
   await page.getByRole("button", { name: "重新连接" }).click();
   await expect(page.getByText("连接正常")).toBeVisible();
 });
