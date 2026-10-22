@@ -19,3 +19,8 @@
 !web/tests/**
 !deploy/
 !deploy/Dockerfile
+!scripts/
+!scripts/verify_protocol.py
+!scripts/verify_websocket.py
+!scripts/verify_images.py
+!scripts/verify_keys.py

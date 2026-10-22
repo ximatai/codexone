@@ -17,7 +17,9 @@ ORIGIN = 'https://admin.example.invalid'
 
 
 def run(command, *, data=None, ok=True, timeout=30):
-    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout)
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(('CODEXONE_', 'COMPOSE_'))}
+    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout, env=environment)
     if ok:
         assert result.returncode == 0, 'Synthetic installation command failed; private diagnostics withheld'
     return result
@@ -60,14 +62,27 @@ def verify_initializer(binary):
         for bad in ('codexone:latest', 'sha256:short', 'registry.example/${SECRET}@sha256:' + 'b' * 64):
             other = command.copy(); other[2] = str(parent / 'bad'); other[other.index('--image') + 1] = bad
             assert run(other, ok=False).returncode != 0 and not (parent / 'bad').exists()
+        for flag in ('--uid', '--gid'):
+            other = command.copy(); other[2] = str(parent / 'bad'); other[other.index(flag) + 1] = '0'
+            assert run(other, ok=False).returncode != 0 and not (parent / 'bad').exists()
         malformed = parent / 'pool.json'
         for payload in ('not-json', '[]', '{"padding":"' + 'x' * 65536 + '"}'):
             malformed.write_text(payload)
             other = command.copy(); other[2] = str(parent / 'bad')
             assert run([*other, '--pool-config', str(malformed)], ok=False).returncode != 0
             assert not (parent / 'bad').exists()
-        output = run(['docker', 'compose', '--project-directory', str(target), 'config', '--format', 'json']).stdout
+        # Ambient project/service settings must not select another installation.
+        original = {name: os.environ.get(name) for name in ('COMPOSE_FILE', 'CODEXONE_IMAGE')}
+        try:
+            os.environ['COMPOSE_FILE'] = 'synthetic-unrelated-compose.yaml'
+            os.environ['CODEXONE_IMAGE'] = 'synthetic-unrelated:latest'
+            output = run(['docker', 'compose', '--project-directory', str(target), 'config', '--format', 'json']).stdout
+        finally:
+            for name, value in original.items():
+                if value is None: os.environ.pop(name, None)
+                else: os.environ[name] = value
         config = json.loads(output)['services']['gateway']
+        assert config['image'] == IMAGE_ID
         assert config['read_only'] and config['network_mode'] == 'host' and config['restart'] == 'no'
         assert not config.get('ports') and config['user'].split(':')[0] != '0'
         assert all(secret not in output for secret in credentials)
@@ -85,7 +100,7 @@ def verify_initializer(binary):
     print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation, Compose isolation and binary config validation')
 
 
-def verify_runtime(image):
+def verify_runtime(image, browser=False):
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
@@ -130,6 +145,14 @@ def verify_runtime(image):
                 except AssertionError: pass
                 time.sleep(0.2)
             else: raise AssertionError('OCI candidate did not become live')
+            running = json.loads(run(['docker', 'inspect', name]).stdout)[0]
+            host = running['HostConfig']
+            assert host['ReadonlyRootfs'] and not host['Privileged'] and host['NetworkMode'] == 'host'
+            assert 'ALL' in host['CapDrop'] and 'no-new-privileges:true' in host['SecurityOpt']
+            assert host['Memory'] == 768 * 1024 * 1024 and host['PidsLimit'] == 128
+            assert all(option in host['Tmpfs']['/tmp'] for option in ('noexec', 'nosuid'))
+            mounts = {mount['Destination']: mount for mount in running['Mounts']}
+            assert mounts['/var/lib/codexone']['RW'] and not mounts['/run/codexone']['RW']
             assert request('/health/ready')[0] == 503
             status, html = request('/'); assert status == 200
             asset = re.search(rb'/assets/[^" ]+\.js', html); assert asset
@@ -156,7 +179,11 @@ def verify_runtime(image):
             assert run(['docker', 'exec', name, 'id', '-u']).stdout.strip() == str(uid).encode()
             manifest = json.loads(run(['docker', 'exec', name, 'cat', '/opt/release.json']).stdout)
             assert manifest['revision'] == identifier['Config']['Labels']['org.opencontainers.image.revision']
-            assert run(['docker', 'exec', name, 'sh', '-c', 'command -v swift || command -v node'], ok=False).returncode != 0
+            licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
+            pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
+            assert set(licenses) == {pin['identity'] for pin in pins}
+            run(['docker', 'exec', name, 'test', '-s', '/opt/codexone/LICENSE'])
+            assert run(['docker', 'exec', name, 'sh', '-c', 'command -v swift || command -v node || command -v python3'], ok=False).returncode != 0
             assert run(['docker', 'exec', name, 'touch', '/opt/codexone/forbidden'], ok=False).returncode != 0
             run(['docker', 'exec', name, 'touch', '/tmp/synthetic-writable'])
             locked = run([*compose, 'run', '--rm', 'gateway', '--migrate'], ok=False)
@@ -174,6 +201,14 @@ def verify_runtime(image):
                 except AssertionError: pass
                 time.sleep(0.2)
             assert status == 200 and key_id in [key['id'] for key in json.loads(body)['keys']]
+            if browser:
+                result = run(['node', str(REPO / 'web/scripts/install-image-ui.mjs')], timeout=90, ok=False,
+                    data=json.dumps({'container': name, 'credential': admin,
+                        'output': str(REPO / 'artifacts/installation-ui')}).encode())
+                output = result.stdout + result.stderr
+                assert all(secret.encode() not in output for secret in secrets)
+                print(output.decode(), end='')
+                assert result.returncode == 0, 'Packaged UI verification failed; private diagnostics withheld'
             result = run(['docker', 'logs', name])
             logs = result.stdout + result.stderr
             assert all(secret.encode() not in logs for secret in secrets)
@@ -184,9 +219,10 @@ def verify_runtime(image):
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image')
+    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true')
     args = parser.parse_args()
+    if args.browser: assert args.image, '--browser requires an actual OCI image'
     verify_initializer(args.binary)
-    if args.image: verify_runtime(args.image)
+    if args.image: verify_runtime(args.image, args.browser)
 
 if __name__ == '__main__': main()

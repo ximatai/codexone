@@ -15,6 +15,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify optimized Linux binary with synthetic socket failures
+        run: docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
       - name: Build from locked source
         run: docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$GITHUB_SHA" -f deploy/Dockerfile -t codexone:candidate .
       - name: Verify actual private installation

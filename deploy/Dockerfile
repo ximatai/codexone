@@ -20,6 +20,18 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
     && mkdir /output && cp .build/release/codexone /output/codexone
+RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
+    mkdir /output/licenses && cd .build/checkouts \
+    && find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
+       -exec cp --parents -- {} /output/licenses/ \;
+
+FROM backend AS verification
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/verify_protocol.py scripts/verify_websocket.py scripts/verify_images.py scripts/verify_keys.py /build/scripts/
+RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
+    && python3 scripts/verify_websocket.py --binary /output/codexone \
+    && python3 scripts/verify_images.py --binary /output/codexone
 
 FROM swift:${SWIFT_VERSION}-noble-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 curl ca-certificates \
@@ -40,6 +52,7 @@ RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
 COPY --from=backend /output/codexone /usr/local/bin/codexone
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
+COPY --from=backend /output/licenses/ /opt/codexone/licenses/
 ENV CODEXONE_DATA_DIRECTORY=/var/lib/codexone \
     CODEXONE_WEB_DIRECTORY=/opt/codexone/web
 USER 10001:10001

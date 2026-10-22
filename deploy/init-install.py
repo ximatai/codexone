@@ -21,8 +21,8 @@ def initialize(destination, image, origin, pool, uid, gid):
         raise ValueError('Use a literal ASCII management host without interpolation.')
     # Also rejects malformed and out-of-range ports without echoing the origin.
     _ = url.port
-    if uid <= 0 or gid < 0 or uid > 2147483647 or gid > 2147483647:
-        raise ValueError('Choose a non-root runtime UID and a valid GID.')
+    if uid <= 0 or gid <= 0 or uid > 2147483647 or gid > 2147483647:
+        raise ValueError('Choose non-root runtime UID and GID values.')
     if os.geteuid() != 0 and (uid != os.geteuid() or gid not in (os.getegid(), *os.getgroups())):
         raise ValueError('Runtime ownership must match this user, or initialize as root with explicit non-root UID/GID.')
     source = Path(pool)

@@ -7,13 +7,20 @@
 在干净源码提交上构建，不把账号、安装目录或构建缓存放进上下文：
 
 ```sh
+docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
   --build-arg VERSION=0.0.0-dev -f deploy/Dockerfile -t codexone:candidate .
 python3 scripts/verify_installation.py --image codexone:candidate
+# 本机有 Chrome 且已安装 web 锁文件依赖时，可增加 --browser 验收打包界面。
+# python3 scripts/verify_installation.py --image codexone:candidate --browser
 docker image inspect codexone:candidate --format '{{.Id}}'
 ```
 
-镜像标签和 `/opt/release.json` 保存源码 revision/version；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target 和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；运行层没有编译器、Node 或源码测试。
+`--browser` 使用临时 Chrome 上下文实际操作镜像中的 SPA 和管理 API，经隔离 curl relay 转发 HTTPS 路由以检查浏览器 cookie；它不证明宿主 TLS/Nginx 配置。截图仅含合成资料，凭证控件遮罩，保存在忽略的 artifacts 目录。
+
+镜像标签和 `/opt/release.json` 保存源码 revision/version；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images 与失败路径，之后组装运行层。运行层没有编译器、Node、Python 或源码测试。
+
+项目 LICENSE 位于 `/opt/codexone/LICENSE`；依赖 checkouts 内提供的 LICENSE/NOTICE/COPYING 文件按包路径收集到 `/opt/codexone/licenses`，与最终二进制一同交付。
 
 CI 的 Linux candidate 工作流在阶段出口手动触发，构建、合成安装测试并上传带源码归档/标识、镜像 ID 和 SHA256SUMS 的候选包。它不登录 registry 或推送/发布。下载包后先核对校验和，再 `docker load --input codexone-linux-amd64.tar.gz`；校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 
