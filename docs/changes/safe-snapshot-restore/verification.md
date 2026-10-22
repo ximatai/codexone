@@ -11,4 +11,6 @@
 
 初次失败：macOS 临时目录包含系统路径别名，SQLite NOFOLLOW 打开复制目标失败；改用 POSIX realpath 解析已独占创建的私有文件，保留最终 NOFOLLOW 校验后通过。SQLite Backup API 可能改变复制目标的页头，不能拿第二次复制结果与原文件逐字节比较；改为核对原备份复制前后摘要不变，并通过目标 SQLite schema/quick_check 验证副本。两个失败均没有成功 manifest/可接单恢复目标，不计通过。
 
-完整验证、Linux 跨平台、集中 review/修复结果在阶段出口补记。没有前端产品变更，不用重复原有浏览器/前端全集代替本闭环；操作界面是离线 CLI。Desktop、真实订阅、M5、公共部署、掉电、主密钥轮换、完整低磁盘保护和目标容量继续保留。
+集中 review 在实现提交 `7bd70ba` 后进行；发现新目标父目录未同步（P1）、跨 UTC 午夜冻结下限与 legacy 配置虚假就绪（两项 P2）。主 Agent 以 `704ebd5` 修复，12 项定向 Swift 和真实 CLI/HTTP/SIGKILL 回归通过，两位 reviewer 只读复审关闭；未委派实现。父目录同步故障注入证明失败不发布，不作为掉电证据。
+
+阶段出口：macOS arm64 / Swift 6.4，`./scripts/verify.sh --backend` exit 0：159 项 Swift 测试、格式/文档/依赖检查，以及快照、进程/执行/账号、HTTP/SSE/WS/context/压缩、Images、Key、session 与池配置的全部后端脚本通过。Linux amd64 / Swift 6.4.1 对应 `704ebd5` 的完整公开源码快照，2 CPU/2500 MiB、无网络、native 单并发：`swift test --build-system native --no-parallel -j 1 -Xswiftc -driver-batch-size-limit -Xswiftc 16` 的 159 项测试及同一组全部 Python 后端脚本、文档/架构/格式检查通过，exit 0、未 OOM，容器已回收。构建 190.51 秒；不是远端 CI、目标弱服务器容量或优化版 OCI 验收。原 v6 候选镜像保持原版本，未用其冒充本轮代码。没有前端产品变更，不用重复原有浏览器/前端全集代替本闭环；操作界面是离线 CLI。Desktop、真实订阅、M5、公共部署、掉电、主密钥轮换、完整低磁盘保护和目标容量继续保留。
