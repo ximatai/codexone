@@ -33,10 +33,12 @@ python3 deploy/init-install.py ../codexone-private \
   --image sha256:REPLACE_WITH_LOCAL_IMAGE_ID \
   --origin https://admin.example.invalid
 cd ../codexone-private
-docker compose run --rm gateway --check-config
-docker compose up -d
-docker compose ps
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py up -d
+python3 compose-install.py ps
 ```
+
+安装后的 Compose 操作统一使用 `python3 compose-install.py <command>`：入口固定私有 compose/env 文件、安装目录与唯一 project，剥离宿主 `COMPOSE_` / `CODEXONE_` 覆盖并拒绝命令行切换安装。不要用裸 Compose 命令绕过入口。Docker Engine/context 仍由操作者选择，须指向预期的本地 Linux Engine。
 
 初始化生成 0700 安装/secrets 目录和 0600 文件，并生成唯一 Compose project 与 data volume 名称；此时尚不创建卷。首次 Compose 会创建卷并执行隔离的 init-data：无网络、只挂数据、只为新空卷设定运行 UID/GID 与 0700 权限，非空卷归属不符明确拒绝；不递归改写既有文件。管理员秘密、账号主密钥只写入独立文件，不打印值、不进入 `.env`。先私下编辑 `secrets/pool.json` 的模型/profile、价格和边界，再以实际二进制 `--check-config` 校验。示例模型是占位符；没有账号时仍能管理，readiness 为 503。账户授权操作参见[账号凭证](account-credentials.md)，不要把私人配置提交到仓库。
 
@@ -51,13 +53,13 @@ gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止�
 ## 停止、升级与回退边界
 
 ```sh
-docker compose stop
+python3 compose-install.py stop
 # 私下修改 .env 中的不可变镜像引用；保持 data 与独立主密钥。
-docker compose run --rm gateway --check-config
-docker compose run --rm gateway --migrate
-docker compose up -d
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py run --rm gateway --migrate
+python3 compose-install.py up -d
 ```
 
-data 卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME；普通 `docker compose down` 保留卷。升级不得使用 `down -v` 或删除卷，数据和迁移备份均在卷内；不能用新的空卷冒充已有数据升级。迁移与在线服务共用实例锁；须先停服。普通启动拒绝不兼容旧 schema；显式迁移先产生私有一致性备份，再升级。保留迁移输出所指版本对应的主密钥和备份。新增安装目录不能替代已有安装；不要重新生成主密钥覆盖现有密文依赖。
+data 卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME；普通 `python3 compose-install.py down` 保留卷。升级不得使用 `down -v` 或删除卷，数据和迁移备份均在卷内；不能用新的空卷冒充已有数据升级。迁移与在线服务共用实例锁；须先停服。普通启动拒绝不兼容旧 schema；显式迁移先产生私有一致性备份，再升级。保留迁移输出所指版本对应的主密钥和备份。新增安装目录不能替代已有安装；不要重新生成主密钥覆盖现有密文依赖。
 
 同 schema 的兼容二进制回退与恢复旧库是两回事。恢复旧快照可能丢失新区间的已执行项，不得直接复制旧库后重启接单；O03/O04 要求维护态、披露缺失区间和审计额度基线。现有迁移命令不能替代完整 restore/reconcile 流程。迁移失败保持停止，检查私有资料并保留源库；不要自动重试覆盖或通过删除 data 绕过问题。旧服务替代、弱服务器混合容量和真实客户端兼容按 [验收定义](verification.md) 独立执行，具体交付状态只查 [STATUS](../../STATUS.md)。

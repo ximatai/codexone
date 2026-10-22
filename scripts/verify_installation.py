@@ -9,7 +9,6 @@ from http.cookies import SimpleCookie
 import re
 import subprocess
 import tempfile
-import uuid
 
 REPO = Path(__file__).resolve().parents[1]
 IMAGE_ID = 'sha256:' + 'a' * 64
@@ -17,9 +16,7 @@ ORIGIN = 'https://admin.example.invalid'
 
 
 def run(command, *, data=None, ok=True, timeout=30):
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(('CODEXONE_', 'COMPOSE_'))}
-    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout, env=environment)
+    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout)
     if ok:
         assert result.returncode == 0, 'Synthetic installation command failed; private diagnostics withheld'
     return result
@@ -72,11 +69,18 @@ def verify_initializer(binary):
             assert run([*other, '--pool-config', str(malformed)], ok=False).returncode != 0
             assert not (parent / 'bad').exists()
         # Ambient project/service settings must not select another installation.
-        original = {name: os.environ.get(name) for name in ('COMPOSE_FILE', 'CODEXONE_IMAGE')}
+        pollution = {'COMPOSE_FILE': 'synthetic-unrelated-compose.yaml',
+            'COMPOSE_PROJECT_NAME': 'synthetic-unrelated-project',
+            'CODEXONE_IMAGE': 'synthetic-unrelated:latest',
+            'CODEXONE_DATA_VOLUME': 'synthetic-unrelated-volume',
+            'CODEXONE_UID': '0', 'CODEXONE_ADMIN_PUBLIC_ORIGIN': 'http://synthetic.invalid'}
+        original = {name: os.environ.get(name) for name in pollution}
         try:
-            os.environ['COMPOSE_FILE'] = 'synthetic-unrelated-compose.yaml'
-            os.environ['CODEXONE_IMAGE'] = 'synthetic-unrelated:latest'
-            output = run(['docker', 'compose', '--project-directory', str(target), 'config', '--format', 'json']).stdout
+            os.environ.update(pollution)
+            launcher = ['python3', str(target / 'compose-install.py')]
+            output = run([*launcher, 'config', '--format', 'json']).stdout
+            for selector in ('--file=synthetic.yaml', '-fsynthetic.yaml', '--project-name', '-psynthetic'):
+                assert run([*launcher, 'config', selector], ok=False).returncode != 0
         finally:
             for name, value in original.items():
                 if value is None: os.environ.pop(name, None)
@@ -90,6 +94,9 @@ def verify_initializer(binary):
         assert next(mount for mount in config['volumes'] if mount['target'] == '/var/lib/codexone')['volume']['nocopy']
         assert config['depends_on']['init-data']['condition'] == 'service_completed_successfully'
         assert re.fullmatch('codexone-data-[0-9a-f]{24}', document['volumes']['data']['name'])
+        assert re.fullmatch('codexone-[0-9a-f]{24}', document['name'])
+        assert document['volumes']['data']['name'] == document['name'].replace('codexone-', 'codexone-data-', 1)
+        assert config['environment']['CODEXONE_ADMIN_PUBLIC_ORIGIN'] == ORIGIN
         assert config['image'] == IMAGE_ID
         assert config['read_only'] and config['network_mode'] == 'host' and config['restart'] == 'no'
         assert not config.get('ports') and config['user'].split(':')[0] != '0'
@@ -115,17 +122,17 @@ def verify_runtime(image, browser=False):
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
     assert re.fullmatch('[0-9a-f]{40}', identifier['Config']['Labels']['org.opencontainers.image.revision'])
-    project = 'codexone-install-' + uuid.uuid4().hex[:12]
-    name = project
     with tempfile.TemporaryDirectory(prefix='codexone-oci-') as temporary:
         root = Path(temporary) / 'install'
         _, uid, gid = initialize(root, identifier['Id'])
         settings = dict(line.split('=', 1) for line in (root / '.env').read_text().splitlines())
+        project = settings['COMPOSE_PROJECT_NAME']
+        name = project
         volume = settings['CODEXONE_DATA_VOLUME']
         assert re.fullmatch('codexone-data-[0-9a-f]{24}', volume)
         assert run(['docker', 'volume', 'inspect', volume], ok=False).returncode != 0
         admin = (root / 'secrets/admin').read_text()
-        compose = ['docker', 'compose', '--project-directory', str(root), '--project-name', project]
+        compose = ['python3', str(root / 'compose-install.py')]
         secrets = [admin, (root / 'secrets/master').read_text()]
         def request(path, *, body=None, token=None, headers=None, response_headers=False):
             settings = ['url = ' + json.dumps('http://127.0.0.1:18081' + path)]

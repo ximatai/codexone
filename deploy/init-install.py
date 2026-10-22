@@ -44,6 +44,7 @@ def initialize(destination, image, origin, pool, uid, gid):
                      f'CODEXONE_IMAGE={image}\nCODEXONE_UID={uid}\nCODEXONE_GID={gid}\n'
                      f'CODEXONE_ADMIN_PUBLIC_ORIGIN={origin.rstrip("/")}\n').encode(),
             'compose.yaml': Path(__file__).with_name('compose.yaml').read_bytes(),
+            'compose-install.py': Path(__file__).with_name('compose-install.py').read_bytes(),
         }
         for name, value in values.items():
             descriptor = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
