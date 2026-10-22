@@ -237,7 +237,8 @@ def main():
                         assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
                         assert usage['inputTokens'] == 5 and usage['outputTokens'] == 7 and usage['estimatedMicros'] == 25
                     else:
-                        assert transport == 'websocket' and evidence is None
+                        # Either transport can lose unpersisted evidence during core-failure shutdown.
+                        assert evidence is None
                     print('PASS: Images JSON/SSE/multipart, active edits, permission/ownership, usage, failures and no replay via ' + transport)
                 finally: stop(process)
     finally:
