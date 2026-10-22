@@ -7,7 +7,6 @@ their cgroups are separate. No Docker socket enters either container.
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-from contextlib import contextmanager
 import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +15,6 @@ import os
 import re
 from pathlib import Path
 import secrets
-import sqlite3
 import struct
 import subprocess
 import sys
@@ -88,6 +86,33 @@ def vm_snapshot():
         if key in names:values[key+'Bytes']=int(rest.split()[0])*1024
     values['loadAverage']=[float(value) for value in Path('/proc/loadavg').read_text().split()[:3]]
     return values
+
+
+def verify_recovery(observations, now):
+    assert all(any(row['phase']==phase for row in observations)
+               for phase in ('baseline','sustained','recovery')), 'Missing storage phase evidence'
+    recent=[row for row in observations if row['phase']=='recovery' and
+            0 <= now-row['sampledUnixSeconds'] <= 5]
+    assert len(recent)>=2, 'Recovery storage observations missing or stale'
+    assert all(row['coreAvailable'] and row['pressure']=='normal' and
+               row['regularQueued']==0 and row['criticalQueued']==0 for row in recent)
+
+
+def cleanup_owned(identifier, volume, known_ids):
+    # The owner exists before the first Engine mutation, including lost CLI results.
+    leftovers=run(['docker','ps','-aq','--filter','label=codexone.capacity='+identifier]).stdout.decode().splitlines()
+    assert len(leftovers)<=3 and all(re.fullmatch('[0-9a-f]{12,64}',item) for item in leftovers)
+    for container in set(leftovers+[item for item in known_ids if item]):
+        run(['docker','rm','--force',container],ok=False)
+    inspected=run(['docker','volume','inspect',volume],ok=False)
+    if inspected.returncode==0:
+        owned=json.loads(inspected.stdout)[0]
+        assert owned['Labels']['codexone.capacity']==identifier
+        run(['docker','volume','rm',volume])
+    else:
+        # Distinguish absence from an unavailable Engine or another inspect failure.
+        present=run(['docker','volume','ls','-q']).stdout.decode().splitlines()
+        assert volume not in present, 'Owned volume could not be inspected'
 
 
 def worker(root, duration, transport):
@@ -180,12 +205,13 @@ def worker(root, duration, transport):
             time.sleep(0.2)
         else:raise AssertionError('Gateway startup deadline')
         keys=[]
-        for index in range(4):
-            status,body=response(18081,'/api/keys',admin,{'principal':f'synthetic-capacity-{index}',
+        for index in range(5):
+            status,body=response(18081,'/api/keys',admin,{'principal':('synthetic-capacity-disconnect' if index==4 else f'synthetic-capacity-{index}'),
                 'models':[MODEL],'visionInput':True,'imageGeneration':True,'imageModels':['synthetic-image'],
                 'limits':{'requests':5000,'active':8,'unresolved':8,'budgetMicros':1000000,'unresolvedMicros':1000000}})
             assert status==201
             keys.append(json.loads(body)['secret'])
+        abrupt_key=keys.pop()
         def monitor():
             while not stop_monitor.is_set():
                 try:
@@ -197,7 +223,7 @@ def worker(root, duration, transport):
         monitor_thread=threading.Thread(target=monitor);monitor_thread.start()
         def operation(kind,index):
             nonce=secrets.token_hex(12)
-            started=time.monotonic(); token=keys[index%len(keys)]; status=0; bytes_read=0; failure=None
+            started=time.monotonic(); token=abrupt_key if kind=='abrupt' else keys[index%len(keys)]; status=0; bytes_read=0; failure=None
             try:
                 if kind in ('ws','warmup'):
                     with dial(18080,token=token) as sock:
@@ -282,9 +308,7 @@ def worker(root, duration, transport):
         sustained_elapsed=time.monotonic()-started
         phase('recovery');time.sleep(12)
         stop_monitor.set();monitor_thread.join(timeout=16);assert not monitor_thread.is_alive()
-        assert observations and observations[-1]['coreAvailable']
-        assert observations[-1]['pressure']=='normal'
-        assert observations[-1]['regularQueued']==0 and observations[-1]['criticalQueued']==0
+        verify_recovery(observations, time.time())
         normal=[item for item in results if item['kind']!='hold']
         for item in normal:
             if item['status']!=200:print('FAIL: mixed '+item['kind']+' status='+str(item['status'])+' class='+str(item['failure'])+' seconds='+str(round(item['seconds'],2)),flush=True)
@@ -302,7 +326,7 @@ def worker(root, duration, transport):
             'enabledOperations':kinds,'vmBefore':vm_before,'vmAfter':vm_snapshot(),'providerCalls':state['calls'],'providerPeakConcurrentEventConstruction':state['peakActive'],'operations':samples,
             'storage':observations,'expectedDisconnects':2,'providerReplayDetections':state['duplicates']}
         text=json.dumps(report)
-        assert admin not in text and all(key not in text for key in keys) and encoded[:64] not in text
+        assert admin not in text and all(key not in text for key in keys+[abrupt_key]) and encoded[:64] not in text
         private_json(root/'worker-result.json',report)
         phase('complete')
         print('PASS: bounded synthetic mixed load, overload rejection, disconnect and recovery',flush=True)
@@ -370,9 +394,10 @@ def orchestrate(args):
                 if os.getuid()==0:
                     for file in root.iterdir():os.chown(file,uid,gid)
                     os.chown(root,uid,gid)
-                run(['docker','volume','create','--label','codexone.capacity='+identifier,volume])
                 try:
+                    run(['docker','volume','create','--label','codexone.capacity='+identifier,volume])
                     run(['docker','run','--rm','--platform','linux/amd64','--network','none','--read-only','--user','0:0',
+                        '--label','codexone.capacity='+identifier,'--memory','64m','--memory-swap','64m','--cpus','1','--pids-limit','16',
                         '--cap-drop','ALL','--cap-add','CHOWN','--cap-add','FOWNER','--cap-add','DAC_OVERRIDE','--security-opt','no-new-privileges:true',
                         '--mount',f'type=volume,src={volume},dst=/var/lib/codexone,volume-nocopy','--entrypoint','sh',runtime['Id'],
                         '-ec',f'test -z "$(find /var/lib/codexone -mindepth 1 -maxdepth 1 -print -quit)"; chown {uid}:{gid} /var/lib/codexone; chmod 700 /var/lib/codexone'])
@@ -416,6 +441,17 @@ def orchestrate(args):
                     assert counts.get('intent',0)==0 and counts.get('unknown',0)==2
                     assert sum(counts.values())==report['providerCalls']
                     assert next(row['reserved'] for row in rows if row['state']=='unknown')==2
+                    ownership=json.loads(run(['docker','exec',gateway_id,'sqlite3','-readonly','-json','/var/lib/codexone/core.sqlite',
+                        "SELECT principal,state,COUNT(*) AS count,SUM(reserved) AS reserved, "
+                        "SUM((SELECT COUNT(*) FROM evidence e WHERE e.attempt=a.id AND json_extract(e.payload,'$.completeness')='complete')) AS completeEvidence "
+                        "FROM attempts a GROUP BY principal,state;"]).stdout)
+                    interrupted=[row for row in ownership if row['principal']=='synthetic-capacity-disconnect']
+                    assert len(interrupted)==1 and interrupted[0]['state']=='unknown'
+                    assert interrupted[0]['count']==2 and interrupted[0]['reserved']==2 and interrupted[0]['completeEvidence']==0
+                    ordinary=[row for row in ownership if row['principal']!='synthetic-capacity-disconnect']
+                    assert ordinary and all(row['state']=='settled' for row in ordinary)
+                    expected=sum(item['statuses'].get('200',0) for kind,item in report['operations'].items() if kind!='abrupt')
+                    assert sum(row['count'] for row in ordinary)==expected
                     recovery=[row for row in series if row['phase']=='recovery'];baseline=[row for row in series if row['phase']=='baseline']
                     assert len(recovery)>=3 and baseline
                     assert recovery[-1]['fds']<=max(row['fds'] for row in baseline)+8
@@ -429,7 +465,7 @@ def orchestrate(args):
                     assert (root/'admin').read_bytes() not in logs and str(root).encode() not in logs
                     assert b'synthetic-capacity:' not in logs and b'iVBORw0KGgo' not in logs
                     assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}',logs) is None
-                    report.update(runtimeLogsChecked=True,resources=series,dataFilesystem=filesystem,ledger=rows,runtimeExitCode=state['ExitCode'],runtimeOOMKilled=state['OOMKilled'])
+                    report.update(runtimeLogsChecked=True,ledgerOwnership=ownership,resources=series,dataFilesystem=filesystem,ledger=rows,runtimeExitCode=state['ExitCode'],runtimeOOMKilled=state['OOMKilled'])
                     reports.append(report)
                     print('PASS: '+transport+' bounded profile and preserved responsibility',flush=True)
                 except Exception:
@@ -443,16 +479,10 @@ def orchestrate(args):
                                 print(line,flush=True)
                     raise
                 finally:
-                    # A timed-out docker run can create a container before returning its ID.
-                    leftovers=run(['docker','ps','-aq','--filter','label=codexone.capacity='+identifier]).stdout.decode().splitlines()
-                    assert len(leftovers)<=3 and all(re.fullmatch('[0-9a-f]{12,64}',item) for item in leftovers)
-                    for container in set(leftovers+[item for item in (gateway_id,worker_id) if item]):
-                        run(['docker','rm','--force',container],ok=False)
-                    owned=json.loads(run(['docker','volume','inspect',volume]).stdout)[0]
-                    assert owned['Labels']['codexone.capacity']==identifier
-                    run(['docker','volume','rm',volume])
+                    cleanup_owned(identifier,volume,(gateway_id,worker_id))
         document={'runtimeImageID':runtime['Id'],'sourceRevision':runtime['Config']['Labels']['org.opencontainers.image.revision'],
-            'binaryReference':'candidate validation binary SHA-256','platform':{'imageArchitecture':'amd64','engineArchitecture':info['Architecture'],
+            'harnessImageID':harness['Id'],'harnessSHA256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'websocketHelperSHA256':hashlib.sha256(Path(__file__).with_name('verify_websocket.py').read_bytes()).hexdigest(),'platform':{'imageArchitecture':'amd64','engineArchitecture':info['Architecture'],
             'engineCPUs':info['NCPU'],'engineMemoryBytes':info['MemTotal'],'coResidentContainersAtStart':existing},
             'gatewayLimits':{'memoryBytes':768*MIB,'cpuQuota':1,'pids':128,'swapAllowed':False,'data':'Linux local volume'},
             'stimulusLimits':{'memoryBytes':512*MIB,'cpuQuota':1,'maximumSustainedInFlight':4},

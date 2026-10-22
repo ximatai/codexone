@@ -40,6 +40,14 @@ python3 scripts/verify_capacity.py --image codexone:v8-candidate \
 | WAL采样峰值 KiB / 回稳 | 567.3 / 0 | 458.7 / 0 |
 | 图片生成/编辑 p95 秒 | 0.322 / 0.837 | 0.533 / 1.282 |
 
-每组24路超载为8路完成、16路连接级关闭，约2.1秒内全部收敛；无提供者重放、无intent、恰有2个unknown/2单位未知预留。WS上游故意截断事件触发约10秒执行期限后保留unknown，不能声称上游立即停止。核心/pressure正常，最终writer队列/WAL归零，cgroup OOM计数0、swap上限0，运行进程正常停止exit0。RSS基线约57 MiB，回稳仍比冷启动高约18 MiB；没有以低于预算冒充完全回到冷启动或长期无泄漏。
+每组24路超载为8路完成、16路连接级关闭，约2.1秒内全部收敛；无提供者重放、无intent，汇总恰有2个unknown/2单位未知预留；初版报告未关联断流Key，不能从汇总证明逐请求归属。WS上游故意截断事件触发约10秒执行期限后保留unknown，不能声称上游立即停止。核心/pressure正常，最终writer队列/WAL归零，cgroup OOM计数0、swap上限0，运行进程正常停止exit0。RSS基线约57 MiB，回稳仍比冷启动高约18 MiB；没有以低于预算冒充完全回到冷启动或长期无泄漏。
 
 cgroup累计CPU约296.2/309.1秒，throttle累计约61.5/69.2秒；受1 CPU配额和amd64仿真影响，未达到固定4RPS应如实保留，不给原生硬件性能承诺。
+
+## 集中 review 修复
+
+主 Agent 提交 `5679307`/`3bc6428` 后，两名只读review集中提出三项P2：首次volume create超时缺清理owner、无标签root initializer无法回收；旧成功DTO可冒充回稳；unknown汇总未关联断流归属。主 Agent修复：首次Engine写前建立owner、初始化标签/资源限制；要求 baseline/sustained/recovery及至少两个5秒内回稳DTO；断流使用独立Key/主体，逐主体核对unknown/预留/无完整证据，其余派发项settled。初版长样本仅保留其实际汇总/性能证据，不补造归属。
+
+`python3 scripts/verify_capacity_guards.py --image codexone:v8-candidate --report artifacts/capacity-600/report.json`：两份真实长样本有实际recovery证据；删除回稳样本、时间陈旧、关键队列未清空均拒绝；真实Engine创建成功后注入volume CLI超时和仍运行initializer结果丢失，本次容器/卷全部回收。失败路径通过，不需重跑未改工作负载的600秒测量。
+
+修复后 `--duration 10 --transport both --output artifacts/capacity-review-regression` 完整通过：两配置的独立断流主体各恰有2个unknown/2单位预留/0完整证据，其他四主体派发项全settled；最新回稳DTO/队列/FD、无OOM/swap、正常停止和秘密日志检查通过。该短程是责任/失败保护回归，不替代600秒容量时长。

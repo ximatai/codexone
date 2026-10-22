@@ -23,7 +23,7 @@ python3 scripts/verify_capacity.py --image codexone:v8-candidate \
 
 合成用量明确报告 cached_tokens=0；漏报按产品契约成为 partial/unknown，触发未结额度保护，不能归因于容量不足或通过放宽限额绕过。压缩 opaque 输出每次唯一，不能跨独立任务复用。提供者对含唯一合成 invocation 的请求做有界指纹检测，重复调用直接使样本失败；不记录这些正文或秘密。
 
-压测结束核对：无 intent，恰有两个故意断流 unknown/两单位预留，提供者调用数等于持久 attempt 数；正常响应完成、超载有界拒绝。当前数据入口总连接上限为8，超限在协议解析前关闭连接；24路 hold 批次记录8路完成、16路连接失败属于连接级退让，不能写成16个 HTTP 429。回稳时核心正常、队列归零，检查当前 RSS 仍在预算内、FD 回到基线附近，cgroup 无 OOM、swap 上限0，最后正常停止。所有未知责任先入报告，再回收本次独立合成卷；这不是对运行中数据的清账。标签只允许删除本次资源，即使命令超时未返回容器 ID 也会按本次随机归属清理。
+压测结束核对：无 intent，断流使用独立 Key/主体，按主体核对其恰有两个 unknown/两单位预留且无完整用量证据，其他已派发正常项全为 settled；提供者调用数等于持久 attempt 数；正常响应完成、超载有界拒绝。当前数据入口总连接上限为8，超限在协议解析前关闭连接；24路 hold 批次记录8路完成、16路连接失败属于连接级退让，不能写成16个 HTTP 429。回稳时要求至少两个5秒内的新鲜存储DTO，基线/持续/回稳均有样本，核心正常、队列归零，检查当前 RSS 仍在预算内、FD 回到基线附近，cgroup 无 OOM、swap 上限0，最后正常停止。所有未知责任先入报告，再回收本次独立合成卷；这不是对运行中数据的清账。标签只允许删除本次资源，卷创建前即建立清理 owner，root 初始化容器也有本次标签和资源限制；即使命令超时未返回容器 ID 也会按本次随机归属清理。
 
 ## 指标解释和不能推出的结论
 
@@ -33,3 +33,12 @@ python3 scripts/verify_capacity.py --image codexone:v8-candidate \
 - `vmBefore/vmAfter` 给 Linux VM 内存/可用/swap/负载；报告还列 Engine CPU/架构与共存容器数量。1 CPU/768 MiB cgroup 不能代证约1.6 GiB宿主的OS/共存服务预算；本机约2.84 GiB共享、amd64仿真环境必须明确保留参考宿主差异。
 
 此包络覆盖单参考图、HTTP Images generation/edit、JSON/SSE与WS文本/warmup/compact；未覆盖6 MiB参考图合计/四图/所有最大帧组合、完整图片流/工具峰值、HTTP keepalive与长寿命多turn连接压力、真实提供者迟延分布、Swift async task tracing或实际旧服务混合负载。M5缓存未实现，不伪造缓存压力/恢复重播。低磁盘/WAL/备份不足的独立真实故障证据见[存储压力](storage-pressure.md)。结果只能用于当前合成包络和后续调参，不据此扩大已公布硬边界或宣布O14/首版完成；实际阶段状态与下一步见[STATUS](../../STATUS.md)。
+
+故障保护可独立运行：
+
+```sh
+python3 scripts/verify_capacity_guards.py --image codexone:v8-candidate \
+  --report artifacts/capacity-600/report.json
+```
+
+此检查用真实Engine创建卷/初始化容器，再注入CLI结果丢失，确认本次资源回收；并用报告验证恢复样本拒绝陈旧、缺失或未归零队列。不会重跑持续负载。初版600秒报告只有账本汇总；不能从它倒推unknown逐请求归属。独立断流Key的精确责任断言另经修复后的双配置短程回归验证，测量版本和修复版本分别保留，不混写。
