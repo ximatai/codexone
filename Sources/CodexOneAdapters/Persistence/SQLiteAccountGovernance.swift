@@ -66,7 +66,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
   {
     try Self.validateAccountID(id)
     try Self.validateAccountID(intent)
-    return try await perform { db in
+    return try await perform(admission: true) { db in
       try db.transaction {
         let stored = try Self.loadAccount(db, id)
         let old = stored.account

@@ -18,6 +18,14 @@
 
 SQLite v3 的账号/事件与既有执行/Key 在同一核心库，复用普通有界队列；结束刷新使用 critical 配额。普通审计容量同时计算未完成刷新的一次结束预留，另为全部账号真实禁用预留位置。普通启动在同一事务内恢复执行 unknown 和刷新 auth_uncertain；任一步失败不发布 store。迁移命令不提前恢复状态，流程见 [operations](../specs/operations.md)。
 
+## 共享刷新寿命
+
+Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `AccountRefreshProvider`；自己不依赖加密或 HTTP 框架。Service 必须先运行才接收工作，一次实例停止后不可重新开放。相同 identity/revision 合并等待者，返回相同持久新版本；不同 revision 冲突。身份/等待者/并发和期限见 I14，容量在创建网络任务之前取得。
+
+请求取消只撤销等待；共享任务仍由 Service 负责，结果不保留为无期限结果缓存。Service 停止则通知每个有界工作，尚未派发的队列不开始刷新，运行中的提供者取消并 await。底层 adapter 必须响应取消；截止期限不能强制结束任意忽略取消的 Swift 函数，因此 fake provider 测试不能替代后续真实网络验证。提供者错误被映射为安全刷新错误；不记录私有错误正文。
+
+核心库一旦写失败，开始刷新走与执行准入相同的故障门，不能继续消耗令牌。完成/失败标记仍能尝试关键写入；失败时留下持久 intent，下次启动归纳为 uncertain。该 owner 不负责自动循环刷新 uncertain 或把失败当成可安全重新调用提供者的信号。
+
 ## 合成验证
 
 后端统一验证包含密码学/文件/SQLite 测试与 `scripts/verify_accounts.py`。后者控制独立 `ExecutionProbe`：在刷新 intent 前、intent 后及完成后真实 SIGKILL，再打开同一个临时库核对版本/状态、未知刷新不能再次开始、DB/WAL 不含 token 或主密钥。它不连接提供者、不读取个人登录文件，不证明真实刷新协议或账号池可路由；SIGKILL 也不是掉电验收。

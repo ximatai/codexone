@@ -19,3 +19,11 @@ bace11b 的 reviewer 实证 P2：域允许合计 32 KiB 的合法 token，其中
 修复后 4 个凭证/应用定向测试通过，扩展的真实 SQLite 用例再次单独通过。reviewer 独立完成原提交的 8 个相关 Swift 测试与三个 SIGKILL 场景，未发现其他阻塞问题。98f9746 复审关闭 P2，无新增阻塞；reviewer 独立运行三项定向测试通过，包括最大 slash 与真实 SQLite 刷新。
 
 bace11b 精确快照在 Linux amd64 / Swift 6.4 本地容器完整后端验证通过：60 个 Swift 测试和全部脚本（含三组账号 SIGKILL），exit 0。98f9746 修复快照另在同平台重建后通过 4 个凭证/用例测试及三组真实 SIGKILL，exit 0。均单并发、2 CPU/2500 MiB，本地模拟而非弱服务器/远程 CI；容器正常退出并已回收。修复快照没有重复整个后端，完整结果仅对应原提交，边界回归单独验证。
+
+## 2026-10-22 · Runtime 共享刷新切片
+
+主 Agent 实现 `AccountRefreshSupervisor` 和 Core 端口，未接真实提供者或开放账号 API。`./scripts/verify.sh --backend` 在 macOS arm64 / Swift 6.4 完整通过：66 个 Swift 测试和全部进程/协议脚本。新增 5 个 Runtime 测试覆盖共享刷新的一人/全部等待者取消、64 个立即取消等待者的竞态、身份/全局/每身份等待容量、revision 冲突、并行度、截止期限、父取消、原始提供者错误脱敏及真实 ServiceLifecycle 子服务故障关闭。实际 SQLite 核对未派发队列不写 intent，已派发中断变 uncertain，成功仅提交一次新版本，provider 活动任务归零后 owner 才返回。
+
+自我复盘增加一项持久层修正与第 6 个新增测试：开始刷新使用与执行准入相同的已失败 DB 门。真实事务写故障后去掉故障触发器，库已恢复可写，但受控重启前仍拒绝新刷新 intent，账号元数据不变，不能继续消耗外部令牌。结束写仍保留 critical 配额。关闭时 provider 的取消与停止信号可能同时完成，外部错误统一按 owner 已关闭处理，不把此竞态报告成提供者故障。
+
+资源由 Service 拥有，实际网络端口契约要求响应取消；这些睡眠/取消式合成 provider 测试不证明未来 AHC socket 的关闭、令牌 wire 或真实订阅授权。具体适配、生产组装与账号池仍待后续切片；本切片提交后 review/Linux 验证待执行。

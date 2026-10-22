@@ -228,3 +228,32 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   #expect(try cipher.open(stored.envelope, context: context).refreshToken == maximum.refreshToken)
   await store.close()
 }
+
+@Test func storageFailureStopsFurtherRefreshIntentsEvenIfDatabaseBecomesWritable() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
+  let app = AccountCredentials(store: store, protection: cipher)
+  let credential = try AccountCredential(
+    accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: nil,
+    expiresAtUnixSeconds: 2_000_000_000)
+  let account = try await app.importVerified(
+    id: "account", namespace: "synthetic/account", credential: credential)
+  try rawSQL(
+    path,
+    "CREATE TRIGGER fail_account_write BEFORE INSERT ON account_events BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+  )
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await store.setAccountMode(id: account.id, revision: account.revision, mode: .enabled)
+  }
+  #expect(!store.isAvailable)
+  try rawSQL(path, "DROP TRIGGER fail_account_write")
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await app.beginRefresh(id: account.id, revision: account.revision)
+  }
+  #expect(try await store.accountCredential(id: account.id).account == account)
+  await store.close()
+}
