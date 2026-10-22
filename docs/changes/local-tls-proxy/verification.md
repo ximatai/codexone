@@ -13,4 +13,6 @@
 
 失败记录：初版新夹具误将 logout 成功写为 204、手写流请求漏 Content-Type，修正为已有契约后通过；新增半截上传断言仅接受 408，实测 Nginx 流式上传可直接断连，改为验证有界关闭且无 dispatch；Linux 只读测试暴露默认临时目录不可写，显式设置所有测试临时路径后通过。未放宽产品限制。后两项修复后仅重跑 TLS 定向测试，未重复未改变的 Swift/前端/原有协议全集。
 
+集中 review：UI reviewer 未发现明确问题；后端 reviewer 发现 P2 部分失败清理缺陷。主 Agent 改用立即注册的独立 owner 清理，保证 Nginx 关闭断言不能跳过网关/provider，早期文件写失败也关闭已获取 socket；Nginx 独立进程组，master 异常时回收 worker。macOS `--cleanup-failure-only` 注入私有文件写失败与 master SIGKILL，确认所有 owner/监听器回收；另定向验证 Host/Origin 丢失非默认端口拒绝。Linux release 完整 TLS harness（含新失败注入）通过，未重复浏览器/Swift/前端全集。
+
 候选 CI 已接入同一 Linux TLS 命令，尚未远程运行。测试扩展中的 Nginx/Python/OpenSSL CLI 不进入产品 runtime。Desktop、真实订阅、M5 已有输出恢复、用户真实域名/公共 CA/公网接入、弱服务器容量、维护/恢复与旧服务替代仍不在本次通过范围。

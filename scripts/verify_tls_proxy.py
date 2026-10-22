@@ -2,7 +2,7 @@
 """Real local TLS/Nginx sockets, synthetic upstream, private ledger and optional Chrome."""
 import argparse
 import base64
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import http.client
 from http.cookies import SimpleCookie
@@ -12,6 +12,7 @@ import os
 import re
 from pathlib import Path
 import secrets
+import signal
 import shutil
 import socket
 import sqlite3
@@ -20,6 +21,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from unittest.mock import patch
 
 from verify_protocol import start, stop, latest
 from verify_websocket import exact, send, receive, turn
@@ -177,66 +179,96 @@ class Proxy:
         self.config.write_text('worker_processes 1;\npid ' + quoted(root / 'nginx.pid') + ';\nerror_log ' + quoted(root / 'error.log') + ' crit;\nevents { worker_connections 64; }\nhttp { access_log off; client_body_temp_path ' + quoted(root / 'bodies') + ';\n' + temporary_paths + example + '\n}\n')
         command([nginx, '-e', str(root / 'error.log'), '-p', str(root), '-c', str(self.config), '-t'])
         self.logs = (root / 'process.log').open('w+b')
-        self.process = subprocess.Popen([nginx, '-e', str(root / 'error.log'), '-p', str(root), '-c', str(self.config), '-g', 'daemon off;'], stdout=self.logs, stderr=self.logs)
+        try:
+            self.process = subprocess.Popen([nginx, '-e', str(root / 'error.log'), '-p', str(root), '-c', str(self.config), '-g', 'daemon off;'], stdout=self.logs, stderr=self.logs, start_new_session=True)
+        except BaseException:
+            self.logs.close()
+            raise
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.terminate()
-            try: self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill(); self.process.wait(timeout=3)
-        self.logs.close()
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try: self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self.process.wait(timeout=3)
+        finally:
+            # A crashed/killed master can leave its worker holding the listeners.
+            try: os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            # In a PID-1 test container orphan workers can become our children.
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    child, _ = os.waitpid(-self.process.pid, os.WNOHANG)
+                    if child == 0:
+                        time.sleep(0.02)
+                        continue
+                except ChildProcessError: break
+            self.logs.close()
         assert self.process.returncode == 0, 'Nginx did not exit gracefully'
+
+
+def finish_gateway(process, root, known_secrets, release):
+    release.set()
+    try:
+        process.terminate(); process.wait(timeout=10)
+        logs = process.stdout.read(131073)
+        assert process.returncode == 0 and len(logs) < 131072
+        assert str(root).encode() not in logs
+        assert all(value.encode() not in logs for value in known_secrets)
+        assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', logs) is None
+    finally: stop(process)
+
+
+def finish_provider(provider, thread):
+    provider.release.set(); provider.shutdown(); thread.join(timeout=2)
+    assert not thread.is_alive(), 'Synthetic provider loop did not stop'
 
 
 @contextmanager
 def fixture(args, parent, tls, context, transport):
-    provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticProvider)
-    provider.daemon_threads = True
-    provider.calls = provider.connections = 0
-    provider.guard = threading.Lock()
-    provider.entered = threading.Event(); provider.release = threading.Event(); provider.cancelled = threading.Event()
-    thread = threading.Thread(target=provider.serve_forever, daemon=True); thread.start()
-    root = parent / transport; root.mkdir(mode=0o700)
-    admin_secret = secrets.token_urlsafe(40)
-    admin = root / 'admin'; admin.write_text(admin_secret); admin.chmod(0o600)
-    public_ports = reserve_ports()
-    config = root / 'identity.json'
-    config.write_text(json.dumps(dict(managedKeys=True, namespace='synthetic-tls', identity='synthetic-account',
-        reservedMicros=10, executionTimeoutSeconds=8, upstreamTransport=transport,
-        upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1',
-        models=[dict(id=MODEL, inputMicrosPerMillion=0, outputMicrosPerMillion=0,
-                     catalog=dict(baseInstructions='Explicit synthetic TLS fixture guidance'))])))
-    config.chmod(0o600)
-    process = proxy = None
-    try:
+    # Register each owner immediately. ExitStack continues every callback even
+    # when an earlier close or its verification raises.
+    with ExitStack() as owners:
+        root = parent / transport; root.mkdir(mode=0o700)
+        provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticProvider)
+        owners.callback(provider.server_close)
+        provider.daemon_threads = True
+        provider.calls = provider.connections = 0
+        provider.guard = threading.Lock()
+        provider.entered = threading.Event(); provider.release = threading.Event(); provider.cancelled = threading.Event()
+        admin_secret = secrets.token_urlsafe(40)
+        admin = root / 'admin'; admin.write_text(admin_secret); admin.chmod(0o600)
+        public_ports = reserve_ports()
+        config = root / 'identity.json'
+        config.write_text(json.dumps(dict(managedKeys=True, namespace='synthetic-tls', identity='synthetic-account',
+            reservedMicros=10, executionTimeoutSeconds=8, upstreamTransport=transport,
+            upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1',
+            models=[dict(id=MODEL, inputMicrosPerMillion=0, outputMicrosPerMillion=0,
+                         catalog=dict(baseInstructions='Explicit synthetic TLS fixture guidance'))])))
+        config.chmod(0o600)
+        thread = threading.Thread(target=provider.serve_forever, daemon=True); thread.start()
+        owners.callback(finish_provider, provider, thread)
         process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin,
             web_directory=args.web.resolve(), admin_public_origin=f'https://localhost:{public_ports[1]}')
+        known_secrets = [admin_secret]
+        owners.callback(finish_gateway, process, root, known_secrets, provider.release)
         proxy = Proxy(root / 'proxy', tls, ports, public_ports, args.nginx)
-        fixture = dict(root=root, provider=provider, process=process, proxy=proxy, ports=public_ports, context=context,
-                       admin=admin_secret, secrets=[admin_secret], origin=f'https://localhost:{public_ports[1]}')
+        owners.callback(proxy.close)
+        value = dict(root=root, provider=provider, providerThread=thread, gatewayPorts=ports,
+            process=process, proxy=proxy, ports=public_ports, context=context,
+            admin=admin_secret, secrets=known_secrets, origin=f'https://localhost:{public_ports[1]}')
         deadline = time.monotonic() + 5
         while True:
             assert proxy.process.poll() is None, 'Private Nginx exited'
             try:
-                if request(fixture, 'admin', 'GET', '/health/live')[0] == 200: break
+                if request(value, 'admin', 'GET', '/health/live')[0] == 200: break
             except OSError: pass
             assert time.monotonic() < deadline, 'Private TLS proxy did not listen'
             time.sleep(0.05)
-        yield fixture
-    finally:
-        provider.release.set()
-        if proxy: proxy.close()
-        if process:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-                logs = process.stdout.read(131073)
-                assert process.returncode == 0 and len(logs) < 131072
-                assert str(root).encode() not in logs and admin_secret.encode() not in logs
-                assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', logs) is None
-            finally: stop(process)
-        provider.shutdown(); provider.server_close(); thread.join(timeout=2)
+        yield value
 
 
 def connection(f, plane):
@@ -287,7 +319,9 @@ def admin_checks(f, key):
     forged = {'Origin': origin, 'Host': 'wrong.example.invalid', 'Forwarded': 'host=localhost;proto=https',
               'X-Forwarded-Host': origin.removeprefix('https://'), 'X-Forwarded-Proto': 'https'}
     assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, forged)[0] == 403
-    assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': 'https://wrong.example.invalid'})[0] == 403
+    for bad_origin in ('https://wrong.example.invalid', 'https://localhost'):
+        assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': bad_origin})[0] == 403
+    assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': origin, 'Host': 'localhost'})[0] == 403
     status, headers, body = request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': origin})
     assert status == 200
     cookie = SimpleCookie(); cookie.load(headers['set-cookie']); session = cookie['__Host-codexone_admin']
@@ -393,7 +427,7 @@ def timeout_checks(f, key):
     path.write_text(path.read_text().replace('proxy_read_timeout 130s;', 'proxy_read_timeout 1s;').replace('client_body_timeout 30s;', 'client_body_timeout 1s;'))
     proxy.logs = (proxy.root / 'process.log').open('a+b')
     command([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-t'])
-    proxy.process = subprocess.Popen([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-g', 'daemon off;'], stdout=proxy.logs, stderr=proxy.logs)
+    proxy.process = subprocess.Popen([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-g', 'daemon off;'], stdout=proxy.logs, stderr=proxy.logs, start_new_session=True)
     # Readiness uses a real TLS handshake, independent of arbitrary sleep.
     deadline = time.monotonic() + 5
     while True:
@@ -445,6 +479,41 @@ def browser_checks(f, pin):
     assert result.returncode == 0, 'Real HTTPS browser check failed; private diagnostics withheld'
 
 
+def cleanup_failure_checks(args, root, tls, context):
+    # A private-file failure after the listening socket was acquired must close it.
+    early = root / 'early-failure'; early.mkdir(mode=0o700)
+    acquired = []
+    server_type = ThreadingHTTPServer
+    def track_server(*arguments, **keywords):
+        server = server_type(*arguments, **keywords); acquired.append(server)
+        return server
+    with patch.dict(fixture.__wrapped__.__globals__, ThreadingHTTPServer=track_server):
+        with patch.object(Path, 'write_text', side_effect=OSError('Synthetic private-file failure')):
+            try:
+                with fixture(args, early, tls, context, 'http'): raise AssertionError('Setup failure was not injected')
+            except OSError: pass
+    assert len(acquired) == 1 and acquired[0].fileno() == -1
+    # The Nginx master dies after readiness; its worker/group and every other
+    # acquired owner must still be reaped despite close's non-zero assertion.
+    late = root / 'nginx-failure'; late.mkdir(mode=0o700)
+    value = None
+    try:
+        with fixture(args, late, tls, context, 'http') as value:
+            value['proxy'].process.kill(); value['proxy'].process.wait(timeout=3)
+    except AssertionError as error:
+        assert str(error) == 'Nginx did not exit gracefully'
+    else: raise AssertionError('Abnormal Nginx exit was not reported')
+    assert value is not None
+    assert value['process'].poll() == 0 and value['process'].stdout.closed
+    assert value['proxy'].logs.closed and value['provider'].fileno() == -1
+    assert not value['providerThread'].is_alive()
+    for port in [*value['ports'], *value['gatewayPorts'].values()]:
+        with socket.socket() as client:
+            client.settimeout(1)
+            assert client.connect_ex(('127.0.0.1', port)) != 0, 'Failed fixture retained a listener'
+    print('PASS: injected private-file/Nginx-master failure reclaims provider, gateway, Nginx worker group and listeners')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
@@ -452,6 +521,7 @@ def main():
     parser.add_argument('--nginx', default=shutil.which('nginx'))
     parser.add_argument('--openssl', default=shutil.which('openssl'))
     parser.add_argument('--browser', action='store_true')
+    parser.add_argument('--cleanup-failure-only', action='store_true')
     args = parser.parse_args()
     assert args.nginx and args.openssl and (args.web / 'index.html').is_file(), 'Nginx, OpenSSL and built SPA are required'
     previous = os.umask(0o077)
@@ -459,6 +529,9 @@ def main():
         with tempfile.TemporaryDirectory(prefix='codexone-tls-') as temporary:
             root = Path(temporary); tls = root / 'tls'; tls.mkdir(mode=0o700)
             context, pin = certificate(tls, args.openssl)
+            if args.cleanup_failure_only:
+                cleanup_failure_checks(args, root, tls, context)
+                return
             for transport in ('http', 'websocket'):
                 with fixture(args, root, tls, context, transport) as f:
                     key = token(f)
@@ -473,6 +546,7 @@ def main():
                             assert all(secret.encode() not in contents for secret in f['secrets'])
                             assert str(root).encode() not in contents
                             assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', contents) is None
+            cleanup_failure_checks(args, root, tls, context)
             print('PASS: actual local TLS/Nginx stage; synthetic upstream only, no Desktop/subscription/M5 or target-host claim')
     finally: os.umask(previous)
 
