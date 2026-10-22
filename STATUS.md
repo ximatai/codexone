@@ -69,11 +69,13 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，Desktop测试准备的账号管理闭环阶段出口通过（`ef0f8d3`）：账号列表→授权/重新授权→策略→额度健康详情统一组件和抽屉，保留CAS/未知写锁/共享会话、抽屉内失败重读和回调清除。macOS完整前端43项及最终17项账号相关回归、真实Chrome合成OAuth/失败链路/大屏操作与Linux amd64静态构建通过，两位subagent集中review无新增P1/P2。下一步补长连接和最大图片边界，再冻结本地测试候选；开始真实Desktop前讨论操作方式，真实订阅调用暂不授权。证据见[测试准备](docs/changes/desktop-test-readiness/verification.md)。
+
 2026-10-23，前端管理工作区优化：本地阶段出口通过。实现 `4be9f5b`、编辑回归修复 `fa3b82a`、许可打包修正 `fa509c2` / `5eefe37`，集中review及复审关闭。
 
 密钥列表→创建/编辑抽屉→独立用量路由已可操作；共享会话清除私有视图、跨导航保留未知写锁，秘密不进入URL/持久缓存/Query。保持严格CSP，移除重复登录和不必要的副标题；账号沿用业务控制逻辑并接入共享会话，全面组件迁移留待后续。较大管理资源暴露的提前关闭问题已改为等待最终flush，保留大小/期限边界。
 
-macOS完整前端40项/3项Chrome、review后4项Key定向回归、Swift175项、真实管理API/1MiB并发慢读及断开、实际密钥/用量/账号/图片和HTTPS操作通过。Linux amd64优化程序、静态构建、真实管理API/大资源socket、新测试镜像安装迁移/持久化/重启及Chrome操作通过；未重复未改动的Linux协议全集。阶段证据见[管理工作区验证](docs/changes/admin-workspace/verification.md)。新测试候选为 `codexone:admin-workspace`，来源 `5eefe37`，现有v8归档候选未替换；下一前端闭环是账号列表→授权详情→额度观测的组件和交互统一。Desktop、真实订阅、M5、O14和目标宿主缺口继续保留。
+macOS完整前端40项/3项Chrome、review后4项Key定向回归、Swift175项、真实管理API/1MiB并发慢读及断开、实际密钥/用量/账号/图片和HTTPS操作通过。Linux amd64优化程序、静态构建、真实管理API/大资源socket、新测试镜像安装迁移/持久化/重启及Chrome操作通过；未重复未改动的Linux协议全集。阶段证据见[管理工作区验证](docs/changes/admin-workspace/verification.md)。新测试候选为 `codexone:admin-workspace`，来源 `5eefe37`，现有v8归档候选未替换；账号闭环随后另已完成，见最新记录。Desktop、真实订阅、M5、O14和目标宿主缺口继续保留。
 
 2026-10-22，M6 当前混合容量包络阶段出口通过（脚本 `5679307`，review 修复 `5e74039`）：
 

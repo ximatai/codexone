@@ -47,6 +47,7 @@ async function finishAuthorization(buttonName) {
   await page.getByRole("button", { name: "验证并保存", exact: true }).click();
   stage = prefix + "-confirmed";
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
+  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
   await expect(page.getByRole("button", { name: "重新读取账号", exact: true })).toBeEnabled();
 }
 try {
