@@ -19,7 +19,7 @@
 
 输入/输出 DTO 与领域对象分离：时间为 Unix UTC 秒，金额为微单位估算，limits 字段包括 requests/active/unresolved/budgetMicros/unresolvedMicros。创建/轮换仅在成功响应返回一次 secret，列表与普通更新不返回原文或摘要；若成功响应丢失，应查询元数据后显式轮换，不能找回旧原文。更新/轮换携 revision，冲突返回 409；未知字段拒绝。错误 envelope 仅含安全 code/message/request_id，响应 no-store。
 
-管理入口最多 32 个连接，Key 管理用例最多 16 个并发，另受数据库普通队列容量约束。NIO 在进入 Vapor 路由前收齐正文：最多 8 KiB，从接受连接开始绝对读取期限 10 秒，超时关闭连接、不派发用例，持续小片段不能延长期限，不保证超时 JSON envelope。单请求响应关闭连接，输出最多 1 MiB、写入期限 5 秒。Key 总数最多 256，列表按 ID 每页最多 64。普通变更最多消耗 4096 条审计；另预留 256 条供 enabled→disabled 的真实撤销，总上限 4352。普通容量满后禁止创建/启用/轮换及重复禁用，因此不会消耗新撤销位置，所有现存活动 Key 仍可各禁用一次并持久审计。审计记录动作、revision、UTC 时间和非秘密权限快照；不删除历史。此临时容量边界须在后续诊断/保留策略切片收敛，不代表长期容量验收。
+管理入口最多 32 个连接，Key/账号管理用例共享最多 16 个并发，另受数据库普通队列容量约束。NIO 在进入 Vapor 路由前收齐正文：最多 8 KiB，从接受连接开始绝对读取期限 10 秒，超时关闭连接、不派发用例，持续小片段不能延长期限，不保证超时 JSON envelope。单请求响应关闭连接，输出最多 1 MiB、写入期限 5 秒。Key 总数最多 256，列表按 ID 每页最多 64。普通变更最多消耗 4096 条审计；另预留 256 条供 enabled→disabled 的真实撤销，总上限 4352。普通容量满后禁止创建/启用/轮换及重复禁用，因此不会消耗新撤销位置，所有现存活动 Key 仍可各禁用一次并持久审计。审计记录动作、revision、UTC 时间和非秘密权限快照；不删除历史。此临时容量边界须在后续诊断/保留策略切片收敛，不代表长期容量验收。
 
 ## A11：同源管理会话与静态界面
 
@@ -30,3 +30,10 @@
 `GET /api/keys/options` 提供配置的模型 ID 供表单选择，不含上游指导或凭证。Key 界面显式选择模型与五类治理限额，不把它们称为订阅余额；本切片不代表图片权限或账号池已交付。创建/轮换成功后原文仅保留在当前页面内存，关闭、离开、登出或五分钟后清除，不写浏览器持久存储。CAS 冲突刷新并由用户重新确认；写入结果未知不自动重试，刷新核对后才能继续；登出未确认须清本页秘密并明确提供重试。
 
 可选静态目录只在启动时读取为不可变快照，允许 index.html（64 KiB）及 assets 下最多 32 个 JS/CSS（各 1 MiB、总计含 index 最多 4 MiB）。目录及文件须由进程用户或 root 持有、不可被 group/other 写；拒绝 symlink、非普通文件、硬链接及未知资产类型。仅服务精确路径，不回退任意文件或提供数据目录。HTML/资产设置 no-store、nosniff、禁止 frame/referrer 和仅同源脚本/样式/连接的 CSP；API 复用 A10 的容量与安全错误。
+
+
+## A12：账号管理与一次性授权入口
+
+配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 只有 id、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
+
+POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权。POST `/authorization/:flowID` 只接受 callbackURL；DELETE 丢弃本 owner 尚未完成的流程。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。登录地址和流程信息仅当前响应可用，不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。

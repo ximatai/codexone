@@ -14,10 +14,22 @@ public struct AccountCredentialCipher: AccountCredentialProtection, Sendable,
   public var debugDescription: String { description }
   private static let maximumEnvelopeBytes = 49_152
 
-  public static func load(path: String) async throws -> Self {
+  public static func load(
+    path: String, adminCredentialPath: String? = nil, forbiddenDigest: String? = nil
+  ) async throws -> Self {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
-        do { continuation.resume(returning: try Self(hexKey: readRuntimeSecret(path))) } catch {
+        do {
+          let secret = try readRuntimeSecret(path)
+          guard keyDigest(secret) != forbiddenDigest else { throw ExecutionError.invalidCommand }
+          if let adminCredentialPath {
+            let adminSecret = try readRuntimeSecret(adminCredentialPath)
+            guard secret.lowercased() != adminSecret.lowercased() else {
+              throw ExecutionError.invalidCommand
+            }
+          }
+          continuation.resume(returning: try Self(hexKey: secret))
+        } catch {
           continuation.resume(throwing: ExecutionError.invalidCommand)
         }
       }

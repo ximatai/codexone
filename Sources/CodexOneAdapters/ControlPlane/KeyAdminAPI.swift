@@ -44,9 +44,11 @@ public struct KeyAdminAPI: Sendable {
     }
   }
   func bind(port: Int) { sessions.bind(port: port) }
-  func register(_ app: Application) {
+  func register(_ app: Application, accounts: AccountAdminAPI? = nil) {
     let api = app.grouped("api").grouped(AdminFailureMiddleware())
-    let routes = api.grouped("keys").grouped(KeyAdminGuard(digest: digest, sessions: sessions))
+    let guardMiddleware = KeyAdminGuard(digest: digest, sessions: sessions)
+    let routes = api.grouped("keys").grouped(guardMiddleware)
+    accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
     api.post("session") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["secret"])
       guard let secret = document["secret"]?.string else { throw ExecutionError.invalidCommand }
@@ -190,8 +192,10 @@ private struct KeyAdminGuard: AsyncMiddleware {
       guard zip(supplied.utf8, digest.utf8).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 else {
         throw ExecutionError.unauthorized
       }
+      request.storage[AdminOwnerKey.self] = digest
     } else {
-      _ = try sessions.authorize(request.headers, mutation: request.method != .GET)
+      request.storage[AdminOwnerKey.self] = try sessions.authorize(
+        request.headers, mutation: request.method != .GET)
     }
     return try await next.respond(to: request)
   }
@@ -209,6 +213,24 @@ private struct AdminFailureMiddleware: AsyncMiddleware {
       if let failure = error as? GatewayProtocolError {
         status = failure.status
         code = failure.code
+      } else if let failure = error as? AccountRefreshError {
+        switch failure {
+        case .invalidCommand:
+          status = 400
+          code = "invalid_authorization_command"
+        case .conflict:
+          status = 409
+          code = "account_conflict"
+        case .authorizationRequired:
+          status = 409
+          code = "authorization_required"
+        case .storageUnavailable:
+          status = 503
+          code = "account_storage_unavailable"
+        default:
+          status = 503
+          code = "account_unavailable"
+        }
       } else if let failure = error as? ExecutionError {
         switch failure {
         case .invalidCommand:

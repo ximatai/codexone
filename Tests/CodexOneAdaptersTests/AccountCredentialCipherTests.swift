@@ -82,6 +82,19 @@ private func syntheticCredential() throws -> AccountCredential {
   try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
   let cipher = try await AccountCredentialCipher.load(path: file.path)
   #expect(cipher.keyID.count == 32)
+  let admin = root.appendingPathComponent("admin")
+  try Data(syntheticMaster.uppercased().utf8).write(to: admin)
+  try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: admin.path)
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await AccountCredentialCipher.load(path: file.path, adminCredentialPath: admin.path)
+  }
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await AccountCredentialCipher.load(
+      path: file.path, forbiddenDigest: keyDigest(syntheticMaster))
+  }
+  try Data("independent-synthetic-administrator-secret".utf8).write(to: admin)
+  _ = try await AccountCredentialCipher.load(path: file.path, adminCredentialPath: admin.path)
+
   let link = root.appendingPathComponent("link")
   try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
   await #expect(throws: ExecutionError.invalidCommand) {

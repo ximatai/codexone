@@ -4,7 +4,7 @@
 
 ## 主密钥与信封
 
-`AccountCredentialCipher.load(path:)` 从独立私有文件读取 64 个十六进制字符，即随机 32 字节 AES 主密钥；文件须由进程用户持有、权限 0600、普通文件且非链接。通过安全随机源生成，不能复用管理员凭证、数据 Key 或把测试夹具常量作为部署密钥。调用者提供绝对路径；这里不定义额外 CLI 参数或未经接入的环境变量。
+`AccountCredentialCipher.load(path:)` 从独立私有文件读取 64 个十六进制字符，即随机 32 字节 AES 主密钥；文件须由进程用户持有、权限 0600、普通文件且非链接。通过安全随机源生成，不能复用管理员凭证、数据 Key 或把测试夹具常量作为部署密钥。调用者提供绝对路径；可选环境变量 `CODEXONE_ACCOUNT_MASTER_KEY_FILE` 接入生产组装，需同时配置数据目录和独立管理员凭证文件；`--check-config` 加载校验但不打开核心库或调用认证服务。主密钥内容也不得复用管理员 secret（包括同一 hex 的大小写变体）或既有数据 Key 摘要。
 
 信封 `v1.<key-id>.<base64>` 使用随机 96 bit nonce 和 AES-256-GCM。AAD 的有序 UTF-8 JSON 数组依次为固定用途 `codexone.account-credential`、格式 `1`、key ID、identity、namespace、十进制 credential version。key ID 是主密钥 SHA-256 前 16 字节的十六进制；combined 为 nonce + ciphertext + tag。未知 key ID/格式或不同上下文不能解密。原文 payload 不作为领域类型的 Codable/公开 DTO，诊断字符串固定脱敏。
 
@@ -43,3 +43,9 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 `AccountAuthorizationSupervisor` 注入 Core `AccountAuthorizationProvider` 和凭证用例；订阅 adapter 通过协议桥接，不使 Runtime 依赖 HTTP/加密框架。开始返回 flow ID、登录地址和剩余秒数，完成只接受同一 owner 的一次性回调；重新授权另携带账号 id/revision。容量、期限和取消语义见 I16。flow ID 不是认证凭证，必须同时核对管理 owner。
 
 远程部署的最小 code-flow 操作由后续界面引导：在管理员自己的浏览器打开登录地址，再粘贴最终回调地址；本 owner 不在远端占用操作者的 localhost 端口，也不宣称已有 device-flow 支持。公开 API、session 注入及生产主密钥组装仍由后续切片接入，不允许凭测试通过直接触发真实授权。
+
+## 管理 API
+
+生产入口组装固定 authority provider、初次授权与共享刷新 Service，并把 Core 端口注入 `AccountAdminAPI`；未配置主密钥时不注册账号路由。认证与 body 契约见 A12，具体运行进度见 STATUS。GET/PUT `/api/accounts`、POST refresh 与一次性 authorization 路径复用既有管理 session 或独立 Bearer；浏览器不能混用两种认证。刷新和重新授权不会自动启用初次 disabled 的账号，模式/授权状态需分别核对。
+
+账号 API 本身不创建数据面账号池，enabled 表示管理策略，是否可路由还须通过后续池准入和授权状态复核；不能把列表 ready 当作已有请求执行成功。

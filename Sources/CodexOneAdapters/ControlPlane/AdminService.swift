@@ -7,6 +7,7 @@ public struct AdminService: Service {
   private let group: any EventLoopGroup
   private let port: Int
   private let keys: KeyAdminAPI?
+  private let accounts: AccountAdminAPI?
   private let webBundle: AdminWebBundle?
   private let reportProvider: @Sendable () -> ReadinessReport
   private let onBound: @Sendable (Int) -> Void
@@ -21,9 +22,10 @@ public struct AdminService: Service {
   public init(
     group: any EventLoopGroup, port: Int,
     reportProvider: @escaping @Sendable () -> ReadinessReport, keys: KeyAdminAPI? = nil,
-    webBundle: AdminWebBundle? = nil,
+    webBundle: AdminWebBundle? = nil, accounts: AccountAdminAPI? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.accounts = accounts
     self.webBundle = webBundle
     self.keys = keys
     self.group = group
@@ -59,7 +61,7 @@ public struct AdminService: Service {
           webBundle.asset(path: "/assets/" + (request.parameters.get("name") ?? "")))
       }
     }
-    keys?.register(app)
+    keys?.register(app, accounts: accounts)
     do {
       try await app.asyncBoot()
       try await AdminHTTPIngress(

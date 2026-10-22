@@ -24,6 +24,7 @@ struct CodexOneMain {
       case .invalidAdminOrigin: message = "Invalid public admin origin configuration."
       case .invalidWebDirectory: message = "Invalid admin web directory configuration."
       case .invalidAdminTokenFile: message = "Invalid admin credential configuration."
+      case .invalidAccountMasterKeyFile: message = "Invalid account master key configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
       }
@@ -42,7 +43,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
@@ -72,6 +73,16 @@ struct CodexOneMain {
       webBundle = try await AdminWebBundle.load(path: directory)
     } else {
       webBundle = nil
+    }
+    let credentialProtection: AccountCredentialCipher?
+    if let path = configuration.accountMasterKeyFile {
+      do {
+        credentialProtection = try await AccountCredentialCipher.load(
+          path: path, adminCredentialPath: configuration.adminTokenFile,
+          forbiddenDigest: identityConfiguration?.keySHA256)
+      } catch { throw RuntimeConfiguration.ConfigurationError.invalidAccountMasterKeyFile }
+    } else {
+      credentialProtection = nil
     }
     if arguments == ["--check-config"] {
       if let path = configuration.adminTokenFile {
@@ -116,6 +127,21 @@ struct CodexOneMain {
       .init(name: "authorization", ready: identityConfiguration != nil),
     ])
     var services: [any Service] = []
+    let accountAdmin: AccountAdminAPI?
+    if let credentialProtection, let store {
+      let application = AccountCredentials(store: store, protection: credentialProtection)
+      let provider = try SubscriptionOAuthProvider(group: group)
+      let authorization = try AccountAuthorizationSupervisor(
+        application: application, provider: provider)
+      let refreshing = try AccountRefreshSupervisor(application: application, provider: provider)
+      services.append(provider)
+      services.append(authorization)
+      services.append(refreshing)
+      accountAdmin = AccountAdminAPI(
+        store: store, authorization: authorization, refreshing: refreshing)
+    } else {
+      accountAdmin = nil
+    }
     if let identityConfiguration, let store, let finalizer {
       services.append(
         try SingleIdentityDataService(
@@ -139,7 +165,7 @@ struct CodexOneMain {
               name: "authorization",
               ready: identityConfiguration != nil && finalizer?.isAccepting == true),
           ])
-        }, keys: keyAdmin, webBundle: webBundle
+        }, keys: keyAdmin, webBundle: webBundle, accounts: accountAdmin
       ) {
         announce("admin", port: $0)
       })

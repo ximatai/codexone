@@ -58,7 +58,7 @@ def login(fixture, *, cookie=None, origin=None):
 
 
 @contextmanager
-def running_admin(binary, web_directory=None):
+def running_admin(binary, web_directory=None, account_master=False):
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     provider.daemon_threads = True
     provider.calls = 0
@@ -77,6 +77,10 @@ def running_admin(binary, web_directory=None):
                 (web_directory / 'index.html').write_text('<!doctype html><html><head><title>Synthetic Admin</title><script type="module" src="/assets/entry.js"></script></head><body>synthetic web bundle</body></html>')
                 (web_directory / 'assets/entry.js').write_text('window.syntheticAsset = true;')
                 (web_directory / 'assets/entry.css').write_text('body { color: black; }')
+            master = root / 'master'
+            if account_master:
+                master.write_text('5a' * 32)
+                master.chmod(0o600)
             config = root / 'config.json'
             config.write_text(json.dumps(dict(managedKeys=True, namespace='synthetic', identity='i', reservedMicros=1,
                 models=[dict(id=model, inputMicrosPerMillion=0, outputMicrosPerMillion=0,
@@ -84,9 +88,10 @@ def running_admin(binary, web_directory=None):
                         for model in ['synthetic-text', 'synthetic-other']],
                 upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1')))
             config.chmod(0o600)
-            process, ports = start(binary, config, root, admin_token_file=admin, web_directory=web_directory)
+            process, ports = start(binary, config, root, admin_token_file=admin, web_directory=web_directory,
+                                   account_master_key_file=master if account_master else None)
             fixture = SimpleNamespace(root=root, process=process, ports=ports, provider=provider, admin=admin,
-                                      config=config, web_directory=web_directory, secrets=[],
+                                      config=config, web_directory=web_directory, secrets=[master.read_text()] if account_master else [],
                                       origin=f'http://127.0.0.1:{ports["admin"]}')
             try:
                 yield fixture
@@ -173,7 +178,49 @@ def verify(binary):
         print('PASS: real management sessions: exact Origin/Host and CSRF, secure cookies, logout/restart/capacity, Key actions, bounded static assets and secret-free storage/output')
 
 
+def verify_account_configuration(binary):
+    # Starting an authorization flow creates only a URL; no real token endpoint is called.
+    with running_admin(binary, account_master=True) as f:
+        port = f.ports['admin']
+        cookie, csrf = login(f)
+        auth = dict(cookie=cookie, csrf=csrf, origin=f.origin)
+        assert document(request(port, 'GET', '/api/accounts', cookie=cookie))['accounts'] == []
+        flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None}, **auth))
+        assert flow['authorizationURL'].startswith('https://auth.openai.com/oauth/authorize?')
+        # Wrong state consumes before any network dispatch, then replay conflicts.
+        body = {'callbackURL': 'http://localhost:1455/auth/callback?code=synthetic&state=wrong'}
+        path = '/api/accounts/authorization/' + flow['flowID']
+        assert request(port, 'POST', path, body, **auth)[0] == 400
+        assert request(port, 'POST', path, body, **auth)[0] == 409
+        document(request(port, 'DELETE', path, **auth))
+        master = f.root / 'master'
+        check_directory = f.root / 'check-only'
+        env = {'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(check_directory),
+               'CODEXONE_ADMIN_TOKEN_FILE': str(f.admin), 'CODEXONE_ACCOUNT_MASTER_KEY_FILE': str(master)}
+        def check(expected_success):
+            result = subprocess.run([binary, '--check-config'], env=env, capture_output=True, timeout=5)
+            assert (result.returncode == 0) == expected_success
+            assert not check_directory.exists()
+            output = result.stdout + result.stderr
+            assert all(value.encode() not in output for value in [str(f.root), '5a' * 32, ADMIN])
+        check(True)
+        master.chmod(0o644)
+        check(False)
+        master.chmod(0o600)
+        master.write_text('invalid-private-master-value')
+        check(False)
+        master.write_text('5a' * 32)
+        duplicate_admin = f.root / 'duplicate-admin'
+        duplicate_admin.write_text('5A' * 32)
+        duplicate_admin.chmod(0o600)
+        env['CODEXONE_ADMIN_TOKEN_FILE'] = str(duplicate_admin)
+        check(False)
+        print('PASS: account production assembly and private master validation; safe metadata, one-shot invalid callback before network; check-config has no DB or credential output')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    verify(str(parser.parse_args().binary.resolve()))
+    binary = str(parser.parse_args().binary.resolve())
+    verify(binary)
+    verify_account_configuration(binary)

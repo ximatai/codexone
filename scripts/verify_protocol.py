@@ -162,7 +162,7 @@ def connect(port, method, path, payload=None, *, authorization=True):
     return status, body
 
 
-def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None):
+def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None):
     environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
                                "CODEXONE_DATA_DIRECTORY": str(directory / "state"), "CODEXONE_IDENTITY_CONFIG": str(configuration)}
     if admin_token_file is not None:
@@ -171,6 +171,8 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
         environment["CODEXONE_WEB_DIRECTORY"] = str(web_directory)
     if admin_public_origin is not None:
         environment["CODEXONE_ADMIN_PUBLIC_ORIGIN"] = admin_public_origin
+    if account_master_key_file is not None:
+        environment['CODEXONE_ACCOUNT_MASTER_KEY_FILE'] = str(account_master_key_file)
     process = subprocess.Popen([binary], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
         ports = {}

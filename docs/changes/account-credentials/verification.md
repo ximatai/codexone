@@ -53,3 +53,14 @@ e7c200a 独立 review 未发现需修复或阻塞问题。reviewer 核对 waiter
 0be1012 独立 review 无阻塞，reviewer 独立运行四项 owner 测试及实际 socket 贯通共五项通过。主 Agent 采纳非阻塞建议，增强贯通 server：对收到的 verifier 计算 S256 并与开始流程 URL 的 challenge 比对，不再仅检查 verifier 长度。增强后的真实 socket 定向测试重新构建并通过；未改产品行为。
 
 PKCE 增强复审指出 fixture 的可选值比较会把“缺 verifier”和“未设置固定 verifier”的 nil==nil 误当匹配。主 Agent 改为先要求非空 verifier，再显式选择固定 verifier 或 S256 challenge 分支，缺两种期望也拒绝。重建后原始实际 OAuth 刷新链和 owner 贯通两项测试通过。产品实现未受此 fixture 缺口影响。
+
+
+0be1012 精确快照 Linux amd64 / Swift 6.4 本地单并发容器完整后端 78 测试及全部脚本通过，exit 0；c18f0c9 的 PKCE fixture 修复快照另重建并通过两项实际 socket 测试。均 2 CPU/2500 MiB，本地模拟，非远程 CI/容量，容器已回收。c18f0c9 独立复审关闭 nil 比较缺口，无新增问题。
+
+## 2026-10-22 · 账号 API 与生产组装切片
+
+主 Agent 亲自实现、复盘。macOS arm64 / Swift 6.4，完整 `./scripts/verify.sh --backend` 通过：80 个 Swift 测试与全部脚本。新增一项真实管理 socket 验证：未授权/混合认证/缺 CSRF 拒绝、headless 与浏览器 owner 隔离不消费流程、一次性 code+PKCE 经实际合成 token socket 入库、默认禁用、安全 DTO、模式 CAS 冲突、明确 invalid_grant 持久 requires_auth 后再经公开 API 重新授权，保持原 id/模式并更新版本；登出旧 Cookie 失效。
+
+独立配置测试覆盖主密钥依赖持久存储/管理员、加载实际私有文件、拒绝与管理员 hex 大小写变体或数据 Key 摘要复用。生产进程脚本验证配置成功、权限/格式/复用失败均不创建 check-only 数据库，不打印路径或凭证；组装后的账号空列表与错误 state 一次消费后冲突。此脚本仅产生授权 URL，错误 state 在任何 token POST 前拒绝，不连接真实认证服务。所有成功授权仍由显式合成 loopback 工厂注入；没有新增任意认证地址运行参数。
+
+未改前端，账号 UI 与池路由仍未完成。本切片提交后 review 待进行；不能把生产组装启动或合成授权成功当作真实订阅/额度验收。

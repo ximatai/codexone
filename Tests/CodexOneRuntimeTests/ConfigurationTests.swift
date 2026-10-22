@@ -30,3 +30,17 @@ func invalidConfigurationIsRejectedWithoutEchoingRawValue(_ value: String) {
     try RuntimeConfiguration(environment: ["CODEXONE_DATA_DIRECTORY": "/synthetic/data"])
       .dataDirectory == "/synthetic/data")
 }
+
+@Test func accountMasterConfigurationRequiresPersistentStorageAndAdministrator() throws {
+  var environment = ["CODEXONE_ACCOUNT_MASTER_KEY_FILE": "/synthetic/master"]
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidAccountMasterKeyFile) {
+    try RuntimeConfiguration(environment: environment)
+  }
+  environment["CODEXONE_DATA_DIRECTORY"] = "/synthetic/data"
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidAccountMasterKeyFile) {
+    try RuntimeConfiguration(environment: environment)
+  }
+  environment["CODEXONE_ADMIN_TOKEN_FILE"] = "/synthetic/admin"
+  #expect(
+    try RuntimeConfiguration(environment: environment).accountMasterKeyFile == "/synthetic/master")
+}

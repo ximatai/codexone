@@ -563,3 +563,166 @@ func realOAuthLoginRequiresExpectedNonceAudienceAndCurrentMatchingClaims() async
     }
   }
 }
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+private final class AccountAdminPort: Sendable { let value = Mutex(0) }
+private struct AccountAdminClient: Sendable {
+  let port: Int
+  let session: URLSession
+  func call(
+    _ method: String, _ path: String, body: JSONValue? = nil, headers: [String: String] = [:]
+  ) async throws -> (Int, JSONValue, String?) {
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)" + path)!)
+    request.httpMethod = method
+    request.timeoutInterval = 5
+    if let body {
+      request.httpBody = try body.data()
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+    }
+    for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+    let (bytes, raw) = try await session.data(for: request)
+    let response = try #require(raw as? HTTPURLResponse)
+    return (
+      response.statusCode, try JSONValue.decode(bytes),
+      response.value(forHTTPHeaderField: "set-cookie")
+    )
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func accountManagementUsesRealAuthGuardsAndVerifiedSocketFlows()
+  async throws
+{
+  try await withOAuth { h in
+    let secret = "synthetic-admin-secret-" + String(repeating: "a", count: 32)
+    let path = h.root.appendingPathComponent("admin")
+    try Data(secret.utf8).write(to: path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+    let keys = try await KeyAdminAPI.load(path: path.path, store: h.store)
+    let authorization = try AccountAuthorizationSupervisor(application: h.app, provider: h.provider)
+    let accounts = AccountAdminAPI(
+      store: h.store, authorization: authorization, refreshing: h.supervisor)
+    let port = AccountAdminPort()
+    let admin = AdminService(
+      group: h.group, port: 0, reportProvider: { .init(checks: []) }, keys: keys,
+      accounts: accounts,
+      onBound: { bound in port.value.withLock { $0 = bound } })
+    let owner = Task {
+      try await GatewayRuntime(services: [authorization, admin]).run(handleSignals: false)
+    }
+    let config = URLSessionConfiguration.ephemeral
+    config.httpCookieStorage = nil
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    do {
+      try await awaitOAuth { port.value.withLock { $0 > 0 } && h.provider.isAccepting }
+      let client = AccountAdminClient(port: port.value.withLock { $0 }, session: session)
+      let bearer = ["authorization": "Bearer " + secret]
+      #expect(try await client.call("GET", "/api/accounts").0 == 401)
+      let origin = "http://127.0.0.1:\(client.port)"
+      let login = try await client.call(
+        "POST", "/api/session", body: .object(["secret": .string(secret)]),
+        headers: ["origin": origin])
+      #expect(login.0 == 200)
+      let cookie = try #require(login.2?.split(separator: ";").first.map(String.init))
+      let csrf = try #require(login.1["csrf"]?.string)
+      let browser = ["origin": origin, "cookie": cookie, "x-codexone-csrf": csrf]
+      #expect(
+        try await client.call(
+          "POST", "/api/accounts/authorization", body: .object(["target": .null]),
+          headers: ["origin": origin, "cookie": cookie]
+        ).0 == 403)
+      #expect(
+        try await client.call(
+          "GET", "/api/accounts", headers: ["origin": origin, "authorization": "Bearer " + secret]
+        ).0 == 403)
+      let start = try await client.call(
+        "POST", "/api/accounts/authorization", body: .object(["target": .null]), headers: bearer)
+      #expect(start.0 == 200)
+      let flowID = try #require(start.1["flowID"]?.string)
+      let query = try #require(
+        URLComponents(string: start.1["authorizationURL"]?.string ?? "")?.queryItems)
+      let nonce = try #require(query.first(where: { $0.name == "nonce" })?.value)
+      let state = try #require(query.first(where: { $0.name == "state" })?.value)
+      let challenge = try #require(query.first(where: { $0.name == "code_challenge" })?.value)
+      h.server.state.mutex.withLock {
+        $0.expectedVerifier = nil
+        $0.expectedChallenge = challenge
+      }
+      h.server.set(.reply(try oauthTokens(nonce: nonce)))
+      let callback =
+        SubscriptionOAuthProvider.callbackURI + "?state=" + state + "&code=synthetic-code%2B%2F%3D"
+      let completionPath = "/api/accounts/authorization/" + flowID
+      let document: JSONValue = .object(["callbackURL": .string(callback)])
+      #expect(
+        try await client.call("POST", completionPath, body: document, headers: browser).0 == 409)
+      #expect(h.server.counts.calls == 0)
+      let completed = try await client.call("POST", completionPath, body: document, headers: bearer)
+      #expect(completed.0 == 200)
+      let account = try #require(completed.1["account"])
+      let id = try #require(account["id"]?.string)
+      #expect(account["mode"]?.string == "disabled" && account["authorization"]?.string == "ready")
+      #expect(
+        account["namespace"] == nil && account["refreshIntent"] == nil
+          && account["credential"] == nil)
+      #expect(
+        try await client.call("POST", completionPath, body: document, headers: bearer).0 == 409)
+      let enabled = try await client.call(
+        "PUT", "/api/accounts/" + id,
+        body: .object(["revision": account["revision"]!, "mode": .string("enabled")]),
+        headers: browser)
+      #expect(enabled.0 == 200)
+      #expect(
+        try await client.call(
+          "PUT", "/api/accounts/" + id,
+          body: .object(["revision": account["revision"]!, "mode": .string("disabled")]),
+          headers: browser
+        ).0 == 409)
+      h.server.set(.reply(Data(#"{"error":"invalid_grant"}"#.utf8), status: 400))
+      let refresh = try await client.call(
+        "POST", "/api/accounts/" + id + "/refresh",
+        body: .object(["revision": enabled.1["account"]!["revision"]!]), headers: browser)
+      #expect(refresh.0 == 409 && refresh.1["error"]?["code"]?.string == "authorization_required")
+      let listed = try await client.call("GET", "/api/accounts", headers: browser)
+      #expect(
+        listed.0 == 200
+          && listed.1["accounts"]?.array?.first?["authorization"]?.string == "requires_auth")
+      #expect(h.server.counts.calls == 2 && h.server.counts.invalid == 0)
+      let previous = try #require(listed.1["accounts"]?.array?.first)
+      let restart = try await client.call(
+        "POST", "/api/accounts/authorization",
+        body: .object(["target": .object(["id": .string(id), "revision": previous["revision"]!])]),
+        headers: browser)
+      let restartID = try #require(restart.1["flowID"]?.string)
+      let restartQuery = try #require(
+        URLComponents(string: restart.1["authorizationURL"]?.string ?? "")?.queryItems)
+      let restartState = try #require(restartQuery.first(where: { $0.name == "state" })?.value)
+      let restartNonce = try #require(restartQuery.first(where: { $0.name == "nonce" })?.value)
+      let restartChallenge = try #require(
+        restartQuery.first(where: { $0.name == "code_challenge" })?.value)
+      h.server.state.mutex.withLock { $0.expectedChallenge = restartChallenge }
+      h.server.set(.reply(try oauthTokens(nonce: restartNonce)))
+      let reauthorized = try await client.call(
+        "POST", "/api/accounts/authorization/" + restartID,
+        body: .object([
+          "callbackURL": .string(
+            SubscriptionOAuthProvider.callbackURI + "?state=" + restartState
+              + "&code=synthetic-code%2B%2F%3D")
+        ]),
+        headers: browser)
+      #expect(reauthorized.0 == 200 && reauthorized.1["account"]?["id"]?.string == id)
+      #expect(reauthorized.1["account"]?["credentialVersion"]?.integer == 2)
+      #expect(reauthorized.1["account"]?["mode"]?.string == "enabled")
+      #expect(h.server.counts.calls == 3 && h.server.counts.invalid == 0)
+      _ = try await client.call("DELETE", "/api/session", headers: browser)
+      #expect(try await client.call("GET", "/api/accounts", headers: browser).0 == 401)
+      owner.cancel()
+      try await owner.value
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      throw error
+    }
+  }
+}
