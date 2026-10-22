@@ -214,7 +214,7 @@ def main():
                     with sqlite3.connect(db) as connection:
                         for admission, in connection.execute("SELECT admission_json FROM attempts WHERE json_extract(admission_json,'$.requirements.route')='images'"):
                             assert json.loads(admission)['model'] == 'synthetic-image'
-                        assert connection.execute('PRAGMA user_version').fetchone()[0] == 7
+                        assert connection.execute('PRAGMA user_version').fetchone()[0] == 8
                     with sqlite3.connect(db) as connection:
                         connection.execute("CREATE TRIGGER synthetic_binding_failure BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic'); END")
                     before = upstream.calls

@@ -10,11 +10,11 @@
 codexone --backup /private-backups/new-bundle
 ```
 
-命令通过 SQLite Backup API 导出含 WAL 已提交内容的一致性快照，保留 intent 真相；不先把它们改为 settled/unknown。只读验证所有账号密文可由独立主密钥解开，输出 manifest 的备份 ID、快照时间、来源 generation、v7 schema、SHA-256/字节数和所需 key ID，不输出路径/凭证。
+命令通过 SQLite Backup API 导出含 WAL 已提交内容的一致性快照，保留 intent 真相；不先把它们改为 settled/unknown。只读验证所有账号密文可由独立主密钥解开，输出 manifest 的备份 ID、快照时间、来源 generation、v8 schema、SHA-256/字节数和所需 key ID，不输出路径/凭证。多版本 keyring 时记录实际密文 key ID 集合，见[主密钥维护](master-key-maintenance.md)。
 
 bundle 为 0700，snapshot.sqlite、snapshot.sqlite.lock、manifest.json 为 0600。manifest 最后发布并同步文件/目录；缺 manifest 或只有 partial 不算完成备份。单核心快照硬上限 1 GiB；审计记录硬上限 1000，达到容量时拒绝新增维护写入，不删除旧责任。保留备份对应的主密钥，manifest 的 key ID 不能代替密钥。SHA-256 用于完整性核对，不能证明一个不可信备份的来源；不要导入未知来源的 bundle。
 
-旧 v1—v6 必须先按升级流程显式迁移至 v7（迁移前生成 .pre-v7 备份），再制作可恢复 bundle。v7 二进制普通启动拒绝旧 schema；旧二进制也会拒绝 v7，避免忽略恢复门禁。迁移前单文件备份是升级证据，不是本流程的完成 bundle。
+旧 v1—v7 必须先按升级流程显式迁移至 v8（迁移前生成 .pre-v8 备份），再制作当前 bundle。已有 v7 完成 bundle 仍可验证并显式恢复，staging 升至 v8，源 bundle 保持不变。v8 二进制普通启动拒绝旧 schema；旧二进制也会拒绝 v8，避免忽略恢复门禁。迁移前单文件备份是升级证据，不是本流程的完成 bundle。
 
 ## 恢复到新目标
 
@@ -61,7 +61,7 @@ codexone --maintenance-status
 - 第一次核对不能低于快照继承的缺失占用；确认零也必须明确填写并审计，系统没有默认零。未能核实的风险必须保守预留，足以占满容量时继续拒绝新工作。
 - 首次 expectedRevision=0；以后取得新外部证据，可用报告中的 baselineRevision 作 expectedRevision，提交新的审计编号及**当前总缺失占用**。CAS 防旧请求覆盖新核对，相同请求重试幂等；每次修订追加维护审计，不删除历史，也不修改快照内已存在的 unknown。没有自动过期、自动退款或自动重执行。
 
-核对后仍可显示 frozen；只有时钟到达冻结截止且存储/账号/授权等其他条件满足才 ready。首次核对若跨 UTC 午夜，重新查询 status 取得当前冻结下限；后续基线修订不会自动延长冻结。测试通过移动临时合成库的时间夹具验证新窗口，产品没有绕过时钟的开关。核心状态 schema v7 的不兼容二进制不得原地回滚；同 schema 二进制回退仍须兼容性证据，恢复旧快照必须重新走本流程。
+核对后仍可显示 frozen；只有时钟到达冻结截止且存储/账号/授权等其他条件满足才 ready。首次核对若跨 UTC 午夜，重新查询 status 取得当前冻结下限；后续基线修订不会自动延长冻结。测试通过移动临时合成库的时间夹具验证新窗口，产品没有绕过时钟的开关。核心状态 schema v8 的不兼容二进制不得原地回滚；同 schema 二进制回退仍须兼容性证据，恢复旧快照必须重新走本流程。
 
 ## Compose 操作
 

@@ -6,9 +6,9 @@
 
 `AccountCredentialCipher.load(path:)` 从独立私有文件读取 64 个十六进制字符，即随机 32 字节 AES 主密钥；文件须由进程用户持有、权限 0600、普通文件且非链接。通过安全随机源生成，不能复用管理员凭证、数据 Key 或把测试夹具常量作为部署密钥。调用者提供绝对路径；可选环境变量 `CODEXONE_ACCOUNT_MASTER_KEY_FILE` 接入生产组装，需同时配置数据目录和独立管理员凭证文件；`--check-config` 加载校验但不打开核心库或调用认证服务。主密钥内容也不得复用管理员 secret（包括同一 hex 的大小写变体）或既有数据 Key 摘要。
 
-信封 `v1.<key-id>.<base64>` 使用随机 96 bit nonce 和 AES-256-GCM。AAD 的有序 UTF-8 JSON 数组依次为固定用途 `codexone.account-credential`、格式 `1`、key ID、identity、namespace、十进制 credential version。key ID 是主密钥 SHA-256 前 16 字节的十六进制；combined 为 nonce + ciphertext + tag。未知 key ID/格式或不同上下文不能解密。原文 payload 不作为领域类型的 Codable/公开 DTO，诊断字符串固定脱敏。
+信封 `v1.<key-id>.<base64>` 使用随机 96 bit nonce 和 AES-256-GCM。AAD 的有序 UTF-8 JSON 数组依次为固定用途 `codexone.account-credential`、格式 `1`、key ID、identity、namespace、十进制 credential version。key ID 是主密钥 SHA-256 前 16 字节的十六进制；combined 为 nonce + ciphertext + tag。读取按信封 key ID 选择 active/decrypt-only；未知 key ID/格式或不同上下文不能解密。原文 payload 不作为领域类型的 Codable/公开 DTO，诊断字符串固定脱敏。
 
-密钥不进入 SQLite。核心快照包含密文，解密还依赖对应主密钥；分开保护、验证恢复，不直接覆盖主密钥文件或假定支持多版本轮换。丢失密钥需要重新授权，不能以新密钥使旧密文自动 ready。
+密钥不进入 SQLite。核心快照包含密文，解密还依赖对应主密钥；分开保护、验证恢复；多版本 active/decrypt-only、离线再加密与旧备份退役检查见[主密钥维护](master-key-maintenance.md)。丢失密钥需要重新授权，不能以新密钥使旧密文自动 ready。
 
 ## 应用与事务边界
 
@@ -62,7 +62,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 `AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
 
-当前 v7 不自动升级，已有 v1—v6 须停服显式 migrate，备份保存源版本与未恢复 intent；普通启动才完成 unknown/uncertain 恢复。旧快照恢复的 requires_auth、旧 Key 失效及维护门禁见[快照维护](snapshot-maintenance.md)。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
+当前 v8 不自动升级，已有 v1—v7 须停服显式 migrate，备份保存源版本与未恢复 intent；普通启动才完成 unknown/uncertain 恢复。旧快照恢复的 requires_auth、旧 Key 失效及维护门禁见[快照维护](snapshot-maintenance.md)。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
 
 ## 订阅账号池的 HTTP 入口配置
 

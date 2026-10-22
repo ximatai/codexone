@@ -15,6 +15,17 @@ import Foundation
           usageFixture: CommandLine.arguments[1] == "--usage-admin-ui")
         return
       }
+      if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--key-maintenance-probe" {
+        let ring = try await AccountCredentialCipher.load(path: CommandLine.arguments[3])
+        _ = try await SQLiteKeyMaintenance.reencrypt(
+          path: CommandLine.arguments[2], protection: ring,
+          backupDestination: CommandLine.arguments[4], beforePageCommit: { _ in },
+          afterPageCommit: { checkpoint in
+            emit("page_committed:\(checkpoint.rewritten)")
+            _ = readLine()
+          })
+        return
+      }
       guard CommandLine.arguments.count == 2 else { throw ExecutionError.invalidCommand }
       let store = try await SQLiteExecutionStore.open(
         path: CommandLine.arguments[1],
@@ -62,6 +73,15 @@ import Foundation
                 window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1))
             emit("accepted")
           } catch ExecutionError.denied { emit("denied") }
+        case "account-seed-maintenance":
+          let app = try await accountApplication(store)
+          for number in 0..<20 {
+            _ = try await app.importVerified(
+              id: number == 0 ? "account" : "account-\(number)",
+              namespace: number == 0 ? "synthetic/account" : "synthetic/account-\(number)",
+              credential: syntheticAccountCredential(version: 1))
+          }
+          emit("accounts_seeded")
         case "account-create":
           let app = try await accountApplication(store)
           _ = try await app.importVerified(

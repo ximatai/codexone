@@ -46,6 +46,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       DispatchQueue.global(qos: .utility).async {
         do {
           let connection = try SQLiteConnection(path: path)
+          guard try connection.reencryptionCheckpoint()?.complete != false else {
+            throw KeyMaintenanceError.incompleteReencryption
+          }
           try connection.transaction {
             let json = try encode(limits)
             let existing = try connection.rows("SELECT limits_json FROM metadata WHERE id=1") {

@@ -260,11 +260,11 @@ def verify_runtime(image, browser=False):
             assert b'LISTENING' not in rejected_logs and b'Service startup or shutdown failed.' in rejected_logs
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
-            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v7-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
+            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v8-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
             assert len(backups) == 1
             backup, mode, owner = backups[0].split()
-            assert re.fullmatch('core.sqlite.pre-v7-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
-            for path, version in (('/var/lib/codexone/' + backup, 5), (database, 7)):
+            assert re.fullmatch('core.sqlite.pre-v8-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
+            for path, version in (('/var/lib/codexone/' + backup, 5), (database, 8)):
                 rows = maintenance('sqlite3', ['-readonly', path, 'PRAGMA quick_check; PRAGMA user_version; SELECT id FROM managed_keys;']).stdout.decode().splitlines()
                 assert rows == ['ok', str(version), key_id]
             run([*compose, 'start'])

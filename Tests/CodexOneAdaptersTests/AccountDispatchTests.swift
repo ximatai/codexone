@@ -156,8 +156,8 @@ private func dispatchAdmission(
   await f.close()
 }
 
-@Test(arguments: [3, 4, 5])
-func legacyExplicitMigrationBacksUpPendingTruthBeforeV6StartupRecovery(version: Int) async throws {
+@Test(arguments: [3, 4, 5, 6, 7])
+func legacyExplicitMigrationBacksUpPendingTruthBeforeV8StartupRecovery(version: Int) async throws {
   let f = try await DispatchFixture.make()
   try await f.store.admit(admission("historical"))
   _ = try await f.app.beginRefresh(id: f.account.id, revision: f.account.revision)
@@ -165,7 +165,8 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV6StartupRecovery(version: 
   try rawSQL(
     f.path,
     (version < 5 ? removeObservationSchema : "")
-      + "DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=\(version)"
+      + (version < 7 ? "DROP TABLE maintenance_events; DROP TABLE maintenance_state; " : "")
+      + "PRAGMA user_version=\(version)"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
@@ -173,7 +174,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV6StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path)
   let directory = (f.path as NSString).deletingLastPathComponent
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v7-") && $0.hasSuffix(".sqlite")
+    $0.contains(".pre-v8-") && $0.hasSuffix(".sqlite")
   }
   #expect(backups.count == 1)
   var db: OpaquePointer?
@@ -199,7 +200,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV6StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-      $0.contains(".pre-v7-") && $0.hasSuffix(".sqlite")
+      $0.contains(".pre-v8-") && $0.hasSuffix(".sqlite")
     }.count == 1)
   await f.close()
 }

@@ -14,7 +14,8 @@ func readPrivateData(_ path: String, maximum: Int) throws -> Data {
   defer { close(descriptor) }
   var info = stat()
   guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-    info.st_uid == geteuid(), info.st_mode & 0o077 == 0, info.st_size > 0, info.st_size <= maximum
+    info.st_uid == geteuid(), info.st_nlink == 1, info.st_mode & 0o077 == 0, info.st_size > 0,
+    info.st_size <= maximum
   else {
     throw ExecutionError.invalidCommand
   }

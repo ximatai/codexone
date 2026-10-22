@@ -40,35 +40,43 @@ public enum SQLiteSnapshotMaintenance {
     try await run {
       let db = try SQLiteConnection(path: path, existingOnly: true)
       defer { db.shutdown() }
-      let record = try db.restoreRecord()
-      guard record == nil || record?.baseline != nil else { throw ExecutionError.denied }
-      let keys = try verifyCredentials(db, protection)
-      guard mkdir(destination, 0o700) == 0 else { throw ExecutionError.conflict }
-      try privateDirectory(destination)
-      let partial = destination + "/snapshot.sqlite.partial"
-      try copy(db, to: partial)
-      let hash = try fingerprint(partial)
-      let generation = try db.rows("SELECT generation FROM maintenance_state WHERE id=1") {
-        String(cString: sqlite3_column_text($0, 0))
-      }
-      guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
-      let manifest = SnapshotManifest(
-        format: 1, id: UUID().uuidString,
-        createdUnixSeconds: Int64(Date().timeIntervalSince1970), schema: 7,
-        sourceGeneration: generation[0], databaseBytes: hash.0, databaseSHA256: hash.1,
-        requiredKeyIDs: keys)
-      guard rename(partial, destination + "/snapshot.sqlite") == 0 else {
-        throw ExecutionError.storageUnavailable
-      }
-      try writeFile(destination + "/snapshot.sqlite.lock", Data())
-      try writeFile(destination + "/manifest.partial", JSONEncoder().encode(manifest))
-      guard rename(destination + "/manifest.partial", destination + "/manifest.json") == 0 else {
-        throw ExecutionError.storageUnavailable
-      }
-      try syncDirectory(destination)
-      try syncDirectory((destination as NSString).deletingLastPathComponent)
-      return manifest
+      return try backup(db, destination: destination, protection: protection)
     }
+  }
+  static func backup(
+    _ db: SQLiteConnection, destination: String, protection: AccountCredentialCipher?
+  ) throws -> SnapshotManifest {
+    guard try db.reencryptionCheckpoint()?.complete != false else {
+      throw KeyMaintenanceError.incompleteReencryption
+    }
+    let record = try db.restoreRecord()
+    guard record == nil || record?.baseline != nil else { throw ExecutionError.denied }
+    let keys = try verifyCredentials(db, protection)
+    guard mkdir(destination, 0o700) == 0 else { throw ExecutionError.conflict }
+    try privateDirectory(destination)
+    let partial = destination + "/snapshot.sqlite.partial"
+    try copy(db, to: partial)
+    let hash = try fingerprint(partial)
+    let generation = try db.rows("SELECT generation FROM maintenance_state WHERE id=1") {
+      String(cString: sqlite3_column_text($0, 0))
+    }
+    guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
+    let manifest = SnapshotManifest(
+      format: 1, id: UUID().uuidString,
+      createdUnixSeconds: Int64(Date().timeIntervalSince1970), schema: 8,
+      sourceGeneration: generation[0], databaseBytes: hash.0, databaseSHA256: hash.1,
+      requiredKeyIDs: keys)
+    guard rename(partial, destination + "/snapshot.sqlite") == 0 else {
+      throw ExecutionError.storageUnavailable
+    }
+    try writeFile(destination + "/snapshot.sqlite.lock", Data())
+    try writeFile(destination + "/manifest.partial", JSONEncoder().encode(manifest))
+    guard rename(destination + "/manifest.partial", destination + "/manifest.json") == 0 else {
+      throw ExecutionError.storageUnavailable
+    }
+    try syncDirectory(destination)
+    try syncDirectory((destination as NSString).deletingLastPathComponent)
+    return manifest
   }
 
   public static func restore(bundle: String, path: String, protection: AccountCredentialCipher?)
@@ -83,40 +91,14 @@ public enum SQLiteSnapshotMaintenance {
     syncParent: @escaping @Sendable (String) throws -> Void
   ) async throws -> RestoreRecord {
     try await run {
-      try privateDirectory(bundle)
-      let manifest: SnapshotManifest = try JSONDecoder().decode(
-        SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
-      let now = Int64(Date().timeIntervalSince1970)
-      guard manifest.format == 1, manifest.schema == 7, UUID(uuidString: manifest.id) != nil,
-        manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
-        manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,
-        (1...1_073_741_824).contains(manifest.databaseBytes),
-        manifest.databaseSHA256.count == 64
-      else { throw ExecutionError.invalidCommand }
-      let snapshot = bundle + "/snapshot.sqlite"
-      for suffix in ["-wal", "-shm", ".restore-pending"] {
-        guard !FileManager.default.fileExists(atPath: snapshot + suffix) else {
-          throw ExecutionError.invalidCommand
-        }
+      let verified = try verifiedSnapshot(bundle: bundle, protection: protection)
+      defer {
+        verified.source.shutdown()
+        close(verified.lockFD)
       }
-      let sourceLock = try lock(snapshot + ".lock", readOnly: true)
-      defer { close(sourceLock) }
-      let actual = try fingerprint(snapshot)
-      guard actual.0 == manifest.databaseBytes, actual.1 == manifest.databaseSHA256 else {
-        throw ExecutionError.invalidCommand
-      }
-      let source = try SQLiteConnection(readOnlyPath: snapshot)
-      defer { source.shutdown() }
-      guard try verifyCredentials(source, protection) == manifest.requiredKeyIDs,
-        try source.rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) })
-          == ["ok"],
-        try source.scalar("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0
-      else { throw ExecutionError.invalidCommand }
-      guard
-        try source.rows(
-          "SELECT generation FROM maintenance_state WHERE id=1",
-          map: { String(cString: sqlite3_column_text($0, 0)) }) == [manifest.sourceGeneration]
-      else { throw ExecutionError.invalidCommand }
+      let manifest = verified.manifest
+      let source = verified.source
+      let snapshot = verified.path
       let previous = try source.restoreRecord()
       guard previous == nil || previous?.baseline != nil else { throw ExecutionError.denied }
       let directory = (path as NSString).deletingLastPathComponent
@@ -138,7 +120,8 @@ public enum SQLiteSnapshotMaintenance {
       guard unchangedSource.0 == manifest.databaseBytes,
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
-      let target = try SQLiteConnection(path: staging, existingOnly: true)
+      let target = try SQLiteConnection(
+        path: staging, existingOnly: true, restoringV7: manifest.schema == 7)
       let completedCopyAt = Int64(Date().timeIntervalSince1970)
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
@@ -200,6 +183,75 @@ public enum SQLiteSnapshotMaintenance {
     }
   }
 
+  private struct VerifiedSnapshot {
+    let manifest: SnapshotManifest
+    let source: SQLiteConnection
+    let lockFD: Int32
+    let path: String
+  }
+  private static func verifiedSnapshot(bundle: String, protection: AccountCredentialCipher?) throws
+    -> VerifiedSnapshot
+  {
+    try privateDirectory(bundle)
+    let manifest: SnapshotManifest = try JSONDecoder().decode(
+      SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
+    let now = Int64(Date().timeIntervalSince1970)
+    guard manifest.format == 1, [7, 8].contains(manifest.schema),
+      UUID(uuidString: manifest.id) != nil,
+      manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
+      manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,
+      (1...1_073_741_824).contains(manifest.databaseBytes),
+      manifest.databaseSHA256.count == 64
+    else { throw ExecutionError.invalidCommand }
+    let snapshot = bundle + "/snapshot.sqlite"
+    for suffix in ["-wal", "-shm", ".restore-pending"] {
+      guard !FileManager.default.fileExists(atPath: snapshot + suffix) else {
+        throw ExecutionError.invalidCommand
+      }
+    }
+    let sourceLock = try lock(snapshot + ".lock", readOnly: true)
+    do {
+      let actual = try fingerprint(snapshot)
+      guard actual.0 == manifest.databaseBytes, actual.1 == manifest.databaseSHA256 else {
+        throw ExecutionError.invalidCommand
+      }
+      let source = try SQLiteConnection(readOnlyPath: snapshot)
+      guard try verifyCredentials(source, protection) == manifest.requiredKeyIDs,
+        try source.rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) })
+          == ["ok"],
+        try source.scalar("SELECT COUNT(*) FROM pragma_foreign_key_check") == 0
+      else { throw ExecutionError.invalidCommand }
+      guard
+        try source.rows(
+          "SELECT generation FROM maintenance_state WHERE id=1",
+          map: { String(cString: sqlite3_column_text($0, 0)) }) == [manifest.sourceGeneration]
+      else { throw ExecutionError.invalidCommand }
+      guard try source.reencryptionCheckpoint()?.complete != false else {
+        throw KeyMaintenanceError.incompleteReencryption
+      }
+      return VerifiedSnapshot(
+        manifest: manifest, source: source, lockFD: sourceLock, path: snapshot)
+    } catch {
+      close(sourceLock)
+      throw error
+    }
+  }
+  public static func verifyBackup(bundle: String, protection: AccountCredentialCipher?) async throws
+    -> SnapshotManifest
+  {
+    try await run { try verifyBackup(bundle: bundle, protection: protection) }
+  }
+  static func verifyBackup(bundle: String, protection: AccountCredentialCipher?) throws
+    -> SnapshotManifest
+  {
+    let verified = try verifiedSnapshot(bundle: bundle, protection: protection)
+    defer {
+      verified.source.shutdown()
+      close(verified.lockFD)
+    }
+    return verified.manifest
+  }
+
   public static func status(path: String) async throws -> RestoreRecord? {
     try await run {
       let db = try SQLiteConnection(path: path, existingOnly: true)
@@ -235,9 +287,12 @@ public enum SQLiteSnapshotMaintenance {
     }
   }
 
-  private static func audit(_ db: SQLiteConnection, action: String, record: String, at: Int64)
+  static func audit(_ db: SQLiteConnection, action: String, record: String, at: Int64)
     throws
   {
+    guard
+      try action == "credential_reencryption" || (db.reencryptionCheckpoint()?.complete != false)
+    else { throw KeyMaintenanceError.incompleteReencryption }
     guard try db.scalar("SELECT COUNT(*) FROM maintenance_events") < 1000 else {
       throw ExecutionError.capacity
     }
@@ -248,25 +303,30 @@ public enum SQLiteSnapshotMaintenance {
   private static func encode<T: Encodable>(_ value: T) throws -> String {
     String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
   }
-  private static func verifyCredentials(
+  static func verifyCredentials(
     _ db: SQLiteConnection, _ protection: AccountCredentialCipher?
   ) throws -> [String] {
     let rows = try db.rows(
       "SELECT id,namespace,credential_version,sealed_credential FROM accounts LIMIT 65"
-    ) {
-      (
-        String(cString: sqlite3_column_text($0, 0)), String(cString: sqlite3_column_text($0, 1)),
-        sqlite3_column_int64($0, 2), String(cString: sqlite3_column_text($0, 3))
+    ) { row in
+      guard sqlite3_column_bytes(row, 0) <= 64, sqlite3_column_bytes(row, 1) <= 512,
+        sqlite3_column_bytes(row, 3) <= 49_152
+      else { throw ExecutionError.capacity }
+      return (
+        String(cString: sqlite3_column_text(row, 0)), String(cString: sqlite3_column_text(row, 1)),
+        sqlite3_column_int64(row, 2), String(cString: sqlite3_column_text(row, 3))
       )
     }
     guard rows.count <= 64 else { throw ExecutionError.capacity }
     if rows.isEmpty { return [] }
     guard let protection else { throw ExecutionError.unauthorized }
+    var required = Set<String>()
     for row in rows {
+      required.insert(try AccountCredentialCipher.envelopeKeyID(row.3))
       _ = try protection.open(
         row.3, context: .init(identity: row.0, namespace: row.1, version: row.2))
     }
-    return [protection.keyID]
+    return required.sorted()
   }
   private static func copy(_ source: SQLiteConnection, to path: String) throws {
     let pageSize = try source.scalar("PRAGMA page_size")
@@ -345,7 +405,7 @@ public enum SQLiteSnapshotMaintenance {
     try file.write(contentsOf: data)
     guard fsync(fd) == 0 else { throw ExecutionError.storageUnavailable }
   }
-  private static func fingerprint(_ path: String) throws -> (Int64, String) {
+  static func fingerprint(_ path: String) throws -> (Int64, String) {
     let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { throw ExecutionError.invalidCommand }
     defer { close(fd) }

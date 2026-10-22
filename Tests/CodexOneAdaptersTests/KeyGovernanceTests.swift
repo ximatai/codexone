@@ -190,7 +190,7 @@ private func keyAdmission(
   }
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v7-")
+    $0.contains(".pre-v8-")
   }
   #expect(backups.count == 1)
   let backup = directory + "/" + backups[0]

@@ -39,6 +39,18 @@ struct CodexOneMain {
       FileHandle.standardError.write(
         Data("Restored databases require managed Keys or account-pool configuration.\n".utf8))
       exit(1)
+    } catch KeyMaintenanceError.incompleteReencryption {
+      FileHandle.standardError.write(
+        Data(
+          "Incomplete credential reencryption; retain all keys and run --resume-reencryption offline.\n"
+            .utf8))
+      exit(1)
+    } catch KeyMaintenanceError.wrongActiveKey {
+      FileHandle.standardError.write(
+        Data(
+          "Reencryption requires the original target active key; retain all decrypt-only keys.\n"
+            .utf8))
+      exit(1)
     } catch is CommandError {
       FileHandle.standardError.write(Data("Unsupported arguments. Use --help.\n".utf8))
       exit(64)
@@ -52,14 +64,17 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
     let maintenance =
-      arguments == ["--maintenance-status"]
+      [["--maintenance-status"], ["--key-status"], ["--resume-reencryption"]].contains(arguments)
       || (arguments.count == 2
-        && ["--backup", "--restore", "--reconcile-restored"].contains(arguments[0])
+        && [
+          "--backup", "--restore", "--reconcile-restored", "--reencrypt-credentials",
+          "--verify-backup", "--check-key-retirement",
+        ].contains(arguments[0])
         && arguments[1].hasPrefix("/"))
     guard
       arguments.isEmpty || arguments == ["--check-config"] || arguments == ["--migrate"]
@@ -83,9 +98,41 @@ struct CodexOneMain {
       let path = directory + "/core.sqlite"
       let protection: AccountCredentialCipher?
       if let keyFile = configuration.accountMasterKeyFile {
-        protection = try await AccountCredentialCipher.load(path: keyFile)
+        protection = try await AccountCredentialCipher.load(
+          path: keyFile, adminCredentialPath: configuration.adminTokenFile)
       } else {
         protection = nil
+      }
+      if arguments[0] == "--verify-backup" {
+        let manifest = try await SQLiteSnapshotMaintenance.verifyBackup(
+          bundle: arguments[1], protection: protection)
+        FileHandle.standardOutput.write(try JSONEncoder().encode(manifest) + Data([10]))
+        return
+      }
+      if [
+        "--key-status", "--reencrypt-credentials", "--resume-reencryption",
+        "--check-key-retirement",
+      ].contains(arguments[0]) {
+        guard let protection else {
+          throw RuntimeConfiguration.ConfigurationError.invalidAccountMasterKeyFile
+        }
+        let result: Data
+        if arguments[0] == "--check-key-retirement" {
+          result = try await SQLiteKeyMaintenance.checkRetirement(
+            path: path, protection: protection, inventoryFile: arguments[1])
+        } else {
+          let status: KeyMaintenanceStatus
+          if arguments[0] == "--key-status" {
+            status = try await SQLiteKeyMaintenance.status(path: path, protection: protection)
+          } else {
+            status = try await SQLiteKeyMaintenance.reencrypt(
+              path: path, protection: protection,
+              backupDestination: arguments[0] == "--reencrypt-credentials" ? arguments[1] : nil)
+          }
+          result = try JSONEncoder().encode(status)
+        }
+        FileHandle.standardOutput.write(result + Data([10]))
+        return
       }
       if arguments[0] == "--backup" {
         let manifest = try await SQLiteSnapshotMaintenance.backup(
