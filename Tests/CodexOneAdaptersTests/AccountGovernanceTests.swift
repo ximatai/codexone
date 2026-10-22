@@ -291,3 +291,44 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
       && restored.refreshIntent == nil)
   await reopened.close()
 }
+
+@Test func imageAndConversationCatalogCapacityPreservesAll48CooldownsAndUsageOptions() async throws
+{
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let (_, context, envelope) = try accountFixture()
+  let account = try await store.createVerifiedAccount(
+    id: context.identity, namespace: context.namespace, envelope: envelope)
+  let models = Set((0..<48).map { "synthetic-model-\($0)" })
+  try await store.configureHealthModels(models)
+  try await store.perform { db in
+    for model in models {
+      try db.write(
+        "INSERT INTO account_model_health VALUES(?,?,?,?)",
+        [
+          .text(account.id), .text(model), .number(Int64(Date().timeIntervalSince1970) + 3600),
+          .text("rate_limited"),
+        ])
+    }
+  }
+  do {
+    let health = try await store.accountHealth(id: account.id)
+    #expect(health.cooldowns.count == 48 && store.isAvailable)
+    #expect(
+      try await store.hasHealthyModel(
+        id: account.id, credentialVersion: account.credentialVersion, models: models) == false)
+    let reader = try await store.makeUsageReader()
+    do { #expect(try await reader.usageOptions().models.count == 48) } catch {
+      await reader.close()
+      throw error
+    }
+    await reader.close()
+  } catch {
+    await store.close()
+    throw error
+  }
+  await store.close()
+}

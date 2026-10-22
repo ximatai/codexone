@@ -36,6 +36,7 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     edit.response.document["tools"]?.array?.first?["input_image_mask"]?["image_url"]?.string == url)
   #expect(!edit.response.requirements.visionInput)
   for fields: [String: JSONValue] in [
+    ["model": .number(123)], ["model": .null], ["model": .object([:])],
     ["n": .number(2)], ["size": .string("2048x1024")], ["response_format": .string("url")],
     ["background": .string("transparent"), "output_format": .string("jpeg")],
     ["output_compression": .number(50)], ["user": .string("unrecognized")],

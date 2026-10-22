@@ -67,7 +67,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
       )
     }
     let cooldowns = try db.rows(
-      "SELECT model,until_epoch,failure FROM account_model_health WHERE account_id=? AND until_epoch>? ORDER BY model LIMIT 33",
+      "SELECT model,until_epoch,failure FROM account_model_health WHERE account_id=? AND until_epoch>? ORDER BY model LIMIT 49",
       [.text(account.id), .number(Int64(Date().timeIntervalSince1970))]
     ) { row -> AccountModelCooldown in
       guard let failure = ExecutionFailure(rawValue: String(cString: sqlite3_column_text(row, 2))),
@@ -77,7 +77,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
         model: String(cString: sqlite3_column_text(row, 0)),
         untilUnixSeconds: sqlite3_column_int64(row, 1), failure: failure)
     }
-    guard cooldowns.count <= 32 else { throw ExecutionError.storageUnavailable }
+    guard cooldowns.count <= 48 else { throw ExecutionError.storageUnavailable }
     if let row = records.first {
       guard let failure = ExecutionFailure(rawValue: row.1) else {
         throw ExecutionError.storageUnavailable

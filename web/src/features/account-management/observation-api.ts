@@ -28,7 +28,7 @@ export function parseObservability(raw: unknown): AccountObservability {
   if (new Set(limits.map(limit => limit.id)).size !== limits.length) throw invalid();
   let cooldowns: AccountObservability["health"]["cooldowns"];
   if (health.cooldowns !== undefined) {
-    if (!Array.isArray(health.cooldowns) || health.cooldowns.length > 32) throw invalid();
+    if (!Array.isArray(health.cooldowns) || health.cooldowns.length > 48) throw invalid();
     cooldowns = health.cooldowns.map(raw => { const item = object(raw); const until = time(item.untilUnixSeconds); const code = failure(item.failure); if (!until || !code) throw invalid(); return { model: label(item.model), untilUnixSeconds: until, failure: code }; });
   }
   const age = quota.ageSeconds === null ? null : integer(quota.ageSeconds);
@@ -38,7 +38,7 @@ export function parseObservability(raw: unknown): AccountObservability {
   if (cooldowns && cooldowns.length !== health.cooldownCount) throw invalid();
   return { observing: value.observing, receivedAt: performance.now(), quota: {
     state: quota.state as AccountObservability["quota"]["state"], observedAtUnixSeconds: observedAt, attemptedAtUnixSeconds: attemptedAt, ageSeconds: age, freshForSeconds: remaining, failure: code, additionalCount: integer(quota.additionalCount, 16), limits,
-  }, health: { authenticationRejected: health.authenticationRejected, lastFailure: failure(health.lastFailure), lastFailureAtUnixSeconds: time(health.lastFailureAtUnixSeconds), cooldownCount: integer(health.cooldownCount, 32), nextCooldownEndsAtUnixSeconds: time(health.nextCooldownEndsAtUnixSeconds), ...(cooldowns ? { cooldowns } : {}) } };
+  }, health: { authenticationRejected: health.authenticationRejected, lastFailure: failure(health.lastFailure), lastFailureAtUnixSeconds: time(health.lastFailureAtUnixSeconds), cooldownCount: integer(health.cooldownCount, 48), nextCooldownEndsAtUnixSeconds: time(health.nextCooldownEndsAtUnixSeconds), ...(cooldowns ? { cooldowns } : {}) } };
 }
 export async function fetchObservation(id: string, signal?: AbortSignal): Promise<AccountObservability> { const started = performance.now(); const parsed = parseObservability(await request("/api/accounts/" + encodeURIComponent(id) + "/observation", { signal })); parsed.receivedAt = started; return parsed; }
 export async function observeAccount(id: string, csrf: string, signal?: AbortSignal): Promise<AccountObservability> { const started = performance.now(); const parsed = parseObservability(await request("/api/accounts/" + encodeURIComponent(id) + "/observe", { method: "POST", body: {}, csrf, signal, timeout: 35000 })); parsed.receivedAt = started; return parsed; }

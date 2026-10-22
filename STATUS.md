@@ -78,6 +78,6 @@ M3 已完成以下本地合成闭环：
 
 运行与配置见[Key 治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)。旧版本先按文档停服迁移，保留独立主密钥；不能原地降级或用恢复旧库丢弃新执行责任。
 
-M4 图片能力已接续原有未提交成果，实现独立权限/模型映射、schema v6 显式迁移、Images generation/edits JSON/multipart/SSE 与 Responses 图片工具，共享 HTTP/桥接/原生 WS 的执行/归属/用量治理；管理权限与统计已可操作。macOS 定向 Swift 21 项、前端类型/生产构建及 34 项测试、合成真实 socket 和实际 Chrome 管理操作已通过，详见[图片验证](docs/changes/image-capability/verification.md)。当前进入集中 review/修复，完整前后端及 Linux 阶段出口尚未完成，不标 M4 完成。图片与压缩组合明确拒绝，图片历史压缩适配未验收。
+M4 图片能力已接续原有未提交成果，实现独立权限/模型映射、schema v6 显式迁移、Images generation/edits JSON/multipart/SSE 与 Responses 图片工具，共享 HTTP/桥接/原生 WS 的执行/归属/用量治理；管理权限与统计已可操作。macOS 定向 Swift 21 项、前端类型/生产构建及 34 项测试、合成真实 socket 和实际 Chrome 管理操作已通过，详见[图片验证](docs/changes/image-capability/verification.md)。集中 review 发现的两项 P1、两项 P2 已亲自修复，定向 Swift 22 项/前端 35 项与图片 socket 回归通过；完整前后端及 Linux 阶段出口尚未完成，不标 M4 完成。图片与压缩组合明确拒绝，图片历史压缩适配未验收。
 
-下一步集中 review M4 实现、亲自修复和相关回归，再执行完整阶段出口。Desktop 界面验收、恢复读取契约和真实订阅兼容仍明确保留；真实 Images 兼容、恢复缓存、生产镜像/弱服务器容量、升级/迁移/回退替代演练尚未交付。GitHub 无凭证 CI 定义存在，但尚未远程运行；无远程承接或推送。首版整体未完成。
+下一步复审 M4 修复并执行完整阶段出口。Desktop 界面验收、恢复读取契约和真实订阅兼容仍明确保留；真实 Images 兼容、恢复缓存、生产镜像/弱服务器容量、升级/迁移/回退替代演练尚未交付。GitHub 无凭证 CI 定义存在，但尚未远程运行；无远程承接或推送。首版整体未完成。

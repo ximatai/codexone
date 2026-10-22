@@ -31,15 +31,20 @@ extension ResponseRequest {
     guard let mapping = configuration?.models.first(where: { $0.id == imageModel }) else {
       throw GatewayProtocolError(502, "invalid_upstream_image")
     }
-    let items =
-      response?["output"]?.array?.filter { $0["type"]?.string == "image_generation_call" } ?? []
+    let outputItems = response?["output"]?.array
+    let items = outputItems?.filter { $0["type"]?.string == "image_generation_call" } ?? []
     guard items.count <= 16 else { throw GatewayProtocolError(502, "upstream_output_too_large") }
     var input: Int64 = 0
     var output: Int64 = 0
-    var knownInput = !items.isEmpty
-    var knownOutput = !items.isEmpty
+    let knownOutputItems =
+      outputItems?.allSatisfy {
+        ["message", "reasoning", "function_call", "custom_tool_call", "image_generation_call"]
+          .contains($0["type"]?.string ?? "")
+      } == true
+    var knownInput = knownOutputItems
+    var knownOutput = knownOutputItems
     var images: Int64 = 0
-    var complete = !items.isEmpty
+    var complete = knownOutputItems
     for item in items {
       func tokens(_ name: String) throws -> Int64? {
         guard let value = item["usage"]?[name], value != .null else { return nil }

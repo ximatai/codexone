@@ -33,7 +33,7 @@ class Provider(BaseHTTPRequestHandler):
             self.server.calls += 1
             index = self.server.calls
         tools = request.get('tools', [])
-        image = any(t['type'] == 'image_generation' for t in tools)
+        image = any(t['type'] == 'image_generation' for t in tools) and request.get('tool_choice') != 'none' and request.get('input') != 'no-image'
         item = {'id': f'ig_{index}', 'type': 'image_generation_call', 'status': 'completed', 'result': PNG,
                 'usage': {'input_tokens': 2, 'output_tokens': 3}}
         prompt = request['input']
@@ -106,14 +106,14 @@ def main():
                 config.write_text(json.dumps({'managedKeys': True, 'namespace': 'synthetic', 'identity': 'synthetic-account',
                     'reservedMicros': 10, 'executionTimeoutSeconds': 2, 'upstreamTransport': transport,
                     'upstreamBaseURL': f'http://127.0.0.1:{upstream.server_port}/v1',
-                    'models': [{'id': 'synthetic-host', 'visionInput': True, 'imageGeneration': True, 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
-                    'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': 'synthetic-image', 'hostModel': 'synthetic-host',
-                        'sizePolicy': 'fixed1536', 'supportsTransparency': True, 'supportsInputFidelity': True, 'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000}]}}))
+                    'models': [{'id': host, 'visionInput': True, 'imageGeneration': True, 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000} for host in ('synthetic-host', 'synthetic-host-other')],
+                    'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': image, 'hostModel': host,
+                        'sizePolicy': 'fixed1536', 'supportsTransparency': True, 'supportsInputFidelity': True, 'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000} for image, host in [('synthetic-image', 'synthetic-host'), ('synthetic-image-other', 'synthetic-host-other')]]}}))
                 config.chmod(0o600)
-                process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin, web_directory=(repository / 'web/dist').resolve())
+                process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin, web_directory=(repository / 'web/dist').resolve() if args.browser else None)
                 try:
                     policies = {}
-                    for name, models, vision, image in [('chat', ['synthetic-host'], False, False), ('vision', ['synthetic-host'], True, False), ('images', [], False, True), ('both', ['synthetic-host'], True, True), ('other', ['synthetic-host'], True, True)]:
+                    for name, models, vision, image in [('chat', ['synthetic-host'], False, False), ('vision', ['synthetic-host'], True, False), ('images', [], False, True), ('both', ['synthetic-host'], True, True), ('other', ['synthetic-host'], True, True), ('cross', ['synthetic-host-other'], True, True)]:
                         status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal=name if name == 'other' else 'team', models=models, limits=LIMITS,
                             visionInput=vision, imageGeneration=image, imageModels=['synthetic-image'] if image else []))
                         assert status == 201, (status, created)
@@ -137,7 +137,15 @@ def main():
                     vision = {'model': 'synthetic-host', 'input': [{'role': 'user', 'content': [{'type': 'input_image', 'image_url': URL}]}]}
                     assert request('vision', '/v1/responses', vision)[0] == 200
                     assert request('chat', '/v1/responses', vision)[0] != 200
+                    status, directory = call(port, 'GET', '/v1/models', token=policies['cross']['secret'])
+                    assert status == 200 and next(model for model in directory['data'] if model['id'] == 'synthetic-host-other')['image_generation'] is False
+                    before = upstream.calls
+                    assert request('cross', '/v1/responses', {'model': 'synthetic-host-other', 'input': 'synthetic', 'tools': [{'type': 'image_generation', 'model': 'synthetic-image-other'}]})[0] == 403
+                    assert upstream.calls == before
                     tool = {'model': 'synthetic-host', 'input': 'synthetic', 'tools': [{'type': 'image_generation'}]}
+                    for zero in ({**tool, 'tool_choice': 'none'}, {**tool, 'input': 'no-image'}):
+                        assert request('both', '/v1/responses', zero)[0] == 200
+                        usage = latest(db, 'settled'); assert usage['images'] == 0 and usage['imageInputTokens'] == 0 and usage['estimatedMicros'] == 12
                     assert request('chat', '/v1/responses', tool)[0] != 200
                     assert request('images', '/v1/responses', tool)[0] != 200
                     status, body = request('both', '/v1/responses', tool); assert status == 200, (status, body[:200])
@@ -161,7 +169,7 @@ def main():
                     assert request('images', '/v1/images/generations', {'prompt': 'missing-usage'})[0] == 200
                     usage = latest(db, 'unknown'); assert usage['completeness'] == 'partial' and 'imageInputTokens' not in usage
                     before = upstream.calls
-                    for body in ({'prompt': 'synthetic', 'n': 2}, {'prompt': 'synthetic', 'size': '4096x4096'}, {'prompt': 'synthetic', 'images': [{'image_url': 'https://example.invalid/x.png'}]}):
+                    for body in ({'prompt': 'synthetic', 'model': 123}, {'prompt': 'synthetic', 'model': None}, {'prompt': 'synthetic', 'n': 2}, {'prompt': 'synthetic', 'size': '4096x4096'}, {'prompt': 'synthetic', 'images': [{'image_url': 'https://example.invalid/x.png'}]}):
                         assert request('images', '/v1/images/edits' if 'images' in body else '/v1/images/generations', body)[0] == 400
                     assert upstream.calls == before
                     # Authentication and declared size are checked before waiting for an oversized body.

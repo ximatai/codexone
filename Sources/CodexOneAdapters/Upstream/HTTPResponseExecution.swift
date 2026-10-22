@@ -25,18 +25,18 @@ struct HTTPResponseExecution: Sendable {
 
   func authorized(_ digest: String?) async throws -> Self {
     let policy = try await access.policy(digest)
+    let effectiveImages =
+      policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
       client: client, webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
       gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
-      effectiveImageModels: policy.capabilities.map {
-        configuration.imageGeneration?.effective(for: $0) ?? []
-      } ?? [],
+      effectiveImageModels: effectiveImages,
       effectiveModels: configuration.models.filter { policy.models.contains($0.id) }.map { model in
         var model = model
         model.visionInput = model.visionInput == true && policy.capabilities?.visionInput == true
         model.imageGeneration =
-          model.imageGeneration == true && policy.capabilities?.imageGeneration == true
+          model.imageGeneration == true && effectiveImages.contains { $0.hostModel == model.id }
         return model
       })
   }

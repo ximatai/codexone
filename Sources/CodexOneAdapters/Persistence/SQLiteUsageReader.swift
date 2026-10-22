@@ -64,7 +64,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       let keys = try db.rows("SELECT id FROM managed_keys ORDER BY id LIMIT 257") {
         String(cString: sqlite3_column_text($0, 0))
       }
-      let models = try db.rows("SELECT model FROM health_models ORDER BY model LIMIT 33") {
+      let models = try db.rows("SELECT model FROM health_models ORDER BY model LIMIT 49") {
         String(cString: sqlite3_column_text($0, 0))
       }
       guard keys.count <= 256, models.count <= 48 else { throw ExecutionError.capacity }

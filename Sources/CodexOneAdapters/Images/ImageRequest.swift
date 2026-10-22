@@ -15,6 +15,7 @@ struct ImageToolRequest: Sendable {
   let document: JSONValue
   init(_ value: JSONValue, configuration: ImageConfiguration?, host: String? = nil) throws {
     guard var fields = value.object, fields["type"]?.string == "image_generation",
+      fields["model"] == nil || fields["model"]?.string != nil,
       let configuration,
       let model = configuration.models.first(where: {
         $0.id == (fields["model"]?.string ?? configuration.defaultModel)

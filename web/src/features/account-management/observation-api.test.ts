@@ -20,3 +20,9 @@ describe("upstream observations", () => {
     expect(() => parseObservability({ ...raw, quota: { ...raw.quota, limits: [{ ...raw.quota.limits[0], primary: { ...raw.quota.limits[0].primary, usedPercent: -1 } }] } })).toThrow();
   });
 });
+it("accepts all 48 configured conversation and image cooldowns without hiding health", () => {
+  const raw = observationFixture();
+  const cooldowns = Array.from({ length: 48 }, (_, index) => ({ model: `synthetic-${index}`, untilUnixSeconds: 2000, failure: "rate_limited" }));
+  expect(parseObservability({ ...raw, health: { ...raw.health, cooldownCount: 48, cooldowns } }).health.cooldowns).toHaveLength(48);
+  expect(() => parseObservability({ ...raw, health: { ...raw.health, cooldownCount: 49, cooldowns: [...cooldowns, cooldowns[0]] } })).toThrow();
+});
