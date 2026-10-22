@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Private initialization and optional actual OCI runtime checks, without real accounts."""
 import argparse
-from contextlib import closing
 import hashlib
 import json
 import os
@@ -9,7 +8,6 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 import re
 import subprocess
-import sqlite3
 import tempfile
 import uuid
 
@@ -43,7 +41,7 @@ def verify_initializer(binary):
         command, uid, _ = initialize(target)
         credentials = [(target / 'secrets' / name).read_bytes() for name in ('admin', 'master')]
         assert len(credentials[0]) >= 32 and re.fullmatch(rb'[0-9a-f]{64}', credentials[1])
-        for path in (target, target / 'data', target / 'secrets'):
+        for path in (target, target / 'secrets'):
             assert path.stat().st_mode & 0o777 == 0o700 and path.stat().st_uid == uid
         for path in target.rglob('*'):
             if path.is_file():
@@ -83,23 +81,31 @@ def verify_initializer(binary):
             for name, value in original.items():
                 if value is None: os.environ.pop(name, None)
                 else: os.environ[name] = value
-        config = json.loads(output)['services']['gateway']
+        document = json.loads(output)
+        config = document['services']['gateway']
+        bootstrap = document['services']['init-data']
+        assert bootstrap['user'] == '0:0' and bootstrap['network_mode'] == 'none' and bootstrap['read_only']
+        assert len(bootstrap['volumes']) == 1 and bootstrap['volumes'][0]['type'] == 'volume'
+        assert config['depends_on']['init-data']['condition'] == 'service_completed_successfully'
+        assert re.fullmatch('codexone-data-[0-9a-f]{24}', document['volumes']['data']['name'])
         assert config['image'] == IMAGE_ID
         assert config['read_only'] and config['network_mode'] == 'host' and config['restart'] == 'no'
         assert not config.get('ports') and config['user'].split(':')[0] != '0'
         assert all(secret not in output for secret in credentials)
         if binary and os.geteuid() != 0:
-            env = {'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(target / 'data'),
+            (target / 'check-data').mkdir(mode=0o700)
+            env = {'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(target / 'check-data'),
                    'CODEXONE_ACCOUNT_POOL_CONFIG': str(target / 'secrets/pool.json'),
                    'CODEXONE_ACCOUNT_MASTER_KEY_FILE': str(target / 'secrets/master'),
                    'CODEXONE_ADMIN_TOKEN_FILE': str(target / 'secrets/admin')}
             checked = subprocess.run([str(binary.resolve()), '--check-config'], env=env, capture_output=True, timeout=10)
-            assert checked.returncode == 0 and not list((target / 'data').iterdir())
+            assert checked.returncode == 0 and not list((target / 'check-data').iterdir())
             (target / 'secrets/admin').chmod(0o644)
             rejected = subprocess.run([str(binary.resolve()), '--check-config'], env=env, capture_output=True, timeout=10)
             assert rejected.returncode != 0
             assert all(secret not in checked.stdout + checked.stderr + rejected.stdout + rejected.stderr for secret in credentials)
-    print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation, Compose isolation and binary config validation')
+    print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation and Compose isolation'
+          + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
 def verify_runtime(image, browser=False):
@@ -111,8 +117,11 @@ def verify_runtime(image, browser=False):
     name = project
     with tempfile.TemporaryDirectory(prefix='codexone-oci-') as temporary:
         root = Path(temporary) / 'install'
-        _, uid, _ = initialize(root, identifier['Id'])
-        # TemporaryDirectory itself is private; only the bind mounts are visible to the runtime UID.
+        _, uid, gid = initialize(root, identifier['Id'])
+        settings = dict(line.split('=', 1) for line in (root / '.env').read_text().splitlines())
+        volume = settings['CODEXONE_DATA_VOLUME']
+        assert re.fullmatch('codexone-data-[0-9a-f]{24}', volume)
+        assert run(['docker', 'volume', 'inspect', volume], ok=False).returncode != 0
         admin = (root / 'secrets/admin').read_text()
         compose = ['docker', 'compose', '--project-directory', str(root), '--project-name', project]
         secrets = [admin, (root / 'secrets/master').read_text()]
@@ -129,9 +138,13 @@ def verify_runtime(image, browser=False):
                 raw_headers, payload = payload.split(b'\r\n\r\n', 1)
                 return int(status), payload, raw_headers.decode()
             return int(status), payload
+        def maintenance(entrypoint, arguments, *, ok=True):
+            return run([*compose, 'run', '--rm', '--no-deps', '--entrypoint', entrypoint, 'gateway', *arguments], ok=ok)
         try:
+            root_target = run([*compose, 'run', '--rm', '--no-deps', '--env', 'TARGET_UID=0', 'init-data'], ok=False)
+            assert root_target.returncode != 0
             run([*compose, 'run', '--rm', 'gateway', '--check-config'])
-            assert not list((root / 'data').iterdir())
+            assert not maintenance('find', ['/var/lib/codexone', '-mindepth', '1', '-maxdepth', '1', '-print']).stdout
             (root / 'secrets/admin').chmod(0o644)
             rejected = run([*compose, 'run', '--rm', 'gateway', '--check-config'], ok=False)
             assert rejected.returncode != 0
@@ -155,7 +168,7 @@ def verify_runtime(image, browser=False):
             assert host['Memory'] == 768 * 1024 * 1024 and host['PidsLimit'] == 128
             assert all(option in host['Tmpfs']['/tmp'] for option in ('noexec', 'nosuid'))
             mounts = {mount['Destination']: mount for mount in running['Mounts']}
-            assert mounts['/var/lib/codexone']['RW'] and not mounts['/run/codexone']['RW']
+            assert mounts['/var/lib/codexone']['Type'] == 'volume' and mounts['/var/lib/codexone']['RW'] and not mounts['/run/codexone']['RW']
             process = run(['docker', 'exec', name, 'cat', '/proc/1/status']).stdout.decode()
             status_fields = dict(line.split(':', 1) for line in process.splitlines() if ':' in line)
             assert status_fields['NoNewPrivs'].strip() == '1'
@@ -202,18 +215,19 @@ def verify_runtime(image, browser=False):
             assert run(['docker', 'exec', name, 'touch', '/opt/codexone/forbidden'], ok=False).returncode != 0
             assert run(['docker', 'exec', name, 'touch', '/run/codexone/forbidden'], ok=False).returncode != 0
             run(['docker', 'exec', name, 'touch', '/tmp/synthetic-writable'])
+            wrong_uid = 10002 if uid != 10002 else 10003
+            refused_owner = run([*compose, 'run', '--rm', '--no-deps', '--env', f'TARGET_UID={wrong_uid}', 'init-data'], ok=False)
+            assert refused_owner.returncode != 0 and b'Existing data volume ownership differs' in refused_owner.stderr + refused_owner.stdout
+            assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()
             locked = run([*compose, 'run', '--rm', 'gateway', '--migrate'], ok=False)
             assert locked.returncode != 0
             run([*compose, 'stop'], timeout=40)
             state = json.loads(run(['docker', 'inspect', name]).stdout)[0]
             assert state['State']['ExitCode'] == 0 and not state['State']['OOMKilled'] and state['RestartCount'] == 0
-            database = root / 'data/core.sqlite'
+            database = '/var/lib/codexone/core.sqlite'
             # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
-            with closing(sqlite3.connect(database)) as db:
-                db.execute("UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels')")
-                db.execute('PRAGMA user_version=5')
-                db.commit()
-                assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+            fixture_sql = "BEGIN IMMEDIATE; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
+            assert maintenance('sqlite3', [database, fixture_sql]).stdout.strip() == b'ok'
             before_legacy = run(['docker', 'logs', name])
             run([*compose, 'start'])
             deadline = time.monotonic() + 15
@@ -228,13 +242,13 @@ def verify_runtime(image, browser=False):
             assert b'LISTENING' not in rejected_logs and b'Service startup or shutdown failed.' in rejected_logs
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
-            backups = list((root / 'data').glob('core.sqlite.pre-v6-*.sqlite'))
-            assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
-            for path, version in ((backups[0], 5), (database, 6)):
-                with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
-                    assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
-                    assert db.execute('PRAGMA user_version').fetchone()[0] == version
-                    assert db.execute('SELECT id FROM managed_keys').fetchall() == [(key_id,)]
+            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v6-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
+            assert len(backups) == 1
+            backup, mode, owner = backups[0].split()
+            assert re.fullmatch('core.sqlite.pre-v6-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
+            for path, version in (('/var/lib/codexone/' + backup, 5), (database, 6)):
+                rows = maintenance('sqlite3', ['-readonly', path, 'PRAGMA quick_check; PRAGMA user_version; SELECT id FROM managed_keys;']).stdout.decode().splitlines()
+                assert rows == ['ok', str(version), key_id]
             run([*compose, 'start'])
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
@@ -264,6 +278,15 @@ def verify_runtime(image, browser=False):
             leftovers = run(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project]).stdout.decode().splitlines()
             assert len(leftovers) <= 8 and all(re.fullmatch('[0-9a-f]{12,64}', item) for item in leftovers)
             if leftovers: run(['docker', 'rm', '--force', *leftovers])
+            retained = run(['docker', 'volume', 'inspect', volume], ok=False)
+            if retained.returncode == 0:
+                retained_volume = json.loads(retained.stdout)[0]
+                assert retained_volume['Driver'] == 'local' and retained_volume['Scope'] == 'local'
+                labels = retained_volume['Labels']
+                assert labels['com.docker.compose.project'] == project and labels['com.docker.compose.volume'] == 'data'
+                run(['docker', 'volume', 'rm', volume])
+            else:
+                assert b'no such volume' in retained.stderr.lower() or b'no such object' in retained.stderr.lower()
     print('PASS: actual amd64 OCI/Compose private installation, SPA/auth/Key persistence, non-root/read-only runtime, liveness/readiness, lock, v5 backup migration/legacy denial and graceful restart')
 
 

@@ -2,6 +2,8 @@
 
 依据 O06/O08/O11 和 M6，交付可追溯 Linux amd64 OCI 候选、独立私有配置初始化、Compose 安装/迁移命令、宿主反代模板及合成安装验收。主 Agent 亲自实现，闭环提交后集中 review/修复，阶段出口验证实际运行产物。仅准备本机候选与 CI 定义，不推送镜像、运行远端 CI、发布或部署用户服务。
 
-默认 loopback 监听保持不变。首个 Linux Compose 使用 host network，保留宿主回环隔离；外部访问须由独立 TLS 反代提供。镜像非 root、无 Swift 编译器/Node、只读根、独立 data/secrets/tmp 挂载；初始化不覆盖已有目录，秘密由安全随机生成、只写私有文件、不进入终端日志。已有 schema 不自动升级。
+默认 loopback 监听保持不变。首个 Linux Compose 使用 host network，保留宿主回环隔离；外部访问须由独立 TLS 反代提供。镜像默认非 root、无 Swift 编译器/Node、只读根、独立 data/secrets/tmp 挂载；data 使用显式唯一名称的 Linux 本地 Docker volume，secrets 保持私有文件只读 bind。隔离 root init 仅为新空卷设置运行 UID/GID，非空卷归属不符拒绝，不递归改写已有资料；gateway 始终以非 root 身份运行。初始化不覆盖已有目录，秘密由安全随机生成、只写私有文件、不进入终端日志。已有 schema 不自动升级。
 
 验收：发行二进制与静态管理台可启动；认证/CSRF、配置权限、实例锁、只读根、健康区分、停止/重启、显式迁移与秘密不进入镜像/日志；测试仅合成资料。CI 只构建/测试/上传候选产物，不自动发布。备份/旧快照核对、弱服务器混合容量、真实反代/客户端替代及 M5 缓存仍单独验收，不能由候选安装成功推导首版完成。
+
+数据盘取舍依据：本机 macOS 共享 bind 的最小 flock 探针在同容器/跨容器均错误取得第二把锁；Linux 本地 volume 两者均正确阻止。不能用不满足 O01 的共享目录验收，默认数据改到 Engine 本地卷；不把本机 Docker 虚拟盘等同于目标弱服务器或掉电证据。初始化生成唯一 project/volume 标识，避免不同安装目录同名而误复用数据。

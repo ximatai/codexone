@@ -34,13 +34,14 @@ def initialize(destination, image, origin, pool, uid, gid):
     try:
         # Exclusive creation is the barrier: existing directories/symlinks always fail.
         destination.mkdir(mode=0o700)
-        (destination / 'data').mkdir(mode=0o700)
         (destination / 'secrets').mkdir(mode=0o700)
+        installation = secrets.token_hex(12)
         values = {
             'secrets/admin': secrets.token_urlsafe(48).encode(),
             'secrets/master': secrets.token_hex(32).encode(),
             'secrets/pool.json': contents,
-            '.env': (f'CODEXONE_IMAGE={image}\nCODEXONE_UID={uid}\nCODEXONE_GID={gid}\n'
+            '.env': (f'COMPOSE_PROJECT_NAME=codexone-{installation}\nCODEXONE_DATA_VOLUME=codexone-data-{installation}\n'
+                     f'CODEXONE_IMAGE={image}\nCODEXONE_UID={uid}\nCODEXONE_GID={gid}\n'
                      f'CODEXONE_ADMIN_PUBLIC_ORIGIN={origin.rstrip("/")}\n').encode(),
             'compose.yaml': Path(__file__).with_name('compose.yaml').read_bytes(),
         }
@@ -55,7 +56,7 @@ def initialize(destination, image, origin, pool, uid, gid):
                 raise ValueError('Unexpected installation symlink.')
             os.chown(path, uid, gid)
         os.chown(destination, uid, gid)
-        for directory in (destination / 'data', destination / 'secrets', destination):
+        for directory in (destination / 'secrets', destination):
             descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
                 os.fsync(descriptor)

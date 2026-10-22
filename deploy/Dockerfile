@@ -42,7 +42,7 @@ RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone 
     && python3 scripts/verify_images.py --binary /output/codexone
 
 FROM swift:${SWIFT_VERSION}-noble-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 curl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
     && mkdir -p /var/lib/codexone /run/codexone /opt/codexone/web \
