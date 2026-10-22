@@ -8,7 +8,7 @@ import NIOWebSocket
 
 struct WebSocketUpstream: Sendable {
   let group: any EventLoopGroup
-  let configuration: SingleIdentityConfiguration
+  let configuration: ResponsesConfiguration
   let token: String?
 
   func run(operation: @escaping @Sendable (WebSocketPeer) async throws -> Void) async throws {

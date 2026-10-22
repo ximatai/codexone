@@ -37,3 +37,11 @@ Core 持有当前 Key 策略与有界候选凭证；先获取既有 finalizer ti
 把持久账号 work 接到数据传输之前，适配器须重新核对已保存可信 ID 基线、当前 access 的 subject/account、固定 namespace 与实际访问期限；只从该可信范围产生 Bearer 和 chatgpt-account-id，不接受下游同名头或组织/项目覆盖。此解析只消费 Core 从可信密文准备的 work，不扩展成 JWT 导入或通用签名验证器。认证头仅为瞬时值，description/debugDescription 脱敏，不编码或持久化。
 
 生产目标固定为 chatgpt.com/backend-api/codex，必须匹配生产认证 realm；显式合成工厂仅允许 loopback 端口且须来自合成 realm，禁止将生产命名空间/凭证转发到测试地址。两类目标均无地址运行时覆盖。协议头依据 OpenAI Codex 公共实现的 [bearer auth provider](https://github.com/openai/codex/blob/main/codex-rs/model-provider/src/bearer_auth_provider.rs) 核实；该实现是兼容证据，不承诺内部订阅协议长期稳定。
+
+## HTTP 数据面切片
+
+复用已验收的 Responses JSON/SSE/压缩解析与绑定/证据流程，把单身份和订阅池作为两种实际授权来源。抽取共享模型/profile/传输配置，旧单身份 JSON 与行为保持兼容；新的私有池配置仅包含明确模型/profile、预留和执行期限，不含上游地址、账号、token、组织/项目或任意头。生产池只接受托管 Key，要求数据目录、管理凭证与独立主密钥，和旧单身份配置互斥。提供显式合成工厂给测试，不提供生产地址覆盖。
+
+每次请求重新验证 Key，Core 池用例在持久 intent 后给出唯一账号，适配器将其可信认证值用于一次 HTTP POST。客户端头不会透传；AHC 禁止重定向、连接建立重试、代理继承和解压，HTTP/1 且每连接一次使用。JSON、SSE、压缩和用量/归属处理复用同一代码；错误不重发、不切账号，部分/终态证据仍由 finalizer 收尾。此切片池只启用 HTTP，明确拒绝 native WS 升级；后续连接固定身份另验收。
+
+真实合成 socket 验证两账号/两主体、并发、绑定与续接、管理禁用/Key撤销、刷新、未知失败不重放、JSON/SSE/压缩及取消关闭。配置检查不得建库或请求网络，未知/歧义/跨账号引用在发送前拒绝；现有单身份 HTTP/WS 脚本必须完整回归。M3 不因 HTTP 切片单独标完成。

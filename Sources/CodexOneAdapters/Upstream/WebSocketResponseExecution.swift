@@ -13,7 +13,10 @@ extension HTTPResponseExecution {
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID, mode: request.mode
-    ) { context in
+    ) { context, authorization in
+      guard authorization == nil else {
+        throw GatewayProtocolError(503, "pool_websocket_unavailable")
+      }
       try peer.attachEvidence(lane: lane) { event in
         if let evidence = try ProviderObservation.usage(event["response"]?["usage"], model: model) {
           try context.observeUsage(evidence)

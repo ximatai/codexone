@@ -26,6 +26,8 @@ swift run codexone
 
 环境变量 `CODEXONE_DATA_PORT` / `CODEXONE_ADMIN_PORT` 可指定端口，0 为临时端口；非零端口不得相同。无配置时也能启动健康入口，但不能代理生成。
 
+订阅池 HTTP 使用 `CODEXONE_ACCOUNT_POOL_CONFIG` 私有模型/profile 配置，并要求管理凭证、账号主密钥和数据目录；与旧单身份配置互斥，配置见[账号凭证](docs/development/account-credentials.md)。
+
 可选 `CODEXONE_DATA_DIRECTORY` 指向绝对数据目录，可初始化/恢复核心库并标记存储先决条件就绪；默认不创建持久库，配置存储也不会启用生成。Linux 构建需 `libsqlite3-dev`，macOS 使用系统 SQLite。
 
 前端（另一个终端；开发代理指向管理默认端口）：
@@ -87,6 +89,6 @@ Runtime 有界单飞 owner e7c200a 已实现并通过 macOS/Linux 完整后端 6
 
 初次授权 Runtime owner 与订阅桥接已实现：八流程/四并行、session owner 绑定、10 分钟期限和一次性消费、取消/关闭等待、重新授权 namespace/CAS。macOS 完整后端 77 测试和全部脚本通过，新增实际 socket 贯通后全量 Swift 78 测试通过，0be1012 独立 review 无阻塞，五项定向验证通过；主 Agent 进一步补充实际 verifier/challenge S256 一致性验证并通过。账号管理 API 与生产主密钥组装已实现，macOS 完整后端 80 测试及全部脚本通过，d4fb93e 独立 review 无阻塞，同快照 Linux 完整后端 80 测试/全部脚本通过；主 Agent 补实际管理断开后授权继续收尾的 socket 回归并通过。支持列表/模式 CAS、共享刷新与初次/重新授权，复用现有管理认证/CSRF，配置检查拒绝密钥复用且不建库。账号 UI 已实现，类型/构建/22 组件/API 测试、3 概览 Chrome 及实际账号/Key 全流程通过。81793c7 同快照 Linux 完整后端 80 测试/全部脚本通过；独立 review 实证登出意图与旧 CSRF 两项 P2，主 Agent 已亲自修复并通过组件/实际 Chrome 扩展回归，569af49 复审关闭两项 P2，reviewer 重跑 22 测试和实际 Chrome 全流程通过；新增测试专用合成组装，不提供生产认证地址覆盖。账号池路由仍未实现，不能当已接入订阅账号。边界见[凭证层](docs/development/account-credentials.md)，证据见[验证账](docs/changes/account-credentials/verification.md)。随后推进账号池的原子准入/归属调度与额度观测；M3 整体未完成，无真实账号调用。
 
-账号池下一切片：[托管 dispatch 准入屏障](docs/changes/account-pool-routing/proposal.md)已实现 Core 瞬时凭证准备与安全账号快照，SQLite 同事务复核账号 revision/version/ready/模式/访问期限、Key 与资源治理，匹配托管身份不可省略快照走旧入口。v4 显式迁移覆盖 v1/v2/v3，防旧二进制忽略执行语义；备份先于恢复，历史 admission 保持可读。macOS 完整后端 84 测试和全部脚本通过，f488da5 独立 review 无阻塞，四项定向回归及同快照 Linux 完整后端 84 测试/全部脚本通过；主 Agent 另统一凭证/准入/归属的 512 字节 namespace 边界，macOS 完整后端 85 测试/全部脚本通过，689fdc9 独立 review 无阻塞，同快照 Linux 完整后端 85 测试及全部脚本通过。有效 access 的 Core 池选择用例和 SQLite 原子归属交集/最少在途分流已实现，macOS 完整后端 92 测试及全部脚本通过，6074b3d 独立 review 无阻塞，七项定向测试通过，同快照 Linux amd64 / Swift 6.4 单并发完整后端 92 测试及全部脚本通过。共享刷新衔接已实现，macOS 完整后端 96 测试及全部脚本通过，6c33cad 独立 review 无阻塞，四项定向回归通过，同快照 Linux amd64 / Swift 6.4 单并发完整后端 96 测试及全部脚本通过。订阅数据认证的范围复核/生产与合成目标隔离已实现，macOS 完整后端 98 测试及全部脚本通过，待提交后 review；尚未连接数据传输。详细证据见[账号池验证账](docs/changes/account-pool-routing/verification.md)。
+账号池下一切片：[托管 dispatch 准入屏障](docs/changes/account-pool-routing/proposal.md)已实现 Core 瞬时凭证准备与安全账号快照，SQLite 同事务复核账号 revision/version/ready/模式/访问期限、Key 与资源治理，匹配托管身份不可省略快照走旧入口。v4 显式迁移覆盖 v1/v2/v3，防旧二进制忽略执行语义；备份先于恢复，历史 admission 保持可读。macOS 完整后端 84 测试和全部脚本通过，f488da5 独立 review 无阻塞，四项定向回归及同快照 Linux 完整后端 84 测试/全部脚本通过；主 Agent 另统一凭证/准入/归属的 512 字节 namespace 边界，macOS 完整后端 85 测试/全部脚本通过，689fdc9 独立 review 无阻塞，同快照 Linux 完整后端 85 测试及全部脚本通过。有效 access 的 Core 池选择用例和 SQLite 原子归属交集/最少在途分流已实现，macOS 完整后端 92 测试及全部脚本通过，6074b3d 独立 review 无阻塞，七项定向测试通过，同快照 Linux amd64 / Swift 6.4 单并发完整后端 92 测试及全部脚本通过。共享刷新衔接已实现，macOS 完整后端 96 测试及全部脚本通过，6c33cad 独立 review 无阻塞，四项定向回归通过，同快照 Linux amd64 / Swift 6.4 单并发完整后端 96 测试及全部脚本通过。订阅数据认证的范围复核/生产与合成目标隔离已实现，macOS 完整后端 98 测试及全部脚本通过，bd46a59 独立 review 无阻塞，两项定向回归及同快照 Linux 完整后端 98 测试/全部脚本通过。HTTP JSON/SSE/压缩池入口已实现，正在实际合成 socket 和完整验证；原生 WS、健康/额度仍未完成。详细证据见[账号池验证账](docs/changes/account-pool-routing/verification.md)。
 
 真实订阅验收、账号池、Images 转发、完整管理账本查询与恢复缓存、生产镜像及长期容量均未实现；管理业务界面覆盖 Key 与账号授权/策略，尚未覆盖额度、图片权限与诊断。HTTP JSON/SSE 合成闭环已实现，WS 命名 lane/桥接/预热/压缩合成闭环已实现，CLI 0.163.0 的 HTTP/SSE 文本/函数往返及加密推理回传已通过；尚未完成 M2 整体、Desktop 或真实订阅验收；不能从健康入口或骨架测试推导已支持。恢复客户端契约仍须进一步核实并验证，遇到困难/更优方案及时沟通。

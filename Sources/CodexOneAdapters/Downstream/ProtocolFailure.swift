@@ -2,6 +2,19 @@ import CodexOneCore
 
 func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? GatewayProtocolError { return error }
+  if let error = error as? AccountDispatchError {
+    return .init(
+      503, error == .refreshRequired ? "account_refresh_required" : "account_unavailable")
+  }
+  if let error = error as? AccountRefreshError {
+    switch error {
+    case .authorizationRequired: return .init(503, "account_authorization_required")
+    case .capacity, .closed: return .init(503, "account_refresh_capacity")
+    case .conflict: return .init(503, "account_state_changed")
+    case .storageUnavailable: return .init(503, "storage_unavailable")
+    default: return .init(502, "account_refresh_unavailable")
+    }
+  }
   if let error = error as? ExecutionError {
     switch error {
     case .unauthorized: return .init(401, "invalid_api_key")

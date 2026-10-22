@@ -23,26 +23,45 @@ func generateKeySecret() -> String {
     .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
 }
 struct DataPlaneAuthorization: Sendable {
-  let configuration: SingleIdentityConfiguration
+  let source: ResponsesSource
   let token: String?
   let store: any ExecutionStore
   let finalizer: any FinalizationSink
 
   func digest(_ headers: [String]) throws -> String? {
-    if configuration.managedKeys == true { return try bearerDigest(headers) }
-    guard configuration.accepts(headers) else { throw ExecutionError.unauthorized }
-    return nil
-  }
-  func policy(_ digest: String?) async throws -> SingleIdentityPolicy {
-    let key: ManagedKey?
-    if configuration.managedKeys == true {
-      guard let digest, let keys = store as? any KeyGovernanceStore else {
-        throw ExecutionError.unauthorized
-      }
-      key = try await keys.authenticateKey(digest: digest)
-    } else {
-      key = nil
+    if case .single(let configuration) = source, configuration.managedKeys != true {
+      guard configuration.accepts(headers) else { throw ExecutionError.unauthorized }
+      return nil
     }
-    return try configuration.makePolicy(token: token, key: key)
+    return try bearerDigest(headers)
+  }
+  func policy(_ digest: String?) async throws -> ResponsesPolicy {
+    if case .single(let configuration) = source, configuration.managedKeys != true {
+      return .single(try configuration.makePolicy(token: token))
+    }
+    guard let digest, let keys = store as? any KeyGovernanceStore else {
+      throw ExecutionError.unauthorized
+    }
+    let key = try await keys.authenticateKey(digest: digest)
+    switch source {
+    case .single(let configuration):
+      return .single(try configuration.makePolicy(token: token, key: key))
+    case .pool(let configuration, _, _, _, _): return .pool(try configuration.policy(key: key))
+    }
+  }
+  func gateway(_ policy: ResponsesPolicy) throws -> ResponsesGateway {
+    switch (source, policy) {
+    case (.single, .single(let policy)):
+      return .single(.init(policy: policy, store: store, finalizer: finalizer))
+    case (.pool(_, let credentials, let refresher, let provider, let target), .pool(let policy)):
+      guard let routing = store as? any AccountRoutingStore else {
+        throw ExecutionError.invalidCommand
+      }
+      return .pool(
+        .init(
+          policy: policy, store: routing, credentials: credentials, finalizer: finalizer,
+          refresher: refresher), provider, target)
+    default: throw ExecutionError.invalidCommand
+    }
   }
 }

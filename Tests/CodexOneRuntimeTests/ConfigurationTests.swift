@@ -44,3 +44,30 @@ func invalidConfigurationIsRejectedWithoutEchoingRawValue(_ value: String) {
   #expect(
     try RuntimeConfiguration(environment: environment).accountMasterKeyFile == "/synthetic/master")
 }
+
+@Test func poolConfigurationRequiresPrivateAssemblyAndExcludesSingleIdentity() throws {
+  let valid = [
+    "CODEXONE_DATA_DIRECTORY": "/synthetic/data", "CODEXONE_ADMIN_TOKEN_FILE": "/synthetic/admin",
+    "CODEXONE_ACCOUNT_MASTER_KEY_FILE": "/synthetic/master",
+    "CODEXONE_ACCOUNT_POOL_CONFIG": "/synthetic/pool",
+  ]
+  #expect(
+    try RuntimeConfiguration(environment: valid).accountPoolConfigurationPath == "/synthetic/pool")
+  for field in [
+    "CODEXONE_DATA_DIRECTORY", "CODEXONE_ADMIN_TOKEN_FILE", "CODEXONE_ACCOUNT_MASTER_KEY_FILE",
+  ] {
+    var missing = valid
+    missing.removeValue(forKey: field)
+    #expect(throws: (any Error).self) { try RuntimeConfiguration(environment: missing) }
+  }
+  var conflicting = valid
+  conflicting["CODEXONE_IDENTITY_CONFIG"] = "/synthetic/identity"
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidAccountPoolConfiguration) {
+    try RuntimeConfiguration(environment: conflicting)
+  }
+  var relative = valid
+  relative["CODEXONE_ACCOUNT_POOL_CONFIG"] = "relative"
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidAccountPoolConfiguration) {
+    try RuntimeConfiguration(environment: relative)
+  }
+}

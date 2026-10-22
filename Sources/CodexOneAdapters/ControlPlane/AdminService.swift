@@ -9,7 +9,7 @@ public struct AdminService: Service {
   private let keys: KeyAdminAPI?
   private let accounts: AccountAdminAPI?
   private let webBundle: AdminWebBundle?
-  private let reportProvider: @Sendable () -> ReadinessReport
+  private let reportProvider: @Sendable () async -> ReadinessReport
   private let onBound: @Sendable (Int) -> Void
 
   public init(
@@ -21,7 +21,7 @@ public struct AdminService: Service {
 
   public init(
     group: any EventLoopGroup, port: Int,
-    reportProvider: @escaping @Sendable () -> ReadinessReport, keys: KeyAdminAPI? = nil,
+    reportProvider: @escaping @Sendable () async -> ReadinessReport, keys: KeyAdminAPI? = nil,
     webBundle: AdminWebBundle? = nil, accounts: AccountAdminAPI? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
@@ -42,13 +42,13 @@ public struct AdminService: Service {
     app.routes.defaultMaxBodySize = "8kb"
     for path in ["live", "ready"] {
       app.get("health", PathComponent(stringLiteral: path)) { _ -> Response in
-        let reply = HealthRouter(report: reportProvider()).reply(
+        let reply = HealthRouter(report: await reportProvider()).reply(
           method: "GET", uri: "/health/\(path)")
         return Self.response(reply)
       }
     }
     app.get("api", "system") { _ -> Response in
-      let body = try JSONEncoder().encode(SystemStatusResponse(report: reportProvider()))
+      let body = try JSONEncoder().encode(SystemStatusResponse(report: await reportProvider()))
       return Self.response(HTTPReply(status: 200, body: body))
     }
     if let webBundle {

@@ -25,5 +25,6 @@ public protocol AccountRefreshing: Sendable {
 
 /// Internal routing join by credential generation, distinct from management revision CAS.
 public protocol AccountDispatchRefreshing: Sendable {
+  var isAccepting: Bool { get }
   func refreshForDispatch(account: ManagedAccount) async throws -> ManagedAccount
 }

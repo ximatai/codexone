@@ -15,12 +15,19 @@ extension HTTPResponseExecution {
     else { throw GatewayProtocolError(403, "model_not_allowed") }
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID, mode: .compact
-    ) { context in
+    ) { context, authorization in
       try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
-        var upstream = HTTPClientRequest(url: configuration.upstreamBaseURL + "/responses/compact")
+        var upstream = HTTPClientRequest(
+          url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses/compact")
         upstream.method = .POST
         upstream.headers = ["content-type": "application/json", "accept": "application/json"]
-        if let token { upstream.headers.add(name: "authorization", value: "Bearer " + token) }
+        if let authorization {
+          for header in authorization.headers {
+            upstream.headers.add(name: header.name, value: header.value)
+          }
+        } else if let token {
+          upstream.headers.add(name: "authorization", value: "Bearer " + token)
+        }
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
         let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
         guard response.status == .ok else {

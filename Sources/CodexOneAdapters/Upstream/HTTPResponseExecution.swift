@@ -7,11 +7,11 @@ import NIOHTTP1
 struct HTTPResponseExecution: Sendable {
   let client: HTTPClient
   let webSocket: WebSocketUpstream
-  let configuration: SingleIdentityConfiguration
+  let configuration: ResponsesConfiguration
   let token: String?
-  let report: @Sendable () -> ReadinessReport
+  let report: @Sendable () async -> ReadinessReport
   let access: DataPlaneAuthorization
-  let gateway: SingleIdentityGateway?
+  let gateway: ResponsesGateway?
   let effectiveModels: [SingleIdentityConfiguration.Model]
 
   func authorized(_ digest: String?) async throws -> Self {
@@ -19,7 +19,7 @@ struct HTTPResponseExecution: Sendable {
     return Self(
       client: client, webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
-      gateway: .init(policy: policy, store: access.store, finalizer: access.finalizer),
+      gateway: try access.gateway(policy),
       effectiveModels: configuration.models.filter { policy.models.contains($0.id) })
   }
 
@@ -42,15 +42,22 @@ struct HTTPResponseExecution: Sendable {
     }
     try await gateway.execute(
       model: request.model, references: request.references, requestID: requestID, mode: request.mode
-    ) { context in
+    ) { context, authorization in
       try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
-        var upstream = HTTPClientRequest(url: configuration.upstreamBaseURL + "/responses")
+        var upstream = HTTPClientRequest(
+          url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
         upstream.headers = [
           "content-type": "application/json",
           "accept": request.streaming ? "text/event-stream" : "application/json",
         ]
-        if let token { upstream.headers.add(name: "authorization", value: "Bearer " + token) }
+        if let authorization {
+          for header in authorization.headers {
+            upstream.headers.add(name: header.name, value: header.value)
+          }
+        } else if let token {
+          upstream.headers.add(name: "authorization", value: "Bearer " + token)
+        }
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
         let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
         guard response.status == .ok else {

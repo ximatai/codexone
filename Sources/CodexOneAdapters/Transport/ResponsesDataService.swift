@@ -9,10 +9,11 @@ import ServiceLifecycle
 import Synchronization
 
 /// Configured data-plane lifetime. All connection tasks are children of this service.
-public struct SingleIdentityDataService: Service {
+public struct ResponsesDataService: Service {
   private let group: any EventLoopGroup
   private let port: Int
-  private let configuration: SingleIdentityConfiguration
+  private let source: ResponsesSource
+  private var configuration: ResponsesConfiguration { source.configuration }
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
   private let onBound: @Sendable (Int) -> Void
@@ -25,29 +26,81 @@ public struct SingleIdentityDataService: Service {
     try configuration.validate()
     self.group = group
     self.port = port
-    self.configuration = configuration
+    source = .single(configuration)
     self.store = store
     self.finalizer = finalizer
     self.onBound = onBound
   }
 
+  public init(
+    group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
+    store: any AccountRoutingStore, finalizer: any FinalizationSink,
+    credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
+    provider: SubscriptionOAuthProvider,
+    onBound: @escaping @Sendable (Int) -> Void = { _ in }
+  ) throws {
+    try self.init(
+      group: group, port: port, configuration: configuration, store: store,
+      finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
+      target: .openAI, onBound: onBound)
+  }
+  init(
+    group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
+    store: any AccountRoutingStore, finalizer: any FinalizationSink,
+    credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
+    provider: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
+    onBound: @escaping @Sendable (Int) -> Void
+  ) throws {
+    try configuration.validate()
+    self.group = group
+    self.port = port
+    source = .pool(configuration, credentials, refresher, provider, target)
+    self.store = store
+    self.finalizer = finalizer
+    self.onBound = onBound
+  }
+
+  public func readiness() async -> ReadinessReport {
+    let accounts: Bool
+    switch source {
+    case .single: accounts = true
+    case .pool(_, _, let refresher, let provider, _):
+      if provider.isAccepting && refresher.isAccepting,
+        let routing = store as? any AccountRoutingStore,
+        let current = try? await routing.listAccounts(after: nil)
+      {
+        accounts = current.contains {
+          $0.mode == .enabled && ($0.authorization == .ready || $0.authorization == .refreshing)
+        }
+      } else {
+        accounts = false
+      }
+    }
+    return .init(checks: [
+      .init(name: "execution_store", ready: store.isAvailable),
+      .init(name: "upstream_accounts", ready: accounts),
+      .init(name: "authorization", ready: finalizer.isAccepting),
+    ])
+  }
+
   public func run() async throws {
-    let token = try configuration.upstreamTokenFile.map { try readRuntimeSecret($0) }
+    let token = try source.tokenFile.map { try readRuntimeSecret($0) }
+    var pool = HTTPClient.Configuration.ConnectionPool(
+      idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 16)
+    pool.retryConnectionEstablishment = false
+    var clientConfiguration = HTTPClient.Configuration(
+      redirectConfiguration: .disallow,
+      timeout: .init(connect: .seconds(5), read: .seconds(30)), connectionPool: pool, proxy: nil,
+      decompression: .disabled)
+    clientConfiguration.httpVersion = .http1Only
+    clientConfiguration.maximumUsesPerConnection = 1
     let client = HTTPClient(
-      eventLoopGroupProvider: .shared(group),
-      configuration: .init(
-        redirectConfiguration: .disallow, timeout: .init(connect: .seconds(5), read: .seconds(30))))
+      eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let executor = HTTPResponseExecution(
       client: client, webSocket: .init(group: group, configuration: configuration, token: token),
       configuration: configuration, token: token,
-      report: {
-        .init(checks: [
-          .init(name: "execution_store", ready: store.isAvailable),
-          .init(name: "upstream_accounts", ready: true),
-          .init(name: "authorization", ready: finalizer.isAccepting),
-        ])
-      },
-      access: .init(configuration: configuration, token: token, store: store, finalizer: finalizer),
+      report: { await readiness() },
+      access: .init(source: source, token: token, store: store, finalizer: finalizer),
       gateway: nil, effectiveModels: [])
     let channels = ProtocolChannels(limit: 32)
     do {
@@ -291,7 +344,7 @@ public struct SingleIdentityDataService: Service {
   ) async throws {
     let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
     if head.method == .GET && ["/health/live", "/health/ready"].contains(path) {
-      let reply = HealthRouter(report: executor.report()).reply(method: "GET", uri: path)
+      let reply = HealthRouter(report: await executor.report()).reply(method: "GET", uri: path)
       try await writer.json(
         try JSONDecoder().decode(JSONValue.self, from: reply.body), status: reply.status)
       return

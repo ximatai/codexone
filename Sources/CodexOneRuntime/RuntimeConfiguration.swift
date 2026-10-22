@@ -3,6 +3,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let adminPort: Int
   public let dataDirectory: String?
   public let identityConfigurationPath: String?
+  public let accountPoolConfigurationPath: String?
   public let adminTokenFile: String?
   public let accountMasterKeyFile: String?
   public let adminPublicOrigin: String?
@@ -13,6 +14,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
     case conflictingPorts
     case invalidDataDirectory
     case invalidIdentityConfiguration
+    case invalidAccountPoolConfiguration
     case invalidAdminTokenFile
     case invalidAccountMasterKeyFile
     case invalidAdminOrigin
@@ -63,6 +65,15 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       accountMasterKeyFile = path
     } else {
       accountMasterKeyFile = nil
+    }
+    if let path = environment["CODEXONE_ACCOUNT_POOL_CONFIG"] {
+      guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096,
+        dataDirectory != nil, adminTokenFile != nil, accountMasterKeyFile != nil,
+        identityConfigurationPath == nil
+      else { throw ConfigurationError.invalidAccountPoolConfiguration }
+      accountPoolConfigurationPath = path
+    } else {
+      accountPoolConfigurationPath = nil
     }
     if let origin = environment["CODEXONE_ADMIN_PUBLIC_ORIGIN"] {
       guard !origin.isEmpty, origin.utf8.count <= 2048, !origin.utf8.contains(0),

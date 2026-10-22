@@ -39,4 +39,16 @@ macOS arm64 / Swift 6.4 完整后端 96 测试及全部脚本通过；6c33cad �
 
 主 Agent 实现两项回归，实际合成 OAuth socket 登录后保存/启用/解密 work，再检查临时 Bearer/account 头与脱敏表示。生产和合成 realm/namespace 互换、生产 work 送合成目标、无效 loopback 端口均拒绝；生产 origin 仅在不发网络的合成可信存储 fixture 上检查固定值。另一项覆盖 access 的账号/subject/namespace 变化、缺 ID、过期 access 拒绝及过期可信 ID 基线仍允许；验证阶段没有发送任何数据生成请求，OAuth POST 次数始终为一次。
 
-协议认证头依据 OpenAI Codex 公共 bearer auth provider 核实，未复制架构或实现；纯范围/装配验收不代表数据传输、生产 TLS 或真实订阅通过。macOS arm64 / Swift 6.4 完整后端 98 测试及全部脚本通过；提交后 review 与同快照 Linux 待补记。
+协议认证头依据 OpenAI Codex 公共 bearer auth provider 核实，未复制架构或实现；纯范围/装配验收不代表数据传输、生产 TLS 或真实订阅通过。macOS arm64 / Swift 6.4 完整后端 98 测试及全部脚本通过；bd46a59 独立 review 无阻塞，两项定向回归通过；同快照 Linux amd64 / Swift 6.4 本地单并发完整后端 98 测试及全部脚本通过，exit 0，2 CPU/2500 MiB，容器已回收。
+
+## 2026-10-22 · HTTP 池入口与生产装配
+
+主 Agent 实现、验证并自我复盘。macOS arm64 / Swift 6.4 完整 `./scripts/verify.sh --backend` 通过：106 个 Swift 测试函数、所有旧进程/HTTP/SSE/WS/context/压缩/Key/session/账号脚本，以及新私有池配置脚本。没有前端代码变更或新增浏览器通过声明。
+
+六项新增池 HTTP 测试使用真实 NIO loopback 提供者、URLSession 下游和实际 Runtime/SQLite/AEAD。两个合成 OAuth 登录导入两个隔离 namespace；JSON、SSE、独立 compact 真实转发并结算，跨主体与未知 previous ID 在发往上游前拒绝，续接固定原账号。下游伪造 account/私有头不透传，提供者只收到所选 access/account。并发保持一个在途时选择另账号；提供者直接断开只发送一次，持久 unknown，不切账号重放。禁用原账号不能把续接移往其他账号，新无归属请求可用剩余账号；Key 撤销返回 401 且不派发。
+
+另外以实际合成 token socket 刷新已过期的固定账号，凭证版本在重新授权和共享刷新后递增到 3，原 namespace/续接保留、最终认证头使用新 access，严格计数为两次登录加一次刷新。下游取消归还执行容量并留下 unknown；终态只有部分 usage 时保留已观察成本和 unknown，不冒充结算。复盘先前测试夹具遗漏 cached_tokens 导致完整度应为 partial，修正完整 fixture 并另保留实际部分用量用例，未弱化产品完整度规则。
+
+新增配置/运行约束两项测试及真实进程脚本：拒绝上游地址、token、headers、WS 等未支持根字段；复用完整模型/profile 校验；要求独立主密钥/管理凭证/数据目录，与旧身份配置互斥。私有文件权限校验和 `--check-config` 均不建库/发网络。生产固定目标的空池在数据/管理口 live 200、ready 503；账号列表安全、无 Key 生成请求 401；实际关闭/重开及端口释放通过，无任何提供者请求。
+
+提取共享 Responses 配置与两种真实授权来源，单身份配置与模型校验保持兼容；复用解析/证据/绑定/收尾代码，避免复制第二套协议执行器。AHC 显式关闭重试/重定向/代理继承/解压，单次连接 HTTP/1。管理与数据的健康查询异步读取同一当前账号视图。池 native WS、HTTP→WS、健康/额度及真实订阅仍未完成；不能用原单身份 WS 脚本为池 WS 背书。提交后 review 与同快照 Linux 待补记。

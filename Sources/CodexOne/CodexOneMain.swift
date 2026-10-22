@@ -23,6 +23,7 @@ struct CodexOneMain {
       case .invalidIdentityConfiguration: message = "Invalid single-identity configuration."
       case .invalidAdminOrigin: message = "Invalid public admin origin configuration."
       case .invalidWebDirectory: message = "Invalid admin web directory configuration."
+      case .invalidAccountPoolConfiguration: message = "Invalid account pool configuration."
       case .invalidAdminTokenFile: message = "Invalid admin credential configuration."
       case .invalidAccountMasterKeyFile: message = "Invalid account master key configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
@@ -43,7 +44,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
@@ -67,6 +68,12 @@ struct CodexOneMain {
     }
     if identityConfiguration?.managedKeys == true, configuration.adminTokenFile == nil {
       throw RuntimeConfiguration.ConfigurationError.invalidAdminTokenFile
+    }
+    let poolConfiguration: AccountPoolConfiguration?
+    if let path = configuration.accountPoolConfigurationPath {
+      poolConfiguration = try await AccountPoolConfiguration.load(path: path)
+    } else {
+      poolConfiguration = nil
     }
     let webBundle: AdminWebBundle?
     if let directory = configuration.webDirectory {
@@ -115,7 +122,8 @@ struct CodexOneMain {
       keyAdmin = try await KeyAdminAPI.load(
         path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256,
         publicOrigin: configuration.adminPublicOrigin,
-        availableModels: identityConfiguration?.models.map(\.id) ?? [])
+        availableModels: poolConfiguration?.models.map(\.id) ?? identityConfiguration?.models.map(
+          \.id) ?? [])
     } else {
       keyAdmin = nil
     }
@@ -123,11 +131,15 @@ struct CodexOneMain {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
     let report = ReadinessReport(checks: [
       .init(name: "execution_store", ready: store != nil),
-      .init(name: "upstream_accounts", ready: identityConfiguration != nil),
-      .init(name: "authorization", ready: identityConfiguration != nil),
+      .init(
+        name: "upstream_accounts", ready: (identityConfiguration != nil || poolConfiguration != nil)
+      ),
+      .init(
+        name: "authorization", ready: (identityConfiguration != nil || poolConfiguration != nil)),
     ])
     var services: [any Service] = []
     let accountAdmin: AccountAdminAPI?
+    var poolDataService: ResponsesDataService?
     if let credentialProtection, let store {
       let application = AccountCredentials(store: store, protection: credentialProtection)
       let provider = try SubscriptionOAuthProvider(group: group)
@@ -137,14 +149,23 @@ struct CodexOneMain {
       services.append(provider)
       services.append(authorization)
       services.append(refreshing)
+      if let poolConfiguration, let finalizer {
+        poolDataService = try ResponsesDataService(
+          group: group, port: configuration.dataPort,
+          configuration: poolConfiguration, store: store, finalizer: finalizer,
+          credentials: application, refresher: refreshing, provider: provider
+        ) { announce("data", port: $0) }
+      }
       accountAdmin = AccountAdminAPI(
         store: store, authorization: authorization, refreshing: refreshing)
     } else {
       accountAdmin = nil
     }
-    if let identityConfiguration, let store, let finalizer {
+    if let poolDataService {
+      services.append(poolDataService)
+    } else if let identityConfiguration, let store, let finalizer {
       services.append(
-        try SingleIdentityDataService(
+        try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: identityConfiguration, store: store, finalizer: finalizer
         ) { announce("data", port: $0) })
@@ -154,16 +175,21 @@ struct CodexOneMain {
           announce("data", port: $0)
         })
     }
+    let activePoolDataService = poolDataService
     services.append(
       AdminService(
         group: group, port: configuration.adminPort,
         reportProvider: {
-          .init(checks: [
+          if let activePoolDataService { return await activePoolDataService.readiness() }
+          return .init(checks: [
             .init(name: "execution_store", ready: store?.isAvailable == true),
-            .init(name: "upstream_accounts", ready: identityConfiguration != nil),
+            .init(
+              name: "upstream_accounts",
+              ready: (identityConfiguration != nil || poolConfiguration != nil)),
             .init(
               name: "authorization",
-              ready: identityConfiguration != nil && finalizer?.isAccepting == true),
+              ready: (identityConfiguration != nil || poolConfiguration != nil)
+                && finalizer?.isAccepting == true),
           ])
         }, keys: keyAdmin, webBundle: webBundle, accounts: accountAdmin
       ) {

@@ -63,3 +63,24 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 `AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
 
 v4 不是自动升级。已有 v1/v2/v3 须停服显式 migrate，备份保存源版本与未恢复 intent；v4 普通启动才完成 unknown/uncertain 恢复。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
+
+## 订阅账号池的 HTTP 入口配置
+
+`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
+
+```json
+{
+  "models": [{
+    "id": "example-model",
+    "inputMicrosPerMillion": 0,
+    "outputMicrosPerMillion": 0,
+    "catalog": { "baseInstructions": "Replace with the approved model guidance." }
+  }],
+  "reservedMicros": 100,
+  "executionTimeoutSeconds": 120
+}
+```
+
+示例模型、指导与价格须替换为管理员确认值；本地价格仅为估算。池只接受数据库托管 Key；创建 Key 的模型选项来自该配置。管理员授权账号后需明确启用；空池、所有账号不可用或 owner 未就绪时 readiness 不能表示可执行。数据请求重新验证 Key，并在原子准入复核当前 Key、选中账号及资源限制。生产认证和数据目标固定，无上游 URL/token/header 配置项。`--check-config` 不建库或发网络请求。
+
+HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 access 时至多加入一个共享刷新，未知结果不重放；生成 intent 后也不换账号重发。账号不可用、需要刷新、授权失败或刷新冲突返回安全错误码，不包含提供者正文或账号秘密。池配置的 native WS 升级需要另行接入与验收，不能从 HTTP 结果推导支持。

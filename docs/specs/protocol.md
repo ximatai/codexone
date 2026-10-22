@@ -92,3 +92,9 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 对应输出允许 compaction 项无对象 ID，以非空 encrypted_content 的类型指纹先持久绑定，再暴露完整内容。仅 output_item.added 阶段允许缺失/空的未完成内容；done 必须完整。流式成功必须恰好一个 compaction done，与终态窗口中唯一 compaction 的内容/已提供 ID 一致，output_index 关联有界且必须对应终态 output 数组中该项的实际位置；JSON 成功窗口同样只接受一个完整项。不得在压缩中创建新的客户端工具调用；未支持对象及不一致窗口明确失败，已经观察到的可信用量继续结算。终态缺失保持 unknown，不把 added 或 done 当作执行完成。
 
 普通 Responses 的压缩响应 ID 属于该执行的 response，可按归属用作 previous_response_id；它与独立 compact 返回的 compaction 操作 ID 不同。客户端自行重建后续窗口，完整加密上下文按 P15/I11 验证；网关不自动补正文或重放执行。[CLI 0.163.0 实现依据](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/compact_remote_v2.rs)
+
+## P24：订阅池 HTTP 装配
+
+订阅池复用既有 JSON/SSE/compact 的客户端校验、提供者观察、绑定屏障和累计用量契约；当前托管 Key 与模型白名单先于路由。Core 原子选择后仅向选中身份的固定目标发送一次 POST，认证头由可信 work 装配，下游 Authorization/account/组织/项目头不透传。HTTP client 禁止重定向、连接建立重试、代理继承和解压，使用 HTTP/1 及单次连接；不能安全重放的失败返回并收尾。
+
+池 HTTP 入口不代表 native WS 身份固定已验收；该配置只允许 HTTP，WS 升级明确拒绝。临时账号不可用/需要刷新、刷新授权失败/冲突/容量/存储失败使用脱敏的类型化错误码，不回传上游错误正文。就绪状态读取当前账号并结合存储及运行 owner，不把空池配置当可用账号。
