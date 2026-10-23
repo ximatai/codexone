@@ -1,6 +1,6 @@
 # 默认客户端闭环 · 2026-10-23
 
-全部验证为loopback合成模型/Key/正文、独立临时数据目录和全新私有客户端HOME/空工作区，禁用遥测；没有读取个人登录、调用订阅、推送或部署。平台macOS arm64，Swift 6.4，实际Desktop内置CLI `0.163.0-alpha.11.1`。CLI不是Desktop UI。
+本地阶段全部验证为loopback合成模型/Key/正文、独立临时数据目录和全新私有客户端HOME/空工作区，禁用遥测；该阶段没有读取个人登录、调用订阅、推送或部署。平台macOS arm64，Swift 6.4，实际Desktop内置CLI `0.163.0-alpha.11.1`。CLI不是Desktop UI；后续明确授权的测试服务升级见末节。
 
 ## 真实客户端消费
 
@@ -47,4 +47,20 @@ docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -
 
 ## 边界
 
-本轮只闭合默认客户端正常操作与其安全声明边界。审计中的普通流事件/status矛盾、item.done/最终窗口一致性、HTTP SSE response关联、非法total_tokens提供者输出、首错误分类和健康归因等仍待下一“可信流与失败”闭环；本轮修正合成fixture的total并非完成通用用量输出校验。真实订阅握手/能力、Desktop UI、图片操作、M5恢复和O14容量未验收，线上候选未变更。
+本轮只闭合默认客户端正常操作与其安全声明边界。审计中的普通流事件/status矛盾、item.done/最终窗口一致性、HTTP SSE response关联、非法total_tokens提供者输出、首错误分类和健康归因等仍待下一“可信流与失败”闭环；本轮修正合成fixture的total并非完成通用用量输出校验。真实订阅握手/能力、Desktop UI、图片操作、M5恢复和O14容量未验收。
+
+## 后续明确授权的独立合成测试服务升级
+
+2026-10-23，用户明确授权连接既有目标、升级之前部署的独立测试服务，再通知其操作Desktop；真实订阅、旧服务、个人客户端配置及推送发布不在本次范围。只读核对原运行源码ff1322f、固定loopback合成上游、真实账号为0、只启用所选原Key，原服务健康。
+
+运行候选源码`363e7df8844b887bb6b4af8a2a1d5475175c77f6`（产品代码与本地出口相同），镜像`sha256:630659fe3dd6f832a29d9f9d2474353f99afb9948c5af4781653056e8e68113c`，实际程序SHA256仍为`462d4a6ffead347e79ba51a5f11c27604f6d3f872b45e79a5511040d797accf1`。本机标准多阶段runtime构建及`verify_installation.py --image codexone:default-client-candidate`通过，验证非root/只读、私有卷/配置、SPA/认证/Key持久化、锁、迁移及优雅重启；无需重复没有源码变化的全集。
+
+精确源码/镜像/实际程序/摘要归档保留在忽略的artifacts/default-client-deploy，整体镜像归档SHA256 `fa581cd06ff08fb02a63ee321e273d5f0289819bd13f0acf9de9f73f054cdcc2`。基于旧完整归档仅传约14 MiB差量，目标重建完整归档后核对SHA，未以差量文件冒充运行产物。受控安装入口停止测试gateway/provider，完成并校验私有一致性backup bundle，保留旧镜像、配置与fixture供同schema回退，未恢复旧库或删除卷。原Key/地址/身份/管理员/模型配置及Nginx文件摘要保持。
+
+首次替换fixture遗漏保留文件属主，非root提供者进程因权限拒绝启动，回退也受到同一属主问题影响；不记为成功。核对既有运行UID/GID后恢复旧fixture属主及旧测试版本健康，修正原子替换流程保留属主，再完成升级。新网关和fixture实际文件SHA、release manifest与候选一致，两容器healthy、无OOM/重启；升级前后Key/执行账本计数一致。
+
+公网使用正常证书校验、独立临时合成Key，两个前缀HTTPS JSON/SSE、14 KiB Lite工具说明、WSS预热与previous增量续接、连续两次HTTP compact及非法声明拒绝通过；管理/健康路径不公开，缺失/错误Key拒绝。固定实际CLI用全新私有HOME/空工作区、默认gpt-6.1-sol无显式目录，分别在两个HTTP入口及既有前缀原生WSS完成两轮对话，6次用户操作均exit0/turn.completed，消费实际部署fixture固定合成终态。客户端没有读取个人登录或改个人配置。
+
+最终持久记录精确为generation12、warmup4、compact4，共20次全部settled，无额外attempt；未知责任0、真实账号0。诊断Key已撤销且401复验，只剩所选原Key启用。Nginx及受保护配置/辅助文件摘要保持，旧服务container/image/启动时间未变并healthy。连接owner及私有操作材料只在仓库外保存，管理SSH在收尾时退出；不记录服务器、域名、Key名称或凭证。
+
+本次准备好的是用户操作真实Desktop的合成入口，尚未将Desktop UI、真实订阅、M5或完整O14标通过；最终用户界面结果待其操作反馈。
