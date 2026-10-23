@@ -65,11 +65,15 @@ struct ProviderObservation: Sendable {
               || !(response["tools"]?.array?.contains { $0["type"]?.string == "image_generation" }
                 ?? false)))
       else {
-        throw GatewayProtocolError(502, "unsupported_upstream_object")
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamResponsePolicy)
       }
       if let previous = response["previous_response_id"], previous != .null {
         guard previous.string == expectedPreviousResponseID, expectedPreviousResponseID != nil
-        else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+        else {
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamResponsePrevious)
+        }
       }
       try Self.validateUsageContainer(response["usage"])
       if let error = response["error"], error != .null {
@@ -80,21 +84,28 @@ struct ProviderObservation: Sendable {
         "prompt_cache_retention", "previous_response_id",
       ] {
         if let value = response[key], value != .null, value.string == nil {
-          throw GatewayProtocolError(502, "unsupported_upstream_object")
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object",
+            detail: key == "instructions" ? .upstreamResponseInstructions : .upstreamResponseString)
         }
       }
       for key in ["background", "parallel_tool_calls"] {
         if let value = response[key], value != .null, value.bool == nil {
-          throw GatewayProtocolError(502, "unsupported_upstream_object")
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamResponseBoolean)
         }
       }
       if let created = response["created_at"], created.integer == nil {
-        throw GatewayProtocolError(502, "unsupported_upstream_object")
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamResponseCreated)
       }
       if let details = response["incomplete_details"], details != .null {
         guard details["reason"]?.string != nil,
           details.object?.keys.allSatisfy({ $0 == "reason" }) == true
-        else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+        else {
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamResponseIncomplete)
+        }
       }
       bindings.append(.init(type: "response", rawID: id))
       if allowCompaction, type == "response.completed" {
@@ -190,9 +201,11 @@ struct ProviderObservation: Sendable {
         || allowCompaction && type == "compaction"
         || retained
           && ["compaction", "function_call_output", "custom_tool_call_output"].contains(type)
-    else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+    else {
+      throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamItemType)
+    }
     guard !allowCompaction || !["function_call", "custom_tool_call"].contains(type) else {
-      throw GatewayProtocolError(502, "unsupported_upstream_object")
+      throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamItemType)
     }
     let fields: [String: Set<String>] = [
       "image_generation_call": [
@@ -215,17 +228,22 @@ struct ProviderObservation: Sendable {
       guard
         ["in_progress", "completed", "incomplete", "failed", "cancelled"].contains(
           status.string ?? "")
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      else {
+        throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamItemStatus)
+      }
     }
     if let name = item["name"], name != .null {
       guard let name = name.string, (try? ClientTools.key(name: name)) != nil else {
-        throw GatewayProtocolError(502, "unsupported_upstream_object")
+        throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamItemName)
       }
     }
     if let namespace = item["namespace"], namespace != .null {
       guard let namespace = namespace.string,
         (try? ClientTools.key(name: item["name"]?.string ?? "output", namespace: namespace)) != nil
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamItemNamespace)
+      }
     }
     if let id = item["id"] {
       guard let id = id.string, !id.isEmpty, id.utf8.count <= 256 else {
@@ -247,16 +265,22 @@ struct ProviderObservation: Sendable {
     if type == "message" {
       guard let role = item["role"]?.string,
         (retained ? ["user", "assistant", "developer", "system"] : ["assistant"]).contains(role)
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      else {
+        throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamMessageRole)
+      }
       if !(retained && item["content"]?.string != nil) {
         guard let content = item["content"]?.array, content.count <= 128 else {
-          throw GatewayProtocolError(502, "unsupported_upstream_object")
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamMessageContent)
         }
         for part in content {
           if retained && part["type"]?.string == "input_text" {
             guard part["text"]?.string != nil,
               part.object?.keys.allSatisfy({ ["type", "text"].contains($0) }) == true
-            else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+            else {
+              throw GatewayProtocolError(
+                502, "unsupported_upstream_object", detail: .upstreamMessageContent)
+            }
           } else {
             try Self.validatePart(part, allowSummary: false)
           }
@@ -282,7 +306,10 @@ struct ProviderObservation: Sendable {
     if ["function_call_output", "custom_tool_call_output"].contains(type) {
       guard let call = item["call_id"]?.string, !call.isEmpty, call.utf8.count <= 256,
         item["output"]?.string != nil
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamMessageContent)
+      }
       bindings.append(.init(type: "function_call", rawID: call))
     }
     if type == "reasoning", let content = item["content"], content != .null {
@@ -291,11 +318,15 @@ struct ProviderObservation: Sendable {
           $0["type"]?.string == "reasoning_text" && $0["text"]?.string != nil
             && $0.object?.keys.allSatisfy({ ["type", "text"].contains($0) }) == true
         })
-      else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamReasoningContent)
+      }
     }
     if let summary = item["summary"] {
       guard type == "reasoning", let parts = summary.array, parts.count <= 128 else {
-        throw GatewayProtocolError(502, "unsupported_upstream_object")
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamReasoningSummary)
       }
       for part in parts { try Self.validatePart(part, allowSummary: true) }
     }
@@ -310,9 +341,13 @@ struct ProviderObservation: Sendable {
         if let binding = try opaqueContext(item["encrypted_content"], kind: type) {
           bindings.append(binding)
         } else if type == "compaction" {
-          throw GatewayProtocolError(502, "unsupported_upstream_object")
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamOpaqueContext)
         }
-      } catch { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+      } catch {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamOpaqueContext)
+      }
     }
     return bindings
   }
@@ -350,7 +385,10 @@ struct ProviderObservation: Sendable {
         if numeric(value) { return true }
         return value.object.map { $0.count <= 32 && $0.values.allSatisfy(numeric) } == true
       })
-    else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+    else {
+      throw GatewayProtocolError(
+        502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
+    }
   }
 
   static func usage(_ value: JSONValue?, model: SingleIdentityConfiguration.Model) throws

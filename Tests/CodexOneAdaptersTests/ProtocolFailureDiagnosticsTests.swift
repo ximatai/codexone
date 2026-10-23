@@ -54,6 +54,12 @@ struct ProtocolFailureDiagnosticsTests {
       .toolsNamespace, .toolsMembers, .toolsDuplicate, .toolsGrammar, .toolsType,
       .toolsBuiltinSearch, .toolsDiscovery, .toolsRemoteMCP, .toolsChoice, .toolsPackage,
       .toolsImage, .toolsDescriptionNull, .toolsDescriptionSize,
+      .upstreamResponsePolicy, .upstreamResponsePrevious, .upstreamResponseString,
+      .upstreamResponseInstructions, .upstreamResponseBoolean, .upstreamResponseCreated,
+      .upstreamResponseIncomplete, .upstreamItemType, .upstreamItemStatus, .upstreamItemName,
+      .upstreamItemNamespace, .upstreamMessageRole, .upstreamMessageContent,
+      .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
+      .upstreamUsageContainer,
     ] {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
       let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)
