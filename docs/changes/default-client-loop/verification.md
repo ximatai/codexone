@@ -64,3 +64,5 @@ docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -
 最终持久记录精确为generation12、warmup4、compact4，共20次全部settled，无额外attempt；未知责任0、真实账号0。诊断Key已撤销且401复验，只剩所选原Key启用。Nginx及受保护配置/辅助文件摘要保持，旧服务container/image/启动时间未变并healthy。连接owner及私有操作材料只在仓库外保存，管理SSH在收尾时退出；不记录服务器、域名、Key名称或凭证。
 
 本次准备好的是用户操作真实Desktop的合成入口，尚未将Desktop UI、真实订阅、M5或完整O14标通过；最终用户界面结果待其操作反馈。
+
+部署记录提交4c9faf9后集中只读review无可行动事实或权限问题；reviewer独立核对本机binary/镜像归档/fixture指纹及20次计数与记录一致，源码相对运行候选仅文档变化。review未重复连接目标，远端事实依据主Agent保存的部署摘要；管理SSH owner已退出。
