@@ -33,3 +33,7 @@ CLI 检查入口为 `scripts/verify_client.py`，加 `--retry-probe` 验证 EOF 
 ## M5 复核
 
 同日再次执行 CLI 0.163.0 的隔离 EOF 探针，仍观察到 unknown + 新生成 settled。公开 Responses API 有 GET response/starting_after，但尚无目标 Codex 客户端读取它的证据，也没有订阅提供者等价性证明。复核命令、来源和结论见[契约核实](../changes/recovery-contract-audit/verification.md)。M5 不因标准 API 存在就通过 C10；后续只读证据或明确产品调整方可解除该边界。
+
+## CodexLB源码对照后的边界修正 · 2026-10-23
+
+[明确版本旧源码](codexlb-compatibility.md)存在重复Responses POST直接重放完整持久事件的路径，不要求客户端先调用GET。此前CLI实验只证明当前无缓存网关上的新执行行为，不能据此排除透明POST恢复；“缺少GET轨迹”不是唯一阻断条件。下一步需新增稳定操作关联、重复请求与主动相同新turn区分、全段事件/消费前缀和工具副作用的合成实验，再以实际Desktop确认。尚未选择或实现此路线，C10/M5仍不通过；未知执行再次派发与已有事件读取继续严格分开。

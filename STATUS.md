@@ -69,6 +69,10 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，CodexLB接入取舍只读核对：主Agent对用户指定旧项目的 `6d78866` / 历史修复快照 `6689178` 逐项读取源码，未修改旧项目、读取秘密/部署配置或调用真实订阅。两份旧源码均有重复POST直接重放完整持久事件的分支，修正此前将M5过于集中于GET读取轨迹的解释；它不证明稳定操作关联、消费位置或工具安全，M5仍未完成。另确认默认单次期限、模型目录/指导来源、图片mask与stream转换、认证参数和额度覆盖差异；默认设置不代表当前线上配置。见[对照矩阵](docs/evidence/codexlb-compatibility.md)及[核对记录](docs/changes/codexlb-compatibility-audit/verification.md)。本次不改产品代码，冻结候选仍为下方 `bd38964`。
+
+下一步先补新的合成恢复关联实验（完整事件重放、主动相同新turn、权限/副作用边界），并为长执行的总期限/空闲期限及可信模型profile来源明确方案；行为变化须另提案。真实Desktop操作仍先与用户讨论，首轮仅合成上游；真实订阅调用未开启。只读旧源码不代替Desktop/真实订阅/M5/O14验收。
+
 2026-10-23，Desktop测试准备阶段出口通过：账号闭环 `ef0f8d3` / `5167d68`、图片内部封套修复 `94f6ae5`、测试守卫及预热责任核对 `96af05f` / `bd38964`。主Agent亲自实现与修复，两位subagent集中review及复审关闭，无新增P1/P2。
 
 - 账号授权/详情/启停排空/额度健康抽屉闭环保持CAS、未知写锁和共享会话。macOS完整43项前端、最终17项定向/构建及Linux静态构建通过；最终实际Chrome合成OAuth、失败重读/会话与额度全流程通过，大屏截图已查看。
@@ -77,7 +81,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 - 本地冻结候选 `codexone:desktop-test-candidate`，源码 `bd3896425d7cd47f6aaea95c9a616a9e06d46731`，镜像ID `sha256:2c18e874ef3ae4f1ed653c2018c04ab8e022c95b841e79c63a79046bba9e3930`，Linux实际二进制SHA-256 `55d76ab2b80f69885ff0fc0ec87c6877171aafdb1185a24befa42a856574acd4`。安装升级、不同v8同卷兼容回退/再升级及unknown保留、实际打包SPA Chrome通过；镜像内二进制与受测产物逐字节一致。
 - 忽略目录 `artifacts/desktop-test-candidate/` 包含源码/镜像、标识、限定验证矩阵、两平台报告及已验兼容v8 peer精确源码/镜像，逐项SHA256SUMS与实际归档重载核对通过。旧v8归档保留，不推送/发布；真实本地TLS证据沿用，配置未变。
 
-证据见[测试准备](docs/changes/desktop-test-readiness/verification.md)，操作矩阵和撤销配置步骤见[Desktop准备](docs/development/desktop-preflight.md)。下一步先与用户讨论真实Desktop的版本、独立测试配置和操作方式，再开始真实UI配合合成上游；当前未修改Desktop配置或读取个人登录缓存。真实订阅调用尚未开启，Desktop/真实订阅兼容、M5恢复读取、完整O14/目标宿主、真实旧服务切换与远程CI继续保留，M2/M4/M5/M6完整里程碑不标完成。
+证据见[测试准备](docs/changes/desktop-test-readiness/verification.md)，操作矩阵和撤销配置步骤见[Desktop准备](docs/development/desktop-preflight.md)。冻结时计划先讨论真实Desktop；后续CodexLB对照新增前置关联实验和设计项，按上方最新顺序推进，真实UI仍须先讨论版本、独立配置和操作方式；当前未修改Desktop配置或读取个人登录缓存。真实订阅调用尚未开启，Desktop/真实订阅兼容、M5恢复读取、完整O14/目标宿主、真实旧服务切换与远程CI继续保留，M2/M4/M5/M6完整里程碑不标完成。
 
 2026-10-23，Desktop测试准备的账号管理闭环阶段出口通过（`ef0f8d3`）：账号列表→授权/重新授权→策略→额度健康详情统一组件和抽屉，保留CAS/未知写锁/共享会话、抽屉内失败重读和回调清除。macOS完整前端43项及最终17项账号相关回归、真实Chrome合成OAuth/失败链路/大屏操作与Linux amd64静态构建通过，两位subagent集中review无新增P1/P2。长连接/图片边界与候选冻结随后完成，见上方最新阶段；开始真实Desktop前讨论操作方式，真实订阅调用暂不授权。证据见[测试准备](docs/changes/desktop-test-readiness/verification.md)。
 
