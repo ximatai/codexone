@@ -137,7 +137,7 @@ def run(binary, transport, duration):
                                 try: opcode,data=receive(sock,masked=False)
                                 except EOFError:
                                     raise AssertionError((transport,case,'socket ended before expected terminal'))
-                                if opcode==8: break
+                                assert opcode!=8, 'Socket closed before the expected event'
                                 if opcode==9: send(sock,data,opcode=10,masked=True);continue
                                 assert opcode==1
                                 event=json.loads(data);messages.append(event)
