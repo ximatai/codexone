@@ -38,3 +38,13 @@
 细分候选源码2e02014的Linux amd64 verification全部通过，包含实际剥离程序18类诊断关联（说明三分支均HTTP/WS）、协议/WS/Lite/fixture/图片及维护/恢复/存储/切回；runtime安装验证通过。运行镜像sha256:615b8e8e2603fa9f67a2f0d5d13d7ee7d49134d3aad9b1478a2beda3a1c1605e，程序SHA256 d6a215e1e529112a8df129ea1acaffef9a7390182a532c84cdaf9766f2143df6，与verification程序一致。独立合成测试服务已备份/校验后更新，首轮成功，未重启provider；原配置/数据/属主、fixture、反代及旧服务不变，账号0、unresolved0、仅原Key启用。
 
 更新后公网双前缀HTTPS JSON/SSE、WSS预热/续接成功；null/超长/其他非字符串五个合成错误的界面Reference均匹配具体服务端分类，临时Key已撤销。仅为诊断及合成对照通过，不能证明原Desktop问题已经修复。诊断就绪后请求用户保持同一实际客户端配置再做一次受控合成操作；等待该Reference以确定具体子分类，未采集请求正文或工具原值。没有推送、发布、真实订阅调用或旧服务变更。
+
+## 长说明拒绝确认与修复 · 2026-10-23
+
+用户下一次同配置实际Desktop操作的界面Reference，精确对应2026-10-23 11:04:46 UTC的tools_description_size/unsupported_tools。确认至少一条说明超过32 KiB，未记录说明、精确长度或其他字段值；不能归因为null、类型错误或上游失败。此前32 KiB是CLI样本推定，未覆盖实际Desktop组合，属于网关兼容及容量基线缺口。
+
+修复将单条32 KiB改为跨全部顶层/Lite包/namespace的512 KiB UTF-8说明共享预算；保留纯文本总请求512 KiB、图片外层8 MiB及所有类型/数量/深度/身份限制，不删减或截断声明。官方[Function calling](https://developers.openai.com/api/docs/guides/function-calling)区分function/custom/namespace说明及工具上下文成本；本项目预算为自身资源策略，不将其说成官方协议上限。
+
+macOS定向6项Swift测试通过：长说明两入口接受、精确预算/UTF-8及跨来源/namespace不能重置。实际HTTP JSON/SSE、桥接/原生WS、Lite/compact双前缀验证长function/custom/namespace说明完整转发；预算超限、总文本超限、类型/重复等拒绝不派发、不建attempt/绑定，18类原因/Reference与隐私回归通过。首轮新大帧负向被测试发送helper的旧512 KiB断言挡住，扩展其显式测试上限参数（默认不变）后重跑通过；不将该测试夹具失败写成产品通过。完整后端、Linux及部署在完成后补记，真实Desktop保持未通过。
+
+主Agent自审后，macOS完整verify.sh --backend exit0，199项Swift测试（35+35+3+126）及全部后端脚本通过，136份Markdown/架构/格式检查通过。未改变前端，不重复前端全集；未以CLI替代Desktop操作。Linux出口及修复服务更新仍待完成。

@@ -63,7 +63,7 @@
 
 ### 默认工具声明与WS增量续接
 
-默认内置模型目录会选用Responses Lite工具包，不能用显式合成目录改变工具编码后推断默认路径兼容。接受有界、严格分类的additional_tools并保留输入位置，本地包id不作为远程对象；默认工具说明实测超过8 KiB，改用32 KiB UTF-8有限上限，不截断工具说明。实际CLI还会将WS预热声明留在上游会话，后续只提交previous_response_id和增量输入；每lane保留最近成功响应的工具身份集合供验证，仅精确同模型续接可继承，不缓存正文/完整声明、不跨连接恢复。代价是增加连接内有限状态，须同时证明空声明替换、跨lane/连接不继承及每轮重新授权。普通HTTP/桥接不获得会话继承。这些合成证据仍不能证明真实订阅或Desktop UI，验证要求见[验证约定](../development/verification.md)。
+默认内置模型目录会选用Responses Lite工具包，不能用显式合成目录改变工具编码后推断默认路径兼容。接受有界、严格分类的additional_tools并保留输入位置，本地包id不作为远程对象；实际Desktop受控Reference进一步证明单条说明超过32 KiB；此前按CLI样本设单条阈值不充分，现改为跨顶层/Lite包/namespace的512 KiB UTF-8说明共享预算，沿用文本总请求512 KiB、图片外层8 MiB、声明数量/深度限制，不截断工具说明。独立共享预算也约束图片较大包络，防止单条或多条说明无界增长。实际CLI还会将WS预热声明留在上游会话，后续只提交previous_response_id和增量输入；每lane保留最近成功响应的工具身份集合供验证，仅精确同模型续接可继承，不缓存正文/完整声明、不跨连接恢复。代价是增加连接内有限状态，须同时证明空声明替换、跨lane/连接不继承及每轮重新授权。普通HTTP/桥接不获得会话继承。这些合成证据仍不能证明真实订阅或Desktop UI，验证要求见[验证约定](../development/verification.md)。
 
 已逐项采纳text.verbosity/format与tool_choice/parallel_tool_calls的可空语义，不作全局null宽容。新增[通信扩展复核](../evidence/codexlb-discussions.md#2026-10-23-通信契约扩展复核)已记录本机差异、终态/清理与慢lane隔离风险；先完成当前候选，再以参数及失败可见性为一个闭环。有限订阅握手头与不透明turn-state归属另立契约，不直接透传客户端全部头；不以伪造限流码改变客户端重试。
 

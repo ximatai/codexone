@@ -34,7 +34,7 @@ def cases():
         ('tools_package',dict(input=[{**package,'role':'user'}])),
         ('tools_image',dict(input=[{**package,'tools':[dict(type='image_generation')]}])),
         ('tools_description_null',dict(tools=[{**function,'description':None}])),
-        ('tools_description_size',dict(tools=[{**function,'description':'x'*32769}])),
+        ('tools_description_size',dict(tools=[{**function,'description':'x'*524289}])),
     ]
 
 
@@ -54,7 +54,7 @@ def verify(binary,private,examples):
                 if 'input' in change:request['input']=change['input']
                 if index%2:
                     with dial(ports['data']) as sock:
-                        send(sock,dict(type='response.create',**request),masked=True)
+                        send(sock,dict(type='response.create',**request),masked=True,maximum_bytes=8388608)
                         opcode,data=receive(sock);event=json.loads(data)
                         assert opcode==1 and event['type']=='error';error=event['error']
                 else:

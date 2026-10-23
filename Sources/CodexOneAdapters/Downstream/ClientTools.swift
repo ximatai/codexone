@@ -9,6 +9,8 @@ struct ClientToolSnapshot: Sendable {
 }
 
 struct ClientTools: Sendable {
+  // Share the existing text-request budget across every declaration source and namespace.
+  static let descriptionBytes = 524_288
   var functions = Set<String>()
   var custom = Set<String>()
 
@@ -33,6 +35,7 @@ struct ClientTools: Sendable {
       throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsCount)
     }
     var count = 0
+    var remainingDescriptionBytes = Self.descriptionBytes
     func declarations(_ tools: [JSONValue], namespace: String?) throws -> (Set<String>, Set<String>)
     {
       var functions = Set<String>()
@@ -69,9 +72,10 @@ struct ClientTools: Sendable {
           guard let text = description.string else {
             throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescription)
           }
-          guard text.utf8.count <= 32_768 else {
+          guard text.utf8.count <= remainingDescriptionBytes else {
             throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescriptionSize)
           }
+          remainingDescriptionBytes -= text.utf8.count
         }
         for boolean in ["strict", "defer_loading"] {
           if let value = tool[boolean], value.bool == nil {

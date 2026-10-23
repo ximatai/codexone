@@ -77,7 +77,7 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 
 reasoning对象仅接受effort/summary/context三个已知成员，成员为null表示未指定并在转发前移除；有效非null值保持，未知成员及错误类型继续拒绝。tools缺省与显式空数组保持区别，不合成工具声明。兼容的客户端 metadata 只允许有界字符串字典；stream_options仅include_usage布尔和reasoning_summary_delivery=sequential_cutoff。文本/推理内容分类型校验，不透传未经分类的文件引用、注解或嵌套对象；工具结果的可选 name/namespace 和状态等字段同样按标量校验。提供者原始错误使用脱敏错误替代，响应回显的 previous_response_id 必须匹配已授权输入；可信计数仍在输出分类前记录。客户端须显式关闭本阶段未支持的内置 web_search；网关不静默删掉工具声明以制造兼容结果。
 
-Responses Lite允许在input原位置使用additional_tools包，字段仅type/role/tools/可选本地id，role必须developer；仅含function/custom/单层namespace，包内不开放图片、内置检索或MCP。各来源共享64个声明（含namespace），身份冲突拒绝，每条说明最多32 KiB UTF-8，整体请求仍受原大小限制。聚合声明只用于本轮工具选择/输出校验，不提升到顶层，不改变顺序；本地包id发送前移除，不建立对象权限。HTTP按已校验Lite声明/明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的工具身份集合、Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才可继承校验集合，显式空声明清空，不跨lane/连接/失败恢复。上游增量请求保持原形，每轮授权、引用与用量仍独立执行。
+Responses Lite允许在input原位置使用additional_tools包，字段仅type/role/tools/可选本地id，role必须developer；仅含function/custom/单层namespace，包内不开放图片、内置检索或MCP。各来源共享64个声明（含namespace），身份冲突拒绝，所有function/custom/namespace说明（含namespace本身及叶工具）共享512 KiB UTF-8预算，顶层与各Lite包不重置预算，不另设单条32 KiB限制；整体文本请求仍受512 KiB、图片外层受8 MiB原大小限制。聚合声明只用于本轮工具选择/输出校验，不提升到顶层，不改变顺序；本地包id发送前移除，不建立对象权限。HTTP按已校验Lite声明/明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的工具身份集合、Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才可继承校验集合，显式空声明清空，不跨lane/连接/失败恢复。上游增量请求保持原形，每轮授权、引用与用量仍独立执行。
 
 工具拒绝可在服务端使用固定reason枚举细分容器/数量/名称/说明（null、其他非字符串、超长分别分类）/布尔/namespace/字段/重复/grammar/类型/内置搜索/工具检索/远程MCP/选择/包/图片；不记录工具名、说明、schema、任意字段值或请求正文。沿用16条/单调60秒全局诊断上限和服务端UUID，公开错误仍仅type/code/message/request_id，不公开内部reason；工具拒绝message可附同一个有效UUID供界面关联，不含客户端输入或任意标识。历史日志未记录的信息不得事后推测为已确认根因。
 

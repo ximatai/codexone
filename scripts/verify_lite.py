@@ -14,13 +14,17 @@ from verify_websocket import dial, turn, send, receive
 
 MODEL='synthetic-text'
 LITE_KEY='ws_request_header_x_openai_internal_codex_responses_lite'
-TOOL=dict(type='function',name='synthetic_echo',description='é'*16384,parameters=dict(type='object'))
+TOOL=dict(type='function',name='synthetic_echo',description='é'*32769,parameters=dict(type='object'))
 PACKAGE=dict(type='additional_tools',role='developer',id='at_synthetic_local',tools=[TOOL])
 INPUT=[dict(role='developer',content='synthetic-before'),PACKAGE,dict(role='user',content='synthetic-after')]
 
 
 class Observed(Handler):
     def events(self,document):
+        if getattr(self.server,'expected_large',None) is not None:
+            expected=self.server.expected_large
+            assert document['input']==expected['input'] and document['tools']==expected['tools']
+            return super().events(document)
         if getattr(self.server,'incremental',False):
             step=getattr(self,'step',0);self.step=step+1
             if step==0:
@@ -74,6 +78,18 @@ def main():
                             with dial(ports['data'],path=prefix+'/responses') as sock:
                                 events=turn(sock,dict(model=MODEL,input=INPUT))
                                 assert events[-1]['type']=='response.completed'
+                    # Long function/custom/namespace descriptions must arrive intact, not truncated.
+                    server.expected_large=dict(input='synthetic-large-top',tools=[dict(type='namespace',name='synthetic_ns',
+                        description='n'*65537,tools=[TOOL,dict(type='custom',name='synthetic_custom',description='c'*65537)])])
+                    try:
+                        for prefix in ('/v1','/backend-api/codex'):
+                            for streaming in (False,True):
+                                status,body=connect(ports['data'],'POST',prefix+'/responses',dict(model=MODEL,stream=streaming,**server.expected_large))
+                                assert status==200 and b'response' in body
+                            if transport=='websocket':
+                                with dial(ports['data'],path=prefix+'/responses') as sock:
+                                    assert turn(sock,dict(model=MODEL,**server.expected_large))[-1]['type']=='response.completed'
+                    finally:server.expected_large=None
                     if transport=='websocket':
                         server.incremental=True
                         with dial(ports['data']) as sock:
@@ -103,23 +119,43 @@ def main():
                     invalid=[]
                     for change in [dict(role='user'),dict(tools=None),dict(id=False),dict(private='synthetic'),
                             dict(tools=[dict(type='image_generation')]),dict(tools=[dict(type='web_search')]),
-                            dict(tools=[dict(type='tool_search')]),dict(tools=[{**TOOL,'description':'x'*32769}]),
+                            dict(tools=[dict(type='tool_search')]),dict(tools=[{**TOOL,'description':'x'*524289}]),
                             dict(tools=[TOOL,TOOL]),dict(tools=[{**TOOL,'name':f'synthetic_{i}','description':'synthetic'} for i in range(65)])]:
                         package={**PACKAGE,**change};invalid.append(dict(model=MODEL,input=[package]))
                     invalid.extend([dict(model=MODEL,input=[PACKAGE],tools=[TOOL]),
                         dict(model=MODEL,input=[PACKAGE],tools=None),
                         dict(model=MODEL,input=[PACKAGE,dict(type='function_call_output',call_id='call_unknown',output='synthetic')]),
                         dict(model=MODEL,input=[PACKAGE],previous_response_id=PACKAGE['id'])])
+                    # A source/package/namespace cannot restart the shared UTF-8 description budget.
+                    half={**TOOL,'description':'x'*262144}
+                    nested=dict(type='namespace',name='synthetic_ns',description='x'*131072,
+                        tools=[dict(type='custom',name='synthetic_custom',description='x'*131073)])
+                    for request in [dict(model=MODEL,input=[{**PACKAGE,'tools':[nested]}],tools=[half]),
+                            dict(model=MODEL,input=[{**PACKAGE,'tools':[half]},{**PACKAGE,'tools':[nested]}])]:
+                        status,body=connect(ports['data'],'POST','/v1/responses',request)
+                        assert status==400 and json.loads(body)['error']['code']=='unsupported_tools'
+                        if transport=='websocket':
+                            with dial(ports['data']) as sock:
+                                send(sock,dict(type='response.create',**request),masked=True,maximum_bytes=8388608)
+                                event=json.loads(receive(sock)[1]);assert event['type']=='error' and event['error']['code']=='unsupported_tools'
+                    # Large declarations do not relax the complete text-request limit.
+                    oversized=dict(model=MODEL,input='x'*524289)
+                    status,body=connect(ports['data'],'POST','/v1/responses',oversized)
+                    assert status==413 and json.loads(body)['error']['code']=='request_too_large'
+                    if transport=='websocket':
+                        with dial(ports['data']) as sock:
+                            send(sock,dict(type='response.create',**oversized),masked=True,maximum_bytes=8388608)
+                            event=json.loads(receive(sock)[1]);assert event['type']=='error' and event['error']['code']=='request_too_large'
                     for request in invalid:
                         status,_=connect(ports['data'],'POST','/v1/responses',request)
                         assert status in (400,403,404), status
                         if transport=='websocket':
                             with dial(ports['data']) as sock:
-                                send(sock,dict(type='response.create',**request),masked=True)
+                                send(sock,dict(type='response.create',**request),masked=True,maximum_bytes=8388608)
                                 opcode,data=receive(sock);event=json.loads(data)
                                 assert opcode==1 and event['type']=='error'
                     assert counts(root)==before and server.sequence==calls, 'Rejected declaration/reference dispatched or changed ownership'
-                    print(f'PASS: Lite {transport}, both prefixes, 32KiB UTF-8 description, ordered forwarding, {len(invalid)*(2 if transport=="websocket" else 1)} rejection cases without dispatch',flush=True)
+                    print(f'PASS: Lite {transport}, both prefixes, long UTF-8 description within shared budget, ordered forwarding, {(len(invalid)+3)*(2 if transport=="websocket" else 1)} rejection cases without dispatch',flush=True)
                 finally:stop(process)
     finally:server.interrupt();server.server_close();thread.join(5)
     assert not thread.is_alive() and not server.sockets

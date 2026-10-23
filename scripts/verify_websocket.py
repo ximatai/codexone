@@ -26,9 +26,9 @@ def exact(sock, size):
     return bytes(data)
 
 
-def send(sock, value, *, masked=False, opcode=1, fin=True, rsv1=False):
+def send(sock, value, *, masked=False, opcode=1, fin=True, rsv1=False, maximum_bytes=524288):
     data = json.dumps(value).encode() if not isinstance(value, bytes) else value
-    assert len(data) <= 524288
+    assert len(data) <= maximum_bytes
     header = bytes([(128 if fin else 0) | (64 if rsv1 else 0) | opcode])
     flag = 128 if masked else 0
     if len(data) < 126:

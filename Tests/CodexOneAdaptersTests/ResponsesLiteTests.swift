@@ -117,13 +117,42 @@ private func liteRequest(_ items: [JSONValue], extra: [String: JSONValue] = [:])
 
 @Test func clientToolDescriptionsHaveABoundedUTF8Capacity() throws {
   var tool = liteFunction.object!
-  tool["description"] = .string(String(repeating: "é", count: 16_384))
+  tool["description"] = .string(String(repeating: "é", count: 65_536))
   #expect(try liteRequest([litePackage([.object(tool)])]).functionNames.count == 1)
   #expect(try liteRequest([], extra: ["tools": .array([.object(tool)])]).functionNames.count == 1)
-  tool["description"] = .string(String(repeating: "é", count: 16_384) + "x")
-  #expect(throws: (any Error).self) { try liteRequest([litePackage([.object(tool)])]) }
-  #expect(throws: (any Error).self) {
-    try liteRequest([], extra: ["tools": .array([.object(tool)])])
+  // The description budget is separate from the complete text envelope, which still has overhead.
+  tool["description"] = .string(String(repeating: "é", count: 262_144))
+  #expect(try ClientTools(.array([.object(tool)])).functions.count == 1)
+  tool["description"] = .string(String(repeating: "é", count: 262_144) + "x")
+  #expect(throws: (any Error).self) { try ClientTools(.array([.object(tool)])) }
+}
+
+@Test func toolDescriptionBudgetIncludesNamespacesAndAllDeclarationSources() throws {
+  var function = liteFunction.object!
+  function["description"] = .string(String(repeating: "x", count: 262_144))
+  let leaf: JSONValue = .object([
+    "type": .string("custom"), "name": .string("synthetic_custom"),
+    "description": .string(String(repeating: "é", count: 65_536)),
+  ])
+  var namespace: [String: JSONValue] = [
+    "type": .string("namespace"), "name": .string("synthetic_ns"),
+    "description": .string(String(repeating: "x", count: 131_072)),
+    "tools": .array([leaf]),
+  ]
+  let boundary = try ClientTools(.array([.object(function), .object(namespace)]))
+  #expect(boundary.functions == ["synthetic_echo"])
+  #expect(boundary.custom == ["synthetic_ns:synthetic_custom"])
+  namespace["description"] = .string(String(repeating: "x", count: 131_073))
+  for (items, extra): ([JSONValue], [String: JSONValue]) in [
+    ([litePackage([.object(namespace)])], ["tools": .array([.object(function)])]),
+    ([litePackage([.object(function)]), litePackage([.object(namespace)])], [:]),
+  ] {
+    do {
+      _ = try liteRequest(items, extra: extra)
+      Issue.record("Description budget was reset at a declaration source or namespace")
+    } catch let error as GatewayProtocolError {
+      #expect(error.code == "unsupported_tools" && error.detail == .toolsDescriptionSize)
+    }
   }
 }
 
