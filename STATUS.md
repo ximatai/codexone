@@ -69,7 +69,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，CodexLB接入取舍只读核对：主Agent对用户指定旧项目的 `6d78866` / 历史修复快照 `6689178` 逐项读取源码，未修改旧项目、读取秘密/部署配置或调用真实订阅。两份旧源码均有重复POST直接重放完整持久事件的分支，修正此前将M5过于集中于GET读取轨迹的解释；它不证明稳定操作关联、消费位置或工具安全，M5仍未完成。另确认默认单次期限、模型目录/指导来源、图片mask与stream转换、认证参数和额度覆盖差异；默认设置不代表当前线上配置。见[对照矩阵](docs/evidence/codexlb-compatibility.md)及[核对记录](docs/changes/codexlb-compatibility-audit/verification.md)。本次不改产品代码，冻结候选仍为下方 `bd38964`。
+2026-10-23，CodexLB接入取舍只读核对阶段出口：提交 `e5809df` 后集中review无新增P1/P2，文档/架构/格式/隐私检查通过；主Agent对用户指定旧项目的 `6d78866` / 历史修复快照 `6689178` 逐项读取源码，未修改旧项目、读取秘密/部署配置或调用真实订阅。两份旧源码均有重复POST直接重放完整持久事件的分支，修正此前将M5过于集中于GET读取轨迹的解释；它不证明稳定操作关联、消费位置或工具安全，M5仍未完成。另确认默认单次期限、模型目录/指导来源、图片mask与stream转换、认证参数和额度覆盖差异；默认设置不代表当前线上配置。见[对照矩阵](docs/evidence/codexlb-compatibility.md)及[核对记录](docs/changes/codexlb-compatibility-audit/verification.md)。本次不改产品代码，冻结候选仍为下方 `bd38964`。
 
 下一步先补新的合成恢复关联实验（完整事件重放、主动相同新turn、权限/副作用边界），并为长执行的总期限/空闲期限及可信模型profile来源明确方案；行为变化须另提案。真实Desktop操作仍先与用户讨论，首轮仅合成上游；真实订阅调用未开启。只读旧源码不代替Desktop/真实订阅/M5/O14验收。
 
