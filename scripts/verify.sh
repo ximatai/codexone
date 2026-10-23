@@ -27,6 +27,7 @@ backend() {
   python3 scripts/verify_key_export.py
   python3 scripts/verify_key_import.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_trial_provider.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_lite.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_admin.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_admin_assets.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_pool_config.py --binary "$backend_bin_dir/codexone"
@@ -50,8 +51,9 @@ frontend() {
 }
 
 case "${1:-all}" in
+  --client) shift; python3 scripts/verify_default_client.py "$@" ;;
   --backend) backend ;;
   --web) frontend "${2:-}" ;;
   all) backend; frontend ;;
-  *) echo "Usage: $0 [--backend | --web [--chrome]]" >&2; exit 64 ;;
+  *) echo "Usage: $0 [--backend | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
 esac

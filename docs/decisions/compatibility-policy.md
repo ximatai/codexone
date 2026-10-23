@@ -61,6 +61,10 @@
 
 对照已授权旧源码的nullable模型及转发序列化，采用已知reasoning.effort/summary/context的null=未指定语义，转发时移除这些null成员。保留tools缺省与显式[]的区别，不从完整DTO默认值合成客户端未提供的字段。未知成员和错误类型继续明确拒绝，不以extra=allow或全局删除null掩盖未分类协议。依据见[源码对照](../evidence/codexlb-compatibility.md)。
 
+### 默认工具声明与WS增量续接
+
+默认内置模型目录会选用Responses Lite工具包，不能用显式合成目录改变工具编码后推断默认路径兼容。接受有界、严格分类的additional_tools并保留输入位置，本地包id不作为远程对象；默认工具说明实测超过8 KiB，改用32 KiB UTF-8有限上限，不截断工具说明。实际CLI还会将WS预热声明留在上游会话，后续只提交previous_response_id和增量输入；每lane保留最近成功响应的工具身份集合供验证，仅精确同模型续接可继承，不缓存正文/完整声明、不跨连接恢复。代价是增加连接内有限状态，须同时证明空声明替换、跨lane/连接不继承及每轮重新授权。普通HTTP/桥接不获得会话继承。这些合成证据仍不能证明真实订阅或Desktop UI，验证要求见[验证约定](../development/verification.md)。
+
 已逐项采纳text.verbosity/format与tool_choice/parallel_tool_calls的可空语义，不作全局null宽容。新增[通信扩展复核](../evidence/codexlb-discussions.md#2026-10-23-通信契约扩展复核)已记录本机差异、终态/清理与慢lane隔离风险；先完成当前候选，再以参数及失败可见性为一个闭环。有限订阅握手头与不透明turn-state归属另立契约，不直接透传客户端全部头；不以伪造限流码改变客户端重试。
 
 官方客户端发送结构已明确reasoning.context及reasoning_summary_delivery枚举，按有限允许集合保留，不以控制字段赋予上下文归属/重放或改变准入。新增字段兼容应同时对照提供者/客户端发送结构与CodexLB实践，避免只参考旧代理DTO显式字段导致遗漏，也不默认透传所有扩展。

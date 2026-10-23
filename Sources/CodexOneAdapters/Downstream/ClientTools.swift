@@ -1,5 +1,13 @@
 import Foundation
 
+struct ClientToolSnapshot: Sendable {
+  let responseID: String
+  let model: String
+  let functions: Set<String>
+  let custom: Set<String>
+  let usesResponsesLite: Bool
+}
+
 struct ClientTools: Sendable {
   var functions = Set<String>()
   var custom = Set<String>()
@@ -39,7 +47,7 @@ struct ClientTools: Sendable {
         }
         let key = try Self.key(name: name, namespace: namespace)
         if let description = tool["description"],
-          description.string == nil || description.string!.utf8.count > 8192
+          description.string == nil || description.string!.utf8.count > 32_768
         {
           throw GatewayProtocolError(400, "unsupported_tools")
         }

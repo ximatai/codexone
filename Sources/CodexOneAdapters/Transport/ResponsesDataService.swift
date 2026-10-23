@@ -282,6 +282,7 @@ public struct ResponsesDataService: Service {
           let firstTurn = known.count == 1 ? initial : nil
           lanes.addTask {
             var pending = firstTurn
+            let tools = WebSocketToolState()
             while !Task.isCancelled {
               let data = try await commands.next(lane: lane)
               defer { activity.end() }
@@ -291,14 +292,18 @@ public struct ResponsesDataService: Service {
               var requested: ResponseRequest?
               do {
                 let request = try webSocketCreate(
-                  data, imageConfiguration: executor.configuration.imageGeneration)
+                  data, imageConfiguration: executor.configuration.imageGeneration,
+                  previousTools: tools.snapshot)
                 requested = request
                 if let initialTurn {
                   let model = try executor.executionModel(request)
                   try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
                   try await executor.exchange(
                     request, context: initialTurn.context, model: model, peer: upstream, lane: lane
-                  ) { event in try await downstream.send(event) }
+                  ) { event in
+                    try await downstream.send(event)
+                    tools.observe(event, request: request)
+                  }
                   initialTurn.start.finishTurn()
                 } else {
                   let current = try await executor.authorized(digest)
@@ -306,6 +311,7 @@ public struct ResponsesDataService: Service {
                     request, requestID: requestID, peer: upstream, lane: lane
                   ) { event in
                     try await downstream.send(event)
+                    tools.observe(event, request: request)
                   }
                 }
               } catch {

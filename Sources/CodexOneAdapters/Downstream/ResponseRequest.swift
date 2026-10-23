@@ -27,6 +27,7 @@ struct GatewayProtocolError: Error, Sendable {
 }
 
 struct ResponseRequest: Sendable {
+  static let liteMetadataKey = "ws_request_header_x_openai_internal_codex_responses_lite"
   var requirements = ExecutionRequirements()
   var admissionModel: String { requirements.route == .images ? requirements.imageModel! : model }
   let model: String
@@ -36,21 +37,32 @@ struct ResponseRequest: Sendable {
   let customToolNames: Set<String>
   let mode: ExecutionMode
   let streamCompaction: Bool
+  let usesResponsesLite: Bool
   let document: JSONValue
   init(data: Data, mode: ExecutionMode = .generation, imageConfiguration: ImageConfiguration? = nil)
     throws
   {
     try self.init(
       data: data, mode: mode, imageConfiguration: imageConfiguration,
-      maximumBytes: ImageLimits.requestBytes)
+      maximumBytes: ImageLimits.requestBytes, previousTools: nil)
+  }
+  init(
+    data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?,
+    previousTools: ClientToolSnapshot?
+  ) throws {
+    try self.init(
+      data: data, mode: mode, imageConfiguration: imageConfiguration,
+      maximumBytes: ImageLimits.requestBytes, previousTools: previousTools)
   }
   init(normalizedImage: JSONValue, imageConfiguration: ImageConfiguration?) throws {
     try self.init(
       data: normalizedImage.data(escapingSlashes: false), mode: .generation,
-      imageConfiguration: imageConfiguration, maximumBytes: ImageLimits.normalizedRequestBytes)
+      imageConfiguration: imageConfiguration, maximumBytes: ImageLimits.normalizedRequestBytes,
+      previousTools: nil)
   }
   private init(
-    data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?, maximumBytes: Int
+    data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?, maximumBytes: Int,
+    previousTools: ClientToolSnapshot?
   ) throws {
     guard data.count <= maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
@@ -177,9 +189,45 @@ struct ResponseRequest: Sendable {
     let imageTool = try imageTools.first.map {
       try ImageToolRequest($0, configuration: imageConfiguration, host: model)
     }
-    let tools = try ClientTools(fields["tools"])
-    self.functionNames = tools.functions
-    self.customToolNames = tools.custom
+    guard let input = fields["input"] else { throw GatewayProtocolError(400, "invalid_input") }
+    if let items = input.array, items.count > 256 {
+      throw GatewayProtocolError(400, "invalid_input")
+    }
+    // Inspect every declaration before admitting calls. Keep the original wire locations intact.
+    let packages = input.array?.filter { $0["type"]?.string == "additional_tools" } ?? []
+    var declarations: [JSONValue] = []
+    if let value = fields["tools"] {
+      guard let list = value.array, list.count <= 64 else {
+        throw GatewayProtocolError(400, "unsupported_tools")
+      }
+      declarations = list
+    }
+    for package in packages {
+      guard
+        package.object?.keys.allSatisfy({ ["type", "role", "tools", "id"].contains($0) }) == true,
+        package["role"]?.string == "developer", let list = package["tools"]?.array,
+        list.count <= 64 - declarations.count,
+        !list.contains(where: { $0["type"]?.string == "image_generation" })
+      else { throw GatewayProtocolError(400, "unsupported_tools") }
+      declarations += list
+    }
+    let tools = try ClientTools(.array(declarations))
+    let inherited =
+      fields["tools"] == nil && packages.isEmpty
+        && previousTools?.model == model
+        && fields["previous_response_id"]?.string == previousTools?.responseID
+      ? previousTools : nil
+    usesResponsesLite =
+      !packages.isEmpty
+      || fields["client_metadata"]?[Self.liteMetadataKey]?.string == "true"
+      || inherited?.usesResponsesLite == true
+    if usesResponsesLite, let metadata = fields["client_metadata"]?.object,
+      metadata[Self.liteMetadataKey] == nil, metadata.count >= 32
+    {
+      throw GatewayProtocolError(400, "unsupported_client_metadata")
+    }
+    self.functionNames = inherited?.functions ?? tools.functions
+    self.customToolNames = inherited?.custom ?? tools.custom
     if let options = fields["stream_options"] {
       guard let values = options.object, !values.isEmpty,
         values.keys.allSatisfy({ ["include_usage", "reasoning_summary_delivery"].contains($0) }),
@@ -202,8 +250,8 @@ struct ResponseRequest: Sendable {
         else { throw GatewayProtocolError(400, "unsupported_tools") }
         let key = try ClientTools.key(name: name, namespace: choice["namespace"]?.string)
         guard
-          choice["type"]?.string == "function" && tools.functions.contains(key)
-            || choice["type"]?.string == "custom" && tools.custom.contains(key)
+          choice["type"]?.string == "function" && functionNames.contains(key)
+            || choice["type"]?.string == "custom" && customToolNames.contains(key)
         else { throw GatewayProtocolError(400, "unsupported_tools") }
       }
     }
@@ -212,7 +260,6 @@ struct ResponseRequest: Sendable {
         includes.allSatisfy({ $0.string == "reasoning.encrypted_content" })
       else { throw GatewayProtocolError(400, "unsupported_include") }
     }
-    guard let input = fields["input"] else { throw GatewayProtocolError(400, "invalid_input") }
     var streamCompaction = false
     var visionInput = false
     var imageBytes = 0
@@ -241,6 +288,8 @@ struct ResponseRequest: Sendable {
           }
         }
         switch type {
+        case "additional_tools":
+          break  // Strict declaration validation above; never a remote object.
         case "compaction_trigger":
           guard mode == .generation, !streamCompaction, index == items.count - 1,
             object.count == 1
@@ -340,6 +389,7 @@ struct ResponseRequest: Sendable {
         }
         // File, conversation and other private references are not allowed as unknown fields.
         let fieldsByType: [String: Set<String>] = [
+          "additional_tools": ["role", "tools"],
           "message": ["role", "content", "phase"],
           "function_call": ["name", "arguments", "call_id", "namespace"],
           "custom_tool_call": ["name", "input", "call_id", "namespace"],
@@ -373,7 +423,8 @@ struct ResponseRequest: Sendable {
           let completeContext =
             ["reasoning", "compaction"].contains(type)
             && object["encrypted_content"]?.string != nil
-          if !["message", "function_call_output", "custom_tool_call_output"].contains(type)
+          if !["message", "function_call_output", "custom_tool_call_output", "additional_tools"]
+            .contains(type)
             && !completeContext
           {
             references.append(.init(type: "item", rawID: id))
@@ -416,7 +467,8 @@ struct ResponseRequest: Sendable {
         items.map { item in
           var object = item.object!
           let type = object["type"]?.string ?? "message"
-          if ["message", "function_call_output", "custom_tool_call_output"].contains(type)
+          if ["message", "function_call_output", "custom_tool_call_output", "additional_tools"]
+            .contains(type)
             || (["reasoning", "compaction"].contains(type)
               && object["encrypted_content"]?.string != nil)
           {

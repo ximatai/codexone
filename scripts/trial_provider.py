@@ -14,6 +14,29 @@ from verify_websocket import receive, send
 TEXT = 'CodexOne synthetic connectivity test passed. No real model or subscription was called.'
 
 
+def response_events(response):
+    """Shared actual fixture serializer, including the terminal consumed by real clients."""
+    result=[dict(type='response.created',response={**response,'status':'in_progress','output':[],'usage':None})]
+    for index,item in enumerate(response['output']):
+        added={**item,'status':'in_progress'}
+        kind=item['type']
+        if kind=='message':added['content']=[]
+        if kind=='function_call':added['arguments']=''
+        if kind=='custom_tool_call':added['input']=''
+        if kind=='compaction':added['encrypted_content']=''
+        result.append(dict(type='response.output_item.added',output_index=index,item=added))
+        if kind=='message':
+            for part_index,part in enumerate(item['content']):
+                result.extend([
+                    dict(type='response.content_part.added',item_id=item['id'],output_index=index,content_index=part_index,part={**part,'text':''}),
+                    dict(type='response.output_text.delta',item_id=item['id'],output_index=index,content_index=part_index,delta=part['text']),
+                    dict(type='response.output_text.done',item_id=item['id'],output_index=index,content_index=part_index,text=part['text']),
+                    dict(type='response.content_part.done',item_id=item['id'],output_index=index,content_index=part_index,part=part)])
+        result.append(dict(type='response.output_item.done',output_index=index,item=item))
+    result.append(dict(type='response.completed',response=response))
+    return result
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = False
     def __init__(self, address, models):
@@ -56,17 +79,10 @@ class Handler(BaseHTTPRequestHandler):
             content=[dict(type='output_text',text=TEXT,annotations=[])])
         response=dict(id=f'resp_trial_{index}',object='response',model=document['model'],status='completed',
             output=[] if warmup else [item],usage=dict(input_tokens=0 if warmup else 1,
-            output_tokens=0 if warmup else 1,input_tokens_details=dict(cached_tokens=0)))
-        result=[dict(type='response.created',response={**response,'status':'in_progress','output':[],'usage':None})]
-        if not warmup:
-            result.extend([dict(type='response.output_item.added',output_index=0,item={**item,'status':'in_progress','content':[]}),
-                dict(type='response.content_part.added',item_id=item['id'],output_index=0,content_index=0,
-                    part=dict(type='output_text',text='',annotations=[])),
-                dict(type='response.output_text.delta',item_id=item['id'],output_index=0,content_index=0,delta=TEXT),
-                dict(type='response.output_text.done',item_id=item['id'],output_index=0,content_index=0,text=TEXT),
-                dict(type='response.content_part.done',item_id=item['id'],output_index=0,content_index=0,part=item['content'][0]),
-                dict(type='response.output_item.done',output_index=0,item=item)])
-        result.append(dict(type='response.completed',response=response));return result
+            output_tokens=0 if warmup else 1,total_tokens=0 if warmup else 2,input_tokens_details=dict(cached_tokens=0)))
+        if any(i.get('type')=='compaction_trigger' for i in document.get('input',[]) if isinstance(i,dict)):
+            response['output']=[dict(type='compaction',encrypted_content=f'synthetic-trial-context-{index}')]
+        return response_events(response)
     def do_POST(self):
         self.close_connection=True
         try:
@@ -77,8 +93,8 @@ class Handler(BaseHTTPRequestHandler):
             body=self.rfile.read(length);assert len(body)==length
             document=json.loads(body);events=self.events(document)
             if self.path.endswith('/compact'):
-                result=json.dumps(dict(object='response.compaction',output=[],usage=dict(input_tokens=1,
-                    output_tokens=0,input_tokens_details=dict(cached_tokens=0)))).encode();mime='application/json'
+                result=json.dumps(dict(object='response.compaction',output=[dict(type='compaction',encrypted_content='synthetic-trial-compact-context')],usage=dict(input_tokens=1,
+                    output_tokens=0,total_tokens=1,input_tokens_details=dict(cached_tokens=0)))).encode();mime='application/json'
             elif document.get('stream'):
                 result=''.join('data: '+json.dumps(event)+'\n\n' for event in events).encode();mime='text/event-stream'
             else:result=json.dumps(events[-1]['response']).encode();mime='application/json'

@@ -99,6 +99,9 @@ struct HTTPResponseExecution: Sendable {
           "content-type": "application/json",
           "accept": request.streaming ? "text/event-stream" : "application/json",
         ]
+        if request.usesResponsesLite {
+          upstream.headers.add(name: "x-openai-internal-codex-responses-lite", value: "true")
+        }
         if let authorization {
           for header in authorization.headers {
             upstream.headers.add(name: header.name, value: header.value)

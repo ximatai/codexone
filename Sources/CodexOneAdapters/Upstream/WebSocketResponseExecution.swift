@@ -38,6 +38,11 @@ extension HTTPResponseExecution {
       var create = request.document.object!
       create.removeValue(forKey: "stream")
       create["type"] = .string("response.create")
+      if request.usesResponsesLite {
+        var metadata = create["client_metadata"]?.object ?? [:]
+        metadata[ResponseRequest.liteMetadataKey] = .string("true")
+        create["client_metadata"] = .object(metadata)
+      }
       if request.mode == .warmup { create["generate"] = .bool(false) }
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
       try await peer.send(.object(create), normalizedImage: request.requirements.route == .images)
@@ -102,7 +107,10 @@ extension HTTPResponseExecution {
   }
 }
 
-func webSocketCreate(_ data: Data, imageConfiguration: ImageConfiguration? = nil) throws
+func webSocketCreate(
+  _ data: Data, imageConfiguration: ImageConfiguration? = nil,
+  previousTools: ClientToolSnapshot? = nil
+) throws
   -> ResponseRequest
 {
   guard var document = try JSONValue.decode(data).object,
@@ -117,5 +125,5 @@ func webSocketCreate(_ data: Data, imageConfiguration: ImageConfiguration? = nil
   document["stream"] = .bool(true)
   return try ResponseRequest(
     data: JSONValue.object(document).data(), mode: generate?.bool == false ? .warmup : .generation,
-    imageConfiguration: imageConfiguration)
+    imageConfiguration: imageConfiguration, previousTools: previousTools)
 }
