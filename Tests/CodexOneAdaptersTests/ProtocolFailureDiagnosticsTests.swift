@@ -58,9 +58,14 @@ struct ProtocolFailureDiagnosticsTests {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
       let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)
       #expect(metadata["reason"]?.description == detail.rawValue)
-      let envelope = protocolErrorEnvelope(error, requestID: UUID().uuidString)
+      let id = UUID().uuidString
+      let envelope = protocolErrorEnvelope(error, requestID: id)
       #expect(envelope["error"]?.object?.count == 4)
       #expect(envelope["error"]?["reason"] == nil)
+      #expect(envelope["error"]?["message"]?.string == "Gateway request failed. Reference: \(id).")
     }
+    let untrusted = protocolErrorEnvelope(
+      GatewayProtocolError(400, "unsupported_tools", detail: .toolsName), requestID: "untrusted")
+    #expect(untrusted["error"]?["message"]?.string == "Gateway request failed.")
   }
 }

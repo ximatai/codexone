@@ -60,7 +60,7 @@ def main():
                 else:
                     status,data=connect(ports['data'],'POST','/v1/responses',request)
                     assert status==400;error=json.loads(data)['error']
-                assert error['code']=='unsupported_tools' and error['message']=='Gateway request failed.'
+                assert error['code']=='unsupported_tools' and error['message']=='Gateway request failed. Reference: '+error['request_id']+'.'
                 assert set(error)=={'type','code','message','request_id'} and private.encode() not in data
                 ids.append((reason,error['request_id']))
             # Extra errors cannot exceed the shared diagnostic budget.

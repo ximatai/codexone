@@ -1,4 +1,5 @@
 import CodexOneCore
+import Foundation
 
 func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? GatewayProtocolError { return error }
@@ -32,10 +33,13 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
 func protocolErrorEnvelope(_ error: any Error, requestID: String) -> JSONValue {
   let mapped = protocolFailure(error)
   ProtocolFailureDiagnostics.record(mapped, requestID: requestID)
+  let message =
+    mapped.code == "unsupported_tools" && UUID(uuidString: requestID) != nil
+    ? "Gateway request failed. Reference: \(requestID)." : "Gateway request failed."
   return .object([
     "error": .object([
       "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
-      "code": .string(mapped.code), "message": .string("Gateway request failed."),
+      "code": .string(mapped.code), "message": .string(message),
       "request_id": .string(requestID),
     ])
   ])

@@ -12,11 +12,13 @@
 
 ## 本地诊断实现与定向验证
 
-新增16项固定工具reason，保留原允许集合、数量/大小及公开错误；已知搜索/发现/MCP类型只分类，仍拒绝。无新增正文日志、原始类型名/工具名/字段值日志，也无主体/Key或客户端可控关联标签。
+新增16项固定工具reason，保留原允许集合、数量/大小及公开错误code/字段结构；已知搜索/发现/MCP类型只分类，仍拒绝。无新增正文日志、原始类型名/工具名/字段值日志，也无主体/Key或客户端可控关联标签。
 
 - swift build -j 4：exit0。
 - Swift定向ProtocolFailureDiagnosticsTests/Lite声明、容量及WS继承共10项通过。
 - verify_tool_diagnostics.py：16种原因交替覆盖HTTP/WS，错误UUID与日志逐一对应；公开错误只有原4字段，20次拒绝最多16日志，无任意私有工具字段/描述/正文/Key/路径，无上游连接/attempt/绑定。
 - verify_protocol_rejections.py和verify_lite.py通过，旧reasoning/首WS错误/容量/归属拒绝及成功续接保持。
 
-提交后review、受影响全集、Linux和测试服务更新在完成后补记。没有具体Desktop操作/分类证据前，不标根因已查清或Desktop通过。
+实现提交d83e30c后，按用户最新要求停止刚发起的subagent复核，后续由主Agent自审，不将中止复核记录为review通过。macOS完整verify.sh --backend exit0，198项Swift测试（35+35+3+125）及全部后端脚本通过，新增16类原因/关联/隐私检查在组合入口内实际执行；136份文档及差异/隐私检查通过。Linux和测试服务更新在完成后补记。没有具体Desktop操作/分类证据前，不标根因已查清或Desktop通过。
+
+为真实界面能关联拒绝编号，后续仅在unsupported_tools的message附加已经存在的有效服务端UUID；内部reason仍不公开，不接收客户端任意标签，其他错误文案保持。4项Swift诊断单测及16类真实socket检查覆盖提示编号与日志/响应字段一致，任意非UUID不会进入提示。首个d83e30c诊断构建的Linux verification已通过；加入界面编号后的最终Linux检查另记，不能混作同一受测产物。
