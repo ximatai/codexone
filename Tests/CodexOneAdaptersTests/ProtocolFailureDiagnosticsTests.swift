@@ -53,7 +53,7 @@ struct ProtocolFailureDiagnosticsTests {
       .toolsContainer, .toolsCount, .toolsName, .toolsDescription, .toolsBoolean,
       .toolsNamespace, .toolsMembers, .toolsDuplicate, .toolsGrammar, .toolsType,
       .toolsBuiltinSearch, .toolsDiscovery, .toolsRemoteMCP, .toolsChoice, .toolsPackage,
-      .toolsImage,
+      .toolsImage, .toolsDescriptionNull, .toolsDescriptionSize,
     ] {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
       let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)

@@ -33,12 +33,12 @@ def cases():
         ('tools_choice',dict(tools=[function],tool_choice=private)),
         ('tools_package',dict(input=[{**package,'role':'user'}])),
         ('tools_image',dict(input=[{**package,'tools':[dict(type='image_generation')]}])),
+        ('tools_description_null',dict(tools=[{**function,'description':None}])),
+        ('tools_description_size',dict(tools=[{**function,'description':'x'*32769}])),
     ]
 
 
-def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True)
-    binary=str(parser.parse_args().binary.resolve());private,examples=cases()
+def verify(binary,private,examples):
     with tempfile.TemporaryDirectory(prefix='codexone-tool-reasons-') as tmp,socket.socket() as upstream:
         upstream.bind(('127.0.0.1',0));upstream.listen(8);upstream.settimeout(0.1)
         root=Path(tmp);config=root/'identity.json'
@@ -73,13 +73,21 @@ def main():
                 connection,_=upstream.accept();connection.close();raise AssertionError('Rejected tools dispatched')
             except socket.timeout:pass
             process.terminate();process.wait(8);output=process.stdout.read()
-            assert process.returncode==0 and output.count(b'Protocol request rejected')==16
+            assert process.returncode==0 and output.count(b'Protocol request rejected')==min(len(examples)+4,16)
             for reason,request_id in ids:
                 assert any(('reason='+reason).encode() in line and ('request_id='+request_id).encode() in line for line in output.splitlines()), reason
             for value in [private,TOKEN,'synthetic_private_field','synthetic_echo','server_label',str(config)]:
                 assert value.encode() not in output,value
         finally:stop(process)
-    print('PASS: all 16 fixed tool reasons correlate HTTP/WS errors to bounded private-free logs; no upstream, attempt or binding')
+
+def main():
+    parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True)
+    binary=str(parser.parse_args().binary.resolve());private,examples=cases()
+    # Independent processes preserve the production 16-per-minute diagnostic budget.
+    for offset in range(0,len(examples),16):
+        verify(binary,private,examples[offset:offset+16])
+    verify(binary,private,[examples[-1],examples[-2],examples[3]])
+    print('PASS: all 18 fixed tool reasons correlate HTTP/WS errors to bounded private-free logs; no upstream, attempt or binding')
 
 
 if __name__=='__main__':main()

@@ -62,10 +62,16 @@ struct ClientTools: Sendable {
           throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsName)
         }
         let key = try Self.key(name: name, namespace: namespace)
-        if let description = tool["description"],
-          description.string == nil || description.string!.utf8.count > 32_768
-        {
-          throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescription)
+        if let description = tool["description"] {
+          if description == .null {
+            throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescriptionNull)
+          }
+          guard let text = description.string else {
+            throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescription)
+          }
+          guard text.utf8.count <= 32_768 else {
+            throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsDescriptionSize)
+          }
         }
         for boolean in ["strict", "defer_loading"] {
           if let value = tool[boolean], value.bool == nil {

@@ -12,6 +12,8 @@ enum ProtocolRejectionDetail: String, Sendable {
   case toolsCount = "tools_count"
   case toolsName = "tools_name"
   case toolsDescription = "tools_description"
+  case toolsDescriptionNull = "tools_description_null"
+  case toolsDescriptionSize = "tools_description_size"
   case toolsBoolean = "tools_boolean"
   case toolsNamespace = "tools_namespace"
   case toolsMembers = "tools_members"

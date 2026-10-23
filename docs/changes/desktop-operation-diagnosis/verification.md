@@ -22,3 +22,15 @@
 实现提交d83e30c后，按用户最新要求停止刚发起的subagent复核，后续由主Agent自审，不将中止复核记录为review通过。macOS完整verify.sh --backend exit0，198项Swift测试（35+35+3+125）及全部后端脚本通过，新增16类原因/关联/隐私检查在组合入口内实际执行；136份文档及差异/隐私检查通过。Linux和测试服务更新在完成后补记。没有具体Desktop操作/分类证据前，不标根因已查清或Desktop通过。
 
 为真实界面能关联拒绝编号，后续仅在unsupported_tools的message附加已经存在的有效服务端UUID；内部reason仍不公开，不接收客户端任意标签，其他错误文案保持。4项Swift诊断单测及16类真实socket检查覆盖提示编号与日志/响应字段一致，任意非UUID不会进入提示。首个d83e30c诊断构建的Linux verification已通过；加入界面编号后的最终Linux检查另记，不能混作同一受测产物。
+
+使用新增分类补采集同一合成目录对照，明确该辅助场景的拒绝为tools_builtin_search；默认目录仍成功。此记录只定位本机合成对照的内置搜索分支，另一设备Desktop失败原因仍不可据此认定。
+
+最终候选源码bec950f（含工具拒绝提示UUID），Linux amd64 verification target exit0；真实剥离程序通过16类HTTP/WS reason/Reference关联与隐私无派发、协议/WS/Lite/fixture/图片及维护/恢复/存储/切回定向检查。运行镜像标准安装验证exit0，实际程序与该verification产物SHA一致；未用初版d83e30c的无Reference产物代替。更新测试服务及真实Desktop结果在完成后补记。
+
+## 实际Desktop关联结果
+
+含Reference的bec950f诊断候选已完成受控备份/校验并升级独立合成测试服务，运行程序SHA256为72a1fefc4fbc33fa1385388a4ab22b60c87cd745870520afb443b694e9d2e1b5，与已验Linux产物一致。原配置/数据/属主、fixture及provider进程、反代及旧服务不变；仅原测试Key启用，账号0、unresolved0。公网双前缀HTTPS JSON/SSE及WSS成功对照通过，五个合成拒绝的Reference与预期reason精确匹配；诊断Key已撤销。
+
+用户保持原配置，在另一设备实际Desktop新会话发送约定合成探针，界面报带Reference的网关错误。服务端精确UUID匹配到2026-10-23 10:41:19 UTC的unsupported_tools/tools_description；该请求在工具声明校验阶段拒绝，不能将其他成功执行归于此请求。该旧分类同时代表null、其他非字符串或说明超过32 KiB，尚不能确定其一，也不能推断存在搜索/数量问题。下一步仅拆分该诊断并作最小对照，不据猜测放宽行为。
+
+说明分类细分保持拒绝行为不变：null单列、其他非字符串仍tools_description、超32 KiB单列。macOS build、4项诊断单测、18类HTTP/WS关联/无派发/隐私（说明三分支均覆HTTP及WS）、Lite双前缀成功与拒绝回归、格式/文档/差异检查通过；未采集原说明或其他请求值。Linux与再次运行更新仍在进行，不记为已完成。
