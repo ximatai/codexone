@@ -83,6 +83,10 @@ class Provider(BaseHTTPRequestHandler):
                 early['usage']['input_tokens_details']['cached_tokens'] = {'private': 'synthetic-private-counter'}
             else:
                 early['usage'][field + '_tokens'] = 'synthetic-private-counter'
+            if field != 'metadata':
+                # No terminal evidence is sent: the rejection must originate in the early event,
+                # and cannot race a WS reader that legitimately retains later terminal usage.
+                return events[:1 if mode.startswith('usage-created-') else 2]
         elif mode == 'usage-metadata':
             result['usage'].update(json.loads(FIXTURE.read_text())['usageMetadata'])
             result['usage']['input_tokens_details'].update({'cache_write_tokens': 1, 'metadata': ['synthetic', False]})

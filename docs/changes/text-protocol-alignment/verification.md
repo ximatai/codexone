@@ -37,3 +37,6 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 修正后macOS完整Swift203项、Images与压缩回归exit 0。新增进行中样例曾错误索引output_item.added并导致提供者KeyError，不能把该断连当协议拒绝；已显式插入独立in_progress字面量，并要求负向同时命中invalid_upstream_usage及固定upstream_usage_count，而非仅有error。最终HTTP73次通过，WS及普通协议仍在运行；Linux最终程序编译中，尚未恢复真实调用。
+
+
+非终态负向首轮WS记录仍有完整终态用量：独立reader先收到后续有效终态，按既有责任语义正确保留，不能要求其丢失。探针改为负向只发送待拒绝的created/in_progress前缀且不发送终态，保持严格unknown/no-usage；具体错误码和固定原因仍必须命中。最终macOS独立HTTP73/WS128共201次、普通协议/WS/Images/压缩及203项Swift全部通过。实际Linux候选安装exit 0，原有失败记录不抹去；最后脚本版本的Linux完整verification仍在运行。只修改探针不改变产品证据/结果语义。
