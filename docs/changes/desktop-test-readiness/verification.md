@@ -15,3 +15,5 @@ macOS前端完整43项测试、lint/格式/类型检查通过；最终布局细�
 排错记录：最初30秒夹具执行配置在debug最大图片输出时触发执行期限，改用产品已有120秒上限，不提高产品最大期限；原字节串比对忽略JSON斜杠转义，改为解析SSE终态后精确核对图片；native大帧沿用小帧dial的短socket超时，改为覆盖120秒执行上限的130秒测试读取期限。上述失败不计全量通过，早期3秒样本不称长寿命验收。最大容器包含合法附属填充块，不代证真实提供者/所有像素格式。
 
 `94f6ae5` 集中review：预算入口未发现P1/P2；测试review发现重复请求断言留在handler线程、以及socket.timeout可被误计取消成功两项P2。主Agent改为共享有界错误/重放计数，由主owner等全部handler退出后断言；只接受EOF/reset/close帧，Python3.9的socket.timeout单独识别。新增真实HTTP重复调用、保持开放的WS超时反向检查及真实关闭正例，守卫验证通过。取消SSE读取改用HTTPResponse解chunk后核对created。修复前长样本未作为出口通过。macOS完整175项Swift及全部后端脚本已通过，生产代码未再改变，不重复全集。
+
+原生WS夹具预热未报告usage，持久结果应额外保留1个warmup unknown/1单位预留。原总数断言仅计2个取消unknown而失败（实际8 settled/3 unknown）；现按principal/mode分别核对预热和取消，其他生成必须settled，不修改提供者usage或产品额度语义。

@@ -327,20 +327,21 @@ def verify(binary, duration, transport):
                     if response is not None: response.close()
                     client.close()
                 assert provider.cancelled.wait(8), 'HTTP cancellation did not close upstream'
-                latest(db, 'unknown'); expected_unknown = 1
+                latest(db, 'unknown'); expected_cancelled = 1
+                expected_warmup = 1 if transport == 'websocket' else 0
                 if transport == 'websocket':
                     provider.cancelled.clear()
                     with dial(ports['data'], token=cancelled) as peer:
                         frame(peer, {'type': 'response.create', 'model': MODEL, 'input': 'native-cancel'}, masked=True)
                         assert json.loads(read_frame(peer)[1])['type'] == 'response.created'
                     assert provider.cancelled.wait(8), 'WS cancellation did not close upstream'
-                    expected_unknown += 1
+                    expected_cancelled += 1
                 deadline = time.monotonic() + 15
                 while True:
                     with sqlite3.connect(db) as connection:
                         rows = dict(connection.execute('SELECT state,COUNT(*) FROM attempts GROUP BY state'))
-                    if rows.get('intent', 0) == 0 and rows.get('unknown', 0) == expected_unknown: break
-                    assert time.monotonic() < deadline; time.sleep(.1)
+                    if rows.get('intent', 0) == 0 and rows.get('unknown', 0) == expected_cancelled + expected_warmup: break
+                    assert time.monotonic() < deadline, ("ledger-not-converged", transport, rows, expected_cancelled, expected_warmup); time.sleep(.1)
                 assert sum(rows.values()) == provider.calls, 'Provider calls differ from durable attempts'
                 for _ in range(3):
                     time.sleep(2); value = sample()
@@ -351,15 +352,16 @@ def verify(binary, duration, transport):
                 if 'fds' in baseline: assert samples[-1]['fds'] <= baseline['fds'] + 6
                 assert value['observedFDs'] <= baseline['storage']['observedFDs'] + 6
                 with sqlite3.connect(db) as connection:
-                    assert connection.execute("SELECT COUNT(*) FROM attempts WHERE state='unknown' AND principal!='cancelled'").fetchone()[0] == 0
-                    assert connection.execute("SELECT COUNT(*),SUM(reserved) FROM attempts WHERE principal='cancelled' AND state='unknown'").fetchone() == (expected_unknown, expected_unknown)
+                    assert connection.execute("SELECT COUNT(*) FROM attempts WHERE state='unknown' AND principal!='cancelled' AND json_extract(admission_json,'$.mode')!='warmup'").fetchone()[0] == 0
+                    assert connection.execute("SELECT COUNT(*),COALESCE(SUM(reserved),0) FROM attempts WHERE principal='normal' AND state='unknown' AND json_extract(admission_json,'$.mode')='warmup'").fetchone() == (expected_warmup, expected_warmup)
+                    assert connection.execute("SELECT COUNT(*),SUM(reserved) FROM attempts WHERE principal='cancelled' AND state='unknown'").fetchone() == (expected_cancelled, expected_cancelled)
                 deadline = time.monotonic() + 10
                 while True:
                     with provider.guard: active = provider.active
                     if not active: break
                     assert time.monotonic() < deadline, 'Provider handlers did not retire'; time.sleep(.02)
                 assert_provider_healthy(provider)
-                return {'transport': transport, 'socketLifetimeSeconds': round(lifetime, 3), 'keepaliveTurns': turns, 'nativeUpstreamSessions': len(provider.native_sessions), 'providerCalls': provider.calls, 'providerReplayDetections': provider.replays, 'providerFailures': provider.failures, 'providerActiveHandlers': active, 'ledger': rows, 'samples': samples}
+                return {'transport': transport, 'socketLifetimeSeconds': round(lifetime, 3), 'keepaliveTurns': turns, 'nativeUpstreamSessions': len(provider.native_sessions), 'providerCalls': provider.calls, 'providerReplayDetections': provider.replays, 'providerFailures': provider.failures, 'providerActiveHandlers': active, 'expectedCancelledUnknown': expected_cancelled, 'expectedWarmupUnknown': expected_warmup, 'ledger': rows, 'samples': samples}
             finally: stop(process)
 
 
