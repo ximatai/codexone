@@ -4,6 +4,8 @@
 
 ## 项目状态
 
+2026-10-24，用户要求核查订阅接入条款，发现上线前置范围问题：[SIWC专门条款](https://openai.com/policies/sign-in-with-chatgpt-terms/)限制连接应用用途，排除通用API转接、订阅池化/共享及绕限。当前固定旧客户端身份/订阅后端的实现与[官方自定义客户端授权流程](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)不同，既有真实两轮仅证明技术互通，不代表平台授权。通用网关优先评估[正式API及商业服务协议](https://openai.com/policies/services-agreement/)；若保留订阅路径，需要先调整产品用途并确认适用授权。[自托管VM指南](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)允许同用户同工具转移凭证，而SIWC法律条款限制远程持久存储，两者表述冲突须官方书面澄清，不能自行视为例外。本次只读核查并记录状态，未改产品/旧服务、未新增真实调用；不把安全能力准入申请视为订阅转接许可。
+
 M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界面验收和恢复契约缺口；按用户授权先推进不依赖它们的 M3。M3 与 M4 的代码、集中 review 和本地合成环境阶段出口已完成。M4 的 Desktop 图片操作与真实订阅兼容仍未验收，完整里程碑不标完成。M5 已复核恢复读取契约，证据仍不足，保持未完成；按用户授权推进独立 M6，当前 v8 候选安装升级/兼容回退和合成迁移切回、真实本地 TLS 反代/HTTPS 管理，以及安全快照恢复/审计基线、主密钥多版本维护及低磁盘保护/必要运行观测闭环已完成本机实现与验收；当前混合容量包络已完成本机样本，完整 O14 仍保留；本轮跨平台出口证据见下，M6 整体仍未完成。
 
 - M1：SQLite v1 空库迁移、实例锁、WAL/FULL、三层准入/持久 intent、对象归属屏障、累计证据幂等结算及重启 unknown 恢复；有界 DB 命令与 Runtime finalizer。M1 使用合成身份；M2 的协议实现和 M3 的账号/权限/观测进度见下方，Desktop 与恢复缺口继续保留。
