@@ -75,7 +75,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，真实Desktop具体拒绝已通过界面Reference精确关联：另一设备ChatGPT Desktop 26.1016.62342的受控合成探针在工具声明校验阶段报unsupported_tools/tools_description；尚须区分null、非字符串或超过32 KiB，不能推断为配置错误、搜索或数量问题。诊断候选bec950f已完成macOS完整198项Swift/全部后端脚本、Linux剥离程序定向与runtime安装验证，并升级已授权独立合成服务；公网双前缀HTTPS JSON/SSE/WSS成功对照与五个拒绝Reference关联通过，临时Key撤销，账号0、unresolved0、原Key/配置/数据/fixture/属主/旧服务保持。本阶段依用户要求主Agent自查，不例行召唤subagent。正在[细分说明拒绝](docs/changes/desktop-operation-diagnosis/proposal.md)，不记录内容、不盲目放行；电脑工具禁止操作Desktop且实际客户端在另一设备，未绕过限制，真实界面验收仍须受控用户操作与服务记录共同完成。CLI不代替Desktop成功，真实订阅关闭。
+2026-10-23，真实Desktop具体拒绝已通过界面Reference精确关联：另一设备ChatGPT Desktop 26.1016.62342的受控合成探针在工具声明校验阶段报unsupported_tools/tools_description；尚须区分null、非字符串或超过32 KiB，不能推断为配置错误、搜索或数量问题。诊断候选bec950f已完成macOS完整198项Swift/全部后端脚本、Linux剥离程序定向与runtime安装验证，并升级已授权独立合成服务；公网双前缀HTTPS JSON/SSE/WSS成功对照与五个拒绝Reference关联通过，临时Key撤销，账号0、unresolved0、原Key/配置/数据/fixture/属主/旧服务保持。本阶段依用户要求主Agent自查，不例行召唤subagent。[说明拒绝细分](docs/changes/desktop-operation-diagnosis/proposal.md)候选2e02014已通过macOS定向、Linux实际剥离程序协议回归与安装验证，备份后更新独立合成服务，运行SHA与已验产物一致；公网三分支共五个Reference精确对应，诊断Key已撤销。等待同一真实Desktop一次受控操作确定null/其他非字符串/超长子类，不记录内容、不盲目放行；电脑工具禁止操作Desktop且实际客户端在另一设备，未绕过限制，真实界面验收仍须受控用户操作与服务记录共同完成。CLI不代替Desktop成功，真实订阅关闭。
 
 2026-10-23，用户通知已发送后，所选启用Key出现warmup/generation各1条，均settled/succeeded、failure为空，全局unresolved=0；网关healthy、无OOM/重启，真实账号仍0。只读核对未读取用户正文/凭证。同期仍有unsupported_tools拒绝日志（含合成负向记录），缺主体关联，不能将它们全部归因该主请求；Desktop界面显示与辅助流程仍待确认，不把服务器执行成功标成完整Desktop通过。详见[复测记录](docs/changes/default-client-loop/verification.md)。无代码、部署或客户端配置变更，下一步先由用户确认固定合成回复显示，再定位剩余拒绝是否影响实际操作。
 

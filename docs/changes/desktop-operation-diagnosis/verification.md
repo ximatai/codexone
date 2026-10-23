@@ -34,3 +34,7 @@
 用户保持原配置，在另一设备实际Desktop新会话发送约定合成探针，界面报带Reference的网关错误。服务端精确UUID匹配到2026-10-23 10:41:19 UTC的unsupported_tools/tools_description；该请求在工具声明校验阶段拒绝，不能将其他成功执行归于此请求。该旧分类同时代表null、其他非字符串或说明超过32 KiB，尚不能确定其一，也不能推断存在搜索/数量问题。下一步仅拆分该诊断并作最小对照，不据猜测放宽行为。
 
 说明分类细分保持拒绝行为不变：null单列、其他非字符串仍tools_description、超32 KiB单列。macOS build、4项诊断单测、18类HTTP/WS关联/无派发/隐私（说明三分支均覆HTTP及WS）、Lite双前缀成功与拒绝回归、格式/文档/差异检查通过；未采集原说明或其他请求值。Linux与再次运行更新仍在进行，不记为已完成。
+
+细分候选源码2e02014的Linux amd64 verification全部通过，包含实际剥离程序18类诊断关联（说明三分支均HTTP/WS）、协议/WS/Lite/fixture/图片及维护/恢复/存储/切回；runtime安装验证通过。运行镜像sha256:615b8e8e2603fa9f67a2f0d5d13d7ee7d49134d3aad9b1478a2beda3a1c1605e，程序SHA256 d6a215e1e529112a8df129ea1acaffef9a7390182a532c84cdaf9766f2143df6，与verification程序一致。独立合成测试服务已备份/校验后更新，首轮成功，未重启provider；原配置/数据/属主、fixture、反代及旧服务不变，账号0、unresolved0、仅原Key启用。
+
+更新后公网双前缀HTTPS JSON/SSE、WSS预热/续接成功；null/超长/其他非字符串五个合成错误的界面Reference均匹配具体服务端分类，临时Key已撤销。仅为诊断及合成对照通过，不能证明原Desktop问题已经修复。诊断就绪后请求用户保持同一实际客户端配置再做一次受控合成操作；等待该Reference以确定具体子分类，未采集请求正文或工具原值。没有推送、发布、真实订阅调用或旧服务变更。
