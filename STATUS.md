@@ -69,11 +69,17 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，可选reasoning兼容候选已部署（`bdb67f4`），已知effort/summary的null移除、tools缺省与显式[]保留；主Agent实现、集中review无新增P1/P2。macOS arm64完整184项Swift与全部后端脚本通过；Linux amd64实际剥离程序的五组协议/拒绝/WS/fixture定向检查通过。首轮构建随本机Docker重启以EOF中断，恢复后缓存重建成功，不将中断算通过。
+
+候选 `codexone:reasoning-compat-candidate`，源码 `bdb67f4edd454a86f3893fd6164159b62609b965`，镜像ID `sha256:24aaa77264142d45ce875cbb181f2c8054c475826fdaed72716ba96acb81fb22`，Linux程序SHA256 `8735ced3596e8a04797d661e0078f0d5a1814e3225b19190c4bfc566a63e0838`；实际目标一致。完整镜像复用旧归档内容后按最终SHA重建，仅上传约14MiB；旧归档/服务与新侧配置/管理凭证未变。公网双前缀HTTPS JSON/SSE/WSS、null对照与预热、认证负向及撤销通过，仅所选原Key启用，账号/unknown=0，真实订阅关闭。
+
+用户在更新后新会话仍报unsupported_reasoning/400，所选Key无attempt，Desktop文本未通过；已证明的null缺口不是全部原因。按用户扩展对照CodexLB的要求，新增[通信复核](docs/evidence/codexlb-discussions.md#2026-10-23-通信契约扩展复核)：已知text/tool可空差异实测、developer/工具顺序保持、每turn授权、首帧错误/终态清理、慢lane与订阅握手头边界。下一步集中完成四项已知可空参数及固定reasoning拒绝细分，再更新合成候选定位用户实际拒绝；不读正文/参数原值，不放宽未知成员或伪造限流码。Desktop/真实订阅、M5与完整O14继续保留。
+
 2026-10-23，建执行前拒绝诊断闭环完成（`16082eb`）：首条WS解析失败发送标准error帧后关闭，无上游/intent；固定码白名单+服务端UUID、单调60秒最多16条日志，溢出丢弃。主Agent实现、macOS完整182项Swift/全部后端脚本、Linux同一优化程序的拒绝/协议/WS/fixture回归、集中review通过。独立新侧已更新并核对运行SHA，公网两前缀JSON/SSE/WSS及拒绝路径通过，仅所选原Key启用，旧服务未变healthy；容器日志轮转2MiB×2，真实订阅关闭。
 
 新候选 `codexone:rejection-diagnostic-candidate`，源码 `16082eb9c84b2e2bccb7ee3daf918a92cdfd7964`，镜像ID `sha256:fb2c26d82de20d325c1643488e84a26c101e65b2ccd25fbe0e19cbfa2eb45ea0`，Linux程序SHA256 `e413efd62e3c2058d27edb8aa320342126de95e5b9e072421a6cd824f800d7eb`；旧候选保留，归档在忽略产物目录。部署使用已授权代理管理链路、校验后分段续传；无客户端SSH转发端口，具体连接信息私下保留。
 
-真实Desktop仍失败：握手101已确认Key认证通过，更新后具体码为 `unsupported_reasoning` / 400，未创建执行、unknown=0。合成公网复现可选effort/summary为null被拒、明确值正常；用户未特殊配置。下一步修复已知reasoning可选null语义并继续实际客户端联通，不能把合成对照当成已证明真实请求字段或完整Desktop兼容。见[诊断出口](docs/changes/request-rejection-diagnostics/verification.md)。
+此前诊断候选的真实Desktop仍失败：握手101已确认Key认证通过，当时具体码为 `unsupported_reasoning` / 400，未创建执行、unknown=0。合成公网复现可选effort/summary为null被拒、明确值正常；用户未特殊配置。下一步修复已知reasoning可选null语义并继续实际客户端联通，不能把合成对照当成已证明真实请求字段或完整Desktop兼容。见[诊断出口](docs/changes/request-rejection-diagnostics/verification.md)。
 
 2026-10-23，用户首轮真实Desktop合成请求失败，界面显示重连5/5及通用网关错误，未计兼容通过。只读核对：新网关/fixture healthy，无OOM/重启；当时所选Key无执行/持久拒绝记录；后续临时脱敏状态诊断及具体错误码定位见最新出口，临时日志已恢复关闭。真实订阅仍关闭。
 

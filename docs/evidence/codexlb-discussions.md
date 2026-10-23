@@ -19,3 +19,27 @@
 读取限制：PR1900合并讨论工具首次返回transport错误，改用只读Issue评论入口取得维护者关闭说明；不将失败调用算已读。没有穷举全部Issue/PR、复跑外部测试或审计这些PR全部代码；2537额外核对了host_models与ingress_limits实际patch。未访问真实提供者，未触发远程评论、review、推送或部署。
 
 本项目选定方向、拒绝项与成本见[兼容取舍](../decisions/compatibility-policy.md)。所有外部测试数字均未迁入本项目验证结果。
+
+## 2026-10-23 通信契约扩展复核
+
+本轮通过只读连接核对以下Issue、PR正文/patch及所列维护者讨论。六个新增PR在读取时均为open/unmerged；归档目录、作者测试和bot评论不代表已合并或本平台通过。原始patch/评论未复制入库。
+
+| 依据 | 可吸收内容及边界 |
+|---|---|
+| [Issue1184](https://github.com/Soju06/codex-lb/issues/1184)，closed/completed | 缺省tools被DTO默认值补成[]可触发保留工具schema拒绝；工具排序只能用于缓存指纹，不能改变线上数组/声明。当前可选reasoning回归已检查tools存在性；不能据此声明已支持Responses-Lite/additional_tools。 |
+| [PR2569](https://github.com/Soju06/codex-lb/pull/2569)，head `778e10f4ab7111c7ab5539b448df2763fabc1987` | 作者报告developer消息提升到instructions后，在previous_response_id续接时丢失。当前平台保留developer原位置，合成HTTP实测收到的input与工具数组/嵌套required顺序相同；不照搬system提升或删除历史，真实提供者system接受情况仍待验。 |
+| [PR2634](https://github.com/Soju06/codex-lb/pull/2634)，head `f7bf33633223af8ad3f8c3a3fce50f20febcccbb` | 长连接不能永久缓存账号可用性，应在每次新turn准入复核；已派发与未派发分开处理。当前平台每turn经账号池及SQLite账号/Key版本屏障，并非仅握手认证；派发屏障后的微小竞态不能承诺绝对即时撤销，维持既有责任语义。 |
+| [PR2472](https://github.com/Soju06/codex-lb/pull/2472)及[维护者分析](https://github.com/Soju06/codex-lb/pull/2472#issuecomment-5866469378)，head `bfffc82d40f1b60b6c165e53278226004736de1a` | 吸收真实组合路径的生成器/租约收尾验证；维护者复现finally未执行，并要求独立修复。拒绝把传输损失伪装成rate_limit_exceeded来诱导重试：维护者指出未知response.failed也可能被Codex重试，伪装会污染下游额度分类。终态、清理和重试许可分别验证。 |
+| [PR1903](https://github.com/Soju06/codex-lb/pull/1903)及[维护者方案取舍](https://github.com/Soju06/codex-lb/pull/1903#issuecomment-5662636957)，当前head `b28036815f619d0da436414db367ae4bc64f3941` | 历史关闭讨论提出共享reader不得因单消费者阻塞：每请求保留字节上限、全局预算、原前缀后失败/EOS及释放责任。当前平台已有有界inbox与5秒push期限，但共享reader仍可能等待一个lane、超时后影响整socket；这是自身源码发现的隔离风险，尚无本轮独立对抗实测，不写成已解决。 |
+| [PR2581](https://github.com/Soju06/codex-lb/pull/2581)，head `d83dac5b4fc1159a19fd539bc635e3425eecee9a` | 原完整历史与旧socket锚点不能混用；加密agent消息不因恢复而跨账号。当前不自动注入previous_response_id，且agent_message不在已支持输入集合；保留明确不支持，不自动删消息或赋予重放资格。 |
+| [PR2589](https://github.com/Soju06/codex-lb/pull/2589)，head `c22607d0f11e74aa871ae518e08e8f6404237bc0` | HTTP/WS客户端指纹应有一致、有限的契约，不能由随意header扩大路由能力。该PR还夹带依赖升级，不整包吸收。当前订阅上游只组装验证后的账号头，未实现其客户端指纹/版本/beta选择策略；合成fixture不证明真实握手兼容。 |
+
+### 自身代码与合成对照结果
+
+固定旧源码仍为 `6d788664ff982c87887924694c103c9bc49331fd`。`ResponsesTextControls`的verbosity/format及`ResponsesRequest`的tool_choice/parallel_tool_calls可空，转发exclude_none；当前平台仅修复已知reasoning成员。本轮真实本机HTTP合成探针确认：四项显式null分别得到unsupported_text、unsupported_text、unsupported_tools、invalid_request（均400）。这是待扩展的参数契约差异，不是读取用户正文后的结论；不能用全局删null处理tools等非可空字段或未知成员。
+
+另核对旧源码 `core/clients/proxy_websocket.py::_build_upstream_websocket_headers` 的Responses beta、安装ID与有限头处理，以及当前 `WebSocketUpstream`/`SubscriptionDataAccess`。当前没有等价的beta/客户端版本策略；opaque turn-state也不能直接透传，它需要Key/账号/恢复代际归属验证。文件上传、history/notes、异步工具和steering属于独立有状态接口，不能当作多放行一个JSON字段解决，也不能通过复制模型目录提前宣称支持。
+
+当前 `WebSocketTurns` 首事件要求response.created，独立error首帧会走invalid_upstream_turn；这项源码差异应与流中失败终态一起增加真实socket负向样本，区分安全错误映射、unknown与账号健康，不直接透传原始上游错误正文。当前没有本轮提供者实测，不据此宣布真实订阅缺陷已确认。
+
+建议下一闭环集中处理“已知可选参数与失败可见性”：字段逐项缺省/null/显式值/错误类型矩阵，HTTP/SSE/原生与桥接WS同样的上游文档，首帧/流中拒绝、终态唯一与owner清理；再单列多lane慢读隔离和订阅握手头契约。保持主Agent实现、定向测试、一次集中review/出口验证；不按每个字段反复全量构建。真实订阅继续关闭，M5和Desktop完整验收不因本轮对照完成。

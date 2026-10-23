@@ -41,6 +41,10 @@ def main():
                     event = json.loads(data)
                     assert opcode == 1 and event['type'] == 'error' and event['error']['code'] == code
                     assert 'stream_id' not in event and secret.encode() not in data
+            for reasoning in [[], {'private': secret}, {'effort': False}, {'summary': []}, {'summary': secret}]:
+                status, body = connect(ports['data'], 'POST', '/v1/responses', dict(model='synthetic-text', input=secret, reasoning=reasoning))
+                error = json.loads(body)['error']
+                assert status == 400 and error['code'] == 'unsupported_reasoning' and 'reason' not in error
             for _ in range(30):
                 assert connect(ports['data'], 'POST', '/backend-api/codex/responses', request)[0] == 400
             with sqlite3.connect(root / 'state/core.sqlite') as db:
@@ -58,6 +62,8 @@ def main():
             assert process.returncode == 0
             assert output.count(b'Protocol request rejected') == 16
             assert b'unsupported_request' in output and b'unsupported_websocket_control' in output
+            for reason in ['reasoning_object', 'reasoning_members', 'reasoning_effort', 'reasoning_summary_type', 'reasoning_summary_value']:
+                assert ('reason=' + reason).encode() in output
             for value in [secret, TOKEN, 'unknown_field', 'synthetic-header', str(config)]:
                 assert value.encode() not in output
         finally:

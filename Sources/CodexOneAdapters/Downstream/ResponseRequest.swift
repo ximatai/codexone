@@ -1,11 +1,24 @@
 import CodexOneCore
 import Foundation
 
+enum ProtocolRejectionDetail: String, Sendable {
+  case reasoningObject = "reasoning_object"
+  case reasoningMembers = "reasoning_members"
+  case reasoningEffort = "reasoning_effort"
+  case reasoningSummaryType = "reasoning_summary_type"
+  case reasoningSummaryValue = "reasoning_summary_value"
+}
+
 struct GatewayProtocolError: Error, Sendable {
   let status: Int
   let code: String
   let cooldownSeconds: Int64?
-  init(_ status: Int, _ code: String, cooldownSeconds: Int64? = nil) {
+  let detail: ProtocolRejectionDetail?
+  init(
+    _ status: Int, _ code: String, cooldownSeconds: Int64? = nil,
+    detail: ProtocolRejectionDetail? = nil
+  ) {
+    self.detail = detail
     self.cooldownSeconds = cooldownSeconds
     self.status = status
     self.code = code
@@ -61,6 +74,9 @@ struct ResponseRequest: Sendable {
       let model = fields["model"]?.string,
       !model.isEmpty, model.utf8.count <= 128
     else { throw GatewayProtocolError(400, "unsupported_request") }
+    for key in ["tool_choice", "parallel_tool_calls"] where fields[key] == .null {
+      fields.removeValue(forKey: key)
+    }
     for boolean in ["store", "stream", "background", "parallel_tool_calls"] {
       if let value = fields[boolean], value.bool == nil {
         throw GatewayProtocolError(400, "invalid_request")
@@ -79,20 +95,24 @@ struct ResponseRequest: Sendable {
       references.append(.init(type: "response", rawID: id))
     }
     if let reasoning = fields["reasoning"], reasoning != .null {
-      guard let reasoningFields = reasoning.object,
-        reasoningFields.keys.allSatisfy({ ["effort", "summary"].contains($0) })
-      else {
-        throw GatewayProtocolError(400, "unsupported_reasoning")
+      guard let reasoningFields = reasoning.object else {
+        throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningObject)
+      }
+      guard reasoningFields.keys.allSatisfy({ ["effort", "summary"].contains($0) }) else {
+        throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningMembers)
       }
       if let effort = reasoningFields["effort"], effort != .null {
         guard
           effort.string.map({ !$0.isEmpty && $0.utf8.count <= 32 }) == true
             || effort.integer.map({ (0...1_000_000).contains($0) }) == true
-        else { throw GatewayProtocolError(400, "unsupported_reasoning") }
+        else { throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningEffort) }
       }
       if let summary = reasoningFields["summary"], summary != .null {
-        guard ["auto", "concise", "detailed", "none"].contains(summary.string ?? "") else {
-          throw GatewayProtocolError(400, "unsupported_reasoning")
+        guard let summary = summary.string else {
+          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningSummaryType)
+        }
+        guard ["auto", "concise", "detailed", "none"].contains(summary) else {
+          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningSummaryValue)
         }
       }
       // Optional null members mean unspecified; never broaden the accepted field set.
@@ -118,6 +138,11 @@ struct ResponseRequest: Sendable {
       guard text.object?.keys.allSatisfy({ ["verbosity", "format"].contains($0) }) == true else {
         throw GatewayProtocolError(400, "unsupported_text")
       }
+      let text = JSONValue.object(
+        text.object!.filter {
+          !(["verbosity", "format"].contains($0.key) && $0.value == .null)
+        })
+      fields["text"] = text
       if let verbosity = text["verbosity"] {
         guard ["low", "medium", "high"].contains(verbosity.string ?? "") else {
           throw GatewayProtocolError(400, "unsupported_text")

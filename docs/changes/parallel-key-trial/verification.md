@@ -50,3 +50,11 @@
 只读CodexLB固定快照中ResponsesReasoning可空成员及model_dump_for_forwarding(exclude_none=True/保留tools缺省)后，主Agent修复仅这两个已知成员的null处理。macOS arm64新增2单测，以及实际两前缀HTTP JSON/SSE、桥接/native WS、同socket预热后生成通过；记录合成上游实际收到的reasoning和tools存在性，确认null已移除、显式值保留、缺省tools与[]不同。错误类型及未知成员不连接上游/不创建attempt，全部正常执行最终settled。原拒绝日志/首帧错误/隐私与上限实际进程回归通过。
 
 运行候选剥离调试段的无网络SDK试验将同一程序从约114MiB降为约44MiB，正式候选仍须用剥离后的程序验证并记录SHA。没有因为体积优化而改编译优化等级、运行权限或持久语义。
+
+当前修复提交 `bdb67f4` 集中subagent review未发现新增P1/P2。macOS arm64完整 `./scripts/verify.sh --backend` exit0，184项Swift测试及全部后端脚本通过；不是只运行新增两项。Linux实际候选与公网部署结果另记，不以本机通过代替。
+
+Linux amd64优化候选 `bdb67f4edd454a86f3893fd6164159b62609b965`：镜像ID `sha256:24aaa77264142d45ce875cbb181f2c8054c475826fdaed72716ba96acb81fb22`，实际剥离调试段后的程序SHA256 `8735ced3596e8a04797d661e0078f0d5a1814e3225b19190c4bfc566a63e0838`（46,534,632 bytes）。在无外网、只读、非root、512MiB/2CPU/pids128、1GiB私有临时盘中运行optional_reasoning、protocol_rejections、protocol、websocket、trial_provider五组实际进程/协议检查，全部exit0；本轮Linux不是完整Swift单测全集。没有前端产品变更，不重复UI全集。
+
+首轮Linux构建随本机Docker守护进程重启以EOF中断；未确定重启原因，不计通过。守护进程恢复后复用缓存重建成功，没有重跑已通过的macOS全集，也没有重启或修改服务器旧服务。本机镜像归档119,001,600 bytes，SHA256 `edd0ac1f3d67d06c22389b6c9fcf7d641ab11fd7c13b078ccddf837fef5caa31`；与旧已验证归档共享的内容复用，差量14,370,895 bytes，按固定来源/偏移/长度重建并校验完整SHA，不能以差量自身摘要代替镜像一致性。
+
+候选已在已授权新侧部署，目标重建完整归档及运行程序SHA均匹配；新配置/管理员/身份未变、旧服务容器/镜像未变healthy。公网正常信任校验，两前缀JSON/SSE/WSS与同socket预热、三种已知null组合200，错误类型/未知成员400，401/撤销Key及管理404、HTTP308通过，诊断Key最终撤销。更新后用户再次发送仍得到unsupported_reasoning/400，所选Key无attempt、unknown=0；不标Desktop通过，继续固定原因分类，不推断客户端原字段值。

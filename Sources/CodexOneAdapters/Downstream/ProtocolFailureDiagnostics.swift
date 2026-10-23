@@ -25,6 +25,7 @@ enum ProtocolFailureDiagnostics {
       "code": .string(codes.contains(error.code) ? error.code : "other"),
       "status": .string(String(error.status)),
     ]
+    if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
   }

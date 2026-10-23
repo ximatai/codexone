@@ -15,7 +15,8 @@ from verify_websocket import dial, turn
 class RecordingHandler(Handler):
     def events(self, document):
         with self.server.guard:
-            self.server.observed.append((document.get('reasoning'), 'tools' in document, document.get('tools')))
+            self.server.observed.append((document.get('reasoning'), 'tools' in document, document.get('tools'),
+                {k: document[k] for k in ['text', 'tool_choice', 'parallel_tool_calls'] if k in document}))
         return super().events(document)
 
 
@@ -31,7 +32,9 @@ def main():
     cases = [({'effort': None, 'summary': None}, {}, {}),
              ({'effort': 'high', 'summary': None}, {'effort': 'high'}, {'tools': []}),
              ({'effort': None, 'summary': 'auto'}, {'summary': 'auto'}, {}),
-             ({'effort': 'ultra', 'summary': 'none'}, {'effort': 'ultra', 'summary': 'none'}, {'tools': []})]
+             ({'effort': 'ultra', 'summary': 'none'}, {'effort': 'ultra', 'summary': 'none'}, {'tools': []}),
+             ({'summary': None}, {}, {'text': {'verbosity': None, 'format': None}, 'tool_choice': None, 'parallel_tool_calls': None}),
+             ({'effort': 'high'}, {'effort': 'high'}, {'text': {'verbosity': 'high'}, 'tool_choice': 'auto', 'parallel_tool_calls': False})]
     try:
         for transport in ['http', 'websocket']:
             with tempfile.TemporaryDirectory(prefix='codexone-reasoning-') as temporary:
@@ -49,7 +52,9 @@ def main():
                         for reasoning, expected, extra in cases:
                             request = dict(model='synthetic-text', input='Synthetic nullable reasoning check',
                                            reasoning=reasoning, **extra)
-                            expected_wire = (expected, 'tools' in extra, extra.get('tools'))
+                            controls = {k: v for k, v in extra.items() if k in ['text', 'tool_choice', 'parallel_tool_calls'] and v is not None}
+                            if 'text' in controls: controls['text'] = {k: v for k, v in controls['text'].items() if v is not None}
+                            expected_wire = (expected, 'tools' in extra, extra.get('tools'), controls)
                             for stream in [False, True]:
                                 status, body = connect(ports['data'], 'POST', prefix + '/responses', {**request, 'stream': stream})
                                 assert status == 200 and TEXT.encode() in body
@@ -64,13 +69,14 @@ def main():
                         before = server.sequence
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             attempts = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                        for invalid in [{'effort': False}, {'summary': []}, {'summary': None, 'private': None}]:
-                            request = dict(model='synthetic-text', input='Synthetic rejection check', reasoning=invalid)
+                        for invalid in [dict(reasoning={'effort': False}), dict(reasoning={'summary': []}), dict(reasoning={'summary': None, 'private': None}), dict(text={'verbosity': False}), dict(text={'format': False}), dict(tool_choice=False), dict(parallel_tool_calls='false')]:
+                            request = dict(model='synthetic-text', input='Synthetic rejection check', **invalid)
+                            code = 'unsupported_reasoning' if 'reasoning' in invalid else 'unsupported_text' if 'text' in invalid else 'unsupported_tools' if 'tool_choice' in invalid else 'invalid_request'
                             status, body = connect(ports['data'], 'POST', prefix + '/responses', request)
-                            assert status == 400 and json.loads(body)['error']['code'] == 'unsupported_reasoning'
+                            assert status == 400 and json.loads(body)['error']['code'] == code
                             if transport == 'websocket':
                                 with dial(ports['data'], path=prefix + '/responses') as sock:
-                                    assert turn(sock, request)[-1]['error']['code'] == 'unsupported_reasoning'
+                                    assert turn(sock, request)[-1]['error']['code'] == code
                         assert server.sequence == before
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == attempts
@@ -82,7 +88,7 @@ def main():
         server.server_close()
         thread.join(3)
     assert not thread.is_alive() and not server.sockets
-    print('PASS: nullable effort/summary normalize across both prefixes, HTTP JSON/SSE, bridge/native WS/warmup; explicit tools omission preserved; wrong/unknown fields never dispatch')
+    print('PASS: known nullable reasoning/text/tool controls normalize across both prefixes, HTTP JSON/SSE, bridge/native WS/warmup; explicit tools omission preserved; wrong/unknown fields never dispatch')
 
 
 if __name__ == '__main__':

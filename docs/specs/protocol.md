@@ -117,3 +117,5 @@ reasoning对象仅接受effort/summary两个已知成员，成员为null表示�
 Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编码预算分别执行。仅经过Images校验后生成的Responses封套可用9MiB，不转义base64斜杠，包含8MiB base64及有界提示/工具封套余量。对应上游WS写入只在该内部图片路径使用9MiB；普通请求、下游帧与共享入站队列、提供者事件仍保持原限制。不得通过网络字段选取内部预算。
 
 可信离线profile导入及字段边界见[模型快照](../development/model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
+
+已知可空的text.verbosity/format、tool_choice/parallel_tool_calls与已知reasoning成员按未指定处理，转发时仅移除这些位置的null；text空对象保留。非可空tools/store/stream、未知成员和错误类型不因此接受。拒绝日志可增加固定枚举reason细分reasoning的对象、未知成员、effort、summary类型/取值，仍受原限额；不记录原字段名/值，公开错误码和envelope不增加该诊断字段。

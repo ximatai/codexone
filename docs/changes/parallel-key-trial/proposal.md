@@ -13,3 +13,5 @@
 客户端合成联通闭环的后续修复：实际客户端报unsupported_reasoning；独立合成对照复现effort/summary显式null被误拒。只读参考CodexLB的ResponsesReasoning可空字段与model_dump_for_forwarding(exclude_none=True)，仅将这两个已知可选成员的null按未指定处理，转发前移除；保留显式非null值、未知字段/错误类型/大小拒绝及tools缺省/显式空数组的区别，不吸纳extra=allow或别名兜底。需实际HTTP JSON/SSE、桥接/native WS验证最终上游无null、失败无dispatch，真实客户端继续单独验收。
 
 实测候选部署因135MiB镜像与受限代理带宽耗时超预期。运行候选剥离DWARF调试段（保留可执行代码与符号表），验证剥离后的同一程序；私有部署复用已校验的旧归档相同内容段并重建新归档，要求本机重建及目标最终SHA与完整导出的候选逐字节一致，不修改旧归档，不跳过正常镜像/程序校验。
+
+公网更新后用户再次请求仍报unsupported_reasoning，所选Key无attempt，故nullable reasoning不是唯一原因。后续增加固定枚举的拒绝细分（对象/未知成员/effort类型/summary类型或取值），仅脱敏日志包含枚举，不包含字段名、参数原值或正文，公开错误码/准入语义不变。同时依据明确可空的旧源码契约，规范化text.verbosity/format、tool_choice/parallel_tool_calls的null；只删除这些已知位置，错误类型/未知字段仍拒绝。验收覆盖实际四传输最终上游文档、拒绝不派发和诊断隐私/上限；更新候选后再次核对用户请求，不猜测或放宽未知reasoning成员。

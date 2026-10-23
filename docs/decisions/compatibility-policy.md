@@ -60,3 +60,5 @@
 ## 可选参数与字段缺省
 
 对照已授权旧源码的nullable模型及转发序列化，采用已知reasoning.effort/summary的null=未指定语义，转发时移除这些null成员。保留tools缺省与显式[]的区别，不从完整DTO默认值合成客户端未提供的字段。未知成员和错误类型继续明确拒绝，不以extra=allow或全局删除null掩盖未分类协议。依据见[源码对照](../evidence/codexlb-compatibility.md)。
+
+后续逐项复核已知可空的text控制与tool_choice/parallel_tool_calls，不能把当前reasoning修复理解为所有null均兼容。新增[通信扩展复核](../evidence/codexlb-discussions.md#2026-10-23-通信契约扩展复核)已记录本机差异、终态/清理与慢lane隔离风险；先完成当前候选，再以参数及失败可见性为一个闭环。有限订阅握手头与不透明turn-state归属另立契约，不直接透传客户端全部头；不以伪造限流码改变客户端重试。

@@ -18,6 +18,15 @@ struct ProtocolFailureDiagnosticsTests {
     #expect(known["request_id"]?.description == id)
   }
 
+  @Test func diagnosticReasonIsFixedAndNotPublic() throws {
+    let error = GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningMembers)
+    let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: "untrusted")
+    #expect(metadata["reason"]?.description == "reasoning_members")
+    let envelope = protocolErrorEnvelope(error, requestID: UUID().uuidString)
+    #expect(envelope["error"]?["code"]?.string == "unsupported_reasoning")
+    #expect(envelope["error"]?["reason"] == nil)
+  }
+
   @Test func diagnosticsDropOverflowUntilMonotonicWindowEnds() {
     var gate = ProtocolFailureLogGate()
     let now = ContinuousClock.now
