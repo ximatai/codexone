@@ -45,3 +45,9 @@
 官方[消息类型](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_output_message.py)声明phase可为null，[推理文本增量](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_reasoning_text_delta_event.py)及[完成事件](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_reasoning_text_done_event.py)、[Codex实际解析器](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/sse/responses.rs)提供已知reasoning_text事件。补齐这两项明确契约：phase=null按缺省校验并保留已知消息字段；推理delta/done及其已知reasoning_text内容part只在上游流验证中接受，文本/索引/ID/大小与归属继续校验，不新增工具、历史读取或执行能力，不写入日志。它们是独立确认的实现缺口，尚未证明就是第三笔的唯一原因。
 
 补全固定上游错误码白名单及事件/成员/phase/part的固定拒绝分类；私有探针在结束前记录自己收到的安全网关SSE错误码、Reference和固定事件类别，不保存正文/密文或任意字段值。新账本引用两份已保留unknown账本摘要及一份缺原库的外部未知记录，成功也不能冲销旧责任。
+
+## 非语义扩展事件隔离
+
+第四笔真实生成已到正文增量，随后收到本地unsupported_upstream_event，已停止第二轮并双份保留unknown；没有由此声称具体事件名已确认。官方[Responses解析器](https://github.com/openai/codex/blob/main/codex-rs/codex-api/src/sse/responses.rs)对未处理的事件返回无输出，并只在已知完成终态结束。采用受限丢弃策略：合法非空有界事件类型若不在当前解释范围，整条事件不转发、不绑定对象、不读取用量/错误/终态、不更新客户端状态，也不算有效进展。原始SSE/WS字节、单事件、总期限和队列限制仍先计；已知error/失败/不完整/完成、已知item/part及image事件族仍严格验证，不能冒充扩展绕过权限。
+
+WS仅在已拥有的非idle turn中允许这类事件进入有界消费，不让其响应ID/item/usage字段修改turn状态；未知lane、跨turn和已知事件的关联验证保持。每进程最多一条固定“扩展已隔离”观察，只含UUID，不记事件名、字段或正文。测试必须证明伪造usage/对象/完成字段不能产生结算或归属，扩展本身不能续期、不能替代created/terminal，未知类型正常输出也不能暴露下游。当前累计生成4次，仍限6，修正及验证后最多再进行两次；失败即停。

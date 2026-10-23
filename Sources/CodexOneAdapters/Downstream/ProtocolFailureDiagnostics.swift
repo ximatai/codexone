@@ -6,6 +6,7 @@ import Synchronization
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
+  private static let isolatedExtensionLogged = Mutex(false)
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
@@ -42,6 +43,19 @@ enum ProtocolFailureDiagnostics {
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
+  }
+
+  static func recordIsolatedExtension(requestID: String) {
+    guard let id = UUID(uuidString: requestID) else { return }
+    let first = isolatedExtensionLogged.withLock { logged in
+      guard !logged else { return false }
+      logged = true
+      return true
+    }
+    guard first else { return }
+    logger.info(
+      "Upstream extension isolated without protocol effects",
+      metadata: ["request_id": .string(id.uuidString)])
   }
 
   static func recordMissingStreamMediaType(requestID: String) {

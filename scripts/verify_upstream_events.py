@@ -52,7 +52,7 @@ class Events(Observed):
         elif scenario=='item-id':
             next(e for e in events if e.get('type')=='response.reasoning_text.delta')['item_id']=False
         elif scenario=='unknown-event':
-            next(e for e in events if e.get('type')=='response.reasoning_text.delta')['type']='synthetic-private-rejected-event-value'
+            next(e for e in events if e.get('type')=='response.reasoning_text.delta')['type']=False
         elif scenario=='part':
             next(e for e in events if e.get('type')=='response.content_part.added')['part']['synthetic_unknown']='synthetic-private-rejected-event-value'
         elif scenario=='summary-part':
@@ -61,7 +61,7 @@ class Events(Observed):
             if scenario=='phase':bad=next(e for e in events if e.get('type')=='response.output_item.added' and e['item']['type']=='message')
             elif scenario=='members':bad=next(e for e in events if e.get('type')=='response.output_item.added')
             elif scenario in ('part','summary-part'):bad=next(e for e in events if e.get('type') in ('response.content_part.added','response.reasoning_summary_part.added'))
-            else:bad=next(e for e in events if e.get('type') in ('response.reasoning_text.delta','synthetic-private-rejected-event-value'))
+            else:bad=next(e for e in events if e.get('type') in ('response.reasoning_text.delta',False))
             return events[:events.index(bad)+1]
         return events
 
@@ -111,7 +111,7 @@ def main():
                         else:
                             assert b'response.completed' not in body
                             errors=[e['error'] for e in events if e.get('type')=='error'];assert len(errors)==1
-                            expected=('invalid_upstream_turn',) if transport=='websocket' and scenario=='item-id' else ('unsupported_upstream_event','unsupported_upstream_object')
+                            expected=('invalid_upstream_turn',) if transport=='websocket' and scenario in ('item-id','unknown-event') else ('unsupported_upstream_event','unsupported_upstream_object')
                             assert errors[0]['code'] in expected,(transport,scenario,errors[0]['code'])
                             assert errors[0]['request_id'] in errors[0]['message'];count=1
                         process.terminate();process.wait(10);logs=process.stdout.read()
@@ -119,7 +119,7 @@ def main():
                         if scenario!='ok':
                             assert states(root)[0][0]=='unknown' and states(root)[0][2] is None
                             reason=('upstream_message_phase' if scenario=='phase' else 'upstream_item_members' if scenario=='members' else 'upstream_part' if scenario in ('part','summary-part') else 'upstream_event')
-                            if not (transport=='websocket' and scenario=='item-id'):assert ('reason='+reason).encode() in logs
+                            if not (transport=='websocket' and scenario in ('item-id','unknown-event')):assert ('reason='+reason).encode() in logs
                             assert b'code=other' not in logs
                         assert b'synthetic raw reasoning never log' not in logs and b'synthetic-private-rejected-event-value' not in logs
                         assert b'synthetic-private-upstream-token-never-log' not in logs

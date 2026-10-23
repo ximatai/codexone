@@ -63,3 +63,13 @@ afe1244的原Linux verification目标、最终运行镜像安装/重启均exit 0
 事件契约修正后，macOS arm64 / Swift 6.4完整`./scripts/verify.sh --backend` exit 0：202项Swift、全部后端脚本，包括新增HTTP/WS事件/nullable全窗口续接和负向路径通过。主Agent自查并提交，不例行召唤subagent。Docker仅将Python/OpenSSL验证工具安装前移到源码COPY之前以保持工具层缓存，运行层仍不复制这些工具；Linux构建仍在进行，未计通过、未增加真实生成。
 
 Linux后续构建遇本机Docker控制面超时：运行目标报告DeadlineExceeded，原16文件批量verification未完成并已中止，不计验证通过。Docker VM约3 GiB、另有共存容器；没有因此停止其他容器或重启Docker，也未认定唯一根因为内存/源码。只把本项目release编译批量默认降至1（可显式SWIFT_BATCH_LIMIT调整），保留-O、单并发及既有缓存；工具层已复用，逐文件编译恢复，尚未完成Linux出口。此期间真实生成保持3次。
+
+## 第四笔实际生成及扩展隔离
+
+253bcda / 默认1文件批量的完整Linux verification target exit 0，新的实际OCI/Compose安装/重启exit 0；验证/运行/服务器程序SHA-256均`d9f0725ef7c41748f412cd0b41051efe9c2b7bf6c8797862b114f89cf673cfbf`。实际发出1次后停第二轮：HTTP200，已接受created/in_progress/message item/content part及9个文本事件，随后自身SSE error码明确为unsupported_upstream_event、固定reason=upstream_event。缺媒体观察1，phase:null观察false，未收到可信完成/usage；不得将先前两处独立契约缺口称为本次唯一根因，具体事件名仍未记录。
+
+新账本unknown/failed、usage=null，SHA-256 `bcbcb3152fee5d3d54acba2f8f41ab6f72c207b818b99e79a9b3313508bb8da4`，服务器与私有本地副本核对一致，旧3笔分别引用，当前累计生成4次。访问/管理秘密已清除，实例停止并回收，旧服务healthy/身份配置未变，原合成入口前后ready；没有自动重放。
+
+依据官方解析器未处理事件不产生输出的行为，新增有界非语义扩展隔离。定向Swift测试和实际HTTP/WS代理验证通过：扩展在created前/正文后/terminal前插入的伪造response/item/usage/error不能被转发、绑定、结算或修改turn状态；已知完成及可信usage才能结算，完整窗口/同socket续接保持。扩展-only、持续扩展、超大事件仍失败/unknown，不续期；已知failure仍失败且可信usage保留，未授权image/畸形已知事件仍拒绝；日志每进程仅一条固定观察、无事件名/正文。完整后端/Linux正在运行，尚未消耗最后两次预算。
+
+扩展隔离修正后，macOS arm64完整后端exit 0：203项Swift及全部脚本通过，包括新扩展隔离/伪造数据无效/不续期、已知错误/权限/字节限制保持和原有协议/恢复回归。主Agent自查后提交，真实累计仍4，Linux仍待完成，不计通过。

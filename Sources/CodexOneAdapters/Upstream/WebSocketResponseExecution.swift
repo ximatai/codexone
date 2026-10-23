@@ -70,6 +70,11 @@ extension HTTPResponseExecution {
         guard try webSocketLane(event) == lane else {
           throw GatewayProtocolError(502, "invalid_upstream_lane")
         }
+        if try ProviderObservation.isIsolatedExtension(event) {
+          ProtocolFailureDiagnostics.recordIsolatedExtension(
+            requestID: context.admission.requestID ?? context.admission.attempt)
+          continue
+        }
         if ["response.completed", "response.failed", "response.incomplete"].contains(
           event["type"]?.string ?? "")
         {

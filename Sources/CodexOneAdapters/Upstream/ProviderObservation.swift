@@ -18,6 +18,22 @@ struct ProviderObservation: Sendable {
     "response.refusal.done",
   ]
 
+  /// Unknown extension envelopes carry no output, ownership, progress or usage authority.
+  static func isIsolatedExtension(_ event: JSONValue) throws -> Bool {
+    guard let type = event["type"]?.string, (1...128).contains(type.utf8.count),
+      type.utf8.allSatisfy({
+        (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+          || [45, 46, 95].contains($0)
+      })
+    else { throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent) }
+    return !transparentEvents.contains(type)
+      && ![
+        "error", "response.created", "response.in_progress", "response.completed",
+        "response.failed",
+        "response.incomplete", "response.output_item.added", "response.output_item.done",
+      ].contains(type) && !type.hasPrefix("response.image_generation_call.")
+  }
+
   init(
     event: JSONValue, model: SingleIdentityConfiguration.Model, functionNames: Set<String>,
     customToolNames: Set<String> = [], expectedPreviousResponseID: String? = nil,

@@ -74,6 +74,10 @@ final class WebSocketTurns: Sendable {
         throw GatewayProtocolError(502, "unknown_upstream_lane")
       }
       defer { value.lanes[lane] = current }
+      if try ProviderObservation.isIsolatedExtension(event) {
+        guard case .idle = current.phase else { return }
+        throw GatewayProtocolError(502, "event_outside_upstream_turn")
+      }
       switch current.phase {
       case .idle: throw GatewayProtocolError(502, "event_outside_upstream_turn")
       case .awaitingCreated:

@@ -389,3 +389,40 @@ func webSocketQueueConcurrentCancellationAndFinishNeverResumeUnderItsLock() asyn
     }
   }
 }
+
+@Test func isolatedExtensionsCannotCreateTurnObjectsOrReplaceTerminals() throws {
+  let extensionEvent: JSONValue = .object([
+    "type": .string("synthetic.extension"),
+    "item": .object(["id": .string("synthetic-foreign-item")]),
+    "response": .object(["id": .string("synthetic-foreign-response")]),
+  ])
+  #expect(try ProviderObservation.isIsolatedExtension(extensionEvent))
+  for type in [
+    "error", "response.failed", "response.incomplete", "response.completed",
+    "response.output_item.added", "response.image_generation_call.synthetic",
+  ] {
+    #expect(try !ProviderObservation.isIsolatedExtension(.object(["type": .string(type)])))
+  }
+  let turns = WebSocketTurns()
+  try turns.begin()
+  try turns.observe(extensionEvent.data())
+  try turns.observe(
+    JSONValue.object([
+      "type": .string("response.created"),
+      "response": .object(["id": .string("synthetic-response")]),
+    ]).data())
+  try turns.observe(extensionEvent.data())
+  #expect(throws: (any Error).self) {
+    try turns.observe(
+      JSONValue.object([
+        "type": .string("response.output_text.delta"), "item_id": .string("synthetic-foreign-item"),
+        "delta": .string("synthetic"),
+      ]).data())
+  }
+  try turns.observe(
+    JSONValue.object([
+      "type": .string("response.completed"),
+      "response": .object(["id": .string("synthetic-response")]),
+    ]).data())
+  #expect(throws: (any Error).self) { try turns.observe(extensionEvent.data()) }
+}

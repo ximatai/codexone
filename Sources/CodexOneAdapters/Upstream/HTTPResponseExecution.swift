@@ -158,6 +158,10 @@ struct HTTPResponseExecution: Sendable {
             for byte in chunk.readableBytesView {
               guard let event = try decoder.append(byte) else { continue }
               guard !terminal else { throw GatewayProtocolError(502, "event_after_terminal") }
+              if try ProviderObservation.isIsolatedExtension(event) {
+                ProtocolFailureDiagnostics.recordIsolatedExtension(requestID: requestID)
+                continue
+              }
               // Trusted usage must survive later binding/output failures.
               if ["response.completed", "response.failed", "response.incomplete"].contains(
                 event["type"]?.string ?? "")

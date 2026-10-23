@@ -135,3 +135,5 @@ CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；�
 Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。
 
 上游及续接消息的phase允许null，按缺省校验并保留该已知字段；非空仍限analysis/commentary/final_answer，错误类型/未知值拒绝。已知response.reasoning_text.delta/done及content_part中的reasoning_text按有界流文本处理，delta/text须字符串，已知索引为非负有界整数，item ID保持原归属/WS逐turn关联屏障；不能用reasoning_text冒充summary_part或message正文part。错误事件/成员/phase/part只记录固定分类，不记录文本或任意字段名/值。其他事件不据此放行。
+
+对合法非空有界类型的未解释上游扩展事件，必须整条隔离丢弃，不转发、不授予对象归属、不接受其中用量/错误/终态/进展，不更新客户端状态；仍先计SSE/WS单事件和总字节及总期限。已知error/响应状态/item/part与image事件族照常严格验证，畸形类型/已知结构不得伪装扩展。WS只在已拥有的非idle turn内消费扩展，未知lane/跨turn仍拒绝，扩展不能修改响应或item集合。每进程最多一次固定隔离观察，仅服务端UUID，不记录事件名、字段或正文。扩展不能替代created/可信完成终态，缺失终态仍unknown，无自动重试。
