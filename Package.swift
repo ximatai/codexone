@@ -36,6 +36,7 @@ let package = Package(
         .product(name: "NIOSSL", package: "swift-nio-ssl"),
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOExtras", package: "swift-nio-extras"),
+        .product(name: "Logging", package: "swift-log"),
         .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
       ],
       // Keep optimized per-file compilation bounded for the large adapter target.

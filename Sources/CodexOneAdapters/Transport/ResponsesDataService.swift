@@ -223,8 +223,15 @@ public struct ResponsesDataService: Service {
   {
     try await WebSocketPeer.run(socket, client: false) { downstream in
       let firstData = try await withExecutionDeadline(seconds: 10) { try await downstream.next() }
-      let first = try webSocketCreate(
-        firstData, imageConfiguration: executor.configuration.imageGeneration)
+      let first: ResponseRequest
+      do {
+        first = try webSocketCreate(
+          firstData, imageConfiguration: executor.configuration.imageGeneration)
+      } catch {
+        try? await sendWebSocketError(
+          error, requestID: UUID().uuidString, lane: "", to: downstream)
+        throw error
+      }
       let authorized = try await executor.authorized(digest)
       do { _ = try authorized.executionModel(first) } catch {
         await authorized.recordRejection(first, requestID: UUID().uuidString, error: error)

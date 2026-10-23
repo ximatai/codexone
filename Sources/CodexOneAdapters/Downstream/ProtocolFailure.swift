@@ -31,6 +31,7 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
 
 func protocolErrorEnvelope(_ error: any Error, requestID: String) -> JSONValue {
   let mapped = protocolFailure(error)
+  ProtocolFailureDiagnostics.record(mapped, requestID: requestID)
   return .object([
     "error": .object([
       "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),

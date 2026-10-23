@@ -33,7 +33,7 @@
 
 普通日志、指标及审计不记录正文/图片/凭证/签名 URL；正文仅允许进入 §9.1 的加密恢复缓存，不能混入诊断日志；诊断显示阶段时间线、归属选择理由、策略与计价版本、取消与释放时间、pending 原因。管理台围绕身份、Key/策略、请求/会话、用量/待核对、备份与配置，不扩展成通用控制平台。
 
-swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/responseID 做 label。重点观察队列字节、写等待、task/FD/RSS、取消释放、刷新、未知暴露、账本/DB 和 WAL。完整 tracing exporter 可延期，不承诺未验证 SDK 支持。关键审计/账本可靠保存，非关键统计有界采样。
+swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/responseID 做 label。重点观察队列字节、写等待、task/FD/RSS、取消释放、刷新、未知暴露、账本/DB 和 WAL。完整 tracing exporter 可延期，不承诺未验证 SDK 支持。关键审计/账本可靠保存，非关键统计有界采样。协议拒绝日志仅记录固定允许列表中的错误码、状态及服务端生成UUID；未知码归other，进程全局按单调时钟每60秒最多16条，溢出直接丢弃，无正文、头值、路径、客户端lane或任意Error描述。
 
 ## O11：发行与容量验收细则
 
