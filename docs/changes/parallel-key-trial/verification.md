@@ -38,3 +38,9 @@
 - 独立证书的webroot与校验成功后reload hook已保存，现有Snap续期timer active；首次检查了错误单元名导致新配置安全回退，核实实际timer后加载成功。临时客户端隧道owner已退出，不影响私有管理SSH。
 
 续期实际执行 `certbot renew --cert-name <独立域> --dry-run --run-deploy-hooks --no-random-sleep-on-renew --non-interactive` exit0，验证staging HTTP challenge及配置检查/reload hook。首次长SSH中断、随后受控后台worker遇到Certbot随机延迟；仅终止本次owner进程组，取消随机等待后完成，不改变既有续期timer。私有运行证据留在部署目录，不入仓库。
+
+## 2026-10-23 用户首轮Desktop合成请求跟进（未通过）
+
+用户界面显示重连5/5与通用网关错误。只读检查网关及fixture健康、无重启/OOM；所选源Key没有执行或持久拒绝记录，因此不能断言认证通过、请求已准入或上游失败，也不能以此前诊断Key公网验证替代此次客户端验收。
+
+准备临时入口诊断，仅固定schema的HTTP状态、上游状态、GET/POST/other方法枚举、WS布尔、时长与Nginx随机请求ID；无正文、认证头或路径。私有文件、owner定时检查约64KiB截断、最长600秒后恢复本次自有配置并先检查后reload；不修改旧服务配置。自有未认证探针401及诊断schema检查通过。实际请求失败码仍需用户重试/客户端安全错误详情，不放宽权限/解析契约，不开启真实订阅。

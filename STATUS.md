@@ -69,6 +69,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，用户首轮真实Desktop合成请求失败，界面显示重连5/5及通用网关错误，未计兼容通过。只读核对：新网关/fixture healthy，无OOM/重启；所选Key无执行/持久拒绝记录，尚不能区分认证、请求解析或升级前失败。已准备有owner、最长10分钟自动恢复的临时入口脱敏状态诊断，不记录正文、Key、头值或路径；待用户重试/提供安全错误码后继续定位，真实订阅仍关闭。
+
 2026-10-23，独立公网HTTPS数据入口阶段出口（配置 `090d742`）：沿用数据面WS/SSE/无重试与无正文日志策略，独立公共证书和ACME webroot，管理/健康路由不公开。原Key摘要、合成上游与既有运行候选不变；原Nginx文件逐一摘要核对未变，旧服务容器/镜像未变且健康。主Agent亲自配置/验证，提交后集中review无新增P1/P2。
 
 - macOS arm64与Linux amd64的交付模板Nginx配置检查通过；Linux隔离客户端经真实公网域名完成两条Responses路径JSON/SSE/WSS、正常证书校验、401/404/撤销Key和HTTP跳转。macOS首轮默认网络路径WSS超时，随后直连公共地址并保留域名SNI/正常信任校验完成同组检查；不据此断言首轮超时根因已解决。
