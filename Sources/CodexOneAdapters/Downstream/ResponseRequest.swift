@@ -26,6 +26,9 @@ enum ProtocolRejectionDetail: String, Sendable {
   case toolsChoice = "tools_choice"
   case toolsPackage = "tools_package"
   case toolsImage = "tools_image"
+  case upstreamMediaTypeJSON = "upstream_media_type_json"
+  case upstreamMediaTypeHTML = "upstream_media_type_html"
+  case upstreamMediaTypeOther = "upstream_media_type_other"
   case upstreamOutputLimitUnsupported = "upstream_output_limit_unsupported"
 }
 

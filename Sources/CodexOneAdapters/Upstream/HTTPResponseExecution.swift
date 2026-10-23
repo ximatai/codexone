@@ -130,12 +130,21 @@ struct HTTPResponseExecution: Sendable {
           throw rejection
         }
         if request.streaming {
-          guard
-            response.headers.first(name: "content-type")?.lowercased().hasPrefix(
-              "text/event-stream")
-              == true
-          else {
-            throw GatewayProtocolError(502, "invalid_upstream_content_type")
+          let header = response.headers.first(name: "content-type")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+          let media =
+            header?
+            .components(separatedBy: ";").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+          if header == nil || header == "" {
+            ProtocolFailureDiagnostics.recordMissingStreamMediaType(requestID: requestID)
+          } else if media != "text/event-stream" {
+            let detail: ProtocolRejectionDetail =
+              media == "application/json"
+              ? .upstreamMediaTypeJSON
+              : media == "text/html" ? .upstreamMediaTypeHTML : .upstreamMediaTypeOther
+            throw GatewayProtocolError(
+              502, "invalid_upstream_content_type", detail: detail, upstreamStatus: 200)
           }
           var decoder = SSEDecoder(
             maximumEventBytes: request.requirements.imageModel == nil

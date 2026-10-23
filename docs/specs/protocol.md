@@ -131,3 +131,5 @@ Codex reasoning.context仅允许auto/current_turn/all_turns，null转发前移�
 CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://host:port及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
 
 原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任。
+
+Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。

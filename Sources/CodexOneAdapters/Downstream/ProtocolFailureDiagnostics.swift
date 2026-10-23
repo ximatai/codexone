@@ -6,6 +6,7 @@ import Synchronization
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
+  private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
     "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
@@ -21,7 +22,8 @@ enum ProtocolFailureDiagnostics {
     "upstream_compact_rejected",
     "upstream_upgrade_rejected", "upstream_authentication_rejected", "upstream_rate_limited",
     "upstream_unavailable", "upstream_proxy_authentication_required", "upstream_proxy_timeout",
-    "upstream_proxy_failed",
+    "upstream_proxy_failed", "invalid_upstream_content_type", "upstream_missing_terminal",
+    "invalid_upstream_event",
   ]
 
   static func metadata(_ error: GatewayProtocolError, requestID: String) -> Logger.Metadata {
@@ -35,6 +37,19 @@ enum ProtocolFailureDiagnostics {
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
+  }
+
+  static func recordMissingStreamMediaType(requestID: String) {
+    guard let id = UUID(uuidString: requestID) else { return }
+    let first = missingMediaTypeLogged.withLock { logged in
+      guard !logged else { return false }
+      logged = true
+      return true
+    }
+    guard first else { return }
+    logger.info(
+      "Upstream stream omitted media type; SSE validation required",
+      metadata: ["upstream_status": "200", "request_id": .string(id.uuidString)])
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {

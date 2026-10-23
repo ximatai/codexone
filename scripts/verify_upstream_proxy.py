@@ -90,6 +90,20 @@ class Observed(Handler):
         return super().do_GET()
     def do_POST(self):
         self.accept_upstream_credential()
+        media=getattr(self.server,'media',None)
+        if media is not None:
+            self.close_connection=True
+            length=int(self.headers.get('Content-Length','0'));request=json.loads(self.rfile.read(length));events=self.events(request)
+            body=''.join('data: '+json.dumps(event)+'\n\n' for event in events).encode()
+            if media=='missing-html':body=b'<html>synthetic-private-untyped-body-never-forward</html>'
+            if media=='missing-json':body=b'{"error":"synthetic-private-untyped-body-never-forward"}'
+            if media=='missing-partial':body=('data: '+json.dumps(events[0])+'\n\n').encode()
+            if media=='missing-malformed':body=b'data: synthetic-private-untyped-body-never-forward\n\n'
+            if media=='missing-oversized':body=b'data: '+b'x'*262145+b'\n\n'
+            self.send_response(200)
+            types={'empty':'','typed':'Text/Event-Stream; charset=UTF-8','json':'application/json','html':'text/html','prefix':'text/event-streaming','empty-essence':'; charset=UTF-8'}
+            if media in types:self.send_header('Content-Type',types[media])
+            self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
         if getattr(self.server,'reject',False):
             length=int(self.headers.get('Content-Length','0'));self.rfile.read(length)
             self.send_response(self.server.reject);self.send_header('Content-Type','application/json')
@@ -149,6 +163,45 @@ def authorization_and_quota(binary):
     finally:
         proxy.close_owned();proxy_thread.join(5);provider.shutdown();provider.server_close();provider_thread.join(5)
     print('PASS: OAuth code exchange, refresh and quota GET traverse the explicit proxy; secrets stay out of CONNECT/logs/ledger',flush=True)
+
+
+def stream_media_cases(binary,provider,proxy,owner,source):
+    for media in ['missing','empty','typed','json','html','prefix','empty-essence','missing-html','missing-json','missing-partial','missing-malformed','missing-oversized']:
+        root=owner/('media-'+media);root.mkdir(mode=0o700)
+        config=root/'identity.json';config.write_text(json.dumps({**source,'upstreamTransport':'http'}));config.chmod(0o600)
+        provider.media=media;before=provider.sequence
+        process,ports=start(binary,config,root,upstream_proxy=f'http://127.0.0.1:{proxy.server_address[1]}')
+        try:
+            success=media in ('missing','empty','typed');count=2 if media=='missing' else 1
+            previous=None
+            for _ in range(count):
+                request=dict(model='synthetic-text',input='synthetic media test',stream=True)
+                if previous:request['previous_response_id']=previous
+                status,body=connect(ports['data'],'POST','/v1/responses',request)
+                assert b'synthetic-private-untyped-body-never-forward' not in body
+                if success:
+                    assert status==200
+                    events=[json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: ') and line[6:]!=b'[DONE]']
+                    terminal=[e for e in events if e.get('type')=='response.completed'];assert len(terminal)==1
+                    previous=terminal[0]['response']['id']
+                else:assert b'response.completed' not in body
+            if success:
+                deadline=time.monotonic()+3
+                while ledger(root)!=[('settled',)]*count:
+                    assert time.monotonic()<deadline,ledger(root)
+                    time.sleep(.02)
+            process.terminate();process.wait(10);output=process.stdout.read()
+            assert provider.sequence==before+count
+            assert ledger(root)==[('settled' if success else 'unknown',)]*count
+            if media=='missing':assert output.count(b'Upstream stream omitted media type; SSE validation required')==1
+            if media in ('json','html','prefix','empty-essence'):
+                expected={'json':'json','html':'html','prefix':'other','empty-essence':'other'}[media]
+                assert b'upstream_status=200' in output and ('reason=upstream_media_type_'+expected).encode() in output
+            assert b'synthetic-private-untyped-body-never-forward' not in output
+            assert b'synthetic-private-upstream-token-never-log' not in output
+        finally:stop(process)
+    provider.media=None
+    print('PASS: absent/empty stream media types retain SSE/continuation/usage validation; explicit wrong media, HTML/JSON, partial/malformed/oversized bodies fail without replay or raw output',flush=True)
 
 
 def main():
@@ -219,6 +272,8 @@ def main():
                         else:assert states==[('unknown',)],states
                     finally:stop(process)
                     print(f'PASS: explicit {transport} proxy {mode}; no direct fallback, private output or lost ledger',flush=True)
+            proxy.mode='forward'
+            stream_media_cases(binary,provider,proxy,owner,json.loads(config.read_text()))
             # A provider 400 is distinct from a proxy 407; source status and fixed reason remain server-side.
             proxy.mode='forward';provider.reject=400
             root=owner/'provider-rejection';root.mkdir(mode=0o700)

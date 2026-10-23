@@ -75,7 +75,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，按用户授权继续[真实订阅文本验证](docs/changes/real-subscription-text-validation/verification.md)：实现并提交`196cabf`，显式可信HTTP代理已覆盖生成HTTP、原生WS CONNECT、认证/刷新及额度GET，保持目标TLS校验、原期限/owner、无直连回退或自动重放；固定拒绝分类/上游状态只进有界私有诊断，公开错误附服务端Reference，不记录原正文或静默剥离输出约束。macOS arm64完整后端exit 0（201项Swift及全部脚本），新增代理拒绝/断连/超时/取消、TLS错误证书、认证/refresh/额度合成组装与退出后unknown保留均通过。主Agent实现及自查，依用户指示不例行召唤subagent；Linux amd64 release整套verification及实际OCI/Compose安装通过；首轮代理WS测试读账过早的失败及有界收敛修正已记验证账，产品结算未改。新的真实两轮尚未执行。
+2026-10-23，按用户授权继续[真实订阅文本验证](docs/changes/real-subscription-text-validation/verification.md)：实现并提交`196cabf`，显式可信HTTP代理已覆盖生成HTTP、原生WS CONNECT、认证/刷新及额度GET，保持目标TLS校验、原期限/owner、无直连回退或自动重放；固定拒绝分类/上游状态只进有界私有诊断，公开错误附服务端Reference，不记录原正文或静默剥离输出约束。macOS arm64完整后端exit 0（201项Swift及全部脚本），新增代理拒绝/断连/超时/取消、TLS错误证书、认证/refresh/额度合成组装与退出后unknown保留均通过。主Agent实现及自查，依用户指示不例行召唤subagent；Linux amd64 release整套verification及实际OCI/Compose安装通过；首轮代理WS测试读账过早的失败及有界收敛修正已记验证账，产品结算未改。服务器首次启动预检因宿主不支持CPU配额失败（生成0），移除该独立测试限制后实际发出1次请求，因invalid_upstream_content_type失败并停止第二轮；新账本unknown/failed且usage缺失，服务器与私有本地副本已核对，旧服务/原合成入口前后正常。结合成熟项目已修复同类缺Content-Type证据，正在补受限媒体兼容及失败回归，尚未恢复真实两轮。
 
 此前只读检查已确认旧服务现有Clash可达两官方目标、额度GET 200且allowed；首个本机真实探针返回502/upstream_rejected，无可信usage，未继续第二轮。该次SQLite被探针误清理，只有脱敏记录、缺原attempt ID，未知责任单独保留，不记零或用后续成功抵销。max_output_tokens属于已发现但未证实为唯一原因的契约风险。本轮探针改为派发前持久日志、逐轮核对真实usage/settled后续接，保留独立SQLite及报告，只删除访问快照/管理秘密；在独立服务器loopback实例走现有Clash，不修改旧服务/账号或原公开合成入口。后续实际结果在完成后更新，真实Desktop两轮、M3账号池/刷新、图片及M5仍未验收；无推送、发布或正式切换。
 
