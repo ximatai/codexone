@@ -27,9 +27,10 @@ COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
 COPY Tests/ Tests/
 ARG BUILD_JOBS=1
+ARG SWIFT_BATCH_LIMIT=1
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
-      -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
+      -Xswiftc -driver-batch-size-limit -Xswiftc ${SWIFT_BATCH_LIMIT} \
     && mkdir /output && cp .build/release/codexone /output/codexone \
     && strip --strip-debug /output/codexone
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
@@ -41,7 +42,7 @@ FROM backend AS verification
 # Test-only fixture executable; it is never copied into the runtime image.
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product ExecutionProbe -j ${BUILD_JOBS} \
-      -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
+      -Xswiftc -driver-batch-size-limit -Xswiftc ${SWIFT_BATCH_LIMIT} \
     && cp .build/release/ExecutionProbe /output/ExecutionProbe
 COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \

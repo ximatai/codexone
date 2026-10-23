@@ -61,3 +61,5 @@ afe1244的原Linux verification目标、最终运行镜像安装/重启均exit 0
 官方类型/解析器独立确认phase:null与reasoning_text事件两处实现缺口。新增定向Swift形状/隐私测试通过；实际HTTP/WS代理、缺媒体类型、推理文本/完整加密窗口及phase:null续接、非空错误phase/未知成员/畸形delta/负索引/错误item ID/未知事件/错位summary part均通过。WS错误ID首先由原turn关联屏障拒绝，保留该更强屏障；负向fixture截在错误事件，不用后来成功终态掩盖unknown分支。无自动重放、文本/密文不进日志，失败/用量结算在退出后持久。此时完整后端/Linux仍在运行，尚未恢复真实生成。
 
 事件契约修正后，macOS arm64 / Swift 6.4完整`./scripts/verify.sh --backend` exit 0：202项Swift、全部后端脚本，包括新增HTTP/WS事件/nullable全窗口续接和负向路径通过。主Agent自查并提交，不例行召唤subagent。Docker仅将Python/OpenSSL验证工具安装前移到源码COPY之前以保持工具层缓存，运行层仍不复制这些工具；Linux构建仍在进行，未计通过、未增加真实生成。
+
+Linux后续构建遇本机Docker控制面超时：运行目标报告DeadlineExceeded，原16文件批量verification未完成并已中止，不计验证通过。Docker VM约3 GiB、另有共存容器；没有因此停止其他容器或重启Docker，也未认定唯一根因为内存/源码。只把本项目release编译批量默认降至1（可显式SWIFT_BATCH_LIMIT调整），保留-O、单并发及既有缓存；工具层已复用，逐文件编译恢复，尚未完成Linux出口。此期间真实生成保持3次。
