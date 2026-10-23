@@ -53,7 +53,7 @@ class OwnedServer(ThreadingHTTPServer):
         self.shutdown()
         self.server_close()
         self.thread.join(3)
-        assert not self.thread.is_alive() and not self.failures, 'Fixture owner failed'
+        assert not self.thread.is_alive() and not self.failures, ('Fixture owner failed', self.failures)
 
 
 class Base(BaseHTTPRequestHandler):
@@ -135,7 +135,13 @@ class Relay(Base):
             status, content = r.status, r.getheader('Content-Type', 'application/json')
         finally: c.close()
         if is_create and n == 1:
-            assert status == 200 and b'response.completed' in data
+            assert status == 200
+            parsed = [json.loads(line[6:]) for line in data.splitlines() if line.startswith(b'data: ') and line[6:] != b'[DONE]']
+            terminal = [e for e in parsed if e.get('type') == 'response.completed']
+            assert len(terminal) == 1 and terminal[0]['response']['status'] == 'completed'
+            assert terminal[0]['response']['usage']['input_tokens_details']['cached_tokens'] == 0
+            # HTTP EOF is not a persistence barrier: finalization has its own owner.
+            latest(s.database, 'settled')
             s.cached = data
             self.reply(status, data, content, truncated=True)
         else: self.reply(status, data, content)
@@ -169,6 +175,7 @@ def run_case(binary, codex, case):
             try:
                 with OwnedServer(Relay) as relay:
                     relay.gateway, relay.case = ports['data'], case
+                    relay.database = root/'state/core.sqlite'
                     home, work = root/'client', root/'work'
                     home.mkdir(mode=0o700); work.mkdir(mode=0o700)
                     (home/'config.toml').write_text(f'''model_provider = "synthetic"
