@@ -29,7 +29,21 @@
 
 提交fc5f001后两名reviewer集中核查。Swift协议/权限无新增P1/P2；fixture/客户端测试发现两项P2并修复：HTTP compact使用固定上下文导致第二次503，改为本次epoch/sequence唯一值，两前缀连续compact证明不冲突；工具失败结果也可能让客户端最终完成，改为校验固定sleep成功结构或printf exit0及合成输出，压缩前也必须有成功工具证据。实际fixture的8组socket回归覆盖两种工具×普通/压缩×成功/失败，失败结果必须400且不能压缩；实际CLI完整18组按此收紧条件重跑。首轮完整后端停在重复compact失败处，不计为全集通过；修复后重跑，结果另记。
 
-完整后端、Linux定向出口和提交后review结果在完成后补记。
+修复提交1f9c67d后，原reviewer确认两项P2均充分修复、无新增问题，并独立执行8组fixture正负向socket验证通过。主Agent重新执行完整18组实际CLI矩阵exit0，仍为58次上游/58 settled，无回退/额外调用且成功工具证据均被消费。
+
+macOS arm64完整`./scripts/verify.sh --backend` exit0：格式/架构、build、197项Swift测试（35+35+3+124）及全部后端进程/socket/持久化/管理脚本通过，含新增fixture成功/失败证据、重复compact和跨lane不继承。133份文档结构、差异空白及新增文件私人路径/凭证模式检查通过；未修改前端，不重复前端全集。
+
+## Linux发布二进制定向出口
+
+```sh
+docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:default-client-verification .
+```
+
+最终源代码为fc5f001，review脚本修复为1f9c67d，Swift 6.4.1/noble、native release单job、实际strip后的二进制；最终构建exit0。早期并行构建的上下文包含修复前fixture，同样捕获重复compact失败，不计通过；以最终脚本重建verification层后通过，复用完全相同的Swift Sources/Tests与编译层。
+
+实际无网络权限的容器RUN覆盖protocol、websocket、lite、trial_provider、images、key_maintenance、snapshot_restore、storage_pressure和migration_cutback；Lite含同lane预热/增量工具结果、跨lane/连接拒绝，两前缀重复HTTP compact及28个WS/HTTP声明拒绝。fixture含8组工具成功/失败正负向。镜像经inspect为linux/amd64，标识`sha256:6f70e3458d928d4d0c5f13331bd2040c904ea8c5e134741a0fbf3da789d03881`；容器内实际二进制SHA256 `462d4a6ffead347e79ba51a5f11c27604f6d3f872b45e79a5511040d797accf1`。
+
+这是本机Docker下的Linux定向发布二进制检查，不是Linux Swift测试全集、Linux实际alpha CLI、用户宿主容量、远端CI、完整runtime发行或部署验收。固定实际CLI矩阵仅在macOS执行。
 
 ## 边界
 

@@ -47,6 +47,12 @@ npm run dev
 ./scripts/verify.sh --web --chrome
 ```
 
+默认客户端合成候选出口（FIXED_CODEX显式指向所选固定版本CLI；缺少客户端或版本不符失败，不读取个人登录）：
+
+```sh
+./scripts/verify.sh --client --binary .build/debug/codexone --codex "$FIXED_CODEX" --expected-version 0.163.0-alpha.11.1 --require-lite
+```
+
 Linux amd64 候选构建、私有初始化与受控安装入口见 [Linux 安装](docs/development/linux-installation.md)。安装后用 `python3 compose-install.py <command>`，不要绕过入口使用裸 Compose；可用 `python3 scripts/verify_installation.py --image <candidate> --browser` 验证实际镜像与 Chrome 管理操作。
 
 安全备份/恢复入口：`codexone --backup ABSOLUTE_NEW_BUNDLE`、`--restore ABSOLUTE_BUNDLE`、`--maintenance-status`、`--reconcile-restored ABSOLUTE_BASELINE_JSON`；先停服，设置独立私有数据目录及原账号主密钥。旧 v1—v7 须显式迁移至 v8；恢复后只接受托管 Key/账号池配置，须换发 Key、重新授权账号并核对缺失区间。详细步骤及边界见[快照维护](docs/development/snapshot-maintenance.md)。
@@ -69,7 +75,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，用户恢复实施并要求先完成默认客户端闭环、不部署/真实订阅。已实现Lite工具包严格校验、32 KiB工具说明边界、有限Lite标识、原生WS同lane最近成功响应的工具身份集合续接，以及实际合成fixture完整终态。固定Desktop内置CLI 0.163.0-alpha.11.1默认/显式目录、三传输文本三轮/工具往返/压缩续接共18组通过，30次用户操作、58次上游调用全部settled，断言无传输回退和额外重试。实现自查后提交；完整后端、Linux定向出口及提交后集中review进行中，完成后补记。记录及边界见[闭环验证](docs/changes/default-client-loop/verification.md)；其余可信流/失败风险、Desktop UI、真实订阅、M5/O14仍未完成，线上候选不变。
+2026-10-23，默认客户端本地合成闭环阶段出口完成（实现fc5f001，集中review修复1f9c67d）。Lite工具包严格校验、32 KiB说明边界、有限标识、原生WS同lane最近成功响应的工具身份续接及实际fixture完整终态已实现；review补齐重复compact唯一上下文和成功工具证据，复核无新增问题。固定Desktop内置CLI 0.163.0-alpha.11.1默认/显式目录、三传输文本三轮/工具往返/压缩续接18组重新通过，30次用户操作、58次上游调用全部settled，断言无传输回退/额外重试及真实成功工具结果。macOS完整197项Swift测试与全部后端脚本、133份文档及隐私/差异检查通过；Linux amd64 strip后release二进制定向协议/Lite/fixture/图片/维护/恢复/低磁盘/切回检查通过（无网络权限容器），不是Linux实际alpha CLI或Swift全集。记录、镜像/二进制指纹及未覆盖项见[闭环验证](docs/changes/default-client-loop/verification.md)。未部署/推送/真实订阅、未修改个人客户端或旧服务，线上候选不变。下一步为“可信流与失败”闭环：终态/状态/逐项一致性、HTTP SSE关联、提供者用量字段及错误分类；Desktop UI、真实订阅、M5/O14继续保留。
 
 2026-10-23，按用户要求继续只分析、不修复部署，完成[实现与测试核查](docs/changes/gateway-reliability-audit/proposal.md)：已知默认Lite/部署夹具缺口继续阻塞；新增本机合成观察确认事件/状态矛盾、普通逐项与最终窗口不一致、HTTP SSE与WS的response关联校验差异，以及计量合法但下游total字段矛盾仍透传。首错误/failed形状分类、共享5xx健康归因、慢lane/慢上传与排队后轮换分别保留为契约/策略风险或验证缺口，不宣称已发生线上故障、权限绕过、漏账或重复工具执行。macOS arm64增量build、27项三路径行为观察（各一次上游）及六项已有定向测试完成；另仅补采集HTTP首错误的下游JSON分类，130份文档/探针语法/差异检查通过，没有以观察数冒充兼容通过。提交后集中review无需要修正的P1/P2或事实错误，并独立复现状态矛盾场景。已核实逐轮授权、失败不重放和可信用量保留的已有防线；原因、改进取舍、缺失验证及复现入口见[验证账](docs/changes/gateway-reliability-audit/verification.md)。本轮不重复全集/跨平台/真实客户端，无业务、客户端或线上配置变更；修复/部署继续暂停，真实订阅关闭。下一步先讨论默认客户端完整操作、可信流与失败、授权/故障隔离三个业务闭环的实施方案。
 
