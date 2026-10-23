@@ -61,7 +61,7 @@ struct ProtocolFailureDiagnosticsTests {
       .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
       .upstreamUsageContainer,
       .upstreamUsageCapacity, .upstreamUsageDetails, .upstreamUsageDetailsCapacity,
-      .upstreamUsageDetailsCount,
+      .upstreamUsageCount,
       .upstreamTerminalStatus, .upstreamUsageTotal,
       .downstreamJSONWrite,
     ] {

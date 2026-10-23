@@ -426,6 +426,15 @@ struct ProviderObservation: Sendable {
           502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
       }
     }
+    func validateCount(_ value: JSONValue?) throws {
+      guard let value, value != .null else { return }
+      guard let count = value.integer, (0...1_000_000_000).contains(count) else {
+        throw GatewayProtocolError(
+          502, "invalid_upstream_usage", detail: .upstreamUsageCount)
+      }
+    }
+    try validateCount(object["input_tokens"])
+    try validateCount(object["output_tokens"])
     for key in ["input_tokens_details", "output_tokens_details"] {
       guard let details = object[key], details != .null else { continue }
       guard let members = details.object else {
@@ -437,12 +446,13 @@ struct ProviderObservation: Sendable {
           502, "unsupported_upstream_object", detail: .upstreamUsageDetailsCapacity)
       }
       let counter = key == "input_tokens_details" ? "cache_write_tokens" : "reasoning_tokens"
-      if let value = members[counter], value != .null {
-        guard let count = value.integer, (0...1_000_000_000).contains(count) else {
-          throw GatewayProtocolError(
-            502, "invalid_upstream_usage", detail: .upstreamUsageDetailsCount)
-        }
-      }
+      try validateCount(members[counter])
+      if key == "input_tokens_details" { try validateCount(members["cached_tokens"]) }
+    }
+    if let input = object["input_tokens"]?.integer,
+      let cached = object["input_tokens_details"]?["cached_tokens"]?.integer, cached > input
+    {
+      throw GatewayProtocolError(502, "invalid_upstream_usage", detail: .upstreamUsageCount)
     }
     // Text-only metadata has no evidence authority and is removed before downstream output.
   }

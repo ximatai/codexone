@@ -31,3 +31,6 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 用量分责开发回归保留：仅接受不透明metadata而原样转发的初稿，旧private-usage检查失败，暴露了未知元数据可能含私有标识的边界；未上传或真实运行该稿。已改为普通纯文本路径在校验/绑定后仅向下游投影已支持计量字段，未知附加元数据移除，图片/独立compact沿原契约；补原private-usage成功但无私有标识、独立嵌套伪计量不影响账本/无绑定/无日志检查。旧Linux编译主动取消，改按最终隔离版本重建，取消项不计通过。一次压缩脚本名误写未执行，已用仓库实际verify_compaction_stream入口补跑；不计误写命令通过。当前隔离版回归仍在运行。
+
+
+集中增量复核发现并修正1项P2：非终态已知input/output/cached值原依赖终态observeUsage，按键投影可误透出错误字符串/对象。现统一验证全部事件的已知计数类型/范围/cached一致性，但非终态不创建用量证据；加入created/in_progress的错误input/output/cached及metadata隔离实际socket验证。旧候选未上传，按最终修正重新构建；阶段出口仍待回归及复核确认。

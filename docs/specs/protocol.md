@@ -145,3 +145,5 @@ Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原�
 JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。
 
 usage非null须为最多32成员对象，已知input_tokens_details/output_tokens_details非null须为最多32成员对象；已知cache_write_tokens/reasoning_tokens非null须为0—1000000000整数。input/output/cached证据和total一致性维持原严格校验；普通纯文本路径的其他成员仅在内存中有界接受，向客户端只输出input/output/total及cached/cache_write/reasoning明细；图片和独立compact保持原严格契约，受原JSON深度/单事件/总流预算，不递归提取ID/计量/授权。固定诊断区分根类型/根容量/明细类型/明细容量/已知明细计数，不记录字段名或值。
+
+已知input/output/cached计数在created/in_progress等非终态也验证类型/范围及cached<=input（均已知时）；这仅约束可输出形态，不建立非终态计量证据。新增非终态错误计数及metadata正负socket样例，防止按键投影误透出错误值。

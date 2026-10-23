@@ -49,7 +49,7 @@ enum ProtocolRejectionDetail: String, Sendable {
   case upstreamUsageCapacity = "upstream_usage_capacity"
   case upstreamUsageDetails = "upstream_usage_details"
   case upstreamUsageDetailsCapacity = "upstream_usage_details_capacity"
-  case upstreamUsageDetailsCount = "upstream_usage_details_count"
+  case upstreamUsageCount = "upstream_usage_count"
   case upstreamEvent = "upstream_event"
   case upstreamItemMembers = "upstream_item_members"
   case upstreamMessagePhase = "upstream_message_phase"

@@ -20,6 +20,8 @@ PRIVATE = 'synthetic independent contract output'
 CASES = ['ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', 'incomplete', 'timestamp-string', 'timestamp-null',
          'instructions-boolean', 'instructions-object', 'instructions-scalars', 'instructions-capacity',
          'details-boolean', 'details-reason', 'status-conflict', 'status-unknown',
+         'usage-created-input', 'usage-created-output', 'usage-created-cached', 'usage-progress-input',
+         'usage-progress-output', 'usage-progress-cached', 'usage-created-metadata', 'usage-progress-metadata',
          'usage-metadata', 'usage-root', 'usage-capacity', 'usage-details', 'usage-details-capacity',
          'usage-reasoning', 'usage-cache-write', 'usage-cached', 'total-negative', 'total-null', 'total-fraction', 'total-conflict', 'foreign-terminal', 'foreign-delta']
 
@@ -69,6 +71,16 @@ class Provider(BaseHTTPRequestHandler):
             result['incomplete_details'] = {'reason': 1}
         elif mode.startswith('status-'):
             result['status'] = 'failed' if mode.endswith('conflict') else 'synthetic-unknown-status'
+        elif mode.startswith(('usage-created-', 'usage-progress-')):
+            early = events[0 if mode.startswith('usage-created-') else 1]['response']
+            field = mode.rsplit('-', 1)[-1]
+            early['usage'] = {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}
+            if field == 'metadata':
+                early['usage'].update(json.loads(FIXTURE.read_text())['usageMetadata'])
+            elif field == 'cached':
+                early['usage']['input_tokens_details']['cached_tokens'] = {'private': 'synthetic-private-counter'}
+            else:
+                early['usage'][field + '_tokens'] = 'synthetic-private-counter'
         elif mode == 'usage-metadata':
             result['usage'].update(json.loads(FIXTURE.read_text())['usageMetadata'])
             result['usage']['input_tokens_details'].update({'cache_write_tokens': 1, 'metadata': ['synthetic', False]})
@@ -226,6 +238,8 @@ def main():
                                 continue  # A JSON response has no conflicting SSE event name.
                             if route == 'json' and mode == 'event-oversized':
                                 continue
+                            if transport == 'http' and route == 'json' and mode.startswith(('usage-created-', 'usage-progress-')):
+                                continue
                             if route == 'json' and mode == 'sparse-stream':
                                 continue
                             request = dict(model='synthetic-contract', input=[dict(role='user', content='synthetic contract')])
@@ -234,8 +248,11 @@ def main():
                             status, events = call(ports['data'], route, request)
                             count += 1
                             assert events, (transport, mode, route, status)
+                            assert 'synthetic-private-counter' not in json.dumps(events)
+                            if mode in ('usage-created-metadata', 'usage-progress-metadata'):
+                                assert 'synthetic_metadata' not in json.dumps(events)
                             result = events[-1]
-                            if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'incomplete'):
+                            if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata', 'usage-progress-metadata', 'incomplete'):
                                 assert status == 200 and 'error' not in result, (transport, mode, route, events)
                                 response = result.get('response', result)
                                 assert response['created_at'] == 1.125
@@ -264,12 +281,12 @@ def main():
                         logs = process.stdout.read()
                         assert provider.calls == before + count, 'Unexpected replay or dispatch'
                         records = rows(root)
-                        if mode.startswith('foreign-') or mode in ('event-oversized', 'usage-root', 'usage-cached'):
+                        if (mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata')) or mode.startswith('foreign-') or mode in ('event-oversized', 'usage-root', 'usage-cached'):
                             assert all(s == 'unknown' and u is None for s, _, u in records), records
                         else:
                             assert all(s == 'settled' and u and u['completeness'] == 'complete'
                                        and u['inputTokens'] == 5 and u['outputTokens'] == 3 for s, _, u in records), records
-                            assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata') else 'failed')
+                            assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata', 'usage-progress-metadata') else 'failed')
                                        for _, k, _ in records), (transport, mode, records, outcomes(root))
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
