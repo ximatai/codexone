@@ -23,6 +23,8 @@ codexone --import-keys /run/codexone/approved-key-import.json
 
 源转换器必须核对模型、强制模型/推理/tier、账号/来源绑定、传输限制及其他旧约束；未知或无法等价/保守表达就隔离，输出单独私有清单与原因，不能只删字段放宽权限。模型权限可缩到已批准测试模型、图片/视觉默认关闭；新本地限额是独立小预算，不能称继承旧剩余额度。全部清单先核对，只有受支持条目进入导入文件。
 
+源SQLite转换工具为 `scripts/export_key_trial.py --source-db <readonly-source> --approval-file <private-approval> --output-directory <new-private-directory>`。approval严格包含models、limits、selectedName（名称仅私下使用）；工具固定已核对的源列集合，遇新列/未知schema拒绝，只读事务读取Key元数据，不读取账号、正文或凭证表。输出manifest/mapping/quarantine三个独占0600文件及0700目录，终端仅计数；源约束不支持的条目逐条隔离，所选Key不合格则整次拒绝。不能把输出目录的部分文件当作完成导入，任何转换异常先私下核对。
+
 ## 原子性与启用
 
 整份文件/管理员验证后才打开目标库，持既有实例锁；只接受无Key、Key审计、执行、账号或维护历史且非恢复态的新目标。同事务写全部禁用Key及import_disabled审计，失败整体回滚。输出仅importedKeys/enabledKeys=0。重复导入/已有库/运行实例拒绝，绝不覆盖验证材料或清空旧用量；结果丢失时先查新侧管理元数据，不自动重试覆盖。
@@ -39,4 +41,4 @@ codexone --import-keys /run/codexone/approved-key-import.json
 
 客户端首次使用新会话，保留原Key、切换地址，先验目录与固定合成回复，再验实际客户端支持的协议/失败路径。服务部署不代表真实Desktop、订阅或完整容量通过；真实订阅须另行授权并解决独立凭证/账本责任。
 
-验收入口：`python3 scripts/verify_key_import.py --binary <binary>`、`python3 scripts/verify_trial_provider.py --binary <binary>`，均纳入完整后端检查。
+验收入口：`python3 scripts/verify_key_import.py --binary <binary>`、`python3 scripts/verify_trial_provider.py --binary <binary>`，及 `python3 scripts/verify_key_export.py`，均纳入完整后端检查。
