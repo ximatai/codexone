@@ -60,6 +60,8 @@ struct ProtocolFailureDiagnosticsTests {
       .upstreamItemNamespace, .upstreamMessageRole, .upstreamMessageContent,
       .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
       .upstreamUsageContainer,
+      .upstreamUsageCapacity, .upstreamUsageDetails, .upstreamUsageDetailsCapacity,
+      .upstreamUsageDetailsCount,
       .upstreamTerminalStatus, .upstreamUsageTotal,
       .downstreamJSONWrite,
     ] {

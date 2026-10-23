@@ -104,9 +104,13 @@ extension HTTPResponseExecution {
         for object in observation.bindings { try await context.bind(object) }
         try observeTerminalOutcome(event, context: context)
         if request.streaming {
-          try await emit(event)
+          try await emit(
+            request.requirements.imageModel == nil ? ProviderObservation.textOutput(event) : event)
         } else if observation.terminal {
-          try await emit(event["response"]!)
+          let response = event["response"]!
+          try await emit(
+            request.requirements.imageModel == nil
+              ? ProviderObservation.textOutput(response) : response)
         }
         if observation.terminal { try observeSubmittedTerminal(event, context: context) }
         if observation.terminal { break }

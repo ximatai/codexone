@@ -344,11 +344,14 @@ def main():
                 assert status == 502 and b"resp_" not in body
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 print("PASS: EOF remains unknown; known usage survives rejected provider objects without ID exposure")
-                for prompt in ("private-usage", "provider-error", "foreign-previous"):
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-usage"})
+                assert status == 200 and b"private-synthetic" not in body
+                assert latest(db_path, "settled")["inputTokens"] == 5
+                for prompt in ("provider-error", "foreign-previous"):
                     status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": prompt})
                     assert status == 502 and b"private-synthetic" not in body
                     assert latest(db_path, "settled")["inputTokens"] == 5
-                print("PASS: malformed usage metadata and raw provider errors are not exposed; trusted counters remain settled")
+                print("PASS: isolated usage metadata and rejected raw provider errors are not exposed; trusted counters remain settled")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "refusal"})
                 assert status == 200
                 refused = json.loads(body)["output"]

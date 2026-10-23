@@ -20,7 +20,8 @@ PRIVATE = 'synthetic independent contract output'
 CASES = ['ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', 'incomplete', 'timestamp-string', 'timestamp-null',
          'instructions-boolean', 'instructions-object', 'instructions-scalars', 'instructions-capacity',
          'details-boolean', 'details-reason', 'status-conflict', 'status-unknown',
-         'total-negative', 'total-null', 'total-fraction', 'total-conflict', 'foreign-terminal', 'foreign-delta']
+         'usage-metadata', 'usage-root', 'usage-capacity', 'usage-details', 'usage-details-capacity',
+         'usage-reasoning', 'usage-cache-write', 'usage-cached', 'total-negative', 'total-null', 'total-fraction', 'total-conflict', 'foreign-terminal', 'foreign-delta']
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -68,6 +69,24 @@ class Provider(BaseHTTPRequestHandler):
             result['incomplete_details'] = {'reason': 1}
         elif mode.startswith('status-'):
             result['status'] = 'failed' if mode.endswith('conflict') else 'synthetic-unknown-status'
+        elif mode == 'usage-metadata':
+            result['usage'].update(json.loads(FIXTURE.read_text())['usageMetadata'])
+            result['usage']['input_tokens_details'].update({'cache_write_tokens': 1, 'metadata': ['synthetic', False]})
+            result['usage']['output_tokens_details'] = {'reasoning_tokens': 1, 'metadata': {'label': 'synthetic'}}
+        elif mode == 'usage-root':
+            result['usage'] = 'synthetic-invalid-usage'
+        elif mode == 'usage-capacity':
+            result['usage'].update({f'synthetic_{i}': 0 for i in range(33)})
+        elif mode == 'usage-details':
+            result['usage']['output_tokens_details'] = 3
+        elif mode == 'usage-details-capacity':
+            result['usage']['output_tokens_details'] = {f'synthetic_{i}': 0 for i in range(33)}
+        elif mode == 'usage-reasoning':
+            result['usage']['output_tokens_details'] = {'reasoning_tokens': 'synthetic-invalid'}
+        elif mode == 'usage-cache-write':
+            result['usage']['input_tokens_details']['cache_write_tokens'] = 1.5
+        elif mode == 'usage-cached':
+            result['usage']['input_tokens_details']['cached_tokens'] = 'synthetic-invalid'
         elif mode.startswith('total-'):
             result['usage']['total_tokens'] = {'negative': -1, 'null': None, 'fraction': 8.5,
                                                'conflict': 9}[mode.removeprefix('total-')]
@@ -216,7 +235,7 @@ def main():
                             count += 1
                             assert events, (transport, mode, route, status)
                             result = events[-1]
-                            if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'incomplete'):
+                            if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'incomplete'):
                                 assert status == 200 and 'error' not in result, (transport, mode, route, events)
                                 response = result.get('response', result)
                                 assert response['created_at'] == 1.125
@@ -224,6 +243,11 @@ def main():
                                     assert response['instructions'] == 'synthetic-large-echo-' + 'x' * 300000
                                 else:
                                     assert response['instructions'] == json.loads(provider.literal)[-1]['response']['instructions']
+                                if mode == 'usage-metadata':
+                                    assert set(response['usage']) == {'input_tokens', 'output_tokens', 'total_tokens', 'input_tokens_details', 'output_tokens_details'}
+                                    assert response['usage']['input_tokens_details'] == {'cached_tokens': 0, 'cache_write_tokens': 1}
+                                    assert response['usage']['output_tokens_details'] == {'reasoning_tokens': 1}
+                                    assert response['usage']['input_tokens'] == 5 and response['usage']['output_tokens'] == 3
                                 if mode != 'incomplete':
                                     request['input'] += response['output'] + [dict(role='user', content='synthetic next turn')]
                                     status, events = call(ports['data'], route, request)
@@ -240,17 +264,18 @@ def main():
                         logs = process.stdout.read()
                         assert provider.calls == before + count, 'Unexpected replay or dispatch'
                         records = rows(root)
-                        if mode.startswith('foreign-') or mode == 'event-oversized':
+                        if mode.startswith('foreign-') or mode in ('event-oversized', 'usage-root', 'usage-cached'):
                             assert all(s == 'unknown' and u is None for s, _, u in records), records
                         else:
                             assert all(s == 'settled' and u and u['completeness'] == 'complete'
                                        and u['inputTokens'] == 5 and u['outputTokens'] == 3 for s, _, u in records), records
-                            assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo') else 'failed')
+                            assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata') else 'failed')
                                        for _, k, _ in records), (transport, mode, records, outcomes(root))
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
                                               ('synthetic-metadata-only-id', 'synthetic-foreign-response')).fetchone()[0] == 0
                         assert PRIVATE.encode() not in logs and b'synthetic echoed guidance' not in logs
+                        assert b'synthetic usage metadata' not in logs
                         assert TOKEN.encode() not in logs and b'synthetic-metadata-only-id' not in logs
                     finally:
                         stop(process)

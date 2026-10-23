@@ -76,7 +76,7 @@ struct ProviderObservation: Sendable {
             502, "unsupported_upstream_object", detail: .upstreamResponsePrevious)
         }
       }
-      try Self.validateUsageContainer(response["usage"])
+      try Self.validateUsageContainer(response["usage"], allowMetadata: !allowImages)
       if let error = response["error"], error != .null {
         throw GatewayProtocolError(502, "upstream_execution_failed")
       }
@@ -400,22 +400,74 @@ struct ProviderObservation: Sendable {
     }
   }
 
-  static func validateUsageContainer(_ value: JSONValue?) throws {
+  static func validateUsageContainer(_ value: JSONValue?, allowMetadata: Bool = false) throws {
     guard let value, value != .null else { return }
-    func numeric(_ value: JSONValue) -> Bool {
-      if value == .null { return true }
-      if case .number = value { return true }
-      return false
-    }
-    guard let object = value.object, object.count <= 32,
-      object.values.allSatisfy({ value in
-        if numeric(value) { return true }
-        return value.object.map { $0.count <= 32 && $0.values.allSatisfy(numeric) } == true
-      })
-    else {
+    guard let object = value.object else {
       throw GatewayProtocolError(
         502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
     }
+    guard object.count <= 32 else {
+      throw GatewayProtocolError(
+        502, "unsupported_upstream_object", detail: .upstreamUsageCapacity)
+    }
+    if !allowMetadata {
+      func numeric(_ value: JSONValue) -> Bool {
+        if value == .null { return true }
+        if case .number = value { return true }
+        return false
+      }
+      guard
+        object.values.allSatisfy({ value in
+          numeric(value)
+            || value.object.map { $0.count <= 32 && $0.values.allSatisfy(numeric) } == true
+        })
+      else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
+      }
+    }
+    for key in ["input_tokens_details", "output_tokens_details"] {
+      guard let details = object[key], details != .null else { continue }
+      guard let members = details.object else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamUsageDetails)
+      }
+      guard members.count <= 32 else {
+        throw GatewayProtocolError(
+          502, "unsupported_upstream_object", detail: .upstreamUsageDetailsCapacity)
+      }
+      let counter = key == "input_tokens_details" ? "cache_write_tokens" : "reasoning_tokens"
+      if let value = members[counter], value != .null {
+        guard let count = value.integer, (0...1_000_000_000).contains(count) else {
+          throw GatewayProtocolError(
+            502, "invalid_upstream_usage", detail: .upstreamUsageDetailsCount)
+        }
+      }
+    }
+    // Text-only metadata has no evidence authority and is removed before downstream output.
+  }
+
+  /// Project only documented token counters; unknown upstream metadata never reaches a client.
+  static func textOutput(_ value: JSONValue) -> JSONValue {
+    guard var object = value.object else { return value }
+    if let response = object["response"] { object["response"] = textOutput(response) }
+    if let usage = object["usage"]?.object {
+      let root: Set<String> = [
+        "input_tokens", "output_tokens", "total_tokens", "input_tokens_details",
+        "output_tokens_details",
+      ]
+      var counters = usage.filter { root.contains($0.key) }
+      for key in ["input_tokens_details", "output_tokens_details"] {
+        if let details = counters[key]?.object {
+          let known: Set<String> =
+            key == "input_tokens_details"
+            ? ["cached_tokens", "cache_write_tokens"] : ["reasoning_tokens"]
+          counters[key] = .object(details.filter { known.contains($0.key) })
+        }
+      }
+      object["usage"] = .object(counters)
+    }
+    return .object(object)
   }
 
   /// Client-facing totals must agree with known counters; they never create missing evidence.

@@ -200,7 +200,9 @@ struct HTTPResponseExecution: Sendable {
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
               terminal = observation.terminal
-              try await emit(event)
+              try await emit(
+                request.requirements.imageModel == nil
+                  ? ProviderObservation.textOutput(event) : event)
               if terminal { try observeSubmittedTerminal(event, context: context) }
               if terminal { break readUpstream }
             }
@@ -239,7 +241,9 @@ struct HTTPResponseExecution: Sendable {
             allowImages: request.requirements.imageModel != nil)
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
-          try await emit(document)
+          try await emit(
+            request.requirements.imageModel == nil
+              ? ProviderObservation.textOutput(document) : document)
           try observeSubmittedTerminal(event, context: context)
         }
       }

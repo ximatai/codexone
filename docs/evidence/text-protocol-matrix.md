@@ -25,6 +25,7 @@
 | message/phase/part | ProviderObservation.itemBindings | 既有nullable及reasoning_text独立修正 | 保持已知内容类型/容量；新成员需分类，不全量放过 |
 | 逐项与最终output | ProviderObservation/StreamCompaction/WebSocketTurns | 压缩有窗口一致性，普通窗口仍有已复现缺口 | 本轮不声称全部解决；须区分合法快照差异与ID/type/call_id冲突，再单独补统一关联 |
 | input/output/cached usage | observeUsage/ProviderObservation.usage | 核心累计证据与结果独立，真实第五笔已正确保存 | 保持完整/部分/缺失分类，不能将输出失败当零或丢已有证据 |
+| usage附加元数据 | ProviderObservation.validateUsageContainer | 第六笔固定诊断usage_container；官方新增属性兼容约定 | 已知计量严格/metadata有界隔离且输出投影已支持字段；原始具体字段未留存，不能认定唯一子原因 |
 | total_tokens | ProviderObservation.validateUsageContainer | SDK客户端消费字段；原矛盾total会透传 | 补类型/范围/已知计数相加一致，不补零/反推计量 |
 | 工具/推理/压缩回传 | ClientInput/opaqueContext/StreamCompaction | 完整与增量窗口/相同身份均需验证 | 保持密文仅指纹绑定；不能由文本两轮外推全部工具/压缩 |
 | EOF/取消/error/failed/incomplete | 执行owner/ExecutionObservation | 原无终态unknown；usage与业务结果独立 | 保持首错停止/无自动重放，进一步错误消费矩阵仍保留 |

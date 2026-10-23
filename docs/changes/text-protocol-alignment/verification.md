@@ -21,3 +21,13 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 完整Linux复跑仍失败，现明确为HTTP/details-empty组第一笔JSON在完整响应后settled/failed、failure=indeterminate，用量5/3完整，其他三笔成功；据此排除“仅探针提前停服”的解释。保持原失败账本断言，按提案补完整JSON批量提交及已提交终态的同步结果观察；不改Core first-observation、计量或未知执行语义，不在写入前记录成功。新程序macOS定向build exit 0，下一步重新执行受影响完整后端/Linux/实际安装与快速关闭负向，尚未恢复真实调用。
 
 新程序macOS完整后端首轮在代理stall错误组即时读账失败：错误JSON批写比finalizer收敛更早可见。改为3秒内严格等待unknown，不删失败断言；该完整命令不计exit 0。203项Swift及此前全部脚本已通过，代理完整套件定向复查exit 0，随后顺序补跑其余全部后端脚本（含独立116次、工具/压缩/图片等）；不为测试等待改产品持久或取消语义。Linux新程序已通过完整协议/代理/独立116次/工具/fixture/Images检查，维护段仍在运行，阶段出口尚待完成。
+
+
+原文本对齐/收尾修复出口（程序04543be）：macOS首轮203项Swift与前置脚本、修正等待后的完整代理及其余所有后端脚本分别exit 0；不将首轮命令失败写为一次全绿。Linux新程序完整verification exit 0后发现最后一次测试脚本等待修改未进入镜像，随后按最终源码再次完整verification exit 0；SHA核对代理脚本、独立协议脚本和固定JSON夹具与工作树完全相同。独立HTTP45/WS71合计116次、图片/工具/代理及密钥/快照/低盘/迁移通过。实际Linux amd64 OCI/Compose安装exit 0。一次集中只读复核无新增P1/P2，确认批写与成功观察均在校验/绑定/emit后，未改Core首次结果和未知责任。runtime/verification/服务器运行程序SHA一致：`9f05fc6ce0d07b63400550198bdcb3718972a6bdcd97c09eca3b3b2d1ff2cfa0`。
+
+第六笔真实生成：独立loopback实例、旧服务有效access快照、既有Clash、HTTP/SSE、stream=true/store=false，无refresh/工具/图片；第一轮收到文本后error，固定Reference唯一对应`upstream_usage_container`/`unsupported_upstream_object`，首错停止，第二轮未发送。账本settled/failed，完整input51/output11/cached0、unresolved0；可信计数没有因字段消费失败丢失。新库SHA `858076ea24cde8a3be16180e63b5059e9533724293e3e080aea3a20c41b3d60c`，服务器及本机私有副本核对保留；旧四份库及最早仅外部记录分别引用不变，不以成功或新库抵销未知责任。累计6/8次，两轮仍未通过。该次缺媒体类型与扩展隔离各1次；没有记录原始响应，不能断言具体字段/容量，也不将新metadata策略冒称已证实唯一根因。测试容器正常退出并回收，临时凭证清除，旧服务healthy/身份配置未变，原公开合成入口前后ready；无公开切换、推送或发布。
+
+后续用量分责正在实现：已核对官方新增JSON属性兼容约定；已知计量字段继续严格，未知metadata仅有界保留且不产生权限/证据，补固定容量/明细/计数诊断。尚未运行新程序真实调用。
+
+
+用量分责开发回归保留：仅接受不透明metadata而原样转发的初稿，旧private-usage检查失败，暴露了未知元数据可能含私有标识的边界；未上传或真实运行该稿。已改为普通纯文本路径在校验/绑定后仅向下游投影已支持计量字段，未知附加元数据移除，图片/独立compact沿原契约；补原private-usage成功但无私有标识、独立嵌套伪计量不影响账本/无绑定/无日志检查。旧Linux编译主动取消，改按最终隔离版本重建，取消项不计通过。一次压缩脚本名误写未执行，已用仓库实际verify_compaction_stream入口补跑；不计误写命令通过。当前隔离版回归仍在运行。

@@ -23,5 +23,6 @@
         "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8, "input_tokens_details": {"cached_tokens": 0}}
       }
     }
-  ]
+  ],
+  "usageMetadata": {"synthetic_label": "synthetic usage metadata", "synthetic_flag": false, "synthetic_metadata": {"id": "synthetic-metadata-only-id", "usage": {"input_tokens": 9999}, "values": ["synthetic", false, {"value": null}]}}
 }

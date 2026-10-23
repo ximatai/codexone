@@ -75,11 +75,9 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-24，修正探针后Linux仍复现完整JSON响应后indeterminate结果，已补完整JSON批写及校验/绑定/提交后的同步终态结果观察；不以usage/item.done/部分写入提前成功，不改Core结算/first-observation/unknown语义。新程序macOS 203项Swift、代理故障与独立116次及后续受影响回归通过，Linux协议/代理/独立116次/工具/图片通过、维护段正在运行。Mac完整命令中的代理异步读账等待已修正，分段结果及首轮失败分别记录，未伪称一次全绿。阶段出口集中只读复核和实际新候选安装尚待完成；真实累计仍5次、未上传或恢复调用。详见[验证账](docs/changes/text-protocol-alignment/verification.md)。
+2026-10-24，完成[文本协议对齐](docs/changes/text-protocol-alignment/proposal.md)原阶段出口（04543be）：合法元数据/状态与total/HTTP归属/大回显及JSON完整提交后收尾竞争已修复。macOS 203项Swift及所有受影响后端组件分别通过；最终源码Linux完整verification、实际OCI/Compose安装及集中只读复核通过。独立字面量套件116次执行，覆盖两轮与归属/计量/容量失败；没有以原有同源fixture代替。详见[矩阵](docs/evidence/text-protocol-matrix.md)和[验证账](docs/changes/text-protocol-alignment/verification.md)。
 
-2026-10-24，Linux文本协议出口首轮出现一笔完整响应后的failed结果，未取得具体failure子类，不记通过；发现探针用不存在的pending等待在途，已改为intent有界收敛并保留严格断言，未改产品结果/结算语义。同一程序独立Linux套件116次、10组HTTP成功路径40次及最新Mac套件116次通过；完整Linux正在复跑，尚未新增真实调用或上传。失败及证据限制见[验证账](docs/changes/text-protocol-alignment/verification.md)。
-
-2026-10-24，按用户继续优化的授权，完成[文本协议矩阵](docs/evidence/text-protocol-matrix.md)并实施[契约对齐](docs/changes/text-protocol-alignment/proposal.md)：兼容官方数值时间/指令对象列表/可空原因，隔离非执行metadata权限，补终态/status与total一致性及HTTP执行内响应关联；普通上游JSON/事件1 MiB以容纳已接受的大请求回显，总流8 MiB和图片/独立compact预算不变。macOS完整后端exit 0：203项Swift及全部脚本，新增独立字面量HTTP 45次/WS上游71次，共116次实际执行，通过两轮、300000字节请求回显、稀疏流、类型/状态/总数/关联/超限负向及持久用量/unknown/隐私/不重放。Linux正在构建，真实累计仍5次，不将这些独立缺口认定为第五笔唯一根因。核查后按原授权恢复受控真实验证的准备，尚未新增调用或上传；真实两轮/Desktop及矩阵明确列出的订阅参数、普通多视图等缺口继续保留。
+随后第六笔受控真实生成经既有Clash收到文本及完整input51/output11，但终态被upstream_usage_container拒绝；首错停止，第二轮未发送，账本settled/failed、unresolved0，服务器及本机私有副本SHA核对保留。累计6/8次；历史四笔unknown（最早仅外部记录）及第五笔已结算失败分别保留。无原始响应，尚不能确认具体附加字段/容量；复核发现整份用量只允许数字/一层数字明细的假设，正在按已知计量严格/非执行metadata有界隔离分责，并细分固定诊断。新程序尚未真实调用。原公开合成入口/旧服务健康且未改，隔离实例回收、临时凭证清除；无推送/发布/正式切换。真实两轮/Desktop、普通多视图及订阅参数等仍未验收。
 
 2026-10-23，用户要求先自我反思复盘，新增[协议对齐复盘](docs/evidence/protocol-alignment-review.md)：确认外部参考偏局部、同源夹具共享假设、校验职责未完整分类、真实闭环过晚及诊断证据缺口。下一步先做完整请求/响应/事件/多轮的只读契约矩阵，再集中提出兼容改进；暂缓新增真实调用及部署，累计仍5次，两轮未通过，不要求用户再次重试。此前已启动的72a01c6固定对象诊断候选macOS定向5项测试/构建、Linux完整verification与runtime构建已完成，尚未上传或运行真实调用；不计新安装/Desktop/提供者验收。
 
