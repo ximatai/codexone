@@ -58,6 +58,10 @@ class Provider(BaseHTTPRequestHandler):
         if prompt == 'invalid-output':
             item['result'] = 'bm90LWFuLWltYWdl'
         if prompt == 'abort-after-item': return events
+        if prompt == 'invalid-usage':
+            # Deliver trusted host usage in the same terminal that contains invalid tool usage.
+            # An earlier invalid item may correctly cancel before any host evidence arrives.
+            events = events[:1]
         return events + [{'type': 'response.' + response['status'], 'response': response, **lane}]
     def do_POST(self):
         length = int(self.headers['Content-Length'])

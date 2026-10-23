@@ -43,3 +43,6 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 最终Linux首轮：完整普通协议/WS/代理、独立201次、工具/fixture和HTTP Images通过，但WS Images的invalid-usage未保留预期input5，命令失败，不计出口。追溯为新增已知计数校验在allowMetadata=false时仍继续执行，使图片item.added里的负计数比旧imageResult/终态消费更早拒绝，改变独立reader观察时序；不是立即读账等待问题。修正为图片/独立compact原numeric校验后返回，新增规则只作用于已明确授权的普通纯文本路径。未删除或放宽图片可信计数断言，重新构建并回归后才恢复真实调用。
+
+
+图片探针进一步校准证据来源：invalid-usage原序列在较早item中就放入错误工具用量，不能保证取消前一定收到后续host终态；既有input5断言只有在可信host计量已送达时才成立。改为在同一终态中提供合法host与非法tool用量，继续严格要求unknown且保留host5/12；较早无终态关闭由现有abort-after-item覆盖。不以等待或丢断言掩盖缺证据。修正后的Mac两传输Images再次exit 0；产品17e625b未再变动，最终Linux检查待完成。
