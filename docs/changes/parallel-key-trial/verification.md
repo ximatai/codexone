@@ -58,3 +58,9 @@ Linux amd64优化候选 `bdb67f4edd454a86f3893fd6164159b62609b965`：镜像ID `s
 首轮Linux构建随本机Docker守护进程重启以EOF中断；未确定重启原因，不计通过。守护进程恢复后复用缓存重建成功，没有重跑已通过的macOS全集，也没有重启或修改服务器旧服务。本机镜像归档119,001,600 bytes，SHA256 `edd0ac1f3d67d06c22389b6c9fcf7d641ab11fd7c13b078ccddf837fef5caa31`；与旧已验证归档共享的内容复用，差量14,370,895 bytes，按固定来源/偏移/长度重建并校验完整SHA，不能以差量自身摘要代替镜像一致性。
 
 候选已在已授权新侧部署，目标重建完整归档及运行程序SHA均匹配；新配置/管理员/身份未变、旧服务容器/镜像未变healthy。公网正常信任校验，两前缀JSON/SSE/WSS与同socket预热、三种已知null组合200，错误类型/未知成员400，401/撤销Key及管理404、HTTP308通过，诊断Key最终撤销。更新后用户再次发送仍得到unsupported_reasoning/400，所选Key无attempt、unknown=0；不标Desktop通过，继续固定原因分类，不推断客户端原字段值。
+
+四项可空控制及固定reasoning拒绝原因（`9acf3e3`）：主Agent7项定向Swift、扩展实际HTTP JSON/SSE/桥接与native WS/预热最终文档及负向不派发、固定枚举/公开envelope不变/16条上限及隐私通过，提交后集中review无新增P1/P2。macOS arm64完整187项Swift及 `./scripts/verify.sh --backend` exit0；Linux新候选/公网诊断仍待本轮后续记录，不提前宣布客户端通过。
+
+Linux新候选最终绑定正确源码 `9acf3e3007c56a4047e8d136870dcc2b22190750`，发布revision录入错误在导出前纠正并复用相同后端缓存；实际剥离程序SHA256 `0e1af00159fd57f45cc8c21434bf7766011465d479deb00fb9a96a2892b34fef`，镜像ID `sha256:ed1982b180148c4040765a7d889da3eff5131b3f9fe33cfd0626f4b5ace47677`。同样无外网/只读/非root/512MiB/2CPU隔离：参数、拒绝诊断、HTTP协议首轮通过；WS全部业务断言后在最后网关退出码断言失败，原断言未保留具体码。只重跑WS失败组并补非零退出采集后通过，尚未执行的fixture随后通过；首轮原因未确认，不冒充一次全集全绿或已修复退出根因。未重跑已通过三组，无前端变更。归档SHA256 `91755cc863b89f3a08e525394fde726d5d9c024b2a04b0e6e98c6446f076c72d`。
+
+四项控制候选公网双前缀JSON/SSE/WSS/预热、已知nullable组合、负向参数/认证/管理隔离通过；运行SHA匹配，配置及旧服务未变，诊断Key撤销。用户再次失败固定原因reasoning_members，unknown=0；这仅确认额外成员，不输出字段名或参数原值。按官方客户端发送结构增加context三枚举及summary delivery单枚举，9项定向Swift与实际四传输/预热最终文档和负向无派发通过；新候选尚待Linux/部署，不写实际Desktop通过。

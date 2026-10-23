@@ -16,7 +16,7 @@ class RecordingHandler(Handler):
     def events(self, document):
         with self.server.guard:
             self.server.observed.append((document.get('reasoning'), 'tools' in document, document.get('tools'),
-                {k: document[k] for k in ['text', 'tool_choice', 'parallel_tool_calls'] if k in document}))
+                {k: document[k] for k in ['text', 'tool_choice', 'parallel_tool_calls', 'stream_options'] if k in document}))
         return super().events(document)
 
 
@@ -34,7 +34,9 @@ def main():
              ({'effort': None, 'summary': 'auto'}, {'summary': 'auto'}, {}),
              ({'effort': 'ultra', 'summary': 'none'}, {'effort': 'ultra', 'summary': 'none'}, {'tools': []}),
              ({'summary': None}, {}, {'text': {'verbosity': None, 'format': None}, 'tool_choice': None, 'parallel_tool_calls': None}),
-             ({'effort': 'high'}, {'effort': 'high'}, {'text': {'verbosity': 'high'}, 'tool_choice': 'auto', 'parallel_tool_calls': False})]
+             ({'effort': 'high'}, {'effort': 'high'}, {'text': {'verbosity': 'high'}, 'tool_choice': 'auto', 'parallel_tool_calls': False}),
+             *[({'effort': 'high', 'context': context}, {'effort': 'high', 'context': context}, {'stream_options': {'reasoning_summary_delivery': 'sequential_cutoff'}}) for context in ['auto', 'current_turn', 'all_turns']],
+             ({'context': None}, {}, {'stream_options': {'include_usage': True, 'reasoning_summary_delivery': 'sequential_cutoff'}})]
     try:
         for transport in ['http', 'websocket']:
             with tempfile.TemporaryDirectory(prefix='codexone-reasoning-') as temporary:
@@ -52,7 +54,7 @@ def main():
                         for reasoning, expected, extra in cases:
                             request = dict(model='synthetic-text', input='Synthetic nullable reasoning check',
                                            reasoning=reasoning, **extra)
-                            controls = {k: v for k, v in extra.items() if k in ['text', 'tool_choice', 'parallel_tool_calls'] and v is not None}
+                            controls = {k: v for k, v in extra.items() if k in ['text', 'tool_choice', 'parallel_tool_calls', 'stream_options'] and v is not None}
                             if 'text' in controls: controls['text'] = {k: v for k, v in controls['text'].items() if v is not None}
                             expected_wire = (expected, 'tools' in extra, extra.get('tools'), controls)
                             for stream in [False, True]:
@@ -69,9 +71,9 @@ def main():
                         before = server.sequence
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             attempts = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                        for invalid in [dict(reasoning={'effort': False}), dict(reasoning={'summary': []}), dict(reasoning={'summary': None, 'private': None}), dict(text={'verbosity': False}), dict(text={'format': False}), dict(tool_choice=False), dict(parallel_tool_calls='false')]:
+                        for invalid in [dict(reasoning={'effort': False}), dict(reasoning={'summary': []}), dict(reasoning={'summary': None, 'private': None}), dict(text={'verbosity': False}), dict(text={'format': False}), dict(tool_choice=False), dict(parallel_tool_calls='false'), dict(reasoning={'context': False}), dict(reasoning={'context': 'private'}), dict(stream_options={}), dict(stream_options={'reasoning_summary_delivery': 'private'})]:
                             request = dict(model='synthetic-text', input='Synthetic rejection check', **invalid)
-                            code = 'unsupported_reasoning' if 'reasoning' in invalid else 'unsupported_text' if 'text' in invalid else 'unsupported_tools' if 'tool_choice' in invalid else 'invalid_request'
+                            code = 'unsupported_reasoning' if 'reasoning' in invalid else 'unsupported_text' if 'text' in invalid else 'unsupported_tools' if 'tool_choice' in invalid else 'unsupported_stream_options' if 'stream_options' in invalid else 'invalid_request'
                             status, body = connect(ports['data'], 'POST', prefix + '/responses', request)
                             assert status == 400 and json.loads(body)['error']['code'] == code
                             if transport == 'websocket':

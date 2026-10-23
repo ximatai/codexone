@@ -69,6 +69,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，四项已知可空控制与固定拒绝分类（`9acf3e3`）已更新合成旁路，macOS完整187项Swift/全部后端脚本及Linux逐项协议回归通过，集中review无新增P1/P2；Linux首轮WS退出断言失败，补采集重跑未复现，原因保留。公网双前缀JSON/SSE/WSS/预热/认证负向通过，诊断Key撤销，旧服务未变healthy。用户再试仍失败，现确认固定原因reasoning_members、unknown=0。进一步官方客户端源码核对发现context及summary delivery新增控制，正按明确枚举补兼容；未启用请求镜像或读取正文。旧候选和完整归档保留，真实订阅关闭，Desktop/M5仍未通过。
+
 2026-10-23，可选reasoning兼容候选已部署（`bdb67f4`），已知effort/summary的null移除、tools缺省与显式[]保留；主Agent实现、集中review无新增P1/P2。macOS arm64完整184项Swift与全部后端脚本通过；Linux amd64实际剥离程序的五组协议/拒绝/WS/fixture定向检查通过。首轮构建随本机Docker重启以EOF中断，恢复后缓存重建成功，不将中断算通过。
 
 候选 `codexone:reasoning-compat-candidate`，源码 `bdb67f4edd454a86f3893fd6164159b62609b965`，镜像ID `sha256:24aaa77264142d45ce875cbb181f2c8054c475826fdaed72716ba96acb81fb22`，Linux程序SHA256 `8735ced3596e8a04797d661e0078f0d5a1814e3225b19190c4bfc566a63e0838`；实际目标一致。完整镜像复用旧归档内容后按最终SHA重建，仅上传约14MiB；旧归档/服务与新侧配置/管理凭证未变。公网双前缀HTTPS JSON/SSE/WSS、null对照与预热、认证负向及撤销通过，仅所选原Key启用，账号/unknown=0，真实订阅关闭。
@@ -79,7 +81,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 新候选 `codexone:rejection-diagnostic-candidate`，源码 `16082eb9c84b2e2bccb7ee3daf918a92cdfd7964`，镜像ID `sha256:fb2c26d82de20d325c1643488e84a26c101e65b2ccd25fbe0e19cbfa2eb45ea0`，Linux程序SHA256 `e413efd62e3c2058d27edb8aa320342126de95e5b9e072421a6cd824f800d7eb`；旧候选保留，归档在忽略产物目录。部署使用已授权代理管理链路、校验后分段续传；无客户端SSH转发端口，具体连接信息私下保留。
 
-此前诊断候选的真实Desktop仍失败：握手101已确认Key认证通过，当时具体码为 `unsupported_reasoning` / 400，未创建执行、unknown=0。合成公网复现可选effort/summary为null被拒、明确值正常；用户未特殊配置。下一步修复已知reasoning可选null语义并继续实际客户端联通，不能把合成对照当成已证明真实请求字段或完整Desktop兼容。见[诊断出口](docs/changes/request-rejection-diagnostics/verification.md)。
+此前诊断候选的真实Desktop仍失败：握手101已确认Key认证通过，当时具体码为 `unsupported_reasoning` / 400，未创建执行、unknown=0。合成公网复现可选effort/summary为null被拒、明确值正常；用户未特殊配置。该null缺口随后已修复，更新后用户实际请求仍失败，见最新记录；不能把合成对照当成已证明真实请求字段或完整Desktop兼容。见[诊断出口](docs/changes/request-rejection-diagnostics/verification.md)。
 
 2026-10-23，用户首轮真实Desktop合成请求失败，界面显示重连5/5及通用网关错误，未计兼容通过。只读核对：新网关/fixture healthy，无OOM/重启；当时所选Key无执行/持久拒绝记录；后续临时脱敏状态诊断及具体错误码定位见最新出口，临时日志已恢复关闭。真实订阅仍关闭。
 

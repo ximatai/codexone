@@ -74,3 +74,37 @@ import Testing
     } catch { Issue.record("Unexpected error") }
   }
 }
+
+@Test func codexReasoningContextAndSummaryDeliveryPreserveKnownWireControls() throws {
+  for context in ["auto", "current_turn", "all_turns"] {
+    let request = try ResponseRequest(
+      data: Data(
+        (#"{"model":"synthetic","input":"text","reasoning":{"context":""# + context
+          + #""},"stream_options":{"reasoning_summary_delivery":"sequential_cutoff","include_usage":false}}"#)
+          .utf8))
+    #expect(request.document["reasoning"]?["context"]?.string == context)
+    #expect(
+      request.document["stream_options"]?["reasoning_summary_delivery"]?.string
+        == "sequential_cutoff")
+    #expect(request.document["stream_options"]?["include_usage"]?.bool == false)
+  }
+  let request = try ResponseRequest(
+    data: Data(
+      #"{"model":"synthetic","input":"text","reasoning":{"context":null},"stream_options":{"reasoning_summary_delivery":"sequential_cutoff"}}"#
+        .utf8))
+  #expect(request.document["reasoning"] == .object([:]))
+}
+
+@Test func codexReasoningControlsRejectUnknownTypesValuesAndEmptyStreamOptions() {
+  for extra in [
+    #""reasoning":{"context":false}"#, #""reasoning":{"context":"private"}"#,
+    #""reasoning":{"context":{"response_id":"private"}}"#, #""stream_options":{}"#,
+    #""stream_options":{"reasoning_summary_delivery":false}"#,
+    #""stream_options":{"reasoning_summary_delivery":"private"}"#,
+    #""stream_options":{"reasoning_summary_delivery":"sequential_cutoff","private":null}"#,
+  ] {
+    #expect(throws: (any Error).self) {
+      try ResponseRequest(data: Data((#"{"model":"synthetic","input":"text","# + extra + "}").utf8))
+    }
+  }
+}

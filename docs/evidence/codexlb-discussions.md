@@ -30,7 +30,7 @@
 | [PR2569](https://github.com/Soju06/codex-lb/pull/2569)，head `778e10f4ab7111c7ab5539b448df2763fabc1987` | 作者报告developer消息提升到instructions后，在previous_response_id续接时丢失。当前平台保留developer原位置，合成HTTP实测收到的input与工具数组/嵌套required顺序相同；不照搬system提升或删除历史，真实提供者system接受情况仍待验。 |
 | [PR2634](https://github.com/Soju06/codex-lb/pull/2634)，head `f7bf33633223af8ad3f8c3a3fce50f20febcccbb` | 长连接不能永久缓存账号可用性，应在每次新turn准入复核；已派发与未派发分开处理。当前平台每turn经账号池及SQLite账号/Key版本屏障，并非仅握手认证；派发屏障后的微小竞态不能承诺绝对即时撤销，维持既有责任语义。 |
 | [PR2472](https://github.com/Soju06/codex-lb/pull/2472)及[维护者分析](https://github.com/Soju06/codex-lb/pull/2472#issuecomment-5866469378)，head `bfffc82d40f1b60b6c165e53278226004736de1a` | 吸收真实组合路径的生成器/租约收尾验证；维护者复现finally未执行，并要求独立修复。拒绝把传输损失伪装成rate_limit_exceeded来诱导重试：维护者指出未知response.failed也可能被Codex重试，伪装会污染下游额度分类。终态、清理和重试许可分别验证。 |
-| [PR1903](https://github.com/Soju06/codex-lb/pull/1903)及[维护者方案取舍](https://github.com/Soju06/codex-lb/pull/1903#issuecomment-5662636957)，当前head `b28036815f619d0da436414db367ae4bc64f3941` | 历史关闭讨论提出共享reader不得因单消费者阻塞：每请求保留字节上限、全局预算、原前缀后失败/EOS及释放责任。当前平台已有有界inbox与5秒push期限，但共享reader仍可能等待一个lane、超时后影响整socket；这是自身源码发现的隔离风险，尚无本轮独立对抗实测，不写成已解决。 |
+| [PR1903](https://github.com/Soju06/codex-lb/pull/1903)及[维护者方案取舍](https://github.com/Soju06/codex-lb/pull/1903#issuecomment-5662636957)，当前head `b28036815f619d0da436414db367ae4bc64f3941` | 历史关闭讨论提出共享reader不得因单消费者阻塞：每请求保留字节上限、全局预算、原前缀后失败/EOS及释放责任。当前平台已有有界inbox与5秒push期限，但共享reader仍可能等待一个lane、超时后影响整socket；这是原生WS同一物理socket多lane的潜在隔离风险，尚无本轮独立对抗实测。当前HTTP→WS桥接每次执行独占上游连接，并非该PR的多SSE共享reader结构；先测收益，不直接引入同样的复杂队列，不写成同一缺陷或已解决。 |
 | [PR2581](https://github.com/Soju06/codex-lb/pull/2581)，head `d83dac5b4fc1159a19fd539bc635e3425eecee9a` | 原完整历史与旧socket锚点不能混用；加密agent消息不因恢复而跨账号。当前不自动注入previous_response_id，且agent_message不在已支持输入集合；保留明确不支持，不自动删消息或赋予重放资格。 |
 | [PR2589](https://github.com/Soju06/codex-lb/pull/2589)，head `c22607d0f11e74aa871ae518e08e8f6404237bc0` | HTTP/WS客户端指纹应有一致、有限的契约，不能由随意header扩大路由能力。该PR还夹带依赖升级，不整包吸收。当前订阅上游只组装验证后的账号头，未实现其客户端指纹/版本/beta选择策略；合成fixture不证明真实握手兼容。 |
 
@@ -43,3 +43,5 @@
 当前 `WebSocketTurns` 首事件要求response.created，独立error首帧会走invalid_upstream_turn；这项源码差异应与流中失败终态一起增加真实socket负向样本，区分安全错误映射、unknown与账号健康，不直接透传原始上游错误正文。当前没有本轮提供者实测，不据此宣布真实订阅缺陷已确认。
 
 建议下一闭环集中处理“已知可选参数与失败可见性”：字段逐项缺省/null/显式值/错误类型矩阵，HTTP/SSE/原生与桥接WS同样的上游文档，首帧/流中拒绝、终态唯一与owner清理；再单列多lane慢读隔离和订阅握手头契约。保持主Agent实现、定向测试、一次集中review/出口验证；不按每个字段反复全量构建。真实订阅继续关闭，M5和Desktop完整验收不因本轮对照完成。
+
+进一步只读[官方Codex发送结构](https://github.com/openai/codex/blob/d6817454d76885e9d0e118bbf82e507aed6f715a/codex-rs/codex-api/src/common.rs)：Reasoning在effort/summary之外还有context（auto/current_turn/all_turns），StreamOptions包含reasoning_summary_delivery=sequential_cutoff。当前用户拒绝细分为reasoning_members，与此差异一致，但没有读取其具体字段。采用显式枚举与严格未知拒绝；CodexLB extra=allow可保留该扩展只是实践参考，不作为放开全部未知成员的理由。临时请求镜像诊断未启用。

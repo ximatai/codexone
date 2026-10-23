@@ -75,7 +75,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪，不把 compaction ID 当 previous_response_id；保留的已有引用沿原归属，新引用先绑定，再整体返回；压缩窗口内的工具调用/结果必须来自已授权输入 call_id，不能创建新客户端工具执行。压缩请求沿文本 512 KiB、输出 256 KiB/256 项、总期限及失败语义；未支持模式/输入不发送。
 
-reasoning对象仅接受effort/summary两个已知成员，成员为null表示未指定并在转发前移除；有效非null值保持，未知成员及错误类型继续拒绝。tools缺省与显式空数组保持区别，不合成工具声明。兼容的客户端 metadata 只允许有界字符串字典；stream_options 仅 include_usage。文本/推理内容分类型校验，不透传未经分类的文件引用、注解或嵌套对象；工具结果的可选 name/namespace 和状态等字段同样按标量校验。提供者原始错误使用脱敏错误替代，响应回显的 previous_response_id 必须匹配已授权输入；可信计数仍在输出分类前记录。客户端须显式关闭本阶段未支持的内置 web_search；网关不静默删掉工具声明以制造兼容结果。
+reasoning对象仅接受effort/summary/context三个已知成员，成员为null表示未指定并在转发前移除；有效非null值保持，未知成员及错误类型继续拒绝。tools缺省与显式空数组保持区别，不合成工具声明。兼容的客户端 metadata 只允许有界字符串字典；stream_options仅include_usage布尔和reasoning_summary_delivery=sequential_cutoff。文本/推理内容分类型校验，不透传未经分类的文件引用、注解或嵌套对象；工具结果的可选 name/namespace 和状态等字段同样按标量校验。提供者原始错误使用脱敏错误替代，响应回显的 previous_response_id 必须匹配已授权输入；可信计数仍在输出分类前记录。客户端须显式关闭本阶段未支持的内置 web_search；网关不静默删掉工具声明以制造兼容结果。
 
 ## P16：受控模型目录
 
@@ -118,4 +118,6 @@ Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编�
 
 可信离线profile导入及字段边界见[模型快照](../development/model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
-已知可空的text.verbosity/format、tool_choice/parallel_tool_calls与已知reasoning成员按未指定处理，转发时仅移除这些位置的null；text空对象保留。非可空tools/store/stream、未知成员和错误类型不因此接受。拒绝日志可增加固定枚举reason细分reasoning的对象、未知成员、effort、summary类型/取值，仍受原限额；不记录原字段名/值，公开错误码和envelope不增加该诊断字段。
+已知可空的text.verbosity/format、tool_choice/parallel_tool_calls与已知reasoning成员按未指定处理，转发时仅移除这些位置的null；text空对象保留。非可空tools/store/stream、未知成员和错误类型不因此接受。拒绝日志可增加固定枚举reason细分reasoning的对象、未知成员、effort、summary类型/取值及context，仍受原限额；不记录原字段名/值，公开错误码和envelope不增加该诊断字段。
+
+Codex reasoning.context仅允许auto/current_turn/all_turns，null转发前移除，不合成默认值、不改变上下文归属或重放资格。stream_options接受include_usage布尔与reasoning_summary_delivery=sequential_cutoff，可单独或组合出现，空对象/未知成员/错误类型拒绝；保持现有事件验证及执行预算。

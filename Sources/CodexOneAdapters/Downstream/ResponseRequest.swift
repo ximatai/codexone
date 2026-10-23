@@ -7,6 +7,7 @@ enum ProtocolRejectionDetail: String, Sendable {
   case reasoningEffort = "reasoning_effort"
   case reasoningSummaryType = "reasoning_summary_type"
   case reasoningSummaryValue = "reasoning_summary_value"
+  case reasoningContext = "reasoning_context"
 }
 
 struct GatewayProtocolError: Error, Sendable {
@@ -98,7 +99,8 @@ struct ResponseRequest: Sendable {
       guard let reasoningFields = reasoning.object else {
         throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningObject)
       }
-      guard reasoningFields.keys.allSatisfy({ ["effort", "summary"].contains($0) }) else {
+      guard reasoningFields.keys.allSatisfy({ ["effort", "summary", "context"].contains($0) })
+      else {
         throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningMembers)
       }
       if let effort = reasoningFields["effort"], effort != .null {
@@ -113,6 +115,11 @@ struct ResponseRequest: Sendable {
         }
         guard ["auto", "concise", "detailed", "none"].contains(summary) else {
           throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningSummaryValue)
+        }
+      }
+      if let context = reasoningFields["context"], context != .null {
+        guard ["auto", "current_turn", "all_turns"].contains(context.string ?? "") else {
+          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningContext)
         }
       }
       // Optional null members mean unspecified; never broaden the accepted field set.
@@ -174,8 +181,11 @@ struct ResponseRequest: Sendable {
     self.functionNames = tools.functions
     self.customToolNames = tools.custom
     if let options = fields["stream_options"] {
-      guard options.object?.keys.allSatisfy({ $0 == "include_usage" }) == true,
-        options["include_usage"]?.bool != nil
+      guard let values = options.object, !values.isEmpty,
+        values.keys.allSatisfy({ ["include_usage", "reasoning_summary_delivery"].contains($0) }),
+        values["include_usage"] == nil || values["include_usage"]?.bool != nil,
+        values["reasoning_summary_delivery"] == nil
+          || values["reasoning_summary_delivery"]?.string == "sequential_cutoff"
       else { throw GatewayProtocolError(400, "unsupported_stream_options") }
     }
     if let choice = fields["tool_choice"] {
