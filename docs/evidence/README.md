@@ -3,6 +3,7 @@
 - [明确版本客户端续接与恢复契约](client-recovery.md)：正常续接、EOF 重连和输出读取的证据边界。
 - [CodexLB接入行为对照](codexlb-compatibility.md)：明确源码版本的恢复、认证额度、图片、目录与期限差异，不代替线上或客户端验收。
 - [CodexLB讨论依据](codexlb-discussions.md)：Issue/PR动机、维护者取舍与合并边界，对应后续兼容设计方向。
+- [网关活跃度与关键故障对照](gateway-reliability.md)：CLIProxyAPI/LiteLLM 的目录、多轮、授权、终态与用量证据及本项目适用边界。
 
 原型来源：[ximatai/codexone](https://github.com/ximatai/codexone)，参考提交 `3af8a52fe131b81cbe1a5ca043eaf14e7cbe9bb5`。依据限于该原型及对应测试环境，不能推导正式项目已实现或通过。
 

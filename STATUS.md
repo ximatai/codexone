@@ -69,6 +69,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，按用户要求只读核对四个参考网关的维护活跃度，均有近期实质提交与发布；选择CLIProxyAPI与LiteLLM深入跟进。已核对关键Issue评论/关闭时间线、修复patch、指定源码及部分修复进入发布标签的祖先关系，形成[六项故障对照](docs/evidence/gateway-reliability.md)：能力目录、逐轮授权、网络/健康分类、多轮上下文、可信终态和用量责任。明确区分已发布源码、未合并/草稿、配置处理和转fork关闭；本项目已有防线不写成新发现缺陷，外部报告不代证本项目验收。本机macOS文档检查127份通过、差异空白检查通过，仅文档与静态对照，未重跑产品全集或外部测试、未修改业务/客户端/服务。下一步仍先收敛默认客户端+实际夹具+多轮/失败消费的完整方案，用户恢复实施前保持修复/部署暂停，真实订阅关闭。
+
 2026-10-23，最新用户要求“先找原因，不着急修复”：已停止后续业务代码修改与部署。新候选实际请求报unsupported_input/400（不再是unsupported_reasoning），所选原Key无attempt、unknown=0。只读源码及本机Desktop内置CLI 0.163.0-alpha.11.1隔离合成实验，确认两处独立契约缺口：默认gpt-6.1-sol走Responses-Lite，input.additional_tools不在当前允许集合；显式目录路径虽HTTP200，部署合成fixture还因usage缺total_tokens使CLI终态解析失败。仅在本机内存夹具补齐该字段后CLI exit0/turn.completed，没有修改线上服务。已有CLI验收使用synthetic-text+显式目录及不同终态夹具，未覆盖默认模型+部署夹具组合。
 
 用户实际input类型未记录，不能把本机additional_tools复现当成已捕获真实请求结构；目前确认的是输入校验拒绝与可复现的默认客户端不兼容，第二处为进入上游后会遇到的独立夹具障碍。具体对照、单变量探针和证据边界见[只读调查](docs/changes/parallel-key-trial/verification.md#用户要求先定位不修复后的只读调查)。下一步先向用户报告原因，后续再按默认模型/Lite工具/归属与终态消费完整闭环决定方案；不继续逐字段补丁、放行未知输入或删除工具声明。当前运行候选仍为下方ff1322f，真实订阅关闭，Desktop/M5/O14继续保留。
