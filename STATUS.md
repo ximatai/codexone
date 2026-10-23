@@ -75,6 +75,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-24，修正探针后Linux仍复现完整JSON响应后indeterminate结果，已补完整JSON批写及校验/绑定/提交后的同步终态结果观察；不以usage/item.done/部分写入提前成功，不改Core结算/first-observation/unknown语义。新程序macOS 203项Swift、代理故障与独立116次及后续受影响回归通过，Linux协议/代理/独立116次/工具/图片通过、维护段正在运行。Mac完整命令中的代理异步读账等待已修正，分段结果及首轮失败分别记录，未伪称一次全绿。阶段出口集中只读复核和实际新候选安装尚待完成；真实累计仍5次、未上传或恢复调用。详见[验证账](docs/changes/text-protocol-alignment/verification.md)。
+
 2026-10-24，Linux文本协议出口首轮出现一笔完整响应后的failed结果，未取得具体failure子类，不记通过；发现探针用不存在的pending等待在途，已改为intent有界收敛并保留严格断言，未改产品结果/结算语义。同一程序独立Linux套件116次、10组HTTP成功路径40次及最新Mac套件116次通过；完整Linux正在复跑，尚未新增真实调用或上传。失败及证据限制见[验证账](docs/changes/text-protocol-alignment/verification.md)。
 
 2026-10-24，按用户继续优化的授权，完成[文本协议矩阵](docs/evidence/text-protocol-matrix.md)并实施[契约对齐](docs/changes/text-protocol-alignment/proposal.md)：兼容官方数值时间/指令对象列表/可空原因，隔离非执行metadata权限，补终态/status与total一致性及HTTP执行内响应关联；普通上游JSON/事件1 MiB以容纳已接受的大请求回显，总流8 MiB和图片/独立compact预算不变。macOS完整后端exit 0：203项Swift及全部脚本，新增独立字面量HTTP 45次/WS上游71次，共116次实际执行，通过两轮、300000字节请求回显、稀疏流、类型/状态/总数/关联/超限负向及持久用量/unknown/隐私/不重放。Linux正在构建，真实累计仍5次，不将这些独立缺口认定为第五笔唯一根因。核查后按原授权恢复受控真实验证的准备，尚未新增调用或上传；真实两轮/Desktop及矩阵明确列出的订阅参数、普通多视图等缺口继续保留。

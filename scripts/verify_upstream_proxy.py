@@ -262,7 +262,10 @@ def main():
                             error=json.loads(body)['error'];assert set(error)=={'type','code','message','request_id'}
                             assert error['request_id'] in error['message'] and provider.sequence==before
                             if mode=='reject':assert error['code']=='upstream_proxy_authentication_required',error['code']
-                            assert ledger(root)==[('unknown',)]
+                            deadline=time.monotonic()+3
+                            while ledger(root)!=[('unknown',)]:
+                                assert time.monotonic()<deadline,(transport,mode,ledger(root))
+                                time.sleep(.02)
                         if process.poll() is None:process.terminate();process.wait(10)
                         output=process.stdout.read()
                         for private in [TOKEN,'synthetic-private-provider-error-never-log','synthetic-private-upstream-token-never-log',str(config),f'http://127.0.0.1:{proxy.server_address[1]}']:assert private.encode() not in output

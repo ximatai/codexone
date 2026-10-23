@@ -108,6 +108,7 @@ extension HTTPResponseExecution {
         } else if observation.terminal {
           try await emit(event["response"]!)
         }
+        if observation.terminal { try observeSubmittedTerminal(event, context: context) }
         if observation.terminal { break }
       }
     }

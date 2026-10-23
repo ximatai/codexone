@@ -61,6 +61,7 @@ struct ProtocolFailureDiagnosticsTests {
       .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
       .upstreamUsageContainer,
       .upstreamTerminalStatus, .upstreamUsageTotal,
+      .downstreamJSONWrite,
     ] {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
       let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)

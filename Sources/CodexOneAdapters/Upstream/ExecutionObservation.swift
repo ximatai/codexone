@@ -84,3 +84,10 @@ func observeTerminalOutcome(_ event: JSONValue, context: ExecutionContext) throw
       failure: type == "response.failed" ? .upstreamRejected : .indeterminate,
       atUnixSeconds: Int64(Date().timeIntervalSince1970)))
 }
+
+/// A validated, bound terminal has been submitted downstream; cleanup cannot rewrite it.
+func observeSubmittedTerminal(_ event: JSONValue, context: ExecutionContext) throws {
+  guard event["type"]?.string == "response.completed" else { return }
+  try context.observeOutcome(
+    .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+}

@@ -141,3 +141,5 @@ Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原�
 提供者响应created_at若存在须为JSON数值，包括小数，不舍入或用于授权/计价；instructions回显允许字符串/null或最多128项的对象列表，仅为元数据，不提取其内层ID/工具/usage作为绑定、执行或计量证据。请求instructions沿独立输入契约，不由回显兼容扩大。incomplete_details非null时为最多32成员的对象，reason可缺省/null/字符串，其余元数据不参与控制；incomplete仍为失败结果。原JSON深度/单事件/总字节限制始终保持。
 
 响应status缺省/null保持既有稀疏事件兼容；存在时created只允许queued/in_progress、in_progress只允许in_progress，completed/failed/incomplete须与对应事件一致。total_tokens存在时须为0—2000000000的整数，输入输出计数均已知时等于二者之和；不补零或反推缺失证据。相同执行的合法计量先观察，矛盾状态或下游total不合法再拒绝输出，不能丢掉此前可信用量。错误原因仅固定枚举、无字段值/正文。
+
+JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。

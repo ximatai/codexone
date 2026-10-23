@@ -201,6 +201,7 @@ struct HTTPResponseExecution: Sendable {
               try observeTerminalOutcome(event, context: context)
               terminal = observation.terminal
               try await emit(event)
+              if terminal { try observeSubmittedTerminal(event, context: context) }
               if terminal { break readUpstream }
             }
           }
@@ -239,6 +240,7 @@ struct HTTPResponseExecution: Sendable {
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
           try await emit(document)
+          try observeSubmittedTerminal(event, context: context)
         }
       }
       return nil

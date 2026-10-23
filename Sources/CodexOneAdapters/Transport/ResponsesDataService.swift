@@ -532,11 +532,14 @@ private actor ProtocolResponseWriter {
   }
   func setStreaming(_ value: Bool) { streaming = value }
   private func write(_ part: HTTPServerResponsePart) async throws {
+    try await writeBatch([part])
+  }
+  private func writeBatch(_ parts: [HTTPServerResponsePart]) async throws {
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {
       self.channel.close(promise: nil)
     }
     defer { deadline.cancel() }
-    try await writer.write(part)
+    try await writer.write(contentsOf: parts)
   }
   func json(_ value: JSONValue, status: Int = 200) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
@@ -547,10 +550,18 @@ private actor ProtocolResponseWriter {
     ]
     if !keepAlive { headers.add(name: "connection", value: "close") }
     started = true
-    try await write(
-      .head(.init(version: .http1_1, status: .init(statusCode: status), headers: headers)))
-    try await write(.body(.byteBuffer(ByteBuffer(data: data))))
-    try await write(.end(nil))
+    do {
+      // A Content-Length client may close as soon as it consumes the body. Do not yield
+      // between that body and end: submit one complete bounded response to the writer.
+      try await writeBatch([
+        .head(.init(version: .http1_1, status: .init(statusCode: status), headers: headers)),
+        .body(.byteBuffer(ByteBuffer(data: data))), .end(nil),
+      ])
+    } catch {
+      ProtocolFailureDiagnostics.record(
+        .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
+      throw error
+    }
     ended = true
   }
   func event(_ value: JSONValue) async throws {

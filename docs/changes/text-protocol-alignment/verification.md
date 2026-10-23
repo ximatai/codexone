@@ -17,3 +17,7 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 核查图片配置和现有实现后，更正P13/P14遗留的连接/传输聚合/WS共享队列数字，未改变任何运行容量；目标弱宿主O14仍保留。此前已构建runtime实际OCI/Compose初始化、非root/只读、SPA/Key持久、锁/迁移/重启检查exit 0；不能据runtime安装通过跳过verification失败。
 
 探针修正后macOS独立套件116次执行再次exit 0；应用程序未改动，未重复已通过的203项Swift/其余后端全集。Linux完整verification正在复跑，不将独立诊断容器通过替代该出口。
+
+完整Linux复跑仍失败，现明确为HTTP/details-empty组第一笔JSON在完整响应后settled/failed、failure=indeterminate，用量5/3完整，其他三笔成功；据此排除“仅探针提前停服”的解释。保持原失败账本断言，按提案补完整JSON批量提交及已提交终态的同步结果观察；不改Core first-observation、计量或未知执行语义，不在写入前记录成功。新程序macOS定向build exit 0，下一步重新执行受影响完整后端/Linux/实际安装与快速关闭负向，尚未恢复真实调用。
+
+新程序macOS完整后端首轮在代理stall错误组即时读账失败：错误JSON批写比finalizer收敛更早可见。改为3秒内严格等待unknown，不删失败断言；该完整命令不计exit 0。203项Swift及此前全部脚本已通过，代理完整套件定向复查exit 0，随后顺序补跑其余全部后端脚本（含独立116次、工具/压缩/图片等）；不为测试等待改产品持久或取消语义。Linux新程序已通过完整协议/代理/独立116次/工具/fixture/Images检查，维护段仍在运行，阶段出口尚待完成。

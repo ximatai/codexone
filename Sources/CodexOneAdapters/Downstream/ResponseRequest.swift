@@ -32,6 +32,7 @@ enum ProtocolRejectionDetail: String, Sendable {
   case upstreamResponseInstructions = "upstream_response_instructions"
   case upstreamTerminalStatus = "upstream_terminal_status"
   case upstreamUsageTotal = "upstream_usage_total"
+  case downstreamJSONWrite = "downstream_json_write"
   case upstreamResponseBoolean = "upstream_response_boolean"
   case upstreamResponseCreated = "upstream_response_created"
   case upstreamResponseIncomplete = "upstream_response_incomplete"
