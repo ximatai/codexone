@@ -32,10 +32,8 @@ final class ExecutionProgress: Sendable {
   func note(event: JSONValue? = nil) {
     state.withLock { value in
       let type = event?["type"]?.string
-      if value.received
-        && ((type?.hasSuffix(".delta") == true && event?["delta"]?.string?.isEmpty != false)
-          || ["response.created", "response.in_progress"].contains(type ?? ""))
-      {
+      if type?.hasSuffix(".delta") == true && event?["delta"]?.string?.isEmpty != false { return }
+      if value.received && ["response.created", "response.in_progress"].contains(type ?? "") {
         return
       }
       value.received = true

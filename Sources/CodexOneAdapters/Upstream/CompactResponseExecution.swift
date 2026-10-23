@@ -39,8 +39,9 @@ extension HTTPResponseExecution {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
+        // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
-          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total)))
+          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
         guard response.status == .ok else {
           throw upstreamRejection(status: response.status, headers: response.headers, compact: true)
         }

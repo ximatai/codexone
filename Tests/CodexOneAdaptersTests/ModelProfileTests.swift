@@ -114,3 +114,19 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
   #expect(throws: (any Error).self) { try ExecutionBudget(total: 10, first: 11) }
   #expect(throws: (any Error).self) { try ExecutionBudget(total: 10, idle: 11) }
 }
+
+@Test func rawConfigurationCannotInjectProfileProvenance() throws {
+  let raw: [String: Any] = [
+    "id": "synthetic", "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1,
+    "catalog": ["baseInstructions": "Synthetic guidance"],
+    "profileProvenance": [
+      "source": "unverified", "revision": "v1", "capturedAtUnixSeconds": Int64.min,
+      "clientVersions": ["0.163.0"], "sha256": "unverified", "overridden": false,
+    ],
+  ]
+  #expect(throws: (any Error).self) {
+    try JSONDecoder().decode(
+      SingleIdentityConfiguration.Model.self,
+      from: JSONSerialization.data(withJSONObject: raw))
+  }
+}

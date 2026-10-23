@@ -73,6 +73,7 @@ class Provider(BaseHTTPRequestHandler):
                 if case == 'comments':
                     if ws: send(self.connection, b'heartbeat', opcode=9)
                     else: self.wfile.write(b': synthetic keepalive\n\n'); self.wfile.flush()
+                elif case == 'empty-delta': emit({'type': 'response.output_text.delta', 'item_id': item['id'], 'output_index': 0, 'content_index': 0, 'delta': ''})
                 elif case == 'status-only': emit({'type': 'response.in_progress', 'response': response})
                 else:
                     count += 1
@@ -113,10 +114,10 @@ def run(binary, transport, duration):
                 'executionTimeoutSeconds':max(140,duration+10),'firstResponseTimeoutSeconds':5,'progressTimeoutSeconds':3}
             if transport != 'http': base['upstreamTransport']='websocket'
             records=[]
-            for case in ('progress','first-silent','idle','comments','status-only','total','cancel','compact') + (('json-silent',) if transport=='http' else ()):
+            for case in ('progress','first-silent','idle','comments','status-only','empty-delta','total','cancel','compact') + (('json-silent',) if transport=='http' else ()):
                 value=dict(base)
                 if case=='first-silent': value['firstResponseTimeoutSeconds']=1
-                if case in ('idle','comments','status-only','json-silent'): value['progressTimeoutSeconds']=1
+                if case in ('idle','comments','status-only','empty-delta','json-silent'): value['progressTimeoutSeconds']=1
                 if case=='total':
                     value.update(executionTimeoutSeconds=2,firstResponseTimeoutSeconds=1,progressTimeoutSeconds=1)
                 directory=root/case; directory.mkdir(); config=directory/'identity.json'
@@ -126,27 +127,41 @@ def run(binary, transport, duration):
                 began=time.monotonic()
                 try:
                     request={'model':'synthetic-text','input':case,'stream':case not in ('compact','json-silent')}
+                    if case=='compact': request.pop('stream')
                     if transport=='native' and case!='compact':
                         sock=dial(ports['data']);sock.settimeout(duration+15)
                         send(sock,{'type':'response.create','model':'synthetic-text','input':case},masked=True)
                         messages=[]
-                        while True:
-                            try: opcode,data=receive(sock,masked=False)
-                            except EOFError:
-                                raise AssertionError((transport,case,'socket ended before expected terminal'))
-                            if opcode==8: break
-                            if opcode==9: send(sock,data,opcode=10,masked=True);continue
-                            assert opcode==1
-                            event=json.loads(data);messages.append(event)
-                            if case=='cancel' or event.get('type') in ('response.completed','error'):break
-                        sock.close()
+                        try:
+                            while True:
+                                try: opcode,data=receive(sock,masked=False)
+                                except EOFError:
+                                    raise AssertionError((transport,case,'socket ended before expected terminal'))
+                                if opcode==8: break
+                                if opcode==9: send(sock,data,opcode=10,masked=True);continue
+                                assert opcode==1
+                                event=json.loads(data);messages.append(event)
+                                if case=='cancel':
+                                    assert event.get('type')=='response.created', 'Cancellation requires a live response'
+                                    break
+                                if event.get('type') in ('response.completed','error'):break
+                        finally: sock.close()
                         body=json.dumps(messages).encode()
                     else:
                         c=http.client.HTTPConnection('127.0.0.1',ports['data'],timeout=duration+15)
                         try:
                             c.request('POST','/v1/responses/compact' if case=='compact' else '/v1/responses',json.dumps(request),{'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'})
                             r=c.getresponse()
-                            if case=='cancel': r.readline();body=b''
+                            if case=='cancel':
+                                assert r.status==200 and r.getheader('Content-Type','').startswith('text/event-stream')
+                                body=b''
+                                while True:
+                                    line=r.readline(262145)
+                                    assert line and len(line)<=262144, 'Missing bounded created event'
+                                    if line.startswith(b'data: '):
+                                        event=json.loads(line[6:])
+                                        assert event.get('type')=='response.created', 'Cancellation requires a live response'
+                                        break
                             else: body=r.read()
                             r.close()
                         finally:c.close()
@@ -160,7 +175,7 @@ def run(binary, transport, duration):
                     else:
                         expected={'first-silent':b'execution_first_response_timeout','total':b'execution_deadline_exceeded',
                                   'idle':b'execution_progress_timeout','comments':b'execution_progress_timeout',
-                                  'status-only':b'execution_progress_timeout','json-silent':b'execution_progress_timeout'}
+                                  'status-only':b'execution_progress_timeout','empty-delta':b'execution_progress_timeout','json-silent':b'execution_progress_timeout'}
                         if case!='cancel': assert expected[case] in body, (transport,case,'wrong timeout classification')
                         assert elapsed < (4 if case=='total' else 3)
                         assert provider.closed.wait(5),'Provider socket not closed'

@@ -67,7 +67,7 @@ func modelCatalog(
         "client_versions": .array(profile.clientVersions.map { .string($0) }),
         "overridden": .bool(profile.overridden),
         "stale": .bool(
-          Int64(Date().timeIntervalSince1970) - profile.capturedAtUnixSeconds > 2_592_000),
+          profile.capturedAtUnixSeconds < Int64(Date().timeIntervalSince1970) - 2_592_000),
       ])
     }
     if let effort = metadata?.defaultReasoningEffort {

@@ -177,8 +177,8 @@ def main():
                     assert status == 502
                     invalid_usage = latest(db, 'unknown'); assert invalid_usage['inputTokens'] == 5 and invalid_usage['estimatedMicros'] == 12
                     before = upstream.calls
-                    status, _ = request('images', '/v1/images/generations', {'prompt': 'stall'})
-                    assert status == 504 and upstream.calls == before + 1
+                    status, body = request('images', '/v1/images/generations', {'prompt': 'stall'})
+                    assert status == 504 and upstream.calls == before + 1, (transport, status, body[:200])
                     assert request('images', '/v1/images/generations', {'prompt': 'missing-usage'})[0] == 200
                     usage = latest(db, 'unknown'); assert usage['completeness'] == 'partial' and 'imageInputTokens' not in usage
                     before = upstream.calls

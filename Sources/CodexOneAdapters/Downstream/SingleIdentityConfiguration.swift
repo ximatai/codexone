@@ -10,7 +10,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let inputMicrosPerMillion: Int64
     public let outputMicrosPerMillion: Int64
     public var catalog: Catalog? = nil
-    public var profileProvenance: ModelProfileProvenance? = nil
+    public internal(set) var profileProvenance: ModelProfileProvenance? = nil
     public var visionInput: Bool? = nil
     public var imageGeneration: Bool? = nil
   }

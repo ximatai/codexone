@@ -94,3 +94,24 @@ struct ModelProfileSnapshot: Decodable {
     }
   }
 }
+
+private enum ModelConfigurationKey: String, CodingKey {
+  case id, inputMicrosPerMillion, outputMicrosPerMillion, catalog, profileProvenance
+  case visionInput, imageGeneration
+}
+
+extension SingleIdentityConfiguration.Model {
+  public init(from decoder: any Decoder) throws {
+    let fields = try decoder.container(keyedBy: ModelConfigurationKey.self)
+    // Provenance is an output of the validated importer, never a configuration assertion.
+    guard !fields.contains(.profileProvenance) else { throw ExecutionError.invalidCommand }
+    self.init(
+      id: try fields.decode(String.self, forKey: .id),
+      inputMicrosPerMillion: try fields.decode(Int64.self, forKey: .inputMicrosPerMillion),
+      outputMicrosPerMillion: try fields.decode(Int64.self, forKey: .outputMicrosPerMillion),
+      catalog: try fields.decodeIfPresent(
+        SingleIdentityConfiguration.Catalog.self, forKey: .catalog),
+      visionInput: try fields.decodeIfPresent(Bool.self, forKey: .visionInput),
+      imageGeneration: try fields.decodeIfPresent(Bool.self, forKey: .imageGeneration))
+  }
+}
