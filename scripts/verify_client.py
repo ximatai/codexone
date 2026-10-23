@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import sqlite3
 import subprocess
 import tempfile
@@ -153,12 +154,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--codex', default='codex')
+    parser.add_argument('--outer-container-sandbox', action='store_true',
+                        help='Linux-only: rely on an externally isolated fixture container for the synthetic shell command')
     parser.add_argument('--profile-snapshot', action='store_true', help='Load the same authoritative profile from an approved private snapshot')
     parser.add_argument('--retry-probe', action='store_true', help='Show that a client reconnect creates a new execution after EOF')
     parser.add_argument('--without-profile', action='store_true', help='Verify that directory failure can still cause client fallback')
     parser.add_argument('--transport', choices=('http', 'bridge', 'websocket'), default='http')
     parser.add_argument('--compact-v2', action='store_true', help='Trigger actual client remote compaction and verify its next request')
     args = parser.parse_args()
+    if args.outer_container_sandbox and (sys.platform != 'linux' or not Path('/.dockerenv').is_file()):
+        parser.error('--outer-container-sandbox requires an explicitly isolated Linux fixture container')
+    client_sandbox = 'danger-full-access' if args.outer_container_sandbox else 'read-only'
     if args.profile_snapshot and args.without_profile:
         parser.error('--profile-snapshot requires an available profile')
     if args.transport != 'http' and (args.retry_probe or args.without_profile):
@@ -239,7 +245,7 @@ stream_max_retries = 1
 request_max_retries = 0
 {compact_capabilities}
 ''')
-                result = subprocess.run([codex, 'exec', '--ephemeral', '--skip-git-repo-check', '--json', '--sandbox', 'read-only',
+                result = subprocess.run([codex, 'exec', '--ephemeral', '--skip-git-repo-check', '--json', '--sandbox', client_sandbox,
                     'Return synthetic client acceptance without tools.' if args.retry_probe else
                     'Use exec_command once to print synthetic-tool-success, then report synthetic client acceptance.'],
                     cwd=work, env={'PATH': os.defpath, 'CODEX_HOME': str(client), 'CODEXONE_SYNTHETIC_CLIENT_KEY': TOKEN},
@@ -275,7 +281,7 @@ request_max_retries = 0
                     if args.without_profile:
                         print(f'PASS: {version} unavailable Codex catalog can cause client fallback and generation; explicitly not accepted as model catalog compatibility')
                     else:
-                        print(f'PASS: {version} {args.transport}; explicit model guidance; text/tool loop; {server.warmups} warmups, {server.compactions} v2 compactions and followups; durable settlements; private temporary state')
+                        print(f'PASS: {version} {args.transport}; explicit model guidance; text/tool loop; {server.warmups} warmups, {server.compactions} v2 compactions and followups; durable settlements; private temporary state; sandbox={"outer-container" if args.outer_container_sandbox else "read-only"}')
             finally:
                 stop(process)
     finally:

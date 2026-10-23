@@ -28,8 +28,10 @@ source/revision/clientVersions是1—64字符的ASCII标签（字母、数字、
 
 GET `/v1/models?client_version=...`（亦支持原前缀）的Codex条目返回codexone_profile：来源标签、revision、原文件字节SHA-256、采集时间、客户端清单、overridden/stale。不是签名或官方认可声明。目录指导会替换客户端基础指导，须针对模型/版本审核；客户端版本清单是管理员声明，不会绕过兼容验证。
 
-启动时把已验证文件加载为内存快照。运行中源文件失效不改已加载实例；新启动遇错误拒绝，原文件不会被程序覆盖。更新时先保留原文件/摘要，在新私有文件核对 `--check-config` 后按停服/启动流程替换；不从无效新文件静默生成指导或回退另一模型。需要回退时恢复明确的旧文件和配置，不恢复旧执行库或释放未知责任。
+启动时把已验证文件加载为内存快照。运行中源文件失效不改已加载实例；新启动遇错误拒绝，原文件不会被程序覆盖。更新时先保留原文件/摘要，在新私有文件核对 `--check-config` 后按停服/启动流程替换；不从无效新文件静默生成指导或回退另一模型。需要回退时恢复明确的旧文件和配置，不恢复旧执行库或释放未知责任。旧候选不识别新增profile/阶段期限配置；回退二进制时还须恢复该版本已验证的兼容配置，保留原快照与密钥依赖，不把新配置直接交给旧版本。
 
 执行配置保留少量参数：executionTimeoutSeconds默认600秒/最大1800，firstResponseTimeoutSeconds默认30秒/最大120，progressTimeoutSeconds默认60秒/最大300；显式阶段值不超过总期限，缺省按总期限取小值。GET模型目录同时给出codexone_execution_budget的有效秒数和default/configuration来源；不回显秘密或路径。WS读下一请求的空闲时钟在有执行或排队turn时暂停，执行/队列有界与一小时连接寿命保持。长任务仍占执行/未知容量，超时不自动重试、切账号或退款。
 
 阶段验证入口：`python3 scripts/verify_client.py --binary <binary> --profile-snapshot`（另支持bridge/websocket），`python3 scripts/verify_long_tasks.py --binary <binary> --duration 125 --output <new-report>`。3秒只作排错，不称超过120秒单次验收。前者使用私有合成快照和独立CLI目录；不操作真实Desktop或订阅。
+
+Linux验证容器若禁止bubblewrap创建用户命名空间，CLI工具执行会先失败，不能计为协议通过。`verify_client.py --outer-container-sandbox`仅供明确隔离的Linux合成测试容器：非root、只读根、network none、临时HOME/CODEX_HOME与资源上限，不挂个人资料或真实凭证。该选项令CLI依赖外层容器而不用内层沙箱，报告明确标记sandbox=outer-container；默认仍为read-only，Linux容器外拒绝该选项。这不改变服务权限，也不证明内层Linux沙箱可用。
