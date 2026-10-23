@@ -68,7 +68,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners are loopback-only."
       )
       return
     }
@@ -209,6 +209,7 @@ struct CodexOneMain {
     } else {
       poolConfiguration = nil
     }
+    let upstreamProxy = try configuration.upstreamHTTPProxy.map { try UpstreamHTTPProxy(url: $0) }
     let webBundle: AdminWebBundle?
     if let directory = configuration.webDirectory {
       webBundle = try await AdminWebBundle.load(path: directory)
@@ -292,11 +293,12 @@ struct CodexOneMain {
     var poolDataService: ResponsesDataService?
     if let credentialProtection, let store {
       let application = AccountCredentials(store: store, protection: credentialProtection)
-      let provider = try SubscriptionOAuthProvider(group: group)
+      let provider = try SubscriptionOAuthProvider(group: group, proxy: upstreamProxy)
       let authorization = try AccountAuthorizationSupervisor(
         application: application, provider: provider)
       let refreshing = try AccountRefreshSupervisor(application: application, provider: provider)
-      let quota = try SubscriptionQuotaProvider(group: group, verifier: provider)
+      let quota = try SubscriptionQuotaProvider(
+        group: group, verifier: provider, proxy: upstreamProxy)
       let observing = try AccountObservationSupervisor(
         store: store, application: application, refresher: refreshing, provider: quota)
       services.append(provider)
@@ -308,7 +310,7 @@ struct CodexOneMain {
         poolDataService = try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: poolConfiguration, store: store, finalizer: finalizer,
-          credentials: application, refresher: refreshing, provider: provider
+          credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
@@ -322,7 +324,8 @@ struct CodexOneMain {
       services.append(
         try ResponsesDataService(
           group: group, port: configuration.dataPort,
-          configuration: identityConfiguration, store: store, finalizer: finalizer
+          configuration: identityConfiguration, store: store, finalizer: finalizer,
+          proxy: upstreamProxy
         ) { announce("data", port: $0) })
     } else {
       services.append(

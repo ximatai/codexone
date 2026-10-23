@@ -26,6 +26,7 @@ enum ProtocolRejectionDetail: String, Sendable {
   case toolsChoice = "tools_choice"
   case toolsPackage = "tools_package"
   case toolsImage = "tools_image"
+  case upstreamOutputLimitUnsupported = "upstream_output_limit_unsupported"
 }
 
 struct GatewayProtocolError: Error, Sendable {
@@ -33,10 +34,12 @@ struct GatewayProtocolError: Error, Sendable {
   let code: String
   let cooldownSeconds: Int64?
   let detail: ProtocolRejectionDetail?
+  let upstreamStatus: Int?
   init(
     _ status: Int, _ code: String, cooldownSeconds: Int64? = nil,
-    detail: ProtocolRejectionDetail? = nil
+    detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil
   ) {
+    self.upstreamStatus = upstreamStatus
     self.detail = detail
     self.cooldownSeconds = cooldownSeconds
     self.status = status

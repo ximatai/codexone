@@ -17,7 +17,11 @@ enum ProtocolFailureDiagnostics {
     "unsupported_include", "unsupported_service_tier", "unsupported_prompt_cache",
     "unsupported_websocket_control", "invalid_websocket_lane", "unsupported_content_type",
     "model_not_allowed", "quota_or_policy_denied", "storage_pressure", "maintenance_required",
-    "capacity_exceeded", "execution_indeterminate",
+    "capacity_exceeded", "execution_indeterminate", "upstream_rejected",
+    "upstream_compact_rejected",
+    "upstream_upgrade_rejected", "upstream_authentication_rejected", "upstream_rate_limited",
+    "upstream_unavailable", "upstream_proxy_authentication_required", "upstream_proxy_timeout",
+    "upstream_proxy_failed",
   ]
 
   static func metadata(_ error: GatewayProtocolError, requestID: String) -> Logger.Metadata {
@@ -25,6 +29,9 @@ enum ProtocolFailureDiagnostics {
       "code": .string(codes.contains(error.code) ? error.code : "other"),
       "status": .string(String(error.status)),
     ]
+    if let status = error.upstreamStatus, (100...599).contains(status) {
+      value["upstream_status"] = .string(String(status))
+    }
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value

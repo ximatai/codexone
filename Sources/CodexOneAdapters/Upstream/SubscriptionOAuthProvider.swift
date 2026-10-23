@@ -35,15 +35,18 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
   private let group: any EventLoopGroup
   let realm: String
   private let timeoutMilliseconds: Int
+  private let proxy: UpstreamHTTPProxy?
   public var isAccepting: Bool { state.withLock { $0.client != nil } }
   public var activeRequests: Int { state.withLock { $0.active } }
 
   public init(
-    group: any EventLoopGroup, authority: Authority = .openAI, timeoutMilliseconds: Int = 10_000
+    group: any EventLoopGroup, authority: Authority = .openAI, timeoutMilliseconds: Int = 10_000,
+    proxy: UpstreamHTTPProxy? = nil
   ) throws {
     guard (1...30_000).contains(timeoutMilliseconds) else {
       throw AccountRefreshError.invalidCommand
     }
+    self.proxy = proxy
     self.group = group
     self.timeoutMilliseconds = timeoutMilliseconds
     switch authority {
@@ -64,7 +67,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     var configuration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
       timeout: .init(connect: .seconds(3), read: .seconds(5)), connectionPool: pool,
-      proxy: nil, decompression: .disabled)
+      proxy: proxy?.clientProxy, decompression: .disabled)
     configuration.httpVersion = .http1Only
     configuration.maximumUsesPerConnection = 1
     let client = HTTPClient(eventLoopGroupProvider: .shared(group), configuration: configuration)

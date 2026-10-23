@@ -79,7 +79,7 @@ reasoning对象仅接受effort/summary/context三个已知成员，成员为null
 
 Responses Lite允许在input原位置使用additional_tools包，字段仅type/role/tools/可选本地id，role必须developer；仅含function/custom/单层namespace，包内不开放图片、内置检索或MCP。各来源共享64个声明（含namespace），身份冲突拒绝，所有function/custom/namespace说明（含namespace本身及叶工具）共享512 KiB UTF-8预算，顶层与各Lite包不重置预算，不另设单条32 KiB限制；整体文本请求仍受512 KiB、图片外层受8 MiB原大小限制。聚合声明只用于本轮工具选择/输出校验，不提升到顶层，不改变顺序；本地包id发送前移除，不建立对象权限。HTTP按已校验Lite声明/明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的工具身份集合、Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才可继承校验集合，显式空声明清空，不跨lane/连接/失败恢复。上游增量请求保持原形，每轮授权、引用与用量仍独立执行。
 
-工具拒绝可在服务端使用固定reason枚举细分容器/数量/名称/说明（null、其他非字符串、共享说明预算超限分别分类）/布尔/namespace/字段/重复/grammar/类型/内置搜索/工具检索/远程MCP/选择/包/图片；不记录工具名、说明、schema、任意字段值或请求正文。沿用16条/单调60秒全局诊断上限和服务端UUID，公开错误仍仅type/code/message/request_id，不公开内部reason；工具拒绝message可附同一个有效UUID供界面关联，不含客户端输入或任意标识。历史日志未记录的信息不得事后推测为已确认根因。
+工具拒绝可在服务端使用固定reason枚举细分容器/数量/名称/说明（null、其他非字符串、共享说明预算超限分别分类）/布尔/namespace/字段/重复/grammar/类型/内置搜索/工具检索/远程MCP/选择/包/图片；不记录工具名、说明、schema、任意字段值或请求正文。沿用16条/单调60秒全局诊断上限和服务端UUID，公开错误仍仅type/code/message/request_id，不公开内部reason；所有网关错误message可附同一个有效UUID供界面关联，不含客户端输入或任意标识。历史日志未记录的信息不得事后推测为已确认根因。
 
 ## P16：受控模型目录
 
@@ -125,3 +125,9 @@ Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编�
 已知可空的text.verbosity/format、tool_choice/parallel_tool_calls与已知reasoning成员按未指定处理，转发时仅移除这些位置的null；text空对象保留。非可空tools/store/stream、未知成员和错误类型不因此接受。拒绝日志可增加固定枚举reason细分reasoning的对象、未知成员、effort、summary类型/取值及context，仍受原限额；不记录原字段名/值，公开错误码和envelope不增加该诊断字段。
 
 Codex reasoning.context仅允许auto/current_turn/all_turns，null转发前移除，不合成默认值、不改变上下文归属或重放资格。stream_options接受include_usage布尔与reasoning_summary_delivery=sequential_cutoff，可单独或组合出现，空对象/未知成员/错误类型拒绝；保持现有事件验证及执行预算。
+
+## 可信上游出网代理
+
+CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://host:port及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
+
+原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任。

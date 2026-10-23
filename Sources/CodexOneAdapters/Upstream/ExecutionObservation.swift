@@ -15,14 +15,20 @@ func upstreamRejection(status: HTTPResponseStatus, headers: HTTPHeaders, compact
   } else {
     seconds = nil
   }
-  if status == .unauthorized { return .init(502, "upstream_authentication_rejected") }
+  if status == .unauthorized {
+    return .init(502, "upstream_authentication_rejected", upstreamStatus: Int(status.code))
+  }
   if status == .tooManyRequests {
-    return .init(429, "upstream_rate_limited", cooldownSeconds: seconds)
+    return .init(
+      429, "upstream_rate_limited", cooldownSeconds: seconds, upstreamStatus: Int(status.code))
   }
   if (500...599).contains(Int(status.code)) {
-    return .init(502, "upstream_unavailable", cooldownSeconds: seconds)
+    return .init(
+      502, "upstream_unavailable", cooldownSeconds: seconds, upstreamStatus: Int(status.code))
   }
-  return .init(502, compact ? "upstream_compact_rejected" : "upstream_rejected")
+  return .init(
+    502, compact ? "upstream_compact_rejected" : "upstream_rejected",
+    upstreamStatus: Int(status.code))
 }
 func executionFailure(_ error: any Error) -> ExecutionFailure {
   if error is CancellationError { return .clientCancelled }

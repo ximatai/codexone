@@ -12,6 +12,7 @@ import Synchronization
 public struct ResponsesDataService: Service {
   private let group: any EventLoopGroup
   private let port: Int
+  private let proxy: UpstreamHTTPProxy?
   private let source: ResponsesSource
   private var configuration: ResponsesConfiguration { source.configuration }
   private let store: any ExecutionStore
@@ -20,12 +21,13 @@ public struct ResponsesDataService: Service {
 
   public init(
     group: any EventLoopGroup, port: Int, configuration: SingleIdentityConfiguration,
-    store: any ExecutionStore, finalizer: any FinalizationSink,
+    store: any ExecutionStore, finalizer: any FinalizationSink, proxy: UpstreamHTTPProxy? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try configuration.validate()
     self.group = group
     self.port = port
+    self.proxy = proxy
     source = .single(configuration)
     self.store = store
     self.finalizer = finalizer
@@ -36,24 +38,26 @@ public struct ResponsesDataService: Service {
     group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
     store: any AccountRoutingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
-    provider: SubscriptionOAuthProvider,
+    provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try self.init(
       group: group, port: port, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
-      target: .openAI, onBound: onBound)
+      target: .openAI, proxy: proxy, onBound: onBound)
   }
   init(
     group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
     store: any AccountRoutingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
     provider: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
+    proxy: UpstreamHTTPProxy? = nil,
     onBound: @escaping @Sendable (Int) -> Void
   ) throws {
     try configuration.validate()
     self.group = group
     self.port = port
+    self.proxy = proxy
     source = .pool(configuration, credentials, refresher, provider, target)
     self.store = store
     self.finalizer = finalizer
@@ -97,14 +101,15 @@ public struct ResponsesDataService: Service {
       timeout: .init(
         connect: .seconds(5),
         read: .seconds(Int64(max(configuration.budget.first, configuration.budget.idle) + 5))),
-      connectionPool: pool, proxy: nil,
+      connectionPool: pool, proxy: proxy?.clientProxy,
       decompression: .disabled)
     clientConfiguration.httpVersion = .http1Only
     clientConfiguration.maximumUsesPerConnection = 1
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let executor = HTTPResponseExecution(
-      client: client, webSocket: .init(group: group, configuration: configuration, token: token),
+      client: client,
+      webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
       access: .init(source: source, token: token, store: store, finalizer: finalizer),

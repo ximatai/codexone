@@ -68,3 +68,7 @@ CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key
 加 `--without-profile` 验证缺 profile 的目录失败可能使 CLI fallback 后仍生成；这项成功表示如实观察降级，不表示该配置通过 Codex 目录验收。
 
 完整 profile 配置下，模型目录同时提供 OpenAI `data` 和 Codex `models`，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。
+
+## 显式出网代理
+
+需要Clash等HTTP代理时，在可信启动环境设置CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example:7890；真实地址仅保存在私有配置。不设置或空值保持直连，其他进程代理环境不会自动生效。该设置统一覆盖HTTP、原生WS、账号认证/刷新和额度查询，不改变目标authority、TLS验证或监听地址；代理不可用不会绕过它直连。仅支持无认证HTTP CONNECT代理；userinfo、非根路径、query、fragment或其他scheme拒绝。配置值不进入诊断输出。

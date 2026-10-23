@@ -1,8 +1,16 @@
+import AsyncHTTPClient
 import CodexOneCore
 import Foundation
 
 func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? GatewayProtocolError { return error }
+  if let error = error as? HTTPClientError {
+    if error == .proxyAuthenticationRequired {
+      return .init(502, "upstream_proxy_authentication_required", upstreamStatus: 407)
+    }
+    if error == .httpProxyHandshakeTimeout { return .init(502, "upstream_proxy_timeout") }
+    if error == .invalidProxyResponse { return .init(502, "upstream_proxy_failed") }
+  }
   if let error = error as? AccountDispatchError {
     return .init(
       503, error == .refreshRequired ? "account_refresh_required" : "account_unavailable")
@@ -34,7 +42,7 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String) -> JSONValue {
   let mapped = protocolFailure(error)
   ProtocolFailureDiagnostics.record(mapped, requestID: requestID)
   let message =
-    mapped.code == "unsupported_tools" && UUID(uuidString: requestID) != nil
+    UUID(uuidString: requestID) != nil
     ? "Gateway request failed. Reference: \(requestID)." : "Gateway request failed."
   return .object([
     "error": .object([

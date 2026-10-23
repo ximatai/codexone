@@ -17,27 +17,34 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
   private let verifier: SubscriptionOAuthProvider
   private let target: SubscriptionDataTarget
   private let timeoutMilliseconds: Int
+  private let proxy: UpstreamHTTPProxy?
   public var isAccepting: Bool { state.withLock { $0.client != nil } }
   public var activeRequests: Int { state.withLock { $0.active } }
-  public convenience init(group: any EventLoopGroup, verifier: SubscriptionOAuthProvider) throws {
-    try self.init(group: group, verifier: verifier, target: .openAI, timeoutMilliseconds: 5000)
+  public convenience init(
+    group: any EventLoopGroup, verifier: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil
+  ) throws {
+    try self.init(
+      group: group, verifier: verifier, target: .openAI, timeoutMilliseconds: 5000, proxy: proxy)
   }
   /// Explicit credential-free fixture assembly; never selected by production configuration.
   public static func syntheticLoopback(
-    group: any EventLoopGroup, verifier: SubscriptionOAuthProvider, port: Int
+    group: any EventLoopGroup, verifier: SubscriptionOAuthProvider, port: Int,
+    proxy: UpstreamHTTPProxy? = nil
   ) throws -> SubscriptionQuotaProvider {
     guard verifier.realm.hasPrefix("http://127.0.0.1:"), (1...65535).contains(port) else {
       throw QuotaObservationFailure.unavailable
     }
-    return try .init(group: group, verifier: verifier, target: .syntheticLoopback(port: port))
+    return try .init(
+      group: group, verifier: verifier, target: .syntheticLoopback(port: port), proxy: proxy)
   }
   init(
     group: any EventLoopGroup, verifier: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
-    timeoutMilliseconds: Int = 5000
+    timeoutMilliseconds: Int = 5000, proxy: UpstreamHTTPProxy? = nil
   ) throws {
     guard (1...30_000).contains(timeoutMilliseconds) else {
       throw QuotaObservationFailure.unavailable
     }
+    self.proxy = proxy
     self.group = group
     self.verifier = verifier
     self.target = target
@@ -54,7 +61,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
     var configuration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
       timeout: .init(connect: .seconds(3), read: .seconds(5)), connectionPool: pool,
-      proxy: nil, decompression: .disabled)
+      proxy: proxy?.clientProxy, decompression: .disabled)
     configuration.httpVersion = .http1Only
     configuration.maximumUsesPerConnection = 1
     let client = HTTPClient(eventLoopGroupProvider: .shared(group), configuration: configuration)

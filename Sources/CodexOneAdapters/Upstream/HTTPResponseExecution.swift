@@ -117,7 +117,17 @@ struct HTTPResponseExecution: Sendable {
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
         guard response.status == .ok else {
-          throw upstreamRejection(status: response.status, headers: response.headers)
+          let rejection = upstreamRejection(status: response.status, headers: response.headers)
+          if response.status == .badRequest,
+            let bytes = try? await response.body.collect(upTo: 4096),
+            let document = try? JSONValue.decode(Data(bytes.readableBytesView)),
+            outputLimitUnsupported(document)
+          {
+            throw GatewayProtocolError(
+              rejection.status, rejection.code, detail: .upstreamOutputLimitUnsupported,
+              upstreamStatus: Int(response.status.code))
+          }
+          throw rejection
         }
         if request.streaming {
           guard
@@ -242,4 +252,16 @@ func collectProgressBody(_ body: HTTPClientResponse.Body, progress: ExecutionPro
     data.append(contentsOf: chunk.readableBytesView)
   }
   return data
+}
+
+/// Recognize a fixed unsupported-limit condition without logging any provider error text.
+private func outputLimitUnsupported(_ document: JSONValue) -> Bool {
+  if document["error"]?["param"]?.string == "max_output_tokens",
+    document["error"]?["code"]?.string == "unsupported_parameter"
+  {
+    return true
+  }
+  let message = document["error"]?["message"]?.string ?? document["detail"]?.string
+  return ["Unsupported parameter: max_output_tokens", "Unsupported parameter: max_output_tokens."]
+    .contains(message ?? "")
 }

@@ -162,9 +162,11 @@ def connect(port, method, path, payload=None, *, authorization=True):
     return status, body
 
 
-def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None):
+def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None):
     environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
                                "CODEXONE_DATA_DIRECTORY": str(directory / "state")}
+    if upstream_proxy is not None:
+        environment["CODEXONE_UPSTREAM_HTTP_PROXY"] = upstream_proxy
     if account_pool_config is not None:
         environment["CODEXONE_ACCOUNT_POOL_CONFIG"] = str(account_pool_config)
     else:

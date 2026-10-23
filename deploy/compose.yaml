@@ -63,6 +63,7 @@ services:
           nocopy: true
       - ./secrets:/run/codexone:ro
     environment:
+      CODEXONE_UPSTREAM_HTTP_PROXY: ${CODEXONE_UPSTREAM_HTTP_PROXY:-}
       CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json
       CODEXONE_ACCOUNT_MASTER_KEY_FILE: /run/codexone/master
       CODEXONE_ADMIN_TOKEN_FILE: /run/codexone/admin

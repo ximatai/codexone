@@ -19,6 +19,7 @@ backend() {
   python3 scripts/verify_protocol.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_protocol_rejections.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_upstream_proxy.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_tool_diagnostics.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_optional_reasoning.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"

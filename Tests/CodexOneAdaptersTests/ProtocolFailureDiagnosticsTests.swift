@@ -68,4 +68,24 @@ struct ProtocolFailureDiagnosticsTests {
       GatewayProtocolError(400, "unsupported_tools", detail: .toolsName), requestID: "untrusted")
     #expect(untrusted["error"]?["message"]?.string == "Gateway request failed.")
   }
+  @Test func upstreamStatusRemainsPrivateAndAllErrorsHaveSafeReferences() {
+    for status in [400, 401, 403, 407, 429, 503] {
+      let error = GatewayProtocolError(502, "upstream_rejected", upstreamStatus: status)
+      let id = UUID().uuidString
+      let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: id)
+      #expect(metadata["code"]?.description == "upstream_rejected")
+      #expect(metadata["upstream_status"]?.description == String(status))
+      let envelope = protocolErrorEnvelope(error, requestID: id)
+      #expect(envelope["error"]?.object?.count == 4)
+      #expect(envelope["error"]?["upstream_status"] == nil)
+      #expect(envelope["error"]?["message"]?.string == "Gateway request failed. Reference: \(id).")
+    }
+    for status in [-1, 0, 600] {
+      #expect(
+        ProtocolFailureDiagnostics.metadata(
+          .init(502, "upstream_rejected", upstreamStatus: status), requestID: "untrusted")[
+            "upstream_status"] == nil)
+    }
+  }
+
 }

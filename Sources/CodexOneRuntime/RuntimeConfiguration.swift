@@ -8,6 +8,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let accountMasterKeyFile: String?
   public let adminPublicOrigin: String?
   public let webDirectory: String?
+  public let upstreamHTTPProxy: String?
 
   public enum ConfigurationError: Error, Equatable {
     case invalidPort(String)
@@ -90,6 +91,9 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       webDirectory = path
     } else {
       webDirectory = nil
+    }
+    upstreamHTTPProxy = environment["CODEXONE_UPSTREAM_HTTP_PROXY"].flatMap {
+      $0.isEmpty ? nil : $0
     }
     dataPort = try port("CODEXONE_DATA_PORT", fallback: 18080)
     adminPort = try port("CODEXONE_ADMIN_PORT", fallback: 18081)

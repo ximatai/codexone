@@ -76,3 +76,7 @@ python3 scripts/verify_installation.py --image codexone:candidate \
 实际运维回退先暂停入口/收敛并停服，保存新库一致性 bundle 与全部解密依赖；在私有 `.env` 仅替换已验兼容的不可变镜像引用，保留原卷和原 secrets，运行 `--check-config` 后启动并检查。schema 不兼容时停止，不运行旧版本 migration 或删除新库。恢复旧快照须走维护态流程；合成旧服务转换与新增用量核对见[迁移切回](migration-cutback.md)。
 
 发行候选归档应保留精确源码 revision/归档、镜像 ID、实际二进制 SHA-256 和整体 SHA256SUMS；同时交付已验兼容 peer 的镜像、旧产品 revision、实际构建源码归档（含编译配置补丁）和二进制摘要，避免只有回退说明却没有可用旧产物。校验标签与真实产物，不因流水线模板存在便声明远端运行成功。
+
+### 可选HTTP出网代理
+
+在安装目录的私有.env添加CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example:7890，再使用受控compose-install.py入口启动/升级。空值保持直连，launcher不会采用宿主同名环境覆盖私有manifest；代理配置适用于HTTP/WS/认证/额度，失败不直连回退，目标TLS保持验证。不改Clash全局模式、系统信任或旧服务配置，真实代理地址与凭证不放进公开仓库。

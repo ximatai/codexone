@@ -1,6 +1,7 @@
 import CodexOneCore
 import Foundation
 import NIOCore
+import NIOExtras
 import NIOHTTP1
 import NIOPosix
 import NIOSSL
@@ -11,9 +12,41 @@ struct WebSocketUpstream: Sendable {
   let group: any EventLoopGroup
   let configuration: ResponsesConfiguration
   let token: String?
+  var proxy: UpstreamHTTPProxy? = nil
   var authorization: SubscriptionDataAccess? = nil
   func authorized(_ authorization: SubscriptionDataAccess?) -> Self {
-    Self(group: group, configuration: configuration, token: token, authorization: authorization)
+    Self(
+      group: group, configuration: configuration, token: token, proxy: proxy,
+      authorization: authorization)
+  }
+
+  private func establishProxy(channel: Channel, targetHost: String, targetPort: Int)
+    -> EventLoopFuture<Void>
+  {
+    guard proxy != nil else { return channel.eventLoop.makeSucceededVoidFuture() }
+    let promise = channel.eventLoop.makePromise(of: Void.self)
+    let observed = UpstreamProxyStatus()
+    let encoder = HTTPRequestEncoder()
+    let decoder = ByteToMessageHandler(HTTPResponseDecoder(leftOverBytesStrategy: .forwardBytes))
+    do {
+      try channel.pipeline.syncOperations.addHandler(encoder, name: "upstream-proxy-encoder")
+      try channel.pipeline.syncOperations.addHandler(decoder, name: "upstream-proxy-decoder")
+      try channel.pipeline.syncOperations.addHandler(observed)
+      try channel.pipeline.syncOperations.addHandler(
+        NIOHTTP1ProxyConnectHandler(
+          targetHost: targetHost, targetPort: targetPort, headers: [:],
+          deadline: .now() + .seconds(5), promise: promise))
+    } catch { promise.fail(error) }
+    return promise.futureResult.flatMap {
+      channel.pipeline.removeHandler(name: "upstream-proxy-decoder").flatMap {
+        channel.pipeline.removeHandler(name: "upstream-proxy-encoder")
+      }.flatMap { channel.pipeline.removeHandler(observed) }
+    }.flatMapErrorThrowing { _ in
+      throw GatewayProtocolError(
+        502,
+        observed.status == 407 ? "upstream_proxy_authentication_required" : "upstream_proxy_failed",
+        upstreamStatus: observed.status)
+    }
   }
 
   func run(operation: @escaping @Sendable (WebSocketPeer) async throws -> Void) async throws {
@@ -29,7 +62,7 @@ struct WebSocketUpstream: Sendable {
             ChannelOptions.recvAllocator,
             value: AdaptiveRecvByteBufferAllocator(minimum: 1024, initial: 4096, maximum: 65_536)
           )
-          .connect(host: host, port: url.port ?? (tls ? 443 : 80)) {
+          .connect(host: proxy?.host ?? host, port: proxy?.port ?? url.port ?? (tls ? 443 : 80)) {
             channel -> EventLoopFuture<EventLoopFuture<ProtocolWebSocket>> in
             guard channels.register(channel) else {
               return channel.close().flatMapThrowing { throw CancellationError() }
@@ -37,55 +70,62 @@ struct WebSocketUpstream: Sendable {
             let timeout = channel.eventLoop.scheduleTask(in: .seconds(5)) {
               channel.close(promise: nil)
             }
-            return channel.eventLoop.makeCompletedFuture {
-              () throws -> EventLoopFuture<ProtocolWebSocket> in
-              if let tlsContext {
-                try channel.pipeline.syncOperations.addHandler(
-                  NIOSSLClientHandler(context: tlsContext, serverHostname: host))
-              }
-              var headers: HTTPHeaders = ["host": url.port.map { host + ":" + String($0) } ?? host]
-              if let authorization {
-                for header in authorization.headers {
-                  headers.add(name: header.name, value: header.value)
+            let ready = establishProxy(
+              channel: channel, targetHost: host, targetPort: url.port ?? (tls ? 443 : 80))
+            let upgraded = ready.flatMap {
+              channel.eventLoop.makeCompletedFuture {
+                () throws -> EventLoopFuture<ProtocolWebSocket> in
+                if let tlsContext {
+                  try channel.pipeline.syncOperations.addHandler(
+                    NIOSSLClientHandler(context: tlsContext, serverHostname: host))
                 }
-              } else if let token {
-                headers.add(name: "authorization", value: "Bearer " + token)
-              }
-              let observed = UpstreamUpgradeStatus()
-              let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
-                maxFrameSize: ImageLimits.eventBytes,
-                upgradePipelineHandler: { channel, _ in
-                  channel.pipeline.removeHandler(observed).flatMap {
-                    channel.eventLoop.makeCompletedFuture {
-                      try configureWebSocket(channel, client: true)
-                    }
+                var headers: HTTPHeaders = [
+                  "host": url.port.map { host + ":" + String($0) } ?? host
+                ]
+                if let authorization {
+                  for header in authorization.headers {
+                    headers.add(name: header.name, value: header.value)
                   }
-                })
-              var pipeline = NIOUpgradableHTTPClientPipelineConfiguration(
-                upgradeConfiguration: .init(
-                  upgradeRequestHead: .init(
-                    version: .http1_1, method: .GET, uri: url.path + "/responses", headers: headers),
-                  upgraders: [upgrader],
-                  notUpgradingCompletionHandler: { channel in
-                    let failure = observed.rejection
-                    return channel.close().flatMapThrowing {
-                      throw failure
+                } else if let token {
+                  headers.add(name: "authorization", value: "Bearer " + token)
+                }
+                let observed = UpstreamUpgradeStatus()
+                let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
+                  maxFrameSize: ImageLimits.eventBytes,
+                  upgradePipelineHandler: { channel, _ in
+                    channel.pipeline.removeHandler(observed).flatMap {
+                      channel.eventLoop.makeCompletedFuture {
+                        try configureWebSocket(channel, client: true)
+                      }
                     }
-                  }))
-              pipeline.leftOverBytesStrategy = .forwardBytes
-              let result = try channel.pipeline.syncOperations
-                .configureUpgradableHTTPClientPipeline(
-                  configuration: pipeline)
-              let handler = try channel.pipeline.syncOperations.handler(
-                type: NIOTypedHTTPClientUpgradeHandler<ProtocolWebSocket>.self)
-              try channel.pipeline.syncOperations.addHandler(observed, position: .before(handler))
-              return result
-            }.map { future in
-              future.whenComplete { _ in timeout.cancel() }
-              return future
+                  })
+                var pipeline = NIOUpgradableHTTPClientPipelineConfiguration(
+                  upgradeConfiguration: .init(
+                    upgradeRequestHead: .init(
+                      version: .http1_1, method: .GET, uri: url.path + "/responses",
+                      headers: headers),
+                    upgraders: [upgrader],
+                    notUpgradingCompletionHandler: { channel in
+                      let failure = observed.rejection
+                      return channel.close().flatMapThrowing {
+                        throw failure
+                      }
+                    }))
+                pipeline.leftOverBytesStrategy = .forwardBytes
+                let result = try channel.pipeline.syncOperations
+                  .configureUpgradableHTTPClientPipeline(
+                    configuration: pipeline)
+                let handler = try channel.pipeline.syncOperations.handler(
+                  type: NIOTypedHTTPClientUpgradeHandler<ProtocolWebSocket>.self)
+                try channel.pipeline.syncOperations.addHandler(observed, position: .before(handler))
+                return result
+              }.flatMap { $0 }
             }.flatMapError { error in
-              channel.close().flatMapThrowing { throw error }
+              channel.close().flatMapError { _ in channel.eventLoop.makeSucceededVoidFuture() }
+                .flatMapThrowing { throw error }
             }
+            upgraded.whenComplete { _ in timeout.cancel() }
+            return channel.eventLoop.makeSucceededFuture(upgraded)
           }
         let socket = try await negotiated.get()
         try await WebSocketPeer.run(socket, client: true, operation: operation)
@@ -112,8 +152,22 @@ private final class UpstreamUpgradeStatus: ChannelInboundHandler, RemovableChann
     if case .head(let head) = unwrapInboundIn(data), head.status.code >= 200 {
       let mapped = upstreamRejection(status: head.status, headers: head.headers)
       failure.withLock {
-        $0 = mapped.code == "upstream_rejected" ? .init(502, "upstream_upgrade_rejected") : mapped
+        $0 =
+          mapped.code == "upstream_rejected"
+          ? .init(502, "upstream_upgrade_rejected", upstreamStatus: Int(head.status.code)) : mapped
       }
+    }
+    context.fireChannelRead(data)
+  }
+}
+
+private final class UpstreamProxyStatus: ChannelInboundHandler, RemovableChannelHandler, Sendable {
+  typealias InboundIn = HTTPClientResponsePart
+  private let value = Mutex<Int?>(nil)
+  var status: Int? { value.withLock { $0 } }
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    if case .head(let head) = unwrapInboundIn(data) {
+      value.withLock { $0 = Int(head.status.code) }
     }
     context.fireChannelRead(data)
   }

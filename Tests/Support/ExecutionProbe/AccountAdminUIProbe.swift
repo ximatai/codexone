@@ -29,12 +29,15 @@ extension ExecutionProbe {
         path: root + "/admin", store: store, availableModels: ["synthetic-text"],
         usage: UsageAdminAPI(querying: usageReader))
       let bundle = try await AdminWebBundle.load(path: web)
+      let proxy = try ProcessInfo.processInfo.environment["CODEXONE_UPSTREAM_HTTP_PROXY"].map {
+        try UpstreamHTTPProxy(url: $0)
+      }
       let provider = try SubscriptionOAuthProvider(
-        group: group, authority: .syntheticLoopback(port: oauthPort))
+        group: group, authority: .syntheticLoopback(port: oauthPort), proxy: proxy)
       let authorization = try AccountAuthorizationSupervisor(application: app, provider: provider)
       let refreshing = try AccountRefreshSupervisor(application: app, provider: provider)
       let quota = try SubscriptionQuotaProvider.syntheticLoopback(
-        group: group, verifier: provider, port: oauthPort)
+        group: group, verifier: provider, port: oauthPort, proxy: proxy)
       let observing = try AccountObservationSupervisor(
         store: store, application: app, refresher: refreshing, provider: quota)
       let accounts = AccountAdminAPI(
