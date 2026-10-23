@@ -40,3 +40,6 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 非终态负向首轮WS记录仍有完整终态用量：独立reader先收到后续有效终态，按既有责任语义正确保留，不能要求其丢失。探针改为负向只发送待拒绝的created/in_progress前缀且不发送终态，保持严格unknown/no-usage；具体错误码和固定原因仍必须命中。最终macOS独立HTTP73/WS128共201次、普通协议/WS/Images/压缩及203项Swift全部通过。实际Linux候选安装exit 0，原有失败记录不抹去；最后脚本版本的Linux完整verification仍在运行。只修改探针不改变产品证据/结果语义。
+
+
+最终Linux首轮：完整普通协议/WS/代理、独立201次、工具/fixture和HTTP Images通过，但WS Images的invalid-usage未保留预期input5，命令失败，不计出口。追溯为新增已知计数校验在allowMetadata=false时仍继续执行，使图片item.added里的负计数比旧imageResult/终态消费更早拒绝，改变独立reader观察时序；不是立即读账等待问题。修正为图片/独立compact原numeric校验后返回，新增规则只作用于已明确授权的普通纯文本路径。未删除或放宽图片可信计数断言，重新构建并回归后才恢复真实调用。

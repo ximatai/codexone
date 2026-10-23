@@ -425,6 +425,7 @@ struct ProviderObservation: Sendable {
         throw GatewayProtocolError(
           502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
       }
+      return  // Preserve the independently validated image/compact observation order.
     }
     func validateCount(_ value: JSONValue?) throws {
       guard let value, value != .null else { return }
