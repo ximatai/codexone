@@ -43,3 +43,5 @@ exit0，实际选中六项并全部通过（测试进程分组1+4+1）。证明�
 未新增运行：完整后端/前端、Linux、Desktop UI、实际内置CLI、生产订阅、慢lane填满/慢上传/保活组合、两账号共享5xx耗尽、排队后Key轮换及真实客户端下一轮对不一致历史的处理。前次Lite与缺total的实际CLI证据仍见[先前调查](../parallel-key-trial/verification.md#用户要求先定位不修复后的只读调查)，本轮没有重复它。文档/探针入口检查与集中review结果见任务及STATUS；不因本轮分析而解除原未验收项。
 
 文档结构检查130份通过；探针AST语法检查、差异空白及新增材料隐私自查通过。它们不验证远端URL、协议或运行正确性。
+
+提交 `0103907` 后集中review无需要修正的P1/P2或事实错误。Reviewer独立执行 `probe.py --binary .build/debug/codexone --case status-mismatch --transport http`，一次loopback合成上游，确认completed/status=failed仍settled/complete且failure为空；未重复其余矩阵或产品全集，没有修改业务文件。
