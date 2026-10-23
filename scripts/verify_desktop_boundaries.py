@@ -5,6 +5,7 @@ This is a gateway/socket test, never a Desktop or subscription compatibility cla
 """
 import argparse
 import base64
+from contextlib import contextmanager
 import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -78,13 +79,34 @@ def marker(request):
 class Provider(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     def log_message(self, *_args): pass
+    def failure(self, kind):
+        with self.server.guard:
+            self.server.failures += 1
+            if len(self.server.failure_kinds) < 8: self.server.failure_kinds.append(kind)
     def handle(self):
+        with self.server.guard: self.server.active += 1
         try: super().handle()
-        except (OSError, EOFError): pass
+        except (EOFError, ConnectionResetError, BrokenPipeError): pass
+        except Exception as cause: self.failure(type(cause).__name__)
+        finally:
+            with self.server.guard: self.server.active -= 1
+    def await_cancel(self, websocket):
+        self.connection.settimeout(self.server.cancel_timeout)
+        try:
+            closed = read_frame(self.connection, masked=True)[0] == 8 if websocket else self.connection.recv(1) == b''
+        except (EOFError, ConnectionResetError, BrokenPipeError): closed = True
+        except (socket.timeout, TimeoutError):
+            self.failure('cancel_timeout'); return
+        except OSError:
+            self.failure('cancel_io_error'); return
+        if closed: self.server.cancelled.set()
+        else: self.failure('cancel_without_close')
     def events(self, request, session):
         label = marker(request)
         with self.server.guard:
-            assert label not in self.server.seen, 'Provider replayed an invocation'
+            if label in self.server.seen:
+                self.server.replays += 1
+                raise AssertionError('Provider replayed an invocation')
             self.server.seen.add(label)
             self.server.calls += 1
             number = self.server.calls
@@ -120,9 +142,7 @@ class Provider(BaseHTTPRequestHandler):
         else:
             self.wfile.write(json.dumps(events[-1]['response']).encode()); self.wfile.flush()
         if 'cancel' in label:
-            self.connection.settimeout(8)
-            assert self.connection.recv(1) == b''
-            self.server.cancelled.set()
+            self.await_cancel(False)
         self.close_connection = True
     def do_GET(self):
         assert self.path == '/v1/responses'
@@ -142,10 +162,7 @@ class Provider(BaseHTTPRequestHandler):
                 label, events = self.events(request, session)
                 for event in events: frame(self.connection, event)
                 if 'cancel' in label:
-                    self.connection.settimeout(8)
-                    try: assert read_frame(self.connection, masked=True)[0] == 8
-                    except (EOFError, OSError): pass
-                    self.server.cancelled.set(); return
+                    self.await_cancel(True); return
                 previous.add(events[-1]['response']['id'])
         finally: self.close_connection = True
 
@@ -192,13 +209,32 @@ def resources(pid):
     return {'rssBytes': int(subprocess.check_output(['ps', '-o', 'rss=', '-p', str(pid)]).strip()) * 1024}
 
 
-def verify(binary, duration, transport):
+@contextmanager
+def synthetic_provider(large_size=4 * MIB, cancel_timeout=8):
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider); provider.daemon_threads = True
     worker = None
     try:
-        provider.guard = threading.Lock(); provider.calls = provider.connections = 0; provider.seen = set(); provider.native_sessions = set(); provider.cancelled = threading.Event()
-        provider.small = base64.b64encode(png(65536)).decode(); provider.large = base64.b64encode(png(4 * MIB)).decode()
+        provider.guard = threading.Lock(); provider.calls = provider.connections = 0
+        provider.failures = provider.replays = provider.active = 0; provider.failure_kinds = []
+        provider.seen = set(); provider.native_sessions = set(); provider.cancelled = threading.Event()
+        provider.cancel_timeout = cancel_timeout
+        provider.small = base64.b64encode(png(65536)).decode(); provider.large = base64.b64encode(png(large_size)).decode()
         worker = threading.Thread(target=provider.serve_forever, daemon=True); worker.start()
+        yield provider
+    finally:
+        if worker is not None and worker.is_alive(): provider.shutdown()
+        provider.server_close()
+        if worker is not None and worker.ident is not None: worker.join(timeout=3)
+
+
+def assert_provider_healthy(provider):
+    with provider.guard:
+        assert provider.replays == 0, 'Provider observed replay'
+        assert provider.failures == 0, ('Provider handler failed', provider.failure_kinds)
+
+
+def verify(binary, duration, transport):
+    with synthetic_provider() as provider:
         with tempfile.TemporaryDirectory(prefix='codexone-desktop-boundary-') as temporary:
             root = Path(temporary); root.chmod(0o700)
             admin = root / 'admin'; admin.write_text(ADMIN); admin.chmod(0o600)
@@ -278,10 +314,18 @@ def verify(binary, duration, transport):
                 assert provider.calls == before
                 provider.cancelled.clear()
                 client = http.client.HTTPConnection('127.0.0.1', ports['data'], timeout=10)
-                client.request('POST', '/v1/responses', json.dumps({'model': MODEL, 'input': 'http-cancel', 'stream': True}), {'Authorization': 'Bearer ' + cancelled, 'Content-Type': 'application/json'})
-                response = client.getresponse(); assert response.status == 200
-                assert response.fp.readline().startswith(b'data: ')
-                response.close(); client.close()
+                response = None
+                try:
+                    client.request('POST', '/v1/responses', json.dumps({'model': MODEL, 'input': 'http-cancel', 'stream': True}), {'Authorization': 'Bearer ' + cancelled, 'Content-Type': 'application/json'})
+                    response = client.getresponse(); assert response.status == 200
+                    for _ in range(6):
+                        line = response.readline(65536)
+                        if line.startswith(b'data: '):
+                            assert json.loads(line[6:])['type'] == 'response.created'; break
+                    else: raise AssertionError('Missing created event before cancellation')
+                finally:
+                    if response is not None: response.close()
+                    client.close()
                 assert provider.cancelled.wait(8), 'HTTP cancellation did not close upstream'
                 latest(db, 'unknown'); expected_unknown = 1
                 if transport == 'websocket':
@@ -309,12 +353,14 @@ def verify(binary, duration, transport):
                 with sqlite3.connect(db) as connection:
                     assert connection.execute("SELECT COUNT(*) FROM attempts WHERE state='unknown' AND principal!='cancelled'").fetchone()[0] == 0
                     assert connection.execute("SELECT COUNT(*),SUM(reserved) FROM attempts WHERE principal='cancelled' AND state='unknown'").fetchone() == (expected_unknown, expected_unknown)
-                return {'transport': transport, 'socketLifetimeSeconds': round(lifetime, 3), 'keepaliveTurns': turns, 'nativeUpstreamSessions': len(provider.native_sessions), 'providerCalls': provider.calls, 'ledger': rows, 'samples': samples}
+                deadline = time.monotonic() + 10
+                while True:
+                    with provider.guard: active = provider.active
+                    if not active: break
+                    assert time.monotonic() < deadline, 'Provider handlers did not retire'; time.sleep(.02)
+                assert_provider_healthy(provider)
+                return {'transport': transport, 'socketLifetimeSeconds': round(lifetime, 3), 'keepaliveTurns': turns, 'nativeUpstreamSessions': len(provider.native_sessions), 'providerCalls': provider.calls, 'providerReplayDetections': provider.replays, 'providerFailures': provider.failures, 'providerActiveHandlers': active, 'ledger': rows, 'samples': samples}
             finally: stop(process)
-    finally:
-        if worker is not None and worker.is_alive(): provider.shutdown()
-        provider.server_close()
-        if worker is not None: worker.join(timeout=3)
 
 
 def main():
@@ -325,7 +371,7 @@ def main():
     parser.add_argument('--output', type=Path)
     args = parser.parse_args(); assert 3 <= args.duration <= 300
     if args.output: assert not args.output.exists() and args.output.parent.is_dir()
-    result = {'platform': platform.system(), 'architecture': platform.machine(), 'binarySHA256': hashlib.sha256(args.binary.read_bytes()).hexdigest(), 'longLifetimeSample': args.duration >= 125,
+    result = {'reportVersion': 1, 'verificationSHA256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), 'python': platform.python_version(), 'platform': platform.system(), 'architecture': platform.machine(), 'binarySHA256': hashlib.sha256(args.binary.read_bytes()).hexdigest(), 'longLifetimeSample': args.duration >= 125,
               'results': [verify(str(args.binary.resolve()), args.duration, transport) for transport in (('http', 'websocket') if args.transport == 'both' else (args.transport,))]}
     if args.output: args.output.write_text(json.dumps(result, indent=2)); args.output.chmod(0o600)
     print('PASS: synthetic Desktop socket/image boundaries; platform=' + result['platform'] + '; longLifetime=' + str(result['longLifetimeSample']) + '; transports=' + args.transport)

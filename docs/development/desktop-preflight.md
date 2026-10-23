@@ -6,7 +6,7 @@
 
 冻结同一份已review源码、Linux amd64运行镜像、实际二进制摘要、源码归档及SHA256SUMS；保留阶段测试命令、平台/工具链、合成配置边界和未覆盖项。镜像标签便于查找，实际使用不可变镜像ID；仅本地归档，不推送registry或部署。安装/同卷兼容回退复用[Linux安装](linux-installation.md)流程，不把恢复旧数据库当作撤销新增执行责任。
 
-长连接/最大图片检查使用 `scripts/verify_desktop_boundaries.py`，显式传入binary及新output。duration每配置至少125秒才记录为长寿命样本，3秒只用于夹具排错。真实同一HTTP TCP连接循环，WS配置另保持单一原生WS上游连接、预热及previous_response_id多轮；取消后核对关闭、unknown/预留与无重放。最大参考图包含四图合计6MiB、图+mask合计6MiB、单图/合计/数量溢出及4MiB输入输出工具组合。图片为有效PNG容器和合成像素，精确字节上限用合法附属块填充；不代表全部编解码器、最大像素、所有图片格式/帧组合或真实提供者都接受。
+先以 `scripts/verify_desktop_boundary_guards.py` 的真实夹具socket反向验证，确认重复调用/处理线程错误传回owner，开放连接超时不冒充取消；该守卫检查不是网关兼容证据。长连接/最大图片检查使用 `scripts/verify_desktop_boundaries.py`，显式传入binary及新output。duration每配置至少125秒才记录为长寿命样本，3秒只用于夹具排错。真实同一HTTP TCP连接循环，WS配置另保持单一原生WS上游连接、预热及previous_response_id多轮；取消后核对关闭、unknown/预留与无重放。最大参考图包含四图合计6MiB、图+mask合计6MiB、单图/合计/数量溢出及4MiB输入输出工具组合。图片为有效PNG容器和合成像素，精确字节上限用合法附属块填充；不代表全部编解码器、最大像素、所有图片格式/帧组合或真实提供者都接受。
 
 外部HTTP/WS正文仍8MiB。经过Images校验的multipart转base64后，仅内部封套有9MiB预算，序列化不转义斜杠；不会授予网络请求9MiB上传或改变下游8MiB帧/队列预算。9MiB含6MiB图像base64及有界提示、参数、工具封套余量。源码实际限制与失败路径还须由socket检查核对，不能只看常量。
 
