@@ -10,4 +10,4 @@
 - [x] 独立HTTPS数据域与证书续期；公网JSON/SSE/WSS和负向认证验证，旧服务核对，回收测试隧道；集中review与出口记录。
 
 - [x] 完成reasoning可选null兼容、保留工具缺省语义与失败路径并更新候选；用户Desktop文本仍未通过，继续跟进。
-- [ ] 集中处理其余四项已知可空参数、固定reasoning拒绝细分及官方context/summary delivery枚举，验证最终上游文档/失败无派发与日志隐私，继续定位真实Desktop拒绝。
+- [x] 集中处理四项可空参数、固定reasoning拒绝细分及官方context/summary delivery枚举，跨平台/公网验证后更新候选；实际Desktop复测仍在上方未完成项跟进。

@@ -69,6 +69,16 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，最新用户要求“先找原因，不着急修复”：已停止后续业务代码修改与部署。新候选实际请求报unsupported_input/400（不再是unsupported_reasoning），所选原Key无attempt、unknown=0。只读源码及本机Desktop内置CLI 0.163.0-alpha.11.1隔离合成实验，确认两处独立契约缺口：默认gpt-6.1-sol走Responses-Lite，input.additional_tools不在当前允许集合；显式目录路径虽HTTP200，部署合成fixture还因usage缺total_tokens使CLI终态解析失败。仅在本机内存夹具补齐该字段后CLI exit0/turn.completed，没有修改线上服务。已有CLI验收使用synthetic-text+显式目录及不同终态夹具，未覆盖默认模型+部署夹具组合。
+
+用户实际input类型未记录，不能把本机additional_tools复现当成已捕获真实请求结构；目前确认的是输入校验拒绝与可复现的默认客户端不兼容，第二处为进入上游后会遇到的独立夹具障碍。具体对照、单变量探针和证据边界见[只读调查](docs/changes/parallel-key-trial/verification.md#用户要求先定位不修复后的只读调查)。下一步先向用户报告原因，后续再按默认模型/Lite工具/归属与终态消费完整闭环决定方案；不继续逐字段补丁、放行未知输入或删除工具声明。当前运行候选仍为下方ff1322f，真实订阅关闭，Desktop/M5/O14继续保留。
+
+2026-10-23，显式Codex控制字段候选阶段出口（`ff1322f`）：reasoning.context允许auto/current_turn/all_turns、null移除；stream_options支持include_usage和reasoning_summary_delivery=sequential_cutoff单独/组合，未知/错误/空选项拒绝，不改变归属或重放。依据为固定官方客户端发送结构与CodexLB保留扩展的实践，不读取用户正文；临时请求镜像未启用。主Agent亲自实现，9项定向/实际四传输最终文档及失败无派发、集中review无新增P1/P2；macOS完整189项Swift/全部后端脚本通过。Linux实际剥离程序的参数/诊断/HTTP/WS/fixture五组定向检查本次首轮全部通过，未重复无变更前端全集。
+
+候选 `codexone:codex-context-candidate`，源码 `ff1322f71e19f86359b01c3082bd32f4b8bc76fa`，镜像ID `sha256:c5f487efefdcabb74a0a5b4f2620e709d109ea41e3e6c0a4beaf5e46aef8529b`，Linux运行程序SHA256 `8434b60656fef4b132d1d43285263d3f8e9ca1093dc1d2361676162a4c714fc5`；服务器完整归档重建及运行SHA匹配，既有私有配置/身份/管理员未变、旧服务未变healthy。公网首轮首路径HTTPS JSON/SSE通过后WSS TLS握手EOF；仅补失败/未执行项后双前缀HTTPS/SSE/WSS与三context枚举/预热、负向参数/认证/管理隔离通过。偶发TLS原因未确认，不写成一次全绿；诊断Key撤销，仅所选原Key启用，unknown=0。
+
+该出口后用户复测仍失败，最新原因调查见上；不能将context推断为已确认的真实字段或宣称Desktop修复通过。后续方向：随后按通信复核推进失败终态/owner清理与有限订阅握手头契约，慢lane隔离先按自身结构实测，files/history/notes/async等不提前开放。真实订阅继续关闭；M5、Desktop完整能力、O14和正式切换继续保留。限定证据见[验证账](docs/changes/parallel-key-trial/verification.md)。
+
 2026-10-23，四项已知可空控制与固定拒绝分类（`9acf3e3`）已更新合成旁路，macOS完整187项Swift/全部后端脚本及Linux逐项协议回归通过，集中review无新增P1/P2；Linux首轮WS退出断言失败，补采集重跑未复现，原因保留。公网双前缀JSON/SSE/WSS/预热/认证负向通过，诊断Key撤销，旧服务未变healthy。用户再试仍失败，现确认固定原因reasoning_members、unknown=0。进一步官方客户端源码核对发现context及summary delivery新增控制，正按明确枚举补兼容；未启用请求镜像或读取正文。旧候选和完整归档保留，真实订阅关闭，Desktop/M5仍未通过。
 
 2026-10-23，可选reasoning兼容候选已部署（`bdb67f4`），已知effort/summary的null移除、tools缺省与显式[]保留；主Agent实现、集中review无新增P1/P2。macOS arm64完整184项Swift与全部后端脚本通过；Linux amd64实际剥离程序的五组协议/拒绝/WS/fixture定向检查通过。首轮构建随本机Docker重启以EOF中断，恢复后缓存重建成功，不将中断算通过。

@@ -45,3 +45,5 @@
 建议下一闭环集中处理“已知可选参数与失败可见性”：字段逐项缺省/null/显式值/错误类型矩阵，HTTP/SSE/原生与桥接WS同样的上游文档，首帧/流中拒绝、终态唯一与owner清理；再单列多lane慢读隔离和订阅握手头契约。保持主Agent实现、定向测试、一次集中review/出口验证；不按每个字段反复全量构建。真实订阅继续关闭，M5和Desktop完整验收不因本轮对照完成。
 
 进一步只读[官方Codex发送结构](https://github.com/openai/codex/blob/d6817454d76885e9d0e118bbf82e507aed6f715a/codex-rs/codex-api/src/common.rs)：Reasoning在effort/summary之外还有context（auto/current_turn/all_turns），StreamOptions包含reasoning_summary_delivery=sequential_cutoff。当前用户拒绝细分为reasoning_members，与此差异一致，但没有读取其具体字段。采用显式枚举与严格未知拒绝；CodexLB extra=allow可保留该扩展只是实践参考，不作为放开全部未知成员的理由。临时请求镜像诊断未启用。
+
+只读诊断后，进一步按[官方请求生成器](https://github.com/openai/codex/blob/d6817454d76885e9d0e118bbf82e507aed6f715a/codex-rs/core/src/client.rs)及[默认模型目录](https://github.com/openai/codex/blob/d6817454d76885e9d0e118bbf82e507aed6f715a/codex-rs/models-manager/models.json)在本机Desktop内置CLI复现Lite工具包拒绝；又发现部署合成fixture与CLI终态usage要求不一致。原因/对照见[只读调查](../changes/parallel-key-trial/verification.md#用户要求先定位不修复后的只读调查)。这进一步说明字段缺省、模型目录选择、输入工具协议和完整客户端消费须一起取证，不能只移植CodexLB某个DTO或用HTTP200替代客户端完成；用户要求先找原因，此后未修复或部署。

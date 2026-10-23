@@ -64,3 +64,28 @@ Linux amd64优化候选 `bdb67f4edd454a86f3893fd6164159b62609b965`：镜像ID `s
 Linux新候选最终绑定正确源码 `9acf3e3007c56a4047e8d136870dcc2b22190750`，发布revision录入错误在导出前纠正并复用相同后端缓存；实际剥离程序SHA256 `0e1af00159fd57f45cc8c21434bf7766011465d479deb00fb9a96a2892b34fef`，镜像ID `sha256:ed1982b180148c4040765a7d889da3eff5131b3f9fe33cfd0626f4b5ace47677`。同样无外网/只读/非root/512MiB/2CPU隔离：参数、拒绝诊断、HTTP协议首轮通过；WS全部业务断言后在最后网关退出码断言失败，原断言未保留具体码。只重跑WS失败组并补非零退出采集后通过，尚未执行的fixture随后通过；首轮原因未确认，不冒充一次全集全绿或已修复退出根因。未重跑已通过三组，无前端变更。归档SHA256 `91755cc863b89f3a08e525394fde726d5d9c024b2a04b0e6e98c6446f076c72d`。
 
 四项控制候选公网双前缀JSON/SSE/WSS/预热、已知nullable组合、负向参数/认证/管理隔离通过；运行SHA匹配，配置及旧服务未变，诊断Key撤销。用户再次失败固定原因reasoning_members，unknown=0；这仅确认额外成员，不输出字段名或参数原值。按官方客户端发送结构增加context三枚举及summary delivery单枚举，9项定向Swift与实际四传输/预热最终文档和负向无派发通过；新候选尚待Linux/部署，不写实际Desktop通过。
+
+`ff1322f`增量集中review无新增P1/P2，macOS arm64完整189项Swift及全部后端脚本exit0。Linux amd64实际剥离程序在相同无网络/只读/非root/512MiB/2CPU环境的optional_reasoning、protocol_rejections、protocol、websocket、trial_provider五组本次首轮均通过。程序SHA256 `8434b60656fef4b132d1d43285263d3f8e9ca1093dc1d2361676162a4c714fc5`，镜像ID `sha256:c5f487efefdcabb74a0a5b4f2620e709d109ea41e3e6c0a4beaf5e46aef8529b`，归档SHA256 `54b8776e52b39e883885fade715d1c4ba1f9a99752ce3afedad4a0064e356559`，目标重建/运行一致；旧服务与新侧配置/管理员/身份保持。
+
+公网首轮首前缀JSON/SSE接受context=auto及全部已知可空控制；WSS TLS握手EOF，不计通过。仅补失败和未执行项，另一前缀JSON/SSE与两前缀WSS、current_turn预热/all_turns生成、负向参数/认证/管理隔离/跳转逐项通过；先前已过的认证及首路径JSON/SSE不重复。三context和摘要交付实际到达合成服务，不证明真实提供者。诊断Key全部撤销、仅所选原Key活动，unknown=0；请求镜像从未启用。偶发TLS原因未确认；此前9acf候选的WS退出断言一次失败也保留独立原证据，本次通过不抹除它。
+
+已请求用户进行新候选Desktop复测，截至本次出口无所选Key新执行，结果待用户；未读取真实字段或正文，不把源码推断当真实请求取证。产物在忽略目录artifacts/codex-context，源码精确归档、各平台与公网限定矩阵及SHA256SUMS；无推送/发布或真实订阅调用。
+
+## 用户要求先定位、不修复后的只读调查
+
+用户在新候选复测仍失败后，要求先找原因、不着急修复。此后未修改业务代码、部署、线上配置或用户客户端。服务器只读日志确认本次为unsupported_input/400，已越过reasoning校验；所选原Key无attempt，unknown=0，失败在实际上游执行前。已有诊断未记录input类型，不能直接声称已看到用户的additional_tools。
+
+只读官方Codex固定快照d6817454d76885e9d0e118bbf82e507aed6f715a的core/src/client.rs、protocol/src/models.rs及models-manager/models.json：gpt-6.1-sol/gpt-6-luna默认use_responses_lite=true；请求生成器把工具作为input.additional_tools，缺省顶层tools。CodexLB固定源码的_sanitize_input_items/_normalize_responses_input_instructions保留该指令及developer位置。当前网关ResponseRequest无additional_tools分支，会在未知input类型处拒绝；已有verify_client.py显式使用synthetic-text、api_key_model_discovery=true和model_catalog_url，覆盖了不同的目录/协议路径。
+
+主Agent用本机Desktop内置CLI 0.163.0-alpha.11.1、全新0700 CODEX_HOME/空工作目录/固定合成Key与提示、read-only沙箱，analytics/feedback关闭，所有生成和目录地址仅loopback，在内存中观察合成结构。未使用真实登录文件、用户正文、原Key或真实上游；输出只保留类型/字段名/状态/错误及退出结果，不保留内容与路径。此版本是本机安装版本，不替代对用户所用客户端版本的独立确认。
+
+| 本机合成对照 | 网关/上游结果 | CLI结果及结论 |
+|---|---|---|
+| 默认gpt-6.1-sol、用户提供的同类provider配置，无显式目录 | reasoning包含context/effort，顶层tools缺省，input首项additional_tools；400 unsupported_input，合成上游0次 | exit1；复现线上相同拒绝边界 |
+| 保持该合成请求其余内容，仅移除additional_tools作因果探针 | HTTP200，上游收到请求 | 仅用于锁定校验触发项，不是修复方案，不可对真实请求静默删除工具包 |
+| CLI显式启用已有合成模型目录 | 顶层tools存在、input只有message，HTTP200 | exit1，明确错误failed to parse ResponseCompleted: missing field total_tokens；进入下一层终态契约障碍 |
+| 保持上述目录/客户端/网关，仅在独立内存夹具补齐合成usage.total_tokens | HTTP200，合成上游1次 | exit0、turn.completed、无错误；确认第二处独立夹具问题 |
+
+同一份默认路径合成输入的内容分块仅有type/text；本次没有复现内容metadata差异，不把它额外算作原因。当前部署trial_provider.py有完整message/delta/done/completed顺序，但usage只有input_tokens/output_tokens及cached细分，缺少本CLI终态解析所需total_tokens；已有verify_client.py的另一套Provider包含该字段。这解释了为何独立socket/脚本通过，而默认模型+实际部署夹具没有完成客户端闭环。HTTP200不能当客户端成功；未因退出码更改产品、字段或线上fixture。
+
+结论边界：确认实际拒绝在input白名单；本机原生默认路径及单变量探针锁定additional_tools兼容缺口，并确认部署夹具终态缺字段。用户实际请求的具体input类型仍未采集；需要结构级证据才能把本机复现与该请求完全对应。后续如继续，按默认模型元数据→Lite工具声明/准入/输出→严格终态客户端消费作为同一闭环，不逐字段猜测，不默认放开未知输入、删除工具或把目录切换冒充完整Lite支持。当前暂停修复与部署，真实订阅继续关闭。
