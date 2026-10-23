@@ -69,15 +69,22 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，恢复关联实验阶段出口（`9b6dde7`，持久屏障修复 `c643772`，review/复审关闭）：macOS arm64与Linux amd64的真实CLI0.163.0+合成上游/实际网关通过created/文本前缀断流、完整事件读取及主动相同新turn；重试期间不新增上游调用，主动新turn新增执行，最终仅一条文本。结论为限定HTTP文本的有条件可行；fixture授权/epoch守卫不冒充产品能力，工具/图片/生产关联及M5仍保留。见[实验记录](docs/changes/recovery-correlation/verification.md)。下一步推进长任务与可信模型选择闭环；真实Desktop仍先讨论操作方式，订阅调用关闭。
+2026-10-23，长任务与可信模型选择闭环阶段出口通过（实现 `15b33f5`，review修复 `bdbd427` / `0e9f20f`，Linux测试边界 `f0153fe`）：主Agent亲自实现，两位subagent集中review及复审关闭。默认总期限600秒/首响应30秒/进度60秒、HTTP/桥接/native WS/compact预算快照与取消、WS活动期间请求空闲分离；受信离线profile完整导入/覆盖/来源摘要/陈旧披露及价格权限隔离已可用。没有新增schema、在线发现或自动重放。
+
+- macOS arm64完整后端检查逐项完成（179项Swift，修复后8项定向及相关socket回归）；Linux amd64优化程序的协议/WS/压缩/图片/生产pool导入通过。两平台HTTP、桥接WS、原生WS均完成单次125秒及首响应/进度/心跳/空delta/总期限/取消等28场景，恰好一次上游调用，正常settled、失败unknown且连接收尾。真实CLI0.163.0三传输实际采用快照指导并完成文本/工具续接；Linux显式依赖外层隔离容器，不计内层bubblewrap沙箱通过。没有前端产品改动，不重复前端全集。
+- 新本地候选 `codexone:long-task-profile-candidate`，源码 `0e9f20fe7cc804eb3c596d6a58587504366d8016`，镜像ID `sha256:e062d4672233b42ec6a0e960ed244217440ccad2bcfe94a95b50448f5b1f588c`，Linux二进制SHA256 `e7382d6f28bb3f2345dafeeb162e299b8a393d5fbbd1760cd6ff6bb54288f9a5`；镜像/受测产物一致，归档重载核对通过。安装迁移/重启、默认兼容配置下不同v8同卷回退再升级与unknown保留、实际SPA Chrome操作及大屏检查通过。新增配置回退旧程序须恢复旧兼容配置；旧Desktop候选与归档保持不变。
+
+完整证据及Linux CLI环境边界见[阶段验证](docs/changes/long-task-profiles/verification.md)，配置见[模型profile与长执行](docs/development/model-profiles.md)。产物保留在忽略目录 `artifacts/long-task-profiles/`，不推送/发布；恢复实验仍仅证明限定HTTP文本可行，不将M5标完成。下一步先讨论真实Desktop的版本、独立配置、合成上游操作矩阵和撤销方式；真实订阅调用继续关闭，M2/M4/M5/M6完整里程碑、完整O14与目标宿主等缺口继续保留。
+
+2026-10-23，恢复关联实验阶段出口（`9b6dde7`，持久屏障修复 `c643772`，review/复审关闭）：macOS arm64与Linux amd64的真实CLI0.163.0+合成上游/实际网关通过created/文本前缀断流、完整事件读取及主动相同新turn；重试期间不新增上游调用，主动新turn新增执行，最终仅一条文本。结论为限定HTTP文本的有条件可行；fixture授权/epoch守卫不冒充产品能力，工具/图片/生产关联及M5仍保留。见[实验记录](docs/changes/recovery-correlation/verification.md)。长任务与可信模型选择的后续出口见上；真实Desktop仍先讨论操作方式，订阅调用关闭。
 
 2026-10-23，结合CodexLB源码与GitHub讨论收敛业务取舍阶段出口（`2ba7020`，集中review无新增P1/P2，文档/架构/格式/隐私检查通过）：已选择分阶段期限/执行快照、受信版本化profile、先验证已有输出恢复、图片明确宿主/路由和分离错误健康归因；不吸纳无限重试、直接扩大256MiB入口、多节点协调和未接业务的存储迁移。依据含维护者对恢复大PR关闭未合并、拆分存储仍未接运行路径、图片路由仍缺真实错误帧的说明；没有把外部PR测试或合并状态当本项目兼容通过。见[选定取舍](docs/decisions/compatibility-policy.md)、[公开讨论依据](docs/evidence/codexlb-discussions.md)及[验证账](docs/changes/compatibility-policy/verification.md)。本轮只改决策/证据，当前120秒等限制及冻结候选 `bd38964` 不变；实现参数、规范和新候选由后续闭环交付。
 
-当前顺序：先做有明确结论的合成恢复关联可行性实验，不先建设缓存；再以“正常长任务与可信模型选择可用”为一个业务闭环实现和验证，内部切片不重复全量验收。随后先讨论Desktop操作方式，再进行真实UI+合成上游；真实订阅调用未开启。M5、Desktop/订阅与完整O14等缺口继续保留。
+当前顺序：恢复关联实验与长任务/profile闭环已完成限定阶段出口；接下来先讨论Desktop操作方式，再进行真实UI+合成上游。真实订阅调用未开启；生产恢复缓存、M5、Desktop/订阅与完整O14等缺口继续保留。
 
 2026-10-23，CodexLB接入取舍只读核对阶段出口：提交 `e5809df` 后集中review无新增P1/P2，文档/架构/格式/隐私检查通过；主Agent对用户指定旧项目的 `6d78866` / 历史修复快照 `6689178` 逐项读取源码，未修改旧项目、读取秘密/部署配置或调用真实订阅。两份旧源码均有重复POST直接重放完整持久事件的分支，修正此前将M5过于集中于GET读取轨迹的解释；它不证明稳定操作关联、消费位置或工具安全，M5仍未完成。另确认默认单次期限、模型目录/指导来源、图片mask与stream转换、认证参数和额度覆盖差异；默认设置不代表当前线上配置。见[对照矩阵](docs/evidence/codexlb-compatibility.md)及[核对记录](docs/changes/codexlb-compatibility-audit/verification.md)。本次不改产品代码，冻结候选仍为下方 `bd38964`。
 
-下一步先补新的合成恢复关联实验（完整事件重放、主动相同新turn、权限/副作用边界），并为长执行的总期限/空闲期限及可信模型profile来源明确方案；行为变化须另提案。真实Desktop操作仍先与用户讨论，首轮仅合成上游；真实订阅调用未开启。只读旧源码不代替Desktop/真实订阅/M5/O14验收。
+只读旧源码不代替Desktop/真实订阅/M5/O14验收；对照后新增的实验与实现已在上方记录各自限定出口。
 
 2026-10-23，Desktop测试准备阶段出口通过：账号闭环 `ef0f8d3` / `5167d68`、图片内部封套修复 `94f6ae5`、测试守卫及预热责任核对 `96af05f` / `bd38964`。主Agent亲自实现与修复，两位subagent集中review及复审关闭，无新增P1/P2。
 
