@@ -29,3 +29,7 @@ macOS定向6项Swift诊断/代理配置测试通过。实际代理socket覆盖HT
 开发中的测试失败不计通过：HTTP上游配置不开放下游WS，取消探针改用HTTP原始连接；基础fixture主动拒绝任何Authorization，已增加明确匹配合成上游Bearer的接收校验后复用协议fixture；一次验证与二进制链接重叠导致子进程退出，稳定构建完成后完整定向套件重新通过。未读取真实请求/凭证到仓库或改旧服务，真实新调用尚未执行；完整后端、Linux与两轮结果在完成后补记。
 
 2026-10-23，主 Agent 自查后 macOS arm64 / Swift 6.4 完整 `./scripts/verify.sh --backend` exit 0：201项Swift测试、格式/依赖方向/文档和全部后端进程/socket/恢复脚本通过，包含新增显式代理套件。新增认证/refresh/额度合成组装恰好3次CONNECT，无直连旁路；错误目标证书在HTTP及WSS均未收到应用凭证。此时Linux候选仍在构建，真实两轮未运行，不计通过。
+
+Linux amd64 / Swift 6.4.1首轮verification未通过：新增代理WS成功组收到终态后立刻读账，未等待受监督finalizer持久化；断言看见未settled状态。依据ExecutionCoordinator终态观察/异步handoff契约，测试改为3秒内收敛、准确2/4笔、无重启/新派发，并检查正常停服后全部settled、故障组仍unknown；不改产品结算语义。修改后macOS整个代理套件及Linux整个verification target均exit 0，失败尝试不计通过。
+
+Linux剥离release程序实际通过HTTP/SSE/原生WS/Lite/工具诊断/合成fixture/Images，以及快照、主密钥、存储压力和迁移切回socket/进程验证；新增HTTP/WS代理正负、目标TLS、OAuth/refresh/额度组装通过，均无外网。运行镜像实际OCI/Compose安装检查exit 0，覆盖私有初始化、非root/只读、管理SPA/Key持久化、锁、旧库备份迁移和优雅重启。Linux此次不是完整Swift测试全集或真实Desktop。程序未改动后仅重标源码revision，不重复同一程序安装检查；打包会逐字节比较verification和runtime程序摘要，之后才进行真实调用。

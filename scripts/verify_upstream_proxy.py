@@ -194,7 +194,15 @@ def main():
                                     response=turn(client,request)[-1]['response']
                                     assert turn(client,{**request,'previous_response_id':response['id']})[-1]['type']=='response.completed'
                             assert proxy.requests>tunnels and provider.sequence>before
-                            assert all(s=='settled' for (s,) in ledger(root))
+                            # The terminal frame precedes the owned finalizer's durable completion.
+                            # Require bounded convergence without restart or another dispatch.
+                            expected=4 if transport=='websocket' else 2
+                            deadline=time.monotonic()+3
+                            while True:
+                                states=ledger(root)
+                                if len(states)==expected and all(s=='settled' for (s,) in states):break
+                                assert time.monotonic()<deadline,states
+                                time.sleep(.02)
                         else:
                             began=time.monotonic();status,body=connect(ports['data'],'POST','/v1/responses',request)
                             assert status==502 and time.monotonic()-began<9
@@ -206,7 +214,9 @@ def main():
                         output=process.stdout.read()
                         for private in [TOKEN,'synthetic-private-provider-error-never-log','synthetic-private-upstream-token-never-log',str(config),f'http://127.0.0.1:{proxy.server_address[1]}']:assert private.encode() not in output
                         # Reopening read-only is evidence the ledger survives owner shutdown.
-                        assert ledger(root)
+                        states=ledger(root)
+                        if mode=='forward':assert len(states)==expected and all(s=='settled' for (s,) in states),states
+                        else:assert states==[('unknown',)],states
                     finally:stop(process)
                     print(f'PASS: explicit {transport} proxy {mode}; no direct fallback, private output or lost ledger',flush=True)
             # A provider 400 is distinct from a proxy 407; source status and fixed reason remain server-side.
