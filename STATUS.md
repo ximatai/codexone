@@ -11,7 +11,7 @@ M0、M1 已完成本机验收与提交后 review/修复。M2 保留 Desktop 界�
 - 核心骨架可编译运行：Core / Adapters / Runtime / 入口四个 Swift targets，依赖方向由检查脚本约束；Swift 6.4 严格并发，锁定 Package.resolved。
 - NIO 数据健康入口、Vapor 管理健康 API、配置校验和 ServiceLifecycle 信号/子服务监督。默认仅 loopback；执行未配置时 readiness 为 503，生成请求明确拒绝。
 - React19/TS7/Vite8 管理工作区，Mantine9/Router8、共享会话owner，独立密钥治理与用量路由；Query5/Zod4只读用量与表单试点，Oxlint/Prettier、Vitest/Testing Library 与 Playwright。Node 22.23.0，npm lock 固定依赖。
-- 本地分支 `codex/account-governance`；未关联远程/推送，未改动用户服务器或旧项目。完成的提案在归纳后回收，过程可由 Git 追溯。
+- 本地分支 `codex/account-governance`；未关联远程/推送；本轮按用户明确授权新增独立合成旁路部署，旧服务/旧项目保持原样。完成的提案在归纳后回收，过程可由 Git 追溯。
 
 ## 运行与检查
 
@@ -69,6 +69,14 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，原Key复用与独立旁路试运行准备阶段出口通过（实现 `ed399bb`、受控源转换 `adf85c8`）：主Agent亲自实现，集中review及增量复核无新增P1/P2。离线私有摘要清单仅向新目标原子禁用导入，整批校验/采集时限/实例锁/逐条审计/管理员隔离；固定源schema只读转换，无法安全表达的源约束隔离，不复制账号、原Key明文、旧会话或余额。
+
+- macOS arm64完整180项Swift及全部后端脚本、后增源转换定向回归通过；Linux amd64优化程序的源转换、导入/失败原子性/恢复态/锁、实际HTTP/WS原Key治理、合成fixture与生产pool检查通过。主Agent实际部署独立新服务，仅启用用户选定Key，其余导入Key保持禁用；诊断Key完成合成HTTP/native WS后撤销。验证材料与源私有清单一致，新侧账号/unknown为0，旧服务容器/镜像未变且健康。两侧额度/用量/撤销独立，不称正式迁移或旧余额继承。
+- 已授权目标的基础合成部署、实际cgroup限制与loopback监听核对通过；CPU CFS不可用，采用共享单核CPU集合，保留硬内存/swap/PID上限，不计独占CPU或完整O14。受控SSH通道及真实Chrome打包管理页登录/导入列表/单Key状态/退出通过，安全Cookie/CSRF保留；通道为本次短时测试owner，实际客户端主机须自行具备连接。
+- 候选 `codexone:key-trial-candidate`，源码 `adf85c8f20cd113b7e09e38d55eb336993ee82fa`，镜像ID `sha256:1d5f847fe907e75d96f1ae5bdd439c13760dfc862db30e3d00aa5eccbcaf36bc`，Linux程序SHA256 `28e31778b6c278aefd3934d7f5f46593b70f8ed89007847c02ab56310314ed62`，与实际运行程序一致；旧候选保留，不推送或发布。具体主机/连接/安装位置与Key映射仅私下保存，后续缺失时向用户获取，不在仓库猜测连接目标。
+
+操作见[摘要导入与旁路](docs/development/key-import.md)，限定证据见[阶段验证](docs/changes/parallel-key-trial/verification.md)。下一步用户以独立客户端/新会话切测试地址并保留原Key，主Agent再核对真实客户端协议/失败路径；当前仅固定合成回复。真实所选Key客户端请求、Desktop与订阅调用、正式切换、M5及完整O14/目标真实负载仍未验收；M2/M4/M5/M6整体继续不标完成。
+
 2026-10-23，长任务与可信模型选择闭环阶段出口通过（实现 `15b33f5`，review修复 `bdbd427` / `0e9f20f`，Linux测试边界 `f0153fe`）：主Agent亲自实现，两位subagent集中review及复审关闭。默认总期限600秒/首响应30秒/进度60秒、HTTP/桥接/native WS/compact预算快照与取消、WS活动期间请求空闲分离；受信离线profile完整导入/覆盖/来源摘要/陈旧披露及价格权限隔离已可用。没有新增schema、在线发现或自动重放。
 
 - macOS arm64完整后端检查逐项完成（179项Swift，修复后8项定向及相关socket回归）；Linux amd64优化程序的协议/WS/压缩/图片/生产pool导入通过。两平台HTTP、桥接WS、原生WS均完成单次125秒及首响应/进度/心跳/空delta/总期限/取消等28场景，恰好一次上游调用，正常settled、失败unknown且连接收尾。真实CLI0.163.0三传输实际采用快照指导并完成文本/工具续接；Linux显式依赖外层隔离容器，不计内层bubblewrap沙箱通过。没有前端产品改动，不重复前端全集。
@@ -80,7 +88,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 2026-10-23，结合CodexLB源码与GitHub讨论收敛业务取舍阶段出口（`2ba7020`，集中review无新增P1/P2，文档/架构/格式/隐私检查通过）：已选择分阶段期限/执行快照、受信版本化profile、先验证已有输出恢复、图片明确宿主/路由和分离错误健康归因；不吸纳无限重试、直接扩大256MiB入口、多节点协调和未接业务的存储迁移。依据含维护者对恢复大PR关闭未合并、拆分存储仍未接运行路径、图片路由仍缺真实错误帧的说明；没有把外部PR测试或合并状态当本项目兼容通过。见[选定取舍](docs/decisions/compatibility-policy.md)、[公开讨论依据](docs/evidence/codexlb-discussions.md)及[验证账](docs/changes/compatibility-policy/verification.md)。本轮只改决策/证据，当前120秒等限制及冻结候选 `bd38964` 不变；实现参数、规范和新候选由后续闭环交付。
 
-当前顺序：恢复关联实验与长任务/profile闭环已完成限定阶段出口；接下来先讨论Desktop操作方式，再进行真实UI+合成上游。真实订阅调用未开启；生产恢复缓存、M5、Desktop/订阅与完整O14等缺口继续保留。
+当前顺序：恢复关联实验、长任务/profile及独立旁路准备已完成限定出口；用户已确认并行部署、原Key复用、单Key合成模式。下一步由用户操作独立客户端新会话，再核对实际客户端协议/失败路径；真实订阅调用未开启，生产恢复/M5、Desktop/订阅、正式切换与完整O14等缺口继续保留。
 
 2026-10-23，CodexLB接入取舍只读核对阶段出口：提交 `e5809df` 后集中review无新增P1/P2，文档/架构/格式/隐私检查通过；主Agent对用户指定旧项目的 `6d78866` / 历史修复快照 `6689178` 逐项读取源码，未修改旧项目、读取秘密/部署配置或调用真实订阅。两份旧源码均有重复POST直接重放完整持久事件的分支，修正此前将M5过于集中于GET读取轨迹的解释；它不证明稳定操作关联、消费位置或工具安全，M5仍未完成。另确认默认单次期限、模型目录/指导来源、图片mask与stream转换、认证参数和额度覆盖差异；默认设置不代表当前线上配置。见[对照矩阵](docs/evidence/codexlb-compatibility.md)及[核对记录](docs/changes/codexlb-compatibility-audit/verification.md)。本次不改产品代码，冻结候选仍为下方 `bd38964`。
 
