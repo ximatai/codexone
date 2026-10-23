@@ -37,3 +37,7 @@ CLI 检查入口为 `scripts/verify_client.py`，加 `--retry-probe` 验证 EOF 
 ## CodexLB源码对照后的边界修正 · 2026-10-23
 
 [明确版本旧源码](codexlb-compatibility.md)存在重复Responses POST直接重放完整持久事件的路径，不要求客户端先调用GET。此前CLI实验只证明当前无缓存网关上的新执行行为，不能据此排除透明POST恢复；“缺少GET轨迹”不是唯一阻断条件。下一步需新增稳定操作关联、重复请求与主动相同新turn区分、全段事件/消费前缀和工具副作用的合成实验，再以实际Desktop确认。尚未选择或实现此路线，C10/M5仍不通过；未知执行再次派发与已有事件读取继续严格分开。
+
+## 文本POST关联实验 · 2026-10-23
+
+CLI0.163.0在macOS/Linux的HTTP实验中，created或完整文本delta前缀后断流，重试正文及所选头一致；同线程主动resume相同prompt的input/client_metadata和turn metadata改变。网关先持久settled，试验relay按明确步骤提供原完整事件，客户端仅产生一个最终文本，上游调用不增加；主动新turn新增第二次调用。由此证明该限定路径有条件可消费完整POST重放，而不是证明生产逻辑操作识别、工具副作用或消费位置。scope/epoch拒绝仅fixture守卫，当前网关仍无缓存/读取实现，M5未完成。证据与失败边界见[关联实验](../changes/recovery-correlation/verification.md)。

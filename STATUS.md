@@ -69,6 +69,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，恢复关联实验阶段出口（`9b6dde7`，持久屏障修复 `c643772`，review/复审关闭）：macOS arm64与Linux amd64的真实CLI0.163.0+合成上游/实际网关通过created/文本前缀断流、完整事件读取及主动相同新turn；重试期间不新增上游调用，主动新turn新增执行，最终仅一条文本。结论为限定HTTP文本的有条件可行；fixture授权/epoch守卫不冒充产品能力，工具/图片/生产关联及M5仍保留。见[实验记录](docs/changes/recovery-correlation/verification.md)。下一步推进长任务与可信模型选择闭环；真实Desktop仍先讨论操作方式，订阅调用关闭。
+
 2026-10-23，结合CodexLB源码与GitHub讨论收敛业务取舍阶段出口（`2ba7020`，集中review无新增P1/P2，文档/架构/格式/隐私检查通过）：已选择分阶段期限/执行快照、受信版本化profile、先验证已有输出恢复、图片明确宿主/路由和分离错误健康归因；不吸纳无限重试、直接扩大256MiB入口、多节点协调和未接业务的存储迁移。依据含维护者对恢复大PR关闭未合并、拆分存储仍未接运行路径、图片路由仍缺真实错误帧的说明；没有把外部PR测试或合并状态当本项目兼容通过。见[选定取舍](docs/decisions/compatibility-policy.md)、[公开讨论依据](docs/evidence/codexlb-discussions.md)及[验证账](docs/changes/compatibility-policy/verification.md)。本轮只改决策/证据，当前120秒等限制及冻结候选 `bd38964` 不变；实现参数、规范和新候选由后续闭环交付。
 
 当前顺序：先做有明确结论的合成恢复关联可行性实验，不先建设缓存；再以“正常长任务与可信模型选择可用”为一个业务闭环实现和验证，内部切片不重复全量验收。随后先讨论Desktop操作方式，再进行真实UI+合成上游；真实订阅调用未开启。M5、Desktop/订阅与完整O14等缺口继续保留。
