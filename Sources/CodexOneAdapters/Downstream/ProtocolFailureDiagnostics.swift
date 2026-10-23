@@ -23,7 +23,12 @@ enum ProtocolFailureDiagnostics {
     "upstream_upgrade_rejected", "upstream_authentication_rejected", "upstream_rate_limited",
     "upstream_unavailable", "upstream_proxy_authentication_required", "upstream_proxy_timeout",
     "upstream_proxy_failed", "invalid_upstream_content_type", "upstream_missing_terminal",
-    "invalid_upstream_event",
+    "invalid_upstream_event", "event_outside_upstream_turn", "incomplete_upstream_event",
+    "invalid_upstream_compaction", "invalid_upstream_image", "invalid_upstream_lane",
+    "invalid_upstream_response", "invalid_upstream_turn", "invalid_upstream_usage",
+    "invalid_upstream_warmup", "unknown_upstream_lane", "unsupported_upstream_event",
+    "unsupported_upstream_object", "upstream_event_too_large", "upstream_execution_failed",
+    "upstream_output_too_large", "upstream_response_too_large",
   ]
 
   static func metadata(_ error: GatewayProtocolError, requestID: String) -> Logger.Metadata {

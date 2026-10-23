@@ -133,3 +133,5 @@ CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；�
 原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任。
 
 Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。
+
+上游及续接消息的phase允许null，按缺省校验并保留该已知字段；非空仍限analysis/commentary/final_answer，错误类型/未知值拒绝。已知response.reasoning_text.delta/done及content_part中的reasoning_text按有界流文本处理，delta/text须字符串，已知索引为非负有界整数，item ID保持原归属/WS逐turn关联屏障；不能用reasoning_text冒充summary_part或message正文part。错误事件/成员/phase/part只记录固定分类，不记录文本或任意字段名/值。其他事件不据此放行。

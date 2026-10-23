@@ -11,6 +11,7 @@ struct ProviderObservation: Sendable {
     "response.output_text.delta", "response.output_text.done",
     "response.function_call_arguments.delta", "response.function_call_arguments.done",
     "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done",
+    "response.reasoning_text.delta", "response.reasoning_text.done",
     "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
     "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
     "response.content_part.added", "response.content_part.done", "response.refusal.delta",
@@ -25,7 +26,7 @@ struct ProviderObservation: Sendable {
     throws
   {
     guard let type = event["type"]?.string else {
-      throw GatewayProtocolError(502, "unsupported_upstream_event")
+      throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent)
     }
     let responseEvents: Set<String> = [
       "response.created", "response.in_progress", "response.completed", "response.failed",
@@ -125,11 +126,36 @@ struct ProviderObservation: Sendable {
         }
         bindings.append(.init(type: "item", rawID: id))
       }
+      if ["response.reasoning_text.delta", "response.reasoning_text.done"].contains(type) {
+        let text = type.hasSuffix(".delta") ? event["delta"] : event["text"]
+        let allowed: Set<String> = [
+          "type", "item_id", "output_index", "content_index", "sequence_number",
+          type.hasSuffix(".delta") ? "delta" : "text", "obfuscation",
+        ]
+        guard text?.string != nil, event.object?.keys.allSatisfy(allowed.contains) == true,
+          event["item_id"] == nil || event["item_id"]?.string != nil
+        else {
+          throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent)
+        }
+        for key in ["output_index", "content_index", "sequence_number"] {
+          if let index = event[key] {
+            guard let index = index.integer, (0...1_000_000_000).contains(index) else {
+              throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent)
+            }
+          }
+        }
+        if let padding = event["obfuscation"], padding.string == nil {
+          throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent)
+        }
+      }
       if let part = event["part"] {
-        try Self.validatePart(part, allowSummary: true)
+        try Self.validatePart(
+          part, allowSummary: true,
+          allowReasoning: ["response.content_part.added", "response.content_part.done"].contains(
+            type))
       }
     } else {
-      throw GatewayProtocolError(502, "unsupported_upstream_event")
+      throw GatewayProtocolError(502, "unsupported_upstream_event", detail: .upstreamEvent)
     }
     self.bindings = bindings
     self.usage = usage
@@ -166,7 +192,7 @@ struct ProviderObservation: Sendable {
     ]
     let allowed = fields[type, default: []].union(["type", "id", "status"])
     guard item.object?.keys.allSatisfy(allowed.contains) == true else {
-      throw GatewayProtocolError(502, "unsupported_upstream_object")
+      throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamItemMembers)
     }
     var bindings: [ObjectBinding] = []
     if let status = item["status"], status != .null {
@@ -220,9 +246,10 @@ struct ProviderObservation: Sendable {
           }
         }
       }
-      if let phase = item["phase"] {
+      if let phase = item["phase"], phase != .null {
         guard ["analysis", "commentary", "final_answer"].contains(phase.string ?? "") else {
-          throw GatewayProtocolError(502, "unsupported_upstream_object")
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamMessagePhase)
         }
       }
     }
@@ -274,10 +301,13 @@ struct ProviderObservation: Sendable {
     return bindings
   }
 
-  private static func validatePart(_ part: JSONValue, allowSummary: Bool) throws {
+  private static func validatePart(
+    _ part: JSONValue, allowSummary: Bool, allowReasoning: Bool = false
+  ) throws {
     let type = part["type"]?.string ?? ""
     let allowedTypes =
-      allowSummary ? ["output_text", "refusal", "summary_text"] : ["output_text", "refusal"]
+      (allowSummary ? ["output_text", "refusal", "summary_text"] : ["output_text", "refusal"])
+      + (allowReasoning ? ["reasoning_text"] : [])
     let text = type == "refusal" ? part["refusal"]?.string : part["text"]?.string
     let keys: Set<String> =
       type == "output_text"
@@ -287,7 +317,9 @@ struct ProviderObservation: Sendable {
       part["annotations"] == nil || part["annotations"]?.array == [],
       part["logprobs"] == nil || part["logprobs"] == .null || part["logprobs"]?.array == [],
       part.object?.keys.allSatisfy(keys.contains) == true
-    else { throw GatewayProtocolError(502, "unsupported_upstream_object") }
+    else {
+      throw GatewayProtocolError(502, "unsupported_upstream_object", detail: .upstreamPart)
+    }
   }
 
   static func validateUsageContainer(_ value: JSONValue?) throws {

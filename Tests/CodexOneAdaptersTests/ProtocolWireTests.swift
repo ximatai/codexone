@@ -349,3 +349,43 @@ func webSocketQueueConcurrentCancellationAndFinishNeverResumeUnderItsLock() asyn
     }
   }
 }
+
+@Test func nullableMessagePhaseAndKnownReasoningEventsPreserveStrictShape() throws {
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
+  let item: JSONValue = .object([
+    "type": .string("message"), "id": .string("synthetic-item"),
+    "role": .string("assistant"), "content": .array([]), "phase": .null,
+  ])
+  _ = try ProviderObservation.itemBindings(item, functionNames: [])
+  _ = try ResponseRequest(
+    data: JSONValue.object([
+      "model": .string("synthetic"), "input": .array([item]),
+    ]).data())
+  for bad: JSONValue in [.bool(false), .number(1), .string("synthetic-unknown")] {
+    var object = item.object!
+    object["phase"] = bad
+    #expect(throws: (any Error).self) {
+      try ProviderObservation.itemBindings(.object(object), functionNames: [])
+    }
+  }
+  for type in ["response.reasoning_text.delta", "response.reasoning_text.done"] {
+    let field = type.hasSuffix(".delta") ? "delta" : "text"
+    let event: [String: JSONValue] = [
+      "type": .string(type), field: .string("synthetic reasoning"),
+      "item_id": .string("synthetic-reasoning"), "content_index": .number(0),
+    ]
+    _ = try ProviderObservation(event: .object(event), model: model, functionNames: [])
+    for (key, value): (String, JSONValue) in [
+      (field, .object(["file_id": .string("synthetic-private-file")])),
+      ("content_index", .number(-1)), ("item_id", .number(1)),
+      ("synthetic_unknown", .string("synthetic-private-value")),
+    ] {
+      var invalid = event
+      invalid[key] = value
+      #expect(throws: (any Error).self) {
+        try ProviderObservation(event: .object(invalid), model: model, functionNames: [])
+      }
+    }
+  }
+}

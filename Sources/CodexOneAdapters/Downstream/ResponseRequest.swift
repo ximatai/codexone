@@ -26,6 +26,10 @@ enum ProtocolRejectionDetail: String, Sendable {
   case toolsChoice = "tools_choice"
   case toolsPackage = "tools_package"
   case toolsImage = "tools_image"
+  case upstreamEvent = "upstream_event"
+  case upstreamItemMembers = "upstream_item_members"
+  case upstreamMessagePhase = "upstream_message_phase"
+  case upstreamPart = "upstream_part"
   case upstreamMediaTypeJSON = "upstream_media_type_json"
   case upstreamMediaTypeHTML = "upstream_media_type_html"
   case upstreamMediaTypeOther = "upstream_media_type_other"
@@ -442,7 +446,7 @@ struct ResponseRequest: Sendable {
           }
           _ = try ClientTools.key(name: object["name"]?.string ?? "output", namespace: namespace)
         }
-        if let phase = object["phase"] {
+        if let phase = object["phase"], phase != .null {
           guard type == "message",
             ["analysis", "commentary", "final_answer"].contains(phase.string ?? "")
           else { throw GatewayProtocolError(400, "unsupported_input") }
