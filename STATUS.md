@@ -75,9 +75,14 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，按用户授权继续[真实订阅文本验证](docs/changes/real-subscription-text-validation/verification.md)：实现并提交`196cabf`，显式可信HTTP代理已覆盖生成HTTP、原生WS CONNECT、认证/刷新及额度GET，保持目标TLS校验、原期限/owner、无直连回退或自动重放；固定拒绝分类/上游状态只进有界私有诊断，公开错误附服务端Reference，不记录原正文或静默剥离输出约束。macOS arm64完整后端exit 0（201项Swift及全部脚本），新增代理拒绝/断连/超时/取消、TLS错误证书、认证/refresh/额度合成组装与退出后unknown保留均通过。主Agent实现及自查，依用户指示不例行召唤subagent；Linux amd64 release整套verification及实际OCI/Compose安装通过；首轮代理WS测试读账过早的失败及有界收敛修正已记验证账，产品结算未改。服务器首次启动预检因宿主不支持CPU配额失败（生成0），移除该独立测试限制后实际发出1次请求，因invalid_upstream_content_type失败并停止第二轮；新账本unknown/failed且usage缺失，服务器与私有本地副本已核对，旧服务/原合成入口前后正常。结合成熟项目已修复同类缺Content-Type证据，正在补受限媒体兼容及失败回归，afe1244随后通过Linux原verification/实际安装后真实复验：捕获缺媒体类型，但事件层仍失败，HTTP200不算通过；第三笔全局真实生成unknown/failed且无可信usage，服务器及私有本地副本均已保留。私有探针漏记SSE错误码、已知上游码落other的诊断缺口已修正，补phase:null及reasoning_text的官方契约与HTTP/WS定向回归；当前完整回归/Linux在运行，累计上限明确调整为6。253bcda又经Linux完整verification及安装通过后实际复验，确认已到正文输出，随后以unsupported_upstream_event终止；第四笔仍unknown、无可信usage，账本/私有副本均保留。正按官方未处理扩展策略做有界隔离（不转发/绑定/计usage或进展），定向HTTP/WS/阶段及已知错误保护通过，完整回归/Linux在运行。累计已用4，最后两次预算尚未使用。
+2026-10-23，用户要求先自我反思复盘，新增[协议对齐复盘](docs/evidence/protocol-alignment-review.md)：确认外部参考偏局部、同源夹具共享假设、校验职责未完整分类、真实闭环过晚及诊断证据缺口。下一步先做完整请求/响应/事件/多轮的只读契约矩阵，再集中提出兼容改进；暂缓新增真实调用及部署，累计仍5次，两轮未通过，不要求用户再次重试。此前已启动的72a01c6固定对象诊断候选macOS定向5项测试/构建、Linux完整verification与runtime构建已完成，尚未上传或运行真实调用；不计新安装/Desktop/提供者验收。
 
-此前只读检查已确认旧服务现有Clash可达两官方目标、额度GET 200且allowed；首个本机真实探针返回502/upstream_rejected，无可信usage，未继续第二轮。该次SQLite被探针误清理，只有脱敏记录、缺原attempt ID，未知责任单独保留，不记零或用后续成功抵销。max_output_tokens属于已发现但未证实为唯一原因的契约风险。本轮探针改为派发前持久日志、逐轮核对真实usage/settled后续接，保留独立SQLite及报告，只删除访问快照/管理秘密；在独立服务器loopback实例走现有Clash，不修改旧服务/账号或原公开合成入口。后续实际结果在完成后更新，真实Desktop两轮、M3账号池/刷新、图片及M5仍未验收；无推送、发布或正式切换。
+2026-10-23，按用户授权继续[真实订阅文本验证](docs/changes/real-subscription-text-validation/verification.md)：显式可信HTTP代理覆盖生成HTTP、原生WS CONNECT、认证/刷新及额度GET，目标TLS校验、原期限/owner保持，无直连回退/自动重放。固定失败分类与服务端Reference不记录正文。缺失流媒体类型兼容、nullable phase/reasoning_text及非语义扩展隔离已回归；3b2c4d8通过macOS完整后端203项Swift及全部脚本、Linux完整verification和实际OCI/Compose安装，验证/运行/服务器程序摘要一致。
+
+累计已用5次真实生成：前四笔无可信usage，三份完整SQLite及本机私有副本保留，最早一笔因旧探针误清理SQLite只有脱敏外部记录，未知责任不按零或被后续成功抵销。第五笔经既有Clash实际收到文本及完整usage（input 51/output 11），最终对象被unsupported_upstream_object拒绝，停止第二轮；账本settled/failed、unresolved=0，已双份核对保留，不算生成闭环成功。该次实际观察缺媒体类型及扩展隔离各一次，不能将phase/null等独立缺口称为唯一根因。补齐固定对象校验分类后再定位；本轮累计上限由6明确调整为8，仍首错停止、单并发、逐轮核对。
+
+真实调用仅在独立服务器loopback实例使用有效access快照，不调用refresh/修改旧账号；旧服务healthy、身份配置未变，原公开合成入口前后ready。测试实例已回收，访问/管理秘密清除、日志无凭证；失败账本继续保留。真实HTTP/SSE两轮尚未通过，真实Desktop两轮、M3账号池/刷新、图片及M5仍未验收；无推送、发布或正式切换。
+
 
 2026-10-23，真实Desktop失败已精确定位并更新修复：另一设备ChatGPT Desktop 26.1016.62342的受控操作，界面Reference唯一对应tools_description_size/unsupported_tools，证明说明超过旧单条32 KiB限制，未调用上游；不是null或类型错误。旧阈值按CLI样本推定，真实Desktop工具组合验证缺失。[修复56600c0](docs/changes/desktop-operation-diagnosis/proposal.md)将其改为跨顶层/Lite包/namespace的512 KiB UTF-8说明共享预算，保留纯文本总请求512 KiB、图片外层8 MiB及类型/数量/身份保护，不截断或删除说明。macOS完整后端（199项Swift及全部脚本）、Linux剥离程序协议/维护回归及runtime安装通过，独立合成服务备份校验后已升级，运行SHA与已验程序一致。公网两个前缀HTTPS JSON/SSE、WSS预热/续接带131073字节合成说明通过，五个说明错误Reference精确匹配；临时Key撤销，账号0、unresolved0，原Key/数据/配置/属主、fixture/provider、反代和旧服务不变。主Agent实现/自查，依用户要求不例行召唤subagent。更新后用户在同一真实Desktop保持配置新建会话发送受控探针，确认界面显示完整预期合成回复；本次窗口原Key新增warmup/generation各2条全部settled/succeeded，无新工具拒绝或未决执行，服务healthy、无OOM/重启。因此本版本/配置的新会话文本发送与回复展示通过，未用CLI或仅账本替代真实界面。电脑工具限制未绕过，操作由另一设备用户完成；真实订阅关闭，其他Desktop工具/图片/连续操作、M5及完整里程碑继续保留。
 
@@ -276,7 +281,7 @@ M6 已覆盖以下本机闭环：当前 v8 Linux amd64 可追溯 OCI 候选/私�
 3. 低磁盘保护与必要运行观测：本地阶段出口已完成，覆盖拒绝新工作、关键收尾、WAL 与备份空间不足；不替代目标宿主容量演练。
 4. 当前 v8 候选及安装/升级/兼容回退、合成迁移切回已完成本机闭环；HTTP/native WS各600秒、多Key/单图/断流和资源回稳包络已实测。HTTP keepalive/长寿命多turn和已定义最大参考图/工具图片边界随后通过；仍须补async任务观测、其余图片格式/帧组合，并明确约1.6 GiB参考宿主/共存服务的可解释预算；现有768 MiB容器限额不代证宿主。M5缓存未实现，完整O14仍保留。
 5. 补齐 Desktop/真实订阅的明确版本兼容证据，解决 M5 可用读取路径或明确产品范围调整；这些缺口可先保留，但不能带入首版完成声明。没有新客户端证据时不重复同一恢复探针。
-6. 远端 CI 与发行来源复现，最后在授权范围内安排真实接入/切换和发布。候选安装不等同旧服务可替代，现有授权包含独立合成旁路部署，不含推送/发布/真实额度调用。
+6. 远端 CI 与发行来源复现，最后在授权范围内安排真实接入/切换和发布。候选安装不等同旧服务可替代，现有授权包含独立合成旁路部署及本轮受控真实文本调用，不含推送、发布或正式切换。
 
 每个闭环由主 Agent 实现和定向验证，出口集中 review/修复/必要完整验证，前端实际操作验收。上述顺序不扩大 M7 范围；多架构、多管理员和多上游继续延期。
 

@@ -73,3 +73,13 @@ Linux后续构建遇本机Docker控制面超时：运行目标报告DeadlineExce
 依据官方解析器未处理事件不产生输出的行为，新增有界非语义扩展隔离。定向Swift测试和实际HTTP/WS代理验证通过：扩展在created前/正文后/terminal前插入的伪造response/item/usage/error不能被转发、绑定、结算或修改turn状态；已知完成及可信usage才能结算，完整窗口/同socket续接保持。扩展-only、持续扩展、超大事件仍失败/unknown，不续期；已知failure仍失败且可信usage保留，未授权image/畸形已知事件仍拒绝；日志每进程仅一条固定观察、无事件名/正文。完整后端/Linux正在运行，尚未消耗最后两次预算。
 
 扩展隔离修正后，macOS arm64完整后端exit 0：203项Swift及全部脚本通过，包括新扩展隔离/伪造数据无效/不续期、已知错误/权限/字节限制保持和原有协议/恢复回归。主Agent自查后提交，真实累计仍4，Linux仍待完成，不计通过。
+
+## 第五笔实际生成与对象分类
+
+3b2c4d8完整Linux verification及实际OCI/Compose安装exit 0；验证/运行/服务器程序SHA-256均`85f8a310b816dcbfa7f49f1a6d5e9c7aaead0825c6f1a3bc98bab7f22274500e`。新实例实际生成1次，HTTP200并接受message item/content part各2及8个文本事件，随后unsupported_upstream_object；未继续第二轮。缺媒体类型/扩展隔离各实际观察1，nullable phase观察false；不猜具体未记录事件或失败字段。
+
+本次已取得可信完整usage（input 51/output 11），账本settled/failed、unresolved=0，SHA-256 `a9a9edaf420b9f2701843f4e45170c532f4f87c765bc51f213cb06135010a6e6`；服务器及本机私有副本一致。此前四笔未知继续单列，不能把本笔失败称unknown或成功。凭证快照/管理秘密已清除、日志无凭证、测试实例正常停服回收，旧服务healthy/身份配置未变，原合成入口前后ready。
+
+补齐对象校验的固定分类，不改变任何接受/拒绝行为或公开错误结构。仅记录编译时枚举，不记录任意键/字段值/正文；固定分类隐私定向测试5项通过。累计预算调整见提案，真实两轮仍未完成。
+
+用户要求先复盘后，未继续上传或调用。此前启动的72a01c6本机macOS构建与5项诊断测试、Linux完整verification target及runtime构建exit 0；不记为新候选实际安装或真实提供者验证。本轮只读对照的结论及后续核查要求见[复盘](../../evidence/protocol-alignment-review.md)，真实累计仍5次。

@@ -4,5 +4,7 @@
 - [x] 核对旧服务代理配置；经同一路径CONNECT/TLS及不生成内容的额度GET通过。
 - [x] 完成一次本机隔离网关真实请求：返回upstream_rejected、执行未知，已停后续生成、清除凭证并记录探针账本清理缺陷。
 - [x] 补齐新网关显式Clash出网、可信失败诊断与持续保留账本的有界探针；macOS完整合成验证通过，Linux及真实结果另记。
-- [ ] 补齐官方nullable phase/reasoning_text事件契约及固定诊断，完整回归/Linux后在累计最多6次生成内完成首轮与第二轮续接；不以身份/额度GET、合成上游或CLI代替生成/Desktop验收。
+- [x] 补齐官方nullable phase/reasoning_text、非语义扩展隔离及macOS/Linux/实际安装验证。
+- [ ] 依据第五笔终态对象失败补齐固定诊断，在累计最多8次生成内完成首轮与第二轮续接；不以身份/额度GET、合成上游或CLI代替生成/Desktop验收。
 - [x] 更新本轮真实结果、缺失证据及下一步到STATUS；仍未标真实订阅通过。
+- [x] 按用户最新要求先完成[协议对齐复盘](../../evidence/protocol-alignment-review.md)，暂缓新增真实调用/部署；后续先补只读契约矩阵，不继续逐错试探。
