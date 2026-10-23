@@ -35,7 +35,7 @@ codexone --import-keys /run/codexone/approved-key-import.json
 
 ## 合成旁路
 
-使用独立镜像、数据卷、管理凭证、合成上游与loopback端口；通过受控SSH隧道接客户端，不修改旧反代/域名/防火墙。服务器/连接信息及选定Key映射只保留在私有部署目录，不写本仓库。先检查服务器容量和端口冲突，不复用旧卷或账号refresh token。
+使用独立镜像、数据卷、管理凭证、合成上游与loopback端口；客户端入口可先用受控SSH通道；用户明确授权公网接入后，按[TLS反代](tls-proxy.md)增加独立HTTPS数据域，保留原Key、管理端口继续回环，不修改旧服务路由。服务器/连接信息及选定Key映射只保留在私有部署目录，不写本仓库。先检查服务器容量和端口冲突，不复用旧卷或账号refresh token。
 
 `scripts/trial_provider.py --port <private-loopback-port> --model <approved-model>` 是明确的合成fixture：只回固定联通提示，不转发、执行工具、回显或记录输入；支持JSON/SSE、受控上游WS和compact，最多8个连接，HTTP读取10秒、WS空闲300秒，关闭信号中断并等待连接owner。独立容器非root/只读/资源有界，仅配置该fixture地址、无真实上游凭证；这不等于网络防火墙或真实模型能力验证。
 

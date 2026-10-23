@@ -26,4 +26,15 @@
 
 ## 保留项
 
-下一步用户在独立客户端新会话切测试地址、保留原Key，核对实际协议/失败路径。当前只回明确合成提示，不执行用户工具任务；真实Desktop操作、真实订阅调用、正式切换/账本核对、M5及完整O14均未完成。服务端loopback部署独立保持，本机短时通道结束后须在实际客户端主机重新建立连接。
+下一步用户在独立客户端新会话切测试地址、保留原Key，核对实际协议/失败路径。当前只回明确合成提示，不执行用户工具任务；真实Desktop操作、真实订阅调用、正式切换/账本核对、M5及完整O14均未完成。服务端网关/管理/fixture仍监听loopback；后续授权的公开数据入口见下，客户端无需重新建立SSH隧道。
+
+## 2026-10-23 独立公网HTTPS出口
+
+主Agent配置独立数据域/公共证书与ACME webroot，复用交付数据路由片段，管理保持回环；不修改旧服务路由、容器/镜像或已存在的Nginx文件（逐一SHA核对）。交付 `090d742` 后集中subagent review无新增P1/P2；程序/镜像及schema未变，不重复完整后端和前端验证。
+
+- macOS arm64 / Linux amd64交付数据专用模板实际Nginx配置检查通过。Linux隔离客户端正常验证公网证书链/主机名，两条Responses路径的JSON/SSE/WSS完成固定合成回复，缺失/错误/撤销Key为401，管理/健康/根路径404，HTTP固定域跳转308。
+- macOS首轮默认网络路径WSS握手超时；服务器回环TLS和Linux公网WSS均通过。随后macOS直连公共地址、保留原域名SNI/正常证书校验，同组JSON/SSE/WSS及拒绝路径通过；未定位首轮网络超时根因，不写成默认路径WSS已复现通过。
+- 每次公网检查只用新建诊断Key，不读取原Key明文；首次收尾SSH中断后立即重新连接撤销，后续诊断均撤销，最后仅所选源Key启用，unknown=0、旧服务healthy。真实账号/订阅未配置，原Key客户端操作仍待用户。
+- 独立证书的webroot与校验成功后reload hook已保存，现有Snap续期timer active；首次检查了错误单元名导致新配置安全回退，核实实际timer后加载成功。临时客户端隧道owner已退出，不影响私有管理SSH。
+
+续期实际执行 `certbot renew --cert-name <独立域> --dry-run --run-deploy-hooks --no-random-sleep-on-renew --non-interactive` exit0，验证staging HTTP challenge及配置检查/reload hook。首次长SSH中断、随后受控后台worker遇到Certbot随机延迟；仅终止本次owner进程组，取消随机等待后完成，不改变既有续期timer。私有运行证据留在部署目录，不入仓库。
