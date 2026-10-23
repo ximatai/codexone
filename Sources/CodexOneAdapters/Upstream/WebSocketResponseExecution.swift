@@ -59,7 +59,9 @@ extension HTTPResponseExecution {
         }
         total += data.count
         guard
-          data.count <= (request.requirements.imageModel == nil ? 262_144 : ImageLimits.eventBytes)
+          data.count
+            <= (request.requirements.imageModel == nil
+              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
         else {
           throw GatewayProtocolError(502, "upstream_event_too_large")
         }

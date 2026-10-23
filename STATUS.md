@@ -1,6 +1,6 @@
 # 当前状态
 
-更新时间：2026-10-23（Asia/Shanghai）。唯一全局状态入口。
+更新时间：2026-10-24（Asia/Shanghai）。唯一全局状态入口。
 
 ## 项目状态
 
@@ -74,6 +74,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 有界混合容量：`python3 scripts/verify_capacity.py --image codexone:v8-candidate --duration 600 --output artifacts/capacity-run-001`（显式长耗时、每配置600秒、新输出目录）；定向故障保护和环境前提见[容量演练](docs/development/capacity.md)。
 
 ## 最新验证与范围
+
+2026-10-24，按用户继续优化的授权，完成[文本协议矩阵](docs/evidence/text-protocol-matrix.md)并实施[契约对齐](docs/changes/text-protocol-alignment/proposal.md)：兼容官方数值时间/指令对象列表/可空原因，隔离非执行metadata权限，补终态/status与total一致性及HTTP执行内响应关联；普通上游JSON/事件1 MiB以容纳已接受的大请求回显，总流8 MiB和图片/独立compact预算不变。macOS完整后端exit 0：203项Swift及全部脚本，新增独立字面量HTTP 45次/WS上游71次，共116次实际执行，通过两轮、300000字节请求回显、稀疏流、类型/状态/总数/关联/超限负向及持久用量/unknown/隐私/不重放。Linux正在构建，真实累计仍5次，不将这些独立缺口认定为第五笔唯一根因。核查后按原授权恢复受控真实验证的准备，尚未新增调用或上传；真实两轮/Desktop及矩阵明确列出的订阅参数、普通多视图等缺口继续保留。
 
 2026-10-23，用户要求先自我反思复盘，新增[协议对齐复盘](docs/evidence/protocol-alignment-review.md)：确认外部参考偏局部、同源夹具共享假设、校验职责未完整分类、真实闭环过晚及诊断证据缺口。下一步先做完整请求/响应/事件/多轮的只读契约矩阵，再集中提出兼容改进；暂缓新增真实调用及部署，累计仍5次，两轮未通过，不要求用户再次重试。此前已启动的72a01c6固定对象诊断候选macOS定向5项测试/构建、Linux完整verification与runtime构建已完成，尚未上传或运行真实调用；不计新安装/Desktop/提供者验收。
 

@@ -99,7 +99,7 @@ class Observed(Handler):
             if media=='missing-json':body=b'{"error":"synthetic-private-untyped-body-never-forward"}'
             if media=='missing-partial':body=('data: '+json.dumps(events[0])+'\n\n').encode()
             if media=='missing-malformed':body=b'data: synthetic-private-untyped-body-never-forward\n\n'
-            if media=='missing-oversized':body=b'data: '+b'x'*262145+b'\n\n'
+            if media=='missing-oversized':body=b'data: '+b'x'*1048577+b'\n\n'
             self.send_response(200)
             types={'empty':'','typed':'Text/Event-Stream; charset=UTF-8','json':'application/json','html':'text/html','prefix':'text/event-streaming','empty-essence':'; charset=UTF-8'}
             if media in types:self.send_header('Content-Type',types[media])

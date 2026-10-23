@@ -1,0 +1,27 @@
+{
+  "sources": {
+    "sdk_revision": "81792ff040a2ca2b70348163049d3d69d5ba95cf",
+    "codex_revision": "1c0c45bfc372fb7d7d581508fdef5eef8235eab7",
+    "scope": "Independently authored synthetic events; not a capture or provider serializer output."
+  },
+  "events": [
+    {"type": "response.created", "response": {"id": "resp_contract_1", "status": "in_progress", "created_at": 1, "output": [], "usage": null}},
+    {"type": "response.output_item.added", "output_index": 0, "item": {"type": "message", "id": "msg_contract_1", "role": "assistant", "status": "in_progress", "content": []}},
+    {"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "item_id": "msg_contract_1", "delta": "synthetic independent contract output"},
+    {"type": "response.output_item.done", "output_index": 0, "item": {"type": "message", "id": "msg_contract_1", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "synthetic independent contract output", "annotations": []}]}},
+    {
+      "type": "response.completed",
+      "response": {
+        "id": "resp_contract_1", "object": "response", "model": "synthetic-contract", "status": "completed",
+        "created_at": 1.125,
+        "instructions": [
+          {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "synthetic echoed guidance"}]},
+          {"type": "item_reference", "id": "synthetic-metadata-only-id"}
+        ],
+        "incomplete_details": {"reason": null},
+        "output": [{"type": "message", "id": "msg_contract_1", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "synthetic independent contract output", "annotations": []}]}],
+        "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8, "input_tokens_details": {"cached_tokens": 0}}
+      }
+    }
+  ]
+}

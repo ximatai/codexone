@@ -51,6 +51,7 @@ RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone 
     && python3 scripts/verify_upstream_proxy.py --binary /output/codexone \
     && python3 scripts/verify_upstream_events.py --binary /output/codexone \
     && python3 scripts/verify_upstream_extensions.py --binary /output/codexone \
+    && python3 scripts/verify_text_contract.py --binary /output/codexone \
     && python3 scripts/verify_tool_diagnostics.py --binary /output/codexone \
     && python3 scripts/verify_trial_provider.py --binary /output/codexone \
     && python3 scripts/verify_images.py --binary /output/codexone

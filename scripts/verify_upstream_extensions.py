@@ -27,7 +27,7 @@ class Extensions(Events):
     def events(self,document):
         events=super().events(document);mode=self.server.extension_mode
         if mode=='only':return [extension()]*3
-        if mode=='oversized':return [dict(type='synthetic.extension',data='x'*262145)]
+        if mode=='oversized':return [dict(type='synthetic.extension',data='x'*1048577)]
         if mode=='stall':
             def drip():
                 for _ in range(80):yield extension();time.sleep(.05)

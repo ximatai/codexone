@@ -3,6 +3,7 @@ import Foundation
 
 /// Provider-specific evidence extraction; downstream documents are never used as execution proof.
 struct ProviderObservation: Sendable {
+  static let maximumTextEventBytes = 1_048_576
   let bindings: [ObjectBinding]
   let usage: UsageEvidence?
   let terminal: Bool
@@ -80,28 +81,54 @@ struct ProviderObservation: Sendable {
         throw GatewayProtocolError(502, "upstream_execution_failed")
       }
       for key in [
-        "status", "model", "object", "service_tier", "instructions", "prompt_cache_key",
+        "status", "model", "object", "service_tier", "prompt_cache_key",
         "prompt_cache_retention", "previous_response_id",
       ] {
         if let value = response[key], value != .null, value.string == nil {
           throw GatewayProtocolError(
             502, "unsupported_upstream_object",
-            detail: key == "instructions" ? .upstreamResponseInstructions : .upstreamResponseString)
+            detail: .upstreamResponseString)
         }
       }
+      if let instructions = response["instructions"], instructions != .null {
+        // Echoed instruction items are metadata, never executable input or ownership evidence.
+        guard
+          instructions.string != nil
+            || instructions.array.map({
+              $0.count <= 128 && $0.allSatisfy { $0.object != nil }
+            }) == true
+        else {
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamResponseInstructions)
+        }
+      }
+      if let status = response["status"], status != .null {
+        let expected =
+          type == "response.created"
+          ? ["queued", "in_progress"]
+          : [String(type.dropFirst("response.".count))]
+        guard expected.contains(status.string ?? "") else {
+          throw GatewayProtocolError(
+            502, "invalid_upstream_response", detail: .upstreamTerminalStatus)
+        }
+      }
+      try Self.validateTotalTokens(response["usage"])
       for key in ["background", "parallel_tool_calls"] {
         if let value = response[key], value != .null, value.bool == nil {
           throw GatewayProtocolError(
             502, "unsupported_upstream_object", detail: .upstreamResponseBoolean)
         }
       }
-      if let created = response["created_at"], created.integer == nil {
-        throw GatewayProtocolError(
-          502, "unsupported_upstream_object", detail: .upstreamResponseCreated)
+      if let created = response["created_at"] {
+        guard case .number = created else {
+          throw GatewayProtocolError(
+            502, "unsupported_upstream_object", detail: .upstreamResponseCreated)
+        }
       }
       if let details = response["incomplete_details"], details != .null {
-        guard details["reason"]?.string != nil,
-          details.object?.keys.allSatisfy({ $0 == "reason" }) == true
+        guard let members = details.object, members.count <= 32,
+          details["reason"] == nil || details["reason"] == .null
+            || details["reason"]?.string != nil
         else {
           throw GatewayProtocolError(
             502, "unsupported_upstream_object", detail: .upstreamResponseIncomplete)
@@ -388,6 +415,22 @@ struct ProviderObservation: Sendable {
     else {
       throw GatewayProtocolError(
         502, "unsupported_upstream_object", detail: .upstreamUsageContainer)
+    }
+  }
+
+  /// Client-facing totals must agree with known counters; they never create missing evidence.
+  private static func validateTotalTokens(_ usage: JSONValue?) throws {
+    guard let value = usage?["total_tokens"] else { return }
+    guard let total = value.integer, (0...2_000_000_000).contains(total) else {
+      throw GatewayProtocolError(502, "invalid_upstream_usage", detail: .upstreamUsageTotal)
+    }
+    if let input = usage?["input_tokens"]?.integer,
+      let output = usage?["output_tokens"]?.integer
+    {
+      let sum = input.addingReportingOverflow(output)
+      guard !sum.overflow, total == sum.partialValue else {
+        throw GatewayProtocolError(502, "invalid_upstream_usage", detail: .upstreamUsageTotal)
+      }
     }
   }
 

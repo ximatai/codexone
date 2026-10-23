@@ -60,6 +60,7 @@ struct ProtocolFailureDiagnosticsTests {
       .upstreamItemNamespace, .upstreamMessageRole, .upstreamMessageContent,
       .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
       .upstreamUsageContainer,
+      .upstreamTerminalStatus, .upstreamUsageTotal,
     ] {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
       let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)

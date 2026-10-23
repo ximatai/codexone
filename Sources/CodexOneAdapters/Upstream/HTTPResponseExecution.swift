@@ -148,10 +148,11 @@ struct HTTPResponseExecution: Sendable {
           }
           var decoder = SSEDecoder(
             maximumEventBytes: request.requirements.imageModel == nil
-              ? 262_144 : ImageLimits.eventBytes,
+              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes,
             maximumTotalBytes: request.requirements.imageModel == nil
               ? 8_388_608 : ImageLimits.responseBytes)
           var compaction = StreamCompaction()
+          var responseID: String?
           var terminal = false
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
@@ -161,6 +162,24 @@ struct HTTPResponseExecution: Sendable {
               if try ProviderObservation.isIsolatedExtension(event) {
                 ProtocolFailureDiagnostics.recordIsolatedExtension(requestID: requestID)
                 continue
+              }
+              // An extension cannot establish identity; a foreign terminal cannot supply usage.
+              if [
+                "response.created", "response.in_progress", "response.completed", "response.failed",
+                "response.incomplete",
+              ].contains(event["type"]?.string ?? ""), let response = event["response"] {
+                guard let id = response["id"]?.string, !id.isEmpty, id.utf8.count <= 256,
+                  responseID == nil || responseID == id
+                else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+                responseID = id
+              }
+              if let id = event["response_id"] {
+                guard let id = id.string, !id.isEmpty, id.utf8.count <= 256,
+                  responseID == nil || responseID == id
+                else {
+                  throw GatewayProtocolError(502, "invalid_upstream_turn")
+                }
+                responseID = id
               }
               // Trusted usage must survive later binding/output failures.
               if ["response.completed", "response.failed", "response.incomplete"].contains(
@@ -196,7 +215,8 @@ struct HTTPResponseExecution: Sendable {
           }
           let body = try await collectProgressBody(
             response.body, progress: progress,
-            maximum: request.requirements.imageModel == nil ? 262_144 : ImageLimits.eventBytes)
+            maximum: request.requirements.imageModel == nil
+              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
           let document: JSONValue
           do {
             document = try JSONValue.decode(body)
