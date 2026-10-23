@@ -2,6 +2,8 @@
 
 记录已采用的工作共识及理由，不代表方案不可调整。遇到困难或更好证据，按治理流程沟通；进度只见根 STATUS。
 
+[稳定接入与有限恢复的取舍](compatibility-policy.md)：结合CodexLB源码与Issue/PR讨论选定的期限、模型profile、恢复、图片与错误治理方向，以及不吸纳项；具体实现和当前限制以规范/STATUS为准。
+
 ## 技术栈与组织
 
 Swift 6 严格并发，NIO 掌控数据面，Vapor 承担管理 API，AHC 调用上游；SQLite 单节点。管理台 TypeScript/React/Vite 静态 SPA。Linux amd64 OCI/Compose，由 GitHub CI 构建，服务器不承担编译。
