@@ -83,3 +83,12 @@ Linux后续构建遇本机Docker控制面超时：运行目标报告DeadlineExce
 补齐对象校验的固定分类，不改变任何接受/拒绝行为或公开错误结构。仅记录编译时枚举，不记录任意键/字段值/正文；固定分类隐私定向测试5项通过。累计预算调整见提案，真实两轮仍未完成。
 
 用户要求先复盘后，未继续上传或调用。此前启动的72a01c6本机macOS构建与5项诊断测试、Linux完整verification target及runtime构建exit 0；不记为新候选实际安装或真实提供者验证。本轮只读对照的结论及后续核查要求见[复盘](../../evidence/protocol-alignment-review.md)，真实累计仍5次。
+
+
+## 第六笔分类与第七/八笔文本闭环
+
+第六笔固定诊断为upstream_usage_container，完整input51/output11、settled/failed；原库和私有副本保留，首错停第二轮。随后完成文本契约/用量分责、输出投影与非终态计数保护，详见[最终文本验证](../text-protocol-alignment/verification.md)。归档来源2336499通过最终macOS203项Swift及受影响协议、Linux完整verification和实际OCI/Compose安装，服务器程序摘要与已验程序相同。
+
+第七/八笔经既有Clash真实HTTP/SSE均完整完成；第二轮使用第一轮完整输出窗口并正确复述合成码。逐轮响应与账本一致：51/11及82/11，cached0，两笔settled/succeeded，新未决0；新库SHA`2e4bde74c1bce5ac2c8e7e2fc58ecbdaf0c6a93da2c402af9e0f948b7abf8332`已双份核对。累计8/8=四笔历史未知（最早仅外部记录）+两笔已结算失败+两笔成功；历史责任不冲销，停止额外生成。
+
+隔离实例回收、临时凭证清除、无refresh/旧账号文件变更，旧服务healthy/身份运行指纹未变，原公开合成入口前后ready；无公开切换、推送或发布。本次仅选定模型/参数的HTTP文本全窗口两轮，不是Desktop界面、native WS真实订阅、工具/图片/密文推理或池/刷新验收。估算价格零为测试配置，非实际费用结论。

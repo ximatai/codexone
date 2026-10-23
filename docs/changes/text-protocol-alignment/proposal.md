@@ -29,12 +29,12 @@
 
 本轮第六笔真实调用固定诊断为upstream_usage_container，已可信输入51/输出11且settled/failed；没有保留原始响应，不能断言是哪个附加字段或容量触发。复查发现原校验把所有usage成员都限制为数字或一层数字对象，与[官方兼容约定](https://developers.openai.com/api/reference/overview#backwards-compatibility)允许新增响应属性不相容，也没有区分计量字段和非执行metadata。
 
-改为usage非null须为最多32成员的对象；input_tokens_details/output_tokens_details非null须为最多32成员的对象。input/output/cached继续由原证据解析严格验证，total继续独立一致性校验；已知cache_write_tokens/reasoning_tokens非null须为0—1000000000整数。普通纯文本路径的其他成员仅在内存中作为不透明元数据接受，输出只保留input/output/total及cached/cache_write/reasoning明细，其他成员移除；图片和独立compact仍沿原严格契约，受原JSON深度/单事件/总流预算限制，不递归提取ID、usage、权限或计费。只新增固定的根类型/根容量/明细类型/明细容量/已知明细计数诊断，不记录键名、值或原响应。独立样例覆盖附加字符串/布尔/嵌套元数据、不授予伪造绑定或计量，以及已知明细错误/超量拒绝并保留已可信计数。真实预算累计现6/8，仍首错停止，不因本次失败自动重放。
+改为usage非null须为最多32成员的对象；input_tokens_details/output_tokens_details非null须为最多32成员的对象。input/output/cached继续由原证据解析严格验证，total继续独立一致性校验；已知cache_write_tokens/reasoning_tokens非null须为0—1000000000整数。普通纯文本路径的其他成员仅在内存中作为不透明元数据接受，输出只保留input/output/total及cached/cache_write/reasoning明细，其他成员移除；图片和独立compact仍沿原严格契约，受原JSON深度/单事件/总流预算限制，不递归提取ID、usage、权限或计费。只新增固定的根类型/根容量/明细类型/明细容量/已知明细计数诊断，不记录键名、值或原响应。独立样例覆盖附加字符串/布尔/嵌套元数据、不授予伪造绑定或计量，以及已知明细错误/超量拒绝并保留已可信计数。该次失败后真实预算累计6/8，仍首错停止，不因本次失败自动重放。
 
 ## 验收
 
 先建立[协议矩阵](../../evidence/text-protocol-matrix.md)，明确接受/拒绝/适配/未验证。新增独立字面量事件与提供者脚本，不调用trial_provider.response_events生成被测响应；请求/响应双向观察，覆盖HTTP SSE/JSON、桥接/native WS、两轮完整窗口、合法元数据组合、非法类型、矛盾终态/总数、跨response的伪造usage、未知扩展无权，以及失败后持久责任/无重放/无正文日志。
 
-主Agent定向验证、自查并提交，再运行受影响完整后端/Linux出口；没有证据不标完成。真实调用只在原授权的独立私有实例、既有代理、有效access快照和累计8次上限内进行，目前已用6次；首错停止，旧账全部引用保留，公开入口和旧服务不变。实际Desktop仍须另行操作证据。
+主Agent定向验证、自查并提交，再运行受影响完整后端/Linux出口；没有证据不标完成。真实调用只在原授权的独立私有实例、既有代理、有效access快照和累计8次上限内进行，该分责阶段开始时已用6次；首错停止，旧账全部引用保留，公开入口和旧服务不变。实际Desktop仍须另行操作证据。
 
 已知input/output/cached计数在created/in_progress等非终态也验证类型/范围及cached<=input（均已知时）；这仅约束可输出形态，不建立非终态计量证据。新增非终态错误计数及metadata正负socket样例，防止按键投影误透出错误值。

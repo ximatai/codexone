@@ -1,6 +1,6 @@
 # 文本链路协议对照矩阵
 
-核对日期：2026-10-23。目标为现有已选CLI/Desktop文本路径；原真实Desktop仅合成文本界面通过，真实订阅两轮未通过。当前主线官方客户端为独立审计来源，不据此升级本项目兼容承诺。实施与验收见[提案](../changes/text-protocol-alignment/proposal.md)，全局进度只见[STATUS](../../STATUS.md)。
+核对日期：2026-10-23。目标为现有已选CLI/Desktop文本路径；实际验证范围与剩余验收只见[STATUS](../../STATUS.md)。当前主线官方客户端为独立审计来源，不据此升级本项目兼容承诺。实施与验收见[提案](../changes/text-protocol-alignment/proposal.md)，全局进度只见[STATUS](../../STATUS.md)。
 
 固定来源：[官方SDK Response](https://github.com/openai/openai-python/blob/81792ff040a2ca2b70348163049d3d69d5ba95cf/src/openai/types/responses/response.py)、[官方Codex请求](https://github.com/openai/codex/blob/1c0c45bfc372fb7d7d581508fdef5eef8235eab7/codex-rs/codex-api/src/common.rs)与[流解析器](https://github.com/openai/codex/blob/1c0c45bfc372fb7d7d581508fdef5eef8235eab7/codex-rs/codex-api/src/sse/responses.rs)、[CLIProxyAPI请求适配](https://github.com/router-for-me/CLIProxyAPI/blob/d946c4fba6fc9a5cfbca1f3d85184d62ad2fb683/internal/runtime/executor/codex_executor_request.go)。多轮视图参考[既有LiteLLM对照](gateway-reliability.md#g04第一轮成功不足以证明上下文一致)。这些源码读取不计外部项目测试通过。
 

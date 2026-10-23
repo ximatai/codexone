@@ -77,7 +77,9 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 2026-10-24，完成[文本协议对齐](docs/changes/text-protocol-alignment/proposal.md)原阶段出口（04543be）：合法元数据/状态与total/HTTP归属/大回显及JSON完整提交后收尾竞争已修复。macOS 203项Swift及所有受影响后端组件分别通过；最终源码Linux完整verification、实际OCI/Compose安装及集中只读复核通过。独立字面量套件116次执行，覆盖两轮与归属/计量/容量失败；没有以原有同源fixture代替。详见[矩阵](docs/evidence/text-protocol-matrix.md)和[验证账](docs/changes/text-protocol-alignment/verification.md)。
 
-随后第六笔受控真实生成经既有Clash收到文本及完整input51/output11，但终态被upstream_usage_container拒绝；首错停止，第二轮未发送，账本settled/failed、unresolved0，服务器及本机私有副本SHA核对保留。累计6/8次；历史四笔unknown（最早仅外部记录）及第五笔已结算失败分别保留。无原始响应，尚不能确认具体附加字段/容量；复核发现整份用量只允许数字/一层数字明细的假设，正在按已知计量严格/非执行metadata有界隔离分责，并细分固定诊断。新程序尚未真实调用。原公开合成入口/旧服务健康且未改，隔离实例回收、临时凭证清除；无推送/发布/正式切换。真实两轮/Desktop、普通多视图及订阅参数等仍未验收。
+2026-10-24，后续用量分责闭环完成（归档2336499、产品修正17e625b）：第六笔真实失败精确到upstream_usage_container，完整51/11保留；普通文本已知计数在全部响应阶段严格校验，附加metadata仅内存有界接受、向下游只投影已支持计量，不能泄漏私有标识或创建绑定/伪计量。图片/独立compact保持原语义；集中review的非终态计数P2已关闭。最终macOS203项Swift及受影响协议/WS/Images/压缩、独立201次通过；Linux完整verification、实际最终OCI/Compose安装和源码/脚本/运行程序摘要对应通过。失败、探针校准及受限构建环境记录见[验证账](docs/changes/text-protocol-alignment/verification.md)。
+
+真实订阅经既有Clash完成HTTP/SSE两轮全窗口文本：校验内容及上下文匹配，逐轮完整用量51/11、82/11与账本一致，两笔settled/succeeded、新未决0。新库已在服务器及本机私有副本SHA核对保留；累计8/8次，历史4笔未知（最早仅外部记录）及2笔完整计量失败继续单列，停止额外生成。测试容器回收、临时凭证清除，无refresh/旧账号文件变更；旧服务healthy/运行指纹未变，原公开合成入口前后ready。无公开切换、推送或发布。真实Desktop实机/native WS/工具/图片/密文推理、订阅参数组合、普通多视图、账号池/刷新及M5仍未验收；后续优先补普通多视图关联和订阅参数契约，再单独准备Desktop验证，不凭CLI/脚本要求用户重试。
 
 2026-10-23，用户要求先自我反思复盘，新增[协议对齐复盘](docs/evidence/protocol-alignment-review.md)：确认外部参考偏局部、同源夹具共享假设、校验职责未完整分类、真实闭环过晚及诊断证据缺口。下一步先做完整请求/响应/事件/多轮的只读契约矩阵，再集中提出兼容改进；暂缓新增真实调用及部署，累计仍5次，两轮未通过，不要求用户再次重试。此前已启动的72a01c6固定对象诊断候选macOS定向5项测试/构建、Linux完整verification与runtime构建已完成，尚未上传或运行真实调用；不计新安装/Desktop/提供者验收。
 

@@ -46,3 +46,16 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 图片探针进一步校准证据来源：invalid-usage原序列在较早item中就放入错误工具用量，不能保证取消前一定收到后续host终态；既有input5断言只有在可信host计量已送达时才成立。改为在同一终态中提供合法host与非法tool用量，继续严格要求unknown且保留host5/12；较早无终态关闭由现有abort-after-item覆盖。不以等待或丢断言掩盖缺证据。修正后的Mac两传输Images再次exit 0；产品17e625b未再变动，最终Linux检查待完成。
+
+
+## 2026-10-24 · 最终出口与真实两轮
+
+最终程序/归档来源2336499（产品修正17e625b）：macOS arm64完整Swift203项及受影响普通协议/WS、独立201次、Images/压缩通过；Linux amd64最终完整verification exit 0，包含独立HTTP73/WS128共201次、代理/扩展/工具/Images及密钥/快照/低盘/迁移；实际最终OCI/Compose安装exit 0。比对verification内改动的协议/代理/图片脚本、独立JSON夹具及ProviderObservation与工作树SHA一致；runtime/verification/服务器程序SHA一致为`212442959e048beee378a8a78dfd11cd79cdac4290451cd6d445102a5785d221`。集中增量review的非终态计数P2已关闭；主Agent后续限定图片/独立compact原语义，并保留原计量断言验证。构建中受限Docker虚拟机发生内存不足/只读查询迟滞，取消多余构建后顺序完成，未重启或改资源；三个既有容器仍运行且无unhealthy。中途失败/取消不计通过。
+
+新隔离实例经既有Clash，使用只读有效access快照，真实HTTP/SSE两轮均200/唯一response.completed。第一轮随机合成校验码与第二轮完整窗口复述均匹配；逐轮先核对settled/succeeded及完整计量再继续，第一轮input51/output11/total62，第二轮input82/output11/total93，cached均0。合计input133/output22/total155；网关列表价格配置为零，仅为未校准估算，不能据此声称订阅实际费用为零。未调用refresh、工具或图片，不设置订阅未验输出上限参数。两轮均观察到整数型数值时间、字符串instructions、null incomplete_details，无encrypted reasoning；因此不把SDK新形态或密文续接写成该次真实观察。
+
+新账本两笔settled/succeeded、完整usage与响应一致、未决0；服务器及本机私有副本SHA一致`2e4bde74c1bce5ac2c8e7e2fc58ecbdaf0c6a93da2c402af9e0f948b7abf8332`。引用核对原五份库及最早外部未知记录：累计8/8次=历史4笔未知（其中最早原库缺失）+2笔完整计量失败+本次2笔成功；所有失败/未知继续单列，不由成功冲销。已停止进一步生成，不自动重放。
+
+容器正常停服回收，临时access/管理秘密移除、日志无凭证；旧服务身份配置/运行指纹未变且healthy，原公开合成入口前后ready；没有公开切换、推送或发布。候选/精确源码/镜像及私有账本留在忽略目录，公开仓库只有固定分类、合成夹具和脱敏汇总。
+
+结论仅为当前模型/选定参数/HTTP全窗口文本两轮通过；Desktop真实订阅实机、原生WS真实订阅、encrypted reasoning/工具/图片、池路由/刷新、JSON/store组合、普通多视图一致性及M5仍未验收。没有要求用户仅凭脚本再次重试Desktop。
