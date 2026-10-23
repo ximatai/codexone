@@ -75,7 +75,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，真实Desktop失败已精确定位：另一设备ChatGPT Desktop 26.1016.62342的第二次受控操作，界面Reference唯一对应tools_description_size/unsupported_tools，证明说明超过网关旧单条32 KiB限制，未调用上游；不是null或字段类型错误。旧阈值按CLI样本推定，真实Desktop工具组合验证缺失。[修复](docs/changes/desktop-operation-diagnosis/proposal.md)已改为跨顶层/Lite包/namespace的512 KiB UTF-8说明共享预算，保留纯文本总请求512 KiB、图片外层8 MiB及类型/数量/身份保护，不截断或删除说明。macOS六项定向Swift、HTTP JSON/SSE/桥接及原生WS、Lite/compact双前缀长说明完整转发、共享预算/总请求超限无派发及18类诊断隐私回归通过，macOS完整后端验证通过（199项Swift及全部脚本），Linux候选验证正在执行；独立合成服务仍为2e02014诊断版，尚未更新修复。依用户要求主Agent实现/自查，不例行召唤subagent。真实Desktop未成功前不标验收；电脑工具禁止操作Desktop且实际客户端在另一设备，未绕过限制，仍需受控用户操作与服务记录共同验证。CLI不代替Desktop成功，真实订阅关闭，旧服务不变。
+2026-10-23，真实Desktop失败已精确定位并更新修复：另一设备ChatGPT Desktop 26.1016.62342的受控操作，界面Reference唯一对应tools_description_size/unsupported_tools，证明说明超过旧单条32 KiB限制，未调用上游；不是null或类型错误。旧阈值按CLI样本推定，真实Desktop工具组合验证缺失。[修复56600c0](docs/changes/desktop-operation-diagnosis/proposal.md)将其改为跨顶层/Lite包/namespace的512 KiB UTF-8说明共享预算，保留纯文本总请求512 KiB、图片外层8 MiB及类型/数量/身份保护，不截断或删除说明。macOS完整后端（199项Swift及全部脚本）、Linux剥离程序协议/维护回归及runtime安装通过，独立合成服务备份校验后已升级，运行SHA与已验程序一致。公网两个前缀HTTPS JSON/SSE、WSS预热/续接带131073字节合成说明通过，五个说明错误Reference精确匹配；临时Key撤销，账号0、unresolved0，原Key/数据/配置/属主、fixture/provider、反代和旧服务不变。主Agent实现/自查，依用户要求不例行召唤subagent。现等待同一真实Desktop保持配置的一次受控操作结果，未成功前不标界面验收；电脑工具禁止操作Desktop且实际客户端在另一设备，未绕过限制。CLI/合成对照不代替真实Desktop成功，真实订阅关闭。
 
 2026-10-23，用户通知已发送后，所选启用Key出现warmup/generation各1条，均settled/succeeded、failure为空，全局unresolved=0；网关healthy、无OOM/重启，真实账号仍0。只读核对未读取用户正文/凭证。同期仍有unsupported_tools拒绝日志（含合成负向记录），缺主体关联，不能将它们全部归因该主请求；Desktop界面显示与辅助流程仍待确认，不把服务器执行成功标成完整Desktop通过。详见[复测记录](docs/changes/default-client-loop/verification.md)。无代码、部署或客户端配置变更，下一步先由用户确认固定合成回复显示，再定位剩余拒绝是否影响实际操作。
 

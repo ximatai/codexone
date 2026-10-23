@@ -48,3 +48,7 @@
 macOS定向6项Swift测试通过：长说明两入口接受、精确预算/UTF-8及跨来源/namespace不能重置。实际HTTP JSON/SSE、桥接/原生WS、Lite/compact双前缀验证长function/custom/namespace说明完整转发；预算超限、总文本超限、类型/重复等拒绝不派发、不建attempt/绑定，18类原因/Reference与隐私回归通过。首轮新大帧负向被测试发送helper的旧512 KiB断言挡住，扩展其显式测试上限参数（默认不变）后重跑通过；不将该测试夹具失败写成产品通过。完整后端、Linux及部署在完成后补记，真实Desktop保持未通过。
 
 主Agent自审后，macOS完整verify.sh --backend exit0，199项Swift测试（35+35+3+126）及全部后端脚本通过，136份Markdown/架构/格式检查通过。未改变前端，不重复前端全集；未以CLI替代Desktop操作。Linux出口及修复服务更新仍待完成。
+
+修复候选56600c0的Linux amd64 verification与runtime安装验证均exit0；实际剥离程序通过HTTP/WS/Lite/fixture/图片/维护/恢复/存储/切回及18类诊断检查。镜像sha256:d6044bdcafc55df6f26352576c1f3eda4d6d6d312a2dadfe3a7009fcc79ff823，程序SHA256 3c1ca4962474e60336dec8d312ae72caa8c169f6ea50dd814cb61bdd5b6f897b，与已验程序相同；精确源码/校验和候选保存在忽略的artifacts/tool-budget/。
+
+独立合成测试服务备份及备份校验后升级成功，运行SHA匹配；原Key/数据/配置/属主、fixture及provider启动时间、反代和旧服务不变，账号0、unresolved0。公网两个前缀HTTPS JSON/SSE和WSS预热/续接均带131073字节合成说明通过（旧阈值会拒绝）；五个说明错误的Reference与日志逐一匹配。临时诊断Key已撤销，仅原Key启用。没有真实订阅调用、Git推送或发布。诊断与修复验证就绪后，请求用户在同一实际Desktop保持配置进行一次受控操作，等待界面结果；该结果到达前仍不标真实Desktop通过。

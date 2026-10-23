@@ -17,7 +17,7 @@
 
 ## 已关联拒绝后的细分
 
-受控真实Desktop的Reference已与tools_description/unsupported_tools一一关联；该旧分类同时覆盖null、其他非字符串和超过32 KiB，不能据此宣称已查清具体形态。继续将该分支拆为固定null、非字符串、超限原因，保持原拒绝行为和所有容量，不记录内容或数值。用三种最小合成HTTP/WS对照验证后升级原诊断服务；具体修复须依据实际子分类，不用CLI推测客户端值。
+首次受控真实Desktop的Reference仅能关联到tools_description/unsupported_tools，当时该分类同时覆盖null、其他非字符串和超过32 KiB，不能据此认定具体形态。该诊断阶段已拆成固定null、非字符串、超限原因，未改变允许行为或容量、不记录内容或数值；通过三种最小合成HTTP/WS对照后更新独立服务。第二次真实操作提供了下节修复依据，不用CLI推测客户端值。
 
 ## 已证实的长说明兼容修复
 
