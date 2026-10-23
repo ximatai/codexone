@@ -1,0 +1,27 @@
+# Include in http {} alongside nginx-data.conf installed under snippets/.
+# Replace the hostname and certificate paths. Use an independent ACME webroot.
+map $http_upgrade $codexone_connection { default upgrade; '' close; }
+server {
+    listen 80;
+    listen [::]:80;
+    server_name data.example.invalid;
+    access_log off;
+    error_log /dev/null crit;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/lib/codexone-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 308 https://data.example.invalid$request_uri; }
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name data.example.invalid;
+    ssl_certificate /etc/letsencrypt/live/data.example.invalid/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/data.example.invalid/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+    error_log /dev/null crit;
+    include /etc/nginx/snippets/codexone-data.conf;
+}

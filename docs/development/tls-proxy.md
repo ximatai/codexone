@@ -10,6 +10,12 @@
 
 数据域只转发 `/v1/` 和 `/backend-api/codex/`，其他路径 404；管理域不提供生成入口。数据面需高熵 Key，管理员秘密与 Key 互不替代。按宿主安全策略限制管理域接入，域名分离不替代认证。
 
+## 仅公开数据入口
+
+[独立数据域示例](../../deploy/nginx-data-only.conf.example)复用数据片段，管理端口保持回环。使用独立域名、独立证书和 ACME webroot；首次签发前只加载示例中的 HTTP server，验证域名 DNS 与 challenge 可达后用 Certbot webroot 签发，再加载 TLS server。不要借助安装插件自动改写其他虚拟主机。
+
+证书续期应保留 webroot challenge 路由，并配置仅在 `nginx -t` 成功后 reload 的 deploy hook；检查现有 Certbot timer。验证公网客户端正常信任证书、SSE/WSS 与拒绝路径，再撤掉临时客户端隧道。签发失败时保留原入口，清理本次新增配置；已有域名、证书与服务不做覆盖。
+
 ## 限制与失败语义
 
 - 数据默认请求体上限 8 MiB，管理为 8 KiB；网关更细的模型/端点限制仍生效。大于 Content-Length 上限时，反代在生成准入前拒绝。管理静态页面响应大小不受请求体上限影响。
