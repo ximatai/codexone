@@ -72,6 +72,8 @@ class Provider(BaseHTTPRequestHandler):
         elif mode.startswith('status-'):
             result['status'] = 'failed' if mode.endswith('conflict') else 'synthetic-unknown-status'
         elif mode.startswith(('usage-created-', 'usage-progress-')):
+            if mode.startswith('usage-progress-'):
+                events.insert(1, {'type': 'response.in_progress', 'response': {'id': result['id'], 'status': 'in_progress', 'output': [], 'usage': None}})
             early = events[0 if mode.startswith('usage-created-') else 1]['response']
             field = mode.rsplit('-', 1)[-1]
             early['usage'] = {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}
@@ -271,6 +273,8 @@ def main():
                                     count += 1
                                     assert status == 200 and 'error' not in events[-1]
                             else:
+                                if mode.startswith(('usage-created-', 'usage-progress-')):
+                                    assert result.get('error', {}).get('code') == 'invalid_upstream_usage', (mode, events)
                                 assert 'error' in result and result['error']['request_id'] in result['error']['message'], (transport, mode, route, events)
                         deadline = time.monotonic() + 3
                         while len(rows(root)) != count or any(s == 'intent' for s, _, _ in rows(root)):
@@ -291,6 +295,8 @@ def main():
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
                                               ('synthetic-metadata-only-id', 'synthetic-foreign-response')).fetchone()[0] == 0
+                        if mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata'):
+                            assert b'reason=upstream_usage_count' in logs, logs
                         assert PRIVATE.encode() not in logs and b'synthetic echoed guidance' not in logs
                         assert b'synthetic usage metadata' not in logs
                         assert TOKEN.encode() not in logs and b'synthetic-metadata-only-id' not in logs

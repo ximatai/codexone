@@ -34,3 +34,6 @@ Linux首轮verification未通过：独立HTTP成功组一笔响应完整而关�
 
 
 集中增量复核发现并修正1项P2：非终态已知input/output/cached值原依赖终态observeUsage，按键投影可误透出错误字符串/对象。现统一验证全部事件的已知计数类型/范围/cached一致性，但非终态不创建用量证据；加入created/in_progress的错误input/output/cached及metadata隔离实际socket验证。旧候选未上传，按最终修正重新构建；阶段出口仍待回归及复核确认。
+
+
+修正后macOS完整Swift203项、Images与压缩回归exit 0。新增进行中样例曾错误索引output_item.added并导致提供者KeyError，不能把该断连当协议拒绝；已显式插入独立in_progress字面量，并要求负向同时命中invalid_upstream_usage及固定upstream_usage_count，而非仅有error。最终HTTP73次通过，WS及普通协议仍在运行；Linux最终程序编译中，尚未恢复真实调用。
