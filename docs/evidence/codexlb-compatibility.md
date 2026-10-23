@@ -38,3 +38,9 @@
 此顺序不选择私有恢复协议，不允许自动重执行，不将旧服务源码作为安全结论或当前产品验收。M5、真实Desktop/订阅和完整O14继续保留。
 
 后续已结合公开讨论选择长期方向，见[讨论依据](codexlb-discussions.md)和[兼容取舍](../decisions/compatibility-policy.md)；上表保留本次明确源码对照，后续设计方向不冒充当前候选能力。
+
+## 可选reasoning与缺省工具声明
+
+2026-10-23，再次只读同一`6d788664ff982c87887924694c103c9bc49331fd`快照：`app/core/openai/requests.py::ResponsesReasoning`将effort/summary定义为可空；`ResponsesRequest.model_dump_for_forwarding`以exclude_none=True序列化，同时根据model_fields_set保留tools缺省与显式空数组的区别，避免凭空合成工具声明。模型目录的default_reasoning_summary为none，不能把客户端未特别配置理解为一定不会发送null。
+
+借鉴可空成员与保留缺省语义；不照搬extra=allow、未知字段透传或全部别名兜底。CodexOne仅对已知reasoning成员的null按未指定处理并在上游文档移除，错误类型/未知成员仍拒绝；缺省tools不新增，显式[]不删除。旧源码是兼容实践参考，不证明当前客户端实际请求字段或线上版本。

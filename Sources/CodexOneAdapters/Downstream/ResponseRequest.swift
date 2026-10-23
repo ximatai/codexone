@@ -45,7 +45,7 @@ struct ResponseRequest: Sendable {
     do { document = try JSONValue.decode(data) } catch {
       throw GatewayProtocolError(400, "invalid_json")
     }
-    guard let fields = document.object else { throw GatewayProtocolError(400, "invalid_request") }
+    guard var fields = document.object else { throw GatewayProtocolError(400, "invalid_request") }
     let allowed: Set<String> = [
       "model", "input", "instructions", "tools", "tool_choice", "parallel_tool_calls",
       "reasoning", "text", "temperature", "top_p", "max_output_tokens", "store", "stream",
@@ -79,20 +79,24 @@ struct ResponseRequest: Sendable {
       references.append(.init(type: "response", rawID: id))
     }
     if let reasoning = fields["reasoning"], reasoning != .null {
-      guard reasoning.object?.keys.allSatisfy({ ["effort", "summary"].contains($0) }) == true else {
+      guard let reasoningFields = reasoning.object,
+        reasoningFields.keys.allSatisfy({ ["effort", "summary"].contains($0) })
+      else {
         throw GatewayProtocolError(400, "unsupported_reasoning")
       }
-      if let effort = reasoning["effort"] {
+      if let effort = reasoningFields["effort"], effort != .null {
         guard
           effort.string.map({ !$0.isEmpty && $0.utf8.count <= 32 }) == true
             || effort.integer.map({ (0...1_000_000).contains($0) }) == true
         else { throw GatewayProtocolError(400, "unsupported_reasoning") }
       }
-      if let summary = reasoning["summary"] {
+      if let summary = reasoningFields["summary"], summary != .null {
         guard ["auto", "concise", "detailed", "none"].contains(summary.string ?? "") else {
           throw GatewayProtocolError(400, "unsupported_reasoning")
         }
       }
+      // Optional null members mean unspecified; never broaden the accepted field set.
+      fields["reasoning"] = .object(reasoningFields.filter { $0.value != .null })
     }
     for key in ["metadata", "client_metadata"] {
       if let metadata = fields[key], metadata != .null {

@@ -44,3 +44,9 @@
 用户界面显示重连5/5与通用网关错误。只读检查网关及fixture健康、无重启/OOM；所选源Key没有执行或持久拒绝记录，因此不能断言认证通过、请求已准入或上游失败，也不能以此前诊断Key公网验证替代此次客户端验收。
 
 准备临时入口诊断，仅固定schema的HTTP状态、上游状态、GET/POST/other方法枚举、WS布尔、时长与Nginx随机请求ID；无正文、认证头或路径。私有文件、owner定时检查约64KiB截断、最长600秒后恢复本次自有配置并先检查后reload；不修改旧服务配置。自有未认证探针401及诊断schema检查通过。实际请求失败码仍需用户重试/客户端安全错误详情，不放宽权限/解析契约，不开启真实订阅。
+
+## 可选reasoning修复的定向证据
+
+只读CodexLB固定快照中ResponsesReasoning可空成员及model_dump_for_forwarding(exclude_none=True/保留tools缺省)后，主Agent修复仅这两个已知成员的null处理。macOS arm64新增2单测，以及实际两前缀HTTP JSON/SSE、桥接/native WS、同socket预热后生成通过；记录合成上游实际收到的reasoning和tools存在性，确认null已移除、显式值保留、缺省tools与[]不同。错误类型及未知成员不连接上游/不创建attempt，全部正常执行最终settled。原拒绝日志/首帧错误/隐私与上限实际进程回归通过。
+
+运行候选剥离调试段的无网络SDK试验将同一程序从约114MiB降为约44MiB，正式候选仍须用剥离后的程序验证并记录SHA。没有因为体积优化而改编译优化等级、运行权限或持久语义。

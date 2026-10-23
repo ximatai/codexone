@@ -30,7 +30,8 @@ ARG BUILD_JOBS=1
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc 16 \
-    && mkdir /output && cp .build/release/codexone /output/codexone
+    && mkdir /output && cp .build/release/codexone /output/codexone \
+    && strip --strip-debug /output/codexone
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     mkdir /output/licenses && cd .build/checkouts \
     && find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
