@@ -94,7 +94,10 @@ public struct ResponsesDataService: Service {
     pool.retryConnectionEstablishment = false
     var clientConfiguration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
-      timeout: .init(connect: .seconds(5), read: .seconds(30)), connectionPool: pool, proxy: nil,
+      timeout: .init(
+        connect: .seconds(5),
+        read: .seconds(Int64(max(configuration.budget.first, configuration.budget.idle) + 5))),
+      connectionPool: pool, proxy: nil,
       decompression: .disabled)
     clientConfiguration.httpVersion = .http1Only
     clientConfiguration.maximumUsesPerConnection = 1
@@ -246,6 +249,7 @@ public struct ResponsesDataService: Service {
     executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
   ) async throws {
     let commands = WebSocketInbox()
+    let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
     try await withThrowingTaskGroup(of: Data?.self) { lanes in
       defer { lanes.cancelAll() }
@@ -257,8 +261,14 @@ public struct ResponsesDataService: Service {
         guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
           throw GatewayProtocolError(503, "websocket_lane_capacity")
         }
-        try await withExecutionDeadline(seconds: 5) { [data] in
-          try await commands.push(data, lane: lane)
+        activity.begin()
+        do {
+          try await withExecutionDeadline(seconds: 5) { [data] in
+            try await commands.push(data, lane: lane)
+          }
+        } catch {
+          activity.end()
+          throw error
         }
         if fresh {
           known.insert(lane)
@@ -267,6 +277,7 @@ public struct ResponsesDataService: Service {
             var pending = firstTurn
             while !Task.isCancelled {
               let data = try await commands.next(lane: lane)
+              defer { activity.end() }
               let initialTurn = pending
               pending = nil
               let requestID = initialTurn?.requestID ?? UUID().uuidString
@@ -306,7 +317,7 @@ public struct ResponsesDataService: Service {
           }
         }
         lanes.addTask {
-          try await withExecutionDeadline(seconds: 120) { try await downstream.next() }
+          try await activity.read { try await downstream.next() }
         }
       }
     }
@@ -424,7 +435,8 @@ public struct ResponsesDataService: Service {
       try await writer.json(
         modelCatalog(
           executor.effectiveModels, requireCodexProfile: codexDirectory,
-          images: executor.effectiveImageModels))
+          images: executor.effectiveImageModels, runtimeBudget: executor.configuration.budgetSummary
+        ))
       return
     }
     if ["/images/generations", "/images/edits"].contains(endpoint) {

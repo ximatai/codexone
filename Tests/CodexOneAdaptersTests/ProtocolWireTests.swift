@@ -327,7 +327,8 @@ import Testing
   #expect(entry["input_modalities"] == .array([.string("text")]))
   #expect(entry["supports_search_tool"] == .bool(false))
   for invalid: [String: Any] in [
-    ["contextWindow": 4095], ["contextWindow": 131073], ["displayName": ""],
+    ["contextWindow": 4095], ["contextWindow": 2_000_001],
+    ["contextWindow": 32768, "maxContextWindow": 32000], ["displayName": ""],
     ["reasoningEfforts": ["high", "high"]], ["reasoningEfforts": ["invented"]],
     ["reasoningEfforts": ["low"], "defaultReasoningEffort": "high"],
     ["baseInstructions": " \n"], ["baseInstructions": String(repeating: "x", count: 32769)],

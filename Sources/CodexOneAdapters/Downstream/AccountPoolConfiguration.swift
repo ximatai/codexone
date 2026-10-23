@@ -4,9 +4,12 @@ import Foundation
 
 public struct AccountPoolConfiguration: Sendable, Decodable {
   public let imageGeneration: ImageConfiguration?
-  public let models: [SingleIdentityConfiguration.Model]
+  public var models: [SingleIdentityConfiguration.Model]
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
+  public let firstResponseTimeoutSeconds: Int?
+  public let progressTimeoutSeconds: Int?
+  public let modelProfilesFile: String?
   public let upstreamTransport: String?
   private struct Field: CodingKey {
     let stringValue: String
@@ -20,7 +23,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       values.allKeys.allSatisfy({
         [
           "models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport",
-          "imageGeneration",
+          "imageGeneration", "firstResponseTimeoutSeconds", "progressTimeoutSeconds",
+          "modelProfilesFile",
         ].contains(
           $0.stringValue)
       })
@@ -32,6 +36,12 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     reservedMicros = try values.decode(Int64.self, forKey: Field(stringValue: "reservedMicros")!)
     executionTimeoutSeconds = try values.decodeIfPresent(
       Int.self, forKey: Field(stringValue: "executionTimeoutSeconds")!)
+    firstResponseTimeoutSeconds = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "firstResponseTimeoutSeconds")!)
+    progressTimeoutSeconds = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "progressTimeoutSeconds")!)
+    modelProfilesFile = try values.decodeIfPresent(
+      String.self, forKey: Field(stringValue: "modelProfilesFile")!)
     upstreamTransport = try values.decodeIfPresent(
       String.self, forKey: Field(stringValue: "upstreamTransport")!)
     try validate()
@@ -40,8 +50,10 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     try await withCheckedThrowingContinuation { result in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let configuration = try JSONDecoder().decode(
+          var configuration = try JSONDecoder().decode(
             Self.self, from: readPrivateData(path, maximum: 65_536))
+          configuration.models = try ModelProfileSnapshot.apply(
+            path: configuration.modelProfilesFile, models: configuration.models)
           try configuration.validate()
           result.resume(returning: configuration)
         } catch { result.resume(throwing: ExecutionError.invalidCommand) }
@@ -49,10 +61,12 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     }
   }
   public func validate() throws {
+    _ = try ExecutionBudget(
+      total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
+      idle: progressTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
     guard (0...1_000_000_000_000).contains(reservedMicros),
-      (1...120).contains(executionTimeoutSeconds ?? 120),
       ["http", "websocket"].contains(upstreamTransport ?? "http")
     else { throw ExecutionError.invalidCommand }
   }
@@ -60,7 +74,9 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     .init(
       models: models, upstreamBaseURL: SubscriptionOAuthProvider.dataOrigin,
       executionTimeoutSeconds: executionTimeoutSeconds,
-      upstreamTransport: upstreamTransport ?? "http", imageGeneration: imageGeneration)
+      upstreamTransport: upstreamTransport ?? "http",
+      firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
+      progressTimeoutSeconds: progressTimeoutSeconds, imageGeneration: imageGeneration)
   }
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
@@ -100,7 +116,9 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
             "pricing": .string(pricing),
             "reservation": .number(Decimal(reservedMicros)),
             "transport": .string(upstreamTransport ?? "http"),
-            "timeout": .number(Decimal(executionTimeoutSeconds ?? 120)),
+            "timeout": .number(Decimal(responses.budget.total)),
+            "firstResponseTimeout": .number(Decimal(responses.budget.first)),
+            "progressTimeout": .number(Decimal(responses.budget.idle)),
           ])), as: UTF8.self))
     return try .init(
       key: key, models: Set(effective.map(\.id) + imageModels.map(\.id)),

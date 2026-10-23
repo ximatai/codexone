@@ -53,7 +53,7 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 单身份 Key 先验证，再由应用层按模型与每个引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体或未知执行字段；客户端 function/custom 工具按 type/namespace/name 与返回调用匹配，namespace 只组织客户端工具，不开放内置检索或服务端执行；不接受未经声明的工具或对象类型。
 
-文本 HTTP 切片的请求体为 512 KiB、JSON 深度 64、输入项 256、工具 64、引用 32；上游 JSON 为 256 KiB，单 SSE 事件 256 KiB、累计流 8 MiB。连接最多 32，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒、读取 30 秒、发送至响应体消费/输出的单调总期限默认 120 秒（可信配置可缩短至 1—120 秒），下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
+文本 HTTP 切片的请求体为 512 KiB、JSON 深度 64、输入项 256、工具 64、引用 32；上游 JSON 为 256 KiB，单 SSE 事件 256 KiB、累计流 8 MiB。连接最多 32，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
 
 归属持久屏障在每个含对象的上游事件写下游之前完成；可信终态用量先观察，再做归属/输出检查，输出失败不抹去已知用量。上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。错误使用固定脱敏 envelope 与请求 ID，不输出上游原始错误或请求秘密。
 
@@ -63,7 +63,7 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。未支持控制明确拒绝；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
 
-帧/聚合 512 KiB，单上游事件 256 KiB、累计执行 8 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/1 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求读取空闲 120 秒、连接寿命最多 1 小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
+帧/聚合 512 KiB，单上游事件 256 KiB、累计执行 8 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/1 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
 HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 在入队前验证当前 turn 的 created/response ID/item 关联，并通过已准入 attempt 注册的同步证据 sink 观察终态用量，其他 lane 失败不得清除已接收/分类的可信用量；轮外事件、重复终态/response ID 关闭连接，不得将旧事件用于新 attempt。单连接最多 256 个响应、单轮最多 256 个 item。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
 
@@ -79,7 +79,7 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 
 ## P16：受控模型目录
 
-两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均显式配置非空 baseInstructions 时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。
+两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均由显式内联或经验证私有快照提供非空 baseInstructions 时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。
 
 可信本地 profile 可限定展示名称、说明、上下文窗口、推理选项及模型基础指导。baseInstructions 是权威模型指导，客户端采用后会替换自己的默认指导，不能仅为目录解码提供空字符串；管理员须为目标模型/版本明确配置完整指导。网关不复制/发明客户端默认提示。当前切片只声明文本输入、无内置搜索；shell_type 选择客户端 unified_exec，工具仍遵守其 sandbox。目录不授予额外权限，不证明提供者已支持这些能力。
 
@@ -115,3 +115,5 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 图片首个实现的配置映射、受支持参数、容量与期限见[图片配置](../development/images.md)。所有入口将同一能力要求随 admission 持久保存并在原子准入复核；公开图片模型与内部宿主模型分离，不因宿主映射授予对话权限。完整图片只在可信 response.completed 后完成，output_item.done 与预览均不是整个操作的成功承诺。
 
 Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编码预算分别执行。仅经过Images校验后生成的Responses封套可用9MiB，不转义base64斜杠，包含8MiB base64及有界提示/工具封套余量。对应上游WS写入只在该内部图片路径使用9MiB；普通请求、下游帧与共享入站队列、提供者事件仍保持原限制。不得通过网络字段选取内部预算。
+
+可信离线profile导入及字段边界见[模型快照](../development/model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。

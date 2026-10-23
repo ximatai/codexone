@@ -26,7 +26,7 @@ extension HTTPResponseExecution {
       model: request.model, references: request.references, requestID: requestID, mode: .compact,
       requirements: request.requirements
     ) { context, authorization in
-      try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+      try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses/compact")
         upstream.method = .POST
@@ -39,7 +39,8 @@ extension HTTPResponseExecution {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
         upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
-        let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
+        let response = try await client.execute(
+          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total)))
         guard response.status == .ok else {
           throw upstreamRejection(status: response.status, headers: response.headers, compact: true)
         }
@@ -47,9 +48,10 @@ extension HTTPResponseExecution {
           response.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json")
             == true
         else { throw GatewayProtocolError(502, "invalid_upstream_content_type") }
-        let body = try await response.body.collect(upTo: 262_144)
+        let body = try await collectProgressBody(
+          response.body, progress: progress, maximum: 262_144)
         let document: JSONValue
-        do { document = try JSONValue.decode(Data(body.readableBytesView)) } catch {
+        do { document = try JSONValue.decode(body) } catch {
           throw GatewayProtocolError(502, "invalid_upstream_response")
         }
         guard document["object"]?.string == "response.compaction" else {

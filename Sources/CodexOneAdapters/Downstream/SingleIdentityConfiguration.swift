@@ -10,6 +10,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let inputMicrosPerMillion: Int64
     public let outputMicrosPerMillion: Int64
     public var catalog: Catalog? = nil
+    public var profileProvenance: ModelProfileProvenance? = nil
     public var visionInput: Bool? = nil
     public var imageGeneration: Bool? = nil
   }
@@ -17,6 +18,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public let displayName: String?
     public let description: String?
     public let contextWindow: Int?
+    public let maxContextWindow: Int?
     public let reasoningEfforts: [String]?
     public let defaultReasoningEffort: String?
     public let baseInstructions: String?
@@ -28,11 +30,14 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let managedKeys: Bool?
   public let namespace: String
   public let identity: String
-  public let models: [Model]
+  public var models: [Model]
   public let upstreamBaseURL: String
   public let upstreamTokenFile: String?
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
+  public let firstResponseTimeoutSeconds: Int?
+  public let progressTimeoutSeconds: Int?
+  public let modelProfilesFile: String?
   public let upstreamTransport: String?
 
   public static func load(path: String) async throws -> SingleIdentityConfiguration {
@@ -40,7 +45,9 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       DispatchQueue.global(qos: .utility).async {
         do {
           let data = try readPrivateData(path, maximum: 65_536)
-          let configuration = try JSONDecoder().decode(Self.self, from: data)
+          var configuration = try JSONDecoder().decode(Self.self, from: data)
+          configuration.models = try ModelProfileSnapshot.apply(
+            path: configuration.modelProfilesFile, models: configuration.models)
           try configuration.validate()
           if let tokenPath = configuration.upstreamTokenFile {
             _ = try readRuntimeSecret(tokenPath)
@@ -52,6 +59,9 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   }
 
   public func validate() throws {
+    _ = try ExecutionBudget(
+      total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
+      idle: progressTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
     guard
@@ -61,7 +71,6 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       namespace.utf8.count <= 128,
 
       (0...1_000_000_000_000).contains(reservedMicros),
-      (1...120).contains(executionTimeoutSeconds ?? 120),
       ["http", "websocket"].contains(upstreamTransport ?? "http"),
       let url = URLComponents(string: upstreamBaseURL), url.user == nil, url.password == nil,
       url.query == nil, url.fragment == nil,
@@ -147,7 +156,9 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "models": .array(models.map(\.id).sorted().map { .string($0) }),
           "catalogVersion": .string(digest(try encoder.encode(models))),
           "reservation": .number(Decimal(reservedMicros)),
-          "executionTimeoutSeconds": .number(Decimal(executionTimeoutSeconds ?? 120)),
+          "executionTimeoutSeconds": .number(Decimal(responses.budget.total)),
+          "firstResponseTimeoutSeconds": .number(Decimal(responses.budget.first)),
+          "progressTimeoutSeconds": .number(Decimal(responses.budget.idle)),
           "transport": .string(upstreamTransport ?? "http"),
         ])))
     return try .init(

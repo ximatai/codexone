@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
-from verify_protocol import TOKEN, start, stop, latest
+from verify_protocol import TOKEN, start, stop, latest, connect
 from verify_websocket import receive, send
 
 GUIDANCE = 'Synthetic fixture coding guidance: follow the user request and execute only the requested local test command.'
@@ -153,11 +153,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--codex', default='codex')
+    parser.add_argument('--profile-snapshot', action='store_true', help='Load the same authoritative profile from an approved private snapshot')
     parser.add_argument('--retry-probe', action='store_true', help='Show that a client reconnect creates a new execution after EOF')
     parser.add_argument('--without-profile', action='store_true', help='Verify that directory failure can still cause client fallback')
     parser.add_argument('--transport', choices=('http', 'bridge', 'websocket'), default='http')
     parser.add_argument('--compact-v2', action='store_true', help='Trigger actual client remote compaction and verify its next request')
     args = parser.parse_args()
+    if args.profile_snapshot and args.without_profile:
+        parser.error('--profile-snapshot requires an available profile')
     if args.transport != 'http' and (args.retry_probe or args.without_profile):
         parser.error('--retry-probe and --without-profile currently cover HTTP only')
     if args.compact_v2 and (args.retry_probe or args.without_profile):
@@ -188,6 +191,16 @@ def main():
                 'models': [{'id': 'synthetic-text', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000,
                             'catalog': {'baseInstructions': GUIDANCE} if server.profile_supplied else None}],
                 'upstreamBaseURL': f'http://127.0.0.1:{server.server_port}/v1'}))
+            if args.profile_snapshot:
+                snapshot = root / 'profiles.json'
+                snapshot.write_text(json.dumps({'version': 1, 'source': 'synthetic-approved', 'revision': 'fixture-v1',
+                    'capturedAtUnixSeconds': 1, 'clientVersions': [version.split()[-1]],
+                    'models': [{'id': 'synthetic-text', 'catalog': {'baseInstructions': GUIDANCE}}]}))
+                snapshot.chmod(0o600)
+                value = json.loads(configuration.read_text())
+                value['models'][0].pop('catalog')
+                value['modelProfilesFile'] = str(snapshot)
+                configuration.write_text(json.dumps(value))
             if args.transport != 'http':
                 value = json.loads(configuration.read_text())
                 value['upstreamTransport'] = 'websocket'
@@ -195,6 +208,13 @@ def main():
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, root)
             try:
+                if args.profile_snapshot:
+                    status, body = connect(ports['data'], 'GET', '/v1/models?client_version='+version.split()[-1])
+                    directory = json.loads(body)
+                    profile = directory['models'][0]['codexone_profile']
+                    assert status == 200 and profile['sha256'] == hashlib.sha256(snapshot.read_bytes()).hexdigest()
+                    assert profile['source'] == 'synthetic-approved' and profile['stale'] and not profile['overridden']
+                    assert directory['codexone_execution_budget']['total']['seconds'] == 600
                 client = root / 'client'
                 client.mkdir(mode=0o700)
                 work = root / 'work'

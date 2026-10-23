@@ -66,7 +66,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 ## 订阅账号池的 HTTP 入口配置
 
-`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`、`upstreamTransport`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
+`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`、`firstResponseTimeoutSeconds`、`progressTimeoutSeconds`、`modelProfilesFile`、`imageGeneration`、`upstreamTransport`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
 
 ```json
 {
@@ -90,3 +90,5 @@ HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 acce
 `upstreamTransport` 缺省/`http` 使用 HTTP 上游，`websocket` 为每个 HTTP Responses 请求建立一次选中账号的 WS 上游；对下游仍提供 JSON/SSE。独立 compact 使用同一身份的 HTTP 路径，传输选择进入策略版本但不改变价格版本。选择 websocket 同时启用原生 WS：首 create 原子选账号并建立一次上游连接，所有 lane/后续 turn 固定该身份并逐轮检查权限，刷新不重连。首 turn 结束独立归还执行 ticket；断开、超时及关闭不换账号重放。
 
 账号页面可以展开额度与健康详情并手动读取。额度 GET 与授权刷新使用独立容量；主/次窗口保留提供者时长，五分钟后标陈旧，失败保留最后成功值。禁用账号不周期观察；有效凭证可手动读取，过期须先显式刷新。缺失字段不推算。具体边界见 [U10](../specs/usage.md) 和 [I20](../specs/identity.md)。
+
+分阶段执行期限和受信离线profile与单身份共用，见[快照导入](model-profiles.md)。准入时策略hash包含有效期限与选中profile，费率仍独立；进程运行期间不热加载，恢复旧执行不重解释期限。

@@ -6,6 +6,27 @@ struct ResponsesConfiguration: Sendable {
   let upstreamBaseURL: String
   let executionTimeoutSeconds: Int?
   let upstreamTransport: String?
+  var firstResponseTimeoutSeconds: Int? = nil
+  var progressTimeoutSeconds: Int? = nil
+  var budget: ExecutionBudget {
+    // All entry configurations validate before assembly.
+    try! ExecutionBudget(
+      total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
+      idle: progressTimeoutSeconds)
+  }
+  var budgetSummary: JSONValue {
+    func value(_ effective: Int, _ configured: Int?) -> JSONValue {
+      .object([
+        "seconds": .number(Decimal(effective)),
+        "source": .string(configured == nil ? "default" : "configuration"),
+      ])
+    }
+    return .object([
+      "total": value(budget.total, executionTimeoutSeconds),
+      "first_response": value(budget.first, firstResponseTimeoutSeconds),
+      "progress_idle": value(budget.idle, progressTimeoutSeconds),
+    ])
+  }
   var imageGeneration: ImageConfiguration? = nil
 }
 extension SingleIdentityConfiguration {
@@ -13,6 +34,8 @@ extension SingleIdentityConfiguration {
     .init(
       models: models, upstreamBaseURL: upstreamBaseURL,
       executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: upstreamTransport,
+      firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
+      progressTimeoutSeconds: progressTimeoutSeconds,
       imageGeneration: imageGeneration)
   }
 }
@@ -33,7 +56,9 @@ func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throw
           || (!(catalog.baseInstructions?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ?? true)
             && (catalog.baseInstructions?.utf8.count ?? 0) <= 32_768))
-        && (4096...131_072).contains(catalog.contextWindow ?? 32_768)
+        && (4096...2_000_000).contains(catalog.contextWindow ?? 32_768)
+        && ((catalog.contextWindow ?? 32_768)...2_000_000).contains(
+          catalog.maxContextWindow ?? catalog.contextWindow ?? 32_768)
         && efforts.count <= 8 && Set(efforts).count == efforts.count
         && efforts.allSatisfy({
           ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].contains($0)

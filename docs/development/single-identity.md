@@ -16,11 +16,13 @@
 | keySHA256 | 高熵 Bearer Key 的 SHA-256 小写十六进制；文件不存原始客户端 Key |
 | namespace / identity | 可信配置的提供者命名空间前缀与身份标识 |
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
-| models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—131072，默认 32768）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；Codex 目录还需非空 baseInstructions 权威指导，容量与替换语义见下；不改变价格指纹 |
+| models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—2000000，默认32768）、maxContextWindow（不小于contextWindow，最大2000000，省略则相同）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；Codex 目录还需非空 baseInstructions 权威指导，容量与替换语义见下；不改变价格指纹 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
-| executionTimeoutSeconds | 可选 1—120 秒，默认 120；覆盖发送、响应体消费、屏障及输出，超时不重发，已有证据仍结算 |
+| modelProfilesFile | 可选绝对路径，0600受信离线profile快照；见[快照导入](model-profiles.md)，不新增模型或权限 |
+| firstResponseTimeoutSeconds / progressTimeoutSeconds | 默认30/60秒，显式范围1—120/1—300且不超过总期限，省略时取较小值；SSE注释/WS控制帧不续期 |
+| executionTimeoutSeconds | 可选1—1800秒，默认600；覆盖发送、响应体消费、屏障及输出，超时不重发，已有证据仍结算 |
 | upstreamTokenFile | 可选独立运行时访问凭证文件；与配置同样校验 owner/权限/类型，最多 16 KiB，不写入核心库或日志 |
 
 运行时注入只读取短期访问凭证，不保存/刷新授权；账号生命周期与持久凭证加密遵守身份规范。无法验证新旧凭证等价时，origin/凭证变化使用新命名空间，旧对象不能自由续接或跨身份试探；Key 轮换不改变主体隔离。配置/计价版本使用稳定摘要随准入记录，摘要不含原始凭证。
@@ -57,7 +59,7 @@ python3 scripts/verify_client.py --binary .build/debug/codexone
 
 脚本创建私有临时客户端目录与空工作目录，在只读 sandbox 下使用合成上游，并显式关闭未支持的内置 web_search。客户端仅执行 `/bin/sh` 的固定 printf，不用登录 shell，网关不执行工具。此脚本验证 HTTP/SSE 文本、函数往返及加密推理回传；不代表 Desktop、真实订阅或所有客户端版本通过，不修改个人配置。
 
-CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。所有有效模型须显式配置 `catalog.baseInstructions`（非空，≤32768 UTF-8 字节），它会成为权威基础指导并替换客户端默认指导，须针对目标模型/版本维护；网关不生成默认提示。整个私有配置文件仍限 64 KiB，多模型长 profile 可能触及总容量。未配置完整 profile 时不返回 Codex models，带 client_version 的目录请求返回 503；这不能阻止客户端自己 fallback。验证脚本要求无 metadata fallback，且合成上游 developer 输入包含所配指导。
+CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。所有有效模型须经内联或受信快照提供 `catalog.baseInstructions`（非空，≤32768 UTF-8 字节），它会成为权威基础指导并替换客户端默认指导，须针对目标模型/版本维护；网关不生成默认提示。整个私有配置文件仍限 64 KiB，多模型长 profile 可能触及总容量。未配置完整 profile 时不返回 Codex models，带 client_version 的目录请求返回 503；这不能阻止客户端自己 fallback。验证脚本要求无 metadata fallback，且合成上游 developer 输入包含所配指导。
 
 同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../evidence/client-recovery.md)。
 

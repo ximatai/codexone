@@ -34,7 +34,7 @@ extension HTTPResponseExecution {
         configuration: configuration.imageGeneration)
     }
     defer { peer.detachEvidence(lane: lane) }
-    try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+    try await withProgressDeadline(budget: configuration.budget) { progress in
       var create = request.document.object!
       create.removeValue(forKey: "stream")
       create["type"] = .string("response.create")
@@ -87,6 +87,7 @@ extension HTTPResponseExecution {
           expectedPreviousResponseID: request.document["previous_response_id"]?.string,
           allowCompaction: request.streamCompaction,
           allowImages: request.requirements.imageModel != nil)
+        progress.note(event: event)
         if request.streamCompaction { try compaction.observe(event) }
         for object in observation.bindings { try await context.bind(object) }
         try observeTerminalOutcome(event, context: context)

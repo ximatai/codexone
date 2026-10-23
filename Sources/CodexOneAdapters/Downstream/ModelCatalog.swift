@@ -3,7 +3,7 @@ import Foundation
 /// Both directory forms use the same effective model set. Metadata does not grant capabilities.
 func modelCatalog(
   _ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false,
-  images: [ImageConfiguration.Model] = []
+  images: [ImageConfiguration.Model] = [], runtimeBudget: JSONValue? = nil
 )
   throws -> JSONValue
 {
@@ -29,7 +29,9 @@ func modelCatalog(
     })
   else {
     if requireCodexProfile { throw GatewayProtocolError(503, "model_catalog_unavailable") }
-    return .object(["object": .string("list"), "data": .array(api)])
+    var result: [String: JSONValue] = ["object": .string("list"), "data": .array(api)]
+    result["codexone_execution_budget"] = runtimeBudget
+    return .object(result)
   }
   let codex = models.enumerated().map { index, model in
     let metadata = model.catalog
@@ -47,7 +49,8 @@ func modelCatalog(
       "supported_in_api": .bool(true), "priority": .number(Decimal(index)),
       "support_verbosity": .bool(false), "supports_reasoning_summary_parameter": .bool(true),
       "truncation_policy": .object(["mode": .string("tokens"), "limit": .number(10_000)]),
-      "context_window": .number(Decimal(context)), "max_context_window": .number(Decimal(context)),
+      "context_window": .number(Decimal(context)),
+      "max_context_window": .number(Decimal(metadata?.maxContextWindow ?? context)),
       "auto_compact_token_limit": .number(Decimal(context * 3 / 4)),
       "experimental_supported_tools": .array([]),
       "input_modalities": .array(
@@ -56,10 +59,25 @@ func modelCatalog(
       "include_skills_usage_instructions": .bool(false),
       "include_plugin_usage_instructions": .bool(false),
     ]
+    if let profile = model.profileProvenance {
+      entry["codexone_profile"] = .object([
+        "source": .string(profile.source), "revision": .string(profile.revision),
+        "sha256": .string(profile.sha256),
+        "captured_at": .number(Decimal(profile.capturedAtUnixSeconds)),
+        "client_versions": .array(profile.clientVersions.map { .string($0) }),
+        "overridden": .bool(profile.overridden),
+        "stale": .bool(
+          Int64(Date().timeIntervalSince1970) - profile.capturedAtUnixSeconds > 2_592_000),
+      ])
+    }
     if let effort = metadata?.defaultReasoningEffort {
       entry["default_reasoning_level"] = .string(effort)
     }
     return JSONValue.object(entry)
   }
-  return .object(["object": .string("list"), "data": .array(api), "models": .array(codex)])
+  var result: [String: JSONValue] = [
+    "object": .string("list"), "data": .array(api), "models": .array(codex),
+  ]
+  result["codexone_execution_budget"] = runtimeBudget
+  return .object(result)
 }

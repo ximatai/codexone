@@ -78,7 +78,7 @@ enum PoolWebSocketSession {
             ) { context, authorization in
               guard let authorization else { throw ExecutionError.invalidCommand }
               try await withExecutionDeadline(
-                seconds: executor.configuration.executionTimeoutSeconds ?? 120
+                seconds: executor.configuration.budget.total
               ) {
                 start.publish(.init(context: context, authorization: authorization))
                 try await start.waitForTurn()

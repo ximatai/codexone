@@ -77,7 +77,7 @@ struct HTTPResponseExecution: Sendable {
         model: request.admissionModel, references: request.references, requestID: requestID,
         mode: request.mode, requirements: request.requirements
       ) { context, authorization in
-        try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+        try await withExecutionDeadline(seconds: configuration.budget.total) {
           try await webSocket.authorized(authorization).run { peer in
             try peer.beginTurn(compaction: request.streamCompaction)
             try await exchange(request, context: context, model: model, peer: peer, emit: emit)
@@ -91,7 +91,7 @@ struct HTTPResponseExecution: Sendable {
       model: request.admissionModel, references: request.references, requestID: requestID,
       mode: request.mode, requirements: request.requirements
     ) { context, authorization in
-      try await withExecutionDeadline(seconds: configuration.executionTimeoutSeconds ?? 120) {
+      try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
@@ -110,7 +110,8 @@ struct HTTPResponseExecution: Sendable {
           ByteBuffer(
             data: try request.document.data(escapingSlashes: request.requirements.route != .images))
         )
-        let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
+        let response = try await client.execute(
+          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total)))
         guard response.status == .ok else {
           throw upstreamRejection(status: response.status, headers: response.headers)
         }
@@ -148,6 +149,7 @@ struct HTTPResponseExecution: Sendable {
                 expectedPreviousResponseID: request.document["previous_response_id"]?.string,
                 allowCompaction: request.streamCompaction,
                 allowImages: request.requirements.imageModel != nil)
+              progress.note(event: event)
               if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
@@ -165,11 +167,12 @@ struct HTTPResponseExecution: Sendable {
           else {
             throw GatewayProtocolError(502, "invalid_upstream_content_type")
           }
-          let body = try await response.body.collect(
-            upTo: request.requirements.imageModel == nil ? 262_144 : ImageLimits.eventBytes)
+          let body = try await collectProgressBody(
+            response.body, progress: progress,
+            maximum: request.requirements.imageModel == nil ? 262_144 : ImageLimits.eventBytes)
           let document: JSONValue
           do {
-            document = try JSONValue.decode(Data(body.readableBytesView))
+            document = try JSONValue.decode(body)
           } catch { throw GatewayProtocolError(502, "invalid_upstream_response") }
           let status = document["status"]?.string
           guard ["completed", "failed", "incomplete"].contains(status ?? "") else {
@@ -220,4 +223,19 @@ func withExecutionDeadline<Value: Sendable>(
     defer { group.cancelAll() }
     return try await group.next()!
   }
+}
+
+func collectProgressBody(_ body: HTTPClientResponse.Body, progress: ExecutionProgress, maximum: Int)
+  async throws -> Data
+{
+  var data = Data()
+  for try await chunk in body {
+    try Task.checkCancellation()
+    guard chunk.readableBytes <= maximum - data.count else {
+      throw GatewayProtocolError(502, "upstream_response_too_large")
+    }
+    if chunk.readableBytes > 0 { progress.note() }
+    data.append(contentsOf: chunk.readableBytesView)
+  }
+  return data
 }
