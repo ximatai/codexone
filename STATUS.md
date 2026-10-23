@@ -4,13 +4,11 @@
 
 ## 项目状态
 
-**首要前置项是订阅接入范围。** [SIWC条款](https://openai.com/policies/sign-in-with-chatgpt-terms/)限制通用API转接、订阅池化/共享和绕限；现有旧客户端身份/订阅后端实现不等同于[官方自定义客户端授权](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)。通用网关优先评估[正式API及商业协议](https://openai.com/policies/services-agreement/)；若保留订阅用途，需先调整产品范围并确认授权。远程凭证持久存储条款与[自托管VM指南](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms)表述冲突，须官方书面澄清。技术测试通过不代表平台许可，安全能力准入也不代替订阅转接授权。
-
 | 阶段 | 已有实现与证据 | 仍未完成 |
 |---|---|---|
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
 | M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；固定CLI合成操作与限定Desktop合成文本通过 | 真实订阅Desktop操作及M5恢复读取 |
-| M3 | 管理登录/CSRF、Key、账号授权/刷新、路由及用量观测的本机合成闭环 | 订阅池受条款约束；真实账号池/刷新未验收 |
+| M3 | 管理登录/CSRF、Key、账号授权/刷新、路由及用量观测的本机合成闭环 | 真实账号池/刷新未验收 |
 | M4 | Images生成/编辑及Responses图片工具、权限与计量的本机合成闭环 | 真实Desktop图片、参考图、连续编辑及真实提供者图片 |
 | M5 | 已核对恢复关联及已有输出读取的限定实验 | 正式恢复读取契约不充分，未实现生产正文缓存 |
 | M6 | schema v8候选安装/升级/兼容回退、合成迁移切回、TLS、快照/密钥维护、低盘保护及容量样本 | 完整O14/目标弱宿主、async任务观测、实际旧服务替代、远程CI与发行 |
@@ -50,7 +48,7 @@ swift run codexone
 
 环境变量 `CODEXONE_DATA_PORT` / `CODEXONE_ADMIN_PORT` 可指定端口，0 为临时端口；非零端口不得相同。无配置时也能启动健康入口，但不能代理生成。
 
-现有订阅池代码的配置入口（不代表条款准入）：HTTP 使用 `CODEXONE_ACCOUNT_POOL_CONFIG` 私有模型/profile 配置，并要求管理凭证、账号主密钥和数据目录；与旧单身份配置互斥，配置见[账号凭证](docs/development/account-credentials.md)。
+订阅池 HTTP 使用 `CODEXONE_ACCOUNT_POOL_CONFIG` 私有模型/profile 配置，并要求管理凭证、账号主密钥和数据目录；与旧单身份配置互斥，配置见[账号凭证](docs/development/account-credentials.md)。
 
 可选 `CODEXONE_DATA_DIRECTORY` 指向绝对数据目录，可初始化/恢复核心库并标记存储先决条件就绪；默认不创建持久库，配置存储也不会启用生成。Linux 构建需 `libsqlite3-dev`，macOS 使用系统 SQLite。
 
@@ -99,9 +97,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-1. 先决定接入路线：正式API通用网关，或用途收窄且获准的订阅应用。后续真实订阅接入与公开上线以条款确认/范围调整为前置；既有技术验证不扩大调用或部署授权。
-2. 路线明确后，再按对应官方契约补普通输出多视图关联、请求参数及错误/健康边界；保留归属、可信用量、unknown和无自动重放约束。
-3. 单独准备明确版本的真实Desktop文本/工具/图片操作；脚本、CLI和合成服务均不替代实机验收。恢复读取继续受M5契约约束，没有新证据不重复旧探针。
-4. 补目标宿主及共存服务容量、async任务观测和其余图片组合，再完成远程CI/发行来源复现。推送、发布和正式切换仍依明确授权。
+1. 补普通输出多视图关联、请求参数及错误/健康边界；保留归属、可信用量、unknown和无自动重放约束。
+2. 单独准备明确版本的真实Desktop文本/工具/图片操作；脚本、CLI和合成服务均不替代实机验收。恢复读取继续受M5契约约束，没有新证据不重复旧探针。
+3. 补目标宿主及共存服务容量、async任务观测和其余图片组合，再完成远程CI/发行来源复现。真实调用、推送、发布和正式切换仍依明确授权。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
