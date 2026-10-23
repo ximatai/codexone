@@ -68,10 +68,13 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin). Listeners are loopback-only."
       )
       return
     }
+    let keyImport =
+      arguments.count == 2 && arguments[0] == "--import-keys"
+      && arguments[1].hasPrefix("/")
     let maintenance =
       [["--maintenance-status"], ["--key-status"], ["--resume-reencryption"]].contains(arguments)
       || (arguments.count == 2
@@ -82,11 +85,19 @@ struct CodexOneMain {
         && arguments[1].hasPrefix("/"))
     guard
       arguments.isEmpty || arguments == ["--check-config"] || arguments == ["--migrate"]
-        || maintenance
+        || maintenance || keyImport
     else {
       throw CommandError.unsupportedArguments
     }
     let configuration = try RuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
+    if keyImport {
+      guard let directory = configuration.dataDirectory, let admin = configuration.adminTokenFile
+      else { throw ExecutionError.invalidCommand }
+      let result = try await SQLiteExecutionStore.importKeys(
+        path: directory + "/core.sqlite", manifestFile: arguments[1], adminCredentialFile: admin)
+      FileHandle.standardOutput.write(try JSONEncoder().encode(result) + Data([10]))
+      return
+    }
     if arguments == ["--migrate"] {
       guard let directory = configuration.dataDirectory else {
         throw RuntimeConfiguration.ConfigurationError.invalidDataDirectory

@@ -155,7 +155,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       return key
     } catch { throw ExecutionError.storageUnavailable }
   }
-  private static func encodeKey(_ key: ManagedKey) throws -> String {
+  static func encodeKey(_ key: ManagedKey) throws -> String {
     String(decoding: try JSONEncoder().encode(key), as: UTF8.self)
   }
   private static func checkKeyCapacity(
@@ -169,7 +169,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       throw ExecutionError.capacity
     }
   }
-  private static func auditKey(_ db: SQLiteConnection, key: ManagedKey, action: String) throws {
+  static func auditKey(_ db: SQLiteConnection, key: ManagedKey, action: String) throws {
     try db.write(
       "INSERT INTO key_events VALUES(?,?,?,?,?,?)",
       [
@@ -177,7 +177,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         .number(Int64(Date().timeIntervalSince1970)), .text(try encodeKey(key)),
       ])
   }
-  private static func validateKeyID(_ id: String) throws {
+  static func validateKeyID(_ id: String) throws {
     guard (1...64).contains(id.utf8.count),
       id.utf8.allSatisfy({
         (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
@@ -185,7 +185,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       })
     else { throw ExecutionError.invalidCommand }
   }
-  private static func validateDigest(_ value: String) throws {
+  static func validateDigest(_ value: String) throws {
     guard value.utf8.count == 64, value.allSatisfy({ "0123456789abcdef".contains($0) }) else {
       throw ExecutionError.invalidCommand
     }

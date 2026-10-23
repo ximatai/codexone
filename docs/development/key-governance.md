@@ -61,3 +61,5 @@ python3 scripts/verify_keys.py --binary .build/debug/codexone
 Key 创建/更新可显式设置 `visionInput`、`imageGeneration`、`imageModels`；旧策略缺失字段按关闭处理。`models` 只控制对话模型，`imageModels` 只控制部署映射的公开图片模型。可以发放 `models: []` 的仅图片 Key，但必须启用生成且指定至少一个图片模型。Images generation/edits 共用生成授权；参考图是编辑操作的输入，不要求对话视觉权限。Responses 图片工具同时要求对话模型与图片模型授权。关闭生成不会关闭独立授予的视觉输入。禁用、轮换及 revision CAS 语义保持一致。
 
 管理 options 分别返回 `models` 和 `imageModels`；模型目录只展示 Key 的有效授权交集。新能力不会由旧 Key 自动继承。普通更新请求若省略能力字段按关闭处理；更新方应先读取并原样保留不打算修改的权限。
+
+受控复用原Key字符串的全新目标离线入口见[摘要导入](key-import.md)；默认禁用、显式CAS启用，不向管理HTTP接口提交摘要或旧明文。
