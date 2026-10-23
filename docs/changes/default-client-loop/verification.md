@@ -66,3 +66,5 @@ docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -
 本次准备好的是用户操作真实Desktop的合成入口，尚未将Desktop UI、真实订阅、M5或完整O14标通过；最终用户界面结果待其操作反馈。
 
 部署记录提交4c9faf9后集中只读review无可行动事实或权限问题；reviewer独立核对本机binary/镜像归档/fixture指纹及20次计数与记录一致，源码相对运行候选仅文档变化。review未重复连接目标，远端事实依据主Agent保存的部署摘要；管理SSH owner已退出。
+
+用户随后通知已发送。主Agent只读核对脱敏协议日志和所选启用Key的账本字段，不读取用户输入、凭证或完整admission正文：该Key出现2条执行，warmup及generation各1，均settled、outcome=succeeded、failure为空；全局unresolved为0，网关healthy、无OOM/重启，真实账号仍0。同期还有unsupported_tools/400拒绝日志，其中包含先前合成负向验证；剩余日志缺少主体关联，不能全部归因本次用户主请求，也不能因主请求执行成功就忽略潜在辅助流程兼容问题。尚未确认用户界面实际显示及其他操作结果，本次仅记录服务器执行成功，不标Desktop端到端或全部工具兼容通过；需用户确认界面固定合成回复。

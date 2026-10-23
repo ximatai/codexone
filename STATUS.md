@@ -75,6 +75,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，用户通知已发送后，所选启用Key出现warmup/generation各1条，均settled/succeeded、failure为空，全局unresolved=0；网关healthy、无OOM/重启，真实账号仍0。只读核对未读取用户正文/凭证。同期仍有unsupported_tools拒绝日志（含合成负向记录），缺主体关联，不能将它们全部归因该主请求；Desktop界面显示与辅助流程仍待确认，不把服务器执行成功标成完整Desktop通过。详见[复测记录](docs/changes/default-client-loop/verification.md)。无代码、部署或客户端配置变更，下一步先由用户确认固定合成回复显示，再定位剩余拒绝是否影响实际操作。
+
 2026-10-23，按用户后续明确授权，既有独立合成测试服务已升级至运行候选源码363e7df及本轮fixture，保留原地址/Key/数据与旧版本回退材料。镜像`sha256:630659fe3dd6f832a29d9f9d2474353f99afb9948c5af4781653056e8e68113c`，目标实际程序SHA256 `462d4a6ffead347e79ba51a5f11c27604f6d3f872b45e79a5511040d797accf1`与已验Linux产物一致；本机实际runtime安装、受控升级/一致性备份校验及服务健康通过。首次fixture替换遗漏保留属主导致启动失败，恢复旧测试版本健康、修正属主保留后完成升级，不记为一次全绿。公网双前缀HTTPS JSON/SSE/WSS、Lite说明/预热增量、重复compact及权限负向通过；固定实际CLI默认模型通过两个HTTP入口和原生WSS三组两轮对话，20次执行全部settled（生成12/预热4/压缩4）、无额外attempt/unknown。临时诊断Key撤销，只剩所选原Key启用；真实账号0、订阅关闭、旧服务容器/镜像/启动时间和Nginx配置未变。用户可用原测试地址和原Key新建会话验证Desktop，界面验收待用户反馈，M5/O14及真实订阅仍保留。运行指纹、限定证据与私有操作边界见[升级验证](docs/changes/default-client-loop/verification.md#后续明确授权的独立合成测试服务升级)；无远程Git推送/发布。
 
 2026-10-23，默认客户端本地合成闭环阶段出口完成（实现fc5f001，集中review修复1f9c67d）。Lite工具包严格校验、32 KiB说明边界、有限标识、原生WS同lane最近成功响应的工具身份续接及实际fixture完整终态已实现；review补齐重复compact唯一上下文和成功工具证据，复核无新增问题。固定Desktop内置CLI 0.163.0-alpha.11.1默认/显式目录、三传输文本三轮/工具往返/压缩续接18组重新通过，30次用户操作、58次上游调用全部settled，断言无传输回退/额外重试及真实成功工具结果。macOS完整197项Swift测试与全部后端脚本、133份文档及隐私/差异检查通过；Linux amd64 strip后release二进制定向协议/Lite/fixture/图片/维护/恢复/低磁盘/切回检查通过（无网络权限容器），不是Linux实际alpha CLI或Swift全集。记录、镜像/二进制指纹及未覆盖项见[闭环验证](docs/changes/default-client-loop/verification.md)。未部署/推送/真实订阅、未修改个人客户端或旧服务，线上候选不变。下一步为“可信流与失败”闭环：终态/状态/逐项一致性、HTTP SSE关联、提供者用量字段及错误分类；Desktop UI、真实订阅、M5/O14继续保留。
