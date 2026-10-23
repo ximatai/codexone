@@ -25,7 +25,9 @@
 
 ## 边界与回归
 
-定向Swift首批7项通过；新增WS成功响应继承/替换/模型与ID边界用例随完整后端检查执行。socket脚本verify_lite验证两前缀JSON/SSE、原生WS预热与工具增量、顺序保留/包id移除、32 KiB UTF-8边界、HTTP compact Lite标识、未知/过量/重复声明和伪造call_id/previous拒绝；拒绝不能增加attempt/绑定/上游调用，跨连接不继承。缺失固定客户端的候选入口实际退出非零，未静默跳过。
+定向Swift首批7项通过，加入WS继承边界后8项由reviewer独立通过。socket脚本verify_lite验证两前缀JSON/SSE、原生WS预热与工具增量、顺序保留/包id移除、32 KiB UTF-8边界、重复HTTP compact Lite标识、未知/过量/重复声明和伪造call_id/previous拒绝；拒绝不能增加attempt/绑定/上游调用，跨lane/连接不继承。缺失固定客户端的候选入口实际退出非零，未静默跳过。
+
+提交fc5f001后两名reviewer集中核查。Swift协议/权限无新增P1/P2；fixture/客户端测试发现两项P2并修复：HTTP compact使用固定上下文导致第二次503，改为本次epoch/sequence唯一值，两前缀连续compact证明不冲突；工具失败结果也可能让客户端最终完成，改为校验固定sleep成功结构或printf exit0及合成输出，压缩前也必须有成功工具证据。实际fixture的8组socket回归覆盖两种工具×普通/压缩×成功/失败，失败结果必须400且不能压缩；实际CLI完整18组按此收紧条件重跑。首轮完整后端停在重复compact失败处，不计为全集通过；修复后重跑，结果另记。
 
 完整后端、Linux定向出口和提交后review结果在完成后补记。
 

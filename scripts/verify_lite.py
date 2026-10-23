@@ -69,7 +69,7 @@ def main():
                             status,body=connect(ports['data'],'POST',prefix+'/responses',dict(model=MODEL,input=INPUT,stream=streaming))
                             assert status==200 and b'response' in body
                         status,body=connect(ports['data'],'POST',prefix+'/responses/compact',dict(model=MODEL,input=INPUT))
-                        assert status==200 and json.loads(body)['output'][0]['type']=='compaction'
+                        assert status==200 and json.loads(body)['output'][0]['type']=='compaction', {'status':status,'error':json.loads(body).get('error',{}).get('code')}
                         if transport=='websocket':
                             with dial(ports['data'],path=prefix+'/responses') as sock:
                                 events=turn(sock,dict(model=MODEL,input=INPUT))
@@ -84,6 +84,13 @@ def main():
                             done=turn(sock,dict(model=MODEL,input=[dict(type='function_call_output',call_id='call_lite',output='synthetic-result')],
                                 previous_response_id=called['id']))
                             assert done[-1]['type']=='response.completed'
+                            calls=server.sequence;before=counts(root)
+                            send(sock,dict(type='response.create',stream_id='synthetic-other-lane',model=MODEL,input=[],
+                                previous_response_id=done[-1]['response']['id'],
+                                tool_choice=dict(type='function',name='synthetic_echo')),masked=True)
+                            event=json.loads(receive(sock)[1])
+                            assert event['type']=='error' and event['stream_id']=='synthetic-other-lane'
+                            assert server.sequence==calls and counts(root)==before
                         server.incremental=False
                         # Another connection cannot reuse the previous lane's declaration scope.
                         calls=server.sequence

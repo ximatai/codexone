@@ -93,7 +93,7 @@ class Handler(BaseHTTPRequestHandler):
             body=self.rfile.read(length);assert len(body)==length
             document=json.loads(body);events=self.events(document)
             if self.path.endswith('/compact'):
-                result=json.dumps(dict(object='response.compaction',output=[dict(type='compaction',encrypted_content='synthetic-trial-compact-context')],usage=dict(input_tokens=1,
+                result=json.dumps(dict(object='response.compaction',output=[dict(type='compaction',encrypted_content='synthetic-trial-compact-'+events[-1]['response']['id'])],usage=dict(input_tokens=1,
                     output_tokens=0,total_tokens=1,input_tokens_details=dict(cached_tokens=0)))).encode();mime='application/json'
             elif document.get('stream'):
                 result=''.join('data: '+json.dumps(event)+'\n\n' for event in events).encode();mime='text/event-stream'

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import sqlite3
@@ -65,7 +66,16 @@ class ScriptedTrial(ObservedTrial):
         events=super().events(document)
         response=events[-1]['response']
         if document.get('generate') is False:return events
+        for item in document.get('input',[]):
+            if item.get('type')=='function_call_output' and item.get('call_id')=='call_default_client':
+                output=item.get('output','')
+                if self.server.tool_name=='sleep':
+                    assert re.fullmatch(r'Wall time: [0-9.]+ seconds\nSleep completed\.',output), 'Synthetic sleep did not succeed'
+                else:
+                    assert 'Process exited with code 0\n' in output and output.rsplit('\nOutput:\n',1)[-1]=='synthetic-tool-success', 'Synthetic command did not succeed'
+                self.server.tool_success_seen=True
         if self.server.observed[-1]['compaction']:
+            assert self.server.tool_success_seen, 'Compaction cannot substitute for successful tool execution'
             self.server.compactions+=1
             return events
         if not self.server.tool_sent:
@@ -83,6 +93,7 @@ class ScriptedTrial(ObservedTrial):
             self.server.tool_sent=True
             self.server.tool_name=tool['name']
         else:
+            assert self.server.tool_success_seen, 'Successful tool result was not consumed'
             assert self.server.observed[-1]['result'] or self.server.observed[-1]['context'] or document.get('previous_response_id'), 'Tool/context continuation missing'
         # Uses the exact trial fixture terminal and event serializer, not verify_client.Provider.
         return response_events(response)
@@ -91,7 +102,7 @@ class ScriptedTrial(ObservedTrial):
 def run(args,codex,transport,catalog,scenario,prefix):
     server=Server(('127.0.0.1',0),[MODEL])
     server.RequestHandlerClass=ObservedTrial if scenario=='text' else ScriptedTrial
-    server.observed=[];server.tool_sent=False;server.compactions=0;server.tool_name=None
+    server.observed=[];server.tool_sent=False;server.compactions=0;server.tool_name=None;server.tool_success_seen=False
     thread=threading.Thread(target=server.serve_forever);thread.start()
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-default-client-') as tmp:
@@ -150,7 +161,7 @@ enabled = false
                 assert sum(r['warmup'] for r in observed)==(turns if transport=='native' else 0), 'Native prewarm was skipped or repeated'
                 if not catalog and args.require_lite:assert any(r['lite'] for r in observed), 'Default Lite path was not exercised'
                 if catalog:assert any(r['topTools'] for r in observed), 'Explicit catalog path was not exercised'
-                if scenario!='text':assert server.tool_sent and (any(r['result'] for r in observed) or server.compactions), 'Client did not return the synthetic tool result'
+                if scenario!='text':assert server.tool_sent and server.tool_success_seen, 'Client did not return a successful synthetic tool result'
                 if scenario=='compact':assert server.compactions==1 and any(r['context'] for r in generated), 'Compaction/follow-up not consumed'
             finally:stop(process)
             with sqlite3.connect(root/'state/core.sqlite') as db:
