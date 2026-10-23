@@ -69,7 +69,13 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
-2026-10-23，用户首轮真实Desktop合成请求失败，界面显示重连5/5及通用网关错误，未计兼容通过。只读核对：新网关/fixture healthy，无OOM/重启；所选Key无执行/持久拒绝记录，尚不能区分认证、请求解析或升级前失败。已准备有owner、最长10分钟自动恢复的临时入口脱敏状态诊断，不记录正文、Key、头值或路径；待用户重试/提供安全错误码后继续定位，真实订阅仍关闭。
+2026-10-23，建执行前拒绝诊断闭环完成（`16082eb`）：首条WS解析失败发送标准error帧后关闭，无上游/intent；固定码白名单+服务端UUID、单调60秒最多16条日志，溢出丢弃。主Agent实现、macOS完整182项Swift/全部后端脚本、Linux同一优化程序的拒绝/协议/WS/fixture回归、集中review通过。独立新侧已更新并核对运行SHA，公网两前缀JSON/SSE/WSS及拒绝路径通过，仅所选原Key启用，旧服务未变healthy；容器日志轮转2MiB×2，真实订阅关闭。
+
+新候选 `codexone:rejection-diagnostic-candidate`，源码 `16082eb9c84b2e2bccb7ee3daf918a92cdfd7964`，镜像ID `sha256:fb2c26d82de20d325c1643488e84a26c101e65b2ccd25fbe0e19cbfa2eb45ea0`，Linux程序SHA256 `e413efd62e3c2058d27edb8aa320342126de95e5b9e072421a6cd824f800d7eb`；旧候选保留，归档在忽略产物目录。部署使用已授权代理管理链路、校验后分段续传；无客户端SSH转发端口，具体连接信息私下保留。
+
+真实Desktop仍失败：握手101已确认Key认证通过，更新后具体码为 `unsupported_reasoning` / 400，未创建执行、unknown=0。合成公网复现可选effort/summary为null被拒、明确值正常；用户未特殊配置。下一步修复已知reasoning可选null语义并继续实际客户端联通，不能把合成对照当成已证明真实请求字段或完整Desktop兼容。见[诊断出口](docs/changes/request-rejection-diagnostics/verification.md)。
+
+2026-10-23，用户首轮真实Desktop合成请求失败，界面显示重连5/5及通用网关错误，未计兼容通过。只读核对：新网关/fixture healthy，无OOM/重启；当时所选Key无执行/持久拒绝记录；后续临时脱敏状态诊断及具体错误码定位见最新出口，临时日志已恢复关闭。真实订阅仍关闭。
 
 2026-10-23，独立公网HTTPS数据入口阶段出口（配置 `090d742`）：沿用数据面WS/SSE/无重试与无正文日志策略，独立公共证书和ACME webroot，管理/健康路由不公开。原Key摘要、合成上游与既有运行候选不变；原Nginx文件逐一摘要核对未变，旧服务容器/镜像未变且健康。主Agent亲自配置/验证，提交后集中review无新增P1/P2。
 

@@ -35,7 +35,7 @@
 
 排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
-网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。HTTP 提交前可回 4xx/429/502/503/504；提交后仅协议错误事件或异常关闭。WS 握手后不可返回 HTTP 状态响应；lane 错误服从执行生命周期规范的 FIFO。失败不伪装成功、EOF 不视为终态。
+网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。HTTP 提交前可回 4xx/429/502/503/504；提交后仅协议错误事件或异常关闭。WS 握手后不可返回 HTTP 状态响应；lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
 
 ## P11：Desktop 与现有接入兼容
 
