@@ -143,8 +143,13 @@ actor WebSocketWriter {
     self.channel = channel
     self.client = client
   }
-  func send(_ data: Data, opcode: WebSocketOpcode = .text) async throws {
-    guard data.count <= ImageLimits.eventBytes else {
+  func send(_ data: Data, opcode: WebSocketOpcode = .text, normalizedImage: Bool = false)
+    async throws
+  {
+    guard
+      data.count
+        <= (client && normalizedImage ? ImageLimits.normalizedRequestBytes : ImageLimits.eventBytes)
+    else {
       throw GatewayProtocolError(413, "websocket_message_too_large")
     }
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {
@@ -170,7 +175,10 @@ struct WebSocketPeer: Sendable {
   }
   func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
-  func send(_ value: JSONValue) async throws { try await writer.send(value.data()) }
+  func send(_ value: JSONValue, normalizedImage: Bool = false) async throws {
+    try await writer.send(
+      value.data(escapingSlashes: !normalizedImage), normalizedImage: normalizedImage)
+  }
 
   static func run(
     _ socket: ProtocolWebSocket, client: Bool,

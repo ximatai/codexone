@@ -40,7 +40,7 @@ extension HTTPResponseExecution {
       create["type"] = .string("response.create")
       if request.mode == .warmup { create["generate"] = .bool(false) }
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
-      try await peer.send(.object(create))
+      try await peer.send(.object(create), normalizedImage: request.requirements.route == .images)
       var total = 0
       var compaction = StreamCompaction()
       while true {

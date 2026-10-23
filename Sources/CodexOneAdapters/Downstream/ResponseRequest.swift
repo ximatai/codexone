@@ -26,7 +26,19 @@ struct ResponseRequest: Sendable {
   init(data: Data, mode: ExecutionMode = .generation, imageConfiguration: ImageConfiguration? = nil)
     throws
   {
-    guard data.count <= ImageLimits.requestBytes else {
+    try self.init(
+      data: data, mode: mode, imageConfiguration: imageConfiguration,
+      maximumBytes: ImageLimits.requestBytes)
+  }
+  init(normalizedImage: JSONValue, imageConfiguration: ImageConfiguration?) throws {
+    try self.init(
+      data: normalizedImage.data(escapingSlashes: false), mode: .generation,
+      imageConfiguration: imageConfiguration, maximumBytes: ImageLimits.normalizedRequestBytes)
+  }
+  private init(
+    data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?, maximumBytes: Int
+  ) throws {
+    guard data.count <= maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
     }
     let document: JSONValue

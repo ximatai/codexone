@@ -113,3 +113,5 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 首个执行 owner 与连接 owner 是同一结构化任务组的兄弟，通过容量一交接传递首 context/认证及首 turn 结果。首 turn 结束立即交回自己的最终化 ticket，上游 socket 仍由连接 owner 监督；后续 turn 独立准入和最终化。首执行的配置总期限包含连接与升级；首准入失败、超时、下游断开或 Runtime 关闭必须结束交接双方并等待网络任务。保持 P13/P14 的 lane、排队、帧和连接寿命边界，共用协议/用量观察，不新增恢复或自动重试语义。
 
 图片首个实现的配置映射、受支持参数、容量与期限见[图片配置](../development/images.md)。所有入口将同一能力要求随 admission 持久保存并在原子准入复核；公开图片模型与内部宿主模型分离，不因宿主映射授予对话权限。完整图片只在可信 response.completed 后完成，output_item.done 与预览均不是整个操作的成功承诺。
+
+Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编码预算分别执行。仅经过Images校验后生成的Responses封套可用9MiB，不转义base64斜杠，包含8MiB base64及有界提示/工具封套余量。对应上游WS写入只在该内部图片路径使用9MiB；普通请求、下游帧与共享入站队列、提供者事件仍保持原限制。不得通过网络字段选取内部预算。

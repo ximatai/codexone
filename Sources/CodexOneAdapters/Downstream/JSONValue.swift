@@ -69,5 +69,9 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
     }
     return try JSONDecoder().decode(Self.self, from: data)
   }
-  func data() throws -> Data { try JSONEncoder().encode(self) }
+  func data(escapingSlashes: Bool = true) throws -> Data {
+    let encoder = JSONEncoder()
+    if !escapingSlashes { encoder.outputFormatting = [.withoutEscapingSlashes] }
+    return try encoder.encode(self)
+  }
 }

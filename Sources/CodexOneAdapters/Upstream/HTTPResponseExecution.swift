@@ -106,7 +106,10 @@ struct HTTPResponseExecution: Sendable {
         } else if let token {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
-        upstream.body = .bytes(ByteBuffer(data: try request.document.data()))
+        upstream.body = .bytes(
+          ByteBuffer(
+            data: try request.document.data(escapingSlashes: request.requirements.route != .images))
+        )
         let response = try await client.execute(upstream, deadline: .now() + .seconds(120))
         guard response.status == .ok else {
           throw upstreamRejection(status: response.status, headers: response.headers)

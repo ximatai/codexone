@@ -4,6 +4,8 @@ import Foundation
 /// Limits apply before decoding and are shared by JSON, multipart and WS.
 enum ImageLimits {
   static let requestBytes = 8_388_608
+  // Validated multipart images expand to base64 plus a bounded protocol envelope.
+  static let normalizedRequestBytes = 9_437_184
   static let imageBytes = 4_194_304
   static let totalImageBytes = 6_291_456
   static let eventBytes = 8_388_608
@@ -159,13 +161,13 @@ struct ImagesRequest: Sendable {
       .object(["type": .string("input_image"), "image_url": .string($0.dataURL)])
     }
     var request = try ResponseRequest(
-      data: JSONValue.object([
+      normalizedImage: JSONValue.object([
         "model": .string(tool.model.hostModel),
         "input": .array([.object(["role": .string("user"), "content": .array(content)])]),
         "tools": .array([tool.document]),
         "tool_choice": .object(["type": .string("image_generation")]),
         "stream": .bool(streaming),
-      ]).data(), imageConfiguration: configuration)
+      ]), imageConfiguration: configuration)
     request.requirements = try .init(route: .images, imageModel: tool.model.id)
     response = request
   }
