@@ -47,4 +47,20 @@ struct ProtocolFailureDiagnosticsTests {
     let overflow = gate.admit(now: now.advanced(by: .seconds(60)))
     #expect(!overflow)
   }
+
+  @Test func toolReasonsAreFixedAndNeverAddedToPublicEnvelopes() {
+    for detail: ProtocolRejectionDetail in [
+      .toolsContainer, .toolsCount, .toolsName, .toolsDescription, .toolsBoolean,
+      .toolsNamespace, .toolsMembers, .toolsDuplicate, .toolsGrammar, .toolsType,
+      .toolsBuiltinSearch, .toolsDiscovery, .toolsRemoteMCP, .toolsChoice, .toolsPackage,
+      .toolsImage,
+    ] {
+      let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
+      let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)
+      #expect(metadata["reason"]?.description == detail.rawValue)
+      let envelope = protocolErrorEnvelope(error, requestID: UUID().uuidString)
+      #expect(envelope["error"]?.object?.count == 4)
+      #expect(envelope["error"]?["reason"] == nil)
+    }
+  }
 }

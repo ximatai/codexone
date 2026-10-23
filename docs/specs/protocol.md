@@ -79,6 +79,8 @@ reasoning对象仅接受effort/summary/context三个已知成员，成员为null
 
 Responses Lite允许在input原位置使用additional_tools包，字段仅type/role/tools/可选本地id，role必须developer；仅含function/custom/单层namespace，包内不开放图片、内置检索或MCP。各来源共享64个声明（含namespace），身份冲突拒绝，每条说明最多32 KiB UTF-8，整体请求仍受原大小限制。聚合声明只用于本轮工具选择/输出校验，不提升到顶层，不改变顺序；本地包id发送前移除，不建立对象权限。HTTP按已校验Lite声明/明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的工具身份集合、Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才可继承校验集合，显式空声明清空，不跨lane/连接/失败恢复。上游增量请求保持原形，每轮授权、引用与用量仍独立执行。
 
+工具拒绝可在服务端使用固定reason枚举细分容器/数量/名称/说明/布尔/namespace/字段/重复/grammar/类型/内置搜索/工具检索/远程MCP/选择/包/图片；不记录工具名、说明、schema、任意字段值或请求正文。沿用16条/单调60秒全局诊断上限和服务端UUID，公开错误仍仅type/code/message/request_id，不公开内部reason。历史日志未记录的信息不得事后推测为已确认根因。
+
 ## P16：受控模型目录
 
 两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均由显式内联或经验证私有快照提供非空 baseInstructions 时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。

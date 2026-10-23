@@ -49,6 +49,7 @@ COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
     && python3 scripts/verify_websocket.py --binary /output/codexone \
     && python3 scripts/verify_lite.py --binary /output/codexone \
+    && python3 scripts/verify_tool_diagnostics.py --binary /output/codexone \
     && python3 scripts/verify_trial_provider.py --binary /output/codexone \
     && python3 scripts/verify_images.py --binary /output/codexone
 RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/codexone \

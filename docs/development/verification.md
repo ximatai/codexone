@@ -24,6 +24,8 @@ python3 scripts/check_docs.py
 
 实际报告必须包含命令、平台、结果、覆盖与未覆盖场景。kill -9 不等于掉电测试，Mac 不等于 Linux，缓存重播不等于上游恢复，CLI 成功不等于账号池隔离或财务正确。
 
+真实Desktop验收须记录实际应用/版本、设备及模型/提供者选择、受控操作的界面结果，并与服务端请求UUID/固定拒绝原因或执行账本关联。不能把同Key/相近时间的成功预热或生成当成失败界面对应请求，不能将CLI、渲染网页或另一设备配置替代真实Desktop。电脑工具不允许操作目标应用时明确记录限制，不通过其他UI接口规避；需用户协作的一次操作应在诊断准备后进行，不要求无证据连续重试。
+
 ## 测试框架与入口职责
 
 Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。

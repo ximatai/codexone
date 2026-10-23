@@ -75,6 +75,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 最新验证与范围
 
+2026-10-23，用户失败截图已确认实际Desktop仍未通过，不能以先前所选Key的成功记录归因同一次操作。实际客户端为另一设备的ChatGPT Desktop 26.1016.62342；本机CLI/配置不能替代，电脑工具禁止操作Desktop且未绕过。正在[具体拒绝定位](docs/changes/desktop-operation-diagnosis/proposal.md)：新增16类固定工具拒绝reason，仍相同公开错误与原有允许集合/容量，不记录正文、工具名/字段值/Key。macOS增量build、10项Swift定向、16类HTTP/WS关联与无派发/隐私、既有拒绝及Lite回归已通过；准备提交后review、Linux检查与原独立测试服务诊断更新。历史日志缺少具体分类，根因仍未确定，真实Desktop操作验证保持未完成；不要求用户无诊断反复发送，真实订阅与旧服务不变。
+
 2026-10-23，用户通知已发送后，所选启用Key出现warmup/generation各1条，均settled/succeeded、failure为空，全局unresolved=0；网关healthy、无OOM/重启，真实账号仍0。只读核对未读取用户正文/凭证。同期仍有unsupported_tools拒绝日志（含合成负向记录），缺主体关联，不能将它们全部归因该主请求；Desktop界面显示与辅助流程仍待确认，不把服务器执行成功标成完整Desktop通过。详见[复测记录](docs/changes/default-client-loop/verification.md)。无代码、部署或客户端配置变更，下一步先由用户确认固定合成回复显示，再定位剩余拒绝是否影响实际操作。
 
 2026-10-23，按用户后续明确授权，既有独立合成测试服务已升级至运行候选源码363e7df及本轮fixture，保留原地址/Key/数据与旧版本回退材料。镜像`sha256:630659fe3dd6f832a29d9f9d2474353f99afb9948c5af4781653056e8e68113c`，目标实际程序SHA256 `462d4a6ffead347e79ba51a5f11c27604f6d3f872b45e79a5511040d797accf1`与已验Linux产物一致；本机实际runtime安装、受控升级/一致性备份校验及服务健康通过。首次fixture替换遗漏保留属主导致启动失败，恢复旧测试版本健康、修正属主保留后完成升级，不记为一次全绿。公网双前缀HTTPS JSON/SSE/WSS、Lite说明/预热增量、重复compact及权限负向通过；固定实际CLI默认模型通过两个HTTP入口和原生WSS三组两轮对话，20次执行全部settled（生成12/预热4/压缩4）、无额外attempt/unknown。临时诊断Key撤销，只剩所选原Key启用；真实账号0、订阅关闭、旧服务容器/镜像/启动时间和Nginx配置未变。用户可用原测试地址和原Key新建会话验证Desktop，界面验收待用户反馈，M5/O14及真实订阅仍保留。运行指纹、限定证据与私有操作边界见[升级验证](docs/changes/default-client-loop/verification.md#后续明确授权的独立合成测试服务升级)；无远程Git推送/发布。

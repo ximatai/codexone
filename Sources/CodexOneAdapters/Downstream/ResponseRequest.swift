@@ -8,6 +8,22 @@ enum ProtocolRejectionDetail: String, Sendable {
   case reasoningSummaryType = "reasoning_summary_type"
   case reasoningSummaryValue = "reasoning_summary_value"
   case reasoningContext = "reasoning_context"
+  case toolsContainer = "tools_container"
+  case toolsCount = "tools_count"
+  case toolsName = "tools_name"
+  case toolsDescription = "tools_description"
+  case toolsBoolean = "tools_boolean"
+  case toolsNamespace = "tools_namespace"
+  case toolsMembers = "tools_members"
+  case toolsDuplicate = "tools_duplicate"
+  case toolsGrammar = "tools_grammar"
+  case toolsType = "tools_type"
+  case toolsBuiltinSearch = "tools_builtin_search"
+  case toolsDiscovery = "tools_discovery"
+  case toolsRemoteMCP = "tools_remote_mcp"
+  case toolsChoice = "tools_choice"
+  case toolsPackage = "tools_package"
+  case toolsImage = "tools_image"
 }
 
 struct GatewayProtocolError: Error, Sendable {
@@ -184,7 +200,7 @@ struct ResponseRequest: Sendable {
     let imageTools =
       fields["tools"]?.array?.filter { $0["type"]?.string == "image_generation" } ?? []
     guard imageTools.count <= 1, imageTools.isEmpty || mode == .generation else {
-      throw GatewayProtocolError(400, "unsupported_tools")
+      throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
     }
     let imageTool = try imageTools.first.map {
       try ImageToolRequest($0, configuration: imageConfiguration, host: model)
@@ -197,18 +213,25 @@ struct ResponseRequest: Sendable {
     let packages = input.array?.filter { $0["type"]?.string == "additional_tools" } ?? []
     var declarations: [JSONValue] = []
     if let value = fields["tools"] {
-      guard let list = value.array, list.count <= 64 else {
-        throw GatewayProtocolError(400, "unsupported_tools")
+      guard let list = value.array else {
+        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsContainer)
+      }
+      guard list.count <= 64 else {
+        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsCount)
       }
       declarations = list
     }
     for package in packages {
       guard
         package.object?.keys.allSatisfy({ ["type", "role", "tools", "id"].contains($0) }) == true,
-        package["role"]?.string == "developer", let list = package["tools"]?.array,
-        list.count <= 64 - declarations.count,
-        !list.contains(where: { $0["type"]?.string == "image_generation" })
-      else { throw GatewayProtocolError(400, "unsupported_tools") }
+        package["role"]?.string == "developer", let list = package["tools"]?.array
+      else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsPackage) }
+      guard list.count <= 64 - declarations.count else {
+        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsCount)
+      }
+      guard !list.contains(where: { $0["type"]?.string == "image_generation" }) else {
+        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
+      }
       declarations += list
     }
     let tools = try ClientTools(.array(declarations))
@@ -239,7 +262,7 @@ struct ResponseRequest: Sendable {
     if let choice = fields["tool_choice"] {
       if let mode = choice.string {
         guard ["auto", "none", "required"].contains(mode) else {
-          throw GatewayProtocolError(400, "unsupported_tools")
+          throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice)
         }
       } else if choice == .object(["type": .string("image_generation")]), imageTool != nil {
         // The only built-in tool enabled in this slice.
@@ -247,12 +270,12 @@ struct ResponseRequest: Sendable {
         guard let name = choice["name"]?.string,
           choice["namespace"] == nil || choice["namespace"]?.string != nil,
           choice.object?.keys.allSatisfy({ ["type", "name", "namespace"].contains($0) }) == true
-        else { throw GatewayProtocolError(400, "unsupported_tools") }
+        else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice) }
         let key = try ClientTools.key(name: name, namespace: choice["namespace"]?.string)
         guard
           choice["type"]?.string == "function" && functionNames.contains(key)
             || choice["type"]?.string == "custom" && customToolNames.contains(key)
-        else { throw GatewayProtocolError(400, "unsupported_tools") }
+        else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice) }
       }
     }
     if let include = fields["include"] {
