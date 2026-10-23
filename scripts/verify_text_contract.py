@@ -159,10 +159,19 @@ def rows(root):
                 for s, o, u in db.execute('SELECT state,outcome_json,usage_json FROM attempts ORDER BY rowid')]
 
 
+def outcomes(root):
+    with sqlite3.connect(root / 'state/core.sqlite') as db:
+        return [json.loads(row[0]) if row[0] else None
+                for row in db.execute('SELECT outcome_json FROM attempts ORDER BY rowid')]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    binary = str(parser.parse_args().binary.resolve())
+    parser.add_argument('--case', choices=CASES)
+    parser.add_argument('--transport', choices=('http', 'websocket'))
+    args = parser.parse_args()
+    binary = str(args.binary.resolve())
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     provider.guard = threading.Lock()
     provider.calls = 0
@@ -171,9 +180,9 @@ def main():
     thread.start()
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-text-contract-') as temporary:
-            for transport in ('http', 'websocket'):
+            for transport in ((args.transport,) if args.transport else ('http', 'websocket')):
                 transport_start = provider.calls
-                for mode in CASES:
+                for mode in ([args.case] if args.case else CASES):
                     if transport == 'websocket' and mode == 'sparse-stream':
                         continue  # Preserve native WS's existing stronger created/turn barrier.
                     provider.mode = mode
@@ -223,7 +232,7 @@ def main():
                             else:
                                 assert 'error' in result and result['error']['request_id'] in result['error']['message'], (transport, mode, route, events)
                         deadline = time.monotonic() + 3
-                        while len(rows(root)) != count or any(s == 'pending' for s, _, _ in rows(root)):
+                        while len(rows(root)) != count or any(s == 'intent' for s, _, _ in rows(root)):
                             assert time.monotonic() < deadline
                             time.sleep(.02)
                         process.terminate()
@@ -237,7 +246,7 @@ def main():
                             assert all(s == 'settled' and u and u['completeness'] == 'complete'
                                        and u['inputTokens'] == 5 and u['outputTokens'] == 3 for s, _, u in records), records
                             assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo') else 'failed')
-                                       for _, k, _ in records), records
+                                       for _, k, _ in records), (transport, mode, records, outcomes(root))
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
                                               ('synthetic-metadata-only-id', 'synthetic-foreign-response')).fetchone()[0] == 0
