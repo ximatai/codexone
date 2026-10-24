@@ -101,12 +101,21 @@ extension HTTPResponseExecution {
             event["response"]?["output"] == nil || event["response"]?["output"]?.array == []
           else { throw GatewayProtocolError(502, "invalid_upstream_warmup") }
         }
-        let observation = try ProviderObservation(
-          event: event, model: model, functionNames: request.functionNames,
-          customToolNames: request.customToolNames,
-          expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-          allowCompaction: request.streamCompaction,
-          allowImages: request.requirements.imageModel != nil)
+        let observation: ProviderObservation
+        do {
+          observation = try ProviderObservation(
+            event: event, model: model, functionNames: request.functionNames,
+            customToolNames: request.customToolNames,
+            expectedPreviousResponseID: request.document["previous_response_id"]?.string,
+            allowCompaction: request.streamCompaction,
+            allowImages: request.requirements.imageModel != nil)
+        } catch let error as GatewayProtocolError {
+          if error.detail == .upstreamResponsePolicy {
+            ProtocolFailureDiagnostics.recordResponsePolicyShape(
+              event, requestID: context.admission.requestID ?? context.admission.attempt)
+          }
+          throw error
+        }
         if !request.streamCompaction && request.requirements.imageModel == nil {
           try outputViews.observe(event)
         }

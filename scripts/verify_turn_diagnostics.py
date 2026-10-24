@@ -12,6 +12,15 @@ from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, call, rows
 
 PRIVATE='synthetic-private-provider-error-never-log'
+POLICY_SHAPES={
+    'policy-background': ('background_shape','true'),
+    'policy-conversation': ('conversation_shape','object'),
+    'policy-prompt': ('prompt_shape','object'),
+    'policy-tools-null': ('tools_shape','null'),
+    'policy-tools-string': ('tools_shape','string'),
+    'policy-tools-array': ('tools_shape','array'),
+    'policy-image': ('tools_shape','array'),
+}
 CASES={
     'stream': ('upstream_turn_provider_stream', {'param':'stream'}),
     'reasoning': ('upstream_turn_provider_reasoning_summary', {'param':'reasoning.summary'}),
@@ -25,12 +34,24 @@ CASES={
     'unknown-item': ('upstream_turn_unknown_item_id', None),
 }
 
+CASES.update({name:('upstream_response_policy',None) for name in POLICY_SHAPES})
+
 class Provider(WireProvider):
     def sequence(self, request):
         with self.server.guard:
             self.server.calls+=1
             index=self.server.calls
         mode=self.server.mode;error=CASES[mode][1]
+        if mode in POLICY_SHAPES:
+            response=dict(id=f'synthetic-response-{index}',status='in_progress',output=[],background=False)
+            if mode=='policy-background':response['background']=True
+            if mode=='policy-conversation':response['conversation']={'id':PRIVATE}
+            if mode=='policy-prompt':response['prompt']={'id':PRIVATE}
+            if mode=='policy-tools-null':response['tools']=None
+            if mode=='policy-tools-string':response['tools']=PRIVATE
+            if mode=='policy-tools-array':response['tools']=[{'type':PRIVATE}]
+            if mode=='policy-image':response['tools']=[{'type':'image_generation'}]
+            return [dict(type='response.created',response=response)]
         if error is not None:
             fields={**error,'message':PRIVATE}
             return [dict(type='error',error=fields)] if self.server.nested else [dict(type='error',**fields)]
@@ -58,7 +79,7 @@ def main():
                     try:
                         for route in ('json','sse','native'):
                             _,events=call(ports['data'],route,dict(model='synthetic-contract',input='synthetic error probe'))
-                            error=events[-1]['error'];assert error['code']=='invalid_upstream_turn' and error['request_id'] in error['message'],(case,nested,route,events)
+                            error=events[-1]['error'];expected='unsupported_upstream_object' if case in POLICY_SHAPES else 'invalid_upstream_turn';assert error['code']==expected and error['request_id'] in error['message'],(case,nested,route,events)
                             assert 'reason' not in error
                             request_ids.append(error['request_id'])
                         deadline=time.monotonic()+4
@@ -68,6 +89,9 @@ def main():
                         process.terminate();process.wait(10);logs=process.stdout.read()
                         for request_id in request_ids:
                             assert any(request_id.encode() in line and ('reason='+reason).encode() in line for line in logs.splitlines()),(case,request_id,logs)
+                        if case in POLICY_SHAPES:
+                            field,value=POLICY_SHAPES[case]
+                            assert any(request_ids[0].encode() in line and (field+'='+value).encode() in line for line in logs.splitlines()),(case,logs)
                         assert PRIVATE.encode() not in logs and TOKEN.encode() not in logs
                         assert server.calls==before+3,'Unexpected replay'
                     finally:stop(process)

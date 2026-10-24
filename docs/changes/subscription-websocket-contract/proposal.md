@@ -7,3 +7,5 @@
 按P08—P11/P13—P15与[后端契约](../../specs/protocol.md)，普通订阅WS保留preparedDocument的stream=true/store=false；通用responses WS仍移除stream，图片维持独立契约。由可信配置决定，客户端不能选择。预热和流式压缩属于同一普通订阅WS组包；不扩大工具/图片/续接权限，不改变schema、usage/unknown、重放或健康策略。
 
 验收：独立socket实际捕获两类后端的HTTP/WS wire，分别检查stream形状；reader固定分类在JSON/SSE/native透出UUID而不公开reason/原错误。保持参数拒绝零attempt/零握手、普通输出256项及旧WS/压缩回归；完成两平台验证。真实失败责任继续保留；任何后续实际请求逐笔记录，先定位、首错停，不以fixture替代Desktop。
+
+实际客户端形状的受控预热在响应策略守卫处被拒绝；补充仅首次/进程的固定字段形状（background/conversation/prompt/tools）、有界工具数量及已有固定工具拒绝分类，按UUID关联，不记录原值、ID或提供者消息。此观察不改变守卫、归属或记账，不据此自动接受外部对象。

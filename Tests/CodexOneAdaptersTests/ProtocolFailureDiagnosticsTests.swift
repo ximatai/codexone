@@ -105,3 +105,21 @@ struct ProtocolFailureDiagnosticsTests {
   }
 
 }
+
+@Test func responsePolicyShapeDiagnosticsNeverRetainProviderValues() {
+  let secret = "synthetic-private-provider-value"
+  let event: JSONValue = .object([
+    "response": .object([
+      "background": .bool(false), "conversation": .object(["id": .string(secret)]),
+      "prompt": .string(secret), "tools": .null,
+    ])
+  ])
+  let metadata = ProtocolFailureDiagnostics.responsePolicyMetadata(
+    event, requestID: UUID().uuidString)
+  #expect(metadata["background_shape"]?.description == "false")
+  #expect(metadata["conversation_shape"]?.description == "object")
+  #expect(metadata["prompt_shape"]?.description == "string")
+  #expect(metadata["tools_shape"]?.description == "null")
+  #expect(!metadata.description.contains(secret))
+  #expect(ProtocolFailureDiagnostics.responsePolicyMetadata(event, requestID: secret).isEmpty)
+}

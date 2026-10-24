@@ -8,6 +8,7 @@ enum ProtocolFailureDiagnostics {
   private static let gate = Mutex(ProtocolFailureLogGate())
   private static let isolatedExtensionLogged = Mutex(false)
   private static let missingMediaTypeLogged = Mutex(false)
+  private static let responsePolicyShapeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
     "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
@@ -71,6 +72,50 @@ enum ProtocolFailureDiagnostics {
     logger.info(
       "Upstream stream omitted media type; SSE validation required",
       metadata: ["upstream_status": "200", "request_id": .string(id.uuidString)])
+  }
+
+  static func responsePolicyMetadata(_ event: JSONValue, requestID: String) -> Logger.Metadata {
+    guard let id = UUID(uuidString: requestID) else { return [:] }
+    func shape(_ value: JSONValue?) -> String {
+      guard let value else { return "absent" }
+      switch value {
+      case .null: return "null"
+      case .bool(let value): return value ? "true" : "false"
+      case .object: return "object"
+      case .array: return "array"
+      case .number: return "number"
+      case .string: return "string"
+      }
+    }
+    let response = event["response"]
+    var metadata: Logger.Metadata = ["request_id": .string(id.uuidString)]
+    for key in ["background", "conversation", "prompt", "tools"] {
+      metadata[key + "_shape"] = .string(shape(response?[key]))
+    }
+    if let tools = response?["tools"]?.array {
+      metadata["tools_count"] = .string(String(min(tools.count, 65)))
+      metadata["image_tool"] = .string(
+        tools.contains { $0["type"]?.string == "image_generation" } ? "true" : "false")
+      do {
+        _ = try ClientTools(.array(tools))
+        metadata["tools_validation"] = "accepted"
+      } catch let error as GatewayProtocolError {
+        metadata["tools_validation"] = .string(error.detail?.rawValue ?? "rejected")
+      } catch { metadata["tools_validation"] = "rejected" }
+    }
+    return metadata
+  }
+
+  static func recordResponsePolicyShape(_ event: JSONValue, requestID: String) {
+    let metadata = responsePolicyMetadata(event, requestID: requestID)
+    guard !metadata.isEmpty else { return }
+    let first = responsePolicyShapeLogged.withLock { logged in
+      guard !logged else { return false }
+      logged = true
+      return true
+    }
+    guard first else { return }
+    logger.info("Upstream response policy rejected structural shape", metadata: metadata)
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {
