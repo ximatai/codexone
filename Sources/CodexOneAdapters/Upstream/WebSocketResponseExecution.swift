@@ -116,6 +116,10 @@ extension HTTPResponseExecution {
           }
           throw error
         }
+        if request.requirements.imageModel == nil && event["response"]?["tools"] == .null {
+          ProtocolFailureDiagnostics.recordNullableToolEcho(
+            requestID: context.admission.requestID ?? context.admission.attempt)
+        }
         if !request.streamCompaction && request.requirements.imageModel == nil {
           try outputViews.observe(event)
         }

@@ -47,7 +47,7 @@ class Provider(WireProvider):
             if mode=='policy-background':response['background']=True
             if mode=='policy-conversation':response['conversation']={'id':PRIVATE}
             if mode=='policy-prompt':response['prompt']={'id':PRIVATE}
-            if mode=='policy-tools-null':response['tools']=None
+            if mode=='policy-tools-null':response.update(tools=None,background=True)  # null alone is metadata; background still rejects
             if mode=='policy-tools-string':response['tools']=PRIVATE
             if mode=='policy-tools-array':response['tools']=[{'type':PRIVATE}]
             if mode=='policy-image':response['tools']=[{'type':'image_generation'}]

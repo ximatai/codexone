@@ -61,6 +61,7 @@ struct ProviderObservation: Sendable {
         response["conversation"] == nil || response["conversation"] == .null,
         response["prompt"] == nil || response["prompt"] == .null,
         response["tools"] == nil
+          || (!allowImages && response["tools"] == .null)
           || ((try? ClientTools(response["tools"])) != nil
             && (allowImages
               || !(response["tools"]?.array?.contains { $0["type"]?.string == "image_generation" }

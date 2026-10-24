@@ -123,3 +123,27 @@ struct ProtocolFailureDiagnosticsTests {
   #expect(!metadata.description.contains(secret))
   #expect(ProtocolFailureDiagnostics.responsePolicyMetadata(event, requestID: secret).isEmpty)
 }
+
+@Test func nullToolEchoDoesNotGrantUndeclaredToolsOrChangeImagePolicy() throws {
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
+  var response: [String: JSONValue] = [
+    "id": .string("synthetic-response"), "status": .string("completed"), "output": .array([]),
+    "tools": .null,
+  ]
+  func observe(_ response: [String: JSONValue], image: Bool = false) throws {
+    _ = try ProviderObservation(
+      event: .object(["type": .string("response.completed"), "response": .object(response)]),
+      model: model, functionNames: [], allowImages: image)
+  }
+  try observe(response)
+  #expect(throws: (any Error).self) { try observe(response, image: true) }
+  response["output"] = .array([
+    .object([
+      "type": .string("function_call"), "id": .string("synthetic-item"),
+      "call_id": .string("synthetic-call"), "name": .string("undeclared"),
+      "arguments": .string("{}"),
+    ])
+  ])
+  #expect(throws: (any Error).self) { try observe(response) }
+}

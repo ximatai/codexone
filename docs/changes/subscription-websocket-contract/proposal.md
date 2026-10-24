@@ -9,3 +9,5 @@
 验收：独立socket实际捕获两类后端的HTTP/WS wire，分别检查stream形状；reader固定分类在JSON/SSE/native透出UUID而不公开reason/原错误。保持参数拒绝零attempt/零握手、普通输出256项及旧WS/压缩回归；完成两平台验证。真实失败责任继续保留；任何后续实际请求逐笔记录，先定位、首错停，不以fixture替代Desktop。
 
 实际客户端形状的受控预热在响应策略守卫处被拒绝；补充仅首次/进程的固定字段形状（background/conversation/prompt/tools）、有界工具数量及已有固定工具拒绝分类，按UUID关联，不记录原值、ID或提供者消息。此观察不改变守卫、归属或记账，不据此自动接受外部对象。
+
+普通文本响应的tools=null按未指定回显处理，与缺省等价；该元数据不建立声明或工具执行权，实际function/custom调用仍按本次请求声明校验。图片沿原严格契约，非null非法工具与background/conversation/prompt守卫不变。对实际观察到的null回显仅记一次UUID关联固定标记，不记录原内容。

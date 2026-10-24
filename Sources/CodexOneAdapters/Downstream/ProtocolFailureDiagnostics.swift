@@ -9,6 +9,7 @@ enum ProtocolFailureDiagnostics {
   private static let isolatedExtensionLogged = Mutex(false)
   private static let missingMediaTypeLogged = Mutex(false)
   private static let responsePolicyShapeLogged = Mutex(false)
+  private static let nullableToolEchoLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
     "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
@@ -96,12 +97,7 @@ enum ProtocolFailureDiagnostics {
       metadata["tools_count"] = .string(String(min(tools.count, 65)))
       metadata["image_tool"] = .string(
         tools.contains { $0["type"]?.string == "image_generation" } ? "true" : "false")
-      do {
-        _ = try ClientTools(.array(tools))
-        metadata["tools_validation"] = "accepted"
-      } catch let error as GatewayProtocolError {
-        metadata["tools_validation"] = .string(error.detail?.rawValue ?? "rejected")
-      } catch { metadata["tools_validation"] = "rejected" }
+
     }
     return metadata
   }
@@ -116,6 +112,19 @@ enum ProtocolFailureDiagnostics {
     }
     guard first else { return }
     logger.info("Upstream response policy rejected structural shape", metadata: metadata)
+  }
+
+  static func recordNullableToolEcho(requestID: String) {
+    guard let id = UUID(uuidString: requestID) else { return }
+    let first = nullableToolEchoLogged.withLock { logged in
+      guard !logged else { return false }
+      logged = true
+      return true
+    }
+    guard first else { return }
+    logger.info(
+      "Upstream null tool echo treated as unspecified metadata",
+      metadata: ["request_id": .string(id.uuidString)])
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {
