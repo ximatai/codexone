@@ -39,7 +39,11 @@ extension HTTPResponseExecution {
       var create = try request.preparedDocument(
         contract: configuration.requestContract, nativeWebSocket: true
       ).object!
-      create.removeValue(forKey: "stream")
+      // Codex subscription WS keeps stream=true in its native request contract.
+      // The public Responses WS dialect and image contract retain their separate wire rules.
+      if configuration.requestContract == .responses || request.requirements.imageModel != nil {
+        create.removeValue(forKey: "stream")
+      }
       create["type"] = .string("response.create")
       if request.usesResponsesLite {
         var metadata = create["client_metadata"]?.object ?? [:]

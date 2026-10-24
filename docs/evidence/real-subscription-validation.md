@@ -1,6 +1,6 @@
 # 受控真实订阅验证与责任账
 
-日期：2026-10-23—24。本页记录已发生调用，不构成新的调用授权；当前调用边界只见[STATUS](../../STATUS.md)。最终程序及本机/Linux检查见[文本协议验证](text-protocol-validation.md)。
+日期：2026-10-23—24。本页记录已发生调用，不构成新的调用授权；当前调用边界只见[STATUS](../../STATUS.md)。前八次的最终程序及本机/Linux检查见[文本协议验证](text-protocol-validation.md)，第9笔的实际发布与诊断见[接续验证](../changes/subscription-websocket-contract/verification.md)。
 
 ## 验证条件
 
@@ -8,7 +8,7 @@
 
 派发前同步私有调用记录，结束后保留SQLite与脱敏报告，核对服务器/本机副本摘要；只清除临时凭证。最早探针误清理原SQLite的缺陷和未知责任必须继续披露，不能伪造回填。
 
-## 八次生成及证据
+## 九次生成及证据
 
 输入/输出列为可信token计数；“无证据”不能按零消耗处理。
 
@@ -22,7 +22,9 @@
 | 6 | 04543be | unsupported_upstream_object，固定reason=upstream_usage_container；具体附加字段/容量未留存 | settled/failed，51/11完整 | `858076ea24cde8a3be16180e63b5059e9533724293e3e080aea3a20c41b3d60c` |
 | 7、8 | 2336499 | HTTP200、各唯一response.completed；合成校验码及第二轮全窗口复述均匹配 | 两笔settled/succeeded；51/11、82/11完整，cached均0 | 共用库`2e4bde74c1bce5ac2c8e7e2fc58ecbdaf0c6a93da2c402af9e0f948b7abf8332` |
 
-合计4笔历史未知、2笔完整计量失败、2笔成功。原5份历史库及最终共用库保留服务器/私有本机副本；最早一笔仅外部记录，不能宣称全部原库齐全。最终两笔新未决0不消除历史未知责任，后续成功不冲销失败或未知。
+| 9 | 5f7efc1（产品9dd0d07） | 公开TLS/native WSS首轮预检invalid_upstream_turn；粗分类不足，未留具体事件，不补写唯一根因 | unknown/failed，无可信usage；Reference `9B894C99-DA0F-434C-AAB2-B765DB272C41` | `8ae98a1edc61e09d719f1d0b34f5a957bf873e66eee180008d18d9ee8bcb7d31` |
+
+合计5笔未知（其中4笔历史未知）、2笔完整计量失败、2笔成功。原5份历史库及最终共用库保留服务器/私有本机副本；最早一笔仅外部记录，不能宣称全部原库齐全。最终两笔新未决0不消除历史未知责任，后续成功不冲销失败或未知。第9笔保留远程及私有本机一致SQLite副本，含原103笔合成账与本次新增1笔真实unknown；诊断Key已撤销，未发第二笔生成。
 
 ## 最终两轮及清理核对
 

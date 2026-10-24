@@ -13,6 +13,7 @@ from verify_text_contract import Provider as WireProvider, call, rows
 
 PRIVATE='synthetic-private-provider-error-never-log'
 CASES={
+    'stream': ('upstream_turn_provider_stream', {'param':'stream'}),
     'reasoning': ('upstream_turn_provider_reasoning_summary', {'param':'reasoning.summary'}),
     'authentication': ('upstream_turn_provider_authentication', {'code':'invalid_api_key'}),
     'rate': ('upstream_turn_provider_rate_limit', {'code':'rate_limit_exceeded'}),

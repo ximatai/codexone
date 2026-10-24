@@ -20,4 +20,4 @@ Linux amd64执行`docker build --platform linux/amd64 --target verification -f d
 
 本轮完成一次集中review及相关回归；过程提案/任务/验证日志已归纳回本页与规范，原记录由Git追溯。
 
-仅使用临时loopback无凭证上游与合成正文。未部署、推送或新增真实订阅调用；历史责任账不变。未重新操作真实Desktop，不把这些结果外推为实际订阅参数、native工具/推理/图片或模型容量已经验收。图片、独立compact及流式压缩维持独立契约与回归。
+上述普通输出/参数修复阶段仅使用临时loopback无凭证上游与合成正文，当时未部署、推送或新增真实订阅调用。后续真实WSS预检证实订阅WS stream的原合成预期有误，不能以原314次通过推导实际订阅WS支持；纠正及失败责任见[接续验证](../changes/subscription-websocket-contract/verification.md)。未重新操作真实Desktop，不把这些结果外推为实际订阅参数、native工具/推理/图片或模型容量已经验收。图片、独立compact及流式压缩维持独立契约与回归。

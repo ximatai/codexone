@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 默认目录/模型/能力 | ModelCatalog/ModelProfiles/ClientTools | 固定CLI已有默认/显式目录及Lite全闭环；新主线不等于已验版本 | 保持；Desktop工具/新版本另验 |
 | 认证与代理 | ResponsesDataService/UpstreamHTTPProxy | 服务注入身份；既有Clash实际200/正文/usage | 保持TLS、不继承下游凭证、不直连回退；池/刷新live未验 |
-| HTTP stream/store | ResponseRequest/HTTPResponseExecution | 可信配置区分responses/订阅；普通订阅固定stream=true/store=false | JSON由已验证终态聚合，显式store=true拒绝；合成覆盖，真实细项未验证 |
+| HTTP stream/store | ResponseRequest/HTTPResponseExecution | 可信配置区分responses/订阅；普通订阅固定stream=true/store=false | JSON由已验证终态聚合，显式store=true拒绝；订阅WS保留stream=true，通用WS移除；原脚本曾混用规则，纠正见[变更](../changes/subscription-websocket-contract/proposal.md)，真实细项未验证 |
 | 输出上限/采样/缓存/tier | ResponseRequestParameters | 官方字段形状与固定订阅客户端请求结构分别核对 | 数值/枚举准入检查，订阅不支持的非null字段明确拒绝；合成检查实际wire与零attempt，真实细项仍未验证 |
 | 指令请求 | ResponseRequest字符串/null | 当前所选请求路径；最新官方请求结构已变化 | 保持当前输入范围，不由响应metadata扩大执行能力 |
 | reasoning/null/上下文控制 | ResponseRequest | 已有明确SDK/固定CLI来源，选定枚举及null语义 | 保持；新主线字段/组合不自动开放 |

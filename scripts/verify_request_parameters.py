@@ -68,7 +68,9 @@ def main():
                                 wire=server.received[-1]
                                 assert wire['instructions']==base['instructions'] and wire['prompt_cache_key']==base['prompt_cache_key']
                                 assert wire['client_metadata']['label']=='synthetic' and wire['parallel_tool_calls'] is True
-                                assert ('stream' not in wire) if transport=='websocket' else wire['stream']==(contract=='codex-subscription' or route=='sse')
+                                if transport=='websocket':
+                                    assert wire.get('stream') is True if contract=='codex-subscription' else 'stream' not in wire
+                                else: assert wire['stream']==(contract=='codex-subscription' or route=='sse')
                                 if contract=='codex-subscription':
                                     assert wire['store'] is False and wire['input']==[dict(role='user',content=base['input'])]
                                     if extra.get('service_tier', 'absent') is None: assert 'service_tier' not in wire

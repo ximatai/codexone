@@ -13,6 +13,7 @@ private func turnFailure(_ turns: WebSocketTurns, _ event: JSONValue) throws -> 
 
 @Test func preCreatedProviderRejectionsKeepPrivateFixedReasonsWithoutTrustingPayload() throws {
   for (error, detail): ([String: JSONValue], ProtocolRejectionDetail) in [
+    (["param": .string("stream")], .upstreamTurnProviderStream),
     (["param": .string("reasoning.summary")], .upstreamTurnProviderReasoningSummary),
     (["code": .string("invalid_api_key")], .upstreamTurnProviderAuthentication),
     (["code": .string("rate_limit_exceeded")], .upstreamTurnProviderRateLimit),

@@ -22,6 +22,7 @@ final class WebSocketTurns: Sendable {
   /// Whitelisted structural reasons only; provider messages/unknown parameters are never logged.
   private static func providerErrorDetail(_ event: JSONValue) -> ProtocolRejectionDetail {
     let error = event["error"] ?? event
+    if error["param"]?.string == "stream" { return .upstreamTurnProviderStream }
     if ["reasoning.summary", "reasoning_summary"].contains(error["param"]?.string ?? "") {
       return .upstreamTurnProviderReasoningSummary
     }

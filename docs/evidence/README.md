@@ -8,7 +8,7 @@
 - [文本协议对照矩阵](text-protocol-matrix.md)：固定官方/成熟项目来源、本地校验职责、接受与拒绝范围、剩余真实验证缺口。
 - [文本协议验证摘要](text-protocol-validation.md)：最终受测产物、覆盖、重要失败结论和证据边界。
 - [普通输出与请求参数验证](ordinary-output-parameters.md)：多视图语义关联、可信后端契约、首轮准入与独立socket/账本证据。
-- [真实订阅验证与责任账](real-subscription-validation.md)：八次受控生成、历史未知/失败、账本摘要和清理核对。
+- [真实订阅验证与责任账](real-subscription-validation.md)：受控生成记录、历史未知/失败、账本摘要和清理核对。
 
 原型来源：[ximatai/codexone](https://github.com/ximatai/codexone)，参考提交 `3af8a52fe131b81cbe1a5ca043eaf14e7cbe9bb5`。依据限于该原型及对应测试环境，不能推导正式项目已实现或通过。
 

@@ -42,6 +42,7 @@ enum ProtocolRejectionDetail: String, Sendable {
   case upstreamTurnMissingItemID = "upstream_turn_missing_item_id"
   case upstreamTurnUnknownItemID = "upstream_turn_unknown_item_id"
   case upstreamTurnProviderError = "upstream_turn_provider_error"
+  case upstreamTurnProviderStream = "upstream_turn_provider_stream"
   case upstreamTurnProviderReasoningSummary = "upstream_turn_provider_reasoning_summary"
   case upstreamTurnProviderAuthentication = "upstream_turn_provider_authentication"
   case upstreamTurnProviderRateLimit = "upstream_turn_provider_rate_limit"
