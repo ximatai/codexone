@@ -238,8 +238,16 @@ public struct ResponsesDataService: Service {
         throw error
       }
       let authorized = try await executor.authorized(digest)
-      do { _ = try authorized.executionModel(first) } catch {
-        await authorized.recordRejection(first, requestID: UUID().uuidString, error: error)
+      do {
+        _ = try authorized.executionModel(first)
+        _ = try first.preparedDocument(
+          contract: authorized.configuration.requestContract, nativeWebSocket: true)
+      } catch {
+        let requestID = UUID().uuidString
+        await authorized.recordRejection(first, requestID: requestID, error: error)
+        try? await sendWebSocketError(
+          error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstData)),
+          to: downstream)
         throw error
       }
       if case .pool = authorized.gateway {

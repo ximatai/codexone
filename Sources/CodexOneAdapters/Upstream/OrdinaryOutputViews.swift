@@ -241,6 +241,7 @@ struct OrdinaryOutputViews {
         throw Self.failure(.upstreamOutputIdentity)
       }
       try items[slot].identify(.object(["call_id": .string(id)]))
+      try checkCalls()
     }
     let isSummary = type.contains("reasoning_summary")
     let isReasoning = isSummary || type.contains("reasoning_text")

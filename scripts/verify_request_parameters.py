@@ -13,6 +13,10 @@ from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, FIXTURE, call, rows
 
 class Provider(WireProvider):
+    def do_GET(self):
+        with self.server.guard: self.server.upgrades += 1
+        return super().do_GET()
+
     def sequence(self, request):
         with self.server.guard:
             self.server.calls += 1
@@ -27,7 +31,7 @@ def attempt_count(root):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True);args=parser.parse_args()
-    server=ThreadingHTTPServer(('127.0.0.1',0),Provider);server.guard=threading.Lock();server.calls=0
+    server=ThreadingHTTPServer(('127.0.0.1',0),Provider);server.guard=threading.Lock();server.calls=0;server.upgrades=0
     server.received=[];server.literal=json.dumps(json.loads(FIXTURE.read_text())['events'])
     worker=threading.Thread(target=server.serve_forever);worker.start()
     invalid=[dict(temperature=x) for x in (-.1,2.1,True,'1',{},[])] + [dict(top_p=x) for x in (-.1,1.1,False,'1')]
@@ -75,10 +79,10 @@ def main():
                             negative=invalid+([*unsupported]+([] if route=='native' else [dict(previous_response_id='synthetic-previous')]) if contract=='codex-subscription' else [])
                             negative += [dict(upstreamContract='responses')]
                             for extra in negative:
-                                before=server.calls;attempts=attempt_count(root)
+                                before=server.calls;upgrades=server.upgrades;attempts=attempt_count(root)
                                 status,events=call(ports['data'],route,{**base,**extra});total+=1
                                 assert 'error' in events[-1] and (route=='native' or status==400),(contract,transport,route,extra,status,events)
-                                assert server.calls==before and attempt_count(root)==attempts,'Rejected request admitted or dispatched'
+                                assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts,'Rejected request admitted, connected or dispatched'
                         expected=attempt_count(root);deadline=time.monotonic()+5
                         while len(rows(root))!=expected or any(s=='intent' for s,_,_ in rows(root)):
                             assert time.monotonic()<deadline;time.sleep(.02)

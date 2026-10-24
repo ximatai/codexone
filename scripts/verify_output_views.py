@@ -14,11 +14,11 @@ from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, FIXTURE, PRIVATE, call, rows, outcomes
 
 GOOD = ['message', 'unicode', 'prefix', 'sparse-done', 'metadata', 'two-items', 'function', 'custom',
-        'reasoning', 'reasoning-omitted', 'refusal', 'progress', 'created-prefix']
+        'reasoning', 'reasoning-omitted', 'refusal', 'progress', 'created-prefix', 'lifecycle', 'reasoning-lifecycle']
 FINAL = ['final-id', 'final-text', 'final-missing', 'final-reorder', 'final-type', 'tool-call', 'tool-name',
          'tool-namespace', 'tool-arguments', 'custom-input', 'reasoning-summary', 'reasoning-cipher',
          'duplicate-id', 'duplicate-call']
-EARLY = ['early-index', 'early-type', 'delta-text', 'late-delta', 'part-type', 'part-index', 'duplicate-index', 'part-missing', 'item-id-type', 'tool-delta-call', 'created-id']
+EARLY = ['early-index', 'early-type', 'delta-text', 'late-delta', 'part-type', 'part-index', 'duplicate-index', 'part-missing', 'item-id-type', 'tool-delta-call', 'created-id', 'tool-duplicate-call']
 
 
 def tools():
@@ -68,6 +68,25 @@ class Provider(WireProvider):
                       dict(type='response.reasoning_summary_text.delta', item_id=item['id'], summary_index=0, delta='synthetic summary'),
                       dict(type='response.reasoning_summary_text.done', item_id=item['id'], summary_index=0, text='synthetic summary'),
                       dict(type='response.output_item.done', output_index=0, item=copy.deepcopy(item)), events[-1]]
+        if mode == 'lifecycle':
+            part=copy.deepcopy(item['content'][0])
+            events=[events[0],events[1],
+                    dict(type='response.content_part.added',item_id=item['id'],output_index=0,content_index=0,part={**part,'text':''}),
+                    {**events[2],'delta':PRIVATE[:10],'content_index':0},
+                    {**events[2],'delta':PRIVATE[10:],'content_index':0},
+                    dict(type='response.output_text.done',item_id=item['id'],output_index=0,content_index=0,text=PRIVATE),
+                    dict(type='response.content_part.done',item_id=item['id'],output_index=0,content_index=0,part=part),
+                    events[-2],events[-1]]
+        if mode == 'reasoning-lifecycle':
+            content=copy.deepcopy(item['content'][0]);summary=copy.deepcopy(item['summary'][0])
+            events=[events[0],events[1],
+                    dict(type='response.content_part.added',item_id=item['id'],output_index=0,content_index=0,part={**content,'text':''}),
+                    events[2],events[3],
+                    dict(type='response.content_part.done',item_id=item['id'],output_index=0,content_index=0,part=content),
+                    dict(type='response.reasoning_summary_part.added',item_id=item['id'],output_index=0,summary_index=0,part={**summary,'text':''}),
+                    events[4],events[5],
+                    dict(type='response.reasoning_summary_part.done',item_id=item['id'],output_index=0,summary_index=0,part=summary),
+                    events[-2],events[-1]]
         result['output'] = [copy.deepcopy(item)]
         if mode == 'progress':
             events.insert(3, dict(type='response.in_progress', response={**copy.deepcopy(result), 'status': 'in_progress', 'usage': None}))
@@ -118,6 +137,8 @@ class Provider(WireProvider):
         if mode == 'duplicate-id': result['output'][1]['id'] = target['id']
         if mode == 'duplicate-call': result['output'][1]['call_id'] = target['call_id']
         if mode in EARLY:
+            if mode == 'tool-duplicate-call':
+                return events[:2]+[dict(type='response.function_call_arguments.delta',item_id='synthetic-conflicting-id',output_index=1,call_id=item['call_id'],delta='{}')]
             if mode == 'part-missing':
                 events.insert(-1, dict(type='response.content_part.done', item_id=item['id'], output_index=0))
             if mode == 'item-id-type': events[2]['item_id'] = False
@@ -167,8 +188,9 @@ def main():
                                     assert status==200 and 'error' not in last,(transport,case,route,events)
                                     response=last.get('response',last);request['input']+=response['output']+[dict(role='user',content='synthetic next turn')]
                                 else:
-                                    expected = 'invalid_upstream_turn' if transport == 'websocket' and case == 'item-id-type' else 'invalid_upstream_output'
+                                    expected = 'invalid_upstream_turn' if transport == 'websocket' and case in ('item-id-type','tool-duplicate-call') else 'invalid_upstream_output'
                                     assert last.get('error',{}).get('code')==expected,(transport,case,route,events)
+                                    assert not any(e.get('item_id')=='synthetic-conflicting-id' for e in events),events
                                     assert last['error']['request_id'] in last['error']['message']
                         deadline=time.monotonic()+3
                         while len(rows(root))!=count or any(s=='intent' for s,_,_ in rows(root)):
@@ -178,7 +200,7 @@ def main():
                         if case in EARLY:assert all(s=='unknown' and u is None for s,_,u in records),records
                         else:
                             assert all(s=='settled' and k==('succeeded' if case in GOOD else 'failed') and u['inputTokens']==5 and u['outputTokens']==3 for s,k,u in records),(case,records,outcomes(root))
-                        if case not in GOOD and not (transport == 'websocket' and case == 'item-id-type'):assert b'reason=upstream_output_' in logs,logs
+                        if case not in GOOD and not (transport == 'websocket' and case in ('item-id-type','tool-duplicate-call')):assert b'reason=upstream_output_' in logs,logs
                         assert PRIVATE.encode() not in logs and b'synthetic-private-cipher' not in logs and TOKEN.encode() not in logs
                         with sqlite3.connect(root/'state/core.sqlite') as db:
                             assert db.execute("SELECT count(*) FROM bindings WHERE raw_id IN ('synthetic-conflicting-id','synthetic-conflicting-call')").fetchone()[0]==0

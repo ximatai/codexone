@@ -1261,3 +1261,36 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeRequestParametersRejectBeforeFirstAdmissionOrUpstreamHandshake() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    for fields: [String: JSONValue] in [
+      ["store": .bool(true)], ["max_output_tokens": .number(128)],
+      ["temperature": .number(1)], ["top_p": .number(1)],
+      ["truncation": .string("disabled")], ["metadata": .object(["label": .string("synthetic")])],
+      ["prompt_cache_retention": .string("24h")], ["service_tier": .string("flex")],
+    ] {
+      let client = try PoolWSClient(h)
+      #expect(try await client.read()["ready"]?.bool == true)
+      let rejected = try await client.command(
+        fields.merging(["lane": .string("synthetic-lane")]) { a, _ in a })
+      #expect(rejected["error"]?["code"]?.string == "unsupported_backend_parameter")
+      #expect(rejected["stream_id"]?.string == "synthetic-lane")
+      client.close()
+      #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades == 0 })
+      let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+      #expect(total == 0 && h.finalizer.outstanding == 0)
+    }
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let rejected = try await client.command(["store": .bool(true)])
+    #expect(rejected["error"]?["code"]?.string == "unsupported_backend_parameter")
+    #expect(h.calls.count == 1 && h.state.value.withLock { $0.upgrades == 1 })
+    let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+    #expect(total == 1 && h.finalizer.outstanding == 0)
+  }
+}
