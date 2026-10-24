@@ -25,6 +25,7 @@ backend() {
   python3 scripts/verify_text_contract.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_output_views.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_request_parameters.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_turn_diagnostics.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_tool_diagnostics.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_optional_reasoning.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"

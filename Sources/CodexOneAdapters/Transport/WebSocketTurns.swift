@@ -19,12 +19,31 @@ final class WebSocketTurns: Sendable {
     var responses = Set<String>()
     var closed = false
   }
+  /// Whitelisted structural reasons only; provider messages/unknown parameters are never logged.
+  private static func providerErrorDetail(_ event: JSONValue) -> ProtocolRejectionDetail {
+    let error = event["error"] ?? event
+    if ["reasoning.summary", "reasoning_summary"].contains(error["param"]?.string ?? "") {
+      return .upstreamTurnProviderReasoningSummary
+    }
+    if ["invalid_api_key", "invalid_token", "authentication_error", "unauthorized"].contains(
+      error["code"]?.string ?? "")
+    {
+      return .upstreamTurnProviderAuthentication
+    }
+    if ["rate_limit_exceeded", "insufficient_quota", "rate_limit_error"].contains(
+      error["code"]?.string ?? "")
+    {
+      return .upstreamTurnProviderRateLimit
+    }
+    return .upstreamTurnProviderError
+  }
+
   private let state = Mutex(State())
   func close() { state.withLock { $0.closed = true } }
   func begin(lane: String = "", compaction: Bool = false) throws {
     try state.withLock { value in
       guard !value.closed, value.responses.count < 256 else {
-        throw GatewayProtocolError(502, "invalid_upstream_turn")
+        throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
       }
       if value.lanes[lane] == nil {
         guard lane.isEmpty || value.lanes.keys.filter({ !$0.isEmpty }).count < 32 else {
@@ -33,7 +52,7 @@ final class WebSocketTurns: Sendable {
         value.lanes[lane] = .init()
       }
       guard case .idle = value.lanes[lane]!.phase else {
-        throw GatewayProtocolError(502, "invalid_upstream_turn")
+        throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
       }
       let active = value.lanes.values.filter {
         if case .idle = $0.phase { return false }
@@ -51,7 +70,9 @@ final class WebSocketTurns: Sendable {
     try state.withLock { value in
       guard !value.closed, var current = value.lanes[lane], case .awaitingCreated = current.phase,
         current.evidence == nil
-      else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+      else {
+        throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
+      }
       current.evidence = handler
       value.lanes[lane] = current
     }
@@ -68,7 +89,7 @@ final class WebSocketTurns: Sendable {
     }
     try state.withLock { value in
       guard !value.closed, let type = event["type"]?.string else {
-        throw GatewayProtocolError(502, "invalid_upstream_turn")
+        throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
       }
       guard var current = value.lanes[lane] else {
         throw GatewayProtocolError(502, "unknown_upstream_lane")
@@ -81,20 +102,28 @@ final class WebSocketTurns: Sendable {
       switch current.phase {
       case .idle: throw GatewayProtocolError(502, "event_outside_upstream_turn")
       case .awaitingCreated:
+        if type == "error" {
+          throw GatewayProtocolError(
+            502, "invalid_upstream_turn", detail: Self.providerErrorDetail(event))
+        }
         guard type == "response.created", let id = event["response"]?["id"]?.string,
           !id.isEmpty, id.utf8.count <= 256, value.responses.count < 256,
           value.responses.insert(id).inserted
-        else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+        else {
+          throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnCreated)
+        }
         current.phase = .active(id)
       case .active(let id):
         if let response = event["response"] {
           guard response["id"]?.string == id, type != "response.created" else {
-            throw GatewayProtocolError(502, "invalid_upstream_turn")
+            throw GatewayProtocolError(
+              502, "invalid_upstream_turn", detail: .upstreamTurnResponseID)
           }
         }
         if let responseID = event["response_id"] {
           guard responseID.string == id else {
-            throw GatewayProtocolError(502, "invalid_upstream_turn")
+            throw GatewayProtocolError(
+              502, "invalid_upstream_turn", detail: .upstreamTurnResponseID)
           }
         }
         if let item = event["item"] {
@@ -103,27 +132,34 @@ final class WebSocketTurns: Sendable {
               let index = event["output_index"]?.integer, (0..<256).contains(index),
               current.items.count + current.anonymousCompactions.count < 256
                 || current.anonymousCompactions.contains(Int(index))
-            else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+            else {
+              throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnItemID)
+            }
             current.anonymousCompactions.insert(Int(index))
           } else {
             guard let itemID = item["id"]?.string, !itemID.isEmpty, itemID.utf8.count <= 256,
               current.items.count + current.anonymousCompactions.count < 256
                 || current.items.contains(itemID)
-            else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+            else {
+              throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnItemID)
+            }
             current.items.insert(itemID)
           }
         }
         if ProviderObservation.transparentEvents.contains(type), event["item_id"] == nil {
-          throw GatewayProtocolError(502, "invalid_upstream_turn")
+          throw GatewayProtocolError(
+            502, "invalid_upstream_turn", detail: .upstreamTurnMissingItemID)
         }
         if let itemID = event["item_id"] {
           guard let itemID = itemID.string, current.items.contains(itemID) else {
-            throw GatewayProtocolError(502, "invalid_upstream_turn")
+            throw GatewayProtocolError(
+              502, "invalid_upstream_turn", detail: .upstreamTurnUnknownItemID)
           }
         }
         if ["response.completed", "response.failed", "response.incomplete"].contains(type) {
           guard event["response"]?["id"]?.string == id else {
-            throw GatewayProtocolError(502, "invalid_upstream_turn")
+            throw GatewayProtocolError(
+              502, "invalid_upstream_turn", detail: .upstreamTurnResponseID)
           }
           // Preserve classified evidence before any other lane can cancel queued delivery.
           try current.evidence?(event)
