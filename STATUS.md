@@ -19,13 +19,13 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
-| 2026-10-24 · 候选2336499，产品修正17e625b | macOS arm64 Swift203项及受影响协议/WS/Images/压缩；独立HTTP73/WS128共201次；Linux amd64完整verification及实际OCI/Compose安装 | [文本协议验证](docs/evidence/text-protocol-validation.md) |
+| 2026-10-24 · 代码9dd0d07 | macOS arm64完整后端及Swift205项；独立输出HTTP88/WS168共256次、参数314次、既有文本201次；Linux amd64 release与全部Docker无网络verification通过 | [输出与参数验证](docs/evidence/ordinary-output-parameters.md) |
 | 2026-10-24 · 真实订阅HTTP/SSE | 单模型/选定参数、完整输出窗口两轮；内容、上下文、终态用量与持久账本一致 | [真实调用与责任账](docs/evidence/real-subscription-validation.md) |
 | 2026-10-23 · Desktop 26.1016.62342 | 用户在另一设备保持原配置，新会话显示预期合成回复；修复工具说明容量后与执行账本关联 | [Desktop诊断](docs/changes/desktop-operation-diagnosis/verification.md) |
 | 2026-10-23 · 管理前端与固定CLI | 管理UI合成OAuth/Key/用量操作及Chrome大屏检查；固定CLI默认目录、Lite工具、三传输、工具往返及压缩 | [管理操作](docs/changes/desktop-test-readiness/verification.md)、[默认客户端](docs/changes/default-client-loop/verification.md) |
 | 2026-10-22/23 · 容量与运维 | HTTP/native WS各600秒混合样本、keepalive/长寿命turn、最大图片边界；v8维护/切回与实际TLS | [容量](docs/changes/capacity-rehearsal/verification.md)、[长执行](docs/changes/long-task-profiles/verification.md)、[运维](docs/changes/v8-release-transition/verification.md) |
 
-历史阶段的测试数、旧候选指纹和“当时尚未运行”不作为当前状态。上述记录不扩大到其他客户端版本、真实native WS/工具/图片/密文推理、订阅参数组合或所有输出视图一致性；[协议矩阵](docs/evidence/text-protocol-matrix.md)与[恢复证据](docs/evidence/client-recovery.md)给出适用边界。
+历史阶段的测试数、旧候选指纹和“当时尚未运行”不作为当前状态。上述记录不扩大到其他客户端版本、真实native WS/工具/图片/密文推理、真实订阅参数及未纳入所选契约的输出组合；[协议矩阵](docs/evidence/text-protocol-matrix.md)与[恢复证据](docs/evidence/client-recovery.md)给出适用边界。
 
 ## 候选、部署与账本
 
@@ -97,7 +97,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-1. 补普通输出多视图关联、请求参数及错误/健康边界；保留归属、可信用量、unknown和无自动重放约束。
+1. 继续补错误事件消费与账号健康归因边界；保留归属、可信用量、unknown和无自动重放约束。
 2. 单独准备明确版本的真实Desktop文本/工具/图片操作；脚本、CLI和合成服务均不替代实机验收。恢复读取继续受M5契约约束，没有新证据不重复旧探针。
 3. 补目标宿主及共存服务容量、async任务观测和其余图片组合，再完成远程CI/发行来源复现。真实调用、推送、发布和正式切换仍依明确授权。
 
