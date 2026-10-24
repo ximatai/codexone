@@ -32,6 +32,9 @@ enum ProtocolRejectionDetail: String, Sendable {
   case upstreamResponseInstructions = "upstream_response_instructions"
   case upstreamTerminalStatus = "upstream_terminal_status"
   case upstreamUsageTotal = "upstream_usage_total"
+  case upstreamOutputIdentity = "upstream_output_identity"
+  case upstreamOutputValue = "upstream_output_value"
+  case upstreamOutputCapacity = "upstream_output_capacity"
   case downstreamJSONWrite = "downstream_json_write"
   case upstreamResponseBoolean = "upstream_response_boolean"
   case upstreamResponseCreated = "upstream_response_created"
@@ -150,6 +153,7 @@ struct ResponseRequest: Sendable {
     guard fields["background"]?.bool != true else {
       throw GatewayProtocolError(400, "unsupported_background")
     }
+    try Self.validateParameters(fields)
     self.model = model
     self.streaming = fields["stream"]?.bool == true
     var references: [ObjectBinding] = []

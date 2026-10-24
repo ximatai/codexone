@@ -60,6 +60,7 @@ struct ProtocolFailureDiagnosticsTests {
       .upstreamItemNamespace, .upstreamMessageRole, .upstreamMessageContent,
       .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
       .upstreamUsageContainer,
+      .upstreamOutputIdentity, .upstreamOutputValue, .upstreamOutputCapacity,
       .upstreamUsageCapacity, .upstreamUsageDetails, .upstreamUsageDetailsCapacity,
       .upstreamUsageCount,
       .upstreamTerminalStatus, .upstreamUsageTotal,

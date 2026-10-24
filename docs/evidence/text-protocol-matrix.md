@@ -8,8 +8,8 @@
 |---|---|---|---|
 | 默认目录/模型/能力 | ModelCatalog/ModelProfiles/ClientTools | 固定CLI已有默认/显式目录及Lite全闭环；新主线不等于已验版本 | 保持；Desktop工具/新版本另验 |
 | 认证与代理 | ResponsesDataService/UpstreamHTTPProxy | 服务注入身份；既有Clash实际200/正文/usage | 保持TLS、不继承下游凭证、不直连回退；池/刷新live未验 |
-| HTTP stream/store | ResponseRequest/HTTPResponseExecution | 本地可JSON/SSE，订阅适配器存在强制stream/store规则 | 未证明所有下游组合获订阅支持；不因stream=true/store=false探针成功解除JSON/store兼容缺口 |
-| 输出上限/采样/缓存/tier | ResponseRequest允许/透传 | CLIProxyAPI对部分订阅模式有删除/归一化规则，不能视为本项目承诺 | 不静默删除；需按后端/模型明确支持或准入拒绝，真实细项仍未验证 |
+| HTTP stream/store | ResponseRequest/HTTPResponseExecution | 可信配置区分responses/订阅；普通订阅固定stream=true/store=false | JSON由已验证终态聚合，显式store=true拒绝；合成覆盖，真实细项未验证 |
+| 输出上限/采样/缓存/tier | ResponseRequestParameters | 官方字段形状与固定订阅客户端请求结构分别核对 | 数值/枚举准入检查，订阅不支持的非null字段明确拒绝；合成检查实际wire与零attempt，真实细项仍未验证 |
 | 指令请求 | ResponseRequest字符串/null | 当前所选请求路径；最新官方请求结构已变化 | 保持当前输入范围，不由响应metadata扩大执行能力 |
 | reasoning/null/上下文控制 | ResponseRequest | 已有明确SDK/固定CLI来源，选定枚举及null语义 | 保持；新主线字段/组合不自动开放 |
 | Lite/namespace/function/custom | ClientTools/ClientInput | 已有实际固定CLI工具往返与默认Lite验证 | 保持数量/共享说明预算；内置搜索明确不支持，Desktop工具另验 |
@@ -23,7 +23,7 @@
 | incomplete_details.reason | ProviderObservation | 官方类型允许缺省/null | 允许可空已知成员和有界元数据；incomplete仍非成功 |
 | response.tools/background/外部对象 | ProviderObservation | 本地未开放能力与执行控制 | 继续严格；不能以metadata兼容放过实际未授权工具/后台/外部对象服务 |
 | message/phase/part | ProviderObservation.itemBindings | 既有nullable及reasoning_text独立修正 | 保持已知内容类型/容量；新成员需分类，不全量放过 |
-| 逐项与最终output | ProviderObservation/StreamCompaction/WebSocketTurns | 压缩有窗口一致性，普通窗口仍有已复现缺口 | 不声称全部视图已对齐；须区分合法快照差异与ID/type/call_id冲突，再单独补统一关联 |
+| 逐项与最终output | ProviderObservation/OrdinaryOutputViews/StreamCompaction | 普通输出执行级摘要关联，压缩维持独立窗口契约 | 独立socket覆盖前缀/稀疏/两轮、身份/内容/索引冲突及账本；新模型/实际Desktop仍另验 |
 | input/output/cached usage | observeUsage/ProviderObservation.usage | 核心累计证据与结果独立；真实计量见责任账 | 保持完整/部分/缺失分类，不能将输出失败当零或丢已有证据 |
 | usage附加元数据 | ProviderObservation.validateUsageContainer | 固定诊断及官方新增属性兼容约定 | 已知计量严格/metadata有界隔离且输出投影已支持字段；原始具体字段未留存，不能认定唯一子原因 |
 | total_tokens | ProviderObservation.validateUsageContainer | SDK客户端消费字段 | 验证类型/范围/已知计数相加一致，不补零/反推计量 |

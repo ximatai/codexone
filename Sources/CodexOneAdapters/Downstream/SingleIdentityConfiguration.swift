@@ -39,6 +39,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let progressTimeoutSeconds: Int?
   public let modelProfilesFile: String?
   public let upstreamTransport: String?
+  public let upstreamContract: String?
 
   public static func load(path: String) async throws -> SingleIdentityConfiguration {
     try await withCheckedThrowingContinuation { continuation in
@@ -93,7 +94,10 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     let subscription =
       url.scheme == "https" && url.host == "chatgpt.com" && (url.port == nil || url.port == 443)
       && url.path == "/backend-api/codex"
-    guard synthetic || subscription else { throw ExecutionError.invalidCommand }
+    guard upstreamContract == nil || ResponseRequestContract(rawValue: upstreamContract!) != nil,
+      !subscription || upstreamContract == nil || upstreamContract == "codex-subscription",
+      synthetic || subscription
+    else { throw ExecutionError.invalidCommand }
     if let path = upstreamTokenFile {
       guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096 else {
         throw ExecutionError.invalidCommand
@@ -160,6 +164,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "firstResponseTimeoutSeconds": .number(Decimal(responses.budget.first)),
           "progressTimeoutSeconds": .number(Decimal(responses.budget.idle)),
           "transport": .string(upstreamTransport ?? "http"),
+          "requestContract": .string(responses.requestContract.rawValue),
         ])))
     return try .init(
       owner: .init(

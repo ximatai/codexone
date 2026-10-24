@@ -8,6 +8,7 @@ extension HTTPResponseExecution {
   ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
     let model = try executionModel(request)
+    _ = try request.preparedDocument(contract: configuration.requestContract, nativeWebSocket: true)
     if case .pool = gateway, connection == nil {
       throw GatewayProtocolError(503, "pool_websocket_unavailable")
     }
@@ -35,7 +36,9 @@ extension HTTPResponseExecution {
     }
     defer { peer.detachEvidence(lane: lane) }
     try await withProgressDeadline(budget: configuration.budget) { progress in
-      var create = request.document.object!
+      var create = try request.preparedDocument(
+        contract: configuration.requestContract, nativeWebSocket: true
+      ).object!
       create.removeValue(forKey: "stream")
       create["type"] = .string("response.create")
       if request.usesResponsesLite {
@@ -48,6 +51,7 @@ extension HTTPResponseExecution {
       try await peer.send(.object(create), normalizedImage: request.requirements.route == .images)
       var total = 0
       var compaction = StreamCompaction()
+      var outputViews = OrdinaryOutputViews()
       while true {
         let data = try await peer.next(lane: lane)
         guard
@@ -99,6 +103,9 @@ extension HTTPResponseExecution {
           expectedPreviousResponseID: request.document["previous_response_id"]?.string,
           allowCompaction: request.streamCompaction,
           allowImages: request.requirements.imageModel != nil)
+        if !request.streamCompaction && request.requirements.imageModel == nil {
+          try outputViews.observe(event)
+        }
         progress.note(event: event)
         if request.streamCompaction { try compaction.observe(event) }
         for object in observation.bindings { try await context.bind(object) }

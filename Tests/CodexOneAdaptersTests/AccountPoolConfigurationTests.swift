@@ -14,9 +14,10 @@ import Testing
   try valid.validate()
   #expect(valid.responses.upstreamBaseURL == "https://chatgpt.com/backend-api/codex")
   #expect(valid.responses.upstreamTransport == "http")
+  #expect(valid.responses.requestContract == .codexSubscription)
   for field in [
     "upstreamBaseURL", "upstreamTokenFile", "namespace", "identity", "principal",
-    "headers",
+    "headers", "upstreamContract",
   ] {
     var invalid = base
     invalid[field] = "synthetic-override"

@@ -14,6 +14,11 @@ import Testing
   import FoundationNetworking
 #endif
 
+// Accept both ordinary subscription array input and the independent image/compact contracts.
+private func poolInput(_ request: JSONValue) -> String? {
+  request["input"]?.string ?? request["input"]?.array?.first?["content"]?.string
+}
+
 private let poolImageBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=="
 private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
@@ -108,17 +113,27 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
               account: account, path: head.uri, previous: request["previous_response_id"]?.string))
           return value.calls.count
         }
-        if let input = request["input"]?.string, input.hasPrefix("http"),
+        if let input = poolInput(request), input.hasPrefix("http"),
           let status = Int(input.dropFirst(4))
         {
           reject(context, status: status)
           return
         }
-        if request["input"]?.string == "abort" {
+        if poolInput(request) == "abort" {
           context.close(promise: nil)
           return
         }
         let compact = head.uri.hasSuffix("/compact")
+        if !compact
+          && request["tools"]?.array?.contains(where: { $0["type"]?.string == "image_generation" })
+            != true
+        {
+          guard request["stream"]?.bool == true, request["store"]?.bool == false,
+            request["input"]?.array != nil, request["previous_response_id"] == nil
+          else {
+            throw ExecutionError.invalidCommand
+          }
+        }
         var document: [String: JSONValue] = [
           "id": .string("synthetic-response-\(count)"),
           "object": .string(compact ? "response.compaction" : "response"), "created_at": .number(1),
@@ -128,15 +143,15 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
             "input_tokens_details": .object(["cached_tokens": .number(0)]),
           ]),
         ]
-        if request["input"]?.string == "partial" {
+        if poolInput(request) == "partial" {
           document["usage"] = .object(["input_tokens": .number(2)])
         }
         if !compact {
           document["status"] = .string(
-            request["input"]?.string == "terminal-failed" ? "failed" : "completed")
+            poolInput(request) == "terminal-failed" ? "failed" : "completed")
           document["model"] = .string("synthetic-text")
         }
-        if let previous = request["previous_response_id"] {
+        if !compact, let previous = request["previous_response_id"] {
           document["previous_response_id"] = previous
         }
         let stream = request["stream"]?.bool == true && !compact
@@ -169,7 +184,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
             bound.value.close(promise: nil)
           }
         }
-        if request["input"]?.string == "hold" {
+        if poolInput(request) == "hold" {
           _ = context.eventLoop.scheduleTask(in: .milliseconds(400), reply)
         } else {
           reply()
@@ -395,12 +410,15 @@ func poolHTTPRoutesJSONSSEAndCompactWithPrincipalAffinityAndPrivateHeaders() asy
     #expect(first.0 == 200)
     let id = try #require(JSONValue.decode(first.1)["id"]?.string)
     let firstAccount = try #require(h.calls.first?.account)
-    let stream = try await h.request(stream: true, previous: id)
+    let stream = try await h.request(stream: true)
     #expect(
       stream.0 == 200 && String(decoding: stream.1, as: UTF8.self).contains("response.completed"))
-    #expect(h.calls.last?.account == firstAccount)
-    let compact = try await h.request(compact: true)
+    let beforeRejected = h.calls.count
+    #expect(try await h.request(previous: id).0 == 400)
+    #expect(h.calls.count == beforeRejected)
+    let compact = try await h.request(previous: id, compact: true)
     #expect(compact.0 == 200)
+    #expect(h.calls.last?.account == firstAccount)
     #expect(try JSONValue.decode(compact.1)["object"]?.string == "response.compaction")
     let before = h.calls.count
     let foreign = try await h.request(previous: id, key: h.bob)
@@ -451,7 +469,7 @@ func poolHTTPDisableAndKeyRevocationRefuseContinuationWithoutSwitching() async t
     _ = try await h.oauth.store.setAccountMode(
       id: account.id, revision: account.revision, mode: .disabled)
     let before = h.calls.count
-    #expect(try await h.request(previous: id).0 == 503)
+    #expect(try await h.request(previous: id, compact: true).0 == 503)
     #expect(h.calls.count == before)
     #expect(try await h.request().0 == 200)
     #expect(h.calls.last?.account != selected)
@@ -486,7 +504,7 @@ func poolHTTPDisableAndKeyRevocationRefuseContinuationWithoutSwitching() async t
     let token = try #require(response["access_token"] as? String)
     h.state.value.withLock { $0.expected[selected] = token }
     h.oauth.server.set(.reply(tokens))
-    let continued = try await h.request(stream: true, previous: id)
+    let continued = try await h.request(previous: id, compact: true)
     #expect(continued.0 == 200)
     #expect(h.calls.count == 2 && h.calls.last?.account == selected)
     #expect(h.oauth.server.counts.calls == 3 && h.oauth.server.counts.invalid == 0)
@@ -618,11 +636,11 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
             previous: request["previous_response_id"]?.string))
         return value.calls.count
       }
-      if request["input"]?.string == "abort" {
+      if poolInput(request) == "abort" {
         context.close(promise: nil)
         return
       }
-      if request["input"]?.string == "stallbody" { return }
+      if poolInput(request) == "stallbody" { return }
       var document: [String: JSONValue] = [
         "id": .string("synthetic-ws-\(count)"), "object": .string("response"),
         "model": .string("synthetic-text"), "status": .string("in_progress"), "output": .array([]),
@@ -634,7 +652,7 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         "type": .string("response.created"), "response": .object(document),
       ]
       document["status"] = .string(
-        request["input"]?.string == "terminal-failed" ? "failed" : "completed")
+        poolInput(request) == "terminal-failed" ? "failed" : "completed")
       document["output"] = poolImageOutput(request, count: count)
       document["usage"] = .object([
         "input_tokens": .number(2), "output_tokens": .number(1),
@@ -657,7 +675,7 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
             promise: nil)
         }
       }
-      if request["input"]?.string == "hold" {
+      if poolInput(request) == "hold" {
         _ = context.eventLoop.scheduleTask(in: .milliseconds(400), send)
       } else {
         send()
@@ -673,9 +691,9 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
     let first = try await h.request()
     #expect(first.0 == 200)
     let id = try #require(JSONValue.decode(first.1)["id"]?.string)
-    let selected = try #require(h.calls.first?.account)
-    let continued = try await h.request(stream: true, previous: id)
-    #expect(continued.0 == 200 && h.calls.count == 2 && h.calls.last?.account == selected)
+    _ = try #require(h.calls.first?.account)
+    let continued = try await h.request(stream: true)
+    #expect(continued.0 == 200 && h.calls.count == 2)
     #expect(String(decoding: continued.1, as: UTF8.self).contains("response.completed"))
     let before = h.calls.count
     #expect(try await h.request(previous: id, key: h.bob).0 == 400)

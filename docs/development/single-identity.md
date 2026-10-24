@@ -18,6 +18,7 @@
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
 | models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—2000000，默认32768）、maxContextWindow（不小于contextWindow，最大2000000，省略则相同）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；Codex 目录还需非空 baseInstructions 权威指导，容量与替换语义见下；不改变价格指纹 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
+| upstreamContract | 可选 responses/codex-subscription；loopback缺省responses，可选订阅契约供合成测试；非loopback订阅固定codex-subscription，不允许降为responses |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
 | modelProfilesFile | 可选绝对路径，0600受信离线profile快照；见[快照导入](model-profiles.md)，不新增模型或权限 |

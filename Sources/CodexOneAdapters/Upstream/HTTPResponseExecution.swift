@@ -72,6 +72,9 @@ struct HTTPResponseExecution: Sendable {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
     let model = try executionModel(request)
+    let wireDocument = try request.preparedDocument(
+      contract: configuration.requestContract, nativeWebSocket: false)
+    let wireStreaming = wireDocument["stream"]?.bool == true
     if configuration.upstreamTransport == "websocket" {
       try await gateway.execute(
         model: request.admissionModel, references: request.references, requestID: requestID,
@@ -97,7 +100,7 @@ struct HTTPResponseExecution: Sendable {
         upstream.method = .POST
         upstream.headers = [
           "content-type": "application/json",
-          "accept": request.streaming ? "text/event-stream" : "application/json",
+          "accept": wireStreaming ? "text/event-stream" : "application/json",
         ]
         if request.usesResponsesLite {
           upstream.headers.add(name: "x-openai-internal-codex-responses-lite", value: "true")
@@ -111,7 +114,7 @@ struct HTTPResponseExecution: Sendable {
         }
         upstream.body = .bytes(
           ByteBuffer(
-            data: try request.document.data(escapingSlashes: request.requirements.route != .images))
+            data: try wireDocument.data(escapingSlashes: request.requirements.route != .images))
         )
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
@@ -129,7 +132,7 @@ struct HTTPResponseExecution: Sendable {
           }
           throw rejection
         }
-        if request.streaming {
+        if wireStreaming {
           let header = response.headers.first(name: "content-type")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
           let media =
@@ -152,6 +155,7 @@ struct HTTPResponseExecution: Sendable {
             maximumTotalBytes: request.requirements.imageModel == nil
               ? 8_388_608 : ImageLimits.responseBytes)
           var compaction = StreamCompaction()
+          var outputViews = OrdinaryOutputViews()
           var responseID: String?
           var terminal = false
           readUpstream: for try await chunk in response.body {
@@ -195,14 +199,20 @@ struct HTTPResponseExecution: Sendable {
                 expectedPreviousResponseID: request.document["previous_response_id"]?.string,
                 allowCompaction: request.streamCompaction,
                 allowImages: request.requirements.imageModel != nil)
+              if !request.streamCompaction && request.requirements.imageModel == nil {
+                try outputViews.observe(event)
+              }
               progress.note(event: event)
               if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
               terminal = observation.terminal
-              try await emit(
-                request.requirements.imageModel == nil
-                  ? ProviderObservation.textOutput(event) : event)
+              if request.streaming || terminal {
+                let output = request.streaming ? event : event["response"]!
+                try await emit(
+                  request.requirements.imageModel == nil
+                    ? ProviderObservation.textOutput(output) : output)
+              }
               if terminal { try observeSubmittedTerminal(event, context: context) }
               if terminal { break readUpstream }
             }
@@ -239,6 +249,10 @@ struct HTTPResponseExecution: Sendable {
             expectedPreviousResponseID: request.document["previous_response_id"]?.string,
             allowCompaction: request.streamCompaction,
             allowImages: request.requirements.imageModel != nil)
+          if !request.streamCompaction && request.requirements.imageModel == nil {
+            var outputViews = OrdinaryOutputViews()
+            try outputViews.observe(event)
+          }
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
           try await emit(

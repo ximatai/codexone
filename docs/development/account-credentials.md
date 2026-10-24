@@ -87,7 +87,7 @@ HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 acce
 
 就绪检查会用当前主密钥和存储 context 本地打开候选密文，错误密钥或全部解密失败返回未就绪。单个结构完整但无法解密的账号不遮蔽其他合格账号；派发也跳过该候选，关键数据库故障仍拒绝。检查不改变授权状态或请求上游，可解密的过期 access 仍由共享刷新处理。
 
-`upstreamTransport` 缺省/`http` 使用 HTTP 上游，`websocket` 为每个 HTTP Responses 请求建立一次选中账号的 WS 上游；对下游仍提供 JSON/SSE。独立 compact 使用同一身份的 HTTP 路径，传输选择进入策略版本但不改变价格版本。选择 websocket 同时启用原生 WS：首 create 原子选账号并建立一次上游连接，所有 lane/后续 turn 固定该身份并逐轮检查权限，刷新不重连。首 turn 结束独立归还执行 ticket；断开、超时及关闭不换账号重放。
+账号池普通文本固定使用codex-subscription请求契约，参数支持、准入拒绝及JSON/SSE适配见[协议](../specs/protocol.md)。`upstreamTransport` 缺省/`http` 使用 HTTP 上游，`websocket` 为每个 HTTP Responses 请求建立一次选中账号的 WS 上游；对下游仍提供 JSON/SSE。独立 compact 使用同一身份的 HTTP 路径，传输选择进入策略版本但不改变价格版本。选择 websocket 同时启用原生 WS：首 create 原子选账号并建立一次上游连接，所有 lane/后续 turn 固定该身份并逐轮检查权限，刷新不重连。首 turn 结束独立归还执行 ticket；断开、超时及关闭不换账号重放。
 
 账号页面可以展开额度与健康详情并手动读取。额度 GET 与授权刷新使用独立容量；主/次窗口保留提供者时长，五分钟后标陈旧，失败保留最后成功值。禁用账号不周期观察；有效凭证可手动读取，过期须先显式刷新。缺失字段不推算。具体边界见 [U10](../specs/usage.md) 和 [I20](../specs/identity.md)。
 

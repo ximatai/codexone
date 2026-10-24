@@ -147,3 +147,12 @@ JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒�
 usage非null须为最多32成员对象，已知input_tokens_details/output_tokens_details非null须为最多32成员对象；已知cache_write_tokens/reasoning_tokens非null须为0—1000000000整数。input/output/cached证据和total一致性维持原严格校验；普通纯文本路径的其他成员仅在内存中有界接受，向客户端只输出input/output/total及cached/cache_write/reasoning明细；图片和独立compact保持原严格契约，受原JSON深度/单事件/总流预算，不递归提取ID/计量/授权。固定诊断区分根类型/根容量/明细类型/明细容量/已知明细计数，不记录字段名或值。
 
 普通纯文本路径的已知input/output/cached计数在created/in_progress等非终态也验证类型/范围及cached<=input（均已知时）；这仅约束可输出形态，不建立非终态计量证据。新增非终态错误计数及metadata正负socket样例，防止按键投影误透出错误值。
+
+
+## 普通输出多视图与请求参数
+
+普通文本执行在现有逐事件校验之外，关联created/in_progress、output_item.added/done、content/summary part、text/refusal/arguments/custom input的delta/done与最终窗口。明确提供的索引、ID、type、role及call_id/name/namespace不可冲突；同一窗口ID/call_id不可重复。added允许前缀增长和展示元数据变化；同一完整语义字段与增量聚合须一致。reasoning最终窗口可省略可选content，但已提供的完整值不可改变。稀疏HTTP省略索引/ID时只允许唯一关联，不能在多个候选间猜测。每执行最多16项、每项128个content/summary part，仅保留身份、长度和摘要，随执行释放；图片/流式压缩沿独立契约。冲突在新绑定和下游提交前拒绝，已可信终态用量不丢失；无证据仍unknown，不重放。
+
+普通请求在准入前校验temperature为0—2数值、top_p为0—1数值、max_output_tokens为至少16的Int64整数；bool不作为数值。service_tier接受auto/default/flex/scale/priority/fast/ultrafast，truncation接受auto/disabled，prompt_cache_retention接受in_memory/24h；这些可空字段的null表示未指定。此处是形状校验，不承诺模型支持或输出容量。错误返回400 invalid_request_parameter，不创建attempt或派发。
+
+可信配置选择responses或codex-subscription请求契约，不能由下游覆盖；账号池与非loopback订阅固定后者。普通订阅HTTP使用stream=true/store=false；下游JSON仅提交已验证终态，SSE逐事件提交。显式store=true及HTTP previous_response_id准入拒绝（包括HTTP→WS新连接桥接），原生WS保留同连接续接。订阅普通路径仅接受tier auto/default/priority；非null max_output_tokens/temperature/top_p/truncation/prompt_cache_retention/metadata返回400 unsupported_backend_parameter，不静默删除限制；其null在组装时移除。保留支持的工具、输入顺序、缓存key、client_metadata及指令，字符串input映射为等价user消息数组。图片和独立compact不随此扩展或改变消费语义。合成验证不替代真实客户端/模型验收。

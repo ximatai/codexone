@@ -27,6 +27,7 @@ struct ResponsesConfiguration: Sendable {
       "progress_idle": value(budget.idle, progressTimeoutSeconds),
     ])
   }
+  var requestContract: ResponseRequestContract = .responses
   var imageGeneration: ImageConfiguration? = nil
 }
 extension SingleIdentityConfiguration {
@@ -36,6 +37,8 @@ extension SingleIdentityConfiguration {
       executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: upstreamTransport,
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
       progressTimeoutSeconds: progressTimeoutSeconds,
+      requestContract: upstreamContract.flatMap(ResponseRequestContract.init(rawValue:))
+        ?? (upstreamBaseURL.hasPrefix("https://") ? .codexSubscription : .responses),
       imageGeneration: imageGeneration)
   }
 }

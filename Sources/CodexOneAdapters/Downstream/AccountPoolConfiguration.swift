@@ -76,7 +76,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       executionTimeoutSeconds: executionTimeoutSeconds,
       upstreamTransport: upstreamTransport ?? "http",
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
-      progressTimeoutSeconds: progressTimeoutSeconds, imageGeneration: imageGeneration)
+      progressTimeoutSeconds: progressTimeoutSeconds, requestContract: .codexSubscription,
+      imageGeneration: imageGeneration)
   }
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
