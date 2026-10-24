@@ -16,6 +16,8 @@
 
 Linux amd64执行`docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:output-contract-verify .`，退出0：单并发release构建与剥离后的程序通过Docker verification全部无网络socket/维护检查，包含相同201次文本、256次输出视图及314次参数操作。此入口没有运行Linux Swift单元测试或OCI/Compose安装；macOS Swift账号池native首轮补测不冒充Linux同项实测。
 
+实际发布候选5f7efc1（产品代码仍为9dd0d07）另执行`python3 scripts/verify_installation.py --image codexone:desktop-real-test`，退出0：实际amd64 OCI/Compose安装、非root/只读运行、SPA/认证/Key持久化、锁、v5备份迁移及重启通过；未运行浏览器扩展。runtime与verification程序SHA-256相同，均为`276b551c42d8a19f5465837b2f651067211637d71b8219126a39c798c89bc0c8`。本机忽略目录`artifacts/desktop-real-chain/`保留源码归档、实际程序、release及manifest；runtime不可变镜像为`sha256:b36f6d6ac424ff6ad493be764dad7fe1fc9abbe9dd4e8ae3f98865a780ec403e`。
+
 本轮完成一次集中review及相关回归；过程提案/任务/验证日志已归纳回本页与规范，原记录由Git追溯。
 
 仅使用临时loopback无凭证上游与合成正文。未部署、推送或新增真实订阅调用；历史责任账不变。未重新操作真实Desktop，不把这些结果外推为实际订阅参数、native工具/推理/图片或模型容量已经验收。图片、独立compact及流式压缩维持独立契约与回归。
