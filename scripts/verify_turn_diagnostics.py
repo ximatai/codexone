@@ -54,18 +54,20 @@ def main():
                     config=root/'identity.json';config.write_text(json.dumps(dict(principal='synthetic',keyID='synthetic',namespace='synthetic',identity='synthetic',
                         keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),models=[dict(id='synthetic-contract',inputMicrosPerMillion=0,outputMicrosPerMillion=0)],reservedMicros=1,
                         upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1',upstreamTransport='websocket')));config.chmod(0o600)
-                    process,ports=start(str(args.binary.resolve()),config,root);before=server.calls
+                    process,ports=start(str(args.binary.resolve()),config,root);before=server.calls;request_ids=[]
                     try:
                         for route in ('json','sse','native'):
                             _,events=call(ports['data'],route,dict(model='synthetic-contract',input='synthetic error probe'))
                             error=events[-1]['error'];assert error['code']=='invalid_upstream_turn' and error['request_id'] in error['message'],(case,nested,route,events)
                             assert 'reason' not in error
+                            request_ids.append(error['request_id'])
                         deadline=time.monotonic()+4
                         while len(rows(root))!=3 or any(s=='intent' for s,_,_ in rows(root)):
                             assert time.monotonic()<deadline;time.sleep(.02)
                         assert all(s=='unknown' and u is None for s,_,u in rows(root)),rows(root)
                         process.terminate();process.wait(10);logs=process.stdout.read()
-                        assert ('reason='+reason).encode() in logs,(case,logs)
+                        for request_id in request_ids:
+                            assert any(request_id.encode() in line and ('reason='+reason).encode() in line for line in logs.splitlines()),(case,request_id,logs)
                         assert PRIVATE.encode() not in logs and TOKEN.encode() not in logs
                         assert server.calls==before+3,'Unexpected replay'
                     finally:stop(process)
