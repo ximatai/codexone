@@ -46,7 +46,7 @@ class Provider(BaseHTTPRequestHandler):
                        for item in request['input'])
         mode = self.server.mode
         if mode == 'event-oversized':
-            return [dict(type='synthetic.extension', data='x' * 1048577)]
+            return [dict(type='synthetic.extension', data='x' * 8388609)]
         if mode == 'sparse-stream':
             events[2]['response_id'] = result['id']
             result.pop('status')
@@ -161,7 +161,7 @@ class Provider(BaseHTTPRequestHandler):
                     continue
                 assert opcode == 1
                 for event in self.sequence(json.loads(body)):
-                    send(self.connection, event, maximum_bytes=2 * 1048576)
+                    send(self.connection, event, maximum_bytes=16 * 1048576)
         except (OSError, EOFError):
             return
 
@@ -196,6 +196,13 @@ def rows(root):
                 for s, o, u in db.execute('SELECT state,outcome_json,usage_json FROM attempts ORDER BY rowid')]
 
 
+# Only missing terminals, foreign responses and over-limit events fail; malformed metadata is forwarded.
+FAILED = {mode for mode in CASES if (mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata'))
+          or mode.startswith('foreign-') or mode == 'event-oversized'}
+STRICT_ECHO = {'ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata',
+               'usage-progress-metadata', 'incomplete'}
+
+
 def outcomes(root):
     with sqlite3.connect(root / 'state/core.sqlite') as db:
         return [json.loads(row[0]) if row[0] else None
@@ -222,6 +229,8 @@ def main():
                 for mode in ([args.case] if args.case else CASES):
                     if transport == 'websocket' and mode == 'sparse-stream':
                         continue  # Preserve native WS's existing stronger created/turn barrier.
+                    if transport == 'http' and mode == 'event-oversized':
+                        continue  # Frame limits are exercised on WS; byte-wise SSE decoding is slow in debug.
                     provider.mode = mode
                     root = Path(temporary) / (transport + '-' + mode)
                     root.mkdir(mode=0o700)
@@ -230,7 +239,8 @@ def main():
                         keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(), namespace='synthetic-contract',
                         identity='synthetic-identity', models=[dict(id='synthetic-contract', inputMicrosPerMillion=0,
                         outputMicrosPerMillion=0)], reservedMicros=1,
-                        upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport=transport)))
+                        upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport=transport,
+                        executionTimeoutSeconds=5, firstResponseTimeoutSeconds=2, progressTimeoutSeconds=1)))
                     config.chmod(0o600)
                     process, ports = start(binary, config, root)
                     before = provider.calls
@@ -258,14 +268,16 @@ def main():
                             if mode in ('usage-created-metadata', 'usage-progress-metadata'):
                                 assert 'synthetic_metadata' not in json.dumps(events)
                             result = events[-1]
-                            if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata', 'usage-progress-metadata', 'incomplete'):
+                            if mode not in FAILED:
+                                # Provider metadata variations are forwarded; they never fail delivery.
                                 assert status == 200 and 'error' not in result, (transport, mode, route, events)
                                 response = result.get('response', result)
-                                assert response['created_at'] == 1.125
-                                if mode == 'large-echo':
-                                    assert response['instructions'] == 'synthetic-large-echo-' + 'x' * 300000
-                                else:
-                                    assert response['instructions'] == json.loads(provider.literal)[-1]['response']['instructions']
+                                if mode in STRICT_ECHO:
+                                    assert response['created_at'] == 1.125
+                                    if mode == 'large-echo':
+                                        assert response['instructions'] == 'synthetic-large-echo-' + 'x' * 300000
+                                    else:
+                                        assert response['instructions'] == json.loads(provider.literal)[-1]['response']['instructions']
                                 if mode == 'usage-metadata':
                                     assert set(response['usage']) == {'input_tokens', 'output_tokens', 'total_tokens', 'input_tokens_details', 'output_tokens_details'}
                                     assert response['usage']['input_tokens_details'] == {'cached_tokens': 0, 'cache_write_tokens': 1}
@@ -277,8 +289,6 @@ def main():
                                     count += 1
                                     assert status == 200 and 'error' not in events[-1]
                             else:
-                                if mode.startswith(('usage-created-', 'usage-progress-')):
-                                    assert result.get('error', {}).get('code') == 'invalid_upstream_usage', (mode, events)
                                 assert 'error' in result and result['error']['request_id'] in result['error']['message'], (transport, mode, route, events)
                         deadline = time.monotonic() + 3
                         while len(rows(root)) != count or any(s == 'intent' for s, _, _ in rows(root)):
@@ -289,25 +299,27 @@ def main():
                         logs = process.stdout.read()
                         assert provider.calls == before + count, 'Unexpected replay or dispatch'
                         records = rows(root)
-                        if (mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata')) or mode.startswith('foreign-') or mode in ('event-oversized', 'usage-root', 'usage-cached'):
+                        if mode in FAILED or mode == 'usage-root':
                             assert all(s == 'unknown' and u is None for s, _, u in records), records
+                        elif mode == 'usage-cached':
+                            # The malformed counter is not evidence; observed lower bounds stay unresolved.
+                            assert all(s == 'unknown' and u['completeness'] == 'partial' and u['inputTokens'] == 5
+                                       for s, _, u in records), records
                         else:
                             assert all(s == 'settled' and u and u['completeness'] == 'complete'
                                        and u['inputTokens'] == 5 and u['outputTokens'] == 3 for s, _, u in records), records
-                            assert all(k == ('succeeded' if mode in ('ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata', 'usage-progress-metadata') else 'failed')
+                            assert all(k == ('failed' if mode == 'incomplete' else 'succeeded')
                                        for _, k, _ in records), (transport, mode, records, outcomes(root))
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
                                               ('synthetic-metadata-only-id', 'synthetic-foreign-response')).fetchone()[0] == 0
-                        if mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata'):
-                            assert b'reason=upstream_usage_count' in logs, logs
                         assert PRIVATE.encode() not in logs and b'synthetic echoed guidance' not in logs
                         assert b'synthetic usage metadata' not in logs
                         assert TOKEN.encode() not in logs and b'synthetic-metadata-only-id' not in logs
                     finally:
                         stop(process)
                 print(f'PASS: {transport} {provider.calls - transport_start} independent literal JSON/SSE/native executions, full-window continuation, '
-                      'strict typed metadata/status/totals, response identity, durable usage/unknown and no replay or private logs', flush=True)
+                      'forwarded provider metadata variations, response identity, durable usage/unknown and no replay or private logs', flush=True)
     finally:
         provider.shutdown()
         provider.server_close()

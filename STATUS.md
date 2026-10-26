@@ -1,13 +1,13 @@
 # 当前状态
 
-更新时间：2026-10-24（Asia/Shanghai）。只保留当前快照；阶段过程由 Git 追溯，验证依据在对应证据页。
+更新时间：2026-10-26（Asia/Shanghai）。只保留当前快照；阶段过程由 Git 追溯，验证依据在对应证据页。
 
 ## 项目状态
 
 | 阶段 | 已有实现与证据 | 仍未完成 |
 |---|---|---|
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
-| M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；固定CLI合成操作与限定Desktop合成文本通过 | 真实订阅Desktop操作及M5恢复读取 |
+| M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议改为[开放透传](docs/changes/open-protocol-passthrough/proposal.md)，按Codex实际结构的合成样本通过 | 新版本尚未部署；真实订阅Desktop操作及M5恢复读取 |
 | M3 | 管理登录/CSRF、Key、账号授权/刷新、路由及用量观测的本机合成闭环 | 真实账号池/刷新未验收 |
 | M4 | Images生成/编辑及Responses图片工具、权限与计量的本机合成闭环 | 真实Desktop图片、参考图、连续编辑及真实提供者图片 |
 | M5 | 已核对恢复关联及已有输出读取的限定实验 | 正式恢复读取契约不充分，未实现生产正文缓存 |
@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-26 · 开放协议透传（未提交前工作树） | macOS arm64 `verify.sh --backend` exit0：Swift 200项、全部后端socket脚本，含新增Codex实际结构（web_search/工具检索/结构化工具输出/加密历史/annotations/元数据与额度事件、超512 KiB请求）及提供者错误透传；未运行Linux verification | [变更](docs/changes/open-protocol-passthrough/tasks.md) |
 | 2026-10-24 · 代码9dd0d07 | macOS arm64完整后端及Swift205项；独立输出HTTP88/WS168共256次、参数314次、既有文本201次；Linux amd64 release与全部Docker无网络verification通过 | [输出与参数验证](docs/evidence/ordinary-output-parameters.md) |
 | 2026-10-24 · 真实订阅HTTP/SSE | 单模型/选定参数、完整输出窗口两轮；内容、上下文、终态用量与持久账本一致 | [真实调用与责任账](docs/evidence/real-subscription-validation.md) |
 | 2026-10-23 · Desktop 26.1016.62342 | 用户在另一设备保持原配置，新会话显示预期合成回复；修复工具说明容量后与执行账本关联 | [Desktop诊断](docs/changes/desktop-operation-diagnosis/verification.md) |
@@ -100,6 +101,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试部署已撤除，当前没有安排发布、部署或新增真实订阅调用。后续工作依用户新指示推进；上表未验收能力继续保留为缺口，不将资源回收视为业务验收。
+测试部署已撤除。2026-10-26 复盘确认Desktop长期不能验收的主因是请求/响应封闭校验与提供者错误被替换，已改为开放协议透传并通过本机后端出口。下一步：Linux verification，经用户确认后在其服务器部署测试实例，并用真实Desktop + 真实订阅验收；部署与真实调用须先取得用户确认。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。

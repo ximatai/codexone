@@ -68,21 +68,15 @@ def main():
                                         assert events[-1]['type'] == 'response.completed'
                                         assert server.observed[-1] == expected_wire
                                         if warmup: assert events[-1]['response']['output'] == []
-                        before = server.sequence
-                        with sqlite3.connect(root / 'state/core.sqlite') as db:
-                            attempts = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                        for invalid in [dict(reasoning={'effort': False}), dict(reasoning={'summary': []}), dict(reasoning={'summary': None, 'private': None}), dict(text={'verbosity': False}), dict(text={'format': False}), dict(tool_choice=False), dict(parallel_tool_calls='false'), dict(reasoning={'context': False}), dict(reasoning={'context': 'private'}), dict(stream_options={}), dict(stream_options={'reasoning_summary_delivery': 'private'})]:
-                            request = dict(model='synthetic-text', input='Synthetic rejection check', **invalid)
-                            code = 'unsupported_reasoning' if 'reasoning' in invalid else 'unsupported_text' if 'text' in invalid else 'unsupported_tools' if 'tool_choice' in invalid else 'unsupported_stream_options' if 'stream_options' in invalid else 'invalid_request'
-                            status, body = connect(ports['data'], 'POST', prefix + '/responses', request)
-                            assert status == 400 and json.loads(body)['error']['code'] == code
-                            if transport == 'websocket':
-                                with dial(ports['data'], path=prefix + '/responses') as sock:
-                                    assert turn(sock, request)[-1]['error']['code'] == code
-                        assert server.sequence == before
-                        with sqlite3.connect(root / 'state/core.sqlite') as db:
-                            assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == attempts
-                            assert db.execute("SELECT COUNT(*) FROM attempts WHERE state!='settled'").fetchone()[0] == 0
+                        # Values the gateway does not own are the provider's to judge: forwarded, never rejected.
+                        for future in [dict(reasoning={'effort': 'xhigh', 'context': 'future'}), dict(text={'verbosity': 'max'}),
+                                       dict(stream_options={'future_delivery': 'synthetic'}), dict(reasoning={'summary': None, 'private': None})]:
+                            before = server.sequence
+                            status, body = connect(ports['data'], 'POST', prefix + '/responses', dict(model='synthetic-text', input='Synthetic future control', **future))
+                            assert status == 200 and server.sequence == before + 1
+                            observed = server.observed[-1]
+                            if 'reasoning' in future: assert observed[0] == {k: v for k, v in future['reasoning'].items() if v is not None}
+                            else: assert all(observed[3][k] == v for k, v in future.items())
                 finally:
                     stop(process)
     finally:
@@ -90,7 +84,7 @@ def main():
         server.server_close()
         thread.join(3)
     assert not thread.is_alive() and not server.sockets
-    print('PASS: known nullable reasoning/text/tool controls normalize across both prefixes, HTTP JSON/SSE, bridge/native WS/warmup; explicit tools omission preserved; wrong/unknown fields never dispatch')
+    print('PASS: known nullable reasoning/text/tool controls normalize across both prefixes, HTTP JSON/SSE, bridge/native WS/warmup; explicit tools omission preserved; future members forwarded for the provider to judge')
 
 
 if __name__ == '__main__':

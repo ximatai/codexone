@@ -19,11 +19,11 @@ struct ProtocolFailureDiagnosticsTests {
   }
 
   @Test func diagnosticReasonIsFixedAndNotPublic() throws {
-    let error = GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningMembers)
+    let error = GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
     let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: "untrusted")
-    #expect(metadata["reason"]?.description == "reasoning_members")
+    #expect(metadata["reason"]?.description == "tools_image")
     let envelope = protocolErrorEnvelope(error, requestID: UUID().uuidString)
-    #expect(envelope["error"]?["code"]?.string == "unsupported_reasoning")
+    #expect(envelope["error"]?["code"]?.string == "unsupported_tools")
     #expect(envelope["error"]?["reason"] == nil)
   }
 
@@ -50,25 +50,7 @@ struct ProtocolFailureDiagnosticsTests {
 
   @Test func toolReasonsAreFixedAndNeverAddedToPublicEnvelopes() {
     for detail: ProtocolRejectionDetail in [
-      .toolsContainer, .toolsCount, .toolsName, .toolsDescription, .toolsBoolean,
-      .toolsNamespace, .toolsMembers, .toolsDuplicate, .toolsGrammar, .toolsType,
-      .toolsBuiltinSearch, .toolsDiscovery, .toolsRemoteMCP, .toolsChoice, .toolsPackage,
-      .toolsImage, .toolsDescriptionNull, .toolsDescriptionSize,
-      .upstreamResponsePolicy, .upstreamResponsePrevious, .upstreamResponseString,
-      .upstreamResponseInstructions, .upstreamResponseBoolean, .upstreamResponseCreated,
-      .upstreamResponseIncomplete, .upstreamItemType, .upstreamItemStatus, .upstreamItemName,
-      .upstreamItemNamespace, .upstreamMessageRole, .upstreamMessageContent,
-      .upstreamReasoningContent, .upstreamReasoningSummary, .upstreamOpaqueContext,
-      .upstreamUsageContainer,
-      .upstreamOutputIdentity, .upstreamOutputValue, .upstreamOutputCapacity,
-      .upstreamTurnLifecycle, .upstreamTurnCreated, .upstreamTurnResponseID,
-      .upstreamTurnItemID, .upstreamTurnMissingItemID, .upstreamTurnUnknownItemID,
-      .upstreamTurnProviderStream, .upstreamTurnProviderError,
-      .upstreamTurnProviderReasoningSummary,
-      .upstreamTurnProviderAuthentication, .upstreamTurnProviderRateLimit,
-      .upstreamUsageCapacity, .upstreamUsageDetails, .upstreamUsageDetailsCapacity,
-      .upstreamUsageCount,
-      .upstreamTerminalStatus, .upstreamUsageTotal,
+      .toolsImage, .upstreamTurnLifecycle, .upstreamTurnCreated, .upstreamTurnResponseID,
       .downstreamJSONWrite,
     ] {
       let error = GatewayProtocolError(400, "unsupported_tools", detail: detail)
@@ -81,7 +63,7 @@ struct ProtocolFailureDiagnosticsTests {
       #expect(envelope["error"]?["message"]?.string == "Gateway request failed. Reference: \(id).")
     }
     let untrusted = protocolErrorEnvelope(
-      GatewayProtocolError(400, "unsupported_tools", detail: .toolsName), requestID: "untrusted")
+      GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage), requestID: "untrusted")
     #expect(untrusted["error"]?["message"]?.string == "Gateway request failed.")
   }
   @Test func upstreamStatusRemainsPrivateAndAllErrorsHaveSafeReferences() {
@@ -104,46 +86,4 @@ struct ProtocolFailureDiagnosticsTests {
     }
   }
 
-}
-
-@Test func responsePolicyShapeDiagnosticsNeverRetainProviderValues() {
-  let secret = "synthetic-private-provider-value"
-  let event: JSONValue = .object([
-    "response": .object([
-      "background": .bool(false), "conversation": .object(["id": .string(secret)]),
-      "prompt": .string(secret), "tools": .null,
-    ])
-  ])
-  let metadata = ProtocolFailureDiagnostics.responsePolicyMetadata(
-    event, requestID: UUID().uuidString)
-  #expect(metadata["background_shape"]?.description == "false")
-  #expect(metadata["conversation_shape"]?.description == "object")
-  #expect(metadata["prompt_shape"]?.description == "string")
-  #expect(metadata["tools_shape"]?.description == "null")
-  #expect(!metadata.description.contains(secret))
-  #expect(ProtocolFailureDiagnostics.responsePolicyMetadata(event, requestID: secret).isEmpty)
-}
-
-@Test func nullToolEchoDoesNotGrantUndeclaredToolsOrChangeImagePolicy() throws {
-  let model = SingleIdentityConfiguration.Model(
-    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
-  var response: [String: JSONValue] = [
-    "id": .string("synthetic-response"), "status": .string("completed"), "output": .array([]),
-    "tools": .null,
-  ]
-  func observe(_ response: [String: JSONValue], image: Bool = false) throws {
-    _ = try ProviderObservation(
-      event: .object(["type": .string("response.completed"), "response": .object(response)]),
-      model: model, functionNames: [], allowImages: image)
-  }
-  try observe(response)
-  #expect(throws: (any Error).self) { try observe(response, image: true) }
-  response["output"] = .array([
-    .object([
-      "type": .string("function_call"), "id": .string("synthetic-item"),
-      "call_id": .string("synthetic-call"), "name": .string("undeclared"),
-      "arguments": .string("{}"),
-    ])
-  ])
-  #expect(throws: (any Error).self) { try observe(response) }
 }

@@ -34,12 +34,8 @@ def main():
     server=ThreadingHTTPServer(('127.0.0.1',0),Provider);server.guard=threading.Lock();server.calls=0;server.upgrades=0
     server.received=[];server.literal=json.dumps(json.loads(FIXTURE.read_text())['events'])
     worker=threading.Thread(target=server.serve_forever);worker.start()
-    invalid=[dict(temperature=x) for x in (-.1,2.1,True,'1',{},[])] + [dict(top_p=x) for x in (-.1,1.1,False,'1')]
-    invalid += [dict(max_output_tokens=x) for x in (0,15,-1,16.5,True,'128',9223372036854775808)]
-    invalid += [dict(service_tier='synthetic-unknown'),dict(truncation='synthetic-unknown'),dict(prompt_cache_retention='synthetic-unknown')]
     unsupported=[{key:value} for key,value in [('store',True),('max_output_tokens',128),('temperature',1),
-        ('top_p',.5),('truncation','disabled'),('prompt_cache_retention','24h'),('metadata',{'label':'synthetic'}),
-        ('service_tier','flex'),('service_tier','fast')]]
+        ('top_p',.5),('truncation','disabled'),('prompt_cache_retention','24h'),('metadata',{'label':'synthetic'})]]
     total=0
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-parameters-') as temporary:
@@ -60,7 +56,9 @@ def main():
                             if contract=='responses':
                                 good += [dict(temperature=0,top_p=0,max_output_tokens=16,service_tier='flex',truncation='disabled',prompt_cache_retention='24h'),
                                          dict(temperature=2,top_p=1,max_output_tokens=128,service_tier='fast'),dict(store=True)]
-                            else: good += [dict(service_tier='auto'),dict(service_tier='default')]
+                            else: good += [dict(service_tier='auto'),dict(service_tier='default'),dict(service_tier='flex')]
+                            # Values the provider judges are forwarded, including future fields.
+                            good += [dict(synthetic_future_field={'enabled':True})]
                             for extra in good:
                                 before=server.calls;status,events=call(ports['data'],route,{**base,**extra});total+=1
                                 assert status==200 and 'error' not in events[-1],(contract,transport,route,extra,events)
@@ -78,8 +76,9 @@ def main():
                                 else:
                                     assert wire['input']==base['input']
                                     assert all(wire[key]==value for key,value in extra.items())
-                            negative=invalid+([*unsupported]+([] if route=='native' else [dict(previous_response_id='synthetic-previous')]) if contract=='codex-subscription' else [])
-                            negative += [dict(upstreamContract='responses')]
+                                if 'synthetic_future_field' in extra: assert wire['synthetic_future_field']=={'enabled':True}
+                            # Only explicit constraints the subscription backend cannot honor fail before dispatch.
+                            negative=([*unsupported]+([] if route=='native' else [dict(previous_response_id='synthetic-previous')]) if contract=='codex-subscription' else [])
                             for extra in negative:
                                 before=server.calls;upgrades=server.upgrades;attempts=attempt_count(root)
                                 status,events=call(ports['data'],route,{**base,**extra});total+=1

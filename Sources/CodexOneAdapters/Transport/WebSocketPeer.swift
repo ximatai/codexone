@@ -202,7 +202,7 @@ struct WebSocketPeer: Sendable {
                 guard String(data: data, encoding: .utf8) != nil else {
                   throw GatewayProtocolError(400, "invalid_websocket_text")
                 }
-                let lane = try turns?.observe(data) ?? ""
+                guard let lane = try turns.map({ try $0.observe(data) }) ?? "" else { continue }
                 try await withExecutionDeadline(seconds: 5) {
                   try await inbox.push(data, lane: lane)
                 }

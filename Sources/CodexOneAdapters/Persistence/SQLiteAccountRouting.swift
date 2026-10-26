@@ -12,6 +12,33 @@ extension SQLiteExecutionStore: AccountRoutingStore {
         db, principal: principal, references: references, connection: connection)
     }
   }
+  public func resolveAccountHint(principal: String, hints: [ObjectBinding]) async throws
+    -> AccountRouteIdentity?
+  {
+    let hints = hints.suffix(64).filter { reference in
+      [reference.type, reference.rawID].allSatisfy {
+        !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0)
+      }
+    }
+    guard !principal.isEmpty, principal.utf8.count <= 256, !hints.isEmpty else { return nil }
+    return try await perform { db in
+      for hint in hints.reversed() {
+        let rows = try db.rows(
+          """
+          SELECT DISTINCT b.identity,b.namespace FROM bindings b
+          JOIN accounts a ON a.id=b.identity AND a.namespace=b.namespace
+          WHERE b.principal=? AND b.object_type=? AND b.raw_id=? LIMIT 2
+          """, [.text(principal), .text(hint.type), .text(hint.rawID)]
+        ) { statement in
+          try AccountRouteIdentity(
+            id: String(cString: sqlite3_column_text(statement, 0)),
+            namespace: String(cString: sqlite3_column_text(statement, 1)))
+        }
+        if rows.count == 1 { return rows[0] }
+      }
+      return nil
+    }
+  }
   public func admitSelectingAccount(_ command: AccountPoolAdmission) async throws
     -> ExecutionAdmission
   {

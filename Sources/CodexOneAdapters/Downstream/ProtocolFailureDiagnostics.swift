@@ -6,10 +6,7 @@ import Synchronization
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
-  private static let isolatedExtensionLogged = Mutex(false)
   private static let missingMediaTypeLogged = Mutex(false)
-  private static let responsePolicyShapeLogged = Mutex(false)
-  private static let nullableToolEchoLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
     "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
@@ -45,21 +42,15 @@ enum ProtocolFailureDiagnostics {
       value["upstream_status"] = .string(String(status))
     }
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
+    // Provider codes are short machine identifiers; free text never enters logs.
+    if let code = error.providerError?["code"]?.string ?? error.providerError?["type"]?.string,
+      (1...64).contains(code.utf8.count),
+      code.utf8.allSatisfy({ (97...122).contains($0) || $0 == 95 || (48...57).contains($0) })
+    {
+      value["provider_code"] = .string(code)
+    }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
-  }
-
-  static func recordIsolatedExtension(requestID: String) {
-    guard let id = UUID(uuidString: requestID) else { return }
-    let first = isolatedExtensionLogged.withLock { logged in
-      guard !logged else { return false }
-      logged = true
-      return true
-    }
-    guard first else { return }
-    logger.info(
-      "Upstream extension isolated without protocol effects",
-      metadata: ["request_id": .string(id.uuidString)])
   }
 
   static func recordMissingStreamMediaType(requestID: String) {
@@ -73,58 +64,6 @@ enum ProtocolFailureDiagnostics {
     logger.info(
       "Upstream stream omitted media type; SSE validation required",
       metadata: ["upstream_status": "200", "request_id": .string(id.uuidString)])
-  }
-
-  static func responsePolicyMetadata(_ event: JSONValue, requestID: String) -> Logger.Metadata {
-    guard let id = UUID(uuidString: requestID) else { return [:] }
-    func shape(_ value: JSONValue?) -> String {
-      guard let value else { return "absent" }
-      switch value {
-      case .null: return "null"
-      case .bool(let value): return value ? "true" : "false"
-      case .object: return "object"
-      case .array: return "array"
-      case .number: return "number"
-      case .string: return "string"
-      }
-    }
-    let response = event["response"]
-    var metadata: Logger.Metadata = ["request_id": .string(id.uuidString)]
-    for key in ["background", "conversation", "prompt", "tools"] {
-      metadata[key + "_shape"] = .string(shape(response?[key]))
-    }
-    if let tools = response?["tools"]?.array {
-      metadata["tools_count"] = .string(String(min(tools.count, 65)))
-      metadata["image_tool"] = .string(
-        tools.contains { $0["type"]?.string == "image_generation" } ? "true" : "false")
-
-    }
-    return metadata
-  }
-
-  static func recordResponsePolicyShape(_ event: JSONValue, requestID: String) {
-    let metadata = responsePolicyMetadata(event, requestID: requestID)
-    guard !metadata.isEmpty else { return }
-    let first = responsePolicyShapeLogged.withLock { logged in
-      guard !logged else { return false }
-      logged = true
-      return true
-    }
-    guard first else { return }
-    logger.info("Upstream response policy rejected structural shape", metadata: metadata)
-  }
-
-  static func recordNullableToolEcho(requestID: String) {
-    guard let id = UUID(uuidString: requestID) else { return }
-    let first = nullableToolEchoLogged.withLock { logged in
-      guard !logged else { return false }
-      logged = true
-      return true
-    }
-    guard first else { return }
-    logger.info(
-      "Upstream null tool echo treated as unspecified metadata",
-      metadata: ["request_id": .string(id.uuidString)])
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {

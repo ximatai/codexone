@@ -120,7 +120,7 @@ public struct ExecutionSnapshot: Sendable, Equatable, Codable {
   }
 }
 
-public struct ObjectBinding: Sendable, Equatable, Codable {
+public struct ObjectBinding: Sendable, Hashable, Codable {
   public let type: String
   public let rawID: String
   public init(type: String, rawID: String) {

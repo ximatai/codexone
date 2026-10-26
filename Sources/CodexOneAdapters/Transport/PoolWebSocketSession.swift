@@ -73,7 +73,8 @@ enum PoolWebSocketSession {
         tasks.addTask {
           do {
             try await gateway.execute(
-              model: first.model, references: first.references, requestID: requestID,
+              model: first.model, references: first.references, affinityHints: first.affinityHints,
+              requestID: requestID,
               mode: first.mode, requirements: first.requirements
             ) { context, authorization in
               guard let authorization else { throw ExecutionError.invalidCommand }
@@ -123,7 +124,7 @@ func sendWebSocketError(
   _ error: any Error, requestID: String, lane: String, to downstream: WebSocketPeer
 ) async throws {
   var envelope: [String: JSONValue] = [
-    "type": .string("error"),
+    "type": .string("error"), "status": .number(Decimal(protocolFailure(error).status)),
     "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
   ]
   if !lane.isEmpty { envelope["stream_id"] = .string(lane) }

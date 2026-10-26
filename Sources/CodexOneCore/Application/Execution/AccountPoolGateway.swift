@@ -18,8 +18,9 @@ public struct AccountPoolGateway: Sendable {
     coordinator = ExecutionCoordinator(store: store, finalizer: finalizer)
   }
   public func execute(
-    model: String, references: [ObjectBinding], connection: AccountRouteIdentity? = nil,
-    requestID: String? = nil, mode: ExecutionMode = .generation,
+    model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
+    connection: AccountRouteIdentity? = nil, requestID: String? = nil,
+    mode: ExecutionMode = .generation,
     requirements: ExecutionRequirements = .init(),
     operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
@@ -30,6 +31,11 @@ public struct AccountPoolGateway: Sendable {
       preparing: {
         let affinity = try await store.resolveAccountAffinity(
           principal: policy.key.principal, references: references, connection: connection)
+        // Soft history labels only prefer their account; they never exclude the rest of the pool.
+        let preferred =
+          affinity == nil && connection == nil && !affinityHints.isEmpty
+          ? try await store.resolveAccountHint(
+            principal: policy.key.principal, hints: affinityHints) : nil
         var works: [AccountRouteIdentity: AccountDispatchWork] = [:]
         var refreshable: [ManagedAccount] = []
         for account in try await store.listAccounts(after: nil) {
@@ -67,6 +73,7 @@ public struct AccountPoolGateway: Sendable {
             id: work.account.id, namespace: work.account.namespace)
           works[identity] = work
         }
+        if let preferred, let work = works[preferred] { works = [preferred: work] }
         guard !works.isEmpty else {
           throw refreshable.isEmpty
             ? AccountDispatchError.unavailable : AccountDispatchError.refreshRequired

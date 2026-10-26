@@ -1,5 +1,7 @@
 # 普通输出关联与请求参数验证
 
+> 2026-10-26：输出多视图关联与请求参数形状校验已随[开放协议透传](../changes/open-protocol-passthrough/proposal.md)移除，`verify_output_views.py` 不再存在；本页仅为当时证据。
+
 日期：2026-10-24。产品代码基线9dd0d07；由主Agent实现、自查提交后集中review并修复。行为见[协议](../specs/protocol.md)，外部固定来源及能力边界见[对照矩阵](text-protocol-matrix.md)。本页只保留验证依据，不代替[当前状态](../../STATUS.md)。
 
 ## 核查方法与关键结论

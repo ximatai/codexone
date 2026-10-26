@@ -335,6 +335,8 @@ public struct ResponsesDataService: Service {
                 if initialTurn == nil {
                   try? await sendWebSocketError(
                     error, requestID: requestID, lane: lane, to: downstream)
+                  // A provider error event ended only this turn; the pinned socket stays usable.
+                  if (error as? GatewayProtocolError)?.providerError != nil { continue }
                 }
                 throw error
               }
@@ -576,7 +578,7 @@ private actor ProtocolResponseWriter {
     guard !ended, let type = value["type"]?.string,
       type.utf8.count <= 128,
       type.utf8.allSatisfy({
-        (46...57).contains($0) || (65...90).contains($0) || (95...122).contains($0)
+        (45...57).contains($0) || (65...90).contains($0) || (95...122).contains($0)
       })
     else {
       throw GatewayProtocolError(502, "invalid_upstream_event")
@@ -607,7 +609,16 @@ private actor ProtocolResponseWriter {
     if !started {
       try await json(envelope, status: mapped.status)
     } else if streaming && !ended {
-      try await event(.object(["type": .string("error"), "error": envelope["error"]!]))
+      if mapped.providerError != nil {
+        // Clients interpret provider failures from the terminal response, as on a direct stream.
+        try await event(
+          .object([
+            "type": .string("response.failed"),
+            "response": .object(["status": .string("failed"), "error": envelope["error"]!]),
+          ]))
+      } else {
+        try await event(.object(["type": .string("error"), "error": envelope["error"]!]))
+      }
       try await write(.end(nil))
       ended = true
     } else {

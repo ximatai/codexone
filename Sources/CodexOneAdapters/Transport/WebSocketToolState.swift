@@ -12,8 +12,7 @@ final class WebSocketToolState: Sendable {
     else { return }
     value.withLock {
       $0 = .init(
-        responseID: id, model: request.model, functions: request.functionNames,
-        custom: request.customToolNames, usesResponsesLite: request.usesResponsesLite)
+        responseID: id, model: request.model, usesResponsesLite: request.usesResponsesLite)
     }
   }
 }

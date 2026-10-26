@@ -30,7 +30,8 @@ def main():
         config.chmod(0o600)
         process, ports = start(binary, config, root)
         try:
-            request = dict(model='synthetic-text', input=secret, unknown_field=secret)
+            # Gateway-owned rejections only: provider-state references, background and permissions.
+            request = dict(model='synthetic-text', input=secret, conversation=dict(id=secret))
             status, body = connect(ports['data'], 'POST', '/v1/responses', request)
             assert status == 400 and json.loads(body)['error']['code'] == 'unsupported_request'
             for document, code in [({'type': 'response.create', **request}, 'unsupported_request'),
@@ -41,10 +42,13 @@ def main():
                     event = json.loads(data)
                     assert opcode == 1 and event['type'] == 'error' and event['error']['code'] == code
                     assert 'stream_id' not in event and secret.encode() not in data
-            for reasoning in [[], {'private': secret}, {'effort': False}, {'summary': []}, {'summary': secret}]:
-                status, body = connect(ports['data'], 'POST', '/v1/responses', dict(model='synthetic-text', input=secret, reasoning=reasoning))
+            image = dict(type='additional_tools', role='developer', tools=[dict(type='image_generation')])
+            for extra, code in [(dict(background=True), 'unsupported_background'), (dict(generate=False), 'unsupported_request'),
+                                (dict(prompt=dict(id=secret)), 'unsupported_request'),
+                                (dict(input=[image]), 'unsupported_tools'), (dict(store='false'), 'invalid_request')]:
+                status, body = connect(ports['data'], 'POST', '/v1/responses', {**dict(model='synthetic-text', input=secret), **extra})
                 error = json.loads(body)['error']
-                assert status == 400 and error['code'] == 'unsupported_reasoning' and 'reason' not in error
+                assert status == 400 and error['code'] == code and 'reason' not in error, (extra, body)
             for _ in range(30):
                 assert connect(ports['data'], 'POST', '/backend-api/codex/responses', request)[0] == 400
             with sqlite3.connect(root / 'state/core.sqlite') as db:
@@ -62,9 +66,8 @@ def main():
             assert process.returncode == 0
             assert output.count(b'Protocol request rejected') == 16
             assert b'unsupported_request' in output and b'unsupported_websocket_control' in output
-            for reason in ['reasoning_object', 'reasoning_members', 'reasoning_effort', 'reasoning_summary_type', 'reasoning_summary_value']:
-                assert ('reason=' + reason).encode() in output
-            for value in [secret, TOKEN, 'unknown_field', 'synthetic-header', str(config)]:
+            assert b'reason=tools_image' in output
+            for value in [secret, TOKEN, 'synthetic-header', str(config)]:
                 assert value.encode() not in output
         finally:
             stop(process)

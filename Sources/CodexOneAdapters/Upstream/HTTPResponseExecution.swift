@@ -77,7 +77,8 @@ struct HTTPResponseExecution: Sendable {
     let wireStreaming = wireDocument["stream"]?.bool == true
     if configuration.upstreamTransport == "websocket" {
       try await gateway.execute(
-        model: request.admissionModel, references: request.references, requestID: requestID,
+        model: request.admissionModel, references: request.references,
+        affinityHints: request.affinityHints, requestID: requestID,
         mode: request.mode, requirements: request.requirements
       ) { context, authorization in
         try await withExecutionDeadline(seconds: configuration.budget.total) {
@@ -91,7 +92,8 @@ struct HTTPResponseExecution: Sendable {
       return
     }
     try await gateway.execute(
-      model: request.admissionModel, references: request.references, requestID: requestID,
+      model: request.admissionModel, references: request.references,
+      affinityHints: request.affinityHints, requestID: requestID,
       mode: request.mode, requirements: request.requirements
     ) { context, authorization in
       try await withProgressDeadline(budget: configuration.budget) { progress in
@@ -120,17 +122,7 @@ struct HTTPResponseExecution: Sendable {
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
         guard response.status == .ok else {
-          let rejection = upstreamRejection(status: response.status, headers: response.headers)
-          if response.status == .badRequest,
-            let bytes = try? await response.body.collect(upTo: 4096),
-            let document = try? JSONValue.decode(Data(bytes.readableBytesView)),
-            outputLimitUnsupported(document)
-          {
-            throw GatewayProtocolError(
-              rejection.status, rejection.code, detail: .upstreamOutputLimitUnsupported,
-              upstreamStatus: Int(response.status.code))
-          }
-          throw rejection
+          throw await ProviderError.failure(response: response)
         }
         if wireStreaming {
           let header = response.headers.first(name: "content-type")?
@@ -153,57 +145,41 @@ struct HTTPResponseExecution: Sendable {
             maximumEventBytes: request.requirements.imageModel == nil
               ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes,
             maximumTotalBytes: request.requirements.imageModel == nil
-              ? 8_388_608 : ImageLimits.responseBytes)
-          var compaction = StreamCompaction()
-          var outputViews = OrdinaryOutputViews()
+              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
           var responseID: String?
           var terminal = false
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
             for byte in chunk.readableBytesView {
               guard let event = try decoder.append(byte) else { continue }
-              guard !terminal else { throw GatewayProtocolError(502, "event_after_terminal") }
-              if try ProviderObservation.isIsolatedExtension(event) {
-                ProtocolFailureDiagnostics.recordIsolatedExtension(requestID: requestID)
-                continue
-              }
-              // An extension cannot establish identity; a foreign terminal cannot supply usage.
-              if [
-                "response.created", "response.in_progress", "response.completed", "response.failed",
-                "response.incomplete",
-              ].contains(event["type"]?.string ?? ""), let response = event["response"] {
-                guard let id = response["id"]?.string, !id.isEmpty, id.utf8.count <= 256,
+              guard !terminal else { break readUpstream }
+              let type = try ProviderObservation.eventType(event)
+              if type == "error" { throw ProviderObservation.providerFailure(event) }
+              // A foreign response cannot supply evidence to this attempt.
+              if ProviderObservation.lifecycleEvents.contains(type),
+                let response = event["response"]
+              {
+                guard let id = ProviderObservation.identifier(response["id"]),
                   responseID == nil || responseID == id
                 else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
                 responseID = id
               }
-              if let id = event["response_id"] {
-                guard let id = id.string, !id.isEmpty, id.utf8.count <= 256,
-                  responseID == nil || responseID == id
-                else {
-                  throw GatewayProtocolError(502, "invalid_upstream_turn")
-                }
-                responseID = id
+              if let id = event["response_id"],
+                id.string == nil
+                  || responseID.map({ $0 != id.string })
+                    == true
+              {
+                throw GatewayProtocolError(502, "invalid_upstream_turn")
               }
               // Trusted usage must survive later binding/output failures.
-              if ["response.completed", "response.failed", "response.incomplete"].contains(
-                event["type"]?.string ?? "")
-              {
+              if ProviderObservation.terminalEvents.contains(type) {
                 try request.observeUsage(
                   event["response"], context: context, model: model,
                   configuration: configuration.imageGeneration)
               }
               let observation = try ProviderObservation(
-                event: event, model: model, functionNames: request.functionNames,
-                customToolNames: request.customToolNames,
-                expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-                allowCompaction: request.streamCompaction,
-                allowImages: request.requirements.imageModel != nil)
-              if !request.streamCompaction && request.requirements.imageModel == nil {
-                try outputViews.observe(event)
-              }
+                event: event, model: model, allowImages: request.requirements.imageModel != nil)
               progress.note(event: event)
-              if request.streamCompaction { try compaction.observe(event) }
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
               terminal = observation.terminal
@@ -229,7 +205,7 @@ struct HTTPResponseExecution: Sendable {
           let body = try await collectProgressBody(
             response.body, progress: progress,
             maximum: request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
+              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.eventBytes)
           let document: JSONValue
           do {
             document = try JSONValue.decode(body)
@@ -244,15 +220,7 @@ struct HTTPResponseExecution: Sendable {
             "type": .string("response." + status!), "response": document,
           ])
           let observation = try ProviderObservation(
-            event: event, model: model, functionNames: request.functionNames,
-            customToolNames: request.customToolNames,
-            expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-            allowCompaction: request.streamCompaction,
-            allowImages: request.requirements.imageModel != nil)
-          if !request.streamCompaction && request.requirements.imageModel == nil {
-            var outputViews = OrdinaryOutputViews()
-            try outputViews.observe(event)
-          }
+            event: event, model: model, allowImages: request.requirements.imageModel != nil)
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
           try await emit(
@@ -305,16 +273,4 @@ func collectProgressBody(_ body: HTTPClientResponse.Body, progress: ExecutionPro
     data.append(contentsOf: chunk.readableBytesView)
   }
   return data
-}
-
-/// Recognize a fixed unsupported-limit condition without logging any provider error text.
-private func outputLimitUnsupported(_ document: JSONValue) -> Bool {
-  if document["error"]?["param"]?.string == "max_output_tokens",
-    document["error"]?["code"]?.string == "unsupported_parameter"
-  {
-    return true
-  }
-  let message = document["error"]?["message"]?.string ?? document["detail"]?.string
-  return ["Unsupported parameter: max_output_tokens", "Unsupported parameter: max_output_tokens."]
-    .contains(message ?? "")
 }

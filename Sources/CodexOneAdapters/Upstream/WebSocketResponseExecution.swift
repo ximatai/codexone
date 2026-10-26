@@ -14,7 +14,8 @@ extension HTTPResponseExecution {
     }
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     try await gateway.execute(
-      model: request.admissionModel, references: request.references, requestID: requestID,
+      model: request.admissionModel, references: request.references,
+      affinityHints: request.affinityHints, requestID: requestID,
       mode: request.mode, connection: connection, requirements: request.requirements
     ) { context, _ in
       try await exchange(
@@ -54,15 +55,12 @@ extension HTTPResponseExecution {
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
       try await peer.send(.object(create), normalizedImage: request.requirements.route == .images)
       var total = 0
-      var compaction = StreamCompaction()
-      var outputViews = OrdinaryOutputViews()
       while true {
         let data = try await peer.next(lane: lane)
-        guard
-          data.count
-            <= (request.requirements.imageModel == nil ? 8_388_608 : ImageLimits.responseBytes)
-            - total
-        else {
+        let limit =
+          request.requirements.imageModel == nil
+          ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
+        guard data.count <= limit - total else {
           throw GatewayProtocolError(502, "upstream_response_too_large")
         }
         total += data.count
@@ -80,51 +78,16 @@ extension HTTPResponseExecution {
         guard try webSocketLane(event) == lane else {
           throw GatewayProtocolError(502, "invalid_upstream_lane")
         }
-        if try ProviderObservation.isIsolatedExtension(event) {
-          ProtocolFailureDiagnostics.recordIsolatedExtension(
-            requestID: context.admission.requestID ?? context.admission.attempt)
-          continue
-        }
-        if ["response.completed", "response.failed", "response.incomplete"].contains(
-          event["type"]?.string ?? "")
-        {
+        let type = try ProviderObservation.eventType(event)
+        if type == "error" { throw ProviderObservation.providerFailure(event) }
+        if ProviderObservation.terminalEvents.contains(type) {
           try request.observeUsage(
             event["response"], context: context, model: model,
             configuration: configuration.imageGeneration)
         }
-        if request.mode == .warmup {
-          guard
-            [
-              "response.created", "response.in_progress", "response.completed", "response.failed",
-              "response.incomplete",
-            ].contains(event["type"]?.string ?? ""),
-            event["response"]?["output"] == nil || event["response"]?["output"]?.array == []
-          else { throw GatewayProtocolError(502, "invalid_upstream_warmup") }
-        }
-        let observation: ProviderObservation
-        do {
-          observation = try ProviderObservation(
-            event: event, model: model, functionNames: request.functionNames,
-            customToolNames: request.customToolNames,
-            expectedPreviousResponseID: request.document["previous_response_id"]?.string,
-            allowCompaction: request.streamCompaction,
-            allowImages: request.requirements.imageModel != nil)
-        } catch let error as GatewayProtocolError {
-          if error.detail == .upstreamResponsePolicy {
-            ProtocolFailureDiagnostics.recordResponsePolicyShape(
-              event, requestID: context.admission.requestID ?? context.admission.attempt)
-          }
-          throw error
-        }
-        if request.requirements.imageModel == nil && event["response"]?["tools"] == .null {
-          ProtocolFailureDiagnostics.recordNullableToolEcho(
-            requestID: context.admission.requestID ?? context.admission.attempt)
-        }
-        if !request.streamCompaction && request.requirements.imageModel == nil {
-          try outputViews.observe(event)
-        }
+        let observation = try ProviderObservation(
+          event: event, model: model, allowImages: request.requirements.imageModel != nil)
         progress.note(event: event)
-        if request.streamCompaction { try compaction.observe(event) }
         for object in observation.bindings { try await context.bind(object) }
         try observeTerminalOutcome(event, context: context)
         if request.streaming {

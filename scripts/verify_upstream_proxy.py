@@ -285,14 +285,15 @@ def main():
             process,ports=start(binary,config,root,upstream_proxy=f'http://127.0.0.1:{proxy.server_address[1]}')
             try:
                 status,body=connect(ports['data'],'POST','/v1/responses',dict(model='synthetic-text',input='synthetic rejection',max_output_tokens=128))
-                assert status==502;error=json.loads(body)['error'];assert error['code']=='upstream_rejected'
+                # The provider's actionable 400 reaches the client; its text never enters logs.
+                assert status==400;error=json.loads(body)['error'];assert error['code']=='unsupported_parameter' and error['param']=='max_output_tokens'
                 assert 'upstream_status' not in error and 'reason' not in error
                 process.terminate();process.wait(10);output=process.stdout.read()
-                assert b'upstream_status=400' in output and b'reason=upstream_output_limit_unsupported' in output
+                assert b'upstream_status=400' in output and b'provider_code=unsupported_parameter' in output
                 assert error['request_id'].encode() in output and b'synthetic-private-provider-error-never-log' not in output
                 assert ledger(root)==[('unknown',)]
             finally:stop(process)
-            print('PASS: proxy and provider rejections correlate by UUID with fixed status/reason, no provider text',flush=True)
+            print('PASS: proxy and provider rejections correlate by UUID; provider errors reach the client, never the logs',flush=True)
             # A successful CONNECT never weakens target TLS or permits the bearer to reach a bad certificate.
             tlsroot=owner/'tls';tlsroot.mkdir(mode=0o700)
             subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=synthetic.invalid',

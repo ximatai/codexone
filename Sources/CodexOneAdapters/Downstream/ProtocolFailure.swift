@@ -44,11 +44,12 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String) -> JSONValue {
   let message =
     UUID(uuidString: requestID) != nil
     ? "Gateway request failed. Reference: \(requestID)." : "Gateway request failed."
-  return .object([
-    "error": .object([
-      "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
-      "code": .string(mapped.code), "message": .string(message),
-      "request_id": .string(requestID),
-    ])
-  ])
+  var fields: [String: JSONValue] = [
+    "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
+    "code": .string(mapped.code), "message": .string(message),
+  ]
+  // Provider members win so clients see the same actionable error as a direct connection.
+  for (key, value) in mapped.providerError?.object ?? [:] { fields[key] = value }
+  fields["request_id"] = .string(requestID)
+  return .object(["error": .object(fields)])
 }

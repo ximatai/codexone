@@ -5,12 +5,15 @@ public struct ExecutionContext: Sendable {
   public let admission: ExecutionAdmission
   private let store: any ExecutionStore
   private let observation = UsageObservation()
+  private let bound = BoundObjects()
   init(admission: ExecutionAdmission, store: any ExecutionStore) {
     self.admission = admission
     self.store = store
   }
   /// The caller may expose rawID only after this returns successfully.
+  /// Repeated objects are bound once; beyond the per-attempt bound later objects stay unbound.
   public func bind(_ object: ObjectBinding) async throws {
+    guard bound.claim(object) else { return }
     try await store.bind(attempt: admission.attempt, object: object)
   }
   /// Record trusted usage before writing to downstream; subsequent transport errors cannot erase it.
@@ -21,6 +24,17 @@ public struct ExecutionContext: Sendable {
   }
   fileprivate func finishObservation() -> (UsageEvidence?, ExecutionOutcome?) {
     observation.finish()
+  }
+}
+
+private final class BoundObjects: Sendable {
+  static let maximum = 1024
+  private let objects = Mutex(Set<ObjectBinding>())
+  func claim(_ object: ObjectBinding) -> Bool {
+    objects.withLock {
+      guard $0.count < Self.maximum || $0.contains(object) else { return false }
+      return $0.insert(object).inserted
+    }
   }
 }
 

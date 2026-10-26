@@ -276,12 +276,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           "SELECT attempt FROM bindings WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
           values
         ) { String(cString: sqlite3_column_text($0, 0)) }
-        if let bound = matches.first {
-          guard bound == attempt else { throw ExecutionError.conflict }
-          return
-        }
-        guard try db.scalar("SELECT COUNT(*) FROM bindings WHERE attempt=?", [.text(attempt)]) < 32
-        else { throw ExecutionError.capacity }
+        // Retained history re-emits objects already owned by this principal and identity.
+        guard matches.isEmpty else { return }
         try db.write("INSERT INTO bindings VALUES(?,?,?,?,?,?)", values + [.text(attempt)])
       }
     }

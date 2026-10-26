@@ -46,8 +46,9 @@ enum ResponsesGateway: Sendable {
   case single(SingleIdentityGateway)
   case pool(AccountPoolGateway, SubscriptionOAuthProvider, SubscriptionDataTarget)
   func execute(
-    model: String, references: [ObjectBinding], requestID: String, mode: ExecutionMode,
-    connection: AccountRouteIdentity? = nil, requirements: ExecutionRequirements = .init(),
+    model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
+    requestID: String, mode: ExecutionMode, connection: AccountRouteIdentity? = nil,
+    requirements: ExecutionRequirements = .init(),
     operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
@@ -60,7 +61,8 @@ enum ResponsesGateway: Sendable {
       }
     case .pool(let gateway, let provider, let target):
       try await gateway.execute(
-        model: model, references: references, connection: connection, requestID: requestID,
+        model: model, references: references, affinityHints: affinityHints,
+        connection: connection, requestID: requestID,
         mode: mode, requirements: requirements
       ) { context, work in
         try await observeExecution(context) {

@@ -2,76 +2,16 @@ import CodexOneCore
 import Foundation
 
 enum ProtocolRejectionDetail: String, Sendable {
-  case reasoningObject = "reasoning_object"
-  case reasoningMembers = "reasoning_members"
   case reasoningEffort = "reasoning_effort"
-  case reasoningSummaryType = "reasoning_summary_type"
-  case reasoningSummaryValue = "reasoning_summary_value"
-  case reasoningContext = "reasoning_context"
-  case toolsContainer = "tools_container"
-  case toolsCount = "tools_count"
-  case toolsName = "tools_name"
-  case toolsDescription = "tools_description"
-  case toolsDescriptionNull = "tools_description_null"
-  case toolsDescriptionSize = "tools_description_size"
-  case toolsBoolean = "tools_boolean"
-  case toolsNamespace = "tools_namespace"
-  case toolsMembers = "tools_members"
-  case toolsDuplicate = "tools_duplicate"
-  case toolsGrammar = "tools_grammar"
-  case toolsType = "tools_type"
-  case toolsBuiltinSearch = "tools_builtin_search"
-  case toolsDiscovery = "tools_discovery"
-  case toolsRemoteMCP = "tools_remote_mcp"
-  case toolsChoice = "tools_choice"
-  case toolsPackage = "tools_package"
   case toolsImage = "tools_image"
-  case upstreamResponsePolicy = "upstream_response_policy"
-  case upstreamResponsePrevious = "upstream_response_previous"
-  case upstreamResponseString = "upstream_response_string"
-  case upstreamResponseInstructions = "upstream_response_instructions"
-  case upstreamTerminalStatus = "upstream_terminal_status"
-  case upstreamUsageTotal = "upstream_usage_total"
-  case upstreamOutputIdentity = "upstream_output_identity"
-  case upstreamOutputValue = "upstream_output_value"
-  case upstreamOutputCapacity = "upstream_output_capacity"
   case upstreamTurnLifecycle = "upstream_turn_lifecycle"
   case upstreamTurnCreated = "upstream_turn_created"
   case upstreamTurnResponseID = "upstream_turn_response_id"
-  case upstreamTurnItemID = "upstream_turn_item_id"
-  case upstreamTurnMissingItemID = "upstream_turn_missing_item_id"
-  case upstreamTurnUnknownItemID = "upstream_turn_unknown_item_id"
-  case upstreamTurnProviderError = "upstream_turn_provider_error"
-  case upstreamTurnProviderStream = "upstream_turn_provider_stream"
-  case upstreamTurnProviderReasoningSummary = "upstream_turn_provider_reasoning_summary"
-  case upstreamTurnProviderAuthentication = "upstream_turn_provider_authentication"
-  case upstreamTurnProviderRateLimit = "upstream_turn_provider_rate_limit"
   case downstreamJSONWrite = "downstream_json_write"
-  case upstreamResponseBoolean = "upstream_response_boolean"
-  case upstreamResponseCreated = "upstream_response_created"
-  case upstreamResponseIncomplete = "upstream_response_incomplete"
-  case upstreamItemType = "upstream_item_type"
-  case upstreamItemStatus = "upstream_item_status"
-  case upstreamItemName = "upstream_item_name"
-  case upstreamItemNamespace = "upstream_item_namespace"
-  case upstreamMessageRole = "upstream_message_role"
-  case upstreamMessageContent = "upstream_message_content"
-  case upstreamReasoningContent = "upstream_reasoning_content"
-  case upstreamReasoningSummary = "upstream_reasoning_summary"
-  case upstreamOpaqueContext = "upstream_opaque_context"
-  case upstreamUsageContainer = "upstream_usage_container"
-  case upstreamUsageCapacity = "upstream_usage_capacity"
-  case upstreamUsageDetails = "upstream_usage_details"
-  case upstreamUsageDetailsCapacity = "upstream_usage_details_capacity"
-  case upstreamUsageCount = "upstream_usage_count"
   case upstreamEvent = "upstream_event"
-  case upstreamItemMembers = "upstream_item_members"
-  case upstreamMessagePhase = "upstream_message_phase"
-  case upstreamPart = "upstream_part"
   case upstreamMediaTypeJSON = "upstream_media_type_json"
   case upstreamMediaTypeHTML = "upstream_media_type_html"
   case upstreamMediaTypeOther = "upstream_media_type_other"
-  case upstreamOutputLimitUnsupported = "upstream_output_limit_unsupported"
 }
 
 struct GatewayProtocolError: Error, Sendable {
@@ -80,27 +20,34 @@ struct GatewayProtocolError: Error, Sendable {
   let cooldownSeconds: Int64?
   let detail: ProtocolRejectionDetail?
   let upstreamStatus: Int?
+  /// Sanitized provider error members forwarded so clients can apply their own error handling.
+  let providerError: JSONValue?
   init(
     _ status: Int, _ code: String, cooldownSeconds: Int64? = nil,
-    detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil
+    detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil,
+    providerError: JSONValue? = nil
   ) {
     self.upstreamStatus = upstreamStatus
     self.detail = detail
     self.cooldownSeconds = cooldownSeconds
     self.status = status
     self.code = code
+    self.providerError = providerError
   }
 }
 
 struct ResponseRequest: Sendable {
   static let liteMetadataKey = "ws_request_header_x_openai_internal_codex_responses_lite"
+  /// Most recent soft references kept for account affinity; older history adds no routing value.
+  static let maximumAffinityHints = 64
   var requirements = ExecutionRequirements()
   var admissionModel: String { requirements.route == .images ? requirements.imageModel! : model }
   let model: String
   let streaming: Bool
+  /// References that read provider-side state; each must be owned by the caller.
   let references: [ObjectBinding]
-  let functionNames: Set<String>
-  let customToolNames: Set<String>
+  /// Opaque client history labels used only to keep pooled continuations on their account.
+  let affinityHints: [ObjectBinding]
   let mode: ExecutionMode
   let streamCompaction: Bool
   let usesResponsesLite: Bool
@@ -126,6 +73,8 @@ struct ResponseRequest: Sendable {
       imageConfiguration: imageConfiguration, maximumBytes: ImageLimits.normalizedRequestBytes,
       previousTools: nil)
   }
+  /// Only the gateway's own responsibilities are enforced here: permissions, bounded size,
+  /// provider-state references and execution mode. Everything else is the provider's contract.
   private init(
     data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?, maximumBytes: Int,
     previousTools: ClientToolSnapshot?
@@ -138,154 +87,66 @@ struct ResponseRequest: Sendable {
       throw GatewayProtocolError(400, "invalid_json")
     }
     guard var fields = document.object else { throw GatewayProtocolError(400, "invalid_request") }
-    let allowed: Set<String> = [
-      "model", "input", "instructions", "tools", "tool_choice", "parallel_tool_calls",
-      "reasoning", "text", "temperature", "top_p", "max_output_tokens", "store", "stream",
-      "previous_response_id",
-      "service_tier", "truncation", "include", "metadata", "prompt_cache_key",
-      "prompt_cache_retention", "background", "client_metadata", "stream_options",
-    ]
-    let compactAllowed: Set<String> = [
-      "model", "input", "instructions", "previous_response_id", "prompt_cache_key",
-      "prompt_cache_retention", "service_tier",
-    ]
-    guard fields.keys.allSatisfy((mode == .compact ? compactAllowed : allowed).contains),
-      let model = fields["model"]?.string,
-      !model.isEmpty, model.utf8.count <= 128
-    else { throw GatewayProtocolError(400, "unsupported_request") }
-    for key in ["tool_choice", "parallel_tool_calls"] where fields[key] == .null {
-      fields.removeValue(forKey: key)
+    guard let model = fields["model"]?.string, !model.isEmpty, model.utf8.count <= 128 else {
+      throw GatewayProtocolError(400, "unsupported_request")
     }
-    for boolean in ["store", "stream", "background", "parallel_tool_calls"] {
-      if let value = fields[boolean], value.bool == nil {
+    for boolean in ["store", "stream", "background"] {
+      if let value = fields[boolean], value != .null, value.bool == nil {
         throw GatewayProtocolError(400, "invalid_request")
       }
     }
     guard fields["background"]?.bool != true else {
       throw GatewayProtocolError(400, "unsupported_background")
     }
-    try Self.validateParameters(fields)
+    // Server-stored conversations and prompts cannot be proven to belong to this caller;
+    // generate is a WS-only warmup control removed before this point.
+    for key in ["conversation", "prompt", "generate"]
+    where fields[key] != nil && fields[key] != .null {
+      throw GatewayProtocolError(400, "unsupported_request")
+    }
     self.model = model
     self.streaming = fields["stream"]?.bool == true
     var references: [ObjectBinding] = []
+    var hints: [ObjectBinding] = []
     if let previous = fields["previous_response_id"], previous != .null {
       guard let id = previous.string, !id.isEmpty, id.utf8.count <= 256 else {
         throw GatewayProtocolError(400, "invalid_reference")
       }
       references.append(.init(type: "response", rawID: id))
     }
-    if let reasoning = fields["reasoning"], reasoning != .null {
-      guard let reasoningFields = reasoning.object else {
-        throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningObject)
-      }
-      guard reasoningFields.keys.allSatisfy({ ["effort", "summary", "context"].contains($0) })
-      else {
-        throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningMembers)
-      }
-      if let effort = reasoningFields["effort"], effort != .null {
-        guard
-          effort.string.map({ !$0.isEmpty && $0.utf8.count <= 32 }) == true
-            || effort.integer.map({ (0...1_000_000).contains($0) }) == true
-        else { throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningEffort) }
-      }
-      if let summary = reasoningFields["summary"], summary != .null {
-        guard let summary = summary.string else {
-          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningSummaryType)
-        }
-        guard ["auto", "concise", "detailed", "none"].contains(summary) else {
-          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningSummaryValue)
-        }
-      }
-      if let context = reasoningFields["context"], context != .null {
-        guard ["auto", "current_turn", "all_turns"].contains(context.string ?? "") else {
-          throw GatewayProtocolError(400, "unsupported_reasoning", detail: .reasoningContext)
-        }
-      }
-      // Optional null members mean unspecified; never broaden the accepted field set.
-      fields["reasoning"] = .object(reasoningFields.filter { $0.value != .null })
+    // Known nullable optional members mean unspecified; strip only those nulls.
+    if let reasoning = fields["reasoning"]?.object {
+      fields["reasoning"] = .object(reasoning.filter { $0.value != .null })
     }
-    for key in ["metadata", "client_metadata"] {
-      if let metadata = fields[key], metadata != .null {
-        guard let values = metadata.object, values.count <= 32,
-          values.allSatisfy({
-            $0.key.utf8.count <= 128 && ($0.value.string?.utf8.count ?? 1025) <= 1024
-          })
-        else { throw GatewayProtocolError(400, "unsupported_metadata") }
+    if let text = fields["text"]?.object {
+      fields["text"] = .object(
+        text.filter { !(["verbosity", "format"].contains($0.key) && $0.value == .null) })
+    }
+    for key in ["tool_choice", "parallel_tool_calls"] where fields[key] == .null {
+      fields.removeValue(forKey: key)
+    }
+    let input = fields["input"]
+    guard input != nil, input != .null else { throw GatewayProtocolError(400, "invalid_input") }
+    let items = input?.array ?? []
+    // Image generation stays a permissioned, top-level declaration only.
+    let topLevelTools = fields["tools"]?.array ?? []
+    let packages = items.filter { $0["type"]?.string == "additional_tools" }
+    func nestedImageTool(_ tools: [JSONValue]) -> Bool {
+      tools.contains {
+        $0["type"]?.string == "image_generation"
+          || ($0["type"]?.string == "namespace" && nestedImageTool($0["tools"]?.array ?? []))
       }
     }
-    for key in [
-      "instructions", "service_tier", "prompt_cache_key", "prompt_cache_retention", "truncation",
-    ] {
-      if let value = fields[key], value != .null, value.string == nil {
-        throw GatewayProtocolError(400, "unsupported_request")
-      }
-    }
-    if let text = fields["text"], text != .null {
-      guard text.object?.keys.allSatisfy({ ["verbosity", "format"].contains($0) }) == true else {
-        throw GatewayProtocolError(400, "unsupported_text")
-      }
-      let text = JSONValue.object(
-        text.object!.filter {
-          !(["verbosity", "format"].contains($0.key) && $0.value == .null)
-        })
-      fields["text"] = text
-      if let verbosity = text["verbosity"] {
-        guard ["low", "medium", "high"].contains(verbosity.string ?? "") else {
-          throw GatewayProtocolError(400, "unsupported_text")
-        }
-      }
-      if let format = text["format"] {
-        let type = format["type"]?.string ?? ""
-        let keys: Set<String> =
-          type == "json_schema" ? ["type", "name", "schema", "strict", "description"] : ["type"]
-        guard ["text", "json_object", "json_schema"].contains(type),
-          format.object?.keys.allSatisfy(keys.contains) == true
-        else { throw GatewayProtocolError(400, "unsupported_text") }
-        if type == "json_schema" {
-          guard format["name"]?.string != nil, format["schema"]?.object != nil,
-            format["strict"] == nil || format["strict"]?.bool != nil
-          else { throw GatewayProtocolError(400, "unsupported_text") }
-        }
-      }
-    }
-    let imageTools =
-      fields["tools"]?.array?.filter { $0["type"]?.string == "image_generation" } ?? []
-    guard imageTools.count <= 1, imageTools.isEmpty || mode == .generation else {
-      throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
-    }
+    let imageTools = topLevelTools.filter { $0["type"]?.string == "image_generation" }
+    guard imageTools.count <= 1, imageTools.isEmpty || mode == .generation,
+      !topLevelTools.contains(where: {
+        $0["type"]?.string == "namespace" && nestedImageTool($0["tools"]?.array ?? [])
+      }),
+      !packages.contains(where: { nestedImageTool($0["tools"]?.array ?? []) })
+    else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage) }
     let imageTool = try imageTools.first.map {
       try ImageToolRequest($0, configuration: imageConfiguration, host: model)
     }
-    guard let input = fields["input"] else { throw GatewayProtocolError(400, "invalid_input") }
-    if let items = input.array, items.count > 256 {
-      throw GatewayProtocolError(400, "invalid_input")
-    }
-    // Inspect every declaration before admitting calls. Keep the original wire locations intact.
-    let packages = input.array?.filter { $0["type"]?.string == "additional_tools" } ?? []
-    var declarations: [JSONValue] = []
-    if let value = fields["tools"] {
-      guard let list = value.array else {
-        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsContainer)
-      }
-      guard list.count <= 64 else {
-        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsCount)
-      }
-      declarations = list
-    }
-    for package in packages {
-      guard
-        package.object?.keys.allSatisfy({ ["type", "role", "tools", "id"].contains($0) }) == true,
-        package["role"]?.string == "developer", let list = package["tools"]?.array
-      else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsPackage) }
-      guard list.count <= 64 - declarations.count else {
-        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsCount)
-      }
-      guard !list.contains(where: { $0["type"]?.string == "image_generation" }) else {
-        throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
-      }
-      declarations += list
-    }
-    let tools = try ClientTools(.array(declarations))
     let inherited =
       fields["tools"] == nil && packages.isEmpty
         && previousTools?.model == model
@@ -295,215 +156,58 @@ struct ResponseRequest: Sendable {
       !packages.isEmpty
       || fields["client_metadata"]?[Self.liteMetadataKey]?.string == "true"
       || inherited?.usesResponsesLite == true
-    if usesResponsesLite, let metadata = fields["client_metadata"]?.object,
-      metadata[Self.liteMetadataKey] == nil, metadata.count >= 32
-    {
-      throw GatewayProtocolError(400, "unsupported_client_metadata")
-    }
-    self.functionNames = inherited?.functions ?? tools.functions
-    self.customToolNames = inherited?.custom ?? tools.custom
-    if let options = fields["stream_options"] {
-      guard let values = options.object, !values.isEmpty,
-        values.keys.allSatisfy({ ["include_usage", "reasoning_summary_delivery"].contains($0) }),
-        values["include_usage"] == nil || values["include_usage"]?.bool != nil,
-        values["reasoning_summary_delivery"] == nil
-          || values["reasoning_summary_delivery"]?.string == "sequential_cutoff"
-      else { throw GatewayProtocolError(400, "unsupported_stream_options") }
-    }
-    if let choice = fields["tool_choice"] {
-      if let mode = choice.string {
-        guard ["auto", "none", "required"].contains(mode) else {
-          throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice)
-        }
-      } else if choice == .object(["type": .string("image_generation")]), imageTool != nil {
-        // The only built-in tool enabled in this slice.
-      } else {
-        guard let name = choice["name"]?.string,
-          choice["namespace"] == nil || choice["namespace"]?.string != nil,
-          choice.object?.keys.allSatisfy({ ["type", "name", "namespace"].contains($0) }) == true
-        else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice) }
-        let key = try ClientTools.key(name: name, namespace: choice["namespace"]?.string)
-        guard
-          choice["type"]?.string == "function" && functionNames.contains(key)
-            || choice["type"]?.string == "custom" && customToolNames.contains(key)
-        else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsChoice) }
-      }
-    }
-    if let include = fields["include"] {
-      guard let includes = include.array, includes.count <= 1,
-        includes.allSatisfy({ $0.string == "reasoning.encrypted_content" })
-      else { throw GatewayProtocolError(400, "unsupported_include") }
-    }
     var streamCompaction = false
     var visionInput = false
-    var imageBytes = 0
-    var imagePixels = 0
-    var imageCount = 0
-    var firstImage: ImagePayload?
-    if input.string == nil {
-      guard let items = input.array, items.count <= 256 else {
-        throw GatewayProtocolError(400, "invalid_input")
+    var firstImageURL: String?
+    func scanImages(_ value: JSONValue?) {
+      guard let parts = value?.array else { return }
+      for part in parts where part["type"]?.string == "input_image" {
+        visionInput = true
+        if firstImageURL == nil { firstImageURL = part["image_url"]?.string }
       }
-      for (index, item) in items.enumerated() {
-        guard let object = item.object else { throw GatewayProtocolError(400, "invalid_input") }
-        let type = object["type"]?.string ?? "message"
-        if let declared = object["type"], declared.string == nil {
-          throw GatewayProtocolError(400, "unsupported_input")
+    }
+    func hint(_ binding: ObjectBinding) {
+      hints.removeAll { $0 == binding }
+      hints.append(binding)
+      if hints.count > Self.maximumAffinityHints { hints.removeFirst() }
+    }
+    for (index, item) in items.enumerated() {
+      guard let object = item.object else { continue }
+      let type = object["type"]?.string ?? "message"
+      switch type {
+      case "compaction_trigger":
+        guard mode == .generation, !streamCompaction, index == items.count - 1, object.count == 1
+        else {
+          throw GatewayProtocolError(400, "unsupported_compaction_trigger")
         }
-        if let status = object["status"], status != .null {
-          guard
-            ["in_progress", "completed", "incomplete", "failed", "cancelled"].contains(
-              status.string ?? "")
-          else { throw GatewayProtocolError(400, "unsupported_input") }
+        streamCompaction = true
+      case "item_reference":
+        guard let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256 else {
+          throw GatewayProtocolError(400, "invalid_reference")
         }
-        if let name = object["name"], name != .null {
-          guard let name = name.string, (try? ClientTools.key(name: name)) != nil else {
-            throw GatewayProtocolError(400, "unsupported_input")
-          }
-        }
-        switch type {
-        case "additional_tools":
-          break  // Strict declaration validation above; never a remote object.
-        case "compaction_trigger":
-          guard mode == .generation, !streamCompaction, index == items.count - 1,
-            object.count == 1
-          else { throw GatewayProtocolError(400, "unsupported_compaction_trigger") }
-          streamCompaction = true
-        case "message":
-          guard let role = object["role"]?.string,
-            ["user", "assistant", "system", "developer"].contains(role),
-            let content = object["content"]
-          else { throw GatewayProtocolError(400, "invalid_input") }
-          if content.string == nil {
-            guard let parts = content.array, parts.count <= 128 else {
-              throw GatewayProtocolError(400, "unsupported_input")
-            }
-            for part in parts where part["type"]?.string == "input_image" {
-              guard role == "user",
-                part.object?.keys.allSatisfy({ ["type", "image_url", "detail"].contains($0) })
-                  == true,
-                let url = part["image_url"]?.string,
-                part["detail"] == nil
-                  || ["auto", "low", "high", "original"].contains(part["detail"]?.string ?? "")
-              else { throw GatewayProtocolError(400, "invalid_image") }
-              let image = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
-              imageBytes += image.bytes.count
-              imagePixels += image.width * image.height
-              imageCount += 1
-              guard imageBytes <= ImageLimits.totalImageBytes, imagePixels <= 33_554_432,
-                imageCount <= 4
-              else { throw GatewayProtocolError(413, "image_input_too_large") }
-              if firstImage == nil { firstImage = image }
-              visionInput = true
-            }
-            guard
-
-              parts.allSatisfy({ part in
-                let type = part["type"]?.string ?? ""
-                if type == "input_image" { return true }
-                let keys: Set<String> =
-                  type == "refusal"
-                  ? ["type", "refusal"] : ["type", "text", "annotations", "logprobs"]
-                return ["input_text", "output_text", "refusal"].contains(type)
-                  && (type == "refusal" ? part["refusal"]?.string : part["text"]?.string) != nil
-                  && (part["annotations"] == nil || part["annotations"]?.array == [])
-                  && (part["logprobs"] == nil || part["logprobs"] == .null
-                    || part["logprobs"]?.array == [])
-                  && part.object?.keys.allSatisfy(keys.contains) == true
-              })
-            else {
-              throw GatewayProtocolError(400, "unsupported_input")
-            }
-          }
-        case "function_call_output", "custom_tool_call_output":
-          guard let id = object["call_id"]?.string, !id.isEmpty, id.utf8.count <= 256,
-            object["output"]?.string != nil
-          else { throw GatewayProtocolError(400, "invalid_input") }
-          references.append(.init(type: "function_call", rawID: id))
-        case "function_call", "custom_tool_call":
-          guard let name = object["name"]?.string,
-            (type == "function_call" ? object["arguments"]?.string : object["input"]?.string)
-              != nil,
-            let id = object["call_id"]?.string, !id.isEmpty, id.utf8.count <= 256
-          else { throw GatewayProtocolError(400, "invalid_input") }
-          _ = try ClientTools.key(name: name, namespace: object["namespace"]?.string)
-          references.append(.init(type: "function_call", rawID: id))
-        case "reasoning", "compaction":
-          if let binding = try opaqueContext(object["encrypted_content"], kind: type) {
-            references.append(binding)
-          } else if type != "reasoning" || object["id"]?.string == nil {
-            throw GatewayProtocolError(400, "invalid_private_context")
-          }
-          if let content = object["content"], content != .null {
-            guard type == "reasoning", let parts = content.array, parts.count <= 128,
-              parts.allSatisfy({
-                $0["type"]?.string == "reasoning_text" && $0["text"]?.string != nil
-                  && $0.object?.keys.allSatisfy({ ["type", "text"].contains($0) }) == true
-              })
-            else { throw GatewayProtocolError(400, "unsupported_input") }
-          }
-          if let summary = object["summary"] {
-            guard type == "reasoning", let parts = summary.array, parts.count <= 128,
-              parts.allSatisfy({
-                $0["type"]?.string == "summary_text" && $0["text"]?.string != nil
-                  && $0.object?.keys.allSatisfy({ ["type", "text"].contains($0) }) == true
-              })
-            else { throw GatewayProtocolError(400, "unsupported_input") }
-          }
-        case "image_generation_call":
-          guard imageTool != nil, let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256
-          else { throw GatewayProtocolError(400, "invalid_reference") }
-          references.append(.init(type: "item", rawID: id))
-        case "item_reference":
-          guard let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256 else {
-            throw GatewayProtocolError(400, "invalid_reference")
-          }
-          references.append(.init(type: "item", rawID: id))
-        default: throw GatewayProtocolError(400, "unsupported_input")
-        }
-        // File, conversation and other private references are not allowed as unknown fields.
-        let fieldsByType: [String: Set<String>] = [
-          "additional_tools": ["role", "tools"],
-          "message": ["role", "content", "phase"],
-          "function_call": ["name", "arguments", "call_id", "namespace"],
-          "custom_tool_call": ["name", "input", "call_id", "namespace"],
-          "function_call_output": ["name", "output", "call_id", "namespace"],
-          "custom_tool_call_output": ["name", "output", "call_id", "namespace"],
-          "reasoning": ["summary", "content", "encrypted_content"],
-          "compaction": ["encrypted_content"],
-          "compaction_trigger": [],
-          "item_reference": [],
-          "image_generation_call": [],
-        ]
-        let allowedItem = fieldsByType[type, default: []].union(["type", "id", "status"])
-        guard object.keys.allSatisfy(allowedItem.contains) else {
-          throw GatewayProtocolError(400, "unsupported_input")
-        }
-        if let namespaceValue = object["namespace"] {
-          guard let namespace = namespaceValue.string else {
-            throw GatewayProtocolError(400, "unsupported_input")
-          }
-          _ = try ClientTools.key(name: object["name"]?.string ?? "output", namespace: namespace)
-        }
-        if let phase = object["phase"], phase != .null {
-          guard type == "message",
-            ["analysis", "commentary", "final_answer"].contains(phase.string ?? "")
-          else { throw GatewayProtocolError(400, "unsupported_input") }
-        }
-        if let idValue = object["id"] {
-          guard let id = idValue.string, !id.isEmpty, id.utf8.count <= 256 else {
-            throw GatewayProtocolError(400, "invalid_reference")
-          }
-          let completeContext =
-            ["reasoning", "compaction"].contains(type)
-            && object["encrypted_content"]?.string != nil
-          if !["message", "function_call_output", "custom_tool_call_output", "additional_tools"]
-            .contains(type)
-            && !completeContext
-          {
-            references.append(.init(type: "item", rawID: id))
-          }
-        }
+        references.append(.init(type: "item", rawID: id))
+        continue
+      // An item named only by ID makes the provider read stored state, like item_reference.
+      case "image_generation_call" where object["result"]?.string == nil,
+        "reasoning" where object["encrypted_content"]?.string == nil:
+        guard let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256 else { break }
+        references.append(.init(type: "item", rawID: id))
+        continue
+      default: break
+      }
+      if type == "message" { scanImages(object["content"]) }
+      scanImages(object["output"])
+      if let call = object["call_id"]?.string, !call.isEmpty, call.utf8.count <= 256 {
+        hint(.init(type: "function_call", rawID: call))
+      }
+      if ["reasoning", "compaction"].contains(type),
+        let binding = try? opaqueContext(object["encrypted_content"], kind: type)
+      {
+        hint(binding)
+      } else if let id = object["id"]?.string, !id.isEmpty, id.utf8.count <= 256,
+        !Self.localLabelTypes.contains(type)
+      {
+        hint(.init(type: "item", rawID: id))
       }
     }
     let uniqueReferences = references.reduce(into: [ObjectBinding]()) { result, reference in
@@ -513,17 +217,12 @@ struct ResponseRequest: Sendable {
       throw GatewayProtocolError(400, "too_many_references")
     }
     if let mask = imageTool?.document["input_image_mask"] {
-      guard mask.object?.count == 1, let url = mask["image_url"]?.string, let firstImage else {
+      guard mask.object?.count == 1, let url = mask["image_url"]?.string, let firstImageURL else {
         throw GatewayProtocolError(400, "invalid_mask")
       }
+      let image = try ImagePayload(dataURL: firstImageURL, maximumBytes: ImageLimits.imageBytes)
       let payload = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
-      guard imageBytes + payload.bytes.count <= ImageLimits.totalImageBytes else {
-        throw GatewayProtocolError(413, "image_input_too_large")
-      }
-      try payload.validateMask(for: firstImage)
-    }
-    guard data.count <= 524_288 || visionInput || imageTool != nil else {
-      throw GatewayProtocolError(413, "request_too_large")
+      try payload.validateMask(for: image)
     }
     guard !(streamCompaction || mode == .compact) || (!visionInput && imageTool == nil) else {
       throw GatewayProtocolError(400, "unsupported_image_compaction")
@@ -531,18 +230,18 @@ struct ResponseRequest: Sendable {
     requirements = try .init(
       route: .conversation, visionInput: visionInput, imageModel: imageTool?.model.id)
     self.references = uniqueReferences
+    self.affinityHints = hints.filter { !uniqueReferences.contains($0) }
     self.streamCompaction = streamCompaction
     self.mode = streamCompaction ? .compact : mode
     // Inline message/result IDs are local client correlation labels, not provider references.
     // Remove them at the boundary so a guessed ID cannot make an inline item retrieve private state.
     var upstreamFields = fields
-    if let items = input.array {
+    if let items = input?.array {
       upstreamFields["input"] = .array(
         items.map { item in
-          var object = item.object!
+          guard var object = item.object else { return item }
           let type = object["type"]?.string ?? "message"
-          if ["message", "function_call_output", "custom_tool_call_output", "additional_tools"]
-            .contains(type)
+          if Self.localLabelTypes.contains(type)
             || (["reasoning", "compaction"].contains(type)
               && object["encrypted_content"]?.string != nil)
           {
@@ -557,4 +256,8 @@ struct ResponseRequest: Sendable {
     }
     self.document = .object(upstreamFields)
   }
+
+  private static let localLabelTypes: Set<String> = [
+    "message", "function_call_output", "custom_tool_call_output", "additional_tools",
+  ]
 }

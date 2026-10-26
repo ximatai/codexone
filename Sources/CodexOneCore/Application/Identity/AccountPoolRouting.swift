@@ -117,4 +117,13 @@ public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
     principal: String, references: [ObjectBinding], connection: AccountRouteIdentity?
   ) async throws -> AccountRouteIdentity?
   func admitSelectingAccount(_ command: AccountPoolAdmission) async throws -> ExecutionAdmission
+  /// The account owning the most recent resolvable soft history label, if any.
+  func resolveAccountHint(principal: String, hints: [ObjectBinding]) async throws
+    -> AccountRouteIdentity?
+}
+
+extension AccountRoutingStore {
+  public func resolveAccountHint(principal: String, hints: [ObjectBinding]) async throws
+    -> AccountRouteIdentity?
+  { nil }
 }

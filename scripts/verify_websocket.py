@@ -52,7 +52,7 @@ def receive(sock, *, masked=False):
         length = struct.unpack('!H', exact(sock, 2))[0]
     elif length == 127:
         length = struct.unpack('!Q', exact(sock, 8))[0]
-    assert length <= 524288
+    assert length <= 9437184
     key = exact(sock, 4) if masked else None
     data = exact(sock, length)
     if key:
@@ -304,16 +304,14 @@ def main():
                         events = turn(downstream, {'model': 'synthetic-text', 'input': prompt})
                         assert events[-1]['type'] == 'response.completed'
                         time.sleep(0.1)
-                        try:
-                            events = turn(downstream, {'model': 'synthetic-text', 'input': 'new-turn'})
-                            assert events[-1]['type'] == 'error'
-                            assert 'OLD_TURN_TRAILING_SYNTHETIC' not in json.dumps(events)
-                        except (EOFError, BrokenPipeError, ConnectionResetError):
-                            pass
+                        # Stale events of the finished turn are dropped; the next turn is unaffected.
+                        events = turn(downstream, {'model': 'synthetic-text', 'input': 'new-turn'})
+                        assert events[-1]['type'] == 'response.completed', events
+                        assert 'OLD_TURN_TRAILING_SYNTHETIC' not in json.dumps(events)
                     latest(db, 'settled')
                     with sqlite3.connect(db) as connection:
                         after = connection.execute('SELECT count(*) FROM attempts WHERE state="settled"').fetchone()[0]
-                    assert after == before + 1, 'An old terminal settled a different turn'
+                    assert after == before + 2, 'An old terminal settled a different turn'
                 with dial(ports['data']) as downstream:
                     count = provider.calls
                     events = turn(downstream, {'model': 'synthetic-text', 'input': 'unknown-ref', 'previous_response_id': 'unknown-synthetic-response'})

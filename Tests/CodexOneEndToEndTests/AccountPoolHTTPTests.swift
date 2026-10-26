@@ -1047,7 +1047,8 @@ func poolHTTPExplicitProviderStatusesPersistHealthAndStopNewDispatchWithoutRepla
   for status in [401, 429, 503, 400] {
     try await withPoolHTTP { h in
       let response = try await h.request("http\(status)")
-      #expect(response.0 == (status == 429 ? 429 : 502))
+      // Actionable provider statuses reach the client; the gateway credential failure does not.
+      #expect(response.0 == (status == 401 ? 502 : status))
       try await awaitOAuth { h.finalizer.outstanding == 0 }
       let selected = try #require(h.calls.first?.account).replacingOccurrences(
         of: "synthetic-", with: "")
@@ -1269,7 +1270,7 @@ func poolNativeRequestParametersRejectBeforeFirstAdmissionOrUpstreamHandshake() 
       ["store": .bool(true)], ["max_output_tokens": .number(128)],
       ["temperature": .number(1)], ["top_p": .number(1)],
       ["truncation": .string("disabled")], ["metadata": .object(["label": .string("synthetic")])],
-      ["prompt_cache_retention": .string("24h")], ["service_tier": .string("flex")],
+      ["prompt_cache_retention": .string("24h")],
     ] {
       let client = try PoolWSClient(h)
       #expect(try await client.read()["ready"]?.bool == true)

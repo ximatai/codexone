@@ -100,52 +100,18 @@ def main():
                             done=turn(sock,dict(model=MODEL,input=[dict(type='function_call_output',call_id='call_lite',output='synthetic-result')],
                                 previous_response_id=called['id']))
                             assert done[-1]['type']=='response.completed'
-                            calls=server.sequence;before=counts(root)
-                            send(sock,dict(type='response.create',stream_id='synthetic-other-lane',model=MODEL,input=[],
-                                previous_response_id=done[-1]['response']['id'],
-                                tool_choice=dict(type='function',name='synthetic_echo')),masked=True)
-                            event=json.loads(receive(sock)[1])
-                            assert event['type']=='error' and event['stream_id']=='synthetic-other-lane'
-                            assert server.sequence==calls and counts(root)==before
                         server.incremental=False
-                        # Another connection cannot reuse the previous lane's declaration scope.
-                        calls=server.sequence
-                        with dial(ports['data']) as sock:
-                            send(sock,dict(type='response.create',model=MODEL,input=[],previous_response_id=called['id'],
-                                tool_choice=dict(type='function',name='synthetic_echo')),masked=True)
-                            assert json.loads(receive(sock)[1])['type']=='error'
-                        assert server.sequence==calls
                     before=counts(root);calls=server.sequence
-                    invalid=[]
-                    for change in [dict(role='user'),dict(tools=None),dict(id=False),dict(private='synthetic'),
-                            dict(tools=[dict(type='image_generation')]),dict(tools=[dict(type='web_search')]),
-                            dict(tools=[dict(type='tool_search')]),dict(tools=[{**TOOL,'description':'x'*524289}]),
-                            dict(tools=[TOOL,TOOL]),dict(tools=[{**TOOL,'name':f'synthetic_{i}','description':'synthetic'} for i in range(65)])]:
-                        package={**PACKAGE,**change};invalid.append(dict(model=MODEL,input=[package]))
-                    invalid.extend([dict(model=MODEL,input=[PACKAGE],tools=[TOOL]),
-                        dict(model=MODEL,input=[PACKAGE],tools=None),
-                        dict(model=MODEL,input=[PACKAGE,dict(type='function_call_output',call_id='call_unknown',output='synthetic')]),
-                        dict(model=MODEL,input=[PACKAGE],previous_response_id=PACKAGE['id'])])
-                    # A source/package/namespace cannot restart the shared UTF-8 description budget.
-                    half={**TOOL,'description':'x'*262144}
-                    nested=dict(type='namespace',name='synthetic_ns',description='x'*131072,
-                        tools=[dict(type='custom',name='synthetic_custom',description='x'*131073)])
-                    for request in [dict(model=MODEL,input=[{**PACKAGE,'tools':[nested]}],tools=[half]),
-                            dict(model=MODEL,input=[{**PACKAGE,'tools':[half]},{**PACKAGE,'tools':[nested]}])]:
-                        status,body=connect(ports['data'],'POST','/v1/responses',request)
-                        assert status==400 and json.loads(body)['error']['code']=='unsupported_tools'
-                        if transport=='websocket':
-                            with dial(ports['data']) as sock:
-                                send(sock,dict(type='response.create',**request),masked=True,maximum_bytes=8388608)
-                                event=json.loads(receive(sock)[1]);assert event['type']=='error' and event['error']['code']=='unsupported_tools'
-                    # Large declarations do not relax the complete text-request limit.
-                    oversized=dict(model=MODEL,input='x'*524289)
-                    status,body=connect(ports['data'],'POST','/v1/responses',oversized)
-                    assert status==413 and json.loads(body)['error']['code']=='request_too_large'
-                    if transport=='websocket':
-                        with dial(ports['data']) as sock:
-                            send(sock,dict(type='response.create',**oversized),masked=True,maximum_bytes=8388608)
-                            event=json.loads(receive(sock)[1]);assert event['type']=='error' and event['error']['code']=='request_too_large'
+                    # Only gateway-owned constraints reject: image generation outside its permissioned
+                    # declaration, unowned provider references and the complete request size.
+                    invalid=[dict(model=MODEL,input=[{**PACKAGE,'tools':[dict(type='image_generation')]}]),
+                        dict(model=MODEL,input=[{**PACKAGE,'tools':[dict(type='namespace',name='synthetic_ns',tools=[dict(type='image_generation')])]}]),
+                        dict(model=MODEL,input=[PACKAGE],previous_response_id=PACKAGE['id']),
+                        dict(model=MODEL,input=[PACKAGE,dict(type='item_reference',id='synthetic-unowned-item')])]
+                    oversized=dict(model=MODEL,input='x'*8388609)
+                    try:
+                        status,body=connect(ports['data'],'POST','/v1/responses',oversized);assert status==413
+                    except (BrokenPipeError,ConnectionResetError):pass  # Rejected before the body finished.
                     for request in invalid:
                         status,_=connect(ports['data'],'POST','/v1/responses',request)
                         assert status in (400,403,404), status
@@ -155,7 +121,7 @@ def main():
                                 opcode,data=receive(sock);event=json.loads(data)
                                 assert opcode==1 and event['type']=='error'
                     assert counts(root)==before and server.sequence==calls, 'Rejected declaration/reference dispatched or changed ownership'
-                    print(f'PASS: Lite {transport}, both prefixes, long UTF-8 description within shared budget, ordered forwarding, {(len(invalid)+3)*(2 if transport=="websocket" else 1)} rejection cases without dispatch',flush=True)
+                    print(f'PASS: Lite {transport}, both prefixes, long descriptions forwarded intact, ordered forwarding, {len(invalid)*(2 if transport=="websocket" else 1)+1} rejection cases without dispatch',flush=True)
                 finally:stop(process)
     finally:server.interrupt();server.server_close();thread.join(5)
     assert not thread.is_alive() and not server.sockets

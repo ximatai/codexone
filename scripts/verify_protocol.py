@@ -308,7 +308,7 @@ def main():
                 count = upstream.calls
                 for payload in ({"model": "other", "input": "text"},
                                 {"model": "synthetic-text", "input": "text", "background": True},
-                                {"model": "synthetic-text", "input": "text", "tools": [{"type": "web_search"}]},
+                                {"model": "synthetic-text", "input": "text", "conversation": "synthetic-unowned"},
                                 {"model": "synthetic-text", "input": "text", "previous_response_id": "unknown"}):
                     assert connect(port, "POST", "/v1/responses", payload)[0] in (400, 403)
                 assert upstream.calls == count
@@ -329,7 +329,8 @@ def main():
                     assert status == 200 and b"response.completed" in body and b"[DONE]" in body
                     assert latest(db_path, "settled")["inputTokens"] == 5
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-part", "stream": True})
-                assert status == 200 and b"private-synthetic-file" not in body and b"unsupported_upstream_object" in body
+                # Provider parts are forwarded as-is; a stream without a terminal stays unknown.
+                assert status == 200 and b"file_citation" in body and b"execution_indeterminate" in body
                 assert latest(db_path, "unknown") is None
                 began = time.monotonic()
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "dribble", "stream": True})
@@ -341,17 +342,19 @@ def main():
                 assert status == 200 and b"execution_indeterminate" in body and b"[DONE]" not in body
                 assert latest(db_path, "unknown") is None
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "bad-object"})
-                assert status == 502 and b"resp_" not in body
+                assert status == 200 and json.loads(body)["output"][0]["type"] == "unverified_private_object"
                 assert latest(db_path, "settled")["inputTokens"] == 5
-                print("PASS: EOF remains unknown; known usage survives rejected provider objects without ID exposure")
+                print("PASS: EOF remains unknown; unknown provider objects are forwarded with settled usage")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-usage"})
                 assert status == 200 and b"private-synthetic" not in body
                 assert latest(db_path, "settled")["inputTokens"] == 5
-                for prompt in ("provider-error", "foreign-previous"):
-                    status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": prompt})
-                    assert status == 502 and b"private-synthetic" not in body
-                    assert latest(db_path, "settled")["inputTokens"] == 5
-                print("PASS: isolated usage metadata and rejected raw provider errors are not exposed; trusted counters remain settled")
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "provider-error"})
+                failed = json.loads(body)
+                assert status == 200 and failed["status"] == "failed" and failed["error"]["code"] == "synthetic"
+                assert latest(db_path, "settled")["inputTokens"] == 5
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "foreign-previous"})
+                assert status == 200 and latest(db_path, "settled")["inputTokens"] == 5
+                print("PASS: usage metadata stays private; provider failures reach the client sanitized with settled counters")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "refusal"})
                 assert status == 200
                 refused = json.loads(body)["output"]

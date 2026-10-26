@@ -89,7 +89,7 @@ class Handler(BaseHTTPRequestHandler):
             assert self.path in ('/v1/responses','/v1/responses/compact')
             assert self.headers.get('Transfer-Encoding') is None and self.headers.get('Authorization') is None
             assert len(self.headers.get_all('Content-Length',[]))==1
-            length=int(self.headers['Content-Length']);assert 0<length<=524288
+            length=int(self.headers["Content-Length"]);assert 0<length<=8388608
             body=self.rfile.read(length);assert len(body)==length
             document=json.loads(body);events=self.events(document)
             if self.path.endswith('/compact'):

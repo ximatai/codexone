@@ -80,9 +80,8 @@ func rawSQL(_ path: String, _ sql: String) throws {
     try await store.resolve(principal: "other", object: object)
   }
   try await store.admit(admission("b"))
-  await #expect(throws: ExecutionError.conflict) {
-    try await store.bind(attempt: "b", object: object)
-  }
+  // Retained history may re-emit an owned object; the original owner stays authoritative.
+  try await store.bind(attempt: "b", object: object)
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   #expect(try await reopened.snapshot(attempt: "a").state == .unknown)

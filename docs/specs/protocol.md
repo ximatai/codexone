@@ -11,7 +11,7 @@
 
 ## P09：端点与执行模式
 
-发布清单按“后端 × 客户端版本 × 端点 × 传输 × 执行模式 × 工具”列允许组合；未知组合在 dispatch 前拒绝，不靠透传假设语义相同。元数据扩展字段可保留，执行控制、工具、外部对象引用采用允许列表。适配器声明支持组合，发布夹具证明该声明。
+发布清单按“后端 × 客户端版本 × 端点 × 传输 × 执行模式”列验证组合。网关只对自身职责执行允许列表：认证与 Key/模型/视觉/图片权限、大小/期限/并发、能读取提供者存储状态的引用归属、执行模式控制、账本与可信用量。其他请求字段、input 条目、内容 part 及工具声明原样转发，由提供者判定；见 [P27 开放协议透传](#p27开放协议透传)。
 
 | 能力 | 首版策略 |
 |---|---|
@@ -23,11 +23,11 @@
 | 独立 Images generation | 首版必含 `/images/generations`，兼容配置只增加经验证路径别名，不做任意后缀转发 |
 | compact | 首版 Desktop 压缩契约必验，作为单独前台模式实现；输出先分类，含私有引用需绑定；其他未支持的后端明确拒绝 |
 | 独立 Images edits | 首版支持已验证 Desktop 的参考图编辑；输入格式/图片与 mask 组合、参数和返回/流式事件列入契约，不能泛化为全部 Images 功能 |
-| conversation、远端 MCP、内置检索/容器、通用文件上传/读取 | 首版关闭，直到归属、成本及生命周期有独立契约；不是“普通工具透传” |
+| conversation、prompt 等服务端存储状态 | 无法证明归属，dispatch 前 400；web_search、tool_search、远端 MCP 等由提供者执行的工具声明透传，费用计入所用账号，不由网关执行 |
 | 后台任务、steering、未实现的取消/控制事件 | 首版拒绝；只允许经过契约验证的 turn 级取消，否则采用连接级关闭策略 |
 | GET/delete/cancel response | 不承诺公共对象服务；仅适配器拥有且不暴露给客户的核对接口可内部使用 |
 
-保留允许的元数据扩展字段时，不能由其授予对象归属或执行能力。适配器的事件策略分为：已知可透明数据、含归属对象需屏障、终态/usage、未支持控制及整条隔离扩展。未解释事件按文末规则有界隔离，不透传或读取其对象/用量；已知事件中的未支持执行控制/对象仍拒绝，不以扩展或“透明”绕过准入。
+扩展字段与未知事件不授予对象归属、用量或终态权，按原样转发给客户端。执行控制只认已知模式控制（generate、compaction_trigger、background），对象归属只来自 P27 定义的证据。
 
 ## P10：重试、超时与外部错误
 
@@ -35,7 +35,7 @@
 
 排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
-网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。HTTP 提交前可回 4xx/429/502/503/504；提交后仅协议错误事件或异常关闭。WS 握手后不可返回 HTTP 状态响应；lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
+网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。提供者错误按 P27 脱敏透传其可操作成员。HTTP 提交前可回 4xx/429/502/503/504；提交后提供者失败以 response.failed 事件、网关失败以 error 事件结束。WS 握手后不可返回 HTTP 状态响应；error 帧携带 status，lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
 
 ## P11：Desktop 与现有接入兼容
 
@@ -51,11 +51,11 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 ## P13：受控单身份 HTTP 配置契约
 
-单身份 Key 先验证，再由应用层按模型与每个引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体或未知执行字段；客户端 function/custom 工具按 type/namespace/name 与返回调用匹配，namespace 只组织客户端工具，不开放内置检索或服务端执行；不接受未经声明的工具或对象类型。
+单身份 Key 先验证，再由应用层按模型与每个硬引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体；字段、工具与对象类型按 P27 透传。
 
-文本 HTTP 切片的请求体为 512 KiB、JSON 深度 64、输入项 256、工具 64、引用 32；普通 Responses 上游 JSON 为 1 MiB，单 SSE 事件 1 MiB、累计流 8 MiB。连接最多 8，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
+请求体为 8 MiB（与传输聚合一致）、JSON 深度 64、硬引用 32；input 条目与工具声明数量只受总字节约束。普通 Responses 上游 JSON 与累计流 32 MiB，单 SSE 事件/WS 帧 8 MiB。连接最多 8，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
 
-归属持久屏障在每个含对象的上游事件写下游之前完成；先确认终态属于当前执行，再观察可信用量，随后做对象绑定/输出检查，输出失败不抹去已知用量。HTTP SSE的已知response对象及response_id必须与本执行首次出现的response ID一致，隔离扩展不能建立/改变该关联，不从外来终态获取计量证据；稀疏HTTP流不额外要求先created。上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。错误使用固定脱敏 envelope 与请求 ID，不输出上游原始错误或请求秘密。
+归属持久屏障在每个含对象的上游事件写下游之前完成；先确认终态属于当前执行，再观察可信用量，随后做对象绑定/输出。HTTP SSE的生命周期事件 response.id 及任何 response_id 必须与本执行首次出现的 response ID 一致，不从外来终态获取计量证据；稀疏HTTP流不额外要求先created。上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。
 
 配置与文件安全说明见 [单身份配置](../development/single-identity.md)。Desktop、WS、预热、压缩的最终兼容验收仍按 P11，不能从 HTTP 合成结果推导。
 
@@ -63,23 +63,23 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。未支持控制明确拒绝；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
 
-传输帧/聚合按图片最大包络为8 MiB，普通下游请求消费仍限512 KiB，单上游事件 1 MiB、累计执行 8 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/8 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
+传输帧/聚合按图片最大包络为8 MiB，普通下游请求同为 8 MiB，单上游事件 8 MiB、累计执行 32 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/8 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
-HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 在入队前验证当前 turn 的 created/response ID/item 关联，并通过已准入 attempt 注册的同步证据 sink 观察终态用量，其他 lane 失败不得清除已接收/分类的可信用量；轮外事件、重复终态/response ID 关闭连接，不得将旧事件用于新 attempt。单连接最多 256 个响应、单轮最多 256 个 item。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
+HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 只校验生命周期归属：turn 的第一个生命周期事件确定 response ID，此后生命周期事件与 response_id 必须一致，否则关闭连接；连接内最近 1024 个已开始的 response ID 不能开始新 turn。turn 外事件（如额度通知）及新 turn 开始前属于旧 turn 的 response.* 输出被丢弃，不进入下一 attempt。提供者 error 事件结束当前 turn，以带 status 的 error 帧下发，连接保持可用；终态通过已准入 attempt 注册的同步证据 sink 观察用量，其他 lane 失败不得清除已接收的可信用量。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
 
 下游 WebSocket 扩展提议可以存在，网关忽略提议且不返回扩展协商头；没有实现压缩，不接受未协商 RSV 帧。不能因客户端提供可选压缩提议而拒绝整个握手并将 HTTP fallback 误算为原生 WS 成功。未支持的子协议仍拒绝。实际客户端检查须分别证明直连、桥接与原生连接行为，而非仅最终回答成功。
 
 ## P15：客户端上下文与前台模式
 
-完整 inline 消息及 function/custom tool 结果中的 id 为客户端本地关联标签，发送上游前移除；正文、工具 call_id 和显式引用保持。携完整 encrypted_content 的 reasoning/compaction 以 I11 类型指纹证明正文归属，发送前也移除客户端本地 id，不要求该标签已在上游绑定。显式 item_reference、previous_response_id、函数 call_id 和无完整内容的 reasoning ID 仍按归属查验；不能用本地标签触发上游私有读取。reasoning.encrypted_content include 可用，正文指纹在准入前校验，篡改/跨主体仍拒绝。
+完整 inline 消息、function/custom tool 结果、additional_tools 包及携完整 encrypted_content 的 reasoning/compaction 中的 id 为客户端本地关联标签，发送上游前移除。只有能让提供者读取存储状态的引用是硬引用：previous_response_id、item_reference、仅凭 ID 指向的 image_generation_call（无 result）与 reasoning（无 encrypted_content）；它们必须已绑定到当前主体/身份，否则 dispatch 前拒绝。call_id、加密上下文指纹和其他条目 ID 是路由提示（最近 64 个）：账号池中已知时优先选择其账号，未知或属于他人时忽略，不拒绝也不建立读取权。加密内容只能由签发它的上游账号解密，跨账号时由提供者拒绝。
 
-WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪，不把 compaction ID 当 previous_response_id；保留的已有引用沿原归属，新引用先绑定，再整体返回；压缩窗口内的工具调用/结果必须来自已授权输入 call_id，不能创建新客户端工具执行。压缩请求沿文本 512 KiB、输出 256 KiB/256 项、总期限及失败语义；未支持模式/输入不发送。
+WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 8 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
 
-reasoning对象仅接受effort/summary/context三个已知成员，成员为null表示未指定并在转发前移除；有效非null值保持，未知成员及错误类型继续拒绝。tools缺省与显式空数组保持区别，不合成工具声明。兼容的客户端 metadata 只允许有界字符串字典；stream_options仅include_usage布尔和reasoning_summary_delivery=sequential_cutoff。文本/推理内容分类型校验，不透传未经分类的文件引用、注解或嵌套对象；工具结果的可选 name/namespace 和状态等字段同样按标量校验。提供者原始错误使用脱敏错误替代，响应回显的 previous_response_id 必须匹配已授权输入；可信计数仍在输出分类前记录。客户端须显式关闭本阶段未支持的内置 web_search；网关不静默删掉工具声明以制造兼容结果。
+reasoning、text、stream_options、include、tool_choice、metadata/client_metadata 等控制与可选字段原样转发；只有 reasoning 内 null 成员、text.verbosity/format、tool_choice、parallel_tool_calls 的 null 在转发前移除。tools 缺省与显式空数组保持区别，不合成工具声明，也不静默删除工具声明。
 
-Responses Lite允许在input原位置使用additional_tools包，字段仅type/role/tools/可选本地id，role必须developer；仅含function/custom/单层namespace，包内不开放图片、内置检索或MCP。各来源共享64个声明（含namespace），身份冲突拒绝，所有function/custom/namespace说明（含namespace本身及叶工具）共享512 KiB UTF-8预算，顶层与各Lite包不重置预算，不另设单条32 KiB限制；整体文本请求仍受512 KiB、图片外层受8 MiB原大小限制。聚合声明只用于本轮工具选择/输出校验，不提升到顶层，不改变顺序；本地包id发送前移除，不建立对象权限。HTTP按已校验Lite声明/明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的工具身份集合、Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才可继承校验集合，显式空声明清空，不跨lane/连接/失败恢复。上游增量请求保持原形，每轮授权、引用与用量仍独立执行。
+Responses Lite允许在input原位置使用additional_tools包，包与其中工具原样转发，仅移除本地包 id；image_generation 不得出现在包或 namespace 内，只能作为受权限映射的唯一顶层声明。HTTP按Lite包或明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才继承Lite模式，不跨lane/连接/失败恢复。
 
-工具拒绝可在服务端使用固定reason枚举细分容器/数量/名称/说明（null、其他非字符串、共享说明预算超限分别分类）/布尔/namespace/字段/重复/grammar/类型/内置搜索/工具检索/远程MCP/选择/包/图片；不记录工具名、说明、schema、任意字段值或请求正文。沿用16条/单调60秒全局诊断上限和服务端UUID，公开错误仍仅type/code/message/request_id，不公开内部reason；所有网关错误message可附同一个有效UUID供界面关联，不含客户端输入或任意标识。历史日志未记录的信息不得事后推测为已确认根因。
+网关拒绝仍记录固定 code/reason 与服务端UUID，沿用16条/单调60秒全局诊断上限；提供者错误只额外记录短机器码 provider_code，不记录消息、字段值、工具名或请求正文。公开错误不包含内部 reason。历史日志未记录的信息不得事后推测为已确认根因。
 
 ## P16：受控模型目录
 
@@ -122,10 +122,6 @@ Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编�
 
 可信离线profile导入及字段边界见[模型快照](../development/model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
-已知可空的text.verbosity/format、tool_choice/parallel_tool_calls与已知reasoning成员按未指定处理，转发时仅移除这些位置的null；text空对象保留。非可空tools/store/stream、未知成员和错误类型不因此接受。拒绝日志可增加固定枚举reason细分reasoning的对象、未知成员、effort、summary类型/取值及context，仍受原限额；不记录原字段名/值，公开错误码和envelope不增加该诊断字段。
-
-Codex reasoning.context仅允许auto/current_turn/all_turns，null转发前移除，不合成默认值、不改变上下文归属或重放资格。stream_options接受include_usage布尔与reasoning_summary_delivery=sequential_cutoff，可单独或组合出现，空对象/未知成员/错误类型拒绝；保持现有事件验证及执行预算。
-
 ## 可信上游出网代理
 
 CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://host:port及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
@@ -134,28 +130,22 @@ CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；�
 
 Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。
 
-上游及续接消息的phase允许null，按缺省校验并保留该已知字段；非空仍限analysis/commentary/final_answer，错误类型/未知值拒绝。已知response.reasoning_text.delta/done及content_part中的reasoning_text按有界流文本处理，delta/text须字符串，已知索引为非负有界整数，item ID保持原归属/WS逐turn关联屏障；不能用reasoning_text冒充summary_part或message正文part。错误事件/成员/phase/part只记录固定分类，不记录文本或任意字段名/值。其他事件不据此放行。
-
-对合法非空有界类型的未解释上游扩展事件，必须整条隔离丢弃，不转发、不授予对象归属、不接受其中用量/错误/终态/进展，不更新客户端状态；仍先计SSE/WS单事件和总字节及总期限。已知error/响应状态/item/part与image事件族照常严格验证，畸形类型/已知结构不得伪装扩展。WS只在已拥有的非idle turn内消费扩展，未知lane/跨turn仍拒绝，扩展不能修改响应或item集合。每进程最多一次固定隔离观察，仅服务端UUID，不记录事件名、字段或正文。扩展不能替代created/可信完成终态，缺失终态仍unknown，无自动重试。
-
-提供者响应created_at若存在须为JSON数值，包括小数，不舍入或用于授权/计价；instructions回显允许字符串/null或最多128项的对象列表，仅为元数据，不提取其内层ID/工具/usage作为绑定、执行或计量证据。请求instructions沿独立输入契约，不由回显兼容扩大。incomplete_details非null时为最多32成员的对象，reason可缺省/null/字符串，其余元数据不参与控制；incomplete仍为失败结果。原JSON深度/单事件/总字节限制始终保持。
-
-响应status缺省/null保持既有稀疏事件兼容；存在时created只允许queued/in_progress、in_progress只允许in_progress，completed/failed/incomplete须与对应事件一致。total_tokens存在时须为0—2000000000的整数，输入输出计数均已知时等于二者之和；不补零或反推缺失证据。相同执行的合法计量先观察，矛盾状态或下游total不合法再拒绝输出，不能丢掉此前可信用量。错误原因仅固定枚举、无字段值/正文。
-
 JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。
 
-usage非null须为最多32成员对象，已知input_tokens_details/output_tokens_details非null须为最多32成员对象；已知cache_write_tokens/reasoning_tokens非null须为0—1000000000整数。input/output/cached证据和total一致性维持原严格校验；普通纯文本路径的其他成员仅在内存中有界接受，向客户端只输出input/output/total及cached/cache_write/reasoning明细；图片和独立compact保持原严格契约，受原JSON深度/单事件/总流预算，不递归提取ID/计量/授权。固定诊断区分根类型/根容量/明细类型/明细容量/已知明细计数，不记录字段名或值。
-
-普通纯文本路径的已知input/output/cached计数在created/in_progress等非终态也验证类型/范围及cached<=input（均已知时）；这仅约束可输出形态，不建立非终态计量证据。新增非终态错误计数及metadata正负socket样例，防止按键投影误透出错误值。
+usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细，其余 usage 成员不出网关。
 
 
-## 普通输出多视图与请求参数
+## 请求契约选择
 
-普通文本执行在现有逐事件校验之外，关联created/in_progress、output_item.added/done、content/summary part、text/refusal/arguments/custom input的delta/done与最终窗口。明确提供的索引、ID、type、role及call_id/name/namespace不可冲突；同一窗口ID/call_id不可重复。added允许前缀增长和展示元数据变化；同一完整语义字段与增量聚合须一致。reasoning最终窗口可省略可选content，但已提供的完整值不可改变。稀疏HTTP省略索引/ID时只允许唯一关联，不能在多个候选间猜测。每执行最多16项、每项128个content/summary part，仅保留身份、长度和摘要，随执行释放；图片/流式压缩沿独立契约。冲突在新绑定和下游提交前拒绝，已可信终态用量不丢失；无证据仍unknown，不重放。
-
-普通请求在准入前校验temperature为0—2数值、top_p为0—1数值、max_output_tokens为至少16的Int64整数；bool不作为数值。service_tier接受auto/default/flex/scale/priority/fast/ultrafast，truncation接受auto/disabled，prompt_cache_retention接受in_memory/24h；这些可空字段的null表示未指定。此处是形状校验，不承诺模型支持或输出容量。错误返回400 invalid_request_parameter，不创建attempt或派发。
-
-可信配置选择responses或codex-subscription请求契约，不能由下游覆盖；账号池与非loopback订阅固定后者。普通订阅HTTP使用stream=true/store=false；下游JSON仅提交已验证终态，SSE逐事件提交。显式store=true及HTTP previous_response_id准入拒绝（包括HTTP→WS新连接桥接），原生WS保留同连接续接。订阅普通路径仅接受tier auto/default/priority；非null max_output_tokens/temperature/top_p/truncation/prompt_cache_retention/metadata返回400 unsupported_backend_parameter，不静默删除限制；其null在组装时移除。保留支持的工具、输入顺序、缓存key、client_metadata及指令，字符串input映射为等价user消息数组。图片和独立compact不随此扩展或改变消费语义。合成验证不替代真实客户端/模型验收。
+可信配置选择responses或codex-subscription请求契约，不能由下游覆盖；账号池与非loopback订阅固定后者。普通订阅HTTP使用stream=true/store=false；下游JSON仅提交已验证终态，SSE逐事件提交。显式store=true及HTTP previous_response_id准入拒绝（包括HTTP→WS新连接桥接），原生WS保留同连接续接。订阅普通路径非null max_output_tokens/temperature/top_p/truncation/prompt_cache_retention/metadata返回400 unsupported_backend_parameter，不静默删除限制；其null在组装时移除；service_tier 等其他字段透传。字符串input映射为等价user消息数组。图片和独立compact不随此扩展或改变消费语义。合成验证不替代真实客户端/模型验收。
 
 
-普通订阅WS组包保留stream=true/store=false，与固定Codex客户端ResponseCreateWsRequest一致；通用responses WS仍按其隐式流规则移除stream。不得把公开API的WS规则推导为订阅后端规则，图片沿独立契约。reader在不改变公开错误码/归属/计量屏障的前提下，可用固定枚举区分创建阶段、响应/输出项关联及创建前提供者拒绝；只识别已知参数/错误分类，不记录提供者原消息、未知代码或参数值，reason不进入下游envelope。
+普通订阅WS组包保留stream=true/store=false，与固定Codex客户端ResponseCreateWsRequest一致；通用responses WS仍按其隐式流规则移除stream。不得把公开API的WS规则推导为订阅后端规则，图片沿独立契约。
+
+## P27：开放协议透传
+
+客户端与提供者协议持续演进，网关不以封闭允许集合解释它们。复盘与取舍见 [开放协议透传](../changes/open-protocol-passthrough/proposal.md)。
+
+- 请求：除 P09/P13/P15 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；只有图片编辑 mask 解码校验首图。
+- 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
+- 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds，message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429 并按 resets_in_seconds/Retry-After 设置账号 cooldown。SSE 已开始时以 response.failed 下发，原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。

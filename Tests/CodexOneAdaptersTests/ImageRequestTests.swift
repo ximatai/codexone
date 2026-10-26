@@ -132,14 +132,12 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     try request.response.usage(.object(missing), model: model, configuration: config))
   #expect(
     partial.completeness == .partial && partial.imageInputTokens == nil && partial.images == 1)
-  #expect(throws: (any Error).self) {
-    try ProviderObservation(
-      event: .object(["type": .string("response.completed"), "response": response]), model: model,
-      functionNames: [])
-  }
+  // Text routes forward provider image items without image-contract authority.
+  _ = try ProviderObservation(
+    event: .object(["type": .string("response.completed"), "response": response]), model: model)
   let observed = try ProviderObservation(
     event: .object(["type": .string("response.completed"), "response": response]), model: model,
-    functionNames: [], allowImages: true)
+    allowImages: true)
   #expect(
     observed.terminal && observed.bindings.contains(.init(type: "item", rawID: "ig_synthetic")))
 }

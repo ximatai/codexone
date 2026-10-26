@@ -35,12 +35,17 @@ import Testing
   #expect(throws: (any Error).self) { try JSONValue.decode(Data(deep.utf8)) }
   for raw in [
     #"{"model":"synthetic","input":"text","background":true}"#,
-    #"{"model":"synthetic","input":"text","tool_choice":{"type":"web_search"}}"#,
-    #"{"model":"synthetic","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/private"}]}]}"#,
     #"{"model":"synthetic","input":"text","conversation":"unknown"}"#,
+    #"{"model":"synthetic","input":"text","prompt":{"id":"unknown"}}"#,
   ] {
     #expect(throws: (any Error).self) { try ResponseRequest(data: Data(raw.utf8)) }
   }
+  // Provider-executed tools and remote images are the provider's contract; images need vision.
+  let remote = try ResponseRequest(
+    data: Data(
+      #"{"model":"synthetic","input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image"}]}],"tool_choice":{"type":"web_search"},"tools":[{"type":"web_search"}]}"#
+        .utf8))
+  #expect(remote.requirements.visionInput)
 }
 
 @Test func configurationFingerprintsSeparateOriginsCredentialsAndPricing() throws {
@@ -78,68 +83,58 @@ import Testing
 @Test func partialProviderUsageKeepsObservedLowerBoundsWithoutClaimingCompletion() throws {
   let model = SingleIdentityConfiguration.Model(
     id: "synthetic", inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000)
-  let partial = try ProviderObservation.usage(.object(["input_tokens": .number(5)]), model: model)
+  let partial = ProviderObservation.usage(.object(["input_tokens": .number(5)]), model: model)
   #expect(partial?.inputTokens == 5)
   #expect(partial?.completeness == .partial)
   #expect(partial?.estimatedMicros == 5)
-  #expect(try ProviderObservation.usage(.null, model: model) == nil)
-  let cachedOnly = try ProviderObservation.usage(
+  #expect(ProviderObservation.usage(.null, model: model) == nil)
+  let cachedOnly = ProviderObservation.usage(
     .object(["input_tokens_details": .object(["cached_tokens": .number(3)])]), model: model)
   #expect(cachedOnly?.inputTokens == 3)
   #expect(cachedOnly?.cachedTokens == 3)
   #expect(cachedOnly?.completeness == .partial)
 }
 
-@Test func streamingAndTerminalPartsRejectUnboundNestedReferences() throws {
+@Test func providerPartsAndUnknownMembersAreForwardedWithoutFailing() throws {
   let model = SingleIdentityConfiguration.Model(
     id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
   for eventType in [
     "response.content_part.added", "response.content_part.done",
-    "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+    "response.reasoning_summary_part.added", "response.output_text.annotation.added",
   ] {
-    for nested in ["annotations", "logprobs", "private_object"] {
-      let part: JSONValue = .object([
+    let event: JSONValue = .object([
+      "type": .string(eventType), "item_id": .string("synthetic-item"),
+      "part": .object([
         "type": .string("output_text"), "text": .string("synthetic"),
-        nested: .array([.object(["file_id": .string("synthetic-private-file")])]),
-      ])
-      let event: JSONValue = .object([
-        "type": .string(eventType), "item_id": .string("synthetic-item"), "part": part,
-      ])
-      #expect(throws: (any Error).self) {
-        try ProviderObservation(event: event, model: model, functionNames: [])
-      }
-    }
+        "annotations": .array([.object(["type": .string("url_citation")])]),
+        "synthetic_future_member": .bool(true),
+      ]),
+    ])
+    let observation = try ProviderObservation(event: event, model: model)
+    #expect(observation.bindings == [.init(type: "item", rawID: "synthetic-item")])
   }
 }
 
-@Test func webSocketTurnStateRejectsUncorrelatedAndRepeatedProviderEvents() throws {
+@Test func webSocketTurnStateRejectsOnlyForeignResponses() throws {
   func event(_ type: String, id: String) throws -> Data {
     try JSONValue.object(["type": .string(type), "response": .object(["id": .string(id)])]).data()
   }
   let turns = WebSocketTurns()
   try turns.begin()
-  #expect(throws: (any Error).self) {
-    try turns.observe(event("response.completed", id: "synthetic-first"))
-  }
-  try turns.observe(event("response.created", id: "synthetic-first"))
+  #expect(try turns.observe(event("response.created", id: "synthetic-first")) == "")
   #expect(throws: (any Error).self) {
     try turns.observe(event("response.completed", id: "synthetic-other"))
   }
-  #expect(throws: (any Error).self) {
+  #expect(
     try turns.observe(
       JSONValue.object([
         "type": .string("response.output_text.delta"), "delta": .string("synthetic-unbound"),
-      ]).data())
-  }
-  try turns.observe(event("response.completed", id: "synthetic-first"))
-  #expect(throws: (any Error).self) {
-    try turns.observe(event("response.completed", id: "synthetic-first"))
-  }
+      ]).data()) == "")
+  #expect(try turns.observe(event("response.completed", id: "synthetic-first")) == "")
+  // A repeated terminal after the turn ended cannot reach the next attempt.
+  #expect(try turns.observe(event("response.completed", id: "synthetic-first")) == nil)
   try turns.begin()
-  #expect(throws: (any Error).self) {
-    try turns.observe(event("response.created", id: "synthetic-first"))
-  }
-  try turns.observe(event("response.created", id: "synthetic-second"))
+  #expect(try turns.observe(event("response.created", id: "synthetic-second")) == "")
   turns.close()
   #expect(throws: (any Error).self) { try turns.begin() }
 }
@@ -155,9 +150,13 @@ import Testing
   for index in 0..<16 { try turns.begin(lane: "lane_\(index)") }
   #expect(throws: (any Error).self) { try turns.begin(lane: "lane_16") }
   try observe("response.created", lane: "lane_0", id: "synthetic_0")
-  #expect(throws: (any Error).self) {
-    try observe("response.completed", lane: "lane_1", id: "synthetic_0")
-  }
+  // Another lane's response cannot begin this lane's turn.
+  #expect(
+    try turns.observe(
+      JSONValue.object([
+        "type": .string("response.completed"), "stream_id": .string("lane_1"),
+        "response": .object(["id": .string("synthetic_0")]),
+      ]).data()) == nil)
   try observe("response.completed", lane: "lane_0", id: "synthetic_0")
   try turns.begin(lane: "lane_16")
   for invalid in ["", "bad lane", "é", String(repeating: "a", count: 257)] {
@@ -220,14 +219,14 @@ import Testing
         .utf8))
   #expect(request.document["input"]?.array?[0]["id"] == nil)
   #expect(request.document["input"]?.array?[1]["id"] == nil)
-  #expect(request.references.contains(.init(type: "function_call", rawID: "owned-call")))
-  #expect(request.references.contains(.init(type: "item", rawID: "owned-item")))
-  #expect(!request.references.contains(.init(type: "item", rawID: "local-new-message")))
+  // Only state-reading references must be owned; call identities are routing hints.
+  #expect(request.references == [.init(type: "item", rawID: "owned-item")])
+  #expect(request.affinityHints == [.init(type: "function_call", rawID: "owned-call")])
   for raw in [
-    #"{"model":"synthetic","input":[{"role":"user","content":"synthetic","encrypted_content":"unverified-private"}]}"#,
-    #"{"model":"synthetic","input":[{"type":"reasoning","encrypted_content":"synthetic","file_id":"unverified-private"}]}"#,
+    #"{"model":"synthetic","input":[{"role":"user","content":"synthetic","encrypted_content":"opaque"}]}"#,
+    #"{"model":"synthetic","input":[{"type":"reasoning","encrypted_content":"synthetic","summary":[]}]}"#,
     #"{"model":"synthetic","input":"synthetic","tools":[{"type":"namespace","name":"ns","tools":[{"type":"web_search"}]}]}"#,
-  ] { #expect(throws: (any Error).self) { try ResponseRequest(data: Data(raw.utf8)) } }
+  ] { _ = try ResponseRequest(data: Data(raw.utf8)) }
 }
 
 @Test func clientExecutionModesAreExplicitAndLegacyAdmissionsRemainGeneration() throws {
@@ -348,81 +347,4 @@ func webSocketQueueConcurrentCancellationAndFinishNeverResumeUnderItsLock() asyn
       await tasks.waitForAll()
     }
   }
-}
-
-@Test func nullableMessagePhaseAndKnownReasoningEventsPreserveStrictShape() throws {
-  let model = SingleIdentityConfiguration.Model(
-    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
-  let item: JSONValue = .object([
-    "type": .string("message"), "id": .string("synthetic-item"),
-    "role": .string("assistant"), "content": .array([]), "phase": .null,
-  ])
-  _ = try ProviderObservation.itemBindings(item, functionNames: [])
-  _ = try ResponseRequest(
-    data: JSONValue.object([
-      "model": .string("synthetic"), "input": .array([item]),
-    ]).data())
-  for bad: JSONValue in [.bool(false), .number(1), .string("synthetic-unknown")] {
-    var object = item.object!
-    object["phase"] = bad
-    #expect(throws: (any Error).self) {
-      try ProviderObservation.itemBindings(.object(object), functionNames: [])
-    }
-  }
-  for type in ["response.reasoning_text.delta", "response.reasoning_text.done"] {
-    let field = type.hasSuffix(".delta") ? "delta" : "text"
-    let event: [String: JSONValue] = [
-      "type": .string(type), field: .string("synthetic reasoning"),
-      "item_id": .string("synthetic-reasoning"), "content_index": .number(0),
-    ]
-    _ = try ProviderObservation(event: .object(event), model: model, functionNames: [])
-    for (key, value): (String, JSONValue) in [
-      (field, .object(["file_id": .string("synthetic-private-file")])),
-      ("content_index", .number(-1)), ("item_id", .number(1)),
-      ("synthetic_unknown", .string("synthetic-private-value")),
-    ] {
-      var invalid = event
-      invalid[key] = value
-      #expect(throws: (any Error).self) {
-        try ProviderObservation(event: .object(invalid), model: model, functionNames: [])
-      }
-    }
-  }
-}
-
-@Test func isolatedExtensionsCannotCreateTurnObjectsOrReplaceTerminals() throws {
-  let extensionEvent: JSONValue = .object([
-    "type": .string("synthetic.extension"),
-    "item": .object(["id": .string("synthetic-foreign-item")]),
-    "response": .object(["id": .string("synthetic-foreign-response")]),
-  ])
-  #expect(try ProviderObservation.isIsolatedExtension(extensionEvent))
-  for type in [
-    "error", "response.failed", "response.incomplete", "response.completed",
-    "response.output_item.added", "response.image_generation_call.synthetic",
-  ] {
-    #expect(try !ProviderObservation.isIsolatedExtension(.object(["type": .string(type)])))
-  }
-  let turns = WebSocketTurns()
-  try turns.begin()
-  try turns.observe(extensionEvent.data())
-  try turns.observe(
-    JSONValue.object([
-      "type": .string("response.created"),
-      "response": .object(["id": .string("synthetic-response")]),
-    ]).data())
-  try turns.observe(extensionEvent.data())
-  #expect(throws: (any Error).self) {
-    try turns.observe(
-      JSONValue.object([
-        "type": .string("response.output_text.delta"), "item_id": .string("synthetic-foreign-item"),
-        "delta": .string("synthetic"),
-      ]).data())
-  }
-  try turns.observe(
-    JSONValue.object([
-      "type": .string("response.completed"),
-      "response": .object(["id": .string("synthetic-response")]),
-    ]).data())
-  #expect(throws: (any Error).self) { try turns.observe(extensionEvent.data()) }
 }
