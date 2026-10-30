@@ -117,10 +117,11 @@ export function KeyManagement() {
                     </Table.Td>
                     <Table.Td>
                       <Text size="sm">
-                        {key.limits.requests.toLocaleString()} / 日
+                        {api.formatKeyLimit(key.limits.requests)} / 日
                       </Text>
                       <Text size="xs" c="dimmed">
-                        {key.limits.active} 并发 · {key.limits.unresolved} 未结
+                        {api.formatKeyLimit(key.limits.active)} 并发 ·{" "}
+                        {api.formatKeyLimit(key.limits.unresolved)} 未结
                       </Text>
                     </Table.Td>
                     <Table.Td>

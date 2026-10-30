@@ -7,11 +7,11 @@ export {
 } from "../../shared/management";
 export type { AdminSession } from "../../shared/management";
 export interface KeyLimits {
-  requests: number;
-  active: number;
-  unresolved: number;
-  budgetMicros: number;
-  unresolvedMicros: number;
+  requests: number | null;
+  active: number | null;
+  unresolved: number | null;
+  budgetMicros: number | null;
+  unresolvedMicros: number | null;
 }
 export interface ManagedKey {
   id: string;
@@ -84,6 +84,12 @@ function boolean(value: unknown): boolean {
     throw new ManagementError(0, "invalid_response");
   return value;
 }
+function limit(value: unknown): number | null {
+  return value === null ? null : boundedNumber(value);
+}
+export function formatKeyLimit(value: number | null): string {
+  return value === null ? "不限" : value.toLocaleString();
+}
 export function parseKey(value: unknown): ManagedKey {
   const data = record(value);
   if (
@@ -110,11 +116,11 @@ export function parseKey(value: unknown): ManagedKey {
         : boolean(data.imageGeneration),
     imageModels: models(data.imageModels ?? [], true),
     limits: {
-      requests: boundedNumber(limits.requests),
-      active: boundedNumber(limits.active),
-      unresolved: boundedNumber(limits.unresolved),
-      budgetMicros: boundedNumber(limits.budgetMicros),
-      unresolvedMicros: boundedNumber(limits.unresolvedMicros),
+      requests: limit(limits.requests),
+      active: limit(limits.active),
+      unresolved: limit(limits.unresolved),
+      budgetMicros: limit(limits.budgetMicros),
+      unresolvedMicros: limit(limits.unresolvedMicros),
     },
   };
 }

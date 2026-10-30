@@ -182,3 +182,56 @@ it("edits retained key limits when the current model directory is empty", async 
   );
   view.unmount();
 });
+
+it("toggles unlimited for each dimension, restores a value and submits explicit nulls", async () => {
+  vi.mocked(api.fetchKeys).mockResolvedValue([
+    {
+      ...key,
+      limits: {
+        requests: null,
+        active: null,
+        unresolved: null,
+        budgetMicros: null,
+        unresolvedMicros: null,
+      },
+    },
+  ]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.updateKey).mockResolvedValue(key);
+  const view = render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  expect(screen.getByText("不限 / 日")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("本地治理限额"));
+  for (const label of [
+    "每日请求（UTC）",
+    "同时执行",
+    "未结执行数量",
+    "每日估算阈值（微单位）",
+    "未结暴露阈值（微单位）",
+  ]) {
+    const toggle = screen.getByLabelText(label + "不限");
+    expect(toggle).toBeChecked();
+    expect(screen.getByLabelText(label)).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText(label)).toBeEnabled();
+    fireEvent.change(screen.getByLabelText(label), { target: { value: "17" } });
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText(label)).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText(label)).toHaveValue("17");
+    fireEvent.click(toggle);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(api.updateKey).toHaveBeenCalled());
+  expect(vi.mocked(api.updateKey).mock.calls[0][3]).toEqual({
+    requests: null,
+    active: null,
+    unresolved: null,
+    budgetMicros: null,
+    unresolvedMicros: null,
+  });
+  view.unmount();
+});
