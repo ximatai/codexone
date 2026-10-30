@@ -265,7 +265,11 @@ private func keyAdmission(
     id: "k", principal: "p", revision: 1, enabled: true, policy: try keyPolicy(requests: 1),
     createdAtUnixSeconds: 1)
   let second = ManagedKey(
-    id: "k2", principal: "p", revision: 1, enabled: true, policy: try keyPolicy(requests: 2),
+    id: "k2", principal: "p", revision: 1, enabled: true,
+    policy: try decodedKeyPolicy([
+      "requests": NSNull(), "active": 2, "unresolved": 3,
+      "budgetMicros": 100, "unresolvedMicros": 100,
+    ]),
     createdAtUnixSeconds: 1)
   let a = try config.makePolicy(token: nil, key: first)
   let b = try config.makePolicy(token: nil, key: second)
@@ -307,4 +311,99 @@ private func keyAdmission(
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   #expect(try await reopened.listKeys(after: nil).allSatisfy { !$0.enabled })
   await reopened.close()
+}
+
+private let limitNames = ["requests", "active", "unresolved", "budgetMicros", "unresolvedMicros"]
+private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
+  try JSONDecoder().decode(
+    KeyPolicy.self,
+    from: JSONSerialization.data(withJSONObject: [
+      "models": ["synthetic-text"], "limits": limits,
+    ]))
+}
+
+@Test func nullableKeyDimensionsSkipOnlyTheirOwnAdmissionCheck() async throws {
+  for unlimited in limitNames {
+    // First prove the numeric dimension refuses, then switch only it to null.
+    // Pair it with every other bounded dimension to prove those still refuse.
+    for bounded in [unlimited] + limitNames.filter({ $0 != unlimited }) {
+      let path = try temporaryExecutionPath()
+      let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+      var limits = Dictionary(uniqueKeysWithValues: limitNames.map { ($0, 100 as Any) })
+      limits[bounded] = bounded.contains("Micros") ? 10 : 1
+      var key = try await store.createKey(
+        id: "k", principal: "p",
+        digest: keyDigest("synthetic-null-limit"), policy: decodedKeyPolicy(limits))
+      try await store.admit(keyAdmission("first", key: key))
+      await #expect(throws: ExecutionError.denied) {
+        try await store.admit(keyAdmission("bounded", key: key))
+      }
+      limits[unlimited] = NSNull()
+      key = try await store.updateKey(
+        id: key.id, revision: key.revision, enabled: true,
+        policy: decodedKeyPolicy(limits))
+      if bounded == unlimited {
+        try await store.admit(keyAdmission("unlimited", key: key))
+      } else {
+        await #expect(throws: ExecutionError.denied) {
+          try await store.admit(keyAdmission("still-bounded", key: key))
+        }
+      }
+      await store.close()
+      try FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+    }
+  }
+}
+
+@Test func fullyUnlimitedKeyKeepsLedgerAndGlobalRequestLimit() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(
+    path: path,
+    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100))
+  let policy = try decodedKeyPolicy(
+    Dictionary(uniqueKeysWithValues: limitNames.map { ($0, NSNull()) }))
+  let key = try await store.createKey(
+    id: "k", principal: "p",
+    digest: keyDigest("synthetic-null-limit"), policy: policy)
+  for index in 0..<105 {
+    let attempt = "a\(index)"
+    try await store.admit(keyAdmission(attempt, key: key))
+    try await store.finalize(
+      attempt: attempt,
+      evidence: .init(
+        revision: 1, inputTokens: 0,
+        outputTokens: 0, cachedTokens: 0, images: 0, estimatedMicros: 0, completeness: .complete))
+  }
+  await #expect(throws: ExecutionError.denied) {
+    try await store.admit(keyAdmission("global-denied", key: key))
+  }
+  #expect(try await store.snapshot(attempt: "a104").state == .settled)
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path,
+    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100))
+  #expect(try await reopened.listKeys(after: nil).first?.policy == policy)
+  await reopened.close()
+}
+
+@Test func nullableLimitsRequireEveryFieldAndRejectInvalidNumericValues() throws {
+  let valid = Dictionary(uniqueKeysWithValues: limitNames.map { ($0, NSNull() as Any) })
+  let policy = try decodedKeyPolicy(valid)
+  let encoded = try JSONEncoder().encode(policy)
+  #expect(try JSONDecoder().decode(KeyPolicy.self, from: encoded) == policy)
+  let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+  #expect((object["limits"] as? [String: Any])?.count == 5)
+  for field in limitNames {
+    var missing = valid
+    missing.removeValue(forKey: field)
+    #expect(throws: (any Error).self) { try decodedKeyPolicy(missing) }
+    for invalid: Any in [-1, 0, 1_000_000_000_001, "invalid", true] {
+      var bad = valid
+      bad[field] = invalid
+      #expect(throws: (any Error).self) { try decodedKeyPolicy(bad) }
+    }
+  }
 }

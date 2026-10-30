@@ -81,9 +81,11 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE namespace=? AND identity=? AND window_id=?",
             window)
           let reserved = command.policy.reservedMicros
-          guard counts.0 < limits.active, counts.1 < limits.unresolved, requests < limits.requests,
-            reserved <= limits.unresolvedMicros, counts.2 <= limits.unresolvedMicros - reserved,
-            reserved <= limits.budgetMicros, exposure <= limits.budgetMicros - reserved
+          guard
+            limits.allows(
+              requestCount: requests, activeCount: counts.0, unresolvedCount: counts.1,
+              exposureMicros: exposure, unresolvedExposureMicros: counts.2, reservedMicros: reserved
+            )
           else { continue }
           ranked.append(
             (

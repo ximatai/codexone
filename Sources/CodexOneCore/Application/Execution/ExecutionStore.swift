@@ -62,20 +62,59 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
 }
 
 public struct ExecutionLimits: Sendable, Equatable, Codable {
-  public let requests: Int64
-  public let active: Int64
-  public let unresolved: Int64
-  public let budgetMicros: Int64
-  public let unresolvedMicros: Int64
+  public let requests: Int64?
+  public let active: Int64?
+  public let unresolved: Int64?
+  public let budgetMicros: Int64?
+  public let unresolvedMicros: Int64?
   public init(
-    requests: Int64, active: Int64, unresolved: Int64, budgetMicros: Int64,
-    unresolvedMicros: Int64? = nil
+    requests: Int64?, active: Int64?, unresolved: Int64?, budgetMicros: Int64?,
+    unresolvedMicros: Int64?
   ) {
     self.requests = requests
     self.active = active
     self.unresolved = unresolved
     self.budgetMicros = budgetMicros
-    self.unresolvedMicros = unresolvedMicros ?? budgetMicros
+    self.unresolvedMicros = unresolvedMicros
+  }
+  /// Existing numeric callers may omit the exposure threshold and inherit the budget.
+  public init(requests: Int64, active: Int64, unresolved: Int64, budgetMicros: Int64) {
+    self.init(
+      requests: requests, active: active, unresolved: unresolved,
+      budgetMicros: budgetMicros, unresolvedMicros: budgetMicros)
+  }
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case requests, active, unresolved, budgetMicros, unresolvedMicros
+  }
+  public init(from decoder: any Decoder) throws {
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    // decode(Optional.self) requires the field while accepting an explicit null.
+    requests = try fields.decode(Int64?.self, forKey: .requests)
+    active = try fields.decode(Int64?.self, forKey: .active)
+    unresolved = try fields.decode(Int64?.self, forKey: .unresolved)
+    budgetMicros = try fields.decode(Int64?.self, forKey: .budgetMicros)
+    unresolvedMicros = try fields.decode(Int64?.self, forKey: .unresolvedMicros)
+  }
+  public func encode(to encoder: any Encoder) throws {
+    var fields = encoder.container(keyedBy: CodingKeys.self)
+    try fields.encode(requests, forKey: .requests)
+    try fields.encode(active, forKey: .active)
+    try fields.encode(unresolved, forKey: .unresolved)
+    try fields.encode(budgetMicros, forKey: .budgetMicros)
+    try fields.encode(unresolvedMicros, forKey: .unresolvedMicros)
+  }
+  public func allows(
+    requestCount: Int64, activeCount: Int64, unresolvedCount: Int64,
+    exposureMicros: Int64, unresolvedExposureMicros: Int64, reservedMicros: Int64
+  ) -> Bool {
+    func fits(_ limit: Int64?, _ used: Int64, _ additional: Int64) -> Bool {
+      guard let limit else { return true }
+      return additional <= limit && used <= limit - additional
+    }
+    return fits(requests, requestCount, 1) && fits(active, activeCount, 1)
+      && fits(unresolved, unresolvedCount, 1)
+      && fits(budgetMicros, exposureMicros, reservedMicros)
+      && fits(unresolvedMicros, unresolvedExposureMicros, reservedMicros)
   }
 }
 

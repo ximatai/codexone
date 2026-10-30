@@ -125,11 +125,11 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     let exposure = try db.scalar(
       "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE key_id=? AND window_id=?",
       window)
-    guard counts.0 < limits.active, counts.1 < limits.unresolved, requests < limits.requests,
-      command.reservedMicros <= limits.unresolvedMicros,
-      counts.2 <= limits.unresolvedMicros - command.reservedMicros,
-      command.reservedMicros <= limits.budgetMicros,
-      exposure <= limits.budgetMicros - command.reservedMicros
+    guard
+      limits.allows(
+        requestCount: requests, activeCount: counts.0, unresolvedCount: counts.1,
+        exposureMicros: exposure, unresolvedExposureMicros: counts.2,
+        reservedMicros: command.reservedMicros)
     else { throw ExecutionError.denied }
   }
   private static func loadKey(_ db: SQLiteConnection, _ id: String) throws -> ManagedKey {

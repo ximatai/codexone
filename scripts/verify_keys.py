@@ -291,6 +291,21 @@ def main():
                     assert call(ports['data'], 'POST', '/v1/responses', request, token=limited_secret)[0] == 401
                     limited_secret = rotation['secret']
                     assert call(ports['data'], 'POST', '/v1/responses', request, token=limited_secret)[0] == 429
+                    unlimited, unlimited_secret = create(ports['admin'], principal='unlimited', limits=dict.fromkeys(LIMITS))
+                    secrets.append(unlimited_secret)
+                    assert unlimited['limits']==dict.fromkeys(LIMITS)
+                    status, changed=update(ports['admin'], unlimited, limits={**dict.fromkeys(LIMITS),'requests':1})
+                    assert status==200 and changed['key']['limits']['requests']==1
+                    status, changed=update(ports['admin'], changed['key'], limits=dict.fromkeys(LIMITS))
+                    assert status==200 and changed['key']['limits']==dict.fromkeys(LIMITS)
+                    for _ in range(3):
+                        assert call(ports['data'], 'POST', '/v1/responses', request, token=unlimited_secret)[0]==200
+                        latest(db_path,'settled')
+                    for field in LIMITS:
+                        for invalid in (-1,0,10**12+1,'invalid'):
+                            assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits={**dict.fromkeys(LIMITS),field:invalid}))[0]==400
+                        missing=dict.fromkeys(LIMITS);del missing[field]
+                        assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits=missing))[0]==400
                     status, listing = call(ports['admin'], 'GET', '/api/keys')
                     assert status == 200 and 'secret' not in json.dumps(listing) and 'digest' not in json.dumps(listing)
                     assert listing['nextCursor'] is None
