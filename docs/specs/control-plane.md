@@ -39,6 +39,8 @@
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权。POST `/authorization/:flowID` 只接受 callbackURL；DELETE 丢弃本 owner 尚未完成的流程。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。登录地址和流程信息仅当前响应可用，不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 
 
+账号禁用/排空和 Key 禁用/轮换须先确认影响。账号排空不接收新会话请求，已有身份关联续接仍可派发；禁用阻止后续派发（包括续接），两者均不主动取消已经派发的请求。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
+
 账号页面分别展示使用策略与授权状态；新账号保持禁用，刷新失效/授权未知引导重新授权，不能以刷新按钮自动重用失效令牌。一次性回调以隐藏输入接受，提交前即清除；流程仅页面内存保留、期限到期或离开页面清除本地信息。远程操作者可在新窗口登录并复制最终 localhost 回调地址，不自动访问操作者的 callback 服务。账号列表不能包含 token；不把订阅授权状态称为可用余额。
 
 CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败不能谎报已核对。成功写入后若后续读取失败，同样保持锁定；回调不再显示或提供重发。登录/登出失败给出明确重试，登出未确认也清本页授权信息。前端 API 与 session/CSRF 客户端是实际复用的 shared 模块，不把账号依赖放进 Key feature。
@@ -66,3 +68,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 ## A14：受控离线摘要导入
 
 管理员批准的Key复用只通过新目标离线导入：私有有界清单、采集时限、整份校验、实例锁、事务全禁用及逐条审计。不得向已有Key/执行/账号/维护历史或恢复态库导入，不支持覆盖、部分提交或自动启用。源停用、任何到期语义或无法表达的策略须隔离，不能静默放宽；与独立管理员验证材料相同拒绝。元数据/输出不含摘要或明文，原字符串认证、显式CAS启用、轮换和持久准入沿用I12。新旧账本与撤销独立，不伪造余额或持续授权同步。离线清单限额同样逐项显式支持 null；源转换 source 模式只在无任何限额记录时推导全 null，有记录则隔离。格式与操作见[摘要导入](../development/key-import.md)。
+
+### 管理产品化的兼容增量
+
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 无查询参数，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项仅有keyID、可空principal、admitted、failed、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。

@@ -2,12 +2,14 @@
 
 契约见 [proposal](proposal.md)。
 
-- [ ] 后端：usage options 与明细返回 Key 主体名
-- [ ] 后端：`GET /api/usage/keys` 按 Key 汇总当日数据与最近使用时间
-- [ ] 后端：outcome/usage JSON 记录首事件与总耗时（可选成员），明细返回
-- [ ] 前端：登录后的概览首页
-- [ ] 前端：账号窗口剩余比例与重置倒计时、危险操作确认、空状态引导
-- [ ] 前端：Key 列表增强、搜索与筛选、确认、编辑器改进
-- [ ] 前端：用量页自动查询、主体名、快捷区间、明细详情、未展示字段
-- [ ] 前端：术语与美元单位
-- [ ] 测试与 `verify.sh --backend`、`--web --chrome`；大屏走查
+- [x] 后端：usage options 与明细返回 Key 主体名
+- [x] 后端：`GET /api/usage/keys` 按 Key 汇总当日数据与最近使用时间
+- [x] 后端：outcome/usage JSON 记录首事件与总耗时（可选成员），明细返回
+- [x] 前端：登录后的概览首页
+- [x] 前端：账号窗口剩余比例与重置倒计时、危险操作确认、空状态引导
+- [x] 前端：Key 列表增强、搜索与筛选、确认、编辑器改进
+- [x] 前端：用量页自动查询、主体名、快捷区间、明细详情、未展示字段
+- [x] 前端：术语与美元单位
+- [x] 后端定向测试、前端单元测试，以及更新合成 Playwright/live 脚本覆盖（见 [verification](verification.md)）
+- [x] 完整 `verify.sh --backend`
+- [ ] `--web --chrome` 与大屏/窄屏浏览器验收出口（环境限制见 [verification](verification.md)）
