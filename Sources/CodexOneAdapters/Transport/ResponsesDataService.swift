@@ -463,7 +463,9 @@ public struct ResponsesDataService: Service {
       try await writer.json(
         modelCatalog(
           executor.effectiveModels, requireCodexProfile: codexDirectory,
-          images: executor.effectiveImageModels, runtimeBudget: executor.configuration.budgetSummary
+          images: executor.effectiveImageModels,
+          runtimeBudget: executor.configuration.budgetSummary,
+          upstreamTransport: executor.configuration.upstreamTransport
         ))
       return
     }

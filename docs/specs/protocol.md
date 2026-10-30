@@ -83,11 +83,13 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 ## P16：受控模型目录
 
-两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均由显式内联或经验证私有快照提供非空 baseInstructions 时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。
+两个路径的 GET /models 返回有效白名单的 OpenAI data；只有所有模型均由显式内联或经验证私有快照提供完整 profile（非空 baseInstructions 或有效 upstream）时才同时提供同一集合的 Codex models，不裁剪成一个假装完整的子目录。所选客户端的 client_version 查询参数请求 Codex 目录；缺少完整 profile 返回 503 model_catalog_unavailable，普通模型列表仍可用。该查询参数只选择视图，不授予权限；503 不能阻止客户端自行 fallback，未采用目录不得算验收通过。
 
-可信本地 profile 可限定展示名称、说明、上下文窗口、推理选项及模型基础指导。baseInstructions 是权威模型指导，客户端采用后会替换自己的默认指导，不能仅为目录解码提供空字符串；管理员须为目标模型/版本明确配置完整指导。网关不复制/发明客户端默认提示。当前切片只声明文本输入、无内置搜索；shell_type 选择客户端 unified_exec，工具仍遵守其 sandbox。目录不授予额外权限，不证明提供者已支持这些能力。
+受信私有快照条目可提供 `upstream` JSON 对象，与 `catalog` 互斥；须有非空字符串 `base_instructions`，`slug` 若存在必须等于配置模型 ID，单条序列化上限 256 KiB，快照文件上限 4 MiB。未知成员（含嵌套对象）原样保留，不做字段白名单。目录以 upstream 为准，仅覆盖 slug 为配置 ID、priority 为配置顺序；visionInput 非 true 时从 input_modalities 删除 image；upstreamTransport 非 websocket 时设置 prefer_websockets=false；附加现有 codexone_profile 来源信息。所有模型均有完整 profile 才输出 Codex 目录，不输出部分目录。
 
-配置顺序决定 priority，目录内容、指导与顺序进入策略版本；计价版本只包含模型 ID/费率，指导不进入核心持久库。实际版本须显式发现并采用目录和已配置指导，不得以 fallback 元数据下的生成成功充当目录验收。
+旧 `catalog` 为兼容合成路径，行为保持；部署内联 catalog 对快照条目作整体覆盖，覆盖后沿用合成路径。模型基础指导会替换客户端默认指导，管理员须针对模型/版本审核；网关不复制或发明客户端默认提示。目录不授予额外权限，不证明提供者已支持声明的能力。
+
+配置顺序决定 priority，目录内容（包括 upstream 及快照哈希）、指导与顺序进入策略版本；计价版本只包含模型 ID/费率，指导不进入核心持久库。实际版本须显式发现并采用目录和已配置指导，不得以 fallback 元数据下的生成成功充当目录验收。
 
 ## P17：Responses 流式压缩 v2
 
