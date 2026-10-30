@@ -424,7 +424,7 @@ def timeout_checks(f, key):
     proxy = f['proxy']
     proxy.close()
     path = proxy.root / 'data.conf'
-    path.write_text(path.read_text().replace('proxy_read_timeout 130s;', 'proxy_read_timeout 1s;').replace('client_body_timeout 30s;', 'client_body_timeout 1s;'))
+    path.write_text(path.read_text().replace('proxy_read_timeout 1830s;', 'proxy_read_timeout 1s;').replace('client_body_timeout 30s;', 'client_body_timeout 1s;'))
     proxy.logs = (proxy.root / 'process.log').open('a+b')
     command([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-t'])
     proxy.process = subprocess.Popen([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-g', 'daemon off;'], stdout=proxy.logs, stderr=proxy.logs, start_new_session=True)
@@ -466,7 +466,7 @@ def timeout_checks(f, key):
         assert f['provider'].cancelled.wait(3)
         latest(f['root'] / 'state/core.sqlite', 'unknown')
         assert f['provider'].calls == before + 1, 'Proxy replayed timeout generation'
-    print('PASS: injected Nginx partial-body timeout closes before dispatch; idle/pre-header read timeout closes upstream, keeps unknown and does not replay (delivery default remains 130s)')
+    print('PASS: injected Nginx partial-body timeout closes before dispatch; idle/pre-header read timeout closes upstream, keeps unknown and does not replay (delivery default remains 1830s)')
 
 
 def browser_checks(f, pin):
