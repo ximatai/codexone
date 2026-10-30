@@ -23,12 +23,24 @@ private final class WebSocketWireGuard: ChannelInboundHandler {
   }
 }
 
-func configureWebSocket(_ channel: any Channel, client: Bool) throws -> ProtocolWebSocket {
-  try channel.pipeline.syncOperations.addHandlers(
-    WebSocketWireGuard(masked: !client),
-    NIOWebSocketFrameAggregator(
-      minNonFinalFragmentSize: 1, maxAccumulatedFrameCount: 1024,
-      maxAccumulatedFrameSize: ImageLimits.eventBytes))
+func configureWebSocket(
+  _ channel: any Channel, client: Bool, budget: RequestBodyBudget? = nil,
+  reservations: WebSocketBodyReservations? = nil
+) throws -> ProtocolWebSocket {
+  if let budget, let reservations {
+    let decoder = try channel.pipeline.syncOperations.context(
+      handlerType: ByteToMessageHandler<WebSocketFrameDecoder>.self)
+    try channel.pipeline.syncOperations.addHandler(
+      DownstreamWebSocketDecoder(budget: budget, reservations: reservations),
+      position: .before(decoder.handler))
+    channel.pipeline.syncOperations.removeHandler(context: decoder, promise: nil)
+  } else {
+    try channel.pipeline.syncOperations.addHandlers(
+      WebSocketWireGuard(masked: !client),
+      NIOWebSocketFrameAggregator(
+        minNonFinalFragmentSize: 1, maxAccumulatedFrameCount: 1024,
+        maxAccumulatedFrameSize: ImageLimits.eventBytes))
+  }
   return try .init(
     wrappingChannelSynchronously: channel,
     configuration: .init(backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4)))
@@ -37,32 +49,39 @@ func configureWebSocket(_ channel: any Channel, client: Bool) throws -> Protocol
 /// One producer; named queues share count/byte limits before any task or actor mailbox entry.
 final class WebSocketInbox: Sendable {
   private struct State {
-    var queues: [String: [Data]] = [:]
+    let capacity: Int
+    var queues: [String: [WebSocketBody]] = [:]
     var bytes = 0
     var count = 0
-    var waiters: [String: CheckedContinuation<Data, any Error>] = [:]
+    var waiters: [String: CheckedContinuation<WebSocketBody, any Error>] = [:]
     var producer: (lane: String, bytes: Int, continuation: CheckedContinuation<Void, any Error>)?
     var error: (any Error)?
     func hasSpace(lane: String, bytes: Int) -> Bool {
-      (queues[lane]?.count ?? 0) < 4 && count < 64 && bytes <= ImageLimits.eventBytes - self.bytes
+      (queues[lane]?.count ?? 0) < 4 && count < 64 && bytes <= capacity - self.bytes
     }
   }
-  private let state = Mutex(State())
+  private let state: Mutex<State>
+  init(capacity: Int = ImageLimits.eventBytes) { state = Mutex(State(capacity: capacity)) }
   func push(_ data: Data, lane: String = "") async throws {
+    try await pushBody(.init(data), lane: lane)
+  }
+  func pushBody(_ body: WebSocketBody, lane: String = "") async throws {
+    let data = body.data
     while true {
-      let result = try state.withLock { value -> (Bool, CheckedContinuation<Data, any Error>?) in
+      let result = try state.withLock {
+        value -> (Bool, CheckedContinuation<WebSocketBody, any Error>?) in
         if let error = value.error { throw error }
         if let waiter = value.waiters.removeValue(forKey: lane) { return (true, waiter) }
         guard value.hasSpace(lane: lane, bytes: data.count) else { return (false, nil) }
         guard value.queues[lane] != nil || value.queues.count < 33 else {
           throw ExecutionError.capacity
         }
-        value.queues[lane, default: []].append(data)
+        value.queues[lane, default: []].append(body)
         value.bytes += data.count
         value.count += 1
         return (true, nil)
       }
-      result.1?.resume(returning: data)
+      result.1?.resume(returning: body)
       if result.0 { return }
       try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation {
@@ -99,14 +118,15 @@ final class WebSocketInbox: Sendable {
     for waiter in pending.0 { waiter.resume(throwing: error) }
     pending.1?.resume(throwing: error)
   }
-  func next(lane: String = "") async throws -> Data {
+  func next(lane: String = "") async throws -> Data { try await nextBody(lane: lane).data }
+  func nextBody(lane: String = "") async throws -> WebSocketBody {
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         let ready = state.withLock {
-          value -> (Result<Data, any Error>?, CheckedContinuation<Void, any Error>?) in
+          value -> (Result<WebSocketBody, any Error>?, CheckedContinuation<Void, any Error>?) in
           if value.queues[lane]?.isEmpty == false {
             let data = value.queues[lane]!.removeFirst()
-            value.bytes -= data.count
+            value.bytes -= data.data.count
             value.count -= 1
             var producer: CheckedContinuation<Void, any Error>?
             if let waiting = value.producer,
@@ -148,7 +168,10 @@ actor WebSocketWriter {
   {
     guard
       data.count
-        <= (client && normalizedImage ? ImageLimits.normalizedRequestBytes : ImageLimits.eventBytes)
+        <= (client
+          ? (normalizedImage
+            ? ImageLimits.normalizedRequestBytes : RequestBodyLimits.maximumBytes + 1024)
+          : ImageLimits.eventBytes)
     else {
       throw GatewayProtocolError(413, "websocket_message_too_large")
     }
@@ -175,13 +198,15 @@ struct WebSocketPeer: Sendable {
   }
   func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
+  func nextBody() async throws -> WebSocketBody { try await inbox.nextBody() }
   func send(_ value: JSONValue, normalizedImage: Bool = false) async throws {
     try await writer.send(
-      value.data(escapingSlashes: !normalizedImage), normalizedImage: normalizedImage)
+      value.data(escapingSlashes: false), normalizedImage: normalizedImage)
   }
 
   static func run(
     _ socket: ProtocolWebSocket, client: Bool,
+    reservations: WebSocketBodyReservations? = nil,
     operation: @escaping @Sendable (WebSocketPeer) async throws -> Void
   ) async throws {
     let lifetime = socket.channel.eventLoop.scheduleTask(in: .seconds(3600)) {
@@ -189,7 +214,8 @@ struct WebSocketPeer: Sendable {
     }
     defer { lifetime.cancel() }
     try await socket.executeThenClose { inbound, outbound in
-      let inbox = WebSocketInbox()
+      let inbox = WebSocketInbox(
+        capacity: client ? ImageLimits.eventBytes : RequestBodyLimits.budgetBytes)
       let turns = client ? WebSocketTurns() : nil
       let writer = WebSocketWriter(writer: outbound, channel: socket.channel, client: client)
       try await withThrowingTaskGroup(of: Bool.self) { tasks in
@@ -204,7 +230,7 @@ struct WebSocketPeer: Sendable {
                 }
                 guard let lane = try turns.map({ try $0.observe(data) }) ?? "" else { continue }
                 try await withExecutionDeadline(seconds: 5) {
-                  try await inbox.push(data, lane: lane)
+                  try await inbox.pushBody(.init(data, lease: reservations?.take()), lane: lane)
                 }
               case .ping: try await writer.send(data, opcode: .pong)
               case .pong: break
@@ -236,7 +262,8 @@ struct WebSocketPeer: Sendable {
         }
         defer {
           turns?.close()
-          inbox.finish(CancellationError())
+          inbox.finish(CancellationError(), discard: true)
+          reservations?.close()
           socket.channel.close(promise: nil)
           tasks.cancelAll()
         }

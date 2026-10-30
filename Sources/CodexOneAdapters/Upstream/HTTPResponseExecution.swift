@@ -36,7 +36,7 @@ struct HTTPResponseExecution: Sendable {
         var model = model
         model.visionInput = model.visionInput == true && policy.capabilities?.visionInput == true
         model.imageGeneration =
-          model.imageGeneration == true && effectiveImages.contains { $0.hostModel == model.id }
+          model.imageGeneration == true && !effectiveImages.isEmpty
         return model
       })
   }
@@ -48,7 +48,7 @@ struct HTTPResponseExecution: Sendable {
       request.requirements.imageModel == nil
         || (model.imageGeneration == true
           && effectiveImageModels.contains {
-            $0.id == request.requirements.imageModel && $0.hostModel == request.model
+            $0.id == request.requirements.imageModel
           })
     else { throw GatewayProtocolError(403, "model_not_allowed") }
     return model

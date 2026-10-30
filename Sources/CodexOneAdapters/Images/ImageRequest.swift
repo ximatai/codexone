@@ -3,11 +3,10 @@ import Foundation
 
 /// Limits apply before decoding and are shared by JSON, multipart and WS.
 enum ImageLimits {
-  static let requestBytes = 8_388_608
   // Validated multipart images expand to base64 plus a bounded protocol envelope.
-  static let normalizedRequestBytes = 9_437_184
-  static let imageBytes = 4_194_304
-  static let totalImageBytes = 6_291_456
+  static let normalizedRequestBytes = 34_603_008
+  static let imageBytes = 16_777_216
+  static let totalImageBytes = 25_165_824
   static let eventBytes = 8_388_608
   static let responseBytes = 33_554_432
 }
@@ -15,13 +14,13 @@ enum ImageLimits {
 struct ImageToolRequest: Sendable {
   let model: ImageConfiguration.Model
   let document: JSONValue
-  init(_ value: JSONValue, configuration: ImageConfiguration?, host: String? = nil) throws {
+  init(_ value: JSONValue, configuration: ImageConfiguration?) throws {
     guard var fields = value.object, fields["type"]?.string == "image_generation",
       fields["model"] == nil || fields["model"]?.string != nil,
       let configuration,
       let model = configuration.models.first(where: {
         $0.id == (fields["model"]?.string ?? configuration.defaultModel)
-      }), host == nil || model.hostModel == host
+      })
     else { throw GatewayProtocolError(400, "unsupported_image_model") }
     let allowed: Set<String> = [
       "type", "model", "size", "quality", "background", "output_format",
@@ -70,9 +69,14 @@ struct ImagesRequest: Sendable {
   let streaming: Bool
   let editing: Bool
   init(data: Data, contentType: String, editing: Bool, configuration: ImageConfiguration?) throws {
-    guard data.count <= ImageLimits.requestBytes else {
+    guard data.count <= RequestBodyLimits.maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
     }
+    let known: Set<String> = [
+      "model", "prompt", "n", "size", "quality", "background", "output_format",
+      "output_compression", "moderation", "input_fidelity", "partial_images", "stream",
+      "response_format",
+    ]
     var fields: [String: JSONValue]
     var images: [ImagePayload] = []
     var mask: ImagePayload?
@@ -89,7 +93,7 @@ struct ImagesRequest: Sendable {
           } else {
             images.append(image)
           }
-        } else {
+        } else if known.contains(part.name) {
           guard fields[part.name] == nil, part.data.count <= 32_768,
             let text = String(data: part.data, encoding: .utf8)
           else { throw GatewayProtocolError(400, "invalid_multipart") }
@@ -114,28 +118,28 @@ struct ImagesRequest: Sendable {
       else { throw GatewayProtocolError(400, "invalid_json") }
       fields = object
       if let input = fields.removeValue(forKey: "images") {
-        guard editing, let items = input.array, items.count <= 4 else {
+        guard editing, let items = input.array, items.count <= 16 else {
           throw GatewayProtocolError(400, "invalid_image")
         }
         for item in items {
-          guard item.object?.count == 1, let url = item["image_url"]?.string else {
+          guard let url = item["image_url"]?.string else {
             throw GatewayProtocolError(400, "invalid_image")
           }
           images.append(try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes))
         }
       }
       if let input = fields.removeValue(forKey: "mask") {
-        guard editing, input.object?.count == 1, let url = input["image_url"]?.string else {
+        guard editing, let url = input["image_url"]?.string else {
           throw GatewayProtocolError(400, "invalid_mask")
         }
         mask = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
       }
     }
+    fields = fields.filter { known.contains($0.key) }
     guard let prompt = fields.removeValue(forKey: "prompt")?.string, !prompt.isEmpty,
-      prompt.utf8.count <= 32_768, images.count <= 4, editing ? !images.isEmpty : images.isEmpty,
+      prompt.utf8.count <= 32_768, images.count <= 16, editing ? !images.isEmpty : images.isEmpty,
       images.reduce(0, { $0 + $1.bytes.count }) + (mask?.bytes.count ?? 0)
-        <= ImageLimits.totalImageBytes,
-      images.reduce(0, { $0 + $1.width * $1.height }) <= 33_554_432
+        <= ImageLimits.totalImageBytes
     else { throw GatewayProtocolError(400, "invalid_image_request") }
     if let format = fields.removeValue(forKey: "response_format"), format.string != "b64_json" {
       throw GatewayProtocolError(400, "unsupported_response_format")

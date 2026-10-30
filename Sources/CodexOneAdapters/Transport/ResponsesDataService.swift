@@ -17,6 +17,7 @@ public struct ResponsesDataService: Service {
   private var configuration: ResponsesConfiguration { source.configuration }
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
+  private let bodyBudget = RequestBodyBudget()
   private let onBound: @Sendable (Int) -> Void
 
   public init(
@@ -134,7 +135,7 @@ public struct ResponsesDataService: Service {
             channel.close(promise: nil)
           }
           let upgrader = NIOTypedWebSocketServerUpgrader<NegotiatedProtocol>(
-            maxFrameSize: ImageLimits.requestBytes,
+            maxFrameSize: RequestBodyLimits.maximumBytes,
             shouldUpgrade: { channel, head in
               let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
               let allowed =
@@ -154,9 +155,12 @@ public struct ResponsesDataService: Service {
             },
             upgradePipelineHandler: { channel, head in
               channel.eventLoop.makeCompletedFuture {
-                .webSocket(
-                  try configureWebSocket(channel, client: false),
-                  try executor.access.digest(head.headers["authorization"]))
+                let reservations = WebSocketBodyReservations()
+                return .webSocket(
+                  try configureWebSocket(
+                    channel, client: false, budget: bodyBudget,
+                    reservations: reservations),
+                  try executor.access.digest(head.headers["authorization"]), reservations)
               }
             })
           var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(
@@ -194,9 +198,11 @@ public struct ResponsesDataService: Service {
                   tasks.addTask {
                     do {
                       switch try await connection.get() {
-                      case .http(let socket): try await Self.serve(socket, executor: executor)
-                      case .webSocket(let socket, let digest):
-                        try await Self.serveWebSocket(socket, executor: executor, digest: digest)
+                      case .http(let socket):
+                        try await Self.serve(socket, executor: executor, budget: bodyBudget)
+                      case .webSocket(let socket, let digest, let reservations):
+                        try await Self.serveWebSocket(
+                          socket, executor: executor, digest: digest, reservations: reservations)
                       }
                     } catch {}
 
@@ -222,16 +228,19 @@ public struct ResponsesDataService: Service {
   }
 
   private static func serveWebSocket(
-    _ socket: ProtocolWebSocket, executor: HTTPResponseExecution, digest: String?
+    _ socket: ProtocolWebSocket, executor: HTTPResponseExecution, digest: String?,
+    reservations: WebSocketBodyReservations
   )
     async throws
   {
-    try await WebSocketPeer.run(socket, client: false) { downstream in
-      let firstData = try await withExecutionDeadline(seconds: 10) { try await downstream.next() }
+    try await WebSocketPeer.run(socket, client: false, reservations: reservations) { downstream in
+      let firstBody = try await withExecutionDeadline(seconds: 10) {
+        try await downstream.nextBody()
+      }
       let first: ResponseRequest
       do {
         first = try webSocketCreate(
-          firstData, imageConfiguration: executor.configuration.imageGeneration)
+          firstBody.data, imageConfiguration: executor.configuration.imageGeneration)
       } catch {
         try? await sendWebSocketError(
           error, requestID: UUID().uuidString, lane: "", to: downstream)
@@ -246,18 +255,18 @@ public struct ResponsesDataService: Service {
         let requestID = UUID().uuidString
         await authorized.recordRejection(first, requestID: requestID, error: error)
         try? await sendWebSocketError(
-          error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstData)),
+          error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstBody.data)),
           to: downstream)
         throw error
       }
       if case .pool = authorized.gateway {
         try await PoolWebSocketSession.run(
-          downstream: downstream, firstData: firstData, first: first,
+          downstream: downstream, firstBody: firstBody, first: first,
           executor: authorized, digest: digest)
       } else {
         try await executor.webSocket.run { upstream in
           try await serveTurns(
-            downstream: downstream, upstream: upstream, firstData: firstData,
+            downstream: downstream, upstream: upstream, firstBody: firstBody,
             executor: authorized, digest: digest)
         }
       }
@@ -265,26 +274,26 @@ public struct ResponsesDataService: Service {
   }
 
   static func serveTurns(
-    downstream: WebSocketPeer, upstream: WebSocketPeer, firstData: Data,
+    downstream: WebSocketPeer, upstream: WebSocketPeer, firstBody: WebSocketBody,
     executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
   ) async throws {
-    let commands = WebSocketInbox()
+    let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
     let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
-    try await withThrowingTaskGroup(of: Data?.self) { lanes in
+    try await withThrowingTaskGroup(of: WebSocketBody?.self) { lanes in
       defer { lanes.cancelAll() }
       var known = Set<String>()
-      lanes.addTask { firstData }
-      while let result = try await lanes.next(), let data = result {
-        let lane = try webSocketLane(JSONValue.decode(data))
+      lanes.addTask { firstBody }
+      while let result = try await lanes.next(), let body = result {
+        let lane = try webSocketLane(JSONValue.decode(body.data))
         let fresh = !known.contains(lane)
         guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
           throw GatewayProtocolError(503, "websocket_lane_capacity")
         }
         activity.begin()
         do {
-          try await withExecutionDeadline(seconds: 5) { [data] in
-            try await commands.push(data, lane: lane)
+          try await withExecutionDeadline(seconds: 5) {
+            try await commands.pushBody(body, lane: lane)
           }
         } catch {
           activity.end()
@@ -297,7 +306,8 @@ public struct ResponsesDataService: Service {
             var pending = firstTurn
             let tools = WebSocketToolState()
             while !Task.isCancelled {
-              let data = try await commands.next(lane: lane)
+              let body = try await commands.nextBody(lane: lane)
+              defer { body.release() }
               defer { activity.end() }
               let initialTurn = pending
               pending = nil
@@ -305,7 +315,7 @@ public struct ResponsesDataService: Service {
               var requested: ResponseRequest?
               do {
                 let request = try webSocketCreate(
-                  data, imageConfiguration: executor.configuration.imageGeneration,
+                  body.data, imageConfiguration: executor.configuration.imageGeneration,
                   previousTools: tools.snapshot)
                 requested = request
                 if let initialTurn {
@@ -345,7 +355,7 @@ public struct ResponsesDataService: Service {
           }
         }
         lanes.addTask {
-          try await activity.read { try await downstream.next() }
+          try await activity.read { try await downstream.nextBody() }
         }
       }
     }
@@ -353,7 +363,7 @@ public struct ResponsesDataService: Service {
 
   private static func serve(
     _ connection: NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>,
-    executor: HTTPResponseExecution
+    executor: HTTPResponseExecution, budget: RequestBodyBudget
   ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask {
@@ -363,6 +373,8 @@ public struct ResponsesDataService: Service {
             let requestDeadline = connection.channel.eventLoop.scheduleTask(in: .seconds(10)) {
               connection.channel.close(promise: nil)
             }
+            let lease = budget.lease()
+            defer { lease.release() }
             let received: (HTTPRequestHead, Data)?
             do {
               var head: HTTPRequestHead?
@@ -379,15 +391,22 @@ public struct ResponsesDataService: Service {
                       executor.access.digest(next.headers["authorization"]))
                   }
                   if let length = next.headers.first(name: "content-length"),
-                    Int(length).map({ $0 < 0 || $0 > ImageLimits.requestBytes }) ?? true
+                    Int(length).map({ $0 < 0 || $0 > RequestBodyLimits.maximumBytes }) ?? true
                   {
                     throw GatewayProtocolError(413, "request_too_large")
                   }
+                  if let length = next.headers.first(name: "content-length"),
+                    let count = Int(length)
+                  {
+                    try lease.reserve(count)
+                  }
                 case .body(let bytes):
-                  guard head != nil, bytes.readableBytes <= ImageLimits.requestBytes - body.count
+                  guard head != nil,
+                    bytes.readableBytes <= RequestBodyLimits.maximumBytes - body.count
                   else {
                     throw GatewayProtocolError(413, "request_too_large")
                   }
+                  try lease.reserve(body.count + bytes.readableBytes)
                   body.append(contentsOf: bytes.readableBytesView)
                 case .end: ended = true
                 }
@@ -523,7 +542,7 @@ public struct ResponsesDataService: Service {
 
 private enum NegotiatedProtocol: Sendable {
   case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>)
-  case webSocket(ProtocolWebSocket, String?)
+  case webSocket(ProtocolWebSocket, String?, WebSocketBodyReservations)
 }
 
 private actor ProtocolResponseWriter {
@@ -553,13 +572,14 @@ private actor ProtocolResponseWriter {
     defer { deadline.cancel() }
     try await writer.write(contentsOf: parts)
   }
-  func json(_ value: JSONValue, status: Int = 200) async throws {
+  func json(_ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
     let data = try value.data()
     var headers: HTTPHeaders = [
       "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
       "content-length": String(data.count),
     ]
+    if let retryAfter { headers.add(name: "retry-after", value: String(retryAfter)) }
     if !keepAlive { headers.add(name: "connection", value: "close") }
     started = true
     do {
@@ -609,7 +629,7 @@ private actor ProtocolResponseWriter {
     let mapped = protocolFailure(error)
     let envelope = protocolErrorEnvelope(error, requestID: requestID)
     if !started {
-      try await json(envelope, status: mapped.status)
+      try await json(envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds)
     } else if streaming && !ended {
       if mapped.providerError != nil {
         // Clients interpret provider failures from the terminal response, as on a direct stream.

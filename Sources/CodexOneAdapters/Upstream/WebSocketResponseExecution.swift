@@ -123,6 +123,7 @@ func webSocketCreate(
   }
   document["stream"] = .bool(true)
   return try ResponseRequest(
-    data: JSONValue.object(document).data(), mode: generate?.bool == false ? .warmup : .generation,
+    data: JSONValue.object(document).data(escapingSlashes: false),
+    mode: generate?.bool == false ? .warmup : .generation,
     imageConfiguration: imageConfiguration, previousTools: previousTools)
 }

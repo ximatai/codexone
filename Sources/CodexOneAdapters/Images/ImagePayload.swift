@@ -49,7 +49,7 @@ struct ImagePayload: Sendable {
     guard
       declaredType == nil || declaredType == "application/octet-stream" || declaredType == info.0,
       (1...16384).contains(info.1), (1...16384).contains(info.2),
-      info.1 <= 64_000_000 / info.2
+      info.1 <= 50_000_000 / info.2
     else { throw GatewayProtocolError(400, "invalid_image_dimensions") }
     self.bytes = bytes
     mediaType = info.0

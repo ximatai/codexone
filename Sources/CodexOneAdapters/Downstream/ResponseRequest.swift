@@ -57,7 +57,7 @@ struct ResponseRequest: Sendable {
   {
     try self.init(
       data: data, mode: mode, imageConfiguration: imageConfiguration,
-      maximumBytes: ImageLimits.requestBytes, previousTools: nil)
+      maximumBytes: RequestBodyLimits.maximumBytes, previousTools: nil)
   }
   init(
     data: Data, mode: ExecutionMode, imageConfiguration: ImageConfiguration?,
@@ -65,7 +65,7 @@ struct ResponseRequest: Sendable {
   ) throws {
     try self.init(
       data: data, mode: mode, imageConfiguration: imageConfiguration,
-      maximumBytes: ImageLimits.requestBytes, previousTools: previousTools)
+      maximumBytes: RequestBodyLimits.maximumBytes, previousTools: previousTools)
   }
   init(normalizedImage: JSONValue, imageConfiguration: ImageConfiguration?) throws {
     try self.init(
@@ -138,14 +138,14 @@ struct ResponseRequest: Sendable {
       }
     }
     let imageTools = topLevelTools.filter { $0["type"]?.string == "image_generation" }
-    guard imageTools.count <= 1, imageTools.isEmpty || mode == .generation,
+    guard imageTools.count <= 1,
       !topLevelTools.contains(where: {
         $0["type"]?.string == "namespace" && nestedImageTool($0["tools"]?.array ?? [])
       }),
       !packages.contains(where: { nestedImageTool($0["tools"]?.array ?? []) })
     else { throw GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage) }
     let imageTool = try imageTools.first.map {
-      try ImageToolRequest($0, configuration: imageConfiguration, host: model)
+      try ImageToolRequest($0, configuration: imageConfiguration)
     }
     let inherited =
       fields["tools"] == nil && packages.isEmpty
@@ -159,13 +159,18 @@ struct ResponseRequest: Sendable {
     var streamCompaction = false
     var visionInput = false
     var firstImageURL: String?
-    func scanImages(_ value: JSONValue?) {
-      guard let parts = value?.array else { return }
-      for part in parts where part["type"]?.string == "input_image" {
-        visionInput = true
-        if firstImageURL == nil { firstImageURL = part["image_url"]?.string }
+    func scanImages(_ value: JSONValue) {
+      if let object = value.object {
+        if object["type"]?.string == "input_image" {
+          visionInput = true
+          if firstImageURL == nil { firstImageURL = object["image_url"]?.string }
+        }
+        for child in object.values { scanImages(child) }
+      } else if let parts = value.array {
+        for part in parts { scanImages(part) }
       }
     }
+    scanImages(input!)
     func hint(_ binding: ObjectBinding) {
       hints.removeAll { $0 == binding }
       hints.append(binding)
@@ -195,8 +200,6 @@ struct ResponseRequest: Sendable {
         continue
       default: break
       }
-      if type == "message" { scanImages(object["content"]) }
-      scanImages(object["output"])
       if let call = object["call_id"]?.string, !call.isEmpty, call.utf8.count <= 256 {
         hint(.init(type: "function_call", rawID: call))
       }
@@ -223,9 +226,6 @@ struct ResponseRequest: Sendable {
       let image = try ImagePayload(dataURL: firstImageURL, maximumBytes: ImageLimits.imageBytes)
       let payload = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
       try payload.validateMask(for: image)
-    }
-    guard !(streamCompaction || mode == .compact) || (!visionInput && imageTool == nil) else {
-      throw GatewayProtocolError(400, "unsupported_image_compaction")
     }
     requirements = try .init(
       route: .conversation, visionInput: visionInput, imageModel: imageTool?.model.id)
