@@ -26,8 +26,12 @@ RUN set -eu; npm ls --omit=dev --all --parseable > /tmp/runtime-dependencies; \
     done < /tmp/runtime-dependencies
 
 FROM ${SWIFT_BUILD_IMAGE} AS backend
-RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 openssl \
-    && rm -rf /var/lib/apt/lists/*
+# Optional Ubuntu mirror for this install only; the original sources are restored afterwards.
+ARG APT_MIRROR=
+RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
+    && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
+    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 openssl \
+    && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 WORKDIR /build
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
@@ -76,8 +80,12 @@ RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/co
     && python3 scripts/verify_migration_cutback.py --binary /output/codexone
 
 FROM ${SWIFT_RUNTIME_IMAGE} AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
+# Optional Ubuntu mirror for this install only; the original sources are restored afterwards.
+ARG APT_MIRROR=
+RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
+    && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
+    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src" \
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
     && mkdir -p /var/lib/codexone /run/codexone /opt/codexone/web \
     && chown 10001:10001 /var/lib/codexone && chmod 700 /var/lib/codexone
