@@ -2,7 +2,7 @@
 
 `CODEXONE_IDENTITY_CONFIG` / `CODEXONE_ACCOUNT_POOL_CONFIG` 均可声明 `modelProfilesFile`。它是管理员已审核的离线文件，不进行联网发现、提供者登录或读取个人客户端配置。安装Compose可将文件放在既有私有secrets目录，容器路径例如 `/run/codexone/model-profiles.json`；不要在公开配置提交真实指导、路径或账号资料。
 
-快照为当前用户所有的0600普通文件（拒绝链接），最大1MiB。示例使用合成信息：
+快照为当前用户所有的0600普通文件（拒绝链接），最大4MiB。示例使用合成信息：
 
 ```json
 {
@@ -13,18 +13,32 @@
   "clientVersions": ["0.163.0"],
   "models": [{
     "id": "synthetic-text",
-    "catalog": {
-      "baseInstructions": "Synthetic approved model guidance.",
-      "contextWindow": 32768,
-      "maxContextWindow": 65536
+    "upstream": {
+      "slug": "synthetic-text",
+      "base_instructions": "Synthetic guidance",
+      "input_modalities": ["text", "image"],
+      "prefer_websockets": true,
+      "unknown_member": {"nested": true}
     }
   }]
 }
 ```
 
-source/revision/clientVersions是1—64字符的ASCII标签（字母、数字、点、下划线、横线），不得填私有URL/路径；客户端清单最多8个且不重复。采集时间必须有效且不得超前超过60秒；超过30天在目录标陈旧，不据此伪造更新或自动启停模型。版本1只接受已定义字段，整份快照模型最多32个且唯一，即使未选用的条目也必须通过指导/字段校验。
+source/revision/clientVersions是1—64字符的ASCII标签（字母、数字、点、下划线、横线），不得填私有URL/路径；客户端清单最多8个且不重复。采集时间必须有效且不得超前超过60秒；超过30天在目录标陈旧，不据此伪造更新或自动启停模型。版本1的快照封装只接受已定义字段（upstream 内未知成员保留），整份快照模型最多32个且唯一，即使未选用的条目也必须通过指导/字段校验。
 
-只有部署models已明确选择的模型会导入catalog；缺对应模型拒绝新启动，不新增路由、价格、视觉/生成权限或宿主映射。可显式提供内联catalog作**整体覆盖**，须有完整非空baseInstructions，不把指导和其他字段逐项混合；有效元数据及来源摘要参与策略版本，价格版本保持独立。contextWindow与maxContextWindow分别表达默认与最大上下文（最大2000000），不扩大网络正文、输入项和本地容量限制；提供者声明也不证明真实能力。
+只有部署models已明确选择的模型会导入profile；缺对应模型拒绝新启动，不新增路由、价格、视觉/生成权限或宿主映射。可显式提供内联catalog作**整体覆盖**，须有完整非空baseInstructions，不把指导和其他字段逐项混合；有效元数据及来源摘要参与策略版本，价格版本保持独立。contextWindow与maxContextWindow分别表达默认与最大上下文（最大2000000），不扩大网络正文、输入项和本地容量限制；提供者声明也不证明真实能力。
+
+`upstream` 必须为 JSON 对象，含非空字符串 `base_instructions`；`slug` 若存在须等于条目 id。每个 upstream 序列化后最多256 KiB。它与旧 `catalog` 互斥；catalog 保留为兼容合成路径（baseInstructions 最多32 KiB）。内联 catalog 整体覆盖 upstream 后也使用旧合成路径。upstream 的任意未知嵌套成员保留；输出仅覆盖 slug、priority，无视觉权限时移除 input_modalities 中的 image，未启用原生 websocket 时设置 prefer_websockets=false，并附加来源信息。内容和快照哈希进入策略版本，计价版本不变。
+
+离线导入管理员已保存的提供者目录（对象含 models 数组，每项有唯一 slug）：
+
+```sh
+python3 scripts/import_model_profiles.py --source provider-catalog.json \
+  --model synthetic-text --source-label operator-approved --revision synthetic-v1 \
+  --client-version 0.163.0 --output new-model-profiles.json
+```
+
+--model 可重复，按指定顺序选择；--client-version 可重复。缺模型、重复模型或无效指导失败；输出独占创建为0600，拒绝已有文件和链接，不联网，不读取个人客户端配置，终端只打印模型计数。
 
 GET `/v1/models?client_version=...`（亦支持原前缀）的Codex条目返回codexone_profile：来源标签、revision、原文件字节SHA-256、采集时间、客户端清单、overridden/stale。不是签名或官方认可声明。目录指导会替换客户端基础指导，须针对模型/版本审核；客户端版本清单是管理员声明，不会绕过兼容验证。
 
