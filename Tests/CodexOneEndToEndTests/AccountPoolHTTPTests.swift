@@ -123,6 +123,12 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           reject(context, status: status)
           return
         }
+        if let input = poolInput(request), input.hasPrefix("truncated"),
+          let status = Int(input.dropFirst(9))
+        {
+          reject(context, status: status, truncated: true)
+          return
+        }
         if poolInput(request) == "abort" {
           context.close(promise: nil)
           return
@@ -204,7 +210,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
       } catch { context.close(promise: nil) }
     }
   }
-  private func reject(_ context: ChannelHandlerContext, status: Int) {
+  private func reject(_ context: ChannelHandlerContext, status: Int, truncated: Bool = false) {
     let body = ByteBuffer(string: "{\"error\":\"synthetic-private-status-marker\"}")
     context.write(
       wrapOutboundOut(
@@ -212,11 +218,19 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           .init(
             version: .http1_1, status: .init(statusCode: status),
             headers: [
-              "content-type": "application/json", "content-length": String(body.readableBytes),
+              "content-type": "application/json",
+              "content-length": String(body.readableBytes + (truncated ? 64 : 0)),
               "retry-after": "60", "connection": "close",
             ]))), promise: nil)
-    context.write(wrapOutboundOut(.body(.byteBuffer(body))), promise: nil)
     let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+    if truncated {
+      // Error status with a body cut short: the status alone must still classify the account.
+      context.writeAndFlush(wrapOutboundOut(.body(.byteBuffer(body)))).whenComplete { _ in
+        bound.value.close(promise: nil)
+      }
+      return
+    }
+    context.write(wrapOutboundOut(.body(.byteBuffer(body))), promise: nil)
     context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
       bound.value.close(promise: nil)
     }
@@ -1369,13 +1383,16 @@ func nativePoolImageRateLimitCoolsSelectedAccountWithoutReplay() async throws {
 
 @Test(.timeLimit(.minutes(1)))
 func poolControlDispatchHasNoIntentAndSharesCredentialHealthWithResponses() async throws {
-  for status in [200, 400, 429, 401, 500] {
+  for (status, truncated) in [
+    (200, false), (400, false), (429, false), (401, false), (500, false), (429, true), (401, true),
+  ] {
     try await withPoolHTTP { h in
       var request = URLRequest(
         url: URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search?x=%2f&x=2")!)
       request.httpMethod = "POST"
       let body = try JSONValue.object([
-        "input": .string(status == 200 ? "synthetic" : "http\(status)")
+        "input": .string(
+          status == 200 ? "synthetic" : (truncated ? "truncated" : "http") + String(status))
       ]).data()
       request.httpBody = body
       request.setValue("application/json", forHTTPHeaderField: "content-type")

@@ -138,15 +138,21 @@ extension HTTPResponseExecution {
           upstream.body = .bytes(ByteBuffer(data: body))
           let response = try await client.execute(
             upstream, deadline: .now() + .seconds(Int64(route.seconds + 5)))
+          let succeeded = (200...399).contains(Int(response.status.code))
           var data = Data()
-          for try await chunk in response.body {
-            try Task.checkCancellation()
-            guard chunk.readableBytes <= ControlRoute.responseBytes - data.count else {
-              throw GatewayProtocolError(502, "upstream_response_too_large")
+          do {
+            for try await chunk in response.body {
+              try Task.checkCancellation()
+              guard chunk.readableBytes <= ControlRoute.responseBytes - data.count else {
+                throw GatewayProtocolError(502, "upstream_response_too_large")
+              }
+              data.append(contentsOf: chunk.readableBytesView)
             }
-            data.append(contentsOf: chunk.readableBytesView)
+          } catch  where !succeeded && !(error is CancellationError) {
+            // The status already classifies the account; an unreadable error body must not hide it.
+            data = Data()
           }
-          guard (200...399).contains(Int(response.status.code)) else {
+          guard succeeded else {
             let document = try? JSONValue.decode(data)
             throw ProviderError.failure(
               status: Int(response.status.code), error: document?["error"] ?? document?["detail"],
