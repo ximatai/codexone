@@ -19,7 +19,7 @@
 3. **大小上限**：
    - 单个请求体（HTTP JSON/SSE、multipart、WS 单条消息）上限 32 MiB。
    - 参考图最多 16 张，单图 16 MiB，参考图与 mask 合计 24 MiB；单图像素不超过 50,000,000，不再设总像素上限。
-   - 新增全局请求体字节预算 96 MiB，由所有正在读取或持有请求正文的 HTTP 请求与 WS 消息共享。超过 8 MiB 的正文在读取前按 Content-Length 或增量申请预算；预算不足时有界拒绝：HTTP 返回 503 `capacity_exhausted` 并带 Retry-After，WS 返回 error 帧且连接保持。正文释放后归还预算，不排队等待。
+   - 新增全局请求体字节预算 48 MiB，由所有正在读取或持有请求正文的 HTTP 请求与 WS 消息共享。超过 8 MiB 的正文在读取前按 Content-Length 或增量申请预算；预算不足时有界拒绝：HTTP 返回 503 `capacity_exhausted` 并带 Retry-After，WS 返回 error 帧且连接保持。正文释放后归还预算，不排队等待。预算取 48 MiB 而非更大：实现评估 32 MiB 正文在解析与转发中可能有 4–8 份同量级拷贝，而测试宿主总内存约 1.6 GiB、容器上限 768 MiB；48 MiB 允许一个满额请求与若干中等请求并存。
    - 上游图片事件上限（单事件 8 MiB、总计 32 MiB）不变；超限仍为明确失败。
 4. **Responses 图片工具**：只需满足两点：图片模型在 Key 的 `imageModels` 中，且本次对话模型是 Key 授权的、声明了 `imageGeneration: true` 的模型。`hostModel` 只用于 Images 入口选择内部宿主。部署配置仍要求每个图片映射的 hostModel 声明了 `imageGeneration`。
 5. **部署模板**：数据入口反代 `client_max_body_size` 与新上限一致（33m），同步 [TLS 反代](../../development/tls-proxy.md) 与[图片入口](../../development/images.md)。
