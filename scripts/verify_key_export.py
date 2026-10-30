@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
-from export_key_trial import COLUMNS, convert, write_private
+from export_key_trial import COLUMNS, LIMIT_COLUMNS, convert, write_private
 from verify_keys import LIMITS
 
 
@@ -38,6 +38,33 @@ def main():
         try:write_private(result,output)
         except FileExistsError:pass
         else:raise AssertionError('Existing export was overwritten')
+        source_approval={**approval,'limits':'source'}
+        def rejected(value):
+            try:convert(path,value)
+            except AssertionError:pass
+            else:raise AssertionError('Unsafe source limits accepted')
+        rejected(source_approval)  # Missing limits table.
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE api_key_limits ('+','.join(sorted(LIMIT_COLUMNS))+')')
+        before=path.read_bytes()
+        unlimited=convert(path,source_approval)
+        assert path.read_bytes()==before
+        assert unlimited['manifest']['entries'][0]['policy']['limits']==dict.fromkeys(LIMITS)
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO api_key_limits (id,api_key_id) VALUES ('limit-other','synthetic-rejected-0')")
+        result=convert(path,source_approval)
+        assert any('source_limits_unsupported' in q['reasons'] for q in result['quarantine'])
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO api_key_limits (id,api_key_id) VALUES ('limit-selected','synthetic-source-key')")
+        rejected(source_approval)
+        # An explicit approved numeric policy retains its existing behavior.
+        assert convert(path,approval)['manifest']['entries'][0]['policy']['limits']==LIMITS
+        with sqlite3.connect(path) as db:db.execute('ALTER TABLE api_key_limits ADD COLUMN unknown_policy')
+        rejected(source_approval)
+        with sqlite3.connect(path) as db:
+            db.execute('DROP TABLE api_key_limits')
+            db.execute('CREATE TABLE api_key_limits ('+','.join(sorted(LIMIT_COLUMNS-{'reset_at'}))+')')
+        rejected(source_approval)
         with sqlite3.connect(path) as db:db.execute('ALTER TABLE api_keys ADD COLUMN unknown_policy')
         try:convert(path,approval)
         except AssertionError:pass

@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ManagementError } from "../../shared/management";
 import * as api from "./api";
+import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
 export const failures: Record<string, string> = {
   authentication_rejected: "上游认证拒绝",
   rate_limited: "上游限流",
@@ -135,6 +136,7 @@ export function UsageOverview({
     models: [],
     failures: [],
   });
+  const [policyRead, setPolicyRead] = useState(0);
   const [report, setReport] = useState<api.UsageReport | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -187,6 +189,7 @@ export function UsageOverview({
       });
       if (version !== epoch.current || abort.signal.aborted) return;
       setReport(next);
+      setPolicyRead((value) => value + 1);
       setApplied({ ...filters });
       onApplied?.(filters);
       setHistory(cursors);
@@ -480,6 +483,11 @@ export function UsageOverview({
             图片工具 token 与宿主响应 token
             分别统计，不相加；缺失工具证据显示不可用。
           </p>
+          <KeyLimitsSummary
+            key={applied?.key ?? ""}
+            keyID={applied?.key ?? ""}
+            refresh={policyRead}
+          />
           <p className="governance-note">
             {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}
             全时间治理暴露（不受其他筛选影响）：

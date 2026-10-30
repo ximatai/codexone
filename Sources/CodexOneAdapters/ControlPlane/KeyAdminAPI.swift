@@ -177,11 +177,12 @@ public struct KeyAdminAPI: Sendable {
       "imageModels": .array(key.policy.imageModels.map { .string($0) }),
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
-        "requests": .number(Decimal(key.policy.limits.requests)),
-        "active": .number(Decimal(key.policy.limits.active)),
-        "unresolved": .number(Decimal(key.policy.limits.unresolved)),
-        "budgetMicros": .number(Decimal(key.policy.limits.budgetMicros)),
-        "unresolvedMicros": .number(Decimal(key.policy.limits.unresolvedMicros)),
+        "requests": key.policy.limits.requests.map { .number(Decimal($0)) } ?? .null,
+        "active": key.policy.limits.active.map { .number(Decimal($0)) } ?? .null,
+        "unresolved": key.policy.limits.unresolved.map { .number(Decimal($0)) } ?? .null,
+        "budgetMicros": key.policy.limits.budgetMicros.map { .number(Decimal($0)) } ?? .null,
+        "unresolvedMicros": key.policy.limits.unresolvedMicros.map { .number(Decimal($0)) }
+          ?? .null,
       ]),
     ])
   }
@@ -196,8 +197,8 @@ public struct KeyAdminAPI: Sendable {
 }
 
 private struct KeyLimitsDTO: Decodable {
-  let requests: Int64, active: Int64, unresolved: Int64, budgetMicros: Int64,
-    unresolvedMicros: Int64
+  let requests: Int64?, active: Int64?, unresolved: Int64?, budgetMicros: Int64?,
+    unresolvedMicros: Int64?
   var value: ExecutionLimits {
     .init(
       requests: requests, active: active, unresolved: unresolved,

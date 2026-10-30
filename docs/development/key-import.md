@@ -16,14 +16,16 @@ codexone --import-keys /run/codexone/approved-key-import.json
 | --- | --- |
 | id / principal | 新侧独立稳定标识，1—64 ASCII字母/数字/点/横线/下划线；原则上每个旧Key单独主体，不猜测共享归属 |
 | digest | 原始Bearer UTF-8的64位小写SHA-256；与管理员摘要相同拒绝 |
-| policy | 显式models/limits；可含visionInput/imageGeneration/imageModels；同既有Key策略校验 |
+| policy | 显式models/limits；limits 五项均须出现，每项正整数（≤10¹²）或 null（不限）；可含visionInput/imageGeneration/imageModels；同既有Key策略校验 |
 | sourceActive | 必须true；源停用条目隔离，不能放入新侧可启用表 |
 | sourceExpiresAtUnixSeconds | 必须显式null；带任何过期时间均隔离，当前不支持复制到期语义 |
 | policyEquivalent | 必须true；是管理员对转换的明确声明，不是自动证明或免审开关 |
 
-源转换器必须核对模型、强制模型/推理/tier、账号/来源绑定、传输限制及其他旧约束；未知或无法等价/保守表达就隔离，输出单独私有清单与原因，不能只删字段放宽权限。模型权限可缩到已批准测试模型、图片/视觉默认关闭；新本地限额是独立小预算，不能称继承旧剩余额度。全部清单先核对，只有受支持条目进入导入文件。
+源转换器必须核对模型、强制模型/推理/tier、账号/来源绑定、传输限制及其他旧约束；未知或无法等价/保守表达就隔离，输出单独私有清单与原因，不能只删字段放宽权限。模型权限可缩到已批准测试模型、图片/视觉默认关闭；显式数值模式的新本地限额独立配置，source 模式只保留无任何限额记录的“不限”语义，均不能称继承旧剩余额度。全部清单先核对，只有受支持条目进入导入文件。
 
 源SQLite转换工具为 `scripts/export_key_trial.py --source-db <readonly-source> --approval-file <private-approval> --output-directory <new-private-directory>`。approval严格包含models、limits、selectedName（名称仅私下使用）；工具固定已核对的源列集合，遇新列/未知schema拒绝，只读事务读取Key元数据，不读取账号、正文或凭证表。输出manifest/mapping/quarantine三个独占0600文件及0700目录，终端仅计数；源约束不支持的条目逐条隔离，所选Key不合格则整次拒绝。不能把输出目录的部分文件当作完成导入，任何转换异常先私下核对。
+
+`approval.limits` 可为原有五项显式正整数对象，或字符串 `"source"`。source 模式在同一只读事务中检查 `api_key_limits` 固定列集合（`id, api_key_id, limit_type, limit_window, max_value, current_value, model_filter, reset_at`）；缺表、缺列或新增列均拒绝。源 Key 无任何限额记录时，清单五项均为 `null`；有任何记录则以 `source_limits_unsupported` 隔离，不按模型/时间窗猜测换算。所选 Key 被隔离时整次拒绝。显式数值 approval 行为不变。导入及元数据往返保留 null，仍默认禁用且不清账本/unknown。
 
 ## 原子性与启用
 

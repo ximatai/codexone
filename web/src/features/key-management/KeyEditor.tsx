@@ -12,7 +12,7 @@ import {
 import { useForm } from "@mantine/form";
 import { z } from "../../shared/schema";
 import type { KeyDraft, KeyLimits, ManagedKey } from "./api";
-const integer = z.number().int().min(1).max(1_000_000_000_000);
+const integer = z.number().int().min(1).max(1_000_000_000_000).nullable();
 const schema = z
   .object({
     principal: z
@@ -66,6 +66,7 @@ export function KeyEditor({
   submit: (draft: KeyDraft) => Promise<boolean>;
   close: () => void;
 }) {
+  const retainedLimits = useRef<Partial<Record<keyof KeyLimits, number>>>({});
   const advanced = useRef<HTMLDetailsElement>(null);
   const form = useForm({
     initialValues: {
@@ -199,15 +200,37 @@ export function KeyEditor({
           <summary>本地治理限额</summary>
           <Stack gap="md" mt="md">
             {fields.map(([name, label]) => (
-              <NumberInput
-                key={name}
-                label={label}
-                min={1}
-                max={1_000_000_000_000}
-                allowDecimal={false}
-                disabled={disabled}
-                {...form.getInputProps(`limits.${name}`)}
-              />
+              <Stack key={name} gap="xs">
+                <Checkbox
+                  label="不限"
+                  aria-label={`${label}不限`}
+                  disabled={disabled}
+                  checked={form.values.limits[name] === null}
+                  onChange={(event) => {
+                    const value = form.values.limits[name];
+                    if (event.currentTarget.checked && value !== null)
+                      retainedLimits.current[name] = value;
+                    form.setFieldValue(
+                      `limits.${name}`,
+                      event.currentTarget.checked
+                        ? null
+                        : (retainedLimits.current[name] ?? 1),
+                    );
+                  }}
+                />
+                <NumberInput
+                  label={label}
+                  min={1}
+                  max={1_000_000_000_000}
+                  allowDecimal={false}
+                  {...form.getInputProps(`limits.${name}`)}
+                  value={form.values.limits[name] ?? ""}
+                  disabled={disabled || form.values.limits[name] === null}
+                  placeholder={
+                    form.values.limits[name] === null ? "不限" : undefined
+                  }
+                />
+              </Stack>
             ))}
             <Alert color="gray">
               这些是本地阈值，不是订阅余额。预热和压缩计入请求，未知用量保留预留。

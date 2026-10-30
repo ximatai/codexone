@@ -54,7 +54,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
         limits.unresolvedMicros,
       ].allSatisfy({
-        $0 > 0 && $0 <= 1_000_000_000_000
+        $0.map { $0 > 0 && $0 <= 1_000_000_000_000 } ?? false
       })
     else {
       throw ExecutionError.invalidCommand
@@ -197,10 +197,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       let existingCount = try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
       let existingMicros = try db.scalar(
         "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE state!='settled'")
-      guard missingCount < limits.unresolved, existingCount < limits.unresolved - missingCount,
-        missingMicros <= limits.unresolvedMicros,
-        command.reservedMicros <= limits.unresolvedMicros - missingMicros,
-        existingMicros <= limits.unresolvedMicros - missingMicros - command.reservedMicros
+      guard let unresolved = limits.unresolved, let unresolvedMicros = limits.unresolvedMicros,
+        missingCount < unresolved, existingCount < unresolved - missingCount,
+        missingMicros <= unresolvedMicros,
+        command.reservedMicros <= unresolvedMicros - missingMicros,
+        existingMicros <= unresolvedMicros - missingMicros - command.reservedMicros
       else { throw ExecutionError.denied }
     }
     guard
@@ -238,11 +239,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       let unresolvedMicros = try db.scalar(
         "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE \(scope) AND state!='settled'",
         parameters)
-      guard command.reservedMicros <= limits.unresolvedMicros,
-        unresolvedMicros <= limits.unresolvedMicros - command.reservedMicros,
-        requests < limits.requests, counts.1 < limits.active, counts.2 < limits.unresolved,
-        command.reservedMicros <= limits.budgetMicros,
-        exposure <= limits.budgetMicros - command.reservedMicros
+      guard
+        limits.allows(
+          requestCount: requests, activeCount: counts.1, unresolvedCount: counts.2,
+          exposureMicros: exposure, unresolvedExposureMicros: unresolvedMicros,
+          reservedMicros: command.reservedMicros)
       else {
         throw ExecutionError.denied
       }
