@@ -129,7 +129,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         }
         let compact = head.uri.hasSuffix("/compact")
         let nativeImage = head.uri.contains("/images/")
-        if !compact && !nativeImage
+        let control = head.uri.hasPrefix("/backend-api/codex/alpha/search")
+        if !compact && !nativeImage && !control
           && request["tools"]?.array?.contains(where: { $0["type"]?.string == "image_generation" })
             != true
         {
@@ -1363,5 +1364,71 @@ func nativePoolImageRateLimitCoolsSelectedAccountWithoutReplay() async throws {
       throw error
     }
     await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolControlDispatchHasNoIntentAndSharesCredentialHealthWithResponses() async throws {
+  for status in [200, 400, 429, 401, 500] {
+    try await withPoolHTTP { h in
+      var request = URLRequest(
+        url: URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search?x=%2f&x=2")!)
+      request.httpMethod = "POST"
+      let body = try JSONValue.object([
+        "input": .string(status == 200 ? "synthetic" : "http\(status)")
+      ]).data()
+      request.httpBody = body
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("synthetic-cookie", forHTTPHeaderField: "cookie")
+      request.setValue("forged-account", forHTTPHeaderField: "chatgpt-account-id")
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      let (_, response) = try await session.data(for: request)
+      #expect(
+        (response as! HTTPURLResponse).statusCode == (status == 401 || status == 500 ? 502 : status)
+      )
+      #expect(h.calls.count == 1)
+      let call = try #require(h.calls.first)
+      #expect(call.path == "/backend-api/codex/alpha/search?x=%2f&x=2")
+      #expect(call.body == body && call.headers?["cookie"].isEmpty == true)
+      #expect(h.state.value.withLock { $0.invalid } == 0)
+      let count = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+      #expect(count == 0 && h.finalizer.outstanding == 0)
+      let selected = call.account.replacingOccurrences(of: "synthetic-", with: "")
+      let health = try await h.store.accountHealth(id: selected)
+      #expect(health.authenticationRejected == (status == 401))
+      #expect(health.cooldowns.count == ([429, 500].contains(status) ? 1 : 0))
+      let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
+      _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
+      #expect(try await h.request().0 == ([200, 400].contains(status) ? 200 : 503))
+      #expect(h.calls.count == ([200, 400].contains(status) ? 2 : 1))
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolControlFollowsResponsesSessionWithoutCreatingAnotherIntent() async throws {
+  try await withPoolHTTP { h in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.setValue("synthetic-session-affinity", forHTTPHeaderField: "session_id")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"),
+    ]).data()
+    let (_, first) = try await session.data(for: request)
+    #expect((first as! HTTPURLResponse).statusCode == 200)
+    let account = try #require(h.calls.last?.account)
+    request.url = URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search")!
+    request.httpBody = Data("{}".utf8)
+    let (_, second) = try await session.data(for: request)
+    #expect((second as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.count == 2 && h.calls.last?.account == account)
+    let count = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+    #expect(count == 1)
   }
 }
