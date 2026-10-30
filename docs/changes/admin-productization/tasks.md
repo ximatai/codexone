@@ -12,4 +12,4 @@
 - [x] 前端：术语与美元单位
 - [x] 后端定向测试、前端单元测试，以及更新合成 Playwright/live 脚本覆盖（见 [verification](verification.md)）
 - [x] 完整 `verify.sh --backend`
-- [ ] `--web --chrome` 与大屏/窄屏浏览器验收出口（环境限制见 [verification](verification.md)）
+- [x] `--web --chrome` 与大屏浏览器走查（见 [verification](verification.md)）

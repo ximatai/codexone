@@ -96,3 +96,22 @@
 - `docs/changes/admin-productization/proposal.md`
 - `docs/changes/admin-productization/tasks.md`
 - `docs/changes/admin-productization/verification.md`
+
+## 主 Agent 复核与大屏走查（2026-10-31）
+
+- 本机原生 `./scripts/verify.sh --backend`：退出码 0，Swift 共 218 项。
+- `./scripts/verify.sh --web --chrome`：退出码 0，vitest 54 项，Playwright 5 项。
+- `verify_admin_ui.py` 与 `verify_account_admin_ui.py`（真实 Chrome）：均 PASS。执行者沙箱中无法启动浏览器，本轮由主 Agent 原生补跑。
+- 1440×900 合成实例走查发现并修复的问题：
+  - 管理端 CSP（`style-src 'self'`）会阻止 Mantine 为响应式 `SimpleGrid` 注入的样式，概览与用量页的卡片在大屏上退化为单列。改为静态 CSS 网格（`responsive-grid`）。
+  - 概览把“今日运营概览”放在就绪信息之前。
+  - 用量明细表的次要信息原为行内 `<small>`，文字挤在一起，改为分行显示并左对齐。
+  - 账号详情中新旧两套窗口进度条重复显示，移除旧的。
+  - 账号列表的陈旧判断与告警判断统一使用同一时钟。
+  - 文案：费用无值时显示“费用：不可用”；从未使用的 Key 显示“从未使用”。
+  - 相应地更新了 live/e2e/单元测试的断言（新列表也显示新鲜度，改用 `.first()`；进度条改为剩余比例）。
+- 已确认可用：
+  - 登录后首页 4 列卡片；
+  - Key 搜索、状态筛选与今日用量列；
+  - 从 Key 进入用量时按主体名自动查询；
+  - 明细详情抽屉，含完整请求 ID、复制、首事件/总耗时与各项用量。
