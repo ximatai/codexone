@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -44,13 +44,14 @@ const schema = z
         message: "请选择图片模型",
       });
   });
-const fields: [keyof KeyLimits, string][] = [
-  ["requests", "每日请求（UTC）"],
-  ["active", "同时执行"],
-  ["unresolved", "未结执行数量"],
-  ["budgetMicros", "每日估算阈值（微单位）"],
-  ["unresolvedMicros", "未结暴露阈值（微单位）"],
-];
+import {
+  limitLabels,
+  dollarsToMicros,
+  microsToDollars,
+  money,
+  estimateNote,
+} from "../../shared/presentation";
+const fields = Object.entries(limitLabels) as [keyof KeyLimits, string][];
 export function KeyEditor({
   entry,
   models,
@@ -67,6 +68,12 @@ export function KeyEditor({
   close: () => void;
 }) {
   const retainedLimits = useRef<Partial<Record<keyof KeyLimits, number>>>({});
+  const [amounts, setAmounts] = useState<Record<string, string | number>>({
+    budgetMicros: microsToDollars(entry?.limits.budgetMicros ?? 1_000_000),
+    unresolvedMicros: microsToDollars(
+      entry?.limits.unresolvedMicros ?? 1_000_000,
+    ),
+  });
   const advanced = useRef<HTMLDetailsElement>(null);
   const form = useForm({
     initialValues: {
@@ -155,6 +162,23 @@ export function KeyEditor({
         <fieldset className="editor-fieldset">
           <legend>对话模型</legend>
           <Stack gap="xs">
+            <Checkbox
+              label="全部模型"
+              description="选择当前目录的全部对话模型，新增模型仍需手动授权。"
+              checked={
+                models.length > 0 &&
+                models.every((model) => form.values.models.includes(model))
+              }
+              disabled={disabled || !models.length}
+              onChange={(e) =>
+                form.setFieldValue(
+                  "models",
+                  e.currentTarget.checked
+                    ? [...new Set([...models, ...(entry?.models ?? [])])]
+                    : [],
+                )
+              }
+            />
             {choices(models, entry?.models ?? [], form.values.models, "models")}
           </Stack>
           {form.errors.models && (
@@ -168,6 +192,7 @@ export function KeyEditor({
           <Stack gap="sm">
             <Checkbox
               label="视觉输入"
+              description="ⓘ 让对话模型理解上传的图片，不授予图片生成权限。"
               disabled={disabled}
               {...form.getInputProps("visionInput", { type: "checkbox" })}
             />
@@ -175,6 +200,7 @@ export function KeyEditor({
               <>
                 <Checkbox
                   label="图片生成与参考图编辑"
+                  description="ⓘ 调用图片模型生成或编辑图片，与视觉输入分别授权。"
                   disabled={disabled}
                   {...form.getInputProps("imageGeneration", {
                     type: "checkbox",
@@ -196,6 +222,14 @@ export function KeyEditor({
             )}
           </Stack>
         </fieldset>
+        <Text size="sm">
+          每日请求 {form.values.limits.requests ?? "不限"} · 并发{" "}
+          {form.values.limits.active ?? "不限"} · 待核对{" "}
+          {form.values.limits.unresolved ?? "不限"}
+          <br />
+          每日 {money(form.values.limits.budgetMicros, true)} · 待核对占用{" "}
+          {money(form.values.limits.unresolvedMicros, true)}
+        </Text>
         <details ref={advanced}>
           <summary>本地治理限额</summary>
           <Stack gap="md" mt="md">
@@ -210,6 +244,13 @@ export function KeyEditor({
                     const value = form.values.limits[name];
                     if (event.currentTarget.checked && value !== null)
                       retainedLimits.current[name] = value;
+                    if (!event.currentTarget.checked && name.endsWith("Micros"))
+                      setAmounts((previous) => ({
+                        ...previous,
+                        [name]: microsToDollars(
+                          retainedLimits.current[name] ?? 1,
+                        ),
+                      }));
                     form.setFieldValue(
                       `limits.${name}`,
                       event.currentTarget.checked
@@ -220,11 +261,35 @@ export function KeyEditor({
                 />
                 <NumberInput
                   label={label}
-                  min={1}
-                  max={1_000_000_000_000}
-                  allowDecimal={false}
+                  min={name.endsWith("Micros") ? 0.000001 : 1}
+                  max={name.endsWith("Micros") ? 1_000_000 : 1_000_000_000_000}
+                  allowDecimal={name.endsWith("Micros")}
+                  decimalScale={name.endsWith("Micros") ? 6 : 0}
                   {...form.getInputProps(`limits.${name}`)}
-                  value={form.values.limits[name] ?? ""}
+                  value={
+                    form.values.limits[name] === null
+                      ? ""
+                      : name.endsWith("Micros")
+                        ? amounts[name]
+                        : form.values.limits[name]!
+                  }
+                  onChange={(value) => {
+                    if (name.endsWith("Micros"))
+                      setAmounts((previous) => ({
+                        ...previous,
+                        [name]: value,
+                      }));
+                    try {
+                      form.setFieldValue(
+                        `limits.${name}`,
+                        name.endsWith("Micros")
+                          ? dollarsToMicros(value)
+                          : Number(value),
+                      );
+                    } catch {
+                      form.setFieldValue(`limits.${name}`, 0);
+                    }
+                  }}
                   disabled={disabled || form.values.limits[name] === null}
                   placeholder={
                     form.values.limits[name] === null ? "不限" : undefined
@@ -233,7 +298,8 @@ export function KeyEditor({
               </Stack>
             ))}
             <Alert color="gray">
-              这些是本地阈值，不是订阅余额。预热和压缩计入请求，未知用量保留预留。
+              {estimateNote}
+              。这些是本地阈值，不是订阅余额。预热和压缩计入请求，待核对请求保留占用。
             </Alert>
           </Stack>
         </details>

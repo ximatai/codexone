@@ -208,9 +208,9 @@ it("toggles unlimited for each dimension, restores a value and submits explicit 
   for (const label of [
     "每日请求（UTC）",
     "同时执行",
-    "未结执行数量",
-    "每日估算阈值（微单位）",
-    "未结暴露阈值（微单位）",
+    "待核对请求数量",
+    "每日估算阈值（美元）",
+    "待核对占用阈值（美元）",
   ]) {
     const toggle = screen.getByLabelText(label + "不限");
     expect(toggle).toBeChecked();
@@ -234,4 +234,24 @@ it("toggles unlimited for each dimension, restores a value and submits explicit 
     unresolvedMicros: null,
   });
   view.unmount();
+});
+
+it("requires explicit confirmation before disabling, and cancellation leaves the key unchanged", async () => {
+  vi.mocked(api.fetchKeys).mockResolvedValue([key]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.updateKey).mockResolvedValue({ ...key, enabled: false });
+  render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "team 更多操作" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "禁用" }));
+  expect(await screen.findByText(/客户端会立即失败/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(api.updateKey).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "禁用" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认禁用" }));
+  await waitFor(() => expect(api.updateKey).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.updateKey).mock.calls[0][1]).toBe(false);
 });

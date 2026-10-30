@@ -31,7 +31,7 @@ async function finishAuthorization(buttonName) {
   await page.getByRole("button", { name: buttonName, exact: true }).click();
   stage = prefix + "-popup";
   const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("link", { name: "在新窗口打开授权页面" }).click();
+  await page.getByRole("link", { name: "1. 在新窗口打开授权页面" }).click();
   const popup = await popupPromise;
   await expect(popup.getByRole("heading", { name: "合成订阅授权" })).toBeVisible();
   stage = prefix + "-callback";
@@ -44,7 +44,7 @@ async function finishAuthorization(buttonName) {
   stage = prefix + "-paste";
   await page.getByLabel("2. 粘贴完整回调地址", { exact: true }).fill(callback);
   stage = prefix + "-save";
-  await page.getByRole("button", { name: "验证并保存", exact: true }).click();
+  await page.getByRole("button", { name: "3. 验证并保存", exact: true }).click();
   stage = prefix + "-confirmed";
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
@@ -109,6 +109,7 @@ try {
   stage = "conflict";
   await admin("/api/accounts/" + id, "PUT", { revision: account.revision, mode: "draining" });
   await page.getByRole("button", { name: "禁用", exact: true }).click();
+  await page.getByRole("button", { name: "确认禁用", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("状态已变化");
   await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
@@ -120,6 +121,7 @@ try {
     else await route.continue();
   });
   await page.getByRole("button", { name: "禁用", exact: true }).click();
+  await page.getByRole("button", { name: "确认禁用", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("操作结果未确认");
   await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeDisabled();
   await page.unroute("**/api/accounts/" + id);
@@ -152,7 +154,7 @@ try {
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
   await expect(page.getByText("主窗口已用 25%", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("progressbar", { name: "次窗口已用比例", exact: true }).first()).toHaveAttribute("value", "45");
+  await expect(page.getByRole("progressbar", { name: "次窗口剩余比例", exact: true }).first()).toHaveAttribute("aria-valuenow", "55");
   const observed = (await admin()).accounts[0].observability.quota.observedAtUnixSeconds;
   await capture("quota-desktop.png");
   stage = "quota-failure-retains-value";
@@ -170,7 +172,7 @@ try {
   await fixture({ quota_mode: "ok" });
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
   await expect(page.getByText("额度观测已更新。", { exact: true })).toBeVisible();
-  await expect(page.getByText("额度观测新鲜", { exact: true })).toBeVisible();
+  await expect(page.getByText("额度观测新鲜", { exact: true }).first()).toBeVisible();
   stage = "quota-restricted-without-percentages";
   await fixture({ quota_mode: "restricted" });
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();

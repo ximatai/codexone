@@ -13,17 +13,17 @@
   letter-spacing: 0.08em;
   color: #3e735d;
 }
-:where(.account-management, .usage-panel, .system-status) h1 {
+:where(.account-management, .system-status) h1 {
   font-size: clamp(26px, 4vw, 34px);
   font-weight: 600;
   letter-spacing: -0.04em;
   margin: 12px 0;
 }
-:where(.account-management, .usage-panel, .system-status) p {
+:where(.account-management, .system-status) p {
   line-height: 1.7;
   color: #65736b;
 }
-:where(.account-management, .usage-panel, .system-status) h2 {
+:where(.account-management, .system-status) h2 {
   font-size: 18px;
   font-weight: 600;
   margin: 0;
@@ -48,12 +48,12 @@
   background: #eaf4ed;
   white-space: nowrap;
 }
-:where(.account-management, .usage-panel, .system-status) ul {
+:where(.account-management, .system-status) ul {
   list-style: none;
   padding: 0;
   margin: 24px 0;
 }
-:where(.account-management, .usage-panel, .system-status) li {
+:where(.account-management, .system-status) li {
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -67,7 +67,7 @@
 .good {
   color: #276146;
 }
-:where(.account-management, .usage-panel, .system-status) button {
+:where(.account-management, .system-status) button {
   border: 0;
   border-radius: 8px;
   background: #204c3f;
@@ -77,14 +77,14 @@
   font: inherit;
   font-size: 13px;
 }
-:where(.account-management, .usage-panel, .system-status) button:hover {
+:where(.account-management, .system-status) button:hover {
   background: #163e32;
 }
-:where(.account-management, .usage-panel, .system-status) button:focus-visible {
+:where(.account-management, .system-status) button:focus-visible {
   outline: 3px solid #95bca8;
   outline-offset: 3px;
 }
-:where(.account-management, .usage-panel, .system-status) button.secondary {
+:where(.account-management, .system-status) button.secondary {
   background: #edf2ee;
   color: #334f3f;
 }
@@ -93,7 +93,7 @@
     padding: 22px;
   }
 }
-:where(.account-management, .usage-panel, .system-status) button:disabled {
+:where(.account-management, .system-status) button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
@@ -126,8 +126,7 @@
   font-size: 14px;
   font-weight: 500;
 }
-:where(.account-management, .usage-panel, .system-status)
-  input:not([type="checkbox"]) {
+:where(.account-management, .system-status) input:not([type="checkbox"]) {
   width: 100%;
   min-width: 0;
   border: 1px solid #cdd8cf;
@@ -138,11 +137,11 @@
   color: #21302b;
   background: #fff;
 }
-:where(.account-management, .usage-panel, .system-status) input:focus-visible {
+:where(.account-management, .system-status) input:focus-visible {
   outline: 3px solid #b7d0c0;
   outline-offset: 1px;
 }
-:where(.account-management, .usage-panel, .system-status) input:disabled {
+:where(.account-management, .system-status) input:disabled {
   background: #f5f7f5;
 }
 .field-hint {
@@ -215,13 +214,13 @@
 .table-scroll {
   overflow-x: auto;
 }
-:where(.account-management, .usage-panel, .system-status) table {
+:where(.account-management, .system-status) table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
   text-align: left;
 }
-:where(.account-management, .usage-panel, .system-status) th {
+:where(.account-management, .system-status) th {
   color: #738176;
   font-size: 11px;
   font-weight: 500;
@@ -229,12 +228,12 @@
   padding: 0 10px 13px 0;
   white-space: nowrap;
 }
-:where(.account-management, .usage-panel, .system-status) td {
+:where(.account-management, .system-status) td {
   padding: 19px 10px 19px 0;
   border-bottom: 1px solid #edf0ed;
   vertical-align: top;
 }
-:where(.account-management, .usage-panel, .system-status) td small {
+:where(.account-management, .system-status) td small {
   display: block;
   color: #738176;
   font-size: 11px;
@@ -267,15 +266,14 @@
   gap: 8px;
   align-items: center;
 }
-:where(.account-management, .usage-panel, .system-status) button.text-button {
+:where(.account-management, .system-status) button.text-button {
   background: transparent;
   color: #315c49;
   padding: 2px 0;
   font-size: 12px;
   white-space: nowrap;
 }
-:where(.account-management, .usage-panel, .system-status)
-  button.text-button:hover {
+:where(.account-management, .system-status) button.text-button:hover {
   color: #163e32;
   text-decoration: underline;
 }
@@ -298,7 +296,7 @@
   color: #276146;
   background: #eaf4ed;
 }
-:where(.account-management, .usage-panel, .system-status) dialog {
+:where(.account-management, .system-status) dialog {
   border: 1px solid #dce3dd;
   border-radius: 16px;
   padding: 28px;
@@ -308,18 +306,18 @@
   color: #21302b;
   box-shadow: 0 24px 70px #173d3026;
 }
-:where(.account-management, .usage-panel, .system-status) dialog::backdrop {
+:where(.account-management, .system-status) dialog::backdrop {
   background: #10251d66;
 }
-:where(.account-management, .usage-panel, .system-status) dialog p {
+:where(.account-management, .system-status) dialog p {
   font-size: 14px;
 }
-:where(.account-management, .usage-panel, .system-status) dialog .key-id {
+:where(.account-management, .system-status) dialog .key-id {
   max-width: none;
   overflow-wrap: anywhere;
   white-space: normal;
 }
-:where(.account-management, .usage-panel, .system-status) input.secret-value {
+:where(.account-management, .system-status) input.secret-value {
   font:
     12px ui-monospace,
     monospace;
@@ -474,7 +472,7 @@
 .usage-summary,
 .usage-metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin: 20px 0;
 }
@@ -539,7 +537,7 @@
   opacity: 0.65;
 }
 .usage-table {
-  min-width: 1050px;
+  min-width: 0;
 }
 .usage-pagination {
   justify-content: flex-end;
@@ -634,4 +632,98 @@ body {
 }
 body.management-overlay-open {
   overflow: hidden;
+}
+
+.responsive-table {
+  width: 100%;
+}
+.responsive-table table {
+  table-layout: fixed;
+  width: 100%;
+}
+.responsive-table td,
+.responsive-table th {
+  overflow-wrap: anywhere;
+}
+.usage-workspace {
+  min-width: 0;
+}
+.usage-workspace .usage-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.usage-workspace td {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 750px) {
+  .responsive-table thead,
+  .usage-table thead {
+    display: none;
+  }
+  .responsive-table tr,
+  .usage-table tr {
+    display: block;
+    border-bottom: 1px solid #dce3dd;
+    padding: 12px 0;
+  }
+  .responsive-table td,
+  .usage-table td {
+    display: block;
+    width: 100%;
+    padding: 6px;
+  }
+  .usage-workspace {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 600px) {
+  .quota-windows {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 750px) {
+  .responsive-table td::before,
+  .usage-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    color: #65736b;
+  }
+}
+
+/* Responsive grids live in static CSS: the admin CSP (style-src 'self') blocks Mantine's injected responsive styles. */
+.responsive-grid {
+  display: grid;
+  gap: var(--mantine-spacing-md);
+  grid-template-columns: minmax(0, 1fr);
+}
+.grid-gap-bottom {
+  margin-bottom: var(--mantine-spacing-md);
+}
+@media (min-width: 48em) {
+  .responsive-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 75em) {
+  .responsive-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .responsive-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.usage-table th,
+.usage-table td {
+  text-align: left;
+  vertical-align: top;
+}
+.usage-table td > span,
+.usage-table td > small {
+  display: block;
+}
+.usage-table td > small {
+  color: var(--mantine-color-dimmed);
+  margin-top: 2px;
 }

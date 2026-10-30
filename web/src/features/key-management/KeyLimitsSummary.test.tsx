@@ -30,7 +30,7 @@ it("shows unlimited policy beside usage without changing exposure statistics", a
     "同时执行 2",
   );
   expect(screen.getByText(/每日请求 不限/)).toHaveTextContent(
-    "未结暴露阈值 不限",
+    "待核对占用阈值 不限",
   );
   view.unmount();
 });

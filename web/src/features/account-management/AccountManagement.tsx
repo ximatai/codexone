@@ -7,6 +7,7 @@ import {
   Drawer,
   Group,
   Loader,
+  Modal,
   Paper,
   PasswordInput,
   Stack,
@@ -19,19 +20,25 @@ import { AccountObservability, utc } from "./AccountObservability";
 import { observeAccount, observationNotice } from "./observation-api";
 import { useAccounts } from "./useAccounts";
 import styles from "./accounts.module.css";
-const modes = { enabled: "允许使用", draining: "排空中", disabled: "已禁用" };
-const authorization = {
-  ready: "授权有效",
-  refreshing: "正在刷新",
-  requires_auth: "需要重新授权",
-  auth_uncertain: "授权结果未知",
-};
+import {
+  accountModes as modes,
+  authorizations as authorization,
+} from "../../shared/presentation";
+import { QuotaWindowBar } from "./QuotaWindowBar";
 export function AccountManagement() {
   const state = useAccounts();
+  const [confirm, setConfirm] = useState<{
+    account: api.Account;
+    mode: api.AccountMode;
+  } | null>(null);
+  function changeMode(account: api.Account, mode: api.AccountMode) {
+    if (mode === "enabled") state.setMode(account, mode);
+    else setConfirm({ account, mode });
+  }
   const [selected, setSelected] = useState<string | null>(null);
   const account = state.accounts.find((item) => item.id === selected);
   const blocked = state.busy || state.locked || !!state.flow;
-  const overlay = !!account || !!state.flow;
+  const overlay = !!account || !!state.flow || !!confirm;
   useEffect(() => {
     if (!overlay) return;
     document.body.classList.add("management-overlay-open");
@@ -103,11 +110,13 @@ export function AccountManagement() {
         </Paper>
       ) : !state.accounts.length ? (
         <Paper withBorder p="xl">
-          <Text c="dimmed">还没有订阅账号。</Text>
+          <Text c="dimmed">
+            还没有订阅账号。点击上方“发起账号授权”接入第一个账号。
+          </Text>
         </Paper>
       ) : (
         <Paper withBorder p="md">
-          <Table.ScrollContainer minWidth={900}>
+          <div className="responsive-table">
             <Table verticalSpacing="lg" highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -143,12 +152,12 @@ export function AccountManagement() {
                             : null;
                   return (
                     <Table.Tr key={item.id}>
-                      <Table.Td>
+                      <Table.Td data-label="账号">
                         <Text fw={600} size="sm" className={styles.id}>
                           {item.id}
                         </Text>
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label="使用策略">
                         <Badge
                           variant="light"
                           color={
@@ -162,7 +171,7 @@ export function AccountManagement() {
                           {modes[item.mode]}
                         </Badge>
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label="授权">
                         <Badge
                           variant="outline"
                           color={
@@ -172,11 +181,28 @@ export function AccountManagement() {
                           {authorization[item.authorization]}
                         </Badge>
                       </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">
-                          {quota?.primary?.usedPercent == null
-                            ? "额度未提供"
-                            : `主窗口已用 ${quota.primary.usedPercent}%`}
+                      <Table.Td data-label="额度与健康">
+                        <QuotaWindowBar
+                          title="主窗口"
+                          value={quota?.primary ?? null}
+                        />
+                        <QuotaWindowBar
+                          title="次窗口"
+                          value={quota?.secondary ?? null}
+                        />
+                        <Text size="xs" c="dimmed">
+                          {!summary
+                            ? "尚无观测"
+                            : summary.quota.state === "stale" ||
+                                (Math.max(state.clock, performance.now()) -
+                                  summary.receivedAt) /
+                                  1000 >=
+                                  summary.quota.freshForSeconds
+                              ? "额度观测已陈旧"
+                              : summary.quota.state === "unavailable"
+                                ? "额度不可用"
+                                : "额度观测新鲜"}
+                          {summary?.quota.failure ? " · 最近读取失败" : ""}
                         </Text>
                         {attention && (
                           <Text size="xs" c="orange">
@@ -184,7 +210,7 @@ export function AccountManagement() {
                           </Text>
                         )}
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td data-label="操作">
                         <Group gap="xs" wrap="nowrap">
                           <Button
                             variant="subtle"
@@ -199,7 +225,7 @@ export function AccountManagement() {
                             color={item.mode === "disabled" ? "green" : "red"}
                             disabled={blocked}
                             onClick={() =>
-                              state.setMode(
+                              changeMode(
                                 item,
                                 item.mode === "disabled"
                                   ? "enabled"
@@ -216,11 +242,52 @@ export function AccountManagement() {
                 })}
               </Table.Tbody>
             </Table>
-          </Table.ScrollContainer>
+          </div>
         </Paper>
       )}
+      <Modal
+        opened={!!confirm}
+        onClose={() => {
+          if (!state.busy) setConfirm(null);
+        }}
+        title={confirm?.mode === "draining" ? "排空账号" : "禁用账号"}
+        lockScroll={false}
+        closeOnEscape={!state.busy}
+        closeOnClickOutside={!state.busy}
+        withCloseButton={!state.busy}
+      >
+        <Stack>
+          <Text>
+            {confirm?.mode === "draining"
+              ? "不再接收新的会话请求；已有身份关联的续接请求仍可派发，在途请求继续。"
+              : "停止后续派发（包括续接）；已经派发的在途请求继续，不会主动取消。"}
+          </Text>
+          <Text>{confirm?.account.id}</Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={state.busy}
+              onClick={() => setConfirm(null)}
+            >
+              取消
+            </Button>
+            <Button
+              color="red"
+              disabled={blocked}
+              onClick={() => {
+                if (confirm) {
+                  state.setMode(confirm.account, confirm.mode);
+                  setConfirm(null);
+                }
+              }}
+            >
+              确认{confirm?.mode === "draining" ? "排空" : "禁用"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <Drawer
-        opened={!!account && !state.flow}
+        opened={!!account && !state.flow && !confirm}
         onClose={() => setSelected(null)}
         title="账号详情"
         position="right"
@@ -273,7 +340,7 @@ export function AccountManagement() {
                     size="xs"
                     variant={account.mode === mode ? "filled" : "default"}
                     disabled={blocked || account.mode === mode}
-                    onClick={() => state.setMode(account, mode)}
+                    onClick={() => changeMode(account, mode)}
                   >
                     {mode === "enabled"
                       ? "启用"
@@ -378,7 +445,7 @@ export function AccountManagement() {
                 rel="noopener noreferrer"
                 referrerPolicy="no-referrer"
               >
-                在新窗口打开授权页面 ↗
+                1. 在新窗口打开授权页面 ↗
               </Anchor>
               <Text size="sm" c="dimmed">
                 登录后复制完整 localhost
@@ -420,7 +487,7 @@ export function AccountManagement() {
                     !state.remaining
                   }
                 >
-                  验证并保存
+                  3. 验证并保存
                 </Button>
               </Group>
             </Stack>

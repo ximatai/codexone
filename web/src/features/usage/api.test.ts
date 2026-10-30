@@ -57,3 +57,20 @@ it("uses inclusive UTC days and strictly bounds the calendar range", () => {
   ])
     expect(() => usageParameters(invalid)).toThrow();
 });
+
+it("queries a rolling 24 completed UTC hours instead of the calendar day", () => {
+  const parameters = usageParameters({
+    start: "2026-10-01",
+    end: "2026-10-31",
+    key: "",
+    model: "",
+    mode: "",
+    failure: "",
+    state: "",
+    failedOnly: false,
+    range: "24h",
+  });
+  const end = Math.floor(Date.now() / 3600000) * 3600;
+  expect(Number(parameters.get("end"))).toBe(end);
+  expect(Number(parameters.get("start"))).toBe(end - 86400);
+});
