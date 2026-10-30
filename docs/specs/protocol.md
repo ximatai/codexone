@@ -155,3 +155,5 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 原生 Images SSE 按完整事件有界暂存后检查，普通事件原字节下发（含注释、event 行、CRLF、`[DONE]`），`type: error` 原文不下发，按上述 P27 脱敏后结束；不缓冲整流，沿用单事件与总量上限。
 
 原生 Images 两前缀均 POST 至所选身份上游 /backend-api/codex/images/generations|edits；与 Responses HTTP 共用受限客户端标识头，额外转发 x-codex-image-turn-id，账号认证由服务注入。回传 x-codex-imagegen-request-id 和网关 x-request-id。服务持有独立 imageConcurrency 许可池（1—8、默认2），等待最多30秒；超时429 image_capacity_exhausted / Retry-After: 1，无 intent/派发。成功、失败、取消与断开均只归还一次许可；账本未知责任不随许可归还而释放。
+
+Desktop 辅助控制接口采用[精确方法/路径允许列表](../changes/desktop-control-passthrough/proposal.md)，仅启用的托管 Key 可访问；analytics-events/events 的 POST 本地 202 `{}`，其余单次账号授权后透传，不创建生成 intent 或扣减 Key 生成限额。请求原字节/查询串/Content-Type 保留，辅助正文最多 8 MiB 且全部计入共享 48 MiB 预算；响应提交前有界收集最多 16 MiB，超出 502。成功状态/正文与安全头回传，错误遵循 P27；账号池辅助 429/5xx 冷却全部配置模型、401 标记当前凭证健康。数据服务持有全局 8、每 Key 4 的无等待舱壁，超限 429 control_capacity_exhausted、Retry-After: 1，所有结束路径单次释放。派发总期限 60 秒（memories 为 300 秒），超时 504 表示结果未知，取消并等待本地上游、不重放。只记录有界路径类别/Key ID/账号 ID/状态/耗时，realtime 仅状态/耗时；头部软亲和、读取期限和安全响应头范围见[开发约定](../development/desktop-control.md)。不扩展 realtime WebSocket、transcribe、files 或 usage 路由。
