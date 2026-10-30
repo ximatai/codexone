@@ -9,7 +9,9 @@ FROM scratch AS swiftpm-mirrors
 FROM ${NODE_IMAGE} AS web
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
+# Optional registry mirror; package-lock integrity hashes still verify every tarball.
+ARG NPM_REGISTRY=
+RUN npm ci --ignore-scripts --no-audit --no-fund ${NPM_REGISTRY:+--registry=$NPM_REGISTRY}
 COPY web/ ./
 RUN npm run build
 COPY web/licenses/ /licenses/
