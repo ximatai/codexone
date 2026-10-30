@@ -230,14 +230,25 @@ def web_smoke(port, state):
 
 
 def verify_model_profiles(binary):
-    for supplied in (False, True):
+    for supplied in (False, True, "upstream"):
         with tempfile.TemporaryDirectory(prefix="codexone-catalog-") as temporary:
             root = Path(temporary)
             model = {"id": "synthetic-text", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0}
-            if supplied:
+            if supplied is True:
                 model["catalog"] = {"baseInstructions": "Explicit synthetic fixture guidance"}
             config = root / "identity.json"
-            config.write_text(json.dumps({"principal": "p", "keyID": "k", "namespace": "synthetic", "identity": "i",
+            snapshot = root / "profiles.json"
+            upstream = dict(slug="synthetic-text", base_instructions="Synthetic guidance",
+                input_modalities=["text", "image"], prefer_websockets=True, priority=91,
+                unknown={"nested": [True, None]}, shell_type="synthetic-shell")
+            extra = {}
+            if supplied == "upstream":
+                snapshot.write_text(json.dumps(dict(version=1, source="synthetic", revision="v1",
+                    capturedAtUnixSeconds=1, clientVersions=["0.163.0"],
+                    models=[dict(id="synthetic-text", upstream=upstream)])))
+                snapshot.chmod(0o600)
+                extra["modelProfilesFile"] = str(snapshot)
+            config.write_text(json.dumps({**extra, "principal": "p", "keyID": "k", "namespace": "synthetic", "identity": "i",
                 "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(), "reservedMicros": 0,
                 "models": [model], "upstreamBaseURL": "http://127.0.0.1:9/v1"}))
             config.chmod(0o600)
@@ -249,12 +260,16 @@ def verify_model_profiles(binary):
                         status, body = connect(ports["data"], "GET", prefix + "/models" + query)
                         document = json.loads(body)
                         assert status == 200 and document["data"][0]["id"] == "synthetic-text"
-                        assert ("models" in document) == supplied
+                        assert ("models" in document) == bool(supplied)
                     for query in ("?client_version=0.163.0", "?client_version", "?client_version=1&client_version=2",
                                   "?%63lient_version=1", "?client_version=%ZZ"):
                         status, body = connect(ports["data"], "GET", prefix + "/models" + query)
                         if supplied:
                             assert status == 200 and json.loads(body)["models"][0]["base_instructions"]
+                            if supplied == "upstream":
+                                actual = json.loads(body)["models"][0]
+                                assert actual.pop("codexone_profile")["source"] == "synthetic"
+                                assert actual == {**upstream, "priority": 0, "input_modalities": ["text"], "prefer_websockets": False}
                         else:
                             assert status == 503 and b"model_catalog_unavailable" in body and b'"models"' not in body
                 assert not sqlite3.connect(root / "state/core.sqlite").execute("SELECT 1 FROM attempts").fetchall()

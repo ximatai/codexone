@@ -50,6 +50,15 @@ func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throw
         && (0...500_000_000).contains($0.outputMicrosPerMillion)
     }),
     models.allSatisfy({ model in
+      if let upstream = model.upstream {
+        guard model.catalog == nil, upstream.object != nil,
+          let instructions = upstream["base_instructions"]?.string,
+          !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          upstream["slug"] == nil || upstream["slug"]?.string == model.id,
+          let data = try? upstream.data(), data.count <= 262_144
+        else { return false }
+        return true
+      }
       guard let catalog = model.catalog else { return true }
       let efforts = catalog.reasoningEfforts ?? []
       return (catalog.displayName?.utf8.count ?? 1) > 0
