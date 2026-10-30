@@ -23,6 +23,7 @@
 3. **权限**：`model` 必须在部署图片模型列表中，且在 Key 的有效 `imageModels` 内，否则 403 `model_not_allowed`。视觉权限不适用于参考图。
 4. **头部**：
    - 转发客户端的 `x-codex-image-turn-id`、`x-codex-turn-metadata`，以及与 Responses 路径相同策略的客户端标识头；网关注入账号认证头。
+   - HTTP Images 与 Responses 共用有界标识头允许列表：user-agent、originator、version、session_id、x-codex-turn-metadata、x-codex-image-turn-id；认证与账号路由头不来自客户端。
    - 回传提供者的 `x-codex-imagegen-request-id` 和网关 request_id。
 5. **执行治理**：
    - 一次操作一个持久 intent，派发前完成归属。

@@ -33,3 +33,5 @@
 新 admission 保存模型及 Key revision；历史记录缺失字段时标为不可用，不猜测模型或改写旧记录。金额仍是估算费用，Key 的日预算不是订阅余额或真实消耗硬上界。
 
 图片工具用量与宿主响应 token 分开记录和展示，不将工具 token 加入宿主 token 总数；费用按两份显式映射费率分别估算。缺少工具输入/输出用量时保持部分证据、unknown 和对应暴露，不能用图片已返回推导完整结清。图片工具指标为可空，历史缺失不补零。
+
+原生 Images 无宿主执行，usage.input_tokens/output_tokens 映射 imageInputTokens/imageOutputTokens，input_tokens_details.text_tokens/image_tokens 如有则分别记录 imageInputTextTokens/imageInputImageTokens；有效 data[].b64_json 数量记录 images。按图片模型费率估算；缺失或畸形计数为不可用，不能以零替代，缺完整输入/输出计数保持 partial/unknown。结果有效性与结算完整度独立：200 空 data/非 JSON 结果失败，仍保存可信 usage。统计中 Images 不适用的宿主 token 及完全缺计数的费用返回 null，不把内部兼容计数当观测。沿用 usage JSON 的可选指标，不修改数据库 schema 版本或回填历史。
