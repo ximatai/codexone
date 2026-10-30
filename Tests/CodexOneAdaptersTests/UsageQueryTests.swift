@@ -266,3 +266,64 @@ private struct UsageFixture {
   }
   await f.close()
 }
+
+@Test func keyUsageUsesUTCDayAndNamesWithoutInventingHistoricalTiming() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    let start = Int64(Date().timeIntervalSince1970) / 86400 * 86400
+    try await f.insert("before", at: start - 1, evidence: usage(amount: 70))
+    try await f.insert("boundary", at: start, evidence: usage(amount: 3))
+    try await f.insert("failed-today", at: start + 1, evidence: nil, failure: .upstreamRejected)
+    try await f.insert("after", at: start + 86400, evidence: usage(amount: 80))
+    try await f.store.admit(
+      .init(
+        attempt: "in-flight",
+        owner: .init(principal: "alpha", key: "alpha", namespace: "synthetic", identity: "single"),
+        window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 10,
+        requestID: "request-in-flight", model: "synthetic-text"))
+    let summary = try await f.reader.keyUsage()
+    let alpha = try #require(summary.keys.first { $0.key.id == "alpha" })
+    #expect(summary.startUnixSeconds == start && summary.keys.count == 2)
+    #expect(alpha.admitted == 3 && alpha.failed == 1 && alpha.pending == 2)
+    #expect(alpha.estimatedMicros == 3 && alpha.lastUsedAtUnixSeconds == start + 86400)
+    #expect(alpha.key.principal == "alpha")
+    let query = try UsageQuery(startUnixSeconds: start, endUnixSeconds: start + 86400)
+    let historical = try await f.reader.queryUsage(query)
+    #expect(historical.rows.allSatisfy { $0.principal == "alpha" && $0.totalMilliseconds == nil })
+    try await f.store.perform { db in
+      try db.write(
+        "UPDATE attempts SET outcome_json=json_set(outcome_json,'$.firstEventMilliseconds',12,'$.totalMilliseconds',34) WHERE id='boundary'"
+      )
+      try db.write(
+        "INSERT INTO request_diagnostics VALUES ('ghost-request',?,'ghost','synthetic-text','generation','invalid_request')",
+        [.number(start)])
+      try db.write("DELETE FROM key_events WHERE key_id='alpha'")
+      try db.write("DELETE FROM managed_keys WHERE id='alpha'")
+    }
+    let deleted = try await f.reader.queryUsage(query)
+    #expect(deleted.rows.allSatisfy { $0.principal == nil })
+    #expect(deleted.rows.contains { $0.keyID == "ghost" })
+    #expect(deleted.rows.first { $0.id == "boundary" }?.totalMilliseconds == 34)
+    #expect(deleted.totals.metrics.estimatedMicros == historical.totals.metrics.estimatedMicros)
+    #expect(try await f.reader.usageOptions().keyOptions.map(\.principal) == [nil, "beta", nil])
+    // Reader rejects corrupted/oversized option sets instead of silently truncating.
+    try await f.store.perform { db in
+      try db.exec(
+        """
+        WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<255)
+        INSERT INTO managed_keys SELECT 'extra-'||i,printf('%064d',i),metadata_json FROM managed_keys,n WHERE id='beta';
+        """)
+    }
+    #expect(try await f.reader.keyUsage().keys.count == 256)
+    try await f.store.perform { db in
+      try db.write(
+        "INSERT INTO managed_keys SELECT 'overflow',printf('%064d',9999),metadata_json FROM managed_keys WHERE id='beta'"
+      )
+    }
+    await #expect(throws: ExecutionError.capacity) { try await f.reader.keyUsage() }
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}

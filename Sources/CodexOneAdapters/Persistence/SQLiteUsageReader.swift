@@ -59,16 +59,54 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   public func queryUsage(_ query: UsageQuery) async throws -> UsageReport {
     try await read { try Self.query($0, query) }
   }
-  public func usageOptions() async throws -> (keys: [String], models: [String]) {
+  public func usageOptions() async throws -> (
+    keys: [String], models: [String], keyOptions: [UsageKeyOption]
+  ) {
     try await read { db in
-      let keys = try db.rows("SELECT id FROM managed_keys ORDER BY id LIMIT 257") {
-        String(cString: sqlite3_column_text($0, 0))
+      let keys = try db.rows(
+        "SELECT ids.id,json_extract(k.metadata_json,'$.principal') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
+      ) {
+        UsageKeyOption(
+          id: String(cString: sqlite3_column_text($0, 0)),
+          principal: sqlite3_column_type($0, 1) == SQLITE_NULL
+            ? nil : String(cString: sqlite3_column_text($0, 1)))
       }
       let models = try db.rows("SELECT model FROM health_models ORDER BY model LIMIT 49") {
         String(cString: sqlite3_column_text($0, 0))
       }
       guard keys.count <= 256, models.count <= 48 else { throw ExecutionError.capacity }
-      return (keys, models)
+      return (keys.map(\.id), models, keys)
+    }
+  }
+  public func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary]) {
+    try await read { db in
+      let start = Int64(Date().timeIntervalSince1970) / 86400 * 86400
+      let rows = try db.rows(
+        """
+        SELECT k.id,json_extract(k.metadata_json,'$.principal'),
+          COUNT(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN 1 END),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='failed' ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state!='settled' ELSE 0 END),0),
+          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN
+            CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
+          MAX(a.created_at_epoch)
+        FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
+        GROUP BY k.id ORDER BY k.id LIMIT 257
+        """, (0..<4).flatMap { _ in [.number(start), .number(start + 86400)] }
+      ) { row in
+        KeyUsageSummary(
+          key: .init(
+            id: String(cString: sqlite3_column_text(row, 0)),
+            principal: String(cString: sqlite3_column_text(row, 1))),
+          admitted: sqlite3_column_int64(row, 2), failed: sqlite3_column_int64(row, 3),
+          pending: sqlite3_column_int64(row, 4),
+          estimatedMicros: sqlite3_column_type(row, 5) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 5),
+          lastUsedAtUnixSeconds: sqlite3_column_type(row, 6) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 6))
+      }
+      guard rows.count <= 256 else { throw ExecutionError.capacity }
+      return (start, rows)
     }
   }
   private func read<T: Sendable>(_ operation: @escaping @Sendable (SQLiteConnection) throws -> T)

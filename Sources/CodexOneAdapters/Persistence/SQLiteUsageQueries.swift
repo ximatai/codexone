@@ -99,17 +99,17 @@ extension SQLiteUsageReader {
         unresolved: activity[at]?.1 ?? 0)
     }
     var sql = """
-      SELECT * FROM (
+      SELECT history.*, (SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id) FROM (
       SELECT 'admitted' kind,'a:'||id cursor_id,id,created_at_epoch at_epoch,key_id,
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
         identity,request_id,state,json_extract(outcome_json,'$.kind') outcome,
         json_extract(outcome_json,'$.failure') failure,json_extract(usage_json,'$.completeness') completeness,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
-        CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens FROM attempts WHERE \(attempts.sql)
+        CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds') FROM attempts WHERE \(attempts.sql)
       UNION ALL
-      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
-        FROM request_diagnostics WHERE \(rejected.sql))
+      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
+        FROM request_diagnostics WHERE \(rejected.sql)) history
       """
     var values = attempts.values + rejected.values
     if let cursor = query.cursor {
@@ -141,7 +141,11 @@ extension SQLiteUsageReader {
         accountID: string(7), requestID: string(8), state: state, outcome: outcome,
         failure: failure,
         completeness: completeness, metrics: try metrics(row, offset: 13),
-        cursor: .init(atUnixSeconds: at, id: cursorID))
+        cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(24),
+        firstEventMilliseconds: sqlite3_column_type(row, 22) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 22),
+        totalMilliseconds: sqlite3_column_type(row, 23) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 23))
     }
     let more = rows.count > query.limit
     if more { rows.removeLast() }

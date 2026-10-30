@@ -31,6 +31,7 @@ extension HTTPResponseExecution {
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     try peer.attachEvidence(lane: lane) { event in
+      context.observeUpstreamEvent()
       try request.observeUsage(
         event["response"], context: context, model: model,
         configuration: configuration.imageGeneration)
@@ -57,6 +58,7 @@ extension HTTPResponseExecution {
       var total = 0
       while true {
         let data = try await peer.next(lane: lane)
+        context.observeUpstreamEvent()
         let limit =
           request.requirements.imageModel == nil
           ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes

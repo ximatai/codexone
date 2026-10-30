@@ -12,9 +12,40 @@ public struct UsageAdminAPI: Sendable {
       return try Self.response(
         .object([
           "keys": .array(options.keys.map { .string($0) }),
+          "keyOptions": .array(
+            options.keyOptions.map {
+              .object([
+                "id": .string($0.id), "principal": $0.principal.map { .string($0) } ?? .null,
+              ])
+            }),
           "models": .array(options.models.map { .string($0) }),
           "failures": .array(ExecutionFailure.allCases.map { .string($0.rawValue) }),
         ]))
+    }
+    routes.get("keys") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      do {
+        let report = try await querying.keyUsage()
+        return try Self.response(
+          .object([
+            "startUnixSeconds": .number(Decimal(report.startUnixSeconds)),
+            "endUnixSeconds": .number(Decimal(report.startUnixSeconds + 86400)),
+            "timezone": .string("UTC"),
+            "keys": .array(
+              report.keys.map { value in
+                .object([
+                  "keyID": .string(value.key.id),
+                  "principal": value.key.principal.map { .string($0) } ?? .null,
+                  "admitted": .number(Decimal(value.admitted)),
+                  "failed": .number(Decimal(value.failed)),
+                  "pending": .number(Decimal(value.pending)),
+                  "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
+                  "lastUsedAtUnixSeconds": value.lastUsedAtUnixSeconds.map { .number(Decimal($0)) }
+                    ?? .null,
+                ])
+              }),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
     }
     routes.get { request async throws -> Response in
       let query = try Self.parse(request.url.string)
@@ -139,6 +170,9 @@ public struct UsageAdminAPI: Sendable {
           .object([
             "kind": .string(value.kind.rawValue), "id": .string(value.id),
             "atUnixSeconds": count(value.atUnixSeconds),
+            "principal": text(value.principal),
+            "firstEventMilliseconds": value.firstEventMilliseconds.map(count) ?? .null,
+            "totalMilliseconds": value.totalMilliseconds.map(count) ?? .null,
             "keyID": .string(value.keyID), "model": text(value.model),
             "mode": .string(value.mode.rawValue),
             "accountID": text(value.accountID), "requestID": text(value.requestID),

@@ -18,6 +18,7 @@ public struct ExecutionContext: Sendable {
   }
   /// Record trusted usage before writing to downstream; subsequent transport errors cannot erase it.
   public func observeUsage(_ evidence: UsageEvidence) throws { try observation.record(evidence) }
+  public func observeUpstreamEvent() { observation.recordFirstEvent() }
   public func observeOutcome(_ outcome: ExecutionOutcome) throws {
     try outcome.validate()
     try observation.recordOutcome(outcome)
@@ -39,6 +40,13 @@ private final class BoundObjects: Sendable {
 }
 
 private final class UsageObservation: Sendable {
+  private let started = ContinuousClock.now
+  private let firstEvent = Mutex<Int64?>(nil)
+  private func elapsed() -> Int64 {
+    let parts = started.duration(to: .now).components
+    return max(0, parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000)
+  }
+  func recordFirstEvent() { firstEvent.withLock { if $0 == nil { $0 = elapsed() } } }
   private let latest = Mutex(
     (evidence: UsageEvidence?.none, outcome: ExecutionOutcome?.none, sealed: false))
   func recordOutcome(_ outcome: ExecutionOutcome) throws {
@@ -50,7 +58,13 @@ private final class UsageObservation: Sendable {
   func finish() -> (UsageEvidence?, ExecutionOutcome?) {
     latest.withLock { value in
       value.sealed = true
-      return (value.evidence, value.outcome)
+      let outcome = value.outcome.flatMap {
+        try? ExecutionOutcome(
+          failure: $0.failure, atUnixSeconds: $0.atUnixSeconds,
+          cooldownSeconds: $0.cooldownSeconds, firstEventMilliseconds: firstEvent.withLock { $0 },
+          totalMilliseconds: elapsed())
+      }
+      return (value.evidence, outcome)
     }
   }
   func record(_ evidence: UsageEvidence) throws {
