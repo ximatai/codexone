@@ -113,6 +113,11 @@ public struct PreparedAccountPoolAdmission: Sendable, CustomStringConvertible,
   }
 }
 public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
+  func selectControlAccount(
+    key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?
+  ) async throws -> AccountRouteIdentity
+  func recordControlOutcome(account: AccountRouteCandidate, outcome: ExecutionOutcome) async throws
+
   func resolveAccountAffinity(
     principal: String, references: [ObjectBinding], connection: AccountRouteIdentity?
   ) async throws -> AccountRouteIdentity?
@@ -123,6 +128,17 @@ public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
 }
 
 extension AccountRoutingStore {
+  public func selectControlAccount(
+    key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?
+  ) async throws -> AccountRouteIdentity {
+    throw AccountDispatchError.unavailable
+  }
+  public func recordControlOutcome(account: AccountRouteCandidate, outcome: ExecutionOutcome)
+    async throws
+  {
+    throw ExecutionError.storageUnavailable
+  }
+
   public func resolveAccountHint(principal: String, hints: [ObjectBinding]) async throws
     -> AccountRouteIdentity?
   { nil }
