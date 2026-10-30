@@ -19,4 +19,6 @@
 
 主 Agent 复核：同日在普通 macOS 环境（依赖经按 `Package.resolved` revision 预取的本地镜像解析，锁文件不变）重跑 `./scripts/verify.sh --backend`，退出码 0，Swift 203 项及全部后端脚本通过。
 
-未验证：Linux verification；部署后真实 Desktop 采用目录。二者保持未完成，后者仍需单独授权。
+2026-10-30 Linux amd64（macOS arm64 宿主经 Rosetta 运行 Docker，依赖经按 revision 预取的本地镜像构建上下文）：`docker build --target verification` 退出码 0，release 构建及全部 verification 脚本 PASS。
+
+未验证：部署后真实 Desktop 采用目录。二者保持未完成，后者仍需单独授权。
