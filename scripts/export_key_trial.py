@@ -14,6 +14,7 @@ COLUMNS = {'id','name','key_hash','key_prefix','allowed_models','expires_at','is
     'enforced_model','enforced_reasoning_effort','enforced_service_tier','account_assignment_scope_enabled',
     'apply_to_codex_model','traffic_class','transport_policy_override','usage_sections',
     'source_assignment_scope_enabled','allowed_reasoning_efforts'}
+LIMIT_COLUMNS = {'id','api_key_id','limit_type','limit_window','max_value','current_value','model_filter','reset_at'}
 FORCED = ('enforced_model','enforced_reasoning_effort','enforced_service_tier','transport_policy_override','allowed_reasoning_efforts')
 SCOPES = ('account_assignment_scope_enabled','source_assignment_scope_enabled','apply_to_codex_model')
 
@@ -23,8 +24,10 @@ def convert(source, approval):
     models=approval['models'];limits=approval['limits']
     assert isinstance(models,list) and 1<=len(models)<=32 and len(set(models))==len(models)
     assert all(isinstance(x,str) and 0<len(x.encode())<=128 for x in models)
-    assert set(limits)=={'requests','active','unresolved','budgetMicros','unresolvedMicros'}
-    assert all(type(n) is int and 1<=n<=10**12 for n in limits.values())
+    assert limits == 'source' or isinstance(limits, dict)
+    if limits != 'source':
+        assert set(limits)=={'requests','active','unresolved','budgetMicros','unresolvedMicros'}
+        assert all(type(n) is int and 1<=n<=10**12 for n in limits.values())
     assert isinstance(approval['selectedName'],str) and 0<len(approval['selectedName'].encode())<=256
     path=Path(source).resolve(strict=True)
     db=sqlite3.connect('file:'+quote(str(path),safe='/')+'?mode=ro',uri=True,timeout=2)
@@ -34,12 +37,19 @@ def convert(source, approval):
         assert {row[1] for row in db.execute('PRAGMA table_info(api_keys)')}==COLUMNS,'Unsupported source schema'
         rows=db.execute('SELECT '+','.join(sorted(COLUMNS))+' FROM api_keys ORDER BY id LIMIT 257').fetchall()
         assert 1<=len(rows)<=256
+        limited=set()
+        if limits == 'source':
+            assert {row[1] for row in db.execute('PRAGMA table_info(api_key_limits)')}==LIMIT_COLUMNS,'Unsupported source limits schema'
+            # Read only the pinned columns in the same source snapshot.
+            for record in db.execute('SELECT '+','.join(sorted(LIMIT_COLUMNS))+' FROM api_key_limits'):
+                limited.add(record['api_key_id'])
     finally:db.close()
     selected=[row for row in rows if row['name']==approval['selectedName']]
     assert len(selected)==1,'Selected source key is missing or ambiguous'
     entries=[];mapping=[];quarantine=[]
     for row in rows:
         reasons=[]
+        if limits == 'source' and row['id'] in limited:reasons.append('source_limits_unsupported')
         digest=row['key_hash'];identifier=row['id']
         assert isinstance(identifier,str) and 0<len(identifier.encode())<=256
         reference=hashlib.sha256(identifier.encode()).hexdigest()[:32]
@@ -65,7 +75,7 @@ def convert(source, approval):
         if reasons:
             quarantine.append(dict(keyID=new_id,reasons=reasons));continue
         entries.append(dict(id=new_id,principal='legacy-p-'+reference,digest=digest,
-            policy=dict(models=allowed,limits=limits,visionInput=False,imageGeneration=False,imageModels=[]),
+            policy=dict(models=allowed,limits=({name:None for name in ('requests','active','unresolved','budgetMicros','unresolvedMicros')} if limits == 'source' else limits),visionInput=False,imageGeneration=False,imageModels=[]),
             sourceActive=True,sourceExpiresAtUnixSeconds=None,policyEquivalent=True))
     selected_id=next(m['keyID'] for m in mapping if m['selected'])
     assert any(e['id']==selected_id for e in entries),'Selected key cannot be represented safely'
