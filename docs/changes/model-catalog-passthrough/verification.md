@@ -21,4 +21,4 @@
 
 2026-10-30 Linux amd64（macOS arm64 宿主经 Rosetta 运行 Docker，依赖经按 revision 预取的本地镜像构建上下文）：`docker build --target verification` 退出码 0，release 构建及全部 verification 脚本 PASS。
 
-未验证：部署后真实 Desktop 采用目录。二者保持未完成，后者仍需单独授权。
+2026-10-30 部署后真实 Desktop 采用目录：三模型对话、视觉输入与工具往返通过，见[开放协议透传验证](../open-protocol-passthrough/verification.md)。

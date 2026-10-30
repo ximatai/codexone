@@ -7,6 +7,6 @@
 - [x] macOS `verify.sh --backend` 出口。
 - [x] macOS 前端 lint、format、typecheck、组件测试与生产构建。
 - [x] macOS 浏览器出口：`verify.sh --web --chrome`（主 Agent 复验）。
-- [ ] Linux verification 出口与部署后启用（随下一次镜像）。
+- [x] 2026-10-30 Linux verification 出口（a8a3e1b）与部署后启用：source 模式导入的无限额 Key 经真实 Desktop 使用，见[开放协议透传验证](../open-protocol-passthrough/verification.md)。
 
 验证详情见 [verification](verification.md)。
