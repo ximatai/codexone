@@ -45,4 +45,16 @@ SwiftPM 在此受限环境的 manifest sandbox-exec 不可用，原始不带覆�
 - usage.input_tokens/output_tokens 与 text_tokens/image_tokens 的实际提供情况、语义和缺失行为；本地费率仅为估算，不代表订阅账单。
 - x-codex-imagegen-request-id 的实际可用性，429/Retry-After 的冷却行为，真实生图耗时与首响应/进度期限。
 
-Linux verification、真实生成 1 张/编辑 1 次及 Desktop 操作均未在本执行者范围内执行，不能据本机合成结果标为完成。
+## 主 Agent 复核与真实验证（2026-10-30）
+
+- 本机重跑 `./scripts/verify.sh --backend`：退出码 0，Swift 共 213 项通过（35/37/3/138），合成脚本输出 87 条 PASS。
+- Linux amd64 镜像构建与 `verification` target（含 `verify_images.py`）：退出码 0。
+- 测试部署（账号池、WebSocket 对话上游；图片模型 `gpt-image-2`，并发 2；反代正文上限 33m），临时 Key，客户端 UA 为 Codex 形态：
+  - `/backend-api/codex/images/generations`（JSON，1024×1024，low）：200，耗时约 105 秒；1 张图片；回传 `x-codex-imagegen-request-id` 与 `x-request-id`；usage 含 `input_tokens_details.text_tokens/image_tokens` 与 `output_tokens_details`；
+  - `/v1/images/edits`（multipart，以上一步的图片作参考图）：200，耗时约 138 秒；参考图计入 `image_tokens` 1536；
+  - 账本：两次均为 settled/succeeded/complete，图片数与 token 细分和响应一致；Images 不适用的宿主 token 为 null。
+- 已核实的真实端点行为：原生路径、data URL 形式的 images、usage 位置与细分、请求 ID 头都与实现假设一致。原生响应还含 `background`、`output_format`、`quality`、`size`、`safety_identifier` 等成员，网关原样透传。
+- 发现：客户端 UA 为 `Python-urllib` 时，提供者在 2 秒内返回 403（网关记为 `upstream_rejected`），换成 Codex 形态的 UA 后成功。Codex CLI/Desktop 发送自身的 UA，不受影响。非 Codex 客户端（如 OpenAI SDK）是否需要网关代填 UA 待用户决定，未做额外探测。
+- 该 403 在账本中按“无用量证据的失败保留 unknown 责任”的现行规则记为 unknown；规则本身属于独立的治理议题，不在本变更内修改。
+- 仍未核对：SSE（`stream: true`）的真实事件形状，以及 429/Retry-After 的冷却行为。
+

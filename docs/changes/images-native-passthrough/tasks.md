@@ -6,5 +6,6 @@
 - [x] 图片并发舱壁与许可释放。
 - [x] 配置兼容字段与文档、规范同步。
 - [x] 合成验证与 macOS 后端出口（证据见 [verification](verification.md)）。
-- [ ] Linux verification（本阶段执行者范围外）。
-- [ ] 部署后网关真实冒烟（生成 1、编辑 1）与 Desktop 生图验收。
+- [x] Linux verification。
+- [x] 部署后网关真实冒烟（生成 1、编辑 1）。
+- [ ] Desktop 生图、编辑与含图会话压缩验收（等待用户操作）。
