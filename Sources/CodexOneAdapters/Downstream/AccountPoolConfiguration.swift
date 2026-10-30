@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 
 public struct AccountPoolConfiguration: Sendable, Decodable {
+  public let imageConcurrency: Int?
   public let imageGeneration: ImageConfiguration?
   public var models: [SingleIdentityConfiguration.Model]
   public let reservedMicros: Int64
@@ -24,11 +25,13 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
         [
           "models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport",
           "imageGeneration", "firstResponseTimeoutSeconds", "progressTimeoutSeconds",
-          "modelProfilesFile",
+          "modelProfilesFile", "imageConcurrency",
         ].contains(
           $0.stringValue)
       })
     else { throw ExecutionError.invalidCommand }
+    imageConcurrency = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "imageConcurrency")!)
     imageGeneration = try values.decodeIfPresent(
       ImageConfiguration.self, forKey: Field(stringValue: "imageGeneration")!)
     models = try values.decode(
@@ -66,6 +69,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       idle: progressTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
+    guard (1...8).contains(imageConcurrency ?? 2) else { throw ExecutionError.invalidCommand }
     guard (0...1_000_000_000_000).contains(reservedMicros),
       ["http", "websocket"].contains(upstreamTransport ?? "http")
     else { throw ExecutionError.invalidCommand }
@@ -91,13 +95,10 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       ])
     }
     prices += imageModels.sorted { $0.id < $1.id }.map { image in
-      let host = models.first { $0.id == image.hostModel }!
       return JSONValue.object([
-        "id": .string(image.id), "hostModel": .string(host.id),
+        "id": .string(image.id),
         "inputMicrosPerMillion": .number(Decimal(image.inputMicrosPerMillion)),
         "outputMicrosPerMillion": .number(Decimal(image.outputMicrosPerMillion)),
-        "hostInputMicrosPerMillion": .number(Decimal(host.inputMicrosPerMillion)),
-        "hostOutputMicrosPerMillion": .number(Decimal(host.outputMicrosPerMillion)),
       ])
     }
     let pricing = keyDigest(String(decoding: try encoder.encode(prices), as: UTF8.self))

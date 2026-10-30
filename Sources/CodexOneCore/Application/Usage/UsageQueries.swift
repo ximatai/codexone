@@ -54,14 +54,19 @@ public struct UsageMetrics: Sendable {
   public let cachedTokens: Int64?
   public let imageInputTokens: Int64?
   public let imageOutputTokens: Int64?
+  public let imageInputTextTokens: Int64?
+  public let imageInputImageTokens: Int64?
   public let images: Int64?
   public let estimatedMicros: Int64?
   public init(
     inputTokens: Int64?, outputTokens: Int64?, cachedTokens: Int64?, images: Int64?,
-    estimatedMicros: Int64?, imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil
+    estimatedMicros: Int64?, imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil,
+    imageInputTextTokens: Int64? = nil, imageInputImageTokens: Int64? = nil
   ) {
     self.imageInputTokens = imageInputTokens
     self.imageOutputTokens = imageOutputTokens
+    self.imageInputTextTokens = imageInputTextTokens
+    self.imageInputImageTokens = imageInputImageTokens
     self.inputTokens = inputTokens
     self.outputTokens = outputTokens
     self.cachedTokens = cachedTokens

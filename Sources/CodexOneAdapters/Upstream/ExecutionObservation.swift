@@ -43,6 +43,7 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
     case "execution_deadline_exceeded", "execution_first_response_timeout",
       "execution_progress_timeout":
       return .deadlineExceeded
+    case "upstream_response_too_large", "upstream_event_too_large": return .invalidUpstreamResponse
     case "model_not_allowed": return .modelNotAllowed
     default:
       if error.code.hasPrefix("invalid_upstream") { return .invalidUpstreamResponse }

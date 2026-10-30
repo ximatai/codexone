@@ -16,7 +16,8 @@ import Testing
 
 // Accept both ordinary subscription array input and the independent image/compact contracts.
 private func poolInput(_ request: JSONValue) -> String? {
-  request["input"]?.string ?? request["input"]?.array?.first?["content"]?.string
+  request["prompt"]?.string ?? request["input"]?.string
+    ?? request["input"]?.array?.first?["content"]?.string
 }
 
 private let poolImageBase64 =
@@ -38,6 +39,8 @@ private final class PoolHTTPState: Sendable {
     let account: String
     let path: String
     let previous: String?
+    var body: Data? = nil
+    var headers: HTTPHeaders? = nil
   }
   struct State {
     var expected: [String: String] = [:]
@@ -110,7 +113,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           }
           value.calls.append(
             .init(
-              account: account, path: head.uri, previous: request["previous_response_id"]?.string))
+              account: account, path: head.uri, previous: request["previous_response_id"]?.string,
+              body: body, headers: head.headers))
           return value.calls.count
         }
         if let input = poolInput(request), input.hasPrefix("http"),
@@ -124,7 +128,8 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           return
         }
         let compact = head.uri.hasSuffix("/compact")
-        if !compact
+        let nativeImage = head.uri.contains("/images/")
+        if !compact && !nativeImage
           && request["tools"]?.array?.contains(where: { $0["type"]?.string == "image_generation" })
             != true
         {
@@ -153,6 +158,12 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         }
         if !compact, let previous = request["previous_response_id"] {
           document["previous_response_id"] = previous
+        }
+        if nativeImage {
+          document = [
+            "data": .array([.object(["b64_json": .string(poolImageBase64)])]),
+            "usage": .object(["input_tokens": .number(2), "output_tokens": .number(3)]),
+          ]
         }
         let stream = request["stream"]?.bool == true && !compact
         let bytes: Data
@@ -1202,6 +1213,29 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
           let (data, response) = try await session.data(for: request)
           return ((response as! HTTPURLResponse).statusCode, try JSONValue.decode(data))
         }
+        for prefix in ["/v1", "/backend-api/codex"] {
+          for operation in ["generations", "edits"] {
+            var request = URLRequest(
+              url: URL(string: "http://127.0.0.1:\(h.port)" + prefix + "/images/" + operation)!)
+            request.httpMethod = "POST"
+            request.httpBody = Data(
+              #"{ "model":"synthetic-image", "prompt":"synthetic", "future":42 }"#.utf8)
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+            request.setValue("synthetic-turn", forHTTPHeaderField: "x-codex-image-turn-id")
+            request.setValue("synthetic-desktop", forHTTPHeaderField: "originator")
+            request.setValue("forged-downstream-account", forHTTPHeaderField: "chatgpt-account-id")
+            request.setValue("synthetic-client-header", forHTTPHeaderField: "x-client-private")
+            let session = URLSession(configuration: .ephemeral)
+            let (_, response) = try await session.data(for: request)
+            session.invalidateAndCancel()
+            #expect((response as! HTTPURLResponse).statusCode == 200)
+            #expect(h.calls.last?.path == "/backend-api/codex/images/" + operation)
+            #expect(h.calls.last?.body == request.httpBody)
+            #expect(h.calls.last?.headers?.first(name: "x-codex-image-turn-id") == "synthetic-turn")
+            #expect(h.calls.last?.headers?.first(name: "originator") == "synthetic-desktop")
+          }
+        }
         let generated = try await post(
           "images/generations", .object(["prompt": .string("synthetic pool image")]))
         #expect(
@@ -1210,7 +1244,7 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
         try await awaitOAuth { h.finalizer.outstanding == 0 }
         let imagesOnly = try await post(
           "responses", .object(["model": .string("synthetic-text"), "input": .string("synthetic")]))
-        #expect(imagesOnly.0 == 403 && h.calls.count == 1)
+        #expect(imagesOnly.0 == 403 && h.calls.count == 5)
         let key = try #require(try await h.store.listKeys(after: nil).first { $0.id == "alice" })
         _ = try await h.store.updateKey(
           id: key.id, revision: key.revision, enabled: true,
@@ -1293,5 +1327,41 @@ func poolNativeRequestParametersRejectBeforeFirstAdmissionOrUpstreamHandshake() 
     #expect(h.calls.count == 1 && h.state.value.withLock { $0.upgrades == 1 })
     let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
     #expect(total == 1 && h.finalizer.outstanding == 0)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func nativePoolImageRateLimitCoolsSelectedAccountWithoutReplay() async throws {
+  try await withOAuth(timeout: 3000) { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, images: true)
+    do {
+      func post(_ prompt: String) async throws -> Int {
+        var request = URLRequest(
+          url: URL(string: "http://127.0.0.1:\(h.port)/v1/images/generations")!)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONValue.object(["prompt": .string(prompt)]).data()
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (_, response) = try await session.data(for: request)
+        return (response as! HTTPURLResponse).statusCode
+      }
+      #expect(try await post("http429") == 429)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      #expect(h.calls.count == 1)
+      let selected = try #require(h.calls.first?.account).replacingOccurrences(
+        of: "synthetic-", with: "")
+      let health = try await h.store.accountHealth(id: selected)
+      #expect(health.cooldowns.count == 1)
+      let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
+      _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
+      #expect(try await post("synthetic") == 503)
+      #expect(h.calls.count == 1 && h.state.value.withLock { $0.invalid == 0 })
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
   }
 }

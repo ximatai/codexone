@@ -22,6 +22,24 @@ from verify_websocket import dial, send, receive
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=='
 URL = 'data:image/png;base64,' + PNG
 
+def native_body(prompt):
+    if prompt == 'non-json': return b'synthetic invalid JSON'
+    document = {'created':1,'data':[] if prompt == 'empty' else [{'b64_json':PNG}], 'future':'preserved'}
+    if prompt != 'missing-usage':
+        document['usage'] = {'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}
+    return json.dumps(document).encode()
+
+
+def native_stream(operation, prompt='synthetic'):
+    prefix = 'image_edit' if operation == 'edits' else 'image_generation'
+    preview = {'type':prefix+'.partial_image','b64_json':PNG, 'partial_image_index':0}
+    final = {'type':prefix+'.completed','b64_json':PNG,'usage':{'input_tokens':2,'output_tokens':3}}
+    if prompt == 'stream-empty': final['b64_json'] = ''
+    if prompt == 'stream-abort': return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\n'
+    if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic'}}
+    return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\nevent: ' + final['type'].encode() + b'\r\ndata: ' + json.dumps(final).encode() + b'\r\n\r\ndata: [DONE]\n\n'
+
+
 class Provider(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     def log_message(self, *_args): pass
@@ -72,6 +90,27 @@ class Provider(BaseHTTPRequestHandler):
             events = events[:1]
         return events + [{'type': 'response.' + response['status'], 'response': response, **lane}]
     def do_POST(self):
+        if self.path.startswith('/backend-api/codex/images/'):
+            data = self.rfile.read(int(self.headers['Content-Length']))
+            request = json.loads(data)
+            with self.server.guard:
+                self.server.calls += 1
+                self.server.requests.append((self.path, data, dict((k.lower(),v) for k,v in self.headers.items())))
+            prompt = request.get('prompt','')
+            if prompt == 'hold': self.server.release.wait(55)
+            status = int(prompt[4:]) if prompt.startswith('http') else 200
+            body = (json.dumps({'error':{'code':'synthetic_provider_error','message':'synthetic acct-private'}}).encode()
+                if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt) if request.get('stream') else native_body(prompt))
+            if prompt == 'oversize': body = b' ' * (48 * 1024 * 1024 + 1)
+            self.send_response(status)
+            self.send_header('Content-Type','text/event-stream' if request.get('stream') else 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
+            if status == 429: self.send_header('Retry-After','1')
+            self.end_headers()
+            try: self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError): pass
+            return
         length = int(self.headers['Content-Length'])
         assert length <= 34603008 and self.path in ('/v1/responses', '/v1/responses/compact')
         request = json.loads(self.rfile.read(length))
@@ -102,284 +141,172 @@ class Provider(BaseHTTPRequestHandler):
                 for event in self.events(json.loads(data)): send(self.connection, event)
         except (EOFError, OSError): pass
 
-
-def raw(port, path, data, token, content_type='application/json'):
-    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=20)
-    connection.request('POST', path, data, {'Authorization': 'Bearer ' + token, 'Content-Type': content_type})
-    response = connection.getresponse(); result = response.status, response.read(); connection.close()
-    return result
-
-
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path, required=True); parser.add_argument('--browser', action='store_true')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--browser', action='store_true')
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
-    upstream = ThreadingHTTPServer(('127.0.0.1', 0), Provider); upstream.daemon_threads = True
-    upstream.guard = threading.Lock(); upstream.calls = 0
-    worker = threading.Thread(target=upstream.serve_forever, daemon=True); worker.start()
+    upstream = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    upstream.daemon_threads = True
+    upstream.guard = threading.Lock()
+    upstream.calls = 0
+    upstream.requests = []
+    upstream.release = threading.Event()
+    worker = threading.Thread(target=upstream.serve_forever, daemon=True)
+    worker.start()
     try:
         for transport in ('http', 'websocket'):
             with tempfile.TemporaryDirectory(prefix='codexone-images-') as temporary:
                 root = Path(temporary)
-                config = root / 'identity.json'; admin = root / 'admin'; admin.write_text(ADMIN); admin.chmod(0o600)
+                config = root / 'identity.json'
+                admin = root / 'admin'; admin.write_text(ADMIN); admin.chmod(0o600)
+                token = root / 'upstream-token'; token.write_text('synthetic-upstream-token-for-images'); token.chmod(0o600)
                 config.write_text(json.dumps({'managedKeys': True, 'namespace': 'synthetic', 'identity': 'synthetic-account',
-                    'reservedMicros': 10, 'executionTimeoutSeconds': 10, 'upstreamTransport': transport,
+                    'reservedMicros': 10, 'executionTimeoutSeconds': 60, 'firstResponseTimeoutSeconds': 60,
+                    'upstreamTransport': transport, 'imageConcurrency': 1, 'upstreamTokenFile': str(token),
                     'upstreamBaseURL': f'http://127.0.0.1:{upstream.server_port}/v1',
-                    'models': [{'id': host, 'visionInput': True, 'imageGeneration': True, 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000} for host in ('synthetic-host', 'synthetic-host-other')] + [{'id': 'synthetic-no-image', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
-                    'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': image, 'hostModel': host,
-                        'sizePolicy': 'fixed1536', 'supportsTransparency': True, 'supportsInputFidelity': True, 'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000} for image, host in [('synthetic-image', 'synthetic-host'), ('synthetic-image-other', 'synthetic-host-other')]]}}))
+                    'models': [{'id': 'synthetic-host', 'imageGeneration': True, 'visionInput': True,
+                        'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
+                    'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': 'synthetic-image',
+                        'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000}]}}))
                 config.chmod(0o600)
-                process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin, web_directory=(repository / 'web/dist').resolve() if args.browser else None)
+                process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin,
+                    web_directory=(repository / 'web/dist').resolve() if args.browser else None)
                 try:
                     policies = {}
-                    for name, models, vision, image in [('chat', ['synthetic-host'], False, False), ('vision', ['synthetic-host'], True, False), ('images', [], False, True), ('both', ['synthetic-host'], True, True), ('other', ['synthetic-host'], True, True), ('cross', ['synthetic-host-other'], True, True), ('plain', ['synthetic-no-image'], True, True)]:
-                        status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal=name if name == 'other' else 'team', models=models, limits=LIMITS,
-                            visionInput=vision, imageGeneration=image, imageModels=['synthetic-image'] if image else []))
+                    for name, image in [('images', True), ('chat', False), ('both', True)]:
+                        status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal='team',
+                            models=[] if name == 'images' else ['synthetic-host'], limits={**LIMITS, 'unresolved': 100},
+                            visionInput=name == 'both', imageGeneration=image,
+                            imageModels=['synthetic-image'] if image else []))
                         assert status == 201, (status, created)
                         policies[name] = created
                     port = ports['data']; db = root / 'state/core.sqlite'
-                    def request(name, endpoint, body): return raw(port, endpoint, json.dumps(body).encode(), policies[name]['secret'])
-                    for prefix in ('/v1', '/backend-api/codex'):
-                        for name in ('chat', 'vision'):
-                            before = upstream.calls
-                            assert request(name, prefix + '/images/generations', {'prompt': 'synthetic'})[0] != 200
-                            assert upstream.calls == before
-                        status, body = request('images', prefix + '/images/generations', {'prompt': 'synthetic'})
-                        assert status == 200 and json.loads(body)['data'][0]['b64_json'] == PNG, (status, body[:200])
-                        usage = latest(db, 'settled'); assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['estimatedMicros'] == 25
-                        status, body = request('images', prefix + '/images/edits', {'prompt': 'synthetic edit', 'images': [{'image_url': URL}], 'mask': {'image_url': URL}, 'stream': True})
-                        assert status == 200 and b'image_edit.partial_image' in body and b'image_edit.completed' in body
-                        for line in body.splitlines():
-                            if not line.startswith(b'data: ') or line[6:] == b'[DONE]': continue
-                            event = json.loads(line[6:])
-                            if event['type'] in ('image_edit.partial_image', 'image_edit.completed'):
-                                assert all(name in event for name in ('created_at', 'size', 'quality', 'background', 'output_format'))
-                                assert event['output_format'] == 'png' and event['created_at'] > 0
-                        status, body = request('images', prefix + '/images/edits', {'prompt': 'next active edit', 'images': [{'image_url': URL}]})
-                        assert status == 200
-                    status, body = request('images', '/v1/images/edits', {'prompt': 'synthetic', 'user': 'discard',
-                        'images': [{'image_url': URL, 'detail': 'discard'}] * 16, 'mask': {'image_url': URL, 'detail': 'discard'}})
-                    assert status == 200, (status, body[:200])
-                    before = upstream.calls
-                    for images in ([{'image_url': URL}] * 17, [{}], [{'image_url': 1}]):
-                        assert request('images', '/v1/images/edits', {'prompt': 'synthetic', 'images': images})[0] == 400
-                    assert upstream.calls == before
-                    multipart = (b'--synthetic\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nsynthetic edit\r\n--synthetic\r\nContent-Disposition: form-data; name="image[]"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n' + base64.b64decode(PNG) + b'\r\n--synthetic--\r\n')
-                    assert raw(port, '/v1/images/edits', multipart, policies['images']['secret'], 'multipart/form-data; boundary=synthetic')[0] == 200
-                    def webp(size, width=1, height=1):
-                        # Synthetic container headers; the gateway never raster-decodes input.
-                        payload = b'\x2f' + struct.pack('<I', (width - 1) | ((height - 1) << 14))
-                        payload += b'\0' * (size - 20 - len(payload))
-                        return b'RIFF' + struct.pack('<I', size - 8) + b'WEBPVP8L' + struct.pack('<I', len(payload)) + payload
-                    def multipart_body(images):
-                        body = b'--synthetic\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nsynthetic\r\n'
-                        for image in images:
-                            body += b'--synthetic\r\nContent-Disposition: form-data; name="image[]"; filename="synthetic.webp"\r\nContent-Type: image/webp\r\n\r\n' + image + b'\r\n'
-                        return body + b'--synthetic--\r\n'
-                    status, body = request('images', '/v1/images/edits', {'prompt': 'synthetic',
-                        'images': [{'image_url': 'data:image/webp;base64,' + base64.b64encode(webp(32, 3000, 3000)).decode()}] * 16})
-                    assert status == 200, (status, body[:200])
-                    before = upstream.calls
-                    for images in ([webp(16 * 1024 * 1024 + 2)], [webp(13 * 1024 * 1024)] * 2, [webp(32, 10000, 5001)]):
-                        status, _ = raw(port, '/v1/images/edits', multipart_body(images), policies['images']['secret'], 'multipart/form-data; boundary=synthetic')
-                        assert status in (400, 413), status
-                        assert upstream.calls == before
-                    vision = {'model': 'synthetic-host', 'input': [{'role': 'user', 'content': [{'type': 'input_image', 'image_url': URL}]}]}
-                    assert request('vision', '/v1/responses', vision)[0] == 200
-                    assert request('chat', '/v1/responses', vision)[0] != 200
-                    status, directory = call(port, 'GET', '/v1/models', token=policies['cross']['secret'])
-                    assert status == 200 and next(model for model in directory['data'] if model['id'] == 'synthetic-host-other')['image_generation'] is True
-                    before = upstream.calls
-                    assert request('cross', '/v1/responses', {'model': 'synthetic-host-other', 'input': 'synthetic', 'tools': [{'type': 'image_generation', 'model': 'synthetic-image-other'}]})[0] == 403
-                    assert upstream.calls == before
-                    assert request('cross', '/v1/responses', {'model': 'synthetic-host-other', 'input': 'synthetic', 'tools': [{'type': 'image_generation', 'model': 'synthetic-image'}]})[0] == 200
-                    for endpoint, compact in (('/v1/responses/compact', vision), ('/v1/responses', {**vision, 'stream': True, 'input': vision['input'] + [{'type': 'compaction_trigger'}]})):
-                        assert request('vision', endpoint, compact)[0] == 200
-                        status, denied = request('chat', endpoint, compact)
-                        assert status == 403 and b'model_not_allowed' in denied
-                    large = {'model': 'synthetic-host', 'input': 'S' * (20 * 1024 * 1024)}
-                    status, body = request('vision', '/v1/responses', large)
-                    assert status == 200, (status, body[:200])
-                    tool = {'model': 'synthetic-host', 'input': 'synthetic', 'tools': [{'type': 'image_generation'}]}
-                    before = upstream.calls
-                    assert request('plain', '/v1/responses', {**tool, 'model': 'synthetic-no-image'})[0] == 403
-                    assert upstream.calls == before
-                    for zero in ({**tool, 'tool_choice': 'none'}, {**tool, 'input': 'no-image'}):
-                        assert request('both', '/v1/responses', zero)[0] == 200
-                        usage = latest(db, 'settled'); assert usage['images'] == 0 and usage['imageInputTokens'] == 0 and usage['estimatedMicros'] == 12
-                    assert request('chat', '/v1/responses', tool)[0] != 200
-                    assert request('images', '/v1/responses', tool)[0] != 200
-                    status, body = request('both', '/v1/responses', tool); assert status == 200, (status, body[:200])
-                    result = json.loads(body)
-                    follow = {**tool, 'input': [{'type': 'image_generation_call', 'id': result['output'][0]['id']}, {'role': 'user', 'content': 'synthetic next edit'}]}
-                    assert request('both', '/v1/responses', follow)[0] == 200
-                    before = upstream.calls
-                    assert request('other', '/v1/responses', follow)[0] != 200
-                    assert upstream.calls == before
-                    for prompt in ('failed-after-item', 'abort-after-item', 'invalid-output'):
-                        before = upstream.calls
-                        status, body = request('images', '/v1/images/generations', {'prompt': prompt, 'stream': True})
-                        assert b'image_generation.completed' not in body, (prompt, status, body[:100])
-                        assert upstream.calls == before + 1
-                    for prompt in ('failed-empty', 'incomplete-empty'):
-                        status, body = request('images', '/v1/images/generations', {'prompt': prompt, 'stream': True})
-                        assert b'image_generation.completed' not in body
-                        partial = latest(db, 'unknown'); assert partial['completeness'] == 'partial' and 'imageInputTokens' not in partial
-                    status, _ = request('images', '/v1/images/generations', {'prompt': 'invalid-usage'})
-                    assert status == 502
-                    invalid_usage = latest(db, 'unknown'); assert invalid_usage['inputTokens'] == 5 and invalid_usage['estimatedMicros'] == 12
-                    before = upstream.calls
-                    status, body = request('images', '/v1/images/generations', {'prompt': 'stall'})
-                    assert status == 504 and upstream.calls == before + 1, (transport, status, body[:200])
-                    assert request('images', '/v1/images/generations', {'prompt': 'missing-usage'})[0] == 200
-                    usage = latest(db, 'unknown'); assert usage['completeness'] == 'partial' and 'imageInputTokens' not in usage
-                    before = upstream.calls
-                    for body in ({'prompt': 'synthetic', 'model': 123}, {'prompt': 'synthetic', 'model': None}, {'prompt': 'synthetic', 'n': 2}, {'prompt': 'synthetic', 'size': '4096x4096'}, {'prompt': 'synthetic', 'images': [{'image_url': 'https://example.invalid/x.png'}]}):
-                        assert request('images', '/v1/images/edits' if 'images' in body else '/v1/images/generations', body)[0] == 400
-                    assert upstream.calls == before
-                    # Authentication and declared size are checked before waiting for an oversized body.
-                    with socket.create_connection(('127.0.0.1', port), timeout=3) as sock:
-                        sock.sendall(b'POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 33554433\r\n\r\n')
-                        assert b'401' in sock.recv(4096)
-                    with socket.create_connection(('127.0.0.1', port), timeout=3) as sock:
-                        sock.sendall(('POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + policies['images']['secret'] + '\r\nContent-Length: 33554433\r\n\r\n').encode())
-                        assert b'413' in sock.recv(4096)
-                    if transport == 'http':
-                        # Reserve 32 of 48 MiB before any body arrives. The next large request must not admit.
-                        held = []
-                        before = upstream.calls
-                        with sqlite3.connect(db) as connection:
-                            intents = connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                        header = ('POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
-                            + policies['vision']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: 33554432\r\n\r\n').encode()
-                        try:
-                            for _ in range(1):
-                                held.append(socket.create_connection(('127.0.0.1', port), timeout=3))
-                                held[-1].sendall(header)
-                            time.sleep(0.2)
-                            with socket.create_connection(('127.0.0.1', port), timeout=3) as exhausted:
-                                exhausted.sendall(header)
-                                response = http.client.HTTPResponse(exhausted); response.begin()
-                                assert response.status == 503 and response.getheader('Retry-After') == '1'
-                                assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
-                            chunked = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
-                            chunked.request('POST', '/v1/responses', iter([b' ' * (1024 * 1024)] * 17),
-                                {'Authorization': 'Bearer ' + policies['vision']['secret'], 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked'}, encode_chunked=True)
-                            refused = chunked.getresponse()
-                            assert refused.status == 503 and b'capacity_exhausted' in refused.read()
-                            chunked.close()
-                            assert upstream.calls == before
+                    def request(body, path='/v1/images/generations', name='images', headers=None, content_type='application/json'):
+                        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=65)
+                        connection.request('POST', path, body if isinstance(body, bytes) else json.dumps(body).encode(),
+                            {'Authorization': 'Bearer ' + policies[name]['secret'], 'Content-Type': content_type, **(headers or {})})
+                        response = connection.getresponse()
+                        result = response.status, response.read(), dict((k.lower(), v) for k, v in response.getheaders())
+                        connection.close()
+                        return result
+                    def ledger():
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
                             with sqlite3.connect(db) as connection:
-                                assert connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == intents
-                            # Partial upload and disconnect release a full Content-Length reservation.
-                            held[0].sendall(b'{"model":')
-                        finally:
-                            for connection in held: connection.close()
-                        time.sleep(0.2)
-                        assert request('vision', '/v1/responses', large)[0] == 200
-                        # Reader deadline also returns all reservations without an execution intent.
-                        with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
-                            stalled.sendall(header)
-                            time.sleep(10.2)
-                            stalled.recv(4096)
-                        assert request('vision', '/v1/responses', large)[0] == 200
-                    if transport == 'websocket':
-                        held = []
-                        header = ('POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
-                            + policies['vision']['secret'] + '\r\nContent-Length: 33554432\r\n\r\n').encode()
-                        with dial(port, token=policies['vision']['secret']) as sock:
+                                row = connection.execute('SELECT state,usage_json,outcome_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()
+                            if row and row[0] != 'intent':
+                                return row[0], json.loads(row[1]) if row[1] else None, json.loads(row[2]) if row[2] else None
+                            time.sleep(.02)
+                        raise AssertionError('Finalization did not finish')
+                    def count_intents():
+                        with sqlite3.connect(db) as connection:
+                            return connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+                    def wait_calls(expected):
+                        deadline = time.monotonic() + 5
+                        while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
+                        assert upstream.calls == expected
+                    client_headers = {'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
+                        'User-Agent': 'synthetic-codex-client', 'originator': 'synthetic-desktop', 'version': '1.0',
+                        'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
+                    for prefix in ('/v1', '/backend-api/codex'):
+                        for operation in ('generations', 'edits'):
+                            wire = ('{ "model" : "synthetic-image", "prompt":"synthetic", "n":2, "future":{"x":true}'
+                                + (', "images":[{"image_url":"' + URL + '","detail":"preserve"}], "mask":{"image_url":"' + URL + '"}' if operation == 'edits' else '') + ' }').encode()
                             before = upstream.calls
-                            try:
-                                for _ in range(1):
-                                    held.append(socket.create_connection(('127.0.0.1', port), timeout=3))
-                                    held[-1].sendall(header)
-                                time.sleep(0.2)
-                                send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
-                                _, data = receive(sock)
-                                assert json.loads(data)['status'] == 503 and json.loads(data)['error']['code'] == 'capacity_exhausted'
-                                assert upstream.calls == before
-                            finally:
-                                for connection in held: connection.close()
-                            time.sleep(0.2)
-                            send(sock, {'type': 'response.create', **vision}, masked=True)
-                            while True:
-                                _, data = receive(sock)
-                                event = json.loads(data)
-                                assert event['type'] != 'error', event
-                                if event['type'] == 'response.completed': break
-                        with dial(port, token=policies['vision']['secret']) as sock:
-                            sock.settimeout(20)
-                            send(sock, {'type': 'response.create', **large}, masked=True, maximum_bytes=32 * 1024 * 1024)
-                            while True:
-                                _, data = receive(sock)
-                                event = json.loads(data)
-                                assert event['type'] != 'error', event
-                                if event['type'] == 'response.completed': break
-                            # Fragment aggregation must reject at 32 MiB and then accept a new turn.
-                            fragment = b' ' * (17 * 1024 * 1024)
-                            send(sock, fragment, masked=True, fin=False, maximum_bytes=len(fragment))
-                            send(sock, fragment, masked=True, opcode=0, maximum_bytes=len(fragment))
-                            _, data = receive(sock)
-                            assert json.loads(data)['status'] == 413
-                            send(sock, {'type': 'response.create', **vision, 'input': vision['input'] + [{'type': 'compaction_trigger'}]}, masked=True)
-                            while True:
-                                _, data = receive(sock)
-                                event = json.loads(data)
-                                assert event['type'] != 'error', event
-                                if event['type'] == 'response.completed': break
-                        with dial(port, token=policies['chat']['secret']) as sock:
-                            send(sock, {'type': 'response.create', **vision, 'input': vision['input'] + [{'type': 'compaction_trigger'}]}, masked=True)
-                            _, data = receive(sock)
-                            assert json.loads(data)['status'] == 403 and json.loads(data)['error']['code'] == 'model_not_allowed'
-                        with dial(port, token=policies['both']['secret']) as sock:
-                            send(sock, {'type': 'response.create', **tool}, masked=True)
-                            events = []
-                            while True:
-                                opcode, data = receive(sock); assert opcode == 1
-                                event = json.loads(data); events.append(event)
-                                if event['type'] == 'response.completed': break
-                            assert any(e['type'] == 'response.image_generation_call.partial_image' for e in events)
-                            key = policies['both']['key']
-                            status, _ = call(ports['admin'], 'PUT', '/api/keys/' + key['id'], dict(revision=key['revision'], enabled=True, models=key['models'], limits=key['limits'], visionInput=True, imageGeneration=False, imageModels=['synthetic-image']))
+                            status, body, headers = request(wire, prefix + '/images/' + operation, headers=client_headers)
+                            assert status == 200 and upstream.calls == before + 1, (status, body[:200])
+                            path, received, sent_headers = upstream.requests[-1]
+                            assert path == '/backend-api/codex/images/' + operation and received == wire
+                            for key in ('x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
+                                assert sent_headers[key] == client_headers[key]
+                            assert sent_headers['user-agent'] == client_headers['User-Agent']
+                            assert sent_headers['authorization'] == 'Bearer synthetic-upstream-token-for-images'
+                            assert 'chatgpt-account-id' not in sent_headers and 'x-client-private' not in sent_headers
+                            assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
+                            assert headers['x-request-id']
+                            assert body == native_body('synthetic')
+                            state, usage, outcome = ledger()
+                            assert state == 'settled' and outcome['kind'] == 'succeeded'
+                            assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                            assert usage['imageInputTextTokens'] == 1 and usage['imageInputImageTokens'] == 1
+                            assert usage['estimatedMicros'] == 13
+                            status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
                             assert status == 200
-                            before = upstream.calls
-                            send(sock, {'type': 'response.create', **tool}, masked=True)
-                            opcode, denied = receive(sock)
-                            assert opcode == 1 and json.loads(denied)['type'] == 'error' and upstream.calls == before
+                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
+                            status, body, _ = request({'prompt':'synthetic','stream':True}, prefix + '/images/' + operation)
+                            assert status == 200 and body == native_stream(operation)
+                            assert ledger()[0] == 'settled'
+                    before = upstream.calls; intents = count_intents()
+                    for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
+                        status, error, _ = request(body, name=name)
+                        assert status == 403 and json.loads(error)['error']['code'] == 'model_not_allowed'
+                    assert upstream.calls == before and count_intents() == intents
+                    multipart = b'--synthetic\r\n'
+                    for field, value in [('prompt', b'synthetic edit'), ('n', b'3'), ('stream', b'false'), ('future', b'preserved')]:
+                        multipart += f'Content-Disposition: form-data; name="{field}"\r\n\r\n'.encode() + value + b'\r\n--synthetic\r\n'
+                    for field in ('image[]', 'mask'):
+                        multipart += f'Content-Disposition: form-data; name="{field}"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n'.encode() + base64.b64decode(PNG) + b'\r\n--synthetic' + (b'\r\n' if field == 'image[]' else b'--\r\n')
+                    assert request(multipart, '/v1/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 200
+                    assert json.loads(upstream.requests[-1][1]) == {'model':'synthetic-image','prompt':'synthetic edit','n':3,'stream':False,'future':'preserved', 'images':[{'image_url':URL}], 'mask':{'image_url':URL}}
+                    assert request(multipart, '/backend-api/codex/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 415
+                    for fault, expected in [('http400',400), ('http429',429), ('http500',502)]:
+                        before = upstream.calls
+                        status, error, headers = request({'prompt':fault})
+                        assert status == expected and upstream.calls == before + 1, (status,error[:200])
+                        assert json.loads(error)['error']['code'] == 'synthetic_provider_error'
+                        assert 'acct-private' not in error.decode() and headers['x-request-id']
+                        assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
+                        if expected == 429: assert headers['retry-after'] == '1'
+                        assert ledger()[0] == 'unknown'
+                    for fault in ('empty', 'non-json', 'oversize'):
+                        status, body, _ = request({'prompt':fault})
+                        assert status == (502 if fault == 'oversize' else 200), (fault,status,body[:100])
+                        state, usage, outcome = ledger()
+                        assert outcome['kind'] == 'failed'
+                        if fault != 'empty': assert state == 'unknown'
+                    assert request({'prompt':'missing-usage'})[0] == 200
+                    state, usage, outcome = ledger()
+                    assert state == 'unknown' and usage['completeness'] == 'partial' and 'imageInputTokens' not in usage and 'imageOutputTokens' not in usage
+                    assert usage['images'] == 1 and outcome['kind'] == 'succeeded'
+                    for fault in ('stream-abort', 'stream-empty', 'stream-error'):
+                        status, body, _ = request({'prompt':fault,'stream':True})
+                        assert status == 200 and ledger()[2]['kind'] == 'failed'
+                    # A held upstream consumes the sole permit. A queued request times out before intent/dispatch.
+                    if transport == 'http':
+                        upstream.release.clear()
+                        before = upstream.calls
+                        wire = json.dumps({'prompt':'hold'}).encode()
+                        held = socket.create_connection(('127.0.0.1',port), timeout=5)
+                        held.sendall(('POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: ' + str(len(wire)) + '\r\n\r\n').encode() + wire)
+                        wait_calls(before + 1)
+                        intents = count_intents()
+                        started = time.monotonic()
+                        status, error, headers = request({'prompt':'waiting'})
+                        assert status == 429 and time.monotonic() - started >= 29
+                        assert json.loads(error)['error']['code'] == 'image_capacity_exhausted' and headers['retry-after'] == '1'
+                        assert upstream.calls == before + 1 and count_intents() == intents
+                        held.close()
+                        state, usage, outcome = ledger()
+                        assert state == 'unknown' and outcome['kind'] == 'cancelled'
+                        assert request({'prompt':'released'})[0] == 200
+                        assert upstream.calls == before + 2
+                        upstream.release.set()
+                    # Responses managed tool evidence remains independent from native Images accounting.
+                    status, body, _ = request({'model':'synthetic-host','input':'synthetic','tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
+                    assert status == 200, (status,body[:200])
+                    state, usage, _ = ledger()
+                    assert state == 'settled' and usage['inputTokens'] == 5 and usage['imageInputTokens'] == 2 and usage['estimatedMicros'] == 25
                     if args.browser and transport == 'http':
                         result = subprocess.run(['node', str(repository / 'web/scripts/live-images.mjs'), str(ports['admin']), str(port), str(repository / 'artifacts/image-management-ui')], input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=60)
                         assert result.returncode == 0, 'Image browser validation failed; private output withheld'
-                    with sqlite3.connect(db) as connection:
-                        for admission, in connection.execute("SELECT admission_json FROM attempts WHERE json_extract(admission_json,'$.requirements.route')='images'"):
-                            assert json.loads(admission)['model'] == 'synthetic-image'
-                        assert connection.execute('PRAGMA user_version').fetchone()[0] == 8
-                    with sqlite3.connect(db) as connection:
-                        connection.execute("CREATE TRIGGER synthetic_binding_failure BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-                    before = upstream.calls
-                    status, body = request('images', '/v1/images/generations', {'prompt': 'synthetic binding failure'})
-                    assert status == 503 and b'b64_json' not in body and upstream.calls == before + 1
-                    # Core write failure can stop the monitor before finalization; restart must
-                    # recover a durable intent. The independent WS reader may already have
-                    # captured complete terminal evidence, which must stay settled instead.
+                    print('PASS: native Images byte/header/path parity, multipart, usage, SSE, provider failures, unknown/no replay and capacity via ' + transport)
+                finally:
+                    upstream.release.set()
                     stop(process)
-                    process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin)
-                    with sqlite3.connect(db) as connection:
-                        attempt, state, evidence = connection.execute(
-                            "SELECT id,state,usage_json FROM attempts ORDER BY rowid DESC LIMIT 1").fetchone()
-                        assert connection.execute("SELECT COUNT(*) FROM bindings WHERE attempt=?", (attempt,)).fetchone()[0] == 0
-                    assert upstream.calls == before + 1, 'Restart replayed a failed binding request'
-                    assert state in ('settled', 'unknown'), 'Restart retained an unresolved intent'
-                    if state == 'settled':
-                        usage = json.loads(evidence)
-                        assert usage['completeness'] == 'complete'
-                        assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
-                        assert usage['inputTokens'] == 5 and usage['outputTokens'] == 7 and usage['estimatedMicros'] == 25
-                    else:
-                        # Either transport can lose unpersisted evidence during core-failure shutdown.
-                        assert evidence is None
-                    print('PASS: Images JSON/SSE/multipart, active edits, permission/ownership, usage, failures and no replay via ' + transport)
-                finally: stop(process)
     finally:
+        upstream.release.set()
         upstream.shutdown(); upstream.server_close(); worker.join(timeout=3)
 
 if __name__ == '__main__': main()

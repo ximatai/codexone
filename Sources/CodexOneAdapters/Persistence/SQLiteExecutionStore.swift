@@ -344,6 +344,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             evidence.estimatedMicros >= old.estimatedMicros,
             (evidence.imageInputTokens ?? 0) >= (old.imageInputTokens ?? 0),
             (evidence.imageOutputTokens ?? 0) >= (old.imageOutputTokens ?? 0),
+            (evidence.imageInputTextTokens ?? 0) >= (old.imageInputTextTokens ?? 0),
+            (evidence.imageInputImageTokens ?? 0) >= (old.imageInputImageTokens ?? 0),
             old.completeness != .complete || evidence.completeness == .complete
           else { throw ExecutionError.conflict }
         }
@@ -353,6 +355,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             evidence.estimatedMicros <= old.estimatedMicros,
             (evidence.imageInputTokens ?? 0) <= (old.imageInputTokens ?? 0),
             (evidence.imageOutputTokens ?? 0) <= (old.imageOutputTokens ?? 0),
+            (evidence.imageInputTextTokens ?? 0) <= (old.imageInputTextTokens ?? 0),
+            (evidence.imageInputImageTokens ?? 0) <= (old.imageInputImageTokens ?? 0),
             evidence.completeness != .complete || old.completeness == .complete
           else {
             throw ExecutionError.conflict
@@ -444,6 +448,7 @@ private func validate(_ value: UsageEvidence) throws {
     [
       value.revision, value.inputTokens, value.outputTokens, value.cachedTokens, value.images,
       value.estimatedMicros, value.imageInputTokens ?? 0, value.imageOutputTokens ?? 0,
+      value.imageInputTextTokens ?? 0, value.imageInputImageTokens ?? 0,
     ].allSatisfy({ (0...1_000_000_000_000).contains($0) }), value.cachedTokens <= value.inputTokens
   else { throw ExecutionError.invalidCommand }
 }

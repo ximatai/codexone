@@ -225,3 +225,44 @@ private struct UsageFixture {
   }
   await f.close()
 }
+
+@Test func nativeImageUsageProjectionKeepsMissingMetricsUnavailableAndLegacyHostEvidence()
+  async throws
+{
+  let f = try await UsageFixture.make()
+  do {
+    try await f.insert(
+      "native-missing", at: f.hour,
+      evidence: .init(
+        revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
+        estimatedMicros: 0, completeness: .partial, nativeImages: true))
+    let missing = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600))
+    #expect(missing.totals.metrics.inputTokens == nil && missing.totals.metrics.outputTokens == nil)
+    #expect(
+      missing.totals.metrics.estimatedMicros == nil
+        && missing.totals.metrics.imageInputTokens == nil)
+    #expect(missing.rows.first?.metrics.images == 1)
+    try await f.insert(
+      "native-complete", at: f.hour + 3600,
+      evidence: .init(
+        revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
+        estimatedMicros: 13, completeness: .complete, imageInputTokens: 2, imageOutputTokens: 3,
+        imageInputTextTokens: 1, imageInputImageTokens: 1, nativeImages: true))
+    let complete = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour + 3600, endUnixSeconds: f.hour + 7200))
+    #expect(
+      complete.totals.metrics.imageInputTextTokens == 1
+        && complete.rows.first?.metrics.imageInputImageTokens == 1)
+    #expect(
+      complete.totals.metrics.estimatedMicros == 13 && complete.totals.metrics.inputTokens == nil)
+    try await f.insert("legacy-image-host", at: f.hour + 7200, evidence: usage(amount: 7))
+    let legacy = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour + 7200, endUnixSeconds: f.hour + 10800))
+    #expect(legacy.totals.metrics.inputTokens == 7 && legacy.totals.metrics.estimatedMicros == 7)
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}

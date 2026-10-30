@@ -41,7 +41,7 @@ struct ResponseRequest: Sendable {
   /// Most recent soft references kept for account affinity; older history adds no routing value.
   static let maximumAffinityHints = 64
   var requirements = ExecutionRequirements()
-  var admissionModel: String { requirements.route == .images ? requirements.imageModel! : model }
+  var admissionModel: String { model }
   let model: String
   let streaming: Bool
   /// References that read provider-side state; each must be owned by the caller.
@@ -66,12 +66,6 @@ struct ResponseRequest: Sendable {
     try self.init(
       data: data, mode: mode, imageConfiguration: imageConfiguration,
       maximumBytes: RequestBodyLimits.maximumBytes, previousTools: previousTools)
-  }
-  init(normalizedImage: JSONValue, imageConfiguration: ImageConfiguration?) throws {
-    try self.init(
-      data: normalizedImage.data(escapingSlashes: false), mode: .generation,
-      imageConfiguration: imageConfiguration, maximumBytes: ImageLimits.normalizedRequestBytes,
-      previousTools: nil)
   }
   /// Only the gateway's own responsibilities are enforced here: permissions, bounded size,
   /// provider-state references and execution mode. Everything else is the provider's contract.

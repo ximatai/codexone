@@ -53,7 +53,7 @@ extension HTTPResponseExecution {
       }
       if request.mode == .warmup { create["generate"] = .bool(false) }
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
-      try await peer.send(.object(create), normalizedImage: request.requirements.route == .images)
+      try await peer.send(.object(create))
       var total = 0
       while true {
         let data = try await peer.next(lane: lane)

@@ -17,6 +17,7 @@ public struct ResponsesDataService: Service {
   private var configuration: ResponsesConfiguration { source.configuration }
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
+  private let imageCapacity: ImageCapacity
   private let bodyBudget = RequestBodyBudget()
   private let onBound: @Sendable (Int) -> Void
 
@@ -29,6 +30,7 @@ public struct ResponsesDataService: Service {
     self.group = group
     self.port = port
     self.proxy = proxy
+    imageCapacity = ImageCapacity(limit: configuration.imageConcurrency ?? 2)
     source = .single(configuration)
     self.store = store
     self.finalizer = finalizer
@@ -59,6 +61,7 @@ public struct ResponsesDataService: Service {
     self.group = group
     self.port = port
     self.proxy = proxy
+    imageCapacity = ImageCapacity(limit: configuration.imageConcurrency ?? 2)
     source = .pool(configuration, credentials, refresher, provider, target)
     self.store = store
     self.finalizer = finalizer
@@ -109,7 +112,7 @@ public struct ResponsesDataService: Service {
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let executor = HTTPResponseExecution(
-      client: client,
+      imageCapacity: imageCapacity, client: client,
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
@@ -472,8 +475,9 @@ public struct ResponsesDataService: Service {
     else {
       throw GatewayProtocolError(404, "not_found")
     }
-    let executor = try await executor.authorized(
+    var executor = try await executor.authorized(
       executor.access.digest(head.headers["authorization"]))
+    executor.clientHeaders = forwardedClientHeaders(head.headers)
     if endpoint == "/models", head.method == .GET {
       let codexDirectory =
         URLComponents(string: head.uri)?.queryItems?.contains {
@@ -493,23 +497,20 @@ public struct ResponsesDataService: Service {
       guard head.headers["content-type"].count == 1, head.headers["content-encoding"].isEmpty else {
         throw GatewayProtocolError(415, "unsupported_content_type")
       }
+      guard
+        prefix == "/v1"
+          || !head.headers.first(name: "content-type")!.lowercased().hasPrefix("multipart/")
+      else {
+        throw GatewayProtocolError(415, "unsupported_content_type")
+      }
       let request = try ImagesRequest(
         data: body, contentType: head.headers.first(name: "content-type")!,
         editing: endpoint == "/images/edits", configuration: executor.configuration.imageGeneration)
-      await writer.setStreaming(request.streaming)
-      try await executor.execute(request.response, requestID: writer.requestID) { document in
-        if let mapped = try imageReply(
-          document, streaming: request.streaming, editing: request.editing,
-          options: request.response.document["tools"]?.array?.first)
-        {
-          if request.streaming {
-            try await writer.event(mapped)
-          } else {
-            try await writer.json(mapped)
-          }
-        }
-      }
-      if request.streaming { try await writer.finishStream() }
+      try await executor.executeImage(
+        request, requestID: writer.requestID, headers: head.headers,
+        receiveHeaders: { await writer.imageHeaders($0) },
+        begin: { try await writer.beginRaw($0, streaming: request.streaming) },
+        emit: { try await writer.raw($0) }, finish: { try await writer.finishRaw() })
       return
     }
     guard ["/responses", "/responses/compact"].contains(endpoint), head.method == .POST else {
@@ -550,6 +551,12 @@ private actor ProtocolResponseWriter {
   private let writer: NIOAsyncChannelOutboundWriter<HTTPServerResponsePart>
   private let channel: any Channel
   private let keepAlive: Bool
+  private var extraHeaders = HTTPHeaders()
+  func imageHeaders(_ headers: HTTPHeaders) {
+    if let value = headers.first(name: "x-codex-imagegen-request-id") {
+      extraHeaders.replaceOrAdd(name: "x-codex-imagegen-request-id", value: value)
+    }
+  }
   private var started = false
   private var streaming = false
   private var ended = false
@@ -577,8 +584,9 @@ private actor ProtocolResponseWriter {
     let data = try value.data()
     var headers: HTTPHeaders = [
       "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
-      "content-length": String(data.count),
+      "content-length": String(data.count), "x-request-id": requestID,
     ]
+    for header in extraHeaders { headers.add(name: header.name, value: header.value) }
     if let retryAfter { headers.add(name: "retry-after", value: String(retryAfter)) }
     if !keepAlive { headers.add(name: "connection", value: "close") }
     started = true
@@ -594,6 +602,23 @@ private actor ProtocolResponseWriter {
         .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
       throw error
     }
+    ended = true
+  }
+  func beginRaw(_ headers: HTTPHeaders, streaming: Bool) async throws {
+    guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
+    self.streaming = streaming
+    var headers = headers
+    headers.add(name: "x-request-id", value: requestID)
+    headers.add(name: "cache-control", value: "no-store")
+    if !keepAlive { headers.add(name: "connection", value: "close") }
+    started = true
+    try await write(.head(.init(version: .http1_1, status: .ok, headers: headers)))
+  }
+  func raw(_ data: Data) async throws {
+    try await write(.body(.byteBuffer(ByteBuffer(data: data))))
+  }
+  func finishRaw() async throws {
+    try await write(.end(nil))
     ended = true
   }
   func event(_ value: JSONValue) async throws {
