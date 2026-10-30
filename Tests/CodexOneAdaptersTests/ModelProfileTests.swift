@@ -130,3 +130,141 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
       from: JSONSerialization.data(withJSONObject: raw))
   }
 }
+
+@Test func upstreamProfilesPreserveUnknownMembersAndEnforceGatewayOverrides() throws {
+  let (root, file) = try profileFixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let upstream: [String: Any] = [
+    "slug": "synthetic", "base_instructions": "Synthetic guidance",
+    "priority": 99, "input_modalities": ["text", "image"], "prefer_websockets": true,
+    "unknown": ["nested": [true, false]], "shell_type": "synthetic-shell",
+  ]
+  try writeProfile(file) { $0["models"] = [["id": "synthetic", "upstream": upstream]] }
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 1, outputMicrosPerMillion: 2)
+  let loaded = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  for vision in [false, true] {
+    for transport in ["http", "websocket"] {
+      var effective = loaded
+      effective[0].visionInput = vision
+      let directory = try modelCatalog(
+        effective, requireCodexProfile: true, upstreamTransport: transport)
+      var actual = try #require(directory["models"]?.array?.first?.object)
+      #expect(actual.removeValue(forKey: "codexone_profile") != nil)
+      var expected = try #require(
+        JSONValue.decode(JSONSerialization.data(withJSONObject: upstream)).object)
+      expected["priority"] = .number(0)
+      if !vision { expected["input_modalities"] = .array([.string("text")]) }
+      if transport != "websocket" { expected["prefer_websockets"] = .bool(false) }
+      #expect(actual == expected)
+    }
+  }
+  var override = model
+  override.catalog = .init(
+    displayName: nil, description: nil, contextWindow: nil,
+    maxContextWindow: nil, reasoningEfforts: nil, defaultReasoningEffort: nil,
+    baseInstructions: "Synthetic override")
+  let overridden = try ModelProfileSnapshot.apply(path: file.path, models: [override])
+  #expect(overridden[0].upstream == nil)
+  #expect(
+    try modelCatalog(overridden)["models"]?.array?.first?["shell_type"] == .string("unified_exec"))
+  #expect(overridden[0].profileProvenance?.overridden == true)
+}
+
+@Test func upstreamProfilesRejectInvalidAndOversizedEntries() throws {
+  let (root, file) = try profileFixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
+  for upstream: [String: Any] in [
+    ["slug": "different", "base_instructions": "Synthetic guidance"],
+    [:], ["base_instructions": " "], ["base_instructions": 1],
+    ["base_instructions": String(repeating: "x", count: 262144)],
+  ] {
+    try writeProfile(file) { $0["models"] = [["id": "synthetic", "upstream": upstream]] }
+    #expect(throws: (any Error).self) {
+      try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    }
+  }
+  try writeProfile(file) {
+    $0["models"] = [
+      [
+        "id": "synthetic", "upstream": ["base_instructions": "Synthetic guidance"],
+        "catalog": ["baseInstructions": "Synthetic guidance"],
+      ]
+    ]
+  }
+  #expect(throws: (any Error).self) {
+    try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  }
+  // A valid file above the old 1 MiB limit still imports.
+  try writeProfile(file) {
+    $0["models"] = [
+      [
+        "id": "synthetic",
+        "upstream": [
+          "base_instructions": String(repeating: "x", count: 40_000)
+        ],
+      ]
+    ]
+  }
+  var padded = try Data(contentsOf: file)
+  padded.append(Data(repeating: 32, count: 1_048_576))
+  try padded.write(to: file)
+  let loaded = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  #expect(loaded[0].upstream?["base_instructions"]?.string?.count == 40_000)
+  try writeProfile(file)
+  var oversized = try Data(contentsOf: file)
+  oversized.append(Data(repeating: 32, count: 4_194_305))
+  try oversized.write(to: file)
+  #expect(throws: (any Error).self) {
+    try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  }
+}
+
+@Test func upstreamContentAndSnapshotHashChangePolicyButNotPricing() throws {
+  let (root, file) = try profileFixture()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 1, outputMicrosPerMillion: 2)
+  let key = ManagedKey(
+    id: "key", principal: "p", revision: 1, enabled: true,
+    policy: try KeyPolicy(models: ["synthetic"], limits: syntheticLimits), createdAtUnixSeconds: 1)
+  var pool = try JSONDecoder().decode(
+    AccountPoolConfiguration.self,
+    from: Data(
+      #"{"reservedMicros":1,"models":[{"id":"synthetic","inputMicrosPerMillion":1,"outputMicrosPerMillion":2}]}"#
+        .utf8))
+  var identity = try JSONDecoder().decode(
+    SingleIdentityConfiguration.self,
+    from: Data(
+      #"{"principal":"p","keyID":"k","namespace":"n","identity":"i","keySHA256":"0000000000000000000000000000000000000000000000000000000000000000","reservedMicros":1,"models":[{"id":"synthetic","inputMicrosPerMillion":1,"outputMicrosPerMillion":2}],"upstreamBaseURL":"http://127.0.0.1:9/v1"}"#
+        .utf8))
+  var poolVersions: [String] = []
+  var identityVersions: [String] = []
+  var poolPrices: Set<String> = []
+  var identityPrices: Set<String> = []
+  for revision in ["v1", "v2", "v3"] {
+    try writeProfile(file) {
+      $0["revision"] = revision
+      $0["models"] = [
+        [
+          "id": "synthetic",
+          "upstream": [
+            "base_instructions": "Synthetic guidance", "unknown": revision == "v3",
+          ],
+        ]
+      ]
+    }
+    pool.models = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    identity.models = pool.models
+    let poolPolicy = try pool.policy(key: key)
+    let identityPolicy = try identity.makePolicy(token: nil)
+    poolVersions.append(poolPolicy.policyVersion)
+    identityVersions.append(identityPolicy.policyVersion)
+    poolPrices.insert(poolPolicy.pricingVersion)
+    identityPrices.insert(identityPolicy.pricingVersion)
+  }
+  #expect(Set(poolVersions).count == 3 && Set(identityVersions).count == 3)
+  #expect(poolPrices.count == 1 && identityPrices.count == 1)
+}

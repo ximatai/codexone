@@ -18,6 +18,8 @@ docker image inspect codexone:candidate --format '{{.Id}}'
 
 `--browser` 使用临时 Chrome 上下文实际操作镜像中的 SPA 和管理 API，经隔离 curl relay 转发 HTTPS 路由以检查浏览器 cookie；它不证明宿主 TLS/Nginx 配置。截图仅含合成资料，凭证控件遮罩，保存在忽略的 artifacts 目录。
 
+GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖取成 `OWNER/REPO.git` 布局的本地裸仓库目录，构建时追加 `--build-context swiftpm-mirrors=<该目录>`；仅这两次 Swift 构建把 GitHub 地址改写到只读挂载的镜像，不写入镜像层，锁定版本不变。默认上下文为空，行为与直接联网相同。npm 官方源受限时同理可加 `--build-arg NPM_REGISTRY=<镜像源>`，lockfile 完整性哈希仍逐包校验。Ubuntu 源受限时可加 `--build-arg APT_MIRROR=<镜像源 /ubuntu 地址>`，仅在安装期间替换，结束后恢复原源配置。
+
 镜像标签和 `/opt/release.json` 保存源码 revision/version，release manifest 另声明 schemaVersion=8；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；Swift release 保留 `-O` 和单并发、默认每批1文件（SWIFT_BATCH_LIMIT），仅大型 Adapters target 关闭 whole-module optimization 以减少单次编译峰值（不代表运行容量）；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images、快照/主密钥/存储观测及合成迁移切回失败路径，之后组装运行层。运行候选在优化构建后剥离DWARF调试段，保留可执行代码和普通符号表，验证/归档以剥离后的同一程序为准。运行层没有编译器、Node、Python 或源码测试。
 
 项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
@@ -72,6 +74,8 @@ python3 scripts/verify_installation.py --image codexone:candidate \
 ```
 
 所有镜像须实际存在；脚本解析不可变 ID，并要求兼容 peer 的实际二进制摘要与当前版本不同。CI 的固定 v8 peer 保留旧 revision 的产品源码，使用当前 Package.swift 编译配置与 Dockerfile；本机 peer 同样只对旧构建 manifest 加入 Adapters 分文件 release 设置，并明确记录。peer 应为受信、已经验证兼容当前 schema/信封/配置的旧版本，不能把同一二进制换 tag 冒充回退。安装演练在同一 Engine 本地卷保留 Key/未知责任，以真实前一 v8 启动、再升级恢复当前观测；旧 v6 必须在监听前拒绝，账本保持。它不承诺任意同 schema 版本皆兼容，亦不允许向旧 schema 改版本号。
+
+回退到不支持 null 限额的旧二进制前，先通过管理入口把所有不限 Key 改为五项显式数值；schema 相同也不代表旧版本可解码 null，否则旧版本可能拒绝启动或拒绝这些 Key。此调整不清除历史账本或 unknown 责任。
 
 实际运维回退先暂停入口/收敛并停服，保存新库一致性 bundle 与全部解密依赖；在私有 `.env` 仅替换已验兼容的不可变镜像引用，保留原卷和原 secrets，运行 `--check-config` 后启动并检查。schema 不兼容时停止，不运行旧版本 migration 或删除新库。恢复旧快照须走维护态流程；合成旧服务转换与新增用量核对见[迁移切回](migration-cutback.md)。
 

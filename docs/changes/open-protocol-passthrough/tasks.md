@@ -7,5 +7,5 @@
 - [x] 按真实形态新增 `verify_codex_shapes.py`，更新 Swift 测试与后端脚本，删除只断言旧拒绝的脚本。
 - [x] 同步协议规范 P09/P13—P15/P27 与共识决策。
 - [x] 2026-10-26 macOS arm64 `verify.sh --backend` exit0（Swift 200项及全部后端脚本）。
-- [ ] Linux verification 出口。
-- [ ] 经用户授权后部署测试实例，真实 Desktop + 真实订阅验收。
+- [x] 2026-10-30 Linux verification 出口（a8a3e1b）。
+- [x] 2026-10-30 经用户授权部署测试实例，真实 Desktop + 真实订阅文本/视觉/工具验收，见[验证](verification.md)；图片生成另行对齐。

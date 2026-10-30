@@ -39,7 +39,7 @@ codexone --migrate
 
 `principal` 为稳定非秘密标识，1—64 字节 ASCII 字母/数字/点/横线/下划线；不能在已有 Key 上改主体。`models` 为 1—32 个不重复的明确模型 ID（每项 ≤128 UTF-8 字节）；有效目录/执行取与上游配置交集，无交集返回空目录。此切片仅文本/客户端工具；图片权限和账号池另交付，不因创建 Key 自动获得尚未支持的能力。
 
-`limits` 必须显式提供五个正整数（≤10¹²）：`requests`（UTC 日请求）、`active`（在途 turn）、`unresolved`（未完整结算执行）、`budgetMicros`（UTC 日估算费用）、`unresolvedMicros`（跨窗口未结暴露）。仍受全局/主体/身份限制。预热/压缩也计入请求；缺用量不记零。轮换不重置计数，禁用不抹除未结暴露。
+`limits` 必须显式提供五个字段，每项为正整数（≤10¹²）或 `null`（该 Key 的该维度不限）：`requests`（UTC 日请求）、`active`（在途 turn）、`unresolved`（未完整结算执行）、`budgetMicros`（UTC 日估算费用）、`unresolvedMicros`（跨窗口未结暴露）。缺字段、0、负数、超范围和字符串拒绝；元数据保留显式 `null`，策略版本反映数值/null 变化。准入跳过 null 维度，仍受全局/主体/身份限制及执行容量约束。管理界面每项可选择“不限”，与数值输入互斥；列表、编辑详情和用量页均显示“不限”。预热/压缩也计入请求；缺用量不记零。轮换不重置计数，禁用不抹除未结暴露。
 
 元数据为 `id/principal/revision/enabled/models/limits/createdAtUnixSeconds`，时间是 UTC Unix 秒；不返回摘要或旧 secret。权限变更和轮换需使用最新 revision，冲突为 409。创建/轮换响应丢失时，先查询元数据，再显式轮换，不能读取已丢失的原文。普通禁用停止下一执行，已准入执行继续结算；原生 WS 每 turn 查当前权限。紧急撤销、管理浏览器登录和完整用量报表仍须对应切片验收。
 

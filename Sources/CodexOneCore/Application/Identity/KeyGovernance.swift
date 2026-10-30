@@ -20,7 +20,7 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
         limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
         limits.unresolvedMicros,
       ]
-      .allSatisfy({ (1...1_000_000_000_000).contains($0) })
+      .allSatisfy({ $0.map { (1...1_000_000_000_000).contains($0) } ?? true })
     else { throw ExecutionError.invalidCommand }
     self.models = models
     self.limits = limits

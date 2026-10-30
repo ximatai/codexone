@@ -139,3 +139,31 @@ it("bounds stalled session response bodies and supports a fresh attempt", async 
   timer.mockRestore();
   expect(await fetchSession()).toEqual({ csrf });
 });
+
+it("round-trips explicit nulls and rejects missing or invalid limit fields", async () => {
+  const limits = {
+    requests: null,
+    active: null,
+    unresolved: null,
+    budgetMicros: null,
+    unresolvedMicros: null,
+  };
+  expect(parseKey({ ...key, limits }).limits).toEqual(limits);
+  for (const field of Object.keys(limits)) {
+    const missing: Record<string, unknown> = { ...limits };
+    delete missing[field];
+    expect(() => parseKey({ ...key, limits: missing })).toThrow();
+    for (const invalid of [0, -1, 1_000_000_000_001, "invalid", true])
+      expect(() =>
+        parseKey({ ...key, limits: { ...limits, [field]: invalid } }),
+      ).toThrow();
+  }
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(reply({ key: { ...key, limits }, secret }));
+  vi.stubGlobal("fetch", fetch);
+  expect((await createKey({ ...key, limits }, csrf)).key.limits).toEqual(
+    limits,
+  );
+  expect(JSON.parse(fetch.mock.calls[0][1].body).limits).toEqual(limits);
+});

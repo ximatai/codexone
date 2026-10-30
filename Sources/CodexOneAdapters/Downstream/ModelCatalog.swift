@@ -3,7 +3,8 @@ import Foundation
 /// Both directory forms use the same effective model set. Metadata does not grant capabilities.
 func modelCatalog(
   _ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false,
-  images: [ImageConfiguration.Model] = [], runtimeBudget: JSONValue? = nil
+  images: [ImageConfiguration.Model] = [], runtimeBudget: JSONValue? = nil,
+  upstreamTransport: String? = nil
 )
   throws -> JSONValue
 {
@@ -24,6 +25,7 @@ func modelCatalog(
     }
   guard
     models.allSatisfy({
+      if $0.upstream != nil { return true }
       guard let instructions = $0.catalog?.baseInstructions else { return false }
       return !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     })
@@ -40,7 +42,7 @@ func modelCatalog(
       "slug": .string(model.id), "display_name": .string(metadata?.displayName ?? model.id),
       "description": .string(metadata?.description ?? "Configured text model"),
       // An explicit authoritative profile must not silently clear the client's base guidance.
-      "base_instructions": .string(metadata!.baseInstructions!),
+      "base_instructions": .string(metadata?.baseInstructions ?? ""),
       "supported_reasoning_levels": .array(
         (metadata?.reasoningEfforts ?? []).map { effort in
           .object(["effort": .string(effort), "description": .string(effort)])
@@ -59,6 +61,15 @@ func modelCatalog(
       "include_skills_usage_instructions": .bool(false),
       "include_plugin_usage_instructions": .bool(false),
     ]
+    if let upstream = model.upstream?.object {
+      entry = upstream
+      entry["slug"] = .string(model.id)
+      entry["priority"] = .number(Decimal(index))
+      if model.visionInput != true, let modalities = entry["input_modalities"]?.array {
+        entry["input_modalities"] = .array(modalities.filter { $0 != .string("image") })
+      }
+      if upstreamTransport != "websocket" { entry["prefer_websockets"] = .bool(false) }
+    }
     if let profile = model.profileProvenance {
       entry["codexone_profile"] = .object([
         "source": .string(profile.source), "revision": .string(profile.revision),
