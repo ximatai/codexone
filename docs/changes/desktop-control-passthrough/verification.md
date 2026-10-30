@@ -78,3 +78,15 @@
    docs/development/desktop-control.md
    docs/specs/protocol.md
    ```
+
+## 主 Agent 复核与真实验证（2026-10-31）
+
+- 评审（Codex，gpt-6.1-sol medium）发现 1 项 P2：错误状态的正文读取失败时，丢失了账号健康与冷却记录。已修复：错误状态先完成分类，不依赖正文读取完整；池测试新增截断正文的 429/401 用例，修复前失败、修复后通过。
+- 本机 `./scripts/verify.sh --backend`：退出码 0，Swift 共 217 项，合成脚本 100 条 PASS。
+- Linux amd64 `verification` target 加入 `verify_control.py`，退出码 0。
+- 测试部署，经公网 HTTPS 反代（location 已放行 `/backend-api/wham/`），使用临时 Key：
+  - `GET` codex 与 wham 两个 `agent-identities/jwks`：都返回 200，正文含 `keys`；
+  - `analytics-events/events`：本地返回 202；
+  - 未列出的路径返回 404，错误 Key 返回 401；
+  - 结构化日志只含路径类别、Key/账号 ID、状态码和耗时。
+- 待用户在 Desktop 中验收：独立搜索（`alpha/search`）、记忆摘要和 thread goal。
