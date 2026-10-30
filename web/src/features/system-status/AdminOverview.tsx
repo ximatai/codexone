@@ -9,7 +9,7 @@ import {
   Title,
 } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError, request } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
@@ -32,7 +32,18 @@ async function fetchStorage(signal: AbortSignal) {
 }
 export function AdminOverview() {
   const owner = useManagementSession();
+  const [clock, setClock] = useState(() => performance.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(performance.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [params, setParams] = useSearchParams();
+  const overlay = !!owner.session && params.get("storage") === "details";
+  useEffect(() => {
+    if (!overlay) return;
+    document.body.classList.add("management-overlay-open");
+    return () => document.body.classList.remove("management-overlay-open");
+  }, [overlay]);
   const accounts = useQuery({
     queryKey: ["overview-accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
@@ -149,12 +160,7 @@ export function AdminOverview() {
           const quota = account.observability?.quota;
           const base = quota?.limits.find((limit) => limit.id === "codex");
           return (
-            <Paper
-              withBorder
-              p="md"
-              key={account.id}
-              style={{ overflowWrap: "anywhere" }}
-            >
+            <Paper withBorder p="md" key={account.id} className="wrap-anywhere">
               <Anchor component={Link} to="/accounts">
                 {account.id}
               </Anchor>
@@ -175,7 +181,11 @@ export function AdminOverview() {
               <Text size="xs">
                 {!quota || quota.state === "unavailable"
                   ? "额度不可用"
-                  : quota.state === "stale"
+                  : quota.state === "stale" ||
+                      (Math.max(clock, performance.now()) -
+                        account.observability!.receivedAt) /
+                        1000 >=
+                        quota.freshForSeconds
                     ? "额度观测已陈旧"
                     : "最近读取的额度观测"}
                 {quota?.failure ? " · 最近读取失败" : ""}
@@ -185,6 +195,7 @@ export function AdminOverview() {
         })}
       </div>
       <Drawer
+        lockScroll={false}
         opened={params.get("storage") === "details"}
         onClose={() => setParams({})}
         title="存储与准入详情"

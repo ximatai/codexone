@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AccountManagement } from "./AccountManagement";
 import * as api from "./api";
 import * as observations from "./observation-api";
+import { observationFixture } from "./observation.test-data";
 import * as sessions from "../../shared/management";
 vi.mock("./api");
 vi.mock("./observation-api", async (original) => ({
@@ -269,4 +270,26 @@ it("confirms draining from details and explains that associated continuations an
   fireEvent.click(screen.getByRole("button", { name: "确认排空" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalledOnce());
   expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("draining");
+});
+
+it("shows unavailable quota before elapsed freshness for an account with no successful observation", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  const summary = observations.parseObservability(observationFixture());
+  summary.quota = {
+    ...summary.quota,
+    state: "unavailable",
+    observedAtUnixSeconds: null,
+    ageSeconds: null,
+    freshForSeconds: 0,
+    limits: [],
+  };
+  summary.receivedAt = performance.now() - 600000;
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, observability: summary },
+  ]);
+  render(<AccountManagement />);
+  expect((await screen.findAllByText("额度不可用")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("额度观测已陈旧")).toBeNull();
 });

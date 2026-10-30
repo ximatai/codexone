@@ -121,10 +121,17 @@ export function UsageOverview({
   onApplied?: (filters: api.UsageFilters) => void;
 }) {
   const queryClient = useQueryClient();
+  const queryWindow = useRef<api.UsageFilters["window"]>(undefined);
   const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
     null,
   );
   const [copied, setCopied] = useState("");
+  const overlay = !!detail && !paused;
+  useEffect(() => {
+    if (!overlay) return;
+    document.body.classList.add("management-overlay-open");
+    return () => document.body.classList.remove("management-overlay-open");
+  }, [overlay]);
   const [draft, setDraft] = useState<api.UsageFilters>(
     () => initialFilters ?? { ...api.defaults(), key: selection?.keyID ?? "" },
   );
@@ -166,7 +173,20 @@ export function UsageOverview({
     setBusy(true);
     setError("");
     try {
-      api.usageParameters(filters, cursors[index]);
+      const parameters = api.usageParameters(
+        {
+          ...filters,
+          window: cursors.length > 1 ? queryWindow.current : undefined,
+        },
+        cursors[index],
+      );
+      const requestFilters = {
+        ...filters,
+        window: {
+          start: Number(parameters.get("start")),
+          end: Number(parameters.get("end")),
+        },
+      };
       if (!optionsLoaded.current) {
         const next = await api.fetchUsageOptions(abort.signal);
         if (version !== epoch.current || abort.signal.aborted) return;
@@ -174,10 +194,10 @@ export function UsageOverview({
         optionsLoaded.current = true;
       }
       const next = await queryClient.fetchQuery({
-        queryKey: ["usage", filters, cursors[index]],
+        queryKey: ["usage", requestFilters, cursors[index]],
         queryFn: ({ signal }) =>
           api.fetchUsage(
-            filters,
+            requestFilters,
             cursors[index],
             AbortSignal.any([signal, abort.signal]),
           ),
@@ -186,6 +206,7 @@ export function UsageOverview({
         gcTime: 0,
       });
       if (version !== epoch.current || abort.signal.aborted) return;
+      queryWindow.current = requestFilters.window;
       setReport(next);
       setPolicyRead((value) => value + 1);
       setApplied({ ...filters });
@@ -693,6 +714,7 @@ export function UsageOverview({
         </div>
       )}
       <Drawer
+        lockScroll={false}
         opened={!!detail}
         onClose={() => {
           setDetail(null);
@@ -705,7 +727,7 @@ export function UsageOverview({
       >
         {detail && (
           <Stack>
-            <Text style={{ overflowWrap: "anywhere" }}>
+            <Text className="wrap-anywhere">
               请求 ID：{detail.requestID ?? detail.id}
             </Text>
             <Button

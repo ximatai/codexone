@@ -727,3 +727,7 @@ body.management-overlay-open {
   color: var(--mantine-color-dimmed);
   margin-top: 2px;
 }
+
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}

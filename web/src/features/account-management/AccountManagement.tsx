@@ -141,15 +141,16 @@ export function AccountManagement() {
                         ? "上游额度受限"
                         : summary?.quota.failure
                           ? "最近读取失败"
-                          : summary &&
-                              summary.quota.state !== "unavailable" &&
-                              (summary.quota.state === "stale" ||
-                                (Math.max(state.clock, performance.now()) -
-                                  summary.receivedAt) /
-                                  1000 >=
-                                  summary.quota.freshForSeconds)
-                            ? "额度观测已陈旧"
-                            : null;
+                          : !summary || summary.quota.state === "unavailable"
+                            ? "额度不可用"
+                            : summary &&
+                                (summary.quota.state === "stale" ||
+                                  (Math.max(state.clock, performance.now()) -
+                                    summary.receivedAt) /
+                                    1000 >=
+                                    summary.quota.freshForSeconds)
+                              ? "额度观测已陈旧"
+                              : null;
                   return (
                     <Table.Tr key={item.id}>
                       <Table.Td data-label="账号">
@@ -193,14 +194,14 @@ export function AccountManagement() {
                         <Text size="xs" c="dimmed">
                           {!summary
                             ? "尚无观测"
-                            : summary.quota.state === "stale" ||
-                                (Math.max(state.clock, performance.now()) -
-                                  summary.receivedAt) /
-                                  1000 >=
-                                  summary.quota.freshForSeconds
-                              ? "额度观测已陈旧"
-                              : summary.quota.state === "unavailable"
-                                ? "额度不可用"
+                            : summary.quota.state === "unavailable"
+                              ? "额度不可用"
+                              : summary.quota.state === "stale" ||
+                                  (Math.max(state.clock, performance.now()) -
+                                    summary.receivedAt) /
+                                    1000 >=
+                                    summary.quota.freshForSeconds
+                                ? "额度观测已陈旧"
                                 : "额度观测新鲜"}
                           {summary?.quota.failure ? " · 最近读取失败" : ""}
                         </Text>

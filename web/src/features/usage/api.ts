@@ -9,6 +9,7 @@ export interface UsageFilters {
   state: string;
   failedOnly: boolean;
   range?: "24h";
+  window?: { start: number; end: number };
 }
 export interface Metrics {
   imageInputTextTokens?: string | null;
@@ -282,8 +283,11 @@ export function usageParameters(
   }
   const currentHour = Math.floor(Date.now() / 3600000) * 3600;
   const start =
-      filters.range === "24h" ? currentHour - 86400 : day(filters.start),
-    end = filters.range === "24h" ? currentHour : day(filters.end) + 86400;
+      filters.window?.start ??
+      (filters.range === "24h" ? currentHour - 86400 : day(filters.start)),
+    end =
+      filters.window?.end ??
+      (filters.range === "24h" ? currentHour : day(filters.end) + 86400);
   if (end <= start || end - start > 31 * 86400)
     throw new ManagementError(400, "invalid_range");
   const parameters = new URLSearchParams({

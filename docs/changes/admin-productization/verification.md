@@ -115,3 +115,14 @@
   - Key 搜索、状态筛选与今日用量列；
   - 从 Key 进入用量时按主体名自动查询；
   - 明细详情抽屉，含完整请求 ID、复制、首事件/总耗时与各项用量。
+
+
+## 四项 P2 返工（2026-10-31）
+
+- 范围仅 web 代码/测试与本记录；没有后端、依赖、STATUS 或其他规范改动，没有暂存或提交。
+- 最近 24 小时首次查询固定已完成 UTC 小时的起止秒；翻页（含返回第一页）沿用窗口，重新查询或快捷区间查询重新计算。单测跨小时验证实际请求筛选经 `usageParameters` 后起止参数相同、游标变化，以及重新查询更新结束时间。
+- 首页使用账号摘要的单调接收时间与 `freshForSeconds`，每 15 秒更新显示。fake timers 推进 300 秒验证 fresh 变 stale，unavailable 保持不可用；账号列表另测从未成功观测时不显示陈旧。
+- 用量明细与首页存储抽屉设置 `lockScroll={false}`，生命周期维护外部 CSS 的 `management-overlay-open`；测试覆盖打开、关闭、重新打开和卸载清理。
+- 全部 `web/src` 检索：全部 9 处 Modal/Drawer 均已显式关闭默认滚动锁；未发现响应式对象 props、`hiddenFrom`/`visibleFrom`、SimpleGrid/Grid、ScrollArea 或自定义 style 标签注入。额外修复首页账号卡片与用量请求 ID 两处内联 `overflowWrap`，统一为外部 `.wrap-anywhere`。既有 MantineProvider 保持 `withCssVariables={false}` / `withGlobalClasses={false}`，静态媒体查询网格保持不变。
+- 最终执行 `cd web && npm run lint && npm run format:check && npm test && npm run build`：退出码 0；lint、格式通过，15 个文件/58 项单元测试通过，TypeScript 与 Vite 生产构建通过。`git diff --check` 通过。首轮发现新增单调时钟初始化的 receiver 问题，修正为闭包后上述最终检查全部通过。
+- 本轮未执行 Playwright 或浏览器视觉验收，由主 Agent 在可启动浏览器的环境补跑；不沿用此前浏览器结果宣称本次返工已通过浏览器验收。

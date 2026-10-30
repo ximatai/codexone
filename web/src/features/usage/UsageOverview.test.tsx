@@ -12,6 +12,7 @@ vi.mock("./api", async (original) => ({
 }));
 afterEach(() => {
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 function setup() {
   vi.mocked(api.fetchUsageOptions).mockResolvedValue({
@@ -147,7 +148,7 @@ it("automatically queries the selected Key, shows principal and durations, and c
     configurable: true,
     value: { writeText },
   });
-  render(
+  const view = render(
     <UsageOverview
       selection={{ keyID: "alpha", sequence: 1 }}
       paused={false}
@@ -170,4 +171,61 @@ it("automatically queries the selected Key, shows principal and durations, and c
   fireEvent.click(screen.getByRole("button", { name: "复制请求 ID" }));
   await screen.findByText("已复制请求 ID");
   expect(writeText).toHaveBeenCalledWith(report.rows[0].requestID);
+  expect(document.body).toHaveClass("management-overlay-open");
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(document.body).not.toHaveClass("management-overlay-open");
+  fireEvent.click(screen.getAllByRole("button", { name: "查看详情" })[0]);
+  expect(document.body).toHaveClass("management-overlay-open");
+  view.unmount();
+  expect(document.body).not.toHaveClass("management-overlay-open");
+});
+
+it("keeps the completed-hour window through pagination across an hour and renews it on query", async () => {
+  setup();
+  const now = vi
+    .spyOn(Date, "now")
+    .mockReturnValue(Date.parse("2026-10-31T10:59:59Z"));
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  await screen.findByText("第 1 页");
+  fireEvent.click(screen.getByRole("button", { name: "最近 24 小时" }));
+  await waitFor(() =>
+    expect(api.fetchUsage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ range: "24h" }),
+      null,
+      expect.any(AbortSignal),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "下一页" })).toBeEnabled(),
+  );
+  const first = api.usageParameters(
+    vi.mocked(api.fetchUsage).mock.lastCall![0],
+  );
+  now.mockReturnValue(Date.parse("2026-10-31T11:00:01Z"));
+  fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+  await screen.findByText("第 2 页");
+  const next = api.usageParameters(
+    ...(vi.mocked(api.fetchUsage).mock.lastCall!.slice(0, 2) as [
+      api.UsageFilters,
+      string | null,
+    ]),
+  );
+  expect(next.get("start")).toBe(first.get("start"));
+  expect(next.get("end")).toBe(first.get("end"));
+  expect(next.get("after")).toBe("synthetic_cursor");
+  fireEvent.click(screen.getByRole("button", { name: "上一页" }));
+  await screen.findByText("第 1 页");
+  expect(
+    api.usageParameters(vi.mocked(api.fetchUsage).mock.lastCall![0]).get("end"),
+  ).toBe(first.get("end"));
+  fireEvent.click(screen.getByRole("button", { name: "查询用量" }));
+  await waitFor(() =>
+    expect(
+      api
+        .usageParameters(vi.mocked(api.fetchUsage).mock.lastCall![0])
+        .get("end"),
+    ).toBe(String(Date.parse("2026-10-31T11:00:00Z") / 1000)),
+  );
 });
