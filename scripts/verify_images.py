@@ -36,7 +36,8 @@ def native_stream(operation, prompt='synthetic'):
     final = {'type':prefix+'.completed','b64_json':PNG,'usage':{'input_tokens':2,'output_tokens':3}}
     if prompt == 'stream-empty': final['b64_json'] = ''
     if prompt == 'stream-abort': return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\n'
-    if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic'}}
+    if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic acct-split-secret user-synthetic@example.invalid',
+        'type':'invalid_request_error','param':'prompt','private':'synthetic-private-member'}}
     return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\nevent: ' + final['type'].encode() + b'\r\ndata: ' + json.dumps(final).encode() + b'\r\n\r\ndata: [DONE]\n\n'
 
 
@@ -108,7 +109,17 @@ class Provider(BaseHTTPRequestHandler):
             self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
             if status == 429: self.send_header('Retry-After','1')
             self.end_headers()
-            try: self.wfile.write(body)
+            try:
+                if request.get('stream'):
+                    # Split inside the final event, after sensitive text for errors. Flush and
+                    # pause to force the gateway to process the first fragment before the rest.
+                    marker = b'acct-split-secret' if prompt == 'stream-error' else b'"usage"'
+                    split = body.index(marker) + len(marker) if marker in body else len(body) // 2
+                    self.wfile.write(body[:split]); self.wfile.flush()
+                    time.sleep(0.15)
+                    self.wfile.write(body[split:]); self.wfile.flush()
+                else:
+                    self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError): pass
             return
         length = int(self.headers['Content-Length'])
@@ -270,7 +281,21 @@ def main():
                     state, usage, outcome = ledger()
                     assert state == 'unknown' and usage['completeness'] == 'partial' and 'imageInputTokens' not in usage and 'imageOutputTokens' not in usage
                     assert usage['images'] == 1 and outcome['kind'] == 'succeeded'
-                    for fault in ('stream-abort', 'stream-empty', 'stream-error'):
+                    for prefix in ('/v1', '/backend-api/codex'):
+                        for operation in ('generations', 'edits'):
+                            status, body, headers = request({'prompt':'stream-error','stream':True}, prefix + '/images/' + operation)
+                            assert status == 200
+                            assert b'acct-split-secret' not in body and b'user-synthetic@example.invalid' not in body
+                            assert b'synthetic-private-member' not in body
+                            events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
+                            failure = events[-1]
+                            assert failure['type'] == 'response.failed', failure
+                            error = failure['response']['error']
+                            assert error['code'] == 'synthetic_provider_error' and error['type'] == 'invalid_request_error'
+                            assert error['param'] == 'prompt' and '[redacted]' in error['message']
+                            assert error['request_id'] == headers['x-request-id']
+                            assert ledger()[2]['kind'] == 'failed'
+                    for fault in ('stream-abort', 'stream-empty'):
                         status, body, _ = request({'prompt':fault,'stream':True})
                         assert status == 200 and ledger()[2]['kind'] == 'failed'
                     # A held upstream consumes the sole permit. A queued request times out before intent/dispatch.
@@ -293,6 +318,67 @@ def main():
                         assert request({'prompt':'released'})[0] == 200
                         assert upstream.calls == before + 2
                         upstream.release.set()
+                    # Reserve 32 of 48 MiB before the native Images body is complete. HTTP
+                    # and WS readers share this budget, and rejection must precede intent/dispatch.
+                    reservation_header = ('POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
+                        + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: 33554432\r\n\r\n').encode()
+                    large_native = {'model':'synthetic-image', 'prompt':'synthetic', 'future':'x' * (20 * 1024 * 1024)}
+                    before = upstream.calls; intents = count_intents()
+                    held = socket.create_connection(('127.0.0.1', port), timeout=3)
+                    try:
+                        held.sendall(reservation_header + b'{"model":')
+                        time.sleep(.2)
+                        with socket.create_connection(('127.0.0.1', port), timeout=3) as exhausted:
+                            exhausted.sendall(reservation_header)
+                            response = http.client.HTTPResponse(exhausted); response.begin()
+                            assert response.status == 503 and response.getheader('Retry-After') == '1'
+                            assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
+                        assert upstream.calls == before and count_intents() == intents
+                        chunked = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+                        try:
+                            chunked.request('POST', '/backend-api/codex/images/generations', iter([b' ' * (1024 * 1024)] * 17),
+                                {'Authorization':'Bearer ' + policies['images']['secret'], 'Content-Type':'application/json',
+                                 'Transfer-Encoding':'chunked'}, encode_chunked=True)
+                            response = chunked.getresponse()
+                            assert response.status == 503 and response.getheader('Retry-After') == '1'
+                            assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
+                        finally:
+                            chunked.close()
+                        assert upstream.calls == before and count_intents() == intents
+                        if transport == 'websocket':
+                            with dial(port, token=policies['both']['secret']) as sock:
+                                send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
+                                opcode, data = receive(sock)
+                                error = json.loads(data)
+                                assert opcode == 1 and error['type'] == 'error' and error['status'] == 503
+                                assert error['error']['code'] == 'capacity_exhausted'
+                                assert upstream.calls == before and count_intents() == intents
+                                # A budget rejection ends only the message; the WS connection stays usable.
+                                send(sock, {'type':'response.create','model':'synthetic-host','input':'synthetic'}, masked=True)
+                                while True:
+                                    _, data = receive(sock)
+                                    event = json.loads(data)
+                                    assert event['type'] != 'error', event
+                                    if event['type'] == 'response.completed': break
+                                ledger()
+                    finally:
+                        held.close()
+                    # Partial upload disconnect releases the full Content-Length reservation.
+                    time.sleep(.2)
+                    before = upstream.calls; intents = count_intents()
+                    assert request(large_native)[0] == 200
+                    assert ledger()[0] == 'settled'
+                    assert upstream.calls == before + 1 and count_intents() == intents + 1
+                    before = upstream.calls; intents = count_intents()
+                    with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
+                        stalled.sendall(reservation_header + b'{"model":')
+                        started = time.monotonic()
+                        assert stalled.recv(4096) == b''
+                        assert time.monotonic() - started >= 9
+                    assert upstream.calls == before and count_intents() == intents
+                    assert request(large_native, '/backend-api/codex/images/generations')[0] == 200
+                    assert ledger()[0] == 'settled'
+                    assert upstream.calls == before + 1 and count_intents() == intents + 1
                     # Responses managed tool evidence remains independent from native Images accounting.
                     status, body, _ = request({'model':'synthetic-host','input':'synthetic','tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
                     assert status == 200, (status,body[:200])

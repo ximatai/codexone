@@ -152,4 +152,6 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 - 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
 - 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds，message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429 并按 resets_in_seconds/Retry-After 设置账号 cooldown。SSE 已开始时以 response.failed 下发，原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
 
+原生 Images SSE 按完整事件有界暂存后检查，普通事件原字节下发（含注释、event 行、CRLF、`[DONE]`），`type: error` 原文不下发，按上述 P27 脱敏后结束；不缓冲整流，沿用单事件与总量上限。
+
 原生 Images 两前缀均 POST 至所选身份上游 /backend-api/codex/images/generations|edits；与 Responses HTTP 共用受限客户端标识头，额外转发 x-codex-image-turn-id，账号认证由服务注入。回传 x-codex-imagegen-request-id 和网关 x-request-id。服务持有独立 imageConcurrency 许可池（1—8、默认2），等待最多30秒；超时429 image_capacity_exhausted / Retry-After: 1，无 intent/派发。成功、失败、取消与断开均只归还一次许可；账本未知责任不随许可归还而释放。

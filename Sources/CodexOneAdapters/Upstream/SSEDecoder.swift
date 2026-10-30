@@ -8,6 +8,9 @@ struct SSEDecoder {
   private var total = 0
   private(set) var sawDone = false
 
+  /// Includes comment-only events and [DONE], which do not return a JSON value.
+  var isAtEventBoundary: Bool { buffer.isEmpty }
+
   mutating func append(_ byte: UInt8) throws -> JSONValue? {
     guard total < maximumTotalBytes else {
       throw GatewayProtocolError(502, "upstream_response_too_large")

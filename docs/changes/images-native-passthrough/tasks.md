@@ -9,3 +9,9 @@
 - [x] Linux verification。
 - [x] 部署后网关真实冒烟（生成 1、编辑 1）。
 - [ ] Desktop 生图、编辑与含图会话压缩验收（等待用户操作）。
+
+## 评审返工（2026-10-31）
+
+- [x] P1：完整事件检查后原字节下发，分片 error 脱敏且暂存有界；两前缀合成回归。
+- [x] P2：恢复大 HTTP/chunked/WS 共享请求体预算拒绝、断开与超时释放回归。
+- [x] macOS build/test、图片 HTTP/WS 配置及完整 backend 出口验证（见 [verification](verification.md)）。

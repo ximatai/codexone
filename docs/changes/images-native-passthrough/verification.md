@@ -58,3 +58,23 @@ SwiftPM 在此受限环境的 manifest sandbox-exec 不可用，原始不带覆�
 - 该 403 在账本中按“无用量证据的失败保留 unknown 责任”的现行规则记为 unknown；规则本身属于独立的治理议题，不在本变更内修改。
 - 仍未核对：SSE（`stream: true`）的真实事件形状，以及 429/Retry-After 的冷却行为。
 
+## P1/P2 评审返工（2026-10-31）
+
+平台：macOS arm64，Apple Swift 6.4.2；仅本机合成上游。未真实调用、部署、推送、暂存或提交；未改 STATUS、Package 文件或 web。
+
+- P1：SSEDecoder 暴露完整事件边界，原生图片执行仅保留当前事件原字节，在完整解析并排除 error 后下发；沿用原生 SSE 单事件与累计 48 MiB 限制。注释、event 行、CRLF 与 DONE 保持原字节。
+- 合成上游在 error 敏感标记之后截断首片，flush 并暂停 150 ms 后发送余下事件；两前缀 generations/edits 均断言完整下游没有账号/邮箱标记及私有成员，返回 response.failed、可操作 type/code/param、脱敏 message 与对应 request_id。普通完成事件也强制分片并比较完整下游原字节。返工前二进制在新增敏感标记断言失败，修复后二进制通过。
+- P2：32 MiB Content-Length 半截上传占用 48 MiB 共享预算期间，大 HTTP、17 MiB chunked、17 MiB WS 消息分别拒绝，HTTP 检查 Retry-After，WS 检查 status 503 且同连接仍可执行下一消息；每次预算拒绝均不新增 intent 或上游调用。半截上传断开和实际读取超时 EOF 后，20 MiB 原生 Images 请求成功、settled 且恰好新增一次 intent/上游调用；超时本身不创建执行。
+
+| 命令 | 退出码与关键输出 |
+|---|---|
+| `swift build` | 0，`Build complete!` |
+| `swift test 2>&1 \| tail -5`（pipefail 保留 Swift 退出码） | 0，共 213 项（35/37/3/138），尾行 `Test run with 138 tests in 1 suite passed` |
+| `python3 scripts/verify_images.py --binary .build/debug/codexone` | 0，HTTP 与 websocket 两配置均 `PASS: native Images ... capacity` |
+| `./scripts/verify.sh --backend` | 0，213 项 Swift 测试及 87 条 PASS；最终加强的预算断言随图片脚本两配置再次通过 |
+| `git diff --check`、`python3 scripts/check_docs.py` | 0，无格式错误，159 篇文档检查通过 |
+
+直接不带覆盖的 `swift build` 首次退出 1（manifest sandbox-exec 的 sandbox_apply 被拒）。按 brief 使用仓库外临时 swift 包装器，仅对 build/test/package 注入 `--disable-sandbox`；以上成功 Swift 命令及 backend 均使用该包装器，Package 与验证入口未改。
+
+本轮没有执行 Linux 或真实提供者 SSE 验证，不扩大既有兼容证据；事件缓冲增加最多一个有界原始事件副本，不改为整流缓冲。
+

@@ -75,12 +75,15 @@ extension HTTPResponseExecution {
             maximumEventBytes: ImageLimits.nativeResponseBytes,
             maximumTotalBytes: ImageLimits.nativeResponseBytes)
           var terminal: JSONValue?
+          // Retain only the current event; decoder enforces the event and stream limits.
+          var pending = Data()
           try await begin(replyHeaders)
           for try await chunk in response.body {
             try Task.checkCancellation()
-            let bytes = Data(chunk.readableBytesView)
-            for byte in bytes {
-              if let event = try decoder.append(byte) {
+            for byte in chunk.readableBytesView {
+              let event = try decoder.append(byte)
+              pending.append(byte)
+              if let event {
                 progress.note()
                 let type = event["type"]?.string ?? ""
                 if type == "error" { throw ProviderObservation.providerFailure(event) }
@@ -94,8 +97,11 @@ extension HTTPResponseExecution {
                   if let usage = observation.usage { try context.observeUsage(usage) }
                 }
               }
+              if decoder.isAtEventBoundary {
+                try await emit(pending)
+                pending.removeAll(keepingCapacity: true)
+              }
             }
-            try await emit(bytes)
           }
           try decoder.finish()
           guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
