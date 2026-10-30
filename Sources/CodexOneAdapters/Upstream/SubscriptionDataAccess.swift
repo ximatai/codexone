@@ -10,6 +10,7 @@ enum SubscriptionDataTarget: Sendable {
 struct SubscriptionDataAccess: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
   let baseURL: String
   let headers: HTTPHeaders
+  var identity: AccountRouteIdentity? = nil
   var description: String { "SubscriptionDataAccess(redacted)" }
   var debugDescription: String { description }
 }
@@ -38,7 +39,8 @@ extension SubscriptionOAuthProvider {
       else { throw AccountDispatchError.unavailable }
       return SubscriptionDataAccess(
         baseURL: baseURL,
-        headers: try verifiedHeaders(account: work.account, credential: work.credential))
+        headers: try verifiedHeaders(account: work.account, credential: work.credential),
+        identity: try AccountRouteIdentity(id: work.account.id, namespace: work.account.namespace))
     } catch { throw AccountDispatchError.unavailable }
   }
   func quotaAccess(work: AccountObservationWork, target: SubscriptionDataTarget) throws

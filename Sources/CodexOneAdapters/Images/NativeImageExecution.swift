@@ -8,10 +8,18 @@ import NIOHTTP1
 func forwardedClientHeaders(_ headers: HTTPHeaders) -> HTTPHeaders {
   let allowed: Set<String> = [
     "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
-    "x-codex-image-turn-id",
+    "x-codex-image-turn-id", "x-codex-turn-state", "x-session-id", "conversation_id",
+    "x-conversation-id",
   ]
+  let connectionHeaders = Set(
+    headers["connection"].flatMap {
+      $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    })
   var result = HTTPHeaders()
-  for header in headers where allowed.contains(header.name.lowercased()) {
+  for header in headers
+  where allowed.contains(header.name.lowercased())
+    && !connectionHeaders.contains(header.name.lowercased())
+  {
     if header.value.utf8.count <= 8192 { result.add(name: header.name, value: header.value) }
   }
   return result
