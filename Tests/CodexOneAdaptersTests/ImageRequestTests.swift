@@ -39,7 +39,7 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     ["model": .number(123)], ["model": .null], ["model": .object([:])],
     ["n": .number(2)], ["size": .string("2048x1024")], ["response_format": .string("url")],
     ["background": .string("transparent"), "output_format": .string("jpeg")],
-    ["output_compression": .number(50)], ["user": .string("unrecognized")],
+    ["output_compression": .number(50)],
     ["partial_images": .number(4)],
   ] { #expect(throws: (any Error).self) { try request(fields) } }
   #expect(throws: (any Error).self) { try request(editing: true) }
@@ -140,4 +140,54 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     allowImages: true)
   #expect(
     observed.terminal && observed.bindings.contains(.init(type: "item", rawID: "ig_synthetic")))
+}
+
+@Test func imagesDiscardUnknownMembersBeforeConstructingToolsAndAcceptSixteenReferences() throws {
+  let config = try syntheticImageConfiguration()
+  let url = "data:image/png;base64," + syntheticImagePNG.base64EncodedString()
+  func edit(_ images: [JSONValue], mask: JSONValue? = nil) throws -> ImagesRequest {
+    var fields: [String: JSONValue] = [
+      "prompt": .string("synthetic"), "user": .string("discard"), "action": .string("discard"),
+      "images": .array(images), "input_image_mask": .string("discard"),
+    ]
+    fields["mask"] = mask
+    return try ImagesRequest(
+      data: JSONValue.object(fields).data(), contentType: "application/json",
+      editing: true, configuration: config)
+  }
+  let image: JSONValue = .object(["image_url": .string(url), "detail": .string("discard")])
+  let result = try edit(Array(repeating: image, count: 16), mask: image)
+  let tool = try #require(result.response.document["tools"]?.array?.first)
+  #expect(tool["user"] == nil && tool["detail"] == nil && tool["action"] == .string("edit"))
+  #expect(tool["input_image_mask"]?.object?.count == 1)
+  #expect(result.response.document["input"]?.array?.first?["content"]?.array?.count == 17)
+  #expect(throws: (any Error).self) { try edit(Array(repeating: image, count: 17)) }
+  for invalid: JSONValue in [.object([:]), .object(["image_url": .number(1)]), .string(url)] {
+    #expect(throws: (any Error).self) { try edit([invalid]) }
+    #expect(throws: (any Error).self) { try edit([image], mask: invalid) }
+  }
+}
+
+@Test func visionCompactionAndImageToolsDoNotRequireTheMappedConversationHost() throws {
+  let config = try syntheticImageConfiguration()
+  let input: [JSONValue] = [
+    .object([
+      "role": .string("user"),
+      "content": .array([
+        .object(["type": .string("input_image"), "image_url": .string("synthetic-opaque")])
+      ]),
+    ])
+  ]
+  for compact in [false, true] {
+    let request = try ResponseRequest(
+      data: JSONValue.object([
+        "model": .string("synthetic-other"),
+        "input": .array(
+          input + (compact ? [] : [.object(["type": .string("compaction_trigger")])])),
+        "tools": .array([.object(["type": .string("image_generation")])]),
+      ]).data(), mode: compact ? .compact : .generation, imageConfiguration: config)
+    #expect(
+      request.requirements.visionInput && request.requirements.imageModel == "synthetic-image")
+    #expect(request.mode == .compact)
+  }
 }

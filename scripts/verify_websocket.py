@@ -52,7 +52,7 @@ def receive(sock, *, masked=False):
         length = struct.unpack('!H', exact(sock, 2))[0]
     elif length == 127:
         length = struct.unpack('!Q', exact(sock, 8))[0]
-    assert length <= 9437184
+    assert length <= (34603008 if masked else 8388608)
     key = exact(sock, 4) if masked else None
     data = exact(sock, length)
     if key:

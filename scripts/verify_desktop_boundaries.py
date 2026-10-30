@@ -44,7 +44,7 @@ def png(size, fill=b'x'):
 
 def frame(sock, value, masked=False):
     data = json.dumps(value, separators=(',', ':')).encode() if not isinstance(value, bytes) else value
-    assert len(data) <= 8 * MIB
+    assert len(data) <= (32 if masked else 8) * MIB
     flag = 128 if masked else 0
     header = b'\x81' + (bytes([flag | len(data)]) if len(data) < 126 else bytes([flag | 126]) + struct.pack('!H', len(data)) if len(data) < 65536 else bytes([flag | 127]) + struct.pack('!Q', len(data)))
     if masked:
@@ -60,7 +60,7 @@ def read_frame(sock, masked=False):
     size = second & 127
     if size == 126: size = struct.unpack('!H', exact(sock, 2))[0]
     elif size == 127: size = struct.unpack('!Q', exact(sock, 8))[0]
-    assert size <= (9 if masked else 8) * MIB
+    assert size <= (33 if masked else 8) * MIB
     mask = exact(sock, 4) if masked else None
     data = exact(sock, size)
     if mask: data = bytes(byte ^ mask[index % 4] for index, byte in enumerate(data))
@@ -128,7 +128,7 @@ class Provider(BaseHTTPRequestHandler):
         return label, events + [{'type': 'response.completed', 'response': response}]
     def do_POST(self):
         assert self.path == '/v1/responses'
-        size = int(self.headers['Content-Length']); assert 0 < size <= 9 * MIB
+        size = int(self.headers['Content-Length']); assert 0 < size <= 33 * MIB
         request = json.loads(self.rfile.read(size))
         label, events = self.events(request, None)
         streaming = request.get('stream', False)
@@ -282,20 +282,20 @@ def verify(binary, duration, transport):
                 lifetime = time.monotonic() - started
                 print(f"PASS: {transport} persistent sockets lifetime={lifetime:.3f}s turns={turns}", flush=True)
                 for index in range(2):
-                    status, body = request(ports['data'], secret, '/v1/images/edits', raw=multipart([png(3 * MIB // 2, b'\xff' if index == 1 else b'x')] * 4), content_type='multipart/form-data; boundary=boundary')
+                    status, body = request(ports['data'], secret, '/v1/images/edits', raw=multipart([png(6 * MIB, b'\xff' if index == 1 else b'x')] * 4), content_type='multipart/form-data; boundary=boundary')
                     assert status == 200, ('multipart-max-status', status, json.loads(body).get('error', {}).get('code')); assert json.loads(body)['data'][0]['b64_json']; sample()
-                status, body = request(ports['data'], secret, '/v1/images/edits', raw=multipart([png(3 * MIB)], png(3 * MIB)), content_type='multipart/form-data; boundary=boundary')
+                status, body = request(ports['data'], secret, '/v1/images/edits', raw=multipart([png(12 * MIB)], png(12 * MIB)), content_type='multipart/form-data; boundary=boundary')
                 assert status == 200; sample()
                 before = provider.calls
-                for images in ([png(3 * MIB // 2)] * 3 + [png(3 * MIB // 2 + 1)], [png(65536)] * 5, [png(4 * MIB + 1)]):
+                for images in ([png(6 * MIB)] * 3 + [png(6 * MIB + 1)], [png(65536)] * 17, [png(16 * MIB + 1)]):
                     status, _ = request(ports['data'], secret, '/v1/images/edits', raw=multipart(images), content_type='multipart/form-data; boundary=boundary')
                     assert status in (400, 413)
                 assert provider.calls == before, 'Rejected image reached provider'
                 with socket.create_connection(('127.0.0.1', ports['data']), timeout=5) as peer:
-                    peer.sendall(('POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + secret + '\r\nContent-Length: 8388609\r\n\r\n').encode())
+                    peer.sendall(('POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + secret + '\r\nContent-Length: 33554433\r\n\r\n').encode())
                     assert b'413' in peer.recv(4096)
                 assert provider.calls == before, 'Internal envelope budget enlarged public upload limit' 
-                print("PASS: " + transport + " exact 6MiB multipart, mask, overflow and external 8MiB limit", flush=True)
+                print("PASS: " + transport + " exact 24MiB multipart, mask, overflow and external 32MiB limit", flush=True)
                 data_url = 'data:image/png;base64,' + provider.large
                 document = {'model': MODEL, 'input': [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'tool-large-output'}, {'type': 'input_image', 'image_url': data_url}]}], 'tools': [{'type': 'image_generation'}], 'stream': True}
                 status, body = request(ports['data'], secret, '/v1/responses', document)
@@ -309,7 +309,7 @@ def verify(binary, duration, transport):
                         assert result['output'][0]['result'] == provider.large
                     sample()
                 before = provider.calls
-                oversized = {**document, 'input': [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'oversized-image'}, {'type': 'input_image', 'image_url': 'data:image/png;base64,' + base64.b64encode(png(4 * MIB + 1)).decode()}]}]}
+                oversized = {**document, 'input': 'x' * (32 * MIB + 1)}
                 assert request(ports['data'], secret, '/v1/responses', oversized)[0] == 413
                 assert provider.calls == before
                 provider.cancelled.clear()

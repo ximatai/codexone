@@ -343,7 +343,7 @@ def admin_checks(f, key):
 
 def limits_checks(f, key):
     before, calls = ledger(f), f['provider'].calls
-    for plane, size, path in (('data', 8 * 1024 * 1024 + 1, '/v1/responses'), ('admin', 8193, '/api/session')):
+    for plane, size, path in (('data', 33 * 1024 * 1024 + 1, '/v1/responses'), ('admin', 8193, '/api/session')):
         client = connection(f, plane)
         try:
             # Content-Length alone must refuse an oversized body before gateway dispatch.

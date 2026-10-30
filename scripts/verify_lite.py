@@ -108,7 +108,7 @@ def main():
                         dict(model=MODEL,input=[{**PACKAGE,'tools':[dict(type='namespace',name='synthetic_ns',tools=[dict(type='image_generation')])]}]),
                         dict(model=MODEL,input=[PACKAGE],previous_response_id=PACKAGE['id']),
                         dict(model=MODEL,input=[PACKAGE,dict(type='item_reference',id='synthetic-unowned-item')])]
-                    oversized=dict(model=MODEL,input='x'*8388609)
+                    oversized=dict(model=MODEL,input='x'*33554433)
                     try:
                         status,body=connect(ports['data'],'POST','/v1/responses',oversized);assert status==413
                     except (BrokenPipeError,ConnectionResetError):pass  # Rejected before the body finished.

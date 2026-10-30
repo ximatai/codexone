@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import threading
@@ -28,11 +29,18 @@ class Provider(BaseHTTPRequestHandler):
         try: super().handle()
         except (ConnectionResetError, BrokenPipeError): pass
     def events(self, request):
-        assert request['model'] == 'synthetic-host'
+        assert request['model'] in ('synthetic-host', 'synthetic-host-other')
         with self.server.guard:
             self.server.calls += 1
             index = self.server.calls
         tools = request.get('tools', [])
+        for tool in tools:
+            if tool['type'] == 'image_generation':
+                assert 'user' not in tool and 'detail' not in tool
+                assert 'detail' not in tool.get('input_image_mask', {})
+        for row in request.get('input', []) if isinstance(request.get('input'), list) else []:
+            for part in row.get('content', []) if isinstance(row.get('content'), list) else []:
+                assert 'detail' not in part
         image = any(t['type'] == 'image_generation' for t in tools) and request.get('tool_choice') != 'none' and request.get('input') != 'no-image'
         item = {'id': f'ig_{index}', 'type': 'image_generation_call', 'status': 'completed', 'result': PNG,
                 'usage': {'input_tokens': 2, 'output_tokens': 3, 'total_tokens': 5, 'input_tokens_details': {'text_tokens': 1, 'image_tokens': 1}}}
@@ -41,7 +49,7 @@ class Provider(BaseHTTPRequestHandler):
             prompt = next((part['text'] for row in prompt for part in row.get('content', []) if isinstance(part, dict) and part['type'] == 'input_text'), '')
         if prompt == 'invalid-usage': item['usage']['output_tokens'] = -1
         if prompt == 'missing-usage': item.pop('usage')
-        if prompt == 'stall': time.sleep(3)
+        if prompt == 'stall': time.sleep(11)
         response = {'id': f'resp_{index}', 'status': 'completed', 'output': [item] if image else [],
                     'usage': {'input_tokens': 5, 'output_tokens': 7, 'input_tokens_details': {'cached_tokens': 0}}}
         lane = {'stream_id': request['stream_id']} if 'stream_id' in request else {}
@@ -65,9 +73,13 @@ class Provider(BaseHTTPRequestHandler):
         return events + [{'type': 'response.' + response['status'], 'response': response, **lane}]
     def do_POST(self):
         length = int(self.headers['Content-Length'])
-        assert length <= 8388608 and self.path == '/v1/responses'
+        assert length <= 34603008 and self.path in ('/v1/responses', '/v1/responses/compact')
         request = json.loads(self.rfile.read(length))
         events = self.events(request)
+        if self.path.endswith('/compact'):
+            events[-1]['response'] = {'id': 'cmp_' + events[-1]['response']['id'],
+                'object': 'response.compaction', 'output': [{'type': 'compaction', 'encrypted_content': 'synthetic-compact'}],
+                'usage': events[-1]['response']['usage']}
         self.send_response(200)
         streaming = request.get('stream', False)
         body = (''.join('data: ' + json.dumps(event) + '\n\n' for event in events).encode() if streaming
@@ -92,7 +104,7 @@ class Provider(BaseHTTPRequestHandler):
 
 
 def raw(port, path, data, token, content_type='application/json'):
-    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=8)
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=20)
     connection.request('POST', path, data, {'Authorization': 'Bearer ' + token, 'Content-Type': content_type})
     response = connection.getresponse(); result = response.status, response.read(); connection.close()
     return result
@@ -111,16 +123,16 @@ def main():
                 root = Path(temporary)
                 config = root / 'identity.json'; admin = root / 'admin'; admin.write_text(ADMIN); admin.chmod(0o600)
                 config.write_text(json.dumps({'managedKeys': True, 'namespace': 'synthetic', 'identity': 'synthetic-account',
-                    'reservedMicros': 10, 'executionTimeoutSeconds': 2, 'upstreamTransport': transport,
+                    'reservedMicros': 10, 'executionTimeoutSeconds': 10, 'upstreamTransport': transport,
                     'upstreamBaseURL': f'http://127.0.0.1:{upstream.server_port}/v1',
-                    'models': [{'id': host, 'visionInput': True, 'imageGeneration': True, 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000} for host in ('synthetic-host', 'synthetic-host-other')],
+                    'models': [{'id': host, 'visionInput': True, 'imageGeneration': True, 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000} for host in ('synthetic-host', 'synthetic-host-other')] + [{'id': 'synthetic-no-image', 'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
                     'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': image, 'hostModel': host,
                         'sizePolicy': 'fixed1536', 'supportsTransparency': True, 'supportsInputFidelity': True, 'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000} for image, host in [('synthetic-image', 'synthetic-host'), ('synthetic-image-other', 'synthetic-host-other')]]}}))
                 config.chmod(0o600)
                 process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin, web_directory=(repository / 'web/dist').resolve() if args.browser else None)
                 try:
                     policies = {}
-                    for name, models, vision, image in [('chat', ['synthetic-host'], False, False), ('vision', ['synthetic-host'], True, False), ('images', [], False, True), ('both', ['synthetic-host'], True, True), ('other', ['synthetic-host'], True, True), ('cross', ['synthetic-host-other'], True, True)]:
+                    for name, models, vision, image in [('chat', ['synthetic-host'], False, False), ('vision', ['synthetic-host'], True, False), ('images', [], False, True), ('both', ['synthetic-host'], True, True), ('other', ['synthetic-host'], True, True), ('cross', ['synthetic-host-other'], True, True), ('plain', ['synthetic-no-image'], True, True)]:
                         status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal=name if name == 'other' else 'team', models=models, limits=LIMITS,
                             visionInput=vision, imageGeneration=image, imageModels=['synthetic-image'] if image else []))
                         assert status == 201, (status, created)
@@ -145,17 +157,53 @@ def main():
                                 assert event['output_format'] == 'png' and event['created_at'] > 0
                         status, body = request('images', prefix + '/images/edits', {'prompt': 'next active edit', 'images': [{'image_url': URL}]})
                         assert status == 200
+                    status, body = request('images', '/v1/images/edits', {'prompt': 'synthetic', 'user': 'discard',
+                        'images': [{'image_url': URL, 'detail': 'discard'}] * 16, 'mask': {'image_url': URL, 'detail': 'discard'}})
+                    assert status == 200, (status, body[:200])
+                    before = upstream.calls
+                    for images in ([{'image_url': URL}] * 17, [{}], [{'image_url': 1}]):
+                        assert request('images', '/v1/images/edits', {'prompt': 'synthetic', 'images': images})[0] == 400
+                    assert upstream.calls == before
                     multipart = (b'--synthetic\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nsynthetic edit\r\n--synthetic\r\nContent-Disposition: form-data; name="image[]"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n' + base64.b64decode(PNG) + b'\r\n--synthetic--\r\n')
                     assert raw(port, '/v1/images/edits', multipart, policies['images']['secret'], 'multipart/form-data; boundary=synthetic')[0] == 200
+                    def webp(size, width=1, height=1):
+                        # Synthetic container headers; the gateway never raster-decodes input.
+                        payload = b'\x2f' + struct.pack('<I', (width - 1) | ((height - 1) << 14))
+                        payload += b'\0' * (size - 20 - len(payload))
+                        return b'RIFF' + struct.pack('<I', size - 8) + b'WEBPVP8L' + struct.pack('<I', len(payload)) + payload
+                    def multipart_body(images):
+                        body = b'--synthetic\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nsynthetic\r\n'
+                        for image in images:
+                            body += b'--synthetic\r\nContent-Disposition: form-data; name="image[]"; filename="synthetic.webp"\r\nContent-Type: image/webp\r\n\r\n' + image + b'\r\n'
+                        return body + b'--synthetic--\r\n'
+                    status, body = request('images', '/v1/images/edits', {'prompt': 'synthetic',
+                        'images': [{'image_url': 'data:image/webp;base64,' + base64.b64encode(webp(32, 3000, 3000)).decode()}] * 16})
+                    assert status == 200, (status, body[:200])
+                    before = upstream.calls
+                    for images in ([webp(16 * 1024 * 1024 + 2)], [webp(13 * 1024 * 1024)] * 2, [webp(32, 10000, 5001)]):
+                        status, _ = raw(port, '/v1/images/edits', multipart_body(images), policies['images']['secret'], 'multipart/form-data; boundary=synthetic')
+                        assert status in (400, 413), status
+                        assert upstream.calls == before
                     vision = {'model': 'synthetic-host', 'input': [{'role': 'user', 'content': [{'type': 'input_image', 'image_url': URL}]}]}
                     assert request('vision', '/v1/responses', vision)[0] == 200
                     assert request('chat', '/v1/responses', vision)[0] != 200
                     status, directory = call(port, 'GET', '/v1/models', token=policies['cross']['secret'])
-                    assert status == 200 and next(model for model in directory['data'] if model['id'] == 'synthetic-host-other')['image_generation'] is False
+                    assert status == 200 and next(model for model in directory['data'] if model['id'] == 'synthetic-host-other')['image_generation'] is True
                     before = upstream.calls
                     assert request('cross', '/v1/responses', {'model': 'synthetic-host-other', 'input': 'synthetic', 'tools': [{'type': 'image_generation', 'model': 'synthetic-image-other'}]})[0] == 403
                     assert upstream.calls == before
+                    assert request('cross', '/v1/responses', {'model': 'synthetic-host-other', 'input': 'synthetic', 'tools': [{'type': 'image_generation', 'model': 'synthetic-image'}]})[0] == 200
+                    for endpoint, compact in (('/v1/responses/compact', vision), ('/v1/responses', {**vision, 'stream': True, 'input': vision['input'] + [{'type': 'compaction_trigger'}]})):
+                        assert request('vision', endpoint, compact)[0] == 200
+                        status, denied = request('chat', endpoint, compact)
+                        assert status == 403 and b'model_not_allowed' in denied
+                    large = {'model': 'synthetic-host', 'input': 'S' * (20 * 1024 * 1024)}
+                    status, body = request('vision', '/v1/responses', large)
+                    assert status == 200, (status, body[:200])
                     tool = {'model': 'synthetic-host', 'input': 'synthetic', 'tools': [{'type': 'image_generation'}]}
+                    before = upstream.calls
+                    assert request('plain', '/v1/responses', {**tool, 'model': 'synthetic-no-image'})[0] == 403
+                    assert upstream.calls == before
                     for zero in ({**tool, 'tool_choice': 'none'}, {**tool, 'input': 'no-image'}):
                         assert request('both', '/v1/responses', zero)[0] == 200
                         usage = latest(db, 'settled'); assert usage['images'] == 0 and usage['imageInputTokens'] == 0 and usage['estimatedMicros'] == 12
@@ -191,12 +239,98 @@ def main():
                     assert upstream.calls == before
                     # Authentication and declared size are checked before waiting for an oversized body.
                     with socket.create_connection(('127.0.0.1', port), timeout=3) as sock:
-                        sock.sendall(b'POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 9000000\r\n\r\n')
+                        sock.sendall(b'POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nContent-Length: 33554433\r\n\r\n')
                         assert b'401' in sock.recv(4096)
                     with socket.create_connection(('127.0.0.1', port), timeout=3) as sock:
-                        sock.sendall(('POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + policies['images']['secret'] + '\r\nContent-Length: 9000000\r\n\r\n').encode())
+                        sock.sendall(('POST /v1/images/edits HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ' + policies['images']['secret'] + '\r\nContent-Length: 33554433\r\n\r\n').encode())
                         assert b'413' in sock.recv(4096)
+                    if transport == 'http':
+                        # Reserve 32 of 48 MiB before any body arrives. The next large request must not admit.
+                        held = []
+                        before = upstream.calls
+                        with sqlite3.connect(db) as connection:
+                            intents = connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+                        header = ('POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
+                            + policies['vision']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: 33554432\r\n\r\n').encode()
+                        try:
+                            for _ in range(1):
+                                held.append(socket.create_connection(('127.0.0.1', port), timeout=3))
+                                held[-1].sendall(header)
+                            time.sleep(0.2)
+                            with socket.create_connection(('127.0.0.1', port), timeout=3) as exhausted:
+                                exhausted.sendall(header)
+                                response = http.client.HTTPResponse(exhausted); response.begin()
+                                assert response.status == 503 and response.getheader('Retry-After') == '1'
+                                assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
+                            chunked = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+                            chunked.request('POST', '/v1/responses', iter([b' ' * (1024 * 1024)] * 17),
+                                {'Authorization': 'Bearer ' + policies['vision']['secret'], 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked'}, encode_chunked=True)
+                            refused = chunked.getresponse()
+                            assert refused.status == 503 and b'capacity_exhausted' in refused.read()
+                            chunked.close()
+                            assert upstream.calls == before
+                            with sqlite3.connect(db) as connection:
+                                assert connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == intents
+                            # Partial upload and disconnect release a full Content-Length reservation.
+                            held[0].sendall(b'{"model":')
+                        finally:
+                            for connection in held: connection.close()
+                        time.sleep(0.2)
+                        assert request('vision', '/v1/responses', large)[0] == 200
+                        # Reader deadline also returns all reservations without an execution intent.
+                        with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
+                            stalled.sendall(header)
+                            time.sleep(10.2)
+                            stalled.recv(4096)
+                        assert request('vision', '/v1/responses', large)[0] == 200
                     if transport == 'websocket':
+                        held = []
+                        header = ('POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
+                            + policies['vision']['secret'] + '\r\nContent-Length: 33554432\r\n\r\n').encode()
+                        with dial(port, token=policies['vision']['secret']) as sock:
+                            before = upstream.calls
+                            try:
+                                for _ in range(1):
+                                    held.append(socket.create_connection(('127.0.0.1', port), timeout=3))
+                                    held[-1].sendall(header)
+                                time.sleep(0.2)
+                                send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
+                                _, data = receive(sock)
+                                assert json.loads(data)['status'] == 503 and json.loads(data)['error']['code'] == 'capacity_exhausted'
+                                assert upstream.calls == before
+                            finally:
+                                for connection in held: connection.close()
+                            time.sleep(0.2)
+                            send(sock, {'type': 'response.create', **vision}, masked=True)
+                            while True:
+                                _, data = receive(sock)
+                                event = json.loads(data)
+                                assert event['type'] != 'error', event
+                                if event['type'] == 'response.completed': break
+                        with dial(port, token=policies['vision']['secret']) as sock:
+                            sock.settimeout(20)
+                            send(sock, {'type': 'response.create', **large}, masked=True, maximum_bytes=32 * 1024 * 1024)
+                            while True:
+                                _, data = receive(sock)
+                                event = json.loads(data)
+                                assert event['type'] != 'error', event
+                                if event['type'] == 'response.completed': break
+                            # Fragment aggregation must reject at 32 MiB and then accept a new turn.
+                            fragment = b' ' * (17 * 1024 * 1024)
+                            send(sock, fragment, masked=True, fin=False, maximum_bytes=len(fragment))
+                            send(sock, fragment, masked=True, opcode=0, maximum_bytes=len(fragment))
+                            _, data = receive(sock)
+                            assert json.loads(data)['status'] == 413
+                            send(sock, {'type': 'response.create', **vision, 'input': vision['input'] + [{'type': 'compaction_trigger'}]}, masked=True)
+                            while True:
+                                _, data = receive(sock)
+                                event = json.loads(data)
+                                assert event['type'] != 'error', event
+                                if event['type'] == 'response.completed': break
+                        with dial(port, token=policies['chat']['secret']) as sock:
+                            send(sock, {'type': 'response.create', **vision, 'input': vision['input'] + [{'type': 'compaction_trigger'}]}, masked=True)
+                            _, data = receive(sock)
+                            assert json.loads(data)['status'] == 403 and json.loads(data)['error']['code'] == 'model_not_allowed'
                         with dial(port, token=policies['both']['secret']) as sock:
                             send(sock, {'type': 'response.create', **tool}, masked=True)
                             events = []
