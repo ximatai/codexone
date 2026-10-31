@@ -72,6 +72,12 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await expect(page.getByText("第 1 页", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "最近 24 小时" }).click();
   await expect.poll(() => queries.length).toBe(2);
+  await expect(
+    page.getByRole("button", { name: "最近 24 小时" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "自定义", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
   const firstStart = queries[1].searchParams.get("start");
   await page.getByRole("button", { name: "下一页" }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
@@ -96,8 +102,8 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
   await expect(drawer).toContainText("request-first");
   await expect(drawer).toContainText("合成团队");
-  await expect(drawer).toContainText("首事件耗时：12 ms");
-  await expect(drawer).toContainText("总耗时：34 ms");
+  await expect(drawer).toContainText("首事件耗时");
+  await expect(drawer).toContainText("总耗时");
   await page.waitForTimeout(300);
   await page.screenshot({
     path: "../artifacts/ui-phase2/usage-detail-1440.png",

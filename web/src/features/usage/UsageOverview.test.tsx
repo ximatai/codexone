@@ -30,6 +30,7 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
   expect(await screen.findAllByText("≥ 10,000,000,000,000,001")).toHaveLength(
     2,
   );
+  fireEvent.click(screen.getByText("更多统计与用量证据"));
   expect(screen.getByText(/另有 1 条/)).toBeVisible();
   expect(
     screen.getByText(/待核对占用（预估）（不受其他筛选影响）/),
@@ -55,13 +56,13 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
   expect(screen.getByText(/当前结果/)).toHaveTextContent(
     "全部 Key · 上次成功快照",
   );
-  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("模式 全部");
+  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("全部 Key");
   expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
   fireEvent.click(screen.getByText("查询用量"));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(screen.getByText(/当前结果/)).toHaveTextContent("beta");
   expect(screen.getByText("第 1 页")).toBeVisible();
-  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("模式 压缩");
+  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("压缩");
   view.unmount();
 });
 it("aborts stale ownership on Key selection, pause and unmount, and clears private data on unauthorized", async () => {
@@ -167,11 +168,11 @@ it("automatically queries the selected Key, shows principal and durations, and c
   fireEvent.click(
     (await screen.findAllByRole("button", { name: "查看详情" }))[0],
   );
-  expect(await screen.findByText(/首事件耗时：12 ms/)).toHaveTextContent(
-    "总耗时：34 ms",
-  );
+  expect((await screen.findAllByText("首事件耗时")).at(-1)).toBeVisible();
+  expect(screen.getAllByText("12 ms").at(-1)).toBeVisible();
+  expect(screen.getAllByText("34 ms").at(-1)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "复制请求 ID" }));
-  await screen.findByText("已复制请求 ID");
+  await waitFor(() => expect(writeText).toHaveBeenCalled());
   expect(writeText).toHaveBeenCalledWith(report.rows[0].requestID);
   expect(document.querySelector("[data-ui-overlay]")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
@@ -254,7 +255,47 @@ it("shows filtered aggregate latency, request duration columns and complete draw
   expect(screen.getByText("15 ms")).toBeInTheDocument();
   expect(screen.getByText("200 ms")).toBeInTheDocument();
   fireEvent.click(screen.getAllByRole("button", { name: "查看详情" })[0]);
-  expect(await screen.findByText(/^缓存 token：/)).toBeVisible();
-  expect(screen.getByText(/^账号：/)).toBeVisible();
+  expect((await screen.findAllByText("缓存 token")).at(-1)).toBeVisible();
+  expect(screen.getByText("账号")).toBeVisible();
   expect(screen.getByText(/^用量：/)).toBeVisible();
+});
+
+it("derives preset selection only from successfully applied filters", async () => {
+  setup();
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  await screen.findByText("第 1 页");
+  fireEvent.click(screen.getByRole("button", { name: "最近 7 天" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "最近 7 天" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "自定义" }));
+  expect(screen.getByRole("button", { name: "自定义" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  vi.mocked(api.fetchUsage).mockRejectedValueOnce(new Error("synthetic"));
+  fireEvent.click(screen.getByRole("button", { name: "最近 30 天" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: "最近 7 天" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  fireEvent.change(screen.getByLabelText("起始日（UTC）"), {
+    target: { value: "2026-01-01" },
+  });
+  fireEvent.change(screen.getByLabelText("结束日（UTC）"), {
+    target: { value: "2026-01-02" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "查询用量" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "自定义" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    ),
+  );
 });

@@ -1,7 +1,9 @@
 export function duration(value: number | null | undefined) {
   return value == null
     ? "不可用"
-    : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} ms`;
+    : value >= 1000
+      ? `${(value / 1000).toFixed(1)} s`
+      : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} ms`;
 }
 export function number(value: string | null | undefined, lower = false) {
   return value == null

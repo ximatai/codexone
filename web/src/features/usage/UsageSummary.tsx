@@ -45,12 +45,18 @@ export function UsageSummary({ report }: { report: UsageReport }) {
     </div>
   );
 }
-export function UsageEvidence({ report }: { report: UsageReport }) {
+export function UsageEvidence({
+  report,
+  expanded = false,
+}: {
+  report: UsageReport;
+  expanded?: boolean;
+}) {
   const { totals } = report;
   const incomplete = totals.partial + totals.unavailable > 0;
   return (
-    <details className={styles.moreFilters}>
-      <summary>更多统计与用量证据</summary>
+    <details className={styles.moreFilters} open={expanded || undefined}>
+      <summary hidden={expanded}>统计明细</summary>
       <div className={styles.metrics}>
         <div>
           <span>平均总耗时</span>

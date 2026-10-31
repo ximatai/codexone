@@ -1,5 +1,5 @@
 import { BarChart } from "@mantine/charts";
-import { Paper, Title, Text, Group } from "@mantine/core";
+import { Paper, Title, Text } from "@mantine/core";
 import type { UsageReport } from "./api";
 import { utc } from "./format";
 import styles from "./usage.module.css";
@@ -25,8 +25,8 @@ export function UsageTrend({ report }: { report: UsageReport }) {
     rejected: item.rejected,
   }));
   return (
-    <Paper withBorder p="lg" className={styles.trend}>
-      <Title order={3} mb="md">
+    <Paper withBorder p="md" className={styles.trend}>
+      <Title order={3} mb="xs">
         请求趋势{" "}
         <Text component="span" size="xs" c="dimmed">
           UTC · 按{daily ? "日" : "小时"}
@@ -37,7 +37,7 @@ export function UsageTrend({ report }: { report: UsageReport }) {
         aria-label={`UTC 按${daily ? "日" : "小时"}请求趋势，已准入 ${report.totals.admitted}，已记录拒绝 ${report.totals.recordedRejections}`}
       >
         <BarChart
-          h={220}
+          h={200}
           data={points}
           dataKey="at"
           type="stacked"
@@ -49,14 +49,6 @@ export function UsageTrend({ report }: { report: UsageReport }) {
           barProps={{ isAnimationActive: false }}
         />
       </div>
-      <Group justify="space-between" mt="xs">
-        <Text size="xs" c="dimmed">
-          {utc(report.startUnixSeconds)}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {utc(report.endUnixSeconds)} 前
-        </Text>
-      </Group>
     </Paper>
   );
 }

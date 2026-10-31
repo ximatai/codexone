@@ -198,6 +198,17 @@ export function UsageOverview({
     event.preventDefault();
     if (!busy && !paused) void load({ ...draft });
   }
+  const currentPreset =
+    applied?.range === "24h"
+      ? 1
+      : [7, 30].find(
+          (days) =>
+            applied?.end === new Date().toISOString().slice(0, 10) &&
+            applied?.start ===
+              new Date(Date.now() - (days - 1) * 86400000)
+                .toISOString()
+                .slice(0, 10),
+        );
   if (paused)
     return (
       <section>
@@ -207,7 +218,7 @@ export function UsageOverview({
   return (
     <Paper
       withBorder
-      p="lg"
+      p="md"
       radius="md"
       className={styles.workspace}
       component="section"
@@ -221,21 +232,12 @@ export function UsageOverview({
       >
         用量与请求诊断
       </Title>
-      <details className={styles.method}>
-        <summary>统计口径</summary>
-        <p className={styles.hint}>
-          按准入 UTC 时间统计，起止日均包含。轮换保留原 Key
-          历史；迟到用量会更新原时段。每次查询为新的账本快照。
-        </p>
-      </details>
-      <Text size="xs" c="dimmed" mb="xs">
-        最近 24 小时按已完成 UTC 小时查询；日期筛选包含起止日。
-      </Text>
-      <Group mb="md">
+      <Group mb="sm">
         {[1, 7, 30].map((days) => (
           <Button
             key={days}
-            variant="light"
+            variant={currentPreset === days ? "filled" : "default"}
+            aria-pressed={currentPreset === days}
             disabled={busy}
             onClick={() => {
               const now = new Date();
@@ -255,7 +257,8 @@ export function UsageOverview({
           </Button>
         ))}
         <Button
-          variant={customRange ? "filled" : "default"}
+          variant={!currentPreset ? "filled" : "default"}
+          aria-pressed={!currentPreset}
           onClick={() => setCustomRange((value) => !value)}
           aria-expanded={customRange}
         >
@@ -315,6 +318,7 @@ export function UsageOverview({
             {" "}
             <TextInput
               label="起始日（UTC）"
+              aria-label="起始日（UTC）"
               type="date"
               value={draft.start}
               disabled={busy}
@@ -323,6 +327,7 @@ export function UsageOverview({
             />
             <TextInput
               label="结束日（UTC）"
+              aria-label="结束日（UTC）"
               type="date"
               value={draft.end}
               disabled={busy}
@@ -383,7 +388,7 @@ export function UsageOverview({
       {busy && !report && <LoadingState>正在读取用量…</LoadingState>}
       {report && (
         <div aria-busy={busy} className={stale ? styles.stale : undefined}>
-          <p className={styles.hint}>
+          <p className={styles.hint} aria-label="当前结果筛选">
             当前结果：
             {applied?.range === "24h"
               ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
@@ -392,59 +397,59 @@ export function UsageOverview({
             {options.keyOptions?.find((k) => k.id === applied?.key)
               ?.principal ??
               (applied?.key || "全部 Key")}
+            {applied?.model ? ` · 模型 ${applied.model}` : ""}
+            {applied?.mode ? ` · ${modes[applied.mode]}` : ""}
+            {applied?.failure
+              ? ` · ${failures[applied.failure] ?? "其他异常"}`
+              : ""}
+            {applied?.state ? ` · ${states[applied.state]}` : ""}
+            {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>
-          {(stale ||
-            applied?.model ||
-            applied?.mode ||
-            applied?.failure ||
-            applied?.state ||
-            applied?.failedOnly) && (
-            <p className={styles.hint} aria-label="当前结果筛选">
-              结果筛选：模型 {applied?.model || "全部"} · 模式{" "}
-              {applied?.mode ? modes[applied.mode] : "全部"} · 错误{" "}
-              {applied?.failure
-                ? (failures[applied.failure] ?? "其他异常")
-                : "全部"}{" "}
-              · 用量状态 {applied?.state ? states[applied.state] : "全部"} ·{" "}
-              {applied?.failedOnly ? "仅异常结果" : "全部结果"}
+          <details className={styles.method}>
+            <summary>统计口径</summary>
+            <p className={styles.hint}>
+              按准入 UTC 时间统计，起止日均包含；最近 24 小时按已完成 UTC
+              小时查询。轮换保留原 Key
+              历史，迟到用量更新原时段；每次查询为新账本快照。拒绝诊断查询最近
+              30
+              天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
+              50 条，不包含请求或响应正文。
             </p>
-          )}
+          </details>
           <UsageSummary report={report} />
           <UsageTrend report={report} />
-          <UsageEvidence report={report} />
-          <KeyLimitsSummary
-            key={applied?.key ?? ""}
-            keyID={applied?.key ?? ""}
-            refresh={policyRead}
-          />
-          <Text
-            className={styles.governance}
-            size="sm"
-            my="md"
-            title="缺少完整用量的请求仍保留占用；更改时间范围不会释放。占用不能代表实际费用上界。"
-          >
-            {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}{" "}
-            {terms.exposure}（不受其他筛选影响）：
-            {report.lifetimeGovernance.inFlight} 在途、
-            {report.lifetimeGovernance.unknown} {terms.pending}，
-            {money(report.lifetimeGovernance.exposureMicros)} ⓘ
-            <br />
-            区间{terms.exposure}：
-            {money(report.totals.unresolvedExposureMicros)}
-          </Text>
-          {report.totals.historicalWithoutTime > 0 && (
-            <p className={styles.warning}>
-              另有 {report.totals.historicalWithoutTime}{" "}
-              条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
-            </p>
-          )}
+          <details className={styles.moreFilters}>
+            <summary>更多统计与用量证据</summary>
+            <UsageEvidence report={report} expanded />
+            <KeyLimitsSummary
+              key={applied?.key ?? ""}
+              keyID={applied?.key ?? ""}
+              refresh={policyRead}
+            />
+            <Text
+              className={styles.governance}
+              size="sm"
+              my="md"
+              title="缺少完整用量的请求仍保留占用；更改时间范围不会释放。占用不能代表实际费用上界。"
+            >
+              {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}{" "}
+              {terms.exposure}（不受其他筛选影响）：
+              {report.lifetimeGovernance.inFlight} 在途、
+              {report.lifetimeGovernance.unknown} {terms.pending}，
+              {money(report.lifetimeGovernance.exposureMicros)} ⓘ
+              <br />
+              区间{terms.exposure}：
+              {money(report.totals.unresolvedExposureMicros)}
+            </Text>
+            {report.totals.historicalWithoutTime > 0 && (
+              <p className={styles.warning}>
+                另有 {report.totals.historicalWithoutTime}{" "}
+                条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
+              </p>
+            )}
+          </details>
           <h3>请求明细</h3>
-          <p className={styles.hint}>
-            拒绝诊断查询最近 30
-            天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
-            50 条，不包含请求或响应正文。
-          </p>
           <UsageRequests
             rows={report.rows}
             onDetail={setDetail}
