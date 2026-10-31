@@ -16,6 +16,8 @@ final class WebSocketTurns: Sendable {
       var phase = Phase.idle
       var receivedCreated = false
       var interrupted = false
+      // Set at the existing wire dispatch boundary, not at admission/begin.
+      var dispatched = false
       var evidence: (@Sendable (JSONValue) throws -> Void)?
     }
     var lanes: [String: Lane] = [:]
@@ -97,6 +99,7 @@ final class WebSocketTurns: Sendable {
       value.lanes[lane]!.phase = .awaitingCreated
       value.lanes[lane]!.receivedCreated = false
       value.lanes[lane]!.interrupted = false
+      value.lanes[lane]!.dispatched = false
     }
   }
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
@@ -114,10 +117,36 @@ final class WebSocketTurns: Sendable {
   }
   func detachEvidence(lane: String) { state.withLock { $0.lanes[lane]?.evidence = nil } }
 
-  func markInterrupted(responseID: String, lane: String) {
+  func markDispatched(lane: String) {
+    state.withLock { $0.lanes[lane]?.dispatched = true }
+  }
+
+  /// A projection of the owned turn, never an independently advanced settlement state.
+  enum Settlement {
+    case finished, awaitingIdentity, interrupted
+    case interrupt(String)
+  }
+  func settlement(lane: String) -> Settlement {
     state.withLock { value in
-      guard case .active(let id) = value.lanes[lane]?.phase, id == responseID else { return }
+      guard !value.closed, let turn = value.lanes[lane], turn.dispatched else {
+        return .finished
+      }
+      switch turn.phase {
+      case .idle: return .finished
+      case .awaitingCreated: return .awaitingIdentity
+      case .active(let id): return turn.interrupted ? .interrupted : .interrupt(id)
+      }
+    }
+  }
+
+  /// Claim before a suspended wire write; caller controls and disconnect settlement race here.
+  func claimInterrupt(responseID: String, lane: String) -> Bool {
+    state.withLock { value in
+      guard !value.closed, case .active(let id) = value.lanes[lane]?.phase, id == responseID,
+        value.lanes[lane]?.interrupted == false
+      else { return false }
       value.lanes[lane]?.interrupted = true
+      return true
     }
   }
   func wasInterrupted(lane: String) -> Bool {
