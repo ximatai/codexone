@@ -82,7 +82,8 @@ import Testing
   do {
     let key = try #require(try await reopened.listKeys(after: nil).first)
     #expect(
-      !key.policy.visionInput && !key.policy.imageGeneration && key.policy.imageModels.isEmpty)
+      !key.policy.visionInput && !key.policy.imageGeneration
+        && key.policy.imageModels?.isEmpty == true)
     let version = try await reopened.perform { try $0.scalar("PRAGMA user_version") }
     #expect(version == 10)
   } catch {

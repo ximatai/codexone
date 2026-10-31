@@ -21,13 +21,13 @@ public struct AccountPoolPolicy: Sendable {
     key: ManagedKey, models: Set<String>, reservedMicros: Int64, policyVersion: String,
     pricingVersion: String
   ) throws {
-    guard key.enabled, models.count <= 48,
+    guard key.enabled, key.archivedAtUnixSeconds == nil, models.count <= 48,
       models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       [policyVersion, pricingVersion].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
       (0...1_000_000_000_000).contains(reservedMicros)
     else { throw ExecutionError.invalidCommand }
     self.key = key
-    self.models = models.intersection(key.policy.authorizedModels)
+    self.models = models.filter { key.policy.allowsConfiguredModel($0) }
     self.reservedMicros = reservedMicros
     self.policyVersion = policyVersion
     self.pricingVersion = pricingVersion

@@ -160,7 +160,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       let principal = key?.principal ?? principal, let keyID = key?.id ?? keyID
     else { throw ExecutionError.unauthorized }
     let allModels = models
-    let models = models.filter { key == nil || key!.policy.models.contains($0.id) }
+    let models = models.filter { key == nil || key!.policy.allowsConversationModel($0.id) }
     let capabilities =
       try key?.policy
       ?? KeyPolicy(

@@ -342,6 +342,19 @@ def main():
                             assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits={**dict.fromkeys(LIMITS),field:invalid}))[0]==400
                         missing=dict.fromkeys(LIMITS);del missing[field]
                         assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits=missing))[0]==400
+                    status, dynamic=call(ports['admin'],'POST','/api/keys',dict(principal='dynamic',models=None,limits=LIMITS))
+                    assert status==201 and dynamic['key']['models'] is None
+                    secrets.append(dynamic['secret'])
+                    assert [m['id'] for m in call(ports['data'],'GET','/v1/models',token=dynamic['secret'])[1]['data']]==['synthetic-text','synthetic-other']
+                    assert call(ports['data'],'POST','/v1/responses',request,token=dynamic['secret'])[0]==200
+                    latest(db_path,'settled')
+                    assert call(ports['data'],'POST','/v1/responses',{**request,'model':'unconfigured'},token=dynamic['secret'])[0]==403
+                    assert call(ports['admin'],'POST','/api/keys',dict(principal='missing',limits=LIMITS))[0]==400
+                    assert call(ports['admin'],'POST','/api/keys',dict(principal='empty',models=[],limits=LIMITS))[0]==400
+                    status,dynamic_update=update(ports['admin'],dynamic['key'],models=['synthetic-text'])
+                    assert status==200 and dynamic_update['key']['models']==['synthetic-text']
+                    status,dynamic_update=update(ports['admin'],dynamic_update['key'],models=None)
+                    assert status==200 and dynamic_update['key']['models'] is None
                     verify_archive(ports, db_path)
                     status, listing = call(ports['admin'], 'GET', '/api/keys')
                     assert status == 200 and 'secret' not in json.dumps(listing) and 'digest' not in json.dumps(listing)

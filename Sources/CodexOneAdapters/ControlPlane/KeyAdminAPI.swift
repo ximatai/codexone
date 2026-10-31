@@ -137,7 +137,8 @@ public struct KeyAdminAPI: Sendable {
       let secret = generateKeySecret()
       let key = try await store.createKey(
         id: UUID().uuidString, principal: dto.principal,
-        digest: keyDigest(secret), policy: dto.policy())
+        digest: keyDigest(secret),
+        policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
       return try Self.response(
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
@@ -147,7 +148,7 @@ public struct KeyAdminAPI: Sendable {
       let dto = try JSONDecoder().decode(UpdateKeyDTO.self, from: document.data())
       let key = try await store.updateKey(
         id: request.parameters.get("id") ?? "", revision: dto.revision,
-        enabled: dto.enabled, policy: dto.policy())
+        enabled: dto.enabled, policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
     routes.put(":id", "display-name") { request async throws -> Response in
@@ -234,10 +235,11 @@ public struct KeyAdminAPI: Sendable {
       "displayName": key.displayName.map { .string($0) } ?? .null,
       "id": .string(key.id), "principal": .string(key.principal),
       "revision": .number(Decimal(key.revision)),
-      "enabled": .bool(key.enabled), "models": .array(key.policy.models.map { .string($0) }),
+      "enabled": .bool(key.enabled),
+      "models": key.policy.models.map { .array($0.map { .string($0) }) } ?? .null,
       "visionInput": .bool(key.policy.visionInput),
       "imageGeneration": .bool(key.policy.imageGeneration),
-      "imageModels": .array(key.policy.imageModels.map { .string($0) }),
+      "imageModels": key.policy.imageModels.map { .array($0.map { .string($0) }) } ?? .null,
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
         "requests": key.policy.limits.requests.map { .number(Decimal($0)) } ?? .null,
@@ -259,32 +261,11 @@ public struct KeyAdminAPI: Sendable {
   }
 }
 
-private struct KeyLimitsDTO: Decodable {
-  let requests: Int64?, active: Int64?, unresolved: Int64?, budgetMicros: Int64?,
-    unresolvedMicros: Int64?
-  var value: ExecutionLimits {
-    .init(
-      requests: requests, active: active, unresolved: unresolved,
-      budgetMicros: budgetMicros, unresolvedMicros: unresolvedMicros)
-  }
-}
 private struct CreateKeyDTO: Decodable {
-  let principal: String, models: [String], limits: KeyLimitsDTO
-  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
-  func policy() throws -> KeyPolicy {
-    try .init(
-      models: models, limits: limits.value, visionInput: visionInput ?? false,
-      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
-  }
+  let principal: String
 }
 private struct UpdateKeyDTO: Decodable {
-  let revision: Int64, enabled: Bool, models: [String], limits: KeyLimitsDTO
-  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
-  func policy() throws -> KeyPolicy {
-    try .init(
-      models: models, limits: limits.value, visionInput: visionInput ?? false,
-      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
-  }
+  let revision: Int64, enabled: Bool
 }
 private struct AdminSessionRenewalKey: StorageKey {
   typealias Value = AdminSessions.Created

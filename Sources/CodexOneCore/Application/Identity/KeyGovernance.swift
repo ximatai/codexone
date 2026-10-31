@@ -1,21 +1,22 @@
 import Foundation
 
 public struct KeyPolicy: Sendable, Equatable, Codable {
-  public let models: [String]
+  public let models: [String]?
   public let limits: ExecutionLimits
   public let visionInput: Bool
   public let imageGeneration: Bool
-  public let imageModels: [String]
+  public let imageModels: [String]?
   public init(
-    models: [String], limits: ExecutionLimits, visionInput: Bool = false,
-    imageGeneration: Bool = false, imageModels: [String] = []
+    models: [String]?, limits: ExecutionLimits, visionInput: Bool = false,
+    imageGeneration: Bool = false, imageModels: [String]? = []
   ) throws {
-    guard !models.isEmpty || imageGeneration, models.count <= 32,
-      Set(models).count == models.count,
-      imageModels.count <= 16, Set(imageModels).count == imageModels.count,
-      !imageGeneration || !imageModels.isEmpty,
-      imageModels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }),
-      models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }),
+    guard models == nil || !models!.isEmpty || imageGeneration,
+      models.map({ $0.count <= 32 && Set($0).count == $0.count }) ?? true,
+      imageModels.map({ $0.count <= 16 && Set($0).count == $0.count }) ?? true,
+      !imageGeneration || imageModels == nil || !imageModels!.isEmpty,
+      (imageModels ?? []).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }
+      ),
+      (models ?? []).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }),
       [
         limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
         limits.unresolvedMicros,
@@ -39,25 +40,42 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
   public init(from decoder: any Decoder) throws {
     let fields = try decoder.container(keyedBy: CodingKeys.self)
     try self.init(
-      models: fields.decode([String].self, forKey: .models),
+      models: fields.decode([String]?.self, forKey: .models),
       limits: fields.decode(ExecutionLimits.self, forKey: .limits),
       visionInput: fields.decodeIfPresent(Bool.self, forKey: .visionInput) ?? false,
       imageGeneration: fields.decodeIfPresent(Bool.self, forKey: .imageGeneration) ?? false,
-      imageModels: fields.decodeIfPresent([String].self, forKey: .imageModels) ?? [])
+      imageModels: fields.contains(.imageModels)
+        ? fields.decode([String]?.self, forKey: .imageModels) : [])
   }
-  public var authorizedModels: Set<String> {
-    Set(models).union(imageGeneration ? imageModels : [])
+  public func encode(to encoder: any Encoder) throws {
+    var fields = encoder.container(keyedBy: CodingKeys.self)
+    try fields.encode(models, forKey: .models)
+    try fields.encode(limits, forKey: .limits)
+    try fields.encode(visionInput, forKey: .visionInput)
+    try fields.encode(imageGeneration, forKey: .imageGeneration)
+    try fields.encode(imageModels, forKey: .imageModels)
+  }
+  public func allowsConversationModel(_ model: String) -> Bool {
+    models?.contains(model) ?? true
+  }
+  public func allowsImageModel(_ model: String) -> Bool {
+    imageGeneration && (imageModels?.contains(model) ?? true)
+  }
+  public func allowsConfiguredModel(_ model: String) -> Bool {
+    allowsConversationModel(model) || allowsImageModel(model)
   }
   public func allows(model: String, requirements: ExecutionRequirements) -> Bool {
     guard (try? requirements.validate()) != nil else { return false }
     switch requirements.route {
     case .conversation:
-      guard models.contains(model), !requirements.visionInput || visionInput else { return false }
+      guard allowsConversationModel(model), !requirements.visionInput || visionInput else {
+        return false
+      }
     case .images:
       guard requirements.imageModel == model else { return false }
     }
     if let image = requirements.imageModel {
-      return imageGeneration && imageModels.contains(image)
+      return allowsImageModel(image)
     }
     return true
   }
