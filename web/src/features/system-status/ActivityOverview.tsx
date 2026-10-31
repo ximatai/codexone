@@ -151,7 +151,13 @@ export function ActivityOverview({
           KPI 统计口径 ⓘ
         </Text>
       </Tooltip>
-      <OverviewStats buckets={daily.data ?? []} loading={daily.isPending} />
+      {daily.isError ? (
+        <ErrorState retry={() => void daily.refetch()}>
+          运营指标读取失败，请重试。
+        </ErrorState>
+      ) : (
+        <OverviewStats buckets={daily.data ?? []} loading={daily.isPending} />
+      )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
           <Paper withBorder p="md">
@@ -168,6 +174,11 @@ export function ActivityOverview({
               rowKey={(row) => row.id}
               retry={() => void flight.refetch()}
               loading={flight.isPending}
+              error={
+                flight.isError
+                  ? `进行中请求读取失败。${flight.dataUpdatedAt ? `上次成功读取：${localTime(flight.dataUpdatedAt / 1000)}` : "请重试。"}`
+                  : undefined
+              }
               empty="当前没有进行中的请求。"
               columns={[
                 {
@@ -237,6 +248,11 @@ export function ActivityOverview({
               rowKey={(row) => row.id}
               retry={() => void recent.refetch()}
               loading={recent.isPending}
+              error={
+                recent.isError
+                  ? `最近请求读取失败。${recent.dataUpdatedAt ? `上次成功读取：${localTime(recent.dataUpdatedAt / 1000)}` : "请重试。"}`
+                  : undefined
+              }
               empty="暂无已结束的请求。"
               columns={[
                 {
