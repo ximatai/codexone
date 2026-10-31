@@ -20,6 +20,11 @@ const KeyManagement = lazy(() =>
     default: module.KeyManagement,
   })),
 );
+const AdminOverview = lazy(() =>
+  import("./features/system-status/AdminOverview").then((module) => ({
+    default: module.AdminOverview,
+  })),
+);
 import { SystemOverview } from "./features/system-status/SystemOverview";
 const UsagePage = lazy(() =>
   import("./features/usage/UsagePage").then((module) => ({
@@ -91,7 +96,15 @@ function Workspace() {
               fallback={<p role="status">正在打开页面…</p>}
             >
               <Routes>
-                <Route path="/" element={<SystemOverview />} />
+                <Route
+                  path="/"
+                  element={
+                    <>
+                      <AdminOverview />
+                      <SystemOverview />
+                    </>
+                  }
+                />
                 <Route path="/keys" element={<KeyManagement />} />
                 <Route path="/accounts" element={<AccountManagement />} />
                 <Route path="/usage" element={<UsagePage />} />

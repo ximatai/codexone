@@ -56,6 +56,7 @@ extension HTTPResponseExecution {
         let body = try await collectProgressBody(
           response.body, progress: progress,
           maximum: ProviderObservation.maximumTextResponseBytes)
+        context.observeUpstreamEvent()
         let document: JSONValue
         do { document = try JSONValue.decode(body) } catch {
           throw GatewayProtocolError(502, "invalid_upstream_response")

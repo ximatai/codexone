@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchKeys, formatKeyLimit } from "./api";
 
+import { money } from "../../shared/presentation";
+
 /** Current policy is separate from the historical usage snapshot. */
 export function KeyLimitsSummary({
   keyID,
@@ -24,10 +26,10 @@ export function KeyLimitsSummary({
       {key ? (
         <>
           每日请求 {formatKeyLimit(key.limits.requests)} · 同时执行{" "}
-          {formatKeyLimit(key.limits.active)} · 未结执行{" "}
+          {formatKeyLimit(key.limits.active)} · 待核对请求{" "}
           {formatKeyLimit(key.limits.unresolved)} · 每日估算阈值{" "}
-          {formatKeyLimit(key.limits.budgetMicros)} · 未结暴露阈值{" "}
-          {formatKeyLimit(key.limits.unresolvedMicros)}（微单位）
+          {money(key.limits.budgetMicros, true)} · 待核对占用阈值{" "}
+          {money(key.limits.unresolvedMicros, true)}（美元）
         </>
       ) : query.isPending ? (
         "读取中"

@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 from verify_protocol import Upstream, start, latest
 from verify_keys import ADMIN, LIMITS, shutdown
@@ -107,12 +108,17 @@ def verify(binary):
     with running_admin(binary) as f:
         port = f.ports['admin']
         assert request(port, 'GET', '/api/session')[0] == 401
+        assert request(port, 'GET', '/api/usage/keys')[0] == 401
         assert request(port, 'POST', '/api/session', {'secret': ADMIN})[0] == 403
         assert request(port, 'POST', '/api/session', {'secret': 'synthetic-wrong-admin'}, origin=f.origin)[0] == 401
         assert request(port, 'POST', '/api/session', {'secret': ADMIN}, origin=f.origin, headers={'Host': 'foreign.example'})[0] == 403
         cookie, csrf = login(f)
         assert document(request(port, 'GET', '/api/session', cookie=cookie))['csrf'] == csrf
         assert document(request(port, 'GET', '/api/keys/options', cookie=cookie))['models'] == ['synthetic-text', 'synthetic-other']
+        assert request(port, 'GET', '/api/usage/keys', cookie=cookie, headers={'Sec-Fetch-Site': 'cross-site'})[0] == 403
+        assert request(port, 'GET', '/api/usage/keys', cookie=cookie, origin='https://foreign.example')[0] == 403
+        assert request(port, 'GET', '/api/usage/keys?extra=1', cookie=cookie)[0] == 400
+        assert document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'] == []
         create = dict(principal='browser-synthetic', models=['synthetic-text'], limits=LIMITS)
         assert request(port, 'POST', '/api/keys', create, cookie=cookie, origin=f.origin)[0] == 403
         assert request(port, 'POST', '/api/keys', create, cookie=cookie, origin='https://foreign.example', csrf=csrf)[0] == 403
@@ -127,6 +133,13 @@ def verify(binary):
         result = request(f.ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'synthetic', 'stream': False}, headers={'Authorization': 'Bearer ' + secret})
         assert result[0] == 200
         latest(f.root / 'state/core.sqlite', 'settled')
+        summary = document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'][0]
+        assert summary['principal'] == 'browser-synthetic' and summary['admitted'] == 1
+        options = document(request(port, 'GET', '/api/usage/options', cookie=cookie))
+        assert options['keyOptions'] == [{'id': key['id'], 'principal': 'browser-synthetic'}]
+        summary_start = int(time.time()) // 86400 * 86400
+        row = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]
+        assert row['principal'] == 'browser-synthetic' and row['totalMilliseconds'] >= row['firstEventMilliseconds'] >= 0
         # Disabled credentials can be rotated without briefly enabling the old secret.
         update = dict(revision=key['revision'], enabled=False, models=key['models'], limits=key['limits'])
         disabled = document(request(port, 'PUT', '/api/keys/' + key['id'], update, cookie=cookie, origin=f.origin, csrf=csrf))['key']

@@ -8,8 +8,12 @@ export interface UsageFilters {
   failure: string;
   state: string;
   failedOnly: boolean;
+  range?: "24h";
+  window?: { start: number; end: number };
 }
 export interface Metrics {
+  imageInputTextTokens?: string | null;
+  imageInputImageTokens?: string | null;
   imageInputTokens?: string | null;
   imageOutputTokens?: string | null;
   inputTokens: string | null;
@@ -51,6 +55,9 @@ export interface UsageReport {
     kind: "admitted" | "rejected";
     id: string;
     atUnixSeconds: number;
+    principal?: string | null;
+    firstEventMilliseconds?: number | null;
+    totalMilliseconds?: number | null;
     keyID: string;
     model: string | null;
     mode: string;
@@ -66,6 +73,7 @@ export interface UsageReport {
 }
 export interface UsageOptions {
   keys: string[];
+  keyOptions?: { id: string; principal: string | null }[];
   models: string[];
   failures: string[];
 }
@@ -116,6 +124,8 @@ function requiredMetric(value: unknown): string {
 function metrics(raw: unknown): Metrics {
   const value = object(raw);
   return {
+    imageInputTextTokens: metric(value.imageInputTextTokens ?? null),
+    imageInputImageTokens: metric(value.imageInputImageTokens ?? null),
     imageInputTokens: metric(value.imageInputTokens ?? null),
     imageOutputTokens: metric(value.imageOutputTokens ?? null),
     inputTokens: metric(value.inputTokens),
@@ -207,6 +217,13 @@ export function parseUsage(raw: unknown): UsageReport {
       kind,
       id: text(item.id),
       atUnixSeconds: at,
+      principal: nullableText(item.principal ?? null, 64),
+      firstEventMilliseconds:
+        item.firstEventMilliseconds == null
+          ? null
+          : integer(item.firstEventMilliseconds),
+      totalMilliseconds:
+        item.totalMilliseconds == null ? null : integer(item.totalMilliseconds),
       keyID: text(item.keyID),
       model: nullableText(item.model, 128),
       mode: oneOf(item.mode, ["generation", "warmup", "compact"]),
@@ -264,8 +281,13 @@ export function usageParameters(
       throw new ManagementError(400, "invalid_range");
     return epoch / 1000;
   }
-  const start = day(filters.start),
-    end = day(filters.end) + 86400;
+  const currentHour = Math.floor(Date.now() / 3600000) * 3600;
+  const start =
+      filters.window?.start ??
+      (filters.range === "24h" ? currentHour - 86400 : day(filters.start)),
+    end =
+      filters.window?.end ??
+      (filters.range === "24h" ? currentHour : day(filters.end) + 86400);
   if (end <= start || end - start > 31 * 86400)
     throw new ManagementError(400, "invalid_range");
   const parameters = new URLSearchParams({
@@ -300,7 +322,62 @@ export async function fetchUsageOptions(
   }
   return {
     keys: list(value.keys, 256, 256),
+    keyOptions:
+      value.keyOptions === undefined
+        ? undefined
+        : (() => {
+            if (
+              !Array.isArray(value.keyOptions) ||
+              value.keyOptions.length > 256
+            )
+              throw invalid();
+            return value.keyOptions.map((raw) => {
+              const item = object(raw);
+              return {
+                id: text(item.id),
+                principal: nullableText(item.principal, 64),
+              };
+            });
+          })(),
     models: list(value.models, 48, 128),
     failures: list(value.failures, 32, 64),
   };
+}
+
+export interface KeyUsage {
+  keyID: string;
+  principal: string | null;
+  admitted: number;
+  failed: number;
+  pending: number;
+  estimatedMicros: string | null;
+  lastUsedAtUnixSeconds: number | null;
+}
+export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsage[]> {
+  const value = object(await request("/api/usage/keys", { signal }));
+  const start = integer(value.startUnixSeconds),
+    end = integer(value.endUnixSeconds);
+  if (
+    value.timezone !== "UTC" ||
+    start % 86400 ||
+    end - start !== 86400 ||
+    !Array.isArray(value.keys) ||
+    value.keys.length > 256
+  )
+    throw invalid();
+  return value.keys.map((raw) => {
+    const item = object(raw);
+    return {
+      keyID: text(item.keyID),
+      principal: nullableText(item.principal, 64),
+      admitted: integer(item.admitted),
+      failed: integer(item.failed),
+      pending: integer(item.pending),
+      estimatedMicros: metric(item.estimatedMicros),
+      lastUsedAtUnixSeconds:
+        item.lastUsedAtUnixSeconds === null
+          ? null
+          : integer(item.lastUsedAtUnixSeconds),
+    };
+  });
 }

@@ -3,39 +3,33 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ManagementError } from "../../shared/management";
 import * as api from "./api";
 import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
-export const failures: Record<string, string> = {
-  authentication_rejected: "上游认证拒绝",
-  rate_limited: "上游限流",
-  upstream_unavailable: "上游暂不可用",
-  upstream_rejected: "上游拒绝请求",
-  invalid_upstream_response: "上游响应无效",
-  deadline_exceeded: "执行期限到达",
-  client_cancelled: "客户端断开/取消",
-  key_rejected: "Key 不可用",
-  model_not_allowed: "模型未授权",
-  object_unavailable: "对象未知或不属于当前主体",
-  object_ambiguous: "对象归属不唯一",
-  local_capacity: "本地限额或容量",
-  account_unavailable: "账号暂不可用",
-  storage_unavailable: "账本存储不可用",
-  invalid_request: "请求无效",
-  indeterminate: "执行结果未明",
-};
-const modes: Record<string, string> = {
-  generation: "生成",
-  warmup: "预热",
-  compact: "压缩",
-};
-const states: Record<string, string> = {
-  intent: "在途",
-  unknown: "用量未结",
-  settled: "用量已结",
-};
-const outcomes: Record<string, string> = {
-  succeeded: "成功返回",
-  failed: "失败",
-  cancelled: "取消",
-};
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Drawer,
+  Group,
+  NativeSelect,
+  Paper,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import {
+  failures,
+  modes,
+  states,
+  outcomes,
+  terms,
+  metricLabels,
+  money,
+  localTime,
+  timeTitle,
+  estimateNote,
+} from "../../shared/presentation";
+export { failures } from "../../shared/presentation";
 function number(value: string | null | undefined, lower = false) {
   return value == null
     ? "不可用"
@@ -87,7 +81,7 @@ function Trend({ report }: { report: api.UsageReport }) {
           <g key={at}>
             <title>
               {utc(at)} · 已准入 {item.admitted} · 已记录拒绝 {item.rejected} ·
-              用量未结 {item.unresolved}
+              待核对 {item.unresolved}
             </title>
             <rect
               x={index * 20}
@@ -127,6 +121,17 @@ export function UsageOverview({
   onApplied?: (filters: api.UsageFilters) => void;
 }) {
   const queryClient = useQueryClient();
+  const queryWindow = useRef<api.UsageFilters["window"]>(undefined);
+  const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
+    null,
+  );
+  const [copied, setCopied] = useState("");
+  const overlay = !!detail && !paused;
+  useEffect(() => {
+    if (!overlay) return;
+    document.body.classList.add("management-overlay-open");
+    return () => document.body.classList.remove("management-overlay-open");
+  }, [overlay]);
   const [draft, setDraft] = useState<api.UsageFilters>(
     () => initialFilters ?? { ...api.defaults(), key: selection?.keyID ?? "" },
   );
@@ -168,7 +173,20 @@ export function UsageOverview({
     setBusy(true);
     setError("");
     try {
-      api.usageParameters(filters, cursors[index]);
+      const parameters = api.usageParameters(
+        {
+          ...filters,
+          window: cursors.length > 1 ? queryWindow.current : undefined,
+        },
+        cursors[index],
+      );
+      const requestFilters = {
+        ...filters,
+        window: {
+          start: Number(parameters.get("start")),
+          end: Number(parameters.get("end")),
+        },
+      };
       if (!optionsLoaded.current) {
         const next = await api.fetchUsageOptions(abort.signal);
         if (version !== epoch.current || abort.signal.aborted) return;
@@ -176,10 +194,10 @@ export function UsageOverview({
         optionsLoaded.current = true;
       }
       const next = await queryClient.fetchQuery({
-        queryKey: ["usage", filters, cursors[index]],
+        queryKey: ["usage", requestFilters, cursors[index]],
         queryFn: ({ signal }) =>
           api.fetchUsage(
-            filters,
+            requestFilters,
             cursors[index],
             AbortSignal.any([signal, abort.signal]),
           ),
@@ -188,6 +206,7 @@ export function UsageOverview({
         gcTime: 0,
       });
       if (version !== epoch.current || abort.signal.aborted) return;
+      queryWindow.current = requestFilters.window;
       setReport(next);
       setPolicyRead((value) => value + 1);
       setApplied({ ...filters });
@@ -199,6 +218,8 @@ export function UsageOverview({
       if (version !== epoch.current || abort.signal.aborted) return;
       if (cause instanceof ManagementError && cause.status === 401) {
         setReport(null);
+        setDetail(null);
+        setCopied("");
         setOptions({ keys: [], models: [], failures: [] });
         unauthorized.current();
       } else {
@@ -252,7 +273,11 @@ export function UsageOverview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, paused, filterIdentity]);
   function update(name: keyof api.UsageFilters, value: string | boolean) {
-    setDraft((previous) => ({ ...previous, [name]: value }));
+    setDraft((previous) => ({
+      ...previous,
+      [name]: value,
+      ...(["start", "end"].includes(name) ? { range: undefined } : {}),
+    }));
   }
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -267,14 +292,22 @@ export function UsageOverview({
   const incomplete =
     !!report && report.totals.partial + report.totals.unavailable > 0;
   return (
-    <section className="panel usage-panel" aria-labelledby="usage-heading">
-      <h2
+    <Paper
+      withBorder
+      p="lg"
+      radius="md"
+      className="usage-workspace"
+      component="section"
+      aria-labelledby="usage-heading"
+    >
+      <Title
+        order={2}
         id="usage-heading"
         ref={heading}
         className={initialFilters ? "visually-hidden" : undefined}
       >
         用量与请求诊断
-      </h2>
+      </Title>
       <details className="usage-method">
         <summary>统计口径</summary>
         <p className="field-hint">
@@ -282,127 +315,153 @@ export function UsageOverview({
           历史；迟到用量会更新原时段。每次查询为新的账本快照。
         </p>
       </details>
-      <form className="usage-filters" onSubmit={submit}>
-        <label>
-          起始日（UTC）
-          <input
+      <Text size="xs" c="dimmed" mb="xs">
+        最近 24 小时按已完成 UTC 小时查询；日期筛选包含起止日。
+      </Text>
+      <Group mb="md">
+        {[1, 7, 30].map((days) => (
+          <Button
+            key={days}
+            variant="light"
+            disabled={busy}
+            onClick={() => {
+              const now = new Date();
+              const next: api.UsageFilters = {
+                ...draft,
+                range: days === 1 ? "24h" : undefined,
+                start: new Date(now.getTime() - (days - 1) * 86400000)
+                  .toISOString()
+                  .slice(0, 10),
+                end: now.toISOString().slice(0, 10),
+              };
+              setDraft(next);
+              void load(next);
+            }}
+          >
+            {days === 1 ? "最近 24 小时" : `最近 ${days} 天`}
+          </Button>
+        ))}
+      </Group>
+      <form onSubmit={submit}>
+        <div className="responsive-grid responsive-grid-4 grid-gap-bottom">
+          <TextInput
+            label="起始日（UTC）"
             type="date"
             value={draft.start}
             disabled={busy}
             required
-            onChange={(event) => update("start", event.target.value)}
+            onChange={(e) => update("start", e.currentTarget.value)}
           />
-        </label>
-        <label>
-          结束日（UTC）
-          <input
+          <TextInput
+            label="结束日（UTC）"
             type="date"
             value={draft.end}
             disabled={busy}
             required
-            onChange={(event) => update("end", event.target.value)}
+            onChange={(e) => update("end", e.currentTarget.value)}
           />
-        </label>
-        <label>
-          Key 标识
-          <input
-            list="usage-key-options"
+          <NativeSelect
+            label="Key 主体"
             value={draft.key}
-            maxLength={256}
-            placeholder="全部 Key"
             disabled={busy}
-            onChange={(event) => update("key", event.target.value)}
+            onChange={(e) => update("key", e.currentTarget.value)}
+            data={[
+              { value: "", label: "全部 Key" },
+              ...[
+                ...new Set([
+                  ...options.keys,
+                  ...(draft.key ? [draft.key] : []),
+                ]),
+              ].map((id) => ({
+                value: id,
+                label:
+                  options.keyOptions?.find((k) => k.id === id)?.principal ??
+                  `主体未记录 · ${id}`,
+              })),
+            ]}
           />
-          <datalist id="usage-key-options">
-            {options.keys.map((key) => (
-              <option key={key} value={key} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          模型
-          <input
+          <TextInput
+            label="模型"
             list="usage-model-options"
             value={draft.model}
             maxLength={128}
             placeholder="全部模型，可输入历史模型"
             disabled={busy}
-            onChange={(event) => update("model", event.target.value)}
+            onChange={(e) => update("model", e.currentTarget.value)}
           />
           <datalist id="usage-model-options">
             {options.models.map((model) => (
               <option key={model} value={model} />
             ))}
           </datalist>
-        </label>
-        <label>
-          执行模式
-          <select
+          <NativeSelect
+            label="执行模式"
             value={draft.mode}
             disabled={busy}
-            onChange={(event) => update("mode", event.target.value)}
-          >
-            <option value="">全部模式</option>
-            {Object.entries(modes).map(([id, title]) => (
-              <option key={id} value={id}>
-                {title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          错误分类
-          <select
+            onChange={(e) => update("mode", e.currentTarget.value)}
+            data={[
+              { value: "", label: "全部模式" },
+              ...Object.entries(modes).map(([value, label]) => ({
+                value,
+                label,
+              })),
+            ]}
+          />
+          <NativeSelect
+            label="错误分类"
             value={draft.failure}
             disabled={busy}
-            onChange={(event) => update("failure", event.target.value)}
-          >
-            <option value="">全部分类</option>
-            {options.failures.map((code) => (
-              <option key={code} value={code}>
-                {failures[code] ?? "其他异常"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          用量状态
-          <select
+            onChange={(e) => update("failure", e.currentTarget.value)}
+            data={[
+              { value: "", label: "全部分类" },
+              ...options.failures.map((value) => ({
+                value,
+                label: failures[value] ?? "其他异常",
+              })),
+            ]}
+          />
+          <NativeSelect
+            label="用量状态"
             value={draft.state}
             disabled={busy}
-            onChange={(event) => update("state", event.target.value)}
-          >
-            <option value="">全部状态</option>
-            {Object.entries(states).map(([id, title]) => (
-              <option key={id} value={id}>
-                {title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="usage-submit">
-          <label>
-            <input
-              type="checkbox"
+            onChange={(e) => update("state", e.currentTarget.value)}
+            data={[
+              { value: "", label: "全部状态" },
+              ...Object.entries(states).map(([value, label]) => ({
+                value,
+                label,
+              })),
+            ]}
+          />
+          <Group>
+            <Checkbox
+              label="仅异常结果"
               checked={draft.failedOnly}
               disabled={busy}
-              onChange={(event) => update("failedOnly", event.target.checked)}
+              onChange={(e) => update("failedOnly", e.currentTarget.checked)}
             />
-            仅异常结果
-          </label>
-          <button disabled={busy}>{busy ? "正在查询…" : "查询用量"}</button>
+            <Button type="submit" disabled={busy}>
+              {busy ? "正在查询…" : "查询用量"}
+            </Button>
+          </Group>
         </div>
       </form>
       {error && (
-        <p role="alert" className="error-banner">
+        <Alert role="alert" color="red">
           {error}
-        </p>
+        </Alert>
       )}
       {report && (
         <div aria-busy={busy} className={stale ? "usage-stale" : undefined}>
           <p className="field-hint">
-            当前结果：{applied?.start} 至 {applied?.end}（UTC） ·{" "}
-            {applied?.key || "全部 Key"}
+            当前结果：
+            {applied?.range === "24h"
+              ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
+              : `${applied?.start} 至 ${applied?.end}（UTC）`}{" "}
+            ·{" "}
+            {options.keyOptions?.find((k) => k.id === applied?.key)
+              ?.principal ??
+              (applied?.key || "全部 Key")}
             {stale ? " · 上次成功快照" : ""}
           </p>
           {(stale ||
@@ -423,7 +482,7 @@ export function UsageOverview({
           )}
           <div className="usage-summary">
             <div>
-              <span>已准入执行</span>
+              <span>请求</span>
               <strong>{report.totals.admitted.toLocaleString()}</strong>
               <small>生成 / 预热 / 压缩</small>
             </div>
@@ -435,15 +494,22 @@ export function UsageOverview({
               <small>未启动执行</small>
             </div>
             <div>
-              <span>区间用量未结</span>
+              <span>区间待核对</span>
               <strong>
                 {(
                   report.totals.inFlight + report.totals.unknown
                 ).toLocaleString()}
               </strong>
               <small>
-                {report.totals.inFlight} 在途 · {report.totals.unknown} unknown
+                {report.totals.inFlight} 在途 · {report.totals.unknown} 待核对
               </small>
+            </div>
+            <div>
+              <span>失败 / 取消</span>
+              <strong>
+                {report.totals.failed} / {report.totals.cancelled}
+              </strong>
+              <small>结果与用量完整度独立</small>
             </div>
             <div>
               <span>用量完整度</span>
@@ -456,22 +522,16 @@ export function UsageOverview({
           </div>
           <div className="usage-metrics">
             {(
-              [
-                ["inputTokens", "输入 token"],
-                ["outputTokens", "输出 token"],
-                ["cachedTokens", "缓存 token"],
-                ["images", "图片"],
-                ["imageInputTokens", "图片工具输入 token"],
-                ["imageOutputTokens", "图片工具输出 token"],
-                ["estimatedMicros", "估算费用（微单位）"],
-              ] as const
+              Object.entries(metricLabels) as [keyof api.Metrics, string][]
             ).map(([field, title]) => (
               <div key={field}>
                 <span>{title}</span>
                 <strong>
                   {report.totals.admitted === 0
                     ? "—"
-                    : number(report.totals.metrics[field], incomplete)}
+                    : field === "estimatedMicros"
+                      ? money(report.totals.metrics[field])
+                      : number(report.totals.metrics[field], incomplete)}
                 </strong>
               </div>
             ))}
@@ -479,7 +539,7 @@ export function UsageOverview({
           <p className="field-hint">
             {incomplete
               ? "含不完整/缺失证据：数值只表示已观测下界，未知部分无法量化，不能当零。"
-              : "费用按部署价格估算，不是订阅余额、实际账单或绝对消耗上界。"}{" "}
+              : estimateNote}{" "}
             图片工具 token 与宿主响应 token
             分别统计，不相加；缺失工具证据显示不可用。
           </p>
@@ -488,18 +548,25 @@ export function UsageOverview({
             keyID={applied?.key ?? ""}
             refresh={policyRead}
           />
-          <p className="governance-note">
-            {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}
-            全时间治理暴露（不受其他筛选影响）：
+          <Text
+            className="governance-note"
+            size="sm"
+            my="md"
+            title="缺少完整用量的请求仍保留占用；更改时间范围不会释放。占用不能代表实际费用上界。"
+          >
+            {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}{" "}
+            {terms.exposure}（不受其他筛选影响）：
             {report.lifetimeGovernance.inFlight} 在途、
-            {report.lifetimeGovernance.unknown} unknown，保留{" "}
-            {number(report.lifetimeGovernance.exposureMicros)}{" "}
-            微单位。运营预留不是未知实际费用上界，时间区间改变不会释放它。
-          </p>
+            {report.lifetimeGovernance.unknown} {terms.pending}，
+            {money(report.lifetimeGovernance.exposureMicros)} ⓘ
+            <br />
+            区间{terms.exposure}：
+            {money(report.totals.unresolvedExposureMicros)}
+          </Text>
           {report.totals.historicalWithoutTime > 0 && (
             <p className="warning-banner">
               另有 {report.totals.historicalWithoutTime}{" "}
-              条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用全时间治理暴露。
+              条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
             </p>
           )}
           <Trend report={report} />
@@ -513,7 +580,7 @@ export function UsageOverview({
             <p className="empty-state">此筛选下没有已记录请求。</p>
           ) : (
             <div className="table-scroll">
-              <table className="usage-table">
+              <Table className="usage-table" highlightOnHover>
                 <thead>
                   <tr>
                     <th>准入/记录时间</th>
@@ -521,13 +588,16 @@ export function UsageOverview({
                     <th>归属 / 模式</th>
                     <th>请求结果</th>
                     <th>用量</th>
+                    <th>详情</th>
                   </tr>
                 </thead>
                 <tbody>
                   {report.rows.map((row) => (
                     <tr key={row.kind + row.id}>
-                      <td>
-                        {utc(row.atUnixSeconds)}
+                      <td data-label="准入/记录时间">
+                        <span title={timeTitle(row.atUnixSeconds)}>
+                          {localTime(row.atUnixSeconds)}
+                        </span>
                         <small
                           className="key-id"
                           title={row.requestID ?? row.id}
@@ -535,15 +605,17 @@ export function UsageOverview({
                           {row.requestID ?? row.id}
                         </small>
                       </td>
-                      <td>
-                        {row.keyID}
+                      <td data-label="Key / 模型">
+                        <span title={row.keyID}>
+                          {row.principal ?? "主体未记录"}
+                        </span>
                         <small>{row.model ?? "模型未记录"}</small>
                       </td>
-                      <td>
+                      <td data-label="归属 / 模式">
                         {row.accountID ?? "未派发"}
                         <small>{modes[row.mode]}</small>
                       </td>
-                      <td>
+                      <td data-label="请求结果">
                         {row.kind === "rejected"
                           ? "准入前拒绝"
                           : row.outcome
@@ -558,7 +630,7 @@ export function UsageOverview({
                           {row.state ? states[row.state] : "无执行租约"}
                         </small>
                       </td>
-                      <td>
+                      <td data-label="用量">
                         {row.kind === "rejected" ? (
                           "无执行用量"
                         ) : (
@@ -580,26 +652,36 @@ export function UsageOverview({
                                 row.completeness === "partial",
                               )}
                             </small>
+                            <small>{money(row.metrics.estimatedMicros)}</small>
                             <small>
-                              估算{" "}
-                              {number(
-                                row.metrics.estimatedMicros,
-                                row.completeness === "partial",
-                              )}{" "}
-                              微单位
+                              缓存 {number(row.metrics.cachedTokens)} · 图片输入{" "}
+                              {number(row.metrics.imageInputTokens)} · 图片输出{" "}
+                              {number(row.metrics.imageOutputTokens)}
                             </small>
                           </>
                         )}
                       </td>
+                      <td data-label="详情">
+                        <Button
+                          variant="subtle"
+                          size="compact-sm"
+                          onClick={() => {
+                            setDetail(row);
+                            setCopied("");
+                          }}
+                        >
+                          查看详情
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </Table>
             </div>
           )}
           <div className="usage-pagination">
             <span>第 {page + 1} 页</span>
-            <button
+            <Button
               className="secondary"
               disabled={busy || stale || !applied || page === 0}
               onClick={() => {
@@ -607,8 +689,8 @@ export function UsageOverview({
               }}
             >
               上一页
-            </button>
-            <button
+            </Button>
+            <Button
               className="secondary"
               disabled={
                 busy ||
@@ -627,10 +709,97 @@ export function UsageOverview({
               }}
             >
               下一页
-            </button>
+            </Button>
           </div>
         </div>
       )}
-    </section>
+      <Drawer
+        lockScroll={false}
+        opened={!!detail}
+        onClose={() => {
+          setDetail(null);
+          setCopied("");
+        }}
+        title="请求详情"
+        position="right"
+        size="lg"
+        closeButtonProps={{ "aria-label": "关闭" }}
+      >
+        {detail && (
+          <Stack>
+            <Text className="wrap-anywhere">
+              请求 ID：{detail.requestID ?? detail.id}
+            </Text>
+            <Button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(
+                    detail.requestID ?? detail.id,
+                  );
+                  setCopied("已复制请求 ID");
+                } catch {
+                  setCopied("复制失败，请手动选择请求 ID");
+                }
+              }}
+            >
+              复制请求 ID
+            </Button>
+            {copied && <Text role="status">{copied}</Text>}
+            <Text title={timeTitle(detail.atUnixSeconds)}>
+              {localTime(detail.atUnixSeconds)} / {utc(detail.atUnixSeconds)}
+            </Text>
+            <Text>
+              Key：{detail.principal ?? "主体未记录"} · {detail.keyID}
+            </Text>
+            <Text>
+              账号：{detail.accountID ?? "未派发"} · 模型：
+              {detail.model ?? "未记录"} · {modes[detail.mode]}
+            </Text>
+            <Text>
+              结果：{detail.outcome ? outcomes[detail.outcome] : "未记录"} ·{" "}
+              {detail.state ? states[detail.state] : "无执行租约"}
+            </Text>
+            <Text>
+              错误：
+              {detail.failure
+                ? (failures[detail.failure] ?? "其他异常")
+                : "无已记录错误"}
+            </Text>
+            <Text>
+              首事件耗时：
+              {detail.firstEventMilliseconds == null
+                ? "不可用"
+                : `${detail.firstEventMilliseconds} ms`}{" "}
+              · 总耗时：
+              {detail.totalMilliseconds == null
+                ? "不可用"
+                : `${detail.totalMilliseconds} ms`}
+            </Text>
+            <Text size="sm">
+              耗时从准入后开始观测；历史记录或无首事件时不可用。{estimateNote}。
+            </Text>
+            <Text>
+              用量：
+              {detail.completeness === "complete"
+                ? "完整"
+                : detail.completeness === "partial"
+                  ? "部分证据，数值为下界"
+                  : "不可用"}
+            </Text>
+            {Object.entries(metricLabels).map(([key, label]) => (
+              <Text key={key}>
+                {label}：
+                {key === "estimatedMicros"
+                  ? money(detail.metrics.estimatedMicros)
+                  : number(
+                      detail.metrics[key as keyof api.Metrics],
+                      detail.completeness === "partial",
+                    )}
+              </Text>
+            ))}
+          </Stack>
+        )}
+      </Drawer>
+    </Paper>
   );
 }

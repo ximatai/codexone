@@ -35,3 +35,7 @@
 图片工具用量与宿主响应 token 分开记录和展示，不将工具 token 加入宿主 token 总数；费用按两份显式映射费率分别估算。缺少工具输入/输出用量时保持部分证据、unknown 和对应暴露，不能用图片已返回推导完整结清。图片工具指标为可空，历史缺失不补零。
 
 原生 Images 无宿主执行，usage.input_tokens/output_tokens 映射 imageInputTokens/imageOutputTokens，input_tokens_details.text_tokens/image_tokens 如有则分别记录 imageInputTextTokens/imageInputImageTokens；有效 data[].b64_json 数量记录 images。按图片模型费率估算；缺失或畸形计数为不可用，不能以零替代，缺完整输入/输出计数保持 partial/unknown。结果有效性与结算完整度独立：200 空 data/非 JSON 结果失败，仍保存可信 usage。统计中 Images 不适用的宿主 token 及完全缺计数的费用返回 null，不把内部兼容计数当观测。沿用 usage JSON 的可选指标，不修改数据库 schema 版本或回填历史。
+
+管理产品化只增加观测：`GET /api/usage/keys` 返回当前托管 Key（最多256）的 UTC 当日左闭右开窗口准入数、failed 终态数、unknown/在途待核对数、已观测估算费用及全时间最近准入时间。缺失费用/时间为 null；取消单独保留在用量报告，不计入 failed。摘要与 options/明细共用有界只读 reader、单在途及扫描/取消预算。轮换不清零。
+
+用量 options 保留 `keys` ID 数组，新增 `keyOptions: [{id, principal}]`；明细新增可空 `principal`，按当前托管 Key 元数据连接，删除或未知 Key 为 null。新增可空 `firstEventMilliseconds`、`totalMilliseconds`：从准入后执行上下文开始，以单调时钟观测首个上游事件及执行退出；无首事件为 null。仅新执行在既有 outcome JSON 存储，历史缺失为 null，不改 schema、不参与用量证据比较、计费或治理。首事件指解析出的流事件/WS消息，非流式指收到完整响应；不是下游首 token 时间。

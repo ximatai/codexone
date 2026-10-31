@@ -9,14 +9,9 @@ import {
   type QuotaWindow,
   type QuotaLimit,
 } from "./observation-api";
-export function utc(value: number | null): string {
-  return value === null
-    ? "未提供"
-    : new Date(value * 1000)
-        .toISOString()
-        .replace("T", " ")
-        .replace(".000Z", " UTC");
-}
+import { timeTitle } from "../../shared/presentation";
+import { QuotaWindowBar } from "./QuotaWindowBar";
+export const utc = timeTitle;
 function duration(value: number | null): string {
   if (value === null) return "时长未提供";
   if (value % 86400 === 0) return `${value / 86400} 天`;
@@ -41,16 +36,9 @@ function Window({
           <p>
             {value.usedPercent === null
               ? "用量比例未提供"
-              : `已用 ${value.usedPercent}% · 剩余 ${Math.max(0, 100 - value.usedPercent)}%`}
+              : `已用 ${value.usedPercent}%`}
           </p>
-          {value.usedPercent !== null && (
-            <progress
-              aria-label={`${title}已用比例`}
-              max={100}
-              value={Math.min(100, value.usedPercent)}
-            />
-          )}
-          <small>重置：{utc(value.resetsAtUnixSeconds)}</small>
+          <QuotaWindowBar title={title} value={value} />
         </>
       )}
     </div>

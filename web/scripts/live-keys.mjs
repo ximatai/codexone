@@ -128,6 +128,7 @@ try {
   stage = "disabled rotation and limits";
   await row.getByRole("button", { name: /更多操作/ }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  await page.getByRole("button", { name: "确认禁用", exact: true }).click();
   await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   assert((await data("/v1/models", firstSecret)).status === 401);
   await row.getByRole("button", { name: /更多操作/ }).click();
@@ -161,6 +162,7 @@ try {
   await page.route("**/api/keys/" + key.id, async route => { await route.fetch(); dropped++; await route.abort(); }, { times: 1 });
   await row.getByRole("button", { name: /更多操作/ }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  await page.getByRole("button", { name: "确认禁用", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("操作结果尚未确认");
   await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeDisabled();
   const authoritative = (await admin("/api/keys")).keys[0];

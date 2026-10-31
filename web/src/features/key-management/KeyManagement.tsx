@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Badge,
@@ -8,6 +8,7 @@ import {
   Menu,
   Modal,
   Paper,
+  NativeSelect,
   Stack,
   Table,
   Text,
@@ -18,10 +19,57 @@ import { Link } from "react-router";
 import * as api from "./api";
 import { KeyEditor } from "./KeyEditor";
 import { useKeys } from "./useKeys";
+import { useQuery } from "@tanstack/react-query";
+import { useManagementSession } from "../../shared/session";
+import { ManagementError } from "../../shared/management";
+import { fetchKeyUsage } from "../usage/api";
+import {
+  money,
+  localTime,
+  timeTitle,
+  estimateNote,
+} from "../../shared/presentation";
 export function KeyManagement() {
   const state = useKeys();
+  const owner = useManagementSession();
+  const [refresh, setRefresh] = useState(0);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [disabling, setDisabling] = useState<api.ManagedKey | null>(null);
+  const usage = useQuery({
+    queryKey: ["key-usage", state.keys, refresh],
+    queryFn: ({ signal }) => fetchKeyUsage(signal),
+    enabled: !state.checking && !state.busy && !state.loading,
+    retry: false,
+  });
+  useEffect(() => {
+    if (usage.error instanceof ManagementError && usage.error.status === 401)
+      owner.invalidate();
+  }, [usage.error, owner]);
+  const keys = state.keys
+    .filter(
+      (key) =>
+        key.principal.toLowerCase().includes(search.toLowerCase()) &&
+        (!status || key.enabled === (status === "enabled")),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.enabled) - Number(a.enabled) ||
+        a.principal.localeCompare(b.principal),
+    );
+  function toggle(key: api.ManagedKey) {
+    return state.mutate(
+      (csrf, signal) =>
+        api.updateKey(key, !key.enabled, key.models, key.limits, csrf, signal),
+      key.enabled ? "密钥已禁用。" : "密钥已启用。",
+    );
+  }
   const overlay =
-    state.creating || !!state.editing || !!state.rotating || !!state.created;
+    state.creating ||
+    !!state.editing ||
+    !!state.rotating ||
+    !!state.created ||
+    !!disabling;
   useEffect(() => {
     if (!overlay) return;
     document.body.classList.add("management-overlay-open");
@@ -35,7 +83,10 @@ export function KeyManagement() {
           <Button
             variant="default"
             disabled={state.busy || state.loading}
-            onClick={state.reload}
+            onClick={() => {
+              state.reload();
+              setRefresh((value) => value + 1);
+            }}
           >
             {state.loading ? "正在刷新…" : "刷新列表"}
           </Button>
@@ -47,6 +98,27 @@ export function KeyManagement() {
           </Button>
         </Group>
       </Group>
+      <Group mb="md">
+        <TextInput
+          label="搜索主体名"
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+        />
+        <NativeSelect
+          label="密钥状态"
+          value={status}
+          onChange={(e) => setStatus(e.currentTarget.value)}
+          data={[
+            { value: "", label: "全部状态" },
+            { value: "enabled", label: "启用" },
+            { value: "disabled", label: "禁用" },
+          ]}
+        />
+      </Group>
+      <Text size="xs" c="dimmed" mb="md">
+        今日统计按 UTC · {estimateNote}。
+        {usage.isError ? "今日摘要读取失败，请刷新列表重试。" : ""}
+      </Text>
       {state.error && (
         <Alert role="alert" color="red" mb="md">
           {state.error}
@@ -63,7 +135,7 @@ export function KeyManagement() {
         <Alert>管理入口尚未启用</Alert>
       ) : (
         <Paper withBorder radius="md" p="md">
-          <Table.ScrollContainer minWidth={750}>
+          <div className="responsive-table">
             <Table verticalSpacing="md" highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -71,13 +143,14 @@ export function KeyManagement() {
                   <Table.Th>权限</Table.Th>
                   <Table.Th>状态</Table.Th>
                   <Table.Th>本地限制</Table.Th>
+                  <Table.Th>今日 / 最近使用</Table.Th>
                   <Table.Th>操作</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {state.keys.map((key) => (
+                {keys.map((key) => (
                   <Table.Tr key={key.id}>
-                    <Table.Td>
+                    <Table.Td data-label="主体 / 标识">
                       <Text fw={600}>{key.principal}</Text>
                       <Text
                         size="xs"
@@ -87,8 +160,15 @@ export function KeyManagement() {
                       >
                         {key.id}
                       </Text>
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        title={timeTitle(key.createdAtUnixSeconds)}
+                      >
+                        创建：{localTime(key.createdAtUnixSeconds)}
+                      </Text>
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td data-label="权限">
                       <Group gap={5}>
                         {key.models.map((model) => (
                           <Badge
@@ -107,7 +187,7 @@ export function KeyManagement() {
                         )}
                       </Group>
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td data-label="状态">
                       <Badge
                         color={key.enabled ? "green" : "gray"}
                         variant="light"
@@ -115,16 +195,46 @@ export function KeyManagement() {
                         {key.enabled ? "启用" : "禁用"}
                       </Badge>
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td data-label="本地限制">
                       <Text size="sm">
                         {api.formatKeyLimit(key.limits.requests)} / 日
                       </Text>
                       <Text size="xs" c="dimmed">
                         {api.formatKeyLimit(key.limits.active)} 并发 ·{" "}
-                        {api.formatKeyLimit(key.limits.unresolved)} 未结
+                        {api.formatKeyLimit(key.limits.unresolved)} 待核对
                       </Text>
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td data-label="今日 / 最近使用">
+                      <Text size="sm">
+                        {usage.data?.find((item) => item.keyID === key.id)
+                          ?.admitted ?? "—"}{" "}
+                        请求 / {api.formatKeyLimit(key.limits.requests)} 上限
+                      </Text>
+                      <Text size="xs">
+                        费用：
+                        {money(
+                          usage.data?.find((item) => item.keyID === key.id)
+                            ?.estimatedMicros,
+                        )}
+                      </Text>
+                      <Text
+                        size="xs"
+                        title={timeTitle(
+                          usage.data?.find((item) => item.keyID === key.id)
+                            ?.lastUsedAtUnixSeconds,
+                        )}
+                      >
+                        最近：
+                        {usage.data?.find((item) => item.keyID === key.id)
+                          ?.lastUsedAtUnixSeconds == null
+                          ? "从未使用"
+                          : localTime(
+                              usage.data?.find((item) => item.keyID === key.id)
+                                ?.lastUsedAtUnixSeconds,
+                            )}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td data-label="操作">
                       <Group gap="xs">
                         <Button
                           size="compact-sm"
@@ -160,18 +270,9 @@ export function KeyManagement() {
                             <Menu.Item
                               color={key.enabled ? "red" : undefined}
                               onClick={() =>
-                                void state.mutate(
-                                  (csrf, signal) =>
-                                    api.updateKey(
-                                      key,
-                                      !key.enabled,
-                                      key.models,
-                                      key.limits,
-                                      csrf,
-                                      signal,
-                                    ),
-                                  key.enabled ? "密钥已禁用。" : "密钥已启用。",
-                                )
+                                key.enabled
+                                  ? setDisabling(key)
+                                  : void toggle(key)
                               }
                             >
                               {key.enabled ? "禁用" : "启用"}
@@ -184,14 +285,54 @@ export function KeyManagement() {
                 ))}
               </Table.Tbody>
             </Table>
-          </Table.ScrollContainer>
-          {!state.keys.length && (
+          </div>
+          {!keys.length && (
             <Text ta="center" c="dimmed" py="xl">
-              尚未创建密钥。
+              {state.keys.length ? "没有匹配的密钥。" : "尚未创建密钥。"}
             </Text>
           )}
         </Paper>
       )}
+      <Modal
+        lockScroll={false}
+        opened={!!disabling}
+        onClose={() => {
+          if (!state.busy) setDisabling(null);
+        }}
+        title="禁用 API Key"
+        closeOnEscape={!state.busy}
+        closeOnClickOutside={!state.busy}
+        withCloseButton={!state.busy}
+      >
+        <Stack>
+          <Text>
+            禁用后，持有该 Key
+            的客户端会立即失败，后续请求将被拒绝。请先通知使用者。
+          </Text>
+          <Text>{disabling?.principal}</Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={state.busy}
+              onClick={() => setDisabling(null)}
+            >
+              取消
+            </Button>
+            <Button
+              color="red"
+              disabled={state.disabled}
+              onClick={async () => {
+                if (disabling) {
+                  await toggle(disabling);
+                  setDisabling(null);
+                }
+              }}
+            >
+              确认禁用
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <Drawer
         lockScroll={false}
         opened={state.creating || !!state.editing}

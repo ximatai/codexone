@@ -161,6 +161,7 @@ struct HTTPResponseExecution: Sendable {
             try Task.checkCancellation()
             for byte in chunk.readableBytesView {
               guard let event = try decoder.append(byte) else { continue }
+              context.observeUpstreamEvent()
               guard !terminal else { break readUpstream }
               let type = try ProviderObservation.eventType(event)
               if type == "error" { throw ProviderObservation.providerFailure(event) }
@@ -223,6 +224,7 @@ struct HTTPResponseExecution: Sendable {
           guard ["completed", "failed", "incomplete"].contains(status ?? "") else {
             throw GatewayProtocolError(502, "execution_indeterminate")
           }
+          context.observeUpstreamEvent()
           try request.observeUsage(
             document, context: context, model: model, configuration: configuration.imageGeneration)
           let event = JSONValue.object([

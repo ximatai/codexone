@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AccountManagement } from "./AccountManagement";
 import * as api from "./api";
 import * as observations from "./observation-api";
+import { observationFixture } from "./observation.test-data";
 import * as sessions from "../../shared/management";
 vi.mock("./api");
 vi.mock("./observation-api", async (original) => ({
@@ -71,7 +72,7 @@ it("clears one-shot callback after failed submission and never offers replay", a
   fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
   const input = await screen.findByLabelText("2. 粘贴完整回调地址");
   fireEvent.change(input, { target: { value: "private-callback-value" } });
-  fireEvent.click(screen.getByRole("button", { name: "验证并保存" }));
+  fireEvent.click(screen.getByRole("button", { name: "3. 验证并保存" }));
   await screen.findByText(/操作结果未确认/);
   expect(
     screen.queryByLabelText("2. 粘贴完整回调地址"),
@@ -218,7 +219,7 @@ it("keeps reconciliation available inside an authorization drawer after its read
   );
   fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
   await screen.findByText(/账号读取失败/);
-  expect(screen.getByRole("button", { name: "验证并保存" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "3. 验证并保存" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
   await waitFor(() =>
     expect(screen.getByLabelText("2. 粘贴完整回调地址")).toBeEnabled(),
@@ -238,4 +239,57 @@ it("cancels the detail read when its drawer closes", async () => {
   await waitFor(() => expect(signal).toBeDefined());
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(signal?.aborted).toBe(true));
+});
+
+it("confirms draining from details and explains that associated continuations and in-flight requests continue", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, mode: "enabled" },
+  ]);
+  vi.mocked(observations.fetchObservation).mockRejectedValue(
+    new Error("synthetic unavailable"),
+  );
+  vi.mocked(api.setMode).mockResolvedValue({
+    ...account,
+    mode: "draining",
+    revision: 2,
+  });
+  render(<AccountManagement />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "排空" }));
+  expect(
+    await screen.findByText(/已有身份关联的续接请求仍可派发/),
+  ).toHaveTextContent("在途请求继续");
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(api.setMode).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("button", { name: "排空" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认排空" }));
+  await waitFor(() => expect(api.setMode).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("draining");
+});
+
+it("shows unavailable quota before elapsed freshness for an account with no successful observation", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  const summary = observations.parseObservability(observationFixture());
+  summary.quota = {
+    ...summary.quota,
+    state: "unavailable",
+    observedAtUnixSeconds: null,
+    ageSeconds: null,
+    freshForSeconds: 0,
+    limits: [],
+  };
+  summary.receivedAt = performance.now() - 600000;
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, observability: summary },
+  ]);
+  render(<AccountManagement />);
+  expect((await screen.findAllByText("额度不可用")).length).toBeGreaterThan(0);
+  expect(screen.queryByText("额度观测已陈旧")).toBeNull();
 });

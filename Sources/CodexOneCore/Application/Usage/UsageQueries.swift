@@ -141,6 +141,9 @@ public struct UsageRow: Sendable {
   public let failure: ExecutionFailure?
   public let completeness: UsageEvidence.Completeness?
   public let metrics: UsageMetrics
+  public let principal: String?
+  public let firstEventMilliseconds: Int64?
+  public let totalMilliseconds: Int64?
   public let cursor: UsageCursor
   public init(
     kind: Kind, id: String, atUnixSeconds: Int64, keyID: String, model: String?,
@@ -148,7 +151,8 @@ public struct UsageRow: Sendable {
     accountID: String?, requestID: String?, state: ExecutionSnapshot.State?,
     outcome: ExecutionOutcome.Kind?,
     failure: ExecutionFailure?, completeness: UsageEvidence.Completeness?, metrics: UsageMetrics,
-    cursor: UsageCursor
+    cursor: UsageCursor, principal: String? = nil, firstEventMilliseconds: Int64? = nil,
+    totalMilliseconds: Int64? = nil
   ) {
     self.kind = kind
     self.id = id
@@ -163,6 +167,9 @@ public struct UsageRow: Sendable {
     self.failure = failure
     self.completeness = completeness
     self.metrics = metrics
+    self.principal = principal
+    self.firstEventMilliseconds = firstEventMilliseconds
+    self.totalMilliseconds = totalMilliseconds
     self.cursor = cursor
   }
 }
@@ -180,9 +187,39 @@ public struct UsageReport: Sendable {
     self.nextCursor = nextCursor
   }
 }
+public struct UsageKeyOption: Sendable {
+  public let id: String
+  public let principal: String?
+  public init(id: String, principal: String?) {
+    self.id = id
+    self.principal = principal
+  }
+}
+public struct KeyUsageSummary: Sendable {
+  public let key: UsageKeyOption
+  public let admitted: Int64
+  public let failed: Int64
+  public let pending: Int64
+  public let estimatedMicros: Int64?
+  public let lastUsedAtUnixSeconds: Int64?
+  public init(
+    key: UsageKeyOption, admitted: Int64, failed: Int64, pending: Int64,
+    estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?
+  ) {
+    self.key = key
+    self.admitted = admitted
+    self.failed = failed
+    self.pending = pending
+    self.estimatedMicros = estimatedMicros
+    self.lastUsedAtUnixSeconds = lastUsedAtUnixSeconds
+  }
+}
 public protocol UsageQuerying: Sendable {
   func queryUsage(_ query: UsageQuery) async throws -> UsageReport
-  func usageOptions() async throws -> (keys: [String], models: [String])
+  func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary])
+  func usageOptions() async throws -> (
+    keys: [String], models: [String], keyOptions: [UsageKeyOption]
+  )
 }
 public protocol ExecutionDiagnosticsStore: Sendable {
   func recordRejection(

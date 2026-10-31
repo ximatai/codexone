@@ -92,6 +92,7 @@ extension HTTPResponseExecution {
               let event = try decoder.append(byte)
               pending.append(byte)
               if let event {
+                context.observeUpstreamEvent()
                 progress.note()
                 let type = event["type"]?.string ?? ""
                 if type == "error" { throw ProviderObservation.providerFailure(event) }
@@ -120,6 +121,7 @@ extension HTTPResponseExecution {
         } else {
           let body = try await collectProgressBody(
             response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes)
+          context.observeUpstreamEvent()
           let observation = (try? JSONValue.decode(body)).map {
             NativeImageObservation($0, model: model)
           }

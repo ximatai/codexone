@@ -18,12 +18,14 @@ export function UsagePage() {
   ] as const) {
     if (params.has(key)) filters[key] = params.get(key)!;
   }
+  if (params.get("range") === "24h") filters.range = "24h";
   filters.failedOnly = params.get("failedOnly") === "true";
   // Only filters go into the URL. Request cursors and all authentication data remain local.
   function applied(value: UsageFilters) {
     const next = new URLSearchParams();
     for (const [name, field] of Object.entries(value))
-      if (field !== "" && field !== false) next.set(name, String(field));
+      if (field !== "" && field !== false && field !== undefined)
+        next.set(name, String(field));
     if (next.toString() !== params.toString())
       setParams(next, { replace: true });
   }
