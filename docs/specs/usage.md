@@ -56,3 +56,9 @@
 管理员可通过 `POST /api/executions/unknown/release` 人工核对解除容量占用。请求必填非负整数 `beforeUnixSeconds` 和 `expectedCount`，拒绝未知字段。在单一写事务内计数 `state=unknown AND created_at_epoch < beforeUnixSeconds`，不等于 expectedCount 返回 409，匹配则转 settled 并追加一条 release_unknown 治理审计。审计含截止时间、释放数量和执行时间；审计失败与状态修改共同回滚。0 条匹配可成功。intent、已有 settled、截止时间相等及之后记录均不变。
 
 释放保留 outcome/failure 和可信用量证据，不补零、不产生估算；用量查询继续显示 unavailable，已有部分数值仅作为下界保留。unknown 及未结暴露计数相应减少。迟到部分证据不重新占用已释放容量；迟到完整可信证据仍可将统计修订为 complete。账本无 TTL 自动释放。全局/身份容量为独立运行常量，不改写主体限额的持久元数据；主体与 Key 限额保持原值，其他持久配置差异仍拒绝启动。
+
+### U10 补充：请求参数观察
+
+准入将 Responses 的 reasoning.effort 与 service_tier 记录为现有 admission JSON 的 reasoningEffort、serviceTier；字符串须匹配 `[a-z0-9_-]{1,32}`，非法/超长/非字符串（含显式 null）记为 other，缺失语义为 null。requestMetadataRecorded=true 区分新请求未指定与历史无字段；可空值在持久 JSON 中可省略，管理 DTO 显式返回 null。原生 Images、预热与压缩无对应字段时同样为 null，不补写历史，不改 schema。此元数据仅观察，不改变转发内容、权限、准入判定或结算。
+
+可信上游终态提供 service_tier 时，按相同规则记录 outcome JSON 的 actualServiceTier；缺失为 null，与请求值独立，不从请求推导。查询字段/筛选与界面默认说明见 A13 补充。记录中不包含正文或任意参数对象。

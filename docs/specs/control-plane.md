@@ -23,7 +23,7 @@
 
 ## A11：同源管理会话与静态界面
 
-`POST /api/session` 仅接受独立管理员 secret 和可信浏览器来源，返回一次 CSRF 证明并设置 `__Host-codexone_admin`：HttpOnly、Secure、SameSite=Strict、Path=/、Max-Age=1800、无 Domain。`GET` 获取当前证明，`DELETE` 校验后撤销并清 Cookie。session 由管理服务持有，最多 16 个、绝对寿命 30 分钟，访问时清理过期记录；只保存 token 摘要和内存 CSRF，重启失效。重新登录可替换当前 session，旧/过期 Cookie 不得造成无法重新登录。管理员文件更换须重启生效。
+`POST /api/session` 接受必填 username（精确等于命名常量 admin）、独立管理员 secret 和可信浏览器来源，返回一次 CSRF 证明并设置 `__Host-codexone_admin`：HttpOnly、Secure、SameSite=Strict、Path=/、Max-Age 为绝对剩余秒数（最长 604800）、无 Domain。`GET` 获取当前证明，`DELETE` 校验后撤销并清 Cookie。session 由管理服务持有，最多 16 个，滑动空闲寿命 24 小时、绝对寿命 7 天（均为命名常量），边界时刻过期；每次认证通过刷新活动时间及 Cookie，续期不越过绝对截止，访问时清理过期记录；只保存 token 摘要和内存 CSRF，重启失效。用户名缺失、错误、大小写不同与密码错误返回相同 401/code/message（request_id 每请求独立），未知字段拒绝。登录采用标准 form，默认 admin 的 username 输入框使用 name=username、autocomplete=username；密码框使用 name=password、autocomplete=current-password，支持浏览器识别凭证保存，前端不在本地存储保存凭证。独立 headless Bearer 路径不变；现有连接/并发/期限限制保持，基线无单独登录失败次数限速，本次不新增策略。重新登录可替换当前 session，旧/过期 Cookie 不得造成无法重新登录。管理员文件更换须重启生效。
 
 所有浏览器请求严格校验 Host；变更须同时有精确可信 Origin 和 CSRF，读请求有 Origin 时也须一致。Sec-Fetch-Site 若提供只接受 same-origin，重复/混合认证和重复 Cookie 拒绝。默认 origin 来自实际 loopback 监听端口；反代须显式配置公开 HTTPS origin，不信任任意转发头，不从请求 Host 推导来源。HTTP 仅允许 loopback；不为兼容浏览器降低安全 Cookie 属性。
 
@@ -57,7 +57,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 账号列表含非秘密 observability 摘要；`GET /api/accounts/:id/observation` 返回有界窗口/健康详情，`POST /:id/observe` 只接受空 JSON 对象，复用 session/CSRF。主次窗口显示真实比例、时长、重置、观察及失败时间；附加标识不猜测模型含义。手动读取失败明确提示并保留上次成功值，不能显示已更新；五分钟陈旧随页面时间推进。认证拒绝与模型冷却分开解释，不展示 namespace/令牌/上游错误正文。
 
-`GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。
+`GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/reasoningEffort/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。
 
 管理台采用 hash 路由，访问密钥、订阅账号和用量共享同一管理会话 owner；用量为独立页面，点击某 Key 以 URL 筛选直接进入。仅可读筛选、对象定位 ID 与页码进入 URL，游标、一次性秘密、授权回调和 CSRF 不进入 URL 或持久缓存。用量游标、固定查询窗口和列表滚动位置仅在当前管理会话内存保留，登出或会话更换清除；仅浏览器历史返回（POP）恢复筛选、页码与位置，用量位置按筛选与页码分别记忆；侧栏或链接新进入遵循当前 URL 并从顶部开始，游标失效时明确提示并回到可读取的首页。翻页成功回到列表顶部，Key 客户端每页 50 条。表头随页面滚动吸顶并避开顶栏，不引入双重纵向滚动。创建/编辑以抽屉按需呈现，关键一次性秘密在独立短寿命弹窗中显示。失败读取保留标注的上次成功筛选/快照，旧请求返回不能覆盖新选择；卸载、登出、会话失效清除私有界面。Key 登出开始即隐藏界面并重新取得当前 CSRF 再撤销；未确认只能重试登出，不允许读列表恢复操作。大屏优先实际操作验收。
 
@@ -148,3 +148,9 @@ Key 可用状态筛选仅综合开关和有效期：可用为启用且未到期�
 首页提醒默认显示前五项，同时保留紧急/提醒总数、类别计数及展开/收起入口；对象提醒携带 ID，账号打开详情，Key 定位并高亮目标，目标隐藏或不存在时明确说明。
 
 提醒收起后将展开按钮滚回视口并保持焦点。管理员登录入口将焦点送入首个凭证输入框；弹层取消或 Esc 关闭后焦点返回触发控件；提醒定位到 Key 后滚动并聚焦带可读名称的目标行。额度卡片的账号链接直接打开该账号详情，与提醒使用相同 target 参数。绿色仅表示真正可用状态：已到期 Key 的启用开关标签为中性色，账号存在授权异常时系统状态圆点为警告色；用量非状态链接/折叠入口使用主色。
+
+## 请求推理强度与服务档位
+
+明细（含首页最近请求所用查询）增加可空 reasoningEffort、serviceTier、actualServiceTier 和布尔 requestMetadataRecorded。来源及有界值规则见 U10 补充；历史及准入前拒绝为 false，各值为 null。筛选 reasoningEffort 接受 `[a-z0-9_-]{1,32}`，精确匹配记录值，排除历史、未指定及准入前拒绝。筛选作用于明细、区间合计、小时桶和缺时间历史计数，既有全时间治理占用不变。
+
+options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从可信配置 catalog.defaultReasoningEffort 或 upstream.default_reasoning_level 提取，不在线请求上游。明细表新增“推理”列：显式值原样展示，未指定显示灰字“默认”，目录有值时为“默认 · high”等；历史显示“—”。详情显示请求推理强度、请求服务档位和实际服务档位，实际未提供显示“—”。默认值仅为当前目录说明，不推测历史实际参数。
