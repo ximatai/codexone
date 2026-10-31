@@ -68,6 +68,9 @@
 .trend {
   margin: 12px 0;
   min-width: 0;
+  /* Keep chart decorations inside their panel while Recharts updates stale
+     desktop tooltip/legend coordinates after a narrow viewport resize. */
+  overflow-x: clip;
 }
 .table {
   margin-top: 16px;

@@ -166,6 +166,10 @@ test("K01 K02 K05: availability filters, pagination top, sticky header and back 
   await expect(page.locator("tbody tr").first()).toContainText("已到期");
   await page.getByLabel("可用状态", { exact: true }).selectOption("");
   await expect(page).toHaveURL(/#\/keys$/);
+  // Both the expired and unfiltered first pages have 50 rows. The URL can
+  // update before React commits the new filter, so also wait for its controls.
+  await expect(page.getByLabel("可用状态", { exact: true })).toHaveValue("");
+  await expect(page.getByText("共 204 个", { exact: true })).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(50);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(page).toHaveURL(/page=2/);

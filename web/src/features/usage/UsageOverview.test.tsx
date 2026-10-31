@@ -304,7 +304,7 @@ it("derives preset selection only from successfully applied filters", async () =
   );
 });
 
-it("U03 preserves the saved position across a slow restore and intervening layout scroll", async () => {
+it("U03 restores only after rows commit, even when a frame precedes the slow render", async () => {
   setup();
   const filters = api.defaults();
   const params = api.usageParameters(filters);
@@ -328,7 +328,19 @@ it("U03 preserves the saved position across a slow restore and intervening layou
       finish = resolve;
     }),
   );
-  const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  // Simulate a frame firing before React commits the state updates from the read.
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  const committed: boolean[] = [];
+  const scroll = vi.spyOn(window, "scrollTo").mockImplementation((_x, y) => {
+    if (y === 900)
+      committed.push(
+        !!screen.queryByText("第 2 页") &&
+          !!screen.queryByText("request-first"),
+      );
+  });
   render(
     <UsageOverview
       initialFilters={filters}
@@ -343,6 +355,7 @@ it("U03 preserves the saved position across a slow restore and intervening layou
   fireEvent.scroll(window);
   await act(async () => finish(api.parseUsage(reportFixture())));
   await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
+  expect(committed).toEqual([true]);
   expect(screen.getByText("第 2 页")).toBeVisible();
 });
 

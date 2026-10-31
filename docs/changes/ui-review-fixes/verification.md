@@ -95,3 +95,33 @@
 迭代说明：首轮完整入口退出 1（66.84 秒），Key 快速筛选/翻页时序及移动端流程未通过；随后修正翻页定位竞态与过时测试定位，移动端定向复验通过，最终完整入口结果以上表为准。早期源码/测试迭代日志保留在忽略目录，未将中途失败写成通过。
 
 未修项：无。本轮新增 11 项 Chrome 回归及 3 项 Vitest 回归；既有用量慢速恢复/400 游标回退测试继续通过。仅前端合成验收，未执行后端、生产 CSP/live 或跨平台验证。提交前检查新增文件/差异未发现本机私有路径、外部私有地址、真实凭证或私钥；一次性凭证 fixture 均为合成值。
+
+## 合并后回归定位与修复 · 2026-10-31
+
+平台：macOS arm64、全新 Chrome 合成上下文。仅当前 worktree；未修改 STATUS，未 SSH/部署、调用真实账号或订阅、运行 Docker/Linux、push 或 PR。
+
+### 根因与修复
+
+- 两次 merge 未改动用量视图记忆、请求详情或相关 CSS。未修改代码时两项单次定向测试都曾通过，但两轮各 16 次诊断分别复现 5 次和 4 次失败；不能归因于新增备份提醒或断开结算。诊断脚本已移除，采样日志不进入仓库。
+- POP 恢复曾调用 `scrollTo(0, 1800)`，但请求完成后的 `requestAnimationFrame` 不保证 React 并发渲染已提交，短加载页面将位置钳到 0。改为提交后的 `useLayoutEffect` 执行定位，同时核对读取 epoch 与对应 report，翻页仍滚动并聚焦请求明细。增强慢读取单测：模拟帧先于渲染，断言滚动时第二页和请求行已经存在；慢速失败/重试、失效游标回退等既有用例保留。
+- 390×844 横向溢出源自背景趋势图：桌面悬停后 Recharts 隐藏 tooltip 保留旧 transform，盒子右沿约 979.5 px，将 body 撑至 980 px；图例重算前也会暂留桌面宽度。趋势面板使用 `overflow-x: clip` 限制图表装饰边界，不裁剪整页或 Drawer，不引入额外纵向滚动。原 390 px 断言不变，新增先悬停图表再打开详情/缩窄的实际交互。
+- `first` 重复 key 来源为 `admin-productization.spec.ts` 的合成接口：每页重复同一条 `id=first`，却始终声明 `nextCursor=synthetic_cursor`，首页最近请求聚合出十个重复行。修正该单页夹具为 `nextCursor: null`，增加最近请求恰好一行与无重复 key 控制台警告的断言，不改生产行标识来掩盖数据问题。
+- 完整入口另暴露 Key 用例前提竞态：URL 已清空筛选，但旧“已到期”第一页也有 50 行，旧断言会提前放行并点击旧视图的分页。失败快照仍为“已到期”、第二页仅一行，table top=396.375。新增等待“全部”选中及准确“共 204 个”，保留原分页位置、吸顶与返回断言。
+
+独立 subagent 只读源码 review：P0/P1/P2 均为 0。浏览器额外走查 1440×900、390×844：详情打开/关闭 body 均为 390 px；窄屏图例与重新悬停 tooltip 可见，tooltip 边界 x=108、宽约 210.67 px；慢速第二页 POP 恢复到 1800；外部请求与重复 key 均为 0。三张截图与走查脚本保存在忽略目录 `artifacts/ui-review/merge-regression/` 及其同级脚本中，已直接查看桌面/手机详情和窄屏图表。
+
+### 命令记录
+
+| 命令 | 退出码 | 耗时 | 关键结果 |
+|---|---:|---:|---|
+| `npx vitest run src/features/usage/UsageOverview.test.tsx`（web） | 0 | 1.57 秒（Vitest 报告） | 11 项通过，含提交后定位、慢速失败重试及失效游标 |
+| `npx playwright test --project=chrome admin-productization.spec.ts ui-review-rework.spec.ts -g 'login overview\|P2-2 Usage' --repeat-each=8 --workers=4`（web） | 0 | 30.69 秒 | 原两项各 8 次，共 16 次全部通过，无重复 key 警告 |
+| `node artifacts/ui-review/merge-regression.mjs` | 0 | 4.56 秒 | 桌面/窄屏详情、图例与 tooltip、慢速 POP；外部请求 0 |
+| `./scripts/verify.sh --web --chrome` | 0 | 71.98 秒 | lint、格式、类型、生产构建；28 个 Vitest 文件 134 项、Chrome 33 项全部通过；重复 key 警告 0 |
+| `python3 scripts/check_docs.py` | 0 | 0.16 秒 | 215 篇 Markdown 的入口、本地链接与变更结构通过 |
+
+迭代说明：一次早期完整入口与诊断运行重叠，共享 Playwright trace 目录产生 ENOENT，该次不作为产品验证结论；后续 E2E 入口独立执行。修复后的首次完整入口退出 1（58.84 秒），原两项通过，Key 用例前提失败；修正上述前提后再运行完整入口，最终 134 项 Vitest 与 33 项 Chrome 全通过，见上表。走查初次因图例/tooltip 同名定位不唯一退出 1，改为限定图例容器后通过，无产品代码变更。
+
+仅前端本机合成验证；未运行后端、生产 CSP/live 或跨平台构建。
+
+本轮提交前 `git diff --check`、新增差异敏感信息检查及 STATUS 未修改检查通过；无未知或未提交的产品工作。构建工具的 Vite native-config 预告、部分零尺寸图表预警及 jsdom scrollTo 提示仍属既有测试环境输出，不影响上述断言通过。

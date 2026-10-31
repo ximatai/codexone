@@ -4,7 +4,13 @@ import { ErrorState, LoadingState } from "../../shared/ui/States";
 import { UsageDetail } from "./UsageDetail";
 import styles from "./usage.module.css";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { ManagementError } from "../../shared/management";
 import * as api from "./api";
 import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
@@ -116,6 +122,30 @@ export function UsageOverview({
   const controller = useRef<AbortController | null>(null),
     epoch = useRef(0),
     heading = useRef<HTMLHeadingElement>(null);
+  const pendingPosition = useRef<{
+    version: number;
+    scroll: number | null;
+    report: api.UsageReport;
+  } | null>(null);
+  // A frame can run before React commits a concurrent report render. Position
+  // only after its rows exist, otherwise the loading layout clamps POP to zero.
+  useLayoutEffect(() => {
+    const pending = pendingPosition.current;
+    if (
+      !pending ||
+      pending.version !== epoch.current ||
+      pending.report !== report
+    )
+      return;
+    pendingPosition.current = null;
+    if (pending.scroll !== null) {
+      window.scrollTo?.(0, pending.scroll);
+      restoringNavigation.current = false;
+    } else {
+      requestsHeading.current?.scrollIntoView?.({ block: "start" });
+      requestsHeading.current?.focus({ preventScroll: true });
+    }
+  });
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   const lastApplied = useRef(applied);
@@ -179,6 +209,10 @@ export function UsageOverview({
       });
       if (version !== epoch.current || abort.signal.aborted) return;
       queryWindow.current = requestFilters.window;
+      pendingPosition.current =
+        restore || index !== page
+          ? { version, report: next, scroll: restore ? restoreScroll : null }
+          : null;
       setReport(next);
       setReadAt(Date.now());
       setPolicyRead((value) => value + 1);
@@ -194,16 +228,6 @@ export function UsageOverview({
       setHistory(cursors);
       setPage(index);
       setStale(false);
-      if (restore || index !== page)
-        requestAnimationFrame(() => {
-          if (restore) {
-            window.scrollTo?.(0, restoreScroll);
-            restoringNavigation.current = false;
-          } else {
-            requestsHeading.current?.scrollIntoView?.({ block: "start" });
-            requestsHeading.current?.focus({ preventScroll: true });
-          }
-        });
     } catch (cause) {
       if (version !== epoch.current || abort.signal.aborted) return;
       if (cause instanceof ManagementError && cause.status === 401) {
