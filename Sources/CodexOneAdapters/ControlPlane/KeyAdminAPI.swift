@@ -14,13 +14,14 @@ public struct KeyAdminAPI: Sendable {
   private let usage: UsageAdminAPI?
   private let executions: (any UnknownExecutionReleasing)?
   private let attention: AttentionAdminAPI?
+  private let backup: (any BackupMaintaining)?
   private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
     publicOrigin: String? = nil, availableModels: [String] = [], imageModels: [String] = [],
     usage: UsageAdminAPI? = nil, attention: AttentionAdminAPI? = nil,
     executions: (any UnknownExecutionReleasing)? = nil,
-    storageMonitoring: (any StorageMonitoring)? = nil
+    storageMonitoring: (any StorageMonitoring)? = nil, backup: (any BackupMaintaining)? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
@@ -32,7 +33,7 @@ public struct KeyAdminAPI: Sendable {
       sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
       availableModels: availableModels, imageModels: imageModels, usage: usage,
       executions: executions, attention: attention,
-      storageMonitoring: storageMonitoring)
+      backup: backup, storageMonitoring: storageMonitoring)
   }
   public static func validateCredential(
     path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
@@ -70,6 +71,8 @@ public struct KeyAdminAPI: Sendable {
         var object =
           try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation))
           as! [String: Any]
+        object["backup"] = try JSONSerialization.jsonObject(
+          with: JSONEncoder().encode(backup?.backupObservation ?? BackupObservation()))
         object["admissionAllowed"] = observation.admissionAllowed
         object["optionalWorkAllowed"] = observation.optionalWorkAllowed
         let data = try JSONSerialization.data(withJSONObject: object)

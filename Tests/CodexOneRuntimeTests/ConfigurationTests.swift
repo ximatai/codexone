@@ -71,3 +71,22 @@ func invalidConfigurationIsRejectedWithoutEchoingRawValue(_ value: String) {
     try RuntimeConfiguration(environment: relative)
   }
 }
+
+@Test func backupConfigurationIsOptionalAndRequiresAbsolutePathAndCoreStorage() throws {
+  #expect(try RuntimeConfiguration(environment: [:]).backupDirectory == nil)
+  for path in ["relative", "", "/synthetic/\0invalid"] {
+    #expect(throws: RuntimeConfiguration.ConfigurationError.invalidBackupDirectory) {
+      try RuntimeConfiguration(environment: [
+        "CODEXONE_DATA_DIRECTORY": "/synthetic/data", "CODEXONE_BACKUP_DIRECTORY": path,
+      ])
+    }
+  }
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidBackupDirectory) {
+    try RuntimeConfiguration(environment: ["CODEXONE_BACKUP_DIRECTORY": "/synthetic/backups"])
+  }
+  #expect(
+    try RuntimeConfiguration(environment: [
+      "CODEXONE_DATA_DIRECTORY": "/synthetic/data",
+      "CODEXONE_BACKUP_DIRECTORY": "/synthetic/backups",
+    ]).backupDirectory == "/synthetic/backups")
+}

@@ -34,7 +34,24 @@ import { fetchKeyUsage } from "../usage/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
 import { terms } from "../../shared/presentation";
 
-async function fetchStorage(signal: AbortSignal) {
+import { z } from "../../shared/schema";
+
+const backupSchema = z.object({
+  enabled: z.boolean(),
+  lastSuccessUnixSeconds: z.number().nullable().optional(),
+  retainedCount: z.number().int().nonnegative(),
+});
+function backupTime(backup: z.infer<typeof backupSchema> | undefined) {
+  if (!backup) return "未提供";
+  if (!backup.enabled) return "未启用";
+  if (!backup.lastSuccessUnixSeconds) return "尚无成功备份";
+  return new Date(backup.lastSuccessUnixSeconds * 1000).toLocaleString();
+}
+async function fetchStorage(
+  signal: AbortSignal,
+): Promise<
+  Record<string, unknown> & { backup?: z.infer<typeof backupSchema> }
+> {
   const value = (await request("/api/runtime/storage", { signal })) as Record<
     string,
     unknown
@@ -45,7 +62,10 @@ async function fetchStorage(signal: AbortSignal) {
     typeof value.pressure !== "string"
   )
     throw new Error("invalid storage response");
-  return value;
+  return {
+    ...value,
+    backup: value.backup == null ? undefined : backupSchema.parse(value.backup),
+  };
 }
 export function AdminOverview() {
   const owner = useManagementSession();
@@ -289,6 +309,19 @@ export function AdminOverview() {
                     to: "/?storage=details",
                     good: !!storage.data?.optionalWorkAllowed,
                   },
+                  {
+                    label: "最近备份",
+                    value: backupTime(storage.data?.backup),
+                    to: "/?storage=details",
+                    good:
+                      !!storage.data?.backup?.enabled &&
+                      !!storage.data.backup.lastSuccessUnixSeconds &&
+                      storage.data.backup.lastSuccessUnixSeconds <=
+                        Date.now() / 1000 &&
+                      Date.now() / 1000 -
+                        storage.data.backup.lastSuccessUnixSeconds <=
+                        36 * 3600,
+                  },
                 ].map((row) => (
                   <Anchor
                     key={row.label}
@@ -416,6 +449,10 @@ export function AdminOverview() {
                 : "未提供"}
             </Text>
           ))}
+          <Text>最近成功备份：{backupTime(storage.data?.backup)}</Text>
+          <Text>
+            保留备份：{storage.data?.backup?.retainedCount ?? "未提供"}
+          </Text>
           <Text size="sm">
             存储压力影响新请求与可选工作；已准入请求仍按持久账本收尾。
           </Text>

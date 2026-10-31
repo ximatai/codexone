@@ -41,6 +41,7 @@ def initialize(destination, image, origin, pool, uid, gid):
             'secrets/master': secrets.token_hex(32).encode(),
             'secrets/pool.json': contents,
             '.env': (f'COMPOSE_PROJECT_NAME=codexone-{installation}\nCODEXONE_DATA_VOLUME=codexone-data-{installation}\n'
+                     f'CODEXONE_BACKUP_VOLUME=codexone-backups-{installation}\n'
                      f'CODEXONE_IMAGE={image}\nCODEXONE_UID={uid}\nCODEXONE_GID={gid}\n'
                      f'CODEXONE_ADMIN_PUBLIC_ORIGIN={origin.rstrip("/")}\n').encode(),
             'compose.yaml': Path(__file__).with_name('compose.yaml').read_bytes(),
