@@ -2,7 +2,7 @@
 
 说明本项目代码、协议参考和合成素材的来源。
 
-CodexOne 的原型 [ximatai/codexone-lab](https://github.com/ximatai/codexone-lab)（原名 ximatai/codexone，已归档）是作者本人的项目，本项目由作者以 MIT 许可证发布。codex-lb 与 OpenAI Codex 仅用于参考行为和协议，未复制其代码；这些项目的名称、商标与第三方权利不因本项目 MIT 许可而转移。
+CodexOne 起步于作者本人的一个 Swift/Vapor 传输可行性实验（已停止维护，结论已并入本项目），本项目由作者以 MIT 许可证发布。codex-lb 与 OpenAI Codex 仅用于参考行为和协议，未复制其代码；这些项目的名称、商标与第三方权利不因本项目 MIT 许可而转移。
 
 协议 JSON fixture 为自行编写的合成事件，图片 fixture 为生成的纯色测试素材。README 截图由本仓库 Playwright 合成 API fixture 渲染，不含真实账号、凭证、用户正文或运营数据。
 
