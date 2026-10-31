@@ -1,3 +1,4 @@
+import { KeyName } from "../../shared/KeyName";
 import { useQuery } from "@tanstack/react-query";
 import {
   Anchor,
@@ -170,8 +171,7 @@ export function ActivityOverview({
                   render: (row) => (
                     <Stack gap={2}>
                       <Text size="sm">
-                        {row.principal ?? "主体未记录"} ·{" "}
-                        {row.model ?? "模型未记录"}
+                        {<KeyName {...row} />} · {row.model ?? "模型未记录"}
                       </Text>
                       <Text size="xs" c="dimmed">
                         {modes[row.mode] ?? "其他模式"} ·{" "}
@@ -242,8 +242,11 @@ export function ActivityOverview({
                 {
                   id: "principal",
                   title: "Key / 模型",
-                  render: (row) =>
-                    `${row.principal ?? "主体未记录"} · ${row.model ?? "未记录"}`,
+                  render: (row) => (
+                    <span>
+                      <KeyName {...row} /> · {row.model ?? "未记录"}
+                    </span>
+                  ),
                 },
                 {
                   id: "outcome",

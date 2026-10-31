@@ -39,7 +39,12 @@ export function KeyList({
       sortValue: (key) => key.principal,
       render: (key) => (
         <>
-          <Text fw={600}>{key.principal}</Text>
+          <Text fw={600}>{key.displayName ?? key.principal}</Text>
+          {key.displayName && (
+            <Text size="xs" c="dimmed">
+              {key.principal}
+            </Text>
+          )}
           <Text size="xs" c="dimmed" className="identifier" title={key.id}>
             {key.id}
           </Text>

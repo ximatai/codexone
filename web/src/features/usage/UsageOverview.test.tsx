@@ -134,7 +134,9 @@ it("automatically queries the selected Key, shows principal and durations, and c
   setup();
   vi.mocked(api.fetchUsageOptions).mockResolvedValue({
     keys: ["alpha"],
-    keyOptions: [{ id: "alpha", principal: "synthetic-team" }],
+    keyOptions: [
+      { id: "alpha", principal: "synthetic-team", displayName: "用量别名" },
+    ],
     models: [],
     failures: [],
   });
@@ -142,6 +144,7 @@ it("automatically queries the selected Key, shows principal and durations, and c
   report.rows[0] = {
     ...report.rows[0],
     principal: "synthetic-team",
+    displayName: "用量别名",
     firstEventMilliseconds: 12,
     totalMilliseconds: 34,
   };
@@ -165,6 +168,7 @@ it("automatically queries the selected Key, shows principal and durations, and c
       expect.any(AbortSignal),
     ),
   );
+  expect((await screen.findAllByText("用量别名")).length).toBeGreaterThan(0);
   fireEvent.click(
     (await screen.findAllByRole("button", { name: "查看详情" }))[0],
   );

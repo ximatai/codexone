@@ -15,6 +15,7 @@ export interface KeyLimits {
 }
 export interface ManagedKey {
   id: string;
+  displayName?: string | null;
   principal: string;
   revision: number;
   enabled: boolean;
@@ -32,6 +33,7 @@ export interface ImagePermissions {
   imageModels?: string[];
 }
 export interface KeyDraft extends ImagePermissions {
+  displayName?: string | null;
   principal: string;
   models: string[];
   limits: KeyLimits;
@@ -111,6 +113,18 @@ export function parseKey(value: unknown): ManagedKey {
             data.expiresAtUnixSeconds === null
               ? null
               : boundedNumber(data.expiresAtUnixSeconds),
+        }),
+    ...(data.displayName === undefined
+      ? {}
+      : {
+          displayName:
+            data.displayName === null
+              ? null
+              : typeof data.displayName === "string"
+                ? data.displayName
+                : (() => {
+                    throw new ManagementError(0, "invalid_response");
+                  })(),
         }),
     principal: data.principal,
     enabled: data.enabled,
@@ -265,4 +279,25 @@ export function expirationLabel(
       : state === "soon"
         ? "7 天内将到期"
         : "有效期内";
+}
+
+export async function setDisplayName(
+  key: ManagedKey,
+  displayName: string | null,
+  csrf: string,
+  signal?: AbortSignal,
+): Promise<ManagedKey> {
+  return parseKey(
+    record(
+      await request(
+        "/api/keys/" + encodeURIComponent(key.id) + "/display-name",
+        {
+          method: "PUT",
+          body: { revision: key.revision, displayName },
+          csrf,
+          signal,
+        },
+      ),
+    ).key,
+  );
 }

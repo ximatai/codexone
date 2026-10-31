@@ -7,6 +7,7 @@ import {
   parseKey,
   updateKey,
   setExpiration,
+  setDisplayName,
 } from "./api";
 const csrf = "ac1_" + "a".repeat(43);
 const secret = "co1_" + "b".repeat(43);
@@ -196,4 +197,31 @@ it("sets and clears expiration with a revision and never retries conflicts", asy
     status: 409,
   });
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("sets and clears display names using CAS without retrying conflicts", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      reply({ key: { ...key, revision: 8, displayName: "合成别名" } }),
+    )
+    .mockResolvedValueOnce(
+      reply({ key: { ...key, revision: 9, displayName: null } }),
+    )
+    .mockResolvedValueOnce(
+      reply({ error: { code: "revision_conflict" } }, 409),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const named = await setDisplayName(key, "合成别名", csrf);
+  expect(named.displayName).toBe("合成别名");
+  expect((await setDisplayName(named, null, csrf)).displayName).toBeNull();
+  await expect(setDisplayName(key, "stale", csrf)).rejects.toMatchObject({
+    status: 409,
+  });
+  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch.mock.calls[0][0]).toBe("/api/keys/key-1/display-name");
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    revision: 7,
+    displayName: "合成别名",
+  });
 });
