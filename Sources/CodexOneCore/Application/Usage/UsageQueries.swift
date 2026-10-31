@@ -217,10 +217,12 @@ public struct UsageReport: Sendable {
   }
 }
 public struct UsageKeyOption: Sendable {
+  public let archived: Bool
   public let id: String
   public let displayName: String?
   public let principal: String?
-  public init(id: String, principal: String?, displayName: String? = nil) {
+  public init(id: String, principal: String?, displayName: String? = nil, archived: Bool = false) {
+    self.archived = archived
     self.id = id
     self.displayName = displayName
     self.principal = principal

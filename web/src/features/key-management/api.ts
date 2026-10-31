@@ -19,23 +19,24 @@ export interface ManagedKey {
   principal: string;
   revision: number;
   enabled: boolean;
-  models: string[];
+  models: string[] | null;
   visionInput?: boolean;
   imageGeneration?: boolean;
-  imageModels?: string[];
+  imageModels?: string[] | null;
   limits: KeyLimits;
   createdAtUnixSeconds: number;
   expiresAtUnixSeconds?: number | null;
+  archivedAtUnixSeconds?: number | null;
 }
 export interface ImagePermissions {
   visionInput?: boolean;
   imageGeneration?: boolean;
-  imageModels?: string[];
+  imageModels?: string[] | null;
 }
 export interface KeyDraft extends ImagePermissions {
   displayName?: string | null;
   principal: string;
-  models: string[];
+  models: string[] | null;
   limits: KeyLimits;
 }
 export interface KeyOptions {
@@ -130,14 +131,22 @@ export function parseKey(value: unknown): ManagedKey {
     enabled: data.enabled,
     revision: boundedNumber(data.revision, 1, 1_000_000),
     createdAtUnixSeconds: boundedNumber(data.createdAtUnixSeconds, 0),
-    models: models(data.models, data.imageGeneration === true),
+    archivedAtUnixSeconds:
+      data.archivedAtUnixSeconds == null
+        ? null
+        : boundedNumber(data.archivedAtUnixSeconds),
+    models:
+      data.models === null
+        ? null
+        : models(data.models, data.imageGeneration === true),
     visionInput:
       data.visionInput === undefined ? false : boolean(data.visionInput),
     imageGeneration:
       data.imageGeneration === undefined
         ? false
         : boolean(data.imageGeneration),
-    imageModels: models(data.imageModels ?? [], true),
+    imageModels:
+      data.imageModels === null ? null : models(data.imageModels ?? [], true),
     limits: {
       requests: limit(limits.requests),
       active: limit(limits.active),
@@ -163,13 +172,22 @@ export async function fetchOptions(signal?: AbortSignal): Promise<KeyOptions> {
     imageModels: models(value.imageModels ?? [], true),
   };
 }
-export async function fetchKeys(signal?: AbortSignal): Promise<ManagedKey[]> {
+export async function fetchKeys(
+  signal?: AbortSignal,
+  archived = false,
+): Promise<ManagedKey[]> {
   let after: string | null = null;
   const result = new Map<string, ManagedKey>();
   for (let page = 0; page < 5; page++) {
     const value = record(
       await request(
-        "/api/keys" + (after ? "?after=" + encodeURIComponent(after) : ""),
+        "/api/keys" +
+          (archived
+            ? "?archived=true" +
+              (after ? "&after=" + encodeURIComponent(after) : "")
+            : after
+              ? "?after=" + encodeURIComponent(after)
+              : ""),
         { signal },
       ),
     );
@@ -202,7 +220,7 @@ export async function createKey(
 export async function updateKey(
   key: ManagedKey,
   enabled: boolean,
-  allowedModels: string[],
+  allowedModels: string[] | null,
   limits: KeyLimits,
   csrf: string,
   signal?: AbortSignal,
@@ -219,7 +237,10 @@ export async function updateKey(
           limits,
           visionInput: capabilities.visionInput ?? false,
           imageGeneration: capabilities.imageGeneration ?? false,
-          imageModels: capabilities.imageModels ?? [],
+          imageModels:
+            capabilities.imageModels === undefined
+              ? []
+              : capabilities.imageModels,
         },
         csrf,
         signal,
@@ -264,6 +285,8 @@ export function matchesAvailability(
   filter: string,
   now = Date.now() / 1000,
 ): boolean {
+  if (filter === "archived") return key.archivedAtUnixSeconds != null;
+  if (key.archivedAtUnixSeconds != null) return false;
   const expiry = expirationState(key.expiresAtUnixSeconds, now);
   if (filter === "available") return key.enabled && expiry !== "expired";
   if (filter === "expiring") return key.enabled && expiry === "soon";
@@ -306,6 +329,27 @@ export async function setDisplayName(
         {
           method: "PUT",
           body: { revision: key.revision, displayName },
+          csrf,
+          signal,
+        },
+      ),
+    ).key,
+  );
+}
+
+export async function setArchived(
+  key: ManagedKey,
+  archived: boolean,
+  csrf: string,
+  signal?: AbortSignal,
+): Promise<ManagedKey> {
+  return parseKey(
+    record(
+      await request(
+        `/api/keys/${encodeURIComponent(key.id)}/${archived ? "archive" : "unarchive"}`,
+        {
+          method: "PUT",
+          body: { revision: key.revision },
           csrf,
           signal,
         },

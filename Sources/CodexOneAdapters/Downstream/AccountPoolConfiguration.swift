@@ -96,7 +96,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
-    let effective = models.filter { key.policy.models.contains($0.id) }
+    let effective = models.filter { key.policy.allowsConversationModel($0.id) }
     let imageModels = imageGeneration?.effective(for: key.policy) ?? []
     var prices = effective.sorted { $0.id < $1.id }.map {
       JSONValue.object([

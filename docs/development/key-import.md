@@ -16,7 +16,7 @@ codexone --import-keys /run/codexone/approved-key-import.json
 | --- | --- |
 | id / principal | 新侧独立稳定标识，1—64 ASCII字母/数字/点/横线/下划线；原则上每个旧Key单独主体，不猜测共享归属 |
 | digest | 原始Bearer UTF-8的64位小写SHA-256；与管理员摘要相同拒绝 |
-| policy | 显式models/limits；limits 五项均须出现，每项正整数（≤10¹²）或 null（不限）；可含visionInput/imageGeneration/imageModels；同既有Key策略校验 |
+| policy | 显式models/limits；models 可为 null 跟随当前配置，imageModels 显式 null 跟随当前图片配置（仍需打开 imageGeneration），数组/null 原样保留；limits 五项均须出现，每项正整数（≤10¹²）或 null（不限）；可含visionInput/imageGeneration/imageModels；同既有Key策略校验 |
 | sourceActive | 必须true；源停用条目隔离，不能放入新侧可启用表 |
 | sourceExpiresAtUnixSeconds | 必须显式null；带任何过期时间均隔离，当前不支持复制到期语义 |
 | policyEquivalent | 必须true；是管理员对转换的明确声明，不是自动证明或免审开关 |
@@ -44,3 +44,5 @@ codexone --import-keys /run/codexone/approved-key-import.json
 客户端首次使用新会话，保留原Key、切换地址，先验目录与固定合成回复，再验实际客户端支持的协议/失败路径。服务部署不代表真实Desktop、订阅或完整容量通过；真实订阅须另行授权并解决独立凭证/账本责任。
 
 验收入口：`python3 scripts/verify_key_import.py --binary <binary>`、`python3 scripts/verify_trial_provider.py --binary <binary>`，及 `python3 scripts/verify_key_export.py`，均纳入完整后端检查。
+
+`approval.models` 也可为字符串 `"source"`。该模式须另传 `--configured-models-file <configured-models-json>`，文件为当前已配置对话模型 ID 的 JSON 数组（最多 32 个、不重复）；缺少清单则拒绝，避免猜测当前配置。源 allowed_models 为 SQL NULL 时输出 `models: null`；非 null 时必须是合法源数组，只保留与配置清单的交集，无交集按 no_approved_model 隔离，所选 Key 隔离则整次拒绝。图片能力仍按既有源推导（关闭），不因对话不限而自动开启。approval 显式模型数组仍按原批准清单求交，不改变旧行为。模型 null 经离线导入、元数据读取与重启保留，默认仍停用。回退前须把全部模型与不限限额改为显式值，见[回退前提](key-governance.md#兼容回退前提)。

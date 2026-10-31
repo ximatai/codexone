@@ -532,3 +532,116 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   await reader.close()
   await store.close()
 }
+
+@Test func archivedKeysRequireExplicitRestoreAndKeepHistory() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let digest = keyDigest("synthetic-archive")
+  var key = try await store.createKey(
+    id: "archive", principal: "p", digest: digest, policy: keyPolicy())
+  await #expect(throws: KeyGovernanceError.keyEnabled) {
+    try await store.setKeyArchived(id: key.id, revision: key.revision, archived: true)
+  }
+  await #expect(throws: KeyGovernanceError.keyNotArchived) {
+    try await store.setKeyArchived(id: key.id, revision: key.revision, archived: false)
+  }
+  try await store.admit(keyAdmission("before-archive", key: key))
+  key = try await store.setKeyDisplayName(
+    id: key.id, revision: key.revision, displayName: "Synthetic key")
+  key = try await store.updateKey(
+    id: key.id, revision: key.revision, enabled: false, policy: key.policy)
+  await #expect(throws: ExecutionError.conflict) {
+    try await store.setKeyArchived(id: key.id, revision: 1, archived: true)
+  }
+  key = try await store.setKeyArchived(id: key.id, revision: key.revision, archived: true)
+  #expect(key.archivedAtUnixSeconds != nil && !key.enabled)
+  await #expect(throws: KeyGovernanceError.keyArchived) {
+    try await store.setKeyArchived(id: key.id, revision: key.revision, archived: true)
+  }
+  for enabled in [true, false] {
+    await #expect(throws: KeyGovernanceError.keyArchived) {
+      try await store.updateKey(
+        id: key.id, revision: key.revision, enabled: enabled, policy: key.policy)
+    }
+  }
+  await #expect(throws: KeyGovernanceError.keyArchived) {
+    try await store.rotateKey(
+      id: key.id, revision: key.revision, digest: keyDigest("synthetic-rotated"))
+  }
+  await #expect(throws: KeyGovernanceError.keyArchived) {
+    try await store.setKeyDisplayName(id: key.id, revision: key.revision, displayName: nil)
+  }
+  await #expect(throws: KeyGovernanceError.keyArchived) {
+    try await store.setKeyExpiration(id: key.id, revision: key.revision, expiresAtUnixSeconds: nil)
+  }
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.authenticateKey(digest: digest)
+  }
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.admit(keyAdmission("archived", key: key))
+  }
+  #expect(try await store.listKeys().isEmpty)
+  #expect(try await store.listKeys(archived: true) == [key])
+  let reader = try await store.makeUsageReader()
+  let option = try #require(try await reader.usageOptions().keyOptions.first)
+  #expect(option.archived && option.displayName == "Synthetic key")
+  #expect(try await reader.keyUsage().keys.first?.admitted == 1)
+  #expect(
+    try await reader.attentionItems(now: Int64(Date().timeIntervalSince1970)).allSatisfy {
+      $0.subjectID != key.id
+    })
+  key = try await store.setKeyArchived(id: key.id, revision: key.revision, archived: false)
+  #expect(key.archivedAtUnixSeconds == nil && !key.enabled)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.authenticateKey(digest: digest)
+  }
+  key = try await store.updateKey(
+    id: key.id, revision: key.revision, enabled: true, policy: key.policy)
+  #expect(try await store.authenticateKey(digest: digest) == key)
+  try await store.finalize(attempt: "before-archive", evidence: usage())
+  #expect(try await store.snapshot(attempt: "before-archive").state == .settled)
+  #expect(
+    try await store.perform { db in
+      try db.scalar("SELECT COUNT(*) FROM key_events WHERE action IN ('archive','unarchive')")
+    } == 2)
+  await reader.close()
+  await store.close()
+}
+
+@Test func archivePaginationFiltersBeforeLimitingAndRollsBackAuditFailure() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  for index in 0..<130 {
+    let id = String(format: "key-%03d", index)
+    var key = try await store.createKey(
+      id: id, principal: "p", digest: keyDigest(id), policy: keyPolicy())
+    if index % 2 == 0 {
+      key = try await store.updateKey(
+        id: id, revision: key.revision, enabled: false, policy: key.policy)
+      _ = try await store.setKeyArchived(id: id, revision: key.revision, archived: true)
+    }
+  }
+  for archived in [false, true] {
+    let first = try await store.listKeys(archived: archived)
+    let second = try await store.listKeys(after: first.last?.id, archived: archived)
+    #expect(first.count == 64 && second.count == 1)
+    #expect((first + second).allSatisfy { ($0.archivedAtUnixSeconds != nil) == archived })
+    #expect(Set((first + second).map(\.id)).count == 65)
+  }
+  let key = try #require(try await store.listKeys(archived: true).first)
+  try rawSQL(
+    path,
+    "CREATE TRIGGER fail_archive BEFORE INSERT ON key_events BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+  )
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await store.setKeyArchived(id: key.id, revision: key.revision, archived: false)
+  }
+  #expect(try await store.listKeys(archived: true).first == key)
+  await store.close()
+}

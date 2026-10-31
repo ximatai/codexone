@@ -53,7 +53,7 @@ public struct ImageConfiguration: Sendable, Codable {
     else { throw ExecutionError.invalidCommand }
   }
   func effective(for policy: KeyPolicy) -> [Model] {
-    policy.imageGeneration ? models.filter { policy.imageModels.contains($0.id) } : []
+    policy.imageGeneration ? models.filter { policy.allowsImageModel($0.id) } : []
   }
 }
 private struct ImageField: CodingKey {

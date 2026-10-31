@@ -30,7 +30,7 @@ def main():
             digest=hashlib.sha256(secret.encode()).hexdigest(),policy=copy.deepcopy(policy),
             sourceActive=True,sourceExpiresAtUnixSeconds=None,policyEquivalent=True)
             for n,secret in enumerate((SECRET,OTHER))]
-        entries[1]['policy']['limits']=dict.fromkeys(LIMITS)
+        entries[1]['policy'].update(limits=dict.fromkeys(LIMITS),models=None,imageGeneration=True,imageModels=None)
         manifest=dict(version=1,capturedAtUnixSeconds=int(time.time()),entries=entries)
         def invoke(directory,value,*,file_mode=0o600,link=False,raw=None):
             directory.mkdir(exist_ok=True)
@@ -62,6 +62,7 @@ def main():
             for invalid in (-1,0,10**12+1,'invalid'):
                 v=copy.deepcopy(manifest);v['entries'][1]['policy']['limits'][field]=invalid;bad.append(v)
             v=copy.deepcopy(manifest);del v['entries'][1]['policy']['limits'][field];bad.append(v)
+        v=copy.deepcopy(manifest);del v['entries'][0]['policy']['models'];bad.append(v)
         for n,value in enumerate(bad):
             directory=root/f'bad-{n}';assert invoke(directory,value).returncode!=0
             assert not (directory/'state').exists(),'Invalid manifest created storage'
@@ -91,6 +92,8 @@ def main():
                 status,listed=call(ports['admin'],'GET','/api/keys');assert status==200
                 assert len(listed['keys'])==2 and 'digest' not in json.dumps(listed)
                 assert next(k for k in listed['keys'] if k['id']=='import-1')['limits']==dict.fromkeys(LIMITS)
+                assert next(k for k in listed['keys'] if k['id']=='import-1')['models'] is None
+                assert next(k for k in listed['keys'] if k['id']=='import-1')['imageModels'] is None
                 first=next(k for k in listed['keys'] if k['id']=='import-0')
                 assert update(ports['admin'],first,enabled=True)[0]==200
                 assert call(ports['data'],'GET','/v1/models',token=SECRET)[0]==200
@@ -113,6 +116,8 @@ def main():
                 assert provider.calls==2
                 listed=call(ports['admin'],'GET','/api/keys')[1]
                 assert next(k for k in listed['keys'] if k['id']=='import-1')['limits']==dict.fromkeys(LIMITS)
+                assert next(k for k in listed['keys'] if k['id']=='import-1')['models'] is None
+                assert next(k for k in listed['keys'] if k['id']=='import-1')['imageModels'] is None
                 first=next(k for k in listed['keys'] if k['id']=='import-0')
                 status,rotated=call(ports['admin'],'POST','/api/keys/import-0/rotate',dict(revision=first['revision']))
                 assert status==201

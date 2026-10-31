@@ -4,6 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 from export_key_trial import COLUMNS, LIMIT_COLUMNS, convert, write_private
 from verify_keys import LIMITS
@@ -38,6 +40,33 @@ def main():
         try:write_private(result,output)
         except FileExistsError:pass
         else:raise AssertionError('Existing export was overwritten')
+        source_models={**approval,'models':'source'}
+        dynamic=convert(path,source_models,['synthetic-text'])
+        assert dynamic['manifest']['entries'][0]['policy']['models'] is None
+        approved=root/'source-approval.json';approved.write_text(json.dumps(source_models));approved.chmod(0o600)
+        configured=root/'configured-models.json';configured.write_text('["synthetic-text"]')
+        command=[sys.executable,str(Path(__file__).with_name('export_key_trial.py')),'--source-db',str(path),
+                 '--approval-file',str(approved),'--output-directory',str(root/'source-output')]
+        assert subprocess.run(command,capture_output=True,timeout=5).returncode!=0
+        completed=subprocess.run(command+['--configured-models-file',str(configured)],capture_output=True,timeout=5)
+        assert completed.returncode==0 and json.loads(completed.stdout)['importableKeys']==1
+        assert json.loads((root/'source-output/manifest.json').read_text())['entries'][0]['policy']['models'] is None
+        assert any('no_approved_model' in q['reasons'] for q in dynamic['quarantine'])
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE api_keys SET allowed_models=? WHERE id=?", ('["synthetic-text","unconfigured"]',row['id']))
+        assert convert(path,source_models,['synthetic-text'])['manifest']['entries'][0]['policy']['models']==['synthetic-text']
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE api_keys SET allowed_models=? WHERE id=?", ('["synthetic-second","synthetic-text","synthetic-second"]',row['id']))
+        assert convert(path,source_models,['synthetic-text','synthetic-second'])['manifest']['entries'][0]['policy']['models']==['synthetic-second','synthetic-text']
+        assert convert(path,approval)['manifest']['entries'][0]['policy']['models']==['synthetic-text']
+        try:convert(path,source_models,['other'])
+        except AssertionError:pass
+        else:raise AssertionError('Empty model intersection accepted')
+        try:convert(path,source_models)
+        except AssertionError:pass
+        else:raise AssertionError('Missing configured models accepted')
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE api_keys SET allowed_models=NULL WHERE id=?", (row['id'],))
         source_approval={**approval,'limits':'source'}
         def rejected(value):
             try:convert(path,value)

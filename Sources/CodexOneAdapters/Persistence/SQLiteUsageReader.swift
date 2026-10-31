@@ -64,14 +64,15 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   ) {
     try await read { db in
       let keys = try db.rows(
-        "SELECT ids.id,json_extract(k.metadata_json,'$.principal'),json_extract(k.metadata_json,'$.displayName') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM usage_daily UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
+        "SELECT ids.id,json_extract(k.metadata_json,'$.principal'),json_extract(k.metadata_json,'$.displayName'),json_extract(k.metadata_json,'$.archivedAtUnixSeconds') IS NOT NULL FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM usage_daily UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
       ) {
         UsageKeyOption(
           id: String(cString: sqlite3_column_text($0, 0)),
           principal: sqlite3_column_type($0, 1) == SQLITE_NULL
             ? nil : String(cString: sqlite3_column_text($0, 1)),
           displayName: sqlite3_column_type($0, 2) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text($0, 2)))
+            ? nil : String(cString: sqlite3_column_text($0, 2)),
+          archived: sqlite3_column_int($0, 3) != 0)
       }
       let models = try db.rows("SELECT model FROM health_models ORDER BY model LIMIT 49") {
         String(cString: sqlite3_column_text($0, 0))

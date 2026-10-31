@@ -114,10 +114,17 @@ public struct KeyAdminAPI: Sendable {
     }
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
-      guard query.count <= 1, query.allSatisfy({ $0.name == "after" && $0.value != nil }) else {
+      guard query.count <= 2, Set(query.map(\.name)).count == query.count,
+        query.allSatisfy({
+          ($0.name == "after" && $0.value != nil)
+            || ($0.name == "archived" && ["true", "false"].contains($0.value ?? ""))
+        })
+      else {
         throw ExecutionError.invalidCommand
       }
-      let keys = try await store.listKeys(after: query.first?.value)
+      let keys = try await store.listKeys(
+        after: query.first { $0.name == "after" }?.value,
+        archived: query.first { $0.name == "archived" }?.value == "true")
       return try Self.response(
         .object([
           "keys": .array(keys.map(Self.metadata)),
@@ -130,7 +137,8 @@ public struct KeyAdminAPI: Sendable {
       let secret = generateKeySecret()
       let key = try await store.createKey(
         id: UUID().uuidString, principal: dto.principal,
-        digest: keyDigest(secret), policy: dto.policy())
+        digest: keyDigest(secret),
+        policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
       return try Self.response(
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
@@ -140,7 +148,7 @@ public struct KeyAdminAPI: Sendable {
       let dto = try JSONDecoder().decode(UpdateKeyDTO.self, from: document.data())
       let key = try await store.updateKey(
         id: request.parameters.get("id") ?? "", revision: dto.revision,
-        enabled: dto.enabled, policy: dto.policy())
+        enabled: dto.enabled, policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
     routes.put(":id", "display-name") { request async throws -> Response in
@@ -165,6 +173,18 @@ public struct KeyAdminAPI: Sendable {
         id: request.parameters.get("id") ?? "",
         revision: revision, expiresAtUnixSeconds: document["expiresAtUnixSeconds"]?.integer)
       return try Self.response(.object(["key": Self.metadata(key)]))
+    }
+    for (path, archived) in [("archive", true), ("unarchive", false)] {
+      routes.put(":id", .constant(path)) { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(request, allowed: ["revision"])
+        guard let revision = document["revision"]?.integer else {
+          throw ExecutionError.invalidCommand
+        }
+        let key = try await store.setKeyArchived(
+          id: request.parameters.get("id") ?? "", revision: revision, archived: archived)
+        return try Self.response(.object(["key": Self.metadata(key)]))
+      }
     }
     routes.post(":id", "rotate") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision"])
@@ -210,14 +230,16 @@ public struct KeyAdminAPI: Sendable {
   }
   private static func metadata(_ key: ManagedKey) -> JSONValue {
     .object([
+      "archivedAtUnixSeconds": key.archivedAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
       "expiresAtUnixSeconds": key.expiresAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
       "displayName": key.displayName.map { .string($0) } ?? .null,
       "id": .string(key.id), "principal": .string(key.principal),
       "revision": .number(Decimal(key.revision)),
-      "enabled": .bool(key.enabled), "models": .array(key.policy.models.map { .string($0) }),
+      "enabled": .bool(key.enabled),
+      "models": key.policy.models.map { .array($0.map { .string($0) }) } ?? .null,
       "visionInput": .bool(key.policy.visionInput),
       "imageGeneration": .bool(key.policy.imageGeneration),
-      "imageModels": .array(key.policy.imageModels.map { .string($0) }),
+      "imageModels": key.policy.imageModels.map { .array($0.map { .string($0) }) } ?? .null,
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
         "requests": key.policy.limits.requests.map { .number(Decimal($0)) } ?? .null,
@@ -239,32 +261,11 @@ public struct KeyAdminAPI: Sendable {
   }
 }
 
-private struct KeyLimitsDTO: Decodable {
-  let requests: Int64?, active: Int64?, unresolved: Int64?, budgetMicros: Int64?,
-    unresolvedMicros: Int64?
-  var value: ExecutionLimits {
-    .init(
-      requests: requests, active: active, unresolved: unresolved,
-      budgetMicros: budgetMicros, unresolvedMicros: unresolvedMicros)
-  }
-}
 private struct CreateKeyDTO: Decodable {
-  let principal: String, models: [String], limits: KeyLimitsDTO
-  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
-  func policy() throws -> KeyPolicy {
-    try .init(
-      models: models, limits: limits.value, visionInput: visionInput ?? false,
-      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
-  }
+  let principal: String
 }
 private struct UpdateKeyDTO: Decodable {
-  let revision: Int64, enabled: Bool, models: [String], limits: KeyLimitsDTO
-  let visionInput: Bool?, imageGeneration: Bool?, imageModels: [String]?
-  func policy() throws -> KeyPolicy {
-    try .init(
-      models: models, limits: limits.value, visionInput: visionInput ?? false,
-      imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
-  }
+  let revision: Int64, enabled: Bool
 }
 private struct AdminSessionRenewalKey: StorageKey {
   typealias Value = AdminSessions.Created
@@ -316,6 +317,13 @@ private struct AdminFailureMiddleware: AsyncMiddleware {
       if let failure = error as? GatewayProtocolError {
         status = failure.status
         code = failure.code
+      } else if let failure = error as? KeyGovernanceError {
+        status = 409
+        switch failure {
+        case .keyEnabled: code = "key_enabled"
+        case .keyArchived: code = "key_archived"
+        case .keyNotArchived: code = "key_not_archived"
+        }
       } else if let failure = error as? QuotaObservationFailure {
         status = 503
         code = failure == .capacity ? "observation_capacity" : "observation_unavailable"

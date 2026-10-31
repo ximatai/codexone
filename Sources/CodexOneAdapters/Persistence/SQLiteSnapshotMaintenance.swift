@@ -178,7 +178,8 @@ public enum SQLiteSnapshotMaintenance {
             let disabled = ManagedKey(
               id: key.id, principal: key.principal, revision: key.revision + 1,
               enabled: false, policy: key.policy, createdAtUnixSeconds: key.createdAtUnixSeconds,
-              expiresAtUnixSeconds: key.expiresAtUnixSeconds, displayName: key.displayName)
+              expiresAtUnixSeconds: key.expiresAtUnixSeconds, displayName: key.displayName,
+              archivedAtUnixSeconds: key.archivedAtUnixSeconds)
             let digest = SHA256.hash(data: Data(UUID().uuidString.utf8)).map {
               String(format: "%02x", $0)
             }.joined()

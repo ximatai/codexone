@@ -56,13 +56,13 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
     state.failures["/api/keys"] = status;
     await page.goto("/#/keys");
     await expect(page.getByText("数量不可用")).toBeVisible();
-    await expect(page.getByText("尚未创建密钥。")).toHaveCount(0);
+    await expect(page.getByText("暂无未归档密钥。")).toHaveCount(0);
     await expect(page.getByText("共 0 个")).toHaveCount(0);
   }
   state.failures = {};
   state.empty = true;
   await page.reload();
-  await expect(page.getByText("尚未创建密钥。")).toBeVisible();
+  await expect(page.getByText("暂无未归档密钥。")).toBeVisible();
   await expect(page.getByText("共 0 个")).toBeVisible();
   await page.goto("/#/accounts");
   await expect(page.getByText(/接入第一个账号/)).toBeVisible();

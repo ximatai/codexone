@@ -46,7 +46,7 @@ private let imageLimits = ExecutionLimits(
   ]
   let legacy = try JSONDecoder().decode(
     KeyPolicy.self, from: JSONSerialization.data(withJSONObject: old))
-  #expect(!legacy.visionInput && !legacy.imageGeneration && legacy.imageModels.isEmpty)
+  #expect(!legacy.visionInput && !legacy.imageGeneration && legacy.imageModels?.isEmpty == true)
   let policy = try KeyPolicy(
     models: [], limits: imageLimits, imageGeneration: true, imageModels: ["synthetic-image"])
   #expect(try JSONDecoder().decode(KeyPolicy.self, from: JSONEncoder().encode(policy)) == policy)

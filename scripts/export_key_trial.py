@@ -19,10 +19,14 @@ FORCED = ('enforced_model','enforced_reasoning_effort','enforced_service_tier','
 SCOPES = ('account_assignment_scope_enabled','source_assignment_scope_enabled','apply_to_codex_model')
 
 
-def convert(source, approval):
+def convert(source, approval, configured_models=None):
     assert set(approval)=={'models','limits','selectedName'}
     models=approval['models'];limits=approval['limits']
-    assert isinstance(models,list) and 1<=len(models)<=32 and len(set(models))==len(models)
+    source_models = models == 'source'
+    if source_models:
+        assert isinstance(configured_models, list), 'Source mode requires configured models'
+        models = configured_models
+    assert isinstance(models,list) and (0 if source_models else 1)<=len(models)<=32 and len(set(models))==len(models)
     assert all(isinstance(x,str) and 0<len(x.encode())<=128 for x in models)
     assert limits == 'source' or isinstance(limits, dict)
     if limits != 'source':
@@ -61,16 +65,17 @@ def convert(source, approval):
         if row['traffic_class']!='foreground':reasons.append('source_traffic_policy_unsupported')
         if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest):
             reasons.append('source_digest_invalid')
-        allowed=models
+        allowed=None if source_models else models
         if row['allowed_models'] is not None:
             try:
                 raw=row['allowed_models'];assert isinstance(raw,str) and len(raw.encode())<=32768
                 values=json.loads(raw)
                 assert isinstance(values,list) and len(values)<=32 and all(isinstance(x,str) for x in values)
-                allowed=[model for model in models if model in values]
+                allowed=(list(dict.fromkeys(model for model in values if model in models))
+                         if source_models else [model for model in models if model in values])
             except (ValueError,TypeError,AssertionError):
                 allowed=[];reasons.append('source_models_invalid')
-        if not allowed:reasons.append('no_approved_model')
+        if allowed == []:reasons.append('no_approved_model')
         mapping.append(dict(sourceID=identifier,keyID=new_id,selected=row['name']==approval['selectedName']))
         if reasons:
             quarantine.append(dict(keyID=new_id,reasons=reasons));continue
@@ -100,6 +105,7 @@ def write_private(result, destination):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--source-db',required=True)
     parser.add_argument('--approval-file',required=True);parser.add_argument('--output-directory',required=True)
+    parser.add_argument('--configured-models-file', help='JSON array of currently configured conversation model IDs; required for source model mode')
     args=parser.parse_args()
     try:
         # Approval has no credential, but carries the operator's private selection and must stay private.
@@ -109,7 +115,15 @@ def main():
             assert stat.S_ISREG(info.st_mode) and info.st_uid==os.geteuid() and info.st_nlink==1 and info.st_mode&0o077==0 and 0<info.st_size<=65536
             raw=file.read(65537);assert len(raw)<=65536
         approval=json.loads(raw)
-        result=convert(args.source_db,approval);write_private(result,args.output_directory)
+        configured_models=None
+        if args.configured_models_file:
+            fd=os.open(args.configured_models_file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+            with os.fdopen(fd,'rb') as file:
+                info=os.fstat(file.fileno())
+                assert stat.S_ISREG(info.st_mode) and 0<info.st_size<=65536
+                raw=file.read(65537);assert len(raw)<=65536
+            configured_models=json.loads(raw)
+        result=convert(args.source_db,approval,configured_models);write_private(result,args.output_directory)
         print(json.dumps(dict(importableKeys=len(result['manifest']['entries']),quarantinedKeys=len(result['quarantine']))))
     except Exception:
         raise SystemExit('Private key conversion rejected; inspect source/approval privately; no import was performed.')

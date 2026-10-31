@@ -1727,3 +1727,73 @@ func poolNativeWebSocketControlsAndUnexpectedGenerationKeepDurableOwner() async 
     #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func poolNullModelScopesAuthorizeImagesAndToolsOnlyWithinConfiguredCatalog() async throws {
+  for transport in ["http", "websocket"] {
+    try await withOAuth(timeout: 3000) { oauth in
+      let h = try await PoolHTTPHarness.open(oauth, transport: transport, images: true)
+      do {
+        var key = try #require(try await h.store.listKeys().first { $0.id == "alice" })
+        key = try await h.store.updateKey(
+          id: key.id, revision: key.revision, enabled: true,
+          policy: .init(
+            models: nil, limits: key.policy.limits, imageGeneration: true, imageModels: nil))
+        func post(_ path: String, _ body: JSONValue) async throws -> Int {
+          var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/" + path)!)
+          request.httpMethod = "POST"
+          request.setValue("Bearer " + h.alice, forHTTPHeaderField: "Authorization")
+          request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+          request.httpBody = try body.data()
+          let session = URLSession(configuration: .ephemeral)
+          defer { session.invalidateAndCancel() }
+          return (try await session.data(for: request).1 as! HTTPURLResponse).statusCode
+        }
+        #expect(
+          try await post(
+            "responses",
+            .object([
+              "model": .string("synthetic-text"), "input": .string("synthetic"),
+              "tools": .array([.object(["type": .string("image_generation")])]),
+            ])) == 200)
+        #expect(
+          try await post(
+            "images/generations",
+            .object([
+              "model": .string("synthetic-image"), "prompt": .string("synthetic"),
+            ])) == 200)
+        let count = h.calls.count
+        #expect(
+          try await post(
+            "responses",
+            .object([
+              "model": .string("unconfigured"), "input": .string("synthetic"),
+            ])) == 403)
+        #expect(
+          try await post(
+            "images/generations",
+            .object([
+              "model": .string("unconfigured"), "prompt": .string("synthetic"),
+            ])) != 200)
+        #expect(h.calls.count == count)
+        _ = try await h.store.updateKey(
+          id: key.id, revision: key.revision, enabled: true,
+          policy: .init(
+            models: nil, limits: key.policy.limits, imageGeneration: false, imageModels: nil))
+        #expect(
+          try await post(
+            "responses",
+            .object([
+              "model": .string("synthetic-text"), "input": .string("synthetic"),
+              "tools": .array([.object(["type": .string("image_generation")])]),
+            ])) == 403)
+        #expect(h.calls.count == count)
+        try await awaitOAuth { h.finalizer.outstanding == 0 }
+      } catch {
+        await h.close()
+        throw error
+      }
+      await h.close()
+    }
+  }
+}
