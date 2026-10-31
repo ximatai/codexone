@@ -2,6 +2,11 @@
 services:
   init-data:
     image: ${CODEXONE_IMAGE:?Set an immutable candidate image reference}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     platform: linux/amd64
     user: "0:0"
     working_dir: /
@@ -21,6 +26,11 @@ services:
         target: /var/lib/codexone
         volume:
           nocopy: true
+      - type: volume
+        source: backups
+        target: /var/backups/codexone
+        volume:
+          nocopy: true
     environment:
       TARGET_UID: ${CODEXONE_UID:?Run init-install.py}
       TARGET_GID: ${CODEXONE_GID:?Run init-install.py}
@@ -33,18 +43,25 @@ services:
           [ "$$identifier" -le 2147483647 ] || exit 1
         done
         expected="$$TARGET_UID:$$TARGET_GID"
-        actual="$$(stat -c %u:%g /var/lib/codexone)"
-        if [ "$$actual" != "$$expected" ]; then
-          entries="$$(find /var/lib/codexone -mindepth 1 -maxdepth 1 -print -quit)"
-          if [ -n "$$entries" ]; then
-            echo 'Existing data volume ownership differs; offline maintenance is required.' >&2
-            exit 1
+        for directory in /var/lib/codexone /var/backups/codexone; do
+          actual="$$(stat -c %u:%g "$$directory")"
+          if [ "$$actual" != "$$expected" ]; then
+            entries="$$(find "$$directory" -mindepth 1 -maxdepth 1 -print -quit)"
+            if [ -n "$$entries" ]; then
+              echo 'Existing volume ownership differs; offline maintenance is required.' >&2
+              exit 1
+            fi
+            chown "$$expected" "$$directory"
           fi
-          chown "$$expected" /var/lib/codexone
-        fi
-        chmod 700 /var/lib/codexone
+          chmod 700 "$$directory"
+        done
   gateway:
     image: ${CODEXONE_IMAGE:?Set an immutable candidate image reference}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     platform: linux/amd64
     network_mode: host
     user: "${CODEXONE_UID:?Run init-install.py}:${CODEXONE_GID:?Run init-install.py}"
@@ -61,8 +78,14 @@ services:
         target: /var/lib/codexone
         volume:
           nocopy: true
+      - type: volume
+        source: backups
+        target: /var/backups/codexone
+        volume:
+          nocopy: true
       - ./secrets:/run/codexone:ro
     environment:
+      CODEXONE_BACKUP_DIRECTORY: /var/backups/codexone
       CODEXONE_UPSTREAM_HTTP_PROXY: ${CODEXONE_UPSTREAM_HTTP_PROXY:-}
       CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json
       CODEXONE_ACCOUNT_MASTER_KEY_FILE: /run/codexone/master
@@ -77,3 +100,6 @@ volumes:
   data:
     driver: local
     name: ${CODEXONE_DATA_VOLUME:?Run init-install.py}
+  backups:
+    driver: local
+    name: ${CODEXONE_BACKUP_VOLUME:?Run init-install.py}

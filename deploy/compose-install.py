@@ -19,6 +19,9 @@ def main():
             raise ValueError('Invalid installation identity')
         if settings['CODEXONE_DATA_VOLUME'] != 'codexone-data-' + project.removeprefix('codexone-'):
             raise ValueError('Mismatched installation volume')
+        backup_volume = 'codexone-backups-' + project.removeprefix('codexone-')
+        if settings.get('CODEXONE_BACKUP_VOLUME', backup_volume) != backup_volume:
+            raise ValueError('Mismatched installation backup volume')
         # Keep Compose's global installation selectors under this entry point's control.
         forbidden = ('-f', '--file', '-p', '--project-name', '--project-directory', '--env-file')
         arguments = sys.argv[1:]
@@ -40,6 +43,8 @@ def main():
             raise ValueError('Use a Compose command without installation selectors')
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(('CODEXONE_', 'COMPOSE_'))}
+        # Derive the same isolated backup volume for installations created before this field existed.
+        environment['CODEXONE_BACKUP_VOLUME'] = backup_volume
         command = ['docker', 'compose', '--file', str(root / 'compose.yaml'),
                    '--env-file', str(root / '.env'), '--project-directory', str(root),
                    '--project-name', project, *arguments]
