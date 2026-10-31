@@ -1,6 +1,7 @@
 import CodexOneCore
 import Foundation
 import NIOHTTP1
+import Synchronization
 import Testing
 
 @testable import CodexOneAdapters
@@ -25,7 +26,8 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
 @Test func browserSessionsRequireExactHostOriginAndMutationProof() throws {
   let sessions = try AdminSessions(digest: keyDigest(syntheticAdminSecret), publicOrigin: nil)
   sessions.bind(port: 19876)
-  let session = try sessions.login(secret: syntheticAdminSecret, headers: loginHeaders())
+  let session = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
   #expect(try sessions.authorize(sessionHeaders(session), mutation: false) == session.csrf)
   #expect(
     try sessions.authorize(sessionHeaders(session, mutation: true), mutation: true) == session.csrf)
@@ -51,14 +53,16 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
   sessions.bind(port: 19876)
   var created: [AdminSessions.Created] = []
   for _ in 0..<16 {
-    created.append(try sessions.login(secret: syntheticAdminSecret, headers: loginHeaders()))
+    created.append(
+      try sessions.login(username: "admin", secret: syntheticAdminSecret, headers: loginHeaders()))
   }
   #expect(throws: ExecutionError.capacity) {
-    try sessions.login(secret: syntheticAdminSecret, headers: loginHeaders())
+    try sessions.login(username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
   }
   var replacing = loginHeaders()
   replacing.add(name: "cookie", value: AdminSessions.cookieName + "=" + created[0].token)
-  let fresh = try sessions.login(secret: syntheticAdminSecret, headers: replacing)
+  let fresh = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: replacing)
   #expect(throws: ExecutionError.unauthorized) {
     try sessions.authorize(sessionHeaders(created[0]), mutation: false)
   }
@@ -66,15 +70,17 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
   #expect(throws: ExecutionError.unauthorized) {
     try sessions.authorize(sessionHeaders(fresh), mutation: false)
   }
-  _ = try sessions.login(secret: syntheticAdminSecret, headers: loginHeaders())
+  _ = try sessions.login(username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
 }
 
 @Test func expiredAndRestartedSessionsCannotAuthorizeButCanLoginAgain() async throws {
+  let clock = Mutex(ContinuousClock.now)
   let sessions = try AdminSessions(
-    digest: keyDigest(syntheticAdminSecret), publicOrigin: nil, maximumAge: 1)
+    digest: keyDigest(syntheticAdminSecret), publicOrigin: nil, now: { clock.withLock { $0 } })
   sessions.bind(port: 19876)
-  let session = try sessions.login(secret: syntheticAdminSecret, headers: loginHeaders())
-  try await Task.sleep(for: .milliseconds(1100))
+  let session = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
+  clock.withLock { $0 = $0.advanced(by: .seconds(AdminSessions.idleLifetime)) }
   #expect(throws: ExecutionError.unauthorized) {
     try sessions.authorize(sessionHeaders(session), mutation: false)
   }
@@ -85,7 +91,7 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
   }
   var stale = loginHeaders()
   stale.add(name: "cookie", value: AdminSessions.cookieName + "=" + session.token)
-  let fresh = try restarted.login(secret: syntheticAdminSecret, headers: stale)
+  let fresh = try restarted.login(username: "admin", secret: syntheticAdminSecret, headers: stale)
   #expect(try restarted.authorize(sessionHeaders(fresh), mutation: false) == fresh.csrf)
 }
 
@@ -104,12 +110,58 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
   var headers = loginHeaders()
   headers.replaceOrAdd(name: "origin", value: "https://admin.example")
   headers.add(name: "x-forwarded-host", value: "foreign.example")
-  let session = try sessions.login(secret: syntheticAdminSecret, headers: headers)
+  let session = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: headers)
   var proof = sessionHeaders(session, mutation: true)
   proof.replaceOrAdd(name: "origin", value: "https://foreign.example")
   proof.add(name: "x-forwarded-host", value: "admin.example")
   #expect(throws: GatewayProtocolError.self) { try sessions.authorize(proof, mutation: true) }
   #expect(throws: ExecutionError.unauthorized) {
-    try sessions.login(secret: "synthetic-wrong-admin-credential", headers: headers)
+    try sessions.login(
+      username: "admin", secret: "synthetic-wrong-admin-credential", headers: headers)
   }
+}
+
+@Test func sessionActivitySlidesUntilAbsoluteBoundaryAndCapsCookieAge() throws {
+  let start = ContinuousClock.now
+  let clock = Mutex(start)
+  let sessions = try AdminSessions(
+    digest: keyDigest(syntheticAdminSecret), publicOrigin: nil, now: { clock.withLock { $0 } })
+  sessions.bind(port: 19876)
+  let session = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
+  #expect(session.maximumAge == AdminSessions.absoluteLifetime)
+  for hour in stride(from: 23, through: 167, by: 12) {
+    clock.withLock { $0 = start.advanced(by: .seconds(hour * 3600)) }
+    let renewed = try sessions.authenticate(sessionHeaders(session), mutation: false)
+    #expect(renewed.csrf == session.csrf)
+    #expect(renewed.maximumAge == AdminSessions.absoluteLifetime - hour * 3600)
+  }
+  clock.withLock { $0 = start.advanced(by: .seconds(AdminSessions.absoluteLifetime)) }
+  #expect(throws: ExecutionError.unauthorized) {
+    try sessions.authenticate(sessionHeaders(session), mutation: false)
+  }
+}
+@Test func usernamesFailWithTheSameCredentialError() throws {
+  let sessions = try AdminSessions(digest: keyDigest(syntheticAdminSecret), publicOrigin: nil)
+  sessions.bind(port: 19876)
+  for username in [nil, "", "wrong", "Admin", "ADMIN"] as [String?] {
+    #expect(throws: ExecutionError.unauthorized) {
+      try sessions.login(username: username, secret: syntheticAdminSecret, headers: loginHeaders())
+    }
+  }
+}
+
+@Test func cookieAgeIsComputedAtResponseTimeAndNeverExceedsDeadline() throws {
+  let start = ContinuousClock.now
+  let clock = Mutex(start)
+  let sessions = try AdminSessions(
+    digest: keyDigest(syntheticAdminSecret), publicOrigin: nil, now: { clock.withLock { $0 } })
+  sessions.bind(port: 19876)
+  let session = try sessions.login(
+    username: "admin", secret: syntheticAdminSecret, headers: loginHeaders())
+  clock.withLock { $0 = start.advanced(by: .seconds(AdminSessions.absoluteLifetime - 1)) }
+  #expect(sessions.cookieAge(session) == 1)
+  clock.withLock { $0 = $0.advanced(by: .seconds(2)) }
+  #expect(sessions.cookieAge(session) == 0)
 }

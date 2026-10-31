@@ -318,11 +318,11 @@ def admin_checks(f, key):
     assert request(f, 'admin', 'GET', '/api/keys', headers={'Authorization': 'Bearer ' + key})[0] == 401
     forged = {'Origin': origin, 'Host': 'wrong.example.invalid', 'Forwarded': 'host=localhost;proto=https',
               'X-Forwarded-Host': origin.removeprefix('https://'), 'X-Forwarded-Proto': 'https'}
-    assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, forged)[0] == 403
+    assert request(f, 'admin', 'POST', '/api/session', {'username': 'admin', 'secret': f['admin']}, forged)[0] == 403
     for bad_origin in ('https://wrong.example.invalid', 'https://localhost'):
-        assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': bad_origin})[0] == 403
-    assert request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': origin, 'Host': 'localhost'})[0] == 403
-    status, headers, body = request(f, 'admin', 'POST', '/api/session', {'secret': f['admin']}, {'Origin': origin})
+        assert request(f, 'admin', 'POST', '/api/session', {'username': 'admin', 'secret': f['admin']}, {'Origin': bad_origin})[0] == 403
+    assert request(f, 'admin', 'POST', '/api/session', {'username': 'admin', 'secret': f['admin']}, {'Origin': origin, 'Host': 'localhost'})[0] == 403
+    status, headers, body = request(f, 'admin', 'POST', '/api/session', {'username': 'admin', 'secret': f['admin']}, {'Origin': origin})
     assert status == 200
     cookie = SimpleCookie(); cookie.load(headers['set-cookie']); session = cookie['__Host-codexone_admin']
     assert session['secure'] and session['httponly'] and session['samesite'] == 'Strict' and session['path'] == '/'

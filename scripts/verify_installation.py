@@ -197,7 +197,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             asset = re.search(rb'/assets/[^" ]+\.js', html); assert asset
             assert request(asset[0].decode())[0] == 200
             assert request('/api/keys')[0] == 401
-            status, login, raw_headers = request('/api/session', body={'secret': admin}, headers=['Origin: ' + ORIGIN, 'Host: admin.example.invalid'], response_headers=True)
+            status, login, raw_headers = request('/api/session', body={'username': 'admin', 'secret': admin}, headers=['Origin: ' + ORIGIN, 'Host: admin.example.invalid'], response_headers=True)
             assert status == 200 and 'csrf' in json.loads(login)
             cookies = SimpleCookie()
             for line in raw_headers.splitlines():
