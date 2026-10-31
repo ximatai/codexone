@@ -155,17 +155,34 @@ def verify(binary):
         assert result[0] == 200
         latest(f.root / 'state/core.sqlite', 'settled')
         summary = document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'][0]
-        assert summary['principal'] == 'browser-synthetic' and summary['admitted'] == 1
+        assert summary['principal'] == 'browser-synthetic' and summary['admitted'] == 1 and summary['displayName'] is None
         options = document(request(port, 'GET', '/api/usage/options', cookie=cookie))
-        assert options['keyOptions'] == [{'id': key['id'], 'principal': 'browser-synthetic'}]
+        assert options['keyOptions'] == [{'id': key['id'], 'principal': 'browser-synthetic', 'displayName': None}]
         summary_start = int(time.time()) // 86400 * 86400
         row = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]
+        assert row['displayName'] is None
         assert row['principal'] == 'browser-synthetic' and row['totalMilliseconds'] >= row['firstEventMilliseconds'] >= 0
         daily = document(request(port, 'GET', '/api/usage/daily?days=1&key=' + key['id'] + '&model=synthetic-text', cookie=cookie))['buckets'][0]
         assert daily['requests'] == daily['succeeded'] == 1 and daily['failed'] == 0
         assert daily['metrics'] == row['metrics']
         totals = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}&limit=1', cookie=cookie))['totals']
         assert totals['p95FirstEventMilliseconds'] == row['firstEventMilliseconds']
+        name_path = '/api/keys/' + key['id'] + '/display-name'
+        assert key['displayName'] is None
+        body = dict(revision=key['revision'], displayName='合成别名')
+        assert request(port, 'PUT', name_path, body)[0] == 403
+        assert request(port, 'PUT', name_path, body, cookie=cookie, origin=f.origin)[0] == 403
+        for invalid in ['', 'a' * 65, '😀' * 65, 'a\n', 'a\u200d', 'a\u2028', 123]:
+            assert request(port, 'PUT', name_path, dict(revision=key['revision'], displayName=invalid), cookie=cookie, origin=f.origin, csrf=csrf)[0] == 400
+        key = document(request(port, 'PUT', name_path, body, cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert key['displayName'] == '合成别名'
+        assert document(request(port, 'GET', '/api/keys', cookie=cookie))['keys'][0]['displayName'] == '合成别名'
+        assert document(request(port, 'GET', '/api/usage/options', cookie=cookie))['keyOptions'][0]['displayName'] == '合成别名'
+        assert document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'][0]['displayName'] == '合成别名'
+        assert document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]['displayName'] == '合成别名'
+        assert request(port, 'PUT', name_path, body, cookie=cookie, origin=f.origin, csrf=csrf)[0] == 409
+        key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert key['displayName'] is None
         expiration_path = '/api/keys/' + key['id'] + '/expiration'
         expired_body = dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time()))
         assert request(port, 'PUT', expiration_path, expired_body)[0] == 403
@@ -183,6 +200,10 @@ def verify(binary):
         assert request(f.ports['data'], 'GET', '/v1/models', headers={'Authorization': 'Bearer ' + secret})[0] == 200
         attention = document(request(port, 'GET', '/api/attention', cookie=cookie))
         assert any(item['kind'] == 'key_expiring' and item['subjectID'] == key['id'] for item in attention['items'])
+        key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName='提醒别名'), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        named_attention = document(request(port, 'GET', '/api/attention', cookie=cookie))
+        assert any(item['kind'] == 'key_expiring' and item['subjectName'] == '提醒别名' for item in named_attention['items'])
+        key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         rendered = json.dumps(attention)
         assert all(value not in rendered for value in f.secrets + [ADMIN])
         assert all(value not in rendered for value in ('digest', 'envelope', 'refreshToken', 'accessToken', 'namespace'))
@@ -202,7 +223,10 @@ def verify(binary):
             assert time.monotonic() < deadline
             time.sleep(.02)
         assert len(live) == 1 and live[0]['principal'] == 'browser-synthetic' and live[0]['model'] == 'synthetic-text'
-        assert set(live[0]).issubset({'id', 'keyID', 'principal', 'model', 'mode', 'accountID', 'accountDisplayName', 'startedAtUnixSeconds', 'elapsedSeconds', 'hasFirstEvent'})
+        assert live[0]['displayName'] is None
+        key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName='进行中别名'), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert document(request(port, 'GET', '/api/usage/in-flight?limit=1', cookie=cookie))['rows'][0]['displayName'] == '进行中别名'
+        assert set(live[0]).issubset({'id', 'keyID', 'principal', 'displayName', 'model', 'mode', 'accountID', 'accountDisplayName', 'startedAtUnixSeconds', 'elapsedSeconds', 'hasFirstEvent'})
         key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time())), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert document(request(port, 'GET', '/api/usage/in-flight', cookie=cookie))['rows']
         assert b'response.output_text.delta' in response.read()

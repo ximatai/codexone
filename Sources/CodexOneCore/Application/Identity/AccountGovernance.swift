@@ -42,7 +42,7 @@ public struct ManagedAccount: Sendable, Equatable, Encodable {
   public static func validateDisplayName(_ value: String?) throws {
     guard
       value.map({
-        (1...64).contains($0.unicodeScalars.count)
+        (1...64).contains($0.unicodeScalars.count) && $0.utf8.count <= 256
           && !$0.unicodeScalars.contains {
             CharacterSet.controlCharacters.contains($0)
               || CharacterSet.illegalCharacters.contains($0)

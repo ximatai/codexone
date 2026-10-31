@@ -192,7 +192,7 @@ enum AttentionRules {
     {
       result.append(
         .init(
-          "key_expiring", type: "key", id: key.id, name: key.principal,
+          "key_expiring", type: "key", id: key.id, name: key.displayName ?? key.principal,
           detail: ["expiresAtUnixSeconds": .number(Decimal(expiration))], since: expiration))
     }
     for (metric, value, limit) in [
@@ -202,7 +202,7 @@ enum AttentionRules {
       if let limit, Double(value) / Double(limit) * 100 >= AttentionThresholds.quotaWarning {
         result.append(
           .init(
-            "key_limit_near", type: "key", id: key.id, name: key.principal,
+            "key_limit_near", type: "key", id: key.id, name: key.displayName ?? key.principal,
             detail: [
               "metric": .string(metric),
               "usedPercent": .number(Decimal(Double(value) / Double(limit) * 100)),

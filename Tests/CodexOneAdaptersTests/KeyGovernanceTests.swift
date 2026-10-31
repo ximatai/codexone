@@ -470,3 +470,67 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   #expect(try await reopened.authenticateKey(digest: digest).expiresAtUnixSeconds == nil)
   await reopened.close()
 }
+
+@Test func keyDisplayNameValidationCASPreservationAndAuthenticationIsolation() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let digest = keyDigest("synthetic-name-token")
+  var key = try await store.createKey(
+    id: "named", principal: "owner", digest: digest, policy: keyPolicy())
+  // Legacy metadata omits the optional field entirely.
+  try rawSQL(
+    path, "UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.displayName')")
+  #expect(try await store.listKeys(after: nil).first?.displayName == nil)
+  for invalid in [
+    "", String(repeating: "a", count: 65), String(repeating: "😀", count: 65), "a\n", "a\u{200D}",
+    "a\u{2028}", "a\u{2029}", "a\u{0000}", "a\u{FFFF}",
+  ] {
+    await #expect(throws: ExecutionError.invalidCommand) {
+      try await store.setKeyDisplayName(id: key.id, revision: key.revision, displayName: invalid)
+    }
+  }
+  let name = String(repeating: "😀", count: 64)
+  key = try await store.setKeyDisplayName(id: key.id, revision: key.revision, displayName: name)
+  #expect(key.displayName == name)
+  await #expect(throws: ExecutionError.conflict) {
+    try await store.setKeyDisplayName(id: key.id, revision: 1, displayName: "stale")
+  }
+  let second = try await store.createKey(
+    id: "other-name", principal: "other-owner",
+    digest: keyDigest("synthetic-other-name-token"), policy: keyPolicy())
+  _ = try await store.setKeyDisplayName(id: second.id, revision: second.revision, displayName: name)
+  #expect(try await store.authenticateKey(digest: digest).principal == "owner")
+  #expect(
+    try await store.authenticateKey(digest: keyDigest("synthetic-other-name-token")).principal
+      == "other-owner")
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await store.authenticateKey(digest: keyDigest(name))
+  }
+  key = try await store.updateKey(
+    id: key.id, revision: key.revision, enabled: true, policy: key.policy)
+  #expect(key.displayName == name)
+  key = try await store.setKeyExpiration(
+    id: key.id, revision: key.revision, expiresAtUnixSeconds: nil)
+  #expect(key.displayName == name)
+  key = try await store.rotateKey(
+    id: key.id, revision: key.revision, digest: keyDigest("synthetic-rotated-name-token"))
+  #expect(key.displayName == name)
+  try await store.admit(keyAdmission("named-request", key: key))
+  let reader = try await store.makeUsageReader()
+  #expect(try await reader.usageOptions().keyOptions.first { $0.id == key.id }?.displayName == name)
+  #expect(try await reader.keyUsage().keys.first { $0.key.id == key.id }?.key.displayName == name)
+  #expect(try await reader.inFlightUsage(limit: 10).first?.displayName == name)
+  let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+  let report = try await reader.queryUsage(
+    .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
+  #expect(report.rows.first?.displayName == name)
+  key = try await store.setKeyDisplayName(id: key.id, revision: key.revision, displayName: nil)
+  #expect(key.displayName == nil)
+  #expect(try await reader.inFlightUsage(limit: 10).first?.displayName == nil)
+  #expect(try await reader.usageOptions().keyOptions.first { $0.id == key.id }?.displayName == nil)
+  await reader.close()
+  await store.close()
+}
