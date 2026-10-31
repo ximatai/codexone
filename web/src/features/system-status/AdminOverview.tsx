@@ -1,13 +1,17 @@
+import { quotaStale } from "../account-management/quota";
+import { useOverviewRefresh } from "./useOverviewRefresh";
 import { ActivityOverview } from "./ActivityOverview";
+import styles from "./overview.module.css";
+import { EmptyState, ErrorState } from "../../shared/ui/States";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Alert,
   Drawer,
   Anchor,
   Paper,
   Stack,
   Text,
   Title,
+  Skeleton,
 } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
 import { useEffect, useState } from "react";
@@ -16,7 +20,7 @@ import { ManagementError, request } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
 import { fetchKeyUsage } from "../usage/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
-import { money, terms, estimateNote } from "../../shared/presentation";
+import { terms } from "../../shared/presentation";
 
 async function fetchStorage(signal: AbortSignal) {
   const value = (await request("/api/runtime/storage", { signal })) as Record<
@@ -33,6 +37,12 @@ async function fetchStorage(signal: AbortSignal) {
 }
 export function AdminOverview() {
   const owner = useManagementSession();
+  const refresh = useOverviewRefresh();
+  const polling = {
+    refetchInterval: refresh.interval,
+    staleTime: 15000,
+    refetchOnWindowFocus: true,
+  };
   const [clock, setClock] = useState(() => performance.now());
   useEffect(() => {
     const timer = window.setInterval(() => setClock(performance.now()), 15000);
@@ -40,25 +50,23 @@ export function AdminOverview() {
   }, []);
   const [params, setParams] = useSearchParams();
   const overlay = !!owner.session && params.get("storage") === "details";
-  useEffect(() => {
-    if (!overlay) return;
-    document.body.classList.add("management-overlay-open");
-    return () => document.body.classList.remove("management-overlay-open");
-  }, [overlay]);
   const accounts = useQuery({
     queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const usage = useQuery({
     queryKey: ["overview", "key-usage"],
     queryFn: ({ signal }) => fetchKeyUsage(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const storage = useQuery({
     queryKey: ["overview", "storage"],
     queryFn: ({ signal }) => fetchStorage(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const unauthorized = [accounts.error, usage.error, storage.error].some(
     (error) => error instanceof ManagementError && error.status === 401,
@@ -84,132 +92,149 @@ export function AdminOverview() {
   function total(field: "admitted" | "failed" | "pending") {
     return usage.data?.reduce((sum, item) => sum + item[field], 0) ?? "—";
   }
-  const knownCost = usage.data?.filter((item) => item.estimatedMicros !== null);
-  const cost = knownCost?.length
-    ? knownCost
-        .reduce((sum, item) => sum + BigInt(item.estimatedMicros!), 0n)
-        .toString()
-    : null;
   return (
     <Stack mb="xl" aria-label="管理概览">
-      <Title order={2}>今日运营概览</Title>
-      <Text size="sm" c="dimmed">
-        UTC 当日 · {estimateNote}；缺失用量保持不可用，Token
-        与费用为已观测下界。
-      </Text>
-      {usage.isFetched && (
-        <ActivityOverview
-          refreshOverview={() =>
-            Promise.all([
-              accounts.refetch(),
-              usage.refetch(),
-              storage.refetch(),
-            ])
-          }
-        />
-      )}
-      <div className="responsive-grid responsive-grid-4">
-        <Paper withBorder p="lg">
-          <Anchor component={Link} to="/accounts">
-            可用账号
-          </Anchor>
-          <Title order={3}>{available ?? "—"}</Title>
-          <Text size="sm">授权异常 {abnormal ?? "—"}</Text>
-          <Text size="xs">允许使用且无已知健康阻断，实际准入仍会复核。</Text>
-        </Paper>
-        <Paper withBorder p="lg">
-          <Anchor component={Link} to={todayUsage}>
-            今日请求 / 失败
-          </Anchor>
-          <Title order={3}>
-            {total("admitted")} / {total("failed")}
-          </Title>
-          <Text size="sm">费用：{money(cost)}</Text>
-        </Paper>
-        <Paper withBorder p="lg">
-          <Anchor component={Link} to={todayUsage}>
-            {terms.pending}
-          </Anchor>
-          <Title order={3}>{total("pending")}</Title>
-          <Text size="sm">今日在途与缺少完整用量的请求</Text>
-        </Paper>
-        <Paper withBorder p="lg">
-          <Anchor component={Link} to="/?storage=details">
-            存储与准入状态
-          </Anchor>
-          <Title order={3}>
-            {storage.data
-              ? storage.data.admissionAllowed
-                ? "允许准入"
-                : "暂停准入"
-              : "不可用"}
-          </Title>
-          <Text size="sm">
-            {storage.data
-              ? storage.data.optionalWorkAllowed
-                ? "统计可用"
-                : "可选工作暂停"
-              : "尚无存储观测"}
-          </Text>
-        </Paper>
-      </div>
       {(accounts.isError || usage.isError || storage.isError) && (
-        <Alert color="yellow">
+        <ErrorState
+          retryLabel="重新读取概览"
+          retry={() => {
+            void accounts.refetch();
+            void usage.refetch();
+            void storage.refetch();
+          }}
+        >
           部分概览读取失败或未开启，未将缺失值记为零。
-          <Anchor
-            component="button"
-            onClick={() => {
-              void accounts.refetch();
-              void usage.refetch();
-              void storage.refetch();
-            }}
-          >
-            重新读取概览
-          </Anchor>
-        </Alert>
+        </ErrorState>
       )}
-      <div className="responsive-grid responsive-grid-3">
-        {accounts.data?.map((account) => {
-          const quota = account.observability?.quota;
-          const base = quota?.limits.find((limit) => limit.id === "codex");
-          return (
-            <Paper withBorder p="md" key={account.id} className="wrap-anywhere">
-              <Anchor component={Link} to="/accounts">
-                {account.displayName ?? account.id}
-              </Anchor>
-              <QuotaWindowBar title="主窗口" value={base?.primary ?? null} />
-              <QuotaWindowBar title="次窗口" value={base?.secondary ?? null} />
-              <Text
-                size="xs"
-                c={
-                  base?.limitReached || base?.allowed === false
-                    ? "red"
-                    : "dimmed"
-                }
-              >
-                {base?.limitReached || base?.allowed === false
-                  ? "额度告警：上游报告受限"
-                  : "窗口为上游观测，不是 Key 余额"}
-              </Text>
-              <Text size="xs">
-                {!quota || quota.state === "unavailable"
-                  ? "额度不可用"
-                  : quota.state === "stale" ||
-                      (Math.max(clock, performance.now()) -
-                        account.observability!.receivedAt) /
-                        1000 >=
-                        quota.freshForSeconds
-                    ? "额度观测已陈旧"
-                    : "最近读取的额度观测"}
-                {quota?.failure ? " · 最近读取失败" : ""}
-              </Text>
+      <ActivityOverview
+        refresh={refresh}
+        extraQueries={[accounts, usage, storage]}
+        sidebar={
+          <>
+            <Paper withBorder p="md">
+              <Title order={3} size="h4" mb="md">
+                订阅额度
+              </Title>
+              {accounts.isPending && <Skeleton h={160} />}
+              {accounts.data?.length === 0 && (
+                <EmptyState>暂无订阅账号。</EmptyState>
+              )}
+              <Stack gap="md">
+                {accounts.data?.map((account) => {
+                  const quota = account.observability?.quota;
+                  const base = quota?.limits.find(
+                    (limit) => limit.id === "codex",
+                  );
+                  return (
+                    <Stack gap="xs" key={account.id} className="wrap-anywhere">
+                      <Anchor component={Link} to="/accounts">
+                        {account.displayName ?? account.id}
+                      </Anchor>
+                      <QuotaWindowBar
+                        title="主窗口"
+                        value={base?.primary ?? null}
+                      />
+                      <QuotaWindowBar
+                        title="次窗口"
+                        value={base?.secondary ?? null}
+                      />
+                      <Text
+                        size="xs"
+                        c={
+                          base?.limitReached || base?.allowed === false
+                            ? "red"
+                            : "dimmed"
+                        }
+                      >
+                        {base?.limitReached || base?.allowed === false
+                          ? "额度告警：上游报告受限"
+                          : "窗口为上游观测，不是 Key 余额"}
+                      </Text>
+                      <Text size="xs" c="orange">
+                        {!quota || quota.state === "unavailable"
+                          ? "额度不可用"
+                          : quotaStale(
+                                account.observability!,
+                                Math.max(clock, performance.now()),
+                              )
+                            ? "额度观测已陈旧"
+                            : ""}
+                        {quota?.failure ? " · 最近读取失败" : ""}
+                      </Text>
+                    </Stack>
+                  );
+                })}
+              </Stack>
             </Paper>
-          );
-        })}
-      </div>
+            <Paper withBorder p="md">
+              <Title order={3} size="h4" mb="md">
+                系统状态
+              </Title>
+              <Stack gap="xs">
+                {[
+                  {
+                    label: "可用账号",
+                    value: `${available ?? "—"} · 授权异常 ${abnormal ?? "—"}`,
+                    to: "/accounts",
+                    good: available != null && available > 0,
+                  },
+                  {
+                    label: terms.pending,
+                    value: String(total("pending")),
+                    to: todayUsage,
+                    good: total("pending") === 0,
+                  },
+                  {
+                    label: "存储与准入",
+                    value: storage.data
+                      ? storage.data.admissionAllowed
+                        ? "允许准入"
+                        : "暂停准入"
+                      : "不可用",
+                    to: "/?storage=details",
+                    good: !!storage.data?.admissionAllowed,
+                  },
+                  {
+                    label: "可选工作",
+                    value: storage.data
+                      ? storage.data.optionalWorkAllowed
+                        ? "统计可用"
+                        : "可选工作暂停"
+                      : "不可用",
+                    to: "/?storage=details",
+                    good: !!storage.data?.optionalWorkAllowed,
+                  },
+                ].map((row) => (
+                  <Anchor
+                    key={row.label}
+                    component={Link}
+                    to={row.to}
+                    className={styles.statusRow}
+                  >
+                    <Text size="sm">{row.label}</Text>
+                    <Text size="sm">
+                      <span
+                        style={{
+                          color: row.good
+                            ? "var(--mantine-color-green-7)"
+                            : "var(--mantine-color-orange-7)",
+                        }}
+                      >
+                        ●
+                      </span>{" "}
+                      {row.value} ›
+                    </Text>
+                  </Anchor>
+                ))}
+              </Stack>
+            </Paper>
+          </>
+        }
+      />
       <Drawer
-        lockScroll={false}
-        opened={params.get("storage") === "details"}
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={overlay || undefined}
+        opened={overlay}
         onClose={() => setParams({})}
         title="存储与准入详情"
         position="right"

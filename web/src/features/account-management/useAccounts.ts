@@ -1,19 +1,9 @@
+import { useManagedMutation } from "../../shared/useManagedMutation";
 import { useManagementSession } from "../../shared/session";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as sessionAPI from "../../shared/management";
 import * as api from "./api";
 import type { Account, AccountMode, AuthorizationFlow } from "./api";
-function failure(error: unknown): string {
-  if (error instanceof sessionAPI.ManagementError) {
-    if (error.code === "authorization_required")
-      return "上游授权已失效。请重新读取账号后重新授权。";
-    if (error.status === 409)
-      return "状态已变化或授权流程已结束。请重新读取账号，核对后再操作。";
-    if (error.status === 400)
-      return "提交内容无效，请检查显示名或授权信息后重试。";
-  }
-  return "操作结果未确认。请重新读取账号核对，系统不会自动重复提交。";
-}
 export function useAccounts() {
   const owner = useManagementSession();
   const [session, setSession] = useState<sessionAPI.AdminSession | null>(
@@ -140,60 +130,39 @@ export function useAccounts() {
     await read(version, controller.current?.signal);
     if (current(version)) setBusy(false);
   }
+  const managed = useManagedMutation({
+    scope: "accounts",
+    successNotification: false,
+    errorMessage: (cause) =>
+      cause instanceof sessionAPI.ManagementError &&
+      cause.code === "authorization_required"
+        ? "上游授权已失效。请重新读取账号后重新授权。"
+        : undefined,
+    invalidMessage: "提交内容无效，请检查显示名或授权信息后重试。",
+    invalidate: [],
+    refresh: async (signal) => !!(await read(epoch.current, signal)),
+  });
   async function mutation<T>(
     work: (csrf: string, signal?: AbortSignal) => Promise<T>,
     success: string | ((result: T) => { text: string; warning: boolean }),
   ) {
-    if (!session || busy || locked || owner.locked("accounts")) return;
-    owner.lock("accounts", true);
-    setBusy(true);
+    if (!session || busy || locked || managed.busy) return;
     setError("");
     setNotice("");
-    const version = epoch.current;
-    try {
-      const result = await work(session.csrf, controller.current?.signal);
-      if (!current(version)) return;
-      setLocked(true);
-      const refreshed = await read(version, controller.current?.signal);
-      if (refreshed === "same" && current(version)) {
-        const notice =
-          typeof success === "string"
-            ? { text: success, warning: false }
-            : success(result);
-        setNotice(notice.text, notice.warning ? "warning" : "success");
-      }
-    } catch (cause) {
-      if (current(version)) {
-        setLocked(true);
-        setError(failure(cause));
-        if (
-          cause instanceof sessionAPI.ManagementError &&
-          cause.status === 409
-        ) {
-          const refreshed = await read(version, controller.current?.signal);
-          if (current(version))
-            setError(
-              refreshed
-                ? "记录已被其他操作修改，账号已刷新，请重新确认后操作。"
-                : "记录已变化，刷新失败，请重新读取账号后再操作。",
-            );
+    await managed.run(
+      async (csrf, signal) => {
+        const result = await work(csrf, signal);
+        if (signal.aborted) return;
+        const refreshed = await read(epoch.current, signal);
+        if (!refreshed) throw new Error("Account refresh failed");
+        if (typeof success === "string") setNotice(success);
+        else {
+          const notice = success(result);
+          setNotice(notice.text, notice.warning ? "warning" : "success");
         }
-        if (
-          cause instanceof sessionAPI.ManagementError &&
-          cause.status === 401
-        ) {
-          proof.current = null;
-          owner.invalidate();
-          setSession(null);
-          setAccounts([]);
-          clearFlow();
-          setNotice("");
-          setError("管理会话已失效，请重新登录。");
-        }
-      }
-    } finally {
-      if (current(version)) setBusy(false);
-    }
+      },
+      typeof success === "string" ? success : "额度观测已完成。",
+    );
   }
   async function begin(account: Account | null) {
     const version = epoch.current;
@@ -249,7 +218,7 @@ export function useAccounts() {
     accounts,
     configured,
     checking,
-    busy,
+    busy: busy || managed.busy,
     locked: locked || owner.locked("accounts"),
     error,
     notice,

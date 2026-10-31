@@ -184,7 +184,7 @@ test("round two overview, usage, account name and key expiration", async ({
   ).toBeVisible();
   await expect(activity.getByText("16", { exact: true })).toBeVisible();
   await expect(activity.getByLabel("自动刷新（15 秒）")).toBeChecked();
-  await activity.getByRole("button", { name: "查看详情" }).first().click();
+  await activity.locator("tbody tr[tabindex]").first().click();
   await expect(page.getByRole("dialog", { name: "请求详情" })).toContainText(
     "request-first",
   );
@@ -241,7 +241,7 @@ test("round two overview, usage, account name and key expiration", async ({
     .getByLabel("到期日期（UTC）")
     .fill(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
   await expiry.getByRole("button", { name: "保存到期时间" }).click();
-  await expect(page.getByText("7 天内将到期", { exact: true })).toBeVisible();
+  await expect(page.getByText("7 天内到期", { exact: true })).toBeVisible();
   await page.screenshot({
     path: screenshots + "/key-expiration-1440.png",
     fullPage: true,

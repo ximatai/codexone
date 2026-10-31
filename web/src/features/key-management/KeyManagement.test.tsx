@@ -2,7 +2,13 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { renderPrivate as render } from "../../../tests/render";
 import * as sessions from "../../shared/management";
 import { beforeEach } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { KeyManagement } from "./KeyManagement";
 import * as api from "./api";
@@ -22,6 +28,7 @@ vi.mock("./api", async (original) => ({
   fetchOptions: vi.fn(),
   createKey: vi.fn(),
   updateKey: vi.fn(),
+  setExpiration: vi.fn(),
 }));
 const key: api.ManagedKey = {
   id: "key-1",
@@ -91,13 +98,18 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
   );
   await screen.findByText("尚未创建密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
-  fireEvent.change(screen.getByLabelText("主体标识"), {
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "team" },
   });
   fireEvent.click(screen.getByLabelText("synthetic-text"));
   vi.useFakeTimers();
   await act(async () => {
-    fireEvent.click(screen.getByText("创建 API Key"));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
+        "button",
+        { name: "创建密钥" },
+      ),
+    );
   });
   expect(screen.getByLabelText("新 API Key")).toHaveValue(
     "synthetic-one-time-secret",
@@ -155,12 +167,17 @@ it("creates an image-only key without granting vision or a conversation model", 
   const view = render(<KeyManagement />);
   await screen.findByText("尚未创建密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
-  fireEvent.change(screen.getByLabelText("主体标识"), {
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "images-team" },
   });
   fireEvent.click(screen.getByLabelText("图片生成与参考图编辑"));
   fireEvent.click(screen.getByLabelText("synthetic-image"));
-  fireEvent.click(screen.getByText("创建 API Key"));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
+      "button",
+      { name: "创建密钥" },
+    ),
+  );
   await waitFor(() => expect(api.createKey).toHaveBeenCalled());
   expect(vi.mocked(api.createKey).mock.calls[0][0]).toMatchObject({
     principal: "images-team",
@@ -300,4 +317,108 @@ it("retains the editor draft after validation rejection", async () => {
     expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled(),
   );
   expect(screen.getByLabelText("每日请求（UTC）")).toHaveValue("7");
+});
+
+it.each([false, true])(
+  "sets creation expiration and preserves one-time secret on partial failure=%s",
+  async (fails) => {
+    vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+    vi.mocked(api.fetchKeys).mockResolvedValue([]);
+    vi.mocked(api.fetchOptions).mockResolvedValue({
+      models: ["synthetic-text"],
+      imageModels: [],
+    });
+    vi.mocked(api.createKey).mockResolvedValue({
+      key: { ...key },
+      secret: "synthetic-once",
+    });
+    if (fails)
+      vi.mocked(api.setExpiration).mockRejectedValue(
+        new sessions.ManagementError(0, "connection_failed"),
+      );
+    else
+      vi.mocked(api.setExpiration).mockResolvedValue({
+        ...key,
+        revision: 2,
+        expiresAtUnixSeconds: 2000000000,
+      });
+    render(<KeyManagement />);
+    await screen.findByText("尚未创建密钥。");
+    fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
+    fireEvent.change(await screen.findByLabelText("主体标识"), {
+      target: { value: "team" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
+    fireEvent.change(screen.getByLabelText("到期时间"), {
+      target: { value: "7" },
+    });
+    const date = (screen.getByLabelText("到期日期（UTC）") as HTMLInputElement)
+      .value;
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
+        "button",
+        { name: "创建密钥" },
+      ),
+    );
+    await waitFor(() =>
+      expect(api.setExpiration).toHaveBeenCalledWith(
+        expect.objectContaining({ id: key.id, revision: 1 }),
+        Date.parse(date + "T00:00:00Z") / 1000,
+        "synthetic-csrf",
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(await screen.findByLabelText("新 API Key")).toHaveValue(
+      "synthetic-once",
+    );
+    if (fails)
+      expect(await screen.findByText(/密钥已创建但到期设置失败/)).toBeVisible();
+    else await screen.findByText("保存一次性凭证");
+    expect(api.createKey).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.createKey).mock.calls[0][0]).not.toHaveProperty(
+      "expiresAtUnixSeconds",
+    );
+  },
+);
+
+it("does not revive a dismissed secret when a delayed expiration response arrives", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.createKey).mockResolvedValue({
+    key: { ...key },
+    secret: "synthetic-delayed",
+  });
+  let finish!: (key: api.ManagedKey) => void;
+  vi.mocked(api.setExpiration).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  render(<KeyManagement />);
+  await screen.findByText("尚未创建密钥。");
+  fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
+    target: { value: "team" },
+  });
+  fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
+  fireEvent.change(screen.getByLabelText("到期时间"), {
+    target: { value: "30" },
+  });
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
+      "button",
+      { name: "创建密钥" },
+    ),
+  );
+  expect(await screen.findByLabelText("新 API Key")).toHaveValue(
+    "synthetic-delayed",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "我已保存，关闭" }));
+  await act(async () => finish({ ...key, revision: 2 }));
+  expect(screen.queryByLabelText("新 API Key")).toBeNull();
+  expect(api.createKey).toHaveBeenCalledTimes(1);
 });

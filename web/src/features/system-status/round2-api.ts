@@ -110,12 +110,3 @@ export function pointChange(
   if (Math.abs(points) < 0.05) return "较昨日持平";
   return `较昨日 ${points > 0 ? "+" : ""}${points.toFixed(1)} 个百分点`;
 }
-export function trendPoints(values: (number | null)[]) {
-  const available = values.filter((v): v is number => v !== null);
-  const maximum = Math.max(1, ...available);
-  return values.map((value, index) =>
-    value === null
-      ? null
-      : `${(index * 100) / Math.max(1, values.length - 1)},${34 - (value / maximum) * 30}`,
-  );
-}

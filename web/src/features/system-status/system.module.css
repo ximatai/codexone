@@ -1,0 +1,73 @@
+.root {
+  max-width: 920px;
+  margin-top: 24px;
+}
+.root h1 {
+  font-size: clamp(24px, 3vw, 30px);
+  margin: 0 0 16px;
+}
+.root h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.root p {
+  color: var(--mantine-color-dimmed);
+  line-height: 1.7;
+}
+.panel {
+  padding: 24px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  background: var(--mantine-color-body);
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.badge {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--mantine-color-green-9);
+  background: var(--mantine-color-green-0);
+}
+.root ul {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+}
+.root li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  font-size: 14px;
+}
+.subtle {
+  color: var(--mantine-color-dimmed);
+}
+.good {
+  color: var(--mantine-color-green-8);
+}
+.root button {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  background: var(--mantine-primary-color-filled);
+  color: white;
+  padding: 10px 16px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.root button:focus-visible {
+  outline: 2px solid var(--mantine-color-green-6);
+  outline-offset: 3px;
+}
+.root button.secondary {
+  background: var(--mantine-color-gray-0);
+  color: var(--mantine-color-text);
+}

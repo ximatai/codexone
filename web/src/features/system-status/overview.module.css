@@ -1,0 +1,51 @@
+.header > :first-child {
+  margin-bottom: 0;
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: 20px;
+}
+.main {
+  min-width: 0;
+}
+.sidebar {
+  display: grid;
+  gap: 20px;
+}
+@media (max-width: 1199px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .content {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+}
+@media (max-width: 991px) {
+  .content {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 479px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .sparkline {
+    display: none;
+  }
+}
+
+.statusRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}

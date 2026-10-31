@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 import * as sessions from "../shared/management";
@@ -95,7 +101,12 @@ it("requires a successful reconciliation read after an unknown write even across
     target: { value: "new-team" },
   });
   fireEvent.click(screen.getByLabelText("synthetic-text"));
-  fireEvent.click(screen.getByRole("button", { name: "创建 API Key" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
+      "button",
+      { name: "创建密钥" },
+    ),
+  );
   await screen.findByText(/操作结果尚未确认/);
   // Leaving discards the form. A failed read on return cannot release the owner lock.
   fireEvent.click(screen.getByRole("link", { name: "服务概览" }));

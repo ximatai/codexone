@@ -44,4 +44,6 @@ Package.swift、锁文件和前端包配置应记录实际版本及支持范围�
 
 `shared/query-keys.ts` 集中查询 key；`shared/useManagedMutation.ts` 使用会话 owner 的 CSRF 与生命周期，统一 Query mutation、通知、失效、409 刷新与未知结果锁，不自动重放。查询仅保存可再次读取的公开管理 DTO；修改函数只返回 void，一次性凭证由 feature 局部持有，不进入 Query/Mutation 结果或通知。具体表单与业务校验留在 feature。
 
-`shared/ui/` 放实际展示模式：页头、表格、确认框、状态/错误/空态及时间金额。DataTable 的列定义包含排序值和窄屏标签，响应式使用 CSS Modules 的静态媒体查询。Key 的确认框共用 ConfirmModal；Mantine 保留焦点和滚轮/触摸隔离，但关闭会注入 style 标签的滚动条补偿，由静态 `body:has([data-ui-overlay])` 隐藏背景滚动。其他页面的旧滚动锁留待迁移时清理，不能为复用组件绕过同源、会话或 CSP 边界。
+`shared/ui/` 放实际展示模式：页头、表格、确认框、状态/错误/空态及时间金额。DataTable 的列定义包含排序值和窄屏标签，响应式使用 CSS Modules 的静态媒体查询。确认框共用 ConfirmModal；所有弹层保留 Mantine 焦点和滚轮/触摸隔离，但关闭会注入 style 标签的滚动条补偿。仅打开时标记 `data-ui-overlay="true"`，由静态 `body:has([data-ui-overlay="true"])` 隐藏背景滚动；关闭后保留的空 root 不得锁住页面。不能为复用组件绕过同源、会话或 CSP 边界。
+
+WorkspaceFrame 用 Mantine 控件与静态 CSS Modules 组织侧栏、顶部操作与小于 768px 的导航 Drawer。Mantine 9.7.3 AppShell 自身无条件渲染 InlineStyles，因此不直接使用该根组件；响应式尺寸禁止传会生成 style 标签的对象属性。图表使用精确同版 `@mantine/charts` 和静态样式 import，缺失数据保留 null，不补造观测。DataTable 支持可选行点击及 Enter/Space 键盘操作，分页与服务端筛选仍由 feature 持有。共享 mutation 的无效输入及业务错误文案由调用方配置；会话、409刷新、不重放和未知结果锁由共享 owner 统一维护。

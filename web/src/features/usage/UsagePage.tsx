@@ -1,4 +1,4 @@
-import { Title } from "@mantine/core";
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useSearchParams } from "react-router";
 import { useManagementSession } from "../../shared/session";
 import { UsageOverview } from "./UsageOverview";
@@ -31,9 +31,10 @@ export function UsagePage() {
   }
   return (
     <section>
-      <Title order={1} mb="xl">
-        用量与诊断
-      </Title>
+      <PageHeader
+        title="用量与诊断"
+        description="查看请求用量、性能与异常，定位执行与用量证据。"
+      />
       <UsageOverview
         initialFilters={filters}
         selection={null}

@@ -14,6 +14,9 @@ interface Options {
   invalidate: readonly QueryKey[];
   refresh: (signal: AbortSignal) => Promise<boolean>;
   onFailure?: () => void;
+  invalidMessage?: string;
+  successNotification?: boolean;
+  errorMessage?: (error: unknown) => string | undefined;
 }
 /** Results deliberately never pass through useMutation: one-time secrets stay in their feature owner. */
 export function useManagedMutation(options: Options) {
@@ -50,12 +53,13 @@ export function useManagedMutation(options: Options) {
         );
         if (!current()) return;
         owner.lock(options.scope, false);
-        notifications.show({
-          id: notificationID,
-          message: success,
-          role: "status",
-          color: "green",
-        });
+        if (options.successNotification !== false)
+          notifications.show({
+            id: notificationID,
+            message: success,
+            role: "status",
+            color: "green",
+          });
       } catch (error) {
         if (!current()) return;
         if (
@@ -86,7 +90,8 @@ export function useManagedMutation(options: Options) {
           (error.status === 400 || error.status === 413)
         ) {
           owner.lock(options.scope, false);
-          message = "提交内容不符合要求，请检查模型、限额与到期时间。";
+          message =
+            options.invalidMessage ?? "提交内容不符合要求，请检查后重试。";
         } else if (error instanceof ManagementError && error.status === 403) {
           // A 403 is a definite rejection, so the scope can be used again.
           owner.lock(options.scope, false);
@@ -95,6 +100,7 @@ export function useManagedMutation(options: Options) {
               ? "管理会话已更新，请刷新后重试。"
               : "当前页面来源或会话验证不通过，请使用正确的管理地址。";
         }
+        message = options.errorMessage?.(error) ?? message;
         notifications.show({
           id: notificationID,
           message,

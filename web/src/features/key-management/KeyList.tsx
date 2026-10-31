@@ -1,4 +1,13 @@
-import { Badge, Button, Group, Menu, Text } from "@mantine/core";
+import { Tooltip, Badge, ActionIcon, Group, Menu, Text } from "@mantine/core";
+import {
+  IconChartBar,
+  IconPencil,
+  IconDots,
+  IconClock,
+  IconRefresh,
+  IconBan,
+  IconCheck,
+} from "@tabler/icons-react";
 import { Link } from "react-router";
 import * as api from "./api";
 import type { useKeys } from "./useKeys";
@@ -26,6 +35,7 @@ export function KeyList({
     {
       id: "col0",
       title: "主体 / 标识",
+      mobileTitle: true,
       sortValue: (key) => key.principal,
       render: (key) => (
         <>
@@ -68,21 +78,30 @@ export function KeyList({
       title: "状态",
       render: (key) => (
         <>
-          <StatusBadge color={key.enabled ? "green" : "gray"}>
-            {key.enabled ? "启用" : "禁用"}
-          </StatusBadge>
-          <Text
-            size="xs"
-            c={
-              api.expirationState(key.expiresAtUnixSeconds) === "expired"
-                ? "red"
-                : api.expirationState(key.expiresAtUnixSeconds) === "soon"
-                  ? "orange"
-                  : "dimmed"
+          <StatusBadge
+            color={
+              !key.enabled
+                ? "gray"
+                : api.expirationState(key.expiresAtUnixSeconds) === "expired"
+                  ? "red"
+                  : api.expirationState(key.expiresAtUnixSeconds) === "soon"
+                    ? "orange"
+                    : "green"
             }
           >
-            {api.expirationLabel(key.expiresAtUnixSeconds)}
-          </Text>
+            {!key.enabled
+              ? "禁用"
+              : api.expirationState(key.expiresAtUnixSeconds) === "expired"
+                ? "已到期"
+                : api.expirationState(key.expiresAtUnixSeconds) === "soon"
+                  ? "7 天内到期"
+                  : "启用"}
+          </StatusBadge>
+          {key.expiresAtUnixSeconds == null && (
+            <Text size="xs" c="dimmed">
+              永不过期
+            </Text>
+          )}
           {key.expiresAtUnixSeconds != null && (
             <Text size="xs" title={timeTitle(key.expiresAtUnixSeconds)}>
               {new Date(key.expiresAtUnixSeconds * 1000)
@@ -154,42 +173,63 @@ export function KeyList({
       render: (key) => (
         <>
           <Group gap="xs">
-            <Button
-              size="compact-sm"
-              variant="subtle"
-              component={Link}
-              to={`/usage?key=${encodeURIComponent(key.id)}`}
-            >
-              用量
-            </Button>
-            <Button
-              size="compact-sm"
-              variant="subtle"
-              disabled={state.disabled}
-              onClick={() => state.setEditing(key)}
-            >
-              编辑
-            </Button>
+            <Tooltip label="用量">
+              <ActionIcon
+                size="md"
+                variant="default"
+                aria-label="用量"
+                component={Link}
+                to={`/usage?key=${encodeURIComponent(key.id)}`}
+              >
+                <IconChartBar size={17} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="编辑">
+              <ActionIcon
+                size="md"
+                variant="default"
+                aria-label="编辑"
+                disabled={state.disabled}
+                onClick={() => state.setEditing(key)}
+              >
+                <IconPencil size={17} />
+              </ActionIcon>
+            </Tooltip>
             <Menu position="bottom-end">
-              <Menu.Target>
-                <Button
-                  size="compact-sm"
-                  variant="subtle"
-                  disabled={state.disabled}
-                  aria-label={`${key.principal} 更多操作`}
-                >
-                  更多
-                </Button>
-              </Menu.Target>
+              <Tooltip label="更多操作">
+                <Menu.Target>
+                  <ActionIcon
+                    size="md"
+                    variant="default"
+                    disabled={state.disabled}
+                    aria-label={`${key.principal} 更多操作`}
+                  >
+                    <IconDots size={17} />
+                  </ActionIcon>
+                </Menu.Target>
+              </Tooltip>
               <Menu.Dropdown>
-                <Menu.Item onClick={() => setExpiring(key)}>
+                <Menu.Item
+                  leftSection={<IconClock size={16} />}
+                  onClick={() => setExpiring(key)}
+                >
                   设置到期时间
                 </Menu.Item>
-                <Menu.Item onClick={() => state.setRotating(key)}>
+                <Menu.Item
+                  leftSection={<IconRefresh size={16} />}
+                  onClick={() => state.setRotating(key)}
+                >
                   轮换
                 </Menu.Item>
                 <Menu.Item
                   color={key.enabled ? "red" : undefined}
+                  leftSection={
+                    key.enabled ? (
+                      <IconBan size={16} />
+                    ) : (
+                      <IconCheck size={16} />
+                    )
+                  }
                   onClick={() =>
                     key.enabled ? setDisabling(key) : void toggle(key)
                   }

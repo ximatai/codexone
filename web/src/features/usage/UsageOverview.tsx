@@ -1,3 +1,4 @@
+import { ErrorState, LoadingState } from "../../shared/ui/States";
 import { UsageDetail } from "./UsageDetail";
 import styles from "./usage.module.css";
 import { useQueryClient } from "@tanstack/react-query";
@@ -6,13 +7,11 @@ import { ManagementError } from "../../shared/management";
 import * as api from "./api";
 import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
 import {
-  Alert,
   Button,
   Checkbox,
   Group,
   NativeSelect,
   Paper,
-  Table,
   Text,
   TextInput,
   Title,
@@ -21,97 +20,15 @@ import {
   failures,
   modes,
   states,
-  outcomes,
   terms,
-  metricLabels,
   money,
-  localTime,
-  timeTitle,
-  estimateNote,
 } from "../../shared/presentation";
+import { UsageTrend } from "./UsageTrend";
+import { UsageRequests } from "./UsageRequests";
+import { UsageEvidence, UsageSummary } from "./UsageSummary";
+import { utc } from "./format";
+export { duration } from "./format";
 export { failures } from "../../shared/presentation";
-export function duration(value: number | null | undefined) {
-  return value == null
-    ? "不可用"
-    : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} ms`;
-}
-function number(value: string | null | undefined, lower = false) {
-  return value == null
-    ? "不可用"
-    : (lower ? "≥ " : "") + BigInt(value).toLocaleString("zh-CN");
-}
-function utc(value: number) {
-  return new Date(value * 1000)
-    .toISOString()
-    .replace("T", " ")
-    .replace(".000Z", " UTC");
-}
-function Trend({ report }: { report: api.UsageReport }) {
-  const daily = report.buckets.length > 168;
-  const grouped = new Map<
-    number,
-    { admitted: number; rejected: number; unresolved: number }
-  >();
-  for (const point of report.buckets) {
-    const at = daily
-      ? Math.floor(point.atUnixSeconds / 86400) * 86400
-      : point.atUnixSeconds;
-    const item = grouped.get(at) ?? { admitted: 0, rejected: 0, unresolved: 0 };
-    item.admitted += point.admitted;
-    item.rejected += point.recordedRejections;
-    item.unresolved += point.unresolved;
-    grouped.set(at, item);
-  }
-  const points = [...grouped],
-    maximum = Math.max(
-      1,
-      ...points.flatMap(([, item]) => [item.admitted, item.rejected]),
-    );
-  return (
-    <div className="usage-trend">
-      <h3>
-        请求趋势 <small>UTC · 按{daily ? "日" : "小时"}</small>
-      </h3>
-      <div className="trend-legend">
-        <span>■ 已准入</span>
-        <span>■ 已记录准入前拒绝</span>
-      </div>
-      <svg
-        role="img"
-        aria-label={`UTC 按${daily ? "日" : "小时"}请求趋势，已准入 ${report.totals.admitted}，已记录拒绝 ${report.totals.recordedRejections}`}
-        viewBox={`0 0 ${Math.max(240, points.length * 20)} 120`}
-        preserveAspectRatio="none"
-      >
-        {points.map(([at, item], index) => (
-          <g key={at}>
-            <title>
-              {utc(at)} · 已准入 {item.admitted} · 已记录拒绝 {item.rejected} ·
-              待核对 {item.unresolved}
-            </title>
-            <rect
-              x={index * 20}
-              y={110 - (item.admitted / maximum) * 100}
-              width="8"
-              height={(item.admitted / maximum) * 100}
-              fill="#286453"
-            />
-            <rect
-              x={index * 20 + 9}
-              y={110 - (item.rejected / maximum) * 100}
-              width="8"
-              height={(item.rejected / maximum) * 100}
-              fill="#ba8230"
-            />
-          </g>
-        ))}
-      </svg>
-      <div className="trend-period">
-        <small>{utc(report.startUnixSeconds)}</small>
-        <small>{utc(report.endUnixSeconds)} 前</small>
-      </div>
-    </div>
-  );
-}
 export function UsageOverview({
   selection,
   paused,
@@ -139,6 +56,7 @@ export function UsageOverview({
     models: [],
     failures: [],
   });
+  const [customRange, setCustomRange] = useState(false);
   const [policyRead, setPolicyRead] = useState(0);
   const [report, setReport] = useState<api.UsageReport | null>(null);
   const [busy, setBusy] = useState(false),
@@ -280,20 +198,29 @@ export function UsageOverview({
     event.preventDefault();
     if (!busy && !paused) void load({ ...draft });
   }
+  const currentPreset =
+    applied?.range === "24h"
+      ? 1
+      : [7, 30].find(
+          (days) =>
+            applied?.end === new Date().toISOString().slice(0, 10) &&
+            applied?.start ===
+              new Date(Date.now() - (days - 1) * 86400000)
+                .toISOString()
+                .slice(0, 10),
+        );
   if (paused)
     return (
-      <section className="panel usage-panel">
+      <section>
         <p role="status">管理操作进行中，用量查询暂缓。</p>
       </section>
     );
-  const incomplete =
-    !!report && report.totals.partial + report.totals.unavailable > 0;
   return (
     <Paper
       withBorder
-      p="lg"
+      p="md"
       radius="md"
-      className="usage-workspace"
+      className={styles.workspace}
       component="section"
       aria-labelledby="usage-heading"
     >
@@ -305,21 +232,12 @@ export function UsageOverview({
       >
         用量与请求诊断
       </Title>
-      <details className="usage-method">
-        <summary>统计口径</summary>
-        <p className="field-hint">
-          按准入 UTC 时间统计，起止日均包含。轮换保留原 Key
-          历史；迟到用量会更新原时段。每次查询为新的账本快照。
-        </p>
-      </details>
-      <Text size="xs" c="dimmed" mb="xs">
-        最近 24 小时按已完成 UTC 小时查询；日期筛选包含起止日。
-      </Text>
-      <Group mb="md">
+      <Group mb="sm">
         {[1, 7, 30].map((days) => (
           <Button
             key={days}
-            variant="light"
+            variant={currentPreset === days ? "filled" : "default"}
+            aria-pressed={currentPreset === days}
             disabled={busy}
             onClick={() => {
               const now = new Date();
@@ -338,25 +256,17 @@ export function UsageOverview({
             {days === 1 ? "最近 24 小时" : `最近 ${days} 天`}
           </Button>
         ))}
+        <Button
+          variant={!currentPreset ? "filled" : "default"}
+          aria-pressed={!currentPreset}
+          onClick={() => setCustomRange((value) => !value)}
+          aria-expanded={customRange}
+        >
+          自定义
+        </Button>
       </Group>
       <form onSubmit={submit}>
-        <div className="responsive-grid responsive-grid-4 grid-gap-bottom">
-          <TextInput
-            label="起始日（UTC）"
-            type="date"
-            value={draft.start}
-            disabled={busy}
-            required
-            onChange={(e) => update("start", e.currentTarget.value)}
-          />
-          <TextInput
-            label="结束日（UTC）"
-            type="date"
-            value={draft.end}
-            disabled={busy}
-            required
-            onChange={(e) => update("end", e.currentTarget.value)}
-          />
+        <div className={styles.filters}>
           <NativeSelect
             label="Key 主体"
             value={draft.key}
@@ -391,46 +301,7 @@ export function UsageOverview({
               <option key={model} value={model} />
             ))}
           </datalist>
-          <NativeSelect
-            label="执行模式"
-            value={draft.mode}
-            disabled={busy}
-            onChange={(e) => update("mode", e.currentTarget.value)}
-            data={[
-              { value: "", label: "全部模式" },
-              ...Object.entries(modes).map(([value, label]) => ({
-                value,
-                label,
-              })),
-            ]}
-          />
-          <NativeSelect
-            label="错误分类"
-            value={draft.failure}
-            disabled={busy}
-            onChange={(e) => update("failure", e.currentTarget.value)}
-            data={[
-              { value: "", label: "全部分类" },
-              ...options.failures.map((value) => ({
-                value,
-                label: failures[value] ?? "其他异常",
-              })),
-            ]}
-          />
-          <NativeSelect
-            label="用量状态"
-            value={draft.state}
-            disabled={busy}
-            onChange={(e) => update("state", e.currentTarget.value)}
-            data={[
-              { value: "", label: "全部状态" },
-              ...Object.entries(states).map(([value, label]) => ({
-                value,
-                label,
-              })),
-            ]}
-          />
-          <Group>
+          <Group align="end">
             <Checkbox
               label="仅异常结果"
               checked={draft.failedOnly}
@@ -442,15 +313,82 @@ export function UsageOverview({
             </Button>
           </Group>
         </div>
+        {customRange && (
+          <div className={styles.dateFilters}>
+            {" "}
+            <TextInput
+              label="起始日（UTC）"
+              aria-label="起始日（UTC）"
+              type="date"
+              value={draft.start}
+              disabled={busy}
+              required
+              onChange={(e) => update("start", e.currentTarget.value)}
+            />
+            <TextInput
+              label="结束日（UTC）"
+              aria-label="结束日（UTC）"
+              type="date"
+              value={draft.end}
+              disabled={busy}
+              required
+              onChange={(e) => update("end", e.currentTarget.value)}
+            />
+          </div>
+        )}
+        <details className={styles.moreFilters}>
+          <summary>更多筛选</summary>
+          <div className={styles.advancedFilters}>
+            {" "}
+            <NativeSelect
+              label="执行模式"
+              value={draft.mode}
+              disabled={busy}
+              onChange={(e) => update("mode", e.currentTarget.value)}
+              data={[
+                { value: "", label: "全部模式" },
+                ...Object.entries(modes).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
+              ]}
+            />
+            <NativeSelect
+              label="错误分类"
+              value={draft.failure}
+              disabled={busy}
+              onChange={(e) => update("failure", e.currentTarget.value)}
+              data={[
+                { value: "", label: "全部分类" },
+                ...options.failures.map((value) => ({
+                  value,
+                  label: failures[value] ?? "其他异常",
+                })),
+              ]}
+            />
+            <NativeSelect
+              label="用量状态"
+              value={draft.state}
+              disabled={busy}
+              onChange={(e) => update("state", e.currentTarget.value)}
+              data={[
+                { value: "", label: "全部状态" },
+                ...Object.entries(states).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
+              ]}
+            />
+          </div>
+        </details>
       </form>
       {error && (
-        <Alert role="alert" color="red">
-          {error}
-        </Alert>
+        <ErrorState retry={() => void load({ ...draft })}>{error}</ErrorState>
       )}
+      {busy && !report && <LoadingState>正在读取用量…</LoadingState>}
       {report && (
-        <div aria-busy={busy} className={stale ? "usage-stale" : undefined}>
-          <p className="field-hint">
+        <div aria-busy={busy} className={stale ? styles.stale : undefined}>
+          <p className={styles.hint} aria-label="当前结果筛选">
             当前结果：
             {applied?.range === "24h"
               ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
@@ -459,285 +397,70 @@ export function UsageOverview({
             {options.keyOptions?.find((k) => k.id === applied?.key)
               ?.principal ??
               (applied?.key || "全部 Key")}
+            {applied?.model ? ` · 模型 ${applied.model}` : ""}
+            {applied?.mode ? ` · ${modes[applied.mode]}` : ""}
+            {applied?.failure
+              ? ` · ${failures[applied.failure] ?? "其他异常"}`
+              : ""}
+            {applied?.state ? ` · ${states[applied.state]}` : ""}
+            {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>
-          {(stale ||
-            applied?.model ||
-            applied?.mode ||
-            applied?.failure ||
-            applied?.state ||
-            applied?.failedOnly) && (
-            <p className="field-hint" aria-label="当前结果筛选">
-              结果筛选：模型 {applied?.model || "全部"} · 模式{" "}
-              {applied?.mode ? modes[applied.mode] : "全部"} · 错误{" "}
-              {applied?.failure
-                ? (failures[applied.failure] ?? "其他异常")
-                : "全部"}{" "}
-              · 用量状态 {applied?.state ? states[applied.state] : "全部"} ·{" "}
-              {applied?.failedOnly ? "仅异常结果" : "全部结果"}
+          <details className={styles.method}>
+            <summary>统计口径</summary>
+            <p className={styles.hint}>
+              按准入 UTC 时间统计，起止日均包含；最近 24 小时按已完成 UTC
+              小时查询。轮换保留原 Key
+              历史，迟到用量更新原时段；每次查询为新账本快照。拒绝诊断查询最近
+              30
+              天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
+              50 条，不包含请求或响应正文。
             </p>
-          )}
-          <div className={`usage-summary ${styles.summary}`}>
-            <div>
-              <span>Token 合计</span>
-              <strong>
-                {report.totals.metrics.inputTokens == null ||
-                report.totals.metrics.outputTokens == null
-                  ? "不可用"
-                  : (incomplete ? "≥ " : "") +
-                    (
-                      BigInt(report.totals.metrics.inputTokens) +
-                      BigInt(report.totals.metrics.outputTokens)
-                    ).toLocaleString("zh-CN") +
-                    " Token"}
-              </strong>
-              <small>输入含缓存 + 输出；图片工具单列</small>
-            </div>
-            <div>
-              <span title="首个上游事件耗时，并非下游首个 Token">
-                平均首事件耗时
-              </span>
-              <strong>
-                {duration(report.totals.averageFirstEventMilliseconds)}
-              </strong>
-              <small>首个上游事件，非下游首 Token</small>
-            </div>
-            <div>
-              <span>P95 首事件耗时</span>
-              <strong>
-                {duration(report.totals.p95FirstEventMilliseconds)}
-              </strong>
-              <small>仅非空观测样本</small>
-            </div>
-            <div>
-              <span>平均总耗时</span>
-              <strong>
-                {duration(report.totals.averageTotalMilliseconds)}
-              </strong>
-              <small>仅非空观测样本</small>
-            </div>
-            <div>
-              <span>请求</span>
-              <strong>{report.totals.admitted.toLocaleString()}</strong>
-              <small>生成 / 预热 / 压缩</small>
-            </div>
-            <div>
-              <span>已记录准入前拒绝</span>
-              <strong>
-                {report.totals.recordedRejections.toLocaleString()}
-              </strong>
-              <small>未启动执行</small>
-            </div>
-            <div>
-              <span>区间待核对</span>
-              <strong>
-                {(
-                  report.totals.inFlight + report.totals.unknown
-                ).toLocaleString()}
-              </strong>
-              <small>
-                {report.totals.inFlight} 在途 · {report.totals.unknown} 待核对
-              </small>
-            </div>
-            <div>
-              <span>失败 / 取消</span>
-              <strong>
-                {report.totals.failed} / {report.totals.cancelled}
-              </strong>
-              <small>结果与用量完整度独立</small>
-            </div>
-            <div>
-              <span>用量完整度</span>
-              <strong>{report.totals.complete} 完整</strong>
-              <small>
-                {report.totals.partial} 部分 · {report.totals.unavailable}{" "}
-                不可用
-              </small>
-            </div>
-          </div>
-          <div className="usage-metrics">
-            {(
-              Object.entries(metricLabels) as [keyof api.Metrics, string][]
-            ).map(([field, title]) => (
-              <div key={field}>
-                <span>{title}</span>
-                <strong>
-                  {report.totals.admitted === 0
-                    ? "—"
-                    : field === "estimatedMicros"
-                      ? money(report.totals.metrics[field])
-                      : number(report.totals.metrics[field], incomplete)}
-                </strong>
-              </div>
-            ))}
-          </div>
-          <p className="field-hint">
-            {incomplete
-              ? "含不完整/缺失证据：数值只表示已观测下界，未知部分无法量化，不能当零。"
-              : estimateNote}{" "}
-            图片工具 token 与宿主响应 token
-            分别统计，不相加；缺失工具证据显示不可用。
-          </p>
-          <KeyLimitsSummary
-            key={applied?.key ?? ""}
-            keyID={applied?.key ?? ""}
-            refresh={policyRead}
-          />
-          <Text
-            className="governance-note"
-            size="sm"
-            my="md"
-            title="缺少完整用量的请求仍保留占用；更改时间范围不会释放。占用不能代表实际费用上界。"
-          >
-            {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}{" "}
-            {terms.exposure}（不受其他筛选影响）：
-            {report.lifetimeGovernance.inFlight} 在途、
-            {report.lifetimeGovernance.unknown} {terms.pending}，
-            {money(report.lifetimeGovernance.exposureMicros)} ⓘ
-            <br />
-            区间{terms.exposure}：
-            {money(report.totals.unresolvedExposureMicros)}
-          </Text>
-          {report.totals.historicalWithoutTime > 0 && (
-            <p className="warning-banner">
-              另有 {report.totals.historicalWithoutTime}{" "}
-              条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
-            </p>
-          )}
-          <Trend report={report} />
+          </details>
+          <UsageSummary report={report} />
+          <UsageTrend report={report} />
+          <details className={styles.moreFilters}>
+            <summary>更多统计与用量证据</summary>
+            <UsageEvidence report={report} expanded />
+            <KeyLimitsSummary
+              key={applied?.key ?? ""}
+              keyID={applied?.key ?? ""}
+              refresh={policyRead}
+            />
+            <Text
+              className={styles.governance}
+              size="sm"
+              my="md"
+              title="缺少完整用量的请求仍保留占用；更改时间范围不会释放。占用不能代表实际费用上界。"
+            >
+              {report.lifetimeGovernance.keyID ? "当前 Key" : "全部 Key"}{" "}
+              {terms.exposure}（不受其他筛选影响）：
+              {report.lifetimeGovernance.inFlight} 在途、
+              {report.lifetimeGovernance.unknown} {terms.pending}，
+              {money(report.lifetimeGovernance.exposureMicros)} ⓘ
+              <br />
+              区间{terms.exposure}：
+              {money(report.totals.unresolvedExposureMicros)}
+            </Text>
+            {report.totals.historicalWithoutTime > 0 && (
+              <p className={styles.warning}>
+                另有 {report.totals.historicalWithoutTime}{" "}
+                条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
+              </p>
+            )}
+          </details>
           <h3>请求明细</h3>
-          <p className="field-hint">
-            拒绝诊断查询最近 30
-            天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
-            50 条，不包含请求或响应正文。
-          </p>
-          {!report.rows.length ? (
-            <p className="empty-state">此筛选下没有已记录请求。</p>
-          ) : (
-            <div className="table-scroll">
-              <Table className="usage-table" highlightOnHover>
-                <thead>
-                  <tr>
-                    <th>准入/记录时间</th>
-                    <th>Key / 模型</th>
-                    <th>归属 / 模式</th>
-                    <th>请求结果</th>
-                    <th>用量</th>
-                    <th className={styles.wideMetric}>缓存 Token</th>
-                    <th
-                      className={styles.wideMetric}
-                      title="首个上游事件耗时，并非下游首个 Token"
-                    >
-                      首事件耗时
-                    </th>
-                    <th className={styles.wideMetric}>总耗时</th>
-                    <th>详情</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.rows.map((row) => (
-                    <tr key={row.kind + row.id}>
-                      <td data-label="准入/记录时间">
-                        <span title={timeTitle(row.atUnixSeconds)}>
-                          {localTime(row.atUnixSeconds)}
-                        </span>
-                        <small
-                          className="key-id"
-                          title={row.requestID ?? row.id}
-                        >
-                          {row.requestID ?? row.id}
-                        </small>
-                      </td>
-                      <td data-label="Key / 模型">
-                        <span title={row.keyID}>
-                          {row.principal ?? "主体未记录"}
-                        </span>
-                        <small>{row.model ?? "模型未记录"}</small>
-                      </td>
-                      <td data-label="归属 / 模式">
-                        {row.accountID ?? "未派发"}
-                        <small>{modes[row.mode]}</small>
-                      </td>
-                      <td data-label="请求结果">
-                        {row.kind === "rejected"
-                          ? "准入前拒绝"
-                          : row.outcome
-                            ? outcomes[row.outcome]
-                            : "结果未记录"}
-                        <small>
-                          {row.failure
-                            ? (failures[row.failure] ?? "其他异常")
-                            : ""}
-                        </small>
-                        <small>
-                          {row.state ? states[row.state] : "无执行租约"}
-                        </small>
-                      </td>
-                      <td data-label="用量">
-                        {row.kind === "rejected" ? (
-                          "无执行用量"
-                        ) : (
-                          <>
-                            {row.completeness === null
-                              ? "不可用"
-                              : row.completeness === "partial"
-                                ? "部分证据，下界"
-                                : "完整证据"}
-                            <small>
-                              输入{" "}
-                              {number(
-                                row.metrics.inputTokens,
-                                row.completeness === "partial",
-                              )}{" "}
-                              · 输出{" "}
-                              {number(
-                                row.metrics.outputTokens,
-                                row.completeness === "partial",
-                              )}
-                            </small>
-                            <small>{money(row.metrics.estimatedMicros)}</small>
-                            <small>
-                              缓存 {number(row.metrics.cachedTokens)} · 图片输入{" "}
-                              {number(row.metrics.imageInputTokens)} · 图片输出{" "}
-                              {number(row.metrics.imageOutputTokens)}
-                            </small>
-                          </>
-                        )}
-                      </td>
-                      <td className={styles.wideMetric} data-label="缓存 Token">
-                        {number(row.metrics.cachedTokens)}
-                      </td>
-                      <td
-                        className={styles.wideMetric}
-                        data-label="首事件耗时"
-                        title="首个上游事件耗时，并非下游首个 Token"
-                      >
-                        {duration(row.firstEventMilliseconds)}
-                      </td>
-                      <td className={styles.wideMetric} data-label="总耗时">
-                        {duration(row.totalMilliseconds)}
-                      </td>
-                      <td data-label="详情">
-                        <Button
-                          variant="subtle"
-                          size="compact-sm"
-                          onClick={() => {
-                            setDetail(row);
-                          }}
-                        >
-                          查看详情
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
-          <div className="usage-pagination">
+          <UsageRequests
+            rows={report.rows}
+            onDetail={setDetail}
+            retry={() => {
+              if (applied) void load(applied, history, page);
+            }}
+          />
+          <div className={styles.pagination}>
             <span>第 {page + 1} 页</span>
             <Button
-              className="secondary"
+              variant="default"
               disabled={busy || stale || !applied || page === 0}
               onClick={() => {
                 if (applied) void load(applied, history, page - 1);
@@ -746,7 +469,7 @@ export function UsageOverview({
               上一页
             </Button>
             <Button
-              className="secondary"
+              variant="default"
               disabled={
                 busy ||
                 stale ||

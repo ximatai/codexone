@@ -29,3 +29,31 @@
     color: var(--mantine-color-dimmed);
   }
 }
+
+.clickable {
+  cursor: pointer;
+}
+.clickable:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+.table th {
+  background: var(--mantine-color-gray-0);
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}
+.table td {
+  font-size: var(--mantine-font-size-sm);
+  vertical-align: top;
+}
+
+.sortButton {
+  font: inherit;
+  color: inherit;
+}
+.unsorted {
+  opacity: 0.4;
+}
+.hiddenLabel {
+  display: none;
+}

@@ -17,11 +17,85 @@
 .observation small {
   font-size: 12px;
 }
-.observation :global(.quota-details) {
+.details {
   margin-top: 4px;
 }
 .observation summary {
   cursor: pointer;
   font-size: 12px;
   color: #627069;
+}
+
+.cardSection {
+  margin-bottom: 12px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+@media (min-width: 1200px) {
+  .cards {
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  }
+}
+.subtle {
+  color: var(--mantine-color-dimmed);
+}
+.attention {
+  color: var(--mantine-color-orange-8);
+}
+.warning {
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: var(--mantine-color-yellow-9);
+  background: var(--mantine-color-yellow-0);
+  line-height: 1.6;
+}
+.details {
+  padding: 16px;
+  background: var(--mantine-color-gray-0);
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+}
+.windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.window {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.window p {
+  font-size: 13px;
+  margin: 0;
+}
+.window small,
+.details > small {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.additional {
+  border-top: 1px solid var(--mantine-color-gray-3);
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .windows {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.quotaWindow {
+  padding: 12px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-gray-0);
 }
