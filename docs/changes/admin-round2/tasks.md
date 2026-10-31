@@ -18,4 +18,4 @@
 - [x] vitest/Playwright、1440×900 走查与 subagent 界面评审。
 
 ## 出口
-- [ ] Linux verification、测试实例部署与浏览器实测（主 Agent）。
+- [x] Linux verification、测试实例部署与 API 实测（主 Agent；生产管理域名不做浏览器登录，界面由合成走查覆盖）。
