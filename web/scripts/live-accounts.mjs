@@ -89,7 +89,7 @@ try {
   let account = (await admin()).accounts[0];
   const id = account.id;
   stage = "replaced-session";
-  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
+  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", secret }) })).status, credential), 200);
   await page.getByRole("button", { name: "启用", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("管理会话已更新");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
@@ -103,7 +103,7 @@ try {
   await page.getByRole("button", { name: "发起账号授权", exact: true }).click();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重新读取账号", exact: true })).toBeEnabled();
-  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
+  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", secret }) })).status, credential), 200);
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/管理会话已更新/).first()).toBeVisible();

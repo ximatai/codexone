@@ -17,7 +17,8 @@ extension HTTPResponseExecution {
     try await gateway.execute(
       model: request.admissionModel, references: request.references,
       affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, connection: connection, requirements: request.requirements
+      mode: request.mode, connection: connection, requirements: request.requirements,
+      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
     ) { context, _ in
       try await exchange(
         request, context: context, model: model, peer: peer, lane: lane,
@@ -102,6 +103,7 @@ extension HTTPResponseExecution {
         }
         let observation = try ProviderObservation(
           event: event, model: model, allowImages: request.requirements.imageModel != nil)
+        context.observeActualServiceTier(observation.actualServiceTier)
         progress.note(event: event)
         for object in observation.bindings { try await context.bind(object) }
         try observeTerminalOutcome(event, context: context)

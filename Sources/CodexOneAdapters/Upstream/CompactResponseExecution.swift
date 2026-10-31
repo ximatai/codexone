@@ -25,7 +25,8 @@ extension HTTPResponseExecution {
     try await gateway.execute(
       model: request.model, references: request.references, affinityHints: request.affinityHints,
       requestID: requestID, mode: .compact,
-      requirements: request.requirements
+      requirements: request.requirements,
+      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
     ) { context, authorization in
       try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
@@ -66,6 +67,7 @@ extension HTTPResponseExecution {
         guard document["object"]?.string == "response.compaction" else {
           throw GatewayProtocolError(502, "invalid_upstream_compaction")
         }
+        context.observeActualServiceTier(requestMetadataValue(document["service_tier"]))
         if let evidence = ProviderObservation.usage(document["usage"], model: model) {
           try context.observeUsage(evidence)
         }

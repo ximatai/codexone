@@ -42,7 +42,7 @@ def document(result, status=200):
 
 
 def login(fixture, *, cookie=None, origin=None):
-    result = request(fixture.ports['admin'], 'POST', '/api/session', {'secret': ADMIN}, cookie=cookie,
+    result = request(fixture.ports['admin'], 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN}, cookie=cookie,
                      origin=origin or fixture.origin)
     payload = document(result)
     raw = result[1]['set-cookie']
@@ -50,7 +50,7 @@ def login(fixture, *, cookie=None, origin=None):
     name = '__Host-codexone_admin'
     assert parsed[name]['httponly'] and parsed[name]['secure']
     assert parsed[name]['samesite'] == 'Strict' and parsed[name]['path'] == '/' and not parsed[name]['domain']
-    assert parsed[name]['max-age'] == '1800'
+    assert 0 < int(parsed[name]['max-age']) <= 7 * 86400
     token = parsed[name].value
     csrf = payload['csrf']
     assert len(token) == 47 and len(csrf) == 47 and token.encode() not in result[2] and ADMIN.encode() not in result[2]
@@ -111,11 +111,21 @@ def verify(binary):
         assert request(port, 'GET', '/api/usage/keys')[0] == 401
         for path in ('/api/usage/daily', '/api/usage/in-flight', '/api/attention'):
             assert request(port, 'GET', path)[0] == 401
-        assert request(port, 'POST', '/api/session', {'secret': ADMIN})[0] == 403
+        assert request(port, 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN})[0] == 403
         assert request(port, 'POST', '/api/session', {'secret': 'synthetic-wrong-admin'}, origin=f.origin)[0] == 401
-        assert request(port, 'POST', '/api/session', {'secret': ADMIN}, origin=f.origin, headers={'Host': 'foreign.example'})[0] == 403
+        assert request(port, 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN}, origin=f.origin, headers={'Host': 'foreign.example'})[0] == 403
         cookie, csrf = login(f)
-        assert document(request(port, 'GET', '/api/session', cookie=cookie))['csrf'] == csrf
+        renewal = request(port, 'GET', '/api/session', cookie=cookie)
+        assert document(renewal)['csrf'] == csrf
+        assert 0 < int(SimpleCookie(renewal[1]['set-cookie'])['__Host-codexone_admin']['max-age']) <= 7 * 86400
+        failures = []
+        for body in ({'secret': ADMIN}, {'username': 'wrong', 'secret': ADMIN},
+                     {'username': 'Admin', 'secret': ADMIN}, {'username': 'admin', 'secret': 'synthetic-wrong-admin'}):
+            rejected = request(port, 'POST', '/api/session', body, origin=f.origin)
+            failure = document(rejected, 401)['error']
+            failures.append((rejected[0], failure['code'], failure['message']))
+        assert len(set(failures)) == 1 and failures[0][0] == 401
+        assert request(port, 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN, 'extra': True}, origin=f.origin)[0] == 400
         assert document(request(port, 'GET', '/api/keys/options', cookie=cookie))['models'] == ['synthetic-text', 'synthetic-other']
         assert request(port, 'GET', '/api/usage/keys', cookie=cookie, headers={'Sec-Fetch-Site': 'cross-site'})[0] == 403
         assert request(port, 'GET', '/api/usage/keys', cookie=cookie, origin='https://foreign.example')[0] == 403
@@ -184,7 +194,8 @@ def verify(binary):
         assert document(request(port, 'GET', '/api/usage/options', cookie=cookie))['keyOptions'][0]['displayName'] == '合成别名'
         assert document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'][0]['displayName'] == '合成别名'
         assert document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]['displayName'] == '合成别名'
-        assert request(port, 'PUT', name_path, body, cookie=cookie, origin=f.origin, csrf=csrf)[0] == 409
+        conflict = request(port, 'PUT', name_path, body, cookie=cookie, origin=f.origin, csrf=csrf)
+        assert conflict[0] == 409 and 'set-cookie' in conflict[1]
         key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert key['displayName'] is None
         expiration_path = '/api/keys/' + key['id'] + '/expiration'
@@ -261,7 +272,7 @@ def verify(binary):
             assert request(port, 'GET', path)[0] == 404
         for _ in range(15):
             login(f)
-        assert request(port, 'POST', '/api/session', {'secret': ADMIN}, origin=f.origin)[0] == 503
+        assert request(port, 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN}, origin=f.origin)[0] == 503
         # Re-authentication replaces the caller's session, including at capacity; old proof dies.
         fresh_cookie, fresh_csrf = login(f, cookie=cookie)
         assert request(port, 'GET', '/api/session', cookie=cookie)[0] == 401
@@ -276,7 +287,7 @@ def verify(binary):
                                  admin_public_origin='https://admin.example:443/')
         port = f.ports['admin']
         assert request(port, 'GET', '/api/session', cookie=surviving_cookie)[0] == 401
-        assert request(port, 'POST', '/api/session', {'secret': ADMIN}, origin=f.origin)[0] == 403
+        assert request(port, 'POST', '/api/session', {'username': 'admin', 'secret': ADMIN}, origin=f.origin)[0] == 403
         cookie, csrf = login(f, cookie=surviving_cookie, origin='https://admin.example')
         assert request(port, 'GET', '/api/session', cookie=cookie, origin='https://foreign.example', headers={'X-Forwarded-Host': 'admin.example'})[0] == 403
         for path in (f.root / 'state').glob('core.sqlite*'):

@@ -24,7 +24,7 @@ codexone --migrate
 
 先在 `web` 运行 `npm run build`，把 `CODEXONE_WEB_DIRECTORY` 设置为构建产物目录的绝对路径。例如 `/opt/codexone/web` 只放 index.html 和 assets 内 JS/CSS；不指向状态或凭证目录。启动加载安全快照，文件更新须重启。`--check-config` 也校验静态目录与公开 origin，不打开 DB 或监听端口。
 
-打开实际管理地址，选择“访问密钥”，使用独立管理员文件中的凭证登录。浏览器只在登录正文发送一次原文，以 HttpOnly/Secure/SameSite=Strict Cookie 维持最多 30 分钟的内存会话；不保存到 localStorage/sessionStorage。默认使用 `http://127.0.0.1:<管理端口>`，须用支持 loopback 安全 Cookie 的浏览器。远程反代必须配置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=https://admin.example`，保持同源、转发正确 Host（公开 authority 或实际 loopback authority），不得依赖 X-Forwarded-* 推导来源。HTTP 仅允许 loopback，不修改 Cookie 安全属性。
+打开实际管理地址，选择“访问密钥”，使用用户名 admin 和独立管理员文件中的凭证登录。浏览器只在登录正文发送一次原文，以 HttpOnly/Secure/SameSite=Strict Cookie 维持空闲 24 小时、绝对最长 7 天的内存会话，认证活动续期但不越过绝对截止；不保存到 localStorage/sessionStorage。默认使用 `http://127.0.0.1:<管理端口>`，须用支持 loopback 安全 Cookie 的浏览器。远程反代必须配置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=https://admin.example`，保持同源、转发正确 Host（公开 authority 或实际 loopback authority），不得依赖 X-Forwarded-* 推导来源。HTTP 仅允许 loopback，不修改 Cookie 安全属性。
 
 创建时显式选择模型和本地限额。编辑使用 revision；冲突后核对刷新列表再修改。禁用 Key 可以先轮换并保存新凭证，再显式启用，轮换保持当前启用状态与计数。一次性秘密关闭/离开/登出或五分钟后清除；响应丢失无法找回原文，核对后显式轮换。写入结果未知不会自动重发；登出失败显示待重试，不能据页面已清空推导服务端会话已撤销。
 

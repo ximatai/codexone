@@ -57,6 +57,12 @@
 
 释放保留 outcome/failure 和可信用量证据，不补零、不产生估算；用量查询继续显示 unavailable，已有部分数值仅作为下界保留。unknown 及未结暴露计数相应减少。迟到部分证据不重新占用已释放容量；迟到完整可信证据仍可将统计修订为 complete。期满关闭由 Runtime 单一顺序 owner 每 60 秒处理最多 100 条，按 unknown_since_epoch ≤ now−24h 选择；审计 reason 区分 manual/reconciliation_expired。API/snapshot 投影状态 closed_unknown；完整迟到证据清除关闭标记，部分证据保留下界且不重新占用容量。迁移把既有 unknown 按结果时间/准入时间/迁移时间初始化核对起点；既有 settled 且非完整证据映射关闭标记。
 
+### U10 补充：请求参数观察
+
+准入将 Responses 的 reasoning.effort 与 service_tier 记录为现有 admission JSON 的 reasoningEffort、serviceTier；字符串须匹配 `[a-z0-9_-]{1,32}`，非法/超长/非字符串（含显式 null）记为 other，缺失语义为 null。requestMetadataRecorded=true 区分新请求未指定与历史无字段；可空值在持久 JSON 中可省略，管理 DTO 显式返回 null。原生 Images、预热与压缩无对应字段时同样为 null，不补写历史，不改 schema。此元数据仅观察，不改变转发内容、权限、准入判定或结算。
+
+可信上游终态提供 service_tier 时，按相同规则记录 outcome JSON 的 actualServiceTier；缺失为 null，与请求值独立，不从请求推导。查询字段/筛选与界面默认说明见 A13 补充。记录中不包含正文或任意参数对象。
+
 ## U15：保留、汇总与参考阈值
 
 全局 UTC 日请求 10000、估算费用 1000000000 微美元、明细 100000 行为参考阈值，达到 80% warning，超过只标明已超过参考上限。未知质量提醒用最近 1 小时准入数作分母，非客户端取消的 unknown/closed_unknown ≥10 条且比例 ≥20% 时 warning。每账号 24 小时峰值并发 ≥16×80% 时 warning；最近 10 分钟 ≥60 条且 ≥过去 7 天相同滚动时段计数中位数×5 时 warning（无历史视为 0）。quota_high 附最近 5 小时前 5 个 Key 的已观测费用下界、请求和缺失计数；不自动禁用或限流。

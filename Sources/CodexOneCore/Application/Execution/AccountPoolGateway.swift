@@ -22,6 +22,7 @@ public struct AccountPoolGateway: Sendable {
     connection: AccountRouteIdentity? = nil, requestID: String? = nil,
     mode: ExecutionMode = .generation,
     requirements: ExecutionRequirements = .init(),
+    reasoningEffort: String? = nil, serviceTier: String? = nil,
     operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
     guard policy.models.contains(model),
@@ -42,7 +43,8 @@ public struct AccountPoolGateway: Sendable {
         let command = try AccountPoolAdmission(
           attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
           requestID: requestID, mode: mode, references: references, connection: connection,
-          candidates: candidates, requirements: requirements)
+          candidates: candidates, requirements: requirements,
+          reasoningEffort: reasoningEffort, serviceTier: serviceTier)
         return try PreparedAccountPoolAdmission(command: command, credentials: works)
       }, operation: operation)
   }

@@ -41,6 +41,10 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let accountSnapshot: AccountDispatchSnapshot?
   public let requirements: ExecutionRequirements?
   public var executionRequirements: ExecutionRequirements { requirements ?? .init() }
+  public let reasoningEffort: String?
+  public let serviceTier: String?
+  /// Absent in historical JSON; distinguishes missing evidence from an unspecified parameter.
+  public let requestMetadataRecorded: Bool?
   public let mode: ExecutionMode?
   public var executionMode: ExecutionMode { mode ?? .generation }
   public init(
@@ -48,9 +52,13 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
     mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil,
     accountSnapshot: AccountDispatchSnapshot? = nil, requirements: ExecutionRequirements? = nil,
+    reasoningEffort: String? = nil, serviceTier: String? = nil,
     references: [ObjectBinding]? = nil
   ) {
     self.references = references
+    self.reasoningEffort = reasoningEffort.map(RequestMetadataValue.sanitize)
+    self.serviceTier = serviceTier.map(RequestMetadataValue.sanitize)
+    self.requestMetadataRecorded = true
     self.requirements = requirements
     self.accountSnapshot = accountSnapshot
     self.attempt = attempt
@@ -239,4 +247,16 @@ public protocol FinalizationSink: Sendable {
   func canExecute(_ ticket: UUID) -> Bool
   func abandon(_ ticket: UUID)
   func handoff(_ ticket: UUID, finalization: Finalization)
+}
+
+/// Bounded non-secret observation only; never used to authorize or rewrite a request.
+public enum RequestMetadataValue {
+  public static func sanitize(_ value: String) -> String {
+    guard (1...32).contains(value.utf8.count),
+      value.utf8.allSatisfy({
+        (97...122).contains($0) || (48...57).contains($0) || $0 == 95 || $0 == 45
+      })
+    else { return "other" }
+    return value
+  }
 }

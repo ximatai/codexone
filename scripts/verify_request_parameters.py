@@ -22,8 +22,14 @@ class Provider(WireProvider):
             self.server.calls += 1
             count = self.server.calls
             self.server.received.append(request)
-        return json.loads(self.server.literal.replace('resp_contract_1', f'resp_contract_{count}')
+        events = json.loads(self.server.literal.replace('resp_contract_1', f'resp_contract_{count}')
                           .replace('msg_contract_1', f'msg_contract_{count}'))
+        # The actual tier is provider evidence, independent of the requested value.
+        if request.get('service_tier') is not None:
+            for event in events:
+                if event.get('type') in ('response.completed', 'response.failed', 'response.incomplete'):
+                    event['response']['service_tier'] = 'default'
+        return events
 
 def attempt_count(root):
     with sqlite3.connect(root/'state/core.sqlite') as db:
@@ -58,6 +64,10 @@ def main():
                                 good += [dict(temperature=0,top_p=0,max_output_tokens=16,service_tier='flex',truncation='disabled',prompt_cache_retention='24h'),
                                          dict(temperature=2,top_p=1,max_output_tokens=128,service_tier='fast'),dict(store=True)]
                             else: good += [dict(service_tier='auto'),dict(service_tier='default'),dict(service_tier='flex')]
+                            good += [dict(reasoning={'effort': effort}, service_tier='priority')
+                                     for effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'future_1')]
+                            good += [dict(reasoning={'effort': value}, service_tier=value)
+                                     for value in ('INVALID', 'bad value', 'a'*33, 7, True)]
                             # Values the provider judges are forwarded, including future fields.
                             good += [dict(synthetic_future_field={'enabled':True})]
                             for extra in good:
@@ -77,6 +87,22 @@ def main():
                                 else:
                                     assert wire['input']==base['input']
                                     assert all(wire[key]==value for key,value in extra.items())
+                                if 'reasoning' in extra: assert wire['reasoning'] == extra['reasoning']
+                                deadline = time.monotonic() + 5
+                                while True:
+                                    with sqlite3.connect(root/'state/core.sqlite') as db:
+                                        admission, outcome = db.execute('SELECT admission_json,outcome_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()
+                                    if outcome is not None: break
+                                    assert time.monotonic() < deadline
+                                    time.sleep(.01)
+                                admission, outcome = json.loads(admission), json.loads(outcome)
+                                def observed(value):
+                                    if isinstance(value, str) and 1 <= len(value) <= 32 and all(c in 'abcdefghijklmnopqrstuvwxyz0123456789_-' for c in value): return value
+                                    return 'other'
+                                assert admission.get('reasoningEffort') == (observed(extra['reasoning']['effort']) if 'reasoning' in extra else None)
+                                assert admission.get('serviceTier') == (observed(extra['service_tier']) if 'service_tier' in extra else None)
+                                assert admission['requestMetadataRecorded'] is True
+                                assert outcome.get('actualServiceTier') == ('default' if extra.get('service_tier') is not None else None)
                                 if 'include' in extra: assert wire['include'] == extra['include']
                                 if 'synthetic_future_field' in extra: assert wire['synthetic_future_field']=={'enabled':True}
                             # Only explicit constraints the subscription backend cannot honor fail before dispatch.

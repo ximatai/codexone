@@ -75,7 +75,8 @@ enum PoolWebSocketSession {
             try await gateway.execute(
               model: first.model, references: first.references, affinityHints: first.affinityHints,
               requestID: requestID,
-              mode: first.mode, requirements: first.requirements
+              mode: first.mode, requirements: first.requirements,
+              reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
             ) { context, authorization in
               try await withExecutionDeadline(
                 seconds: executor.configuration.budget.total

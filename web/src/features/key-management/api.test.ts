@@ -40,11 +40,14 @@ it("uses cookies and CSRF without retaining or replaying administrator credentia
     .mockResolvedValueOnce(reply({ key, secret }))
     .mockResolvedValueOnce(reply({ key }));
   vi.stubGlobal("fetch", fetch);
-  await login("synthetic-admin-input");
+  await login("admin", "synthetic-admin-input");
   expect(fetch.mock.calls[0][1]).toMatchObject({
     credentials: "same-origin",
     cache: "no-store",
-    body: JSON.stringify({ secret: "synthetic-admin-input" }),
+    body: JSON.stringify({
+      username: "admin",
+      secret: "synthetic-admin-input",
+    }),
   });
   expect(
     (

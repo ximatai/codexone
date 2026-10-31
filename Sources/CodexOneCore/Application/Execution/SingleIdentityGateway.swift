@@ -43,6 +43,7 @@ public struct SingleIdentityGateway: Sendable {
   public func execute(
     model: String, references: [ObjectBinding], requestID: String? = nil,
     mode: ExecutionMode = .generation, requirements: ExecutionRequirements = .init(),
+    reasoningEffort: String? = nil, serviceTier: String? = nil,
     operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
     try requirements.validate()
@@ -68,7 +69,7 @@ public struct SingleIdentityGateway: Sendable {
       pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
       keyRevision: policy.keyRevision, model: model, requirements: requirements,
-      references: references)
+      reasoningEffort: reasoningEffort, serviceTier: serviceTier, references: references)
     try await coordinator.execute(admission, operation: operation)
   }
 }

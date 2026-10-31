@@ -3,6 +3,7 @@ import {
   Button,
   Paper,
   PasswordInput,
+  TextInput,
   Stack,
   Title,
   Alert,
@@ -67,6 +68,7 @@ export function ManagementSession({
   const [status, setStatus] = useState<Status>("checking");
   const [session, setSession] = useState<api.AdminSession | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [username, setUsername] = useState("admin");
   const [credential, setCredential] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -116,7 +118,7 @@ export function ManagementSession({
     setSession(value);
     setStatus("authenticated");
   }
-  async function connect(secret?: string) {
+  async function connect(secret?: string, loginUsername = "admin") {
     const signal = lifetime.current?.signal;
     if (!signal || signal.aborted) return;
     const version = ++sequence.current;
@@ -126,11 +128,13 @@ export function ManagementSession({
       const value =
         secret === undefined
           ? await api.fetchSession(signal)
-          : await api.login(secret, signal);
+          : await api.login(loginUsername, secret, signal);
       if (signal.aborted || version !== sequence.current) return;
+      setCredential("");
       adopt(value);
     } catch (cause) {
       if (signal.aborted || version !== sequence.current) return;
+      if (secret !== undefined) setCredential("");
       setSession(null);
       if (cause instanceof api.ManagementError && cause.status === 401) {
         setStatus("anonymous");
@@ -268,11 +272,20 @@ export function ManagementSession({
                   event.preventDefault();
                   if (busy) return;
                   const value = credential;
-                  setCredential("");
-                  void connect(value);
+                  void connect(value, username);
                 }}
               >
                 <Stack>
+                  <TextInput
+                    label="用户名"
+                    withAsterisk={false}
+                    name="username"
+                    autoComplete="username"
+                    required
+                    value={username}
+                    disabled={busy}
+                    onChange={(event) => setUsername(event.currentTarget.value)}
+                  />
                   <PasswordInput
                     autoFocus
                     visibilityToggleButtonProps={{
@@ -280,7 +293,8 @@ export function ManagementSession({
                     }}
                     label="管理员凭证"
                     withAsterisk={false}
-                    autoComplete="off"
+                    name="password"
+                    autoComplete="current-password"
                     required
                     value={credential}
                     disabled={busy}

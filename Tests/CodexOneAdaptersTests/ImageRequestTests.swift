@@ -14,14 +14,16 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
 @Test func nativeImagesPreserveBytesAndLeaveParametersToProvider() throws {
   let config = try syntheticImageConfiguration()
   let raw = Data(
-    #"{ "model" : "synthetic-image", "unknown":{"future":true}, "n":3, "size":"future", "prompt":"synthetic" }"#
+    #"{ "model" : "synthetic-image", "unknown":{"future":true}, "service_tier":"priority", "n":3, "size":"future", "prompt":"synthetic" }"#
       .utf8)
   let request = try ImagesRequest(
     data: raw, contentType: "application/json", editing: false, configuration: config)
   #expect(request.body == raw)
+  #expect(request.serviceTier == "priority")
   let defaulted = try ImagesRequest(
     data: Data(#"{"prompt":"synthetic","unknown":1}"#.utf8), contentType: "application/json",
     editing: false, configuration: config)
+  #expect(defaulted.serviceTier == nil)
   #expect(try JSONValue.decode(defaulted.body)["model"] == .string("synthetic-image"))
   #expect(try JSONValue.decode(defaulted.body)["unknown"] == .number(1))
   for model: JSONValue in [.null, .number(1)] {

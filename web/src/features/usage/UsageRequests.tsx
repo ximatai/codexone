@@ -1,5 +1,5 @@
 import { KeyName } from "../../shared/KeyName";
-import { Button } from "@mantine/core";
+import { Button, Text } from "@mantine/core";
 import { DataTable } from "../../shared/ui/DataTable";
 import {
   failures,
@@ -15,10 +15,12 @@ export function UsageRequests({
   rows,
   onDetail,
   retry,
+  defaultReasoningEfforts = {},
 }: {
   rows: UsageReport["rows"];
   onDetail: (row: UsageReport["rows"][number]) => void;
   retry: () => void;
+  defaultReasoningEfforts?: Record<string, string>;
 }) {
   return (
     <div className={`usage-table ${styles.table}`}>
@@ -52,6 +54,21 @@ export function UsageRequests({
                 <small>{row.model ?? "模型未记录"}</small>
               </>
             ),
+          },
+          {
+            id: "reasoning",
+            title: "推理",
+            render: (row) =>
+              !row.requestMetadataRecorded
+                ? "—"
+                : (row.reasoningEffort ?? (
+                    <Text component="span" size="sm" c="dimmed">
+                      默认
+                      {row.model && defaultReasoningEfforts[row.model]
+                        ? ` · ${defaultReasoningEfforts[row.model]}`
+                        : ""}
+                    </Text>
+                  )),
           },
           {
             id: "outcome",

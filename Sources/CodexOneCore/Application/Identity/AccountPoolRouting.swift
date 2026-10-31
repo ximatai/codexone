@@ -52,11 +52,14 @@ public struct AccountPoolAdmission: Sendable {
   public let references: [ObjectBinding]
   public let connection: AccountRouteIdentity?
   public let requirements: ExecutionRequirements
+  public let reasoningEffort: String?
+  public let serviceTier: String?
   public let candidates: [AccountRouteCandidate]
   public init(
     attempt: String, policy: AccountPoolPolicy, model: String, window: String, requestID: String?,
     mode: ExecutionMode, references: [ObjectBinding], connection: AccountRouteIdentity?,
-    candidates: [AccountRouteCandidate], requirements: ExecutionRequirements = .init()
+    candidates: [AccountRouteCandidate], requirements: ExecutionRequirements = .init(),
+    reasoningEffort: String? = nil, serviceTier: String? = nil
   ) throws {
     guard !attempt.isEmpty, attempt.utf8.count <= 256, !window.isEmpty, window.utf8.count <= 256,
       policy.models.contains(model),
@@ -65,6 +68,8 @@ public struct AccountPoolAdmission: Sendable {
       Set(candidates.map(\.identity)).count == candidates.count,
       Set(candidates.map(\.identity.id)).count == candidates.count
     else { throw ExecutionError.invalidCommand }
+    self.reasoningEffort = reasoningEffort
+    self.serviceTier = serviceTier
     self.requirements = requirements
     self.attempt = attempt
     self.policy = policy
@@ -85,7 +90,7 @@ public struct AccountPoolAdmission: Sendable {
       window: window, policyVersion: policy.policyVersion, pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
       keyRevision: policy.key.revision, model: model, accountSnapshot: candidate.snapshot,
-      requirements: requirements)
+      requirements: requirements, reasoningEffort: reasoningEffort, serviceTier: serviceTier)
   }
 }
 public struct PreparedAccountPoolAdmission: Sendable, CustomStringConvertible,

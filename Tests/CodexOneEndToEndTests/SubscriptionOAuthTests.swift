@@ -372,7 +372,8 @@ private struct AccountAdminClient: Sendable {
       #expect(conflict.0 == 409 && conflict.3 == "no-store")
       let origin = "http://127.0.0.1:\(client.port)"
       let login = try await client.call(
-        "POST", "/api/session", body: .object(["secret": .string(secret)]),
+        "POST", "/api/session",
+        body: .object(["username": .string("admin"), "secret": .string(secret)]),
         headers: ["origin": origin])
       #expect(login.0 == 200)
       let cookie = try #require(login.2?.split(separator: ";").first.map(String.init))

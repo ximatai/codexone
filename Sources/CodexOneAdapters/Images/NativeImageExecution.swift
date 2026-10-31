@@ -64,7 +64,8 @@ extension HTTPResponseExecution {
     try Task.checkCancellation()
     try await gateway.execute(
       model: request.model, references: [], requestID: requestID, mode: .generation,
-      requirements: try .init(route: .images, imageModel: request.model)
+      requirements: try .init(route: .images, imageModel: request.model),
+      serviceTier: request.serviceTier
     ) { context, authorization in
       try await withProgressDeadline(budget: configuration.budget) { progress in
         let base = authorization?.baseURL ?? configuration.upstreamBaseURL
@@ -125,6 +126,7 @@ extension HTTPResponseExecution {
                   guard terminal == nil else {
                     throw GatewayProtocolError(502, "invalid_upstream_image")
                   }
+                  context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
                   terminal = event
                   let observation = NativeImageObservation(event, model: model, streaming: true)
                   if let usage = observation.usage { try context.observeUsage(usage) }
@@ -146,9 +148,9 @@ extension HTTPResponseExecution {
           let body = try await collectProgressBody(
             response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes)
           context.observeUpstreamEvent()
-          let observation = (try? JSONValue.decode(body)).map {
-            NativeImageObservation($0, model: model)
-          }
+          let document = try? JSONValue.decode(body)
+          let observation = document.map { NativeImageObservation($0, model: model) }
+          context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
           if let usage = observation?.usage { try context.observeUsage(usage) }
           if observation?.images ?? 0 == 0 {
             try context.observeOutcome(

@@ -29,6 +29,9 @@ public struct ExecutionContext: Sendable {
     observation.recordFirstEvent()
     (store as? any ExecutionLiveObserving)?.executionReceivedFirstEvent(attempt: admission.attempt)
   }
+  public func observeActualServiceTier(_ tier: String?) {
+    observation.recordActualServiceTier(tier)
+  }
   public func observeOutcome(_ outcome: ExecutionOutcome) throws {
     try outcome.validate()
     try observation.recordOutcome(outcome)
@@ -67,9 +70,18 @@ private final class UsageObservation: Sendable {
   }
   func recordFirstEvent() { firstEvent.withLock { if $0 == nil { $0 = elapsed() } } }
   private let latest = Mutex(
-    (evidence: UsageEvidence?.none, outcome: ExecutionOutcome?.none, sealed: false))
+    (
+      evidence: UsageEvidence?.none, outcome: ExecutionOutcome?.none,
+      actualServiceTier: String?.none, sealed: false
+    ))
   var isProviderRejection: Bool {
     latest.withLock { $0.evidence?.providerRejectedBeforeOutput == true }
+  }
+  func recordActualServiceTier(_ tier: String?) {
+    latest.withLock { value in
+      guard !value.sealed, let tier else { return }
+      value.actualServiceTier = RequestMetadataValue.sanitize(tier)
+    }
   }
   func recordOutcome(_ outcome: ExecutionOutcome) throws {
     try latest.withLock { value in
@@ -84,7 +96,8 @@ private final class UsageObservation: Sendable {
         try? ExecutionOutcome(
           failure: $0.failure, atUnixSeconds: $0.atUnixSeconds,
           cooldownSeconds: $0.cooldownSeconds, firstEventMilliseconds: firstEvent.withLock { $0 },
-          totalMilliseconds: elapsed())
+          totalMilliseconds: elapsed(),
+          actualServiceTier: value.actualServiceTier ?? $0.actualServiceTier)
       }
       return (value.evidence, outcome)
     }

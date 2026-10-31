@@ -56,7 +56,8 @@ public struct KeyAdminAPI: Sendable {
   }
   func bind(port: Int) { sessions.bind(port: port) }
   func register(_ app: Application, accounts: AccountAdminAPI? = nil) {
-    let api = app.grouped("api").grouped(AdminFailureMiddleware())
+    let api = app.grouped("api").grouped(
+      AdminCookieMiddleware(sessions: sessions), AdminFailureMiddleware())
     let guardMiddleware = KeyAdminGuard(digest: digest, sessions: sessions)
     let routes = api.grouped("keys").grouped(guardMiddleware)
     accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
@@ -82,18 +83,21 @@ public struct KeyAdminAPI: Sendable {
       }
     }
     api.post("session") { request async throws -> Response in
-      let document = try Self.body(request, allowed: ["secret"])
+      let document = try Self.body(request, allowed: ["secret"], optional: ["username"])
       guard let secret = document["secret"]?.string else { throw ExecutionError.invalidCommand }
-      let created = try sessions.login(secret: secret, headers: request.headers)
+      let created = try sessions.login(
+        username: document["username"]?.string, secret: secret, headers: request.headers)
       let response = try Self.response(
         .object(["authenticated": .bool(true), "csrf": .string(created.csrf)]))
-      response.headers.add(
-        name: "set-cookie", value: Self.cookie(created.token, age: created.maximumAge))
+      request.storage[AdminSessionRenewalKey.self] = created
       return response
     }
     api.get("session") { request async throws -> Response in
-      let csrf = try sessions.authorize(request.headers, mutation: false)
-      return try Self.response(.object(["authenticated": .bool(true), "csrf": .string(csrf)]))
+      let session = try sessions.authenticate(request.headers, mutation: false)
+      let response = try Self.response(
+        .object(["authenticated": .bool(true), "csrf": .string(session.csrf)]))
+      request.storage[AdminSessionRenewalKey.self] = session
+      return response
     }
     api.delete("session") { request async throws -> Response in
       try sessions.logout(request.headers)
@@ -175,11 +179,13 @@ public struct KeyAdminAPI: Sendable {
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
   }
-  private static func cookie(_ token: String, age: Int) -> String {
+  fileprivate static func cookie(_ token: String, age: Int) -> String {
     AdminSessions.cookieName + "=" + token
       + "; Path=/; Max-Age=\(age); HttpOnly; Secure; SameSite=Strict"
   }
-  private static func body(_ request: Request, allowed: Set<String>) throws -> JSONValue {
+  private static func body(
+    _ request: Request, allowed: Set<String>, optional: Set<String> = []
+  ) throws -> JSONValue {
     guard request.headers["content-type"].count == 1,
       request.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json")
         == true,
@@ -187,11 +193,11 @@ public struct KeyAdminAPI: Sendable {
     else { throw ExecutionError.invalidCommand }
     guard let buffer = request.body.data else { throw ExecutionError.invalidCommand }
     let document = try JSONValue.decode(Data(buffer.readableBytesView))
-    let optional: Set<String> =
-      allowed.contains("limits") ? ["visionInput", "imageGeneration", "imageModels"] : []
+    let optionalFields: Set<String> =
+      allowed.contains("limits") ? ["visionInput", "imageGeneration", "imageModels"] : optional
     guard let object = document.object,
-      Set(object.keys).subtracting(optional) == allowed
-        && Set(object.keys).isSubset(of: allowed.union(optional))
+      Set(object.keys).subtracting(optionalFields) == allowed
+        && Set(object.keys).isSubset(of: allowed.union(optionalFields))
     else {
       throw ExecutionError.invalidCommand
     }
@@ -260,6 +266,22 @@ private struct UpdateKeyDTO: Decodable {
       imageGeneration: imageGeneration ?? false, imageModels: imageModels ?? [])
   }
 }
+private struct AdminSessionRenewalKey: StorageKey {
+  typealias Value = AdminSessions.Created
+}
+private struct AdminCookieMiddleware: AsyncMiddleware {
+  let sessions: AdminSessions
+  func respond(to request: Request, chainingTo next: any AsyncResponder) async throws -> Response {
+    let response = try await next.respond(to: request)
+    if let session = request.storage[AdminSessionRenewalKey.self] {
+      response.headers.replaceOrAdd(
+        name: "set-cookie",
+        value: KeyAdminAPI.cookie(
+          session.token, age: sessions.cookieAge(session)))
+    }
+    return response
+  }
+}
 private struct KeyAdminGuard: AsyncMiddleware {
   let digest: String
   let sessions: AdminSessions
@@ -274,8 +296,9 @@ private struct KeyAdminGuard: AsyncMiddleware {
       }
       request.storage[AdminOwnerKey.self] = digest
     } else {
-      request.storage[AdminOwnerKey.self] = try sessions.authorize(
-        request.headers, mutation: request.method != .GET)
+      let session = try sessions.authenticate(request.headers, mutation: request.method != .GET)
+      request.storage[AdminOwnerKey.self] = session.csrf
+      request.storage[AdminSessionRenewalKey.self] = session
     }
     return try await next.respond(to: request)
   }

@@ -28,6 +28,7 @@ struct ImageToolRequest: Sendable {
 }
 
 struct ImagesRequest: Sendable {
+  let serviceTier: String?
   let model: String
   let body: Data
   let streaming: Bool
@@ -111,6 +112,7 @@ struct ImagesRequest: Sendable {
     guard total <= ImageLimits.totalImageBytes else {
       throw GatewayProtocolError(413, "image_too_large")
     }
+    self.serviceTier = requestMetadataValue(fields["service_tier"])
     self.model = model
     streaming = fields["stream"]?.bool == true
     self.editing = editing

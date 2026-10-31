@@ -9,10 +9,12 @@ final class AdminSessions: Sendable {
     let token: String
     let csrf: String
     let maximumAge: Int
+    let absoluteDeadline: ContinuousClock.Instant
   }
   private struct Session: Sendable {
     let csrf: String
-    let expires: ContinuousClock.Instant
+    var lastActivity: ContinuousClock.Instant
+    let absoluteDeadline: ContinuousClock.Instant
   }
   private struct State {
     var port: Int?
@@ -21,15 +23,19 @@ final class AdminSessions: Sendable {
   static let cookieName = "__Host-codexone_admin"
   private let digest: String
   private let publicOrigin: String?
-  private let maximumAge: Int
+  static let idleLifetime = 24 * 60 * 60
+  static let absoluteLifetime = 7 * 24 * 60 * 60
+  static let username = "admin"
   private let state = Mutex(State())
-  private let clock = ContinuousClock()
+  private let now: @Sendable () -> ContinuousClock.Instant
 
-  init(digest: String, publicOrigin: String?, maximumAge: Int = 1800) throws {
-    guard (1...1800).contains(maximumAge) else { throw ExecutionError.invalidCommand }
+  init(
+    digest: String, publicOrigin: String?,
+    now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+  ) throws {
     self.digest = digest
     self.publicOrigin = try publicOrigin.map(Self.canonicalOrigin)
-    self.maximumAge = maximumAge
+    self.now = now
   }
   func bind(port: Int) {
     state.withLock { value in
@@ -38,33 +44,46 @@ final class AdminSessions: Sendable {
       value.port = port
     }
   }
-  func login(secret: String, headers: HTTPHeaders) throws -> Created {
+  func login(username: String?, secret: String, headers: HTTPHeaders) throws -> Created {
     try checkBrowser(headers, mutation: true)
     guard headers["authorization"].isEmpty,
+      username == Self.username,
       (32...512).contains(secret.utf8.count),
       Self.equal(keyDigest(secret), digest)
     else { throw ExecutionError.unauthorized }
     let token = Self.nonce(prefix: "as1_")
     let csrf = Self.nonce(prefix: "ac1_")
     let replacing = try? cookieToken(headers)
-    try state.withLock { value in
-      let now = clock.now
-      value.sessions = value.sessions.filter { $0.value.expires > now }
+    return try state.withLock { value in
+      let now = now()
+      value.sessions = value.sessions.filter {
+        $0.value.absoluteDeadline > now
+          && $0.value.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > now
+      }
       if let replacing { value.sessions.removeValue(forKey: keyDigest(replacing)) }
       guard value.sessions.count < 16 else { throw ExecutionError.capacity }
       value.sessions[keyDigest(token)] = Session(
-        csrf: csrf, expires: now.advanced(by: .seconds(maximumAge)))
+        csrf: csrf, lastActivity: now,
+        absoluteDeadline: now.advanced(by: .seconds(Self.absoluteLifetime)))
+      return Created(
+        token: token, csrf: csrf, maximumAge: Self.absoluteLifetime,
+        absoluteDeadline: now.advanced(by: .seconds(Self.absoluteLifetime)))
     }
-    return Created(token: token, csrf: csrf, maximumAge: maximumAge)
   }
   func authorize(_ headers: HTTPHeaders, mutation: Bool) throws -> String {
+    try authenticate(headers, mutation: mutation).csrf
+  }
+  func authenticate(_ headers: HTTPHeaders, mutation: Bool) throws -> Created {
     try checkBrowser(headers, mutation: mutation)
     guard headers["authorization"].isEmpty else { throw ExecutionError.unauthorized }
     let token = try cookieToken(headers)
     return try state.withLock { value in
-      let now = clock.now
-      value.sessions = value.sessions.filter { $0.value.expires > now }
-      guard let session = value.sessions[keyDigest(token)] else {
+      let now = now()
+      value.sessions = value.sessions.filter {
+        $0.value.absoluteDeadline > now
+          && $0.value.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > now
+      }
+      guard var session = value.sessions[keyDigest(token)] else {
         throw ExecutionError.unauthorized
       }
       if mutation {
@@ -73,8 +92,16 @@ final class AdminSessions: Sendable {
           throw GatewayProtocolError(403, "invalid_csrf")
         }
       }
-      return session.csrf
+      session.lastActivity = now
+      value.sessions[keyDigest(token)] = session
+      let remaining = now.duration(to: session.absoluteDeadline).components.seconds
+      return Created(
+        token: token, csrf: session.csrf, maximumAge: Int(remaining),
+        absoluteDeadline: session.absoluteDeadline)
     }
+  }
+  func cookieAge(_ session: Created) -> Int {
+    max(0, Int(now().duration(to: session.absoluteDeadline).components.seconds))
   }
   func logout(_ headers: HTTPHeaders) throws {
     _ = try authorize(headers, mutation: true)

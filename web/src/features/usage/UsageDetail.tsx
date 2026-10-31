@@ -93,6 +93,19 @@ export function UsageDetail({
                 ],
                 ["模型", detail.model ?? "未记录"],
                 ["模式", modes[detail.mode]],
+                [
+                  "请求推理强度",
+                  detail.requestMetadataRecorded
+                    ? (detail.reasoningEffort ?? "默认")
+                    : "—",
+                ],
+                [
+                  "请求服务档位",
+                  detail.requestMetadataRecorded
+                    ? (detail.serviceTier ?? "默认")
+                    : "—",
+                ],
+                ["实际服务档位", detail.actualServiceTier ?? "—"],
                 ["结果", detail.outcome ? outcomes[detail.outcome] : "未记录"],
                 [
                   "用量状态",

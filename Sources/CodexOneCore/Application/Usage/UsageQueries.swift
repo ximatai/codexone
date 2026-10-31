@@ -15,6 +15,7 @@ public struct UsageQuery: Sendable {
   public let startUnixSeconds: Int64
   public let endUnixSeconds: Int64
   public let keyID: String?
+  public let reasoningEffort: String?
   public let model: String?
   public let mode: ExecutionMode?
   public let failure: ExecutionFailure?
@@ -25,13 +26,15 @@ public struct UsageQuery: Sendable {
   public init(
     startUnixSeconds: Int64, endUnixSeconds: Int64, keyID: String? = nil, model: String? = nil,
     mode: ExecutionMode? = nil, failure: ExecutionFailure? = nil, failedOnly: Bool = false,
-    state: ExecutionSnapshot.State? = nil, cursor: UsageCursor? = nil, limit: Int = 50
+    state: ExecutionSnapshot.State? = nil, reasoningEffort: String? = nil,
+    cursor: UsageCursor? = nil, limit: Int = 50
   ) throws {
     guard (0...1_000_000_000_000).contains(startUnixSeconds), endUnixSeconds > startUnixSeconds,
       endUnixSeconds <= 1_000_000_000_000, endUnixSeconds - startUnixSeconds <= 31 * 86400,
       startUnixSeconds % 3600 == 0, endUnixSeconds % 3600 == 0,
       keyID.map({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0) }) ?? true,
       model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true,
+      reasoningEffort.map({ $0 == RequestMetadataValue.sanitize($0) }) ?? true,
       (1...100).contains(limit),
       cursor.map({ $0.atUnixSeconds >= startUnixSeconds && $0.atUnixSeconds < endUnixSeconds })
         ?? true
@@ -39,6 +42,7 @@ public struct UsageQuery: Sendable {
     self.startUnixSeconds = startUnixSeconds
     self.endUnixSeconds = endUnixSeconds
     self.keyID = keyID
+    self.reasoningEffort = reasoningEffort
     self.model = model
     self.mode = mode
     self.failure = failure
@@ -157,6 +161,10 @@ public struct UsageRow: Sendable {
   public let principal: String?
   public let firstEventMilliseconds: Int64?
   public let totalMilliseconds: Int64?
+  public let reasoningEffort: String?
+  public let serviceTier: String?
+  public let actualServiceTier: String?
+  public let requestMetadataRecorded: Bool
   public let cursor: UsageCursor
   public init(
     kind: Kind, id: String, atUnixSeconds: Int64, keyID: String, model: String?,
@@ -166,8 +174,14 @@ public struct UsageRow: Sendable {
     failure: ExecutionFailure?, completeness: UsageEvidence.Completeness?, metrics: UsageMetrics,
     cursor: UsageCursor, principal: String? = nil, displayName: String? = nil,
     firstEventMilliseconds: Int64? = nil,
-    totalMilliseconds: Int64? = nil
+    totalMilliseconds: Int64? = nil, reasoningEffort: String? = nil,
+    serviceTier: String? = nil, actualServiceTier: String? = nil,
+    requestMetadataRecorded: Bool = false
   ) {
+    self.reasoningEffort = reasoningEffort
+    self.serviceTier = serviceTier
+    self.actualServiceTier = actualServiceTier
+    self.requestMetadataRecorded = requestMetadataRecorded
     self.kind = kind
     self.id = id
     self.atUnixSeconds = atUnixSeconds
