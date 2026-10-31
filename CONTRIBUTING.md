@@ -31,7 +31,7 @@ python3 scripts/check_docs.py
 
 定向前端检查为 `npm --prefix web run lint`、`npm --prefix web run format:check`、`npm --prefix web run typecheck` 和 `npm --prefix web test`。标准 Chromium 首次准备可在 web 下执行 `npx playwright install chromium --only-shell`。依赖/浏览器安装需要网络；离线环境缺依赖时报告限制，不声称通过。
 
-定向修改运行相关测试；合并前完成所影响能力的验收。覆盖网络断开、取消、超时、存储失败、并发和部分成功，不用 helper 成功替代协议/恢复测试。UI 通过合成 API 在浏览器操作关键路径，优先检查大屏并兼顾窄屏。完整定义见[验证约定](docs/development/verification.md)。
+定向修改运行相关测试；合并前完成所影响能力的验收。覆盖网络断开、取消、超时、存储失败、并发和部分成功，不用 helper 成功替代协议/恢复测试。UI 通过合成 API 在浏览器操作关键路径，优先检查大屏并兼顾窄屏。完整定义见[验证约定](docs/development/verification.md)。原 candidate 工作流已由 Release 的手动 dry-run 取代；输入 ref 执行 Linux 镜像、TLS 与真实安装验证并上传产物，不做远端发布，见[发版规则](docs/development/releasing.md)。
 
 ## 提出与提交变更
 

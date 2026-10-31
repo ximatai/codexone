@@ -36,6 +36,23 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 默认客户端候选出口通过verify.sh的显式--client入口提供固定客户端路径及版本，缺少客户端或版本不符必须失败；不能以普通后端CI通过代替。脚本新建私有CODEX_HOME/空工作区、loopback合成身份及实际trial_provider序列化，分别验证默认内置目录/显式受信目录、文本三轮/工具往返/压缩续接与三种传输；断言客户端完成、实际传输无回退、上游次数与持久账本。默认路径通过--require-lite要求实际覆盖Lite工具包（可在WS预热中出现）。仅未支持web_search显式关闭，压缩场景显式降低阈值；不读取个人登录或修改个人配置。这是固定CLI合成兼容证据，不能替代Desktop UI或真实提供者。
 
+## 发版 CI 验证边界
+
+Verify 在 main push、PR 和手动运行时保留后端/前端检查；后端 Swift 容器与 Dockerfile 使用相同的 6.4.1 digest。Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新，更新 PR 仍须通过相关验证，Swift 容器与构建镜像的工具链固定需一同核对。
+
+Release 的 tag 流程和手动 dry-run 共用 Linux amd64 验证：verification target 的优化后二进制合成 socket/迁移失败检查、实际本地 TLS 反代和真实 OCI/Compose 安装。安装覆盖非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。手动流程允许未发布 CHANGELOG，只上传产物；tag 流程须通过版本/主分支历史/CHANGELOG 检查后才可能发布，详见[发版规则](releasing.md)。
+
+工作流/版本政策修改的本地检查：
+
+```sh
+python3 scripts/test_prepare_release.py
+python3 scripts/prepare_release.py --dry-run --output-dir artifacts/release-policy
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7
+python3 scripts/check_docs.py
+```
+
+这组检查验证 tag 格式、CHANGELOG 段落/预发布、真实本地 Git 祖先关系及工作流语法，不构建 Linux 镜像。源代码/安装包/许可归档与校验和的交付、推送后 digest/image ID 比对及来源证明只有实际运行 Release CI 后才有证据。未经明确授权，不运行真实订阅或部署验收。
+
 ## 首版替代验收记录要求
 
 按 P11/P12、U10、C11、O13/O14 和 [项目范围](../../STATUS.md) 制作每次发行的验收矩阵，注明客户端/版本、模型/参数、端点/别名、传输/上游路径、用例与预期、实际结果及未覆盖项。合成失败测试与明确授权的真实 Desktop 流程分别报告；预热不是定时付费唤醒，图片编辑不是通用文件服务。旧服务 HTTP 200 或历史日志只能帮助确定基线，不能证明新实现结果等价。

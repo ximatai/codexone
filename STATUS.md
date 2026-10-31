@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-首个公开版本计划为 **v0.26.1（尚未发布）**，核心数据库 schema v10。GHCR `ghcr.io/ximatai/codexone` 将在首个版本发布后提供镜像；当前可以从源码构建，自动发布 CI 尚待实现。
+首个公开版本计划为 **v0.26.1（尚未发布）**，核心数据库 schema v10。GHCR `ghcr.io/ximatai/codexone` 将在首个版本发布后提供镜像；当前可以从源码构建，公开发版自动化与依赖更新配置已就绪，尚未远端运行验收。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移。
 
@@ -19,7 +19,7 @@
 
 ## 路线图
 
-- 公开发版 CI、GHCR、依赖维护和发布元信息。
+- 首次运行公开发版 CI，核验 GHCR 可见性、来源证明与 Release 附件。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。
