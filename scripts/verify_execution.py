@@ -77,7 +77,7 @@ def main():
                 expected = "absent" if phase == "before_intent" else "settled" if phase == "after_settlement" else "unknown"
                 assert command(recovered, "snapshot") == expected
                 assert command(recovered, "resolve") == ("owned" if phase in ("after_binding", "after_settlement") else "absent")
-                assert command(recovered, "capacity") == ("denied" if expected == "unknown" else "accepted")
+                assert command(recovered, "capacity") == "accepted"  # Unknown accounting never globally blocks admission.
                 if phase == "after_settlement":
                     assert command(recovered, "finalize") == "settled"
                     assert command(recovered, "snapshot") == "settled"

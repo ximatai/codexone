@@ -126,8 +126,8 @@ private func attentionKey(expires: Int64? = nil, enabled: Bool = true, unlimited
       == "error_rate_high")
   #expect(AttentionRules.executions(admitted: 100, failed: 9, unknown: 0, since: nil).isEmpty)
   #expect(
-    AttentionRules.executions(admitted: 0, failed: 0, unknown: 512, since: 20).first?.kind
-      == "unresolved_executions")
+    AttentionRules.executions(admitted: 1000, failed: 0, unknown: 512, since: 20).first?.kind
+      == "observation_quality")
   var many = (0..<60).map { AttentionItem("quota_stale", id: "\($0)", since: Int64($0)) }
   many.append(.init("storage_pressure", critical: true, since: 100))
   many.append(.init("account_requires_auth", critical: true, since: 50))

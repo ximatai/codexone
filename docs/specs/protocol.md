@@ -174,4 +174,4 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 续接标识按允许列表保留，SDK 特征 `x-stainless-*`、`x-openai-client-*`、认证/账号/Cookie、门控头和 hop-by-hop 头不透传。账号认证仍由服务注入。可信离线 `clientFingerprint` 配置及版本选择见[单身份配置](../development/single-identity.md)，请求路径不在线查询版本。
 
-普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝：WS 握手明确返回 HTTP 503 `capacity_exceeded` envelope 后关闭，不等待握手超时；控制舱壁仍能返回429。Key/全局活动限制、握手期限及共享正文预算不变。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。
+普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝：WS 握手明确返回 HTTP 503 `capacity_exceeded` envelope 后关闭，不等待握手超时；控制舱壁仍能返回429。显式 Key 活动限制、每账号 16 并发、握手期限及共享正文预算共同生效；全局记账参考值不阻断。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。

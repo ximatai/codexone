@@ -25,7 +25,7 @@ Runtime 仅一个周期 owner，每次 await 一个命令后休眠约一秒，�
 
 有安全空间时执行 PASSIVE checkpoint，已全部完成且无读者阻塞时尝试 TRUNCATE；临时 busy timeout 为零，完成后恢复 250ms，长读事务不能使监测无限等待。空间低于停止线时暂停主动 checkpoint，留给已准入关键收尾；外部长期读者仍可能钉住 WAL，水位会停止新工作。被动额度不再新增观察；已发起的有限观察仍受原期限/取消 owner 管理，结果写入也会退让。低水位拒绝新报表，并由已有查询的 SQLite progress handler 尽快取消（原一秒总预算保留）。
 
-只有允许过期的 30 日拒绝诊断可清理，每次最多 100 条，且保留额外空间；不删除账本、未结项、账号审计、Key 审计或完成备份。未实现的 M5 正文缓存不计入可用清理能力。
+StorageMonitor 可清理允许过期的 30 日拒绝诊断，每次最多 100 条，且保留额外空间。独立 ExecutionMaintenanceSupervisor 每 60 秒小批关闭 24h unknown、按续接期限删除绑定、把 90 日终态明细转日汇总并清理 90 日关闭审计；每轮最多 100 条/类，空闲页 ≥5% 时 incremental_vacuum(32)。整个维护在非 normal 水位暂停（包括 blocked），恢复后续作；不删除核对中项、账号/Key 审计或完成备份。未实现的 M5 正文缓存不计入可用清理能力。
 
 ## 认证运行观测
 
@@ -56,3 +56,5 @@ python3 scripts/verify_storage_pressure.py --binary .build/debug/codexone
 
 
 在线备份在 writer 外使用独立只读连接，每批复核 normal 和目标可选空间余量。失败仅记录健康分类，不将核心库标记不可用；压力恢复后等待下一轮，不忙重试。目录总量（含未清理 partial）超过 5 GiB、单完成 bundle 超过 768 MiB 时 warning。仅新份通过自检并发布后才裁剪旧份，不在压力下删完成备份换空间，详见[快照维护](snapshot-maintenance.md)。
+
+余量接口 `/api/usage/headroom` 同时列出阻断上限与参考阈值，详见[管理面](../specs/control-plane.md)。试运行把占用比（含并发峰值、WAL与最低可用空间/当前可用空间）≥80% 记 critical，仅增加信号，不扩展自动回滚条件。

@@ -196,7 +196,7 @@ private func keyAdmission(
   }
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v9-")
+    $0.contains(".pre-v10-")
   }
   #expect(backups.count == 1)
   let backup = directory + "/" + backups[0]
@@ -355,7 +355,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   }
 }
 
-@Test func fullyUnlimitedKeyKeepsLedgerAndGlobalRequestLimit() async throws {
+@Test func fullyUnlimitedKeyKeepsLedgerBeyondGlobalReference() async throws {
   let path = try temporaryExecutionPath()
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
@@ -377,9 +377,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
         revision: 1, inputTokens: 0,
         outputTokens: 0, cachedTokens: 0, images: 0, estimatedMicros: 0, completeness: .complete))
   }
-  await #expect(throws: ExecutionError.denied) {
-    try await store.admit(keyAdmission("global-denied", key: key))
-  }
+  try await store.admit(keyAdmission("beyond-global-reference", key: key))
   #expect(try await store.snapshot(attempt: "a104").state == .settled)
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(

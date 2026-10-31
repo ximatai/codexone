@@ -23,7 +23,7 @@ enum StorageCapacity {
     return Int64(product.partialValue)
   }
   static func require(_ directory: String, additionalBytes: Int64, optional: Bool = false) throws {
-    guard additionalBytes >= 0, additionalBytes <= 2_147_483_648,
+    guard additionalBytes >= 0, additionalBytes <= 1_099_511_627_776,
       try available(directory)
         >= (optional
           ? StorageSpacePolicy.standard.optionalBytes : StorageSpacePolicy.standard.stopBytes)

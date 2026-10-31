@@ -3,6 +3,7 @@ import Foundation
 public enum ExecutionError: Error, Sendable, Equatable {
   case keyExpired
   case storagePressure
+  case accountConcurrency
   case invalidCommand, capacity, denied, conflict, unknownAttempt, unknownObject, ambiguousObject
   case storageUnavailable, incompatibleSchema, instanceLocked, closed, staleEvidence, unauthorized,
     maintenanceRequired
@@ -25,6 +26,7 @@ public struct ExecutionOwner: Sendable, Equatable, Codable {
 public enum ExecutionMode: String, Sendable, Codable { case generation, warmup, compact }
 
 public struct ExecutionAdmission: Sendable, Equatable, Codable {
+  public let references: [ObjectBinding]?
   public let attempt: String
   public let owner: ExecutionOwner
   public let window: String
@@ -45,8 +47,10 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
     mode: ExecutionMode? = nil, keyRevision: Int64? = nil, model: String? = nil,
-    accountSnapshot: AccountDispatchSnapshot? = nil, requirements: ExecutionRequirements? = nil
+    accountSnapshot: AccountDispatchSnapshot? = nil, requirements: ExecutionRequirements? = nil,
+    references: [ObjectBinding]? = nil
   ) {
+    self.references = references
     self.requirements = requirements
     self.accountSnapshot = accountSnapshot
     self.attempt = attempt
@@ -67,7 +71,14 @@ public protocol UnknownExecutionReleasing: Sendable {
 }
 
 public struct ExecutionLimits: Sendable, Equatable, Codable {
+  /// Legacy configuration compatibility; no longer an admission limit.
   public static let unresolvedCapacity: Int64 = 1024
+  public static let accountConcurrency: Int64 = 16
+  public static let unknownReconciliationSeconds: Int64 = 24 * 3600
+  public static let bindingContinuationSeconds: Int64 = 30 * 86400
+  public static let detailRetentionSeconds: Int64 = 90 * 86400
+  public static let detailReferenceRows: Int64 = 100_000
+  public static let maintenanceBatch = 100
   public let requests: Int64?
   public let active: Int64?
   public let unresolved: Int64?
@@ -164,7 +175,10 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
 }
 
 public struct ExecutionSnapshot: Sendable, Equatable, Codable {
-  public enum State: String, Sendable, Codable { case intent, unknown, settled }
+  public enum State: String, Sendable, Codable {
+    case intent, unknown, settled
+    case closedUnknown = "closed_unknown"
+  }
   public let admission: ExecutionAdmission
   public let state: State
   public let usage: UsageEvidence?

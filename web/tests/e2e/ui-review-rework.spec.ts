@@ -88,6 +88,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
     "/api/attention",
     "/api/usage/daily",
     "/api/usage/in-flight",
+    "/api/usage/headroom",
   ])
     state.failures[path] = 503;
   await page.goto("/");
@@ -101,6 +102,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
     "Key 用量摘要",
     "存储状态",
     "需要处理提醒",
+    "治理余量",
   ])
     await expect(alert).toContainText(source);
   await expect(alert).not.toContainText("快照");

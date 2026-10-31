@@ -29,7 +29,7 @@ import Testing
   }
   #expect(try await store.snapshot(attempt: "old").state == .unknown)
   #expect(try await store.releaseUnknown(beforeUnixSeconds: 100, expectedCount: 1) == 1)
-  #expect(try await store.snapshot(attempt: "old").state == .settled)
+  #expect(try await store.snapshot(attempt: "old").state == .closedUnknown)
   #expect(try await store.snapshot(attempt: "old").usage == nil)
   #expect(try await store.snapshot(attempt: "boundary").state == .unknown)
   #expect(try await store.snapshot(attempt: "intent").state == .intent)
@@ -84,10 +84,8 @@ import Testing
         admission("a\(i)", principal: "p\(i)", identity: sameIdentity ? "same" : "i\(i)"))
       try await store.finalize(attempt: "a\(i)", evidence: nil)
     }
-    await #expect(throws: ExecutionError.denied) {
-      try await store.admit(
-        admission("rejected", principal: "other", identity: sameIdentity ? "same" : "other"))
-    }
+    try await store.admit(
+      admission("unblocked", principal: "other", identity: sameIdentity ? "same" : "other"))
     #expect(try await store.releaseUnknown(beforeUnixSeconds: Int64.max, expectedCount: 2) == 2)
     try await store.admit(admission("accepted", principal: "other", identity: "same"))
     await store.close()
@@ -95,20 +93,10 @@ import Testing
   }
 }
 
-@Test func attentionUnresolvedPercentageBoundaries() {
-  for (count, severity) in [(49, nil), (50, "warning"), (79, "warning"), (80, "critical")]
-    as [(Int64, String?)]
-  {
-    let item = AttentionRules.executions(
-      admitted: 0, failed: 0, unknown: 3, since: 1, unresolved: count, limit: 100
-    ).first
-    #expect(item?.severity == severity)
-    if severity != nil {
-      #expect(item?.detail["count"]?.integer == 3)
-      #expect(item?.detail["unresolvedCount"]?.integer == count)
-      #expect(item?.detail["limit"]?.integer == 100)
-    }
-  }
+@Test func attentionUnresolvedIsQualityAndNeverCapacity() {
+  #expect(AttentionRules.executions(admitted: 50, failed: 0, unknown: 9, since: 1).isEmpty)
+  let item = AttentionRules.executions(admitted: 50, failed: 0, unknown: 10, since: 1).first
+  #expect(item?.kind == "observation_quality" && item?.severity == "warning")
 }
 
 @Test func globalAndIdentityCapacityGrowWhilePrincipalAndPersistedLimitsStayUnchanged() async throws
@@ -127,9 +115,8 @@ import Testing
       try await store.admit(admission("p\(i)", principal: "unchanged", identity: "other\(i)"))
       try await store.finalize(attempt: "p\(i)", evidence: nil)
     }
-    await #expect(throws: ExecutionError.denied) {
-      try await store.admit(admission("principal-full", principal: "unchanged", identity: "fresh"))
-    }
+    try await store.admit(
+      admission("principal-unblocked", principal: "unchanged", identity: "fresh"))
     await store.close()
     let reopened = try await SQLiteExecutionStore.open(path: path, limits: limits)
     #expect(reopened.limits.unresolved == 32 && reopened.unresolvedCapacity == 1024)
@@ -159,7 +146,7 @@ import Testing
   #expect(report.rows.first?.completeness == nil && report.rows.first?.metrics.inputTokens == 2)
   try await store.finalize(
     attempt: "partial", evidence: usage(revision: 2, amount: 3, complete: false))
-  #expect(try await store.snapshot(attempt: "partial").state == .settled)
+  #expect(try await store.snapshot(attempt: "partial").state == .closedUnknown)
   try await store.finalize(attempt: "partial", evidence: usage(revision: 3, amount: 4))
   let complete = try await reader.queryUsage(
     .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
@@ -188,10 +175,7 @@ import Testing
     try db.write("UPDATE maintenance_state SET restore_json=? WHERE id=1", [.text(payload)])
   }
   let item = try await reader.attentionItems(now: 300).first { $0.kind == "unresolved_executions" }
-  #expect(item?.severity == "warning")
-  #expect(item?.detail["unresolvedCount"]?.integer == 50)
-  #expect(item?.detail["count"]?.integer == 0)
-  #expect(item?.detail["limit"]?.integer == 100)
+  #expect(item == nil)
   await reader.close()
   await store.close()
 }

@@ -38,7 +38,7 @@ jobs:
           cp Package.swift "$RUNNER_TEMP/rollback-source/Package.swift"
           docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$baseline" \
             -f "$RUNNER_TEMP/rollback-source/deploy/Dockerfile" -t codexone:rollback-peer "$RUNNER_TEMP/rollback-source"
-      - name: Verify explicit v8 migration and previous-binary v9 rejection
+      - name: Verify explicit v8 migration and previous-binary v10 rejection
         run: |
           peer_container="$(docker create codexone:rollback-peer)"
           trap 'docker rm -f "$peer_container" >/dev/null 2>&1 || true' EXIT

@@ -76,7 +76,8 @@ public enum SQLiteSnapshotMaintenance {
     guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
     let manifest = SnapshotManifest(
       format: 1, id: UUID().uuidString,
-      createdUnixSeconds: Int64(Date().timeIntervalSince1970), schema: 9,
+      createdUnixSeconds: Int64(Date().timeIntervalSince1970),
+      schema: Int(try snapshot.scalar("PRAGMA user_version")),
       sourceGeneration: generation[0], databaseBytes: hash.0, databaseSHA256: hash.1,
       requiredKeyIDs: keys)
     guard rename(partial, destination + "/snapshot.sqlite") == 0 else {
@@ -138,7 +139,7 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(
-        path: staging, existingOnly: true, restoringV7: manifest.schema < 9)
+        path: staging, existingOnly: true, restoringV7: manifest.schema < 10)
       let completedCopyAt = Int64(Date().timeIntervalSince1970)
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
@@ -154,7 +155,9 @@ public enum SQLiteSnapshotMaintenance {
               .text(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()),
               .text(try encode(record)),
             ])
-          try target.write("UPDATE attempts SET state='unknown' WHERE state='intent'")
+          try target.write(
+            "UPDATE attempts SET state='unknown',unknown_since_epoch=strftime('%s','now') WHERE state='intent'"
+          )
           // Old context and revocations after the snapshot cannot be reconstructed.
           try target.write("DELETE FROM bindings")
           try target.write("UPDATE accounts SET authorization='requires_auth',refresh_intent=NULL")
@@ -217,7 +220,7 @@ public enum SQLiteSnapshotMaintenance {
     let manifest: SnapshotManifest = try JSONDecoder().decode(
       SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
     let now = Int64(Date().timeIntervalSince1970)
-    guard manifest.format == 1, [7, 8, 9].contains(manifest.schema),
+    guard manifest.format == 1, [7, 8, 9, 10].contains(manifest.schema),
       UUID(uuidString: manifest.id) != nil,
       manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
       manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,
@@ -326,7 +329,11 @@ public enum SQLiteSnapshotMaintenance {
     guard
       try action == "credential_reencryption" || (db.reencryptionCheckpoint()?.complete != false)
     else { throw KeyMaintenanceError.incompleteReencryption }
-    guard try db.scalar("SELECT COUNT(*) FROM maintenance_events") < 1000 else {
+    guard
+      try action == "release_unknown"
+        || (db.scalar("SELECT COUNT(*) FROM maintenance_events WHERE action!='release_unknown'")
+          < 1000)
+    else {
       throw ExecutionError.capacity
     }
     try db.write(

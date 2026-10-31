@@ -33,6 +33,8 @@ export interface UsageReport {
     recordedRejections: number;
     inFlight: number;
     unknown: number;
+    usageUnknown?: number;
+    unknownReasons?: Record<string, number>;
     complete: number;
     partial: number;
     unavailable: number;
@@ -194,6 +196,12 @@ export function parseUsage(raw: unknown): UsageReport {
     recordedRejections: integer(totals.recordedRejections),
     inFlight: integer(totals.inFlight),
     unknown: integer(totals.unknown),
+    usageUnknown: integer(totals.usageUnknown ?? totals.unknown),
+    unknownReasons: Object.fromEntries(
+      Object.entries(object(totals.unknownReasons ?? {})).map(
+        ([reason, count]) => [text(reason, 64), integer(count)],
+      ),
+    ),
     complete: integer(totals.complete),
     partial: integer(totals.partial),
     unavailable: integer(totals.unavailable),
@@ -204,6 +212,12 @@ export function parseUsage(raw: unknown): UsageReport {
     metrics: metrics(totals.metrics),
   };
   if (
+    (totals.usageUnknown !== undefined &&
+      (resultTotals.usageUnknown > resultTotals.admitted ||
+        Object.values(resultTotals.unknownReasons).reduce(
+          (sum, count) => sum + count,
+          0,
+        ) !== resultTotals.usageUnknown)) ||
     resultTotals.complete + resultTotals.partial + resultTotals.unavailable !==
       resultTotals.admitted ||
     resultTotals.inFlight + resultTotals.unknown > resultTotals.admitted ||
@@ -254,7 +268,12 @@ export function parseUsage(raw: unknown): UsageReport {
       mode: oneOf(item.mode, ["generation", "warmup", "compact"]),
       accountID: nullableText(item.accountID),
       requestID: nullableText(item.requestID),
-      state: optionalEnum(item.state, ["intent", "unknown", "settled"]),
+      state: optionalEnum(item.state, [
+        "intent",
+        "unknown",
+        "settled",
+        "closed_unknown",
+      ]),
       outcome: optionalEnum(item.outcome, ["succeeded", "failed", "cancelled"]),
       failure: nullableText(item.failure, 64),
       completeness: optionalEnum(item.completeness, ["complete", "partial"]),

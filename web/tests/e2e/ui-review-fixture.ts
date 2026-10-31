@@ -124,6 +124,18 @@ export async function reviewFixture(page: Page) {
       },
       "/api/usage/daily": { timezone: "UTC", days: 7, buckets: [] },
       "/api/usage/in-flight": { rows: [] },
+      "/api/usage/headroom": {
+        generatedAtUnixSeconds: now,
+        capacities: [],
+        accounts: [],
+        storage: { pressure: "normal" },
+        storageLimits: {},
+        unknownReconciliation: {
+          count: 0,
+          beforeUnixSeconds: now - 86400,
+          periodSeconds: 86400,
+        },
+      },
       "/api/runtime/storage": {
         pressure: "normal",
         admissionAllowed: true,
