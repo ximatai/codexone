@@ -149,8 +149,18 @@ def verify_settlement(binary, provider, directory, configuration, headers):
     process, ports = start(binary, config, directory)
     db = directory / 'state/core.sqlite'
     try:
+        def dial_when_free(timeout=5):
+            # Closed probes release their slots asynchronously; slow emulated hosts lag behind.
+            until = time.monotonic() + timeout
+            while True:
+                try:
+                    return dial(ports['data'], headers=headers)
+                except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
+                    assert time.monotonic() < until, 'Connection slot did not become free'
+                    time.sleep(.05)
+
         def begin_settlement(prompt, interrupt=True, queued=False, wait_for_interrupt=True):
-            sock = dial(ports['data'], headers=headers)
+            sock = dial_when_free()
             send(sock, dict(type='response.create', model='synthetic-text', input=prompt), masked=True)
             created = event(sock)
             assert created['type'] == 'response.created', created
@@ -225,7 +235,7 @@ def verify_settlement(binary, provider, directory, configuration, headers):
             if prompt in ('settlement-timeout', 'settlement-unknown'):
                 assert 9.5 <= time.monotonic() - began < 12
             # A fresh connection/turn proves connection/lane/local permits released after failure.
-            with dial(ports['data'], headers=headers) as sock:
+            with dial_when_free() as sock:
                 assert turn(sock, dict(model='synthetic-text', input='after-settlement'))[-1]['type'] == 'response.completed'
             total += 1
             await_rows(total, ['settled'])
