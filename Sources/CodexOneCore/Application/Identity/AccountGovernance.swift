@@ -92,6 +92,10 @@ public protocol AccountGovernanceStore: Sendable {
     id: String, credentialVersion: Int64, intent: String, authorizationRequired: Bool
   ) async throws
     -> ManagedAccount
+  func abandonUncompletedAccountRefresh(id: String, credentialVersion: Int64, intent: String)
+    async throws -> ManagedAccount
+  /// Non-secret durable commit audit time; missing evidence is unavailable.
+  func credentialUpdatedAtUnixSeconds(id: String) async throws -> Int64?
   func replaceVerifiedAccountCredential(
     id: String, revision: Int64, namespace: String, envelope: String
   ) async throws -> ManagedAccount

@@ -26,7 +26,7 @@ public struct AccountAdminAPI: Sendable {
       let accounts = try await store.listAccounts(after: query.first?.value)
       var metadata: [JSONValue] = []
       for account in accounts {
-        var value = Self.metadata(account).object!
+        var value = try await self.metadata(account).object!
         value["observability"] = try await observability(id: account.id, detail: false)
         metadata.append(.object(value))
       }
@@ -57,7 +57,7 @@ public struct AccountAdminAPI: Sendable {
       let account = try await store.setAccountDisplayName(
         id: request.parameters.get("id") ?? "",
         revision: revision, displayName: document["displayName"]?.string)
-      return try Self.response(.object(["account": Self.metadata(account)]))
+      return try Self.response(.object(["account": await self.metadata(account)]))
     }
     routes.put(":id") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision", "mode"])
@@ -66,7 +66,7 @@ public struct AccountAdminAPI: Sendable {
       else { throw ExecutionError.invalidCommand }
       let account = try await store.setAccountMode(
         id: request.parameters.get("id") ?? "", revision: revision, mode: mode)
-      return try Self.response(.object(["account": Self.metadata(account)]))
+      return try Self.response(.object(["account": await self.metadata(account)]))
     }
     routes.post(":id", "refresh") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision"])
@@ -75,7 +75,7 @@ public struct AccountAdminAPI: Sendable {
       }
       let account = try await refreshing.refreshAccount(
         id: request.parameters.get("id") ?? "", revision: revision)
-      return try Self.response(.object(["account": Self.metadata(account)]))
+      return try Self.response(.object(["account": await self.metadata(account)]))
     }
     routes.post("authorization") { request async throws -> Response in
       guard let owner = request.storage[AdminOwnerKey.self] else {
@@ -108,7 +108,7 @@ public struct AccountAdminAPI: Sendable {
       }
       let account = try await authorization.complete(
         owner: owner, flowID: request.parameters.get("flowID") ?? "", callbackURL: callbackURL)
-      return try Self.response(.object(["account": Self.metadata(account)]))
+      return try Self.response(.object(["account": await self.metadata(account)]))
     }
     routes.delete("authorization", ":flowID") { request async throws -> Response in
       guard let owner = request.storage[AdminOwnerKey.self] else {
@@ -127,8 +127,11 @@ public struct AccountAdminAPI: Sendable {
     return accountObservationDTO(
       quota, health: status, observing: observing?.isAccepting == true, detail: detail)
   }
-  private static func metadata(_ account: ManagedAccount) -> JSONValue {
-    .object([
+  private func metadata(_ account: ManagedAccount) async throws -> JSONValue {
+    let updated = try await store.credentialUpdatedAtUnixSeconds(id: account.id)
+    return .object([
+      "accessExpiresAtUnixSeconds": .null,
+      "credentialUpdatedAtUnixSeconds": updated.map { .number(Decimal($0)) } ?? .null,
       "displayName": account.displayName.map { .string($0) } ?? .null,
       "id": .string(account.id), "revision": .number(Decimal(account.revision)),
       "credentialVersion": .number(Decimal(account.credentialVersion)),

@@ -13,6 +13,8 @@ const account = {
   mode: "disabled",
   authorization: "ready",
   createdAtUnixSeconds: 1,
+  accessExpiresAtUnixSeconds: null,
+  credentialUpdatedAtUnixSeconds: null,
 };
 function reply(value: unknown) {
   return new Response(JSON.stringify(value));
@@ -97,4 +99,24 @@ it("sends display-name CAS changes and explicit clear with CSRF", async () => {
   expect(fetch.mock.calls[0][1].headers).toMatchObject({
     "X-CodexOne-CSRF": "synthetic-csrf",
   });
+});
+
+it("parses only safe credential timestamps and rejects malformed values", () => {
+  expect(
+    parseAccount({
+      ...account,
+      accessExpiresAtUnixSeconds: 2000000000,
+      credentialUpdatedAtUnixSeconds: 1900000000,
+    }),
+  ).toMatchObject({
+    accessExpiresAtUnixSeconds: 2000000000,
+    credentialUpdatedAtUnixSeconds: 1900000000,
+  });
+  for (const field of [
+    "accessExpiresAtUnixSeconds",
+    "credentialUpdatedAtUnixSeconds",
+  ]) {
+    for (const value of [0, -1, "secret", 1.5])
+      expect(() => parseAccount({ ...account, [field]: value })).toThrow();
+  }
 });

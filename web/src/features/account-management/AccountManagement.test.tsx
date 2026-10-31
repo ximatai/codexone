@@ -338,3 +338,34 @@ it("clears an existing display name explicitly", async () => {
     ),
   );
 });
+
+it("shows unavailable credential times in account details", async () => {
+  setup();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  expect(screen.getByText("访问凭证到期：不可用")).toBeVisible();
+  expect(screen.getByText("最近凭证更新：不可用")).toBeVisible();
+});
+it("shows local and relative credential times in account details", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  const expiry = Math.floor(Date.now() / 1000) + 10800;
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    {
+      ...account,
+      accessExpiresAtUnixSeconds: expiry,
+      credentialUpdatedAtUnixSeconds: expiry - 21600,
+    },
+  ]);
+  render(<AccountManagement />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  expect(screen.getByText(/访问凭证到期：.*约 3 小时后/)).toBeVisible();
+  expect(screen.getByText(/最近凭证更新：.*约 3 小时前/)).toBeVisible();
+  expect(screen.getByText(/访问凭证到期：/).textContent).toContain(
+    new Date(expiry * 1000).toLocaleString(),
+  );
+});

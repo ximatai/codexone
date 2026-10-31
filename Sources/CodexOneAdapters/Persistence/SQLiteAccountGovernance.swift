@@ -178,6 +178,33 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       }
     }
   }
+  public func abandonUncompletedAccountRefresh(
+    id: String, credentialVersion: Int64, intent: String
+  ) async throws -> ManagedAccount {
+    try Self.validateAccountID(id)
+    try Self.validateAccountID(intent)
+    return try await perform(critical: true) { db in
+      try db.transaction {
+        let stored = try Self.loadAccount(db, id)
+        try Self.matchRefresh(stored.account, version: credentialVersion, intent: intent)
+        let account = try Self.nextAccount(stored.account, authorization: .ready)
+        try Self.saveAccount(db, account, envelope: stored.envelope)
+        try Self.auditAccount(db, account, action: "refresh_not_completed")
+        return account
+      }
+    }
+  }
+  public func credentialUpdatedAtUnixSeconds(id: String) async throws -> Int64? {
+    try Self.validateAccountID(id)
+    return try await perform { db in
+      try db.rows(
+        "SELECT MAX(at_epoch) FROM account_events WHERE account_id=? AND action IN ('create_verified','reauthorize_verified','refresh_commit')",
+        [.text(id)]
+      ) { row -> Int64? in
+        sqlite3_column_type(row, 0) == SQLITE_NULL ? nil : sqlite3_column_int64(row, 0)
+      }.first ?? nil
+    }
+  }
   public func replaceVerifiedAccountCredential(
     id: String, revision: Int64, namespace: String, envelope: String
   ) async throws -> ManagedAccount {
