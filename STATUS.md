@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · 断线与前向兼容 | 上游WS空闲关闭同步关闭下游；`response.interrupt`、未知WS控制与`x-codex-*`头默认转发（含兜底与日志）；Linux amd64 verification通过，部署后用户在Desktop验收停止与中途追加消息无报错 | [断线](docs/changes/ws-upstream-idle-close/verification.md)、[前向兼容](docs/changes/client-protocol-forward-compat/verification.md) |
 | 2026-10-31 · 迁移就绪 | macOS `verify.sh --backend`、Linux amd64 verification 通过；测试实例部署后非原生 UA 文本与生图 200、提供者明确拒绝记 0 费用、启用价格估算 | [迁移就绪](docs/changes/migration-readiness/verification.md) |
 | 2026-10-31 · 真实Desktop生图 | Windows Desktop 26.1027.30824原Key经测试实例原生Images生成、编辑各1次，200且完整结算；门控头不转发上游的回归测试 | [图片](docs/changes/images-native-passthrough/verification.md) |
 | 2026-10-31 · 管理台产品化 | macOS `verify.sh --backend`（Swift 218项）与 `--web --chrome`（vitest 54、Playwright 5）、真实Chrome管理/账号live脚本通过；1440×900合成走查 | [管理台](docs/changes/admin-productization/verification.md) |
@@ -105,6 +106,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：修复上游WebSocket在两轮之间关闭时下游未同步关闭（Desktop下一轮报错后重试），并补 `include` 含 `output.encrypted_content` 透传回归测试；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；管理台下一轮：账号显示名（需schema）、Key到期、进行中请求列表、7天趋势与错误率等（见竞品摸排结论）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：中断后客户端断开时短暂续读上游终态以减少 unknown；协议变化周检与新版CLI金丝雀定期任务；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；管理台下一轮：账号显示名（需schema）、Key到期、进行中请求列表、7天趋势与错误率等（见竞品摸排结论）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
