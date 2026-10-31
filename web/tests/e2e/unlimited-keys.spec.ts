@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 
 test("desktop unlimited Key editing, payload and usage policy display", async ({

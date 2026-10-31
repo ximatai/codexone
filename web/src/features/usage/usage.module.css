@@ -28,7 +28,7 @@
 .moreFilters summary {
   cursor: pointer;
   font-size: var(--mantine-font-size-sm);
-  color: var(--mantine-color-green-8);
+  color: var(--mantine-primary-color-filled);
 }
 .summary,
 .metrics {
@@ -70,6 +70,9 @@
 .trend {
   margin: 12px 0;
   min-width: 0;
+  /* Keep chart decorations inside their panel while Recharts updates stale
+     desktop tooltip/legend coordinates after a narrow viewport resize. */
+  overflow-x: clip;
 }
 .table {
   margin-top: 16px;
@@ -129,8 +132,8 @@
 }
 .governance {
   padding: 12px;
-  border-left: 3px solid var(--mantine-color-green-7);
-  background: var(--mantine-color-green-0);
+  border-left: 3px solid var(--mantine-primary-color-filled);
+  background: var(--mantine-primary-color-light);
 }
 .warning {
   padding: 12px;
@@ -152,4 +155,7 @@
 .detailGrid dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+.requestsHeading {
+  scroll-margin-top: 80px;
 }

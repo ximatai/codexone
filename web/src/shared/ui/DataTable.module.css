@@ -6,6 +6,20 @@
 .table th {
   overflow-wrap: anywhere;
 }
+@media (min-width: 751px) {
+  .table th {
+    position: sticky;
+    top: 64px;
+    z-index: 2;
+  }
+}
+.table tr {
+  scroll-margin-top: 112px;
+}
+.table tr[data-highlighted] td {
+  background: var(--mantine-primary-color-light);
+  border-block: 2px solid var(--mantine-primary-color-filled);
+}
 .label {
   display: none;
 }

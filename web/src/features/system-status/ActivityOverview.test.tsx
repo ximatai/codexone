@@ -27,7 +27,9 @@ it("reports failed query and permits retry to explicit empty state", async () =>
   vi.mocked(api.fetchInFlight).mockResolvedValue([]);
   vi.mocked(api.fetchRecent).mockResolvedValue({ rows: [], truncated: false });
   renderPrivate(<ActivityOverview />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
+  expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
+    "读取失败",
+  );
   fireEvent.click(screen.getByRole("button", { name: "刷新请求概览" }));
   expect(await screen.findByText("当前没有进行中的请求。")).toBeVisible();
   expect(screen.getByText("暂无已结束的请求。")).toBeVisible();

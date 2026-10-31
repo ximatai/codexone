@@ -28,9 +28,9 @@ export function KeyLimitsSummary({
           每日请求 {formatKeyLimit(key.limits.requests)} · 同时执行{" "}
           {formatKeyLimit(key.limits.active)} · 待核对请求{" "}
           {formatKeyLimit(key.limits.unresolved)} · 每日估算阈值{" "}
-          <MoneyText value={key.limits.budgetMicros} unlimited /> ·
+          <MoneyText value={key.limits.budgetMicros} unlimited threshold /> ·
           待核对占用阈值{" "}
-          <MoneyText value={key.limits.unresolvedMicros} unlimited />
+          <MoneyText value={key.limits.unresolvedMicros} unlimited threshold />
           （美元；仅显式配置生效）
         </>
       ) : query.isPending ? (

@@ -10,6 +10,7 @@ export function ConfirmModal({
   label,
   children,
   destructive = false,
+  returnFocusTo,
 }: {
   opened: boolean;
   title: string;
@@ -20,12 +21,15 @@ export function ConfirmModal({
   label: string;
   children: ReactNode;
   destructive?: boolean;
+  returnFocusTo?: () => void;
 }) {
   return (
     <Modal
       removeScrollProps={{ removeScrollBar: false }}
       data-ui-overlay={opened || undefined}
       opened={opened}
+      returnFocus={returnFocusTo ? false : true}
+      onExitTransitionEnd={returnFocusTo}
       onClose={() => {
         if (!busy) close();
       }}

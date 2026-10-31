@@ -4,7 +4,13 @@ import { ErrorState, LoadingState } from "../../shared/ui/States";
 import { UsageDetail } from "./UsageDetail";
 import styles from "./usage.module.css";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { ManagementError } from "../../shared/management";
 import * as api from "./api";
 import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
@@ -24,6 +30,7 @@ import {
   states,
   terms,
   money,
+  localTime,
 } from "../../shared/presentation";
 import { UsageTrend } from "./UsageTrend";
 import { UsageRequests } from "./UsageRequests";
@@ -31,18 +38,33 @@ import { UsageEvidence, UsageSummary } from "./UsageSummary";
 import { utc } from "./format";
 export { duration } from "./format";
 export { failures } from "../../shared/presentation";
+export interface UsageNavigation {
+  history: (string | null)[];
+  page: number;
+  window: api.UsageFilters["window"];
+  scroll: number;
+}
+export function usageNavigationKey(filters: api.UsageFilters, page: number) {
+  return `usage:${JSON.stringify(filters)}:page:${page}`;
+}
 export function UsageOverview({
   selection,
   paused,
   onUnauthorized,
   initialFilters,
   onApplied,
+  requestedPage = 0,
+  navigationStore,
+  restoreView = true,
 }: {
   selection: { keyID: string; sequence: number } | null;
   paused: boolean;
   onUnauthorized: () => void;
   initialFilters?: api.UsageFilters;
-  onApplied?: (filters: api.UsageFilters) => void;
+  onApplied?: (filters: api.UsageFilters, navigation?: UsageNavigation) => void;
+  requestedPage?: number;
+  navigationStore?: Map<string, unknown>;
+  restoreView?: boolean;
 }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({
@@ -58,6 +80,18 @@ export function UsageOverview({
       onUnauthorized();
   }, [accounts.error, onUnauthorized]);
   const queryWindow = useRef<api.UsageFilters["window"]>(undefined);
+  const requestsHeading = useRef<HTMLHeadingElement>(null);
+  const activeNavigation = useRef<UsageNavigation | null>(null);
+  const restoringNavigation = useRef(false);
+  const [navigationNotice, setNavigationNotice] = useState("");
+  useEffect(() => {
+    const remember = () => {
+      if (activeNavigation.current && !restoringNavigation.current)
+        activeNavigation.current.scroll = window.scrollY;
+    };
+    window.addEventListener("scroll", remember);
+    return () => window.removeEventListener("scroll", remember);
+  }, []);
   const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
     null,
   );
@@ -72,6 +106,13 @@ export function UsageOverview({
   });
   const [customRange, setCustomRange] = useState(false);
   const [policyRead, setPolicyRead] = useState(0);
+  const [readAt, setReadAt] = useState<number | null>(null);
+  const failedPage = useRef<{
+    filters: api.UsageFilters;
+    cursors: (string | null)[];
+    index: number;
+    restore: boolean;
+  } | null>(null);
   const [report, setReport] = useState<api.UsageReport | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -81,6 +122,30 @@ export function UsageOverview({
   const controller = useRef<AbortController | null>(null),
     epoch = useRef(0),
     heading = useRef<HTMLHeadingElement>(null);
+  const pendingPosition = useRef<{
+    version: number;
+    scroll: number | null;
+    report: api.UsageReport;
+  } | null>(null);
+  // A frame can run before React commits a concurrent report render. Position
+  // only after its rows exist, otherwise the loading layout clamps POP to zero.
+  useLayoutEffect(() => {
+    const pending = pendingPosition.current;
+    if (
+      !pending ||
+      pending.version !== epoch.current ||
+      pending.report !== report
+    )
+      return;
+    pendingPosition.current = null;
+    if (pending.scroll !== null) {
+      window.scrollTo?.(0, pending.scroll);
+      restoringNavigation.current = false;
+    } else {
+      requestsHeading.current?.scrollIntoView?.({ block: "start" });
+      requestsHeading.current?.focus({ preventScroll: true });
+    }
+  });
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   const lastApplied = useRef(applied);
@@ -95,18 +160,26 @@ export function UsageOverview({
     filters: api.UsageFilters,
     cursors: (string | null)[] = [null],
     index = 0,
+    restore = false,
+    pagination = false,
   ) {
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
     const version = ++epoch.current;
+    // Capture before the read: route/layout scroll events during a slow restore
+    // must not replace the saved position with the temporary loading position.
+    const restoreScroll = activeNavigation.current?.scroll ?? 0;
+    restoringNavigation.current = restore;
     setBusy(true);
     setError("");
+    failedPage.current = null;
     try {
       const parameters = api.usageParameters(
         {
           ...filters,
-          window: cursors.length > 1 ? queryWindow.current : undefined,
+          window:
+            cursors.length > 1 || restore ? queryWindow.current : undefined,
         },
         cursors[index],
       );
@@ -136,10 +209,22 @@ export function UsageOverview({
       });
       if (version !== epoch.current || abort.signal.aborted) return;
       queryWindow.current = requestFilters.window;
+      pendingPosition.current =
+        restore || index !== page
+          ? { version, report: next, scroll: restore ? restoreScroll : null }
+          : null;
       setReport(next);
+      setReadAt(Date.now());
       setPolicyRead((value) => value + 1);
       setApplied({ ...filters });
-      onApplied?.(filters);
+      const navigation: UsageNavigation = {
+        history: cursors,
+        page: index,
+        window: requestFilters.window,
+        scroll: restore ? restoreScroll : 0,
+      };
+      activeNavigation.current = navigation;
+      onApplied?.(filters, navigation);
       setHistory(cursors);
       setPage(index);
       setStale(false);
@@ -151,13 +236,27 @@ export function UsageOverview({
         setOptions({ keys: [], models: [], failures: [] });
         unauthorized.current();
       } else {
+        if (
+          restore &&
+          index > 0 &&
+          cause instanceof ManagementError &&
+          cause.status === 400
+        ) {
+          setNavigationNotice(
+            "原分页已失效，已返回请求明细第一页，请重新核对记录。",
+          );
+          void load(filters);
+          return;
+        }
         setStale(true);
+        if (pagination || restore)
+          failedPage.current = { filters, cursors, index, restore };
         setError(
           cause instanceof ManagementError && cause.status === 400
             ? "请检查 UTC 日期与筛选条件，范围最多 31 天。"
             : cause instanceof ManagementError && cause.status === 404
               ? "用量查询尚未开启。"
-              : "查询失败或繁忙。可缩小区间后重试；下方保留上次成功快照。",
+              : "查询失败或繁忙。可缩小区间后重试。",
         );
       }
     } finally {
@@ -178,7 +277,8 @@ export function UsageOverview({
         : (lastApplied.current ?? lastDraft.current));
     if (
       initial.current &&
-      JSON.stringify(lastApplied.current) === JSON.stringify(next)
+      JSON.stringify(lastApplied.current) === JSON.stringify(next) &&
+      requestedPage === page
     )
       return () => {
         // Numeric owner generation, not a rendered DOM reference.
@@ -189,7 +289,25 @@ export function UsageOverview({
         controller.current?.abort();
       };
     setDraft(next);
-    void load(next);
+    const saved = restoreView
+      ? (navigationStore?.get(usageNavigationKey(next, requestedPage)) as
+          UsageNavigation | undefined)
+      : undefined;
+    if (
+      saved &&
+      saved.page === requestedPage &&
+      requestedPage < saved.history.length
+    ) {
+      queryWindow.current = saved.window;
+      activeNavigation.current = { ...saved };
+      void load(next, saved.history, requestedPage, true);
+    } else {
+      activeNavigation.current = null;
+      window.scrollTo?.(0, 0);
+      if (requestedPage > 0)
+        setNavigationNotice("原分页信息不可用，已返回请求明细第一页。");
+      void load(next);
+    }
     if (selection) heading.current?.scrollIntoView?.({ block: "start" });
     return () => {
       // Numeric owner generation intentionally retires the last owned read.
@@ -199,7 +317,7 @@ export function UsageOverview({
     };
     // The parent owns authentication; this effect owns the read-only view's requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, paused, filterIdentity]);
+  }, [selection, paused, filterIdentity, requestedPage, restoreView]);
   function update(name: keyof api.UsageFilters, value: string | boolean) {
     setDraft((previous) => ({
       ...previous,
@@ -396,8 +514,36 @@ export function UsageOverview({
           </div>
         </details>
       </form>
-      {error && (
-        <ErrorState retry={() => void load({ ...draft })}>{error}</ErrorState>
+      {error && !failedPage.current && (
+        <ErrorState retry={() => void load({ ...draft })}>
+          {error}
+          {readAt !== null
+            ? ` 保留上次成功快照（${localTime(readAt / 1000)}）。`
+            : ""}
+        </ErrorState>
+      )}
+      {navigationNotice && (
+        <Text role="status" size="sm">
+          {navigationNotice}
+        </Text>
+      )}
+      {error && failedPage.current && !report && (
+        <ErrorState
+          retryLabel="重试翻页"
+          retry={() => {
+            const failed = failedPage.current;
+            if (failed)
+              void load(
+                failed.filters,
+                failed.cursors,
+                failed.index,
+                failed.restore,
+                true,
+              );
+          }}
+        >
+          {error}
+        </ErrorState>
       )}
       {busy && !report && <LoadingState>正在读取用量…</LoadingState>}
       {report && (
@@ -465,7 +611,13 @@ export function UsageOverview({
               </p>
             )}
           </details>
-          <h3>请求明细</h3>
+          <h3
+            ref={requestsHeading}
+            tabIndex={-1}
+            className={styles.requestsHeading}
+          >
+            请求明细
+          </h3>
           <UsageRequests
             rows={report.rows}
             onDetail={setDetail}
@@ -473,13 +625,36 @@ export function UsageOverview({
               if (applied) void load(applied, history, page);
             }}
           />
-          <div className={styles.pagination}>
+          {error && failedPage.current && (
+            <ErrorState
+              retryLabel="重试翻页"
+              retry={() => {
+                const failed = failedPage.current;
+                if (failed)
+                  void load(
+                    failed.filters,
+                    failed.cursors,
+                    failed.index,
+                    failed.restore,
+                    true,
+                  );
+              }}
+            >
+              第 {failedPage.current.index + 1} 页读取失败。{error}
+              {readAt !== null
+                ? ` 保留上次成功快照（${localTime(readAt / 1000)}）。`
+                : ""}
+            </ErrorState>
+          )}
+          <div className={styles.pagination} aria-label="请求分页">
             <span>第 {page + 1} 页</span>
             <Button
               variant="default"
-              disabled={busy || stale || !applied || page === 0}
+              disabled={
+                busy || (stale && !failedPage.current) || !applied || page === 0
+              }
               onClick={() => {
-                if (applied) void load(applied, history, page - 1);
+                if (applied) void load(applied, history, page - 1, false, true);
               }}
             >
               上一页
@@ -488,7 +663,7 @@ export function UsageOverview({
               variant="default"
               disabled={
                 busy ||
-                stale ||
+                (stale && !failedPage.current) ||
                 !applied ||
                 !report.nextCursor ||
                 history.length >= 2201
@@ -499,6 +674,8 @@ export function UsageOverview({
                     applied,
                     [...history.slice(0, page + 1), report.nextCursor],
                     page + 1,
+                    false,
+                    true,
                   );
               }}
             >

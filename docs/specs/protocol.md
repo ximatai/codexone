@@ -71,9 +71,9 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 ### P14a：原生 WS 客户端控制与前向兼容
 
-`response.create` 保持完整解析、授权、持久准入及 lane FIFO。`response.interrupt` 只在 response_id 属于本连接已收到 `response.created`、仍在途的响应时原字节转发至固定身份上游，不新增执行、不占准入、不改变 lane FIFO；可按 response_id 定位省略 stream_id 的控制。ID 未知、已结束或显式 lane 不匹配时，在请求 lane 本地回复带 response_id 的 `response.interrupt.failed`，不写上游且保持连接。上游 accepted/failed 确认按已知响应归属下发，确认先于或晚于终态均不影响账本，账本只按原终态证据结算。
+`response.create` 保持完整解析、授权、持久准入及 lane FIFO。`response.interrupt` 的首次请求只在 response_id 属于本连接已收到 `response.created`、仍在途的响应时原字节转发至固定身份上游，不新增执行、不占准入、不改变 lane FIFO；可按 response_id 定位省略 stream_id 的控制。同一在途 turn 的重复中断不再写入上游。ID 未知、已结束或显式 lane 不匹配时，在请求 lane 本地回复带 response_id 的 `response.interrupt.failed`，不写上游且保持连接。上游 accepted/failed 确认按已知响应归属下发，确认先于或晚于终态均不影响账本，账本只按原终态证据结算。
 
-已成功转发过 `response.interrupt` 的在途 turn 在下游关闭后，由原连接 owner 继续读取至终态或断开后最多10秒，且不超过原执行期限。续读期间停止请求接收和排队请求的 dispatch，不再向下游写入内容；连接槽、lane、请求体预留保持至续读结束后释放，Runtime 停止时取消并等待续读子任务。可信终态与用量按原规则结算；超时、上游断开或无可信终态保持 unknown，不重连、不重放。未转发中断的 turn 仍在下游断开时立即取消；同连接其他 lane 的取消不提前终止已中断 turn 的续读。确认 accepted/failed 本身不构成结算证据。
+原生 WS 下游关闭时，已 dispatch 且尚未终态的 turn 由原连接 owner 继续读取至终态或断开后最多10秒，且不超过原执行期限。若该 turn 尚未转发客户端中断，网关补发一次 `response.interrupt`，仅带该 turn 的 `response_id` 及非默认 lane 所需的 `stream_id`；不携带客户端其他字段，不新增准入或计费。中断资格在写入前按当前 turn 原子领取，客户端中断与断线补发竞争时只发送一次；已转发客户端中断的 turn 不重复补发。请求已 dispatch 但响应身份尚未到达时，在同一期限内等待其生命周期 ID 后再定向补发，不发送无目标中断；未 dispatch、已终态或上游已关闭时不补发。续读期间停止请求接收和排队请求的 dispatch，不再向下游写入内容；连接槽、lane、请求体预留保持至续读结束后释放；无 turn 或无需续读的连接关闭后立即回收，不等待10秒期限。Runtime 停止时取消并等待续读子任务。可信终态与用量按原规则结算，续读中观察到的结果仍记 `cancelled`/`client_cancelled`；超时、上游断开、返回 error 或未知事件后没有可信终态时保持 unknown，不重连、不重放。同连接其他 lane 的失败或取消不提前终止该 turn 的续读。HTTP/SSE（包括 HTTP→WS 桥接）与原生 Images 下游断开行为不变。确认 accepted/failed 本身不构成结算证据。
 
 未知类型的对象消息在绑定上游后原字节转发；绑定前、或顶层含 input/model/tools 成员（含 null）时本地400拒绝。每连接独立令牌桶每秒恢复10条、突发20条，超速本地400且连接保持；控制沿用单消息32 MiB、共享正文预算、单reader/串行writer及5秒写期限。计数和最近响应归属随连接释放。未知控制每次放行/拒绝记录 codexone.protocol 结构化warning，仅含有界机器类型名、客户端version/UA类别与结果，不记录消息成员或内容。
 
@@ -174,4 +174,4 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 续接标识按允许列表保留，SDK 特征 `x-stainless-*`、`x-openai-client-*`、认证/账号/Cookie、门控头和 hop-by-hop 头不透传。账号认证仍由服务注入。可信离线 `clientFingerprint` 配置及版本选择见[单身份配置](../development/single-identity.md)，请求路径不在线查询版本。
 
-普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝，控制舱壁仍能返回429；显式 Key 活动限制、每账号 16 并发、握手期限及共享正文预算共同生效；全局记账参考值不阻断。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。
+普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝：WS 握手明确返回 HTTP 503 `capacity_exceeded` envelope 后关闭，不等待握手超时；控制舱壁仍能返回429。显式 Key 活动限制、每账号 16 并发、握手期限及共享正文预算共同生效；全局记账参考值不阻断。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。

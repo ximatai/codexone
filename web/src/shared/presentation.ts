@@ -19,6 +19,10 @@ export function dollarsToMicros(value: string | number): number {
 export function microsToDollars(value: number): number {
   return value / 1000000;
 }
+export function moneyThreshold(value: number | null): string {
+  if (value === null) return "不限";
+  return `$${(value / 1000000).toFixed(6).replace(/\.?0+$/, "")}`;
+}
 export function localTime(value: number | null | undefined): string {
   return value == null
     ? "未提供"

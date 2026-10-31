@@ -303,3 +303,195 @@ it("derives preset selection only from successfully applied filters", async () =
     ),
   );
 });
+
+it("U03 restores only after rows commit, even when a frame precedes the slow render", async () => {
+  setup();
+  const filters = api.defaults();
+  const params = api.usageParameters(filters);
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}:page:1`,
+      {
+        page: 1,
+        history: [null, "synthetic_cursor"],
+        scroll: 900,
+        window: {
+          start: Number(params.get("start")),
+          end: Number(params.get("end")),
+        },
+      },
+    ],
+  ]);
+  let finish!: (value: api.UsageReport) => void;
+  vi.mocked(api.fetchUsage).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  // Simulate a frame firing before React commits the state updates from the read.
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  const committed: boolean[] = [];
+  const scroll = vi.spyOn(window, "scrollTo").mockImplementation((_x, y) => {
+    if (y === 900)
+      committed.push(
+        !!screen.queryByText("第 2 页") &&
+          !!screen.queryByText("request-first"),
+      );
+  });
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(api.fetchUsage).toHaveBeenCalled());
+  fireEvent.scroll(window);
+  await act(async () => finish(api.parseUsage(reportFixture())));
+  await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
+  expect(committed).toEqual([true]);
+  expect(screen.getByText("第 2 页")).toBeVisible();
+});
+
+it("U03 falls back explicitly when a restored cursor is rejected", async () => {
+  setup();
+  const filters = api.defaults();
+  const params = api.usageParameters(filters);
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}:page:1`,
+      {
+        page: 1,
+        history: [null, "expired-cursor"],
+        scroll: 900,
+        window: {
+          start: Number(params.get("start")),
+          end: Number(params.get("end")),
+        },
+      },
+    ],
+  ]);
+  vi.mocked(api.fetchUsage).mockRejectedValueOnce(
+    new ManagementError(400, "invalid_cursor"),
+  );
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      "原分页已失效，已返回请求明细第一页，请重新核对记录。",
+    ),
+  ).toBeVisible();
+  await screen.findByText("第 1 页");
+  expect(api.fetchUsage).toHaveBeenLastCalledWith(
+    expect.anything(),
+    null,
+    expect.any(AbortSignal),
+  );
+});
+
+it.each([true, false])(
+  "P2-2 restores only the matching page snapshot on POP=%s",
+  async (restoreView) => {
+    setup();
+    const filters = api.defaults();
+    const memory = new Map<string, unknown>([
+      [
+        `usage:${JSON.stringify(filters)}:page:0`,
+        {
+          page: 0,
+          history: [null],
+          scroll: 210,
+          window: { start: 100, end: 200 },
+        },
+      ],
+      [
+        `usage:${JSON.stringify(filters)}:page:1`,
+        {
+          page: 1,
+          history: [null, "page-two"],
+          scroll: 1900,
+          window: { start: 300, end: 400 },
+        },
+      ],
+    ]);
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    render(
+      <UsageOverview
+        initialFilters={filters}
+        requestedPage={0}
+        navigationStore={memory}
+        restoreView={restoreView}
+        selection={null}
+        paused={false}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+    await screen.findByText("第 1 页");
+    await waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith(0, restoreView ? 210 : 0),
+    );
+    expect(scroll).not.toHaveBeenCalledWith(0, 1900);
+    expect(api.fetchUsage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        window: restoreView ? { start: 100, end: 200 } : expect.anything(),
+      }),
+      null,
+      expect.any(AbortSignal),
+    );
+  },
+);
+
+it("P2-2 P2-5 preserves POP scroll through a slow failed restore and retry", async () => {
+  setup();
+  const filters = api.defaults();
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}:page:1`,
+      {
+        page: 1,
+        history: [null, "synthetic_cursor"],
+        scroll: 900,
+        window: { start: 100, end: 200 },
+      },
+    ],
+  ]);
+  let reject!: (cause: Error) => void;
+  vi.mocked(api.fetchUsage).mockReturnValueOnce(
+    new Promise((_resolve, failure) => {
+      reject = failure;
+    }),
+  );
+  const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(api.fetchUsage).toHaveBeenCalled());
+  fireEvent.scroll(window);
+  await act(async () => reject(new ManagementError(429, "synthetic_busy")));
+  await screen.findByRole("alert");
+  fireEvent.scroll(window);
+  fireEvent.click(screen.getByRole("button", { name: "重试翻页" }));
+  await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
+  expect(screen.getByText("第 2 页")).toBeVisible();
+});

@@ -1,4 +1,5 @@
 import type { AccountName } from "../../shared/account-presentation";
+import { useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -25,6 +26,7 @@ export function AttentionPanel({
   retry,
   accounts = [],
   release,
+  aggregateErrors = false,
 }: {
   items?: AttentionItem[];
   loading: boolean;
@@ -32,13 +34,26 @@ export function AttentionPanel({
   retry: () => void;
   accounts?: readonly AccountName[];
   release?: (item: AttentionItem) => void;
+  aggregateErrors?: boolean;
 }) {
+  const toggle = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const critical =
+    items?.filter((item) => item.severity === "critical").length ?? 0;
+  const ordered = [...(items ?? [])].sort(
+    (a, b) =>
+      Number(b.severity === "critical") - Number(a.severity === "critical"),
+  );
   return (
     <Paper withBorder p="md" component="section" aria-label="需要处理">
       <Title order={2} size="h4" mb="sm">
         需要处理
       </Title>
-      {error ? (
+      {error && aggregateErrors ? (
+        <Text size="sm" c="dimmed">
+          提醒读取失败，请使用概览汇总重试。
+        </Text>
+      ) : error ? (
         <ErrorState retry={retry} retryLabel="重试读取提醒">
           需要处理的事项读取失败，请重试。
         </ErrorState>
@@ -50,7 +65,23 @@ export function AttentionPanel({
         </Text>
       ) : (
         <Stack gap="xs">
-          {items.map((item, index) => (
+          <Text size="sm">
+            共 {items.length} 项 · 紧急 {critical} 项 · 提醒{" "}
+            {items.length - critical} 项
+          </Text>
+          <Text size="xs" c="dimmed">
+            账号 {items.filter((item) => item.subjectType === "account").length}{" "}
+            项 · Key {items.filter((item) => item.subjectType === "key").length}{" "}
+            项 · 系统与协议{" "}
+            {
+              items.filter(
+                (item) =>
+                  item.subjectType !== "account" && item.subjectType !== "key",
+              ).length
+            }{" "}
+            项
+          </Text>
+          {(expanded ? ordered : ordered.slice(0, 5)).map((item, index) => (
             <Alert
               key={`${item.kind}-${item.subjectID ?? "system"}-${index}`}
               color={item.severity === "critical" ? "red" : "yellow"}
@@ -90,6 +121,23 @@ export function AttentionPanel({
               )}
             </Alert>
           ))}
+          {items.length > 5 && (
+            <Button
+              variant="subtle"
+              ref={toggle}
+              onClick={() => {
+                setExpanded((value) => !value);
+                if (expanded)
+                  requestAnimationFrame(() => {
+                    toggle.current?.scrollIntoView({ block: "center" });
+                    toggle.current?.focus({ preventScroll: true });
+                  });
+              }}
+              aria-expanded={expanded}
+            >
+              {expanded ? "收起提醒" : `查看全部 ${items.length} 项`}
+            </Button>
+          )}
         </Stack>
       )}
     </Paper>

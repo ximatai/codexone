@@ -43,12 +43,12 @@ it("shows critical and warning messages with corresponding navigation", () => {
   expect(screen.getByLabelText("提醒事项")).toBeVisible();
   expect(
     screen.getByRole("link", { name: /合成账号：账号需要重新授权/ }),
-  ).toHaveAttribute("href", "/accounts");
+  ).toHaveAttribute("href", "/accounts?target=synthetic-account");
   expect(
     screen.getByRole("link", {
       name: /合成Key：访问密钥已到期或将在 7 天内到期/,
     }),
-  ).toHaveAttribute("href", "/keys");
+  ).toHaveAttribute("href", "/keys?target=synthetic-key");
 });
 it("shows empty only after success and offers retry on failure even with cached data", () => {
   const retry = vi.fn();

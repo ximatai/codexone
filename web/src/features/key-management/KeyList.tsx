@@ -16,19 +16,24 @@ import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { StatusBadge } from "../../shared/ui/States";
 import { TimeText, MoneyText } from "../../shared/ui/TimeText";
 import { timeTitle } from "../../shared/presentation";
+import { KeyName } from "../../shared/KeyName";
 export function KeyList({
   keys,
   state,
   usage,
   setExpiring,
   setDisabling,
+  setRotating,
   toggle,
+  highlightedID,
 }: {
   keys: api.ManagedKey[];
   state: ReturnType<typeof useKeys>;
-  usage: { data?: KeyUsage[] };
+  usage: { data?: KeyUsage[]; isError?: boolean; isPending?: boolean };
+  highlightedID?: string | null;
   setExpiring: (key: api.ManagedKey) => void;
   setDisabling: (key: api.ManagedKey) => void;
+  setRotating: (key: api.ManagedKey) => void;
   toggle: (key: api.ManagedKey) => Promise<boolean>;
 }) {
   const columns: DataColumn<api.ManagedKey>[] = [
@@ -39,12 +44,7 @@ export function KeyList({
       sortValue: (key) => key.principal,
       render: (key) => (
         <>
-          <Text fw={600}>{key.displayName ?? key.principal}</Text>
-          {key.displayName && (
-            <Text size="xs" c="dimmed">
-              {key.principal}
-            </Text>
-          )}
+          <KeyName {...key} stacked />
           <Text size="xs" c="dimmed" className="identifier" title={key.id}>
             {key.id}
           </Text>
@@ -85,34 +85,34 @@ export function KeyList({
         <>
           <StatusBadge
             color={
-              !key.enabled
-                ? "gray"
-                : api.expirationState(key.expiresAtUnixSeconds) === "expired"
-                  ? "red"
-                  : api.expirationState(key.expiresAtUnixSeconds) === "soon"
-                    ? "orange"
-                    : "green"
+              key.enabled &&
+              api.expirationState(key.expiresAtUnixSeconds) !== "expired"
+                ? "green"
+                : "gray"
             }
           >
-            {!key.enabled
-              ? "禁用"
-              : api.expirationState(key.expiresAtUnixSeconds) === "expired"
-                ? "已到期"
-                : api.expirationState(key.expiresAtUnixSeconds) === "soon"
-                  ? "7 天内到期"
-                  : "启用"}
+            {key.enabled ? "启用" : "禁用"}
           </StatusBadge>
-          {key.expiresAtUnixSeconds == null && (
-            <Text size="xs" c="dimmed">
-              永不过期
-            </Text>
-          )}
+          <StatusBadge
+            color={
+              api.expirationState(key.expiresAtUnixSeconds) === "expired"
+                ? "red"
+                : api.expirationState(key.expiresAtUnixSeconds) === "soon"
+                  ? "orange"
+                  : "gray"
+            }
+          >
+            {api.expirationState(key.expiresAtUnixSeconds) === "expired"
+              ? "已到期"
+              : api.expirationState(key.expiresAtUnixSeconds) === "soon"
+                ? "7 天内到期"
+                : key.expiresAtUnixSeconds == null
+                  ? "永不过期"
+                  : "未到期"}
+          </StatusBadge>
           {key.expiresAtUnixSeconds != null && (
             <Text size="xs" title={timeTitle(key.expiresAtUnixSeconds)}>
-              {new Date(key.expiresAtUnixSeconds * 1000)
-                .toISOString()
-                .slice(0, 10)}{" "}
-              UTC 00:00
+              <TimeText value={key.expiresAtUnixSeconds} mode="utc" />
             </Text>
           )}
         </>
@@ -137,15 +137,20 @@ export function KeyList({
       render: (key) => (
         <>
           <Text size="sm">
-            {usage.data?.find((item) => item.keyID === key.id)?.admitted ?? "—"}{" "}
+            {(usage.isError
+              ? undefined
+              : usage.data?.find((item) => item.keyID === key.id)?.admitted) ??
+              "—"}{" "}
             请求 / {api.formatKeyLimit(key.limits.requests)} 上限
           </Text>
           <Text size="xs">
             费用：
             <MoneyText
               value={
-                usage.data?.find((item) => item.keyID === key.id)
-                  ?.estimatedMicros
+                usage.isError
+                  ? null
+                  : usage.data?.find((item) => item.keyID === key.id)
+                      ?.estimatedMicros
               }
             />
           </Text>
@@ -157,8 +162,13 @@ export function KeyList({
             )}
           >
             最近：
-            {usage.data?.find((item) => item.keyID === key.id)
-              ?.lastUsedAtUnixSeconds == null ? (
+            {usage.isPending ? (
+              "正在读取"
+            ) : usage.isError ||
+              !usage.data?.some((item) => item.keyID === key.id) ? (
+              "不可用"
+            ) : usage.data?.find((item) => item.keyID === key.id)
+                ?.lastUsedAtUnixSeconds == null ? (
               "从未使用"
             ) : (
               <TimeText
@@ -222,7 +232,7 @@ export function KeyList({
                 </Menu.Item>
                 <Menu.Item
                   leftSection={<IconRefresh size={16} />}
-                  onClick={() => state.setRotating(key)}
+                  onClick={() => setRotating(key)}
                 >
                   轮换
                 </Menu.Item>
@@ -253,6 +263,12 @@ export function KeyList({
       rows={keys}
       columns={columns}
       rowKey={(key) => key.id}
+      highlightedID={highlightedID}
+      rowLabel={(key) =>
+        `访问密钥 ${key.displayName ?? key.principal} · ${key.id}`
+      }
+      loading={state.loading && state.readAt === null}
+      error={state.readAt === null ? state.error || undefined : undefined}
       retry={state.reload}
       empty={state.keys.length ? "没有匹配的密钥。" : "尚未创建密钥。"}
     />

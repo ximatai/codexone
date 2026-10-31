@@ -1,9 +1,12 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { useSearchParams } from "react-router";
+import { useNavigationType, useSearchParams } from "react-router";
 import { useManagementSession } from "../../shared/session";
-import { UsageOverview } from "./UsageOverview";
+import { UsageOverview, usageNavigationKey } from "./UsageOverview";
 import { defaults, type UsageFilters } from "./api";
+import type { UsageNavigation } from "./UsageOverview";
+import { readPage } from "../../shared/view-memory";
 export function UsagePage() {
+  const restoreView = useNavigationType() === "POP";
   const [params, setParams] = useSearchParams();
   const owner = useManagementSession();
   const filters: UsageFilters = { ...defaults() };
@@ -20,12 +23,17 @@ export function UsagePage() {
   }
   if (params.get("range") === "24h") filters.range = "24h";
   filters.failedOnly = params.get("failedOnly") === "true";
-  // Only filters go into the URL. Request cursors and all authentication data remain local.
-  function applied(value: UsageFilters) {
+  // The URL contains filters/page only; cursor history belongs to this session owner.
+  function applied(value: UsageFilters, navigation?: UsageNavigation) {
     const next = new URLSearchParams();
     for (const [name, field] of Object.entries(value))
       if (field !== "" && field !== false && field !== undefined)
         next.set(name, String(field));
+    next.delete("window");
+    if (navigation) {
+      next.set("page", String(navigation.page + 1));
+      owner.views.set(usageNavigationKey(value, navigation.page), navigation);
+    }
     if (next.toString() !== params.toString())
       setParams(next, { replace: true });
   }
@@ -37,6 +45,9 @@ export function UsagePage() {
       />
       <UsageOverview
         initialFilters={filters}
+        requestedPage={readPage(params.get("page"), 2201) - 1}
+        navigationStore={owner.views}
+        restoreView={restoreView}
         selection={null}
         paused={false}
         onUnauthorized={owner.invalidate}

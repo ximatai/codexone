@@ -259,6 +259,18 @@ export async function setExpiration(
     ).key,
   );
 }
+export function matchesAvailability(
+  key: ManagedKey,
+  filter: string,
+  now = Date.now() / 1000,
+): boolean {
+  const expiry = expirationState(key.expiresAtUnixSeconds, now);
+  if (filter === "available") return key.enabled && expiry !== "expired";
+  if (filter === "expiring") return key.enabled && expiry === "soon";
+  if (filter === "expired") return expiry === "expired";
+  if (filter === "disabled") return !key.enabled && expiry !== "expired";
+  return true;
+}
 export function expirationState(
   expires: number | null | undefined,
   now = Date.now() / 1000,

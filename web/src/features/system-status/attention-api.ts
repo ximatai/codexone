@@ -44,8 +44,10 @@ export async function fetchAttention(signal: AbortSignal) {
   return report.parse(await request("/api/attention", { signal }));
 }
 export function attentionTarget(item: AttentionItem) {
-  if (item.subjectType === "account") return "/accounts";
-  if (item.subjectType === "key") return "/keys";
+  if (item.subjectType === "account")
+    return `/accounts${item.subjectID ? `?target=${encodeURIComponent(item.subjectID)}` : ""}`;
+  if (item.subjectType === "key")
+    return `/keys${item.subjectID ? `?target=${encodeURIComponent(item.subjectID)}` : ""}`;
   if (item.kind.startsWith("backup_") || item.kind === "storage_pressure")
     return "/?storage=details";
   if (item.kind === "client_protocol_extension") return "/?protocol=details";

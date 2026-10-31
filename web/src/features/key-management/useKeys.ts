@@ -26,6 +26,7 @@ export function useKeys() {
   const uncertain = owner.locked("keys");
   const setUncertain = (value: boolean) => owner.lock("keys", value);
   const [keys, setKeys] = useState<ManagedKey[]>([]);
+  const [readAt, setReadAt] = useState<number | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [imageModels, setImageModels] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -76,6 +77,7 @@ export function useKeys() {
       ]);
       if (signal.aborted || sequence !== readSequence.current) return false;
       setKeys(entries);
+      setReadAt(Date.now() / 1000);
       setModels(options.models);
       setImageModels(options.imageModels);
       setUnavailable(false);
@@ -247,9 +249,10 @@ export function useKeys() {
         setCopyState("复制失败，请手动选择复制。");
     }
   }
-  const disabled = busy || loading || uncertain;
+  const disabled = busy || loading || uncertain || readAt === null;
   return {
     keys,
+    readAt,
     models,
     imageModels,
     checking,

@@ -1,4 +1,4 @@
-import { localTime, timeTitle, money } from "../presentation";
+import { localTime, timeTitle, money, moneyThreshold } from "../presentation";
 export function TimeText({
   value,
   mode = "local",
@@ -34,9 +34,21 @@ export function TimeText({
 export function MoneyText({
   value,
   unlimited = false,
+  threshold = false,
 }: {
   value: string | number | null | undefined;
   unlimited?: boolean;
+  threshold?: boolean;
 }) {
-  return <span>{money(value, unlimited)}</span>;
+  return (
+    <span>
+      {threshold
+        ? value == null
+          ? unlimited
+            ? "不限"
+            : "不可用"
+          : moneyThreshold(Number(value))
+        : money(value, unlimited)}
+    </span>
+  );
 }
