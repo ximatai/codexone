@@ -1,3 +1,4 @@
+import styles from "./system.module.css";
 import { useEffect, useState } from "react";
 import { fetchSystemStatus } from "./api";
 import type { SystemStatus } from "./api";
@@ -36,11 +37,11 @@ export function SystemOverview() {
   }
 
   return (
-    <div className="system-status">
-      <section className="intro">
+    <div className={styles.root}>
+      <section>
         <h1>连接与运行状态</h1>
       </section>
-      <section className="panel" aria-label="服务状态">
+      <section className={styles.panel} aria-label="服务状态">
         {state.kind === "loading" && <p role="status">正在连接服务…</p>}
         {state.kind === "failed" && (
           <>
@@ -51,21 +52,21 @@ export function SystemOverview() {
         )}
         {state.kind === "loaded" && (
           <>
-            <div className="panel-heading">
+            <div className={styles.heading}>
               <h2>网关{state.data.ready ? "已就绪" : "尚未就绪"}</h2>
-              <span className="badge">连接正常</span>
+              <span className={styles.badge}>连接正常</span>
             </div>
             <ul>
               {state.data.checks.map((check) => (
                 <li key={check.name}>
                   <span>{labels[check.name] ?? check.name}</span>
-                  <span className={check.ready ? "good" : "subtle"}>
+                  <span className={check.ready ? styles.good : styles.subtle}>
                     {check.ready ? "已就绪" : "待就绪"}
                   </span>
                 </li>
               ))}
             </ul>
-            <button className="secondary" onClick={reload}>
+            <button className={styles.secondary} onClick={reload}>
               刷新状态
             </button>
           </>

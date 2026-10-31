@@ -4,7 +4,6 @@ import {
   change,
   pointChange,
   tokenTotal,
-  trendPoints,
   type DailyBucket,
 } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
@@ -13,7 +12,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("converts token and trend data without counting cache twice or filling missing evidence", () => {
+it("converts token data without counting cache twice or filling missing evidence", () => {
   const bucket = {
     metrics: { inputTokens: "100", cachedTokens: "80", outputTokens: "20" },
   } as DailyBucket;
@@ -28,7 +27,6 @@ it("converts token and trend data without counting cache twice or filling missin
       metrics: { inputTokens: null, outputTokens: null },
     } as DailyBucket),
   ).toBeNull();
-  expect(trendPoints([0, null, 10])).toEqual(["0,34", null, "100,4"]);
   expect(change(2, 0)).toBe("较昨日新增");
   expect(change(null, 2)).toBe("较昨日不可用");
   expect(change(3, 2)).toBe("较昨日 +50.0%");

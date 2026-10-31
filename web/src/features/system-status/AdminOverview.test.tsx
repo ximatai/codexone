@@ -64,13 +64,13 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   expect(screen.getByText("允许准入")).toBeVisible();
   fireEvent.click(screen.getByRole("link", { name: "存储与准入状态" }));
   expect(await screen.findByText("磁盘可用：1.0 MiB")).toBeVisible();
-  expect(document.body).toHaveClass("management-overlay-open");
+  expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  expect(document.body).not.toHaveClass("management-overlay-open");
+  expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
   fireEvent.click(screen.getByRole("link", { name: "存储与准入状态" }));
-  expect(document.body).toHaveClass("management-overlay-open");
+  expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   view.unmount();
-  expect(document.body).not.toHaveClass("management-overlay-open");
+  expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
   expect(management.request).toHaveBeenCalledWith(
     "/api/runtime/storage",
     expect.objectContaining({ signal: expect.any(AbortSignal) }),

@@ -1,75 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  Alert,
+  Anchor,
   Button,
   Group,
   Paper,
   Stack,
   Switch,
-  Table,
+  Skeleton,
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import { DataTable } from "../../shared/ui/DataTable";
+import { ErrorState, StatusBadge } from "../../shared/ui/States";
+import styles from "./overview.module.css";
+import { OverviewStats } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
-import {
-  failures,
-  localTime,
-  money,
-  outcomes,
-  modes,
-} from "../../shared/presentation";
+import { localTime, outcomes, modes } from "../../shared/presentation";
 import { UsageDetail } from "../usage/UsageDetail";
 import type { UsageReport } from "../usage/api";
-import {
-  change,
-  fetchDaily,
-  fetchInFlight,
-  fetchRecent,
-  pointChange,
-  tokenTotal,
-  trendPoints,
-} from "./round2-api";
+import { fetchDaily, fetchInFlight, fetchRecent } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
-function Sparkline({
-  values,
-  label,
-}: {
-  values: (number | null)[];
-  label: string;
-}) {
-  const points = trendPoints(values);
-  const segments: string[][] = [[]];
-  for (const point of points) {
-    if (point === null) segments.push([]);
-    else segments.at(-1)!.push(point);
-  }
-  return (
-    <svg
-      role="img"
-      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(1)))).join("、")}`}
-      viewBox="-2 0 104 38"
-      preserveAspectRatio="none"
-      width="100%"
-      height="46"
-      style={{ color: "var(--mantine-primary-color-filled)" }}
-    >
-      {segments.map((segment, index) => (
-        <polyline
-          key={index}
-          points={segment.join(" ")}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
-    </svg>
-  );
-}
 function UpdatedAgo({ updated }: { updated: number }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -88,8 +41,10 @@ function UpdatedAgo({ updated }: { updated: number }) {
 }
 export function ActivityOverview({
   refreshOverview,
+  sidebar,
 }: {
   refreshOverview: () => Promise<unknown>;
+  sidebar?: ReactNode;
 }) {
   const owner = useManagementSession();
   const refresh = useOverviewRefresh();
@@ -133,90 +88,10 @@ export function ActivityOverview({
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const buckets = daily.data ?? [];
-  const today = buckets.at(-1),
-    yesterday = buckets.at(-2);
-  const errorRate = (bucket: typeof today) =>
-    bucket
-      ? bucket.requests
-        ? (bucket.failed / bucket.requests) * 100
-        : null
-      : null;
-  const mainFailure = today
-    ? Object.entries(today.failures)
-        .filter(([kind, count]) => count > 0 && kind !== "client_cancelled")
-        .sort((a, b) => b[1] - a[1])[0]
-    : undefined;
-  const failureCount = today
-    ? Object.entries(today.failures)
-        .filter(([kind]) => kind !== "client_cancelled")
-        .reduce((a, [, b]) => a + b, 0)
-    : 0;
   const updated = queries.every((q) => q.dataUpdatedAt > 0)
     ? Math.min(...queries.map((q) => q.dataUpdatedAt))
     : 0;
-  const cards = [
-    {
-      label: "今日请求",
-      value: today?.requests.toLocaleString() ?? "—",
-      values: buckets.map((b) => b.requests),
-      delta: change(today?.requests, yesterday?.requests),
-      note: "按准入时间统计",
-    },
-    {
-      label: "Token",
-      value:
-        today && tokenTotal(today) !== null
-          ? (
-              BigInt(today.metrics.inputTokens!) +
-              BigInt(today.metrics.outputTokens!)
-            ).toLocaleString()
-          : "不可用",
-      values: buckets.map(tokenTotal),
-      delta: change(
-        today ? tokenTotal(today) : null,
-        yesterday ? tokenTotal(yesterday) : null,
-      ),
-      note:
-        today?.metrics.cachedTokens != null &&
-        today.metrics.inputTokens != null &&
-        BigInt(today.metrics.inputTokens) > 0n
-          ? `输入缓存占比 ${((Number(today.metrics.cachedTokens) / Number(today.metrics.inputTokens)) * 100).toFixed(1)}%`
-          : "输入缓存占比不可用",
-    },
-    {
-      label: "费用",
-      value: money(today?.metrics.estimatedMicros),
-      values: buckets.map((b) =>
-        b.metrics.estimatedMicros === null
-          ? null
-          : Number(b.metrics.estimatedMicros) / 1000000,
-      ),
-      delta: change(
-        today?.metrics.estimatedMicros == null
-          ? null
-          : Number(today.metrics.estimatedMicros),
-        yesterday?.metrics.estimatedMicros == null
-          ? null
-          : Number(yesterday.metrics.estimatedMicros),
-      ),
-      note: "估算，非账单",
-    },
-    {
-      label: "错误率",
-      value:
-        errorRate(today) === null ? "—" : `${errorRate(today)!.toFixed(1)}%`,
-      values: buckets.map(errorRate),
-      delta: pointChange(errorRate(today), errorRate(yesterday)),
-      note: mainFailure
-        ? `主要异常：${failures[mainFailure[0]] ?? "其他异常"}（${((mainFailure[1] / failureCount) * 100).toFixed(0)}%）`
-        : today
-          ? today.cancelled
-            ? `暂无失败类别 · 客户端取消 ${today.cancelled}`
-            : "暂无失败类别"
-          : "失败类别不可用",
-    },
-  ];
+
   return (
     <Stack aria-label="请求即时概览">
       <Group justify="space-between">
@@ -244,103 +119,148 @@ export function ActivityOverview({
         </Group>
       </Group>
       {queries.some((q) => q.isPending) && (
-        <Text role="status">正在读取请求概览…</Text>
+        <Stack role="status" aria-label="正在读取请求概览…">
+          <Skeleton h={84} />
+          <Text size="sm">正在读取请求概览…</Text>
+        </Stack>
       )}
       {queries.some((q) => q.isError) && (
-        <Alert color="yellow" role="alert">
+        <ErrorState
+          retry={() => {
+            for (const q of queries) void q.refetch();
+          }}
+        >
           部分请求概览读取失败，请刷新重试；保留的快照可能已过时，缺失值未记为零。
-        </Alert>
+        </ErrorState>
       )}
-      <div className="responsive-grid responsive-grid-4">
-        {cards.map((card) => (
-          <Paper key={card.label} withBorder p="md">
-            <Text size="sm">{card.label}</Text>
-            <Title order={3}>{card.value}</Title>
-            <Sparkline label={card.label} values={card.values} />
-            <Text size="xs">{card.delta}</Text>
-            <Text size="xs" c="dimmed">
-              {card.note}
-            </Text>
-          </Paper>
-        ))}
-      </div>
-      <Paper withBorder p="md">
-        <Title order={3} size="h4">
-          进行中请求
-        </Title>
-        <Text size="xs" c="dimmed">
-          最多显示 200 条；随自动刷新更新。
-        </Text>
-        {flight.data?.length === 0 && (
-          <Text c="dimmed">当前没有进行中的请求。</Text>
-        )}
-        <Stack gap="xs" mt="sm">
-          {flight.data?.map((row) => (
-            <Group
-              key={row.id}
-              justify="space-between"
-              className="wrap-anywhere"
-            >
-              <Text size="sm">
-                {row.principal ?? row.keyID} · {row.model ?? "模型未记录"} ·{" "}
-                {modes[row.mode] ?? "其他模式"} ·{" "}
-                {row.accountDisplayName ?? row.accountID ?? "账号未记录"}
-              </Text>
-              <Text size="xs">
-                {row.elapsedSeconds == null
-                  ? "耗时不可用"
-                  : `已持续 ${Math.floor(row.elapsedSeconds)} 秒`}{" "}
-                ·{" "}
-                {row.hasFirstEvent == null
-                  ? "首事件状态不可用"
-                  : row.hasFirstEvent
-                    ? "已收到首事件"
-                    : "等待首事件"}
-              </Text>
+      <OverviewStats buckets={daily.data ?? []} />
+      <div className={sidebar ? styles.content : undefined}>
+        <Stack className={styles.main}>
+          <Paper withBorder p="md">
+            <Group justify="space-between" mb="xs">
+              <Title order={3} size="h4">
+                进行中请求
+              </Title>
+              <Anchor component={Link} to="/usage">
+                查看全部用量
+              </Anchor>
             </Group>
-          ))}
-        </Stack>
-      </Paper>
-      <Paper withBorder p="md">
-        <Title order={3} size="h4">
-          最近请求
-        </Title>
-        <Text size="xs" c="dimmed">
-          最近 31 天内的 20 条已结束请求，每分钟刷新；待核对结果不代表成功。
-        </Text>
-        {recent.data?.truncated && (
-          <Text c="orange" size="xs">
-            扫描已达上限，可到用量页查询更早请求。
-          </Text>
-        )}
-        {recent.data?.rows.length === 0 && (
-          <Text c="dimmed">暂无已结束的请求。</Text>
-        )}
-        <div className="responsive-table">
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>开始时间（本地）</Table.Th>
-                <Table.Th>Key / 模型</Table.Th>
-                <Table.Th>结果</Table.Th>
-                <Table.Th>详情</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {recent.data?.rows.map((row) => (
-                <Table.Tr key={row.id}>
-                  <Table.Td data-label="开始时间">
-                    {localTime(row.atUnixSeconds)}
-                  </Table.Td>
-                  <Table.Td data-label="Key / 模型">
-                    {row.principal ?? row.keyID} · {row.model ?? "未记录"}
-                  </Table.Td>
-                  <Table.Td data-label="结果">
-                    {row.outcome
-                      ? (outcomes[row.outcome] ?? "待核对")
-                      : "待核对"}
-                  </Table.Td>
-                  <Table.Td data-label="详情">
+            <Text size="xs" c="dimmed" mb="sm">
+              最多显示 200 条；随自动刷新更新。
+            </Text>
+            <DataTable
+              rows={flight.data ?? []}
+              rowKey={(row) => row.id}
+              retry={() => void flight.refetch()}
+              loading={flight.isPending}
+              empty="当前没有进行中的请求。"
+              columns={[
+                {
+                  id: "principal",
+                  title: "主体 / 模型",
+                  render: (row) => (
+                    <Stack gap={2}>
+                      <Text size="sm">
+                        {row.principal ?? "主体未记录"} ·{" "}
+                        {row.model ?? "模型未记录"}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {modes[row.mode] ?? "其他模式"} ·{" "}
+                        {row.accountDisplayName ??
+                          row.accountID ??
+                          "账号未记录"}
+                      </Text>
+                    </Stack>
+                  ),
+                },
+                {
+                  id: "elapsed",
+                  title: "运行时长",
+                  render: (row) =>
+                    row.elapsedSeconds == null
+                      ? "耗时不可用"
+                      : `已持续 ${Math.floor(row.elapsedSeconds)} 秒`,
+                },
+                {
+                  id: "event",
+                  title: "最新状态",
+                  render: (row) => (
+                    <StatusBadge color={row.hasFirstEvent ? "green" : "gray"}>
+                      {row.hasFirstEvent == null
+                        ? "首事件状态不可用"
+                        : row.hasFirstEvent
+                          ? "已收到首事件"
+                          : "等待首事件"}
+                    </StatusBadge>
+                  ),
+                },
+              ]}
+            />
+          </Paper>
+          <Paper withBorder p="md">
+            <Group justify="space-between" mb="xs">
+              <Title order={3} size="h4">
+                最近请求
+              </Title>
+              <Anchor component={Link} to="/usage">
+                查看全部用量
+              </Anchor>
+            </Group>
+            <Text size="xs" c="dimmed" mb="sm">
+              最近 31 天内的 20 条已结束请求，每分钟刷新；待核对结果不代表成功。
+            </Text>
+            {recent.data?.truncated && (
+              <Text c="orange" size="xs">
+                扫描已达上限，可到用量页查询更早请求。
+              </Text>
+            )}
+            <DataTable
+              rows={recent.data?.rows ?? []}
+              rowKey={(row) => row.id}
+              retry={() => void recent.refetch()}
+              loading={recent.isPending}
+              empty="暂无已结束的请求。"
+              columns={[
+                {
+                  id: "time",
+                  title: "开始时间（本地）",
+                  render: (row) => localTime(row.atUnixSeconds),
+                },
+                {
+                  id: "principal",
+                  title: "Key / 模型",
+                  render: (row) =>
+                    `${row.principal ?? "主体未记录"} · ${row.model ?? "未记录"}`,
+                },
+                {
+                  id: "outcome",
+                  title: "结果",
+                  render: (row) => (
+                    <StatusBadge
+                      color={
+                        row.outcome === "succeeded"
+                          ? "green"
+                          : row.outcome === "failed"
+                            ? "red"
+                            : "gray"
+                      }
+                    >
+                      {row.outcome
+                        ? (outcomes[row.outcome] ?? "待核对")
+                        : "待核对"}
+                    </StatusBadge>
+                  ),
+                },
+                {
+                  id: "timing",
+                  title: "首事件 / 总耗时",
+                  render: (row) =>
+                    `${row.firstEventMilliseconds == null ? "不可用" : row.firstEventMilliseconds + " ms"} / ${row.totalMilliseconds == null ? "不可用" : row.totalMilliseconds + " ms"}`,
+                },
+                {
+                  id: "detail",
+                  title: "详情",
+                  render: (row) => (
                     <Button
                       variant="subtle"
                       size="xs"
@@ -348,13 +268,18 @@ export function ActivityOverview({
                     >
                       查看详情
                     </Button>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </div>
-      </Paper>
+                  ),
+                },
+              ]}
+            />
+          </Paper>
+        </Stack>
+        {sidebar && (
+          <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
+            {sidebar}
+          </aside>
+        )}
+      </div>
       <UsageDetail detail={detail} onClose={() => setDetail(null)} />
     </Stack>
   );
