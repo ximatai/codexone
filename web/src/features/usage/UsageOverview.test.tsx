@@ -303,3 +303,89 @@ it("derives preset selection only from successfully applied filters", async () =
     ),
   );
 });
+
+it("U03 preserves the saved position across a slow restore and intervening layout scroll", async () => {
+  setup();
+  const filters = api.defaults();
+  const params = api.usageParameters(filters);
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}`,
+      {
+        page: 1,
+        history: [null, "synthetic_cursor"],
+        scroll: 900,
+        window: {
+          start: Number(params.get("start")),
+          end: Number(params.get("end")),
+        },
+      },
+    ],
+  ]);
+  let finish!: (value: api.UsageReport) => void;
+  vi.mocked(api.fetchUsage).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(api.fetchUsage).toHaveBeenCalled());
+  fireEvent.scroll(window);
+  await act(async () => finish(api.parseUsage(reportFixture())));
+  await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
+  expect(screen.getByText("第 2 页")).toBeVisible();
+});
+
+it("U03 falls back explicitly when a restored cursor is rejected", async () => {
+  setup();
+  const filters = api.defaults();
+  const params = api.usageParameters(filters);
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}`,
+      {
+        page: 1,
+        history: [null, "expired-cursor"],
+        scroll: 900,
+        window: {
+          start: Number(params.get("start")),
+          end: Number(params.get("end")),
+        },
+      },
+    ],
+  ]);
+  vi.mocked(api.fetchUsage).mockRejectedValueOnce(
+    new ManagementError(400, "invalid_cursor"),
+  );
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      "原分页已失效，已返回请求明细第一页，请重新核对记录。",
+    ),
+  ).toBeVisible();
+  await screen.findByText("第 1 页");
+  expect(api.fetchUsage).toHaveBeenLastCalledWith(
+    expect.anything(),
+    null,
+    expect.any(AbortSignal),
+  );
+});

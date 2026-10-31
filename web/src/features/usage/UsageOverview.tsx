@@ -31,18 +31,28 @@ import { UsageEvidence, UsageSummary } from "./UsageSummary";
 import { utc } from "./format";
 export { duration } from "./format";
 export { failures } from "../../shared/presentation";
+export interface UsageNavigation {
+  history: (string | null)[];
+  page: number;
+  window: api.UsageFilters["window"];
+  scroll: number;
+}
 export function UsageOverview({
   selection,
   paused,
   onUnauthorized,
   initialFilters,
   onApplied,
+  requestedPage = 0,
+  navigationStore,
 }: {
   selection: { keyID: string; sequence: number } | null;
   paused: boolean;
   onUnauthorized: () => void;
   initialFilters?: api.UsageFilters;
-  onApplied?: (filters: api.UsageFilters) => void;
+  onApplied?: (filters: api.UsageFilters, navigation?: UsageNavigation) => void;
+  requestedPage?: number;
+  navigationStore?: Map<string, unknown>;
 }) {
   const queryClient = useQueryClient();
   const accounts = useQuery({
@@ -58,6 +68,17 @@ export function UsageOverview({
       onUnauthorized();
   }, [accounts.error, onUnauthorized]);
   const queryWindow = useRef<api.UsageFilters["window"]>(undefined);
+  const requestsHeading = useRef<HTMLHeadingElement>(null);
+  const activeNavigation = useRef<UsageNavigation | null>(null);
+  const [navigationNotice, setNavigationNotice] = useState("");
+  useEffect(() => {
+    const remember = () => {
+      if (activeNavigation.current)
+        activeNavigation.current.scroll = window.scrollY;
+    };
+    window.addEventListener("scroll", remember);
+    return () => window.removeEventListener("scroll", remember);
+  }, []);
   const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
     null,
   );
@@ -95,11 +116,15 @@ export function UsageOverview({
     filters: api.UsageFilters,
     cursors: (string | null)[] = [null],
     index = 0,
+    restore = false,
   ) {
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
     const version = ++epoch.current;
+    // Capture before the read: route/layout scroll events during a slow restore
+    // must not replace the saved position with the temporary loading position.
+    const restoreScroll = activeNavigation.current?.scroll ?? 0;
     setBusy(true);
     setError("");
     try {
@@ -139,10 +164,25 @@ export function UsageOverview({
       setReport(next);
       setPolicyRead((value) => value + 1);
       setApplied({ ...filters });
-      onApplied?.(filters);
+      const navigation: UsageNavigation = {
+        history: cursors,
+        page: index,
+        window: requestFilters.window,
+        scroll: restore ? restoreScroll : 0,
+      };
+      activeNavigation.current = navigation;
+      onApplied?.(filters, navigation);
       setHistory(cursors);
       setPage(index);
       setStale(false);
+      if (restore || index !== page)
+        requestAnimationFrame(() => {
+          if (restore) window.scrollTo?.(0, restoreScroll);
+          else {
+            requestsHeading.current?.scrollIntoView?.({ block: "start" });
+            requestsHeading.current?.focus({ preventScroll: true });
+          }
+        });
     } catch (cause) {
       if (version !== epoch.current || abort.signal.aborted) return;
       if (cause instanceof ManagementError && cause.status === 401) {
@@ -151,6 +191,18 @@ export function UsageOverview({
         setOptions({ keys: [], models: [], failures: [] });
         unauthorized.current();
       } else {
+        if (
+          restore &&
+          index > 0 &&
+          cause instanceof ManagementError &&
+          cause.status === 400
+        ) {
+          setNavigationNotice(
+            "原分页已失效，已返回请求明细第一页，请重新核对记录。",
+          );
+          void load(filters);
+          return;
+        }
         setStale(true);
         setError(
           cause instanceof ManagementError && cause.status === 400
@@ -178,7 +230,8 @@ export function UsageOverview({
         : (lastApplied.current ?? lastDraft.current));
     if (
       initial.current &&
-      JSON.stringify(lastApplied.current) === JSON.stringify(next)
+      JSON.stringify(lastApplied.current) === JSON.stringify(next) &&
+      requestedPage === page
     )
       return () => {
         // Numeric owner generation, not a rendered DOM reference.
@@ -189,7 +242,17 @@ export function UsageOverview({
         controller.current?.abort();
       };
     setDraft(next);
-    void load(next);
+    const saved = navigationStore?.get(`usage:${JSON.stringify(next)}`) as
+      UsageNavigation | undefined;
+    if (saved && requestedPage < saved.history.length) {
+      queryWindow.current = saved.window;
+      activeNavigation.current = { ...saved };
+      void load(next, saved.history, requestedPage, true);
+    } else {
+      if (requestedPage > 0)
+        setNavigationNotice("原分页信息不可用，已返回请求明细第一页。");
+      void load(next);
+    }
     if (selection) heading.current?.scrollIntoView?.({ block: "start" });
     return () => {
       // Numeric owner generation intentionally retires the last owned read.
@@ -199,7 +262,7 @@ export function UsageOverview({
     };
     // The parent owns authentication; this effect owns the read-only view's requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selection, paused, filterIdentity]);
+  }, [selection, paused, filterIdentity, requestedPage]);
   function update(name: keyof api.UsageFilters, value: string | boolean) {
     setDraft((previous) => ({
       ...previous,
@@ -399,6 +462,11 @@ export function UsageOverview({
       {error && (
         <ErrorState retry={() => void load({ ...draft })}>{error}</ErrorState>
       )}
+      {navigationNotice && (
+        <Text role="status" size="sm">
+          {navigationNotice}
+        </Text>
+      )}
       {busy && !report && <LoadingState>正在读取用量…</LoadingState>}
       {report && (
         <div aria-busy={busy} className={stale ? styles.stale : undefined}>
@@ -465,7 +533,13 @@ export function UsageOverview({
               </p>
             )}
           </details>
-          <h3>请求明细</h3>
+          <h3
+            ref={requestsHeading}
+            tabIndex={-1}
+            className={styles.requestsHeading}
+          >
+            请求明细
+          </h3>
           <UsageRequests
             rows={report.rows}
             onDetail={setDetail}
