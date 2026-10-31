@@ -56,8 +56,8 @@ func rawSQL(_ path: String, _ sql: String) throws {
     for await value in group { if value { count += 1 } }
     return count
   }
-  #expect(accepted == 4)
-  await #expect(throws: ExecutionError.denied) {
+  #expect(accepted == 16)
+  await #expect(throws: ExecutionError.accountConcurrency) {
     try await store.admit(admission("extra", window: "new-window"))
   }
   await store.close()
@@ -111,7 +111,7 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await #expect(throws: ExecutionError.conflict) {
     try await store.finalize(attempt: "a", evidence: usage(revision: 4, amount: 10))
   }
-  await #expect(throws: ExecutionError.denied) { try await store.admit(admission("b")) }
+  try await store.admit(admission("b"))
   await store.close()
 }
 
@@ -125,7 +125,7 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   #expect(try await reopened.snapshot(attempt: "a").state == .unknown)
-  await #expect(throws: ExecutionError.denied) { try await reopened.admit(admission("b")) }
+  try await reopened.admit(admission("b"))
   await reopened.close()
 }
 
@@ -143,7 +143,7 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   }
-  try rawSQL(path, "PRAGMA user_version=9")
+  try rawSQL(path, "PRAGMA user_version=10")
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   await reopened.close()
   let legacy = try temporaryExecutionPath()
@@ -222,9 +222,8 @@ func rawSQL(_ path: String, _ sql: String) throws {
   let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   try await store.admit(admission("a", reserved: 100))
   try await store.finalize(attempt: "a", evidence: nil)
-  await #expect(throws: ExecutionError.denied) {
-    try await store.admit(admission("b", principal: "other", window: "next", reserved: 1))
-  }
+  try await store.admit(
+    admission("before-evidence", principal: "other", window: "next", reserved: 1))
   try await store.finalize(attempt: "a", evidence: usage(amount: 0))
   try await store.admit(admission("b", principal: "other", window: "next", reserved: 1))
   await store.close()

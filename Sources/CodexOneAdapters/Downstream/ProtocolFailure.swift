@@ -35,6 +35,7 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
     case .storagePressure: return .init(503, "storage_pressure")
     case .maintenanceRequired: return .init(503, "maintenance_required")
     case .denied: return .init(429, "quota_or_policy_denied")
+    case .accountConcurrency: return .init(429, "account_concurrency_exceeded")
     case .unknownObject, .ambiguousObject: return .init(400, "unknown_or_ambiguous_object")
     case .capacity: return .init(503, "capacity_exceeded")
     default: return .init(503, "execution_indeterminate")

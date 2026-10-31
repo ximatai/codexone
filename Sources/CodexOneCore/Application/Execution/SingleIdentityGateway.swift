@@ -67,7 +67,8 @@ public struct SingleIdentityGateway: Sendable {
       window: "utc-day-\(day)", policyVersion: policy.policyVersion,
       pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
-      keyRevision: policy.keyRevision, model: model, requirements: requirements)
+      keyRevision: policy.keyRevision, model: model, requirements: requirements,
+      references: references)
     try await coordinator.execute(admission, operation: operation)
   }
 }

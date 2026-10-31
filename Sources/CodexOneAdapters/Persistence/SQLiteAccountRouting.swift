@@ -27,7 +27,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           """
           SELECT DISTINCT b.identity,b.namespace FROM bindings b
           JOIN accounts a ON a.id=b.identity AND a.namespace=b.namespace
-          WHERE b.principal=? AND b.object_type=? AND b.raw_id=? LIMIT 2
+          WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=? LIMIT 2
           """, [.text(principal), .text(hint.type), .text(hint.rawID)]
         ) { statement in
           try AccountRouteIdentity(
@@ -47,15 +47,12 @@ extension SQLiteExecutionStore: AccountRoutingStore {
     guard (1...64).contains(command.candidates.count) else { throw ExecutionError.invalidCommand }
     for candidate in command.candidates { try validateAdmission(command.selecting(candidate)) }
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
-      let identityLimits = ExecutionLimits(
-        requests: limits.requests, active: limits.active,
-        unresolved: unresolvedCapacity, budgetMicros: limits.budgetMicros,
-        unresolvedMicros: limits.unresolvedMicros)
       return try db.transaction {
         let affinity = try Self.accountAffinity(
           db, principal: command.policy.key.principal, references: command.references,
           connection: command.connection)
         var ranked: [(AccountRouteCandidate, Int64, UInt64)] = []
+        var atCapacity = false
         for candidate in command.candidates {
           guard affinity == nil || affinity == candidate.identity,
             candidate.snapshot.continuation == (affinity == candidate.identity)
@@ -67,33 +64,16 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           let values: [SQLiteConnection.Value] = [
             .text(candidate.identity.namespace), .text(candidate.identity.id),
           ]
-          let counts = try db.rows(
-            """
-            SELECT COALESCE(SUM(CASE WHEN state='intent' THEN 1 ELSE 0 END),0),
-              COALESCE(SUM(CASE WHEN state!='settled' THEN 1 ELSE 0 END),0),
-              COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0)
-            FROM attempts WHERE namespace=? AND identity=?
-            """, values
-          ) {
-            (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1), sqlite3_column_int64($0, 2))
-          }[0]
-          let window = values + [.text(command.window)]
-          let requests = try db.scalar(
-            "SELECT COUNT(*) FROM attempts WHERE namespace=? AND identity=? AND window_id=?", window
-          )
-          let exposure = try db.scalar(
-            "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE namespace=? AND identity=? AND window_id=?",
-            window)
-          let reserved = command.policy.reservedMicros
-          guard
-            identityLimits.allows(
-              requestCount: requests, activeCount: counts.0, unresolvedCount: counts.1,
-              exposureMicros: exposure, unresolvedExposureMicros: counts.2, reservedMicros: reserved
-            )
-          else { continue }
+          let active = try db.scalar(
+            "SELECT COUNT(*) FROM attempts WHERE namespace=? AND identity=? AND state='intent'",
+            values)
+          guard active < ExecutionLimits.accountConcurrency else {
+            atCapacity = true
+            continue
+          }
           ranked.append(
             (
-              candidate, counts.0,
+              candidate, active,
               Self.routeTie(command.requestID ?? command.attempt, candidate.identity)
             ))
         }
@@ -102,11 +82,24 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           if $0.2 != $1.2 { return $0.2 < $1.2 }
           return $0.0.identity.id < $1.0.identity.id
         }
-        guard let selected = ranked.first?.0 else { throw AccountDispatchError.unavailable }
+        guard let selected = ranked.first?.0 else {
+          if atCapacity { throw ExecutionError.accountConcurrency }
+          throw AccountDispatchError.unavailable
+        }
         let admission = command.selecting(selected)
-        // Common Key/global/principal rejection propagates once; it is not an account failure.
+        // Explicit Key rejection propagates once; it is not an account failure.
         try Self.admitTransaction(
           db, admission, limits: limits, unresolvedCapacity: unresolvedCapacity)
+        for reference in command.references {
+          try db.write(
+            "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
+            [
+              .number(
+                Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds),
+              .text(admission.owner.principal), .text(admission.owner.namespace),
+              .text(admission.owner.identity), .text(reference.type), .text(reference.rawID),
+            ])
+        }
         return admission
       }
     }
@@ -120,7 +113,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
       var sql = """
         SELECT DISTINCT b.identity,b.namespace FROM bindings b
         JOIN accounts a ON a.id=b.identity AND a.namespace=b.namespace
-        WHERE b.principal=? AND b.object_type=? AND b.raw_id=?
+        WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=?
         """
       var values: [SQLiteConnection.Value] = [
         .text(principal), .text(reference.type), .text(reference.rawID),
