@@ -6,7 +6,6 @@ import {
 } from "../../shared/account-presentation";
 import { request } from "../../shared/management";
 import { z } from "../../shared/schema";
-import { ErrorState } from "../../shared/ui/States";
 import { money } from "../../shared/presentation";
 
 const numeric = z.string().regex(/^(0|[1-9][0-9]*)$/);
@@ -54,9 +53,9 @@ export function CapacityPanel({
         容量余量
       </Title>
       {query.isError ? (
-        <ErrorState retry={() => void query.refetch()}>
-          余量读取失败，未将缺失值记为零。
-        </ErrorState>
+        <Text c="dimmed">
+          余量读取失败，请使用概览汇总重试；缺失值未记为零。
+        </Text>
       ) : !query.data ? (
         <Text>正在读取余量</Text>
       ) : (
