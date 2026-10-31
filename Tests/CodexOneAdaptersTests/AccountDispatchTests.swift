@@ -50,7 +50,11 @@ private func dispatchAdmission(
   for change in ["disable", "refresh", "reauthorize", "expiry"] {
     let f = try await DispatchFixture.make(
       expires: change == "expiry" ? Int64(Date().timeIntervalSince1970) + 2 : 2_000_000_000)
-    let work = try await f.app.prepareDispatch(id: f.account.id, continuation: false)
+    let preparation = AccountCredentials(
+      store: f.store,
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)),
+      now: { Int64(Date().timeIntervalSince1970) - 301 })
+    let work = try await preparation.prepareDispatch(id: f.account.id, continuation: false)
     let snapshot = work.snapshot
     switch change {
     case "disable":
@@ -234,5 +238,35 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
     window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
     accountSnapshot: work.snapshot)
   await #expect(throws: ExecutionError.invalidCommand) { try await f.store.admit(invalid) }
+  await f.close()
+}
+
+@Test func dispatchWindowDoesNotShortenObservationValidity() async throws {
+  let f = try await DispatchFixture.make(expires: 2_000_000_000)
+  for remaining: Int64 in [901, 900, 301, 300, 1, 0] {
+    let app = AccountCredentials(
+      store: f.store,
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)),
+      now: { 2_000_000_000 - remaining })
+    if remaining > 300 {
+      #expect(
+        try await app.prepareDispatch(id: f.account.id, continuation: false).account.id
+          == f.account.id)
+    } else {
+      await #expect(throws: AccountDispatchError.refreshRequired) {
+        try await app.prepareDispatch(id: f.account.id, continuation: false)
+      }
+    }
+    if remaining > 0 {
+      #expect(try await app.prepareObservation(id: f.account.id).account.id == f.account.id)
+      #expect(
+        try await app.needsProactiveRefresh(id: f.account.id, windowSeconds: 900)
+          == (remaining <= 900))
+    } else {
+      await #expect(throws: QuotaObservationFailure.refreshRequired) {
+        try await app.prepareObservation(id: f.account.id)
+      }
+    }
+  }
   await f.close()
 }

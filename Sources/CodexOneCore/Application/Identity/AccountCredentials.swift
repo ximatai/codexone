@@ -14,9 +14,15 @@ public struct AccountRefreshWork: Sendable, CustomStringConvertible, CustomDebug
 
 /// Coordinates credential context and durable barriers. Provider verification is an adapter responsibility.
 public struct AccountCredentials: Sendable {
+  public static let dispatchRefreshWindowSeconds: Int64 = 5 * 60
+  private let now: @Sendable () -> Int64
   private let store: any AccountGovernanceStore
   private let protection: any AccountCredentialProtection
-  public init(store: any AccountGovernanceStore, protection: any AccountCredentialProtection) {
+  public init(
+    store: any AccountGovernanceStore, protection: any AccountCredentialProtection,
+    now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }
+  ) {
+    self.now = now
     self.store = store
     self.protection = protection
   }
@@ -49,7 +55,7 @@ public struct AccountCredentials: Sendable {
     let context = try AccountCredentialContext(
       identity: id, namespace: account.namespace, version: account.credentialVersion)
     let credential = try protection.open(stored.envelope, context: context)
-    guard credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
+    guard credential.expiresAtUnixSeconds - now() > Self.dispatchRefreshWindowSeconds else {
       throw AccountDispatchError.refreshRequired
     }
     return try AccountDispatchWork(
@@ -65,7 +71,7 @@ public struct AccountCredentials: Sendable {
     let context = try AccountCredentialContext(
       identity: id, namespace: stored.account.namespace, version: stored.account.credentialVersion)
     let credential = try protection.open(stored.envelope, context: context)
-    guard credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970) else {
+    guard credential.expiresAtUnixSeconds > now() else {
       throw QuotaObservationFailure.refreshRequired
     }
     return AccountObservationWork(account: stored.account, credential: credential)
@@ -99,6 +105,25 @@ public struct AccountCredentials: Sendable {
       } catch { continue }
     }
     return false
+  }
+  /// Only expiry metadata leaves this application boundary; plaintext stays transient.
+  public func needsProactiveRefresh(id: String, windowSeconds: Int64) async throws -> Bool {
+    let stored = try await store.accountCredential(id: id)
+    guard stored.account.mode != .disabled, stored.account.authorization == .ready else {
+      return false
+    }
+    let context = try AccountCredentialContext(
+      identity: id, namespace: stored.account.namespace, version: stored.account.credentialVersion)
+    let credential = try protection.open(stored.envelope, context: context)
+    return credential.expiresAtUnixSeconds - now() <= windowSeconds
+  }
+  /// Trusted evidence that no rotation completed; never use for ambiguous transport failures.
+  public func abandonUncompletedRefresh(_ work: AccountRefreshWork) async throws -> ManagedAccount {
+    guard work.credential.expiresAtUnixSeconds > now() else {
+      return try await failRefresh(work)
+    }
+    return try await store.abandonUncompletedAccountRefresh(
+      id: work.account.id, credentialVersion: work.account.credentialVersion, intent: work.intent)
   }
   public func beginRefresh(id: String, revision: Int64) async throws -> AccountRefreshWork {
     let old = try await store.accountCredential(id: id)

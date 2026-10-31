@@ -4,6 +4,7 @@ import Crypto
 import Foundation
 import NIOCore
 import NIOHTTP1
+import NIOPosix
 import ServiceLifecycle
 import Synchronization
 
@@ -260,6 +261,14 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
         return result
       }
     } catch {
+      // No HTTP request can reach the provider before a connection is established.
+      if let transport = error as? IOError, transport.errnoCode == ECONNREFUSED {
+        throw AccountRefreshError.notCompleted
+      }
+      if error is NIOConnectionError { throw AccountRefreshError.notCompleted }
+      if let transport = error as? HTTPClientError, transport == .connectTimeout {
+        throw AccountRefreshError.notCompleted
+      }
       if error as? AccountRefreshError == .authorizationRequired {
         throw AccountRefreshError.authorizationRequired
       }
