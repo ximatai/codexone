@@ -57,13 +57,13 @@ struct PoolWebSocketInitialTurn: Sendable {
 
 enum PoolWebSocketSession {
   static func run(
-    downstream: WebSocketPeer, firstData: Data, first: ResponseRequest,
+    downstream: WebSocketPeer, firstBody: WebSocketBody, first: ResponseRequest,
     executor: HTTPResponseExecution, digest: String?
   ) async throws {
     guard let gateway = executor.gateway else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
-    let lane = try webSocketLane(JSONValue.decode(firstData))
+    let lane = try webSocketLane(JSONValue.decode(firstBody.data))
     do {
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         defer {
@@ -99,7 +99,7 @@ enum PoolWebSocketSession {
               to: try .init(id: owner.identity, namespace: owner.namespace))
             try await executor.webSocket.authorized(selection.authorization).run { upstream in
               try await ResponsesDataService.serveTurns(
-                downstream: downstream, upstream: upstream, firstData: firstData,
+                downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
                 initial: .init(context: selection.context, start: start, requestID: requestID))
             }

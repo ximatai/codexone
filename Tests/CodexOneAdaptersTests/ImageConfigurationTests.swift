@@ -30,7 +30,7 @@ private func imagePool(_ mutate: (inout [String: Any]) -> Void = { _ in }) throw
   return try JSONDecoder().decode(
     AccountPoolConfiguration.self, from: JSONSerialization.data(withJSONObject: value))
 }
-@Test func imageDeploymentRequiresExplicitHostCapabilitiesAndDoesNotBorrowConversationGrants()
+@Test func imageDeploymentDoesNotBorrowConversationGrantsOrRequireHostCapabilities()
   throws
 {
   let config = try imagePool()
@@ -52,12 +52,10 @@ private func imagePool(_ mutate: (inout [String: Any]) -> Void = { _ in }) throw
     policy: try .init(models: ["synthetic-host"], limits: limits), createdAtUnixSeconds: 1)
   #expect(try config.policy(key: chatOnly).models == ["synthetic-host"])
   #expect(config.imageGeneration?.effective(for: chatOnly.policy).isEmpty == true)
-  #expect(throws: (any Error).self) {
-    try imagePool {
-      $0["models"] = [
-        ["id": "synthetic-host", "inputMicrosPerMillion": 3, "outputMicrosPerMillion": 4]
-      ]
-    }
+  _ = try imagePool {
+    $0["models"] = [
+      ["id": "synthetic-host", "inputMicrosPerMillion": 3, "outputMicrosPerMillion": 4]
+    ]
   }
   #expect(throws: (any Error).self) {
     try imagePool {
@@ -74,13 +72,46 @@ private func imagePool(_ mutate: (inout [String: Any]) -> Void = { _ in }) throw
       ]
     ]
   }
-  #expect(try changedHostPrice.policy(key: imagesOnly).pricingVersion != route.pricingVersion)
+  #expect(try changedHostPrice.policy(key: imagesOnly).pricingVersion == route.pricingVersion)
 }
-@Test func imageSizeProfilesEnforceIntegerPixelBoundsRatherThanInferringFromModelNames() throws {
-  let model = try #require(imagePool().imageGeneration?.models.first)
-  for size in ["auto", "1024x1024", "2048x1024", "3840x2160"] { #expect(model.accepts(size: size)) }
-  for size in [
-    "0x0", "16x16", "-1024x1024", "01024x1024", "1025x1024", "3840x3840", "4096x1024", "3072x768",
-    "9223372036854775807x16",
-  ] { #expect(!model.accepts(size: size)) }
+@Test func imageConcurrencyAndLegacyFieldsAreStrictAndOptional() throws {
+  #expect(try imagePool().imageConcurrency == nil)
+  for limit in [0, 9, -1] {
+    #expect(throws: (any Error).self) { try imagePool { $0["imageConcurrency"] = limit } }
+  }
+  for limit in [1, 8] {
+    #expect(try imagePool { $0["imageConcurrency"] = limit }.imageConcurrency == limit)
+  }
+  _ = try imagePool {
+    $0["imageGeneration"] = [
+      "defaultModel": "synthetic-image",
+      "models": [
+        ["id": "synthetic-image", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0]
+      ],
+    ]
+  }
+  #expect(throws: (any Error).self) { try imagePool { $0["unknown"] = 1 } }
+}
+
+@Test func singleIdentityImageConcurrencyRejectsOutOfRangeAndUnknownConfiguration() throws {
+  var fields: [String: Any] = [
+    "managedKeys": true, "namespace": "synthetic", "identity": "synthetic",
+    "upstreamBaseURL": "http://127.0.0.1:12345/v1", "reservedMicros": 1,
+    "models": [["id": "synthetic-host", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0]],
+  ]
+  func decode(_ value: [String: Any]) throws -> SingleIdentityConfiguration {
+    let config = try JSONDecoder().decode(
+      SingleIdentityConfiguration.self, from: JSONSerialization.data(withJSONObject: value))
+    try config.validate()
+    return config
+  }
+  #expect(try decode(fields).imageConcurrency == nil)
+  for limit in [0, 9, -1] {
+    fields["imageConcurrency"] = limit
+    #expect(throws: (any Error).self) { try decode(fields) }
+  }
+  fields["imageConcurrency"] = 8
+  #expect(try decode(fields).imageConcurrency == 8)
+  fields["unknown"] = 1
+  #expect(throws: (any Error).self) { try decode(fields) }
 }

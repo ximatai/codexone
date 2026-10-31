@@ -27,6 +27,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let principal: String?
   public let keyID: String?
   public let keySHA256: String?
+  public let imageConcurrency: Int?
   public let imageGeneration: ImageConfiguration?
   public let managedKeys: Bool?
   public let namespace: String
@@ -41,6 +42,36 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let modelProfilesFile: String?
   public let upstreamTransport: String?
   public let upstreamContract: String?
+
+  private enum CodingKeys: String, CodingKey, CaseIterable {
+    case principal, keyID, keySHA256, imageConcurrency, imageGeneration, managedKeys, namespace,
+      identity, models, upstreamBaseURL, upstreamTokenFile, reservedMicros, executionTimeoutSeconds,
+      firstResponseTimeoutSeconds, progressTimeoutSeconds, modelProfilesFile, upstreamTransport,
+      upstreamContract
+  }
+  public init(from decoder: any Decoder) throws {
+    try rejectUnknownImageFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
+    let fields = try decoder.container(keyedBy: CodingKeys.self)
+    principal = try fields.decodeIfPresent(String.self, forKey: .principal)
+    keyID = try fields.decodeIfPresent(String.self, forKey: .keyID)
+    keySHA256 = try fields.decodeIfPresent(String.self, forKey: .keySHA256)
+    imageConcurrency = try fields.decodeIfPresent(Int.self, forKey: .imageConcurrency)
+    imageGeneration = try fields.decodeIfPresent(ImageConfiguration.self, forKey: .imageGeneration)
+    managedKeys = try fields.decodeIfPresent(Bool.self, forKey: .managedKeys)
+    namespace = try fields.decode(String.self, forKey: .namespace)
+    identity = try fields.decode(String.self, forKey: .identity)
+    models = try fields.decode([Model].self, forKey: .models)
+    upstreamBaseURL = try fields.decode(String.self, forKey: .upstreamBaseURL)
+    upstreamTokenFile = try fields.decodeIfPresent(String.self, forKey: .upstreamTokenFile)
+    reservedMicros = try fields.decode(Int64.self, forKey: .reservedMicros)
+    executionTimeoutSeconds = try fields.decodeIfPresent(Int.self, forKey: .executionTimeoutSeconds)
+    firstResponseTimeoutSeconds = try fields.decodeIfPresent(
+      Int.self, forKey: .firstResponseTimeoutSeconds)
+    progressTimeoutSeconds = try fields.decodeIfPresent(Int.self, forKey: .progressTimeoutSeconds)
+    modelProfilesFile = try fields.decodeIfPresent(String.self, forKey: .modelProfilesFile)
+    upstreamTransport = try fields.decodeIfPresent(String.self, forKey: .upstreamTransport)
+    upstreamContract = try fields.decodeIfPresent(String.self, forKey: .upstreamContract)
+  }
 
   public static func load(path: String) async throws -> SingleIdentityConfiguration {
     try await withCheckedThrowingContinuation { continuation in
@@ -66,6 +97,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       idle: progressTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
+    guard (1...8).contains(imageConcurrency ?? 2) else { throw ExecutionError.invalidCommand }
     guard
       [namespace, identity].allSatisfy({
         !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0)

@@ -3,62 +3,24 @@ import Foundation
 
 /// Limits apply before decoding and are shared by JSON, multipart and WS.
 enum ImageLimits {
-  static let requestBytes = 8_388_608
-  // Validated multipart images expand to base64 plus a bounded protocol envelope.
-  static let normalizedRequestBytes = 9_437_184
-  static let imageBytes = 4_194_304
-  static let totalImageBytes = 6_291_456
+  static let imageBytes = 16_777_216
+  static let totalImageBytes = 25_165_824
   static let eventBytes = 8_388_608
   static let responseBytes = 33_554_432
+  static let nativeResponseBytes = 50_331_648
 }
 
 struct ImageToolRequest: Sendable {
   let model: ImageConfiguration.Model
   let document: JSONValue
-  init(_ value: JSONValue, configuration: ImageConfiguration?, host: String? = nil) throws {
+  init(_ value: JSONValue, configuration: ImageConfiguration?) throws {
     guard var fields = value.object, fields["type"]?.string == "image_generation",
       fields["model"] == nil || fields["model"]?.string != nil,
       let configuration,
       let model = configuration.models.first(where: {
         $0.id == (fields["model"]?.string ?? configuration.defaultModel)
-      }), host == nil || model.hostModel == host
-    else { throw GatewayProtocolError(400, "unsupported_image_model") }
-    let allowed: Set<String> = [
-      "type", "model", "size", "quality", "background", "output_format",
-      "output_compression", "moderation", "input_fidelity", "action", "partial_images",
-      "input_image_mask",
-    ]
-    guard fields.keys.allSatisfy(allowed.contains) else {
-      throw GatewayProtocolError(400, "unsupported_image_parameter")
-    }
-    for (name, values) in [
-      "quality": ["auto", "low", "medium", "high"],
-      "background": ["auto", "opaque", "transparent"],
-      "output_format": ["png", "jpeg", "webp"], "moderation": ["auto", "low"],
-      "input_fidelity": ["low", "high"], "action": ["auto", "generate", "edit"],
-    ] {
-      if let value = fields[name], !values.contains(value.string ?? "") {
-        throw GatewayProtocolError(400, "unsupported_image_parameter")
-      }
-    }
-    if let size = fields["size"], !model.accepts(size: size.string ?? "") {
-      throw GatewayProtocolError(400, "unsupported_image_size")
-    }
-    guard
-      fields["background"]?.string != "transparent"
-        || (model.supportsTransparency && fields["output_format"]?.string != "jpeg"),
-      fields["input_fidelity"] == nil || model.supportsInputFidelity
-    else { throw GatewayProtocolError(400, "unsupported_image_parameter") }
-    if let value = fields["output_compression"] {
-      guard let n = value.integer, (0...100).contains(n),
-        ["jpeg", "webp"].contains(fields["output_format"]?.string ?? "png")
-      else { throw GatewayProtocolError(400, "unsupported_image_parameter") }
-    }
-    if let value = fields["partial_images"] {
-      guard let n = value.integer, (0...3).contains(n) else {
-        throw GatewayProtocolError(400, "unsupported_image_parameter")
-      }
-    }
+      })
+    else { throw GatewayProtocolError(403, "model_not_allowed") }
     fields["model"] = .string(model.id)
     self.model = model
     document = .object(fields)
@@ -66,35 +28,37 @@ struct ImageToolRequest: Sendable {
 }
 
 struct ImagesRequest: Sendable {
-  let response: ResponseRequest
+  let model: String
+  let body: Data
   let streaming: Bool
   let editing: Bool
   init(data: Data, contentType: String, editing: Bool, configuration: ImageConfiguration?) throws {
-    guard data.count <= ImageLimits.requestBytes else {
+    guard data.count <= RequestBodyLimits.maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
     }
     var fields: [String: JSONValue]
-    var images: [ImagePayload] = []
-    var mask: ImagePayload?
-    if contentType.lowercased().hasPrefix("multipart/form-data") {
+    let multipart = contentType.lowercased().hasPrefix("multipart/form-data")
+    if multipart {
       guard editing else { throw GatewayProtocolError(415, "unsupported_content_type") }
       fields = [:]
+      var images: [JSONValue] = []
       for part in try imageMultipart(data, contentType: contentType) {
         if ["image", "image[]", "mask"].contains(part.name) {
           let image = try ImagePayload(
             bytes: part.data, declaredType: part.contentType, maximumBytes: ImageLimits.imageBytes)
+          let value = JSONValue.object(["image_url": .string(image.dataURL)])
           if part.name == "mask" {
-            guard mask == nil else { throw GatewayProtocolError(400, "invalid_mask") }
-            mask = image
+            guard fields["mask"] == nil else { throw GatewayProtocolError(400, "invalid_mask") }
+            fields["mask"] = value
           } else {
-            images.append(image)
+            images.append(value)
           }
         } else {
-          guard fields[part.name] == nil, part.data.count <= 32_768,
+          guard fields[part.name] == nil, part.name != "images", part.data.count <= 32_768,
             let text = String(data: part.data, encoding: .utf8)
           else { throw GatewayProtocolError(400, "invalid_multipart") }
           if ["n", "partial_images", "output_compression"].contains(part.name) {
-            guard let number = Int64(text), String(number) == text else {
+            guard let number = Int64(text) else {
               throw GatewayProtocolError(400, "invalid_request")
             }
             fields[part.name] = .number(Decimal(number))
@@ -108,67 +72,51 @@ struct ImagesRequest: Sendable {
           }
         }
       }
+      fields["images"] = .array(images)
     } else {
-      guard contentType.lowercased().hasPrefix("application/json"),
-        let object = try JSONValue.decode(data).object
-      else { throw GatewayProtocolError(400, "invalid_json") }
+      guard contentType.lowercased().hasPrefix("application/json") else {
+        throw GatewayProtocolError(415, "unsupported_content_type")
+      }
+      let document: JSONValue
+      do { document = try JSONValue.decode(data) } catch {
+        throw GatewayProtocolError(400, "invalid_json")
+      }
+      guard let object = document.object else { throw GatewayProtocolError(400, "invalid_json") }
       fields = object
-      if let input = fields.removeValue(forKey: "images") {
-        guard editing, let items = input.array, items.count <= 4 else {
+    }
+    guard fields["model"] == nil || fields["model"]?.string != nil,
+      fields["stream"] == nil || fields["stream"]?.bool != nil
+    else { throw GatewayProtocolError(400, "invalid_request") }
+    guard let model = fields["model"]?.string ?? configuration?.defaultModel,
+      configuration?.models.contains(where: { $0.id == model }) == true
+    else { throw GatewayProtocolError(403, "model_not_allowed") }
+    var total = 0
+    if let value = fields["images"] {
+      guard let images = value.array, images.count <= 16 else {
+        throw GatewayProtocolError(400, "invalid_image")
+      }
+      for image in images {
+        guard let url = image["image_url"]?.string else {
           throw GatewayProtocolError(400, "invalid_image")
         }
-        for item in items {
-          guard item.object?.count == 1, let url = item["image_url"]?.string else {
-            throw GatewayProtocolError(400, "invalid_image")
-          }
-          images.append(try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes))
-        }
-      }
-      if let input = fields.removeValue(forKey: "mask") {
-        guard editing, input.object?.count == 1, let url = input["image_url"]?.string else {
-          throw GatewayProtocolError(400, "invalid_mask")
-        }
-        mask = try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes)
+        total += try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes).bytes.count
       }
     }
-    guard let prompt = fields.removeValue(forKey: "prompt")?.string, !prompt.isEmpty,
-      prompt.utf8.count <= 32_768, images.count <= 4, editing ? !images.isEmpty : images.isEmpty,
-      images.reduce(0, { $0 + $1.bytes.count }) + (mask?.bytes.count ?? 0)
-        <= ImageLimits.totalImageBytes,
-      images.reduce(0, { $0 + $1.width * $1.height }) <= 33_554_432
-    else { throw GatewayProtocolError(400, "invalid_image_request") }
-    if let format = fields.removeValue(forKey: "response_format"), format.string != "b64_json" {
-      throw GatewayProtocolError(400, "unsupported_response_format")
+    if let mask = fields["mask"] {
+      guard let url = mask["image_url"]?.string else {
+        throw GatewayProtocolError(400, "invalid_mask")
+      }
+      total += try ImagePayload(dataURL: url, maximumBytes: ImageLimits.imageBytes).bytes.count
     }
-    if let count = fields.removeValue(forKey: "n"), count.integer != 1 {
-      throw GatewayProtocolError(400, "unsupported_image_count")
+    guard total <= ImageLimits.totalImageBytes else {
+      throw GatewayProtocolError(413, "image_too_large")
     }
-    let stream = fields.removeValue(forKey: "stream")
-    guard stream == nil || stream?.bool != nil else {
-      throw GatewayProtocolError(400, "invalid_request")
-    }
-    streaming = stream?.bool == true
+    self.model = model
+    streaming = fields["stream"]?.bool == true
     self.editing = editing
-    fields["type"] = .string("image_generation")
-    if fields["action"] == nil { fields["action"] = .string(editing ? "edit" : "generate") }
-    if let mask {
-      try mask.validateMask(for: images[0])
-      fields["input_image_mask"] = .object(["image_url": .string(mask.dataURL)])
-    }
-    let tool = try ImageToolRequest(.object(fields), configuration: configuration)
-    var content: [JSONValue] = [.object(["type": .string("input_text"), "text": .string(prompt)])]
-    content += images.map {
-      .object(["type": .string("input_image"), "image_url": .string($0.dataURL)])
-    }
-    var request = try ResponseRequest(
-      normalizedImage: JSONValue.object([
-        "model": .string(tool.model.hostModel),
-        "input": .array([.object(["role": .string("user"), "content": .array(content)])]),
-        "tools": .array([tool.document]),
-        "tool_choice": .object(["type": .string("image_generation")]),
-        "stream": .bool(streaming),
-      ]), imageConfiguration: configuration)
-    request.requirements = try .init(route: .images, imageModel: tool.model.id)
-    response = request
+    let missingModel = fields["model"] == nil
+    if missingModel { fields["model"] = .string(model) }
+    body =
+      multipart || missingModel ? try JSONValue.object(fields).data(escapingSlashes: false) : data
   }
 }

@@ -29,7 +29,7 @@ func imageMultipart(_ data: Data, contentType: String) throws -> [ImagePart] {
   var offset = first.count
   var result: [ImagePart] = []
   while offset < data.count {
-    guard result.count < 24,
+    guard result.count < 40,
       let end = data.range(of: Data("\r\n\r\n".utf8), in: offset..<data.count),
       end.lowerBound - offset <= 4096,
       let header = String(data: data[offset..<end.lowerBound], encoding: .utf8)

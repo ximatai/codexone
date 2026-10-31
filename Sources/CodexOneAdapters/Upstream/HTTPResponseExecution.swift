@@ -5,6 +5,8 @@ import NIOCore
 import NIOHTTP1
 
 struct HTTPResponseExecution: Sendable {
+  let imageCapacity: ImageCapacity
+  var clientHeaders = HTTPHeaders()
   let client: HTTPClient
   let webSocket: WebSocketUpstream
   let configuration: ResponsesConfiguration
@@ -28,7 +30,8 @@ struct HTTPResponseExecution: Sendable {
     let effectiveImages =
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
-      client: client, webSocket: webSocket, configuration: configuration, token: token,
+      imageCapacity: imageCapacity, clientHeaders: clientHeaders, client: client,
+      webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
       gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
       effectiveImageModels: effectiveImages,
@@ -36,19 +39,18 @@ struct HTTPResponseExecution: Sendable {
         var model = model
         model.visionInput = model.visionInput == true && policy.capabilities?.visionInput == true
         model.imageGeneration =
-          model.imageGeneration == true && effectiveImages.contains { $0.hostModel == model.id }
+          model.imageGeneration == true && !effectiveImages.isEmpty
         return model
       })
   }
 
   func executionModel(_ request: ResponseRequest) throws -> SingleIdentityConfiguration.Model {
-    let models = request.requirements.route == .images ? configuration.models : effectiveModels
-    guard let model = models.first(where: { $0.id == request.model }),
+    guard let model = effectiveModels.first(where: { $0.id == request.model }),
       !request.requirements.visionInput || model.visionInput == true,
       request.requirements.imageModel == nil
         || (model.imageGeneration == true
           && effectiveImageModels.contains {
-            $0.id == request.requirements.imageModel && $0.hostModel == request.model
+            $0.id == request.requirements.imageModel
           })
     else { throw GatewayProtocolError(403, "model_not_allowed") }
     return model
@@ -100,10 +102,10 @@ struct HTTPResponseExecution: Sendable {
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
-        upstream.headers = [
-          "content-type": "application/json",
-          "accept": wireStreaming ? "text/event-stream" : "application/json",
-        ]
+        upstream.headers = clientHeaders
+        upstream.headers.add(name: "content-type", value: "application/json")
+        upstream.headers.add(
+          name: "accept", value: wireStreaming ? "text/event-stream" : "application/json")
         if request.usesResponsesLite {
           upstream.headers.add(name: "x-openai-internal-codex-responses-lite", value: "true")
         }
@@ -116,7 +118,7 @@ struct HTTPResponseExecution: Sendable {
         }
         upstream.body = .bytes(
           ByteBuffer(
-            data: try wireDocument.data(escapingSlashes: request.requirements.route != .images))
+            data: try wireDocument.data())
         )
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(

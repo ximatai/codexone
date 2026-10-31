@@ -127,16 +127,24 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
   public let cachedTokens: Int64
   public let imageInputTokens: Int64?
   public let imageOutputTokens: Int64?
+  public let nativeImages: Bool?
+  public let imageInputTextTokens: Int64?
+  public let imageInputImageTokens: Int64?
   public let images: Int64
   public let estimatedMicros: Int64
   public let completeness: Completeness
   public init(
     revision: Int64, inputTokens: Int64, outputTokens: Int64,
     cachedTokens: Int64, images: Int64, estimatedMicros: Int64, completeness: Completeness,
-    imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil
+    imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil,
+    imageInputTextTokens: Int64? = nil, imageInputImageTokens: Int64? = nil,
+    nativeImages: Bool? = nil
   ) {
     self.imageInputTokens = imageInputTokens
     self.imageOutputTokens = imageOutputTokens
+    self.nativeImages = nativeImages
+    self.imageInputTextTokens = imageInputTextTokens
+    self.imageInputImageTokens = imageInputImageTokens
     self.revision = revision
     self.inputTokens = inputTokens
     self.outputTokens = outputTokens

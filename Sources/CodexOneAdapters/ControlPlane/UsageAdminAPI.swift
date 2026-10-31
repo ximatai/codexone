@@ -100,6 +100,8 @@ public struct UsageAdminAPI: Sendable {
         "estimatedMicros": metric(value.estimatedMicros),
         "imageInputTokens": metric(value.imageInputTokens),
         "imageOutputTokens": metric(value.imageOutputTokens),
+        "imageInputTextTokens": metric(value.imageInputTextTokens),
+        "imageInputImageTokens": metric(value.imageInputImageTokens),
       ])
     }
     let totals = report.totals

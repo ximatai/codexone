@@ -20,30 +20,16 @@ public struct ImageConfiguration: Sendable, Codable {
       try rejectUnknownImageFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
       let fields = try decoder.container(keyedBy: CodingKeys.self)
       id = try fields.decode(String.self, forKey: .id)
-      hostModel = try fields.decode(String.self, forKey: .hostModel)
-      sizePolicy = try fields.decode(SizePolicy.self, forKey: .sizePolicy)
-      supportsTransparency = try fields.decode(Bool.self, forKey: .supportsTransparency)
-      supportsInputFidelity = try fields.decode(Bool.self, forKey: .supportsInputFidelity)
+      hostModel = try fields.decodeIfPresent(String.self, forKey: .hostModel) ?? ""
+      sizePolicy = try fields.decodeIfPresent(SizePolicy.self, forKey: .sizePolicy) ?? .fixed1536
+      supportsTransparency =
+        try fields.decodeIfPresent(Bool.self, forKey: .supportsTransparency) ?? false
+      supportsInputFidelity =
+        try fields.decodeIfPresent(Bool.self, forKey: .supportsInputFidelity) ?? false
       inputMicrosPerMillion = try fields.decode(Int64.self, forKey: .inputMicrosPerMillion)
       outputMicrosPerMillion = try fields.decode(Int64.self, forKey: .outputMicrosPerMillion)
     }
-    func accepts(size: String) -> Bool {
-      if size == "auto" { return true }
-      switch sizePolicy {
-      case .fixed1536:
-        return ["1024x1024", "1536x1024", "1024x1536"].contains(size)
-      case .flexible3840:
-        let parts = size.split(separator: "x", omittingEmptySubsequences: false)
-        guard parts.count == 2, let width = Int(parts[0]), let height = Int(parts[1]),
-          String(width) == parts[0], String(height) == parts[1],
-          (16...3840).contains(width), (16...3840).contains(height),
-          width % 16 == 0, height % 16 == 0,
-          max(width, height) <= 3 * min(width, height),
-          (655_360...8_294_400).contains(width * height)
-        else { return false }
-        return true
-      }
-    }
+
   }
   public let defaultModel: String
   public let models: [Model]
@@ -61,7 +47,6 @@ public struct ImageConfiguration: Sendable, Codable {
       models.allSatisfy({ model in
         !model.id.isEmpty && model.id.utf8.count <= 128 && !model.id.utf8.contains(0)
           && !hostIDs.contains(model.id)
-          && hosts.contains(where: { $0.id == model.hostModel && $0.imageGeneration == true })
           && (0...500_000_000).contains(model.inputMicrosPerMillion)
           && (0...500_000_000).contains(model.outputMicrosPerMillion)
       })
@@ -77,7 +62,7 @@ private struct ImageField: CodingKey {
   init?(stringValue: String) { self.stringValue = stringValue }
   init?(intValue: Int) { return nil }
 }
-private func rejectUnknownImageFields(_ decoder: any Decoder, allowed: Set<String>) throws {
+func rejectUnknownImageFields(_ decoder: any Decoder, allowed: Set<String>) throws {
   let fields = try decoder.container(keyedBy: ImageField.self)
   guard fields.allKeys.allSatisfy({ allowed.contains($0.stringValue) }) else {
     throw ExecutionError.invalidCommand

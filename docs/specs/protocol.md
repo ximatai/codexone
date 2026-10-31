@@ -45,15 +45,15 @@
 
 ## P12：有边界的图片生成与编辑
 
-Images generation/edits 是下游产品入口；上游可通过已验证的 Responses 图片工具适配，不要求提供者具有同名 Images 端点。必须明确输入输出映射、模型/参数、错误 envelope、使用量与终态含义，不能依赖对话模型名称推导生成权限或硬编码唯一编程模型。
+Images generation/edits 是独立原生产品入口，直接请求所选身份的 /backend-api/codex/images/*，不经 Responses 图片工具改写。必须明确透传、图片模型授权、错误 envelope、用量与终态含义，不能依赖对话模型名称推导图片权限。Responses 托管图片工具保持独立能力与计量契约。
 
-edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入（含适用的 multipart）、返回格式及流式行为；图片数量、类型、解码尺寸、multipart/掩码与输出均有界，未支持组合在 dispatch 前拒绝。直接提交的图片数据无需先开通公共文件上传/读取；不得默认抓取任意远端 URL。编辑与生成复用图片能力判定和执行治理，视觉输入仍单独判定。客户端对已完成编辑主动发出下一次编辑属于新执行；网关不得将断线恢复自动变为重新编辑。
+edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入（含适用的 multipart）、返回格式及流式行为；图片数量、类型、解码尺寸、multipart/掩码与输出均有界；提供者参数组合交由原生端点判定。直接提交的图片数据无需先开通公共文件上传/读取；不得默认抓取任意远端 URL。编辑与生成复用图片能力判定和执行治理，视觉输入仍单独判定。含图历史及图片工具可与 compact、流式压缩组合，权限不放宽。Responses 图片工具要求图片模型在 Key 有效 imageModels 中、对话模型已授权且配置 imageGeneration: true；Images 直接使用公开图片模型调用原生端点，hostModel 仅为无效兼容字段。客户端对已完成编辑主动发出下一次编辑属于新执行；网关不得将断线恢复自动变为重新编辑。
 
 ## P13：受控单身份 HTTP 配置契约
 
 单身份 Key 先验证，再由应用层按模型与每个硬引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体；字段、工具与对象类型按 P27 透传。
 
-请求体为 8 MiB（与传输聚合一致）、JSON 深度 64、硬引用 32；input 条目与工具声明数量只受总字节约束。普通 Responses 上游 JSON 与累计流 32 MiB，单 SSE 事件/WS 帧 8 MiB。连接最多 8，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
+请求体为 32 MiB（与下游传输聚合一致）、JSON 深度 64、硬引用 32；input 条目与工具声明数量只受总字节约束。普通 Responses 上游 JSON 与累计流 32 MiB，单 SSE 事件/WS 帧 8 MiB。连接最多 8，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
 
 归属持久屏障在每个含对象的上游事件写下游之前完成；先确认终态属于当前执行，再观察可信用量，随后做对象绑定/输出。HTTP SSE的生命周期事件 response.id 及任何 response_id 必须与本执行首次出现的 response ID 一致，不从外来终态获取计量证据；稀疏HTTP流不额外要求先created。上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。
 
@@ -63,7 +63,7 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。未支持控制明确拒绝；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
 
-传输帧/聚合按图片最大包络为8 MiB，普通下游请求同为 8 MiB，单上游事件 8 MiB、累计执行 32 MiB；每 peer 入站队列及原生请求调度队列分别共享 64 条/8 MiB 上限，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由框架校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
+下游 WS 消息/分片聚合为 32 MiB，单上游事件 8 MiB、累计执行 32 MiB；上游 peer 入站队列为 64 条/8 MiB，下游入站及原生请求调度队列各为 64 条/48 MiB，超过 8 MiB 正文另受共享预算约束，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由帧读取层校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
 HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 只校验生命周期归属：turn 的第一个生命周期事件确定 response ID，此后生命周期事件与 response_id 必须一致，否则关闭连接；连接内最近 1024 个已开始的 response ID 不能开始新 turn。turn 外事件（如额度通知）及新 turn 开始前属于旧 turn 的 response.* 输出被丢弃，不进入下一 attempt。提供者 error 事件结束当前 turn，以带 status 的 error 帧下发，连接保持可用；终态通过已准入 attempt 注册的同步证据 sink 观察用量，其他 lane 失败不得清除已接收的可信用量。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
 
@@ -73,7 +73,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 完整 inline 消息、function/custom tool 结果、additional_tools 包及携完整 encrypted_content 的 reasoning/compaction 中的 id 为客户端本地关联标签，发送上游前移除。只有能让提供者读取存储状态的引用是硬引用：previous_response_id、item_reference、仅凭 ID 指向的 image_generation_call（无 result）与 reasoning（无 encrypted_content）；它们必须已绑定到当前主体/身份，否则 dispatch 前拒绝。call_id、加密上下文指纹和其他条目 ID 是路由提示（最近 64 个）：账号池中已知时优先选择其账号，未知或属于他人时忽略，不拒绝也不建立读取权。加密内容只能由签发它的上游账号解密，跨账号时由提供者拒绝。
 
-WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 8 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
+WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 32 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
 
 reasoning、text、stream_options、include、tool_choice、metadata/client_metadata 等控制与可选字段原样转发；只有 reasoning 内 null 成员、text.verbosity/format、tool_choice、parallel_tool_calls 的 null 在转发前移除。tools 缺省与显式空数组保持区别，不合成工具声明，也不静默删除工具声明。
 
@@ -118,9 +118,9 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 首个执行 owner 与连接 owner 是同一结构化任务组的兄弟，通过容量一交接传递首 context/认证及首 turn 结果。首 turn 结束立即交回自己的最终化 ticket，上游 socket 仍由连接 owner 监督；后续 turn 独立准入和最终化。首执行的配置总期限包含连接与升级；首准入失败、超时、下游断开或 Runtime 关闭必须结束交接双方并等待网络任务。保持 P13/P14 的 lane、排队、帧和连接寿命边界，共用协议/用量观察，不新增恢复或自动重试语义。
 
-图片首个实现的配置映射、受支持参数、容量与期限见[图片配置](../development/images.md)。所有入口将同一能力要求随 admission 持久保存并在原子准入复核；公开图片模型与内部宿主模型分离，不因宿主映射授予对话权限。完整图片只在可信 response.completed 后完成，output_item.done 与预览均不是整个操作的成功承诺。
+图片原生入口的配置、透传、并发与期限见[图片配置](../development/images.md)。所有入口将能力要求随 admission 持久保存并在原子准入复核；Images 不再选择宿主或改写为 Responses。原生非流式 200 仅在有效 data[].b64_json 非空时判成功；SSE 仅可信图片 completed 事件及有效图片授予完成证据。Responses 托管图片工具仍以可信 response.completed 判定，output_item.done 与预览不承诺整个操作成功。
 
-Images multipart的外部8MiB上传、单图4MiB和合计6MiB限制与内部编码预算分别执行。仅经过Images校验后生成的Responses封套可用9MiB，不转义base64斜杠，包含8MiB base64及有界提示/工具封套余量。对应上游WS写入只在该内部图片路径使用9MiB；普通请求、下游帧与共享入站队列、提供者事件仍保持原限制。不得通过网络字段选取内部预算。
+数据服务持有一个 48 MiB 共享正文预算。超过 8 MiB 时计入整个正文：HTTP Content-Length 在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请，均在缓冲前取得租约。预算不足不排队：HTTP 503 capacity_exhausted、Retry-After: 1；WS 带 status: 503 的 error 帧并丢弃整条消息、保持连接。超过 32 MiB 为 413。解析/派发结束、失败、断开、超时及连接关闭均归还租约，重复释放幂等。预算约束原始正文，不等于进程 RSS；JSON 树、序列化及 base64 会产生额外内存。Images multipart 校验后转换为原生 JSON（24 MiB 图片编码为 32 MiB），不再构造工具封套；原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
 
 可信离线profile导入及字段边界见[模型快照](../development/model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
@@ -148,6 +148,10 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 
 客户端与提供者协议持续演进，网关不以封闭允许集合解释它们。复盘与取舍见 [开放协议透传](../changes/open-protocol-passthrough/proposal.md)。
 
-- 请求：除 P09/P13/P15 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；只有图片编辑 mask 解码校验首图。
+- 请求：Images JSON 原字节转发，仅缺 model 时补部署默认并重新序列化；multipart 仅在 /v1 edits 转换为原生 JSON。未知字段保留，尺寸/质量/背景/格式/fidelity/n 由提供者判定；网关检查模型/Key 授权、stream 类型、内联参考图与容量边界，对象须含字符串 image_url。Responses 除 P09/P13/P15 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；Images 参考图/mask 只接受有界内联 PNG/JPEG/WebP，mask 参数关系交由提供者判定。
 - 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
 - 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds，message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429 并按 resets_in_seconds/Retry-After 设置账号 cooldown。SSE 已开始时以 response.failed 下发，原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
+
+原生 Images SSE 按完整事件有界暂存后检查，普通事件原字节下发（含注释、event 行、CRLF、`[DONE]`），`type: error` 原文不下发，按上述 P27 脱敏后结束；不缓冲整流，沿用单事件与总量上限。
+
+原生 Images 两前缀均 POST 至所选身份上游 /backend-api/codex/images/generations|edits；与 Responses HTTP 共用受限客户端标识头，额外转发 x-codex-image-turn-id，账号认证由服务注入。回传 x-codex-imagegen-request-id 和网关 x-request-id。服务持有独立 imageConcurrency 许可池（1—8、默认2），等待最多30秒；超时429 image_capacity_exhausted / Retry-After: 1，无 intent/派发。成功、失败、取消与断开均只归还一次许可；账本未知责任不随许可归还而释放。
