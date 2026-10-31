@@ -10,6 +10,7 @@ import Synchronization
 
 /// Configured data-plane lifetime. All connection tasks are children of this service.
 public struct ResponsesDataService: Service {
+  private let protocolExtensions: ClientProtocolExtensionRegistry?
   private let group: any EventLoopGroup
   private let port: Int
   private let proxy: UpstreamHTTPProxy?
@@ -26,9 +27,11 @@ public struct ResponsesDataService: Service {
   public init(
     group: any EventLoopGroup, port: Int, configuration: SingleIdentityConfiguration,
     store: any ExecutionStore, finalizer: any FinalizationSink, proxy: UpstreamHTTPProxy? = nil,
+    protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try configuration.validate()
+    self.protocolExtensions = protocolExtensions
     self.group = group
     self.port = port
     self.proxy = proxy
@@ -44,12 +47,13 @@ public struct ResponsesDataService: Service {
     store: any AccountRoutingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
     provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil,
+    protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try self.init(
       group: group, port: port, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
-      target: .openAI, proxy: proxy, onBound: onBound)
+      target: .openAI, proxy: proxy, protocolExtensions: protocolExtensions, onBound: onBound)
   }
   init(
     group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
@@ -57,9 +61,11 @@ public struct ResponsesDataService: Service {
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
     provider: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
     proxy: UpstreamHTTPProxy? = nil,
+    protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     onBound: @escaping @Sendable (Int) -> Void
   ) throws {
     try configuration.validate()
+    self.protocolExtensions = protocolExtensions
     self.group = group
     self.port = port
     self.proxy = proxy
@@ -115,7 +121,8 @@ public struct ResponsesDataService: Service {
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let executor = HTTPResponseExecution(
-      imageCapacity: imageCapacity, controlCapacity: controlCapacity,
+      protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
+      controlCapacity: controlCapacity,
       controlAffinity: controlAffinity, client: client,
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
@@ -174,7 +181,8 @@ public struct ResponsesDataService: Service {
                     reservations: reservations),
                   try executor.access.digest(head.headers["authorization"]), reservations,
                   forwardedClientHeaders(
-                    head.headers, fingerprint: configuration.clientFingerprint),
+                    head.headers, fingerprint: configuration.clientFingerprint,
+                    registry: protocolExtensions),
                   HTTPHeaders(
                     head.headers.filter {
                       ["user-agent", "originator", "version"].contains($0.name.lowercased())
@@ -268,7 +276,7 @@ public struct ResponsesDataService: Service {
           let body = try await downstream.nextBody()
           if try await handleWebSocketControl(
             body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
-            rate: &rate
+            rate: &rate, registry: executor.protocolExtensions
           ) {
             continue
           }
@@ -334,7 +342,8 @@ public struct ResponsesDataService: Service {
           guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
           if try await handleWebSocketControl(
             body, upstream: upstream, downstream: downstream,
-            headers: executor.protocolClientHeaders, rate: &controlRate
+            headers: executor.protocolClientHeaders, rate: &controlRate,
+            registry: executor.protocolExtensions
           ) {
             lanes.addTask {
               try await readWebSocketCommand(downstream, activity: activity, commands: commands)
@@ -580,7 +589,8 @@ public struct ResponsesDataService: Service {
     var executor = try await executor.authorized(
       executor.access.digest(head.headers["authorization"]))
     executor.clientHeaders = forwardedClientHeaders(
-      head.headers, fingerprint: executor.configuration.clientFingerprint)
+      head.headers, fingerprint: executor.configuration.clientFingerprint,
+      registry: executor.protocolExtensions)
     if endpoint == "/models", head.method == .GET {
       let codexDirectory =
         URLComponents(string: head.uri)?.queryItems?.contains {

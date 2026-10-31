@@ -5,6 +5,7 @@ import NIOCore
 import NIOHTTP1
 
 struct HTTPResponseExecution: Sendable {
+  var protocolExtensions: ClientProtocolExtensionRegistry? = nil
   let imageCapacity: ImageCapacity
   var controlCapacity = ControlCapacity()
   var controlAffinity = ControlAffinity()
@@ -33,7 +34,8 @@ struct HTTPResponseExecution: Sendable {
     let effectiveImages =
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
-      imageCapacity: imageCapacity, controlCapacity: controlCapacity,
+      protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
+      controlCapacity: controlCapacity,
       controlAffinity: controlAffinity, clientHeaders: clientHeaders,
       protocolClientHeaders: protocolClientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,

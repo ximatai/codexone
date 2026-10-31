@@ -121,7 +121,8 @@ extension HTTPResponseExecution {
           var upstream = HTTPClientRequest(url: url.string! + query)
           upstream.method = head.method
           upstream.headers = forwardedClientHeaders(
-            head.headers, fingerprint: configuration.clientFingerprint)
+            head.headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions
+          )
           let clientConnectionHeaders = Set(
             head.headers["connection"].flatMap {
               $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
