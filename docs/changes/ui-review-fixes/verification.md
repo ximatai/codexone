@@ -48,3 +48,50 @@
 独立 subagent 源码 review：P0 0；发现表头规则误覆盖 td（P1）、会话清理闭包与无界恢复记录（P2），均已修复；页码统一正整数校验并参数化测试。Key 翻页改为更新后滚动/聚焦，避免旧行布局与焦点影响落点。
 
 未修项：无。无后端 API/schema/准入语义变更。用量游标不进入 query，只记录页码并在会话内存保留游标，符合已定界面安全边界；刷新整页后没有游标会明确退回第一页。仅本机开发 SPA 合成验收；本次未运行生产网关 CSP/live 脚本、后端或跨平台构建，未扩张为真实链路验收。
+
+## 复核返工 · 2026-10-31
+
+本轮仅当前 worktree、macOS arm64 与全新 Chrome 合成上下文；授权边界沿用上轮。未修改 STATUS，未访问其他 worktree/主 checkout、SSH、部署实例、真实订阅，未运行 Docker/Linux、push 或 PR。
+
+新增浏览器回归位于 `web/tests/e2e/ui-review-rework.spec.ts`；下表使用实际测试标题前缀定位。
+
+| 返工项 | 修复方式 | 回归测试名/前缀 |
+|---|---|---|
+| P2-1 | 收起更新后将展开按钮滚至视口中央并保留焦点 | `P2-1: collapsing fifty reminders` |
+| P2-2 | Key 仅 POP 恢复，等待摘要与列表布局稳定且每个导航只定位一次；用量按筛选+页码分别存游标/窗口/位置，PUSH 新进入从顶部读取当前 query | `P2-2 Key: POP restores`、`P2-2 Usage: pages keep separate POP positions`；Vitest `P2-2 restores only the matching page snapshot on POP=%s` |
+| P2-3 | 首次错误只留表格内一处与重试，已有快照失败才用外层横幅 | `P2-3: first Key failure has one error` |
+| P2-4 | 用量首次失败无快照用语；成功后才显示快照时刻；概览七类来源合为一条横幅，区块首次失败不造空态 | `P2-4: first failure has no snapshot claim` |
+| P2-5 | 分页旁提示失败目标页、原快照时刻及重试；不清原页，重试沿用失败游标与固定窗口，仍可操作分页 | `P2-5: 503 page failure`、`P2-5: 429 page failure` |
+| P2-6 | 登录自动聚焦凭证；取消/Esc 回到创建按钮或菜单触发按钮；Key 目标行可聚焦且有名称 | `P2-6: login, Key targets and cancel/Escape` |
+| 颜色语义 | 到期 Key 列表开关及一次性凭证的纯开关标签中性；非状态折叠入口/说明使用主色；有授权异常的账号状态点为警告色 | `Colors: expired switches are neutral`、`P2-6 Colors: rotating an expired Key` |
+| 额度卡链接 | 账号名称携带 target ID，复用提醒的账号详情机制 | `Quota: an account name opens that account's details` |
+
+独立 subagent 源码复核：P0/P1 均为 0，发现三处 P2，均已修正并补回归：POP 慢速恢复失败/重试期间冻结原位置（Vitest `P2-2 P2-5 preserves POP scroll through a slow failed restore and retry`）；旧轮换框退场发现新凭证框时不抢焦点；一次性凭证框的开关标签改中性。轮换成功回归等待旧框实际卸载后检查焦点仍在新框。快速筛选的旧渲染不得提前消耗后续翻页定位；既有 `K01 K02 K05` 覆盖该路径，并在断言前等待已选筛选及翻页定位实际生效。
+
+### 合成走查与截图
+
+重跑 `artifacts/ui-review/after.mjs`、`after-usage.mjs`，以及 `review/overview2.mjs`、`keys.mjs`、`forms.mjs`、`usage.mjs`、`misc.mjs`、`misc2.mjs`、`hidden.mjs`。复核原图保留，新增图输出至忽略的 `artifacts/ui-review/after/rework-*.png`；走查 JSON/日志同样只留在忽略目录。
+
+本轮新增 42 张复核/诊断 after PNG，另更新既有 35 张综合 after PNG。尺寸包括 1920×1080、1440×900、1280×800、390×844。直接查看收起后焦点、概览失败汇总、底部分页 429 与窄屏详情截图；观测：新进入 Key/用量的 scrollY 均为 0，用量第二页返回 1320→1320；分页 429 横幅 y≈783 且下一页可操作；菜单取消/Esc 返回对应按钮；隐藏目标重置后仍定位高亮。所有走查的外部阻断列表均为空，模拟 401/429/503 的控制台网络错误属于注入的失败。
+
+### 最终命令结果
+
+| 命令 | 退出码 | 耗时 | 关键结果 |
+|---|---:|---:|---|
+| `./scripts/verify.sh --web --chrome` | 0 | 63.60 秒 | lint、格式、类型、构建；Vitest 131 项、Chrome 32 项全通过 |
+| `node artifacts/ui-review/after.mjs` | 0 | 35.92 秒 | 四种视口、19 项原走查、35 张综合 after，外部请求 0 |
+| `node artifacts/ui-review/after-usage.mjs` | 0 | 8.50 秒 | 慢速第二页返回恢复 1320→1320 |
+| `node artifacts/ui-review/review/overview2.mjs` | 0 | 15.01 秒 | 50 项提醒收起焦点、首次/旧快照失败汇总 |
+| `node artifacts/ui-review/review/keys.mjs` | 0 | 15.32 秒 | Key 分页/筛选/返回、轮换 Esc 焦点、精确到期时刻 |
+| `node artifacts/ui-review/review/forms.mjs` | 0 | 23.07 秒 | 首次 Key 429、登录焦点与 429、1920/1280 表头 |
+| `node artifacts/ui-review/review/usage.mjs` | 0 | 33.05 秒 | 1440/1920 分页、详情 Esc 焦点、首次 503/429、翻页 429 |
+| `node artifacts/ui-review/review/misc.mjs` | 0 | 11.32 秒 | 侧栏新进入 Key/用量均回顶，分页 429 原地反馈可重试 |
+| `node artifacts/ui-review/review/misc2.mjs` | 0 | 5.94 秒 | 已有第二页记忆时新进入仍为第一页，scrollY=0 |
+| `node artifacts/ui-review/review/hidden.mjs` | 0 | 4.88 秒 | 目标隐藏/重置后定位，取消返回原菜单按钮 |
+| `python3 scripts/check_docs.py` | 0 | 0.06 秒 | 209 篇 Markdown 的链接、入口与变更结构通过 |
+
+表内 `after.mjs`、`review/keys.mjs`、`review/misc.mjs` 为最终代码复验耗时；其余为本轮原脚本重跑。九种走查共执行十二次，全部退出 0，累计 232.95 秒。最终复验的综合脚本仍确认外部请求 0、表头 64 px、用量返回位置一致。
+
+迭代说明：首轮完整入口退出 1（66.84 秒），Key 快速筛选/翻页时序及移动端流程未通过；随后修正翻页定位竞态与过时测试定位，移动端定向复验通过，最终完整入口结果以上表为准。早期源码/测试迭代日志保留在忽略目录，未将中途失败写成通过。
+
+未修项：无。本轮新增 11 项 Chrome 回归及 3 项 Vitest 回归；既有用量慢速恢复/400 游标回退测试继续通过。仅前端合成验收，未执行后端、生产 CSP/live 或跨平台验证。提交前检查新增文件/差异未发现本机私有路径、外部私有地址、真实凭证或私钥；一次性凭证 fixture 均为合成值。
