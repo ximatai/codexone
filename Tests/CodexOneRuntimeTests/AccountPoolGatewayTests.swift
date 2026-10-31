@@ -26,7 +26,7 @@ private struct PoolFixture {
   let worker: Task<Void, any Error>
   let policy: AccountPoolPolicy
   let gateway: AccountPoolGateway
-  static func make(expired: Bool = false) async throws -> Self {
+  static func make(expired: Bool = false, remaining: Int64? = nil) async throws -> Self {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let path = directory.appendingPathComponent("core.sqlite").path
@@ -40,7 +40,8 @@ private struct PoolFixture {
         id: id, namespace: "synthetic/\(id)",
         credential: AccountCredential(
           accessToken: "synthetic-\(id)", refreshToken: "synthetic-refresh-\(id)", idToken: nil,
-          expiresAtUnixSeconds: expired ? 1 : 2_000_000_000))
+          expiresAtUnixSeconds: remaining.map { Int64(Date().timeIntervalSince1970) + $0 }
+            ?? (expired ? 1 : 2_000_000_000)))
       _ = try await store.setAccountMode(id: id, revision: account.revision, mode: .enabled)
     }
     let key = try await store.createKey(
@@ -123,7 +124,7 @@ private struct PoolFixture {
 
 @Test(.timeLimit(.minutes(1)))
 func accountPoolReservesCapacityBeforePreparationAndRejectsExpiredWithoutDispatch() async throws {
-  let f = try await PoolFixture.make(expired: true)
+  let f = try await PoolFixture.make(remaining: 300)
   let tickets = try [f.finalizer.reserve(), f.finalizer.reserve()]
   let probe = PoolProbe()
   let coordinator = ExecutionCoordinator(store: f.store, finalizer: f.finalizer)
@@ -168,7 +169,7 @@ private actor PoolRefreshProvider: AccountRefreshProvider {
 }
 @Test(.timeLimit(.minutes(1)))
 func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async throws {
-  let f = try await PoolFixture.make(expired: true)
+  let f = try await PoolFixture.make(remaining: 300)
   let provider = PoolRefreshProvider()
   let refresh = try AccountRefreshSupervisor(application: f.credentials, provider: provider)
   let owner = Task { try await refresh.run() }
@@ -213,8 +214,8 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
 
 @Test(.timeLimit(.minutes(1))) func accountPoolRefreshFailureDoesNotFanOutOrDispatch() async throws
 {
-  for failure: AccountRefreshError in [.authorizationRequired, .unavailable] {
-    let f = try await PoolFixture.make(expired: true)
+  for failure: AccountRefreshError in [.authorizationRequired, .unavailable, .notCompleted] {
+    let f = try await PoolFixture.make(remaining: 300)
     let provider = PoolRefreshProvider(failure: failure)
     await provider.release()
     let refresh = try AccountRefreshSupervisor(application: f.credentials, provider: provider)
@@ -235,7 +236,8 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
     #expect(f.finalizer.outstanding == 0)
     #expect(
       try await f.store.accountCredential(id: "a").account.authorization
-        == (failure == .authorizationRequired ? .requiresAuth : .authUncertain))
+        == (failure == .authorizationRequired
+          ? .requiresAuth : failure == .notCompleted ? .ready : .authUncertain))
     #expect(try await f.store.accountCredential(id: "b").account.authorization == .ready)
     refresh.stopAccepting()
     try await owner.value
@@ -286,4 +288,19 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
     try await owner.value
     try await f.close()
   }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func accountPoolOutsideFiveMinuteWindowDispatchesWithoutRefresh() async throws {
+  let f = try await PoolFixture.make(remaining: 600)
+  let probe = PoolProbe()
+  try await f.gateway.execute(model: "synthetic-text", references: []) { context, work in
+    #expect(work.account.credentialVersion == 1)
+    #expect(work.credential.accessToken == "synthetic-\(work.account.id)")
+    await probe.called(context.admission)
+    return nil
+  }
+  #expect(await probe.calls.count == 1)
+  #expect(try await f.store.listAccounts().allSatisfy { $0.credentialVersion == 1 })
+  try await f.close()
 }

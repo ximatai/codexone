@@ -532,3 +532,21 @@ func subscriptionDataAccessRejectsChangedScopeAndAcceptsExpiredTrustedIDBaseline
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func refusedOAuthConnectionPreservesValidCredentialAndClosesIntentWithoutRotation() async throws {
+  try await withOAuth { h in
+    let login = try await h.login()
+    let account = try await h.app.importVerified(
+      id: "account", namespace: login.namespace, credential: login.credential)
+    await h.server.close()
+    await #expect(throws: AccountRefreshError.notCompleted) {
+      try await h.supervisor.refreshAccount(id: account.id, revision: account.revision)
+    }
+    let current = try await h.store.accountCredential(id: account.id).account
+    #expect(current.authorization == .ready)
+    #expect(current.refreshIntent == nil)
+    #expect(current.credentialVersion == account.credentialVersion)
+    #expect(h.server.counts.calls == 1)
+  }
+}

@@ -280,6 +280,15 @@ private actor ObservationScanStore: AccountObservationStore {
       id: id, credentialVersion: credentialVersion, intent: intent,
       authorizationRequired: authorizationRequired)
   }
+  func abandonUncompletedAccountRefresh(id: String, credentialVersion: Int64, intent: String)
+    async throws -> ManagedAccount
+  {
+    try await base.abandonUncompletedAccountRefresh(
+      id: id, credentialVersion: credentialVersion, intent: intent)
+  }
+  func credentialUpdatedAtUnixSeconds(id: String) async throws -> Int64? {
+    try await base.credentialUpdatedAtUnixSeconds(id: id)
+  }
   func replaceVerifiedAccountCredential(
     id: String, revision: Int64, namespace: String, envelope: String
   ) async throws -> ManagedAccount {

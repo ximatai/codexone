@@ -219,8 +219,12 @@ public final class AccountRefreshSupervisor: Service, AccountRefreshing, Account
       var failure = Self.safeError(error)
       if let work {
         do {
-          _ = try await application.failRefresh(
-            work, authorizationRequired: error as? AccountRefreshError == .authorizationRequired)
+          if error as? AccountRefreshError == .notCompleted {
+            _ = try await application.abandonUncompletedRefresh(work)
+          } else {
+            _ = try await application.failRefresh(
+              work, authorizationRequired: error as? AccountRefreshError == .authorizationRequired)
+          }
         } catch ExecutionError.conflict {
           // A use case may already have closed this intent, or a newer truth superseded it.
         } catch { failure = .storageUnavailable }

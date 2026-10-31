@@ -336,6 +336,13 @@ export function AccountManagement() {
                 接入于 {utc(account.createdAtUnixSeconds)}
               </Text>
             </div>
+            <Text size="sm">
+              访问凭证到期：{credentialTime(account.accessExpiresAtUnixSeconds)}
+            </Text>
+            <Text size="sm">
+              最近凭证更新：
+              {credentialTime(account.credentialUpdatedAtUnixSeconds)}
+            </Text>
             <DisplayNameEditor
               key={`${account.id}-${account.revision}`}
               account={account}
@@ -563,4 +570,18 @@ function DisplayNameEditor({
       </Group>
     </Stack>
   );
+}
+
+export function credentialTime(
+  value: number | null | undefined,
+  now = Date.now(),
+): string {
+  if (value == null) return "不可用";
+  const seconds = Math.round((value * 1000 - now) / 1000);
+  const absolute = Math.abs(seconds);
+  const relative =
+    absolute < 60
+      ? "刚刚"
+      : `约 ${Math.round(absolute / (absolute < 3600 ? 60 : absolute < 86400 ? 3600 : 86400))} ${absolute < 3600 ? "分钟" : absolute < 86400 ? "小时" : "天"}${seconds >= 0 ? "后" : "前"}`;
+  return `${new Date(value * 1000).toLocaleString()}（${relative}）`;
 }

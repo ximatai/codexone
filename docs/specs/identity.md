@@ -46,7 +46,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 凭证信封采用 AES-256-GCM，格式 v1，独立私有文件提供 32 字节随机主密钥（64 个十六进制字符）；key ID 为该密钥 SHA-256 的前 128 bit，仅用于版本选择。每次随机 nonce，AAD 绑定固定用途/格式、key ID、identity、namespace 与 credential version。原文仅为瞬时应用值，不进入公开 DTO/日志；access/refresh/id token 总计最多 32 KiB、单项最多 16 KiB，信封最多 48 KiB。未知格式、非规范 base64、篡改、错误密钥/身份/版本均拒绝。首个实现不提供主密钥原地轮换或丢失后恢复。
 
-账号身份 namespace 不可原地修改且唯一；初次保存已验证凭证时模式为 disabled，授权状态 ready 不等于路由已启用。模式 enabled/draining/disabled 与授权 ready/refreshing/requires_auth/auth_uncertain 分离。刷新开始按管理 revision CAS 持久刷新 intent，随后才可调用上游；结束按 credential version + intent CAS 原子写新密文/版本和 ready，保留刷新期间最新模式。过时/重复完成不能覆盖新凭证或重新启用已禁用账号。提供者身份变化、刷新不明或本地提交失败进入 auth_uncertain，可信端点明确拒绝且未返回新 token 时进入 requires_auth；两者都禁止自动重用旧 refresh token。无法写结束标记时返回本地状态提交失败，已持久 intent 仍禁止自动恢复 ready。重启在同一启动事务内把所有 refreshing 归纳为 auth_uncertain，不能根据未持久的上游结果推测状态。
+账号身份 namespace 不可原地修改且唯一；初次保存已验证凭证时模式为 disabled，授权状态 ready 不等于路由已启用。模式 enabled/draining/disabled 与授权 ready/refreshing/requires_auth/auth_uncertain 分离。刷新开始按管理 revision CAS 持久刷新 intent，随后才可调用上游；结束按 credential version + intent CAS 原子写新密文/版本和 ready，保留刷新期间最新模式。过时/重复完成不能覆盖新凭证或重新启用已禁用账号。提供者身份变化、刷新不明或本地提交失败进入 auth_uncertain，可信端点明确拒绝且未返回新 token 时进入 requires_auth；两者都禁止自动重用旧 refresh token。仅I20所述可信未完成证据可按原intent/version CAS安全结束并保留旧凭证；无法写结束标记时返回本地状态提交失败，已持久 intent 仍禁止自动恢复 ready。重启在同一启动事务内把所有 refreshing 归纳为 auth_uncertain，不能根据未持久的上游结果推测状态。
 
 每库最多 64 个账号；普通账号审计 4096 条，另预留 64 条供非 disabled→disabled 的真实禁用，总上限 4160。开始刷新须同时为开始和一次结束预留审计空间；普通操作、禁用和重启恢复都计入未完成刷新所需空间，不能占掉其结束位置。结束记录走核心 critical 队列。审计保留安全状态快照、revision、动作和 UTC 秒，不保存凭证原文/摘要或信封。没有删除历史或人工恢复 ready 的旁路。
 
@@ -56,7 +56,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 共享刷新由 Runtime Service 拥有，最多 16 个身份工作、64 个等待者、每身份 16 个等待者、4 个并行提供者调用；加入队列前检查容量。同一 identity 和管理 revision 的请求合并，其他 revision 明确冲突。等待者取消只释放自己的等待配额，不取消共享刷新；即使所有等待者离开，Service 仍负责持久完成或 uncertain。未开始的队列不提前写刷新 intent。
 
-单次提供者调用总期限默认 10 秒、配置上限 30 秒；超时取消并 await 网络工作后持久 auth_uncertain，禁止再发同一 token POST。底层提供者必须有自己的 I/O 边界并响应结构化取消；具体 HTTP 适配须另以真实 socket 验证，不能以等待 helper 证明协议关闭。外部错误只返回安全类型，不能透传提供者错误正文或凭证。
+单次提供者调用总期限默认 10 秒、配置上限 30 秒；总期限超时取消并 await 网络工作后持久 auth_uncertain，禁止再发同一 token POST。底层提供者必须有自己的 I/O 边界并响应结构化取消；具体 HTTP 适配须另以真实 socket 验证，不能以等待 helper 证明协议关闭。外部错误只返回安全类型，不能透传提供者错误正文或凭证。
 
 优雅关闭先拒绝新等待者和工作，未开始的队列不再消耗令牌；已开始的网络收到 owner 停止信号，取消并 await 后收敛持久责任。已获得可信新凭证时应尽量完成本地提交，不因请求等待者离开丢弃结果。父取消也须等待网络与状态收敛，不留下独立 Task。数据库故障标志在原子开始刷新时复核，已失败的核心存储不能因随后可写就重新开始外部刷新；结束/保守标记仍可使用 critical 配额。
 
@@ -68,7 +68,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 刷新先校验已保存可信 ID 的范围（可过期，仅作身份基线）与命名空间，再请求新 token；新 access 必须证明同一 subject/account，双方有 user 声明时也须一致。新 ID 若提供须校验 audience/当前有效期及相同范围；ID/refresh 字段缺省仅可在新 access 范围已确认后保留原值，显式 null/空字段拒绝。expires_in 如提供须为有效正整数，生效期限取其与 access exp 的较早值。身份缺失/冲突、过期、畸形或网络不明均不能发布 ready。
 
-明确 400/401 且无任何新 token 字段的 invalid_grant，或已识别的 refresh_token_expired/reused/invalidated，返回安全的需要重新授权结果并事务写 requires_auth；其他错误/矛盾字段保持 auth_uncertain。服务器错误 prose 不进入日志/DTO，也不用于恢复判断。结束标记提交失败返回存储失败并留下原 intent；重复/过时结束的 CAS 冲突不能冒充存储故障。账号管理流程、具体提供者兼容与池路由另行验收，不能把固定 endpoint 解析或 HTTP 200 作为完整接入证明。
+明确 400/401 且无任何新 token 字段的 invalid_grant，或已识别的 refresh_token_expired/reused/invalidated，返回安全的需要重新授权结果并事务写 requires_auth；其他响应错误/矛盾字段保持 auth_uncertain；建立连接被拒绝、连接建立超时等能够证明未发出token POST的传输失败按I20安全未完成处理，不把读写超时/连接中断当作未完成。服务器错误 prose 不进入日志/DTO，也不用于恢复判断。结束标记提交失败返回存储失败并留下原 intent；重复/过时结束的 CAS 冲突不能冒充存储故障。账号管理流程、具体提供者兼容与池路由另行验收，不能把固定 endpoint 解析或 HTTP 200 作为完整接入证明。
 
 ## I16：初次授权流程责任
 
@@ -81,7 +81,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 ## I17：托管账号 dispatch 的持久复核
 
-Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备须 ready，enabled 可用于新请求；draining 仅供应用已独立核实对象归属或连接身份固定的续接，disabled 不可用。旧访问凭证过期返回需要刷新，不能把它当成失效刷新令牌或自动改写 requires_auth。
+Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备须 ready，enabled 可用于新请求；draining 仅供应用已独立核实对象归属或连接身份固定的续接，disabled 不可用。访问凭证剩余有效期不超过5分钟返回需要刷新，不能把它当成失效刷新令牌或自动改写 requires_auth。
 
 托管 admission 保存非秘密账号快照：管理 revision、credential version、访问期限和可信续接判定；namespace/id 来自既有 owner。快照不从客户端 JSON 构建。SQLite 同一准入事务复核账号 namespace/revision/version、ready、允许模式与当前访问期限，并执行 Key 当前权限和全部资源治理。准备后禁用、刷新或重新授权产生的旧快照拒绝；匹配托管 namespace/id 而省略快照的旧准入路径也拒绝。准入失败不创建 attempt，不可发送生成请求。
 
@@ -96,7 +96,7 @@ Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备�
 
 无归属新请求只取 enabled/ready；有归属可续接 draining，不能迁移到其他账号。事务先排除失效账号快照及身份资源暴露不足的候选，再按当前 intent 数最少、请求 seed 的稳定打散排序，取得唯一执行 intent。Key/主体/全局容量拒绝只返回一次，不扣账号健康，也不逐账号试探。持久 intent 后，无论本地取消、上游失败或部分用量，只交已有 finalizer；不得选择另一账号重放。
 
-池用例在没有有效 access 候选时，才按 ID 稳定顺序选一个合格的过期/正在刷新身份加入刷新 owner；带归属仅选该身份。单个执行至多一次刷新等待，不因失败切换其他账号刷新。管理入口仍按原 revision 加入；内部路由按 credential version 加入已公布版本的现存工作，因此 begin intent 增加 revision 后仍可共享。尚未公布版本的管理工作仅允许相同原 revision 加入；不同代际或无进程 owner 的 refreshing 状态拒绝，不能重放持久未知 intent。
+池用例在没有窗口外有效 access 候选时，才按 ID 稳定顺序选一个合格的剩余有效期不超过5分钟/正在刷新身份加入刷新 owner；带归属仅选该身份。单个执行至多一次刷新等待，不因失败切换其他账号刷新。管理入口仍按原 revision 加入；内部路由按 credential version 加入已公布版本的现存工作，因此 begin intent 增加 revision 后仍可共享。尚未公布版本的管理工作仅允许相同原 revision 加入；不同代际或无进程 owner 的 refreshing 状态拒绝，不能重放持久未知 intent。
 
 请求取消移除自己的刷新等待者并释放尚无生成 intent 的执行 ticket，共享刷新仍由 Service 收尾。刷新完成必须重新读取/解密凭证并走同一原子准入，普通禁用、Key 撤销和额度变化不得被刷新结果覆盖。
 
@@ -117,7 +117,9 @@ Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备�
 
 健康是准入事务的必要条件；新托管准入必须显式携模型，历史缺失模型不改写。readiness 要求同一个本地可解密候选与至少一个无当前阻断模型的交集，不能拼接不同候选的资格。配置对话模型最多 32、图片映射最多 16，清理退出配置的冷却作用域；认证版本屏障独立保留。
 
-Runtime 额度 owner 统一手动/周期单飞，最多 64 个账号工作/64 个管理等待者/4 个网络工作，每项总期限 20 秒；HTTP owner 使用独立四容量、5 秒网络总期限和 64 KiB 响应上限，无重定向/重试/代理继承。周期 60 秒处理 enabled/draining 的 ready/refreshing 账号；禁用但有效的凭证仅手动观察，过期禁用凭证须先显式刷新。允许使用的过期凭证加入已有刷新 owner，不能建立另一套刷新语义。等待者取消只移除等待者；关闭停止接纳、取消并等待所有 owner。记录成功观察须仍是同一 namespace/version/ready，旧返回不能覆盖新授权，失败保留上次成功值。
+Runtime 额度 owner 统一手动/周期单飞，最多 64 个账号工作/64 个管理等待者/4 个网络工作，每项总期限 20 秒；HTTP owner 使用独立四容量、5 秒网络总期限和 64 KiB 响应上限，无重定向/重试/代理继承。周期 60 秒处理 enabled/draining 的 ready/refreshing 账号；禁用但有效的凭证仅手动观察，过期禁用凭证须先显式刷新。enabled/draining 且 ready 的访问凭证剩余有效期不超过15分钟（含已过期）时加入已有共享刷新 owner；refreshing 仍加入现有工作，不能建立另一套单飞或旋转语义。dispatch 准备使用5分钟窗口；额度观察仅在真正到期时拒绝旧凭证，不因dispatch窗口拒绝观察。窗口是内部命名常量，不新增用户配置。提前刷新开始/结果日志只含账号id、凭证版本与固定结果分类。
+
+提前刷新中，可信适配器能证明请求未完成（如建立连接超时）且旧access仍有效时，以原intent/version CAS原子结束刷新、清除intent并保持ready，下周期重试；不得用一般网络错误、响应丢失或总期限超时推断未完成。这些不明结果仍按I06/I08/I14进入auth_uncertain，明确拒绝进入requires_auth。安全未完成结束同样走critical队列及预留结束审计，不递增凭证版本，不修改模式/健康。等待者取消只移除等待者；关闭停止接纳、取消并等待所有 owner。记录成功观察须仍是同一 namespace/version/ready，旧返回不能覆盖新授权，失败保留上次成功值。
 
 图片能力要求（路由、视觉输入、公开图片模型）随执行 admission 持久保存，SQLite 同事务复核当前 Key revision 与权限。此语义自 schema v6 引入，当前版本与显式离线迁移/备份见 [O16](operations.md)；历史缺失能力要求的执行仍按纯对话解释。配置与权限细节见[图片配置](../development/images.md)和[Key 治理](../development/key-governance.md)。
 

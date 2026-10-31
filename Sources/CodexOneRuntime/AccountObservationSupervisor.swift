@@ -1,5 +1,6 @@
 import CodexOneCore
 import Foundation
+import Logging
 import ServiceLifecycle
 import Synchronization
 
@@ -26,6 +27,9 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
     var entries: [String: Entry] = [:]
     var waiters = 0
   }
+  public static let proactiveRefreshWindowSeconds: Int64 = 15 * 60
+  private let logger = Logger(label: "codexone.account-refresh")
+  private let refreshWindowSeconds: Int64
   private let state = Mutex(State())
   private let stream: AsyncStream<Job>
   private let continuation: AsyncStream<Job>.Continuation
@@ -41,12 +45,15 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
   public init(
     store: any AccountObservationStore, application: AccountCredentials,
     refresher: any AccountDispatchRefreshing, provider: any AccountQuotaProvider,
-    intervalMilliseconds: Int = 60_000, timeoutMilliseconds: Int = 20_000
+    intervalMilliseconds: Int = 60_000, timeoutMilliseconds: Int = 20_000,
+    refreshWindowSeconds: Int64 = AccountObservationSupervisor.proactiveRefreshWindowSeconds
   ) throws {
-    guard (1...300_000).contains(intervalMilliseconds), (1...30_000).contains(timeoutMilliseconds)
+    guard (1...300_000).contains(intervalMilliseconds), (1...30_000).contains(timeoutMilliseconds),
+      (0...86_400).contains(refreshWindowSeconds)
     else {
       throw QuotaObservationFailure.unavailable
     }
+    self.refreshWindowSeconds = refreshWindowSeconds
     self.store = store
     self.application = application
     self.refresher = refresher
@@ -144,15 +151,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
         group.addTask {
           while self.isAccepting && !Task.isCancelled {
             do {
-              guard self.store.allowsOptionalStorageWork else { throw ExecutionError.capacity }
-              let accounts = try await self.store.listAccounts(after: nil)
-              guard accounts.count <= 64 else { throw ExecutionError.capacity }
-              for account in accounts
-              where account.mode != .disabled
-                && (account.authorization == .ready || account.authorization == .refreshing)
-              {
-                self.enqueue(id: account.id, waiter: nil)
-              }
+              try await self.scheduleCycle()
             } catch ExecutionError.capacity {
               // Passive observation yields to ordinary DB pressure. Do not turn a
               // recoverable queue rejection into a failure of the entire Runtime.
@@ -185,6 +184,57 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       self.stopAccepting()
     }
   }
+  /// One bounded scan, also usable with an injected clock for deterministic verification.
+  public func scheduleCycle() async throws {
+    guard isAccepting else { throw QuotaObservationFailure.closed }
+    guard store.allowsOptionalStorageWork else { throw ExecutionError.capacity }
+    let accounts = try await store.listAccounts(after: nil)
+    guard accounts.count <= 64 else { throw ExecutionError.capacity }
+    for account in accounts
+    where account.mode != .disabled
+      && (account.authorization == .ready || account.authorization == .refreshing)
+    {
+      enqueue(id: account.id, waiter: nil)
+    }
+  }
+  private func proactivelyRefresh(_ account: ManagedAccount) async throws {
+    guard account.mode != .disabled, account.authorization == .ready,
+      try await application.needsProactiveRefresh(
+        id: account.id, windowSeconds: refreshWindowSeconds)
+    else { return }
+    let metadata: Logger.Metadata = [
+      "account_id": .string(account.id),
+      "credential_version": .string(String(account.credentialVersion)),
+    ]
+    logger.info("proactive_refresh_started", metadata: metadata)
+    do {
+      let updated = try await refresher.refreshForDispatch(account: account)
+      logger.info(
+        "proactive_refresh_result",
+        metadata: metadata.merging([
+          "result": "committed",
+          "new_credential_version": .string(String(updated.credentialVersion)),
+        ]) { _, new in new })
+    } catch {
+      let result: String
+      switch error as? AccountRefreshError {
+      case .notCompleted: result = "not_completed"
+      case .authorizationRequired: result = "requires_auth"
+      case .unavailable: result = "auth_uncertain"
+      case .capacity: result = "capacity"
+      case .conflict: result = "conflict"
+      case .closed: result = "closed"
+      default: result = "local_failure"
+      }
+      logger.info(
+        "proactive_refresh_result",
+        metadata: metadata.merging([
+          "result": .string(result)
+        ]) { _, new in new })
+      // Only proven non-completion permits observing the still-valid credential.
+      if error as? AccountRefreshError != .notCompleted { throw error }
+    }
+  }
   private func execute(_ job: Job) async throws {
     do {
       guard isAccepting, !Task.isCancelled else { throw QuotaObservationFailure.closed }
@@ -201,6 +251,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
           if account.authorization == .refreshing && account.mode != .disabled {
             _ = try await self.refresher.refreshForDispatch(account: account)
           }
+          try await self.proactivelyRefresh(account)
           let work: AccountObservationWork
           do {
             work = try await self.application.prepareObservation(id: job.id)

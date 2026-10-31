@@ -16,6 +16,8 @@ public protocol AccountRefreshProvider: Sendable {
     -> VerifiedAccountRefresh
 }
 public enum AccountRefreshError: Error, Sendable, Equatable {
+  /// The trusted adapter proves the token POST did not complete (e.g. connect timeout).
+  case notCompleted
   case invalidCommand, capacity, closed, conflict, unavailable, storageUnavailable,
     authorizationRequired
 }
