@@ -204,7 +204,11 @@ export function KeyManagement() {
           }
         }}
         closeButtonProps={{ "aria-label": "关闭" }}
-        title={state.editing ? "编辑密钥权限" : "创建密钥"}
+        title={
+          <Text component="span" size="xl" fw={700}>
+            {state.editing ? "编辑密钥权限" : "创建密钥"}
+          </Text>
+        }
         position="right"
         size="lg"
         closeOnEscape={!state.busy}
@@ -222,7 +226,7 @@ export function KeyManagement() {
               state.setCreating(false);
               state.setEditing(null);
             }}
-            submit={(draft) =>
+            submit={(draft, expires) =>
               state.editing
                 ? state.mutate(
                     (csrf, signal) =>
@@ -240,6 +244,7 @@ export function KeyManagement() {
                 : state.mutate(
                     (csrf, signal) => api.createKey(draft, csrf, signal),
                     "密钥已创建，请保存一次性凭证。",
+                    expires,
                   )
             }
           />
@@ -273,6 +278,11 @@ export function KeyManagement() {
       >
         {state.created && (
           <Stack>
+            {state.expirationFailure && (
+              <Alert color="red" role="alert">
+                密钥已创建但到期设置失败，请保存凭证后刷新列表，核对并重新设置到期时间。
+              </Alert>
+            )}
             <Text>
               {state.created.key.principal} ·{" "}
               <StatusBadge color={state.created.key.enabled ? "green" : "gray"}>

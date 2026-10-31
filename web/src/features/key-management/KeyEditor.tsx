@@ -1,6 +1,8 @@
 import styles from "./keys.module.css";
 import { useRef, useState } from "react";
 import {
+  Accordion,
+  NativeSelect,
   Alert,
   Button,
   Checkbox,
@@ -65,7 +67,7 @@ export function KeyEditor({
   models: string[];
   imageModels: string[];
   disabled: boolean;
-  submit: (draft: KeyDraft) => Promise<boolean>;
+  submit: (draft: KeyDraft, expires?: number | null) => Promise<boolean>;
   close: () => void;
 }) {
   const retainedLimits = useRef<Partial<Record<keyof KeyLimits, number>>>({});
@@ -75,7 +77,9 @@ export function KeyEditor({
       entry?.limits.unresolvedMicros ?? 1_000_000,
     ),
   });
-  const advanced = useRef<HTMLDetailsElement>(null);
+  const [advanced, setAdvanced] = useState<string | null>(null);
+  const [expiration, setExpiration] = useState("never");
+  const [expirationDate, setExpirationDate] = useState("");
   const form = useForm({
     initialValues: {
       principal: entry?.principal ?? "",
@@ -126,11 +130,8 @@ export function KeyEditor({
         event.preventDefault();
         const result = schema.safeParse(form.values);
         if (!result.success) {
-          if (
-            result.error.issues.some((issue) => issue.path[0] === "limits") &&
-            advanced.current
-          )
-            advanced.current.open = true;
+          if (result.error.issues.some((issue) => issue.path[0] === "limits"))
+            setAdvanced("limits");
           form.setErrors(
             Object.fromEntries(
               result.error.issues.map((issue) => [
@@ -142,13 +143,26 @@ export function KeyEditor({
           return;
         }
         form.clearErrors();
-        void submit(result.data);
+        const expires =
+          expiration === "never"
+            ? null
+            : Date.parse(expirationDate + "T00:00:00Z") / 1000;
+        if (
+          !entry &&
+          expires !== null &&
+          (!Number.isSafeInteger(expires) || expires <= 0)
+        ) {
+          form.setFieldError("principal", "请选择有效到期日期");
+          return;
+        }
+        void submit(result.data, expires);
       }}
     >
       <Stack gap="lg">
         <TextInput
           label="主体标识"
-          withAsterisk={false}
+          aria-label="主体标识"
+          withAsterisk
           placeholder="例如 team-a"
           required
           disabled={disabled || !!entry}
@@ -223,87 +237,144 @@ export function KeyEditor({
             )}
           </Stack>
         </fieldset>
-        <Text size="sm">
-          每日请求 {form.values.limits.requests ?? "不限"} · 并发{" "}
-          {form.values.limits.active ?? "不限"} · 待核对{" "}
-          {form.values.limits.unresolved ?? "不限"}
-          <br />
-          每日 {money(form.values.limits.budgetMicros, true)} · 待核对占用{" "}
-          {money(form.values.limits.unresolvedMicros, true)}
-        </Text>
-        <details ref={advanced}>
-          <summary>本地治理限额</summary>
-          <Stack gap="md" mt="md">
-            {fields.map(([name, label]) => (
-              <Stack key={name} gap="xs">
-                <Checkbox
-                  label="不限"
-                  aria-label={`${label}不限`}
-                  disabled={disabled}
-                  checked={form.values.limits[name] === null}
-                  onChange={(event) => {
-                    const value = form.values.limits[name];
-                    if (event.currentTarget.checked && value !== null)
-                      retainedLimits.current[name] = value;
-                    if (!event.currentTarget.checked && name.endsWith("Micros"))
-                      setAmounts((previous) => ({
-                        ...previous,
-                        [name]: microsToDollars(
-                          retainedLimits.current[name] ?? 1,
-                        ),
-                      }));
-                    form.setFieldValue(
-                      `limits.${name}`,
-                      event.currentTarget.checked
-                        ? null
-                        : (retainedLimits.current[name] ?? 1),
-                    );
-                  }}
-                />
-                <NumberInput
-                  label={label}
-                  min={name.endsWith("Micros") ? 0.000001 : 1}
-                  max={name.endsWith("Micros") ? 1_000_000 : 1_000_000_000_000}
-                  allowDecimal={name.endsWith("Micros")}
-                  decimalScale={name.endsWith("Micros") ? 6 : 0}
-                  {...form.getInputProps(`limits.${name}`)}
-                  value={
-                    form.values.limits[name] === null
-                      ? ""
-                      : name.endsWith("Micros")
-                        ? amounts[name]
-                        : form.values.limits[name]!
-                  }
-                  onChange={(value) => {
-                    if (name.endsWith("Micros"))
-                      setAmounts((previous) => ({
-                        ...previous,
-                        [name]: value,
-                      }));
-                    try {
-                      form.setFieldValue(
-                        `limits.${name}`,
-                        name.endsWith("Micros")
-                          ? dollarsToMicros(value)
-                          : Number(value),
-                      );
-                    } catch {
-                      form.setFieldValue(`limits.${name}`, 0);
-                    }
-                  }}
-                  disabled={disabled || form.values.limits[name] === null}
-                  placeholder={
-                    form.values.limits[name] === null ? "不限" : undefined
-                  }
-                />
+        <Accordion value={advanced} onChange={setAdvanced}>
+          <Accordion.Item value="limits">
+            <Accordion.Control>
+              <span>本地治理限额</span>
+              <Text size="xs" c="dimmed">
+                每日请求 {form.values.limits.requests ?? "不限"} · 并发{" "}
+                {form.values.limits.active ?? "不限"} · 待核对{" "}
+                {form.values.limits.unresolved ?? "不限"}
+                <br />
+                每日 {money(form.values.limits.budgetMicros, true)} · 待核对占用{" "}
+                {money(form.values.limits.unresolvedMicros, true)}
+              </Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap="md" mt="md">
+                {fields.map(([name, label]) => (
+                  <Stack key={name} gap="xs">
+                    <Checkbox
+                      label="不限"
+                      aria-label={`${label}不限`}
+                      disabled={disabled}
+                      checked={form.values.limits[name] === null}
+                      onChange={(event) => {
+                        const value = form.values.limits[name];
+                        if (event.currentTarget.checked && value !== null)
+                          retainedLimits.current[name] = value;
+                        if (
+                          !event.currentTarget.checked &&
+                          name.endsWith("Micros")
+                        )
+                          setAmounts((previous) => ({
+                            ...previous,
+                            [name]: microsToDollars(
+                              retainedLimits.current[name] ?? 1,
+                            ),
+                          }));
+                        form.setFieldValue(
+                          `limits.${name}`,
+                          event.currentTarget.checked
+                            ? null
+                            : (retainedLimits.current[name] ?? 1),
+                        );
+                      }}
+                    />
+                    <NumberInput
+                      label={label}
+                      aria-label={label}
+                      withAsterisk={form.values.limits[name] !== null}
+                      min={name.endsWith("Micros") ? 0.000001 : 1}
+                      max={
+                        name.endsWith("Micros") ? 1_000_000 : 1_000_000_000_000
+                      }
+                      allowDecimal={name.endsWith("Micros")}
+                      decimalScale={name.endsWith("Micros") ? 6 : 0}
+                      {...form.getInputProps(`limits.${name}`)}
+                      value={
+                        form.values.limits[name] === null
+                          ? ""
+                          : name.endsWith("Micros")
+                            ? amounts[name]
+                            : form.values.limits[name]!
+                      }
+                      onChange={(value) => {
+                        if (name.endsWith("Micros"))
+                          setAmounts((previous) => ({
+                            ...previous,
+                            [name]: value,
+                          }));
+                        try {
+                          form.setFieldValue(
+                            `limits.${name}`,
+                            name.endsWith("Micros")
+                              ? dollarsToMicros(value)
+                              : Number(value),
+                          );
+                        } catch {
+                          form.setFieldValue(`limits.${name}`, 0);
+                        }
+                      }}
+                      disabled={disabled || form.values.limits[name] === null}
+                      placeholder={
+                        form.values.limits[name] === null ? "不限" : undefined
+                      }
+                    />
+                  </Stack>
+                ))}
+                <Alert color="gray">
+                  {estimateNote}
+                  。这些是本地阈值，不是订阅余额。预热和压缩计入请求，待核对请求保留占用。
+                </Alert>
               </Stack>
-            ))}
-            <Alert color="gray">
-              {estimateNote}
-              。这些是本地阈值，不是订阅余额。预热和压缩计入请求，待核对请求保留占用。
-            </Alert>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+        {!entry && (
+          <Stack gap="xs">
+            <NativeSelect
+              label="到期时间"
+              value={expiration}
+              disabled={disabled}
+              onChange={(e) => {
+                const value = e.currentTarget.value;
+                setExpiration(value);
+                if (["7", "30", "90"].includes(value))
+                  setExpirationDate(
+                    new Date(Date.now() + (Number(value) + 1) * 86400000)
+                      .toISOString()
+                      .slice(0, 10),
+                  );
+              }}
+              data={[
+                { value: "never", label: "永不过期" },
+                { value: "7", label: "7 天" },
+                { value: "30", label: "30 天" },
+                { value: "90", label: "90 天" },
+                { value: "custom", label: "自定义日期" },
+              ]}
+            />
+            {expiration !== "never" && (
+              <TextInput
+                label="到期日期（UTC）"
+                aria-label="到期日期（UTC）"
+                type="date"
+                required
+                disabled={disabled}
+                value={expirationDate}
+                onChange={(e) => {
+                  setExpiration("custom");
+                  setExpirationDate(e.currentTarget.value);
+                }}
+              />
+            )}
+            <Text size="xs" c="dimmed">
+              所选日期 UTC 00:00 起失效（快捷项至少保留整 N
+              天）；到期后拒绝新请求，已派发请求继续。
+            </Text>
           </Stack>
-        </details>
+        )}
         <Group justify="flex-end">
           <Button
             variant="default"
@@ -319,7 +390,7 @@ export function KeyEditor({
               disabled || (!entry && !models.length && !imageModels.length)
             }
           >
-            {entry ? "保存修改" : "创建 API Key"}
+            {entry ? "保存修改" : "创建密钥"}
           </Button>
         </Group>
       </Stack>

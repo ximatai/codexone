@@ -68,7 +68,7 @@ try {
   await page.getByRole("checkbox", { name: "synthetic-text", exact: true }).check();
   await page.getByText("本地治理限额", { exact: true }).click();
   await page.getByLabel("每日请求（UTC）", { exact: true }).fill("5");
-  await page.getByRole("button", { name: "创建 API Key", exact: true }).click();
+  await page.getByRole("dialog", { name: "创建密钥", exact: true }).getByRole("button", { name: "创建密钥", exact: true }).click();
   let secretDialog = page.getByRole("dialog", { name: "保存一次性凭证" });
   await expect(secretDialog).toBeVisible();
   const firstSecret = await secretDialog.getByLabel("新 API Key", { exact: true }).inputValue();

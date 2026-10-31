@@ -84,6 +84,15 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
     .getByRole("radiogroup", { name: "密钥状态" })
     .getByText("全部", { exact: true })
     .click();
+  await expect(
+    page.getByRole("row").filter({ hasText: "ci-team" }),
+  ).toContainText("7 天内到期");
+  await expect(
+    page.getByRole("row").filter({ hasText: "retired-team" }),
+  ).toContainText("已到期");
+  await expect(
+    page.getByRole("row").filter({ hasText: "desktop-team" }),
+  ).toContainText("启用");
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/ui-phase2/keys-1440.png" });
   await page.getByRole("button", { name: "ci-team 更多操作" }).click();

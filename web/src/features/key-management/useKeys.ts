@@ -33,7 +33,12 @@ export function useKeys() {
   const [editing, setEditing] = useState<ManagedKey | null>(null);
   const [rotating, setRotating] = useState<ManagedKey | null>(null);
   const [created, setCreated] = useState<KeyCreated | null>(null);
+  const partialCreation = useRef(false);
+  const [expirationFailure, setExpirationFailure] = useState(false);
   const [copyState, setCopyState] = useState("");
+  useEffect(() => {
+    if (creating || editing) notifications.hide("management-keys");
+  }, [creating, editing]);
   const visibleSecret = useRef(created);
   visibleSecret.current = created;
   const lifetime = useRef<AbortController | null>(null);
@@ -114,6 +119,10 @@ export function useKeys() {
   }, [created]);
   const mutation = useManagedMutation({
     scope: "keys",
+    errorMessage: () =>
+      partialCreation.current
+        ? "密钥已创建但到期设置失败，请保存凭证并刷新列表核对到期时间；勿重复创建。"
+        : undefined,
     invalidMessage: "提交内容不符合要求，请检查模型、限额与到期时间。",
     invalidate: [
       queryKeys.keys.all,
@@ -134,12 +143,31 @@ export function useKeys() {
       signal: AbortSignal,
     ) => Promise<ManagedKey | KeyCreated>,
     success: string,
+    expires?: number | null,
   ): Promise<boolean> {
     if (loading) return false;
     return mutation.run(async (csrf, signal) => {
+      partialCreation.current = false;
       const result = await operation(csrf, signal);
       if (signal.aborted) return;
-      const key = "secret" in result ? result.key : result;
+      let key = "secret" in result ? result.key : result;
+      if ("secret" in result) {
+        setExpirationFailure(false);
+        setCreated(result);
+        setCopyState("");
+        setCreating(false);
+        if (expires != null) {
+          try {
+            key = await api.setExpiration(key, expires, csrf, signal);
+          } catch (error) {
+            if (!signal.aborted) {
+              partialCreation.current = true;
+              setExpirationFailure(true);
+            }
+            throw error;
+          }
+        }
+      }
       setKeys((old) =>
         old.some((item) => item.id === key.id)
           ? old.map((item) => (item.id === key.id ? key : item))
@@ -148,10 +176,6 @@ export function useKeys() {
       setEditing(null);
       setRotating(null);
       setCreating(false);
-      if ("secret" in result) {
-        setCreated(result);
-        setCopyState("");
-      }
     }, success);
   }
   async function copySecret() {
@@ -188,6 +212,7 @@ export function useKeys() {
     created,
     setCreated,
     copyState,
+    expirationFailure,
     mutate,
     copySecret,
     reload: () => {

@@ -23,7 +23,7 @@ try {
   await form.getByLabel("主体标识").fill("browser-images");
   await form.getByLabel("图片生成与参考图编辑", { exact: true }).check();
   await form.getByLabel("synthetic-image", { exact: true }).check();
-  await form.getByRole("button", { name: "创建 API Key" }).click();
+  await form.getByRole("button", { name: "创建密钥" }).click();
   const secret = await page.getByLabel("新 API Key", { exact: true }).inputValue();
   await page.getByRole("button", { name: "我已保存，关闭" }).click();
   const row = page.getByRole("row").filter({ hasText: "browser-images" });
