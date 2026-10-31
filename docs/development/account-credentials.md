@@ -66,7 +66,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 ## 订阅账号池的 HTTP 入口配置
 
-`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`、`firstResponseTimeoutSeconds`、`progressTimeoutSeconds`、`modelProfilesFile`、`imageGeneration`、`upstreamTransport`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
+`CODEXONE_ACCOUNT_POOL_CONFIG` 指向权限 0600、当前进程所有的私有 JSON，须同时设置数据目录、管理凭证和独立账号主密钥；与 `CODEXONE_IDENTITY_CONFIG` 互斥。配置只接受 `models`、`reservedMicros`、`executionTimeoutSeconds`、`firstResponseTimeoutSeconds`、`progressTimeoutSeconds`、`modelProfilesFile`、`imageGeneration`、`imageConcurrency`、`upstreamTransport`、`clientFingerprint`、`dataConnections`，未知根字段拒绝。模型/profile 与单身份配置使用同一校验；目录采用仍要求每个模型的明确非空基础指导。例：
 
 ```json
 {
@@ -92,3 +92,5 @@ HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 acce
 账号页面可以展开额度与健康详情并手动读取。额度 GET 与授权刷新使用独立容量；主/次窗口保留提供者时长，五分钟后标陈旧，失败保留最后成功值。禁用账号不周期观察；有效凭证可手动读取，过期须先显式刷新。缺失字段不推算。具体边界见 [U10](../specs/usage.md) 和 [I20](../specs/identity.md)。
 
 分阶段执行期限和受信离线profile与单身份共用，见[快照导入](model-profiles.md)。准入时策略hash包含有效期限与选中profile，费率仍独立；进程运行期间不热加载，恢复旧执行不重解释期限。
+
+池私有配置的 `clientFingerprint`、`dataConnections` 字段、边界、缺省和示例共用[离线客户端标识与数据连接](single-identity.md#离线客户端标识与数据连接)。它们不改变账号调度或价格。数据请求发送前连接重试不适用于OAuth交换、刷新或被动额度观测。

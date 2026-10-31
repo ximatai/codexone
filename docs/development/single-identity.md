@@ -17,6 +17,8 @@
 | namespace / identity | 可信配置的提供者命名空间前缀与身份标识 |
 | models | 明确模型 ID 与每百万输入/输出 token 的估算价格（微单位），用于本地治理，不代表订阅余额 |
 | models[].catalog | 可选 displayName（1—128 UTF-8 字节）、description（≤1024 字节）、contextWindow（4096—2000000，默认32768）、maxContextWindow（不小于contextWindow，最大2000000，省略则相同）、reasoningEfforts（不重复的已知枚举，≤8）及其中的 defaultReasoningEffort；Codex 目录还需非空 baseInstructions 权威指导，容量与替换语义见下；不改变价格指纹 |
+| clientFingerprint | 可选离线 version/os/arch/terminal，规则和缺省见下文；原生标识保持，不在线查询 |
+| dataConnections | 可选整数8—1024，默认128，另有固定16条控制余量；不改变活动生成限制 |
 | reservedMicros | 单执行运营预留，不声称是真实最大消耗 |
 | upstreamContract | 可选 responses/codex-subscription；loopback缺省responses，可选订阅契约供合成测试；非loopback订阅固定codex-subscription，不允许降为responses |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
@@ -73,3 +75,23 @@ CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key
 ## 显式出网代理
 
 需要Clash等HTTP代理时，在可信启动环境设置CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example:7890；真实地址仅保存在私有配置。不设置或空值保持直连，其他进程代理环境不会自动生效。该设置统一覆盖HTTP、原生WS、账号认证/刷新和额度查询，不改变目标authority、TLS验证或监听地址；代理不可用不会绕过它直连。仅支持无认证HTTP CONNECT代理；userinfo、非根路径、query、fragment或其他scheme拒绝。配置值不进入诊断输出。
+
+## 离线客户端标识与数据连接
+
+单身份与 `pool.json` 均接受可选 `clientFingerprint` 和 `dataConnections`：
+
+```json
+{
+  "clientFingerprint": {
+    "version": "0.163.0",
+    "os": "Mac OS 26.5.0",
+    "arch": "arm64",
+    "terminal": "iTerm.app/3.6.10"
+  },
+  "dataConnections": 128
+}
+```
+
+此片段合入对应私有配置，不是完整配置。四个 fingerprint 字段分别可省略，每个显式值须为1—128字节可打印ASCII（0x20—0x7e）；空值、控制字符、非ASCII、超长拒绝。省略version时取已验证模型profile快照clientVersions按数字段比较的最大版本，无快照时用编译内置0.163.0；其余默认值如示例。不在线查询版本，不改变原生客户端标识。规则见[P28](../specs/protocol.md#p28客户端标识与连接容量)。
+
+`dataConnections` 必须是8—1024的整数，省略为128；额外16条控制余量固定。该值不是活动生成许可，Key/全局并发、控制舱壁、正文预算不随之放宽。上游HTTP/WS连接期限10秒，HTTP允许总期限内发送前的连接建立重试，单连接最多使用一次，发送后失败不重放。容量资源测量见[迁移就绪验证](../changes/migration-readiness/verification.md)，不能外推为目标宿主容量保证。
