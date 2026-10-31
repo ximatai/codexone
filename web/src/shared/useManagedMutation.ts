@@ -88,6 +88,8 @@ export function useManagedMutation(options: Options) {
           owner.lock(options.scope, false);
           message = "提交内容不符合要求，请检查模型、限额与到期时间。";
         } else if (error instanceof ManagementError && error.status === 403) {
+          // A 403 is a definite rejection, so the scope can be used again.
+          owner.lock(options.scope, false);
           message =
             error.code === "invalid_csrf"
               ? "管理会话已更新，请刷新后重试。"

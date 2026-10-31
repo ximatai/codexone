@@ -12,6 +12,7 @@
 !web/index.html
 !web/tsconfig.json
 !web/vite.config.ts
+!web/theme-plugin.ts
 !web/playwright.config.ts
 !web/src/
 !web/src/**

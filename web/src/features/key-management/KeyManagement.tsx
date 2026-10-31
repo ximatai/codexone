@@ -135,6 +135,7 @@ export function KeyManagement() {
           if (!state.busy) setExpiring(null);
         }}
         title="设置 Key 到期时间"
+        closeButtonProps={{ "aria-label": "关闭" }}
         closeOnEscape={!state.busy}
         closeOnClickOutside={!state.busy}
         withCloseButton={!state.busy}

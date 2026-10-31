@@ -17,6 +17,7 @@ export function DataTable<T>({
   error,
   retry,
   empty = "暂无数据。",
+  loadingText = "正在读取…",
 }: {
   rows: T[];
   columns: DataColumn<T>[];
@@ -25,11 +26,12 @@ export function DataTable<T>({
   error?: string;
   retry: () => void;
   empty?: string;
+  loadingText?: string;
 }) {
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
   );
-  if (loading) return <p role="status">正在读取密钥…</p>;
+  if (loading) return <p role="status">{loadingText}</p>;
   if (error) return <ErrorState retry={retry}>{error}</ErrorState>;
   if (!rows.length) return <EmptyState>{empty}</EmptyState>;
   const column = columns.find((item) => item.id === sort?.id);
@@ -57,7 +59,9 @@ export function DataTable<T>({
                   ? sort.descending
                     ? "descending"
                     : "ascending"
-                  : undefined
+                  : item.sortValue
+                    ? "none"
+                    : undefined
               }
             >
               {item.sortValue ? (
@@ -70,7 +74,13 @@ export function DataTable<T>({
                   }
                 >
                   {item.title}
-                  {sort?.id === item.id ? (sort.descending ? " ↓" : " ↑") : ""}
+                  <span aria-hidden="true">
+                    {sort?.id === item.id
+                      ? sort.descending
+                        ? " ↓"
+                        : " ↑"
+                      : ""}
+                  </span>
                 </UnstyledButton>
               ) : (
                 item.title
@@ -84,9 +94,7 @@ export function DataTable<T>({
           <Table.Tr key={rowKey(row)}>
             {columns.map((item) => (
               <Table.Td key={item.id}>
-                <span className={styles.label} aria-hidden="true">
-                  {item.label ?? item.title}
-                </span>
+                <span className={styles.label}>{item.label ?? item.title}</span>
                 {item.render(row)}
               </Table.Td>
             ))}

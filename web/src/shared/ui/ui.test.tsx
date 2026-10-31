@@ -21,10 +21,18 @@ it("sorts real rows in both directions and supplies narrow-screen labels", () =>
       ]}
     />,
   );
+  expect(screen.getByRole("columnheader", { name: "标识" })).toHaveAttribute(
+    "aria-sort",
+    "none",
+  );
   fireEvent.click(screen.getByRole("button", { name: "标识" }));
   expect(screen.getAllByRole("row")[1]).toHaveTextContent("a");
+  expect(screen.getByRole("columnheader", { name: "标识" })).toHaveAttribute(
+    "aria-sort",
+    "ascending",
+  );
   expect(screen.getAllByText("卡片标识")).toHaveLength(2);
-  fireEvent.click(screen.getByRole("button", { name: "标识 ↑" }));
+  fireEvent.click(screen.getByRole("button", { name: "标识" }));
   expect(screen.getAllByRole("row")[1]).toHaveTextContent("b");
 });
 it("renders loading, error retry and empty states", () => {
