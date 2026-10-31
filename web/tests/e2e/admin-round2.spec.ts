@@ -17,6 +17,8 @@ test("round two overview, usage, account name and key expiration", async ({
     displayName: null as string | null,
     mode: "enabled",
     authorization: "ready",
+    accessExpiresAtUnixSeconds: Math.floor(Date.now() / 1000) + 10800,
+    credentialUpdatedAtUnixSeconds: null,
     createdAtUnixSeconds: 1,
     observability: observationFixture(),
   };
@@ -204,6 +206,8 @@ test("round two overview, usage, account name and key expiration", async ({
   });
   await page.getByRole("link", { name: "订阅账号", exact: true }).click();
   await page.getByRole("button", { name: "额度与健康详情" }).click();
+  await expect(page.getByText(/访问凭证到期：.*约 3 小时后/)).toBeVisible();
+  await expect(page.getByText("最近凭证更新：不可用")).toBeVisible();
   await page.getByLabel("账号显示名").fill("合成显示名");
   await page.getByRole("button", { name: "保存显示名" }).click();
   await expect(page.getByLabel("账号显示名")).toHaveValue("合成显示名");

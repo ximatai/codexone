@@ -14,6 +14,8 @@ export interface Account {
   mode: AccountMode;
   authorization: AccountAuthorization;
   createdAtUnixSeconds: number;
+  accessExpiresAtUnixSeconds?: number | null;
+  credentialUpdatedAtUnixSeconds?: number | null;
   observability?: AccountObservability;
 }
 export interface AuthorizationFlow {
@@ -59,6 +61,14 @@ export function parseAccount(raw: unknown): Account {
           displayName:
             value.displayName === null ? null : displayName(value.displayName),
         }),
+    accessExpiresAtUnixSeconds:
+      value.accessExpiresAtUnixSeconds == null
+        ? null
+        : integer(value.accessExpiresAtUnixSeconds, 1_000_000_000_000),
+    credentialUpdatedAtUnixSeconds:
+      value.credentialUpdatedAtUnixSeconds == null
+        ? null
+        : integer(value.credentialUpdatedAtUnixSeconds, 1_000_000_000_000),
     revision: integer(value.revision),
     credentialVersion: integer(value.credentialVersion),
     mode: value.mode as AccountMode,

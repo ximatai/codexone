@@ -70,6 +70,12 @@ def verify_accounts(probe):
                     server.control.update(challenge=query['code_challenge'][0], nonce=query['nonce'][0])
                 callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
                 account = document(request(port, 'POST', '/api/accounts/authorization/' + flow['flowID'], {'callbackURL': callback}, **auth))['account']
+                assert account['accessExpiresAtUnixSeconds'] is None
+                assert isinstance(account['credentialUpdatedAtUnixSeconds'], int)
+                for secret in server.issued:
+                    assert secret not in json.dumps(account)
+                assert not any(field in account for field in ('accessToken', 'refreshToken', 'idToken', 'envelope', 'namespace', 'refreshIntent'))
+                updated = account['credentialUpdatedAtUnixSeconds']
                 path = '/api/accounts/' + account['id'] + '/display-name'
                 body = {'revision': account['revision'], 'displayName': '合成账号'}
                 assert request(port, 'PUT', path, body)[0] == 403
@@ -87,8 +93,21 @@ def verify_accounts(probe):
             try:
                 account = document(request(port, 'GET', '/api/accounts', **auth))['accounts'][0]
                 assert account['displayName'] == '合成账号'
+                assert account['credentialUpdatedAtUnixSeconds'] == updated
+                assert account['accessExpiresAtUnixSeconds'] is None
                 account = document(request(port, 'PUT', path, {'revision': account['revision'], 'displayName': None}, **auth))['account']
                 assert account['displayName'] is None
+            finally:
+                release(process)
+            # Missing historical audit evidence must remain null, never use mode/name time.
+            database = next(root.rglob('core.sqlite'))
+            with sqlite3.connect(database) as db:
+                db.execute("DELETE FROM account_events WHERE action IN ('create_verified','reauthorize_verified','refresh_commit')")
+            process, port = start()
+            try:
+                account = document(request(port, 'GET', '/api/accounts', **auth))['accounts'][0]
+                assert account['credentialUpdatedAtUnixSeconds'] is None
+                assert account['accessExpiresAtUnixSeconds'] is None
             finally:
                 release(process)
             assert server.calls == 1
