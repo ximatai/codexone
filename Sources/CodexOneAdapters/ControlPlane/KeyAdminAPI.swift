@@ -12,11 +12,13 @@ public struct KeyAdminAPI: Sendable {
   private let availableModels: [String]
   private let imageModels: [String]
   private let usage: UsageAdminAPI?
+  private let attention: AttentionAdminAPI?
   private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
     publicOrigin: String? = nil, availableModels: [String] = [], imageModels: [String] = [],
-    usage: UsageAdminAPI? = nil, storageMonitoring: (any StorageMonitoring)? = nil
+    usage: UsageAdminAPI? = nil, attention: AttentionAdminAPI? = nil,
+    storageMonitoring: (any StorageMonitoring)? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
@@ -27,6 +29,7 @@ public struct KeyAdminAPI: Sendable {
       digest: digest, store: store,
       sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
       availableModels: availableModels, imageModels: imageModels, usage: usage,
+      attention: attention,
       storageMonitoring: storageMonitoring)
   }
   public static func validateCredential(
@@ -55,6 +58,7 @@ public struct KeyAdminAPI: Sendable {
     let routes = api.grouped("keys").grouped(guardMiddleware)
     accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
     usage?.register(api.grouped("usage").grouped(guardMiddleware))
+    attention?.register(api.grouped(guardMiddleware))
     if let storageMonitoring {
       api.grouped("runtime").grouped(guardMiddleware).get("storage") { _ async throws -> Response in
         let observation = storageMonitoring.storageObservation

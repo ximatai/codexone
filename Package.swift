@@ -71,6 +71,7 @@ let package = Package(
       name: "CodexOneAdaptersTests",
       dependencies: [
         "CodexOneCore", "CodexOneAdapters", "CSQLite",
+        .product(name: "Vapor", package: "vapor"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOEmbedded", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
