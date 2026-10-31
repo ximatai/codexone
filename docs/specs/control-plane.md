@@ -34,7 +34,9 @@
 
 ## A12：账号管理与一次性授权入口
 
-配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段只有 id、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
+配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段为 id、displayName、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另含可空的 accessExpiresAtUnixSeconds 与 credentialUpdatedAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。到期字段只允许可靠持久元数据；当前v9到期只存在于密文，管理列表不为展示解密凭证，故返回null。最近更新时间取已有account_events中create_verified/reauthorize_verified/refresh_commit的最后提交UTC秒，不用模式/显示名更新或刷新开始/失败时间；缺少可靠审计时返回null。详情以本地时间及相对时间展示，null显示“不可用”，不返回令牌内容或摘要、不新增schema。
+
+PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
 
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权。POST `/authorization/:flowID` 只接受 callbackURL；DELETE 丢弃本 owner 尚未完成的流程。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。登录地址和流程信息仅当前响应可用，不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 

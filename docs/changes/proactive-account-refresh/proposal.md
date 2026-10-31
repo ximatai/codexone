@@ -17,7 +17,7 @@
 - 后台周期（现有 60 秒）对 enabled/draining 且 ready 的账号：访问凭证剩余有效期不超过 **15 分钟**时，交给现有共享刷新 owner 刷新，不新建刷新语义。窗口大于周期，过期前有多次机会。
 - 托管 dispatch：剩余有效期不超过 **5 分钟**的凭证按需要刷新处理（与官方客户端一致），走现有 dispatch 刷新路径。已持久准入和固定连接不受影响，不跨账号重放。
 - 提前刷新失败：
-  - 网络/超时等未发出或明确未完成：凭证仍有效则保持 ready，下个周期再试；
+  - 可信适配器证明未发出或明确未完成（如建立连接超时）：凭证仍有效则按原 intent/version CAS 结束 intent、保持 ready，下个周期再试；一般超时/网络不明仍按现有 auth_uncertain，不推断未完成；
   - 提供者明确拒绝或旋转结果不确定：维持现有 requires_auth / auth_uncertain 语义，不循环使用旧刷新令牌。
 - disabled 账号不做后台提前刷新（维持现状：仅手动观察）。
 - 管理接口与账号详情显示访问凭证到期时间与最近一次凭证更新时间（授权或刷新），只用现有持久数据，不显示令牌内容；无可靠来源的字段显示不可用，不新增 schema。
@@ -35,3 +35,7 @@
 - disabled 账号不被后台刷新。
 - 管理接口返回到期与最近更新时间，不含任何凭证材料；前端账号详情显示。
 - 执行者完整 `verify.sh --backend` 与 `--web --chrome`；主 Agent Linux verification；部署后在测试实例确认真实刷新发生（凭证版本递增、无请求失败）。
+
+## 实现取舍
+
+v9没有非密文到期元数据；为避免扩大管理列表的凭证明文处理范围，accessExpiresAtUnixSeconds返回null。credentialUpdatedAtUnixSeconds从现有account_events提交动作读取，缺失返回null；不新增schema。只有适配器证明未完成才能安全结束intent回到ready；这不改变旋转结果不明与崩溃恢复保护。
