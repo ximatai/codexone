@@ -64,7 +64,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   ) {
     try await read { db in
       let keys = try db.rows(
-        "SELECT ids.id,json_extract(k.metadata_json,'$.principal'),json_extract(k.metadata_json,'$.displayName') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
+        "SELECT ids.id,json_extract(k.metadata_json,'$.principal'),json_extract(k.metadata_json,'$.displayName') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM usage_daily UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
       ) {
         UsageKeyOption(
           id: String(cString: sqlite3_column_text($0, 0)),
@@ -91,7 +91,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state!='settled' ELSE 0 END),0),
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN
             CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
-          MAX(a.created_at_epoch),json_extract(k.metadata_json,'$.displayName')
+          CASE WHEN MAX(a.created_at_epoch) IS NULL THEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)
+            WHEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id) IS NULL THEN MAX(a.created_at_epoch)
+            ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName')
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         GROUP BY k.id ORDER BY k.id LIMIT 257
         """, (0..<4).flatMap { _ in [.number(start), .number(start + 86400)] }
@@ -146,8 +148,14 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   public func dailyUsage(days: Int, keyID: String?, model: String?) async throws
     -> [DailyUsageBucket]
   {
+    try await dailyUsage(days: days, keyID: keyID, model: model, endUnixSeconds: nil)
+  }
+  public func dailyUsage(days: Int, keyID: String?, model: String?, endUnixSeconds: Int64?)
+    async throws -> [DailyUsageBucket]
+  {
     guard (1...31).contains(days) else { throw ExecutionError.invalidCommand }
-    let end = Int64(Date().timeIntervalSince1970) / 86400 * 86400 + 86400
+    let end = endUnixSeconds ?? (Int64(Date().timeIntervalSince1970) / 86400 * 86400 + 86400)
+    guard end >= Int64(days) * 86400, end % 86400 == 0 else { throw ExecutionError.invalidCommand }
     let query = try UsageQuery(
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
     return try await read { db in try Self.daily(db, query) }

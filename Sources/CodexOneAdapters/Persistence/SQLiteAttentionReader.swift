@@ -4,7 +4,7 @@ import Foundation
 
 extension SQLiteUsageReader: AttentionReading {
   public func attentionItems(now: Int64) async throws -> [AttentionItem] {
-    let limit = primary.unresolvedCapacity
+    let limits = primary.limits
     return try await read { db in
       var items: [AttentionItem] = []
       // Independent sources fail visibly. All scans share the reader's single snapshot,
@@ -52,9 +52,29 @@ extension SQLiteUsageReader: AttentionReading {
           ) {
             sqlite3_column_int64($0, 0)
           }.first
-          result += AttentionRules.account(
+          var accountItems = AttentionRules.account(
             id: id, name: name, authorization: authorization,
             quota: quota, cooldownCount: cooldowns, failureAt: failureAt, now: now)
+          if let index = accountItems.firstIndex(where: { $0.kind == "quota_high" }) {
+            let ranking = try db.rows(
+              """
+              SELECT COALESCE(json_extract(k.metadata_json,'$.displayName'),json_extract(k.metadata_json,'$.principal'),a.key_id),SUM(CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END),COUNT(*),
+                COALESCE(SUM(a.usage_json IS NULL OR json_extract(a.usage_json,'$.completeness')!='complete'),0)
+              FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id WHERE a.identity=? AND a.created_at_epoch>=? AND a.created_at_epoch<=?
+              GROUP BY a.key_id ORDER BY SUM(CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END) DESC,a.key_id LIMIT 5
+              """,
+              [.text(id), .number(now - AttentionThresholds.rankingWindowSeconds), .number(now)]
+            ) { row in
+              "\(String(cString: sqlite3_column_text(row, 0)))：\(sqlite3_column_type(row, 1) == SQLITE_NULL ? "费用未知" : String(format: "$%.6f", Double(sqlite3_column_int64(row, 1)) / 1_000_000))，请求 \(sqlite3_column_int64(row, 2))，证据不完整 \(sqlite3_column_int64(row, 3))"
+            }
+            let old = accountItems[index]
+            var detail = old.detail
+            detail["keyRanking"] = .string(ranking.joined(separator: " | "))
+            accountItems[index] = .init(
+              old.kind, critical: old.severity == "critical", type: old.subjectType,
+              id: old.subjectID, name: old.subjectName, detail: detail, since: old.sinceUnixSeconds)
+          }
+          result += accountItems
         }
         return result
       }
@@ -82,19 +102,30 @@ extension SQLiteUsageReader: AttentionReading {
           "SELECT COUNT(*),COALESCE(SUM(json_extract(outcome_json,'$.kind')='failed' AND COALESCE(json_extract(outcome_json,'$.failure'),'')!='client_cancelled'),0) FROM attempts WHERE created_at_epoch>=? AND created_at_epoch<=?",
           [.number(now - AttentionThresholds.errorWindowSeconds), .number(now)]
         ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1)) }[0]
-        let unresolved = try db.rows(
-          "SELECT COUNT(*),MIN(created_at_epoch) FROM attempts WHERE state='unknown'"
-        ) {
-          (
-            sqlite3_column_int64($0, 0),
-            sqlite3_column_type($0, 1) == SQLITE_NULL ? nil : sqlite3_column_int64($0, 1)
-          )
-        }[0]
+        let unknown = try db.scalar(
+          "SELECT COUNT(*) FROM attempts WHERE created_at_epoch>=? AND created_at_epoch<=? AND (state='unknown' OR closed_unknown_at_epoch IS NOT NULL) AND COALESCE(json_extract(outcome_json,'$.failure'),'')!='client_cancelled'",
+          [.number(now - AttentionThresholds.errorWindowSeconds), .number(now)])
         return AttentionRules.executions(
-          admitted: recent.0, failed: recent.1, unknown: unresolved.0, since: unresolved.1,
-          unresolved: try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
-            + (db.restoreRecord()?.unresolvedRequests ?? 0),
-          limit: limit)
+          admitted: recent.0, failed: recent.1, unknown: unknown,
+          since: now - AttentionThresholds.errorWindowSeconds)
+      }
+      try source("capacity") {
+        let headroom = try Self.headroom(db, now: now, limits: limits)
+        var result = headroom.capacities.flatMap { AttentionRules.capacity($0) }
+        for account in headroom.accounts {
+          func count(_ end: Int64) throws -> Int64 {
+            try db.scalar(
+              "SELECT COUNT(*) FROM attempts WHERE identity=? AND created_at_epoch>=? AND created_at_epoch<?",
+              [
+                .text(account.id), .number(end - AttentionThresholds.rateWindowSeconds),
+                .number(end),
+              ])
+          }
+          let baseline = try (1...7).map { try count(now - Int64($0) * 86400) }.sorted()[3]
+          result += AttentionRules.accountCapacity(
+            id: account.id, peak: account.peak24Hours, recent: try count(now), baseline: baseline)
+        }
+        return result
       }
       return items
     }

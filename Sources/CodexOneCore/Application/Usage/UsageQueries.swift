@@ -79,6 +79,8 @@ public struct UsageMetrics: Sendable, Encodable {
   }
 }
 public struct UsageTotals: Sendable {
+  public let usageUnknown: Int64
+  public let unknownReasons: [String: Int64]
   public let admitted: Int64
   public let rejected: Int64
   public let inFlight: Int64
@@ -103,8 +105,11 @@ public struct UsageTotals: Sendable {
     historicalWithoutTime: Int64, unresolvedExposureMicros: Int64,
     lifetimeInFlight: Int64, lifetimeUnknown: Int64, lifetimeExposureMicros: Int64,
     metrics: UsageMetrics, averageFirstEventMilliseconds: Double? = nil,
-    p95FirstEventMilliseconds: Int64? = nil, averageTotalMilliseconds: Double? = nil
+    p95FirstEventMilliseconds: Int64? = nil, averageTotalMilliseconds: Double? = nil,
+    usageUnknown: Int64 = 0, unknownReasons: [String: Int64] = [:]
   ) {
+    self.usageUnknown = usageUnknown
+    self.unknownReasons = unknownReasons
     self.averageFirstEventMilliseconds = averageFirstEventMilliseconds
     self.p95FirstEventMilliseconds = p95FirstEventMilliseconds
     self.averageTotalMilliseconds = averageTotalMilliseconds
@@ -241,6 +246,8 @@ public struct KeyUsageSummary: Sendable {
   }
 }
 public protocol UsageQuerying: Sendable {
+  func dailyUsage(days: Int, keyID: String?, model: String?, endUnixSeconds: Int64?) async throws
+    -> [DailyUsageBucket]
   func dailyUsage(days: Int, keyID: String?, model: String?) async throws -> [DailyUsageBucket]
   func inFlightUsage(limit: Int) async throws -> [InFlightUsageRow]
   func queryUsage(_ query: UsageQuery) async throws -> UsageReport
@@ -256,6 +263,8 @@ public protocol ExecutionDiagnosticsStore: Sendable {
 }
 
 public struct DailyUsageBucket: Sendable {
+  public let usageUnknown: Int64
+  public let unknownReasons: [String: Int64]
   public let atUnixSeconds: Int64
   public let requests: Int64
   public let succeeded: Int64
@@ -265,8 +274,11 @@ public struct DailyUsageBucket: Sendable {
   public let metrics: UsageMetrics
   public init(
     atUnixSeconds: Int64, requests: Int64, succeeded: Int64, failed: Int64,
-    cancelled: Int64, failures: [String: Int64], metrics: UsageMetrics
+    cancelled: Int64, failures: [String: Int64], metrics: UsageMetrics, usageUnknown: Int64 = 0,
+    unknownReasons: [String: Int64] = [:]
   ) {
+    self.usageUnknown = usageUnknown
+    self.unknownReasons = unknownReasons
     self.atUnixSeconds = atUnixSeconds
     self.requests = requests
     self.succeeded = succeeded
@@ -311,4 +323,13 @@ public protocol ExecutionLiveObserving: Sendable {
   func executionStarted(attempt: String)
   func executionReceivedFirstEvent(attempt: String)
   func executionObservationEnded(attempt: String)
+}
+
+extension UsageQuerying {
+  public func dailyUsage(days: Int, keyID: String?, model: String?, endUnixSeconds: Int64?)
+    async throws -> [DailyUsageBucket]
+  {
+    guard endUnixSeconds == nil else { throw ExecutionError.invalidCommand }
+    return try await dailyUsage(days: days, keyID: keyID, model: model)
+  }
 }

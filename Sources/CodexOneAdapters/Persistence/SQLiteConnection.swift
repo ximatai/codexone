@@ -59,12 +59,12 @@ final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
       guard
-        version == 0 || version == 9 || (restoringV7 && [7, 8].contains(version))
-          || (migrating && [1, 2, 3, 4, 5, 6, 7, 8].contains(version))
+        version == 0 || version == 10 || (restoringV7 && [7, 8, 9].contains(version))
+          || (migrating && (1...9).contains(version))
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 9 && !(restoringV7 && [7, 8].contains(version)) {
+      if existingOnly && version != 10 && !(restoringV7 && [7, 8, 9].contains(version)) {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -80,6 +80,9 @@ final class SQLiteConnection: @unchecked Sendable {
               columns
                 + (version >= 5 && table == "attempts"
                   ? ["created_at_epoch", "outcome_json", "request_id"] : [])
+                + (version >= 10 && table == "attempts"
+                  ? ["unknown_since_epoch", "closed_unknown_at_epoch"] : [])
+                + (version >= 10 && table == "bindings" ? ["expires_at_epoch"] : [])
             )
           } + (version >= 2 ? Self.keyColumns : [])
           + (version >= 3
@@ -88,6 +91,7 @@ final class SQLiteConnection: @unchecked Sendable {
             } : [])
           + (version >= 5 ? Self.observationColumns : [])
           + (version >= 7 ? Self.maintenanceColumns : [])
+          + (version >= 10 ? Self.governanceColumns : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -95,12 +99,13 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, ![1, 2, 3, 4, 5, 6, 7, 8, 9].contains(version) {
+      if migrating, !(1...10).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
+      if version == 0 { try exec("PRAGMA auto_vacuum=INCREMENTAL") }
       let journal = try rows("PRAGMA journal_mode=WAL") {
         String(cString: sqlite3_column_text($0, 0))
       }
@@ -114,32 +119,47 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.accountSchema)
           try exec(Self.observationSchema)
           try exec(Self.maintenanceSchema)
-          try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
-          try exec(
-            "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
-          )
-          try exec("PRAGMA user_version=9")
+          if version < 9 {
+            try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
+            try exec(
+              "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
+            )
+          }
+          try exec(Self.governanceSchema)
+          try exec("PRAGMA user_version=10")
         }
       }
-      if [1, 2, 3, 4, 5, 6, 7, 8].contains(version) {
+      if (1...9).contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
           ]
         else { throw ExecutionError.storageUnavailable }
         if !restoringV7 { try backupBeforeUpgrade(canonical) }
+        try StorageCapacity.require(
+          (canonical as NSString).deletingLastPathComponent,
+          additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") * 2 + 8 * 1024
+            * 1024, optional: true)
+        if try scalar("PRAGMA auto_vacuum") != 2 {
+          try exec("PRAGMA auto_vacuum=INCREMENTAL")
+          try exec("VACUUM")
+        }
         try transaction {
           if version == 1 { try exec(Self.keySchema) }
           if version < 3 { try exec(Self.accountSchema) }
           if version < 5 { try exec(Self.observationSchema) }
           if version < 7 { try exec(Self.maintenanceSchema) }
-          try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
-          try exec(
-            "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
-          )
-          try exec("PRAGMA user_version=9")
+          if version < 9 {
+            try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
+            try exec(
+              "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
+            )
+          }
+          try exec(Self.governanceSchema)
+          try exec("PRAGMA user_version=10")
         }
       }
+      guard try scalar("PRAGMA auto_vacuum") == 2 else { throw ExecutionError.storageUnavailable }
       guard
         try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
           "ok"
@@ -175,7 +195,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard [7, 8, 9].contains(try scalar("PRAGMA user_version")),
+      guard [7, 8, 9, 10].contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema
@@ -367,12 +387,46 @@ final class SQLiteConnection: @unchecked Sendable {
     ("maintenance_events", ["id", "action", "record_json", "at_epoch"]),
   ]
 
+  static let governanceSchema = """
+    ALTER TABLE attempts ADD COLUMN unknown_since_epoch INTEGER;
+    ALTER TABLE attempts ADD COLUMN closed_unknown_at_epoch INTEGER;
+    UPDATE attempts SET unknown_since_epoch=COALESCE(json_extract(outcome_json,'$.atUnixSeconds'),created_at_epoch,strftime('%s','now')) WHERE state='unknown';
+    UPDATE attempts SET closed_unknown_at_epoch=COALESCE(created_at_epoch,strftime('%s','now')) WHERE state='settled' AND COALESCE(json_extract(usage_json,'$.completeness'),'')!='complete';
+    ALTER TABLE bindings ADD COLUMN expires_at_epoch INTEGER;
+    UPDATE bindings SET expires_at_epoch=strftime('%s','now')+\(ExecutionLimits.bindingContinuationSeconds);
+    CREATE INDEX bindings_expiry ON bindings(expires_at_epoch);
+    CREATE INDEX attempts_active_identity ON attempts(namespace,identity) WHERE state='intent';
+    CREATE INDEX attempts_retention ON attempts(created_at_epoch,id) WHERE state='settled';
+    CREATE INDEX attempts_unknown_since ON attempts(unknown_since_epoch,id) WHERE state='unknown';
+    CREATE TABLE account_concurrency(namespace TEXT NOT NULL,identity TEXT NOT NULL,at_epoch INTEGER NOT NULL,peak INTEGER NOT NULL,PRIMARY KEY(namespace,identity,at_epoch));
+    CREATE TABLE usage_daily(
+      day_epoch INTEGER NOT NULL,key_id TEXT NOT NULL,model TEXT NOT NULL,mode TEXT NOT NULL,
+      outcome TEXT NOT NULL,failure TEXT NOT NULL,completeness TEXT NOT NULL,usage_unknown INTEGER NOT NULL,
+      requests INTEGER NOT NULL,last_used_epoch INTEGER NOT NULL,
+      input_tokens INTEGER,output_tokens INTEGER,cached_tokens INTEGER,images INTEGER,estimated_micros INTEGER,
+      image_input_tokens INTEGER,image_output_tokens INTEGER,image_input_text_tokens INTEGER,image_input_image_tokens INTEGER,
+      PRIMARY KEY(day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown));
+    CREATE INDEX usage_daily_key ON usage_daily(key_id,last_used_epoch);
+    """
+  private static let governanceColumns: [(String, [String])] = [
+    ("account_concurrency", ["namespace", "identity", "at_epoch", "peak"]),
+    (
+      "usage_daily",
+      [
+        "day_epoch", "key_id", "model", "mode", "outcome", "failure", "completeness",
+        "usage_unknown", "requests", "last_used_epoch", "input_tokens", "output_tokens",
+        "cached_tokens", "images", "estimated_micros", "image_input_tokens", "image_output_tokens",
+        "image_input_text_tokens", "image_input_image_tokens",
+      ]
+    ),
+  ]
+
   private func backupBeforeUpgrade(_ path: String) throws {
     try StorageCapacity.require(
       (path as NSString).deletingLastPathComponent,
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
-    let destination = path + ".pre-v9-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v10-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }
@@ -385,7 +439,7 @@ final class SQLiteConnection: @unchecked Sendable {
       if let target { sqlite3_close_v2(target) }
       throw ExecutionError.storageUnavailable
     }
-    defer { sqlite3_close_v2(target) }
+    defer { if let target { sqlite3_close_v2(target) } }
     guard let copy = sqlite3_backup_init(target, "main", handle, "main") else {
       throw ExecutionError.storageUnavailable
     }
@@ -400,9 +454,21 @@ final class SQLiteConnection: @unchecked Sendable {
     } while step == SQLITE_OK
     let finish = sqlite3_backup_finish(copy)
     finished = true
-    guard step == SQLITE_DONE, finish == SQLITE_OK, fsync(fd) == 0 else {
+    guard step == SQLITE_DONE, finish == SQLITE_OK else {
       throw ExecutionError.storageUnavailable
     }
+    // Publish a self-contained file that can be opened read-only without WAL sidecars.
+    guard sqlite3_exec(target, "PRAGMA journal_mode=DELETE", nil, nil, nil) == SQLITE_OK else {
+      throw ExecutionError.storageUnavailable
+    }
+    guard sqlite3_close(target) == SQLITE_OK else { throw ExecutionError.storageUnavailable }
+    target = nil
+    for suffix in ["-wal", "-shm"] {
+      guard unlink(partial + suffix) == 0 || errno == ENOENT else {
+        throw ExecutionError.storageUnavailable
+      }
+    }
+    guard fsync(fd) == 0 else { throw ExecutionError.storageUnavailable }
     guard rename(partial, destination) == 0 else { throw ExecutionError.storageUnavailable }
     let parent = open((destination as NSString).deletingLastPathComponent, O_RDONLY | O_CLOEXEC)
     guard parent >= 0 else { throw ExecutionError.storageUnavailable }

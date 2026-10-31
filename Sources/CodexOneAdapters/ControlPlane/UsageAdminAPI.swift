@@ -17,8 +17,49 @@ public struct UsageAdminAPI: Sendable {
       })
   }
   func register(_ routes: any RoutesBuilder) {
+    routes.get("headroom") { request async throws -> Response in
+      guard request.url.query == nil, let reader = querying as? any GovernanceReading else {
+        throw ExecutionError.invalidCommand
+      }
+      do {
+        let now = Int64(Date().timeIntervalSince1970)
+        let report = try await reader.governanceHeadroom(now: now)
+        return try Self.response(
+          .object([
+            "generatedAtUnixSeconds": .number(Decimal(now)),
+            "unknownReconciliation": .object([
+              "count": .number(Decimal(report.unknownCount)),
+              "beforeUnixSeconds": .number(Decimal(report.beforeUnixSeconds)),
+              "periodSeconds": .number(Decimal(ExecutionLimits.unknownReconciliationSeconds)),
+            ]),
+            "capacities": .array(
+              report.capacities.map { value in
+                .object([
+                  "name": .string(value.name),
+                  "current": value.current.map { .string(String($0)) } ?? .null,
+                  "limit": .string(String(value.limit)), "blocking": .bool(value.blocking),
+                ])
+              }),
+            "accounts": .array(
+              report.accounts.map {
+                .object([
+                  "id": .string($0.id), "current": .number(Decimal($0.current)),
+                  "peak24Hours": .number(Decimal($0.peak24Hours)),
+                  "limit": .number(Decimal(ExecutionLimits.accountConcurrency)),
+                  "blocking": .bool(true),
+                ])
+              }),
+            "storage": try JSONValue.decode(JSONEncoder().encode(reader.governanceStorage)),
+            "storageLimits": .object([
+              "stopAvailableBytes": .number(Decimal(reader.governanceStoragePolicy.stopBytes)),
+              "stopWALBytes": .number(Decimal(reader.governanceStoragePolicy.walStopBytes)),
+            ]),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    }
     routes.get("daily") { request async throws -> Response in
-      let values = try Self.parameters(request.url.string, allowed: ["days", "key", "model"])
+      let values = try Self.parameters(
+        request.url.string, allowed: ["days", "key", "model", "end"])
       let days: Int
       if let raw = values["days"] {
         guard let value = Int(raw) else { throw ExecutionError.invalidCommand }
@@ -26,9 +67,11 @@ public struct UsageAdminAPI: Sendable {
       } else {
         days = 7
       }
+      let end = values["end"].flatMap(Int64.init)
+      guard values["end"] == nil || end != nil else { throw ExecutionError.invalidCommand }
       do {
         let buckets = try await querying.dailyUsage(
-          days: days, keyID: values["key"], model: values["model"])
+          days: days, keyID: values["key"], model: values["model"], endUnixSeconds: end)
         return try Self.response(
           .object([
             "timezone": .string("UTC"), "days": .number(Decimal(days)),
@@ -37,6 +80,9 @@ public struct UsageAdminAPI: Sendable {
                 .object([
                   "atUnixSeconds": .number(Decimal(value.atUnixSeconds)),
                   "requests": .number(Decimal(value.requests)),
+                  "usageUnknown": .number(Decimal(value.usageUnknown)),
+                  "unknownReasons": .object(
+                    value.unknownReasons.mapValues { .number(Decimal($0)) }),
                   "succeeded": .number(Decimal(value.succeeded)),
                   "failed": .number(Decimal(value.failed)),
                   "cancelled": .number(Decimal(value.cancelled)),
@@ -235,6 +281,8 @@ public struct UsageAdminAPI: Sendable {
           ?? .null,
         "admitted": count(totals.admitted), "recordedRejections": count(totals.rejected),
         "inFlight": count(totals.inFlight), "unknown": count(totals.unknown),
+        "usageUnknown": count(totals.usageUnknown),
+        "unknownReasons": .object(totals.unknownReasons.mapValues(count)),
         "complete": count(totals.complete), "partial": count(totals.partial),
         "unavailable": count(totals.unavailable),
         "failed": count(totals.failed), "cancelled": count(totals.cancelled),
@@ -248,6 +296,7 @@ public struct UsageAdminAPI: Sendable {
         "exposureMicros": metric(totals.lifetimeExposureMicros),
         "scope": .string("key_only_all_time"),
       ]),
+      "detailRetentionDays": .number(90),
       "diagnosticsPolicy": .object([
         "days": .number(30), "maximum": .number(10000), "mayOmitUnderLoad": .bool(true),
       ]),

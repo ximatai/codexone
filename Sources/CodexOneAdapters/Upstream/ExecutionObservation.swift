@@ -39,7 +39,7 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
   if let error = error as? ExecutionError {
     switch error {
     case .unauthorized, .keyExpired: return .keyRejected
-    case .denied, .capacity: return .localCapacity
+    case .denied, .capacity, .accountConcurrency: return .localCapacity
     case .unknownObject: return .objectUnavailable
     case .ambiguousObject: return .objectAmbiguous
     case .invalidCommand: return .invalidRequest

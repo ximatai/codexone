@@ -1,5 +1,6 @@
 import { metricLabels, money, estimateNote } from "../../shared/presentation";
 import type { UsageReport, Metrics } from "./api";
+import { failures } from "../../shared/presentation";
 import { number, duration } from "./format";
 import styles from "./usage.module.css";
 export function UsageSummary({ report }: { report: UsageReport }) {
@@ -76,6 +77,18 @@ export function UsageEvidence({
           </small>
         </div>
         <div>
+          <span>用量未知</span>
+          <strong>{totals.usageUnknown ?? totals.unknown} 条</strong>
+          <small>
+            {Object.entries(totals.unknownReasons ?? {})
+              .map(
+                ([reason, count]) =>
+                  `${failures[reason] ?? "原因未提供"} ${count} 条`,
+              )
+              .join(" · ") || "原因未提供"}
+          </small>
+        </div>
+        <div>
           <span>用量完整度</span>
           <strong>{totals.complete} 完整</strong>
           <small>
@@ -101,7 +114,8 @@ export function UsageEvidence({
         {incomplete
           ? "含不完整/缺失证据：数值只表示已观测下界，未知部分无法量化，不能当零。"
           : estimateNote}{" "}
-        图片工具 token 与宿主响应 token
+        明细仅保留最近 90 天；更早执行保留 UTC 日汇总。待核对满 24
+        小时自动关闭，用量仍为未知。 图片工具 token 与宿主响应 token
         分别统计，不相加；缺失工具证据显示不可用。
       </p>
     </details>

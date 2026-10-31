@@ -160,7 +160,7 @@ def verify(binary,space_root):
             assert not (f.root/'refused-rekey').exists()
             with sqlite3.connect(f.root/'state/core.sqlite') as db:db.execute('PRAGMA user_version=7')
             command(binary,f.root/'state','--migrate',ok=False)
-            assert not list((f.root/'state').glob('*.pre-v9-*.sqlite'))
+            assert not list((f.root/'state').glob('*.pre-v10-*.sqlite'))
         filler.unlink()
         subprocess.run([binary,'--migrate'],env={'PATH':os.defpath,'CODEXONE_DATA_DIRECTORY':str(f.root/'state')},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
         print('PASS: real bounded tmpfs degraded/blocked/live/ready/no dispatch, actual ENOSPC with reserved in-flight settlement, hysteresis recovery and offline backup/restore/rekey/migration refusal')

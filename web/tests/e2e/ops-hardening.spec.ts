@@ -44,7 +44,7 @@ test("reviews unknown release, conflict and success at desktop size", async ({
         items: count
           ? [
               {
-                kind: "unresolved_executions",
+                kind: "observation_quality",
                 severity: "warning",
                 subjectType: "system",
                 subjectID: null,
@@ -54,6 +54,30 @@ test("reviews unknown release, conflict and success at desktop size", async ({
               },
             ]
           : [],
+      },
+      "/api/usage/headroom": {
+        capacities: [
+          {
+            name: "daily_requests",
+            current: "8000",
+            limit: "10000",
+            blocking: false,
+          },
+        ],
+        accounts: [
+          {
+            id: account.id,
+            current: 2,
+            peak24Hours: 13,
+            limit: 16,
+            blocking: true,
+          },
+        ],
+        unknownReconciliation: {
+          count,
+          beforeUnixSeconds: 1,
+          periodSeconds: 86400,
+        },
       },
       "/api/accounts": { accounts: [account], nextCursor: null },
       "/api/usage/keys": {
@@ -76,7 +100,9 @@ test("reviews unknown release, conflict and success at desktop size", async ({
     return route.fulfill({ json: data[path] ?? {} });
   });
   await page.goto("/");
-  await expect(page.getByText("未命名账号 · 12345678")).toBeVisible();
+  await expect(
+    page.getByText("未命名账号 · 12345678", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.getByRole("button", { name: "核对并释放" }).click();
@@ -93,7 +119,7 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await page.getByRole("button", { name: "核对并释放" }).click();
   await dialog.getByRole("button", { name: "确认释放" }).click();
   await expect(page.getByText(/待核对数量已变化/)).toBeVisible();
-  await expect(page.getByText(/未结执行占用 513 \/ 1024/)).toBeVisible();
+  await expect(page.getByText(/513 条待核对/)).toBeVisible();
   await page.getByRole("button", { name: "核对并释放" }).click();
   await expect(dialog).toContainText("513 条");
   await dialog.getByRole("button", { name: "确认释放" }).click();

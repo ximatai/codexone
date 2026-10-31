@@ -92,7 +92,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ## 首页需要处理提醒
 
-`GET /api/attention` 无查询参数，仅管理员可读，复用 A10/A11 的认证、来源、no-store、连接与共享管理容量；GET 不要求 CSRF。返回 `generatedAtUnixSeconds` 与 `items`，最多 50 条，critical 优先，同严重度按 `sinceUnixSeconds` 升序（未知时间最后），再按 kind/主体稳定排序。每项包含 kind、severity（critical/warning）、subjectType（account/key/system/protocol）、可空 subjectID/subjectName、detail、可空 sinceUnixSeconds。detail 仅包含固定枚举、布尔标记或数值，不包含错误正文、头值或凭证。
+`GET /api/attention` 无查询参数，仅管理员可读，复用 A10/A11 的认证、来源、no-store、连接与共享管理容量；GET 不要求 CSRF。返回 `generatedAtUnixSeconds` 与 `items`，最多 50 条，critical 优先，同严重度按 `sinceUnixSeconds` 升序（未知时间最后），再按 kind/主体稳定排序。每项包含 kind、severity（critical/warning）、subjectType（account/key/system/protocol）、可空 subjectID/subjectName、detail、可空 sinceUnixSeconds。detail 包含固定枚举、布尔标记、数值及最多 5 个 Key 的用量排名（仅公开 Key 显示名/主体/ID 和计数），不包含错误正文、头值或凭证。
 
 | kind | 条件 | severity |
 |---|---|---|
@@ -102,7 +102,10 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | quota_stale | 观测失败、不可用或超过 U10 新鲜期 | warning |
 | key_expiring | 启用 Key 到期时间距当前 ≤7天（含已到期） | warning |
 | key_limit_near | 启用 Key 当日请求数或治理预算占用 ≥90% | warning |
-| unresolved_executions | 全时间未结占用达到全局上限 50%，80% 升 critical | warning/critical |
+| observation_quality | 最近 1h 非客户端取消的未知 ≥10 且占已准入 ≥20% | warning |
+| capacity_reference | 今日请求/已观测费用/明细行数达到参考值 80%，超过明确标注 | warning |
+| account_concurrency_high | 24h 峰值 ≥每账号 16 的 80% | warning |
+| account_rate_surge | 10 分钟 ≥60 且 ≥过去 7 天同时段中位数 5 倍 | warning |
 | error_rate_high | 滚动60分钟已准入 ≥20 且失败率 ≥10%，客户端取消不计失败 | critical |
 | backup_disabled | 未配置在线备份目录 | warning |
 | backup_stale | 最近成功（无成功则本次启用时间）距今严格超过 36h / 72h | warning / critical |
@@ -119,7 +122,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 `POST /api/executions/unknown/release` 复用 A10/A11 管理员认证、来源/CSRF、no-store、请求体和共享管理容量，拒绝 query 参数。JSON 两个必填字段 beforeUnixSeconds、expectedCount 均为非负整数，未知字段拒绝；成功返回 `{ "released": n }`，CAS 不符为 409，容量/存储不可用为 503，所有响应 no-store。事务与证据语义见 U07。
 
-unresolved_executions.detail 含 count（可核对 unknown 数）、unresolvedCount（intent/unknown 与恢复缺失暴露的容量占用总数）、limit（与准入同源，默认 1024）。低于 50% 不出提醒。首页“核对并释放”须确认真实用量无法得知、操作仅解除容量占用、统计仍显示用量未知；取消不调用接口，409 提示数量变化并刷新，不自动重放。
+原 unresolved_executions 容量提醒移除。observation_quality 只作质量观察，不能用其非取消计数作人工关闭 CAS。首页“核对并释放”从余量接口读取严格截止前全部 unknown 数；确认未知用量和提前关闭的审计语义。409 及未知结果恢复都重新读取同一个 headroom 来源，不自动重放。
 
 账号读取 accessExpiresAtUnixSeconds 为应用层解密后提取的真实 Unix 秒；未知/取值失败为 null，不传出凭证明文、不改 schema。账号页及首页额度卡显示相对到期时间。15 分钟提前刷新沿用既有授权/额度失败提醒；临近到期本身不冒充刷新失败，无法确定是否刷新时不造失败证据。
 
@@ -148,6 +151,16 @@ Key 可用状态筛选仅综合开关和有效期：可用为启用且未到期�
 首页提醒默认显示前五项，同时保留紧急/提醒总数、类别计数及展开/收起入口；对象提醒携带 ID，账号打开详情，Key 定位并高亮目标，目标隐藏或不存在时明确说明。
 
 提醒收起后将展开按钮滚回视口并保持焦点。管理员登录入口将焦点送入首个凭证输入框；弹层取消或 Esc 关闭后焦点返回触发控件；提醒定位到 Key 后滚动并聚焦带可读名称的目标行。额度卡片的账号链接直接打开该账号详情，与提醒使用相同 target 参数。绿色仅表示真正可用状态：已到期 Key 的启用开关标签为中性色，账号存在授权异常时系统状态圆点为警告色；用量非状态链接/折叠入口使用主色。
+
+## 治理余量与未知用量
+
+`GET /api/usage/headroom` 无查询参数、管理员只读、no-store，继承 usage 的单在途/1 秒预算/取消/低盘门禁；忙返回 429。返回 generatedAtUnixSeconds、capacities（name/current/limit/blocking；current/limit 为十进制字符串，缺费用 current=null）、accounts（id/current/peak24Hours/limit=16/blocking=true）、storage（既有水位快照）及 storageLimits（stopAvailableBytes/stopWALBytes）。capacities 为 daily_requests、daily_estimated_micros、detail_rows，均 blocking=false；费用是已观测下界，未知部分未计入。账号峰值精确按最近 86400 秒内的准入、释放前及启动恢复样本与当前并发取最大；未配置的参考阈值不返回。样本保留严格递减峰值前沿，新样本覆盖更早的相等/更低值，因此不按请求无限增长。
+
+unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、periodSeconds=86400；count 仅 state=unknown 且 created_at_epoch 严格早于截止，人工释放可直接用这一对 CAS 值。该查询参与首页手动/自动刷新、401 会话失效、冲突及未知结果核对。存储门禁不开放读取时沿用 `/api/runtime/storage` 展示水位，不将失败读作零。
+
+用量 rows.state 可为 closed_unknown（持久 settled+关闭标记的投影）；totals 与 daily bucket 新增 usageUnknown、unknownReasons（固定失败枚举或 unspecified），区别于待核对 unknown。用量报告 detailRetentionDays=90，详情/小时桶只含保留明细，日序列及 Key 最近使用合并日汇总。quota_high.detail.keyRanking 为最近 5 小时最多 5 个 Key 的已观测费用下界/请求/缺失排名，不代表提供者按 Key 分配余额；原生图片全缺计数的费用仍为未知。
+
+`GET /api/usage/daily` 可选 `end` 为 UTC 零时的左闭右开结束秒（最多向前 31 日），用于读取已归档日序列；缺省仍含今日。参数无效拒绝，不把日汇总展开为小时。
 
 ## 请求推理强度与服务档位
 

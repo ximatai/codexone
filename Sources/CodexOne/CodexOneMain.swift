@@ -254,7 +254,7 @@ struct CodexOneMain {
       store = try await SQLiteExecutionStore.open(
         path: directory + "/core.sqlite",
         limits: .init(
-          requests: 10_000, active: 16, unresolved: 32,
+          requests: 10_000, active: ExecutionLimits.accountConcurrency, unresolved: 32,
           budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity)
     } else {
       store = nil
@@ -307,7 +307,10 @@ struct CodexOneMain {
         name: "authorization", ready: (identityConfiguration != nil || poolConfiguration != nil)),
     ])
     var services: [any Service] = []
-    if let store { services.append(StorageMonitor(storage: store)) }
+    if let store {
+      services.append(StorageMonitor(storage: store))
+      services.append(ExecutionMaintenanceSupervisor(maintenance: store))
+    }
     if let backup { services.append(OnlineBackupSupervisor(backup: backup)) }
     let accountAdmin: AccountAdminAPI?
     var poolDataService: ResponsesDataService?

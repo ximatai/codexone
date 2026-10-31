@@ -52,6 +52,19 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
         : { error: { code: "unauthorized" } },
     });
   });
+  await page.route("**/api/usage/headroom", (route) =>
+    route.fulfill({
+      json: {
+        capacities: [],
+        accounts: [],
+        unknownReconciliation: {
+          count: 0,
+          beforeUnixSeconds: 1,
+          periodSeconds: 86400,
+        },
+      },
+    }),
+  );
   await page.route("**/api/attention", (route) =>
     route.fulfill({ json: { items: [], generatedAtUnixSeconds: 1 } }),
   );

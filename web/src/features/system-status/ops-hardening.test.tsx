@@ -30,7 +30,7 @@ vi.mock("../account-management/api", () => ({ fetchAccounts: vi.fn() }));
 vi.mock("../usage/api", () => ({ fetchKeyUsage: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 const item = {
-  kind: "unresolved_executions" as const,
+  kind: "observation_quality" as const,
   severity: "warning" as const,
   subjectType: "system" as const,
   subjectID: null,
@@ -55,11 +55,25 @@ function setup(conflict = false) {
     },
   ]);
   vi.mocked(usage.fetchKeyUsage).mockResolvedValue([]);
+  let currentCount = 500;
   vi.mocked(management.request).mockImplementation(async (path) => {
     if (path === "/api/attention")
       return { items: [item], generatedAtUnixSeconds: 1 };
+    if (path === "/api/usage/headroom")
+      return {
+        capacities: [],
+        accounts: [],
+        unknownReconciliation: {
+          count: currentCount,
+          beforeUnixSeconds: 100,
+          periodSeconds: 86400,
+        },
+      };
     if (path === "/api/executions/unknown/release") {
-      if (conflict) throw new management.ManagementError(409, "conflict");
+      if (conflict) {
+        currentCount = 501;
+        throw new management.ManagementError(409, "conflict");
+      }
       return { released: 500 };
     }
     return {
@@ -74,7 +88,7 @@ it("requires confirmation, cancels safely, releases unknown count and preserves 
   const show = vi.spyOn(notifications, "show");
   setup();
   await screen.findByText("访问凭证约 1 小时后到期");
-  expect(screen.getByText(/未结执行占用 512 \/ 1024/)).toBeVisible();
+  expect(screen.getByText(/500 条待核对/)).toBeVisible();
   fireEvent.click(await screen.findByRole("button", { name: "核对并释放" }));
   expect(await screen.findByText(/真实用量无法得知/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
@@ -123,6 +137,7 @@ it("refreshes changed counts after a conflict without replaying release", async 
       .mocked(management.request)
       .mock.calls.filter(([path]) => path === "/api/attention"),
   ).toHaveLength(2);
+  expect(await screen.findByText(/501 条待核对/)).toBeVisible();
   expect(
     vi
       .mocked(management.request)

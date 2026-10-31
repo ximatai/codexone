@@ -169,7 +169,8 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   try rawSQL(
     f.path,
     "ALTER TABLE accounts DROP COLUMN display_name; "
-      + (version < 5 ? removeObservationSchema : "DROP INDEX attempts_in_flight; ")
+      + (version < 5
+        ? removeObservationSchema : removeGovernanceSchema + "DROP INDEX attempts_in_flight; ")
       + (version < 7 ? "DROP TABLE maintenance_events; DROP TABLE maintenance_state; " : "")
       + "PRAGMA user_version=\(version)"
   )
@@ -179,7 +180,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path)
   let directory = (f.path as NSString).deletingLastPathComponent
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v9-") && $0.hasSuffix(".sqlite")
+    $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
   }
   #expect(backups.count == 1)
   var db: OpaquePointer?
@@ -205,7 +206,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-      $0.contains(".pre-v9-") && $0.hasSuffix(".sqlite")
+      $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
     }.count == 1)
   await f.close()
 }

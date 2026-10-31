@@ -148,7 +148,8 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   // A historical v7 completed bundle uses the identical envelope/maintenance columns.
   try rawSQL(
     root + "/old/snapshot.sqlite",
-    "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=7"
+    removeGovernanceSchema
+      + "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=7"
   )
   let hash = try SQLiteSnapshotMaintenance.fingerprint(root + "/old/snapshot.sqlite")
   let manifestURL = URL(fileURLWithPath: root + "/old/manifest.json")
@@ -206,7 +207,7 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   #expect(object["verifiedRestoreIDs"] as? [String] == [restored.id])
   #expect(object["verifiedLegacySHA256"] as? [String] == [hash.1])
   let restoredDB = try SQLiteConnection(path: root + "/drill/core.sqlite", existingOnly: true)
-  #expect(try restoredDB.scalar("PRAGMA user_version") == 9)
+  #expect(try restoredDB.scalar("PRAGMA user_version") == 10)
   restoredDB.shutdown()
   #expect(object["requiredCurrentKeyIDs"] as? [String] == [ring.keyID])
   #expect(
@@ -235,7 +236,8 @@ func backupSchemaMislabelIsRejectedBeforeVerificationRetirementOrTargetCreation(
   if actualSchema < 9 {
     try rawSQL(
       root + "/bundle/snapshot.sqlite",
-      "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=\(actualSchema)"
+      removeGovernanceSchema
+        + "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=\(actualSchema)"
     )
   }
   let hash = try SQLiteSnapshotMaintenance.fingerprint(root + "/bundle/snapshot.sqlite")

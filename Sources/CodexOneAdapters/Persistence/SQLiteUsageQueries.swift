@@ -47,7 +47,16 @@ extension SQLiteUsageReader {
       result.terms.append("json_extract(outcome_json,'$.failure') IS NOT NULL")
     }
     if let state = query.state {
-      if diagnostic { result.terms.append("0") } else { add("state=?", .text(state.rawValue)) }
+      if diagnostic {
+        result.terms.append("0")
+      } else {
+        if state == .closedUnknown {
+          result.terms.append("closed_unknown_at_epoch IS NOT NULL")
+        } else {
+          add("state=?", .text(state.rawValue))
+          if state == .settled { result.terms.append("closed_unknown_at_epoch IS NULL") }
+        }
+      }
     }
     return result
   }
@@ -88,6 +97,10 @@ extension SQLiteUsageReader {
         """, attempts.values + [.number((timing.2 * 95 + 99) / 100 - 1)])
     // Settled + partial evidence is an audited release, not complete metering. Retain
     // trusted metric lower bounds while projecting its completeness as unavailable.
+    let unknownReasons = try db.rows(
+      "SELECT COALESCE(json_extract(outcome_json,'$.failure'),'unspecified'),COUNT(*) FROM attempts WHERE \(attempts.sql) AND (state='unknown' OR closed_unknown_at_epoch IS NOT NULL) GROUP BY 1",
+      attempts.values
+    ) { (String(cString: sqlite3_column_text($0, 0)), sqlite3_column_int64($0, 1)) }
     let totals = try db.rows(
       """
       SELECT COUNT(*),COALESCE(SUM(state='intent'),0),COALESCE(SUM(state='unknown'),0),
@@ -111,7 +124,9 @@ extension SQLiteUsageReader {
         lifetimeInFlight: lifetime.0, lifetimeUnknown: lifetime.1,
         lifetimeExposureMicros: lifetime.2,
         metrics: try metrics(row, offset: 9), averageFirstEventMilliseconds: timing.0,
-        p95FirstEventMilliseconds: p95, averageTotalMilliseconds: timing.1)
+        p95FirstEventMilliseconds: p95, averageTotalMilliseconds: timing.1,
+        usageUnknown: unknownReasons.reduce(0) { $0 + $1.1 },
+        unknownReasons: Dictionary(uniqueKeysWithValues: unknownReasons))
     }[0]
     let grouped = try db.rows(
       "SELECT created_at_epoch/3600*3600,COUNT(*),SUM(state!='settled') FROM attempts WHERE \(attempts.sql) GROUP BY created_at_epoch/3600",
@@ -134,7 +149,7 @@ extension SQLiteUsageReader {
       SELECT history.*, (SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id), (SELECT json_extract(metadata_json,'$.displayName') FROM managed_keys WHERE id=history.key_id) FROM (
       SELECT 'admitted' kind,'a:'||id cursor_id,id,created_at_epoch at_epoch,key_id,
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
-        identity,request_id,state,json_extract(outcome_json,'$.kind') outcome,
+        identity,request_id,CASE WHEN closed_unknown_at_epoch IS NOT NULL THEN 'closed_unknown' ELSE state END state,json_extract(outcome_json,'$.kind') outcome,
         json_extract(outcome_json,'$.failure') failure,CASE WHEN state='settled' AND json_extract(usage_json,'$.completeness')='partial' THEN NULL ELSE json_extract(usage_json,'$.completeness') END completeness,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
@@ -217,16 +232,23 @@ extension SQLiteUsageReader {
       terms.append("json_extract(admission_json,'$.model')=?")
       values.append(.text(model))
     }
+    let source = """
+      (SELECT created_at_epoch,key_id,admission_json,outcome_json,usage_json,1 record_count,
+        state='unknown' OR closed_unknown_at_epoch IS NOT NULL usage_unknown FROM attempts
+      UNION ALL SELECT day_epoch,key_id,json_object('model',NULLIF(model,''),'mode',mode),json_object('kind',NULLIF(outcome,''),'failure',NULLIF(failure,'')),
+        json_object('inputTokens',input_tokens,'outputTokens',output_tokens,'cachedTokens',cached_tokens,'images',images,'estimatedMicros',estimated_micros,
+          'imageInputTokens',image_input_tokens,'imageOutputTokens',image_output_tokens,'imageInputTextTokens',image_input_text_tokens,'imageInputImageTokens',image_input_image_tokens),requests,usage_unknown FROM usage_daily)
+      """
     let predicate = terms.joined(separator: " AND ")
     let rows = try db.rows(
       """
-      SELECT created_at_epoch/86400*86400,COUNT(*),
-        COALESCE(SUM(json_extract(outcome_json,'$.kind')='succeeded'),0),
-        COALESCE(SUM(json_extract(outcome_json,'$.kind')='failed'),0),
-        COALESCE(SUM(json_extract(outcome_json,'$.kind')='cancelled'),0),
+      SELECT created_at_epoch/86400*86400,SUM(record_count),
+        COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='succeeded' THEN record_count ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='failed' THEN record_count ELSE 0 END),0),
+        COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='cancelled' THEN record_count ELSE 0 END),0),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM attempts WHERE \(predicate) GROUP BY created_at_epoch/86400
+        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM \(source) WHERE \(predicate) GROUP BY created_at_epoch/86400
       """, values
     ) { row in
       (
@@ -236,10 +258,19 @@ extension SQLiteUsageReader {
     }
     let failures = try db.rows(
       """
-      SELECT created_at_epoch/86400*86400,json_extract(outcome_json,'$.failure'),COUNT(*) FROM attempts
+      SELECT created_at_epoch/86400*86400,json_extract(outcome_json,'$.failure'),SUM(record_count) FROM \(source)
       WHERE \(predicate) AND json_extract(outcome_json,'$.failure') IS NOT NULL
       GROUP BY created_at_epoch/86400,json_extract(outcome_json,'$.failure')
       """, values
+    ) {
+      (
+        sqlite3_column_int64($0, 0), String(cString: sqlite3_column_text($0, 1)),
+        sqlite3_column_int64($0, 2)
+      )
+    }
+    let unknown = try db.rows(
+      "SELECT created_at_epoch/86400*86400,COALESCE(json_extract(outcome_json,'$.failure'),'unspecified'),SUM(record_count) FROM \(source) WHERE \(predicate) AND usage_unknown GROUP BY 1,2",
+      values
     ) {
       (
         sqlite3_column_int64($0, 0), String(cString: sqlite3_column_text($0, 1)),
@@ -256,7 +287,10 @@ extension SQLiteUsageReader {
         failed: row?.3 ?? 0, cancelled: row?.4 ?? 0,
         failures: Dictionary(
           uniqueKeysWithValues: failures.filter { $0.0 == at }.map { ($0.1, $0.2) }),
-        metrics: row?.5 ?? empty)
+        metrics: row?.5 ?? empty,
+        usageUnknown: unknown.filter { $0.0 == at }.reduce(0) { $0 + $1.2 },
+        unknownReasons: Dictionary(
+          uniqueKeysWithValues: unknown.filter { $0.0 == at }.map { ($0.1, $0.2) }))
     }
   }
 }

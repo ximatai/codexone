@@ -32,7 +32,7 @@ private func privateSnapshotRoot() throws -> String {
   await store.close()
   let manifest = try await SQLiteSnapshotMaintenance.backup(
     path: path, destination: root + "/backup", protection: nil)
-  #expect(manifest.schema == 9 && manifest.databaseBytes > 0)
+  #expect(manifest.schema == 10 && manifest.databaseBytes > 0)
   let current = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   try await current.admit(admission("absent-after-snapshot"))
   await current.close()
@@ -135,7 +135,7 @@ private func privateSnapshotRoot() throws -> String {
   #expect(!FileManager.default.fileExists(atPath: path))
 }
 
-@Test func reconciliationRejectsWrongIdentityAndEarlyWindowAndKeepsLifetimeGapReservations()
+@Test func reconciliationRejectsWrongIdentityAndEarlyWindowWithoutGloballyBlockingOnGap()
   async throws
 {
   let root = try privateSnapshotRoot()
@@ -181,13 +181,9 @@ private func privateSnapshotRoot() throws -> String {
       window: "utc-day-\(now/86400)", policyVersion: "p", pricingVersion: "p",
       reservedMicros: reserved, keyRevision: key.revision, model: "m")
   }
-  await #expect(throws: ExecutionError.denied) {
-    try await ready.admit(fresh("too-expensive", reserved: 21))
-  }
+  try await ready.admit(fresh("gap-does-not-block", reserved: 21))
   try await ready.admit(fresh("bounded", reserved: 20))
-  await #expect(throws: ExecutionError.denied) {
-    try await ready.admit(fresh("exceeds-count", reserved: 1))
-  }
+  try await ready.admit(fresh("gap-count-does-not-block", reserved: 1))
   #expect(try await ready.snapshot(attempt: "bounded").state == .intent)
   await ready.close()
 }

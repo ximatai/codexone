@@ -91,8 +91,16 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             } else {
               try connection.write("INSERT INTO metadata VALUES(1,?)", [.text(json)])
             }
+            try connection.exec(
+              "DELETE FROM account_concurrency WHERE peak<=(SELECT COUNT(*) FROM attempts a WHERE a.namespace=account_concurrency.namespace AND a.identity=account_concurrency.identity AND a.state='intent')"
+            )
+            try connection.write(
+              "INSERT INTO account_concurrency SELECT namespace,identity,?,COUNT(*) FROM attempts WHERE state='intent' GROUP BY namespace,identity ON CONFLICT(namespace,identity,at_epoch) DO UPDATE SET peak=MAX(peak,excluded.peak)",
+              [.number(Int64(Date().timeIntervalSince1970))])
             // All intents belonged to the previous owner, whose instance lock is now ours.
-            try connection.write("UPDATE attempts SET state='unknown' WHERE state='intent'")
+            try connection.write(
+              "UPDATE attempts SET state='unknown',unknown_since_epoch=? WHERE state='intent'",
+              [.number(Int64(Date().timeIntervalSince1970))])
             try Self.recoverAccountRefreshes(connection)
             if storage.snapshot.optionalWorkAllowed {
               try connection.write(
@@ -193,9 +201,6 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     try await perform(essential: true) { db in
       try db.transaction {
         let original = try Self.load(db, attempt).admission
-        guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
-          throw ExecutionError.capacity
-        }
         let command = ExecutionAdmission(
           attempt: UUID().uuidString, owner: original.owner,
           window: "utc-day-\(Int64(Date().timeIntervalSince1970) / 86400)",
@@ -227,77 +232,44 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       guard restored.allowsAdmission(at: now), command.keyRevision != nil,
         command.window == "utc-day-\(now / 86400)"
       else { throw ExecutionError.maintenanceRequired }
-      let missingCount = restored.unresolvedRequests
-      let missingMicros = restored.unresolvedMicros
-      let existingCount = try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
-      let existingMicros = try db.scalar(
-        "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE state!='settled'")
-      let unresolved = unresolvedCapacity
-      guard let unresolvedMicros = limits.unresolvedMicros,
-        missingCount < unresolved, existingCount < unresolved - missingCount,
-        missingMicros <= unresolvedMicros,
-        command.reservedMicros <= unresolvedMicros - missingMicros,
-        existingMicros <= unresolvedMicros - missingMicros - command.reservedMicros
-      else { throw ExecutionError.denied }
+
     }
     guard
       try db.scalar("SELECT COUNT(*) FROM attempts WHERE id=?", [.text(command.attempt)]) == 0
     else { throw ExecutionError.conflict }
-    guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
-      throw ExecutionError.capacity
-    }
     try Self.checkAccountAdmission(db, command)
     try Self.checkKeyAdmission(db, command)
-    // Lifetime unresolved/active exposure survives window rotation. Budget/request totals belong to the admission window.
-    for (scope, parameters) in [
-      ("1=1", [SQLiteConnection.Value]()),
-      ("principal=?", [.text(command.owner.principal)]),
-      (
-        "namespace=? AND identity=?",
-        [.text(command.owner.namespace), .text(command.owner.identity)]
-      ),
-    ] {
-      let counts = try db.rows(
-        """
-        SELECT COUNT(*), COALESCE(SUM(CASE WHEN state='intent' THEN 1 ELSE 0 END),0),
-        COALESCE(SUM(CASE WHEN state!='settled' THEN 1 ELSE 0 END),0)
-        FROM attempts WHERE \(scope)
-        """, parameters
-      ) { s in
-        (sqlite3_column_int64(s, 0), sqlite3_column_int64(s, 1), sqlite3_column_int64(s, 2))
-      }[0]
-      let requests = try db.scalar(
-        "SELECT COUNT(*) FROM attempts WHERE \(scope) AND window_id=?",
-        parameters + [.text(command.window)])
-      let exposure = try db.scalar(
-        "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE \(scope) AND window_id=?",
-        parameters + [.text(command.window)])
-      let unresolvedMicros = try db.scalar(
-        "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE \(scope) AND state!='settled'",
-        parameters)
-      let scopeLimits = ExecutionLimits(
-        requests: limits.requests, active: limits.active,
-        unresolved: scope == "principal=?" ? limits.unresolved : unresolvedCapacity,
-        budgetMicros: limits.budgetMicros, unresolvedMicros: limits.unresolvedMicros)
+    let active = try db.scalar(
+      "SELECT COUNT(*) FROM attempts WHERE namespace=? AND identity=? AND state='intent'",
+      [.text(command.owner.namespace), .text(command.owner.identity)])
+    guard active < ExecutionLimits.accountConcurrency else {
+      throw ExecutionError.accountConcurrency
+    }
+    for reference in command.references ?? [] {
+      let values: [SQLiteConnection.Value] = [
+        .text(command.owner.principal), .text(command.owner.namespace),
+        .text(command.owner.identity), .text(reference.type), .text(reference.rawID),
+      ]
       guard
-        scopeLimits.allows(
-          requestCount: requests, activeCount: counts.1, unresolvedCount: counts.2,
-          exposureMicros: exposure, unresolvedExposureMicros: unresolvedMicros,
-          reservedMicros: command.reservedMicros)
-      else {
-        throw ExecutionError.denied
-      }
+        try db.scalar(
+          "SELECT COUNT(*) FROM bindings WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=? AND expires_at_epoch>strftime('%s','now')",
+          values) == 1
+      else { throw ExecutionError.unknownObject }
+      try db.write(
+        "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
+        [.number(Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds)]
+          + values)
     }
     try Self.insertAttempt(db, command, state: "intent")
   }
 
-  private static func insertAttempt(
+  static func insertAttempt(
     _ db: SQLiteConnection, _ command: ExecutionAdmission, state: String
   ) throws {
     try db.write(
       """
-      INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,created_at_epoch,request_id)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,created_at_epoch,request_id,unknown_since_epoch)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       """,
       [
         .text(command.attempt), .text(command.owner.principal), .text(command.owner.key),
@@ -305,6 +277,26 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         .text(command.policyVersion), .text(command.pricingVersion),
         .number(command.reservedMicros), .text(state), .text(try encode(command)),
         .number(Int64(Date().timeIntervalSince1970)), command.requestID.map { .text($0) } ?? .null,
+        state == "unknown" ? .number(Int64(Date().timeIntervalSince1970)) : .null,
+      ])
+    if state == "intent" { try Self.recordAccountConcurrency(db, owner: command.owner) }
+  }
+
+  static func recordAccountConcurrency(_ db: SQLiteConnection, owner: ExecutionOwner) throws {
+    let current = try db.scalar(
+      "SELECT COUNT(*) FROM attempts WHERE namespace=? AND identity=? AND state='intent'",
+      [.text(owner.namespace), .text(owner.identity)])
+    // A newer sample dominates older samples of equal/lower concurrency for every future window.
+    // Keep a monotone frontier (at most 16 values/account), rather than one row per request/second.
+    let now = Int64(Date().timeIntervalSince1970)
+    try db.write(
+      "DELETE FROM account_concurrency WHERE namespace=? AND identity=? AND at_epoch<=? AND peak<=?",
+      [.text(owner.namespace), .text(owner.identity), .number(now), .number(current)])
+    try db.write(
+      "INSERT INTO account_concurrency VALUES(?,?,?,?) ON CONFLICT(namespace,identity,at_epoch) DO UPDATE SET peak=MAX(peak,excluded.peak)",
+      [
+        .text(owner.namespace), .text(owner.identity), .number(now),
+        .number(current),
       ])
   }
 
@@ -324,8 +316,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           values
         ) { String(cString: sqlite3_column_text($0, 0)) }
         // Retained history re-emits objects already owned by this principal and identity.
-        guard matches.isEmpty else { return }
-        try db.write("INSERT INTO bindings VALUES(?,?,?,?,?,?)", values + [.text(attempt)])
+        guard matches.isEmpty else {
+          try db.write(
+            "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
+            [
+              .number(
+                Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds)
+            ] + values)
+          return
+        }
+        try db.write(
+          "INSERT INTO bindings VALUES(?,?,?,?,?,?,?)",
+          values + [
+            .text(attempt),
+            .number(
+              Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds),
+          ])
       }
     }
   }
@@ -337,7 +343,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let namespace { try validateStrings([namespace], maximum: 512) }
     return try await perform { db in
       var sql =
-        "SELECT a.admission_json FROM bindings b JOIN attempts a ON a.id=b.attempt WHERE b.principal=? AND b.object_type=? AND b.raw_id=?"
+        "SELECT a.admission_json FROM bindings b JOIN attempts a ON a.id=b.attempt WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=?"
       var values: [SQLiteConnection.Value] = [
         .text(principal), .text(object.type), .text(object.rawID),
       ]
@@ -364,10 +370,15 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     try await perform(critical: true) { db in
       try db.transaction {
         let snapshot = try Self.load(db, attempt)
+        if snapshot.state == .intent {
+          try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
+        }
         if let outcome { try Self.recordOutcome(db, snapshot: snapshot, outcome: outcome) }
         guard let evidence else {
           if snapshot.state == .intent {
-            try db.write("UPDATE attempts SET state='unknown' WHERE id=?", [.text(attempt)])
+            try db.write(
+              "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?) WHERE id=?",
+              [.number(Int64(Date().timeIntervalSince1970)), .text(attempt)])
           }
           return
         }
@@ -426,13 +437,15 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         // An audited manual release remains settled when late evidence is still incomplete.
         if snapshot.usage == nil || evidence.revision > snapshot.usage!.revision {
           try db.write(
-            "UPDATE attempts SET state=?,usage_json=?,estimated=? WHERE id=?",
+            "UPDATE attempts SET state=?,usage_json=?,estimated=?,unknown_since_epoch=COALESCE(unknown_since_epoch,?),closed_unknown_at_epoch=CASE WHEN ?='complete' THEN NULL ELSE closed_unknown_at_epoch END WHERE id=?",
             [
               .text(
-                snapshot.state == .settled || evidence.completeness == .complete
+                snapshot.state == .settled || snapshot.state == .closedUnknown
+                  || evidence.completeness == .complete
                   ? "settled" : "unknown"),
               .text(try encode(evidence)),
-              .number(evidence.estimatedMicros), .text(attempt),
+              .number(evidence.estimatedMicros), .number(Int64(Date().timeIntervalSince1970)),
+              .text(evidence.completeness.rawValue), .text(attempt),
             ])
         }
       }
@@ -445,7 +458,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   }
   private static func load(_ db: SQLiteConnection, _ attempt: String) throws -> ExecutionSnapshot {
     let results = try db.rows(
-      "SELECT admission_json,state,usage_json FROM attempts WHERE id=?", [.text(attempt)]
+      "SELECT admission_json,CASE WHEN closed_unknown_at_epoch IS NOT NULL THEN 'closed_unknown' ELSE state END,usage_json FROM attempts WHERE id=?",
+      [.text(attempt)]
     ) { s in
       let admission = try decode(
         ExecutionAdmission.self, String(cString: sqlite3_column_text(s, 0)))
@@ -470,6 +484,10 @@ private func validateStrings(_ values: [String], maximum: Int = 256) throws {
 }
 func validateAdmission(_ value: ExecutionAdmission) throws {
   try value.executionRequirements.validate()
+  guard (value.references?.count ?? 0) <= 32 else { throw ExecutionError.invalidCommand }
+  for reference in value.references ?? [] {
+    try validateStrings([reference.type, reference.rawID])
+  }
   guard
     value.executionRequirements.route != .images
       || value.executionRequirements.imageModel == value.model
@@ -562,18 +580,15 @@ extension SQLiteExecutionStore: UnknownExecutionReleasing {
           "SELECT COUNT(*) FROM attempts WHERE state='unknown' AND created_at_epoch<?",
           [.number(beforeUnixSeconds)])
         guard count == expectedCount else { throw ExecutionError.conflict }
-        try db.write(
-          "UPDATE attempts SET state='settled' WHERE state='unknown' AND created_at_epoch<?",
-          [.number(beforeUnixSeconds)])
-        let record = try encode(ReleaseAudit(released: count, beforeUnixSeconds: beforeUnixSeconds))
-        try SQLiteSnapshotMaintenance.audit(
-          db, action: "release_unknown", record: record, at: Int64(Date().timeIntervalSince1970))
+        try Self.closeUnknown(
+          db,
+          ids: try db.rows(
+            "SELECT id FROM attempts WHERE state='unknown' AND created_at_epoch<?",
+            [.number(beforeUnixSeconds)]
+          ) { String(cString: sqlite3_column_text($0, 0)) }, before: beforeUnixSeconds,
+          automatic: false, now: Int64(Date().timeIntervalSince1970))
         return count
       }
     }
   }
-}
-private struct ReleaseAudit: Encodable {
-  let released: Int64
-  let beforeUnixSeconds: Int64
 }
