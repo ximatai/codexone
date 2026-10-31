@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · Key 显示名 | macOS arm64完整后端入口（Swift 260项、全部合成脚本）通过；前端lint/格式/类型/构建、Vitest100项及Chrome共13项通过（新增用例断言修正后定向补验）；1440×900/390×844走查与前端subagent复核通过；未跑Linux/部署 | [显示名验证](docs/changes/key-display-name/verification.md) |
 | 2026-10-31 · 首页需要处理提醒 | macOS arm64构建、Swift258项、全部后端标准脚本、Vitest96项、Chrome12项及真实生产SPA管理UI/CSP逐项通过（失败项修正后定向补验）；1440×900与窄屏走查、前端subagent评审完成；未跑Linux/部署 | [提醒验证](docs/changes/admin-attention/verification.md) |
 | 2026-10-31 · 管理台基础层阶段 2 | macOS arm64 `verify.sh --web --chrome`（Vitest 91、Chrome 12）、codexone/ExecutionProbe 构建、两项真实本机合成 UI/CSP 入口通过；阶段 2 评审返工 1–18 已处理；四页与详情/菜单共13张桌面/手机截图已更新、subagent复核完成 | [基础层验证](docs/changes/admin-ui-foundation/verification.md) |
 | 2026-10-31 · 账号提前刷新 | macOS arm64完整`verify.sh --backend`（Swift 245项）与`--web --chrome`（Vitest 74、Playwright 6）通过；15/5分钟窗口、单飞/失败分类、loopback连接拒绝、管理时间字段与1440×900账号详情；subagent评审问题已修复 | [提前刷新](docs/changes/proactive-account-refresh/verification.md) |
@@ -109,6 +110,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 有界混合容量：`python3 scripts/verify_capacity.py --image codexone:v8-candidate --duration 600 --output artifacts/capacity-run-001`（显式长耗时、每配置600秒、新输出目录）；定向故障保护和环境前提见[容量演练](docs/development/capacity.md)。
 
 ## 当前交付与下一步
+
+[Key 显示名](docs/changes/key-display-name/proposal.md)后端与前端本机实现和验证已完成：可空元数据与CAS编辑、轮换/全量更新保留、管理查询展示及别名搜索，不改schema或认证/归属。当前分支为待主Agent承接的本机候选；下一步由主Agent评审并执行Linux verification，再按授权部署和设置迁移别名。本次未推送、未部署。
 
 管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1、2 已合并（“C 结构 + A 克制”：侧栏/窄屏导航、四页迁移、图表/DataTable、账号共享修改、CSS 清理，一轮评审返工），macOS 前端与两项合成生产 CSP 入口、Linux verification 通过；阶段 3 深色开关未开始。主色于2026-10-31改为石墨蓝（用户改选），绿/黄/红仅表示状态。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
 
