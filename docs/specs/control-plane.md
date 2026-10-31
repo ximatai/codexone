@@ -34,7 +34,7 @@
 
 ## A12：账号管理与一次性授权入口
 
-配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段为 id、displayName、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另含可空的 accessExpiresAtUnixSeconds 与 credentialUpdatedAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。到期字段只允许可靠持久元数据；当前v9到期只存在于密文，管理列表不为展示解密凭证，故返回null。最近更新时间取已有account_events中create_verified/reauthorize_verified/refresh_commit的最后提交UTC秒，不用模式/显示名更新或刷新开始/失败时间；缺少可靠审计时返回null。详情以本地时间及相对时间展示，null显示“不可用”，不返回令牌内容或摘要、不新增schema。
+配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段为 id、displayName、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另含可空的 accessExpiresAtUnixSeconds 与 credentialUpdatedAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。到期字段由应用层读取并解密已有凭证后只提取 Unix 秒元数据，适配器不得获得凭证明文；未知或取值失败返回 null，不新增 schema。最近更新时间取已有account_events中create_verified/reauthorize_verified/refresh_commit的最后提交UTC秒，不用模式/显示名更新或刷新开始/失败时间；缺少可靠审计时返回null。详情以本地时间及相对时间展示，null显示“不可用”，不返回令牌内容或摘要、不新增schema。
 
 PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
 
@@ -102,7 +102,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | quota_stale | 观测失败、不可用或超过 U10 新鲜期 | warning |
 | key_expiring | 启用 Key 到期时间距当前 ≤7天（含已到期） | warning |
 | key_limit_near | 启用 Key 当日请求数或治理预算占用 ≥90% | warning |
-| unresolved_executions | 全时间 unknown 执行存在 | warning |
+| unresolved_executions | 全时间未结占用达到全局上限 50%，80% 升 critical | warning/critical |
 | error_rate_high | 滚动60分钟已准入 ≥20 且失败率 ≥10%，客户端取消不计失败 | critical |
 | storage_pressure | 现有低盘保护 degraded/blocked | critical |
 | client_protocol_extension | 本进程出现未知 WS 控制类型或未知 x-codex-* 头名 | warning |
@@ -111,6 +111,17 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 汇总共享用量只读 reader 的单在途、扫描预算与取消门禁；繁忙返回429，读取失败不能表现为无异常。低盘保护暂停可选读取时跳过统计快照，为 accounts/keys/executions 返回来源不可用项，仍返回存储压力提醒；不绕过可选工作门禁。Key预算占用沿用准入治理，包含未结预留，不是提供者订阅余额。协议名称由入口持有并注入数据与管理入口的并发安全集合记录，最多32个名称，每名称1–128字节可打印ASCII，去重保留首次UTC秒；溢出不再新增并在 detail.overflow 标记，重启清空，不记录值或消息内容。
 
 首页在页头下展示提醒，critical 红、warning 琥珀，提供对应账号/Key、诊断或存储详情链接；空态与读取失败/重试态明确区分。提醒沿用 overview 查询分组的刷新与暂停，有 critical 时导航“服务概览”显示带可访问名称的小红点；不持久化忽略或已读状态。
+
+### 试运行治理操作与账号展示
+
+`POST /api/executions/unknown/release` 复用 A10/A11 管理员认证、来源/CSRF、no-store、请求体和共享管理容量，拒绝 query 参数。JSON 两个必填字段 beforeUnixSeconds、expectedCount 均为非负整数，未知字段拒绝；成功返回 `{ "released": n }`，CAS 不符为 409，容量/存储不可用为 503，所有响应 no-store。事务与证据语义见 U07。
+
+unresolved_executions.detail 含 count（可核对 unknown 数）、unresolvedCount（intent/unknown 与恢复缺失暴露的容量占用总数）、limit（与准入同源，默认 1024）。低于 50% 不出提醒。首页“核对并释放”须确认真实用量无法得知、操作仅解除容量占用、统计仍显示用量未知；取消不调用接口，409 提示数量变化并刷新，不自动重放。
+
+账号读取 accessExpiresAtUnixSeconds 为应用层解密后提取的真实 Unix 秒；未知/取值失败为 null，不传出凭证明文、不改 schema。账号页及首页额度卡显示相对到期时间。15 分钟提前刷新沿用既有授权/额度失败提醒；临近到期本身不冒充刷新失败，无法确定是否刷新时不造失败证据。
+
+全站账号名优先 displayName；未命名统一“未命名账号 · <ID 前 8 位>”。活动、用量与提醒只有 accountID 时使用账号列表映射，找不到也用相同回退；账号页提示可设置名称。
+
 
 ## Key 显示名
 

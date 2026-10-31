@@ -62,7 +62,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       displayName: "工作站别名",
       model: "synthetic-text",
       mode: "generation",
-      accountID: null,
+      accountID: "synthetic-account",
       elapsedSeconds: 2,
       hasFirstEvent: false,
     },
@@ -77,7 +77,11 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
     ],
     truncated: false,
   });
-  renderPrivate(<ActivityOverview />);
+  renderPrivate(
+    <ActivityOverview
+      accounts={[{ id: "synthetic-account", displayName: "活动账号" }]}
+    />,
+  );
   expect(
     await screen.findByRole("img", { name: "今日请求近 7 天：4" }),
   ).toBeVisible();
@@ -90,6 +94,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(screen.getByText("等待首事件")).toBeVisible();
   expect(await screen.findByText("最近别名")).toBeVisible();
   expect(screen.queryByText(/object Object/)).toBeNull();
+  expect(screen.getAllByText(/活动账号/)[0]).toBeVisible();
 });
 
 it("renders only skeletons in KPI cards before the daily response", async () => {

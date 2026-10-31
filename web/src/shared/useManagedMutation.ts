@@ -10,7 +10,7 @@ import { useManagementSession } from "./session";
 
 type Operation = (csrf: string, signal: AbortSignal) => Promise<void>;
 interface Options {
-  scope: "keys" | "accounts";
+  scope: "keys" | "accounts" | "executions";
   invalidate: readonly QueryKey[];
   refresh: (signal: AbortSignal) => Promise<boolean>;
   onFailure?: () => void;

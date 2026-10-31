@@ -276,3 +276,26 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   #expect(try await f.store.quotaObservation(id: "a") == failed)
   await f.close()
 }
+
+@Test func accountPoolIdentityCapacityDoesNotReusePrincipalLimit() async throws {
+  let f = try await RoutingFixture.make(
+    limits: .init(requests: 100, active: 10, unresolved: 2, budgetMicros: 100))
+  for index in 0..<3 {
+    let key = try await f.store.createKey(
+      id: "key-\(index)", principal: "p-\(index)",
+      digest: String(repeating: String(index + 1), count: 64),
+      policy: KeyPolicy(models: ["synthetic-text"], limits: syntheticLimits))
+    let policy = try AccountPoolPolicy(
+      key: key, models: ["synthetic-text"], reservedMicros: 1,
+      policyVersion: "1", pricingVersion: "1")
+    let work = try await f.app.prepareDispatch(id: "a", continuation: false)
+    let command = try AccountPoolAdmission(
+      attempt: "capacity-\(index)", policy: policy,
+      model: "synthetic-text", window: "w", requestID: "seed", mode: .generation,
+      references: [], connection: nil, candidates: [AccountRouteCandidate(work: work)])
+    let admitted = try await f.store.admitSelectingAccount(command)
+    #expect(admitted.owner.identity == "a")
+    try await f.store.finalize(attempt: admitted.attempt, evidence: nil)
+  }
+  await f.close()
+}

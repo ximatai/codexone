@@ -1,5 +1,7 @@
+import type { AccountName } from "../../shared/account-presentation";
 import {
   Alert,
+  Button,
   Anchor,
   Paper,
   Skeleton,
@@ -21,11 +23,15 @@ export function AttentionPanel({
   loading,
   error,
   retry,
+  accounts = [],
+  release,
 }: {
   items?: AttentionItem[];
   loading: boolean;
   error: boolean;
   retry: () => void;
+  accounts?: readonly AccountName[];
+  release?: (item: AttentionItem) => void;
 }) {
   return (
     <Paper withBorder p="md" component="section" aria-label="需要处理">
@@ -66,8 +72,22 @@ export function AttentionPanel({
                 c="inherit"
                 size="sm"
               >
-                {attentionMessage(item)} ›
+                {attentionMessage(item, accounts)} ›
               </Anchor>
+              {item.kind === "unresolved_executions" && release && (
+                <Button
+                  size="xs"
+                  variant="light"
+                  ml="sm"
+                  disabled={
+                    typeof item.detail.count !== "number" ||
+                    item.detail.count <= 0
+                  }
+                  onClick={() => release(item)}
+                >
+                  核对并释放
+                </Button>
+              )}
             </Alert>
           ))}
         </Stack>

@@ -4,14 +4,17 @@ import Vapor
 
 /// Registers only beneath the shared, authenticated management route group.
 public struct AccountAdminAPI: Sendable {
+  private let credentials: AccountCredentials?
   private let store: any AccountGovernanceStore
   private let authorization: any AccountAuthorizing
   private let refreshing: any AccountRefreshing
   private let observing: (any AccountQuotaObserving)?
   public init(
     store: any AccountGovernanceStore, authorization: any AccountAuthorizing,
-    refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil
+    refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil,
+    credentials: AccountCredentials? = nil
   ) {
+    self.credentials = credentials
     self.store = store
     self.authorization = authorization
     self.refreshing = refreshing
@@ -129,8 +132,9 @@ public struct AccountAdminAPI: Sendable {
   }
   private func metadata(_ account: ManagedAccount) async throws -> JSONValue {
     let updated = try await store.credentialUpdatedAtUnixSeconds(id: account.id)
+    let expiration = try? await credentials?.accessExpiresAtUnixSeconds(id: account.id)
     return .object([
-      "accessExpiresAtUnixSeconds": .null,
+      "accessExpiresAtUnixSeconds": expiration.map { .number(Decimal($0)) } ?? .null,
       "credentialUpdatedAtUnixSeconds": updated.map { .number(Decimal($0)) } ?? .null,
       "displayName": account.displayName.map { .string($0) } ?? .null,
       "id": .string(account.id), "revision": .number(Decimal(account.revision)),

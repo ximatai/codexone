@@ -1,3 +1,4 @@
+import { accountName } from "../../shared/account-presentation";
 import { quotaStale } from "./quota";
 import { useEffect, useRef, useState } from "react";
 import { ErrorState } from "../../shared/ui/States";
@@ -152,7 +153,7 @@ export function AccountObservability({
         <div
           className={styles.details}
           role="region"
-          aria-label={`${account.id} 额度与健康`}
+          aria-label={`${accountName(account.id, [], account.displayName)} 额度与健康`}
         >
           <Button
             variant="default"

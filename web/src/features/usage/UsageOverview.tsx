@@ -1,3 +1,5 @@
+import { fetchAccounts } from "../account-management/api";
+import { useQuery } from "@tanstack/react-query";
 import { ErrorState, LoadingState } from "../../shared/ui/States";
 import { UsageDetail } from "./UsageDetail";
 import styles from "./usage.module.css";
@@ -43,6 +45,18 @@ export function UsageOverview({
   onApplied?: (filters: api.UsageFilters) => void;
 }) {
   const queryClient = useQueryClient();
+  const accounts = useQuery({
+    queryKey: ["accounts", "names"],
+    queryFn: ({ signal }) => fetchAccounts(signal),
+    staleTime: 15000,
+  });
+  useEffect(() => {
+    if (
+      accounts.error instanceof ManagementError &&
+      accounts.error.status === 401
+    )
+      onUnauthorized();
+  }, [accounts.error, onUnauthorized]);
   const queryWindow = useRef<api.UsageFilters["window"]>(undefined);
   const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
     null,
@@ -493,7 +507,11 @@ export function UsageOverview({
           </div>
         </div>
       )}
-      <UsageDetail detail={detail} onClose={() => setDetail(null)} />
+      <UsageDetail
+        accounts={accounts.data}
+        detail={detail}
+        onClose={() => setDetail(null)}
+      />
     </Paper>
   );
 }

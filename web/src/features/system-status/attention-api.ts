@@ -1,3 +1,7 @@
+import {
+  accountName,
+  type AccountName,
+} from "../../shared/account-presentation";
 import { z } from "../../shared/schema";
 import { request } from "../../shared/management";
 
@@ -58,7 +62,33 @@ const messages: Record<AttentionItem["kind"], string> = {
   client_protocol_extension: "检测到新的客户端协议名称，请核对兼容性",
   attention_source_unavailable: "提醒数据源读取失败，请检查后重试",
 };
-export function attentionMessage(item: AttentionItem) {
-  const name = item.subjectName ?? item.subjectID;
-  return `${name ? `${name}：` : ""}${messages[item.kind]}`;
+export function attentionMessage(
+  item: AttentionItem,
+  accounts: readonly AccountName[] = [],
+) {
+  const name =
+    item.subjectType === "account"
+      ? accountName(item.subjectID, accounts, item.subjectName)
+      : (item.subjectName ?? item.subjectID);
+  const message =
+    item.kind === "unresolved_executions"
+      ? `未结执行占用 ${item.detail.unresolvedCount ?? item.detail.count} / ${item.detail.limit ?? "—"}，其中 ${item.detail.count} 条待核对`
+      : messages[item.kind];
+  return `${name ? `${name}：` : ""}${message}`;
+}
+
+export async function releaseUnknown(
+  beforeUnixSeconds: number,
+  expectedCount: number,
+  csrf: string,
+  signal: AbortSignal,
+) {
+  return z.object({ released: z.number().int().nonnegative() }).parse(
+    await request("/api/executions/unknown/release", {
+      method: "POST",
+      csrf,
+      signal,
+      body: { beforeUnixSeconds, expectedCount },
+    }),
+  );
 }

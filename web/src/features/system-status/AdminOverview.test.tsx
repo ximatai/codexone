@@ -117,7 +117,7 @@ it.each(["fresh", "unavailable"] as const)(
     ]);
     const view = renderPrivate(<AdminOverview />);
     await screen.findByText(
-      state === "fresh" ? "synthetic-account" : "额度不可用",
+      state === "fresh" ? "未命名账号 · syntheti" : "额度不可用",
     );
     fireEvent.click(await screen.findByLabelText("自动刷新（15 秒）"));
     await act(async () => {});

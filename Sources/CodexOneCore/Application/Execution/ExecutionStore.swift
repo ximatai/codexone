@@ -62,7 +62,12 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   }
 }
 
+public protocol UnknownExecutionReleasing: Sendable {
+  func releaseUnknown(beforeUnixSeconds: Int64, expectedCount: Int64) async throws -> Int64
+}
+
 public struct ExecutionLimits: Sendable, Equatable, Codable {
+  public static let unresolvedCapacity: Int64 = 1024
   public let requests: Int64?
   public let active: Int64?
   public let unresolved: Int64?

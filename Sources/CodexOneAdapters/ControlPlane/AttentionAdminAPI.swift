@@ -211,13 +211,22 @@ enum AttentionRules {
     }
     return result
   }
-  static func executions(admitted: Int64, failed: Int64, unknown: Int64, since: Int64?)
+  static func executions(
+    admitted: Int64, failed: Int64, unknown: Int64, since: Int64?, unresolved: Int64? = nil,
+    limit: Int64 = ExecutionLimits.unresolvedCapacity
+  )
     -> [AttentionItem]
   {
     var items: [AttentionItem] = []
-    if unknown > 0 {
+    let occupied = unresolved ?? unknown
+    if Double(occupied) / Double(limit) >= 0.5 {
       items.append(
-        .init("unresolved_executions", detail: ["count": .number(Decimal(unknown))], since: since))
+        .init(
+          "unresolved_executions", critical: Double(occupied) / Double(limit) >= 0.8,
+          detail: [
+            "count": .number(Decimal(unknown)), "unresolvedCount": .number(Decimal(occupied)),
+            "limit": .number(Decimal(limit)),
+          ], since: since))
     }
     if admitted >= AttentionThresholds.minimumAdmitted,
       Double(failed) / Double(admitted) * 100 >= AttentionThresholds.errorPercent
