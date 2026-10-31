@@ -14,7 +14,12 @@ export function KeyLimitsSummary({
 }) {
   const query = useQuery({
     queryKey: [...queryKeys.keys.all, "limits", keyID, refresh],
-    queryFn: ({ signal }) => fetchKeys(signal),
+    queryFn: async ({ signal }) => {
+      const keys = await fetchKeys(signal);
+      return keys.some((key) => key.id === keyID)
+        ? keys
+        : [...keys, ...(await fetchKeys(signal, true))];
+    },
     enabled: !!keyID,
     gcTime: 0,
   });

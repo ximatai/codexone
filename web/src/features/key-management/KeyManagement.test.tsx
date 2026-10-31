@@ -30,6 +30,7 @@ vi.mock("./api", async (original) => ({
   updateKey: vi.fn(),
   setExpiration: vi.fn(),
   setDisplayName: vi.fn(),
+  setArchived: vi.fn(),
 }));
 const key: api.ManagedKey = {
   id: "key-1",
@@ -97,7 +98,7 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
       <CacheProbe />
     </>,
   );
-  await screen.findByText("尚未创建密钥。");
+  await screen.findByText("暂无未归档密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
   fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "team" },
@@ -166,7 +167,7 @@ it("creates an image-only key without granting vision or a conversation model", 
     secret: "synthetic-once",
   });
   const view = render(<KeyManagement />);
-  await screen.findByText("尚未创建密钥。");
+  await screen.findByText("暂无未归档密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
   fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "images-team" },
@@ -300,7 +301,7 @@ it("retains the editor draft after validation rejection", async () => {
   vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
   vi.mocked(api.fetchKeys).mockResolvedValue([key]);
   vi.mocked(api.fetchOptions).mockResolvedValue({
-    models: key.models,
+    models: key.models!,
     imageModels: [],
   });
   vi.mocked(api.updateKey).mockRejectedValue(
@@ -344,7 +345,7 @@ it.each([false, true])(
         expiresAtUnixSeconds: 2000000000,
       });
     render(<KeyManagement />);
-    await screen.findByText("尚未创建密钥。");
+    await screen.findByText("暂无未归档密钥。");
     fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
     fireEvent.change(await screen.findByLabelText("主体标识"), {
       target: { value: "team" },
@@ -400,7 +401,7 @@ it("does not revive a dismissed secret when a delayed expiration response arrive
     }),
   );
   render(<KeyManagement />);
-  await screen.findByText("尚未创建密钥。");
+  await screen.findByText("暂无未归档密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
   fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "team" },
@@ -512,4 +513,117 @@ it("refreshes and closes the editor when policy commits but name is rejected", a
       screen.queryByRole("button", { name: "保存修改" }),
     ).not.toBeInTheDocument(),
   );
+});
+
+it("archives with confirmation, reads the recycle bin and restores disabled", async () => {
+  let current: api.ManagedKey = { ...key, enabled: false, models: null };
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.fetchKeys).mockImplementation(
+    async (_signal, archived = false) =>
+      (current.archivedAtUnixSeconds != null) === archived ? [current] : [],
+  );
+  vi.mocked(api.setArchived).mockImplementation(async (_key, archived) => {
+    current = {
+      ...current,
+      revision: current.revision + 1,
+      archivedAtUnixSeconds: archived ? 100 : null,
+      enabled: false,
+    };
+    return current;
+  });
+  render(<KeyManagement />);
+  await screen.findByText("全部模型");
+  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^归档$/ }));
+  expect(
+    screen.getByText(/归档后从默认列表隐藏，用量统计和审计保留/),
+  ).toBeVisible();
+  expect(api.setArchived).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "team 更多操作" }),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText("可用状态"), {
+    target: { value: "archived" },
+  });
+  await screen.findByRole("button", { name: "team 更多操作" });
+  expect(api.fetchKeys).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
+  expect(screen.getByRole("button", { name: /^编辑$/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /^恢复$/ }));
+  expect(screen.getByText("恢复后仍为停用状态，需要单独启用。")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "确认恢复" }));
+  await waitFor(() => expect(api.setArchived).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "team 更多操作" }),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText("可用状态"), {
+    target: { value: "disabled" },
+  });
+  await screen.findByRole("button", { name: "team 更多操作" });
+  expect(current.enabled).toBe(false);
+});
+
+it("explains that an enabled Key must be disabled before archiving", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.fetchKeys).mockResolvedValue([key]);
+  render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "team 更多操作" }));
+  const archive = await screen.findByRole("menuitem", {
+    name: "归档（请先停用）",
+  });
+  expect(archive).toBeDisabled();
+  expect(archive).toHaveAttribute("title", "请先停用密钥，再归档");
+});
+
+it("edits independent conversation and image scopes and preserves explicit null", async () => {
+  const all = {
+    ...key,
+    models: null,
+    imageGeneration: true,
+    imageModels: null,
+  };
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([all]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: ["synthetic-image"],
+  });
+  vi.mocked(api.updateKey).mockResolvedValue({ ...all, revision: 2 });
+  render(<KeyManagement />);
+  await screen.findByText("全部模型");
+  fireEvent.click(screen.getByRole("button", { name: /^编辑$/ }));
+  const chat = screen.getByRole("radiogroup", { name: "对话模型范围" });
+  const images = screen.getByRole("radiogroup", { name: "图片模型范围" });
+  expect(within(chat).getByLabelText("全部模型（跟随配置）")).toBeChecked();
+  expect(within(images).getByLabelText("全部模型（跟随配置）")).toBeChecked();
+  fireEvent.click(within(chat).getByLabelText("指定模型"));
+  fireEvent.click(screen.getByLabelText("synthetic-text"));
+  expect(within(images).getByLabelText("全部模型（跟随配置）")).toBeChecked();
+  fireEvent.click(within(images).getByLabelText("指定模型"));
+  fireEvent.click(screen.getByLabelText("synthetic-image"));
+  fireEvent.click(within(chat).getByLabelText("全部模型（跟随配置）"));
+  fireEvent.click(within(images).getByLabelText("全部模型（跟随配置）"));
+  fireEvent.click(within(chat).getByLabelText("指定模型"));
+  fireEvent.click(within(images).getByLabelText("指定模型"));
+  expect(screen.getByLabelText("synthetic-text")).toBeChecked();
+  expect(screen.getByLabelText("synthetic-image")).toBeChecked();
+  fireEvent.click(within(chat).getByLabelText("全部模型（跟随配置）"));
+  fireEvent.click(within(images).getByLabelText("全部模型（跟随配置）"));
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(api.updateKey).toHaveBeenCalled());
+  expect(vi.mocked(api.updateKey).mock.calls[0][2]).toBeNull();
+  expect(vi.mocked(api.updateKey).mock.calls[0][6]?.imageModels).toBeNull();
 });

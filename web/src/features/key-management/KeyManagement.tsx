@@ -36,10 +36,10 @@ export function KeyManagement() {
   const navigationType = useNavigationType();
   const locationKey = useLocation().key;
   const positionedLocation = useRef<string | null>(null);
-  const state = useKeys();
+  const [params, setParams] = useSearchParams();
+  const state = useKeys(params.get("status") === "archived");
   const owner = useManagementSession();
   const [refresh, setRefresh] = useState(0);
-  const [params, setParams] = useSearchParams();
   const search = params.get("q") ?? "";
   const status = params.get("status") ?? "";
   const target = params.get("target");
@@ -72,6 +72,7 @@ export function KeyManagement() {
     );
   }
   const [expiring, setExpiring] = useState<api.ManagedKey | null>(null);
+  const [archiving, setArchiving] = useState<api.ManagedKey | null>(null);
   const [disabling, setDisabling] = useState<api.ManagedKey | null>(null);
   const usage = useQuery({
     queryKey: [...queryKeys.usage.keys(), state.keys, refresh],
@@ -210,6 +211,7 @@ export function KeyManagement() {
         />
         <NativeSelect
           label="可用状态"
+          disabled={state.busy}
           value={status}
           onChange={(event) => filter("status", event.currentTarget.value)}
           data={[
@@ -218,6 +220,7 @@ export function KeyManagement() {
             { value: "expiring", label: "即将到期" },
             { value: "expired", label: "已到期" },
             { value: "disabled", label: "已禁用" },
+            { value: "archived", label: "已归档" },
           ]}
         />
         <Text size="sm" c="dimmed">
@@ -280,6 +283,10 @@ export function KeyManagement() {
               state.setRotating(key);
             }}
             usage={usage}
+            setArchiving={(key) => {
+              rememberMenuTrigger(key);
+              setArchiving(key);
+            }}
             setExpiring={(key) => {
               rememberMenuTrigger(key);
               setExpiring(key);
@@ -366,6 +373,38 @@ export function KeyManagement() {
           的客户端会立即失败，后续请求将被拒绝。请先通知使用者。
         </Text>
         <Text>{disabling?.principal}</Text>
+      </ConfirmModal>
+      <ConfirmModal
+        opened={!!archiving}
+        returnFocusTo={returnToMenuTrigger}
+        title={
+          archiving?.archivedAtUnixSeconds != null ? "恢复密钥" : "归档密钥"
+        }
+        label={
+          archiving?.archivedAtUnixSeconds != null ? "确认恢复" : "确认归档"
+        }
+        busy={state.busy}
+        disabled={state.disabled}
+        close={() => setArchiving(null)}
+        destructive={false}
+        confirm={async () => {
+          if (archiving) {
+            const archived = archiving.archivedAtUnixSeconds == null;
+            await state.mutate(
+              (csrf, signal) =>
+                api.setArchived(archiving, archived, csrf, signal),
+              archived ? "密钥已归档。" : "密钥已恢复，仍为停用状态。",
+            );
+            setArchiving(null);
+          }
+        }}
+      >
+        <Text>
+          {archiving?.archivedAtUnixSeconds != null
+            ? "恢复后仍为停用状态，需要单独启用。"
+            : "归档后从默认列表隐藏，用量统计和审计保留，可在已归档视图恢复。"}
+        </Text>
+        <Text>{archiving?.displayName ?? archiving?.principal}</Text>
       </ConfirmModal>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}

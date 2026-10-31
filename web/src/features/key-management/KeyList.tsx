@@ -21,6 +21,7 @@ export function KeyList({
   keys,
   state,
   usage,
+  setArchiving,
   setExpiring,
   setDisabling,
   setRotating,
@@ -31,6 +32,7 @@ export function KeyList({
   state: ReturnType<typeof useKeys>;
   usage: { data?: KeyUsage[]; isError?: boolean; isPending?: boolean };
   highlightedID?: string | null;
+  setArchiving: (key: api.ManagedKey) => void;
   setExpiring: (key: api.ManagedKey) => void;
   setDisabling: (key: api.ManagedKey) => void;
   setRotating: (key: api.ManagedKey) => void;
@@ -65,14 +67,16 @@ export function KeyList({
       render: (key) => (
         <>
           <Group gap={5}>
-            {key.models.map((model) => (
+            {(key.models === null ? ["全部模型"] : key.models).map((model) => (
               <Badge className="model-id" variant="light" key={model}>
                 {model}
               </Badge>
             ))}
             {key.visionInput && <Badge variant="outline">视觉</Badge>}
             {key.imageGeneration && (
-              <Badge variant="outline">图片生成 / 编辑</Badge>
+              <Badge variant="outline">
+                图片生成 / 编辑{key.imageModels === null ? " · 全部模型" : ""}
+              </Badge>
             )}
           </Group>
         </>
@@ -91,7 +95,11 @@ export function KeyList({
                 : "gray"
             }
           >
-            {key.enabled ? "启用" : "禁用"}
+            {key.archivedAtUnixSeconds != null
+              ? "已归档"
+              : key.enabled
+                ? "启用"
+                : "禁用"}
           </StatusBadge>
           <StatusBadge
             color={
@@ -204,7 +212,7 @@ export function KeyList({
                 size="md"
                 variant="default"
                 aria-label="编辑"
-                disabled={state.disabled}
+                disabled={state.disabled || key.archivedAtUnixSeconds != null}
                 onClick={() => state.setEditing(key)}
               >
                 <IconPencil size={17} />
@@ -225,32 +233,47 @@ export function KeyList({
               </Tooltip>
               <Menu.Dropdown>
                 <Menu.Item
-                  leftSection={<IconClock size={16} />}
-                  onClick={() => setExpiring(key)}
+                  disabled={key.enabled}
+                  title={key.enabled ? "请先停用密钥，再归档" : undefined}
+                  onClick={() => setArchiving(key)}
                 >
-                  设置到期时间
+                  {key.archivedAtUnixSeconds != null
+                    ? "恢复"
+                    : key.enabled
+                      ? "归档（请先停用）"
+                      : "归档"}
                 </Menu.Item>
-                <Menu.Item
-                  leftSection={<IconRefresh size={16} />}
-                  onClick={() => setRotating(key)}
-                >
-                  轮换
-                </Menu.Item>
-                <Menu.Item
-                  color={key.enabled ? "red" : undefined}
-                  leftSection={
-                    key.enabled ? (
-                      <IconBan size={16} />
-                    ) : (
-                      <IconCheck size={16} />
-                    )
-                  }
-                  onClick={() =>
-                    key.enabled ? setDisabling(key) : void toggle(key)
-                  }
-                >
-                  {key.enabled ? "禁用" : "启用"}
-                </Menu.Item>
+                {key.archivedAtUnixSeconds == null && (
+                  <>
+                    <Menu.Item
+                      leftSection={<IconClock size={16} />}
+                      onClick={() => setExpiring(key)}
+                    >
+                      设置到期时间
+                    </Menu.Item>
+                    <Menu.Item
+                      leftSection={<IconRefresh size={16} />}
+                      onClick={() => setRotating(key)}
+                    >
+                      轮换
+                    </Menu.Item>
+                    <Menu.Item
+                      color={key.enabled ? "red" : undefined}
+                      leftSection={
+                        key.enabled ? (
+                          <IconBan size={16} />
+                        ) : (
+                          <IconCheck size={16} />
+                        )
+                      }
+                      onClick={() =>
+                        key.enabled ? setDisabling(key) : void toggle(key)
+                      }
+                    >
+                      {key.enabled ? "禁用" : "启用"}
+                    </Menu.Item>
+                  </>
+                )}
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -270,7 +293,13 @@ export function KeyList({
       loading={state.loading && state.readAt === null}
       error={state.readAt === null ? state.error || undefined : undefined}
       retry={state.reload}
-      empty={state.keys.length ? "没有匹配的密钥。" : "尚未创建密钥。"}
+      empty={
+        state.keys.length
+          ? "没有匹配的密钥。"
+          : state.archived
+            ? "暂无已归档密钥。"
+            : "暂无未归档密钥。"
+      }
     />
   );
 }

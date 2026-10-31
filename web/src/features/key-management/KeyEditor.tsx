@@ -8,6 +8,7 @@ import {
   Checkbox,
   Group,
   NumberInput,
+  Radio,
   Stack,
   Text,
   TextInput,
@@ -31,10 +32,10 @@ const schema = z
     principal: z
       .string()
       .regex(/^[A-Za-z0-9._-]{1,64}$/, "使用1–64位字母、数字或 . _ -"),
-    models: z.array(z.string()),
+    models: z.array(z.string()).nullable(),
     visionInput: z.boolean(),
     imageGeneration: z.boolean(),
-    imageModels: z.array(z.string()),
+    imageModels: z.array(z.string()).nullable(),
     limits: z.object({
       requests: integer,
       active: integer,
@@ -44,13 +45,17 @@ const schema = z
     }),
   })
   .superRefine((value, context) => {
-    if (!value.models.length && !value.imageGeneration)
+    if (value.models !== null && !value.models.length && !value.imageGeneration)
       context.addIssue({
         code: "custom",
         path: ["models"],
         message: "请选择对话模型或图片生成权限",
       });
-    if (value.imageGeneration && !value.imageModels.length)
+    if (
+      value.imageGeneration &&
+      value.imageModels !== null &&
+      !value.imageModels.length
+    )
       context.addIssue({
         code: "custom",
         path: ["imageModels"],
@@ -80,6 +85,10 @@ export function KeyEditor({
   submit: (draft: KeyDraft, expires?: number | null) => Promise<boolean>;
   close: () => void;
 }) {
+  const retainedScopes = useRef({
+    models: entry?.models ?? [],
+    imageModels: entry?.imageModels ?? [],
+  });
   const retainedLimits = useRef<Partial<Record<keyof KeyLimits, number>>>({});
   const [amounts, setAmounts] = useState<Record<string, string | number>>({
     budgetMicros: microsToDollars(entry?.limits.budgetMicros ?? 1_000_000),
@@ -94,10 +103,13 @@ export function KeyEditor({
     initialValues: {
       displayName: entry?.displayName ?? "",
       principal: entry?.principal ?? "",
-      models: entry?.models ?? [],
+      models: entry ? entry.models : ([] as string[] | null),
       visionInput: entry?.visionInput ?? false,
       imageGeneration: entry?.imageGeneration ?? false,
-      imageModels: entry?.imageModels ?? [],
+      imageModels:
+        entry?.imageModels === null
+          ? null
+          : (entry?.imageModels ?? ([] as string[] | null)),
       limits: entry?.limits ?? {
         requests: 1000,
         active: 4,
@@ -200,24 +212,34 @@ export function KeyEditor({
         <fieldset className={styles.fieldset}>
           <legend>对话模型</legend>
           <Stack gap="xs">
-            <Checkbox
-              label="全部模型"
-              description="选择当前目录的全部对话模型，新增模型仍需手动授权。"
-              checked={
-                models.length > 0 &&
-                models.every((model) => form.values.models.includes(model))
-              }
-              disabled={disabled || !models.length}
-              onChange={(e) =>
+            <Radio.Group
+              label="对话模型范围"
+              value={form.values.models === null ? "all" : "selected"}
+              onChange={(value) => {
+                if (form.values.models !== null)
+                  retainedScopes.current.models = form.values.models;
                 form.setFieldValue(
                   "models",
-                  e.currentTarget.checked
-                    ? [...new Set([...models, ...(entry?.models ?? [])])]
-                    : [],
-                )
-              }
-            />
-            {choices(models, entry?.models ?? [], form.values.models, "models")}
+                  value === "all" ? null : retainedScopes.current.models,
+                );
+              }}
+            >
+              <Stack gap="xs">
+                <Radio
+                  value="all"
+                  label="全部模型（跟随配置）"
+                  disabled={disabled}
+                />
+                <Radio value="selected" label="指定模型" disabled={disabled} />
+              </Stack>
+            </Radio.Group>
+            {form.values.models !== null &&
+              choices(
+                models,
+                entry?.models ?? [],
+                form.values.models,
+                "models",
+              )}
           </Stack>
           {form.errors.models && (
             <Text c="red" size="sm" role="alert">
@@ -244,13 +266,47 @@ export function KeyEditor({
                     type: "checkbox",
                   })}
                 />
-                {form.values.imageGeneration &&
-                  choices(
-                    imageModels,
-                    entry?.imageModels ?? [],
-                    form.values.imageModels,
-                    "imageModels",
-                  )}
+                {form.values.imageGeneration && (
+                  <>
+                    <Radio.Group
+                      label="图片模型范围"
+                      value={
+                        form.values.imageModels === null ? "all" : "selected"
+                      }
+                      onChange={(value) => {
+                        if (form.values.imageModels !== null)
+                          retainedScopes.current.imageModels =
+                            form.values.imageModels;
+                        form.setFieldValue(
+                          "imageModels",
+                          value === "all"
+                            ? null
+                            : retainedScopes.current.imageModels,
+                        );
+                      }}
+                    >
+                      <Stack gap="xs">
+                        <Radio
+                          value="all"
+                          label="全部模型（跟随配置）"
+                          disabled={disabled}
+                        />
+                        <Radio
+                          value="selected"
+                          label="指定模型"
+                          disabled={disabled}
+                        />
+                      </Stack>
+                    </Radio.Group>
+                    {form.values.imageModels !== null &&
+                      choices(
+                        imageModels,
+                        entry?.imageModels ?? [],
+                        form.values.imageModels,
+                        "imageModels",
+                      )}
+                  </>
+                )}
               </>
             )}
             {form.errors.imageModels && (

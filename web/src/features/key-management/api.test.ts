@@ -228,3 +228,37 @@ it("sets and clears display names using CAS without retrying conflicts", async (
     displayName: "合成别名",
   });
 });
+
+it("preserves null model scopes through parse and update without treating missing fields as all", async () => {
+  const all = {
+    ...key,
+    models: null,
+    imageGeneration: true,
+    imageModels: null,
+  };
+  expect(parseKey(all)).toMatchObject({ models: null, imageModels: null });
+  const missing = { ...all } as Record<string, unknown>;
+  delete missing.models;
+  expect(() => parseKey(missing)).toThrow();
+  const fetch = vi.fn().mockResolvedValue(reply({ key: all }));
+  vi.stubGlobal("fetch", fetch);
+  await updateKey(all, false, null, all.limits, csrf);
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
+    models: null,
+    imageModels: null,
+  });
+});
+
+it("keeps the archived filter on every cursor page", async () => {
+  const archived = { ...key, archivedAtUnixSeconds: 100 };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(reply({ keys: [archived], nextCursor: key.id }))
+    .mockResolvedValueOnce(reply({ keys: [], nextCursor: null }));
+  vi.stubGlobal("fetch", fetch);
+  expect(await fetchKeys(undefined, true)).toEqual([parseKey(archived)]);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    "/api/keys?archived=true",
+    "/api/keys?archived=true&after=key-1",
+  ]);
+});

@@ -62,3 +62,29 @@ it("rereads the same Key after a successful usage refresh", async () => {
   expect(await screen.findByText(/每日请求 不限/)).toBeInTheDocument();
   view.unmount();
 });
+
+it("reads the current policy of an archived Key", async () => {
+  vi.mocked(fetchKeys)
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "archived",
+        principal: "synthetic",
+        revision: 2,
+        enabled: false,
+        archivedAtUnixSeconds: 100,
+        models: null,
+        limits: {
+          requests: 17,
+          active: null,
+          unresolved: null,
+          budgetMicros: null,
+          unresolvedMicros: null,
+        },
+        createdAtUnixSeconds: 1,
+      },
+    ]);
+  render(<KeyLimitsSummary keyID="archived" />);
+  expect(await screen.findByText(/每日请求 17/)).toBeInTheDocument();
+  expect(fetchKeys).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
+});

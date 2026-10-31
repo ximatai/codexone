@@ -86,6 +86,7 @@ export interface UsageOptions {
   defaultReasoningEfforts?: Record<string, string>;
   keys: string[];
   keyOptions?: {
+    archived?: boolean;
     id: string;
     displayName?: string | null;
     principal: string | null;
@@ -409,6 +410,14 @@ export async function fetchUsageOptions(
             return value.keyOptions.map((raw) => {
               const item = object(raw);
               return {
+                archived:
+                  item.archived === undefined
+                    ? false
+                    : typeof item.archived === "boolean"
+                      ? item.archived
+                      : (() => {
+                          throw invalid();
+                        })(),
                 id: text(item.id),
                 displayName: nullableText(item.displayName ?? null, 256),
                 principal: nullableText(item.principal, 64),

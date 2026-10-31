@@ -16,7 +16,7 @@ function message(error: unknown): string {
       : "当前页面来源或会话验证不通过，请使用正确的管理地址。";
   return "管理服务暂时不可用，请稍后重试。";
 }
-export function useKeys() {
+export function useKeys(archived = false) {
   const [creating, setCreating] = useState(false);
   const owner = useManagementSession();
   const [checking, setChecking] = useState(true);
@@ -69,8 +69,8 @@ export function useKeys() {
         return false;
       const [entries, options] = await Promise.all([
         client.fetchQuery({
-          queryKey: queryKeys.keys.list(),
-          queryFn: () => api.fetchKeys(signal),
+          queryKey: [...queryKeys.keys.list(), archived],
+          queryFn: () => api.fetchKeys(signal, archived),
           staleTime: 0,
         }),
         api.fetchOptions(signal),
@@ -114,7 +114,7 @@ export function useKeys() {
     };
     // The session generation remounts this owner; reload is intentionally mount-scoped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [archived]);
   useEffect(() => {
     if (!created) return;
     const timer = window.setTimeout(() => setCreated(null), 300_000);
@@ -176,8 +176,14 @@ export function useKeys() {
       }
       setKeys((old) =>
         old.some((item) => item.id === key.id)
-          ? old.map((item) => (item.id === key.id ? key : item))
-          : [key, ...old],
+          ? old
+              .map((item) => (item.id === key.id ? key : item))
+              .filter(
+                (item) => (item.archivedAtUnixSeconds != null) === archived,
+              )
+          : (key.archivedAtUnixSeconds != null) === archived
+            ? [key, ...old]
+            : old,
       );
       setEditing(null);
       setRotating(null);
@@ -197,14 +203,14 @@ export function useKeys() {
         key.limits,
         key.visionInput ?? false,
         key.imageGeneration ?? false,
-        key.imageModels ?? [],
+        key.imageModels === undefined ? [] : key.imageModels,
       ]) !==
         JSON.stringify([
           draft.models,
           draft.limits,
           draft.visionInput ?? false,
           draft.imageGeneration ?? false,
-          draft.imageModels ?? [],
+          draft.imageModels === undefined ? [] : draft.imageModels,
         ]);
     let updated = key;
     if (policyChanged)
@@ -251,6 +257,7 @@ export function useKeys() {
   }
   const disabled = busy || loading || uncertain || readAt === null;
   return {
+    archived,
     keys,
     readAt,
     models,
