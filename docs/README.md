@@ -12,6 +12,7 @@
 | [开发目录](development/layout.md) | 文件归属与构建边界 |
 | [验证要求](development/verification.md) | 各层验收定义 |
 | [客户端配置](client-setup.md) | Codex CLI/Desktop 接入与生图工具前提 |
+| [客户端协议跟踪](development/client-protocol-watch.md) | 发现 Codex 新增协议的手段与待讨论治理问题 |
 | [项目里程碑](plans/roadmap.md) | 阶段目标、重点、边界与验收出口 |
 | [治理](governance.md) | 状态、协作、变更与清理规则 |
 | [变更约定](changes/README.md) | 实现前提案与任务格式 |
