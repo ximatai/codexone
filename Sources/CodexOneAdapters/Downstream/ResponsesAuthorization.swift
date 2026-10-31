@@ -49,13 +49,14 @@ enum ResponsesGateway: Sendable {
     model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
     requestID: String, mode: ExecutionMode, connection: AccountRouteIdentity? = nil,
     requirements: ExecutionRequirements = .init(),
+    reasoningEffort: String? = nil, serviceTier: String? = nil,
     operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
     case .single(let gateway):
       try await gateway.execute(
         model: model, references: references, requestID: requestID, mode: mode,
-        requirements: requirements
+        requirements: requirements, reasoningEffort: reasoningEffort, serviceTier: serviceTier
       ) { context in
         try await observeExecution(context) { try await operation(context, nil) }
       }
@@ -63,7 +64,8 @@ enum ResponsesGateway: Sendable {
       try await gateway.execute(
         model: model, references: references, affinityHints: affinityHints,
         connection: connection, requestID: requestID,
-        mode: mode, requirements: requirements
+        mode: mode, requirements: requirements, reasoningEffort: reasoningEffort,
+        serviceTier: serviceTier
       ) { context, work in
         try await observeExecution(context) {
           try await operation(context, provider.dataAccess(work: work, target: target))

@@ -17,6 +17,7 @@ struct ProviderObservation: Sendable {
   let bindings: [ObjectBinding]
   let usage: UsageEvidence?
   let terminal: Bool
+  let actualServiceTier: String?
 
   /// Event names are forwarded as SSE event lines, so they stay bounded and line-safe.
   static func eventType(_ event: JSONValue) throws -> String {
@@ -67,6 +68,8 @@ struct ProviderObservation: Sendable {
     self.bindings = bindings
     self.usage = usage
     self.terminal = terminal
+    self.actualServiceTier =
+      terminal ? requestMetadataValue(event["response"]?["service_tier"]) : nil
   }
 
   static func identifier(_ value: JSONValue?) -> String? {

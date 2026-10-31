@@ -284,7 +284,10 @@ struct CodexOneMain {
           \.id) ?? [],
         imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?
           .imageGeneration?.models.map(\.id) ?? [],
-        usage: usageReader.map { UsageAdminAPI(querying: $0) },
+        usage: usageReader.map {
+          UsageAdminAPI(
+            querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [])
+        },
         attention: usageReader.map {
           AttentionAdminAPI(
             reader: $0, storage: store, registry: protocolExtensions, backup: backup)

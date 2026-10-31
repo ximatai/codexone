@@ -70,18 +70,24 @@ func observeExecution(
 /// A failed terminal response can carry complete usage. Result and evidence are independent.
 func observeTerminalOutcome(_ event: JSONValue, context: ExecutionContext) throws {
   let type = event["type"]?.string
+  if ProviderObservation.terminalEvents.contains(type ?? "") {
+    context.observeActualServiceTier(requestMetadataValue(event["response"]?["service_tier"]))
+  }
   guard type == "response.failed" || type == "response.incomplete" else { return }
   try context.observeOutcome(
     .init(
       failure: type == "response.failed" ? .upstreamRejected : .indeterminate,
-      atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+      atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      actualServiceTier: requestMetadataValue(event["response"]?["service_tier"])))
 }
 
 /// A validated, bound terminal has been submitted downstream; cleanup cannot rewrite it.
 func observeSubmittedTerminal(_ event: JSONValue, context: ExecutionContext) throws {
   guard event["type"]?.string == "response.completed" else { return }
   try context.observeOutcome(
-    .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+    .init(
+      failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      actualServiceTier: requestMetadataValue(event["response"]?["service_tier"])))
 }
 
 /// Explicit provider proof is the only exception to missing usage remaining unknown.

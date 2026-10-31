@@ -88,7 +88,8 @@ struct HTTPResponseExecution: Sendable {
       try await gateway.execute(
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
-        mode: request.mode, requirements: request.requirements
+        mode: request.mode, requirements: request.requirements,
+        reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, authorization in
         try await withExecutionDeadline(seconds: configuration.budget.total) {
           try await webSocket.authorized(authorization, headers: clientHeaders).run { peer in
@@ -103,7 +104,8 @@ struct HTTPResponseExecution: Sendable {
     try await gateway.execute(
       model: request.admissionModel, references: request.references,
       affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, requirements: request.requirements
+      mode: request.mode, requirements: request.requirements,
+      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
     ) { context, authorization in
       try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
@@ -196,6 +198,7 @@ struct HTTPResponseExecution: Sendable {
               }
               let observation = try ProviderObservation(
                 event: event, model: model, allowImages: request.requirements.imageModel != nil)
+              context.observeActualServiceTier(observation.actualServiceTier)
               progress.note(event: event)
               for object in observation.bindings { try await context.bind(object) }
               try observeTerminalOutcome(event, context: context)
@@ -239,6 +242,7 @@ struct HTTPResponseExecution: Sendable {
           ])
           let observation = try ProviderObservation(
             event: event, model: model, allowImages: request.requirements.imageModel != nil)
+          context.observeActualServiceTier(observation.actualServiceTier)
           for object in observation.bindings { try await context.bind(object) }
           try observeTerminalOutcome(event, context: context)
           try await emit(

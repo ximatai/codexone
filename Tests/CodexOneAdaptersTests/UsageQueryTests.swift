@@ -479,3 +479,70 @@ private struct UsageFixture {
   }
   await f.close()
 }
+
+@Test func requestMetadataPersistsProjectsAndFiltersWithoutRewritingHistory() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    for id in ["explicit", "default", "historical"] {
+      try await f.store.admit(
+        .init(
+          attempt: id,
+          owner: .init(
+            principal: "alpha", key: "alpha", namespace: "synthetic", identity: "single"),
+          window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 10,
+          mode: .generation, keyRevision: 1, model: "synthetic-text",
+          reasoningEffort: id == "explicit" ? "xhigh" : nil,
+          serviceTier: id == "explicit" ? "priority" : nil))
+      try await f.store.finalize(
+        attempt: id, evidence: usage(amount: 1),
+        outcome: .init(
+          failure: nil, atUnixSeconds: f.hour + 1,
+          actualServiceTier: id == "explicit" ? "default" : nil))
+    }
+    try await f.store.perform { db in
+      try db.write(
+        "UPDATE attempts SET admission_json=json_remove(admission_json,'$.requestMetadataRecorded','$.reasoningEffort','$.serviceTier') WHERE id='historical'"
+      )
+    }
+    let query = try UsageQuery(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600)
+    let report = try await f.reader.queryUsage(query)
+    let explicit = try #require(report.rows.first { $0.id == "explicit" })
+    #expect(explicit.reasoningEffort == "xhigh" && explicit.serviceTier == "priority")
+    #expect(explicit.actualServiceTier == "default" && explicit.requestMetadataRecorded)
+    let historical = try #require(report.rows.first { $0.id == "historical" })
+    #expect(!historical.requestMetadataRecorded && historical.reasoningEffort == nil)
+    let document = try UsageAdminAPI.document(report, query: query)
+    #expect(
+      document["rows"]?.array?.first { $0["id"]?.string == "explicit" }?["actualServiceTier"]?
+        .string == "default")
+    for effort in ["xhigh", "default", "low"] {
+      let filtered = try await f.reader.queryUsage(
+        .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600, reasoningEffort: effort))
+      #expect(filtered.totals.admitted == (effort == "xhigh" ? 1 : 0))
+      #expect(filtered.rows.count == (effort == "xhigh" ? 1 : 0))
+      #expect(filtered.buckets[0].admitted == (effort == "xhigh" ? 1 : 0))
+    }
+    #expect(
+      try UsageAdminAPI.parse("/api/usage?start=0&end=3600&reasoningEffort=xhigh").reasoningEffort
+        == "xhigh")
+    for value in ["HIGH", "", "bad%20value", String(repeating: "a", count: 33)] {
+      #expect(throws: ExecutionError.invalidCommand) {
+        try UsageAdminAPI.parse("/api/usage?start=0&end=3600&reasoningEffort=" + value)
+      }
+    }
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
+@Test func usageAcceptsAllFiltersTogetherWithTheCursor() throws {
+  let cursor = Data(#"{"at":1,"id":"a:synthetic"}"#.utf8)
+    .base64EncodedString().replacingOccurrences(of: "+", with: "-")
+    .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+  let query = try UsageAdminAPI.parse(
+    "/api/usage?start=0&end=3600&key=alpha&model=synthetic&mode=generation&failure=client_cancelled&failedOnly=true&state=unknown&reasoningEffort=xhigh&limit=1&after="
+      + cursor)
+  #expect(query.reasoningEffort == "xhigh" && query.cursor?.id == "a:synthetic")
+}

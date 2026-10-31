@@ -26,10 +26,12 @@ public struct ExecutionOutcome: Sendable, Equatable, Codable {
   public let atUnixSeconds: Int64
   public let firstEventMilliseconds: Int64?
   public let totalMilliseconds: Int64?
+  public let actualServiceTier: String?
   public let cooldownSeconds: Int64?
   public init(
     failure: ExecutionFailure?, atUnixSeconds: Int64, cooldownSeconds: Int64? = nil,
-    firstEventMilliseconds: Int64? = nil, totalMilliseconds: Int64? = nil
+    firstEventMilliseconds: Int64? = nil, totalMilliseconds: Int64? = nil,
+    actualServiceTier: String? = nil
   )
     throws
   {
@@ -40,6 +42,7 @@ public struct ExecutionOutcome: Sendable, Equatable, Codable {
       cooldownSeconds == nil || failure == .rateLimited || failure == .upstreamUnavailable
     else { throw ExecutionError.invalidCommand }
     kind = failure == nil ? .succeeded : failure == .clientCancelled ? .cancelled : .failed
+    self.actualServiceTier = actualServiceTier.map(RequestMetadataValue.sanitize)
     self.failure = failure
     self.atUnixSeconds = atUnixSeconds
     self.cooldownSeconds = cooldownSeconds

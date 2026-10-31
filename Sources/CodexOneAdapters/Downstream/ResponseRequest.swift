@@ -44,6 +44,8 @@ struct ResponseRequest: Sendable {
   static let maximumAffinityHints = 64
   var requirements = ExecutionRequirements()
   var admissionModel: String { model }
+  let reasoningEffort: String?
+  let serviceTier: String?
   let model: String
   let streaming: Bool
   /// References that read provider-side state; each must be owned by the caller.
@@ -100,6 +102,8 @@ struct ResponseRequest: Sendable {
     where fields[key] != nil && fields[key] != .null {
       throw GatewayProtocolError(400, "unsupported_request")
     }
+    reasoningEffort = requestMetadataValue(fields["reasoning"]?["effort"])
+    serviceTier = requestMetadataValue(fields["service_tier"])
     self.model = model
     self.streaming = fields["stream"]?.bool == true
     var references: [ObjectBinding] = []
@@ -256,4 +260,10 @@ struct ResponseRequest: Sendable {
   private static let localLabelTypes: Set<String> = [
     "message", "function_call_output", "custom_tool_call_output", "additional_tools",
   ]
+}
+
+func requestMetadataValue(_ value: JSONValue?) -> String? {
+  guard let value else { return nil }
+  guard let string = value.string else { return "other" }
+  return RequestMetadataValue.sanitize(string)
 }

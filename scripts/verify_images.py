@@ -25,6 +25,7 @@ URL = 'data:image/png;base64,' + PNG
 def native_body(prompt):
     if prompt == 'non-json': return b'synthetic invalid JSON'
     document = {'created':1,'data':[] if prompt == 'empty' else [{'b64_json':PNG}], 'future':'preserved'}
+    if prompt == 'synthetic': document['service_tier'] = 'default'
     if prompt != 'missing-usage':
         document['usage'] = {'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}
     return json.dumps(document).encode()
@@ -34,6 +35,7 @@ def native_stream(operation, prompt='synthetic'):
     prefix = 'image_edit' if operation == 'edits' else 'image_generation'
     preview = {'type':prefix+'.partial_image','b64_json':PNG, 'partial_image_index':0}
     final = {'type':prefix+'.completed','b64_json':PNG,'usage':{'input_tokens':2,'output_tokens':3}}
+    if prompt == 'synthetic': final['service_tier'] = 'default'
     if prompt == 'stream-empty': final['b64_json'] = ''
     if prompt == 'stream-abort': return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\n'
     if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic acct-split-secret user-synthetic@example.invalid',
@@ -223,7 +225,7 @@ def main():
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
-                            wire = ('{ "model" : "synthetic-image", "prompt":"synthetic", "n":2, "future":{"x":true}'
+                            wire = ('{ "model" : "synthetic-image", "prompt":"synthetic", "service_tier":"priority", "n":2, "future":{"x":true}'
                                 + (', "images":[{"image_url":"' + URL + '","detail":"preserve"}], "mask":{"image_url":"' + URL + '"}' if operation == 'edits' else '') + ' }').encode()
                             before = upstream.calls
                             status, body, headers = request(wire, prefix + '/images/' + operation, headers=client_headers)
@@ -241,15 +243,19 @@ def main():
                             assert body == native_body('synthetic')
                             state, usage, outcome = ledger()
                             assert state == 'settled' and outcome['kind'] == 'succeeded'
+                            assert outcome['actualServiceTier'] == 'default'
+                            with sqlite3.connect(root/'state/core.sqlite') as connection:
+                                admission = json.loads(connection.execute('SELECT admission_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])
+                            assert admission['serviceTier'] == 'priority' and admission.get('reasoningEffort') is None
                             assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
                             assert usage['imageInputTextTokens'] == 1 and usage['imageInputImageTokens'] == 1
                             assert usage['estimatedMicros'] == 13
                             status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
                             assert status == 200
                             assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
-                            status, body, _ = request({'prompt':'synthetic','stream':True}, prefix + '/images/' + operation)
+                            status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
                             assert status == 200 and body == native_stream(operation)
-                            assert ledger()[0] == 'settled'
+                            assert ledger()[0] == 'settled' and ledger()[2]['actualServiceTier'] == 'default'
                     before = upstream.calls; intents = count_intents()
                     for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
                         status, error, _ = request(body, name=name)

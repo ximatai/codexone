@@ -4,7 +4,18 @@ import Vapor
 
 public struct UsageAdminAPI: Sendable {
   private let querying: any UsageQuerying
-  public init(querying: any UsageQuerying) { self.querying = querying }
+  private let defaultReasoningEfforts: [String: String]
+  public init(querying: any UsageQuerying, models: [SingleIdentityConfiguration.Model] = []) {
+    self.querying = querying
+    defaultReasoningEfforts = Dictionary(
+      uniqueKeysWithValues: models.compactMap { model in
+        guard
+          let value = model.catalog?.defaultReasoningEffort
+            ?? model.upstream?["default_reasoning_level"]?.string
+        else { return nil }
+        return (model.id, RequestMetadataValue.sanitize(value))
+      })
+  }
   func register(_ routes: any RoutesBuilder) {
     routes.get("daily") { request async throws -> Response in
       let values = try Self.parameters(request.url.string, allowed: ["days", "key", "model"])
@@ -72,6 +83,7 @@ public struct UsageAdminAPI: Sendable {
               ])
             }),
           "models": .array(options.models.map { .string($0) }),
+          "defaultReasoningEfforts": .object(defaultReasoningEfforts.mapValues { .string($0) }),
           "failures": .array(ExecutionFailure.allCases.map { .string($0.rawValue) }),
         ]))
     }
@@ -132,9 +144,10 @@ public struct UsageAdminAPI: Sendable {
   static func parse(_ url: String) throws -> UsageQuery {
     let allowed: Set<String> = [
       "start", "end", "key", "model", "mode", "failure", "failedOnly", "state", "after", "limit",
+      "reasoningEffort",
     ]
     let entries = URLComponents(string: url)?.queryItems ?? []
-    guard entries.count <= 10, Set(entries.map(\.name)).count == entries.count,
+    guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,
       entries.allSatisfy({ allowed.contains($0.name) && $0.value != nil })
     else { throw ExecutionError.invalidCommand }
     let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.value!) })
@@ -159,6 +172,7 @@ public struct UsageAdminAPI: Sendable {
     return try .init(
       startUnixSeconds: start, endUnixSeconds: end, keyID: values["key"], model: values["model"],
       mode: mode, failure: failure, failedOnly: values["failedOnly"] == "true", state: state,
+      reasoningEffort: values["reasoningEffort"],
       cursor: cursor, limit: limit)
   }
   private static func decodeCursor(_ raw: String) throws -> UsageCursor {
@@ -249,6 +263,10 @@ public struct UsageAdminAPI: Sendable {
           .object([
             "kind": .string(value.kind.rawValue), "id": .string(value.id),
             "atUnixSeconds": count(value.atUnixSeconds),
+            "reasoningEffort": text(value.reasoningEffort),
+            "serviceTier": text(value.serviceTier),
+            "actualServiceTier": text(value.actualServiceTier),
+            "requestMetadataRecorded": .bool(value.requestMetadataRecorded),
             "principal": text(value.principal),
             "displayName": text(value.displayName),
             "firstEventMilliseconds": value.firstEventMilliseconds.map(count) ?? .null,
