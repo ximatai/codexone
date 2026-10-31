@@ -1,3 +1,7 @@
+import {
+  accountName,
+  credentialExpiry,
+} from "../../shared/account-presentation";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/States";
 import { useState } from "react";
 import {
@@ -147,8 +151,16 @@ export function AccountManagement() {
                 <Group justify="space-between" align="start" mb="md">
                   <div aria-label="账号">
                     <Text fw={700} size="xl">
-                      {item.displayName ?? item.id}
+                      {accountName(item.id, [], item.displayName)}
                     </Text>
+                    <Text size="xs" c="dimmed">
+                      {credentialExpiry(item.accessExpiresAtUnixSeconds)}
+                    </Text>
+                    {!item.displayName && (
+                      <Text size="xs" c="dimmed">
+                        可在账号详情中设置名称
+                      </Text>
+                    )}
                     {item.displayName && (
                       <Text size="xs" c="dimmed" className={styles.id}>
                         {item.id}
@@ -211,7 +223,7 @@ export function AccountManagement() {
                         <Menu.Target>
                           <ActionIcon
                             variant="default"
-                            aria-label={`${item.displayName ?? item.id} 更多操作`}
+                            aria-label={`${accountName(item.id, [], item.displayName)} 更多操作`}
                           >
                             <IconDots size={17} />
                           </ActionIcon>
@@ -253,7 +265,10 @@ export function AccountManagement() {
               ? "不再接收新的会话请求；已有身份关联的续接请求仍可派发，在途请求继续。"
               : "停止后续派发（包括续接）；已经派发的在途请求继续，不会主动取消。"}
           </Text>
-          <Text>{confirm?.account.id}</Text>
+          <Text>
+            {confirm &&
+              accountName(confirm.account.id, [], confirm.account.displayName)}
+          </Text>
           <Group justify="flex-end">
             <Button
               variant="default"
@@ -324,7 +339,7 @@ export function AccountManagement() {
 
             <div>
               <Text fw={600} className={styles.id}>
-                {account.id}
+                {accountName(account.id, [], account.displayName)}
               </Text>
               <Text size="xs" c="dimmed">
                 凭证 v{account.credentialVersion} · 修订 {account.revision} ·

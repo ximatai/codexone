@@ -24,7 +24,7 @@ type Status =
   | "failed"
   | "unavailable"
   | "logout-unconfirmed";
-type Scope = "keys" | "accounts";
+type Scope = "keys" | "accounts" | "executions";
 interface SessionOwner {
   session: api.AdminSession | null;
   generation: number;

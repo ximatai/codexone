@@ -128,3 +128,27 @@ it("updates the accessible navigation marker from the shared homepage snapshot",
     ).toBeNull(),
   );
 });
+
+it("disables release when capacity is occupied without any unknown executions", () => {
+  const release = vi.fn();
+  render(
+    <AttentionPanel
+      items={[
+        {
+          ...item,
+          kind: "unresolved_executions",
+          subjectType: "system",
+          detail: { count: 0, unresolvedCount: 512, limit: 1024 },
+        },
+      ]}
+      loading={false}
+      error={false}
+      retry={() => {}}
+      release={release}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "核对并释放" });
+  expect(button).toBeDisabled();
+  fireEvent.click(button);
+  expect(release).not.toHaveBeenCalled();
+});
