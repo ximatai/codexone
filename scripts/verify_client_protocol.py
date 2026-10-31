@@ -43,6 +43,27 @@ class Provider(BaseHTTPRequestHandler):
         self.end_headers()
         pending = {}
         recent = None
+        writes = threading.Lock()
+        closed = threading.Event()
+        settlements = []
+
+        def emit(value):
+            with writes:
+                send(self.connection, value)
+
+        def complete(items):
+            # A delayed lane must not block this connection's sole request reader.
+            until = time.monotonic() + 5
+            while not self.server.settle_release.is_set():
+                if closed.wait(.01):
+                    return
+                assert time.monotonic() < until, 'Synthetic settlement gate timed out'
+            try:
+                for item in items:
+                    emit(item)
+            except (EOFError, ConnectionResetError, BrokenPipeError, OSError):
+                pass
+
         try:
             while True:
                 opcode, data = receive(self.connection, masked=True)
@@ -51,32 +72,44 @@ class Provider(BaseHTTPRequestHandler):
                 value = json.loads(data)
                 kind = value['type']
                 if kind == 'response.interrupt':
-                    response, lane, prompt = pending.pop(value['response_id'])
                     with self.server.guard:
                         self.server.interrupts += 1
+                        self.server.interrupt_bytes.append(value)
+                    response, lane, prompt = pending.pop(value['response_id'])
                     if prompt.startswith('settlement-'):
                         self.server.interrupted.set()
                         if prompt == 'settlement-abrupt':
                             time.sleep(.2)
                             return
-                        if prompt in ('settlement-timeout', 'settlement-shutdown'):
+                        if prompt == 'settlement-error':
+                            emit(dict(type='error', response_id=response['id'],
+                                error=dict(code='synthetic_interrupt_unsupported', message=PRIVATE), **lane))
+                            continue
+                        if prompt == 'settlement-unknown':
+                            emit(dict(type='synthetic.interrupt_unknown', response_id=response['id'], **lane))
+                        if prompt in ('settlement-timeout', 'settlement-shutdown', 'settlement-unknown'):
                             self.connection.settimeout(15)
                             assert self.connection.recv(1) == b''
                             return
-                        assert self.server.settle_release.wait(5)
                     ack = dict(type='response.interrupt.accepted', response_id=response['id'])
                     done = dict(type='response.completed', response=response, **lane)
-                    for item in ([done, ack] if prompt == 'cancel-after' else [ack, done]):
-                        send(self.connection, item)
+                    items = [done, ack] if prompt == 'cancel-after' else [ack, done]
+                    if prompt.startswith('settlement-'):
+                        worker = threading.Thread(target=complete, args=(items,))
+                        settlements.append(worker)
+                        worker.start()
+                    else:
+                        for item in items:
+                            emit(item)
                     recent = response['id']
                 elif kind != 'response.create':
                     with self.server.guard:
                         self.server.controls += 1
                         self.server.control_bytes.append(data)
                     if kind == 'synthetic.spawn':
-                        send(self.connection, dict(type='response.created', response=dict(id='synthetic-unadmitted', status='in_progress', output=[])))
+                        emit(dict(type='response.created', response=dict(id='synthetic-unadmitted', status='in_progress', output=[])))
                     else:
-                        send(self.connection, dict(type='synthetic.echo', response_id=recent, payload=value.get('payload')))
+                        emit(dict(type='synthetic.echo', response_id=recent, payload=value.get('payload')))
                 else:
                     with self.server.guard:
                         self.server.creates += 1
@@ -84,21 +117,28 @@ class Provider(BaseHTTPRequestHandler):
                     response = dict(id=f'synthetic-response-{index}', status='completed', output=[],
                         usage=dict(input_tokens=5, output_tokens=3, input_tokens_details=dict(cached_tokens=0)))
                     lane = dict(stream_id=value['stream_id']) if 'stream_id' in value else {}
-                    send(self.connection, dict(type='response.created', response={**response, 'status': 'in_progress', 'usage': None}, **lane))
+                    if value['input'] == 'settlement-late-created':
+                        self.server.dispatched.set()
+                        time.sleep(.2)
+                    emit(dict(type='response.created', response={**response, 'status': 'in_progress', 'usage': None}, **lane))
                     if value['input'] in ('cancel-before', 'cancel-after', 'drain') or value['input'].startswith('settlement-'):
                         pending[response['id']] = response, lane, value['input']
                     else:
-                        send(self.connection, dict(type='response.completed', response=response, **lane))
+                        emit(dict(type='response.completed', response=response, **lane))
                         recent = response['id']
         except (EOFError, ConnectionResetError, BrokenPipeError):
             pass
         finally:
+            closed.set()
+            for worker in settlements:
+                worker.join(1)
+                assert not worker.is_alive()
             self.close_connection = True
 
 
 def counts(db):
     with sqlite3.connect(db) as connection:
-        return connection.execute('SELECT state,usage_json,admission_json FROM attempts ORDER BY rowid').fetchall()
+        return connection.execute('SELECT state,usage_json,admission_json,outcome_json FROM attempts ORDER BY rowid').fetchall()
 
 
 def verify_settlement(binary, provider, directory, configuration, headers):
@@ -109,7 +149,7 @@ def verify_settlement(binary, provider, directory, configuration, headers):
     process, ports = start(binary, config, directory)
     db = directory / 'state/core.sqlite'
     try:
-        def begin_settlement(prompt, interrupt=True):
+        def begin_settlement(prompt, interrupt=True, queued=False, wait_for_interrupt=True):
             sock = dial(ports['data'], headers=headers)
             send(sock, dict(type='response.create', model='synthetic-text', input=prompt), masked=True)
             created = event(sock)
@@ -118,7 +158,10 @@ def verify_settlement(binary, provider, directory, configuration, headers):
             if interrupt:
                 provider.interrupted.clear()
                 send(sock, dict(type='response.interrupt', response_id=rid), masked=True)
-                assert provider.interrupted.wait(3)
+                if wait_for_interrupt:
+                    assert provider.interrupted.wait(3)
+            if queued:
+                send(sock, dict(type='response.create', model='synthetic-text', input='must-not-dispatch'), masked=True)
             sock.close()
 
         def await_rows(total, states, timeout=5):
@@ -127,14 +170,30 @@ def verify_settlement(binary, provider, directory, configuration, headers):
                 rows = counts(db)
                 if len(rows) == total and [row[0] for row in rows[-len(states):]] == states:
                     return rows[-len(states):]
-                assert time.monotonic() < until, rows
+                assert time.monotonic() < until, [row[0] for row in rows]
                 time.sleep(.02)
+
+        def assert_connection_slots_released():
+            until = time.monotonic() + 3
+            while True:
+                sockets = []
+                try:
+                    for _ in range(8):
+                        sockets.append(dial(ports['data'], headers=headers))
+                    return
+                except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
+                    assert time.monotonic() < until, 'Connection slots were not released'
+                    time.sleep(.02)
+                finally:
+                    for sock in sockets:
+                        sock.close()
 
         baseline = len(counts(db))
         before = provider.creates
-        # Eight closed downstreams retain all eight connection slots until settlement.
+        interrupt_before = provider.interrupts
+        # No caller interrupt: all eight closed downstreams retain their connection slots.
         for _ in range(8):
-            begin_settlement('settlement-success')
+            begin_settlement('settlement-success', interrupt=False)
         assert len(counts(db)) == baseline + 8
         assert all(row[0] == 'intent' for row in counts(db)[-8:])
         rejected = False
@@ -146,47 +205,100 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         assert rejected, 'Settlement released connection capacity early'
         provider.settle_release.set()
         settled = await_rows(baseline + 8, ['settled'] * 8)
+        assert provider.interrupts == interrupt_before + 8
+        assert all(set(value) == {'type', 'response_id'} for value in provider.interrupt_bytes[-8:])
         assert all(json.loads(row[1])['inputTokens'] == 5 and json.loads(row[1])['outputTokens'] == 3
                    and json.loads(row[1])['estimatedMicros'] == 8 for row in settled)
-        # Upstream EOF, no interrupt, and the ten-second ceiling preserve unknown responsibility.
-        begin_settlement('settlement-abrupt')
-        await_rows(baseline + 9, ['unknown'])
-        begin_settlement('settlement-no-interrupt', interrupt=False)
-        await_rows(baseline + 10, ['unknown'])
-        began = time.monotonic()
-        begin_settlement('settlement-timeout')
-        await_rows(baseline + 11, ['unknown'], timeout=12)
-        assert 9.5 <= time.monotonic() - began < 12
-        assert provider.creates == before + 11, 'Unexpected replay'
-        # A fresh connection/turn succeeds after drain resources have been released.
+        assert all(json.loads(row[3])['kind'] == 'cancelled'
+                   and json.loads(row[3])['failure'] == 'client_cancelled' for row in settled)
+        assert_connection_slots_released()
+        # Every failure retains unknown exposure and never replays the create.
+        total = baseline + 8
+        for prompt in ('settlement-abrupt', 'settlement-error', 'settlement-timeout', 'settlement-unknown'):
+            began = time.monotonic()
+            interrupts = provider.interrupts
+            begin_settlement(prompt, interrupt=False)
+            total += 1
+            row = await_rows(total, ['unknown'], timeout=12)[0]
+            assert row[1] is None and json.loads(row[3])['failure'] == 'client_cancelled'
+            assert provider.interrupts == interrupts + 1
+            if prompt in ('settlement-timeout', 'settlement-unknown'):
+                assert 9.5 <= time.monotonic() - began < 12
+            # A fresh connection/turn proves connection/lane/local permits released after failure.
+            with dial(ports['data'], headers=headers) as sock:
+                assert turn(sock, dict(model='synthetic-text', input='after-settlement'))[-1]['type'] == 'response.completed'
+            total += 1
+            await_rows(total, ['settled'])
+            assert_connection_slots_released()
+        # An already forwarded interrupt must not be sent again after downstream closure.
+        provider.settle_release.clear()
+        interrupted = provider.interrupts
+        begin_settlement('settlement-success', queued=True)
+        total += 1
+        time.sleep(.1)
+        assert provider.interrupts == interrupted + 1
+        provider.settle_release.set()
+        row = await_rows(total, ['settled'])[0]
+        assert json.loads(row[3])['failure'] == 'client_cancelled'
+        assert provider.interrupts == interrupted + 1
+        # Close immediately after writing the caller interrupt: a suspended write cannot duplicate it.
+        interrupted = provider.interrupts
+        begin_settlement('settlement-success', wait_for_interrupt=False)
+        total += 1
+        await_rows(total, ['settled'])
+        assert provider.interrupts == interrupted + 1
+        # Wait for a dispatched turn's identity rather than broadcast an interrupt without an ID.
+        provider.dispatched.clear()
+        sock = dial(ports['data'], headers=headers)
+        send(sock, dict(type='response.create', model='synthetic-text', input='settlement-late-created'), masked=True)
+        assert provider.dispatched.wait(3)
+        sock.close()
+        total += 1
+        await_rows(total, ['settled'])
+        # Before any create, and after a completed turn, disconnect sends no extra control.
+        interrupted = provider.interrupts
+        with dial(ports['data'], headers=headers):
+            pass
         with dial(ports['data'], headers=headers) as sock:
-            assert turn(sock, dict(model='synthetic-text', input='after-settlement'))[-1]['type'] == 'response.completed'
-        await_rows(baseline + 12, ['settled'])
-        # Cancelling the first lane must not cancel an interrupted sibling lane.
+            assert turn(sock, dict(model='synthetic-text', input='already-terminal'))[-1]['type'] == 'response.completed'
+        total += 1
+        await_rows(total, ['settled'])
+        time.sleep(.1)
+        assert provider.interrupts == interrupted
+        # A failed lane must not cancel its sibling's settlement or target its identity.
         provider.settle_release.clear()
         sock = dial(ports['data'], headers=headers)
-        send(sock, dict(type='response.create', model='synthetic-text', input='drain'), masked=True)
-        assert event(sock)['type'] == 'response.created'
-        send(sock, dict(type='response.create', model='synthetic-text', input='settlement-success', stream_id='sibling'), masked=True)
-        rid = event(sock)['response']['id']
-        provider.interrupted.clear()
-        send(sock, dict(type='response.interrupt', response_id=rid), masked=True)
-        assert provider.interrupted.wait(3)
+        ids = {}
+        for lane, prompt in (('', 'settlement-error'), ('sibling', 'settlement-success')):
+            send(sock, dict(type='response.create', model='synthetic-text', input=prompt,
+                **(dict(stream_id=lane) if lane else {})), masked=True)
+            ids[lane] = event(sock)['response']['id']
         sock.close()
-        await_rows(baseline + 14, ['unknown', 'intent'])
+        total += 2
+        await_rows(total, ['unknown', 'intent'])
         provider.settle_release.set()
-        await_rows(baseline + 14, ['unknown', 'settled'])
-        begin_settlement('settlement-shutdown')
+        await_rows(total, ['unknown', 'settled'])
+        controls = {value['response_id']: value for value in provider.interrupt_bytes}
+        assert controls[ids['sibling']] == dict(type='response.interrupt',
+            response_id=ids['sibling'], stream_id='sibling')
+        assert controls[ids['']] == dict(type='response.interrupt', response_id=ids[''])
+        assert provider.creates == before + total - baseline, 'Unexpected replay'
+        provider.interrupted.clear()
+        begin_settlement('settlement-shutdown', interrupt=False)
+        assert provider.interrupted.wait(3)
+        total += 1
         began = time.monotonic()
         process.terminate()
         assert process.wait(10) == 0
         assert time.monotonic() - began < 5, 'Shutdown waited for settlement timeout'
-        await_rows(baseline + 15, ['unknown'])
+        await_rows(total, ['unknown'])
         assert process.returncode == 0
         logs = process.stdout.read()
+        assert all(secret.encode() not in logs for secret in
+            (PRIVATE, TOKEN, ADMIN, 'synthetic-value', 'synthetic-gate', 'synthetic-known'))
         for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
             assert ('protocol_name=' + name).encode() not in logs
-        print('PASS: interrupted disconnect settles usage; retained connection capacity; EOF/10s timeout/no interrupt remain unknown without replay; resources release; shutdown cancels drain; known headers forward without warnings')
+        print('PASS: gateway interrupt settles cancelled usage; exactly one targeted control; connection capacity retained; EOF/error/10s timeout/unknown preserve unknown without replay; sibling lanes and resources release; shutdown cancels drain; known headers forward without warnings')
         short_root = directory / 'short-deadline'
         short_root.mkdir()
         short_config = short_root / 'identity.json'
@@ -195,7 +307,7 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         process, ports = start(binary, short_config, short_root)
         db = short_root / 'state/core.sqlite'
         began = time.monotonic()
-        begin_settlement('settlement-timeout')
+        begin_settlement('settlement-timeout', interrupt=False)
         await_rows(1, ['unknown'], timeout=4)
         assert time.monotonic() - began < 4, 'Settlement extended the execution deadline'
         print('PASS: interrupted settlement retains the original shorter execution deadline')
@@ -212,6 +324,8 @@ def main():
     provider.guard = threading.Lock()
     provider.creates = provider.controls = provider.interrupts = 0
     provider.control_bytes = []
+    provider.interrupt_bytes = []
+    provider.dispatched = threading.Event()
     provider.interrupted = threading.Event()
     provider.settle_release = threading.Event()
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
@@ -286,7 +400,7 @@ def main():
                     assert time.monotonic() < deadline
                     time.sleep(.02)
                 assert len(counts(db)) == provider.creates == 8
-                assert all(state == 'settled' and json.loads(usage)['estimatedMicros'] == 8 for state, usage, _ in counts(db))
+                assert all(state == 'settled' and json.loads(usage)['estimatedMicros'] == 8 for state, usage, _, _ in counts(db))
                 before = provider.creates
                 with dial(ports['data'], headers=headers) as sock:
                     assert turn(sock, dict(model='synthetic-text', input='before-spawn'))[-1]['type'] == 'response.completed'
@@ -364,7 +478,8 @@ def main():
                     assert ('protocol_name=' + name).encode() in logs
                 assert b'outcome=recorded_unknown' in logs and b'outcome=unknown_record_failed' in logs
                 assert b'client_category=other' in logs and b'client_version=unknown' in logs
-                assert PRIVATE.encode() not in logs and TOKEN.encode() not in logs and temporary.encode() not in logs
+                assert all(secret.encode() not in logs for secret in
+            (PRIVATE, TOKEN, ADMIN, 'synthetic-value', 'synthetic-gate', 'synthetic-known')) and TOKEN.encode() not in logs and temporary.encode() not in logs
                 print('PASS: native Cancel before/after terminal, Drain, ended/foreign IDs, multi-lane, unknown controls, rate rejection, terminal ledger, unadmitted unknown without replay, prefix handshake and content-free logs')
                 verify_settlement(binary, provider, root / 'settlement', json.loads(config.read_text()), headers)
             finally:

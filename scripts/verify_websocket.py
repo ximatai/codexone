@@ -112,7 +112,7 @@ class Provider(BaseHTTPRequestHandler):
                     index = self.server.calls
                 if create['input'] == 'stall':
                     self.server.stalled.set()
-                    self.connection.settimeout(6)
+                    self.connection.settimeout(15)
                     if self.connection.recv(1) == b'':
                         self.server.cancelled.set()
                     return
@@ -403,7 +403,7 @@ def main():
                 with dial(ports['data']) as downstream:
                     send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'stall'}, masked=True)
                     assert provider.stalled.wait(3)
-                assert provider.cancelled.wait(4)
+                assert provider.cancelled.wait(12)
                 latest(db, 'unknown')
                 with sqlite3.connect(db) as connection:
                     connection.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")

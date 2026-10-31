@@ -141,3 +141,40 @@ func interruptionRequiresCreatedAndUnexpectedLifecycleStopsDispatch(_ unexpected
   await second.value
   #expect(turns.isClosed)
 }
+
+@Test func disconnectSettlementUsesOnlyTheCurrentDispatchedTurn() throws {
+  let turns = WebSocketTurns()
+  func observe(_ type: String) throws {
+    _ = try turns.observe(
+      JSONValue.object([
+        "type": .string(type), "response": .object(["id": .string("synthetic_response")]),
+      ]).data())
+  }
+  func finished() -> Bool {
+    if case .finished = turns.settlement(lane: "") { return true }
+    return false
+  }
+  #expect(finished())
+  try turns.begin()
+  #expect(finished())  // Admission/preparation has not written a request.
+  turns.markDispatched(lane: "")
+  if case .awaitingIdentity = turns.settlement(lane: "") {
+  } else {
+    Issue.record("Dispatched turn did not wait for its identity")
+  }
+  try observe("response.created")
+  if case .interrupt(let id) = turns.settlement(lane: "") {
+    #expect(id == "synthetic_response")
+  } else {
+    Issue.record("Active turn lost its interrupt identity")
+  }
+  turns.markInterrupted(responseID: "synthetic_response", lane: "")
+  if case .interrupted = turns.settlement(lane: "") {
+  } else {
+    Issue.record("Already forwarded interrupt was not retained")
+  }
+  try observe("response.completed")
+  #expect(finished())
+  try turns.begin()
+  #expect(finished())  // Neither dispatch nor interrupt markers cross into the next turn.
+}

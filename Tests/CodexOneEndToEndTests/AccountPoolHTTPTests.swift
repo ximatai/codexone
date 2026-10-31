@@ -1080,7 +1080,8 @@ func poolNativeWebSocketDisconnectAndRuntimeCancellationCloseOwnedHandshakeAndTu
     for shutdown in [true, false] {
       try await withOAuth(timeout: 3000) { oauth in
         let h = try await PoolHTTPHarness.open(
-          oauth, transport: "websocket", handshake: handshake ? "stall" : nil)
+          oauth, transport: "websocket", executionTimeout: 1,
+          handshake: handshake ? "stall" : nil)
         do {
           let client = try PoolWSClient(h)
           defer { client.close() }

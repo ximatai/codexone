@@ -316,6 +316,7 @@ public struct ResponsesDataService: Service {
     downstream: WebSocketPeer, upstream: WebSocketPeer, firstBody: WebSocketBody,
     executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
   ) async throws {
+    downstream.permitSettlement()
     let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
     let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
@@ -397,7 +398,7 @@ public struct ResponsesDataService: Service {
                       try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
                       try await executor.exchange(
                         request, context: initialTurn.context, model: model, peer: upstream,
-                        lane: lane
+                        lane: lane, downstream: downstream
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
@@ -406,7 +407,8 @@ public struct ResponsesDataService: Service {
                     } else {
                       let current = try await executor.authorized(digest)
                       try await current.execute(
-                        request, requestID: requestID, peer: upstream, lane: lane
+                        request, requestID: requestID, peer: upstream, lane: lane,
+                        downstream: downstream
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
