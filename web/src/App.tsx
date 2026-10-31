@@ -1,15 +1,9 @@
-import styles from "./app/Workspace.module.css";
-import { Button, Group, MantineProvider } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
+import { WorkspaceFrame } from "./app/WorkspaceFrame";
+import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import {
-  HashRouter,
-  NavLink,
-  Navigate,
-  Route,
-  Routes,
-  useLocation,
-} from "react-router";
+import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router";
 const AccountManagement = lazy(() =>
   import("./features/account-management/AccountManagement").then((module) => ({
     default: module.AccountManagement,
@@ -61,33 +55,7 @@ function OwnedQueries({ children }: { children: ReactNode }) {
 function Workspace() {
   const location = useLocation();
   return (
-    <div className={styles.workspace}>
-      <header className={styles.header}>
-        <span className="brand-mark" aria-hidden="true">
-          C
-        </span>
-        <strong>CodexOne</strong>
-      </header>
-      <nav aria-label="控制台导航">
-        <Group gap="xs">
-          {[
-            ["/", "服务概览"],
-            ["/accounts", "订阅账号"],
-            ["/keys", "访问密钥"],
-            ["/usage", "用量与诊断"],
-          ].map(([path, title]) => (
-            <Button
-              key={path}
-              component={NavLink}
-              to={path}
-              end
-              variant="subtle"
-            >
-              {title}
-            </Button>
-          ))}
-        </Group>
-      </nav>
+    <WorkspaceFrame>
       <main>
         <ManagementSession publicView={location.pathname === "/"}>
           <OwnedQueries>
@@ -114,7 +82,7 @@ function Workspace() {
           </OwnedQueries>
         </ManagementSession>
       </main>
-    </div>
+    </WorkspaceFrame>
   );
 }
 export function App() {
@@ -125,6 +93,7 @@ export function App() {
       withCssVariables={false}
       withGlobalClasses={false}
     >
+      <Notifications position="top-right" />
       <HashRouter>
         <Workspace />
       </HashRouter>
