@@ -69,7 +69,6 @@ export function ActivityOverview({
     // Returning to the tab refetches only snapshots older than one refresh period.
     refetchOnWindowFocus: true,
     staleTime: 15000,
-    retry: false as const,
   };
   const daily = useQuery({
     queryKey: ["overview", "daily"],
