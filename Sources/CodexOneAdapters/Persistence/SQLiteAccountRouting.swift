@@ -46,8 +46,12 @@ extension SQLiteExecutionStore: AccountRoutingStore {
       principal: command.policy.key.principal, references: command.references)
     guard (1...64).contains(command.candidates.count) else { throw ExecutionError.invalidCommand }
     for candidate in command.candidates { try validateAdmission(command.selecting(candidate)) }
-    return try await perform(admission: true) { [limits] db in
-      try db.transaction {
+    return try await perform(admission: true) { [limits, unresolvedCapacity] db in
+      let identityLimits = ExecutionLimits(
+        requests: limits.requests, active: limits.active,
+        unresolved: unresolvedCapacity, budgetMicros: limits.budgetMicros,
+        unresolvedMicros: limits.unresolvedMicros)
+      return try db.transaction {
         let affinity = try Self.accountAffinity(
           db, principal: command.policy.key.principal, references: command.references,
           connection: command.connection)
@@ -82,7 +86,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             window)
           let reserved = command.policy.reservedMicros
           guard
-            limits.allows(
+            identityLimits.allows(
               requestCount: requests, activeCount: counts.0, unresolvedCount: counts.1,
               exposureMicros: exposure, unresolvedExposureMicros: counts.2, reservedMicros: reserved
             )
@@ -101,7 +105,8 @@ extension SQLiteExecutionStore: AccountRoutingStore {
         guard let selected = ranked.first?.0 else { throw AccountDispatchError.unavailable }
         let admission = command.selecting(selected)
         // Common Key/global/principal rejection propagates once; it is not an account failure.
-        try Self.admitTransaction(db, admission, limits: limits)
+        try Self.admitTransaction(
+          db, admission, limits: limits, unresolvedCapacity: unresolvedCapacity)
         return admission
       }
     }

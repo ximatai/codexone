@@ -248,7 +248,8 @@ struct CodexOneMain {
       store = try await SQLiteExecutionStore.open(
         path: directory + "/core.sqlite",
         limits: .init(
-          requests: 10_000, active: 16, unresolved: 32, budgetMicros: 1_000_000_000))
+          requests: 10_000, active: 16, unresolved: 32,
+          budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity)
     } else {
       store = nil
     }
@@ -278,7 +279,7 @@ struct CodexOneMain {
         attention: usageReader.map {
           AttentionAdminAPI(reader: $0, storage: store, registry: protocolExtensions)
         },
-        storageMonitoring: store)
+        executions: store, storageMonitoring: store)
     } else {
       keyAdmin = nil
     }
@@ -320,7 +321,8 @@ struct CodexOneMain {
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
-        store: store, authorization: authorization, refreshing: refreshing, observing: observing)
+        store: store, authorization: authorization, refreshing: refreshing, observing: observing,
+        credentials: application)
     } else {
       accountAdmin = nil
     }

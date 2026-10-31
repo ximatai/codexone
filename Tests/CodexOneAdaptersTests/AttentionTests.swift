@@ -126,7 +126,7 @@ private func attentionKey(expires: Int64? = nil, enabled: Bool = true, unlimited
       == "error_rate_high")
   #expect(AttentionRules.executions(admitted: 100, failed: 9, unknown: 0, since: nil).isEmpty)
   #expect(
-    AttentionRules.executions(admitted: 0, failed: 0, unknown: 1, since: 20).first?.kind
+    AttentionRules.executions(admitted: 0, failed: 0, unknown: 512, since: 20).first?.kind
       == "unresolved_executions")
   var many = (0..<60).map { AttentionItem("quota_stale", id: "\($0)", since: Int64($0)) }
   many.append(.init("storage_pressure", critical: true, since: 100))
@@ -214,7 +214,7 @@ private struct AttentionStorage: StorageMonitoring {
     await #expect(throws: CancellationError.self) { try await cancelled.value }
     let first = try await reader.attentionItems(now: attentionNow)
     #expect(!first.contains { $0.kind == "error_rate_high" })
-    #expect(first.contains { $0.kind == "unresolved_executions" })
+    #expect(!first.contains { $0.kind == "unresolved_executions" })
     #expect(
       first.contains { $0.kind == "key_limit_near" && $0.detail["metric"]?.string == "requests" })
     let encoded = String(decoding: try JSONEncoder().encode(first), as: UTF8.self)

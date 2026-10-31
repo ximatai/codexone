@@ -4,7 +4,8 @@ import Foundation
 
 extension SQLiteUsageReader: AttentionReading {
   public func attentionItems(now: Int64) async throws -> [AttentionItem] {
-    try await read { db in
+    let limit = primary.unresolvedCapacity
+    return try await read { db in
       var items: [AttentionItem] = []
       // Independent sources fail visibly. All scans share the reader's single snapshot,
       // one-second SQL budget, storage gate, and cancellation handler.
@@ -90,7 +91,10 @@ extension SQLiteUsageReader: AttentionReading {
           )
         }[0]
         return AttentionRules.executions(
-          admitted: recent.0, failed: recent.1, unknown: unresolved.0, since: unresolved.1)
+          admitted: recent.0, failed: recent.1, unknown: unresolved.0, since: unresolved.1,
+          unresolved: try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
+            + (db.restoreRecord()?.unresolvedRequests ?? 0),
+          limit: limit)
       }
       return items
     }

@@ -79,11 +79,13 @@ extension SQLiteUsageReader {
         WHERE \(attempts.sql) AND json_extract(outcome_json,'$.firstEventMilliseconds') IS NOT NULL
         ORDER BY json_extract(outcome_json,'$.firstEventMilliseconds') LIMIT 1 OFFSET ?
         """, attempts.values + [.number((timing.2 * 95 + 99) / 100 - 1)])
+    // Settled + partial evidence is an audited release, not complete metering. Retain
+    // trusted metric lower bounds while projecting its completeness as unavailable.
     let totals = try db.rows(
       """
       SELECT COUNT(*),COALESCE(SUM(state='intent'),0),COALESCE(SUM(state='unknown'),0),
         COALESCE(SUM(json_extract(usage_json,'$.completeness')='complete'),0),
-        COALESCE(SUM(json_extract(usage_json,'$.completeness')='partial'),0),COALESCE(SUM(usage_json IS NULL),0),
+        COALESCE(SUM(json_extract(usage_json,'$.completeness')='partial' AND state!='settled'),0),COALESCE(SUM(usage_json IS NULL OR (state='settled' AND json_extract(usage_json,'$.completeness')='partial')),0),
         COALESCE(SUM(json_extract(outcome_json,'$.kind')='failed'),0),
         COALESCE(SUM(json_extract(outcome_json,'$.kind')='cancelled'),0),
         COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0),
@@ -126,7 +128,7 @@ extension SQLiteUsageReader {
       SELECT 'admitted' kind,'a:'||id cursor_id,id,created_at_epoch at_epoch,key_id,
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
         identity,request_id,state,json_extract(outcome_json,'$.kind') outcome,
-        json_extract(outcome_json,'$.failure') failure,json_extract(usage_json,'$.completeness') completeness,
+        json_extract(outcome_json,'$.failure') failure,CASE WHEN state='settled' AND json_extract(usage_json,'$.completeness')='partial' THEN NULL ELSE json_extract(usage_json,'$.completeness') END completeness,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds') FROM attempts WHERE \(attempts.sql)
