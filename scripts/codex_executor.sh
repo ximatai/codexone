@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs a Codex executor with full access by default (owner's decision).
+# Runs a Codex executor with full access, high effort and the fast tier by
+# default (owner's decision); CODEX_EXECUTOR_EFFORT/CODEX_EXECUTOR_TIER override.
 # CODEX_EXECUTOR_SANDBOX=workspace-write restores the sandbox with the grants
 # this repository's builds need; there --browser runs Chrome outside the
 # sandbox (seatbelt denies its Mach registration) and tests connect to it.
@@ -35,6 +36,7 @@ fi
 export CODEXONE_BUILD_JOBS=${CODEXONE_BUILD_JOBS:-12}
 export CODEXONE_SWIFTPM_DISABLE_SANDBOX=1
 export PYTHONDONTWRITEBYTECODE=1
-codex exec -m "${CODEX_EXECUTOR_MODEL:-gpt-6.1-sol}" -c model_reasoning_effort='"low"' \
+codex exec -m "${CODEX_EXECUTOR_MODEL:-gpt-6.1-sol}" \
+  -c model_reasoning_effort="\"${CODEX_EXECUTOR_EFFORT:-high}\"" -c service_tier="\"${CODEX_EXECUTOR_TIER:-fast}\"" \
   -s "${CODEX_EXECUTOR_SANDBOX:-danger-full-access}" -c sandbox_workspace_write.network_access=true \
   -C "$worktree" "${grants[@]}" "$(cat "$brief")" </dev/null >"$log" 2>&1
