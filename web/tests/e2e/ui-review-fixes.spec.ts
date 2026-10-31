@@ -165,8 +165,11 @@ test("K01 K02 K05: availability filters, pagination top, sticky header and back 
   await page.getByLabel("可用状态", { exact: true }).selectOption("expired");
   await expect(page.locator("tbody tr").first()).toContainText("已到期");
   await page.getByLabel("可用状态", { exact: true }).selectOption("");
+  await expect(page).toHaveURL(/#\/keys$/);
+  await expect(page.locator("tbody tr")).toHaveCount(50);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(page).toHaveURL(/page=2/);
+  await expect(page.locator("table").locator("..")).toBeFocused();
   await expect
     .poll(() =>
       page
@@ -199,7 +202,7 @@ test("K01 K02 K05: availability filters, pagination top, sticky header and back 
       .evaluate((th) => th.getBoundingClientRect().top),
   ).toBe(64);
   await page.getByLabel("搜索主体名", { exact: true }).fill("team-201");
-  await page.getByRole("link", { name: "用量", exact: true }).click();
+  await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "用量与诊断", exact: true }),
   ).toBeVisible();

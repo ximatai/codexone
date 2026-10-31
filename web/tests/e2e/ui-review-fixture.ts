@@ -40,6 +40,7 @@ export async function reviewFixture(page: Page) {
     empty: false,
     anonymous: false,
     alerts: 2,
+    reads: [] as { path: string; query: string }[],
     writes: [] as { path: string; body: Record<string, unknown> }[],
   };
   await page.context().route("**/*", async (route) => {
@@ -49,6 +50,7 @@ export async function reviewFixture(page: Page) {
     const path = url.pathname;
     if (!path.startsWith("/api/")) return route.continue();
     const method = route.request().method();
+    if (method === "GET") state.reads.push({ path, query: url.search });
     if (state.failures[path])
       return route.fulfill({
         status: state.failures[path],
@@ -68,7 +70,11 @@ export async function reviewFixture(page: Page) {
       if (key) {
         Object.assign(key, body);
         key.revision++;
-        return route.fulfill({ json: { key } });
+        return route.fulfill({
+          json: path.endsWith("/rotate")
+            ? { key, secret: "co1_" + "s".repeat(43) }
+            : { key },
+        });
       }
       return route.fulfill({
         status: 400,

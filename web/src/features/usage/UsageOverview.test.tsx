@@ -310,7 +310,7 @@ it("U03 preserves the saved position across a slow restore and intervening layou
   const params = api.usageParameters(filters);
   const memory = new Map<string, unknown>([
     [
-      `usage:${JSON.stringify(filters)}`,
+      `usage:${JSON.stringify(filters)}:page:1`,
       {
         page: 1,
         history: [null, "synthetic_cursor"],
@@ -352,7 +352,7 @@ it("U03 falls back explicitly when a restored cursor is rejected", async () => {
   const params = api.usageParameters(filters);
   const memory = new Map<string, unknown>([
     [
-      `usage:${JSON.stringify(filters)}`,
+      `usage:${JSON.stringify(filters)}:page:1`,
       {
         page: 1,
         history: [null, "expired-cursor"],
@@ -388,4 +388,97 @@ it("U03 falls back explicitly when a restored cursor is rejected", async () => {
     null,
     expect.any(AbortSignal),
   );
+});
+
+it.each([true, false])(
+  "P2-2 restores only the matching page snapshot on POP=%s",
+  async (restoreView) => {
+    setup();
+    const filters = api.defaults();
+    const memory = new Map<string, unknown>([
+      [
+        `usage:${JSON.stringify(filters)}:page:0`,
+        {
+          page: 0,
+          history: [null],
+          scroll: 210,
+          window: { start: 100, end: 200 },
+        },
+      ],
+      [
+        `usage:${JSON.stringify(filters)}:page:1`,
+        {
+          page: 1,
+          history: [null, "page-two"],
+          scroll: 1900,
+          window: { start: 300, end: 400 },
+        },
+      ],
+    ]);
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    render(
+      <UsageOverview
+        initialFilters={filters}
+        requestedPage={0}
+        navigationStore={memory}
+        restoreView={restoreView}
+        selection={null}
+        paused={false}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+    await screen.findByText("第 1 页");
+    await waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith(0, restoreView ? 210 : 0),
+    );
+    expect(scroll).not.toHaveBeenCalledWith(0, 1900);
+    expect(api.fetchUsage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        window: restoreView ? { start: 100, end: 200 } : expect.anything(),
+      }),
+      null,
+      expect.any(AbortSignal),
+    );
+  },
+);
+
+it("P2-2 P2-5 preserves POP scroll through a slow failed restore and retry", async () => {
+  setup();
+  const filters = api.defaults();
+  const memory = new Map<string, unknown>([
+    [
+      `usage:${JSON.stringify(filters)}:page:1`,
+      {
+        page: 1,
+        history: [null, "synthetic_cursor"],
+        scroll: 900,
+        window: { start: 100, end: 200 },
+      },
+    ],
+  ]);
+  let reject!: (cause: Error) => void;
+  vi.mocked(api.fetchUsage).mockReturnValueOnce(
+    new Promise((_resolve, failure) => {
+      reject = failure;
+    }),
+  );
+  const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  render(
+    <UsageOverview
+      initialFilters={filters}
+      requestedPage={1}
+      navigationStore={memory}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(api.fetchUsage).toHaveBeenCalled());
+  fireEvent.scroll(window);
+  await act(async () => reject(new ManagementError(429, "synthetic_busy")));
+  await screen.findByRole("alert");
+  fireEvent.scroll(window);
+  fireEvent.click(screen.getByRole("button", { name: "重试翻页" }));
+  await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
+  expect(screen.getByText("第 2 页")).toBeVisible();
 });
