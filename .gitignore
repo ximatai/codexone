@@ -39,3 +39,5 @@ __pycache__/
 
 # Vite regenerates theme variables from app/theme.ts on dev and build
 web/src/app/generated/
+
+*.tsbuildinfo
