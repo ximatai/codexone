@@ -6,7 +6,7 @@ import {
   Paper,
   Stack,
   Switch,
-  Skeleton,
+  Tooltip,
   Text,
   Title,
 } from "@mantine/core";
@@ -15,6 +15,8 @@ import { Link } from "react-router";
 import { DataTable } from "../../shared/ui/DataTable";
 import { ErrorState, StatusBadge } from "../../shared/ui/States";
 import styles from "./overview.module.css";
+import { PageHeader } from "../../shared/ui/PageHeader";
+import { duration } from "../usage/format";
 import { OverviewStats } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
@@ -40,20 +42,27 @@ function UpdatedAgo({ updated }: { updated: number }) {
   );
 }
 export function ActivityOverview({
-  refreshOverview,
+  refresh,
+  extraQueries = [],
   sidebar,
 }: {
-  refreshOverview: () => Promise<unknown>;
+  refresh?: ReturnType<typeof useOverviewRefresh>;
+  extraQueries?: {
+    dataUpdatedAt: number;
+    isFetching: boolean;
+    refetch: () => Promise<unknown>;
+  }[];
   sidebar?: ReactNode;
 }) {
   const owner = useManagementSession();
-  const refresh = useOverviewRefresh();
+  const localRefresh = useOverviewRefresh();
+  const control = refresh ?? localRefresh;
   const [detail, setDetail] = useState<UsageReport["rows"][number] | null>(
     null,
   );
   const options = {
     enabled: !!owner.session,
-    refetchInterval: refresh.interval,
+    refetchInterval: control.interval,
     // Returning to the tab refetches only snapshots older than one refresh period.
     refetchOnWindowFocus: true,
     staleTime: 15000,
@@ -61,10 +70,7 @@ export function ActivityOverview({
   };
   const daily = useQuery({
     queryKey: ["overview", "daily"],
-    queryFn: async ({ signal }) => {
-      await refreshOverview();
-      return fetchDaily(signal);
-    },
+    queryFn: ({ signal }) => fetchDaily(signal),
     ...options,
   });
   const flight = useQuery({
@@ -72,15 +78,14 @@ export function ActivityOverview({
     queryFn: ({ signal }) => fetchInFlight(signal),
     ...options,
   });
-  // Recent rows may page through the usage window, so they refresh less often.
+  // All overview snapshots share the same pause and refresh cadence.
   const recent = useQuery({
     queryKey: ["overview", "recent"],
     queryFn: ({ signal }) => fetchRecent(signal),
     ...options,
-    refetchInterval: refresh.interval && 60000,
-    staleTime: 60000,
   });
   const queries = [daily, flight, recent];
+  const allQueries = [...queries, ...extraQueries];
   const unauthorized = queries.some(
     (q) => q.error instanceof ManagementError && q.error.status === 401,
   );
@@ -88,52 +93,56 @@ export function ActivityOverview({
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const updated = queries.every((q) => q.dataUpdatedAt > 0)
-    ? Math.min(...queries.map((q) => q.dataUpdatedAt))
+  const updated = allQueries.every((q) => q.dataUpdatedAt > 0)
+    ? Math.min(...allQueries.map((q) => q.dataUpdatedAt))
     : 0;
 
   return (
     <Stack aria-label="请求即时概览">
-      <Group justify="space-between">
-        <Text size="sm" c="dimmed">
-          近 7 天 · UTC · 今日未结束，与昨日完整日比较；Token
-          为已观测输入与输出之和，缓存包含在输入中。
-        </Text>
-        <Group>
-          <Switch
-            label="自动刷新（15 秒）"
-            checked={refresh.automatic}
-            onChange={(e) => refresh.setAutomatic(e.currentTarget.checked)}
-          />
-          <UpdatedAgo updated={updated} />
-          <Button
-            size="xs"
-            variant="default"
-            disabled={queries.some((q) => q.isFetching)}
-            onClick={() => {
-              for (const q of queries) void q.refetch();
-            }}
-          >
-            刷新请求概览
-          </Button>
-        </Group>
-      </Group>
-      {queries.some((q) => q.isPending) && (
-        <Stack role="status" aria-label="正在读取请求概览…">
-          <Skeleton h={84} />
-          <Text size="sm">正在读取请求概览…</Text>
-        </Stack>
-      )}
+      <div className={styles.header}>
+        <PageHeader
+          title="今日运营概览"
+          description="UTC 当日 · 费用为估算，非账单"
+          actions={
+            <Group>
+              <Switch
+                label="自动刷新（15 秒）"
+                checked={control.automatic}
+                onChange={(e) => control.setAutomatic(e.currentTarget.checked)}
+              />
+              <UpdatedAgo updated={updated} />
+              <Button
+                size="xs"
+                variant="default"
+                disabled={allQueries.some((q) => q.isFetching)}
+                onClick={() => {
+                  for (const q of allQueries) void q.refetch();
+                }}
+              >
+                刷新请求概览
+              </Button>
+            </Group>
+          }
+        />
+      </div>
       {queries.some((q) => q.isError) && (
         <ErrorState
           retry={() => {
-            for (const q of queries) void q.refetch();
+            for (const q of allQueries) void q.refetch();
           }}
         >
           部分请求概览读取失败，请刷新重试；保留的快照可能已过时，缺失值未记为零。
         </ErrorState>
       )}
-      <OverviewStats buckets={daily.data ?? []} />
+      <Tooltip
+        events={{ hover: true, focus: true, touch: true }}
+        label="近 7 天 · UTC；今日未结束，与昨日完整日比较。Token 为已观测输入与输出之和，缓存包含在输入中；缺失用量保持不可用，Token 与费用为已观测下界。"
+      >
+        <Text size="xs" c="dimmed" w="fit-content" tabIndex={0}>
+          KPI 统计口径 ⓘ
+        </Text>
+      </Tooltip>
+      <OverviewStats buckets={daily.data ?? []} loading={daily.isPending} />
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
           <Paper withBorder p="md">
@@ -141,9 +150,6 @@ export function ActivityOverview({
               <Title order={3} size="h4">
                 进行中请求
               </Title>
-              <Anchor component={Link} to="/usage">
-                查看全部用量
-              </Anchor>
             </Group>
             <Text size="xs" c="dimmed" mb="sm">
               最多显示 200 条；随自动刷新更新。
@@ -207,7 +213,8 @@ export function ActivityOverview({
               </Anchor>
             </Group>
             <Text size="xs" c="dimmed" mb="sm">
-              最近 31 天内的 20 条已结束请求，每分钟刷新；待核对结果不代表成功。
+              最近 31 天内的 20
+              条已结束请求，随自动刷新更新；待核对结果不代表成功。
             </Text>
             {recent.data?.truncated && (
               <Text c="orange" size="xs">
@@ -215,6 +222,7 @@ export function ActivityOverview({
               </Text>
             )}
             <DataTable
+              onRowClick={setDetail}
               rows={recent.data?.rows ?? []}
               rowKey={(row) => row.id}
               retry={() => void recent.refetch()}
@@ -224,6 +232,8 @@ export function ActivityOverview({
                 {
                   id: "time",
                   title: "开始时间（本地）",
+                  width: "25%",
+                  nowrap: true,
                   render: (row) => localTime(row.atUnixSeconds),
                 },
                 {
@@ -235,6 +245,7 @@ export function ActivityOverview({
                 {
                   id: "outcome",
                   title: "结果",
+                  width: "13%",
                   render: (row) => (
                     <StatusBadge
                       color={
@@ -255,20 +266,13 @@ export function ActivityOverview({
                   id: "timing",
                   title: "首事件 / 总耗时",
                   render: (row) =>
-                    `${row.firstEventMilliseconds == null ? "不可用" : row.firstEventMilliseconds + " ms"} / ${row.totalMilliseconds == null ? "不可用" : row.totalMilliseconds + " ms"}`,
+                    `${duration(row.firstEventMilliseconds)} / ${duration(row.totalMilliseconds)}`,
                 },
                 {
-                  id: "detail",
-                  title: "详情",
-                  render: (row) => (
-                    <Button
-                      variant="subtle"
-                      size="xs"
-                      onClick={() => setDetail(row)}
-                    >
-                      查看详情
-                    </Button>
-                  ),
+                  id: "open",
+                  title: "",
+                  width: "4%",
+                  render: () => <span aria-hidden="true">›</span>,
                 },
               ]}
             />

@@ -24,7 +24,7 @@ it("reports failed query and permits retry to explicit empty state", async () =>
     .mockResolvedValue([]);
   vi.mocked(api.fetchInFlight).mockResolvedValue([]);
   vi.mocked(api.fetchRecent).mockResolvedValue({ rows: [], truncated: false });
-  renderPrivate(<ActivityOverview refreshOverview={async () => {}} />);
+  renderPrivate(<ActivityOverview />);
   expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
   fireEvent.click(screen.getByRole("button", { name: "刷新请求概览" }));
   expect(await screen.findByText("当前没有进行中的请求。")).toBeVisible();
@@ -65,7 +65,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
     },
   ]);
   vi.mocked(api.fetchRecent).mockResolvedValue({ rows: [], truncated: false });
-  renderPrivate(<ActivityOverview refreshOverview={async () => {}} />);
+  renderPrivate(<ActivityOverview />);
   expect(
     await screen.findByRole("img", { name: "今日请求近 7 天：4" }),
   ).toBeVisible();
@@ -75,4 +75,19 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(await screen.findByText("合成工作站 · synthetic-text")).toBeVisible();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
   expect(screen.getByText("等待首事件")).toBeVisible();
+});
+
+it("renders only skeletons in KPI cards before the daily response", async () => {
+  vi.mocked(management.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  vi.mocked(api.fetchDaily).mockReturnValue(new Promise(() => {}));
+  vi.mocked(api.fetchInFlight).mockResolvedValue([]);
+  vi.mocked(api.fetchRecent).mockResolvedValue({ rows: [], truncated: false });
+  renderPrivate(<ActivityOverview />);
+  const kpis = await screen.findByLabelText("正在读取请求概览…");
+  expect(kpis).toHaveAttribute("aria-busy", "true");
+  expect(kpis.querySelectorAll(".mantine-Skeleton-root")).toHaveLength(4);
+  expect(kpis).not.toHaveTextContent("不可用");
+  expect(kpis).not.toHaveTextContent("—");
 });

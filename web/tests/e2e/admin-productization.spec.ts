@@ -138,10 +138,11 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await expect(
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();
-  await expect(page.getByText("允许准入", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("费用：估算 $2.50", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText(/允许准入/)).toBeVisible();
+  await expect(page.getByText("今日请求 / 失败", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/^费用：/)).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath("admin-overview-1440.png"),
     fullPage: true,

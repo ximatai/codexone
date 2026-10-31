@@ -1,6 +1,7 @@
+import { quotaStale } from "../account-management/quota";
+import { useOverviewRefresh } from "./useOverviewRefresh";
 import { ActivityOverview } from "./ActivityOverview";
 import styles from "./overview.module.css";
-import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState } from "../../shared/ui/States";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -19,7 +20,7 @@ import { ManagementError, request } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
 import { fetchKeyUsage } from "../usage/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
-import { money, terms, estimateNote } from "../../shared/presentation";
+import { terms } from "../../shared/presentation";
 
 async function fetchStorage(signal: AbortSignal) {
   const value = (await request("/api/runtime/storage", { signal })) as Record<
@@ -36,6 +37,12 @@ async function fetchStorage(signal: AbortSignal) {
 }
 export function AdminOverview() {
   const owner = useManagementSession();
+  const refresh = useOverviewRefresh();
+  const polling = {
+    refetchInterval: refresh.interval,
+    staleTime: 15000,
+    refetchOnWindowFocus: true,
+  };
   const [clock, setClock] = useState(() => performance.now());
   useEffect(() => {
     const timer = window.setInterval(() => setClock(performance.now()), 15000);
@@ -47,16 +54,19 @@ export function AdminOverview() {
     queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const usage = useQuery({
     queryKey: ["overview", "key-usage"],
     queryFn: ({ signal }) => fetchKeyUsage(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const storage = useQuery({
     queryKey: ["overview", "storage"],
     queryFn: ({ signal }) => fetchStorage(signal),
     enabled: !!owner.session,
+    ...polling,
   });
   const unauthorized = [accounts.error, usage.error, storage.error].some(
     (error) => error instanceof ManagementError && error.status === 401,
@@ -82,20 +92,8 @@ export function AdminOverview() {
   function total(field: "admitted" | "failed" | "pending") {
     return usage.data?.reduce((sum, item) => sum + item[field], 0) ?? "—";
   }
-  const knownCost = usage.data?.filter((item) => item.estimatedMicros !== null);
-  const cost = knownCost?.length
-    ? knownCost
-        .reduce((sum, item) => sum + BigInt(item.estimatedMicros!), 0n)
-        .toString()
-    : null;
   return (
     <Stack mb="xl" aria-label="管理概览">
-      <div className={styles.header}>
-        <PageHeader
-          title="今日运营概览"
-          description={`UTC 当日 · ${estimateNote}；缺失用量保持不可用，Token 与费用为已观测下界。`}
-        />
-      </div>
       {(accounts.isError || usage.isError || storage.isError) && (
         <ErrorState
           retryLabel="重新读取概览"
@@ -109,9 +107,8 @@ export function AdminOverview() {
         </ErrorState>
       )}
       <ActivityOverview
-        refreshOverview={() =>
-          Promise.all([accounts.refetch(), usage.refetch(), storage.refetch()])
-        }
+        refresh={refresh}
+        extraQueries={[accounts, usage, storage]}
         sidebar={
           <>
             <Paper withBorder p="md">
@@ -153,16 +150,15 @@ export function AdminOverview() {
                           ? "额度告警：上游报告受限"
                           : "窗口为上游观测，不是 Key 余额"}
                       </Text>
-                      <Text size="xs">
+                      <Text size="xs" c="orange">
                         {!quota || quota.state === "unavailable"
                           ? "额度不可用"
-                          : quota.state === "stale" ||
-                              (Math.max(clock, performance.now()) -
-                                account.observability!.receivedAt) /
-                                1000 >=
-                                quota.freshForSeconds
+                          : quotaStale(
+                                account.observability!,
+                                Math.max(clock, performance.now()),
+                              )
                             ? "额度观测已陈旧"
-                            : "最近读取的额度观测"}
+                            : ""}
                         {quota?.failure ? " · 最近读取失败" : ""}
                       </Text>
                     </Stack>
@@ -174,44 +170,62 @@ export function AdminOverview() {
               <Title order={3} size="h4" mb="md">
                 系统状态
               </Title>
-              <Stack gap="sm">
-                <Anchor component={Link} to="/accounts">
-                  可用账号
-                </Anchor>
-                <Text>
-                  {available ?? "—"} · 授权异常 {abnormal ?? "—"}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  允许使用且无已知健康阻断，实际准入仍会复核。
-                </Text>
-                <Anchor component={Link} to={todayUsage}>
-                  今日请求 / 失败
-                </Anchor>
-                <Text>
-                  {total("admitted")} / {total("failed")}
-                </Text>
-                <Text size="sm">费用：{money(cost)}</Text>
-                <Anchor component={Link} to={todayUsage}>
-                  {terms.pending}
-                </Anchor>
-                <Text>{total("pending")}</Text>
-                <Anchor component={Link} to="/?storage=details">
-                  存储与准入状态
-                </Anchor>
-                <Text>
-                  {storage.data
-                    ? storage.data.admissionAllowed
-                      ? "允许准入"
-                      : "暂停准入"
-                    : "不可用"}
-                </Text>
-                <Text size="sm" c="dimmed">
-                  {storage.data
-                    ? storage.data.optionalWorkAllowed
-                      ? "统计可用"
-                      : "可选工作暂停"
-                    : "尚无存储观测"}
-                </Text>
+              <Stack gap="xs">
+                {[
+                  {
+                    label: "可用账号",
+                    value: `${available ?? "—"} · 授权异常 ${abnormal ?? "—"}`,
+                    to: "/accounts",
+                    good: available != null && available > 0,
+                  },
+                  {
+                    label: terms.pending,
+                    value: String(total("pending")),
+                    to: todayUsage,
+                    good: total("pending") === 0,
+                  },
+                  {
+                    label: "存储与准入",
+                    value: storage.data
+                      ? storage.data.admissionAllowed
+                        ? "允许准入"
+                        : "暂停准入"
+                      : "不可用",
+                    to: "/?storage=details",
+                    good: !!storage.data?.admissionAllowed,
+                  },
+                  {
+                    label: "可选工作",
+                    value: storage.data
+                      ? storage.data.optionalWorkAllowed
+                        ? "统计可用"
+                        : "可选工作暂停"
+                      : "不可用",
+                    to: "/?storage=details",
+                    good: !!storage.data?.optionalWorkAllowed,
+                  },
+                ].map((row) => (
+                  <Anchor
+                    key={row.label}
+                    component={Link}
+                    to={row.to}
+                    className={styles.statusRow}
+                  >
+                    <Text size="sm">{row.label}</Text>
+                    <Text size="sm">
+                      <span
+                        style={{
+                          color: row.good
+                            ? "var(--mantine-color-green-7)"
+                            : "var(--mantine-color-orange-7)",
+                        }}
+                      >
+                        ●
+                      </span>{" "}
+                      {row.value} ›
+                    </Text>
+                  </Anchor>
+                ))}
               </Stack>
             </Paper>
           </>

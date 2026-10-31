@@ -118,7 +118,12 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.waitForTimeout(400);
   await page.screenshot({ path: screenshots + "/overview-1440.png" });
-  await page.getByRole("button", { name: "查看详情" }).first().click();
+  const recent = page
+    .getByRole("row")
+    .filter({ hasText: "1.2 s / 14.0 s" })
+    .first();
+  await recent.focus();
+  await recent.press("Enter");
   await expect(page.getByRole("dialog", { name: "请求详情" })).toContainText(
     "request-first",
   );
@@ -128,8 +133,15 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .getByRole("dialog")
     .getByRole("button", { name: "关闭", exact: true })
     .click();
+  await recent.click();
+  await expect(page.getByRole("dialog", { name: "请求详情" })).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(350);
   await page.screenshot({ path: screenshots + "/overview-390.png" });
 });

@@ -59,15 +59,23 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
     },
   ]);
   const view = renderPrivate(<AdminOverview />);
-  expect(await screen.findByText("费用：估算 $1.25")).toBeVisible();
-  expect(screen.getByText("3 / 1")).toBeVisible();
-  expect(screen.getByText("允许准入")).toBeVisible();
-  fireEvent.click(screen.getByRole("link", { name: "存储与准入状态" }));
+  await screen.findByText(/允许准入/);
+  expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
+  expect(usage.fetchKeyUsage).toHaveBeenCalledTimes(1);
+  expect(
+    vi
+      .mocked(management.request)
+      .mock.calls.filter(([path]) => path === "/api/runtime/storage"),
+  ).toHaveLength(1);
+  expect(screen.queryByText("今日请求 / 失败")).toBeNull();
+  expect(screen.queryByText("费用：估算 $1.25")).toBeNull();
+  expect(screen.getByText(/允许准入/)).toBeVisible();
+  fireEvent.click(screen.getByRole("link", { name: /存储与准入/ }));
   expect(await screen.findByText("磁盘可用：1.0 MiB")).toBeVisible();
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
-  fireEvent.click(screen.getByRole("link", { name: "存储与准入状态" }));
+  fireEvent.click(screen.getByRole("link", { name: /存储与准入/ }));
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   view.unmount();
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
@@ -109,7 +117,7 @@ it.each(["fresh", "unavailable"] as const)(
     ]);
     const view = renderPrivate(<AdminOverview />);
     await screen.findByText(
-      state === "fresh" ? "最近读取的额度观测" : "额度不可用",
+      state === "fresh" ? "synthetic-account" : "额度不可用",
     );
     fireEvent.click(await screen.findByLabelText("自动刷新（15 秒）"));
     await act(async () => {});
