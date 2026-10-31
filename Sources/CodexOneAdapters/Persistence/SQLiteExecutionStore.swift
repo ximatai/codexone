@@ -177,6 +177,27 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     }
   }
 
+  /// An already observed, unadmitted provider execution is responsibility, not new permission.
+  /// Preserve the connection's durable owner even if the Key has since been disabled or exhausted.
+  public func recordUnexpectedExecution(basedOn attempt: String) async throws {
+    try await perform(essential: true) { db in
+      try db.transaction {
+        let original = try Self.load(db, attempt).admission
+        guard try db.scalar("SELECT COUNT(*) FROM attempts") < 100_000 else {
+          throw ExecutionError.capacity
+        }
+        let command = ExecutionAdmission(
+          attempt: UUID().uuidString, owner: original.owner,
+          window: "utc-day-\(Int64(Date().timeIntervalSince1970) / 86400)",
+          policyVersion: original.policyVersion, pricingVersion: original.pricingVersion,
+          reservedMicros: original.reservedMicros, requestID: UUID().uuidString,
+          mode: .generation, keyRevision: original.keyRevision,
+          accountSnapshot: original.accountSnapshot)
+        try Self.insertAttempt(db, command, state: "unknown")
+      }
+    }
+  }
+
   public func admit(_ command: ExecutionAdmission) async throws {
     try validateAdmission(command)
     try await perform(admission: true) { [limits] db in
@@ -248,16 +269,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         throw ExecutionError.denied
       }
     }
+    try Self.insertAttempt(db, command, state: "intent")
+  }
+
+  private static func insertAttempt(
+    _ db: SQLiteConnection, _ command: ExecutionAdmission, state: String
+  ) throws {
     try db.write(
       """
       INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,created_at_epoch,request_id)
-      VALUES(?,?,?,?,?,?,?,?,?,'intent',?,?,?)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
       """,
       [
         .text(command.attempt), .text(command.owner.principal), .text(command.owner.key),
         .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
         .text(command.policyVersion), .text(command.pricingVersion),
-        .number(command.reservedMicros), .text(try encode(command)),
+        .number(command.reservedMicros), .text(state), .text(try encode(command)),
         .number(Int64(Date().timeIntervalSince1970)), command.requestID.map { .text($0) } ?? .null,
       ])
   }

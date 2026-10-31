@@ -1,3 +1,4 @@
+import CSQLite
 import CodexOneCore
 import CodexOneRuntime
 import Foundation
@@ -660,6 +661,8 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
   typealias OutboundOut = WebSocketFrame
   let state: PoolHTTPState
   let account: String
+  private var pending: [String: (JSONValue, String)] = [:]
+  private var recent: String?
   init(_ state: PoolHTTPState, account: String) {
     self.state = state
     self.account = account
@@ -684,6 +687,44 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
     }
     do {
       let request = try JSONValue.decode(Data(frame.unmaskedData.readableBytesView))
+      func emit(_ event: JSONValue) throws {
+        context.writeAndFlush(
+          wrapOutboundOut(
+            .init(fin: true, opcode: .text, data: ByteBuffer(data: try event.data()))),
+          promise: nil)
+      }
+      if request["type"]?.string == "response.interrupt" {
+        let id = request["response_id"]!.string!
+        guard let (completed, prompt) = pending.removeValue(forKey: id) else {
+          throw ExecutionError.invalidCommand
+        }
+        let ack = JSONValue.object([
+          "type": .string("response.interrupt.accepted"), "response_id": .string(id),
+        ])
+        for event in prompt == "cancel-after" ? [completed, ack] : [ack, completed] {
+          try emit(event)
+        }
+        return
+      }
+      if request["type"]?.string == "synthetic.spawn" {
+        try emit(
+          .object([
+            "type": .string("response.created"),
+            "response": .object([
+              "id": .string("synthetic-unadmitted"), "status": .string("in_progress"),
+              "output": .array([]),
+            ]),
+          ]))
+        return
+      }
+      if request["type"]?.string == "synthetic.future" {
+        try emit(
+          .object([
+            "type": .string("synthetic.echo"), "response_id": .string(recent!),
+            "payload": request["payload"]!,
+          ]))
+        return
+      }
       guard request["type"]?.string == "response.create" else {
         throw ExecutionError.invalidCommand
       }
@@ -723,6 +764,14 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
       if let lane = request["stream_id"] {
         created["stream_id"] = lane
         completed["stream_id"] = lane
+      }
+      recent = document["id"]?.string
+      if let prompt = poolInput(request),
+        ["cancel-before", "cancel-after", "drain"].contains(prompt)
+      {
+        pending[recent!] = (.object(completed), prompt)
+        try emit(.object(created))
+        return
       }
       let wire =
         poolRefusalEvents(poolInput(request), response: .object(document))
@@ -1644,5 +1693,36 @@ func poolNativeWebSocketUpstreamCloseDrainsAndRejectsQueuedCreates() async throw
       #expect(try await next.command()["type"]?.string == "response.completed")
       #expect(h.calls.count == (active ? 3 : 2))
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketControlsAndUnexpectedGenerationKeepDurableOwner() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    #expect(try await client.read()["ready"]?.bool == true)
+    #expect(try await client.command(["op": .string("compatibility")])["verified"]?.bool == true)
+    try await awaitOAuth {
+      h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
+    }
+    let rows = try await h.store.perform {
+      try $0.rows("SELECT state,admission_json,usage_json FROM attempts ORDER BY rowid") {
+        statement in
+        (
+          String(cString: sqlite3_column_text(statement, 0)),
+          String(cString: sqlite3_column_text(statement, 1)),
+          sqlite3_column_type(statement, 2) == SQLITE_NULL
+        )
+      }
+    }
+    #expect(rows.count == 5)
+    #expect(rows.filter { $0.0 == "settled" }.count == 4)
+    #expect(rows.last?.0 == "unknown" && rows.last?.2 == true)
+    let owner = try JSONValue.decode(Data(rows[0].1.utf8))["owner"]
+    #expect(try rows.allSatisfy { try JSONValue.decode(Data($0.1.utf8))["owner"] == owner })
+    #expect(owner?["key"]?.string == "alice")
+    #expect(h.calls.count == 4 && Set(h.calls.map(\.account)).count == 1)
+    #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
   }
 }

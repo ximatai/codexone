@@ -107,7 +107,10 @@ extension HTTPResponseExecution {
               ? ProviderObservation.textOutput(response) : response)
         }
         if observation.terminal { try observeSubmittedTerminal(event, context: context) }
-        if observation.terminal { break }
+        if observation.terminal {
+          peer.delivered(event)
+          break
+        }
       }
     }
   }

@@ -171,7 +171,12 @@ public struct ResponsesDataService: Service {
                     channel, client: false, budget: bodyBudget,
                     reservations: reservations),
                   try executor.access.digest(head.headers["authorization"]), reservations,
-                  forwardedClientHeaders(head.headers, fingerprint: configuration.clientFingerprint)
+                  forwardedClientHeaders(
+                    head.headers, fingerprint: configuration.clientFingerprint),
+                  HTTPHeaders(
+                    head.headers.filter {
+                      ["user-agent", "originator", "version"].contains($0.name.lowercased())
+                    })
                 )
               }
             })
@@ -214,9 +219,12 @@ public struct ResponsesDataService: Service {
                         try await Self.serve(
                           socket, executor: executor, budget: bodyBudget,
                           normalChannels: normalChannels)
-                      case .webSocket(let socket, let digest, let reservations, let headers):
+                      case .webSocket(
+                        let socket, let digest, let reservations, let headers, let diagnosticHeaders
+                      ):
                         var executor = executor
                         executor.clientHeaders = headers
+                        executor.protocolClientHeaders = diagnosticHeaders
                         try await Self.serveWebSocket(
                           socket, executor: executor, digest: digest, reservations: reservations)
                       }
@@ -251,7 +259,17 @@ public struct ResponsesDataService: Service {
   {
     try await WebSocketPeer.run(socket, client: false, reservations: reservations) { downstream in
       let firstBody = try await withExecutionDeadline(seconds: 10) {
-        try await downstream.nextBody()
+        var rate = WebSocketControlRate()
+        while true {
+          let body = try await downstream.nextBody()
+          if try await handleWebSocketControl(
+            body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
+            rate: &rate
+          ) {
+            continue
+          }
+          return body
+        }
       }
       let first: ResponseRequest
       do {
@@ -299,9 +317,17 @@ public struct ResponsesDataService: Service {
           throw WebSocketUpstreamClosed()
         }
         var known = Set<String>()
+        var controlRate = WebSocketControlRate()
         lanes.addTask { firstBody }
         while let result = try await lanes.next(), let body = result {
           guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
+          if try await handleWebSocketControl(
+            body, upstream: upstream, downstream: downstream,
+            headers: executor.protocolClientHeaders, rate: &controlRate
+          ) {
+            lanes.addTask { try await activity.read { try await downstream.nextBody() } }
+            continue
+          }
           let lane = try webSocketLane(JSONValue.decode(body.data))
           let fresh = !known.contains(lane)
           guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
@@ -594,7 +620,7 @@ public struct ResponsesDataService: Service {
 
 private enum NegotiatedProtocol: Sendable {
   case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>)
-  case webSocket(ProtocolWebSocket, String?, WebSocketBodyReservations, HTTPHeaders)
+  case webSocket(ProtocolWebSocket, String?, WebSocketBodyReservations, HTTPHeaders, HTTPHeaders)
 }
 
 private actor ProtocolResponseWriter {

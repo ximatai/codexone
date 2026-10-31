@@ -51,7 +51,11 @@ struct WebSocketUpstream: Sendable {
     }
   }
 
-  func run(operation: @escaping @Sendable (WebSocketPeer) async throws -> Void) async throws {
+  func run(
+    detachedEvent: (@Sendable (Data, String) async throws -> Void)? = nil,
+    unexpectedResponse: (@Sendable () async throws -> Void)? = nil,
+    operation: @escaping @Sendable (WebSocketPeer) async throws -> Void
+  ) async throws {
     let url = URLComponents(string: authorization?.baseURL ?? configuration.upstreamBaseURL)!
     let host = url.host!
     let tls = url.scheme == "https"
@@ -130,7 +134,9 @@ struct WebSocketUpstream: Sendable {
             return channel.eventLoop.makeSucceededFuture(upgraded)
           }
         let socket = try await negotiated.get()
-        try await WebSocketPeer.run(socket, client: true, operation: operation)
+        try await WebSocketPeer.run(
+          socket, client: true, detachedEvent: detachedEvent,
+          unexpectedResponse: unexpectedResponse, operation: operation)
       } onCancel: {
         channels.close()
       }

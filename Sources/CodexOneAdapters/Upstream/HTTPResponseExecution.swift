@@ -9,6 +9,7 @@ struct HTTPResponseExecution: Sendable {
   var controlCapacity = ControlCapacity()
   var controlAffinity = ControlAffinity()
   var clientHeaders = HTTPHeaders()
+  var protocolClientHeaders = HTTPHeaders()
   let client: HTTPClient
   let webSocket: WebSocketUpstream
   let configuration: ResponsesConfiguration
@@ -33,7 +34,8 @@ struct HTTPResponseExecution: Sendable {
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
       imageCapacity: imageCapacity, controlCapacity: controlCapacity,
-      controlAffinity: controlAffinity, clientHeaders: clientHeaders, client: client,
+      controlAffinity: controlAffinity, clientHeaders: clientHeaders,
+      protocolClientHeaders: protocolClientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
       gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,

@@ -61,13 +61,21 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 ## P14：单身份 WS 连接与 lane
 
-配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。固定身份上游 socket 因提供者关闭、网络断开或连接寿命到期而结束时，停止接受新 create；空闲时以 1000 正常关闭下游，有在途 turn 时先按已有证据结束执行并交接最终化责任（通常为 unknown），再以 1000 关闭下游。排队或在关闭后到达的 create 在 dispatch 前停止，不新增执行记录、额度占用或上游写入；连接 owner 释放 lane、请求体预留及 socket，不自动重建上游，客户端在新连接续接。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。未支持控制明确拒绝；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
+配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。固定身份上游 socket 因提供者关闭、网络断开或连接寿命到期而结束时，停止接受新 create；空闲时以 1000 正常关闭下游，有在途 turn 时先按已有证据结束执行并交接最终化责任（通常为 unknown），再以 1000 关闭下游。排队或在关闭后到达的 create 在 dispatch 前停止，不新增执行记录、额度占用或上游写入；连接 owner 释放 lane、请求体预留及 socket，不自动重建上游，客户端在新连接续接。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。response.interrupt 与未知控制按 P14a 转发；真实客户端仍按 P11/E10 验收，不从合成 WS 切片推导完整客户端支持。
 
 下游 WS 消息/分片聚合为 32 MiB，单上游事件 8 MiB、累计执行 32 MiB；上游 peer 入站队列为 64 条/8 MiB，下游入站及原生请求调度队列各为 64 条/48 MiB，超过 8 MiB 正文另受共享预算约束，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由帧读取层校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
-HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 只校验生命周期归属：turn 的第一个生命周期事件确定 response ID，此后生命周期事件与 response_id 必须一致，否则关闭连接；连接内最近 1024 个已开始的 response ID 不能开始新 turn。turn 外事件（如额度通知）及新 turn 开始前属于旧 turn 的 response.* 输出被丢弃，不进入下一 attempt。提供者 error 事件结束当前 turn，以带 status 的 error 帧下发，连接保持可用；终态通过已准入 attempt 注册的同步证据 sink 观察用量，其他 lane 失败不得清除已接收的可信用量。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
+HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接缓存；原生 WS 续接使用原 socket。上游 reader 只校验生命周期归属：turn 的第一个生命周期事件确定 response ID，此后生命周期事件与 response_id 必须一致，否则关闭连接；连接内最近 1024 个已开始的 response ID 不能开始新 turn。带 response_id 或 response.id 且属于最近1024个已结束响应的终态后事件，直接下发到原 lane，不进入新 attempt 的证据、用量或终态判定；重复 response.created 不重新开始 turn。不属于任何已知响应的普通 turn 外事件（如额度通知）及没有响应标识的旧输出仍丢弃。提供者 error 事件结束当前 turn，以带 status 的 error 帧下发，连接保持可用；终态通过已准入 attempt 注册的同步证据 sink 观察用量，其他 lane 失败不得清除已接收的可信用量。终态与 EOF 同到时，消费已进入有界队列的事件后再报告 EOF；已观察用量不因网络关闭丢弃。连接关闭不证明上游未执行，未观察终态保持 unknown。
 
 下游 WebSocket 扩展提议可以存在，网关忽略提议且不返回扩展协商头；没有实现压缩，不接受未协商 RSV 帧。不能因客户端提供可选压缩提议而拒绝整个握手并将 HTTP fallback 误算为原生 WS 成功。未支持的子协议仍拒绝。实际客户端检查须分别证明直连、桥接与原生连接行为，而非仅最终回答成功。
+
+### P14a：原生 WS 客户端控制与前向兼容
+
+`response.create` 保持完整解析、授权、持久准入及 lane FIFO。`response.interrupt` 只在 response_id 属于本连接已收到 `response.created`、仍在途的响应时原字节转发至固定身份上游，不新增执行、不占准入、不改变 lane FIFO；可按 response_id 定位省略 stream_id 的控制。ID 未知、已结束或显式 lane 不匹配时，在请求 lane 本地回复带 response_id 的 `response.interrupt.failed`，不写上游且保持连接。上游 accepted/failed 确认按已知响应归属下发，确认先于或晚于终态均不影响账本，账本只按原终态证据结算。
+
+未知类型的对象消息在绑定上游后原字节转发；绑定前、或顶层含 input/model/tools 成员（含 null）时本地400拒绝。每连接独立令牌桶每秒恢复10条、突发20条，超速本地400且连接保持；控制沿用单消息32 MiB、共享正文预算、单reader/串行writer及5秒写期限。计数和最近响应归属随连接释放。未知控制每次放行/拒绝记录 codexone.protocol 结构化warning，仅含有界机器类型名、客户端version/UA类别与结果，不记录消息成员或内容。
+
+未准入的 response.created 或没有等待准入turn的其他生命周期起点出现时，立即停止该连接后续dispatch；在既有首轮持久归属下记一条独立unknown执行（当前Key与固定账号、保留责任估算、模型未知），然后关闭连接，不重放、不重连。此已发生责任写入不再按新请求权限/额度准入，但保留存储容量上限；关键存储失败仍关闭并记录固定分类warning，不声称已持久成功。HTTP与HTTP→WS桥接仍由客户端断开连接取消，不支持控制消息。
 
 ## P15：客户端上下文与前台模式
 
@@ -77,7 +85,7 @@ WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只
 
 reasoning、text、stream_options、include、tool_choice、metadata/client_metadata 等控制与可选字段原样转发；只有 reasoning 内 null 成员、text.verbosity/format、tool_choice、parallel_tool_calls 的 null 在转发前移除。tools 缺省与显式空数组保持区别，不合成工具声明，也不静默删除工具声明。
 
-Responses Lite允许在input原位置使用additional_tools包，包与其中工具原样转发，仅移除本地包 id；image_generation 不得出现在包或 namespace 内，只能作为受权限映射的唯一顶层声明。HTTP按Lite包或明确标记生成有限Lite header，WS生成每轮有限metadata标记，不透传任意header。原生WS每lane仅记最近成功响应的Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才继承Lite模式，不跨lane/连接/失败恢复。
+Responses Lite允许在input原位置使用additional_tools包，包与其中工具原样转发，仅移除本地包 id；image_generation 不得出现在包或 namespace 内，只能作为受权限映射的唯一顶层声明。HTTP按Lite包或明确标记生成有限Lite header，WS生成每轮有限metadata标记；客户端标识头遵守P28规则。原生WS每lane仅记最近成功响应的Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才继承Lite模式，不跨lane/连接/失败恢复。
 
 网关拒绝仍记录固定 code/reason 与服务端UUID，沿用16条/单调60秒全局诊断上限；提供者错误只额外记录短机器码 provider_code，不记录消息、字段值、工具名或请求正文。公开错误不包含内部 reason。历史日志未记录的信息不得事后推测为已确认根因。
 
@@ -160,7 +168,7 @@ Desktop 辅助控制接口采用[精确方法/路径允许列表](../changes/des
 
 ## P28：客户端标识与连接容量
 
-Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户端标识规则。入站 User-Agent 以 `codex_cli_rs`、`codex-tui`、`codex_exec`、`codex_sdk_ts`、`codex_vscode`、`Codex Desktop` 或 `Codex ` 开头，或 originator 精确属于 `codex_cli_rs`、`codex_vscode`、`codex_sdk_ts`、`codex_exec`、`codex_chatgpt_desktop`、`Codex Desktop` 时为原生（值区分大小写，头名不区分）。`x-codex-*` 不是原生判定信号。原生标识沿既有允许列表保持原值；非原生移除入站 user-agent/originator/version，设置 `codex_cli_rs/<version> (<os>; <arch>) <terminal>`、`codex_cli_rs`、`<version>`。原生 WS 按该下游连接握手头，HTTP→WS 按该 HTTP 请求头；不从先前请求继承。
+Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户端标识规则。入站 User-Agent 以 `codex_cli_rs`、`codex-tui`、`codex_exec`、`codex_sdk_ts`、`codex_vscode`、`Codex Desktop` 或 `Codex ` 开头，或 originator 精确属于 `codex_cli_rs`、`codex_vscode`、`codex_sdk_ts`、`codex_exec`、`codex_chatgpt_desktop`、`Codex Desktop` 时为原生（值区分大小写，头名不区分）。`x-codex-*` 不是原生判定信号。原生标识保持原值；非原生移除入站 user-agent/originator/version，设置 `codex_cli_rs/<version> (<os>; <arch>) <terminal>`、`codex_cli_rs`、`<version>`。原生 WS 按该下游连接握手头，HTTP→WS 按该 HTTP 请求头；不从先前请求继承。所有这些路径统一转发 x-codex- 前缀头（头名不区分大小写、每个值最多8 KiB、按入站顺序最多32条，超限省略）；Connection声明的逐跳头仍去除，认证、账号与本地门控头不转发。每个新前缀头放行时记录结构化warning，只有头名、客户端version/UA类别和结果，无头值；未知version或类型名不满足有界机器标识格式时只记invalid。
 
 续接标识按允许列表保留，SDK 特征 `x-stainless-*`、`x-openai-client-*`、认证/账号/Cookie、门控头和 hop-by-hop 头不透传。账号认证仍由服务注入。可信离线 `clientFingerprint` 配置及版本选择见[单身份配置](../development/single-identity.md)，请求路径不在线查询版本。
 
