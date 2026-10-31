@@ -33,7 +33,7 @@ function Sparkline({
         h={64}
         data={values.map((value, index) => ({ day: String(index), value }))}
         dataKey="day"
-        series={[{ name: "value", color: "green.6" }]}
+        series={[{ name: "value", color: "brand.5" }]}
         withXAxis={false}
         withYAxis={false}
         withTooltip={false}
@@ -154,7 +154,7 @@ export function OverviewStats({
                   variant="light"
                   size={40}
                   radius="xl"
-                  color={index === 3 ? "red" : "green"}
+                  color={index === 3 ? "red" : "brand"}
                 >
                   {index === 0 ? (
                     <IconSend size={22} />

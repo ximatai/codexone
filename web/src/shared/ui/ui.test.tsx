@@ -72,7 +72,10 @@ it("renders local, UTC, relative and unavailable times with full titles", () => 
 });
 it("generates both static schemes from the primary palette", () => {
   const css = themeCss();
-  expect(css).toContain("--mantine-color-green-8: #204c3f");
+  expect(css).toContain("--mantine-color-brand-7: #2f4b7c");
+  expect(css).toContain(
+    "--mantine-primary-color-filled: var(--mantine-color-brand-filled)",
+  );
   expect(css).toContain('[data-mantine-color-scheme="light"]');
   expect(css).toContain('[data-mantine-color-scheme="dark"]');
 });

@@ -40,8 +40,8 @@
   background: var(--mantine-color-gray-0);
 }
 .link[aria-current="page"] {
-  background: var(--mantine-color-green-0);
-  color: var(--mantine-color-green-8);
+  background: var(--mantine-primary-color-light);
+  color: var(--mantine-primary-color-light-color);
   font-weight: 600;
 }
 .content {
