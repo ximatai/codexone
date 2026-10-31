@@ -53,9 +53,9 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 单身份 Key 先验证，再由应用层按模型与每个硬引用的主体/命名空间/身份判定准入。模型目录仅列可信配置允许的模型。`/v1` 与 `/backend-api/codex` 的显式 HTTP 路由共用同一授权和执行用例，不做任意后缀匹配；尾斜杠未定义时明确拒绝。HTTP 请求以 `application/json` 输入，不接受压缩请求体；字段、工具与对象类型按 P27 透传。
 
-请求体为 32 MiB（与下游传输聚合一致）、JSON 深度 64、硬引用 32；input 条目与工具声明数量只受总字节约束。普通 Responses 上游 JSON 与累计流 32 MiB，单 SSE 事件/WS 帧 8 MiB。连接最多 8，入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 5 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
+请求体为 32 MiB（与下游传输聚合一致）、JSON 深度 64、硬引用 32；input 条目与工具声明数量只受总字节约束。普通 Responses 上游 JSON 与累计流 32 MiB，单 SSE 事件/WS 帧 8 MiB。普通数据连接由私有 `dataConnections` 配置（默认128，8—1024），额外固定16条连接为控制接口留余量；入站异步通道高/低水位为 4/1，单次接收分配最大 64 KiB；请求读取 10 秒、上游建连 10 秒；单次执行总期限默认600秒（可信配置1—1800秒），首响应默认30秒（1—120秒）、有效进度空闲默认60秒（1—300秒），显式阶段期限不能超过总期限，省略时取总期限的较小值。阶段计时由独立owner覆盖HTTP/WS/compact，SSE注释、ping/pong、重复created/in_progress和空delta不续期；JSON正文按非空负载字节推进，仍受总期限和大小约束。底层HTTP读取使用较长保护期限，不抢先替代阶段错误；发送至消费/绑定/输出始终在单调总期限内，下游写入 5 秒超时关闭连接。后续图片使用独立验证过的负载边界，不沿用文本限制冒充图片能力。
 
-归属持久屏障在每个含对象的上游事件写下游之前完成；先确认终态属于当前执行，再观察可信用量，随后做对象绑定/输出。HTTP SSE的生命周期事件 response.id 及任何 response_id 必须与本执行首次出现的 response ID 一致，不从外来终态获取计量证据；稀疏HTTP流不额外要求先created。上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。
+归属持久屏障在每个含对象的上游事件写下游之前完成；先确认终态属于当前执行，再观察可信用量，随后做对象绑定/输出。HTTP SSE的生命周期事件 response.id 及任何 response_id 必须与本执行首次出现的 response ID 一致，不从外来终态获取计量证据；稀疏HTTP流不额外要求先created。提供者输出前明确拒绝的零用量证据仅按[U13](usage.md#u13输出前明确拒绝的零用量证据)结算；除此之外，上游 EOF、无终态或缺失用量不得伪造成成功/零消耗。部分证据的计数只表示已观察下界，完整度为 partial，继续保留未知暴露。发生核心持久故障后停止后续发送，数据/管理 readiness 反映不可用，liveness 不作为账号额度判断。
 
 配置与文件安全说明见 [单身份配置](../development/single-identity.md)。Desktop、WS、预热、压缩的最终兼容验收仍按 P11，不能从 HTTP 合成结果推导。
 
@@ -101,7 +101,7 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 ## P24：订阅池 HTTP 装配
 
-订阅池复用既有 JSON/SSE/compact 的客户端校验、提供者观察、绑定屏障和累计用量契约；当前托管 Key 与模型白名单先于路由。Core 原子选择后仅向选中身份的固定目标发送一次 POST，认证头由可信 work 装配，下游 Authorization/account/组织/项目头不透传。HTTP client 禁止重定向、连接建立重试、代理继承和解压，使用 HTTP/1 及单次连接；不能安全重放的失败返回并收尾。
+订阅池复用既有 JSON/SSE/compact 的客户端校验、提供者观察、绑定屏障和累计用量契约；当前托管 Key 与模型白名单先于路由。Core 原子选择后仅向选中身份的固定目标发送一次 POST，认证头由可信 work 装配，下游 Authorization/account/组织/项目头不透传。HTTP client 禁止重定向、代理继承和解压；仅请求发送前允许在原总期限内有界重试建立连接，使用 HTTP/1 及单次连接；不能安全重放的失败返回并收尾。
 
 池的原生 WS 只在明确配置 websocket 上游时升级；身份固定见 P26。临时账号不可用/需要刷新、刷新授权失败/冲突/容量/存储失败使用脱敏的类型化错误码，不回传上游错误正文。就绪状态读取当前账号并结合存储及运行 owner，不把空池配置当可用账号。
 
@@ -128,7 +128,7 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://host:port及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
 
-原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任。
+原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任，提供者明确拒绝的例外见 U13；代理拒绝不属于该例外。
 
 Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。
 
@@ -157,3 +157,11 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 原生 Images 两前缀均 POST 至所选身份上游 /backend-api/codex/images/generations|edits；与 Responses HTTP 共用受限客户端标识头，额外转发 x-codex-image-turn-id，账号认证由服务注入。`x-openai-actor-authorization` 是 Codex 客户端的本地门控标记：Desktop 自定义 provider 配置它（且 `requires_openai_auth = false`）才会声明内置生图与独立搜索工具。网关接受携带它的请求、不据此授权，任何上游请求（Responses、Images、控制接口共用的标识头允许列表及 WS 握手）均不得携带。回传 x-codex-imagegen-request-id 和网关 x-request-id。服务持有独立 imageConcurrency 许可池（1—8、默认2），等待最多30秒；超时429 image_capacity_exhausted / Retry-After: 1，无 intent/派发。成功、失败、取消与断开均只归还一次许可；账本未知责任不随许可归还而释放。
 
 Desktop 辅助控制接口采用[精确方法/路径允许列表](../changes/desktop-control-passthrough/proposal.md)，仅启用的托管 Key 可访问；analytics-events/events 的 POST 本地 202 `{}`，其余单次账号授权后透传，不创建生成 intent 或扣减 Key 生成限额。请求原字节/查询串/Content-Type 保留，辅助正文最多 8 MiB 且全部计入共享 48 MiB 预算；响应提交前有界收集最多 16 MiB，超出 502。成功状态/正文与安全头回传，错误遵循 P27；账号池辅助 429/5xx 冷却全部配置模型、401 标记当前凭证健康。数据服务持有全局 8、每 Key 4 的无等待舱壁，超限 429 control_capacity_exhausted、Retry-After: 1，所有结束路径单次释放。派发总期限 60 秒（memories 为 300 秒），超时 504 表示结果未知，取消并等待本地上游、不重放。只记录有界路径类别/Key ID/账号 ID/状态/耗时，realtime 仅状态/耗时；头部软亲和、读取期限和安全响应头范围见[开发约定](../development/desktop-control.md)。不扩展 realtime WebSocket、transcribe、files 或 usage 路由。
+
+## P28：客户端标识与连接容量
+
+Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户端标识规则。入站 User-Agent 以 `codex_cli_rs`、`codex-tui`、`codex_exec`、`codex_sdk_ts`、`codex_vscode`、`Codex Desktop` 或 `Codex ` 开头，或 originator 精确属于 `codex_cli_rs`、`codex_vscode`、`codex_sdk_ts`、`codex_exec`、`codex_chatgpt_desktop`、`Codex Desktop` 时为原生（值区分大小写，头名不区分）。`x-codex-*` 不是原生判定信号。原生标识沿既有允许列表保持原值；非原生移除入站 user-agent/originator/version，设置 `codex_cli_rs/<version> (<os>; <arch>) <terminal>`、`codex_cli_rs`、`<version>`。原生 WS 按该下游连接握手头，HTTP→WS 按该 HTTP 请求头；不从先前请求继承。
+
+续接标识按允许列表保留，SDK 特征 `x-stainless-*`、`x-openai-client-*`、认证/账号/Cookie、门控头和 hop-by-hop 头不透传。账号认证仍由服务注入。可信离线 `clientFingerprint` 配置及版本选择见[单身份配置](../development/single-identity.md)，请求路径不在线查询版本。
+
+普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝，控制舱壁仍能返回429；Key/全局活动限制、握手期限及共享正文预算不变。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。

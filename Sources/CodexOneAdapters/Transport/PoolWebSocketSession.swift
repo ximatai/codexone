@@ -7,7 +7,7 @@ import Synchronization
 final class PoolWebSocketStart: Sendable {
   struct Selection: Sendable {
     let context: ExecutionContext
-    let authorization: SubscriptionDataAccess
+    let authorization: SubscriptionDataAccess?
   }
   private let selections: AsyncThrowingStream<Selection, any Error>
   private let selected: AsyncThrowingStream<Selection, any Error>.Continuation
@@ -77,7 +77,6 @@ enum PoolWebSocketSession {
               requestID: requestID,
               mode: first.mode, requirements: first.requirements
             ) { context, authorization in
-              guard let authorization else { throw ExecutionError.invalidCommand }
               try await withExecutionDeadline(
                 seconds: executor.configuration.budget.total
               ) {
@@ -95,9 +94,14 @@ enum PoolWebSocketSession {
           do {
             let selection = try await start.receive()
             let owner = selection.context.admission.owner
-            let pinned = executor.pinned(
-              to: try .init(id: owner.identity, namespace: owner.namespace))
-            try await executor.webSocket.authorized(selection.authorization).run { upstream in
+            let pinned =
+              selection.authorization == nil
+              ? executor
+              : executor.pinned(
+                to: try .init(id: owner.identity, namespace: owner.namespace))
+            try await executor.webSocket.authorized(
+              selection.authorization, headers: executor.clientHeaders
+            ).run { upstream in
               try await ResponsesDataService.serveTurns(
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,

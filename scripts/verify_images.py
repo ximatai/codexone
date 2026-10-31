@@ -219,7 +219,7 @@ def main():
                         while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
                         assert upstream.calls == expected
                     client_headers = {'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
-                        'User-Agent': 'synthetic-codex-client', 'originator': 'synthetic-desktop', 'version': '1.0',
+                        'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
@@ -270,7 +270,7 @@ def main():
                         assert 'acct-private' not in error.decode() and headers['x-request-id']
                         assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
                         if expected == 429: assert headers['retry-after'] == '1'
-                        assert ledger()[0] == 'unknown'
+                        assert ledger()[0] == ('unknown' if expected == 502 else 'settled')
                     for fault in ('empty', 'non-json', 'oversize'):
                         status, body, _ = request({'prompt':fault})
                         assert status == (502 if fault == 'oversize' else 200), (fault,status,body[:100])

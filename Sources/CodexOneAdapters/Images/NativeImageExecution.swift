@@ -5,7 +5,9 @@ import NIOCore
 import NIOHTTP1
 
 /// Client metadata only; credentials, routing and arbitrary internal headers never cross.
-func forwardedClientHeaders(_ headers: HTTPHeaders) -> HTTPHeaders {
+func forwardedClientHeaders(
+  _ headers: HTTPHeaders, fingerprint: ClientFingerprint = .init().resolved(models: [])
+) -> HTTPHeaders {
   let allowed: Set<String> = [
     "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
     "x-codex-image-turn-id", "x-codex-turn-state", "x-session-id", "conversation_id",
@@ -21,6 +23,12 @@ func forwardedClientHeaders(_ headers: HTTPHeaders) -> HTTPHeaders {
     && !connectionHeaders.contains(header.name.lowercased())
   {
     if header.value.utf8.count <= 8192 { result.add(name: header.name, value: header.value) }
+  }
+  if !ClientFingerprint.isNative(headers) {
+    for name in ["user-agent", "originator", "version"] { result.remove(name: name) }
+    result.add(name: "user-agent", value: fingerprint.userAgent)
+    result.add(name: "originator", value: "codex_cli_rs")
+    result.add(name: "version", value: fingerprint.version!)
   }
   return result
 }
@@ -50,7 +58,8 @@ extension HTTPResponseExecution {
         url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")
         var upstream = HTTPClientRequest(url: url.string!)
         upstream.method = .POST
-        upstream.headers = forwardedClientHeaders(headers)
+        upstream.headers = forwardedClientHeaders(
+          headers, fingerprint: configuration.clientFingerprint)
         upstream.headers.add(name: "content-type", value: "application/json")
         upstream.headers.add(
           name: "accept", value: request.streaming ? "text/event-stream" : "application/json")
@@ -94,6 +103,7 @@ extension HTTPResponseExecution {
               if let event {
                 context.observeUpstreamEvent()
                 progress.note()
+                try observeProviderEvent(event, context: context)
                 let type = event["type"]?.string ?? ""
                 if type == "error" { throw ProviderObservation.providerFailure(event) }
                 if type == (request.editing ? "image_edit.completed" : "image_generation.completed")

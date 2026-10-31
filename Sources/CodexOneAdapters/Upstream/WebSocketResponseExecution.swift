@@ -32,6 +32,10 @@ extension HTTPResponseExecution {
   ) async throws {
     try peer.attachEvidence(lane: lane) { event in
       context.observeUpstreamEvent()
+      try observeProviderEvent(event, context: context)
+      guard !context.providerRejectedBeforeOutput,
+        ProviderObservation.terminalEvents.contains(event["type"]?.string ?? "")
+      else { return }
       try request.observeUsage(
         event["response"], context: context, model: model,
         configuration: configuration.imageGeneration)
@@ -82,7 +86,8 @@ extension HTTPResponseExecution {
         }
         let type = try ProviderObservation.eventType(event)
         if type == "error" { throw ProviderObservation.providerFailure(event) }
-        if ProviderObservation.terminalEvents.contains(type) {
+        if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
+        {
           try request.observeUsage(
             event["response"], context: context, model: model,
             configuration: configuration.imageGeneration)

@@ -31,7 +31,9 @@ extension HTTPResponseExecution {
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses/compact")
         upstream.method = .POST
-        upstream.headers = ["content-type": "application/json", "accept": "application/json"]
+        upstream.headers = clientHeaders
+        upstream.headers.add(name: "content-type", value: "application/json")
+        upstream.headers.add(name: "accept", value: "application/json")
         if request.usesResponsesLite {
           upstream.headers.add(name: "x-openai-internal-codex-responses-lite", value: "true")
         }

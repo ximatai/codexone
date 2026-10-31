@@ -5,30 +5,14 @@ import NIOHTTP1
 func upstreamRejection(status: HTTPResponseStatus, headers: HTTPHeaders, compact: Bool = false)
   -> GatewayProtocolError
 {
-  let retry = headers["retry-after"]
-  let seconds: Int64?
-  if retry.count == 1, retry[0].utf8.count <= 10,
-    retry[0].utf8.allSatisfy({ (48...57).contains($0) }),
-    let raw = Int64(retry[0])
-  {
-    seconds = min(3600, max(1, raw))
-  } else {
-    seconds = nil
-  }
-  if status == .unauthorized {
-    return .init(502, "upstream_authentication_rejected", upstreamStatus: Int(status.code))
-  }
-  if status == .tooManyRequests {
-    return .init(
-      429, "upstream_rate_limited", cooldownSeconds: seconds, upstreamStatus: Int(status.code))
-  }
   if (500...599).contains(Int(status.code)) {
     return .init(
-      502, "upstream_unavailable", cooldownSeconds: seconds, upstreamStatus: Int(status.code))
+      502, "upstream_unavailable", cooldownSeconds: ProviderError.retryAfter(headers),
+      upstreamStatus: Int(status.code))
   }
-  return .init(
-    502, compact ? "upstream_compact_rejected" : "upstream_rejected",
-    upstreamStatus: Int(status.code))
+  return ProviderError.failure(
+    status: Int(status.code), error: nil,
+    retryAfter: ProviderError.retryAfter(headers), compact: compact)
 }
 func executionFailure(_ error: any Error) -> ExecutionFailure {
   if error is CancellationError { return .clientCancelled }
@@ -68,6 +52,11 @@ func observeExecution(
   _ context: ExecutionContext, operation: @Sendable () async throws -> UsageEvidence?
 ) async throws -> UsageEvidence? {
   do { return try await operation() } catch {
+    if let error = error as? GatewayProtocolError, error.explicitProviderRejection,
+      !context.hasProviderEvents
+    {
+      try? observeProviderRejection(context)
+    }
     try? context.observeOutcome(
       .init(
         failure: executionFailure(error), atUnixSeconds: Int64(Date().timeIntervalSince1970),
@@ -91,4 +80,37 @@ func observeSubmittedTerminal(_ event: JSONValue, context: ExecutionContext) thr
   guard event["type"]?.string == "response.completed" else { return }
   try context.observeOutcome(
     .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+}
+
+/// Explicit provider proof is the only exception to missing usage remaining unknown.
+func observeProviderRejection(_ context: ExecutionContext) throws {
+  let images = context.admission.executionRequirements.imageModel != nil
+  let nativeImages = context.admission.executionRequirements.route == .images
+  try context.observeUsage(
+    .init(
+      revision: 1, inputTokens: 0, outputTokens: 0,
+      cachedTokens: 0, images: 0, estimatedMicros: 0, completeness: .complete,
+      imageInputTokens: images ? 0 : nil, imageOutputTokens: images ? 0 : nil,
+      imageInputTextTokens: images ? 0 : nil, imageInputImageTokens: images ? 0 : nil,
+      nativeImages: nativeImages ? true : nil, providerRejectedBeforeOutput: true))
+}
+
+/// Only the first parsed event can certify a refusal. Even a lifecycle event closes this gate.
+func observeProviderEvent(_ event: JSONValue, context: ExecutionContext) throws {
+  let first = context.observeProviderEvent()
+  guard first, ["error", "response.failed"].contains(event["type"]?.string ?? ""),
+    event["response"]?["output"] == nil || event["response"]?["output"] == .array([]),
+    event["output"] == nil || event["output"] == .array([]),
+    event["response"]?["usage"] == nil || event["response"]?["usage"] == .null,
+    event["item"] == nil, event["delta"] == nil
+  else { return }
+  let response = event["response"] ?? event
+  let error = response["error"] ?? event["error"] ?? event
+  let status =
+    event["status"]?.integer ?? event["status_code"]?.integer
+    ?? response["status_code"]?.integer ?? error["status"]?.integer ?? error["status_code"]?.integer
+  guard ProviderError.isExplicitRejection(status: status.map(Int.init), error: error) else {
+    return
+  }
+  try observeProviderRejection(context)
 }

@@ -74,6 +74,7 @@ RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone 
     && python3 scripts/verify_turn_diagnostics.py --binary /output/codexone \
     && python3 scripts/verify_trial_provider.py --binary /output/codexone \
     && python3 scripts/verify_images.py --binary /output/codexone \
+    && python3 scripts/verify_migration_readiness.py --binary /output/codexone \
     && python3 scripts/verify_control.py --binary /output/codexone
 RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/codexone \
     && python3 scripts/verify_snapshot_restore.py --binary /output/codexone \

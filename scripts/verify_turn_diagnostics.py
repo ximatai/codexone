@@ -64,7 +64,11 @@ def main():
                         deadline=time.monotonic()+4
                         while len(rows(root))!=3 or any(s=='intent' for s,_,_ in rows(root)):
                             assert time.monotonic()<deadline;time.sleep(.02)
-                        assert all(s=='unknown' and u is None for s,_,u in rows(root)),rows(root)
+                        if case == 'response':
+                            assert all(s=='unknown' and u is None for s,_,u in rows(root)),rows(root)
+                        else:
+                            assert all(s=='settled' and u['completeness']=='complete' and u['estimatedMicros']==0
+                                       and u['providerRejectedBeforeOutput'] for s,_,u in rows(root)),rows(root)
                         process.terminate();process.wait(10);logs=process.stdout.read()
                         for request_id in request_ids:
                             assert any(request_id.encode() in line and ('code='+code).encode() in line for line in logs.splitlines()),(case,request_id,logs)
@@ -72,7 +76,7 @@ def main():
                         assert PRIVATE.encode() not in logs and ORG.encode() not in logs and TOKEN.encode() not in logs
                         assert server.calls==before+3,'Unexpected replay'
                     finally:stop(process)
-        print(f'PASS: {server.calls} provider error/foreign-response turns; actionable sanitized errors across JSON/SSE/native, no provider payload logs, unknown ledger and no replay',flush=True)
+        print(f'PASS: {server.calls} provider error/foreign-response turns; actionable sanitized errors across JSON/SSE/native, no provider payload logs, zero-cost explicit refusals, foreign-response unknown ledger and no replay',flush=True)
     finally:server.shutdown();server.server_close();worker.join(10)
 
 if __name__=='__main__':main()

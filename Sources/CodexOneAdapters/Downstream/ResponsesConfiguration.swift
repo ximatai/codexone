@@ -29,6 +29,8 @@ struct ResponsesConfiguration: Sendable {
   }
   var requestContract: ResponseRequestContract = .responses
   var imageGeneration: ImageConfiguration? = nil
+  var clientFingerprint = ClientFingerprint().resolved(models: [])
+  var dataConnections = 128
 }
 extension SingleIdentityConfiguration {
   var responses: ResponsesConfiguration {
@@ -39,7 +41,9 @@ extension SingleIdentityConfiguration {
       progressTimeoutSeconds: progressTimeoutSeconds,
       requestContract: upstreamContract.flatMap(ResponseRequestContract.init(rawValue:))
         ?? (upstreamBaseURL.hasPrefix("https://") ? .codexSubscription : .responses),
-      imageGeneration: imageGeneration)
+      imageGeneration: imageGeneration,
+      clientFingerprint: (clientFingerprint ?? .init()).resolved(models: models),
+      dataConnections: dataConnections ?? 128)
   }
 }
 func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throws {

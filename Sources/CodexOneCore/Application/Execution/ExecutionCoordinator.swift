@@ -6,6 +6,9 @@ public struct ExecutionContext: Sendable {
   private let store: any ExecutionStore
   private let observation = UsageObservation()
   private let bound = BoundObjects()
+  public func observeProviderEvent() -> Bool { observation.recordProviderEvent() }
+  public var hasProviderEvents: Bool { observation.hasProviderEvents }
+  public var providerRejectedBeforeOutput: Bool { observation.isProviderRejection }
   init(admission: ExecutionAdmission, store: any ExecutionStore) {
     self.admission = admission
     self.store = store
@@ -40,6 +43,14 @@ private final class BoundObjects: Sendable {
 }
 
 private final class UsageObservation: Sendable {
+  private let providerEvents = Mutex(0)
+  func recordProviderEvent() -> Bool {
+    providerEvents.withLock {
+      $0 += 1
+      return $0 == 1
+    }
+  }
+  var hasProviderEvents: Bool { providerEvents.withLock { $0 > 0 } }
   private let started = ContinuousClock.now
   private let firstEvent = Mutex<Int64?>(nil)
   private func elapsed() -> Int64 {
@@ -49,6 +60,9 @@ private final class UsageObservation: Sendable {
   func recordFirstEvent() { firstEvent.withLock { if $0 == nil { $0 = elapsed() } } }
   private let latest = Mutex(
     (evidence: UsageEvidence?.none, outcome: ExecutionOutcome?.none, sealed: false))
+  var isProviderRejection: Bool {
+    latest.withLock { $0.evidence?.providerRejectedBeforeOutput == true }
+  }
   func recordOutcome(_ outcome: ExecutionOutcome) throws {
     try latest.withLock { value in
       guard !value.sealed else { throw ExecutionError.closed }

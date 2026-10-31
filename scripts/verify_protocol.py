@@ -148,8 +148,8 @@ class Upstream(BaseHTTPRequestHandler):
                 self.close_connection = True
 
 
-def connect(port, method, path, payload=None, *, authorization=True):
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=8)
+def connect(port, method, path, payload=None, *, authorization=True, timeout=8):
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     headers = {"Content-Type": "application/json", "X-Synthetic-Secret": "synthetic-header"}
     if authorization:
         headers["Authorization"] = "Bearer " + TOKEN

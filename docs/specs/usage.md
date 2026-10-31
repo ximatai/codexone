@@ -39,3 +39,9 @@
 管理产品化只增加观测：`GET /api/usage/keys` 返回当前托管 Key（最多256）的 UTC 当日左闭右开窗口准入数、failed 终态数、unknown/在途待核对数、已观测估算费用及全时间最近准入时间。缺失费用/时间为 null；取消单独保留在用量报告，不计入 failed。摘要与 options/明细共用有界只读 reader、单在途及扫描/取消预算。轮换不清零。
 
 用量 options 保留 `keys` ID 数组，新增 `keyOptions: [{id, principal}]`；明细新增可空 `principal`，按当前托管 Key 元数据连接，删除或未知 Key 为 null。新增可空 `firstEventMilliseconds`、`totalMilliseconds`：从准入后执行上下文开始，以单调时钟观测首个上游事件及执行退出；无首事件为 null。仅新执行在既有 outcome JSON 存储，历史缺失为 null，不改 schema、不参与用量证据比较、计费或治理。首事件指解析出的流事件/WS消息，非流式指收到完整响应；不是下游首 token 时间。
+
+## U13：输出前明确拒绝的零用量证据
+
+“缺失证据不得记零”的唯一提供者拒绝例外：Responses/compact/Images 收到 HTTP 4xx 响应头（含429、正文不可读），或提供者 WS 握手4xx；以及 SSE/WS 首个解析事件为 error/response.failed，且有明确4xx状态或已识别的请求/权限/认证/额度错误码，没有输出条目或delta。状态存在时以状态为准，5xx不能被错误码改成零费用。已识别码包括 invalid_request_error/invalid_request、permission_denied/access_denied、model_not_found、content_policy_violation、unsupported_parameter 及既有认证/限流码；未知机器码不足以证明拒绝。首个非拒绝生命周期/未知事件也关闭此证据入口，采取保守边界。
+
+上述执行记 settled、outcome failed，failure 保留既有分类，可信计数及费用为0、完整度complete，usage JSON 可选 `providerRejectedBeforeOutput: true` 注明依据；最终化释放预留和未知暴露。原生Images的图片计数为0，宿主token仍不适用、查询返回null；费用为可信0。拒绝不自动重放。无 schema 变化，历史 unknown 不回填。5xx、超时、断线、取消、已有输出后的错误、代理CONNECT拒绝或无法确认依据仍沿用 unknown/partial；已有可信用量不被清零。查询中可见真实零费用，不使用缺失值替代。

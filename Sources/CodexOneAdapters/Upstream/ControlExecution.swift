@@ -120,7 +120,8 @@ extension HTTPResponseExecution {
           let query = head.uri.firstIndex(of: "?").map { String(head.uri[$0...]) } ?? ""
           var upstream = HTTPClientRequest(url: url.string! + query)
           upstream.method = head.method
-          upstream.headers = forwardedClientHeaders(head.headers)
+          upstream.headers = forwardedClientHeaders(
+            head.headers, fingerprint: configuration.clientFingerprint)
           let clientConnectionHeaders = Set(
             head.headers["connection"].flatMap {
               $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }

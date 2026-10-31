@@ -87,7 +87,7 @@ struct HTTPResponseExecution: Sendable {
         mode: request.mode, requirements: request.requirements
       ) { context, authorization in
         try await withExecutionDeadline(seconds: configuration.budget.total) {
-          try await webSocket.authorized(authorization).run { peer in
+          try await webSocket.authorized(authorization, headers: clientHeaders).run { peer in
             try peer.beginTurn(compaction: request.streamCompaction)
             try await exchange(request, context: context, model: model, peer: peer, emit: emit)
           }
@@ -163,6 +163,7 @@ struct HTTPResponseExecution: Sendable {
               guard let event = try decoder.append(byte) else { continue }
               context.observeUpstreamEvent()
               guard !terminal else { break readUpstream }
+              try observeProviderEvent(event, context: context)
               let type = try ProviderObservation.eventType(event)
               if type == "error" { throw ProviderObservation.providerFailure(event) }
               // A foreign response cannot supply evidence to this attempt.
@@ -182,7 +183,9 @@ struct HTTPResponseExecution: Sendable {
                 throw GatewayProtocolError(502, "invalid_upstream_turn")
               }
               // Trusted usage must survive later binding/output failures.
-              if ProviderObservation.terminalEvents.contains(type) {
+              if ProviderObservation.terminalEvents.contains(type),
+                !context.providerRejectedBeforeOutput
+              {
                 try request.observeUsage(
                   event["response"], context: context, model: model,
                   configuration: configuration.imageGeneration)

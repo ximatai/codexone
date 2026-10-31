@@ -34,6 +34,29 @@ private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
     ])
   ])
 }
+private func poolRefusalEvents(_ input: String?, response: JSONValue) -> [JSONValue]? {
+  guard let input, ["refuse-error", "refuse-failed", "output-error"].contains(input) else {
+    return nil
+  }
+  let error = JSONValue.object([
+    "code": .string("invalid_request_error"), "message": .string("Synthetic refusal"),
+  ])
+  let failure = JSONValue.object(["type": .string("error"), "error": error])
+  if input == "refuse-error" { return [failure] }
+  if input == "refuse-failed" {
+    var document = response.object!
+    document["status"] = .string("failed")
+    document["error"] = error
+    document.removeValue(forKey: "usage")
+    return [.object(["type": .string("response.failed"), "response": .object(document)])]
+  }
+  return [
+    .object(["type": .string("response.created"), "response": response]),
+    .object(["type": .string("response.output_text.delta"), "delta": .string("synthetic")]),
+    failure,
+  ]
+}
+
 private final class PoolHTTPState: Sendable {
   struct Call: Sendable {
     let account: String
@@ -48,6 +71,7 @@ private final class PoolHTTPState: Sendable {
     var invalid = 0
     var upgrades = 0
     var upgradeAccounts: [String] = []
+    var upgradeHeaders: [HTTPHeaders] = []
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let value = Mutex(State())
@@ -179,9 +203,16 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
             "type": .string("response." + (document["status"]?.string ?? "completed")),
             "response": .object(document),
           ])
-          bytes = Data(
-            "event: response.completed\ndata: \(String(decoding: try event.data(), as: UTF8.self))\n\n"
-              .utf8)
+          if let refusals = poolRefusalEvents(poolInput(request), response: .object(document)) {
+            bytes = try refusals.reduce(into: Data()) { data, event in
+              data.append(
+                Data("data: \(String(decoding: try event.data(), as: UTF8.self))\n\n".utf8))
+            }
+          } else {
+            bytes = Data(
+              "event: response.completed\ndata: \(String(decoding: try event.data(), as: UTF8.self))\n\n"
+                .utf8)
+          }
         } else {
           bytes = try JSONValue.object(document).data()
         }
@@ -293,6 +324,7 @@ private struct PoolHTTPHarness {
             state.value.withLock { value in
               value.upgrades += 1
               value.upgradeAccounts.append(account)
+              value.upgradeHeaders.append(head.headers)
               if head.headers["authorization"]
                 != (value.expected[account].map { ["Bearer " + $0] } ?? [])
                 || !head.headers["x-client-private"].isEmpty
@@ -692,7 +724,10 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         created["stream_id"] = lane
         completed["stream_id"] = lane
       }
-      let bytes = try [created, completed].map { try JSONValue.object($0).data() }
+      let wire =
+        poolRefusalEvents(poolInput(request), response: .object(document))
+        ?? [JSONValue.object(created), JSONValue.object(completed)]
+      let bytes = try wire.map { try $0.data() }
       let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
       let send: @Sendable () -> Void = { [self] in
         for data in bytes {
@@ -1089,7 +1124,7 @@ func poolHTTPExplicitProviderStatusesPersistHealthAndStopNewDispatchWithoutRepla
       let unknown = try await h.store.perform {
         try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
       }
-      #expect(unknown == 1)
+      #expect(unknown == (status >= 500 ? 1 : 0))
       for file in try FileManager.default.contentsOfDirectory(
         at: h.oauth.root, includingPropertiesForKeys: nil)
       where file.lastPathComponent.hasPrefix("core.sqlite") {
@@ -1103,33 +1138,47 @@ func poolHTTPExplicitProviderStatusesPersistHealthAndStopNewDispatchWithoutRepla
 
 @Test(.timeLimit(.minutes(1)))
 func poolWebSocketUpgradeRejectionsClassifyHealthBeforeAnyCreateAndNeverReconnect() async throws {
-  for status in [401, 429, 503] {
-    try await withOAuth(timeout: 3000) { oauth in
-      let h = try await PoolHTTPHarness.open(
-        oauth, transport: "websocket", handshake: String(status))
-      do {
-        #expect(try await h.request().0 == (status == 429 ? 429 : 502))
-        try await awaitOAuth { h.finalizer.outstanding == 0 }
-        let selected = try #require(h.state.value.withLock { $0.upgradeAccounts.first })
-          .replacingOccurrences(of: "synthetic-", with: "")
-        let health = try await h.store.accountHealth(id: selected)
-        #expect(health.authenticationRejected == (status == 401))
-        #expect(health.cooldowns.count == (status == 401 ? 0 : 1))
-        let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
-        _ = try await h.store.setAccountMode(
-          id: other.id, revision: other.revision, mode: .disabled)
-        #expect(try await h.readiness().0 == 503)
-        #expect(try await h.request().0 == 503)
-        #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 1)
-        let unknown = try await h.store.perform {
-          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+  for native in [false, true] {
+    for status in [400, 403, 401, 429, 503] {
+      try await withOAuth(timeout: 3000) { oauth in
+        let h = try await PoolHTTPHarness.open(
+          oauth, transport: "websocket", handshake: String(status))
+        do {
+          if native {
+            let client = try PoolWSClient(h)
+            defer { client.close() }
+            _ = try await client.read()
+            #expect(try await client.command()["type"]?.string == "error")
+          } else {
+            #expect(try await h.request().0 == (status == 429 ? 429 : 502))
+          }
+          try await awaitOAuth { h.finalizer.outstanding == 0 }
+          let selected = try #require(h.state.value.withLock { $0.upgradeAccounts.first })
+            .replacingOccurrences(of: "synthetic-", with: "")
+          let health = try await h.store.accountHealth(id: selected)
+          #expect(health.authenticationRejected == (status == 401))
+          #expect(health.cooldowns.count == ([429, 503].contains(status) ? 1 : 0))
+          let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
+          _ = try await h.store.setAccountMode(
+            id: other.id, revision: other.revision, mode: .disabled)
+          if [400, 403].contains(status) {
+            #expect(try await h.readiness().0 == 200)
+          } else {
+            #expect(try await h.readiness().0 == 503)
+            #expect(try await h.request().0 == 503)
+          }
+          if status < 500 { try await assertPoolRefusalSettled(h) }
+          #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 1)
+          let unknown = try await h.store.perform {
+            try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+          }
+          #expect(unknown == (status >= 500 ? 1 : 0))
+        } catch {
+          await h.close()
+          throw error
         }
-        #expect(unknown == 1)
-      } catch {
         await h.close()
-        throw error
       }
-      await h.close()
     }
   }
 }
@@ -1250,7 +1299,7 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
             #expect(h.calls.last?.path == "/backend-api/codex/images/" + operation)
             #expect(h.calls.last?.body == request.httpBody)
             #expect(h.calls.last?.headers?.first(name: "x-codex-image-turn-id") == "synthetic-turn")
-            #expect(h.calls.last?.headers?.first(name: "originator") == "synthetic-desktop")
+            #expect(h.calls.last?.headers?.first(name: "originator") == "codex_cli_rs")
             for name in ["x-openai-actor-authorization", "x-client-private"] {
               #expect(h.calls.last?.headers?[name].isEmpty == true)
             }
@@ -1455,5 +1504,99 @@ func poolControlFollowsResponsesSessionWithoutCreatingAnotherIntent() async thro
     #expect(h.calls.count == 2 && h.calls.last?.account == account)
     let count = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
     #expect(count == 1)
+  }
+}
+
+private func assertPoolRefusalSettled(_ h: PoolHTTPHarness) async throws {
+  try await awaitOAuth { h.finalizer.outstanding == 0 }
+  let reader = try await h.store.makeUsageReader()
+  do {
+    let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+    let report = try await reader.queryUsage(
+      .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
+    #expect(report.totals.complete == 1 && report.totals.failed == 1 && report.totals.unknown == 0)
+    #expect(report.totals.metrics.estimatedMicros == 0)
+    if report.rows.first(where: { $0.kind == .admitted })?.model == "synthetic-image" {
+      #expect(
+        report.totals.metrics.inputTokens == nil && report.totals.metrics.imageInputTokens == 0)
+    } else {
+      #expect(report.totals.metrics.inputTokens == 0)
+    }
+    #expect(report.totals.lifetimeExposureMicros == 0 && report.totals.lifetimeInFlight == 0)
+    let admitted = report.rows.first { $0.kind == .admitted }
+    #expect(admitted?.state == .settled && admitted?.outcome == .failed)
+    let marked = try await h.store.perform {
+      try $0.scalar(
+        "SELECT COUNT(*) FROM attempts WHERE json_extract(usage_json,'$.providerRejectedBeforeOutput')=1"
+      )
+    }
+    #expect(marked == 1)
+  } catch {
+    await reader.close()
+    throw error
+  }
+  await reader.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolExplicitRefusalSettlesAllHTTPModesIncludingUnreadableBodies() async throws {
+  for path in ["responses", "responses/compact", "images/generations"] {
+    for fault in ["http400", "http403", "http429", "truncated403"] {
+      try await withOAuth(timeout: 3000) { oauth in
+        let h = try await PoolHTTPHarness.open(oauth, images: true)
+        do {
+          let session = URLSession(configuration: .ephemeral)
+          defer { session.invalidateAndCancel() }
+          var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/" + path)!)
+          request.httpMethod = "POST"
+          request.httpBody = try JSONValue.object(
+            path.hasPrefix("images")
+              ? ["model": .string("synthetic-image"), "prompt": .string(fault)]
+              : ["model": .string("synthetic-text"), "input": .string(fault)]
+          ).data()
+          request.setValue("application/json", forHTTPHeaderField: "content-type")
+          // Bob has text plus Images permission; Alice deliberately has Images only.
+          request.setValue("Bearer " + h.bob, forHTTPHeaderField: "authorization")
+          let (_, response) = try await session.data(for: request)
+          #expect([400, 403, 429].contains((response as! HTTPURLResponse).statusCode))
+          try await assertPoolRefusalSettled(h)
+          #expect(h.calls.count == 1)
+        } catch {
+          await h.close()
+          throw error
+        }
+        await h.close()
+      }
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolFirstEventRefusalsSettleButOutputThenErrorRemainsUnknown() async throws {
+  for transport in ["http", "websocket"] {
+    for native in [false, true] where !native || transport == "websocket" {
+      for fault in ["refuse-error", "refuse-failed", "output-error"] {
+        try await withPoolHTTP(transport: transport) { h in
+          if native {
+            let client = try PoolWSClient(h)
+            defer { client.close() }
+            _ = try await client.read()
+            _ = try await client.command(["input": .string(fault)])
+          } else {
+            _ = try await h.request(fault, stream: true)
+          }
+          if fault == "output-error" {
+            try await awaitOAuth { h.finalizer.outstanding == 0 }
+            let unknown = try await h.store.perform {
+              try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+            }
+            #expect(unknown == 1)
+          } else {
+            try await assertPoolRefusalSettled(h)
+          }
+          #expect(h.calls.count == 1)
+        }
+      }
+    }
   }
 }
