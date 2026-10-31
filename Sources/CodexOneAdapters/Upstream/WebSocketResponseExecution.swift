@@ -4,6 +4,7 @@ import Foundation
 extension HTTPResponseExecution {
   func execute(
     _ request: ResponseRequest, requestID: String, peer: WebSocketPeer, lane: String = "",
+    downstream: WebSocketPeer? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
@@ -19,7 +20,8 @@ extension HTTPResponseExecution {
       mode: request.mode, connection: connection, requirements: request.requirements
     ) { context, _ in
       try await exchange(
-        request, context: context, model: model, peer: peer, lane: lane, emit: emit)
+        request, context: context, model: model, peer: peer, lane: lane,
+        downstream: downstream, emit: emit)
       return nil
     }
   }
@@ -28,8 +30,10 @@ extension HTTPResponseExecution {
   func exchange(
     _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
     peer: WebSocketPeer, lane: String = "",
+    downstream: WebSocketPeer? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    defer { observeDisconnectedOutcome(downstream, context: context) }
     try peer.attachEvidence(lane: lane) { event in
       context.observeUpstreamEvent()
       try observeProviderEvent(event, context: context)
@@ -58,6 +62,9 @@ extension HTTPResponseExecution {
       }
       if request.mode == .warmup { create["generate"] = .bool(false) }
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
+      try Task.checkCancellation()
+      guard downstream?.isClosed != true else { throw CancellationError() }
+      peer.markDispatched(lane: lane)
       try await peer.send(.object(create))
       var total = 0
       while true {
@@ -84,6 +91,7 @@ extension HTTPResponseExecution {
         guard try webSocketLane(event) == lane else {
           throw GatewayProtocolError(502, "invalid_upstream_lane")
         }
+        observeDisconnectedOutcome(downstream, context: context)
         let type = try ProviderObservation.eventType(event)
         if type == "error" { throw ProviderObservation.providerFailure(event) }
         if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
@@ -136,4 +144,11 @@ func webSocketCreate(
     data: JSONValue.object(document).data(escapingSlashes: false),
     mode: generate?.bool == false ? .warmup : .generation,
     imageConfiguration: imageConfiguration, previousTools: previousTools)
+}
+
+/// A detached native turn may settle usage, but its caller still cancelled the response.
+private func observeDisconnectedOutcome(_ downstream: WebSocketPeer?, context: ExecutionContext) {
+  guard downstream?.isClosed == true else { return }
+  try? context.observeOutcome(
+    .init(failure: .clientCancelled, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
 }

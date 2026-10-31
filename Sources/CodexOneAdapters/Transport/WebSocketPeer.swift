@@ -193,8 +193,28 @@ struct WebSocketPeer: Sendable {
   private let turns: WebSocketTurns?
   private let closure: WebSocketTurns
   var isClosed: Bool { closure.isClosed }
-  func markInterrupted(responseID: String, lane: String) {
-    turns?.markInterrupted(responseID: responseID, lane: lane)
+  func markDispatched(lane: String) { turns?.markDispatched(lane: lane) }
+  /// Never broadcast a cancellation: wait for the reader to identify this dispatched turn.
+  func interruptForSettlement(lane: String) async throws {
+    while true {
+      try Task.checkCancellation()
+      switch turns?.settlement(lane: lane) ?? .finished {
+      case .finished: throw CancellationError()
+      case .awaitingIdentity: try await Task.sleep(for: .milliseconds(10))
+      case .interrupted: return
+      case .interrupt(let id):
+        guard claimInterrupt(responseID: id, lane: lane) else { return }
+        var control: [String: JSONValue] = [
+          "type": .string("response.interrupt"), "response_id": .string(id),
+        ]
+        if !lane.isEmpty { control["stream_id"] = .string(lane) }
+        try await send(.object(control))
+        return
+      }
+    }
+  }
+  func claimInterrupt(responseID: String, lane: String) -> Bool {
+    turns?.claimInterrupt(responseID: responseID, lane: lane) == true
   }
   func wasInterrupted(lane: String) -> Bool { turns?.wasInterrupted(lane: lane) == true }
   func permitSettlement() { closure.permitSettlement() }

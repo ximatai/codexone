@@ -1,8 +1,58 @@
+import CodexOneCore
 import Foundation
+import NIOEmbedded
 import NIOHTTP1
 import Testing
 
 @testable import CodexOneAdapters
+
+@Test func websocketHandshakeRejectionWritesCompleteCapacityEnvelopeBeforeClose() throws {
+  let channel = EmbeddedChannel()
+  let rejection = rejectWebSocketUpgrade(channel, error: ExecutionError.capacity)
+  channel.embeddedEventLoop.run()
+  try rejection.wait()
+  guard case .head(let head) = try channel.readOutbound(as: HTTPServerResponsePart.self) else {
+    Issue.record("Missing handshake rejection head")
+    return
+  }
+  #expect(head.status.code == 503 && head.headers.first(name: "connection") == "close")
+  guard
+    case .body(.byteBuffer(let body)) = try channel.readOutbound(as: HTTPServerResponsePart.self)
+  else {
+    Issue.record("Missing handshake rejection envelope")
+    return
+  }
+  let envelope = try JSONValue.decode(Data(body.readableBytesView))
+  #expect(envelope["error"]?["code"]?.string == "capacity_exceeded")
+  #expect(envelope["error"]?["request_id"]?.string == head.headers.first(name: "x-request-id"))
+  guard case .end = try channel.readOutbound(as: HTTPServerResponsePart.self) else {
+    Issue.record("Missing handshake rejection end")
+    return
+  }
+  #expect(!channel.isActive)
+  _ = try channel.finish(acceptAlreadyClosed: true)
+}
+
+@Test func concurrentClientAndSettlementInterruptsClaimOnlyOnce() async throws {
+  let turns = WebSocketTurns()
+  try turns.begin()
+  turns.markDispatched(lane: "")
+  _ = try turns.observe(
+    JSONValue.object([
+      "type": .string("response.created"),
+      "response": .object(["id": .string("synthetic_response")]),
+    ]).data())
+  let claimed = await withTaskGroup(of: Bool.self, returning: Int.self) { tasks in
+    for _ in 0..<64 {
+      tasks.addTask { turns.claimInterrupt(responseID: "synthetic_response", lane: "") }
+    }
+    var count = 0
+    for await won in tasks { if won { count += 1 } }
+    return count
+  }
+  #expect(claimed == 1)
+  #expect(turns.wasInterrupted(lane: ""))
+}
 
 @Test func clientPrefixHeadersAreBoundedAndHopByHopExcluded() {
   var headers = HTTPHeaders()
@@ -42,13 +92,13 @@ import Testing
   }
   #expect(try turns.observe(event("response.created", response: true)) == "synthetic_lane")
   #expect(turns.interruptLane(responseID: "synthetic_response") == "synthetic_lane")
-  turns.markInterrupted(responseID: "synthetic_response", lane: "synthetic_lane")
+  #expect(turns.claimInterrupt(responseID: "synthetic_response", lane: "synthetic_lane"))
   #expect(turns.wasInterrupted(lane: "synthetic_lane"))
   #expect(try turns.delivery(event("response.interrupt.accepted"))?.detached == true)
   _ = try turns.observe(event("response.completed", response: true))
   #expect(turns.interruptLane(responseID: "synthetic_response") == nil)
   try turns.begin(lane: "synthetic_lane")
-  turns.markInterrupted(responseID: "synthetic_response", lane: "synthetic_lane")
+  #expect(!turns.claimInterrupt(responseID: "synthetic_response", lane: "synthetic_lane"))
   #expect(!turns.wasInterrupted(lane: "synthetic_lane"))
   let late = try turns.delivery(event("response.interrupt.accepted"))
   #expect(late?.lane == "synthetic_lane" && late?.detached == true)
@@ -140,4 +190,41 @@ func interruptionRequiresCreatedAndUnexpectedLifecycleStopsDispatch(_ unexpected
   await first.value
   await second.value
   #expect(turns.isClosed)
+}
+
+@Test func disconnectSettlementUsesOnlyTheCurrentDispatchedTurn() throws {
+  let turns = WebSocketTurns()
+  func observe(_ type: String) throws {
+    _ = try turns.observe(
+      JSONValue.object([
+        "type": .string(type), "response": .object(["id": .string("synthetic_response")]),
+      ]).data())
+  }
+  func finished() -> Bool {
+    if case .finished = turns.settlement(lane: "") { return true }
+    return false
+  }
+  #expect(finished())
+  try turns.begin()
+  #expect(finished())  // Admission/preparation has not written a request.
+  turns.markDispatched(lane: "")
+  if case .awaitingIdentity = turns.settlement(lane: "") {
+  } else {
+    Issue.record("Dispatched turn did not wait for its identity")
+  }
+  try observe("response.created")
+  if case .interrupt(let id) = turns.settlement(lane: "") {
+    #expect(id == "synthetic_response")
+  } else {
+    Issue.record("Active turn lost its interrupt identity")
+  }
+  #expect(turns.claimInterrupt(responseID: "synthetic_response", lane: ""))
+  if case .interrupted = turns.settlement(lane: "") {
+  } else {
+    Issue.record("Already forwarded interrupt was not retained")
+  }
+  try observe("response.completed")
+  #expect(finished())
+  try turns.begin()
+  #expect(finished())  // Neither dispatch nor interrupt markers cross into the next turn.
 }

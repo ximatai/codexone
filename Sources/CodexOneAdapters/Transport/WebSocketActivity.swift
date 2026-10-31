@@ -64,8 +64,14 @@ func withWebSocketSettlement(
     tasks.addTask {
       await downstream.waitForClose()
       try Task.checkCancellation()
-      if upstream.wasInterrupted(lane: lane) {
-        try await Task.sleep(for: .seconds(10))
+      try await withThrowingTaskGroup(of: Void.self) { settlement in
+        defer { settlement.cancelAll() }
+        settlement.addTask {
+          try await upstream.interruptForSettlement(lane: lane)
+          try await Task.sleep(for: .seconds(10))
+        }
+        settlement.addTask { try await Task.sleep(for: .seconds(10)) }
+        try await settlement.next()
       }
       throw CancellationError()
     }
