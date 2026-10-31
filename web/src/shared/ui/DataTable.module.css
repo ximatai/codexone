@@ -46,3 +46,14 @@
   font-size: var(--mantine-font-size-sm);
   vertical-align: top;
 }
+
+.sortButton {
+  font: inherit;
+  color: inherit;
+}
+.unsorted {
+  opacity: 0.4;
+}
+.hiddenLabel {
+  display: none;
+}

@@ -6,6 +6,9 @@ export interface DataColumn<T> {
   id: string;
   title: string;
   label?: string;
+  width?: string;
+  nowrap?: boolean;
+  mobileTitle?: boolean;
   render: (row: T) => ReactNode;
   sortValue?: (row: T) => string | number;
 }
@@ -56,6 +59,7 @@ export function DataTable<T>({
           {columns.map((item) => (
             <Table.Th
               key={item.id}
+              style={{ width: item.width }}
               aria-sort={
                 sort?.id === item.id
                   ? sort.descending
@@ -68,6 +72,7 @@ export function DataTable<T>({
             >
               {item.sortValue ? (
                 <UnstyledButton
+                  className={styles.sortButton}
                   onClick={() =>
                     setSort({
                       id: item.id,
@@ -76,12 +81,17 @@ export function DataTable<T>({
                   }
                 >
                   {item.title}
-                  <span aria-hidden="true">
+                  <span
+                    aria-hidden="true"
+                    className={
+                      sort?.id === item.id ? undefined : styles.unsorted
+                    }
+                  >
                     {sort?.id === item.id
                       ? sort.descending
                         ? " ↓"
                         : " ↑"
-                      : ""}
+                      : " ↕"}
                   </span>
                 </UnstyledButton>
               ) : (
@@ -113,8 +123,17 @@ export function DataTable<T>({
             }
           >
             {columns.map((item) => (
-              <Table.Td key={item.id}>
-                <span className={styles.label}>{item.label ?? item.title}</span>
+              <Table.Td
+                key={item.id}
+                style={{ whiteSpace: item.nowrap ? "nowrap" : undefined }}
+              >
+                <span
+                  className={
+                    item.mobileTitle ? styles.hiddenLabel : styles.label
+                  }
+                >
+                  {item.label ?? item.title}
+                </span>
                 {item.render(row)}
               </Table.Td>
             ))}

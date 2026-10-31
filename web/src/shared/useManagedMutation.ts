@@ -15,6 +15,7 @@ interface Options {
   refresh: (signal: AbortSignal) => Promise<boolean>;
   onFailure?: () => void;
   invalidMessage?: string;
+  successNotification?: boolean;
   errorMessage?: (error: unknown) => string | undefined;
 }
 /** Results deliberately never pass through useMutation: one-time secrets stay in their feature owner. */
@@ -52,12 +53,13 @@ export function useManagedMutation(options: Options) {
         );
         if (!current()) return;
         owner.lock(options.scope, false);
-        notifications.show({
-          id: notificationID,
-          message: success,
-          role: "status",
-          color: "green",
-        });
+        if (options.successNotification !== false)
+          notifications.show({
+            id: notificationID,
+            message: success,
+            role: "status",
+            color: "green",
+          });
       } catch (error) {
         if (!current()) return;
         if (

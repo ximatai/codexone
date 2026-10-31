@@ -93,7 +93,7 @@ export function App() {
       withCssVariables={false}
       withGlobalClasses={false}
     >
-      <Notifications position="top-right" />
+      <Notifications position="bottom-right" />
       <HashRouter>
         <Workspace />
       </HashRouter>
