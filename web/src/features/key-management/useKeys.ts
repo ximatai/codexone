@@ -114,6 +114,7 @@ export function useKeys() {
   }, [created]);
   const mutation = useManagedMutation({
     scope: "keys",
+    invalidMessage: "提交内容不符合要求，请检查模型、限额与到期时间。",
     invalidate: [
       queryKeys.keys.all,
       queryKeys.usage.all,

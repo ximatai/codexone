@@ -1,4 +1,13 @@
-import { Badge, Button, Group, Menu, Text } from "@mantine/core";
+import { Badge, ActionIcon, Group, Menu, Text } from "@mantine/core";
+import {
+  IconChartBar,
+  IconPencil,
+  IconDots,
+  IconClock,
+  IconRefresh,
+  IconBan,
+  IconCheck,
+} from "@tabler/icons-react";
 import { Link } from "react-router";
 import * as api from "./api";
 import type { useKeys } from "./useKeys";
@@ -154,42 +163,57 @@ export function KeyList({
       render: (key) => (
         <>
           <Group gap="xs">
-            <Button
-              size="compact-sm"
-              variant="subtle"
+            <ActionIcon
+              size="md"
+              variant="default"
+              aria-label="用量"
               component={Link}
               to={`/usage?key=${encodeURIComponent(key.id)}`}
             >
-              用量
-            </Button>
-            <Button
-              size="compact-sm"
-              variant="subtle"
+              <IconChartBar size={17} />
+            </ActionIcon>
+            <ActionIcon
+              size="md"
+              variant="default"
+              aria-label="编辑"
               disabled={state.disabled}
               onClick={() => state.setEditing(key)}
             >
-              编辑
-            </Button>
+              <IconPencil size={17} />
+            </ActionIcon>
             <Menu position="bottom-end">
               <Menu.Target>
-                <Button
-                  size="compact-sm"
+                <ActionIcon
+                  size="md"
                   variant="subtle"
                   disabled={state.disabled}
                   aria-label={`${key.principal} 更多操作`}
                 >
-                  更多
-                </Button>
+                  <IconDots size={17} />
+                </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item onClick={() => setExpiring(key)}>
+                <Menu.Item
+                  leftSection={<IconClock size={16} />}
+                  onClick={() => setExpiring(key)}
+                >
                   设置到期时间
                 </Menu.Item>
-                <Menu.Item onClick={() => state.setRotating(key)}>
+                <Menu.Item
+                  leftSection={<IconRefresh size={16} />}
+                  onClick={() => state.setRotating(key)}
+                >
                   轮换
                 </Menu.Item>
                 <Menu.Item
                   color={key.enabled ? "red" : undefined}
+                  leftSection={
+                    key.enabled ? (
+                      <IconBan size={16} />
+                    ) : (
+                      <IconCheck size={16} />
+                    )
+                  }
                   onClick={() =>
                     key.enabled ? setDisabling(key) : void toggle(key)
                   }

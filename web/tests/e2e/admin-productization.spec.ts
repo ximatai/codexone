@@ -149,9 +149,15 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await page.getByLabel("搜索主体名").fill("synthetic");
   await expect(page.getByText("other-team", { exact: true })).toBeHidden();
-  await page.getByLabel("密钥状态").selectOption("disabled");
+  await page
+    .getByRole("radiogroup", { name: "密钥状态" })
+    .getByText("禁用", { exact: true })
+    .click();
   await expect(page.getByText("没有匹配的密钥。")).toBeVisible();
-  await page.getByLabel("密钥状态").selectOption("enabled");
+  await page
+    .getByRole("radiogroup", { name: "密钥状态" })
+    .getByText("启用", { exact: true })
+    .click();
   await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "禁用 API Key" });
@@ -166,7 +172,10 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await confirm.getByRole("button", { name: "确认禁用" }).click();
   await expect(confirm).toBeHidden();
   expect(mutations).toBe(1);
-  await page.getByLabel("密钥状态").selectOption("disabled");
+  await page
+    .getByRole("radiogroup", { name: "密钥状态" })
+    .getByText("禁用", { exact: true })
+    .click();
   const row = page.getByRole("row").filter({ hasText: "synthetic-team" });
   await expect(row).toContainText("禁用");
   await page.screenshot({

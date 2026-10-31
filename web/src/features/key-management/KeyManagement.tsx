@@ -6,12 +6,14 @@ import {
   Group,
   Modal,
   Paper,
-  NativeSelect,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
 } from "@mantine/core";
 
+import { IconSearch, IconPlus, IconRefresh } from "@tabler/icons-react";
+import styles from "./keys.module.css";
 import * as api from "./api";
 import { KeyEditor } from "./KeyEditor";
 import { useKeys } from "./useKeys";
@@ -24,7 +26,7 @@ import { PageHeader } from "../../shared/ui/PageHeader";
 import { ConfirmModal } from "../../shared/ui/ConfirmModal";
 import { KeyList } from "./KeyList";
 import { ExpirationEditor } from "./ExpirationEditor";
-import { ErrorState, StatusBadge } from "../../shared/ui/States";
+import { ErrorState, StatusBadge, LoadingState } from "../../shared/ui/States";
 import { queryKeys } from "../../shared/query-keys";
 export function KeyManagement() {
   const state = useKeys();
@@ -47,8 +49,12 @@ export function KeyManagement() {
   const keys = state.keys
     .filter(
       (key) =>
-        key.principal.toLowerCase().includes(search.toLowerCase()) &&
-        (!status || key.enabled === (status === "enabled")),
+        (key.principal.toLowerCase().includes(search.toLowerCase()) ||
+          key.id.toLowerCase().includes(search.toLowerCase())) &&
+        (!status ||
+          (status === "expiring"
+            ? api.expirationState(key.expiresAtUnixSeconds) === "soon"
+            : key.enabled === (status === "enabled"))),
     )
     .sort(
       (a, b) =>
@@ -66,10 +72,12 @@ export function KeyManagement() {
     <section>
       <PageHeader
         title="访问密钥"
+        description="管理访问权限与本地用量限制。"
         actions={
           <Group>
             <Button
               variant="default"
+              leftSection={<IconRefresh size={16} />}
               disabled={state.busy || state.loading}
               onClick={() => {
                 state.reload();
@@ -80,6 +88,7 @@ export function KeyManagement() {
             </Button>
             <Button
               disabled={state.disabled}
+              leftSection={<IconPlus size={16} />}
               onClick={() => state.setCreating(true)}
             >
               创建密钥
@@ -87,23 +96,29 @@ export function KeyManagement() {
           </Group>
         }
       />
-      <Group mb="md">
+      <Paper withBorder p="md" mb="md" className={styles.toolbar}>
         <TextInput
-          label="搜索主体名"
+          aria-label="搜索主体名"
+          placeholder="搜索主体名或标识…"
+          leftSection={<IconSearch size={18} />}
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
         />
-        <NativeSelect
-          label="密钥状态"
+        <SegmentedControl
+          aria-label="密钥状态"
           value={status}
-          onChange={(e) => setStatus(e.currentTarget.value)}
+          onChange={setStatus}
           data={[
-            { value: "", label: "全部状态" },
+            { value: "", label: "全部" },
             { value: "enabled", label: "启用" },
             { value: "disabled", label: "禁用" },
+            { value: "expiring", label: "即将到期" },
           ]}
         />
-      </Group>
+        <Text size="sm" c="dimmed">
+          共 {keys.length} 个
+        </Text>
+      </Paper>
       <Text size="xs" c="dimmed" mb="md">
         今日统计按 UTC · {estimateNote}。
         {usage.isError ? "今日摘要读取失败，请刷新列表重试。" : ""}
@@ -112,7 +127,7 @@ export function KeyManagement() {
         <ErrorState retry={state.reload}>{state.error}</ErrorState>
       )}
       {state.checking ? (
-        <p role="status">正在读取密钥…</p>
+        <LoadingState>正在读取密钥…</LoadingState>
       ) : state.unavailable ? (
         <Alert>管理入口尚未启用</Alert>
       ) : (
@@ -129,7 +144,7 @@ export function KeyManagement() {
       )}
       <Modal
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay="true"
+        data-ui-overlay={!!expiring || undefined}
         opened={!!expiring}
         onClose={() => {
           if (!state.busy) setExpiring(null);
@@ -180,7 +195,7 @@ export function KeyManagement() {
       </ConfirmModal>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay="true"
+        data-ui-overlay={state.creating || !!state.editing || undefined}
         opened={state.creating || !!state.editing}
         onClose={() => {
           if (!state.busy) {
@@ -250,7 +265,7 @@ export function KeyManagement() {
       </ConfirmModal>
       <Modal
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay="true"
+        data-ui-overlay={!!state.created || undefined}
         opened={!!state.created}
         onClose={() => state.setCreated(null)}
         closeButtonProps={{ "aria-label": "关闭" }}

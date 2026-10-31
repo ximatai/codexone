@@ -1,3 +1,4 @@
+import styles from "./keys.module.css";
 import { useRef, useState } from "react";
 import {
   Alert,
@@ -159,7 +160,7 @@ export function KeyEditor({
             主体隔离会话，创建后不可修改。
           </Text>
         )}
-        <fieldset className="editor-fieldset">
+        <fieldset className={styles.fieldset}>
           <legend>对话模型</legend>
           <Stack gap="xs">
             <Checkbox
@@ -187,7 +188,7 @@ export function KeyEditor({
             </Text>
           )}
         </fieldset>
-        <fieldset className="editor-fieldset">
+        <fieldset className={styles.fieldset}>
           <legend>图片能力</legend>
           <Stack gap="sm">
             <Checkbox
