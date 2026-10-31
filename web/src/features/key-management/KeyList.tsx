@@ -23,6 +23,7 @@ export function KeyList({
   usage,
   setExpiring,
   setDisabling,
+  setRotating,
   toggle,
   highlightedID,
 }: {
@@ -32,6 +33,7 @@ export function KeyList({
   highlightedID?: string | null;
   setExpiring: (key: api.ManagedKey) => void;
   setDisabling: (key: api.ManagedKey) => void;
+  setRotating: (key: api.ManagedKey) => void;
   toggle: (key: api.ManagedKey) => Promise<boolean>;
 }) {
   const columns: DataColumn<api.ManagedKey>[] = [
@@ -81,7 +83,14 @@ export function KeyList({
       title: "状态",
       render: (key) => (
         <>
-          <StatusBadge color={key.enabled ? "green" : "gray"}>
+          <StatusBadge
+            color={
+              key.enabled &&
+              api.expirationState(key.expiresAtUnixSeconds) !== "expired"
+                ? "green"
+                : "gray"
+            }
+          >
             {key.enabled ? "启用" : "禁用"}
           </StatusBadge>
           <StatusBadge
@@ -223,7 +232,7 @@ export function KeyList({
                 </Menu.Item>
                 <Menu.Item
                   leftSection={<IconRefresh size={16} />}
-                  onClick={() => state.setRotating(key)}
+                  onClick={() => setRotating(key)}
                 >
                   轮换
                 </Menu.Item>
@@ -255,6 +264,9 @@ export function KeyList({
       columns={columns}
       rowKey={(key) => key.id}
       highlightedID={highlightedID}
+      rowLabel={(key) =>
+        `访问密钥 ${key.displayName ?? key.principal} · ${key.id}`
+      }
       loading={state.loading && state.readAt === null}
       error={state.readAt === null ? state.error || undefined : undefined}
       retry={state.reload}

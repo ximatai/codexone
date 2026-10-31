@@ -274,6 +274,7 @@ export function ManagementSession({
               >
                 <Stack>
                   <PasswordInput
+                    autoFocus
                     visibilityToggleButtonProps={{
                       "aria-label": "显示或隐藏管理员凭证",
                     }}

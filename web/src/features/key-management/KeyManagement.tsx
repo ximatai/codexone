@@ -28,11 +28,14 @@ import { KeyList } from "./KeyList";
 import { ExpirationEditor } from "./ExpirationEditor";
 import { ErrorState, StatusBadge, LoadingState } from "../../shared/ui/States";
 import { queryKeys } from "../../shared/query-keys";
-import { useSearchParams } from "react-router";
+import { useLocation, useNavigationType, useSearchParams } from "react-router";
 import { readPage } from "../../shared/view-memory";
 import { KeyName } from "../../shared/KeyName";
 import { localTime } from "../../shared/presentation";
 export function KeyManagement() {
+  const navigationType = useNavigationType();
+  const locationKey = useLocation().key;
+  const positionedLocation = useRef<string | null>(null);
   const state = useKeys();
   const owner = useManagementSession();
   const [refresh, setRefresh] = useState(0);
@@ -41,7 +44,20 @@ export function KeyManagement() {
   const status = params.get("status") ?? "";
   const target = params.get("target");
   const list = useRef<HTMLDivElement>(null);
-  const paging = useRef(false);
+  const paging = useRef<number | null>(null);
+  const menuTrigger = useRef<HTMLElement | null>(null);
+  function rememberMenuTrigger(key: api.ManagedKey) {
+    const row = [
+      ...(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? []),
+    ].find((element) => element.dataset.rowId === key.id);
+    menuTrigger.current =
+      row?.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ?? null;
+  }
+  function returnToMenuTrigger() {
+    if (document.querySelector('[data-ui-overlay="true"]')) return;
+    if (menuTrigger.current?.isConnected)
+      menuTrigger.current.focus({ preventScroll: true });
+  }
   const pageSize = 50;
   function filter(name: string, value: string) {
     setParams(
@@ -88,7 +104,7 @@ export function KeyManagement() {
       : Math.min(pageCount, requestedPage);
   const identity = params.toString();
   useEffect(() => {
-    if (!state.readAt || state.loading) return;
+    if (!state.readAt || state.loading || usage.isPending) return;
     if (page !== requestedPage) {
       setParams(
         (previous) => {
@@ -103,8 +119,12 @@ export function KeyManagement() {
     const memoryKey = `keys:${identity}`;
     const saved = owner.views.get(memoryKey) as number | undefined;
     const frame = requestAnimationFrame(() => {
-      if (paging.current) {
-        paging.current = false;
+      // A pending filter render must not consume a later page button's scroll.
+      if (paging.current !== null && paging.current !== page) return;
+      if (positionedLocation.current === locationKey) return;
+      positionedLocation.current = locationKey;
+      if (paging.current === page) {
+        paging.current = null;
         list.current?.scrollIntoView?.({ block: "start" });
         list.current?.focus({ preventScroll: true });
       } else if (targetIndex >= 0) {
@@ -113,7 +133,8 @@ export function KeyManagement() {
             []),
         ].find((element) => element.dataset.rowId === target);
         row?.scrollIntoView?.({ block: "center" });
-      } else if (saved !== undefined) window.scrollTo?.(0, saved);
+        row?.focus({ preventScroll: true });
+      } else window.scrollTo?.(0, navigationType === "POP" ? (saved ?? 0) : 0);
     });
     const remember = () => owner.views.set(memoryKey, window.scrollY);
     window.addEventListener("scroll", remember);
@@ -123,8 +144,11 @@ export function KeyManagement() {
     };
   }, [
     identity,
+    navigationType,
+    locationKey,
     state.readAt,
     state.loading,
+    usage.isPending,
     page,
     requestedPage,
     targetIndex,
@@ -133,7 +157,7 @@ export function KeyManagement() {
     setParams,
   ]);
   function changePage(nextPage: number) {
-    paging.current = true;
+    paging.current = nextPage;
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       next.set("page", String(nextPage));
@@ -208,7 +232,7 @@ export function KeyManagement() {
         今日统计按 UTC · {estimateNote}。
         {usage.isError ? "今日摘要读取失败，请刷新列表重试。" : ""}
       </Text>
-      {state.error && (
+      {state.error && state.readAt !== null && (
         <ErrorState retry={state.reload}>
           {state.error}
           {state.readAt
@@ -251,9 +275,19 @@ export function KeyManagement() {
             keys={keys.slice((page - 1) * pageSize, page * pageSize)}
             highlightedID={target}
             state={state}
+            setRotating={(key) => {
+              rememberMenuTrigger(key);
+              state.setRotating(key);
+            }}
             usage={usage}
-            setExpiring={setExpiring}
-            setDisabling={setDisabling}
+            setExpiring={(key) => {
+              rememberMenuTrigger(key);
+              setExpiring(key);
+            }}
+            setDisabling={(key) => {
+              rememberMenuTrigger(key);
+              setDisabling(key);
+            }}
             toggle={toggle}
           />
           {state.readAt !== null && (
@@ -283,6 +317,8 @@ export function KeyManagement() {
         removeScrollProps={{ removeScrollBar: false }}
         data-ui-overlay={!!expiring || undefined}
         opened={!!expiring}
+        returnFocus={false}
+        onExitTransitionEnd={returnToMenuTrigger}
         onClose={() => {
           if (!state.busy) setExpiring(null);
         }}
@@ -311,6 +347,7 @@ export function KeyManagement() {
       </Modal>
       <ConfirmModal
         opened={!!disabling}
+        returnFocusTo={returnToMenuTrigger}
         title="禁用 API Key"
         label="确认禁用"
         busy={state.busy}
@@ -381,6 +418,7 @@ export function KeyManagement() {
       </Drawer>
       <ConfirmModal
         opened={!!state.rotating}
+        returnFocusTo={returnToMenuTrigger}
         title="轮换 API Key"
         label="确认轮换"
         busy={state.busy}
@@ -426,9 +464,9 @@ export function KeyManagement() {
                 密钥已创建但到期设置失败，请保存凭证后刷新列表，核对并重新设置到期时间。
               </Alert>
             )}
-            <Text>
+            <Text component="div">
               {state.created.key.principal} ·{" "}
-              <StatusBadge color={state.created.key.enabled ? "green" : "gray"}>
+              <StatusBadge color="gray">
                 {state.created.key.enabled ? "已启用" : "当前禁用"}
               </StatusBadge>
             </Text>
