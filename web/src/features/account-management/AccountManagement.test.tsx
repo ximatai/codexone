@@ -1,3 +1,4 @@
+import { Notifications } from "@mantine/notifications";
 import { renderPrivate as render } from "../../../tests/render";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -32,7 +33,12 @@ function setup() {
     csrf: "synthetic-csrf",
   });
   vi.mocked(api.fetchAccounts).mockResolvedValue([account]);
-  return render(<AccountManagement />);
+  return render(
+    <>
+      <Notifications />
+      <AccountManagement />
+    </>,
+  );
 }
 it("locks writes after unknown results until a successful account read", async () => {
   vi.mocked(api.setMode).mockRejectedValue(
@@ -44,7 +50,7 @@ it("locks writes after unknown results until a successful account read", async (
     expect(screen.getByRole("button", { name: "启用" })).toBeEnabled(),
   );
   fireEvent.click(screen.getByRole("button", { name: "启用" }));
-  await screen.findByText(/操作结果未确认/);
+  await screen.findByText(/操作结果尚未确认/);
   expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
   vi.mocked(api.fetchAccounts).mockRejectedValueOnce(new Error("network"));
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
@@ -73,7 +79,7 @@ it("clears one-shot callback after failed submission and never offers replay", a
   const input = await screen.findByLabelText("2. 粘贴完整回调地址");
   fireEvent.change(input, { target: { value: "private-callback-value" } });
   fireEvent.click(screen.getByRole("button", { name: "3. 验证并保存" }));
-  await screen.findByText(/操作结果未确认/);
+  await screen.findByText(/操作结果尚未确认/);
   expect(
     screen.queryByLabelText("2. 粘贴完整回调地址"),
   ).not.toBeInTheDocument();
@@ -260,13 +266,13 @@ it("confirms draining from details and explains that associated continuations an
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "排空" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "排空" }));
   expect(
     await screen.findByText(/已有身份关联的续接请求仍可派发/),
   ).toHaveTextContent("在途请求继续");
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
   expect(api.setMode).not.toHaveBeenCalled();
-  fireEvent.click(await screen.findByRole("button", { name: "排空" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "排空" }));
   fireEvent.click(screen.getByRole("button", { name: "确认排空" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalledOnce());
   expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("draining");
@@ -307,7 +313,7 @@ it("edits display names, refreshing a conflicting revision before retry", async 
     target: { value: "合成账号" },
   });
   fireEvent.click(screen.getByRole("button", { name: "保存显示名" }));
-  await screen.findByText(/账号已刷新/);
+  await screen.findByText(/数据已被修改，请确认后重试/);
   expect(api.setDisplayName).toHaveBeenCalledTimes(1);
   expect(api.fetchAccounts).toHaveBeenCalledTimes(2);
   await waitFor(() =>

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/States";
+import { useState } from "react";
 import {
   Alert,
   Anchor,
@@ -11,7 +12,7 @@ import {
   Paper,
   PasswordInput,
   Stack,
-  Table,
+  SegmentedControl,
   Text,
   TextInput,
   Title,
@@ -39,23 +40,22 @@ export function AccountManagement() {
   const [selected, setSelected] = useState<string | null>(null);
   const account = state.accounts.find((item) => item.id === selected);
   const blocked = state.busy || state.locked || !!state.flow;
-  const overlay = !!account || !!state.flow || !!confirm;
-  useEffect(() => {
-    if (!overlay) return;
-    document.body.classList.add("management-overlay-open");
-    return () => document.body.classList.remove("management-overlay-open");
-  }, [overlay]);
   function begin(value: api.Account | null) {
     setSelected(null);
     void state.begin(value);
   }
-  if (state.checking) return <Text role="status">正在检查管理会话…</Text>;
+  if (state.checking) return <LoadingState>正在检查管理会话…</LoadingState>;
   return (
     <section className={styles.workspace} aria-labelledby="accounts-heading">
       <Group justify="space-between" mb="xl">
-        <Title id="accounts-heading" order={1}>
-          订阅账号
-        </Title>
+        <div>
+          <Title id="accounts-heading" order={1}>
+            订阅账号
+          </Title>
+          <Text c="dimmed" size="sm" mt="xs">
+            管理订阅账号、额度与执行策略。
+          </Text>
+        </div>
         <Group>
           {!state.flow && !account && (
             <Group justify="flex-end">
@@ -80,15 +80,13 @@ export function AccountManagement() {
         </Group>
       </Group>
       {state.error && !state.flow && !account && (
-        <Alert color="red" role="alert" mb="md">
-          {state.error}
-        </Alert>
+        <ErrorState retry={() => void state.reread()}>{state.error}</ErrorState>
       )}
       {state.notice && !state.flow && !account && (
         <Alert
           color={state.noticeTone === "warning" ? "yellow" : "green"}
           className={
-            state.noticeTone === "warning" ? "warning-banner" : undefined
+            state.noticeTone === "warning" ? styles.warning : undefined
           }
           role="status"
           mb="md"
@@ -111,146 +109,127 @@ export function AccountManagement() {
         </Paper>
       ) : !state.accounts.length ? (
         <Paper withBorder p="xl">
-          <Text c="dimmed">
+          <EmptyState>
             还没有订阅账号。点击上方“发起账号授权”接入第一个账号。
-          </Text>
+          </EmptyState>
         </Paper>
       ) : (
-        <Paper withBorder p="md">
-          <div className="responsive-table">
-            <Table verticalSpacing="lg" highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>账号</Table.Th>
-                  <Table.Th>使用策略</Table.Th>
-                  <Table.Th>授权</Table.Th>
-                  <Table.Th>额度与健康</Table.Th>
-                  <Table.Th>操作</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {state.accounts.map((item) => {
-                  const summary = item.observability;
-                  const quota = summary?.quota.limits.find(
-                    (limit) => limit.id === "codex",
-                  );
-                  const attention = summary?.health.authenticationRejected
-                    ? "认证拒绝"
-                    : summary?.health.cooldownCount
-                      ? `${summary.health.cooldownCount} 个模型冷却`
-                      : quota?.allowed === false || quota?.limitReached
-                        ? "上游额度受限"
-                        : summary?.quota.failure
-                          ? "最近读取失败"
-                          : !summary || summary.quota.state === "unavailable"
-                            ? "额度不可用"
-                            : summary &&
-                                (summary.quota.state === "stale" ||
-                                  (Math.max(state.clock, performance.now()) -
-                                    summary.receivedAt) /
-                                    1000 >=
-                                    summary.quota.freshForSeconds)
-                              ? "额度观测已陈旧"
-                              : null;
-                  return (
-                    <Table.Tr key={item.id}>
-                      <Table.Td data-label="账号">
-                        <Text fw={600} size="sm" className={styles.id}>
-                          {item.displayName ?? item.id}
-                        </Text>
-                        {item.displayName && (
-                          <Text size="xs" c="dimmed" className={styles.id}>
-                            {item.id}
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td data-label="使用策略">
-                        <Badge
-                          variant="light"
-                          color={
-                            item.mode === "enabled"
-                              ? "green"
-                              : item.mode === "draining"
-                                ? "yellow"
-                                : "gray"
-                          }
-                        >
-                          {modes[item.mode]}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td data-label="授权">
-                        <Badge
-                          variant="outline"
-                          color={
-                            item.authorization === "ready" ? "green" : "yellow"
-                          }
-                        >
-                          {authorization[item.authorization]}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td data-label="额度与健康">
-                        <QuotaWindowBar
-                          title="主窗口"
-                          value={quota?.primary ?? null}
-                        />
-                        <QuotaWindowBar
-                          title="次窗口"
-                          value={quota?.secondary ?? null}
-                        />
-                        <Text size="xs" c="dimmed">
-                          {!summary
-                            ? "尚无观测"
-                            : summary.quota.state === "unavailable"
-                              ? "额度不可用"
-                              : summary.quota.state === "stale" ||
-                                  (Math.max(state.clock, performance.now()) -
-                                    summary.receivedAt) /
-                                    1000 >=
-                                    summary.quota.freshForSeconds
-                                ? "额度观测已陈旧"
-                                : "额度观测新鲜"}
-                          {summary?.quota.failure ? " · 最近读取失败" : ""}
-                        </Text>
-                        {attention && (
-                          <Text size="xs" c="orange">
-                            {attention}
-                          </Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td data-label="操作">
-                        <Group gap="xs" wrap="nowrap">
-                          <Button
-                            variant="subtle"
-                            size="xs"
-                            onClick={() => setSelected(item.id)}
-                          >
-                            额度与健康详情
-                          </Button>
-                          <Button
-                            variant="subtle"
-                            size="xs"
-                            color={item.mode === "disabled" ? "green" : "red"}
-                            disabled={blocked}
-                            onClick={() =>
-                              changeMode(
-                                item,
-                                item.mode === "disabled"
-                                  ? "enabled"
-                                  : "disabled",
-                              )
-                            }
-                          >
-                            {item.mode === "disabled" ? "启用" : "禁用"}
-                          </Button>
-                        </Group>
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </div>
-        </Paper>
+        <div className={styles.cards}>
+          {state.accounts.map((item) => {
+            const summary = item.observability;
+            const quota = summary?.quota.limits.find(
+              (limit) => limit.id === "codex",
+            );
+            const attention = summary?.health.authenticationRejected
+              ? "认证拒绝"
+              : summary?.health.cooldownCount
+                ? `${summary.health.cooldownCount} 个模型冷却`
+                : quota?.allowed === false || quota?.limitReached
+                  ? "上游额度受限"
+                  : summary?.quota.failure
+                    ? "最近读取失败"
+                    : !summary || summary.quota.state === "unavailable"
+                      ? "额度不可用"
+                      : summary &&
+                          (summary.quota.state === "stale" ||
+                            (Math.max(state.clock, performance.now()) -
+                              summary.receivedAt) /
+                              1000 >=
+                              summary.quota.freshForSeconds)
+                        ? "额度观测已陈旧"
+                        : null;
+            return (
+              <Paper withBorder p="lg" key={item.id}>
+                <div className={styles.cardSection} aria-label="账号">
+                  <Text fw={600} size="sm" className={styles.id}>
+                    {item.displayName ?? item.id}
+                  </Text>
+                  {item.displayName && (
+                    <Text size="xs" c="dimmed" className={styles.id}>
+                      {item.id}
+                    </Text>
+                  )}
+                </div>
+                <div className={styles.cardSection} aria-label="使用策略">
+                  <Badge
+                    variant="light"
+                    color={
+                      item.mode === "enabled"
+                        ? "green"
+                        : item.mode === "draining"
+                          ? "yellow"
+                          : "gray"
+                    }
+                  >
+                    {modes[item.mode]}
+                  </Badge>
+                </div>
+                <div className={styles.cardSection} aria-label="授权">
+                  <Badge
+                    variant="outline"
+                    color={item.authorization === "ready" ? "green" : "yellow"}
+                  >
+                    {authorization[item.authorization]}
+                  </Badge>
+                </div>
+                <div className={styles.cardSection} aria-label="额度与健康">
+                  <QuotaWindowBar
+                    title="主窗口"
+                    value={quota?.primary ?? null}
+                  />
+                  <QuotaWindowBar
+                    title="次窗口"
+                    value={quota?.secondary ?? null}
+                  />
+                  <Text size="xs" c="dimmed">
+                    {!summary
+                      ? "尚无观测"
+                      : summary.quota.state === "unavailable"
+                        ? "额度不可用"
+                        : summary.quota.state === "stale" ||
+                            (Math.max(state.clock, performance.now()) -
+                              summary.receivedAt) /
+                              1000 >=
+                              summary.quota.freshForSeconds
+                          ? "额度观测已陈旧"
+                          : "额度观测新鲜"}
+                    {summary?.quota.failure ? " · 最近读取失败" : ""}
+                  </Text>
+                  {attention && (
+                    <Text size="xs" c="orange">
+                      {attention}
+                    </Text>
+                  )}
+                </div>
+                <div className={styles.cardSection} aria-label="操作">
+                  <Group gap="xs" wrap="nowrap">
+                    <Button
+                      variant="subtle"
+                      size="xs"
+                      onClick={() => setSelected(item.id)}
+                    >
+                      额度与健康详情
+                    </Button>
+                    <Button
+                      variant="subtle"
+                      size="xs"
+                      color={item.mode === "disabled" ? "green" : "red"}
+                      disabled={blocked}
+                      onClick={() =>
+                        changeMode(
+                          item,
+                          item.mode === "disabled" ? "enabled" : "disabled",
+                        )
+                      }
+                    >
+                      {item.mode === "disabled" ? "启用" : "禁用"}
+                    </Button>
+                  </Group>
+                </div>
+              </Paper>
+            );
+          })}
+        </div>
       )}
       <Modal
         opened={!!confirm}
@@ -258,7 +237,8 @@ export function AccountManagement() {
           if (!state.busy) setConfirm(null);
         }}
         title={confirm?.mode === "draining" ? "排空账号" : "禁用账号"}
-        lockScroll={false}
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={!!confirm || undefined}
         closeOnEscape={!state.busy}
         closeOnClickOutside={!state.busy}
         withCloseButton={!state.busy}
@@ -299,7 +279,8 @@ export function AccountManagement() {
         title="账号详情"
         position="right"
         size="lg"
-        lockScroll={false}
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={(!!account && !state.flow && !confirm) || undefined}
         closeButtonProps={{ "aria-label": "关闭" }}
       >
         {account && (
@@ -313,7 +294,7 @@ export function AccountManagement() {
               <Alert
                 color={state.noticeTone === "warning" ? "yellow" : "green"}
                 className={
-                  state.noticeTone === "warning" ? "warning-banner" : undefined
+                  state.noticeTone === "warning" ? styles.warning : undefined
                 }
                 role="status"
               >
@@ -359,23 +340,18 @@ export function AccountManagement() {
               <Title order={3} size="h5" mb="sm">
                 使用策略
               </Title>
-              <Group gap="xs">
-                {(["enabled", "draining", "disabled"] as const).map((mode) => (
-                  <Button
-                    key={mode}
-                    size="xs"
-                    variant={account.mode === mode ? "filled" : "default"}
-                    disabled={blocked || account.mode === mode}
-                    onClick={() => changeMode(account, mode)}
-                  >
-                    {mode === "enabled"
-                      ? "启用"
-                      : mode === "draining"
-                        ? "排空"
-                        : "禁用"}
-                  </Button>
-                ))}
-              </Group>
+              <SegmentedControl
+                value={account.mode}
+                disabled={blocked}
+                onChange={(mode) =>
+                  changeMode(account, mode as api.AccountMode)
+                }
+                data={[
+                  { value: "enabled", label: "启用" },
+                  { value: "draining", label: "排空" },
+                  { value: "disabled", label: "禁用" },
+                ]}
+              />
               <Text size="xs" c="dimmed" mt="xs">
                 排空只保留已有身份关联；禁用停止后续派发。
               </Text>
@@ -440,7 +416,8 @@ export function AccountManagement() {
         title={state.flow?.accountID ? "重新授权账号" : "接入订阅账号"}
         position="right"
         size="lg"
-        lockScroll={false}
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={!!state.flow || undefined}
         closeOnEscape={!state.busy}
         closeOnClickOutside={!state.busy}
         closeButtonProps={{ "aria-label": "关闭", disabled: state.busy }}

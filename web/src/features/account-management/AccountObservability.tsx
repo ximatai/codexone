@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@mantine/core";
+import { ErrorState } from "../../shared/ui/States";
+import { Button, Skeleton } from "@mantine/core";
 import styles from "./accounts.module.css";
 import { ManagementError } from "../../shared/management";
 import type { Account } from "./api";
@@ -26,13 +27,15 @@ function Window({
   value: QuotaWindow | null;
 }) {
   return (
-    <div className="quota-window">
+    <div className={styles.window}>
       <strong>{title}</strong>
       {!value ? (
-        <p className="subtle">上游未提供</p>
+        <p className={styles.subtle}>上游未提供</p>
       ) : (
         <>
-          <span className="subtle">{duration(value.durationSeconds)}</span>
+          <span className={styles.subtle}>
+            {duration(value.durationSeconds)}
+          </span>
           <p>
             {value.usedPercent === null
               ? "用量比例未提供"
@@ -51,8 +54,8 @@ function LimitStatus({ value }: { value: QuotaLimit | undefined }) {
     <p
       className={
         value?.allowed === false || value?.limitReached === true
-          ? "observation-warning"
-          : "subtle"
+          ? styles.warning
+          : styles.subtle
       }
     >
       上游允许使用：{flag(value?.allowed)} · 已达窗口限额：
@@ -120,8 +123,8 @@ export function AccountObservability({
       <span
         className={
           health?.authenticationRejected || health?.cooldownCount
-            ? "state-attention"
-            : "subtle"
+            ? styles.attention
+            : styles.subtle
         }
       >
         {health?.authenticationRejected
@@ -141,14 +144,13 @@ export function AccountObservability({
           <small>主窗口已用 {base.primary.usedPercent}%</small>
         )}
       {(base?.allowed === false || base?.limitReached === true) && (
-        <small className="state-attention">
+        <small className={styles.attention}>
           上游额度报告受限，请查看窗口详情
         </small>
       )}
       {!inDetails && (
         <Button
           variant="subtle"
-          className="text-button"
           aria-expanded={expanded}
           onClick={() => setExpanded(!expanded)}
         >
@@ -157,7 +159,7 @@ export function AccountObservability({
       )}
       {expanded && (
         <div
-          className="quota-details"
+          className={styles.details}
           role="region"
           aria-label={`${account.id} 额度与健康`}
         >
@@ -175,25 +177,26 @@ export function AccountObservability({
             读取上游额度
           </Button>
           {!details && !failed ? (
-            <p role="status">正在读取观测详情…</p>
+            <Skeleton
+              height={80}
+              role="status"
+              aria-label="正在读取观测详情…"
+            />
           ) : failed ? (
-            <p role="alert">
+            <ErrorState retry={() => setRetry(retry + 1)} retryLabel="重试详情">
               详情读取失败。
-              <Button variant="subtle" onClick={() => setRetry(retry + 1)}>
-                重试详情
-              </Button>
-            </p>
+            </ErrorState>
           ) : (
             details && (
               <>
                 <details>
                   <summary>窗口口径</summary>
-                  <p className="subtle">
+                  <p className={styles.subtle}>
                     订阅账号的上游窗口；与本地 Key 限额、估算费用相互独立。
                   </p>
                 </details>
                 <LimitStatus value={base} />
-                <div className="quota-windows">
+                <div className={styles.windows}>
                   <Window title="主窗口" value={base?.primary ?? null} />
                   <Window title="次窗口" value={base?.secondary ?? null} />
                 </div>
@@ -204,7 +207,7 @@ export function AccountObservability({
                   最近尝试：{utc(details.quota.attemptedAtUnixSeconds)}
                 </small>
                 {details.quota.failure && (
-                  <p className="observation-warning">
+                  <p className={styles.warning}>
                     最近一次读取失败，保留上次成功值。
                     {details.quota.failure === "refresh_required"
                       ? "请先刷新授权。"
@@ -214,10 +217,10 @@ export function AccountObservability({
                 {details.quota.limits
                   .filter((limit) => limit.id !== "codex")
                   .map((limit) => (
-                    <div key={limit.id} className="quota-additional">
+                    <div key={limit.id} className={styles.additional}>
                       <strong>其他上游窗口 · {limit.id}</strong>
                       <LimitStatus value={limit} />
-                      <div className="quota-windows">
+                      <div className={styles.windows}>
                         <Window title="主窗口" value={limit.primary} />
                         <Window title="次窗口" value={limit.secondary} />
                       </div>
@@ -235,12 +238,12 @@ export function AccountObservability({
                   </small>
                 )}
                 {details.health.authenticationRejected && (
-                  <p className="observation-warning">
+                  <p className={styles.warning}>
                     当前凭证的实际派发曾被拒绝。新执行已暂停，请刷新授权或重新授权；已有未知执行仍保留。
                   </p>
                 )}
                 {(details.health.cooldowns ?? []).map((item) => (
-                  <p key={item.model} className="observation-warning">
+                  <p key={item.model} className={styles.warning}>
                     {item.model}：
                     {item.failure === "rate_limited"
                       ? "上游限流"

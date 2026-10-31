@@ -91,7 +91,7 @@ try {
   stage = "replaced-session";
   assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
   await page.getByRole("button", { name: "启用", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("操作结果未确认");
+  await expect(page.getByRole("alert")).toContainText("管理会话已更新");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
   await expect(page.getByRole("button", { name: "启用", exact: true })).toBeEnabled();
   stage = "enable";
@@ -111,8 +111,8 @@ try {
   await admin("/api/accounts/" + id, "PUT", { revision: account.revision, mode: "draining" });
   await page.getByRole("button", { name: "禁用", exact: true }).click();
   await page.getByRole("button", { name: "确认禁用", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("状态已变化");
-  await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText("数据已被修改，请确认后重试");
+  await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
   await expect(page.getByText("排空中", { exact: true })).toBeVisible();
   stage = "unknown-write";
@@ -123,12 +123,12 @@ try {
   });
   await page.getByRole("button", { name: "禁用", exact: true }).click();
   await page.getByRole("button", { name: "确认禁用", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("操作结果未确认");
+  await expect(page.getByRole("alert")).toContainText("操作结果尚未确认");
   await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeDisabled();
   await page.unroute("**/api/accounts/" + id);
   await page.route("**/api/accounts", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "management_unavailable" } }) }));
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("账号读取失败");
+  await expect(page.getByRole("alert").filter({ hasText: "账号读取失败" })).toBeVisible();
   await expect(page.getByRole("button", { name: "禁用", exact: true })).toBeDisabled();
   await page.unroute("**/api/accounts");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
@@ -161,7 +161,7 @@ try {
   stage = "quota-failure-retains-value";
   await fixture({ quota_mode: "fail" });
   await page.getByRole("button", { name: "读取上游额度", exact: true }).click();
-  await expect(page.locator(".warning-banner")).toContainText("本次额度读取失败");
+  await expect(page.getByRole("status").filter({ hasText: "本次额度读取失败" })).toContainText("本次额度读取失败");
   await expect(page.getByText("主窗口已用 25%", { exact: true }).first()).toBeVisible();
   const failedQuota = (await admin()).accounts[0].observability.quota;
   assert.equal(failedQuota.observedAtUnixSeconds, observed);
@@ -238,6 +238,7 @@ try {
   await expect(page.getByRole("button", { name: "发起账号授权", exact: true })).toBeEnabled();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
   assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
+  assert.equal(await page.locator("style").count(), 0);
   assert.deepEqual(errors, []);
   console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; passive quota GET, failure retention/staleness/recovery; private storage and large-screen captures");
 } catch (error) {
