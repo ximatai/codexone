@@ -78,3 +78,18 @@ SwiftPM 在此受限环境的 manifest sandbox-exec 不可用，原始不带覆�
 
 本轮没有执行 Linux 或真实提供者 SSE 验证，不扩大既有兼容证据；事件缓冲增加最多一个有界原始事件副本，不改为整流缓冲。
 
+
+## 真实 Desktop 生图与编辑（2026-10-31）
+
+客户端：Windows Codex Desktop 26.1027.30824（内置 codex 0.166.0-alpha.5.1），原 Key，自定义 provider 指向测试实例 `/backend-api/codex`，`env_key` 传 Key，apikey 登录。
+
+| 操作 | 网关观察 | 账本 |
+|---|---|---|
+| 新会话生成像素风头像 | `POST /backend-api/codex/images/generations` 200，约 50 秒，响应约 1.7 MB | settled/succeeded/complete；imageInput 169、imageOutput 515 |
+| 同会话编辑上一张图 | `POST /backend-api/codex/images/edits` 200，约 49 秒，响应约 1.8 MB | settled/succeeded/complete；imageInput 1690（含参考图）、imageOutput 515 |
+
+两小时窗口内无 failed/unknown/在途记录。诊断期间临时开启只记录方法、路径、状态、耗时、UA 与门控头值的反代访问日志，验收后已恢复关闭。
+
+客户端前提（对照 Codex 源码 `core/src/tools/spec_plan.rs` 与 `model-provider-info`）：内置 `image_gen` 工具在客户端本地判定，网关无法影响。自定义 provider 用 Key 连接时，须在 provider 段配置非空 `x-openai-actor-authorization` 且 `requires_openai_auth = false`；后者为 true 时门控头失效，而另一路径要求 ChatGPT 登录。缺少任一条件时请求中不声明生图工具，旧服务同样不可用。用 Key 连接时客户端使用内置模型目录，不读取网关 `/models`。
+
+服务端回归：`ClientHeaderForwardingTests` 断言门控头（含大小写变体）、认证头、下游伪造账号头和私有头不进入转发集；`AccountPoolHTTPTests` 两前缀生成/编辑请求携带门控头，断言上游请求不含它。

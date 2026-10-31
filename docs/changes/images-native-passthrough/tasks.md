@@ -8,7 +8,9 @@
 - [x] 合成验证与 macOS 后端出口（证据见 [verification](verification.md)）。
 - [x] Linux verification。
 - [x] 部署后网关真实冒烟（生成 1、编辑 1）。
-- [ ] Desktop 生图、编辑与含图会话压缩验收（等待用户操作）。
+- [x] 2026-10-31 真实 Desktop 经网关生图与编辑（见 [verification](verification.md)）。
+- [x] 客户端门控头 `x-openai-actor-authorization` 不转发上游的规范与回归测试。
+- [ ] Desktop 含图会话压缩验收（等待用户操作）。
 
 ## 评审返工（2026-10-31）
 

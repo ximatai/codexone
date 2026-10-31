@@ -1241,6 +1241,8 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
             request.setValue("synthetic-desktop", forHTTPHeaderField: "originator")
             request.setValue("forged-downstream-account", forHTTPHeaderField: "chatgpt-account-id")
             request.setValue("synthetic-client-header", forHTTPHeaderField: "x-client-private")
+            // Desktop custom-provider configs send this only to unlock the local image tool.
+            request.setValue("synthetic-gate", forHTTPHeaderField: "x-openai-actor-authorization")
             let session = URLSession(configuration: .ephemeral)
             let (_, response) = try await session.data(for: request)
             session.invalidateAndCancel()
@@ -1249,6 +1251,12 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
             #expect(h.calls.last?.body == request.httpBody)
             #expect(h.calls.last?.headers?.first(name: "x-codex-image-turn-id") == "synthetic-turn")
             #expect(h.calls.last?.headers?.first(name: "originator") == "synthetic-desktop")
+            for name in ["x-openai-actor-authorization", "x-client-private"] {
+              #expect(h.calls.last?.headers?[name].isEmpty == true)
+            }
+            #expect(
+              h.calls.last?.headers?["chatgpt-account-id"].contains("forged-downstream-account")
+                == false)
           }
         }
         let generated = try await post(
