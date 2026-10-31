@@ -55,6 +55,8 @@ export function ActivityOverview({
 }: {
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
+    source: string;
+    isError: boolean;
     dataUpdatedAt: number;
     isFetching: boolean;
     refetch: () => Promise<unknown>;
@@ -93,7 +95,13 @@ export function ActivityOverview({
     ...options,
   });
   const queries = [daily, flight, recent];
-  const allQueries = [...queries, ...extraQueries];
+  const allQueries = [
+    ...queries.map((query, index) => ({
+      ...query,
+      source: ["运营指标", "进行中请求", "最近请求"][index],
+    })),
+    ...extraQueries,
+  ];
   const unauthorized = queries.some(
     (q) => q.error instanceof ManagementError && q.error.status === 401,
   );
@@ -134,13 +142,21 @@ export function ActivityOverview({
         />
       </div>
       {attention}
-      {queries.some((q) => q.isError) && (
+      {allQueries.some((q) => q.isError) && (
         <ErrorState
           retry={() => {
             for (const q of allQueries) void q.refetch();
           }}
         >
-          部分请求概览读取失败，请刷新重试；保留的快照可能已过时，缺失值未记为零。
+          概览读取失败：
+          {allQueries
+            .filter((q) => q.isError)
+            .map(
+              (q) =>
+                `${q.source}${q.dataUpdatedAt ? `（保留上次成功快照 ${localTime(q.dataUpdatedAt / 1000)}）` : "（尚无成功数据）"}`,
+            )
+            .join("、")}
+          。缺失值未记为零，请重试。
         </ErrorState>
       )}
       <Tooltip
@@ -151,10 +167,10 @@ export function ActivityOverview({
           KPI 统计口径 ⓘ
         </Text>
       </Tooltip>
-      {daily.isError ? (
-        <ErrorState retry={() => void daily.refetch()}>
+      {daily.isError && !daily.data ? (
+        <Text size="sm" c="dimmed">
           运营指标读取失败，请重试。
-        </ErrorState>
+        </Text>
       ) : (
         <OverviewStats buckets={daily.data ?? []} loading={daily.isPending} />
       )}
@@ -169,60 +185,61 @@ export function ActivityOverview({
             <Text size="xs" c="dimmed" mb="sm">
               最多显示 200 条；随自动刷新更新。
             </Text>
-            <DataTable
-              rows={flight.data ?? []}
-              rowKey={(row) => row.id}
-              retry={() => void flight.refetch()}
-              loading={flight.isPending}
-              error={
-                flight.isError
-                  ? `进行中请求读取失败。${flight.dataUpdatedAt ? `上次成功读取：${localTime(flight.dataUpdatedAt / 1000)}` : "请重试。"}`
-                  : undefined
-              }
-              empty="当前没有进行中的请求。"
-              columns={[
-                {
-                  id: "principal",
-                  title: "主体 / 模型",
-                  render: (row) => (
-                    <Stack gap={2}>
-                      <Text size="sm">
-                        {<KeyName {...row} />} · {row.model ?? "模型未记录"}
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        {modes[row.mode] ?? "其他模式"} ·{" "}
-                        {accountName(
-                          row.accountID,
-                          accounts,
-                          row.accountDisplayName,
-                        )}
-                      </Text>
-                    </Stack>
-                  ),
-                },
-                {
-                  id: "elapsed",
-                  title: "运行时长",
-                  render: (row) =>
-                    row.elapsedSeconds == null
-                      ? "耗时不可用"
-                      : `已持续 ${Math.floor(row.elapsedSeconds)} 秒`,
-                },
-                {
-                  id: "event",
-                  title: "最新状态",
-                  render: (row) => (
-                    <StatusBadge color={row.hasFirstEvent ? "green" : "gray"}>
-                      {row.hasFirstEvent == null
-                        ? "首事件状态不可用"
-                        : row.hasFirstEvent
-                          ? "已收到首事件"
-                          : "等待首事件"}
-                    </StatusBadge>
-                  ),
-                },
-              ]}
-            />
+            {flight.isError && !flight.data ? (
+              <Text size="sm" c="dimmed">
+                进行中请求读取失败。请重试。
+              </Text>
+            ) : (
+              <DataTable
+                rows={flight.data ?? []}
+                rowKey={(row) => row.id}
+                retry={() => void flight.refetch()}
+                loading={flight.isPending}
+                empty="当前没有进行中的请求。"
+                columns={[
+                  {
+                    id: "principal",
+                    title: "主体 / 模型",
+                    render: (row) => (
+                      <Stack gap={2}>
+                        <Text size="sm">
+                          {<KeyName {...row} />} · {row.model ?? "模型未记录"}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {modes[row.mode] ?? "其他模式"} ·{" "}
+                          {accountName(
+                            row.accountID,
+                            accounts,
+                            row.accountDisplayName,
+                          )}
+                        </Text>
+                      </Stack>
+                    ),
+                  },
+                  {
+                    id: "elapsed",
+                    title: "运行时长",
+                    render: (row) =>
+                      row.elapsedSeconds == null
+                        ? "耗时不可用"
+                        : `已持续 ${Math.floor(row.elapsedSeconds)} 秒`,
+                  },
+                  {
+                    id: "event",
+                    title: "最新状态",
+                    render: (row) => (
+                      <StatusBadge color={row.hasFirstEvent ? "green" : "gray"}>
+                        {row.hasFirstEvent == null
+                          ? "首事件状态不可用"
+                          : row.hasFirstEvent
+                            ? "已收到首事件"
+                            : "等待首事件"}
+                      </StatusBadge>
+                    ),
+                  },
+                ]}
+              />
+            )}
           </Paper>
           <Paper withBorder p="md">
             <Group justify="space-between" mb="xs">
@@ -242,69 +259,70 @@ export function ActivityOverview({
                 扫描已达上限，可到用量页查询更早请求。
               </Text>
             )}
-            <DataTable
-              onRowClick={setDetail}
-              rows={recent.data?.rows ?? []}
-              rowKey={(row) => row.id}
-              retry={() => void recent.refetch()}
-              loading={recent.isPending}
-              error={
-                recent.isError
-                  ? `最近请求读取失败。${recent.dataUpdatedAt ? `上次成功读取：${localTime(recent.dataUpdatedAt / 1000)}` : "请重试。"}`
-                  : undefined
-              }
-              empty="暂无已结束的请求。"
-              columns={[
-                {
-                  id: "time",
-                  title: "开始时间（本地）",
-                  width: "25%",
-                  nowrap: true,
-                  render: (row) => localTime(row.atUnixSeconds),
-                },
-                {
-                  id: "principal",
-                  title: "Key / 模型",
-                  render: (row) => (
-                    <span>
-                      <KeyName {...row} /> · {row.model ?? "未记录"}
-                    </span>
-                  ),
-                },
-                {
-                  id: "outcome",
-                  title: "结果",
-                  width: "13%",
-                  render: (row) => (
-                    <StatusBadge
-                      color={
-                        row.outcome === "succeeded"
-                          ? "green"
-                          : row.outcome === "failed"
-                            ? "red"
-                            : "gray"
-                      }
-                    >
-                      {row.outcome
-                        ? (outcomes[row.outcome] ?? "待核对")
-                        : "待核对"}
-                    </StatusBadge>
-                  ),
-                },
-                {
-                  id: "timing",
-                  title: "首事件 / 总耗时",
-                  render: (row) =>
-                    `${duration(row.firstEventMilliseconds)} / ${duration(row.totalMilliseconds)}`,
-                },
-                {
-                  id: "open",
-                  title: "",
-                  width: "4%",
-                  render: () => <span aria-hidden="true">›</span>,
-                },
-              ]}
-            />
+            {recent.isError && !recent.data ? (
+              <Text size="sm" c="dimmed">
+                最近请求读取失败。请重试。
+              </Text>
+            ) : (
+              <DataTable
+                onRowClick={setDetail}
+                rows={recent.data?.rows ?? []}
+                rowKey={(row) => row.id}
+                retry={() => void recent.refetch()}
+                loading={recent.isPending}
+                empty="暂无已结束的请求。"
+                columns={[
+                  {
+                    id: "time",
+                    title: "开始时间（本地）",
+                    width: "25%",
+                    nowrap: true,
+                    render: (row) => localTime(row.atUnixSeconds),
+                  },
+                  {
+                    id: "principal",
+                    title: "Key / 模型",
+                    render: (row) => (
+                      <span>
+                        <KeyName {...row} /> · {row.model ?? "未记录"}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: "outcome",
+                    title: "结果",
+                    width: "13%",
+                    render: (row) => (
+                      <StatusBadge
+                        color={
+                          row.outcome === "succeeded"
+                            ? "green"
+                            : row.outcome === "failed"
+                              ? "red"
+                              : "gray"
+                        }
+                      >
+                        {row.outcome
+                          ? (outcomes[row.outcome] ?? "待核对")
+                          : "待核对"}
+                      </StatusBadge>
+                    ),
+                  },
+                  {
+                    id: "timing",
+                    title: "首事件 / 总耗时",
+                    render: (row) =>
+                      `${duration(row.firstEventMilliseconds)} / ${duration(row.totalMilliseconds)}`,
+                  },
+                  {
+                    id: "open",
+                    title: "",
+                    width: "4%",
+                    render: () => <span aria-hidden="true">›</span>,
+                  },
+                ]}
+              />
+            )}
           </Paper>
         </Stack>
         {sidebar && (

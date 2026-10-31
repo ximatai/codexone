@@ -1,5 +1,5 @@
 import type { AccountName } from "../../shared/account-presentation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -26,6 +26,7 @@ export function AttentionPanel({
   retry,
   accounts = [],
   release,
+  aggregateErrors = false,
 }: {
   items?: AttentionItem[];
   loading: boolean;
@@ -33,7 +34,9 @@ export function AttentionPanel({
   retry: () => void;
   accounts?: readonly AccountName[];
   release?: (item: AttentionItem) => void;
+  aggregateErrors?: boolean;
 }) {
+  const toggle = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
   const critical =
     items?.filter((item) => item.severity === "critical").length ?? 0;
@@ -46,7 +49,11 @@ export function AttentionPanel({
       <Title order={2} size="h4" mb="sm">
         需要处理
       </Title>
-      {error ? (
+      {error && aggregateErrors ? (
+        <Text size="sm" c="dimmed">
+          提醒读取失败，请使用概览汇总重试。
+        </Text>
+      ) : error ? (
         <ErrorState retry={retry} retryLabel="重试读取提醒">
           需要处理的事项读取失败，请重试。
         </ErrorState>
@@ -117,7 +124,15 @@ export function AttentionPanel({
           {items.length > 5 && (
             <Button
               variant="subtle"
-              onClick={() => setExpanded((value) => !value)}
+              ref={toggle}
+              onClick={() => {
+                setExpanded((value) => !value);
+                if (expanded)
+                  requestAnimationFrame(() => {
+                    toggle.current?.scrollIntoView({ block: "center" });
+                    toggle.current?.focus({ preventScroll: true });
+                  });
+              }}
               aria-expanded={expanded}
             >
               {expanded ? "收起提醒" : `查看全部 ${items.length} 项`}
