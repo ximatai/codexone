@@ -98,7 +98,7 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
   );
   await screen.findByText("尚未创建密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
-  fireEvent.change(screen.getByLabelText("主体标识"), {
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "team" },
   });
   fireEvent.click(screen.getByLabelText("synthetic-text"));
@@ -167,7 +167,7 @@ it("creates an image-only key without granting vision or a conversation model", 
   const view = render(<KeyManagement />);
   await screen.findByText("尚未创建密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
-  fireEvent.change(screen.getByLabelText("主体标识"), {
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "images-team" },
   });
   fireEvent.click(screen.getByLabelText("图片生成与参考图编辑"));
@@ -343,8 +343,9 @@ it.each([false, true])(
         expiresAtUnixSeconds: 2000000000,
       });
     render(<KeyManagement />);
-    fireEvent.click(await screen.findByRole("button", { name: "创建密钥" }));
-    fireEvent.change(screen.getByLabelText("主体标识"), {
+    await screen.findByText("尚未创建密钥。");
+    fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
+    fireEvent.change(await screen.findByLabelText("主体标识"), {
       target: { value: "team" },
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
@@ -398,8 +399,9 @@ it("does not revive a dismissed secret when a delayed expiration response arrive
     }),
   );
   render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "创建密钥" }));
-  fireEvent.change(screen.getByLabelText("主体标识"), {
+  await screen.findByText("尚未创建密钥。");
+  fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
+  fireEvent.change(await screen.findByLabelText("主体标识"), {
     target: { value: "team" },
   });
   fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
