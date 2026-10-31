@@ -198,7 +198,7 @@ export function AdminOverview() {
           { ...usage, source: "Key 用量摘要" },
           { ...storage, source: "存储状态" },
           { ...attention, source: "需要处理提醒" },
-            { ...headroom, source: "治理余量" },
+          { ...headroom, source: "治理余量" },
         ]}
         attention={
           <AttentionPanel
