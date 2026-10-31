@@ -39,3 +39,9 @@ Core 内部按 Execution、Identity、Governance、Recovery 等实际业务增�
 Package.swift、锁文件和前端包配置应记录实际版本及支持范围，不从原型拷贝后宣称产品兼容。可运行命令和实现进度只见 [STATUS](../../STATUS.md)。
 
 前端 `app/` 组装 hash 路由、主题和会话内 Query client；`shared/session` 是唯一管理会话与代际/未知范围锁 owner，`shared/management` 保留同源/CSRF/超时边界。feature 内分离表单/展示与实际复用控制hook，禁止页面重复维护登录。布局样式逐步采用CSS Modules，旧feature样式限定到其作用域，避免全局元素选择器污染Mantine。一次性秘密不进入通用缓存，账号授权流程仍由账号页面持有并在离开时清除。
+
+前端基础层约定：`app/theme.ts` 是 Mantine 主题与静态 CSS 变量的唯一来源；Vite 的 `theme-plugin.ts` 在开发启动和生产构建时生成 `app/generated/theme.css`（忽略的构建产物，由 `main.tsx` 普通 CSS import 引入），同时输出浅色/深色变量。Provider 禁止运行时变量和全局 class 样式注入；本阶段固定浅色。主题生成测试校验主色与两套 scheme，生成目录不参与格式检查。
+
+`shared/query-keys.ts` 集中查询 key；`shared/useManagedMutation.ts` 使用会话 owner 的 CSRF 与生命周期，统一 Query mutation、通知、失效、409 刷新与未知结果锁，不自动重放。查询仅保存可再次读取的公开管理 DTO；修改函数只返回 void，一次性凭证由 feature 局部持有，不进入 Query/Mutation 结果或通知。具体表单与业务校验留在 feature。
+
+`shared/ui/` 放实际展示模式：页头、表格、确认框、状态/错误/空态及时间金额。DataTable 的列定义包含排序值和窄屏标签，响应式使用 CSS Modules 的静态媒体查询。Key 的确认框共用 ConfirmModal；Mantine 保留焦点和滚轮/触摸隔离，但关闭会注入 style 标签的滚动条补偿，由静态 `body:has([data-ui-overlay])` 隐藏背景滚动。其他页面的旧滚动锁留待迁移时清理，不能为复用组件绕过同源、会话或 CSP 边界。

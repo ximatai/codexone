@@ -107,6 +107,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
+管理台基础层阶段 1 已在 `codex/admin-ui-foundation` 完成执行者实现与 macOS 合成验证（主题静态生成、共享 mutation/UI、Key 试点；[验证记录](docs/changes/admin-ui-foundation/verification.md)）。主 Agent 评审及 Linux verification 尚未完成，不据此标记整个阶段验收结束；账号/用量/首页迁移仍属阶段 2。
+
 测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；全部Key正式迁移（含5枚需图片权限的Key）与切回预案（真实切换前须用户确认）；管理台后续：Key自助查询页、模型/客户端分布、CSV导出、深色模式、账号检查按钮，以及首页旧运营卡片与新KPI去重。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。

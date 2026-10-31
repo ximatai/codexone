@@ -3,12 +3,12 @@
 契约见 [proposal](proposal.md)。
 
 ## 阶段 1
-- [ ] 构建时主题 CSS 与 CSP 检查。
-- [ ] 外框与页头组件。
-- [ ] 全局通知与模态管理，移除手写滚动锁（Key 页）。
-- [ ] Query key 工厂与 `useManagedMutation`。
-- [ ] DataTable、状态与时间/金额组件。
-- [ ] Key 管理页试点迁移与截图基线。
+- [x] 构建时主题 CSS 与 CSP 检查。
+- [x] 外框与页头组件。
+- [x] 全局通知与模态管理，移除手写滚动锁（Key 页）。
+- [x] Query key 工厂与 `useManagedMutation`。
+- [x] DataTable、状态与时间/金额组件。
+- [x] Key 管理页试点迁移与截图基线。
 - [ ] 主 Agent 评审、界面走查与 Linux verification。
 
 ## 阶段 2

@@ -14,7 +14,7 @@ Mantine 9、TanStack Query、zod 本身成熟，但页面之上没有共用层�
 
 ## 约束
 
-- 管理入口 CSP 为 `style-src 'self'`：禁止 `<style>` 注入。Mantine 运行时 CSS 变量注入因此关闭。主题须在构建时生成静态 CSS（由同一 theme 对象生成），不放宽 CSP。React 经 CSSOM 设置的样式属性不受影响。
+- 管理入口 CSP 为 `style-src 'self'`：禁止 `<style>` 注入。Mantine 运行时 CSS 变量注入因此关闭。主题须在构建时生成静态 CSS（由同一 theme 对象生成），不放宽 CSP。React 经 CSSOM 设置的样式属性不受影响。Mantine 默认滚动条补偿会通过 react-remove-scroll-bar 注入 style；Key 弹层关闭该补偿，保留 Mantine 滚轮/触摸隔离，以静态 CSS 隐藏背景滚动，不降低 CSP。
 - 只为已有两处以上实际使用的模式建共用件（[布局约定](../../development/layout.md)），不预建未来抽象。
 - 不改变外部行为与可访问名称；现有 vitest/Playwright 作为安全网，迁移页面增加截图基线。
 
