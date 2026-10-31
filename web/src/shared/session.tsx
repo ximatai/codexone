@@ -6,6 +6,7 @@ import {
   Stack,
   Title,
   Alert,
+  Text,
 } from "@mantine/core";
 import {
   createContext,
@@ -70,6 +71,7 @@ export function ManagementSession({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showLogin, setShowLogin] = useState(false);
   const [, updateLocks] = useState(0);
   const locks = useRef(new Set<Scope>());
   // Read-only navigation metadata only; never results, credentials or callbacks.
@@ -137,7 +139,11 @@ export function ManagementSession({
         setStatus("unavailable");
       else {
         setStatus(secret === undefined ? "failed" : "anonymous");
-        setError("无法连接管理服务，请重试。");
+        setError(
+          cause instanceof api.ManagementError && cause.status === 429
+            ? "管理服务繁忙，请稍候再手动重试登录。"
+            : "无法连接管理服务，请重试。",
+        );
       }
     } finally {
       if (!signal.aborted) setBusy(false);
@@ -221,7 +227,15 @@ export function ManagementSession({
           {notice}
         </Alert>
       )}
-      {status === "authenticated" || publicView ? (
+      {publicView && status !== "authenticated" && !showLogin && (
+        <Paper withBorder p="md" mb="md">
+          <Text size="sm" mb="sm">
+            登录后查看运营信息并管理账号与密钥。
+          </Text>
+          <Button onClick={() => setShowLogin(true)}>管理员登录</Button>
+        </Paper>
+      )}
+      {status === "authenticated" || (publicView && !showLogin) ? (
         <div key={generation}>{children}</div>
       ) : (
         <Paper className={styles.login} withBorder p="xl" radius="md">
@@ -281,6 +295,9 @@ export function ManagementSession({
             )}
           </Stack>
         </Paper>
+      )}
+      {publicView && showLogin && status !== "authenticated" && (
+        <div key={generation}>{children}</div>
       )}
     </Context.Provider>
   );
