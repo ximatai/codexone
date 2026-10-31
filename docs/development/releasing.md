@@ -37,7 +37,7 @@ python3 scripts/check_docs.py
 
 验证 job 上传 `verified-release-files` 与 `verified-linux-amd64-image`，保留 7 天；后者包含可用 `docker load --input codexone-linux-amd64.tar.gz` 导入的镜像。tag 发布成功后上传 `published-release-files`，保留 30 天，并把以下文件附到 Release：
 
-- 带版本前缀的源码归档、Linux amd64 二进制、实际镜像 `/opt/codexone/licenses` 和项目 LICENSE/清单打包的 `licenses.tar.gz`。
+- 带版本前缀的源码归档、镜像内二进制的 SHA-256（二进制依赖镜像内 Swift 运行时，不单独提供下载）、实际镜像 `/opt/codexone/licenses` 和项目 LICENSE/清单打包的 `licenses.tar.gz`。
 - `image-id.txt`、`image-digest.txt`、`source-revision.txt`、`binary-sha256.txt`、`release.json` 与 `release-notes.md`。
 - `SHA256SUMS` 覆盖上述文件及 `image-archive-sha256.txt`，后者核对工作流单独保存的镜像归档。Release 不附巨型 Docker 镜像归档；`sha256sum --check SHA256SUMS` 只需 Release 的全部附件。
 

@@ -89,12 +89,14 @@ jobs:
           docker cp "$container:/usr/local/bin/codexone" artifacts/codexone-linux-amd64
           verified_binary="$(docker run --rm --network none --read-only --entrypoint sha256sum codexone:tls-base /output/codexone | cut -d ' ' -f 1)"
           test "$(sha256sum artifacts/codexone-linux-amd64 | cut -d ' ' -f 1)" = "$verified_binary"
+          # The binary needs the image's Swift runtime; publish only its digest, not a standalone download.
+          sha256sum artifacts/codexone-linux-amd64 | sed 's|artifacts/||' > artifacts/binary-sha256.txt
+          rm artifacts/codexone-linux-amd64
           mkdir "$RUNNER_TEMP/licenses"
           docker cp "$container:/opt/codexone/licenses/." "$RUNNER_TEMP/licenses/"
           docker cp "$container:/opt/codexone/LICENSE" "$RUNNER_TEMP/licenses/LICENSE"
           cp THIRD_PARTY_NOTICES.md "$RUNNER_TEMP/licenses/"
           tar -czf artifacts/licenses.tar.gz -C "$RUNNER_TEMP/licenses" .
-          sha256sum artifacts/codexone-linux-amd64 | sed 's|artifacts/||' > artifacts/binary-sha256.txt
           printf 'Not published; local image ID: %s\n' "$image_id" > artifacts/image-digest.txt
           mkdir image
           docker save "$image_id" | gzip > image/codexone-linux-amd64.tar.gz
@@ -227,7 +229,7 @@ jobs:
           if [[ "$PRERELEASE" == true ]]; then args=(--prerelease --latest=false); fi
           gh release create "$TAG" --verify-tag --title "$TAG" \
             --notes-file artifacts/release-notes.md "${args[@]}" \
-            artifacts/*-source.tar.gz artifacts/codexone-linux-amd64 artifacts/licenses.tar.gz \
+            artifacts/*-source.tar.gz artifacts/licenses.tar.gz \
             artifacts/SHA256SUMS artifacts/image-digest.txt artifacts/image-id.txt \
             artifacts/binary-sha256.txt artifacts/source-revision.txt artifacts/release.json \
             artifacts/release-notes.md artifacts/image-archive-sha256.txt
