@@ -57,7 +57,7 @@ def verify(binary):
                 with sqlite3.connect(database) as db:
                     row = db.execute('SELECT sealed_credential FROM accounts').fetchone()[0]
                     assert (row == original) == (barrier != 'after_commit')
-                    assert db.execute('PRAGMA user_version').fetchone()[0] == 9
+                    assert db.execute('PRAGMA user_version').fetchone()[0] == 10
                 for path in root.glob('core.sqlite*'):
                     content = path.read_bytes()
                     assert all(secret not in content for secret in [b'synthetic-access-1', b'synthetic-refresh-1', b'synthetic-access-2', b'synthetic-refresh-2', ('5a' * 32).encode()])

@@ -161,7 +161,7 @@ private struct UsageFixture {
         WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<9999)
         INSERT INTO attempts SELECT 'synthetic-'||i,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,
           reserved,state,json_remove(json_set(admission_json,'$.attempt','synthetic-'||i),'$.requestID'),usage_json,evidence_floor,estimated,
-          created_at_epoch,outcome_json,NULL FROM attempts,n WHERE id='seed';
+          created_at_epoch,outcome_json,NULL,unknown_since_epoch,closed_unknown_at_epoch FROM attempts,n WHERE id='seed';
         INSERT INTO evidence SELECT id,1,usage_json FROM attempts WHERE id LIKE 'synthetic-%';
         """)
     }
