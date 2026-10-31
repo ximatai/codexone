@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · 试运行加固 | macOS arm64 完整 `verify.sh --backend`（Swift 266项、全部后端标准脚本）、`--web --chrome`（Vitest 109项、Chrome 13项）、文档检查通过；1440×900合成流程与独立subagent复核通过；未跑Linux/部署 | [加固验证](docs/changes/ops-hardening/verification.md) |
 | 2026-10-31 · 首页需要处理提醒 | macOS arm64构建、Swift258项、全部后端标准脚本、Vitest96项、Chrome12项及真实生产SPA管理UI/CSP逐项通过（失败项修正后定向补验）；1440×900与窄屏走查、前端subagent评审完成；未跑Linux/部署 | [提醒验证](docs/changes/admin-attention/verification.md) |
 | 2026-10-31 · 管理台基础层阶段 2 | macOS arm64 `verify.sh --web --chrome`（Vitest 91、Chrome 12）、codexone/ExecutionProbe 构建、两项真实本机合成 UI/CSP 入口通过；阶段 2 评审返工 1–18 已处理；四页与详情/菜单共13张桌面/手机截图已更新、subagent复核完成 | [基础层验证](docs/changes/admin-ui-foundation/verification.md) |
 | 2026-10-31 · 账号提前刷新 | macOS arm64完整`verify.sh --backend`（Swift 245项）与`--web --chrome`（Vitest 74、Playwright 6）通过；15/5分钟窗口、单飞/失败分类、loopback连接拒绝、管理时间字段与1440×900账号详情；subagent评审问题已修复 | [提前刷新](docs/changes/proactive-account-refresh/verification.md) |
@@ -112,8 +113,10 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1、2 已合并（“C 结构 + A 克制”：侧栏/窄屏导航、四页迁移、图表/DataTable、账号共享修改、CSS 清理，一轮评审返工），macOS 前端与两项合成生产 CSP 入口、Linux verification 通过；阶段 3 深色开关未开始。主色于2026-10-31改为石墨蓝（用户改选），绿/黄/红仅表示状态。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
 
+[试运行加固](docs/changes/ops-hardening/proposal.md)本机候选已完成：全局/身份未结容量1024（主体/Key原有限额不变）、unknown人工CAS释放与原子审计、容量比例提醒、真实凭证到期元数据、统一账号名称；释放后用量仍未知，可信部分数值保留下界，迟到部分证据不重新占用容量。工作位于本地`codex/ops-hardening`，未push/PR、未访问或修改部署实例；下一步由主Agent承接Linux verification及部署评估。
+
 首页[需要处理提醒](docs/changes/admin-attention/proposal.md)已合并：只读汇总账号授权/冷却、额度、Key到期与限额、待核对、60分钟错误率、低盘与进程内客户端协议名称，来源失败单独提示；首页提醒区与导航红点；macOS完整后端/前端与Linux verification通过。
 
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（v9管理到期字段为null，最近更新来自提交审计）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；[客户端协议跟踪](docs/development/client-protocol-watch.md)按已定治理执行（部署前手动比对，未知名称进首页提醒）；后续排期（2026-10-31 用户确认）：管理台阶段 2 → [首页需要处理提醒](docs/changes/admin-attention/proposal.md) → [用量分析](docs/changes/usage-analytics/proposal.md)（模型/客户端分布、CSV导出）→ [Key自助查询](docs/changes/key-self-service/proposal.md)；完成后单独讨论全部Key迁移、Nginx切换与观察回退；深色模式待排。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（部署候选仍未包含本地加固；新候选从应用层提取真实到期元数据）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；[客户端协议跟踪](docs/development/client-protocol-watch.md)按已定治理执行（部署前手动比对，未知名称进首页提醒）；后续排期（2026-10-31 用户确认）：管理台阶段 2 → [首页需要处理提醒](docs/changes/admin-attention/proposal.md) → [用量分析](docs/changes/usage-analytics/proposal.md)（模型/客户端分布、CSV导出）→ [Key自助查询](docs/changes/key-self-service/proposal.md)；完成后单独讨论全部Key迁移、Nginx切换与观察回退；深色模式待排。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
