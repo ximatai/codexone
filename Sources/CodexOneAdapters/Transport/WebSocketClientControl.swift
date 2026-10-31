@@ -62,8 +62,9 @@ func handleWebSocketControl(
       fields["stream_id"] == nil || owner == lane
     {
       // Claim before suspending the write: disconnect settlement must not enqueue a duplicate.
-      upstream.markInterrupted(responseID: id, lane: owner)
-      try await upstream.writer.send(body.data)
+      if upstream.claimInterrupt(responseID: id, lane: owner) {
+        try await upstream.writer.send(body.data)
+      }
       downstream.permitSettlement()
     } else {
       var failed: [String: JSONValue] = [

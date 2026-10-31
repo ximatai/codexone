@@ -203,18 +203,18 @@ struct WebSocketPeer: Sendable {
       case .awaitingIdentity: try await Task.sleep(for: .milliseconds(10))
       case .interrupted: return
       case .interrupt(let id):
+        guard claimInterrupt(responseID: id, lane: lane) else { return }
         var control: [String: JSONValue] = [
           "type": .string("response.interrupt"), "response_id": .string(id),
         ]
         if !lane.isEmpty { control["stream_id"] = .string(lane) }
         try await send(.object(control))
-        markInterrupted(responseID: id, lane: lane)
         return
       }
     }
   }
-  func markInterrupted(responseID: String, lane: String) {
-    turns?.markInterrupted(responseID: responseID, lane: lane)
+  func claimInterrupt(responseID: String, lane: String) -> Bool {
+    turns?.claimInterrupt(responseID: responseID, lane: lane) == true
   }
   func wasInterrupted(lane: String) -> Bool { turns?.wasInterrupted(lane: lane) == true }
   func permitSettlement() { closure.permitSettlement() }

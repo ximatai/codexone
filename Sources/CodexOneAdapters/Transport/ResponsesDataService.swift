@@ -169,7 +169,12 @@ public struct ResponsesDataService: Service {
                     throw ExecutionError.capacity
                   }
                   return HTTPHeaders()
-                } catch { return nil }
+                } catch {
+                  // NIO's declined-upgrade path does not replay this request head/end.
+                  // Write the rejection here so a full ordinary pool cannot hang the handshake.
+                  try? await rejectWebSocketUpgrade(channel, error: error).get()
+                  return nil
+                }
               }
             },
             upgradePipelineHandler: { channel, head in

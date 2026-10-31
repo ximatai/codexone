@@ -139,10 +139,14 @@ final class WebSocketTurns: Sendable {
     }
   }
 
-  func markInterrupted(responseID: String, lane: String) {
+  /// Claim before a suspended wire write; caller controls and disconnect settlement race here.
+  func claimInterrupt(responseID: String, lane: String) -> Bool {
     state.withLock { value in
-      guard case .active(let id) = value.lanes[lane]?.phase, id == responseID else { return }
+      guard !value.closed, case .active(let id) = value.lanes[lane]?.phase, id == responseID,
+        value.lanes[lane]?.interrupted == false
+      else { return false }
       value.lanes[lane]?.interrupted = true
+      return true
     }
   }
   func wasInterrupted(lane: String) -> Bool {

@@ -60,22 +60,33 @@ def receive(sock, *, masked=False):
     return first & 15, data
 
 
+class WebSocketHandshakeRejected(AssertionError):
+    def __init__(self, header):
+        super().__init__(header[:100])
+        self.status = int(header.split(b' ', 2)[1])
+
+
 def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None, timeout=5):
     sock = socket.create_connection(('127.0.0.1', port), timeout=timeout)
-    key = base64.b64encode(os.urandom(16)).decode()
-    auth = 'Authorization: Bearer ' + token + '\r\n' if authorized else ''
-    auth += ''.join(f'{name}: {value}\r\n' for name, value in (headers or {}).items())
-    extensions = 'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n' if extension_offer else ''
-    sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + extensions + '\r\n').encode())
-    header = bytearray()
-    while not header.endswith(b'\r\n\r\n'):
-        header.extend(exact(sock, 1))
-        assert len(header) < 16384
-    assert b' 101 ' in header, header[:100]
-    expected = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
-    assert expected.lower() in header.lower()
-    assert b'sec-websocket-extensions:' not in header.lower()
-    return sock
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        auth = 'Authorization: Bearer ' + token + '\r\n' if authorized else ''
+        auth += ''.join(f'{name}: {value}\r\n' for name, value in (headers or {}).items())
+        extensions = 'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n' if extension_offer else ''
+        sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + extensions + '\r\n').encode())
+        header = bytearray()
+        while not header.endswith(b'\r\n\r\n'):
+            header.extend(exact(sock, 1))
+            assert len(header) < 16384
+        if b' 101 ' not in header:
+            raise WebSocketHandshakeRejected(bytes(header))
+        expected = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
+        assert expected.lower() in header.lower()
+        assert b'sec-websocket-extensions:' not in header.lower()
+        return sock
+    except BaseException:
+        sock.close()
+        raise
 
 
 class Provider(BaseHTTPRequestHandler):

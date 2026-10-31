@@ -5,18 +5,47 @@ import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import sqlite3
-import socket
 import tempfile
 import threading
 import time
 from verify_protocol import TOKEN, start, stop
-from verify_websocket import dial, send, receive, turn
+from verify_websocket import dial, send, receive, turn, WebSocketHandshakeRejected
 from verify_admin import request, document
 from verify_keys import ADMIN
 
 PRIVATE = 'synthetic-payload-must-not-enter-logs'
+
+
+class GatewayLogs:
+    """Drain the owned child pipe continuously; retain bounded synthetic logs for assertions."""
+    def __init__(self, process):
+        self.output = bytearray()
+        self.overflow = False
+        self.fd = process.stdout.fileno()
+        self.worker = threading.Thread(target=self.drain)
+        self.worker.start()
+
+    def drain(self):
+        while True:
+            try:
+                chunk = os.read(self.fd, 8192)
+            except OSError:
+                return  # Failure cleanup may already have closed the exited child's pipe.
+            if not chunk:
+                return
+            if len(self.output) + len(chunk) <= 131072:
+                self.output.extend(chunk)
+            else:
+                self.overflow = True  # Keep draining so diagnostics cannot block the gateway.
+
+    def read(self):
+        self.worker.join(3)
+        assert not self.worker.is_alive(), 'Gateway log reader did not finish'
+        assert not self.overflow, 'Gateway synthetic log capture exceeded 128 KiB'
+        return bytes(self.output)
 
 
 def event(sock):
@@ -147,15 +176,19 @@ def verify_settlement(binary, provider, directory, configuration, headers):
     config.write_text(json.dumps(configuration))
     config.chmod(0o600)
     process, ports = start(binary, config, directory)
+    capture = GatewayLogs(process)
     db = directory / 'state/core.sqlite'
     try:
         def dial_when_free(timeout=5):
-            # Closed probes release their slots asynchronously; slow emulated hosts lag behind.
+            # Retry only explicit capacity rejections; a hung handshake is a test failure.
             until = time.monotonic() + timeout
             while True:
                 try:
-                    return dial(ports['data'], headers=headers)
-                except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
+                    remaining = until - time.monotonic()
+                    assert remaining > 0, 'Connection slot did not become free'
+                    return dial(ports['data'], headers=headers, timeout=min(1, remaining))
+                except WebSocketHandshakeRejected as error:
+                    assert error.status == 503, error
                     assert time.monotonic() < until, 'Connection slot did not become free'
                     time.sleep(.05)
 
@@ -183,20 +216,20 @@ def verify_settlement(binary, provider, directory, configuration, headers):
                 assert time.monotonic() < until, [row[0] for row in rows]
                 time.sleep(.02)
 
+        release_samples = []
+
         def assert_connection_slots_released():
-            until = time.monotonic() + 3
-            while True:
-                sockets = []
-                try:
-                    for _ in range(8):
-                        sockets.append(dial(ports['data'], headers=headers))
-                    return
-                except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
-                    assert time.monotonic() < until, 'Connection slots were not released'
-                    time.sleep(.02)
-                finally:
-                    for sock in sockets:
-                        sock.close()
+            began = time.monotonic()
+            sockets = []
+            try:
+                for _ in range(8):
+                    remaining = 3 - (time.monotonic() - began)
+                    assert remaining > 0, 'Connection slots were not released within 3s'
+                    sockets.append(dial_when_free(timeout=remaining))
+                release_samples.append(time.monotonic() - began)
+            finally:
+                for sock in sockets:
+                    sock.close()
 
         baseline = len(counts(db))
         before = provider.creates
@@ -206,13 +239,13 @@ def verify_settlement(binary, provider, directory, configuration, headers):
             begin_settlement('settlement-success', interrupt=False)
         assert len(counts(db)) == baseline + 8
         assert all(row[0] == 'intent' for row in counts(db)[-8:])
-        rejected = False
+        began = time.monotonic()
         try:
-            with dial(ports['data'], headers=headers, timeout=.25):
-                pass
-        except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
-            rejected = True
-        assert rejected, 'Settlement released connection capacity early'
+            with dial(ports['data'], headers=headers, timeout=1):
+                raise AssertionError('Settlement released connection capacity early')
+        except WebSocketHandshakeRejected as error:
+            assert error.status == 503, error
+        assert time.monotonic() - began < 1, 'Full connection pool hung the handshake'
         provider.settle_release.set()
         settled = await_rows(baseline + 8, ['settled'] * 8)
         assert provider.interrupts == interrupt_before + 8
@@ -222,6 +255,9 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         assert all(json.loads(row[3])['kind'] == 'cancelled'
                    and json.loads(row[3])['failure'] == 'client_cancelled' for row in settled)
         assert_connection_slots_released()
+        # Reacquiring every slot after closing idle probes must not wait for a 10s drain.
+        for _ in range(3):
+            assert_connection_slots_released()
         # Every failure retains unknown exposure and never replays the create.
         total = baseline + 8
         for prompt in ('settlement-abrupt', 'settlement-error', 'settlement-timeout', 'settlement-unknown'):
@@ -303,18 +339,23 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         assert time.monotonic() - began < 5, 'Shutdown waited for settlement timeout'
         await_rows(total, ['unknown'])
         assert process.returncode == 0
-        logs = process.stdout.read()
+        logs = capture.read()
+        assert len(logs) > 8192, 'Exercise log draining beyond a small Linux pipe capacity'
         assert all(secret.encode() not in logs for secret in
             (PRIVATE, TOKEN, ADMIN, 'synthetic-value', 'synthetic-gate', 'synthetic-known'))
         for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
             assert ('protocol_name=' + name).encode() not in logs
         print('PASS: gateway interrupt settles cancelled usage; exactly one targeted control; connection capacity retained; EOF/error/10s timeout/unknown preserve unknown without replay; sibling lanes and resources release; shutdown cancels drain; known headers forward without warnings')
+        print('RESOURCE connection_slot_reacquire_seconds=' + json.dumps(release_samples))
+        print('RESOURCE settlement_log_bytes=' + str(len(logs)))
+        stop(process)
         short_root = directory / 'short-deadline'
         short_root.mkdir()
         short_config = short_root / 'identity.json'
         short_config.write_text(json.dumps({**configuration, 'executionTimeoutSeconds': 2}))
         short_config.chmod(0o600)
         process, ports = start(binary, short_config, short_root)
+        capture = GatewayLogs(process)
         db = short_root / 'state/core.sqlite'
         began = time.monotonic()
         begin_settlement('settlement-timeout', interrupt=False)
@@ -323,6 +364,7 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         print('PASS: interrupted settlement retains the original shorter execution deadline')
     finally:
         stop(process)
+        capture.read()
 
 
 def main():
@@ -354,6 +396,7 @@ def main():
             admin.write_text(ADMIN)
             admin.chmod(0o600)
             process, ports = start(binary, config, root, admin_token_file=admin)
+            capture = GatewayLogs(process)
             db = root/'state/core.sqlite'
             try:
                 headers = {'x-codex-future-header': 'synthetic-value', 'x-openai-actor-authorization': 'synthetic-gate', 'chatgpt-account-id': 'synthetic-forged'}
@@ -481,7 +524,7 @@ def main():
                 assert all(secret not in payload for secret in (PRIVATE, TOKEN, ADMIN, "synthetic-value", "synthetic-gate"))
                 process.terminate()
                 assert process.wait(10) == 0
-                logs = process.stdout.read()
+                logs = capture.read()
                 for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
                     assert ('protocol_name=' + name).encode() not in logs
                 for name in ('synthetic.unbound', 'synthetic.future', 'synthetic.generation', 'synthetic.burst', 'x-codex-future-header'):
@@ -494,6 +537,7 @@ def main():
                 verify_settlement(binary, provider, root / 'settlement', json.loads(config.read_text()), headers)
             finally:
                 stop(process)
+                capture.read()
     finally:
         provider.shutdown()
         provider.server_close()
