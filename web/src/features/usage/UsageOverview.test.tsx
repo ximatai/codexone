@@ -27,7 +27,9 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
   const view = render(
     <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
   );
-  await screen.findByText("≥ 10,000,000,000,000,001");
+  expect(await screen.findAllByText("≥ 10,000,000,000,000,001")).toHaveLength(
+    2,
+  );
   expect(screen.getByText(/另有 1 条/)).toBeVisible();
   expect(
     screen.getByText(/待核对占用（预估）（不受其他筛选影响）/),
@@ -171,13 +173,13 @@ it("automatically queries the selected Key, shows principal and durations, and c
   fireEvent.click(screen.getByRole("button", { name: "复制请求 ID" }));
   await screen.findByText("已复制请求 ID");
   expect(writeText).toHaveBeenCalledWith(report.rows[0].requestID);
-  expect(document.body).toHaveClass("management-overlay-open");
+  expect(document.querySelector("[data-ui-overlay]")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  expect(document.body).not.toHaveClass("management-overlay-open");
+  expect(screen.queryByRole("dialog", { name: "请求详情" })).toBeNull();
   fireEvent.click(screen.getAllByRole("button", { name: "查看详情" })[0]);
-  expect(document.body).toHaveClass("management-overlay-open");
+  expect(document.querySelector("[data-ui-overlay]")).toBeInTheDocument();
   view.unmount();
-  expect(document.body).not.toHaveClass("management-overlay-open");
+  expect(screen.queryByRole("dialog", { name: "请求详情" })).toBeNull();
 });
 
 it("keeps the completed-hour window through pagination across an hour and renews it on query", async () => {
@@ -230,7 +232,7 @@ it("keeps the completed-hour window through pagination across an hour and renews
   );
 });
 
-it("shows filtered aggregate latency and dedicated request metric columns", async () => {
+it("shows filtered aggregate latency, request duration columns and complete drawer metrics", async () => {
   setup();
   const report = api.parseUsage(reportFixture());
   report.totals.averageFirstEventMilliseconds = 12.5;
@@ -244,10 +246,15 @@ it("shows filtered aggregate latency and dedicated request metric columns", asyn
   );
   await screen.findByText("12.5 ms");
   expect(screen.getByText("60 ms")).toBeVisible();
+  fireEvent.click(screen.getByText("更多统计与用量证据"));
   expect(screen.getByText("300 ms")).toBeVisible();
   expect(
-    screen.getByRole("columnheader", { name: "缓存 Token" }),
+    screen.getByRole("columnheader", { name: "首事件耗时" }),
   ).toBeVisible();
   expect(screen.getByText("15 ms")).toBeInTheDocument();
   expect(screen.getByText("200 ms")).toBeInTheDocument();
+  fireEvent.click(screen.getAllByRole("button", { name: "查看详情" })[0]);
+  expect(await screen.findByText(/^缓存 token：/)).toBeVisible();
+  expect(screen.getByText(/^账号：/)).toBeVisible();
+  expect(screen.getByText(/^用量：/)).toBeVisible();
 });
