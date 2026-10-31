@@ -13,6 +13,7 @@
 | 用量查询 | Core/Application/Usage 查询值与端口 | Adapters 单一只读 WAL reader/专用队列 | 一个在途快照、有总预算/取消；入口先关闭 reader 再关闭主库，不占 writer 队列 |
 | SQL 原子操作 | Core/Application 定义命令端口 | Adapters/Persistence 有界 DB 执行 | 一次命令一个事务；不跨网络持有，不向核心返回 SQL row |
 | 恢复授权与代际 | Core/Application/Recovery | Runtime 监督缓存 worker；Transport 只交内容 | 先查核心归属/当前策略，后调缓存端口；restore 用例协调新 generation/清理 |
+| 未知关闭与保留 | Core ExecutionMaintaining，Adapters 原子汇总/清理 | Runtime ExecutionMaintenanceSupervisor 单一顺序 owner | await 每轮最多 100 条后等待 60 秒；非 normal 暂停，关闭 await 后再关 DB |
 | 存储压力与周期观测 | Core 定义水位与观测端口，Adapters 采样/储备/SQLite | Runtime StorageMonitor 单一顺序 owner | await 一次维护再等待；writer 队列复核，关键收尾保留，先停 monitor 再关闭 DB |
 | 启动、drain、维护锁 | Core 定义所需端口/结果 | Runtime | 入口组装；启动恢复前不开放准入，关闭有顺序且有期限 |
 | 管理 API | Core 的管理用例 | Adapters/ControlPlane 的请求/会话 | DTO 转应用命令；不直接改共享字典/DB |

@@ -81,7 +81,7 @@ python3 scripts/verify_installation.py --image codexone:candidate \
   --incompatible-image codexone:rollback-peer --incompatible-schema 8 --browser
 ```
 
-当前schema v9不能用v8作同库兼容回退。CI保留固定v8旧revision产品源码，以实际旧二进制验证正向启动控制、显式备份迁移及拒绝v9且不修改数据；安装脚本的incompatible-schema缺省6，也可选7/8。镜像须实际存在，脚本解析不可变ID。未来有受信、验证过当前schema/信封/配置兼容的旧v9候选后，才可用previous-image验证同库回退；必须是不同实际二进制，不能同一二进制换tag，也不能改数据库版本号。v9升级部署与本机证据见[第二轮管理](../changes/admin-round2/verification.md)。
+当前schema v10不能用v9及更旧版本作同库兼容回退。CI保留固定v8旧revision产品源码，以实际旧二进制验证正向启动控制、显式备份迁移及拒绝v10且不修改数据；安装脚本的incompatible-schema缺省6，也可选7/8/9。镜像须实际存在，脚本解析不可变ID。未来有受信、验证过当前schema/信封/配置兼容的旧v10候选后，才可用previous-image验证同库回退；必须是不同实际二进制，不能同一二进制换tag，也不能改数据库版本号。v9 历史升级部署与本机证据见[第二轮管理](../changes/admin-round2/verification.md)。
 
 回退到不支持 null 限额的旧二进制前，先通过管理入口把所有不限 Key 改为五项显式数值；schema 相同也不代表旧版本可解码 null，否则旧版本可能拒绝启动或拒绝这些 Key。此调整不清除历史账本或 unknown 责任。
 
@@ -92,3 +92,5 @@ python3 scripts/verify_installation.py --image codexone:candidate \
 ### 可选HTTP出网代理
 
 在安装目录的私有.env添加CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example:7890，再使用受控compose-install.py入口启动/升级。空值保持直连，launcher不会采用宿主同名环境覆盖私有manifest；代理配置适用于HTTP/WS/认证/额度，失败不直连回退，目标TLS保持验证。不改Clash全局模式、系统信任或旧服务配置，真实代理地址与凭证不放进公开仓库。
+
+本次 v10 治理实现仅有本机 macOS 验证；Linux 镜像/迁移出口须由主 Agent 按治理变更验证账承接，未在此声称通过。
