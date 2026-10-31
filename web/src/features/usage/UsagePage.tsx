@@ -1,11 +1,12 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { useSearchParams } from "react-router";
+import { useNavigationType, useSearchParams } from "react-router";
 import { useManagementSession } from "../../shared/session";
-import { UsageOverview } from "./UsageOverview";
+import { UsageOverview, usageNavigationKey } from "./UsageOverview";
 import { defaults, type UsageFilters } from "./api";
 import type { UsageNavigation } from "./UsageOverview";
 import { readPage } from "../../shared/view-memory";
 export function UsagePage() {
+  const restoreView = useNavigationType() === "POP";
   const [params, setParams] = useSearchParams();
   const owner = useManagementSession();
   const filters: UsageFilters = { ...defaults() };
@@ -31,7 +32,7 @@ export function UsagePage() {
     next.delete("window");
     if (navigation) {
       next.set("page", String(navigation.page + 1));
-      owner.views.set(`usage:${JSON.stringify(value)}`, navigation);
+      owner.views.set(usageNavigationKey(value, navigation.page), navigation);
     }
     if (next.toString() !== params.toString())
       setParams(next, { replace: true });
@@ -46,6 +47,7 @@ export function UsagePage() {
         initialFilters={filters}
         requestedPage={readPage(params.get("page"), 2201) - 1}
         navigationStore={owner.views}
+        restoreView={restoreView}
         selection={null}
         paused={false}
         onUnauthorized={owner.invalidate}
