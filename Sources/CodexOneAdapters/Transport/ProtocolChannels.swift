@@ -14,17 +14,19 @@ final class ProtocolChannels: Sendable {
 
   func register(_ channel: any Channel) -> Bool {
     let id = ObjectIdentifier(channel)
-    let accepted = state.withLock { value in
-      guard !value.draining, value.channels.count < limit else { return false }
+    let newlyAccepted: Bool? = state.withLock { value in
+      guard !value.draining else { return nil }
+      if value.channels[id] != nil { return false }
+      guard value.channels.count < limit else { return nil }
       value.channels[id] = channel
       return true
     }
-    if accepted {
+    if newlyAccepted == true {
       channel.closeFuture.whenComplete { _ in
         self.state.withLock { _ = $0.channels.removeValue(forKey: id) }
       }
     }
-    return accepted
+    return newlyAccepted != nil
   }
 
   func close() {

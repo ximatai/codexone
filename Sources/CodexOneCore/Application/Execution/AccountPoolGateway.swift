@@ -36,48 +36,7 @@ public struct AccountPoolGateway: Sendable {
           affinity == nil && connection == nil && !affinityHints.isEmpty
           ? try await store.resolveAccountHint(
             principal: policy.key.principal, hints: affinityHints) : nil
-        var works: [AccountRouteIdentity: AccountDispatchWork] = [:]
-        var refreshable: [ManagedAccount] = []
-        for account in try await store.listAccounts(after: nil) {
-          try Task.checkCancellation()
-          let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
-          guard affinity == nil || affinity == identity,
-            account.authorization == .ready || account.authorization == .refreshing,
-            account.mode == .enabled || (account.mode == .draining && affinity == identity)
-          else { continue }
-          if account.authorization == .refreshing {
-            refreshable.append(account)
-            continue
-          }
-          do {
-            let work = try await credentials.prepareDispatch(
-              id: account.id, continuation: affinity == identity)
-            works[identity] = work
-          } catch AccountDispatchError.refreshRequired {
-            refreshable.append(account)
-          } catch AccountDispatchError
-            .unavailable
-          { continue } catch ExecutionError.invalidCommand {
-            // Isolate a credential that fails local decryption; DB failures still abort the pool.
-            continue
-          }
-        }
-        if works.isEmpty, let account = refreshable.sorted(by: { $0.id < $1.id }).first,
-          let refresher
-        {
-          _ = try await refresher.refreshForDispatch(account: account)
-          try Task.checkCancellation()
-          let work = try await credentials.prepareDispatch(
-            id: account.id, continuation: affinity?.id == account.id)
-          let identity = try AccountRouteIdentity(
-            id: work.account.id, namespace: work.account.namespace)
-          works[identity] = work
-        }
-        if let preferred, let work = works[preferred] { works = [preferred: work] }
-        guard !works.isEmpty else {
-          throw refreshable.isEmpty
-            ? AccountDispatchError.unavailable : AccountDispatchError.refreshRequired
-        }
+        let works = try await prepareWorks(affinity: affinity, preferred: preferred)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let day = Int64(Date().timeIntervalSince1970 / 86_400)
         let command = try AccountPoolAdmission(
@@ -87,4 +46,65 @@ public struct AccountPoolGateway: Sendable {
         return try PreparedAccountPoolAdmission(command: command, credentials: works)
       }, operation: operation)
   }
+  /// Auxiliary dispatch has no generation admission, reservation or finalization ticket.
+  public func authorizeControl(preferred: AccountRouteIdentity? = nil) async throws
+    -> AccountDispatchWork
+  {
+    let works = try await prepareWorks(affinity: nil, preferred: nil)
+    let selected = try await store.selectControlAccount(
+      key: policy.key, candidates: try works.values.map { try AccountRouteCandidate(work: $0) },
+      preferred: preferred)
+    guard let work = works[selected] else { throw ExecutionError.conflict }
+    return work
+  }
+
+  private func prepareWorks(affinity: AccountRouteIdentity?, preferred: AccountRouteIdentity?)
+    async throws
+    -> [AccountRouteIdentity: AccountDispatchWork]
+  {
+    var works: [AccountRouteIdentity: AccountDispatchWork] = [:]
+    var refreshable: [ManagedAccount] = []
+    for account in try await store.listAccounts(after: nil) {
+      try Task.checkCancellation()
+      let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
+      guard affinity == nil || affinity == identity,
+        account.authorization == .ready || account.authorization == .refreshing,
+        account.mode == .enabled || (account.mode == .draining && affinity == identity)
+      else { continue }
+      if account.authorization == .refreshing {
+        refreshable.append(account)
+        continue
+      }
+      do {
+        let work = try await credentials.prepareDispatch(
+          id: account.id, continuation: affinity == identity)
+        works[identity] = work
+      } catch AccountDispatchError.refreshRequired {
+        refreshable.append(account)
+      } catch AccountDispatchError
+        .unavailable
+      { continue } catch ExecutionError.invalidCommand {
+        // Isolate a credential that fails local decryption; DB failures still abort the pool.
+        continue
+      }
+    }
+    if works.isEmpty, let account = refreshable.sorted(by: { $0.id < $1.id }).first,
+      let refresher
+    {
+      _ = try await refresher.refreshForDispatch(account: account)
+      try Task.checkCancellation()
+      let work = try await credentials.prepareDispatch(
+        id: account.id, continuation: affinity?.id == account.id)
+      let identity = try AccountRouteIdentity(
+        id: work.account.id, namespace: work.account.namespace)
+      works[identity] = work
+    }
+    if let preferred, let work = works[preferred] { works = [preferred: work] }
+    guard !works.isEmpty else {
+      throw refreshable.isEmpty
+        ? AccountDispatchError.unavailable : AccountDispatchError.refreshRequired
+    }
+    return works
+  }
+
 }

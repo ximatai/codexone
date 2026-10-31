@@ -54,7 +54,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
         [.text(account.id), .text(model), .number(Int64(Date().timeIntervalSince1970))]) == 0
     else { throw ExecutionError.denied }
   }
-  private static func loadHealth(_ db: SQLiteConnection, account: ManagedAccount) throws
+  static func loadHealth(_ db: SQLiteConnection, account: ManagedAccount) throws
     -> AccountHealth
   {
     let records = try db.rows(
@@ -117,6 +117,16 @@ extension SQLiteExecutionStore: AccountHealthStore {
     guard current.namespace == snapshot.admission.owner.namespace,
       current.credentialVersion == captured.credentialVersion
     else { return }
+    try applyAccountFailure(db, account: current, model: snapshot.admission.model, outcome: outcome)
+  }
+  static func applyAccountFailure(
+    _ db: SQLiteConnection, account current: ManagedAccount, model: String?,
+    outcome: ExecutionOutcome
+  ) throws {
+    guard let failure = outcome.failure,
+      [.authenticationRejected, .rateLimited, .upstreamUnavailable].contains(failure)
+    else { return }
+    let id = current.id
     try db.write(
       """
       INSERT INTO account_health VALUES(?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET
@@ -128,7 +138,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
         .text(id), failure == .authenticationRejected ? .number(current.credentialVersion) : .null,
         .text(failure.rawValue), .number(outcome.atUnixSeconds),
       ])
-    guard failure != .authenticationRejected, let model = snapshot.admission.model,
+    guard failure != .authenticationRejected, let model,
       try db.scalar("SELECT COUNT(*) FROM health_models WHERE model=?", [.text(model)]) == 1
     else { return }
     let until =

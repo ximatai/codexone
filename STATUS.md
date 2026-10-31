@@ -1,15 +1,15 @@
 # 当前状态
 
-更新时间：2026-10-30（Asia/Shanghai）。只保留当前快照；阶段过程由 Git 追溯，验证依据在对应证据页。
+更新时间：2026-10-31（Asia/Shanghai）。只保留当前快照；阶段过程由 Git 追溯，验证依据在对应证据页。
 
 ## 项目状态
 
 | 阶段 | 已有实现与证据 | 仍未完成 |
 |---|---|---|
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
-| M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议[开放透传](docs/changes/open-protocol-passthrough/proposal.md)与[模型目录透传](docs/changes/model-catalog-passthrough/proposal.md)；真实Desktop+真实订阅三模型对话、视觉输入、工具往返通过 | 压缩、长任务/中断恢复的真实验收及M5恢复读取 |
+| M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议[开放透传](docs/changes/open-protocol-passthrough/proposal.md)、[模型目录透传](docs/changes/model-catalog-passthrough/proposal.md)与[Desktop辅助接口透传](docs/changes/desktop-control-passthrough/proposal.md)（独立搜索、记忆摘要、realtime SDP、thread goal、jwks；analytics本地接受）；真实Desktop+真实订阅三模型对话、视觉输入、工具往返通过 | 压缩、长任务/中断恢复的真实验收及M5恢复读取 |
 | M3 | 管理登录/CSRF、Key（含[显式无限额](docs/changes/unlimited-key-limits/proposal.md)）、账号授权/刷新、路由及用量观测；真实OAuth授权、额度观测与单Key摘要导入已在测试实例使用 | 多账号路由、长期刷新、全部Key正式迁移与切回 |
-| M4 | Images生成/编辑及Responses图片工具、权限与计量的本机合成闭环 | 与旧服务对齐的图片模型映射、真实Desktop图片生成、参考图、连续编辑 |
+| M4 | Images改为[原生端点透传](docs/changes/images-native-passthrough/proposal.md)（独立并发舱壁、原生usage计量），[Desktop图片对齐](docs/changes/desktop-image-parity/proposal.md)（含图压缩、32 MiB请求、共享请求体预算）；测试实例经网关真实生成1张、multipart编辑1次并核对账本 | 真实Desktop生图/编辑/含图压缩验收；非Codex UA客户端被提供者403的处理待定；原生SSE与429冷却真实形状 |
 | M5 | 已核对恢复关联及已有输出读取的限定实验 | 正式恢复读取契约不充分，未实现生产正文缓存 |
 | M6 | schema v8候选安装/升级/兼容回退、合成迁移切回、TLS、快照/密钥维护、低盘保护及容量样本 | 完整O14/目标弱宿主、async任务观测、实际旧服务替代、远程CI与发行 |
 
@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · 代码46829d3+测试实例 | macOS `verify.sh --backend`（Swift 217项）、Linux amd64全部Docker无网络verification（含图片原生与控制透传）通过；部署后网关真实生图/编辑各1次、控制接口公网冒烟（jwks两路径200、analytics 202、未列路径404） | [图片](docs/changes/images-native-passthrough/verification.md)、[控制](docs/changes/desktop-control-passthrough/verification.md) |
 | 2026-10-30 · 代码a8a3e1b测试实例 | Linux amd64 release及全部Docker无网络verification通过；部署后真实Desktop新会话（原Key改地址）三模型对话、视觉输入、本地命令工具成功，当日17次准入全部完整结算；冒烟2次真实调用 | [Desktop验收](docs/changes/open-protocol-passthrough/verification.md) |
 | 2026-10-30 · 目录透传与无限额 | macOS arm64 `verify.sh --backend`（Swift 206项）及 `--web --chrome` 通过 | [目录](docs/changes/model-catalog-passthrough/verification.md)、[无限额](docs/changes/unlimited-key-limits/verification.md) |
 | 2026-10-24 · 代码9dd0d07 | macOS arm64完整后端及Swift205项；独立输出HTTP88/WS168共256次、参数314次、既有文本201次；Linux amd64 release与全部Docker无网络verification通过 | [输出与参数验证](docs/evidence/ordinary-output-parameters.md) |
@@ -36,7 +37,8 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 - 订阅账号经管理台全新OAuth授权，不复用旧服务refresh token（轮换token一次性，共用会互相作废）。
 - 旧服务全部Key以摘要离线导入且默认禁用，仅启用用户选定的一枚；其余待正式迁移。冒烟用临时Key已禁用。
 - 2026-10-24回收的旧测试实例账本已私下归档：真实生成累计9次（5未知、2完整计量失败、2成功），回收不改变其结算与未知责任。
-- 当前分支`codex/account-governance`在私有远程`origin`的位置为d31e3c0，其后本地提交（目录透传、无限额、构建镜像源及本次记录）尚未推送；无远程CI，无正式旧服务切换。
+- `codex/account-governance`已合并PR #1；图片对齐/原生透传在PR #2（`codex/desktop-image-parity`），控制接口透传在其上的`codex/desktop-control-passthrough`。远程CI因账户计费不可用；无正式旧服务切换。
+- 测试实例当前运行控制透传分支候选镜像；图片模型`gpt-image-2`并发2，数据反代正文上限33m并放行`/backend-api/wham/`；用户在用的Key已开通图片。
 
 ## 运行与检查
 
@@ -100,6 +102,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试实例已通过真实Desktop文本/视觉/工具验收。下一步按顺序：图片生成与旧服务对齐（每个图片模型一个hostModel、图片历史与压缩拒绝问题）后真实Desktop图片闭环；数据面连接上限（当前8）评估；全部Key正式迁移与切回预案。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。真实调用、推送与部署仍须用户授权。
+测试实例已通过真实Desktop文本/视觉/工具验收，图片与辅助接口已部署。下一步：用户在Desktop验收生图/编辑/含图压缩与独立搜索；决定非Codex客户端UA处理与“明确的提供者4xx是否按零费用结算而非unknown”；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；数据面连接上限评估；之后复盘管理前端的产品化与易用性。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。

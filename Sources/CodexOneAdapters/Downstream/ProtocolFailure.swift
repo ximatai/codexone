@@ -38,9 +38,11 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   return .init(502, "execution_indeterminate")
 }
 
-func protocolErrorEnvelope(_ error: any Error, requestID: String) -> JSONValue {
+func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: Bool = true)
+  -> JSONValue
+{
   let mapped = protocolFailure(error)
-  ProtocolFailureDiagnostics.record(mapped, requestID: requestID)
+  if diagnostics { ProtocolFailureDiagnostics.record(mapped, requestID: requestID) }
   let message =
     UUID(uuidString: requestID) != nil
     ? "Gateway request failed. Reference: \(requestID)." : "Gateway request failed."

@@ -29,8 +29,8 @@ final class RequestBodyLease: Sendable {
   private let budget: RequestBodyBudget
   private let bytes = Mutex(0)
   fileprivate init(budget: RequestBodyBudget) { self.budget = budget }
-  func reserve(_ size: Int) throws {
-    guard size > RequestBodyLimits.unreservedBytes else { return }
+  func reserve(_ size: Int, countAll: Bool = false) throws {
+    guard countAll || size > RequestBodyLimits.unreservedBytes else { return }
     try bytes.withLock {
       if size > $0 {
         try budget.acquire(size - $0)

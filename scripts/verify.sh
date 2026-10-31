@@ -29,6 +29,7 @@ backend() {
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_compaction_stream.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_images.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_control.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_keys.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_model_profiles_import.py
   python3 scripts/verify_key_export.py

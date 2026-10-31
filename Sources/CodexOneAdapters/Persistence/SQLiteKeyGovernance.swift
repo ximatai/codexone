@@ -132,7 +132,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         reservedMicros: command.reservedMicros)
     else { throw ExecutionError.denied }
   }
-  private static func loadKey(_ db: SQLiteConnection, _ id: String) throws -> ManagedKey {
+  static func loadKey(_ db: SQLiteConnection, _ id: String) throws -> ManagedKey {
     guard
       let key = try db.rows(
         "SELECT metadata_json FROM managed_keys WHERE id=?", [.text(id)], map: { try decodeKey($0) }

@@ -18,6 +18,8 @@ public struct ResponsesDataService: Service {
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
   private let imageCapacity: ImageCapacity
+  private let controlCapacity = ControlCapacity()
+  private let controlAffinity = ControlAffinity()
   private let bodyBudget = RequestBodyBudget()
   private let onBound: @Sendable (Int) -> Void
 
@@ -104,7 +106,8 @@ public struct ResponsesDataService: Service {
       redirectConfiguration: .disallow,
       timeout: .init(
         connect: .seconds(5),
-        read: .seconds(Int64(max(configuration.budget.first, configuration.budget.idle) + 5))),
+        read: .seconds(
+          Int64(max(300, max(configuration.budget.first, configuration.budget.idle)) + 5))),
       connectionPool: pool, proxy: proxy?.clientProxy,
       decompression: .disabled)
     clientConfiguration.httpVersion = .http1Only
@@ -112,13 +115,17 @@ public struct ResponsesDataService: Service {
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let executor = HTTPResponseExecution(
-      imageCapacity: imageCapacity, client: client,
+      imageCapacity: imageCapacity, controlCapacity: controlCapacity,
+      controlAffinity: controlAffinity, client: client,
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
       access: .init(source: source, token: token, store: store, finalizer: finalizer),
       gateway: nil, effectiveModels: [])
-    let channels = ProtocolChannels(limit: 8)
+    // Eight additional accepted sockets let a saturated control bulkhead return HTTP 429.
+    // Non-control HTTP and native WS retain their original eight-connection envelope.
+    let channels = ProtocolChannels(limit: 16)
+    let normalChannels = ProtocolChannels(limit: 8)
     do {
       let server = try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -128,7 +135,7 @@ public struct ResponsesDataService: Service {
         )
         .bind(
           host: "127.0.0.1", port: port,
-          serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 8)
+          serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 16)
         ) {
           channel -> EventLoopFuture<EventLoopFuture<NegotiatedProtocol>> in
           guard channels.register(channel) else {
@@ -152,6 +159,7 @@ public struct ResponsesDataService: Service {
                 do {
                   _ = try await executor.access.policy(
                     executor.access.digest(head.headers["authorization"]))
+                  guard normalChannels.register(channel) else { throw ExecutionError.capacity }
                   return HTTPHeaders()
                 } catch { return nil }
               }
@@ -202,7 +210,9 @@ public struct ResponsesDataService: Service {
                     do {
                       switch try await connection.get() {
                       case .http(let socket):
-                        try await Self.serve(socket, executor: executor, budget: bodyBudget)
+                        try await Self.serve(
+                          socket, executor: executor, budget: bodyBudget,
+                          normalChannels: normalChannels)
                       case .webSocket(let socket, let digest, let reservations):
                         try await Self.serveWebSocket(
                           socket, executor: executor, digest: digest, reservations: reservations)
@@ -366,7 +376,7 @@ public struct ResponsesDataService: Service {
 
   private static func serve(
     _ connection: NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>,
-    executor: HTTPResponseExecution, budget: RequestBodyBudget
+    executor: HTTPResponseExecution, budget: RequestBodyBudget, normalChannels: ProtocolChannels
   ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask {
@@ -379,37 +389,47 @@ public struct ResponsesDataService: Service {
             let lease = budget.lease()
             defer { lease.release() }
             let received: (HTTPRequestHead, Data)?
+            var control = false
             do {
               var head: HTTPRequestHead?
               var body = Data()
               var ended = false
+              var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
                 switch part {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
                   head = next
                   let path = String(next.uri.split(separator: "?", maxSplits: 1).first ?? "")
+                  control = ControlRoute.match(method: next.method, path: path) != nil
+                  if control { maximumBytes = ControlRoute.requestBytes }
                   if !["/health/live", "/health/ready"].contains(path) {
                     _ = try await executor.access.policy(
                       executor.access.digest(next.headers["authorization"]))
                   }
+                  if !control, !normalChannels.register(connection.channel) {
+                    throw ExecutionError.capacity
+                  }
+                  if control, !next.headers["content-encoding"].isEmpty {
+                    throw GatewayProtocolError(415, "unsupported_content_type")
+                  }
                   if let length = next.headers.first(name: "content-length"),
-                    Int(length).map({ $0 < 0 || $0 > RequestBodyLimits.maximumBytes }) ?? true
+                    Int(length).map({ $0 < 0 || $0 > maximumBytes }) ?? true
                   {
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   if let length = next.headers.first(name: "content-length"),
                     let count = Int(length)
                   {
-                    try lease.reserve(count)
+                    try lease.reserve(count, countAll: control)
                   }
                 case .body(let bytes):
                   guard head != nil,
-                    bytes.readableBytes <= RequestBodyLimits.maximumBytes - body.count
+                    bytes.readableBytes <= maximumBytes - body.count
                   else {
                     throw GatewayProtocolError(413, "request_too_large")
                   }
-                  try lease.reserve(body.count + bytes.readableBytes)
+                  try lease.reserve(body.count + bytes.readableBytes, countAll: control)
                   body.append(contentsOf: bytes.readableBytesView)
                 case .end: ended = true
                 }
@@ -421,7 +441,8 @@ public struct ResponsesDataService: Service {
               requestDeadline.cancel()
               let writer = ProtocolResponseWriter(
                 writer: outbound, channel: connection.channel, keepAlive: false)
-              try? await writer.fail(error)
+              if control { await writer.setControlRequest() }
+              try? await writer.fail(error, diagnostics: !control)
               throw error
             }
             guard let (head, body) = received else { return }
@@ -458,6 +479,17 @@ public struct ResponsesDataService: Service {
       let reply = HealthRouter(report: await executor.report()).reply(method: "GET", uri: path)
       try await writer.json(
         try JSONDecoder().decode(JSONValue.self, from: reply.body), status: reply.status)
+      return
+    }
+    if let control = ControlRoute.match(method: head.method, path: path) {
+      await writer.setControlRequest()
+      do {
+        try await executor.executeControl(control, head: head, body: body) {
+          try await writer.control($0)
+        }
+      } catch {
+        try await writer.fail(error, diagnostics: false)
+      }
       return
     }
     let prefix: String
@@ -557,6 +589,8 @@ private actor ProtocolResponseWriter {
       extraHeaders.replaceOrAdd(name: "x-codex-imagegen-request-id", value: value)
     }
   }
+  private var controlRequest = false
+  func setControlRequest() { controlRequest = true }
   private var started = false
   private var streaming = false
   private var ended = false
@@ -598,10 +632,25 @@ private actor ProtocolResponseWriter {
         .body(.byteBuffer(ByteBuffer(data: data))), .end(nil),
       ])
     } catch {
-      ProtocolFailureDiagnostics.record(
-        .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
+      if !controlRequest {
+        ProtocolFailureDiagnostics.record(
+          .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
+      }
       throw error
     }
+    ended = true
+  }
+  func control(_ reply: ControlReply) async throws {
+    guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
+    var headers = reply.headers
+    headers.replaceOrAdd(name: "content-length", value: String(reply.body.count))
+    headers.replaceOrAdd(name: "x-request-id", value: requestID)
+    if !keepAlive { headers.replaceOrAdd(name: "connection", value: "close") }
+    started = true
+    try await writeBatch([
+      .head(.init(version: .http1_1, status: .init(statusCode: reply.status), headers: headers)),
+      .body(.byteBuffer(ByteBuffer(data: reply.body))), .end(nil),
+    ])
     ended = true
   }
   func beginRaw(_ headers: HTTPHeaders, streaming: Bool) async throws {
@@ -650,9 +699,9 @@ private actor ProtocolResponseWriter {
     try await write(.end(nil))
     ended = true
   }
-  func fail(_ error: any Error) async throws {
+  func fail(_ error: any Error, diagnostics: Bool = true) async throws {
     let mapped = protocolFailure(error)
-    let envelope = protocolErrorEnvelope(error, requestID: requestID)
+    let envelope = protocolErrorEnvelope(error, requestID: requestID, diagnostics: diagnostics)
     if !started {
       try await json(envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds)
     } else if streaming && !ended {

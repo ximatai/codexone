@@ -6,6 +6,8 @@ import NIOHTTP1
 
 struct HTTPResponseExecution: Sendable {
   let imageCapacity: ImageCapacity
+  var controlCapacity = ControlCapacity()
+  var controlAffinity = ControlAffinity()
   var clientHeaders = HTTPHeaders()
   let client: HTTPClient
   let webSocket: WebSocketUpstream
@@ -30,7 +32,8 @@ struct HTTPResponseExecution: Sendable {
     let effectiveImages =
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
-      imageCapacity: imageCapacity, clientHeaders: clientHeaders, client: client,
+      imageCapacity: imageCapacity, controlCapacity: controlCapacity,
+      controlAffinity: controlAffinity, clientHeaders: clientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
       gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
@@ -123,6 +126,10 @@ struct HTTPResponseExecution: Sendable {
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+        if let identity = authorization?.identity, let key = currentKeyID {
+          controlAffinity.observe(key: key, headers: clientHeaders, account: identity)
+          controlAffinity.observe(key: key, headers: response.headers, account: identity)
+        }
         guard response.status == .ok else {
           throw await ProviderError.failure(response: response)
         }
