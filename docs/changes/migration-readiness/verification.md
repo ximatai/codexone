@@ -41,59 +41,14 @@ macOS通过系统libproc的PROC_PIDTASKINFO与PROC_PIDLISTFDS只读采样；环�
 
 统一标识后的真实提供者HTTP/Images和WS握手接受情况仍待部署后经授权验证；不从合成成功推导其反爬、版本或风控行为。真实网络10秒建连与退避效果、长期混合负载/目标宿主资源、真实SSE/WS拒绝码形状仍待验证。历史unknown不回填，无schema变更；没有正式迁移或切回操作。
 
-## 交付文件与建议提交
+## 主 Agent 复核与真实验证（2026-10-31）
 
-共39个工作树文件，无暂存、提交或推送。以下是主要归组；共享文件须按hunk拆分后按A、B、C、文档顺序提交。
-
-### A · `Normalize non-native upstream client fingerprints`
-
-- `Sources/CodexOneAdapters/Downstream/ClientFingerprint.swift`
-- `Sources/CodexOneAdapters/Downstream/AccountPoolConfiguration.swift`
-- `Sources/CodexOneAdapters/Downstream/ResponsesConfiguration.swift`
-- `Sources/CodexOneAdapters/Downstream/SingleIdentityConfiguration.swift`
-- `Sources/CodexOneAdapters/Images/NativeImageExecution.swift`
-- `Sources/CodexOneAdapters/Upstream/CompactResponseExecution.swift`
-- `Sources/CodexOneAdapters/Upstream/ControlExecution.swift`
-- `Sources/CodexOneAdapters/Upstream/HTTPResponseExecution.swift`
-- `Sources/CodexOneAdapters/Upstream/WebSocketUpstream.swift`
-- `Tests/CodexOneAdaptersTests/ClientHeaderForwardingTests.swift`
-- `Tests/CodexOneAdaptersTests/MigrationConfigurationTests.swift`
-
-### B · `Settle explicit provider refusals with zero usage`
-
-- `Sources/CodexOneAdapters/Downstream/ResponseRequest.swift`
-- `Sources/CodexOneAdapters/Transport/PoolWebSocketSession.swift`
-- `Sources/CodexOneAdapters/Transport/WebSocketTurns.swift`
-- `Sources/CodexOneAdapters/Upstream/ExecutionObservation.swift`
-- `Sources/CodexOneAdapters/Upstream/ProviderError.swift`
-- `Sources/CodexOneAdapters/Upstream/WebSocketResponseExecution.swift`
-- `Sources/CodexOneCore/Application/Execution/ExecutionCoordinator.swift`
-- `Sources/CodexOneCore/Application/Execution/ExecutionStore.swift`
-- `Tests/CodexOneEndToEndTests/AccountPoolHTTPTests.swift`
-- `scripts/verify_images.py`
-- `scripts/verify_pool_ws_client.py`
-- `scripts/verify_turn_diagnostics.py`
-
-### C · `Configure data connections and retry pre-send connects`
-
-- `Sources/CodexOneAdapters/Transport/ResponsesDataService.swift`
-- `deploy/Dockerfile`
-- `scripts/check_architecture.py`
-- `scripts/verify.sh`
-- `scripts/verify_migration_readiness.py`
-- `scripts/verify_protocol.py`
-- `scripts/verify_upstream_proxy.py`
-
-### Docs · `Document migration readiness contracts and verification`
-
-- `docs/changes/migration-readiness/tasks.md`
-- `docs/development/account-credentials.md`
-- `docs/development/capacity.md`
-- `docs/development/desktop-control.md`
-- `docs/development/images.md`
-- `docs/development/single-identity.md`
-- `docs/specs/protocol.md`
-- `docs/specs/usage.md`
-- `docs/changes/migration-readiness/verification.md`
-
-共享hunk：三份配置及MigrationConfigurationTests中的dataConnections归C；NativeImageExecution、HTTPResponseExecution、WebSocketUpstream中的拒绝观察归B，WS连接期限归C；ResponsesDataService的标识携带归A、单身份首准入归B，其余容量/重试归C；verify_images的原生UA夹具归A、结算断言归B；verify_upstream_proxy的提供者400结算断言归B、期限与TLS发送前重试断言归C。新迁移socket脚本整体归C，依赖A/B完成后注册；它同时覆盖三部分，不拆成重复实现。
+- 本机重跑 `swift build`、`swift test`、`swift format lint --strict`、`check_docs.py` 与 `verify.sh --backend`：退出码均为 0。
+- Linux amd64 运行镜像与 `verification` target（含 `verify_migration_readiness.py`）：退出码 0。
+- 部署到测试实例（账号池），同时启用公开 API 价格估算。临时 Key 直连网关，客户端标识非原生：
+  - 文本请求（`claude-cli` UA，附 `x-stainless-*`）：200，约 3 秒；账本 settled/succeeded，估算费用非零。
+  - 原生 Images 生成（`OpenAI/Python` UA）：200，约 34 秒，1 张图片。部署前同类 UA 会被提供者 403 拒绝。
+  - 提供者明确拒绝（Images 的 `background` 取非法值）：提供者 400，约 2 秒；账本 settled/failed/`upstream_rejected`，估算费用 0。
+  - 提供者会自动纠正非法的 `size` 和 `quality`，这两种情况仍返回 200，不能用来验证拒绝结算。
+- 部署后空载时网关容器内存约 26 MiB。
+- 未覆盖：非原生客户端经上游 WebSocket 握手的真实请求；原生 Desktop 的 WebSocket 握手由用户日常使用持续观察。

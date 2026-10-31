@@ -7,4 +7,4 @@
 - [x] C：`dataConnections` 可配置（缺省 128）；上游连接期限与发送前重试；记录资源测量。
 - [x] 规范同步（协议、用量、运行限制），配置示例与文档。
 - [x] 定向测试与完整 `verify.sh --backend`。
-- [ ] Linux verification（主 Agent）。
+- [x] Linux verification 与测试实例真实冒烟（主 Agent，见[验证](verification.md)）。
