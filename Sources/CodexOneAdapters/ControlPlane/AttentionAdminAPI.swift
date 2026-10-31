@@ -216,7 +216,7 @@ enum AttentionRules {
   }
   static func key(_ key: ManagedKey, requests: Int64, budget: Int64, now: Int64) -> [AttentionItem]
   {
-    guard key.enabled else { return [] }
+    guard key.enabled, key.archivedAtUnixSeconds == nil else { return [] }
     var result: [AttentionItem] = []
     if let expiration = key.expiresAtUnixSeconds,
       expiration <= now + AttentionThresholds.keyExpirationSeconds

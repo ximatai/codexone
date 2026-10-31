@@ -72,11 +72,14 @@ public struct ManagedKey: Sendable, Equatable, Codable {
   public let enabled: Bool
   public let policy: KeyPolicy
   public let createdAtUnixSeconds: Int64
+  public let archivedAtUnixSeconds: Int64?
   public let expiresAtUnixSeconds: Int64?
   public init(
     id: String, principal: String, revision: Int64, enabled: Bool, policy: KeyPolicy,
-    createdAtUnixSeconds: Int64, expiresAtUnixSeconds: Int64? = nil, displayName: String? = nil
+    createdAtUnixSeconds: Int64, expiresAtUnixSeconds: Int64? = nil, displayName: String? = nil,
+    archivedAtUnixSeconds: Int64? = nil
   ) {
+    self.archivedAtUnixSeconds = archivedAtUnixSeconds
     self.displayName = displayName
     self.expiresAtUnixSeconds = expiresAtUnixSeconds
     self.id = id
@@ -101,5 +104,10 @@ public protocol KeyGovernanceStore: Sendable {
     -> ManagedKey
   func rotateKey(id: String, revision: Int64, digest: String) async throws
     -> ManagedKey
-  func listKeys(after: String?) async throws -> [ManagedKey]
+  func setKeyArchived(id: String, revision: Int64, archived: Bool) async throws -> ManagedKey
+  func listKeys(after: String?, archived: Bool) async throws -> [ManagedKey]
+}
+
+public enum KeyGovernanceError: Error, Sendable {
+  case keyEnabled, keyArchived, keyNotArchived
 }

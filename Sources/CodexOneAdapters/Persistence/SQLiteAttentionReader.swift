@@ -85,7 +85,7 @@ extension SQLiteUsageReader: AttentionReading {
         }
         guard keys.count <= 256 else { throw ExecutionError.storageUnavailable }
         var result: [AttentionItem] = []
-        for key in keys where key.enabled {
+        for key in keys where key.enabled && key.archivedAtUnixSeconds == nil {
           try key.policy.validate()
           let values: [SQLiteConnection.Value] = [.text(key.id), .text("utc-day-\(now / 86400)")]
           let requests = try db.scalar(

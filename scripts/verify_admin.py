@@ -171,7 +171,7 @@ def verify(binary):
         summary = document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'][0]
         assert summary['principal'] == 'browser-synthetic' and summary['admitted'] == 1 and summary['displayName'] is None
         options = document(request(port, 'GET', '/api/usage/options', cookie=cookie))
-        assert options['keyOptions'] == [{'id': key['id'], 'principal': 'browser-synthetic', 'displayName': None}]
+        assert options['keyOptions'] == [{'id': key['id'], 'principal': 'browser-synthetic', 'displayName': None, 'archived': False}]
         summary_start = int(time.time()) // 86400 * 86400
         row = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]
         assert row['displayName'] is None

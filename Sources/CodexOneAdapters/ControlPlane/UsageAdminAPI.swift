@@ -124,6 +124,7 @@ public struct UsageAdminAPI: Sendable {
           "keyOptions": .array(
             options.keyOptions.map {
               .object([
+                "archived": .bool($0.archived),
                 "displayName": $0.displayName.map { .string($0) } ?? .null,
                 "id": .string($0.id), "principal": $0.principal.map { .string($0) } ?? .null,
               ])

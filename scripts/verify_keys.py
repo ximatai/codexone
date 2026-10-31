@@ -177,6 +177,42 @@ def verify_migration(binary):
         assert fifo.returncode != 0 and str(root).encode() not in fifo.stdout + fifo.stderr
         print('PASS: offline migration rejects a live owner and normal v1 startup, creates private consistent backup; admin/data credential reuse fails closed')
 
+def verify_archive(ports, db_path):
+    admin=ports['admin'];data=ports['data']
+    key,secret=create(admin,principal='archive-synthetic')
+    path='/api/keys/'+key['id']
+    def change(action, revision=None):
+        return call(admin,'PUT',path+'/'+action,dict(revision=key['revision'] if revision is None else revision))
+    assert change('archive')[1]['error']['code']=='key_enabled'
+    assert change('unarchive')[1]['error']['code']=='key_not_archived'
+    key=update(admin,key,enabled=False)[1]['key']
+    assert change('archive',1)[1]['error']['code']=='revision_conflict'
+    status,value=change('archive');assert status==200;key=value['key']
+    assert key['archivedAtUnixSeconds'] is not None and not key['enabled']
+    assert change('archive')[1]['error']['code']=='key_archived'
+    for action,method,body in [('', 'PUT',dict(revision=key['revision'],enabled=True,models=key['models'],limits=key['limits'])),
+                              ('/rotate','POST',dict(revision=key['revision'])),
+                              ('/display-name','PUT',dict(revision=key['revision'],displayName='Synthetic')),
+                              ('/expiration','PUT',dict(revision=key['revision'],expiresAtUnixSeconds=None))]:
+        status,value=call(admin,method,path+action,body)
+        assert status==409 and value['error']['code']=='key_archived'
+    assert call(data,'GET','/v1/models',token=secret)[0]==401
+    assert key['id'] not in [k['id'] for k in call(admin,'GET','/api/keys')[1]['keys']]
+    assert call(admin,'GET','/api/keys?archived=true')[1]['keys']==[key]
+    assert call(admin,'GET','/api/keys?archived=true&after='+key['id'])[1]['keys']==[]
+    for query in ('archived=bad','archived=true&archived=false','unknown=true'):
+        assert call(admin,'GET','/api/keys?'+query)[0]==400
+    options=call(admin,'GET','/api/usage/options')[1]['keyOptions']
+    assert next(o for o in options if o['id']==key['id'])['archived'] is True
+    key=change('unarchive')[1]['key']
+    assert not key['enabled'] and key['archivedAtUnixSeconds'] is None
+    assert call(data,'GET','/v1/models',token=secret)[0]==401
+    key=update(admin,key,enabled=True)[1]['key']
+    assert call(data,'GET','/v1/models',token=secret)[0]==200
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT action FROM key_events WHERE key_id=? AND action IN ('archive','unarchive') ORDER BY revision",(key['id'],)).fetchall()==[('archive',),('unarchive',)]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -306,6 +342,7 @@ def main():
                             assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits={**dict.fromkeys(LIMITS),field:invalid}))[0]==400
                         missing=dict.fromkeys(LIMITS);del missing[field]
                         assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits=missing))[0]==400
+                    verify_archive(ports, db_path)
                     status, listing = call(ports['admin'], 'GET', '/api/keys')
                     assert status == 200 and 'secret' not in json.dumps(listing) and 'digest' not in json.dumps(listing)
                     assert listing['nextCursor'] is None

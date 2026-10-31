@@ -114,10 +114,17 @@ public struct KeyAdminAPI: Sendable {
     }
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
-      guard query.count <= 1, query.allSatisfy({ $0.name == "after" && $0.value != nil }) else {
+      guard query.count <= 2, Set(query.map(\.name)).count == query.count,
+        query.allSatisfy({
+          ($0.name == "after" && $0.value != nil)
+            || ($0.name == "archived" && ["true", "false"].contains($0.value ?? ""))
+        })
+      else {
         throw ExecutionError.invalidCommand
       }
-      let keys = try await store.listKeys(after: query.first?.value)
+      let keys = try await store.listKeys(
+        after: query.first { $0.name == "after" }?.value,
+        archived: query.first { $0.name == "archived" }?.value == "true")
       return try Self.response(
         .object([
           "keys": .array(keys.map(Self.metadata)),
@@ -166,6 +173,18 @@ public struct KeyAdminAPI: Sendable {
         revision: revision, expiresAtUnixSeconds: document["expiresAtUnixSeconds"]?.integer)
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
+    for (path, archived) in [("archive", true), ("unarchive", false)] {
+      routes.put(":id", .constant(path)) { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(request, allowed: ["revision"])
+        guard let revision = document["revision"]?.integer else {
+          throw ExecutionError.invalidCommand
+        }
+        let key = try await store.setKeyArchived(
+          id: request.parameters.get("id") ?? "", revision: revision, archived: archived)
+        return try Self.response(.object(["key": Self.metadata(key)]))
+      }
+    }
     routes.post(":id", "rotate") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision"])
       guard let revision = document["revision"]?.integer else {
@@ -210,6 +229,7 @@ public struct KeyAdminAPI: Sendable {
   }
   private static func metadata(_ key: ManagedKey) -> JSONValue {
     .object([
+      "archivedAtUnixSeconds": key.archivedAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
       "expiresAtUnixSeconds": key.expiresAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
       "displayName": key.displayName.map { .string($0) } ?? .null,
       "id": .string(key.id), "principal": .string(key.principal),
@@ -316,6 +336,13 @@ private struct AdminFailureMiddleware: AsyncMiddleware {
       if let failure = error as? GatewayProtocolError {
         status = failure.status
         code = failure.code
+      } else if let failure = error as? KeyGovernanceError {
+        status = 409
+        switch failure {
+        case .keyEnabled: code = "key_enabled"
+        case .keyArchived: code = "key_archived"
+        case .keyNotArchived: code = "key_not_archived"
+        }
       } else if let failure = error as? QuotaObservationFailure {
         status = 503
         code = failure == .capacity ? "observation_capacity" : "observation_unavailable"

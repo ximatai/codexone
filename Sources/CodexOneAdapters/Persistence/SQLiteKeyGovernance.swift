@@ -11,7 +11,9 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       ) {
         try Self.decodeKey($0)
       }
-      guard let key = values.first, key.enabled else { throw ExecutionError.unauthorized }
+      guard let key = values.first, key.enabled, key.archivedAtUnixSeconds == nil else {
+        throw ExecutionError.unauthorized
+      }
       try Self.checkKeyExpiration(key)
       return key
     }
@@ -51,6 +53,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try db.transaction {
         let old = try Self.loadKey(db, id)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
         let revoking = old.enabled && !enabled
         guard storage.snapshot.optionalWorkAllowed || revoking else {
           throw ExecutionError.storagePressure
@@ -83,6 +86,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try db.transaction {
         let old = try Self.loadKey(db, id)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
         try Self.checkKeyCapacity(db)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
@@ -109,6 +113,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try db.transaction {
         let old = try Self.loadKey(db, id)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
         try Self.checkKeyCapacity(db)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
@@ -132,6 +137,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         guard old.revision == revision, revision < 1_000_000,
           try db.scalar("SELECT COUNT(*) FROM managed_keys WHERE digest=?", [.text(digest)]) == 0
         else { throw ExecutionError.conflict }
+        guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
           enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
@@ -144,12 +150,40 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       }
     }
   }
-  public func listKeys(after: String? = nil) async throws -> [ManagedKey] {
+  public func setKeyArchived(id: String, revision: Int64, archived: Bool) async throws -> ManagedKey
+  {
+    try Self.validateKeyID(id)
+    guard (1...1_000_000).contains(revision) else { throw ExecutionError.invalidCommand }
+    return try await perform(optional: true) { db in
+      try db.transaction {
+        let old = try Self.loadKey(db, id)
+        guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        if archived {
+          guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
+          guard !old.enabled else { throw KeyGovernanceError.keyEnabled }
+        } else {
+          guard old.archivedAtUnixSeconds != nil else { throw KeyGovernanceError.keyNotArchived }
+        }
+        try Self.checkKeyCapacity(db)
+        let key = ManagedKey(
+          id: old.id, principal: old.principal, revision: revision + 1, enabled: false,
+          policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: old.displayName,
+          archivedAtUnixSeconds: archived ? Int64(Date().timeIntervalSince1970) : nil)
+        try db.write(
+          "UPDATE managed_keys SET metadata_json=? WHERE id=?",
+          [.text(try Self.encodeKey(key)), .text(id)])
+        try Self.auditKey(db, key: key, action: archived ? "archive" : "unarchive")
+        return key
+      }
+    }
+  }
+  public func listKeys(after: String? = nil, archived: Bool = false) async throws -> [ManagedKey] {
     if let after { try Self.validateKeyID(after) }
     return try await perform { db in
       try db.rows(
-        "SELECT metadata_json FROM managed_keys WHERE id>? ORDER BY id LIMIT 64",
-        [.text(after ?? "")]
+        "SELECT metadata_json FROM managed_keys WHERE id>? AND (json_extract(metadata_json,'$.archivedAtUnixSeconds') IS NOT NULL)=? ORDER BY id LIMIT 64",
+        [.text(after ?? ""), .number(archived ? 1 : 0)]
       ) {
         try Self.decodeKey($0)
       }
@@ -158,7 +192,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   static func checkKeyAdmission(_ db: SQLiteConnection, _ command: ExecutionAdmission) throws {
     guard let revision = command.keyRevision else { return }
     let key = try loadKey(db, command.owner.key)
-    guard key.enabled else { throw ExecutionError.unauthorized }
+    guard key.enabled, key.archivedAtUnixSeconds == nil else { throw ExecutionError.unauthorized }
     try checkKeyExpiration(key)
     guard key.revision == revision, key.principal == command.owner.principal else {
       throw ExecutionError.unauthorized
@@ -210,6 +244,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try key.policy.validate()
       try ManagedAccount.validateDisplayName(key.displayName)
       guard (1...1_000_000).contains(key.revision), key.createdAtUnixSeconds >= 0,
+        key.archivedAtUnixSeconds.map({ $0 > 0 && !key.enabled }) ?? true,
         key.expiresAtUnixSeconds.map({ (1...1_000_000_000_000).contains($0) }) ?? true
       else {
         throw ExecutionError.storageUnavailable
