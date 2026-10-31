@@ -6,6 +6,7 @@
 
 | 阶段 | 已有实现与证据 | 仍未完成 |
 |---|---|---|
+| 2026-10-31 · 治理姿态/会话/推理强度+部署 | 代码aa59e27（PR #23—#31）：macOS `verify.sh --backend`、`--web --chrome`（Vitest 136+、Chrome 35）通过，Linux amd64 runtime与verification通过；部署前上游Codex协议源码无新提交；线上库副本v9→v10演练0.76秒，正式停服`--migrate`（含升级前备份）后启动健康；首个在线备份`--verify-backup`通过并在全新临时目录恢复演练一致；13枚迁移Key显示名服务端回填 | [治理姿态](docs/changes/governance-posture/proposal.md)、[会话](docs/changes/admin-session/proposal.md)、[推理强度](docs/changes/request-effort/proposal.md) |
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
 | M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议[开放透传](docs/changes/open-protocol-passthrough/proposal.md)、[模型目录透传](docs/changes/model-catalog-passthrough/proposal.md)与[Desktop辅助接口透传](docs/changes/desktop-control-passthrough/proposal.md)（独立搜索、记忆摘要、realtime SDP、thread goal、jwks；analytics本地接受）；真实Desktop+真实订阅三模型对话、视觉输入、工具往返通过 | 压缩、长任务/中断恢复的真实验收及M5恢复读取 |
 | M3 | 管理登录/CSRF、Key（含[显式无限额](docs/changes/unlimited-key-limits/proposal.md)）、账号授权/刷新、路由及用量观测；[管理台产品化第一轮](docs/changes/admin-productization/proposal.md)（运营概览、账号窗口与重置倒计时、Key今日用量/搜索、请求详情与耗时、美元估算与面向用户术语）；[第二轮](docs/changes/admin-round2/proposal.md)（首页KPI七日趋势与错误率、进行中/最近请求自动刷新、首事件/总耗时、账号显示名、Key到期）；真实OAuth授权、额度观测与单Key摘要导入已在测试实例使用 | 多账号路由真实验证（目前仅一个订阅账号，无法实测，暂不验收）；长期刷新真实验证（[提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机合成验收通过，待Linux与真实刷新确认）；试运行（2026-10-31 19:10 +08:00 起）：旧服务全部 13 枚 Key 已在新侧启用（摘要逐枚核对一致，模型同旧服务，开放看图/生图），旧域名仅 Codex 数据路径反代至 CodexOne、旧面板保留；[试运行跟踪](docs/development/trial-watch.md)每5分钟检查、硬故障自动回滚，24小时跟踪中，正式验收待跟踪结束 |
@@ -112,14 +113,8 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-[Key 显示名](docs/changes/key-display-name/proposal.md)后端与前端本机实现和验证已完成：可空元数据与CAS编辑、轮换/全量更新保留、管理查询展示及别名搜索，不改schema或认证/归属。当前分支为待主Agent承接的本机候选；下一步由主Agent评审并执行Linux verification，再按授权部署和设置迁移别名。本次未推送、未部署。
+已部署到测试实例（试运行中，流量全部走 CodexOne，旧服务保留作回退）：Key 显示名、试运行加固（未知人工释放、真实凭证到期、统一账号名）、在线备份（每日、保留7份、陈旧提醒）、下游断线结算（转发 `response.interrupt` 并有界续读）、管理台 UI 评审修复、[治理姿态](docs/changes/governance-posture/proposal.md)（未结计数退出准入、每账号16并发为唯一阻断、未知24小时后关闭为“用量未知”、90天明细+日汇总、30天续接绑定、治理余量与容量提醒，schema v10）、[管理会话](docs/changes/admin-session/proposal.md)（空闲24小时/最长7天、用户名）与[推理强度展示](docs/changes/request-effort/proposal.md)。
 
-管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1、2 已合并（“C 结构 + A 克制”：侧栏/窄屏导航、四页迁移、图表/DataTable、账号共享修改、CSS 清理，一轮评审返工），macOS 前端与两项合成生产 CSP 入口、Linux verification 通过；阶段 3 深色开关未开始。主色于2026-10-31改为石墨蓝（用户改选），绿/黄/红仅表示状态。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
-
-[试运行加固](docs/changes/ops-hardening/proposal.md)本机候选已完成：全局/身份未结容量1024（主体/Key原有限额不变）、unknown人工CAS释放与原子审计、容量比例提醒、真实凭证到期元数据、统一账号名称；释放后用量仍未知，可信部分数值保留下界，迟到部分证据不重新占用容量。工作位于本地`codex/ops-hardening`，未push/PR、未访问或修改部署实例；下一步由主Agent承接Linux verification及部署评估。
-
-首页[需要处理提醒](docs/changes/admin-attention/proposal.md)已合并：只读汇总账号授权/冷却、额度、Key到期与限额、待核对、60分钟错误率、低盘与进程内客户端协议名称，来源失败单独提示；首页提醒区与导航红点；macOS完整后端/前端与Linux verification通过。
-
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（部署候选仍未包含本地加固；新候选从应用层提取真实到期元数据）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；[客户端协议跟踪](docs/development/client-protocol-watch.md)按已定治理执行（部署前手动比对，未知名称进首页提醒）；后续排期（2026-10-31 用户确认）：管理台阶段 2 → [首页需要处理提醒](docs/changes/admin-attention/proposal.md) → [用量分析](docs/changes/usage-analytics/proposal.md)（模型/客户端分布、CSV导出）→ [Key自助查询](docs/changes/key-self-service/proposal.md)；完成后单独讨论全部Key迁移、Nginx切换与观察回退；深色模式待排。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+下一步：试运行跟踪至 2026-11-01 晚，之后由用户决定旧服务保留期与下线；账号首个 access token 约 2026-11-09 到期，届时核对[提前刷新](docs/changes/proactive-account-refresh/proposal.md)真实生效；多账号路由待有第二个订阅账号后实测。后续排期：[用量分析](docs/changes/usage-analytics/proposal.md) → [Key自助查询](docs/changes/key-self-service/proposal.md)；深色模式待排。[客户端协议跟踪](docs/development/client-protocol-watch.md)每次部署前手动比对。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
