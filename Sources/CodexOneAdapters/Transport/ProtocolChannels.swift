@@ -12,7 +12,7 @@ final class ProtocolChannels: Sendable {
   private let limit: Int
   init(limit: Int) { self.limit = limit }
 
-  func register(_ channel: any Channel) -> Bool {
+  func register(_ channel: any Channel, retained: Bool = false) -> Bool {
     let id = ObjectIdentifier(channel)
     let newlyAccepted: Bool? = state.withLock { value in
       guard !value.draining else { return nil }
@@ -21,12 +21,16 @@ final class ProtocolChannels: Sendable {
       value.channels[id] = channel
       return true
     }
-    if newlyAccepted == true {
+    if newlyAccepted == true && !retained {
       channel.closeFuture.whenComplete { _ in
         self.state.withLock { _ = $0.channels.removeValue(forKey: id) }
       }
     }
     return newlyAccepted != nil
+  }
+
+  func release(_ channel: any Channel) {
+    state.withLock { _ = $0.channels.removeValue(forKey: ObjectIdentifier(channel)) }
   }
 
   func close() {

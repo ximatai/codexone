@@ -61,6 +61,8 @@ func handleWebSocketControl(
       fields["stream_id"] == nil || owner == lane
     {
       try await upstream.writer.send(body.data)
+      upstream.markInterrupted(responseID: id, lane: owner)
+      downstream.permitSettlement()
     } else {
       var failed: [String: JSONValue] = [
         "type": .string("response.interrupt.failed"), "response_id": .string(id),

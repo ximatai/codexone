@@ -73,6 +73,8 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 `response.create` 保持完整解析、授权、持久准入及 lane FIFO。`response.interrupt` 只在 response_id 属于本连接已收到 `response.created`、仍在途的响应时原字节转发至固定身份上游，不新增执行、不占准入、不改变 lane FIFO；可按 response_id 定位省略 stream_id 的控制。ID 未知、已结束或显式 lane 不匹配时，在请求 lane 本地回复带 response_id 的 `response.interrupt.failed`，不写上游且保持连接。上游 accepted/failed 确认按已知响应归属下发，确认先于或晚于终态均不影响账本，账本只按原终态证据结算。
 
+已成功转发过 `response.interrupt` 的在途 turn 在下游关闭后，由原连接 owner 继续读取至终态或断开后最多10秒，且不超过原执行期限。续读期间停止请求接收和排队请求的 dispatch，不再向下游写入内容；连接槽、lane、请求体预留保持至续读结束后释放，Runtime 停止时取消并等待续读子任务。可信终态与用量按原规则结算；超时、上游断开或无可信终态保持 unknown，不重连、不重放。未转发中断的 turn 仍在下游断开时立即取消；同连接其他 lane 的取消不提前终止已中断 turn 的续读。确认 accepted/failed 本身不构成结算证据。
+
 未知类型的对象消息在绑定上游后原字节转发；绑定前、或顶层含 input/model/tools 成员（含 null）时本地400拒绝。每连接独立令牌桶每秒恢复10条、突发20条，超速本地400且连接保持；控制沿用单消息32 MiB、共享正文预算、单reader/串行writer及5秒写期限。计数和最近响应归属随连接释放。未知控制每次放行/拒绝记录 codexone.protocol 结构化warning，仅含有界机器类型名、客户端version/UA类别与结果，不记录消息成员或内容。
 
 未准入的 response.created 或没有等待准入turn的其他生命周期起点出现时，立即停止该连接后续dispatch；在既有首轮持久归属下记一条独立unknown执行（当前Key与固定账号、保留责任估算、模型未知），然后关闭连接，不重放、不重连。此已发生责任写入不再按新请求权限/额度准入，但保留存储容量上限；关键存储失败仍关闭并记录固定分类warning，不声称已持久成功。HTTP与HTTP→WS桥接仍由客户端断开连接取消，不支持控制消息。
@@ -124,7 +126,7 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 升级仅验证当前 Key 和连接容量；首个有效 create 才在 Core 原子选择账号并持久准入，之后用该 work 建立一次上游 socket。连接固定 principal 下的 namespace/identity，默认及所有命名 lane 逐 turn 重验当前 Key、账号/凭证和归属交集，不能因无 previous ID、刷新或新 lane 另选账号。draining 允许已固定连接续接，disabled 阻止新 turn；认证或上游失败只结束原 attempt/连接，不重连重放。
 
-首个执行 owner 与连接 owner 是同一结构化任务组的兄弟，通过容量一交接传递首 context/认证及首 turn 结果。首 turn 结束立即交回自己的最终化 ticket，上游 socket 仍由连接 owner 监督；后续 turn 独立准入和最终化。首执行的配置总期限包含连接与升级；首准入失败、超时、下游断开或 Runtime 关闭必须结束交接双方并等待网络任务。保持 P13/P14 的 lane、排队、帧和连接寿命边界，共用协议/用量观察，不新增恢复或自动重试语义。
+首个执行 owner 与连接 owner 是同一结构化任务组的兄弟，通过容量一交接传递首 context/认证及首 turn 结果。首 turn 结束立即交回自己的最终化 ticket，上游 socket 仍由连接 owner 监督；后续 turn 独立准入和最终化。首执行的配置总期限包含连接与升级；首准入失败、超时、下游断开或 Runtime 关闭必须结束交接双方并等待网络任务；下游断开的已中断 turn 按 P14a 有界续读后结束。保持 P13/P14 的 lane、排队、帧和连接寿命边界，共用协议/用量观察，不新增恢复或自动重试语义。
 
 图片原生入口的配置、透传、并发与期限见[图片配置](../development/images.md)。所有入口将能力要求随 admission 持久保存并在原子准入复核；Images 不再选择宿主或改写为 Responses。原生非流式 200 仅在有效 data[].b64_json 非空时判成功；SSE 仅可信图片 completed 事件及有效图片授予完成证据。Responses 托管图片工具仍以可信 response.completed 判定，output_item.done 与预览不承诺整个操作成功。
 
@@ -168,7 +170,7 @@ Desktop 辅助控制接口采用[精确方法/路径允许列表](../changes/des
 
 ## P28：客户端标识与连接容量
 
-Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户端标识规则。入站 User-Agent 以 `codex_cli_rs`、`codex-tui`、`codex_exec`、`codex_sdk_ts`、`codex_vscode`、`Codex Desktop` 或 `Codex ` 开头，或 originator 精确属于 `codex_cli_rs`、`codex_vscode`、`codex_sdk_ts`、`codex_exec`、`codex_chatgpt_desktop`、`Codex Desktop` 时为原生（值区分大小写，头名不区分）。`x-codex-*` 不是原生判定信号。原生标识保持原值；非原生移除入站 user-agent/originator/version，设置 `codex_cli_rs/<version> (<os>; <arch>) <terminal>`、`codex_cli_rs`、`<version>`。原生 WS 按该下游连接握手头，HTTP→WS 按该 HTTP 请求头；不从先前请求继承。所有这些路径统一转发 x-codex- 前缀头（头名不区分大小写、每个值最多8 KiB、按入站顺序最多32条，超限省略）；Connection声明的逐跳头仍去除，认证、账号与本地门控头不转发。每个新前缀头放行时记录结构化warning，只有头名、客户端version/UA类别和结果，无头值；未知version或类型名不满足有界机器标识格式时只记invalid。
+Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户端标识规则。入站 User-Agent 以 `codex_cli_rs`、`codex-tui`、`codex_exec`、`codex_sdk_ts`、`codex_vscode`、`Codex Desktop` 或 `Codex ` 开头，或 originator 精确属于 `codex_cli_rs`、`codex_vscode`、`codex_sdk_ts`、`codex_exec`、`codex_chatgpt_desktop`、`Codex Desktop` 时为原生（值区分大小写，头名不区分）。`x-codex-*` 不是原生判定信号。原生标识保持原值；非原生移除入站 user-agent/originator/version，设置 `codex_cli_rs/<version> (<os>; <arch>) <terminal>`、`codex_cli_rs`、`<version>`。原生 WS 按该下游连接握手头，HTTP→WS 按该 HTTP 请求头；不从先前请求继承。所有这些路径统一转发 x-codex- 前缀头（头名不区分大小写、每个值最多8 KiB、按入站顺序最多32条，超限省略）；Connection声明的逐跳头仍去除，认证、账号与本地门控头不转发。`x-codex-beta-features`、`x-codex-window-id`、`x-codex-parent-thread-id` 为已知头，仍受相同转发边界约束，不记未知日志。其余未知前缀头放行时记录结构化warning，只有头名、客户端version/UA类别和结果，无头值；未知version或类型名不满足有界机器标识格式时只记invalid。
 
 续接标识按允许列表保留，SDK 特征 `x-stainless-*`、`x-openai-client-*`、认证/账号/Cookie、门控头和 hop-by-hop 头不透传。账号认证仍由服务注入。可信离线 `clientFingerprint` 配置及版本选择见[单身份配置](../development/single-identity.md)，请求路径不在线查询版本。
 
