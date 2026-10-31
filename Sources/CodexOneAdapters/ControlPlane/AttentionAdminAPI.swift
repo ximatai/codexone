@@ -59,14 +59,16 @@ enum AttentionThresholds {
 public struct AttentionAdminAPI: Sendable {
   private let reader: any AttentionReading
   private let storage: (any StorageMonitoring)?
+  private let backup: (any BackupMaintaining)?
   private let registry: ClientProtocolExtensionRegistry?
   public init(
     reader: any AttentionReading, storage: (any StorageMonitoring)? = nil,
-    registry: ClientProtocolExtensionRegistry? = nil
+    registry: ClientProtocolExtensionRegistry? = nil, backup: (any BackupMaintaining)? = nil
   ) {
     self.reader = reader
     self.storage = storage
     self.registry = registry
+    self.backup = backup
   }
   func register(_ routes: any RoutesBuilder) {
     routes.get("attention") { request async throws -> Response in
@@ -122,6 +124,7 @@ public struct AttentionAdminAPI: Sendable {
           detail: ["overflow": .bool(snapshot.overflow)], since: $0.firstSeenUnixSeconds)
       }
     }
+    items += AttentionRules.backup(backup?.backupObservation ?? BackupObservation(), now: now)
     return Self.sorted(items)
   }
   static func sorted(_ items: [AttentionItem]) -> [AttentionItem] {
@@ -139,6 +142,27 @@ public struct AttentionAdminAPI: Sendable {
 
 // Pure decisions shared by the bounded reader and boundary tests.
 enum AttentionRules {
+  static func backup(_ observation: BackupObservation, now: Int64) -> [AttentionItem] {
+    guard observation.enabled else { return [.init("backup_disabled")] }
+    var items: [AttentionItem] = []
+    let since = observation.lastSuccessUnixSeconds ?? observation.enabledUnixSeconds
+    if now - since > 36 * 3600 {
+      items.append(.init("backup_stale", critical: now - since > 72 * 3600, since: since))
+    }
+    if observation.totalBytes > 5 * 1024 * 1024 * 1024
+      || observation.largestBundleBytes > 768 * 1024 * 1024
+    {
+      items.append(
+        .init(
+          "backup_size",
+          detail: [
+            "totalBytes": .number(Decimal(observation.totalBytes)),
+            "largestBundleBytes": .number(Decimal(observation.largestBundleBytes)),
+          ]))
+    }
+    return items
+  }
+
   static func account(
     id: String, name: String?, authorization: AccountAuthorization,
     quota: AccountQuotaObservation?, cooldownCount: Int64, failureAt: Int64?, now: Int64

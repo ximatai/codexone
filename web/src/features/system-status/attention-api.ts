@@ -18,6 +18,9 @@ const item = z.object({
     "unresolved_executions",
     "error_rate_high",
     "storage_pressure",
+    "backup_disabled",
+    "backup_stale",
+    "backup_size",
     "client_protocol_extension",
     "attention_source_unavailable",
   ]),
@@ -39,7 +42,8 @@ export async function fetchAttention(signal: AbortSignal) {
 export function attentionTarget(item: AttentionItem) {
   if (item.subjectType === "account") return "/accounts";
   if (item.subjectType === "key") return "/keys";
-  if (item.kind === "storage_pressure") return "/?storage=details";
+  if (item.kind.startsWith("backup_") || item.kind === "storage_pressure")
+    return "/?storage=details";
   if (item.kind === "client_protocol_extension") return "/?protocol=details";
   if (item.kind === "attention_source_unavailable") {
     if (item.detail.source === "accounts") return "/accounts";
@@ -59,6 +63,9 @@ const messages: Record<AttentionItem["kind"], string> = {
   unresolved_executions: "存在待核对的执行，请检查用量",
   error_rate_high: "最近一小时请求失败率偏高",
   storage_pressure: "存储压力已触发低盘保护",
+  backup_disabled: "定时备份未启用，请配置独立备份目录",
+  backup_stale: "已超过备份时限，请检查最近备份与磁盘空间",
+  backup_size: "备份占用偏大，请检查容量并将备份另存异地",
   client_protocol_extension: "检测到新的客户端协议名称，请核对兼容性",
   attention_source_unavailable: "提醒数据源读取失败，请检查后重试",
 };
