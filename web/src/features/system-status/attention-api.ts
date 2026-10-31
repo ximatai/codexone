@@ -16,6 +16,10 @@ const item = z.object({
     "key_expiring",
     "key_limit_near",
     "unresolved_executions",
+    "observation_quality",
+    "capacity_reference",
+    "account_concurrency_high",
+    "account_rate_surge",
     "error_rate_high",
     "storage_pressure",
     "backup_disabled",
@@ -61,6 +65,10 @@ const messages: Record<AttentionItem["kind"], string> = {
   key_expiring: "访问密钥已到期或将在 7 天内到期",
   key_limit_near: "访问密钥今日用量接近限额",
   unresolved_executions: "存在待核对的执行，请检查用量",
+  observation_quality: "最近一小时非客户端取消的未知用量偏多，请检查观测质量",
+  capacity_reference: "用量已接近参考阈值（仅提醒）",
+  account_concurrency_high: "最近 24 小时峰值并发接近上限",
+  account_rate_surge: "最近 10 分钟请求速率突增，请检查主要使用来源",
   error_rate_high: "最近一小时请求失败率偏高",
   storage_pressure: "存储压力已触发低盘保护",
   backup_disabled: "定时备份未启用，请配置独立备份目录",
@@ -81,7 +89,17 @@ export function attentionMessage(
     item.kind === "unresolved_executions"
       ? `未结执行占用 ${item.detail.unresolvedCount ?? item.detail.count} / ${item.detail.limit ?? "—"}，其中 ${item.detail.count} 条待核对`
       : messages[item.kind];
-  return `${name ? `${name}：` : ""}${message}`;
+  const extra =
+    item.kind === "capacity_reference"
+      ? ` · ${item.detail.metric === "daily_requests" ? "今日请求" : item.detail.metric === "daily_estimated_micros" ? "今日估算费用（微美元）" : "明细行数"} ${item.detail.current} / ${item.detail.limit}${item.detail.exceeded ? "，已超过参考上限" : ""}`
+      : item.kind === "quota_high" && item.detail.keyRanking
+        ? ` · 最近 5 小时按 Key 消耗排名（已观测下界）：${item.detail.keyRanking}`
+        : item.kind === "account_concurrency_high"
+          ? ` · ${item.detail.peak} / ${item.detail.limit}`
+          : item.kind === "account_rate_surge"
+            ? ` · ${item.detail.count} 次，过去 7 天同时段中位数 ${item.detail.median}`
+            : "";
+  return `${name ? `${name}：` : ""}${message}${extra}`;
 }
 
 export async function releaseUnknown(

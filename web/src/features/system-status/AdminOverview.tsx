@@ -1,3 +1,4 @@
+import { CapacityPanel, fetchHeadroom } from "./CapacityPanel";
 import {
   accountName,
   credentialExpiry,
@@ -81,7 +82,9 @@ export function AdminOverview() {
     refresh: async (signal) => {
       try {
         const report = await fetchAttention(signal);
+        const capacity = await fetchHeadroom(signal);
         client.setQueryData(attentionQueryKey, report);
+        client.setQueryData(["overview", "headroom"], capacity);
         return true;
       } catch {
         return false;
@@ -131,11 +134,18 @@ export function AdminOverview() {
     enabled: !!owner.session,
     ...polling,
   });
+  const headroom = useQuery({
+    queryKey: ["overview", "headroom"],
+    queryFn: ({ signal }) => fetchHeadroom(signal),
+    enabled: !!owner.session,
+    ...polling,
+  });
   const unauthorized = [
     accounts.error,
     usage.error,
     storage.error,
     attention.error,
+    headroom.error,
   ].some((error) => error instanceof ManagementError && error.status === 401);
   useEffect(() => {
     if (unauthorized) owner.invalidate();
@@ -168,9 +178,12 @@ export function AdminOverview() {
             variant="light"
             ml="sm"
             onClick={() => {
-              void attention.refetch().then((result) => {
-                if (result.isSuccess) owner.lock("executions", false);
-              });
+              void Promise.all([attention.refetch(), headroom.refetch()]).then(
+                (results) => {
+                  if (results.every((result) => result.isSuccess))
+                    owner.lock("executions", false);
+                },
+              );
             }}
           >
             刷新并核对释放结果
@@ -192,7 +205,7 @@ export function AdminOverview() {
       <ActivityOverview
         refresh={refresh}
         accounts={accounts.data}
-        extraQueries={[accounts, usage, storage, attention]}
+        extraQueries={[accounts, usage, storage, attention, headroom]}
         attention={
           <AttentionPanel
             items={attention.data?.items}
@@ -271,6 +284,11 @@ export function AdminOverview() {
                 })}
               </Stack>
             </Paper>
+            <CapacityPanel
+              query={headroom}
+              accounts={accounts.data}
+              onRelease={(before, count) => setRelease({ before, count })}
+            />
             <Paper withBorder p="md">
               <Title order={3} size="h4" mb="md">
                 系统状态
@@ -375,7 +393,7 @@ export function AdminOverview() {
       >
         <Text>
           将释放 {release?.count}{" "}
-          条待核对执行。这些请求的真实用量无法得知；释放只解除容量占用，统计中仍显示用量未知。
+          条待核对执行。这些请求的真实用量无法得知；提前关闭保留审计，统计中仍显示用量未知。
         </Text>
       </ConfirmModal>
       <Drawer

@@ -47,7 +47,8 @@
 }
 .summary span,
 .summary small,
-.metrics span {
+.metrics span,
+.metrics small {
   display: block;
   font-size: var(--mantine-font-size-xs);
   color: var(--mantine-color-dimmed);
@@ -62,6 +63,7 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 .metrics strong {
+  display: block;
   font-size: var(--mantine-font-size-sm);
   overflow-wrap: anywhere;
 }

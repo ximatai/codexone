@@ -30,6 +30,15 @@ test("overview keeps accessible trends, principal names, details and responsive 
     };
     const report = reportFixture();
     const data: Record<string, unknown> = {
+      "/api/usage/headroom": {
+        capacities: [],
+        accounts: [],
+        unknownReconciliation: {
+          count: 0,
+          beforeUnixSeconds: 1,
+          periodSeconds: 86400,
+        },
+      },
       "/api/attention": {
         generatedAtUnixSeconds: 1,
         items: [

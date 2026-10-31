@@ -78,6 +78,7 @@ export const states: Record<string, string> = {
   intent: "在途",
   unknown: terms.pending,
   settled: "已核对",
+  closed_unknown: "已关闭·用量未知",
 };
 export const outcomes: Record<string, string> = {
   succeeded: "成功返回",

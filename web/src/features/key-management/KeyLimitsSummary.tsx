@@ -31,7 +31,7 @@ export function KeyLimitsSummary({
           <MoneyText value={key.limits.budgetMicros} unlimited /> ·
           待核对占用阈值{" "}
           <MoneyText value={key.limits.unresolvedMicros} unlimited />
-          （美元）
+          （美元；仅显式配置生效）
         </>
       ) : query.isPending ? (
         "读取中"

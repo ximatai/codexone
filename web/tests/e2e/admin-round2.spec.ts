@@ -57,7 +57,17 @@ test("round two overview, usage, account name and key expiration", async ({
           : { error: { code: "unauthorized" } },
       });
     }
-    if (path === "/api/attention")
+    if (path === "/api/usage/headroom")
+      json = {
+        capacities: [],
+        accounts: [],
+        unknownReconciliation: {
+          count: 0,
+          beforeUnixSeconds: 1,
+          periodSeconds: 86400,
+        },
+      };
+    else if (path === "/api/attention")
       json = { items: [], generatedAtUnixSeconds: 1 };
     else if (path === "/api/system")
       json = { service: "codexone", ready: true, checks: [] };
