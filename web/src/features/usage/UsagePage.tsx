@@ -15,6 +15,7 @@ export function UsagePage() {
     "end",
     "key",
     "model",
+    "reasoningEffort",
     "mode",
     "failure",
     "state",

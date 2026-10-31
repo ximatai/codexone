@@ -96,11 +96,16 @@ export async function fetchSession(
   return parseSession(await request("/api/session", { signal }));
 }
 export async function login(
+  username: string,
   secret: string,
   signal?: AbortSignal,
 ): Promise<AdminSession> {
   return parseSession(
-    await request("/api/session", { method: "POST", body: { secret }, signal }),
+    await request("/api/session", {
+      method: "POST",
+      body: { username, secret },
+      signal,
+    }),
   );
 }
 export async function logout(

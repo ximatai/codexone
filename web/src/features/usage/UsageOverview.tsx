@@ -433,6 +433,14 @@ export function UsageOverview({
               <option key={model} value={model} />
             ))}
           </datalist>
+          <TextInput
+            label="推理强度"
+            placeholder="全部强度，可输入 high / xhigh"
+            maxLength={32}
+            value={draft.reasoningEffort ?? ""}
+            disabled={busy}
+            onChange={(e) => update("reasoningEffort", e.currentTarget.value)}
+          />
           <Group align="end">
             <Checkbox
               label="仅异常结果"
@@ -560,6 +568,9 @@ export function UsageOverview({
                 ?.principal ??
               (applied?.key || "全部 Key")}
             {applied?.model ? ` · 模型 ${applied.model}` : ""}
+            {applied?.reasoningEffort
+              ? ` · 推理 ${applied.reasoningEffort}`
+              : ""}
             {applied?.mode ? ` · ${modes[applied.mode]}` : ""}
             {applied?.failure
               ? ` · ${failures[applied.failure] ?? "其他异常"}`
@@ -620,6 +631,7 @@ export function UsageOverview({
           </h3>
           <UsageRequests
             rows={report.rows}
+            defaultReasoningEfforts={options.defaultReasoningEfforts}
             onDetail={setDetail}
             retry={() => {
               if (applied) void load(applied, history, page);

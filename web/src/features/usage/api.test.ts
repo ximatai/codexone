@@ -98,3 +98,32 @@ it("parses fractional filtered latency aggregates and rejects invalid values wit
     ).toThrow();
   }
 });
+
+it("preserves bounded request metadata and distinguishes historical rows", () => {
+  const fixture = reportFixture();
+  const parse = (extra: Record<string, unknown>) =>
+    parseUsage({
+      ...fixture,
+      rows: [{ ...fixture.rows[0], ...extra }],
+    }).rows[0];
+  expect(parse({}).requestMetadataRecorded).toBe(false);
+  expect(
+    parse({ requestMetadataRecorded: true, reasoningEffort: null })
+      .reasoningEffort,
+  ).toBeNull();
+  expect(
+    parse({
+      requestMetadataRecorded: true,
+      reasoningEffort: "xhigh",
+      serviceTier: "priority",
+      actualServiceTier: "default",
+    }),
+  ).toMatchObject({
+    reasoningEffort: "xhigh",
+    serviceTier: "priority",
+    actualServiceTier: "default",
+  });
+  for (const key of ["reasoningEffort", "serviceTier", "actualServiceTier"])
+    for (const value of ["INVALID", "a".repeat(33), 1, true])
+      expect(() => parse({ [key]: value })).toThrow();
+});

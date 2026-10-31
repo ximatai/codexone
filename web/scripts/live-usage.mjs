@@ -99,7 +99,7 @@ try {
   await page.getByRole("row").filter({ has: page.getByText("synthetic-alpha", { exact: true }).first() }).getByRole("link", { name: "用量", exact: true }).click();
   await expect(panel().locator(".usage-summary")).toContainText("58 完整");
   stage = "replaced-session-logout";
-  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ secret }) })).status, credential), 200);
+  assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", secret }) })).status, credential), 200);
   await page.route("**/api/session", route => route.request().method() === "DELETE" ? route.abort() : route.continue());
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.getByRole("button", { name: "重试登出", exact: true })).toBeEnabled();

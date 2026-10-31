@@ -4,6 +4,7 @@ export interface UsageFilters {
   end: string;
   key: string;
   model: string;
+  reasoningEffort?: string;
   mode: string;
   failure: string;
   state: string;
@@ -55,6 +56,10 @@ export interface UsageReport {
     unresolved: number;
   }[];
   rows: {
+    reasoningEffort?: string | null;
+    serviceTier?: string | null;
+    actualServiceTier?: string | null;
+    requestMetadataRecorded?: boolean;
     kind: "admitted" | "rejected";
     id: string;
     atUnixSeconds: number;
@@ -76,6 +81,7 @@ export interface UsageReport {
   nextCursor: string | null;
 }
 export interface UsageOptions {
+  defaultReasoningEfforts?: Record<string, string>;
   keys: string[];
   keyOptions?: {
     id: string;
@@ -238,6 +244,14 @@ export function parseUsage(raw: unknown): UsageReport {
     if (at < start || at >= end || (kind === "rejected" && item.state !== null))
       throw invalid();
     return {
+      reasoningEffort: metadataValue(item.reasoningEffort),
+      serviceTier: metadataValue(item.serviceTier),
+      actualServiceTier: metadataValue(item.actualServiceTier),
+      requestMetadataRecorded: (() => {
+        if (item.requestMetadataRecorded === undefined) return false;
+        if (typeof item.requestMetadataRecorded !== "boolean") throw invalid();
+        return item.requestMetadataRecorded;
+      })(),
       kind,
       id: text(item.id),
       atUnixSeconds: at,
@@ -320,8 +334,15 @@ export function usageParameters(
     end: String(end),
     limit: "50",
   });
-  for (const name of ["key", "model", "mode", "failure", "state"] as const)
-    if (filters[name].trim()) parameters.set(name, filters[name].trim());
+  for (const name of [
+    "key",
+    "model",
+    "mode",
+    "failure",
+    "state",
+    "reasoningEffort",
+  ] as const)
+    if (filters[name]?.trim()) parameters.set(name, filters[name]!.trim());
   if (filters.failedOnly) parameters.set("failedOnly", "true");
   if (cursor) parameters.set("after", cursor);
   return parameters;
@@ -345,7 +366,17 @@ export async function fetchUsageOptions(
     if (new Set(result).size !== result.length) throw invalid();
     return result;
   }
+  const defaultReasoningEfforts = Object.fromEntries(
+    Object.entries(object(value.defaultReasoningEfforts ?? {})).map(
+      ([model, effort]) => {
+        const value = metadataValue(effort);
+        if (value === null) throw invalid();
+        return [text(model, 128), value];
+      },
+    ),
+  );
   return {
+    defaultReasoningEfforts,
     keys: list(value.keys, 256, 256),
     keyOptions:
       value.keyOptions === undefined
@@ -408,4 +439,11 @@ export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsage[]> {
           : integer(item.lastUsedAtUnixSeconds),
     };
   });
+}
+
+function metadataValue(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw !== "string" || !/^[a-z0-9_-]{1,32}$/.test(raw))
+    throw invalid();
+  return raw;
 }
