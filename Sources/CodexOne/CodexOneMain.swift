@@ -26,6 +26,7 @@ struct CodexOneMain {
       case .invalidAccountPoolConfiguration: message = "Invalid account pool configuration."
       case .invalidAdminTokenFile: message = "Invalid admin credential configuration."
       case .invalidAccountMasterKeyFile: message = "Invalid account master key configuration."
+      case .invalidBackupDirectory: message = "Invalid backup directory configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
       }
@@ -68,7 +69,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners are loopback-only."
       )
       return
     }
@@ -90,6 +91,11 @@ struct CodexOneMain {
       throw CommandError.unsupportedArguments
     }
     let configuration = try RuntimeConfiguration(environment: ProcessInfo.processInfo.environment)
+    if let directory = configuration.backupDirectory {
+      do { try SQLiteSnapshotMaintenance.validateBackupDirectory(directory) } catch {
+        throw RuntimeConfiguration.ConfigurationError.invalidBackupDirectory
+      }
+    }
     if keyImport {
       guard let directory = configuration.dataDirectory, let admin = configuration.adminTokenFile
       else { throw ExecutionError.invalidCommand }
@@ -265,6 +271,9 @@ struct CodexOneMain {
     } else {
       usageReader = nil
     }
+    let backup = try configuration.backupDirectory.flatMap { directory in
+      try store?.makeOnlineBackup(directory: directory, protection: credentialProtection)
+    }
     let protocolExtensions = ClientProtocolExtensionRegistry()
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
@@ -277,9 +286,10 @@ struct CodexOneMain {
           .imageGeneration?.models.map(\.id) ?? [],
         usage: usageReader.map { UsageAdminAPI(querying: $0) },
         attention: usageReader.map {
-          AttentionAdminAPI(reader: $0, storage: store, registry: protocolExtensions)
+          AttentionAdminAPI(
+            reader: $0, storage: store, registry: protocolExtensions, backup: backup)
         },
-        executions: store, storageMonitoring: store)
+        executions: store, storageMonitoring: store, backup: backup)
     } else {
       keyAdmin = nil
     }
@@ -295,6 +305,7 @@ struct CodexOneMain {
     ])
     var services: [any Service] = []
     if let store { services.append(StorageMonitor(storage: store)) }
+    if let backup { services.append(OnlineBackupSupervisor(backup: backup)) }
     let accountAdmin: AccountAdminAPI?
     var poolDataService: ResponsesDataService?
     if let credentialProtection, let store {

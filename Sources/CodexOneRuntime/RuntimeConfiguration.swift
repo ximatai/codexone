@@ -1,6 +1,7 @@
 public struct RuntimeConfiguration: Sendable, Equatable {
   public let dataPort: Int
   public let adminPort: Int
+  public let backupDirectory: String?
   public let dataDirectory: String?
   public let identityConfigurationPath: String?
   public let accountPoolConfigurationPath: String?
@@ -13,6 +14,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public enum ConfigurationError: Error, Equatable {
     case invalidPort(String)
     case conflictingPorts
+    case invalidBackupDirectory
     case invalidDataDirectory
     case invalidIdentityConfiguration
     case invalidAccountPoolConfiguration
@@ -40,6 +42,14 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       dataDirectory = path
     } else {
       dataDirectory = nil
+    }
+    if let path = environment["CODEXONE_BACKUP_DIRECTORY"] {
+      guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096,
+        dataDirectory != nil
+      else { throw ConfigurationError.invalidBackupDirectory }
+      backupDirectory = path
+    } else {
+      backupDirectory = nil
     }
     if let path = environment["CODEXONE_IDENTITY_CONFIG"] {
       guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096,

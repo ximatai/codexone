@@ -25,7 +25,7 @@ public struct SnapshotManifest: Codable, Sendable {
 
 /// Offline commands retain the same flock as the service. They never replace a live database.
 public enum SQLiteSnapshotMaintenance {
-  private static func run<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws
+  static func run<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws
     -> T
   {
     try await withCheckedThrowingContinuation { continuation in
@@ -44,14 +44,15 @@ public enum SQLiteSnapshotMaintenance {
     }
   }
   static func backup(
-    _ db: SQLiteConnection, destination: String, protection: AccountCredentialCipher?
+    _ db: SQLiteConnection, destination: String, protection: AccountCredentialCipher?,
+    online: Bool = false, check: () throws -> Void = {}
   ) throws -> SnapshotManifest {
     guard try db.reencryptionCheckpoint()?.complete != false else {
       throw KeyMaintenanceError.incompleteReencryption
     }
     let record = try db.restoreRecord()
     guard record == nil || record?.baseline != nil else { throw ExecutionError.denied }
-    let keys = try verifyCredentials(db, protection)
+    if !online { _ = try verifyCredentials(db, protection) }
     let snapshotBytes = try db.scalar("PRAGMA page_count") * db.scalar("PRAGMA page_size")
     try StorageCapacity.require(
       (destination as NSString).deletingLastPathComponent,
@@ -62,9 +63,14 @@ public enum SQLiteSnapshotMaintenance {
     guard mkdir(destination, 0o700) == 0 else { throw ExecutionError.conflict }
     try privateDirectory(destination)
     let partial = destination + "/snapshot.sqlite.partial"
-    try copy(db, to: partial, optional: true)
-    let hash = try fingerprint(partial)
-    let generation = try db.rows("SELECT generation FROM maintenance_state WHERE id=1") {
+    try copy(db, to: partial, optional: true, online: online, check: check)
+    try check()
+    // Read metadata from the completed copy, never a later live-source revision.
+    let snapshot = try SQLiteConnection(readOnlyPath: partial)
+    defer { snapshot.shutdown() }
+    let keys = try verifyCredentials(snapshot, protection)
+    let hash = try fingerprint(partial, check: check)
+    let generation = try snapshot.rows("SELECT generation FROM maintenance_state WHERE id=1") {
       String(cString: sqlite3_column_text($0, 0))
     }
     guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
@@ -201,7 +207,10 @@ public enum SQLiteSnapshotMaintenance {
     let lockFD: Int32
     let path: String
   }
-  private static func verifiedSnapshot(bundle: String, protection: AccountCredentialCipher?) throws
+  private static func verifiedSnapshot(
+    bundle: String, protection: AccountCredentialCipher?,
+    check: @escaping @Sendable () throws -> Void = {}
+  ) throws
     -> VerifiedSnapshot
   {
     try privateDirectory(bundle)
@@ -223,11 +232,21 @@ public enum SQLiteSnapshotMaintenance {
     }
     let sourceLock = try lock(snapshot + ".lock", readOnly: true)
     do {
-      let actual = try fingerprint(snapshot)
+      let actual = try fingerprint(snapshot, check: check)
       guard actual.0 == manifest.databaseBytes, actual.1 == manifest.databaseSHA256 else {
         throw ExecutionError.invalidCommand
       }
       let source = try SQLiteConnection(readOnlyPath: snapshot)
+      let budget = SnapshotReadCheck(check: check)
+      sqlite3_progress_handler(
+        source.handle, 1000,
+        { pointer in
+          guard let pointer else { return 1 }
+          let budget = Unmanaged<SnapshotReadCheck>.fromOpaque(pointer).takeUnretainedValue()
+          return budget.shouldStop ? 1 : 0
+        }, Unmanaged.passUnretained(budget).toOpaque())
+      defer { sqlite3_progress_handler(source.handle, 0, nil, nil) }
+      try check()
       guard try source.scalar("PRAGMA user_version") == Int64(manifest.schema),
         try verifyCredentials(source, protection) == manifest.requiredKeyIDs,
         try source.rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) })
@@ -254,10 +273,11 @@ public enum SQLiteSnapshotMaintenance {
   {
     try await run { try verifyBackup(bundle: bundle, protection: protection) }
   }
-  static func verifyBackup(bundle: String, protection: AccountCredentialCipher?) throws
-    -> SnapshotManifest
-  {
-    let verified = try verifiedSnapshot(bundle: bundle, protection: protection)
+  static func verifyBackup(
+    bundle: String, protection: AccountCredentialCipher?,
+    check: @escaping @Sendable () throws -> Void = {}
+  ) throws -> SnapshotManifest {
+    let verified = try verifiedSnapshot(bundle: bundle, protection: protection, check: check)
     defer {
       verified.source.shutdown()
       close(verified.lockFD)
@@ -341,9 +361,10 @@ public enum SQLiteSnapshotMaintenance {
     }
     return required.sorted()
   }
-  private static func copy(_ source: SQLiteConnection, to path: String, optional: Bool = false)
-    throws
-  {
+  private static func copy(
+    _ source: SQLiteConnection, to path: String, optional: Bool = false, online: Bool = false,
+    check: () throws -> Void = {}
+  ) throws {
     let pageSize = try source.scalar("PRAGMA page_size")
     let pages = try source.scalar("PRAGMA page_count")
     guard pageSize > 0, pages <= 1_073_741_824 / pageSize else { throw ExecutionError.capacity }
@@ -371,12 +392,24 @@ public enum SQLiteSnapshotMaintenance {
     var finished = false
     defer { if !finished { sqlite3_backup_finish(transfer) } }
     var step: Int32
+    let deadline = DispatchTime.now().uptimeNanoseconds + 300_000_000_000
     repeat {
+      try check()
+      guard !online || DispatchTime.now().uptimeNanoseconds < deadline else {
+        throw ExecutionError.storageUnavailable
+      }
       try StorageCapacity.require(
         (path as NSString).deletingLastPathComponent, additionalBytes: 2 * 1024 * 1024,
         optional: optional)
       step = sqlite3_backup_step(transfer, 128)
-    } while step == SQLITE_OK
+      guard Int64(sqlite3_backup_pagecount(transfer)) <= 1_073_741_824 / pageSize else {
+        throw ExecutionError.capacity
+      }
+      if online && (step == SQLITE_OK || step == SQLITE_BUSY || step == SQLITE_LOCKED) {
+        // Release the SQLite read lock between steps; do not pin a read transaction/WAL.
+        usleep(step == SQLITE_OK ? 1_000 : 10_000)
+      }
+    } while step == SQLITE_OK || (online && (step == SQLITE_BUSY || step == SQLITE_LOCKED))
     let finish = sqlite3_backup_finish(transfer)
     finished = true
     guard step == SQLITE_DONE, finish == SQLITE_OK,
@@ -415,6 +448,13 @@ public enum SQLiteSnapshotMaintenance {
       info.st_mode & 0o077 == 0
     else { throw ExecutionError.invalidCommand }
   }
+  public static func validateBackupDirectory(_ path: String) throws {
+    guard path.hasPrefix("/"), !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
+    try privateDirectory(path)
+    var info = stat()
+    guard lstat(path, &info) == 0, info.st_mode & 0o700 == 0o700, access(path, W_OK | X_OK) == 0
+    else { throw ExecutionError.invalidCommand }
+  }
   static func readFile(_ path: String, limit: Int) throws -> Data {
     let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { throw ExecutionError.invalidCommand }
@@ -432,7 +472,7 @@ public enum SQLiteSnapshotMaintenance {
     try file.write(contentsOf: data)
     guard fsync(fd) == 0 else { throw ExecutionError.storageUnavailable }
   }
-  static func fingerprint(_ path: String) throws -> (Int64, String) {
+  static func fingerprint(_ path: String, check: () throws -> Void = {}) throws -> (Int64, String) {
     let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { throw ExecutionError.invalidCommand }
     defer { close(fd) }
@@ -441,6 +481,7 @@ public enum SQLiteSnapshotMaintenance {
     var bytes: Int64 = 0
     var hash = SHA256()
     while let chunk = try file.read(upToCount: 65536), !chunk.isEmpty {
+      try check()
       bytes += Int64(chunk.count)
       guard bytes <= 1_073_741_824 else { throw ExecutionError.capacity }
       hash.update(data: chunk)
@@ -453,7 +494,7 @@ public enum SQLiteSnapshotMaintenance {
     defer { close(fd) }
     guard fsync(fd) == 0 else { throw ExecutionError.storageUnavailable }
   }
-  private static func syncDirectory(_ path: String) throws {
+  static func syncDirectory(_ path: String) throws {
     let fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }
     defer { close(fd) }
@@ -474,5 +515,17 @@ extension SQLiteConnection {
     }
     guard rows.count == 1 else { throw ExecutionError.storageUnavailable }
     return rows[0]
+  }
+}
+
+/// The closure is called only on the snapshot utility worker, including SQLite's progress callback.
+private final class SnapshotReadCheck {
+  private let check: @Sendable () throws -> Void
+  init(check: @escaping @Sendable () throws -> Void) { self.check = check }
+  var shouldStop: Bool {
+    do {
+      try check()
+      return false
+    } catch { return true }
   }
 }
