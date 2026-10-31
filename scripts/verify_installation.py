@@ -92,9 +92,13 @@ def verify_initializer(binary):
         config = document['services']['gateway']
         bootstrap = document['services']['init-data']
         assert bootstrap['user'] == '0:0' and bootstrap['network_mode'] == 'none' and bootstrap['read_only']
-        assert len(bootstrap['volumes']) == 1 and bootstrap['volumes'][0]['type'] == 'volume'
+        assert len(bootstrap['volumes']) == 2 and bootstrap['volumes'][0]['type'] == 'volume'
         assert bootstrap['volumes'][0]['volume']['nocopy']
         assert next(mount for mount in config['volumes'] if mount['target'] == '/var/lib/codexone')['volume']['nocopy']
+        assert config['environment']['CODEXONE_BACKUP_DIRECTORY'] == '/var/backups/codexone'
+        assert next(mount for mount in config['volumes'] if mount['target'] == '/var/backups/codexone')['source'] == 'backups'
+        assert all(service['logging'] == {'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '5'}} for service in document['services'].values())
+        assert document['volumes']['backups']['name'] == document['name'].replace('codexone-', 'codexone-backups-', 1)
         assert config['depends_on']['init-data']['condition'] == 'service_completed_successfully'
         assert re.fullmatch('codexone-data-[0-9a-f]{24}', document['volumes']['data']['name'])
         assert re.fullmatch('codexone-[0-9a-f]{24}', document['name'])
@@ -239,7 +243,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert failed_listing.returncode != 0 and b'Synthetic data listing failure' in failed_listing.stdout + failed_listing.stderr
             assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()
             refused_owner = run([*compose, 'run', '--rm', '--no-deps', '--env', f'TARGET_UID={wrong_uid}', 'init-data'], ok=False)
-            assert refused_owner.returncode != 0 and b'Existing data volume ownership differs' in refused_owner.stderr + refused_owner.stdout
+            assert refused_owner.returncode != 0 and b'Existing volume ownership differs' in refused_owner.stderr + refused_owner.stdout
             assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()
             locked = run([*compose, 'run', '--rm', 'gateway', '--migrate'], ok=False)
             assert locked.returncode != 0
@@ -392,15 +396,16 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             leftovers = run(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project]).stdout.decode().splitlines()
             assert len(leftovers) <= 8 and all(re.fullmatch('[0-9a-f]{12,64}', item) for item in leftovers)
             if leftovers: run(['docker', 'rm', '--force', *leftovers])
-            retained = run(['docker', 'volume', 'inspect', volume], ok=False)
-            if retained.returncode == 0:
-                retained_volume = json.loads(retained.stdout)[0]
-                assert retained_volume['Driver'] == 'local' and retained_volume['Scope'] == 'local'
-                labels = retained_volume['Labels']
-                assert labels['com.docker.compose.project'] == project and labels['com.docker.compose.volume'] == 'data'
-                run(['docker', 'volume', 'rm', volume])
-            else:
-                assert b'no such volume' in retained.stderr.lower() or b'no such object' in retained.stderr.lower()
+            for volume_name, volume_kind in ((volume, 'data'), (settings['CODEXONE_BACKUP_VOLUME'], 'backups')):
+                retained = run(['docker', 'volume', 'inspect', volume_name], ok=False)
+                if retained.returncode == 0:
+                    retained_volume = json.loads(retained.stdout)[0]
+                    assert retained_volume['Driver'] == 'local' and retained_volume['Scope'] == 'local'
+                    labels = retained_volume['Labels']
+                    assert labels['com.docker.compose.project'] == project and labels['com.docker.compose.volume'] == volume_kind
+                    run(['docker', 'volume', 'rm', volume_name])
+                else:
+                    assert b'no such volume' in retained.stderr.lower() or b'no such object' in retained.stderr.lower()
     print('PASS: actual amd64 OCI/Compose private installation, SPA/auth/Key persistence, non-root/read-only runtime, liveness/readiness, lock, v5 backup migration/legacy denial and graceful restart')
 
 

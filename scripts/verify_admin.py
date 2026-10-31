@@ -128,8 +128,12 @@ def verify(binary):
         assert request(port, 'GET', '/api/attention?extra=1', cookie=cookie)[0] == 400
         # GET needs no CSRF proof; both browser session and headless Bearer use the same no-store DTO.
         attention = document(request(port, 'GET', '/api/attention', cookie=cookie))
-        assert attention['items'] == [] and isinstance(attention['generatedAtUnixSeconds'], int)
-        assert document(request(port, 'GET', '/api/attention', headers={'Authorization': 'Bearer ' + ADMIN}))['items'] == []
+        disabled = [dict(kind='backup_disabled', severity='warning', subjectType='system',
+                         subjectID=None, subjectName=None, detail={}, sinceUnixSeconds=None)]
+        assert attention['items'] == disabled and isinstance(attention['generatedAtUnixSeconds'], int)
+        assert document(request(port, 'GET', '/api/attention', headers={'Authorization': 'Bearer ' + ADMIN}))['items'] == disabled
+        backup = document(request(port, 'GET', '/api/runtime/storage', cookie=cookie))['backup']
+        assert backup['enabled'] is False and backup['retainedCount'] == 0
 
         for path in ('/api/usage/daily?days=0', '/api/usage/daily?days=32', '/api/usage/daily?days=x',
                      '/api/usage/daily?days=7&days=8', '/api/usage/daily?key=', '/api/usage/daily?extra=1',

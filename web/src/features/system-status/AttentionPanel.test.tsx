@@ -5,6 +5,7 @@ import { render } from "../../../tests/render";
 import { AttentionPanel } from "./AttentionPanel";
 import {
   attentionQueryKey,
+  attentionMessage,
   attentionTarget,
   type AttentionItem,
 } from "./attention-api";
@@ -152,3 +153,20 @@ it("disables release when capacity is occupied without any unknown executions", 
   fireEvent.click(button);
   expect(release).not.toHaveBeenCalled();
 });
+
+it.each(["backup_disabled", "backup_stale", "backup_size"] as const)(
+  "maps %s to actionable backup text and storage details",
+  (kind) => {
+    const item: AttentionItem = {
+      kind,
+      severity: "warning",
+      subjectType: "system",
+      subjectID: null,
+      subjectName: null,
+      detail: {},
+      sinceUnixSeconds: null,
+    };
+    expect(attentionTarget(item)).toBe("/?storage=details");
+    expect(attentionMessage(item)).toContain("备份");
+  },
+);

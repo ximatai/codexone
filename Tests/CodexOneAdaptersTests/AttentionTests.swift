@@ -150,9 +150,10 @@ private struct AttentionStorage: StorageMonitoring {
 @Test func attentionSourceFailureStoragePressureAndCapacity() async throws {
   let failure = try await AttentionAdminAPI(reader: BrokenAttention(capacity: false)).items(
     now: attentionNow)
-  #expect(failure.count == 4)
+  #expect(failure.count == 5)
+  #expect(failure.contains { $0.kind == "backup_disabled" })
   #expect(
-    Set(failure.map { $0.detail["source"]?.string ?? "" }) == [
+    Set(failure.compactMap { $0.detail["source"]?.string }) == [
       "accounts", "keys", "executions", "storage",
     ])
   await #expect(throws: ExecutionError.capacity) {

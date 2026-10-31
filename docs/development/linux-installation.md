@@ -1,6 +1,6 @@
 # Linux amd64 候选安装
 
-使用 Linux Docker Engine 与 Compose v2、Python 3、本地可靠磁盘。Compose 使用 host network，使服务仍只监听宿主 `127.0.0.1:18080/18081`；不要把此模式直接迁移到 macOS/Windows Docker Desktop。data 使用 Engine 本地磁盘上的命名 volume，不使用宿主共享 bind 或网络盘。外部 HTTPS 由宿主反代提供，管理域名必须与配置的 origin 完全一致。其他平台需单独验收。
+使用 Linux Docker Engine 与 Compose v2、Python 3、本地可靠磁盘。Compose 使用 host network，使服务仍只监听宿主 `127.0.0.1:18080/18081`；不要把此模式直接迁移到 macOS/Windows Docker Desktop。data 与 backups 使用 Engine 本地磁盘上的命名 volume，不使用宿主共享 bind 或网络盘。外部 HTTPS 由宿主反代提供，管理域名必须与配置的 origin 完全一致。其他平台需单独验收。
 
 ## 构建与来源
 
@@ -42,11 +42,19 @@ python3 compose-install.py ps
 
 安装后的 Compose 操作统一使用 `python3 compose-install.py <command>`：入口固定私有 compose/env 文件、安装目录与唯一 project，剥离宿主 `COMPOSE_` / `CODEXONE_` 覆盖并拒绝命令行切换安装。不要用裸 Compose 命令绕过入口。Docker Engine/context 仍由操作者选择，须指向预期的本地 Linux Engine。
 
-初始化生成 0700 安装/secrets 目录和 0600 文件，并生成唯一 Compose project 与 data volume 名称；此时尚不创建卷。首次 Compose 会创建卷并执行隔离的 init-data：无网络、只挂数据、只为新空卷设定运行 UID/GID 与 0700 权限，非空卷归属不符明确拒绝；不递归改写既有文件。管理员秘密、账号主密钥只写入独立文件，不打印值、不进入 `.env`。先私下编辑 `secrets/pool.json` 的模型/profile、价格和边界，再以实际二进制 `--check-config` 校验。示例模型是占位符；没有账号时仍能管理，readiness 为 503。账户授权操作参见[账号凭证](account-credentials.md)，不要把私人配置提交到仓库。
+初始化生成 0700 安装/secrets 目录和 0600 文件，并生成唯一 Compose project、data 与 backups volume 名称；此时尚不创建卷。首次 Compose 会创建卷并执行隔离的 init-data：无网络、只挂数据与备份卷、只为新空卷设定运行 UID/GID 与 0700 权限，非空卷归属不符明确拒绝；不递归改写既有文件。管理员秘密、账号主密钥只写入独立文件，不打印值、不进入 `.env`。先私下编辑 `secrets/pool.json` 的模型/profile、价格和边界，再以实际二进制 `--check-config` 校验。示例模型是占位符；没有账号时仍能管理，readiness 为 503。账户授权操作参见[账号凭证](account-credentials.md)，不要把私人配置提交到仓库。
 
 首次浏览器登录从私有 `secrets/admin` 文件取得秘密，经精确 HTTPS 管理 origin 登录。管理 session 的 Secure cookie 要求 HTTPS；不要把明文 HTTP 直接暴露外网。数据面 Key 与管理员秘密互不替代。
 
-gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止提权；data 本地卷可写、secrets 文件只读、`/tmp` 为有界 tmpfs。短命 init-data 仅以 root 和 CHOWN/FOWNER/DAC_OVERRIDE 设置空卷目录归属，根只读且无网络、不挂 secrets，完成后 gateway 才启动。768 MiB / 128 PID 是安装候选的限制，不是弱服务器容量承诺。live 只检查进程存活；ready 为 503 不触发自动重启。host network 的端口冲突须先处理，不能用映射端口改变回环隔离。
+gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止提权；data 与 backups 本地卷可写、secrets 文件只读、`/tmp` 为有界 tmpfs。短命 init-data 仅以 root 和 CHOWN/FOWNER/DAC_OVERRIDE 设置空卷目录归属，根只读且无网络、不挂 secrets，完成后 gateway 才启动。768 MiB / 128 PID 是安装候选的限制，不是弱服务器容量承诺。live 只检查进程存活；ready 为 503 不触发自动重启。host network 的端口冲突须先处理，不能用映射端口改变回环隔离。
+
+## 定时备份与日志轮转
+
+Compose 的独立 backups 命名卷挂载 `/var/backups/codexone` 并设置 `CODEXONE_BACKUP_DIRECTORY`；init-data 同时检查两卷归属与 0700 权限。launcher 校验两卷均属于唯一安装标识，剥离宿主同名环境覆盖。旧安装升级模板后若 `.env` 未含备份卷字段，launcher 从原 project 派生同一隔离卷名；显式字段不一致则拒绝。
+
+服务启动后 10 分钟首次备份，每轮结束等待 24 小时；normal 才运行，保留 7 份自检成功的 bundle。认证存储接口与首页展示最近成功时间和提醒，格式、权限与恢复见[快照维护](snapshot-maintenance.md)。必须定期将备份和依赖的主密钥分别异地保存并演练恢复；同机独立卷不防磁盘/主机丢失。升级保留两个卷及 secrets，不运行 down -v。
+
+所有服务（含 init-data）日志使用 json-file，每文件 10m、最多 5 文件；已有容器须用新模板重新创建才生效，不涉及 SQLite 账本/审计。源码侧可执行 `python3 scripts/check_backup_compose.py`（需 PyYAML）解析模板并校验安装标识；Linux 卷归属、真实镜像备份/恢复和日志配置仍须独立验收。
 
 ## TLS 反代
 
@@ -62,7 +70,7 @@ python3 compose-install.py run --rm gateway --migrate
 python3 compose-install.py up -d
 ```
 
-data 卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME；普通 `python3 compose-install.py down` 保留卷。升级不得使用 `down -v` 或删除卷，数据和迁移备份均在卷内；不能用新的空卷冒充已有数据升级。迁移与在线服务共用实例锁；须先停服。普通启动拒绝不兼容旧 schema；显式迁移先产生私有一致性备份，再升级。保留迁移输出所指版本对应的主密钥和备份。新增安装目录不能替代已有安装；不要重新生成主密钥覆盖现有密文依赖。
+data/备份卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME/CODEXONE_BACKUP_VOLUME；普通 `python3 compose-install.py down` 保留卷。升级不得使用 `down -v` 或删除卷，数据和迁移备份均在卷内；不能用新的空卷冒充已有数据升级。迁移与在线服务共用实例锁；须先停服。普通启动拒绝不兼容旧 schema；显式迁移先产生私有一致性备份，再升级。保留迁移输出所指版本对应的主密钥和备份。新增安装目录不能替代已有安装；不要重新生成主密钥覆盖现有密文依赖。
 
 同 schema 的兼容二进制回退与恢复旧库是两回事。恢复旧快照可能丢失新区间的已执行项，不得直接复制旧库后重启接单；O03/O04 要求维护态、披露缺失区间和审计额度基线。显式旧快照恢复与审计核对使用[核心快照维护](snapshot-maintenance.md)，不能用迁移前单文件备份替代完成 bundle。迁移失败保持停止，检查私有资料并保留源库；不要自动重试覆盖或通过删除 data 绕过问题。旧服务替代、弱服务器混合容量和真实客户端兼容按 [验收定义](verification.md) 独立执行，具体交付状态只查 [STATUS](../../STATUS.md)。
 

@@ -9,7 +9,7 @@
 | 观察条件 | 状态与动作 |
 |---|---|
 | 可用空间至少 256 MiB，WAL 小于 64 MiB，储备完整 | normal，允许普通工作 |
-| 可用空间低于 256 MiB，或 WAL 达 64 MiB | degraded，暂停用量报表、新普通管理写、被动额度观察及拒绝诊断写；新执行仍须通过准入检查 |
+| 可用空间低于 256 MiB，或 WAL 达 64 MiB | degraded，暂停新备份、用量报表、新普通管理写、被动额度观察及拒绝诊断写；新执行仍须通过准入检查 |
 | 可用空间低于 128 MiB，WAL 达 128 MiB，或储备不完整 | blocked，拒绝新生成 intent 和新刷新 intent，ready=503，live 不受容量水位影响 |
 | 无法取得可靠可用空间/文件证据 | unknown，关闭准入和可选工作，不仅凭统计失败冒充数据库损坏 |
 
@@ -34,6 +34,7 @@ Runtime 仅一个周期 owner，每次 await 一个命令后休眠约一秒，�
 - 采样时间、normal/degraded/blocked/unknown、核心可用与存储准入/可选工作标记；不代替账号、授权和恢复基线等完整 readiness。
 - 用户可用字节、DB/WAL 字节、实际储备/目标字节、最近 checkpoint log/checkpointed frames 与 busy。空间压力时跳过 checkpoint，帧计数保留最近一次尝试值。
 - 当前普通/关键 DB 命令数、最近/最大排队等待微秒、报表 reader 是否活动。
+- `backup` 健康：enabled、enabledUnixSeconds、lastSuccessUnixSeconds、lastFailureUnixSeconds、lastFailure、lastSkippedUnixSeconds、skippedPressure、retainedCount、totalBytes、largestBundleBytes；未发生的可空时间/分类省略。最近成功从保留 manifest 恢复，失败/跳过只保留当前进程，不写核心库。固定失败分类及提醒边界见[管理契约](../specs/control-plane.md)。
 - 进程峰值常驻字节（不是当前 RSS），0—1023 FD 扫描的已用数量与 scanLimit=1024（不是更高编号 FD 的全量统计）。
 
 没有路径、主机/请求/Key/账号 ID、正文或秘密，也不产生高基数 label。当前视图不提供完整 task/连接 tracing；完整混合负载及资源回稳仍须独立容量验收。
@@ -52,3 +53,6 @@ python3 scripts/verify_storage_pressure.py --binary .build/debug/codexone
 ```
 
 真实空间故障仅在显式提供的隔离 Linux tmpfs 上运行 `--space-root ABSOLUTE_PRIVATE_TMPFS`：脚本要求类型 tmpfs、容量 384—512 MiB，拒绝在普通宿主卷填充。覆盖低水位、实际 ENOSPC、已有流结算、拒绝新派发、回稳、离线空间拒绝，以及 SIGSTOP 暂停实际恢复进程后撤去目标空间、SIGCONT 后逐批拒绝。macOS 验证真实储备文件/SQLite FULL/WAL/认证 API，空间水位以内部测试注入；不填满宿主磁盘，不冒充掉电或目标容量证据。
+
+
+在线备份在 writer 外使用独立只读连接，每批复核 normal 和目标可选空间余量。失败仅记录健康分类，不将核心库标记不可用；压力恢复后等待下一轮，不忙重试。目录总量（含未清理 partial）超过 5 GiB、单完成 bundle 超过 768 MiB 时 warning。仅新份通过自检并发布后才裁剪旧份，不在压力下删完成备份换空间，详见[快照维护](snapshot-maintenance.md)。

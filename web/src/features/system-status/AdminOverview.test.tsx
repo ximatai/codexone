@@ -27,6 +27,11 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
     admissionAllowed: true,
     optionalWorkAllowed: true,
     availableBytes: 1048576,
+    backup: {
+      enabled: true,
+      lastSuccessUnixSeconds: 1800000000,
+      retainedCount: 7,
+    },
   });
   vi.mocked(accounts.fetchAccounts).mockResolvedValue([
     {
@@ -72,6 +77,10 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   expect(screen.getByText(/允许准入/)).toBeVisible();
   fireEvent.click(screen.getByRole("link", { name: /存储与准入/ }));
   expect(await screen.findByText("磁盘可用：1.0 MiB")).toBeVisible();
+  expect(screen.getByText("保留备份：7")).toBeVisible();
+  expect(screen.getByText(/最近成功备份：/)).toHaveTextContent(
+    new Date(1800000000 * 1000).toLocaleString(),
+  );
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
