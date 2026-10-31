@@ -1,3 +1,4 @@
+import { ActivityOverview } from "./ActivityOverview";
 import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
@@ -93,8 +94,20 @@ export function AdminOverview() {
     <Stack mb="xl" aria-label="管理概览">
       <Title order={2}>今日运营概览</Title>
       <Text size="sm" c="dimmed">
-        UTC 当日 · {estimateNote}；缺失用量保持不可用，费用为已观测下界。
+        UTC 当日 · {estimateNote}；缺失用量保持不可用，Token
+        与费用为已观测下界。
       </Text>
+      {usage.isFetched && (
+        <ActivityOverview
+          refreshOverview={() =>
+            Promise.all([
+              accounts.refetch(),
+              usage.refetch(),
+              storage.refetch(),
+            ])
+          }
+        />
+      )}
       <div className="responsive-grid responsive-grid-4">
         <Paper withBorder p="lg">
           <Anchor component={Link} to="/accounts">
@@ -162,7 +175,7 @@ export function AdminOverview() {
           return (
             <Paper withBorder p="md" key={account.id} className="wrap-anywhere">
               <Anchor component={Link} to="/accounts">
-                {account.id}
+                {account.displayName ?? account.id}
               </Anchor>
               <QuotaWindowBar title="主窗口" value={base?.primary ?? null} />
               <QuotaWindowBar title="次窗口" value={base?.secondary ?? null} />

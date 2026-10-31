@@ -109,6 +109,8 @@ def verify(binary):
         port = f.ports['admin']
         assert request(port, 'GET', '/api/session')[0] == 401
         assert request(port, 'GET', '/api/usage/keys')[0] == 401
+        for path in ('/api/usage/daily', '/api/usage/in-flight'):
+            assert request(port, 'GET', path)[0] == 401
         assert request(port, 'POST', '/api/session', {'secret': ADMIN})[0] == 403
         assert request(port, 'POST', '/api/session', {'secret': 'synthetic-wrong-admin'}, origin=f.origin)[0] == 401
         assert request(port, 'POST', '/api/session', {'secret': ADMIN}, origin=f.origin, headers={'Host': 'foreign.example'})[0] == 403
@@ -119,6 +121,15 @@ def verify(binary):
         assert request(port, 'GET', '/api/usage/keys', cookie=cookie, origin='https://foreign.example')[0] == 403
         assert request(port, 'GET', '/api/usage/keys?extra=1', cookie=cookie)[0] == 400
         assert document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'] == []
+        for path in ('/api/usage/daily?days=0', '/api/usage/daily?days=32', '/api/usage/daily?days=x',
+                     '/api/usage/daily?days=7&days=8', '/api/usage/daily?key=', '/api/usage/daily?extra=1',
+                     '/api/usage/in-flight?limit=0', '/api/usage/in-flight?limit=201', '/api/usage/in-flight?limit=x',
+                     '/api/usage/in-flight?extra=1'):
+            assert request(port, 'GET', path, cookie=cookie)[0] == 400, path
+        daily = document(request(port, 'GET', '/api/usage/daily', cookie=cookie))
+        assert daily['days'] == 7 and len(daily['buckets']) == 7
+        assert all(row['requests'] == 0 for row in daily['buckets'])
+        assert document(request(port, 'GET', '/api/usage/in-flight', cookie=cookie))['rows'] == []
         create = dict(principal='browser-synthetic', models=['synthetic-text'], limits=LIMITS)
         assert request(port, 'POST', '/api/keys', create, cookie=cookie, origin=f.origin)[0] == 403
         assert request(port, 'POST', '/api/keys', create, cookie=cookie, origin='https://foreign.example', csrf=csrf)[0] == 403
@@ -140,6 +151,51 @@ def verify(binary):
         summary_start = int(time.time()) // 86400 * 86400
         row = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]
         assert row['principal'] == 'browser-synthetic' and row['totalMilliseconds'] >= row['firstEventMilliseconds'] >= 0
+        daily = document(request(port, 'GET', '/api/usage/daily?days=1&key=' + key['id'] + '&model=synthetic-text', cookie=cookie))['buckets'][0]
+        assert daily['requests'] == daily['succeeded'] == 1 and daily['failed'] == 0
+        assert daily['metrics'] == row['metrics']
+        totals = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}&limit=1', cookie=cookie))['totals']
+        assert totals['p95FirstEventMilliseconds'] == row['firstEventMilliseconds']
+        expiration_path = '/api/keys/' + key['id'] + '/expiration'
+        expired_body = dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time()))
+        assert request(port, 'PUT', expiration_path, expired_body)[0] == 403
+        assert request(port, 'PUT', expiration_path, expired_body, cookie=cookie, origin=f.origin)[0] == 403
+        for invalid in (0, -1, 'tomorrow', True):
+            assert request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=invalid), cookie=cookie, origin=f.origin, csrf=csrf)[0] == 400
+        key = document(request(port, 'PUT', expiration_path, expired_body, cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        with sqlite3.connect(f.root / 'state/core.sqlite') as db:
+            before_expired = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+        rejected = request(f.ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'synthetic', 'stream': False}, headers={'Authorization': 'Bearer ' + secret})
+        assert rejected[0] == 401 and json.loads(rejected[2])['error']['code'] == 'api_key_expired'
+        with sqlite3.connect(f.root / 'state/core.sqlite') as db:
+            assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == before_expired
+        key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time()) + 3600), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert request(f.ports['data'], 'GET', '/v1/models', headers={'Authorization': 'Bearer ' + secret})[0] == 200
+        key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert key['expiresAtUnixSeconds'] is None
+        # Real coordinator/runtime observation, with expiry while already dispatched.
+        streaming = http.client.HTTPConnection('127.0.0.1', f.ports['data'], timeout=12)
+        streaming.request('POST', '/v1/responses', json.dumps({'model': 'synthetic-text', 'input': 'dribble', 'stream': True}),
+                          {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + secret})
+        response = streaming.getresponse()
+        assert response.status == 200 and response.readline().startswith((b'data: ', b'event: '))
+        deadline = time.monotonic() + 3
+        while True:
+            live = document(request(port, 'GET', '/api/usage/in-flight?limit=1', cookie=cookie))['rows']
+            if live and live[0].get('hasFirstEvent') is True:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(.02)
+        assert len(live) == 1 and live[0]['principal'] == 'browser-synthetic' and live[0]['model'] == 'synthetic-text'
+        assert set(live[0]).issubset({'id', 'keyID', 'principal', 'model', 'mode', 'accountID', 'accountDisplayName', 'startedAtUnixSeconds', 'elapsedSeconds', 'hasFirstEvent'})
+        key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time())), cookie=cookie, origin=f.origin, csrf=csrf))['key']
+        assert document(request(port, 'GET', '/api/usage/in-flight', cookie=cookie))['rows']
+        assert b'response.output_text.delta' in response.read()
+        response.close()
+        streaming.close()
+        latest(f.root / 'state/core.sqlite', 'unknown')
+        assert document(request(port, 'GET', '/api/usage/in-flight', cookie=cookie))['rows'] == []
+        key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         # Disabled credentials can be rotated without briefly enabling the old secret.
         update = dict(revision=key['revision'], enabled=False, models=key['models'], limits=key['limits'])
         disabled = document(request(port, 'PUT', '/api/keys/' + key['id'], update, cookie=cookie, origin=f.origin, csrf=csrf))['key']

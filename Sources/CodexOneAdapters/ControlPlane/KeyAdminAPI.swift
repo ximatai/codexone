@@ -127,6 +127,18 @@ public struct KeyAdminAPI: Sendable {
         enabled: dto.enabled, policy: dto.policy())
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
+    routes.put(":id", "expiration") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let document = try Self.body(request, allowed: ["revision", "expiresAtUnixSeconds"])
+      guard let revision = document["revision"]?.integer,
+        document["expiresAtUnixSeconds"] == .null
+          || document["expiresAtUnixSeconds"]?.integer != nil
+      else { throw ExecutionError.invalidCommand }
+      let key = try await store.setKeyExpiration(
+        id: request.parameters.get("id") ?? "",
+        revision: revision, expiresAtUnixSeconds: document["expiresAtUnixSeconds"]?.integer)
+      return try Self.response(.object(["key": Self.metadata(key)]))
+    }
     routes.post(":id", "rotate") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision"])
       guard let revision = document["revision"]?.integer else {
@@ -169,6 +181,7 @@ public struct KeyAdminAPI: Sendable {
   }
   private static func metadata(_ key: ManagedKey) -> JSONValue {
     .object([
+      "expiresAtUnixSeconds": key.expiresAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
       "id": .string(key.id), "principal": .string(key.principal),
       "revision": .number(Decimal(key.revision)),
       "enabled": .bool(key.enabled), "models": .array(key.policy.models.map { .string($0) }),

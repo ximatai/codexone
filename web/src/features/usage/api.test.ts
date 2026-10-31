@@ -74,3 +74,27 @@ it("queries a rolling 24 completed UTC hours instead of the calendar day", () =>
   expect(Number(parameters.get("end"))).toBe(end);
   expect(Number(parameters.get("start"))).toBe(end - 86400);
 });
+
+it("parses fractional filtered latency aggregates and rejects invalid values without treating missing evidence as zero", () => {
+  const fixture = reportFixture();
+  const totals = {
+    ...fixture.totals,
+    averageFirstEventMilliseconds: 12.5,
+    p95FirstEventMilliseconds: 80,
+    averageTotalMilliseconds: null,
+  };
+  expect(parseUsage({ ...fixture, totals }).totals).toMatchObject({
+    averageFirstEventMilliseconds: 12.5,
+    p95FirstEventMilliseconds: 80,
+    averageTotalMilliseconds: null,
+  });
+  expect(parseUsage(fixture).totals.averageFirstEventMilliseconds).toBeNull();
+  for (const value of [-1, Infinity, NaN, "20"]) {
+    expect(() =>
+      parseUsage({
+        ...fixture,
+        totals: { ...totals, averageFirstEventMilliseconds: value },
+      }),
+    ).toThrow();
+  }
+});

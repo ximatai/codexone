@@ -1,5 +1,6 @@
 /// Build a physical pre-v5 fixture, rather than stamping an incompatible new schema old.
 let removeObservationSchema = """
+  DROP INDEX attempts_in_flight;
   DROP TABLE request_diagnostics;
   DROP TABLE account_model_health;
   DROP TABLE health_models;

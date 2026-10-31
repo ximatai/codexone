@@ -10,7 +10,7 @@ function failure(error: unknown): string {
     if (error.status === 409)
       return "状态已变化或授权流程已结束。请重新读取账号，核对后再操作。";
     if (error.status === 400)
-      return "授权信息无效，本次流程已结束。请重新发起授权。";
+      return "提交内容无效，请检查显示名或授权信息后重试。";
   }
   return "操作结果未确认。请重新读取账号核对，系统不会自动重复提交。";
 }
@@ -166,6 +166,18 @@ export function useAccounts() {
       if (current(version)) {
         setLocked(true);
         setError(failure(cause));
+        if (
+          cause instanceof sessionAPI.ManagementError &&
+          cause.status === 409
+        ) {
+          const refreshed = await read(version, controller.current?.signal);
+          if (current(version))
+            setError(
+              refreshed
+                ? "记录已被其他操作修改，账号已刷新，请重新确认后操作。"
+                : "记录已变化，刷新失败，请重新读取账号后再操作。",
+            );
+        }
         if (
           cause instanceof sessionAPI.ManagementError &&
           cause.status === 401

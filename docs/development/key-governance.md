@@ -8,13 +8,13 @@
 
 同时设置 `CODEXONE_ADMIN_TOKEN_FILE`，指向独立私有常规文件：当前用户所有、其他用户不可读写、无符号链接，内容为 32—512 字节高熵 ASCII Bearer。文件最多 16 KiB，值不能使用数据 Key 的 `co1_` 格式，也不能与 legacy Key 相同。使用安全随机工具自行生成并私密保存，勿写入仓库、命令行参数或浏览器存储。`--check-config` 校验两种配置/凭证，不建库、不调用上游、不显示路径或秘密。
 
-空数据目录初始化 schema v8。已有 v1/v2/v3/v4/v5/v6/v7 先停服，在原数据目录配置下运行：
+空数据目录初始化 schema v9。已有 v1/v2/v3/v4/v5/v6/v7/v8 先停服，在原数据目录配置下运行：
 
 ```sh
 codexone --migrate
 ```
 
-命令持同一实例锁；从 v1/v2/v3/v4/v5/v6/v7 升至 v8 时先产生 `core.sqlite.pre-v8-<随机标识>.sqlite` 私有一致性备份，再事务升级。保留备份并遵守维护/恢复流程，不能用文件复制遗漏 WAL。失败的 `.partial` 文件不算有效备份；不自动覆盖、删除旧备份。已有 v8 重复命令不降级。升级过程不恢复 intent，由下次普通启动处理。备份机制依据 [SQLite Backup API](https://www.sqlite.org/backup.html)。
+命令持同一实例锁；从 v1/v2/v3/v4/v5/v6/v7/v8 升至 v9 时先产生 `core.sqlite.pre-v9-<随机标识>.sqlite` 私有一致性备份，再事务升级。保留备份并遵守维护/恢复流程，不能用文件复制遗漏 WAL。失败的 `.partial` 文件不算有效备份；不自动覆盖、删除旧备份。已有 v9 重复命令不降级。升级过程不恢复 intent，由下次普通启动处理。备份机制依据 [SQLite Backup API](https://www.sqlite.org/backup.html)。
 
 ## 管理命令契约
 
@@ -63,3 +63,7 @@ Key 创建/更新可显式设置 `visionInput`、`imageGeneration`、`imageModel
 管理 options 分别返回 `models` 和 `imageModels`；模型目录只展示 Key 的有效授权交集。新能力不会由旧 Key 自动继承。普通更新请求若省略能力字段按关闭处理；更新方应先读取并原样保留不打算修改的权限。
 
 受控复用原Key字符串的全新目标离线入口见[摘要导入](key-import.md)；默认禁用、显式CAS启用，不向管理HTTP接口提交摘要或旧明文。
+
+## 到期时间
+
+`PUT /api/keys/:id/expiration`提交revision与expiresAtUnixSeconds（正UTC秒，上限10^12；null清除）。允许设过去时间立即阻止新准入，返回新revision。Key列表/创建/轮换/策略更新均含可空expiresAtUnixSeconds；旧编辑接口保留原值。到期返回401 api_key_expired，已派发继续结算，不清零计数。新能力与管理趋势/进行中字段见[管理规范](../specs/control-plane.md)。

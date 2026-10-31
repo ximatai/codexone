@@ -70,10 +70,10 @@ data 卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME；普通 `python3 com
 
 ```sh
 python3 scripts/verify_installation.py --image codexone:candidate \
-  --previous-image codexone:rollback-peer --incompatible-image codexone:old-v6 --browser
+  --incompatible-image codexone:rollback-peer --incompatible-schema 8 --browser
 ```
 
-所有镜像须实际存在；脚本解析不可变 ID，并要求兼容 peer 的实际二进制摘要与当前版本不同。CI 的固定 v8 peer 保留旧 revision 的产品源码，使用当前 Package.swift 编译配置与 Dockerfile；本机 peer 同样只对旧构建 manifest 加入 Adapters 分文件 release 设置，并明确记录。peer 应为受信、已经验证兼容当前 schema/信封/配置的旧版本，不能把同一二进制换 tag 冒充回退。安装演练在同一 Engine 本地卷保留 Key/未知责任，以真实前一 v8 启动、再升级恢复当前观测；旧 v6 必须在监听前拒绝，账本保持。它不承诺任意同 schema 版本皆兼容，亦不允许向旧 schema 改版本号。
+当前schema v9不能用v8作同库兼容回退。CI保留固定v8旧revision产品源码，以实际旧二进制验证正向启动控制、显式备份迁移及拒绝v9且不修改数据；安装脚本的incompatible-schema缺省6，也可选7/8。镜像须实际存在，脚本解析不可变ID。未来有受信、验证过当前schema/信封/配置兼容的旧v9候选后，才可用previous-image验证同库回退；必须是不同实际二进制，不能同一二进制换tag，也不能改数据库版本号。v9升级部署与本机证据见[第二轮管理](../changes/admin-round2/verification.md)。
 
 回退到不支持 null 限额的旧二进制前，先通过管理入口把所有不限 Key 改为五项显式数值；schema 相同也不代表旧版本可解码 null，否则旧版本可能拒绝启动或拒绝这些 Key。此调整不清除历史账本或 unknown 责任。
 

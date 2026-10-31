@@ -111,13 +111,16 @@ it.each(["fresh", "unavailable"] as const)(
     await screen.findByText(
       state === "fresh" ? "最近读取的额度观测" : "额度不可用",
     );
+    fireEvent.click(await screen.findByLabelText("自动刷新（15 秒）"));
+    await act(async () => {});
+    const reads = vi.mocked(accounts.fetchAccounts).mock.calls.length;
     await act(async () => vi.advanceTimersByTime(300000));
     expect(
       screen.getByText(state === "fresh" ? "额度观测已陈旧" : "额度不可用"),
     ).toBeVisible();
     if (state === "unavailable")
       expect(screen.queryByText("额度观测已陈旧")).toBeNull();
-    expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
+    expect(accounts.fetchAccounts).toHaveBeenCalledTimes(reads);
     view.unmount();
   },
 );

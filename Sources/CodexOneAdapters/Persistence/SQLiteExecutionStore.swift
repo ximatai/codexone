@@ -10,6 +10,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let path: String
   let usageReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
+  let liveFirstEvents = Mutex([String: Bool]())
   let storage: SQLiteStorageGuard
   public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
   let limits: ExecutionLimits
@@ -516,5 +517,17 @@ extension SQLiteExecutionStore: StorageMonitoring {
           [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
       }
     }
+  }
+}
+
+extension SQLiteExecutionStore: ExecutionLiveObserving {
+  public func executionStarted(attempt: String) {
+    liveFirstEvents.withLock { if $0.count < 16 { $0[attempt] = false } }
+  }
+  public func executionReceivedFirstEvent(attempt: String) {
+    liveFirstEvents.withLock { if $0[attempt] != nil { $0[attempt] = true } }
+  }
+  public func executionObservationEnded(attempt: String) {
+    liveFirstEvents.withLock { _ = $0.removeValue(forKey: attempt) }
   }
 }

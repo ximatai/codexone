@@ -20,7 +20,7 @@ v1 信封和 AAD 不变：新导入/重新授权/刷新只用 active，读取按
 
 ## 再加密与中断续作
 
-空库 schema v8；已有 v1—v7 先停服 `codexone --migrate`，保留 `.pre-v8-<id>.sqlite`。v8 防止旧 v7 二进制绕过再加密检查点，不能原地换回旧版本。先把新 active 和全部仍有引用的旧 decrypt-only 配置到私有 keyring，再执行：
+空库 schema v9；已有 v1—v8 先停服 `codexone --migrate`，保留 `.pre-v9-<id>.sqlite`。v8 防止旧 v7 二进制绕过再加密检查点，不能原地换回旧版本。先把新 active 和全部仍有引用的旧 decrypt-only 配置到私有 keyring，再执行：
 
 ```sh
 codexone --key-status
@@ -47,7 +47,7 @@ codexone --resume-reencryption
 codexone --verify-backup /private-backups/before-new-key
 ```
 
-只读验证完成 bundle 的权限、摘要、schema/来源与全部账号密文，manifest 的 requiredKeyIDs 是**实际信封引用的有序去重集合**，不是当前 active 或 keyring 全集。旧 v7 和当前 v8 完成 bundle 都可验证；显式恢复 v7 bundle 时，在保留原 bundle 的前提下将私有 staging 升到 v8，无需修改只读源。恢复仍进入[快照维护](snapshot-maintenance.md)，不绕过旧授权失效、未知执行和额度基线核对。
+只读验证完成 bundle 的权限、摘要、schema/来源与全部账号密文，manifest 的 requiredKeyIDs 是**实际信封引用的有序去重集合**，不是当前 active 或 keyring 全集。旧 v7/v8 和当前 v9 完成 bundle 都可验证；显式恢复 v7/v8 bundle 时，在保留原 bundle 的前提下将私有 staging 升到 v9，无需修改只读源。恢复仍进入[快照维护](snapshot-maintenance.md)，不绕过旧授权失效、未知执行和额度基线核对。
 
 验证恢复时设置另一个全新私有数据目录，配置同一候选 keyring，运行 `--restore ABSOLUTE_BUNDLE`。恢复目标保留 restore ID/backup ID 作为来源证据；这只证明本地解密和维护恢复，不证明真实账号重新授权、无损切换或掉电。
 
@@ -73,6 +73,6 @@ codexone --check-key-retirement /private-config/retained-inventory.json
 
 命令验证全部当前密文、每个完成 bundle、每个演练目标的密文/恢复来源，要求每个 retained backup ID 都有匹配恢复记录，且演练目标离线。输出/追加审计仅含 key ID、backup/restore ID、原始备份 SHA-256 和非秘密审计引用；不写入路径/材料。没有任何自动删除或不可逆“允许删除”开关。
 
-迁移前原始 v7/v8 SQLite 备份列入 `legacyDatabases`，须为无 WAL/SHM/lock 的私有只读一致性备份，逐一校验摘要稳定、完整性及解密依赖；须额外提供 `legacyRestoreAuditReference`，关联操作者在独立副本上完成的迁移/恢复演练证据。工具**不自动证明该外部审计**。更早 raw schema 暂拒绝核对，不能据此退役旧 key；先在独立副本显式迁移、完成恢复演练，明确销毁旧格式副本后，再核对完整剩余清单。
+迁移前原始 v7/v8/v9 SQLite 备份列入 `legacyDatabases`，须为无 WAL/SHM/lock 的私有只读一致性备份，逐一校验摘要稳定、完整性及解密依赖；须额外提供 `legacyRestoreAuditReference`，关联操作者在独立副本上完成的迁移/恢复演练证据。工具**不自动证明该外部审计**。更早 raw schema 暂拒绝核对，不能据此退役旧 key；先在独立副本显式迁移、完成恢复演练，明确销毁旧格式副本后，再核对完整剩余清单。
 
 `inventoryComplete` 是操作者对所有离线/异地/迁移前副本的责任声明；工具无法发现未列出的副本，也不能证明某个副本已销毁。仍保留旧 bundle/raw 副本时，缺失旧 key 会使检查失败；不能用删清单条目代替处理副本。若明确销毁旧备份，先核实新备份和恢复证据，再在外部审计记录销毁，最后更新完整清单重新检查。保留清单、审计证据和独立 secret 备份，避免只轮换线上密文就丢失历史恢复能力。

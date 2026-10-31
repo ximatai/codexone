@@ -26,6 +26,9 @@ export interface UsageReport {
   startUnixSeconds: number;
   endUnixSeconds: number;
   totals: {
+    averageFirstEventMilliseconds?: number | null;
+    p95FirstEventMilliseconds?: number | null;
+    averageTotalMilliseconds?: number | null;
     admitted: number;
     recordedRejections: number;
     inFlight: number;
@@ -165,7 +168,23 @@ export function parseUsage(raw: unknown): UsageReport {
     value.rows.length > 100
   )
     throw invalid();
+  function latency(raw: unknown): number | null {
+    if (raw == null) return null;
+    if (
+      typeof raw !== "number" ||
+      !Number.isFinite(raw) ||
+      raw < 0 ||
+      raw > Number.MAX_SAFE_INTEGER
+    )
+      throw invalid();
+    return raw;
+  }
   const resultTotals = {
+    averageFirstEventMilliseconds: latency(
+      totals.averageFirstEventMilliseconds,
+    ),
+    p95FirstEventMilliseconds: latency(totals.p95FirstEventMilliseconds),
+    averageTotalMilliseconds: latency(totals.averageTotalMilliseconds),
     admitted: integer(totals.admitted),
     recordedRejections: integer(totals.recordedRejections),
     inFlight: integer(totals.inFlight),

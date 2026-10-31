@@ -6,6 +6,51 @@ public struct UsageAdminAPI: Sendable {
   private let querying: any UsageQuerying
   public init(querying: any UsageQuerying) { self.querying = querying }
   func register(_ routes: any RoutesBuilder) {
+    routes.get("daily") { request async throws -> Response in
+      let values = try Self.parameters(request.url.string, allowed: ["days", "key", "model"])
+      let days: Int
+      if let raw = values["days"] {
+        guard let value = Int(raw) else { throw ExecutionError.invalidCommand }
+        days = value
+      } else {
+        days = 7
+      }
+      do {
+        let buckets = try await querying.dailyUsage(
+          days: days, keyID: values["key"], model: values["model"])
+        return try Self.response(
+          .object([
+            "timezone": .string("UTC"), "days": .number(Decimal(days)),
+            "buckets": .array(
+              buckets.map { value in
+                .object([
+                  "atUnixSeconds": .number(Decimal(value.atUnixSeconds)),
+                  "requests": .number(Decimal(value.requests)),
+                  "succeeded": .number(Decimal(value.succeeded)),
+                  "failed": .number(Decimal(value.failed)),
+                  "cancelled": .number(Decimal(value.cancelled)),
+                  "failures": .object(value.failures.mapValues { .number(Decimal($0)) }),
+                  "metrics": Self.metricsDocument(value.metrics),
+                ])
+              }),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    }
+    routes.get("in-flight") { request async throws -> Response in
+      let values = try Self.parameters(request.url.string, allowed: ["limit"])
+      let limit: Int
+      if let raw = values["limit"] {
+        guard let value = Int(raw) else { throw ExecutionError.invalidCommand }
+        limit = value
+      } else {
+        limit = 200
+      }
+      do {
+        let rows = try await querying.inFlightUsage(limit: limit)
+        return try Self.response(
+          .object(["rows": try JSONValue.decode(JSONEncoder().encode(rows))]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    }
     routes.get("options") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
       let options = try await querying.usageOptions()
@@ -55,6 +100,25 @@ public struct UsageAdminAPI: Sendable {
         throw GatewayProtocolError(429, "usage_query_capacity")
       }
     }
+  }
+  private static func parameters(_ url: String, allowed: Set<String>) throws -> [String: String] {
+    let entries = URLComponents(string: url)?.queryItems ?? []
+    guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,
+      entries.allSatisfy({ allowed.contains($0.name) && $0.value != nil })
+    else { throw ExecutionError.invalidCommand }
+    return Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.value!) })
+  }
+  private static func metricsDocument(_ value: UsageMetrics) -> JSONValue {
+    func metric(_ value: Int64?) -> JSONValue { value.map { .string(String($0)) } ?? .null }
+    return .object([
+      "inputTokens": metric(value.inputTokens), "outputTokens": metric(value.outputTokens),
+      "cachedTokens": metric(value.cachedTokens), "images": metric(value.images),
+      "estimatedMicros": metric(value.estimatedMicros),
+      "imageInputTokens": metric(value.imageInputTokens),
+      "imageOutputTokens": metric(value.imageOutputTokens),
+      "imageInputTextTokens": metric(value.imageInputTextTokens),
+      "imageInputImageTokens": metric(value.imageInputImageTokens),
+    ])
   }
   static func parse(_ url: String) throws -> UsageQuery {
     let allowed: Set<String> = [
@@ -140,6 +204,12 @@ public struct UsageAdminAPI: Sendable {
       "startUnixSeconds": count(query.startUnixSeconds),
       "endUnixSeconds": count(query.endUnixSeconds), "timezone": .string("UTC"),
       "totals": .object([
+        "averageFirstEventMilliseconds": totals.averageFirstEventMilliseconds.map {
+          .number(Decimal($0))
+        } ?? .null,
+        "p95FirstEventMilliseconds": totals.p95FirstEventMilliseconds.map(count) ?? .null,
+        "averageTotalMilliseconds": totals.averageTotalMilliseconds.map { .number(Decimal($0)) }
+          ?? .null,
         "admitted": count(totals.admitted), "recordedRejections": count(totals.rejected),
         "inFlight": count(totals.inFlight), "unknown": count(totals.unknown),
         "complete": count(totals.complete), "partial": count(totals.partial),

@@ -243,6 +243,9 @@ private struct UsageFixture {
       missing.totals.metrics.estimatedMicros == nil
         && missing.totals.metrics.imageInputTokens == nil)
     #expect(missing.rows.first?.metrics.images == 1)
+    let dailyMissing = try await f.reader.dailyUsage(days: 1, keyID: nil, model: nil)
+    #expect(
+      dailyMissing[0].metrics.inputTokens == nil && dailyMissing[0].metrics.estimatedMicros == nil)
     try await f.insert(
       "native-complete", at: f.hour + 3600,
       evidence: .init(
@@ -321,6 +324,155 @@ private struct UsageFixture {
       )
     }
     await #expect(throws: ExecutionError.capacity) { try await f.reader.keyUsage() }
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
+@Test func round2DailyReconcilesLedgerAndTimingsIgnorePagination() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    let today = f.hour / 86400 * 86400
+    let emptyReport = try await f.reader.queryUsage(
+      .init(startUnixSeconds: today, endUnixSeconds: today + 86400))
+    #expect(
+      emptyReport.totals.averageFirstEventMilliseconds == nil
+        && emptyReport.totals.p95FirstEventMilliseconds == nil)
+    let empty = try await f.reader.dailyUsage(days: 7, keyID: nil, model: nil)
+    #expect(
+      empty.count == 7 && empty.allSatisfy { $0.requests == 0 && $0.metrics.inputTokens == nil })
+    for i in 1...20 {
+      try await f.insert(
+        "round2-\(i)", at: today - (i <= 10 ? 86400 : 0),
+        evidence: .init(
+          revision: 1, inputTokens: 10, outputTokens: 5, cachedTokens: 3,
+          images: 0, estimatedMicros: 7, completeness: .complete),
+        failure: i == 1 ? .deadlineExceeded : nil)
+      try await f.store.perform { db in
+        try db.write(
+          "UPDATE attempts SET outcome_json=json_set(outcome_json,'$.firstEventMilliseconds',?,'$.totalMilliseconds',?) WHERE id=?",
+          [.number(Int64(i)), .number(Int64(i * 2)), .text("round2-\(i)")])
+      }
+    }
+    try await f.insert("other-key", key: "beta", at: today, evidence: usage(amount: 100))
+    let daily = try await f.reader.dailyUsage(days: 2, keyID: "alpha", model: "synthetic-text")
+    #expect(daily.count == 2 && daily.map(\.requests) == [10, 10])
+    #expect(
+      daily[0].failed == 1 && daily[0].succeeded == 9 && daily[0].failures["deadline_exceeded"] == 1
+    )
+    let report = try await f.reader.queryUsage(
+      .init(
+        startUnixSeconds: today - 86400,
+        endUnixSeconds: today + 86400, keyID: "alpha", model: "synthetic-text", limit: 1))
+    #expect(report.rows.count == 1 && report.totals.admitted == 20)
+    #expect(report.totals.averageFirstEventMilliseconds == 10.5)
+    #expect(
+      report.totals.p95FirstEventMilliseconds == 19 && report.totals.averageTotalMilliseconds == 21)
+    #expect(
+      daily.reduce(0) { $0 + ($1.metrics.inputTokens ?? 0) } == report.totals.metrics.inputTokens)
+    #expect(
+      daily.reduce(0) { $0 + ($1.metrics.cachedTokens ?? 0) } == report.totals.metrics.cachedTokens)
+    #expect(
+      daily.reduce(0) { $0 + ($1.metrics.estimatedMicros ?? 0) }
+        == report.totals.metrics.estimatedMicros)
+    #expect(try await f.reader.dailyUsage(days: 31, keyID: nil, model: nil).count == 31)
+    #expect(
+      try await f.reader.dailyUsage(days: 1, keyID: "alpha", model: "missing").first?.requests == 0)
+    for days in [0, 32] {
+      await #expect(throws: ExecutionError.invalidCommand) {
+        try await f.reader.dailyUsage(days: days, keyID: nil, model: nil)
+      }
+    }
+    await #expect(throws: ExecutionError.invalidCommand) {
+      try await f.reader.dailyUsage(days: 7, keyID: "", model: nil)
+    }
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
+@Test func round2InFlightHasOnlySafeMetadataAndDisappearsOnFinalization() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    for i in 1...3 {
+      try await f.store.admit(
+        .init(
+          attempt: "live-\(i)",
+          owner: .init(
+            principal: "alpha", key: "alpha", namespace: "synthetic", identity: "single"),
+          window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
+          keyRevision: 1, model: "synthetic-text"))
+    }
+    f.store.executionStarted(attempt: "live-3")
+    let initial = try await f.reader.inFlightUsage(limit: 1)
+    #expect(initial.count == 1 && initial[0].id == "live-3" && initial[0].hasFirstEvent == false)
+    f.store.executionReceivedFirstEvent(attempt: "live-3")
+    #expect(try await f.reader.inFlightUsage(limit: 200).first?.hasFirstEvent == true)
+    let encoded = String(decoding: try JSONEncoder().encode(initial), as: UTF8.self)
+    #expect(
+      !encoded.contains("admission_json") && !encoded.contains("digest")
+        && !encoded.contains("credential"))
+    try await f.store.finalize(attempt: "live-3", evidence: usage(amount: 1))
+    f.store.executionObservationEnded(attempt: "live-3")
+    #expect(try await f.reader.inFlightUsage(limit: 200).count == 2)
+    for limit in [0, 201] {
+      await #expect(throws: ExecutionError.invalidCommand) {
+        try await f.reader.inFlightUsage(limit: limit)
+      }
+    }
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
+@Test func round2UsageQueriesStayBoundedAtOneHundredThousandAttempts() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    try await f.insert("scale-seed", at: f.hour, evidence: usage(amount: 1))
+    try await f.store.perform { db in
+      try db.exec(
+        "UPDATE attempts SET outcome_json=json_set(outcome_json,'$.firstEventMilliseconds',1,'$.totalMilliseconds',2)"
+      )
+      let columns = try db.rows("PRAGMA table_info(attempts)") {
+        String(cString: sqlite3_column_text($0, 1))
+      }
+      let expressions = columns.map { column in
+        switch column {
+        case "id": return "'scale-'||i"
+        case "request_id": return "'request-scale-'||i"
+        case "admission_json":
+          return
+            "json_set(admission_json,'$.attempt','scale-'||i,'$.requestID','request-scale-'||i)"
+        default: return column
+        }
+      }.joined(separator: ",")
+      try db.exec(
+        "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<99999) INSERT INTO attempts SELECT \(expressions) FROM attempts,n WHERE id='scale-seed'"
+      )
+      let plans = try db.rows(
+        "EXPLAIN QUERY PLAN SELECT id FROM attempts WHERE created_at_epoch>=0 AND created_at_epoch<2000000000"
+      ) { String(cString: sqlite3_column_text($0, 3)) }
+      #expect(plans.contains { $0.contains("attempts_created") })
+      let inFlightPlans = try db.rows(
+        "EXPLAIN QUERY PLAN SELECT id FROM attempts WHERE state='intent' ORDER BY created_at_epoch DESC,id DESC LIMIT 200"
+      ) { String(cString: sqlite3_column_text($0, 3)) }
+      #expect(inFlightPlans.contains { $0.contains("attempts_in_flight") })
+    }
+    let report = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600, limit: 1))
+    #expect(report.rows.count == 1 && report.totals.admitted == 100000)
+    #expect(
+      report.totals.averageFirstEventMilliseconds == 1
+        && report.totals.p95FirstEventMilliseconds == 1)
+    #expect(
+      try await f.reader.dailyUsage(days: 1, keyID: nil, model: nil).first?.requests == 100000)
+    #expect(try await f.reader.inFlightUsage(limit: 200).isEmpty)
   } catch {
     await f.close()
     throw error

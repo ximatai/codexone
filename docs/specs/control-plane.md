@@ -72,3 +72,17 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 ### 管理产品化的兼容增量
 
 `GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 无查询参数，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项仅有keyID、可空principal、admitted、failed、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+
+## 管理台第二轮 API
+
+所有路径位于现有管理认证/CSRF组，响应 no-store。非法/未知/重复参数400，revision冲突409；查询容量拒绝429，存储/维护门禁沿用现有503。GET参数省略使用缺省值。
+
+| 方法/路径 | 参数 | 返回新增字段 |
+|---|---|---|
+| GET /api/usage/daily | days=1..31（缺省7）、可选key/model | timezone=UTC、days、buckets（按日升序）：atUnixSeconds、requests、succeeded、failed、cancelled、failures（类别→次数）、metrics |
+| GET /api/usage/in-flight | limit=1..200（缺省200） | rows：id、keyID、principal、model、mode、accountID、accountDisplayName、startedAtUnixSeconds、elapsedSeconds、hasFirstEvent；按开始时间/id倒序 |
+| GET /api/usage | 原有start/end与筛选、limit=1..100、after | totals新增averageFirstEventMilliseconds、p95FirstEventMilliseconds、averageTotalMilliseconds；现有admitted/failed/cancelled/metrics即筛选合计 |
+| PUT /api/accounts/:id/display-name | JSON revision、displayName（字符串或null） | account（含displayName与新revision）；账号列表/其他变更返回同字段 |
+| PUT /api/keys/:id/expiration | JSON revision、expiresAtUnixSeconds（正UTC秒或null） | key（含expiresAtUnixSeconds与新revision）；Key列表/创建/其他变更返回同字段 |
+
+日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。

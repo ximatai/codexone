@@ -35,6 +35,7 @@ export function KeyManagement() {
   const [refresh, setRefresh] = useState(0);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [expiring, setExpiring] = useState<api.ManagedKey | null>(null);
   const [disabling, setDisabling] = useState<api.ManagedKey | null>(null);
   const usage = useQuery({
     queryKey: ["key-usage", state.keys, refresh],
@@ -69,7 +70,8 @@ export function KeyManagement() {
     !!state.editing ||
     !!state.rotating ||
     !!state.created ||
-    !!disabling;
+    !!disabling ||
+    !!expiring;
   useEffect(() => {
     if (!overlay) return;
     document.body.classList.add("management-overlay-open");
@@ -194,6 +196,31 @@ export function KeyManagement() {
                       >
                         {key.enabled ? "启用" : "禁用"}
                       </Badge>
+                      <Text
+                        size="xs"
+                        c={
+                          api.expirationState(key.expiresAtUnixSeconds) ===
+                          "expired"
+                            ? "red"
+                            : api.expirationState(key.expiresAtUnixSeconds) ===
+                                "soon"
+                              ? "orange"
+                              : "dimmed"
+                        }
+                      >
+                        {api.expirationLabel(key.expiresAtUnixSeconds)}
+                      </Text>
+                      {key.expiresAtUnixSeconds != null && (
+                        <Text
+                          size="xs"
+                          title={timeTitle(key.expiresAtUnixSeconds)}
+                        >
+                          {new Date(key.expiresAtUnixSeconds * 1000)
+                            .toISOString()
+                            .slice(0, 10)}{" "}
+                          UTC 00:00
+                        </Text>
+                      )}
                     </Table.Td>
                     <Table.Td data-label="本地限制">
                       <Text size="sm">
@@ -264,6 +291,9 @@ export function KeyManagement() {
                             </Button>
                           </Menu.Target>
                           <Menu.Dropdown>
+                            <Menu.Item onClick={() => setExpiring(key)}>
+                              设置到期时间
+                            </Menu.Item>
                             <Menu.Item onClick={() => state.setRotating(key)}>
                               轮换
                             </Menu.Item>
@@ -293,6 +323,34 @@ export function KeyManagement() {
           )}
         </Paper>
       )}
+      <Modal
+        lockScroll={false}
+        opened={!!expiring}
+        onClose={() => {
+          if (!state.busy) setExpiring(null);
+        }}
+        title="设置 Key 到期时间"
+        closeOnEscape={!state.busy}
+        closeOnClickOutside={!state.busy}
+        withCloseButton={!state.busy}
+      >
+        {expiring && (
+          <ExpirationEditor
+            key={`${expiring.id}-${expiring.revision}`}
+            entry={expiring}
+            disabled={state.disabled}
+            save={async (expires) => {
+              const ok = await state.mutate(
+                (csrf, signal) =>
+                  api.setExpiration(expiring, expires, csrf, signal),
+                expires === null ? "到期时间已清除。" : "到期时间已更新。",
+              );
+              setExpiring(null);
+              return ok;
+            }}
+          />
+        )}
+      </Modal>
       <Modal
         lockScroll={false}
         opened={!!disabling}
@@ -457,5 +515,70 @@ export function KeyManagement() {
         )}
       </Modal>
     </section>
+  );
+}
+
+function ExpirationEditor({
+  entry,
+  disabled,
+  save,
+}: {
+  entry: api.ManagedKey;
+  disabled: boolean;
+  save: (expires: number | null) => Promise<boolean>;
+}) {
+  const [date, setDate] = useState(
+    entry.expiresAtUnixSeconds == null
+      ? ""
+      : new Date(entry.expiresAtUnixSeconds * 1000).toISOString().slice(0, 10),
+  );
+  const epoch = date ? Date.parse(date + "T00:00:00Z") / 1000 : NaN;
+  const valid =
+    Number.isSafeInteger(epoch) && epoch > 0 && epoch <= 1_000_000_000_000;
+  return (
+    <Stack>
+      <Text>{entry.principal}</Text>
+      <TextInput
+        label="到期日期（UTC）"
+        type="date"
+        value={date}
+        disabled={disabled}
+        onChange={(event) => setDate(event.currentTarget.value)}
+        description="所选日期 UTC 00:00 起失效（快捷项至少保留整 N 天）；到期后拒绝新请求，已派发请求继续。"
+      />
+      <Group>
+        {[30, 90].map((days) => (
+          <Button
+            key={days}
+            variant="light"
+            disabled={disabled}
+            onClick={() =>
+              setDate(
+                new Date(Date.now() + (days + 1) * 86400000)
+                  .toISOString()
+                  .slice(0, 10),
+              )
+            }
+          >
+            +{days} 天
+          </Button>
+        ))}
+      </Group>
+      {valid && epoch <= Date.now() / 1000 && (
+        <Alert color="yellow">该日期已过去，保存后会立即拒绝新请求。</Alert>
+      )}
+      <Group justify="flex-end">
+        <Button
+          variant="default"
+          disabled={disabled || entry.expiresAtUnixSeconds == null}
+          onClick={() => void save(null)}
+        >
+          清除到期时间
+        </Button>
+        <Button disabled={disabled || !valid} onClick={() => void save(epoch)}>
+          保存到期时间
+        </Button>
+      </Group>
+    </Stack>
   );
 }

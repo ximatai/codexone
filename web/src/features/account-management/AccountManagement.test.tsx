@@ -293,3 +293,48 @@ it("shows unavailable quota before elapsed freshness for an account with no succ
   expect((await screen.findAllByText("额度不可用")).length).toBeGreaterThan(0);
   expect(screen.queryByText("额度观测已陈旧")).toBeNull();
 });
+it("edits display names, refreshing a conflicting revision before retry", async () => {
+  vi.mocked(api.setDisplayName)
+    .mockRejectedValueOnce(
+      new sessions.ManagementError(409, "revision_conflict"),
+    )
+    .mockResolvedValue(account);
+  setup();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  fireEvent.change(await screen.findByLabelText("账号显示名"), {
+    target: { value: "合成账号" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存显示名" }));
+  await screen.findByText(/账号已刷新/);
+  expect(api.setDisplayName).toHaveBeenCalledTimes(1);
+  expect(api.fetchAccounts).toHaveBeenCalledTimes(2);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "保存显示名" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存显示名" }));
+  await screen.findByText("显示名已更新。");
+});
+
+it("clears an existing display name explicitly", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, displayName: "合成账号" },
+  ]);
+  vi.mocked(api.setDisplayName).mockResolvedValue(account);
+  render(<AccountManagement />);
+  await screen.findByText("合成账号");
+  fireEvent.click(screen.getByRole("button", { name: "额度与健康详情" }));
+  fireEvent.click(await screen.findByRole("button", { name: "清除显示名" }));
+  await waitFor(() =>
+    expect(api.setDisplayName).toHaveBeenCalledWith(
+      expect.objectContaining({ displayName: "合成账号" }),
+      null,
+      "synthetic-csrf",
+      expect.any(AbortSignal),
+    ),
+  );
+});

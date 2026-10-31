@@ -13,6 +13,7 @@ import {
   Stack,
   Table,
   Text,
+  TextInput,
   Title,
 } from "@mantine/core";
 import * as api from "./api";
@@ -155,8 +156,13 @@ export function AccountManagement() {
                     <Table.Tr key={item.id}>
                       <Table.Td data-label="账号">
                         <Text fw={600} size="sm" className={styles.id}>
-                          {item.id}
+                          {item.displayName ?? item.id}
                         </Text>
+                        {item.displayName && (
+                          <Text size="xs" c="dimmed" className={styles.id}>
+                            {item.id}
+                          </Text>
+                        )}
                       </Table.Td>
                       <Table.Td data-label="使用策略">
                         <Badge
@@ -330,6 +336,18 @@ export function AccountManagement() {
                 接入于 {utc(account.createdAtUnixSeconds)}
               </Text>
             </div>
+            <DisplayNameEditor
+              key={`${account.id}-${account.revision}`}
+              account={account}
+              disabled={blocked}
+              save={(name) =>
+                state.mutation(
+                  (csrf, signal) =>
+                    api.setDisplayName(account, name, csrf, signal),
+                  "显示名已更新。",
+                )
+              }
+            />
             <section aria-label="账号使用策略">
               <Title order={3} size="h5" mb="sm">
                 使用策略
@@ -496,5 +514,53 @@ export function AccountManagement() {
         )}
       </Drawer>
     </section>
+  );
+}
+
+function DisplayNameEditor({
+  account,
+  disabled,
+  save,
+}: {
+  account: api.Account;
+  disabled: boolean;
+  save: (name: string | null) => Promise<void>;
+}) {
+  const [name, setName] = useState(account.displayName ?? "");
+  const trimmed = name.trim();
+  const valid =
+    [...trimmed].length <= 64 &&
+    !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(trimmed);
+  return (
+    <Stack gap="xs">
+      <TextInput
+        label="账号显示名"
+        description="仅管理员可见，最多 64 个字符；清除后显示账号标识。"
+        value={name}
+        disabled={disabled}
+        onChange={(event) => setName(event.currentTarget.value)}
+        error={!valid ? "请输入最多 64 个可打印字符。" : undefined}
+      />
+      <Group>
+        <Button
+          disabled={
+            disabled ||
+            !valid ||
+            !trimmed.length ||
+            trimmed === (account.displayName ?? "")
+          }
+          onClick={() => void save(trimmed)}
+        >
+          保存显示名
+        </Button>
+        <Button
+          variant="default"
+          disabled={disabled || !account.displayName}
+          onClick={() => void save(null)}
+        >
+          清除显示名
+        </Button>
+      </Group>
+    </Stack>
   );
 }

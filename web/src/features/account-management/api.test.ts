@@ -4,6 +4,7 @@ import {
   completeAuthorization,
   fetchAccounts,
   parseAccount,
+  setDisplayName,
 } from "./api";
 const account = {
   id: "account",
@@ -70,4 +71,30 @@ it("rejects unexpected authorization destinations and never replays a callback",
     "X-CodexOne-CSRF": "synthetic-csrf",
   });
   expect(fetch.mock.calls[1][1].headers).not.toHaveProperty("Authorization");
+});
+it("preserves and validates optional display names", () => {
+  expect(
+    parseAccount({ ...account, displayName: "合成账号" }).displayName,
+  ).toBe("合成账号");
+  expect(
+    parseAccount({ ...account, displayName: null }).displayName,
+  ).toBeNull();
+  for (const displayName of ["", "a".repeat(65), "a\nb", "a\u200bb"])
+    expect(() => parseAccount({ ...account, displayName })).toThrow();
+});
+
+it("sends display-name CAS changes and explicit clear with CSRF", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(reply({ account: { ...account, displayName: null } }));
+  vi.stubGlobal("fetch", fetch);
+  await setDisplayName(parseAccount(account), null, "synthetic-csrf");
+  expect(fetch.mock.calls[0][0]).toBe("/api/accounts/account/display-name");
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    revision: 2,
+    displayName: null,
+  });
+  expect(fetch.mock.calls[0][1].headers).toMatchObject({
+    "X-CodexOne-CSRF": "synthetic-csrf",
+  });
 });

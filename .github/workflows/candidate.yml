@@ -28,7 +28,7 @@ jobs:
             --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
             --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
             codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
-      - name: Build the distinct compatible v8 rollback peer
+      - name: Build the incompatible v8 schema peer
         run: |
           baseline=06058077d2cfa988f094ff50265202cd0721f919
           git fetch --no-tags origin "$baseline"
@@ -37,8 +37,8 @@ jobs:
           # Product sources remain at the old revision; use the bounded current build manifest.
           cp Package.swift "$RUNNER_TEMP/rollback-source/Package.swift"
           docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$baseline" \
-            -f deploy/Dockerfile -t codexone:rollback-peer "$RUNNER_TEMP/rollback-source"
-      - name: Verify real execution truth across the distinct compatible binary
+            -f "$RUNNER_TEMP/rollback-source/deploy/Dockerfile" -t codexone:rollback-peer "$RUNNER_TEMP/rollback-source"
+      - name: Verify explicit v8 migration and previous-binary v9 rejection
         run: |
           peer_container="$(docker create codexone:rollback-peer)"
           trap 'docker rm -f "$peer_container" >/dev/null 2>&1 || true' EXIT
@@ -49,10 +49,10 @@ jobs:
             --tmpfs /tmp:rw,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
             --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/rollback-codexone,dst=/peer/codexone,readonly" \
-            --entrypoint python3 codexone:tls-base /test/scripts/verify_migration_cutback.py \
-            --binary /output/codexone --previous-binary /peer/codexone
-      - name: Verify actual private installation and compatible rollback
-        run: python3 scripts/verify_installation.py --image codexone:candidate --previous-image codexone:rollback-peer
+            --entrypoint python3 codexone:tls-base /test/scripts/verify_admin_round2.py \
+            --binary /output/codexone --probe /output/ExecutionProbe --previous-binary /peer/codexone
+      - name: Verify actual private installation and v8 rejection
+        run: python3 scripts/verify_installation.py --image codexone:candidate --incompatible-image codexone:rollback-peer --incompatible-schema 8
       - name: Export candidate and checksum
         run: |
           mkdir artifacts

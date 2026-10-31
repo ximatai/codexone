@@ -70,7 +70,7 @@ public enum SQLiteSnapshotMaintenance {
     guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
     let manifest = SnapshotManifest(
       format: 1, id: UUID().uuidString,
-      createdUnixSeconds: Int64(Date().timeIntervalSince1970), schema: 8,
+      createdUnixSeconds: Int64(Date().timeIntervalSince1970), schema: 9,
       sourceGeneration: generation[0], databaseBytes: hash.0, databaseSHA256: hash.1,
       requiredKeyIDs: keys)
     guard rename(partial, destination + "/snapshot.sqlite") == 0 else {
@@ -132,7 +132,7 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(
-        path: staging, existingOnly: true, restoringV7: manifest.schema == 7)
+        path: staging, existingOnly: true, restoringV7: manifest.schema < 9)
       let completedCopyAt = Int64(Date().timeIntervalSince1970)
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
@@ -168,7 +168,8 @@ public enum SQLiteSnapshotMaintenance {
             guard key.revision < 1_000_000 else { throw ExecutionError.capacity }
             let disabled = ManagedKey(
               id: key.id, principal: key.principal, revision: key.revision + 1,
-              enabled: false, policy: key.policy, createdAtUnixSeconds: key.createdAtUnixSeconds)
+              enabled: false, policy: key.policy, createdAtUnixSeconds: key.createdAtUnixSeconds,
+              expiresAtUnixSeconds: key.expiresAtUnixSeconds)
             let digest = SHA256.hash(data: Data(UUID().uuidString.utf8)).map {
               String(format: "%02x", $0)
             }.joined()
@@ -207,7 +208,7 @@ public enum SQLiteSnapshotMaintenance {
     let manifest: SnapshotManifest = try JSONDecoder().decode(
       SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
     let now = Int64(Date().timeIntervalSince1970)
-    guard manifest.format == 1, [7, 8].contains(manifest.schema),
+    guard manifest.format == 1, [7, 8, 9].contains(manifest.schema),
       UUID(uuidString: manifest.id) != nil,
       manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
       manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,

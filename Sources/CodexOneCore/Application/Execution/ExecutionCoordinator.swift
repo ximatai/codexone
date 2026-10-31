@@ -15,6 +15,7 @@ public struct ExecutionContext: Sendable {
   init(admission: ExecutionAdmission, store: any ExecutionStore) {
     self.admission = admission
     self.store = store
+    (store as? any ExecutionLiveObserving)?.executionStarted(attempt: admission.attempt)
   }
   /// The caller may expose rawID only after this returns successfully.
   /// Repeated objects are bound once; beyond the per-attempt bound later objects stay unbound.
@@ -24,13 +25,17 @@ public struct ExecutionContext: Sendable {
   }
   /// Record trusted usage before writing to downstream; subsequent transport errors cannot erase it.
   public func observeUsage(_ evidence: UsageEvidence) throws { try observation.record(evidence) }
-  public func observeUpstreamEvent() { observation.recordFirstEvent() }
+  public func observeUpstreamEvent() {
+    observation.recordFirstEvent()
+    (store as? any ExecutionLiveObserving)?.executionReceivedFirstEvent(attempt: admission.attempt)
+  }
   public func observeOutcome(_ outcome: ExecutionOutcome) throws {
     try outcome.validate()
     try observation.recordOutcome(outcome)
   }
   fileprivate func finishObservation() -> (UsageEvidence?, ExecutionOutcome?) {
-    observation.finish()
+    (store as? any ExecutionLiveObserving)?.executionObservationEnded(attempt: admission.attempt)
+    return observation.finish()
   }
 }
 

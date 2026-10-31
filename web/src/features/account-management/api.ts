@@ -8,6 +8,7 @@ export type AccountAuthorization =
   "ready" | "refreshing" | "requires_auth" | "auth_uncertain";
 export interface Account {
   id: string;
+  displayName?: string | null;
   revision: number;
   credentialVersion: number;
   mode: AccountMode;
@@ -52,6 +53,12 @@ export function parseAccount(raw: unknown): Account {
     throw invalid();
   return {
     id: id(value.id),
+    ...(value.displayName === undefined
+      ? {}
+      : {
+          displayName:
+            value.displayName === null ? null : displayName(value.displayName),
+        }),
     revision: integer(value.revision),
     credentialVersion: integer(value.credentialVersion),
     mode: value.mode as AccountMode,
@@ -203,4 +210,39 @@ export async function discardAuthorization(
     csrf,
     signal,
   });
+}
+
+function displayName(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    [...value].length < 1 ||
+    [...value].length > 64 ||
+    new TextEncoder().encode(value).length > 256 ||
+    /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)
+  )
+    throw invalid();
+  return value;
+}
+export async function setDisplayName(
+  account: Account,
+  name: string | null,
+  csrf: string,
+  signal?: AbortSignal,
+): Promise<Account> {
+  return parseAccount(
+    object(
+      await request(
+        "/api/accounts/" + encodeURIComponent(account.id) + "/display-name",
+        {
+          method: "PUT",
+          body: {
+            revision: account.revision,
+            displayName: name === null ? null : displayName(name),
+          },
+          csrf,
+          signal,
+        },
+      ),
+    ).account,
+  );
 }
