@@ -2,6 +2,7 @@ import Foundation
 import Synchronization
 
 struct WebSocketUpstreamClosed: Error {}
+struct UnadmittedWebSocketResponse: Error {}
 
 /// Per-lane turn ownership, updated by the sole reader before it queues an event.
 /// Only lifecycle identity is enforced; other provider events belong to the active turn as-is.
@@ -13,17 +14,33 @@ final class WebSocketTurns: Sendable {
   private struct State {
     struct Lane {
       var phase = Phase.idle
+      var receivedCreated = false
       var evidence: (@Sendable (JSONValue) throws -> Void)?
     }
     var lanes: [String: Lane] = [:]
     /// Recently started responses; stale events for them can never begin a later turn.
     var started: [String] = []
     var startedSet = Set<String>()
+    var responseLanes: [String: String] = [:]
+    var endedLanes: [String: String] = [:]
+    var ended: [String] = []
+    /// At most one terminal awaiting downstream submission per admitted lane (33 lanes).
+    var pendingDelivery: [String: String] = [:]
+    mutating func end(_ id: String, lane: String) {
+      guard endedLanes.updateValue(lane, forKey: id) == nil else { return }
+      ended.append(id)
+      if ended.count > 1024 { endedLanes.removeValue(forKey: ended.removeFirst()) }
+    }
     var closed = false
-    mutating func start(_ id: String) {
+    mutating func start(_ id: String, lane: String) {
       guard startedSet.insert(id).inserted else { return }
       started.append(id)
-      if started.count > 1024 { startedSet.remove(started.removeFirst()) }
+      responseLanes[id] = lane
+      if started.count > 1024 {
+        let oldest = started.removeFirst()
+        startedSet.remove(oldest)
+        responseLanes.removeValue(forKey: oldest)
+      }
     }
   }
 
@@ -60,6 +77,7 @@ final class WebSocketTurns: Sendable {
       }.count
       guard active < 16 else { throw GatewayProtocolError(503, "websocket_turn_capacity") }
       value.lanes[lane]!.phase = .awaitingCreated
+      value.lanes[lane]!.receivedCreated = false
     }
   }
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
@@ -77,26 +95,110 @@ final class WebSocketTurns: Sendable {
   }
   func detachEvidence(lane: String) { state.withLock { $0.lanes[lane]?.evidence = nil } }
 
+  func interruptLane(responseID: String) -> String? {
+    state.withLock { value in
+      value.lanes.first { _, lane in
+        if case .active(let id) = lane.phase { return lane.receivedCreated && id == responseID }
+        return false
+      }?.key
+    }
+  }
+
+  func delivered(_ event: JSONValue) {
+    guard ProviderObservation.terminalEvents.contains(event["type"]?.string ?? ""),
+      let id = event["response"]?["id"]?.string
+    else { return }
+    state.withLock { value in
+      if let lane = value.pendingDelivery.first(where: { $0.value == id })?.key {
+        value.pendingDelivery.removeValue(forKey: lane)
+      }
+    }
+  }
+  func waitForDelivery(_ data: Data) async throws {
+    let event = try JSONValue.decode(data)
+    guard let id = event["response_id"]?.string ?? event["response"]?["id"]?.string else { return }
+    while state.withLock({ $0.pendingDelivery.values.contains(id) && !$0.closed }) {
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    try Task.checkCancellation()
+  }
+
+  struct Delivery {
+    let lane: String
+    let detached: Bool
+  }
+  func observe(_ data: Data) throws -> String? { try delivery(data)?.lane }
+
   /// Returns the lane that owns the event, or nil for provider events outside any turn.
-  func observe(_ data: Data) throws -> String? {
+  func delivery(_ data: Data) throws -> Delivery? {
     let event: JSONValue
     do { event = try JSONValue.decode(data) } catch {
       throw GatewayProtocolError(502, "invalid_upstream_event")
     }
-    let lane: String
+    var lane: String
     do { lane = try webSocketLane(event) } catch {
       throw GatewayProtocolError(502, "invalid_upstream_lane")
     }
-    return try state.withLock { value -> String? in
+    return try state.withLock { value -> Delivery? in
       guard !value.closed else {
         throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
       }
-      guard var current = value.lanes[lane] else { return nil }
-      defer { value.lanes[lane] = current }
       let type = event["type"]?.string ?? ""
+      let id = event["response_id"]?.string ?? event["response"]?["id"]?.string
+      let activeOwner = id.flatMap { responseID in
+        value.lanes.first { _, lane in
+          if case .active(let currentID) = lane.phase { return currentID == responseID }
+          return false
+        }?.key
+      }
+      if let id, let owner = activeOwner ?? value.endedLanes[id] ?? value.responseLanes[id] {
+        let active: Bool
+        if case .active(let currentID) = value.lanes[owner]?.phase {
+          active = currentID == id
+        } else {
+          active = false
+        }
+        if !active {
+          // Repeated lifecycle starts never attach to a newer attempt.
+          if type == "response.created" { return nil }
+          return .init(lane: owner, detached: true)
+        }
+        if type == "response.interrupt.accepted" || type == "response.interrupt.failed" {
+          return .init(lane: owner, detached: true)
+        }
+        if event["stream_id"] == nil { lane = owner }
+      }
+      if ["response.created", "response.queued", "response.in_progress"].contains(type) {
+        let expected: Bool
+        switch value.lanes[lane]?.phase {
+        case .awaitingCreated: expected = true
+        case .active(let currentID): expected = currentID == id
+        default: expected = false
+        }
+        guard expected else {
+          value.closed = true
+          throw UnadmittedWebSocketResponse()
+        }
+      }
+      guard var current = value.lanes[lane] else {
+        if ProviderObservation.lifecycleEvents.contains(type) {
+          value.closed = true
+          throw UnadmittedWebSocketResponse()
+        }
+        return nil
+      }
+      defer { value.lanes[lane] = current }
       let responseID = event["response"]?["id"]?.string
+      if type == "response.created" { current.receivedCreated = true }
+      let previousID: String?
+      if case .active(let id) = current.phase { previousID = id } else { previousID = nil }
       switch current.phase {
-      case .idle: return nil
+      case .idle:
+        if ProviderObservation.lifecycleEvents.contains(type) {
+          value.closed = true
+          throw UnadmittedWebSocketResponse()
+        }
+        return nil
       case .awaitingCreated:
         if type == "error" {
           current.phase = .idle
@@ -105,8 +207,8 @@ final class WebSocketTurns: Sendable {
             throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnCreated)
           }
           // A stale or foreign response can never begin, or supply evidence to, this turn.
-          guard !value.startedSet.contains(id) else { return nil }
-          value.start(id)
+          guard !value.startedSet.contains(id), activeOwner == nil else { return nil }
+          value.start(id, lane: lane)
           current.phase = .active(id)
           try finish(&current, type: type, event: event)
         } else if type.hasPrefix("response.") && type != "response.metadata"
@@ -129,8 +231,12 @@ final class WebSocketTurns: Sendable {
           try finish(&current, type: type, event: event)
         }
       }
+      if case .idle = current.phase, let id = previousID ?? responseID {
+        if ProviderObservation.terminalEvents.contains(type) { value.pendingDelivery[lane] = id }
+        value.end(id, lane: lane)
+      }
       try current.evidence?(event)
-      return lane
+      return .init(lane: lane, detached: false)
     }
   }
 

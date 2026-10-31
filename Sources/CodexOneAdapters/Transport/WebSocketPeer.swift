@@ -189,6 +189,7 @@ struct WebSocketPeer: Sendable {
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
   var isClosed: Bool { turns?.isClosed ?? false }
+  func interruptLane(responseID: String) -> String? { turns?.interruptLane(responseID: responseID) }
   func waitForClose() async { await turns?.waitForClose() }
   func closeNormally() async throws {
     try await writer.send(Data([3, 232]), opcode: .connectionClose)
@@ -200,6 +201,7 @@ struct WebSocketPeer: Sendable {
   {
     try turns?.attachEvidence(lane: lane, handler: handler)
   }
+  func delivered(_ event: JSONValue) { turns?.delivered(event) }
   func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
   func nextBody() async throws -> WebSocketBody { try await inbox.nextBody() }
@@ -211,6 +213,8 @@ struct WebSocketPeer: Sendable {
   static func run(
     _ socket: ProtocolWebSocket, client: Bool,
     reservations: WebSocketBodyReservations? = nil,
+    detachedEvent: (@Sendable (Data, String) async throws -> Void)? = nil,
+    unexpectedResponse: (@Sendable () async throws -> Void)? = nil,
     operation: @escaping @Sendable (WebSocketPeer) async throws -> Void
   ) async throws {
     let lifetime = socket.channel.eventLoop.scheduleTask(in: .seconds(3600)) {
@@ -232,7 +236,23 @@ struct WebSocketPeer: Sendable {
                 guard String(data: data, encoding: .utf8) != nil else {
                   throw GatewayProtocolError(400, "invalid_websocket_text")
                 }
-                guard let lane = try turns.map({ try $0.observe(data) }) ?? "" else { continue }
+                let lane: String
+                if let turns {
+                  let delivery: WebSocketTurns.Delivery?
+                  do { delivery = try turns.delivery(data) } catch is UnadmittedWebSocketResponse {
+                    try await unexpectedResponse?()
+                    throw UnadmittedWebSocketResponse()
+                  }
+                  guard let delivery else { continue }
+                  if delivery.detached {
+                    if detachedEvent != nil { try await turns.waitForDelivery(data) }
+                    try await detachedEvent?(data, delivery.lane)
+                    continue
+                  }
+                  lane = delivery.lane
+                } else {
+                  lane = ""
+                }
                 try await withExecutionDeadline(seconds: 5) {
                   try await inbox.pushBody(.init(data, lease: reservations?.take()), lane: lane)
                 }

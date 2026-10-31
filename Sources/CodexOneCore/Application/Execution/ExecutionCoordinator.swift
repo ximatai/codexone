@@ -2,6 +2,9 @@ import Foundation
 import Synchronization
 
 public struct ExecutionContext: Sendable {
+  public func recordUnexpectedExecution() async throws {
+    try await store.recordUnexpectedExecution(basedOn: admission.attempt)
+  }
   public let admission: ExecutionAdmission
   private let store: any ExecutionStore
   private let observation = UsageObservation()

@@ -218,7 +218,7 @@ def main():
                         deadline = time.monotonic() + 5
                         while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
                         assert upstream.calls == expected
-                    client_headers = {'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
+                    client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
                         'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
                     for prefix in ('/v1', '/backend-api/codex'):
@@ -230,11 +230,12 @@ def main():
                             assert status == 200 and upstream.calls == before + 1, (status, body[:200])
                             path, received, sent_headers = upstream.requests[-1]
                             assert path == '/backend-api/codex/images/' + operation and received == wire
-                            for key in ('x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
+                            for key in ('x-codex-future-header', 'x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
                                 assert sent_headers[key] == client_headers[key]
                             assert sent_headers['user-agent'] == client_headers['User-Agent']
                             assert sent_headers['authorization'] == 'Bearer synthetic-upstream-token-for-images'
                             assert 'chatgpt-account-id' not in sent_headers and 'x-client-private' not in sent_headers
+                            assert 'x-openai-actor-authorization' not in sent_headers
                             assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
                             assert headers['x-request-id']
                             assert body == native_body('synthetic')

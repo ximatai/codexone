@@ -88,7 +88,7 @@ def main():
                 def request(method='POST', path=PREFIX + 'alpha/search', body=b'synthetic\x00\xff', auth=secret, headers=None):
                     connection = http.client.HTTPConnection('127.0.0.1', ports['data'], timeout=70)
                     try:
-                        sent = {'Content-Type': 'application/sdp', 'Cookie': 'synthetic-client-cookie',
+                        sent = {'x-codex-future-header': 'synthetic-value', 'x-openai-actor-authorization': 'synthetic-gate', 'Content-Type': 'application/sdp', 'Cookie': 'synthetic-client-cookie',
                                 'chatgpt-account-id': 'forged', **(headers or {})}
                         if auth is not None: sent['Authorization'] = 'Bearer ' + auth
                         connection.request(method, path, body, sent)
@@ -107,6 +107,8 @@ def main():
                     received_method, received_path, received_body, received_headers = server.calls[-1]
                     assert (received_method, received_path, received_body) == (method, path + query, wire)
                     assert received_headers['content-type'] == 'application/sdp'
+                    assert received_headers['x-codex-future-header'] == 'synthetic-value'
+                    assert 'x-openai-actor-authorization' not in received_headers
                     assert received_headers['authorization'] == 'Bearer synthetic-control-upstream-token'
                     assert 'cookie' not in received_headers and 'chatgpt-account-id' not in received_headers
                 for success in (200, 202, 204, 304):

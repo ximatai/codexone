@@ -18,11 +18,22 @@ func forwardedClientHeaders(
       $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     })
   var result = HTTPHeaders()
+  var codexCount = 0
   for header in headers
-  where allowed.contains(header.name.lowercased())
+  where
+    (allowed.contains(header.name.lowercased()) || header.name.lowercased().hasPrefix("x-codex-"))
     && !connectionHeaders.contains(header.name.lowercased())
   {
-    if header.value.utf8.count <= 8192 { result.add(name: header.name, value: header.value) }
+    guard header.value.utf8.count <= 8192 else { continue }
+    if header.name.lowercased().hasPrefix("x-codex-") {
+      guard codexCount < 32 else { continue }
+      codexCount += 1
+      if !allowed.contains(header.name.lowercased()) {
+        ClientProtocolDiagnostics.record(
+          name: header.name.lowercased(), outcome: "forwarded", headers: headers)
+      }
+    }
+    result.add(name: header.name, value: header.value)
   }
   if !ClientFingerprint.isNative(headers) {
     for name in ["user-agent", "originator", "version"] { result.remove(name: name) }

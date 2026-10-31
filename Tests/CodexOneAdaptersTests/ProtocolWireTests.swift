@@ -132,7 +132,7 @@ import Testing
       ]).data()) == "")
   #expect(try turns.observe(event("response.completed", id: "synthetic-first")) == "")
   // A repeated terminal after the turn ended cannot reach the next attempt.
-  #expect(try turns.observe(event("response.completed", id: "synthetic-first")) == nil)
+  #expect(try turns.delivery(event("response.completed", id: "synthetic-first"))?.detached == true)
   try turns.begin()
   #expect(try turns.observe(event("response.created", id: "synthetic-second")) == "")
   turns.close()

@@ -36,6 +36,9 @@ class Upstream(BaseHTTPRequestHandler):
         assert self.headers.get("Authorization") is None
         # Incoming client credentials and arbitrary headers must never reach the provider.
         assert self.headers.get("X-Synthetic-Secret") is None
+        if payload.get("input") == "prefix-header":
+            assert self.headers.get("x-codex-future-header") == "synthetic-value"
+            assert self.headers.get("x-openai-actor-authorization") is None
         prompt = payload.get("input")
         if self.path == "/v1/responses/compact":
             response = {"id": f"cmp_{index}", "object": "response.compaction", "created_at": 1,
@@ -148,9 +151,9 @@ class Upstream(BaseHTTPRequestHandler):
                 self.close_connection = True
 
 
-def connect(port, method, path, payload=None, *, authorization=True, timeout=8):
+def connect(port, method, path, payload=None, *, authorization=True, timeout=8, client_headers=None):
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-    headers = {"Content-Type": "application/json", "X-Synthetic-Secret": "synthetic-header"}
+    headers = {"Content-Type": "application/json", "X-Synthetic-Secret": "synthetic-header", **(client_headers or {})}
     if authorization:
         headers["Authorization"] = "Bearer " + TOKEN
     connection.request(method, path, body=json.dumps(payload) if payload is not None else None, headers=headers)
@@ -327,6 +330,7 @@ def main():
                                 {"model": "synthetic-text", "input": "text", "previous_response_id": "unknown"}):
                     assert connect(port, "POST", "/v1/responses", payload)[0] in (400, 403)
                 assert upstream.calls == count
+                assert connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'prefix-header'}, client_headers={'x-codex-future-header': 'synthetic-value', 'x-openai-actor-authorization': 'synthetic-gate'})[0] == 200
                 print("PASS: actual JSON/model routes, aliases, authentication, fail-before-dispatch and durable settlement")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "tool", "tools": [{"type": "function", "name": "local_tool", "parameters": {"type": "object", "properties": {}}}]})
                 response = json.loads(body)

@@ -21,6 +21,7 @@ backend() {
   python3 scripts/verify_execution.py --binary "$backend_bin_dir/ExecutionProbe"
   python3 scripts/verify_accounts.py --binary "$backend_bin_dir/ExecutionProbe"
   python3 scripts/verify_protocol.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_protocol_rejections.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_upstream_proxy.py --binary "$backend_bin_dir/codexone"

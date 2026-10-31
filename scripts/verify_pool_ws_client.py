@@ -30,6 +30,32 @@ def main():
             assert len(line) <= 4096
             command = json.loads(line)
             op = command.get("op", "turn")
+            if op == "compatibility":
+                send(sock, dict(type='synthetic.future', payload='synthetic-private-control-body'), masked=True)
+                assert event(sock)['status'] == 400
+                send(sock, create({}), masked=True)
+                first = event(sock); done = event(sock)
+                assert done['type'] == 'response.completed'
+                send(sock, dict(type='synthetic.future', payload='synthetic-private-control-body'), masked=True)
+                assert event(sock)['type'] == 'synthetic.echo'
+                for prompt in ('cancel-before', 'cancel-after', 'drain'):
+                    send(sock, create(dict(input=prompt), prompt), masked=True)
+                    started = event(sock)
+                    rid = started['response']['id']
+                    send(sock, dict(type='response.interrupt', response_id=rid, mode='discard_partial_items'), masked=True)
+                    replies = [event(sock), event(sock)]
+                    expected = ['response.completed', 'response.interrupt.accepted'] if prompt == 'cancel-after' else ['response.interrupt.accepted', 'response.completed']
+                    assert [item['type'] for item in replies] == expected, replies
+                    assert all(item['stream_id'] == prompt for item in replies)
+                    send(sock, dict(type='response.interrupt', response_id=rid), masked=True)
+                    assert event(sock)['type'] == 'response.interrupt.failed'
+                send(sock, dict(type='synthetic.spawn'), masked=True)
+                try:
+                    assert receive(sock)[0] == 8
+                except (EOFError, ConnectionResetError):
+                    pass
+                print('{"verified":true}', flush=True)
+                continue
             if op == "close":
                 return
             if op == "expect_close":

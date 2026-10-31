@@ -182,6 +182,7 @@ public struct ObjectBinding: Sendable, Hashable, Codable {
 public protocol ExecutionStore: Sendable {
   var isAvailable: Bool { get }
   var isAdmissionReady: Bool { get }
+  func recordUnexpectedExecution(basedOn attempt: String) async throws
   func admit(_ command: ExecutionAdmission) async throws
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
@@ -191,6 +192,9 @@ public protocol ExecutionStore: Sendable {
 }
 
 extension ExecutionStore {
+  public func recordUnexpectedExecution(basedOn attempt: String) async throws {
+    throw ExecutionError.storageUnavailable
+  }
   public var isAdmissionReady: Bool { isAvailable }
   public func finalize(attempt: String, evidence: UsageEvidence?) async throws {
     try await finalize(attempt: attempt, evidence: evidence, outcome: nil)

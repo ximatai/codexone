@@ -60,10 +60,11 @@ def receive(sock, *, masked=False):
     return first & 15, data
 
 
-def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN):
+def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None):
     sock = socket.create_connection(('127.0.0.1', port), timeout=5)
     key = base64.b64encode(os.urandom(16)).decode()
     auth = 'Authorization: Bearer ' + token + '\r\n' if authorized else ''
+    auth += ''.join(f'{name}: {value}\r\n' for name, value in (headers or {}).items())
     extensions = 'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n' if extension_offer else ''
     sock.sendall((f'GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n' + auth + extensions + '\r\n').encode())
     header = bytearray()
@@ -369,7 +370,9 @@ def main():
                         events = turn(downstream, {'model': 'synthetic-text', 'input': prompt})
                         assert events[-1]['type'] == 'response.completed'
                         time.sleep(0.1)
-                        # Stale events of the finished turn are dropped; the next turn is unaffected.
+                        # Identified late events are delivered outside attempts; unidentified output stays dropped.
+                        if prompt == 'duplicate-terminal':
+                            assert json.loads(receive(downstream)[1])['type'] == 'response.completed'
                         events = turn(downstream, {'model': 'synthetic-text', 'input': 'new-turn'})
                         assert events[-1]['type'] == 'response.completed', events
                         assert 'OLD_TURN_TRAILING_SYNTHETIC' not in json.dumps(events)

@@ -101,7 +101,33 @@ enum PoolWebSocketSession {
                 to: try .init(id: owner.identity, namespace: owner.namespace))
             try await executor.webSocket.authorized(
               selection.authorization, headers: executor.clientHeaders
-            ).run { upstream in
+            ).run(
+              detachedEvent: { data, lane in
+                var event = try JSONValue.decode(data).object!
+                if !lane.isEmpty { event["stream_id"] = .string(lane) }
+                if event["type"]?.string == "error" {
+                  try await sendWebSocketError(
+                    ProviderObservation.providerFailure(.object(event)),
+                    requestID: UUID().uuidString,
+                    lane: lane, to: downstream)
+                } else {
+                  try await downstream.send(ProviderObservation.textOutput(.object(event)))
+                }
+              },
+              unexpectedResponse: {
+                do {
+                  try await selection.context.recordUnexpectedExecution()
+                  ClientProtocolDiagnostics.record(
+                    name: "upstream.lifecycle", outcome: "recorded_unknown",
+                    headers: executor.protocolClientHeaders)
+                } catch {
+                  ClientProtocolDiagnostics.record(
+                    name: "upstream.lifecycle", outcome: "unknown_record_failed",
+                    headers: executor.protocolClientHeaders)
+                  throw error
+                }
+              }
+            ) { upstream in
               try await ResponsesDataService.serveTurns(
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
