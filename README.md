@@ -27,8 +27,8 @@
 从源码目录初始化独立安装目录，镜像必须解析为不可变 ID：
 
 ```sh
-docker pull ghcr.io/aruis/codexone:0.26.1
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/aruis/codexone:0.26.1 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.1
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}')"
 python3 deploy/init-install.py ../codexone-private \
   --image "$CODEXONE_IMAGE_ID" --origin https://admin.example.invalid
 cd ../codexone-private

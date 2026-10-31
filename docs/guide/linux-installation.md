@@ -11,11 +11,11 @@
 
 ## 获取镜像
 
-GHCR `ghcr.io/aruis/codexone:0.26.1` 在首个版本发布后可用；当前可从源码构建 candidate。发布后先拉取精确版本并解析不可变 ID：
+GHCR `ghcr.io/ximatai/codexone:0.26.1` 在首个版本发布后可用；当前可从源码构建 candidate。发布后先拉取精确版本并解析不可变 ID：
 
 ```sh
-docker pull ghcr.io/aruis/codexone:0.26.1
-docker image inspect ghcr.io/aruis/codexone:0.26.1 --format '{{.Id}}'
+docker pull ghcr.io/ximatai/codexone:0.26.1
+docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}'
 ```
 
 下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。镜像仅提供精确版本与 latest。

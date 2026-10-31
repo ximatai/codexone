@@ -27,8 +27,8 @@ All accounts, models, and requests below are synthetic.
 From the source checkout:
 
 ```sh
-docker pull ghcr.io/aruis/codexone:0.26.1
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/aruis/codexone:0.26.1 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.1
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}')"
 python3 deploy/init-install.py ../codexone-private \
   --image "$CODEXONE_IMAGE_ID" --origin https://admin.example.invalid
 cd ../codexone-private

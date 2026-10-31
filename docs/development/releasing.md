@@ -8,7 +8,7 @@
 
 每个版本发布说明顶部必须有“升级注意”，说明 schema、配置、客户端兼容性、备份与迁移要求，不能从版本号推断无损升级或回退。CHANGELOG 保留用户可观察变化。
 
-发布渠道为 GHCR `ghcr.io/aruis/codexone`，首个版本发布后可用。镜像仅提供精确版本（如 `0.26.1`）与 `latest`，不提供 `0.26` 浮动标签。安装使用 digest 或本地不可变 image ID，不能以 `latest` 作为可追溯部署记录。
+发布渠道为 GHCR `ghcr.io/ximatai/codexone`，首个版本发布后可用。镜像仅提供精确版本（如 `0.26.1`）与 `latest`，不提供 `0.26` 浮动标签。安装使用 digest 或本地不可变 image ID，不能以 `latest` 作为可追溯部署记录。
 
 ## 当前自动化边界
 

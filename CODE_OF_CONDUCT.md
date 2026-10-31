@@ -63,7 +63,7 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported privately to the project maintainers through the repository's GitHub
 private reporting channel: **Security → Report a vulnerability**
-([private report](https://github.com/aruis/codexone/security/advisories/new)).
+([private report](https://github.com/ximatai/codexone/security/advisories/new)).
 For a conduct report, identify it as such in the title. Do not post sensitive
 personal details in public Issues. If the private channel is unavailable,
 request that maintainers enable it without disclosing the incident publicly.
