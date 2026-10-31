@@ -1,6 +1,6 @@
 # 用量分析：模型/客户端分布与 CSV 导出
 
-日期：2026-10-31。用户在管理台基础层阶段 2 之后优先排期。上一轮见 [管理台第二轮](../admin-round2/proposal.md)，口径见 [用量 U10/U12/U14](../../specs/usage.md) 与 [管理面](../../specs/control-plane.md)。
+拟扩展模型/客户端分布与 CSV 导出，保持管理员访问和脱敏边界。
 
 ## 问题
 
@@ -36,3 +36,7 @@
 - 分布查询：鉴权/来源、参数边界、空数据、未知组、50 组截断与 other、与 `/api/usage` totals 对账一致、繁忙 429、取消。
 - 前端：分布切换与点击筛选、导出分页/取消/上限提示的 vitest 与 Playwright；1440×900 走查。
 - 完整 `verify.sh --backend`、`--web --chrome` 与 Linux verification。
+
+## 相关文档
+
+[文档导航](../../README.md)

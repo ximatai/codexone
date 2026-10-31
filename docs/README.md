@@ -1,21 +1,19 @@
-# 文档导航
+# CodexOne 文档
 
-只维护目标、共识方案和执行约定。讨论稿、候选协议、历史评审及完成后的过程记录由 Git 历史追溯，不与正式文档并排保留。共识是推进依据，允许凭新证据沟通调整。
+按使用、运维、接口和开发职责查找文档。
 
-| 文档 | 用途 |
+| 读者与目标 | 入口 |
 |---|---|
-| [产品目标](requirements/product.md) | 服务对象、首版范围、验收目标 |
-| [架构](architecture/ARCHITECTURE.md) | 技术组织与依赖方向 |
-| [运行责任](architecture/ownership.md) | 任务 owner、事务、核心/缓存边界 |
-| [规范](specs/README.md) | 行为与安全约束 |
-| [共识决策](decisions/README.md) | 已采用方案及必要理由 |
-| [开发目录](development/layout.md) | 文件归属与构建边界 |
-| [验证要求](development/verification.md) | 各层验收定义 |
-| [客户端配置](client-setup.md) | Codex CLI/Desktop 接入与生图工具前提 |
-| [客户端协议跟踪](development/client-protocol-watch.md) | 发现 Codex 新增协议的手段与待讨论治理问题 |
-| [项目里程碑](plans/roadmap.md) | 阶段目标、重点、边界与验收出口 |
-| [治理](governance.md) | 状态、协作、变更与清理规则 |
-| [变更约定](changes/README.md) | 实现前提案与任务格式 |
-| [验证依据](evidence/README.md) | 技术选择依据及其适用范围 |
+| 安装并接入自己的设备和工具 | [使用指南](guide/README.md) |
+| 密钥、数据与容量维护 | [运维指南](operations/README.md) |
+| 协议、管理接口与配置字段 | [参考资料](reference/README.md) |
+| 理解模块、依赖和技术选择 | [架构](architecture/ARCHITECTURE.md) · [职责](architecture/ownership.md) · [决策](architecture/decisions/README.md) |
+| 构建、测试与贡献 | [贡献指南](../CONTRIBUTING.md) · [开发目录](development/layout.md) · [验证](development/verification.md) |
+| 跟踪协议与准备版本 | [协议跟踪](development/client-protocol-watch.md) · [版本规则](development/releasing.md) |
+| 理解目标与协作约定 | [产品目标](requirements/product.md) · [治理](governance.md) · [活动提案](changes/README.md) |
 
-全局状态只见根 STATUS；本导航和 README 不维护实现阶段或测试进度。
+规范定义行为，STATUS 说明公开项目状态与路线图，CHANGELOG 记录版本变化；过程记录由 Git 历史追溯。
+
+## 相关文档
+
+[首页](../README.md) · [项目状态](../STATUS.md) · [来源声明](reference/provenance.md)

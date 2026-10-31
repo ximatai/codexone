@@ -1,11 +1,10 @@
-# 任务：中断后断开时续读上游终态
+# 中断后的终态结算任务
 
-契约见 [proposal](proposal.md)。
+记录实现范围与尚未完成的验收，历史执行记录由 Git 追溯。
 
-- [x] 已转发中断的在途 turn 在下游断开后续读至终态或 10 秒。
-- [x] 资源释放与运行时取消。
-- [x] Desktop 常见 `x-codex-*` 头列为已知。
-- [x] 合成测试与规范同步；完整 `verify.sh --backend`。
-- [ ] Linux verification、部署与 Desktop 停止验收（主 Agent）。
+- [x] 完成对应实现并同步[正式说明](../../reference/specs/protocol.md)。
+- [ ] Linux verification、安装及 Desktop 停止验收。
 
-本机验证与边界见 [verification](verification.md)。
+## 相关文档
+
+[提案](proposal.md) · [验证定义](../../development/verification.md)

@@ -1,12 +1,10 @@
-# 任务：上游 WebSocket 空闲关闭同步关闭下游
+# 上游 WS 关闭处理任务
 
-契约见 [proposal](proposal.md)。
+记录实现范围与尚未完成的验收，历史执行记录由 Git 追溯。
 
-- [x] 上游空闲关闭时以 1000 关闭下游，释放连接与预留；在途 turn 维持现有最终化。
-- [x] 关闭与新请求竞争时 dispatch 前拒绝。
-- [x] 合成测试：空闲关闭、在途关闭、多 lane、竞争；单身份与账号池。
-- [x] `include` 含 `output.encrypted_content` 透传回归测试。
-- [x] 同步协议规范。
-- [x] 完整 `verify.sh --backend`。
-- [x] Linux verification。
-- [ ] 部署后观察（需另行授权，由主 Agent 承接）。
+- [x] 完成对应实现并同步[正式说明](../../reference/specs/protocol.md)。
+- [ ] 实际客户端观察（需另行授权，由维护者完成）。
+
+## 相关文档
+
+[提案](proposal.md) · [验证定义](../../development/verification.md)

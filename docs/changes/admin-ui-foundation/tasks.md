@@ -1,31 +1,12 @@
-# 任务：管理台前端基础层
+# 管理台界面基础任务
 
-契约见 [proposal](proposal.md)。
+记录实现范围与尚未完成的验收，历史执行记录由 Git 追溯。
 
-## 阶段 1
-- [x] 构建时主题 CSS 与 CSP 检查。
-- [x] 外框与页头组件。
-- [x] 全局通知与模态管理，移除手写滚动锁（Key 页）。
-- [x] Query key 工厂与 `useManagedMutation`。
-- [x] DataTable、状态与时间/金额组件。
-- [x] Key 管理页试点迁移与截图基线。
-- [ ] 主 Agent 评审、界面走查与 Linux verification。
-
-## 阶段 2
-- [x] 侧栏/窄屏导航、静态主题与图标。
-- [x] 首页 KPI 图表、请求 DataTable 与额度/系统右栏。
-- [x] 用量快捷范围/更多筛选、统计条/堆叠图、DataTable/详情 Drawer。
-- [x] 账号卡片/详情 Drawer、共享修改钩子与错误分类。
-- [x] Key 工具栏、即将到期筛选、图标菜单及安全弹层。
-- [x] 统一状态与骨架、清理全局 CSS 与手写滚动锁。
-- [x] 既有测试与新增 Chrome 场景；桌面/窄屏截图及 subagent 界面评审。
-- [x] 生产路径 CSP 与本机合成后端入口验证。
-- [ ] 主 Agent 最终评审与 Linux verification。
-
-## 阶段 3
+- [x] 完成对应实现并同步[正式说明](../../development/layout.md)。
+- [ ] 维护者评审、界面走查与 Linux verification。
+- [ ] 维护者最终评审与 Linux verification。
 - [ ] 深色模式与交互改进（另提）。
 
-## 阶段 2 评审返工
-- [x] 完成评审 1–18 的布局、状态、查询与两步创建调整。
-- [x] 补充回归、更新四页桌面/窄屏与弹层截图并进行界面评审。
-- [x] 指定前端、两项生产合成入口和文档验证，分组提交。
+## 相关文档
+
+[提案](proposal.md) · [验证定义](../../development/verification.md)

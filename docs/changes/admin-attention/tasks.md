@@ -1,9 +1,10 @@
-# 任务：首页需要处理提醒
+# 管理台待处理提醒任务
 
-契约见 [proposal](proposal.md)。
+记录实现范围与尚未完成的验收，历史执行记录由 Git 追溯。
 
-- [x] `/api/attention` 汇总与各 kind 边界测试。
-- [x] 进程内客户端协议扩展名称集合。
-- [x] 首页提醒区与导航标记。
-- [x] 规范同步与完整本机验证（失败项修正后定向补验，见 verification）。
-- [ ] 主 Agent 评审、Linux verification、部署测试实例。
+- [x] 完成对应实现并同步[正式说明](../../reference/specs/control-plane.md)。
+- [ ] 维护者评审、Linux verification、安装兼容验收。
+
+## 相关文档
+
+[提案](proposal.md) · [验证定义](../../development/verification.md)

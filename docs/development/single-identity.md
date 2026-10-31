@@ -1,8 +1,8 @@
 # 单身份配置与合成验证
 
-全局进度和可运行入口见 [STATUS](../../STATUS.md)，协议与兼容目标见 [protocol](../specs/protocol.md)。
+为无凭证验证配置受控上游，协议约束见[协议规范](../reference/specs/protocol.md)。
 
-多个主体/Key 使用显式 [托管 Key 模式](key-governance.md)，不与下述 legacy 单 Key 字段混用；上游注入与协议限制仍相同。
+多个主体/Key 使用显式 [托管 Key 模式](../guide/key-governance.md)，不与下述 legacy 单 Key 字段混用；上游注入与协议限制仍相同。
 
 ## 本地配置
 
@@ -23,7 +23,7 @@
 | upstreamContract | 可选 responses/codex-subscription；loopback缺省responses，可选订阅契约供合成测试；非loopback订阅固定codex-subscription，不允许降为responses |
 | upstreamTransport | 可选 http（默认）或 websocket；后者同时启用原生 WS 与 HTTP→WS 桥接 |
 | upstreamBaseURL | 字面 loopback HTTP 合成上游，或固定可信订阅 origin/path；不跟随重定向 |
-| modelProfilesFile | 可选绝对路径，0600受信离线profile快照；见[快照导入](model-profiles.md)，不新增模型或权限 |
+| modelProfilesFile | 可选绝对路径，0600受信离线profile快照；见[快照导入](../reference/model-profiles.md)，不新增模型或权限 |
 | firstResponseTimeoutSeconds / progressTimeoutSeconds | 默认30/60秒，显式范围1—120/1—300且不超过总期限，省略时取较小值；SSE注释/WS控制帧不续期 |
 | executionTimeoutSeconds | 可选1—1800秒，默认600；覆盖发送、响应体消费、屏障及输出，超时不重发，已有证据仍结算 |
 | upstreamTokenFile | 可选独立运行时访问凭证文件；与配置同样校验 owner/权限/类型，最多 16 KiB，不写入核心库或日志 |
@@ -44,7 +44,7 @@ python3 scripts/verify_protocol.py --binary .build/debug/codexone --web-smoke
 
 ## WebSocket 传输
 
-配置 `upstreamTransport: "websocket"`，base URL 仍用可信 HTTP(S) origin；握手路径为其 `/responses`，HTTPS 使用系统信任与主机名校验。原生下游支持两个前缀的 GET `/responses`，支持默认 lane 与最多 32 个命名 lane，同 lane FIFO、最多 16 个跨 lane 在途 turn；generate:false 作为独立 warmup 执行，未支持控制仍拒绝。原生连接在首个有效 create 后使用固定上游 socket；HTTP 桥接每执行新建 socket，不能由桥接成功推导 store=false 跨请求续接可用。无自动重连/重放。
+配置 `upstreamTransport: "websocket"`，base URL 仍用可信 HTTP(S) origin；握手路径为其 `/responses`，HTTPS 使用系统信任与主机名校验。原生下游支持两个前缀的 GET `/responses`，支持默认 lane 与最多 32 个命名 lane，同 lane FIFO、最多 16 个跨 lane 在途 turn；generate:false 作为独立 warmup 执行，中断和扩展控制按 P14a 转发，已知不支持模式仍拒绝。原生连接在首个有效 create 后使用固定上游 socket；HTTP 桥接每执行新建 socket，不能由桥接成功推导 store=false 跨请求续接可用。无自动重连/重放。
 
 `verify_websocket.py` 使用 Python 标准库实现有界合成 RFC6455 客户端/上游，纳入后端统一验证；验证帧 masking/分片/ping、延迟建连、同连接续接、FIFO、桥接 JSON/SSE、EOF/断开取消、DB 屏障失败和未完成握手关闭。预热/压缩已有合成验证，Desktop 实际兼容仍需单独验收。
 
@@ -64,17 +64,17 @@ python3 scripts/verify_client.py --binary .build/debug/codexone
 
 CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key_model_discovery = true`，并在 provider 中设置同 origin 的 `model_catalog_url = "http://127.0.0.1:端口/v1/models"`。所有有效模型须经内联或受信快照提供 `catalog.baseInstructions`（非空，≤32768 UTF-8 字节），它会成为权威基础指导并替换客户端默认指导，须针对目标模型/版本维护；网关不生成默认提示。整个私有配置文件仍限 64 KiB，多模型长 profile 可能触及总容量。未配置完整 profile 时不返回 Codex models，带 client_version 的目录请求返回 503；这不能阻止客户端自己 fallback。验证脚本要求无 metadata fallback，且合成上游 developer 输入包含所配指导。
 
-同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../evidence/client-recovery.md)。
+同脚本加 `--retry-probe`，验证 response.created 后 EOF 引起 CLI 第二次生成、原执行仍 unknown。它不是恢复已有输出；具体依据和未决客户端读取契约见[恢复证据](../reference/compatibility.md)。
 
 加 `--compact-v2`，显式配置所选 CLI 的 remote_compaction=v2，并仅在临时测试配置中将自动压缩阈值设为 1，验证工具结果后的真实 compaction_trigger、压缩项与后续输入。可分别与三种 `--transport` 组合；要求恰好一次 compact、完整指纹绑定、无本地标签向上游透传、模式/用量及连接数量正确。阈值和合成零压缩用量只用于可控 fixture，不是生产配置或真实免费假设。无凭证 `verify_compaction_stream.py` 已纳入后端统一检查，覆盖 JSON/SSE/原生 WS、缺失/重复/不一致窗口、部分 EOF、混用控制、跨主体与 DB 屏障失败。
 
 加 `--without-profile` 验证缺 profile 的目录失败可能使 CLI fallback 后仍生成；这项成功表示如实观察降级，不表示该配置通过 Codex 目录验收。
 
-完整 profile 配置下，模型目录同时提供 OpenAI `data` 和 Codex `models`，来自同一白名单。当前切片明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。
+完整 profile 配置下，模型目录同时提供 OpenAI `data` 和 Codex `models`，来自同一白名单。当前功能明确声明仅文本、不支持内置搜索，目录元数据不授予额外权限。目录兼容性需与具体客户端分别验证，不能由 JSON 类型正确推导 Desktop 已通过。
 
 ## 显式出网代理
 
-需要Clash等HTTP代理时，在可信启动环境设置CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example:7890；真实地址仅保存在私有配置。不设置或空值保持直连，其他进程代理环境不会自动生效。该设置统一覆盖HTTP、原生WS、账号认证/刷新和额度查询，不改变目标authority、TLS验证或监听地址；代理不可用不会绕过它直连。仅支持无认证HTTP CONNECT代理；userinfo、非根路径、query、fragment或其他scheme拒绝。配置值不进入诊断输出。
+需要Clash等HTTP代理时，在可信启动环境设置CODEXONE_UPSTREAM_HTTP_PROXY=http://proxy.example.invalid:7890；真实地址仅保存在私有配置。不设置或空值保持直连，其他进程代理环境不会自动生效。该设置统一覆盖HTTP、原生WS、账号认证/刷新和额度查询，不改变目标authority、TLS验证或监听地址；代理不可用不会绕过它直连。仅支持无认证HTTP CONNECT代理；userinfo、非根路径、query、fragment或其他scheme拒绝。配置值不进入诊断输出。
 
 ## 离线客户端标识与数据连接
 
@@ -92,6 +92,10 @@ CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key
 }
 ```
 
-此片段合入对应私有配置，不是完整配置。四个 fingerprint 字段分别可省略，每个显式值须为1—128字节可打印ASCII（0x20—0x7e）；空值、控制字符、非ASCII、超长拒绝。省略version时取已验证模型profile快照clientVersions按数字段比较的最大版本，无快照时用编译内置0.163.0；其余默认值如示例。不在线查询版本，不改变原生客户端标识。规则见[P28](../specs/protocol.md#p28客户端标识与连接容量)。
+此片段合入对应私有配置，不是完整配置。四个 fingerprint 字段分别可省略，每个显式值须为1—128字节可打印ASCII（0x20—0x7e）；空值、控制字符、非ASCII、超长拒绝。省略version时取已验证模型profile快照clientVersions按数字段比较的最大版本，无快照时用编译内置0.163.0；其余默认值如示例。不在线查询版本，不改变原生客户端标识。规则见[P28](../reference/specs/protocol.md#p28客户端标识与连接容量)。
 
-`dataConnections` 必须是8—1024的整数，省略为128；额外16条控制余量固定。该值不是活动生成许可，Key/全局并发、控制舱壁、正文预算不随之放宽。上游HTTP/WS连接期限10秒，HTTP允许总期限内发送前的连接建立重试，单连接最多使用一次，发送后失败不重放。容量资源测量见[迁移就绪验证](../changes/migration-readiness/verification.md)，不能外推为目标宿主容量保证。
+`dataConnections` 必须是8—1024的整数，省略为128；额外16条控制余量固定。该值不是活动生成许可，Key/全局并发、控制舱壁、正文预算不随之放宽。上游HTTP/WS连接期限10秒，HTTP允许总期限内发送前的连接建立重试，单连接最多使用一次，发送后失败不重放。容量资源测量见[迁移就绪验证](../reference/specs/operations.md)，不能外推为目标宿主容量保证。
+
+## 相关文档
+
+[文档导航](../README.md)
