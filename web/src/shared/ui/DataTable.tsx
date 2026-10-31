@@ -22,6 +22,7 @@ export function DataTable<T>({
   empty = "暂无数据。",
   loadingText = "正在读取…",
   onRowClick,
+  highlightedID,
 }: {
   rows: T[];
   columns: DataColumn<T>[];
@@ -32,6 +33,7 @@ export function DataTable<T>({
   empty?: string;
   loadingText?: string;
   onRowClick?: (row: T) => void;
+  highlightedID?: string | null;
 }) {
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
@@ -105,6 +107,8 @@ export function DataTable<T>({
         {ordered.map((row) => (
           <Table.Tr
             key={rowKey(row)}
+            data-row-id={rowKey(row)}
+            data-highlighted={rowKey(row) === highlightedID || undefined}
             className={onRowClick ? styles.clickable : undefined}
             tabIndex={onRowClick ? 0 : undefined}
             onClick={onRowClick ? () => onRowClick(row) : undefined}

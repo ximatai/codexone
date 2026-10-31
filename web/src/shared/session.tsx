@@ -16,6 +16,8 @@ import {
   type ReactNode,
 } from "react";
 import * as api from "./management";
+import { useSearchParams } from "react-router";
+import { ViewMemory } from "./view-memory";
 
 type Status =
   | "checking"
@@ -26,6 +28,7 @@ type Status =
   | "logout-unconfirmed";
 type Scope = "keys" | "accounts" | "executions";
 interface SessionOwner {
+  views: Map<string, unknown>;
   session: api.AdminSession | null;
   generation: number;
   adopt: (value: api.AdminSession) => boolean;
@@ -46,6 +49,20 @@ export function ManagementSession({
   children: ReactNode;
   publicView?: boolean;
 }) {
+  const [, setParams] = useSearchParams();
+  const currentNavigation = useRef(setParams);
+  currentNavigation.current = setParams;
+  function clearNavigation() {
+    currentNavigation.current(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete("target");
+        next.delete("page");
+        return next;
+      },
+      { replace: true },
+    );
+  }
   const [status, setStatus] = useState<Status>("checking");
   const [session, setSession] = useState<api.AdminSession | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -55,17 +72,21 @@ export function ManagementSession({
   const [notice, setNotice] = useState("");
   const [, updateLocks] = useState(0);
   const locks = useRef(new Set<Scope>());
+  // Read-only navigation metadata only; never results, credentials or callbacks.
+  const views = useRef(new ViewMemory());
   const proof = useRef<string | null>(null);
   const lifetime = useRef<AbortController | null>(null);
   const sequence = useRef(0);
   const currentStatus = useRef(status);
   currentStatus.current = status;
   function clear(next: Status) {
+    clearNavigation();
     ++sequence.current;
     api.retireManagementRequests();
     currentStatus.current = next;
     proof.current = null;
     locks.current.clear();
+    views.current.clear();
     setNotice("");
     setSession(null);
     setCredential("");
@@ -79,11 +100,13 @@ export function ManagementSession({
   }
   function adopt(value: api.AdminSession) {
     if (proof.current !== value.csrf) {
+      if (proof.current) clearNavigation();
       if (proof.current)
         setNotice("管理会话已更新，请重新发起需要的授权流程。");
       ++sequence.current;
       api.retireManagementRequests();
       locks.current.clear();
+      views.current.clear();
       setGeneration((previous) => previous + 1);
     }
     proof.current = value.csrf;
@@ -159,6 +182,7 @@ export function ManagementSession({
   }, []);
   const renderEpoch = sequence.current;
   const owner: SessionOwner = {
+    views: views.current,
     session,
     generation,
     adopt: (value) => {
