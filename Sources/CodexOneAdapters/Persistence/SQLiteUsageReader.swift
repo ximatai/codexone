@@ -109,6 +109,44 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       return (start, rows)
     }
   }
+  public func inFlightUsage(limit: Int) async throws -> [InFlightUsageRow] {
+    guard (1...200).contains(limit) else { throw ExecutionError.invalidCommand }
+    return try await read { [primary] db in
+      let events = primary.liveFirstEvents.withLock { $0 }
+      let now = Int64(Date().timeIntervalSince1970)
+      return try db.rows(
+        """
+        SELECT a.id,a.key_id,json_extract(k.metadata_json,'$.principal'),json_extract(a.admission_json,'$.model'),
+          COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch
+        FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id LEFT JOIN accounts c ON c.id=a.identity
+        WHERE a.state='intent' ORDER BY a.created_at_epoch DESC,a.id DESC LIMIT ?
+        """, [.number(Int64(limit))]
+      ) { row in
+        func text(_ i: Int32) -> String? {
+          sqlite3_column_type(row, i) == SQLITE_NULL
+            ? nil : String(cString: sqlite3_column_text(row, i))
+        }
+        guard let id = text(0), let key = text(1), let account = text(5),
+          let mode = text(4).flatMap(ExecutionMode.init(rawValue:))
+        else { throw ExecutionError.storageUnavailable }
+        let start: Int64? =
+          sqlite3_column_type(row, 7) == SQLITE_NULL ? nil : sqlite3_column_int64(row, 7)
+        return InFlightUsageRow(
+          id: id, keyID: key, principal: text(2), model: text(3), mode: mode,
+          accountID: account, accountDisplayName: text(6), startedAtUnixSeconds: start,
+          elapsedSeconds: start.map { max(0, now - $0) }, hasFirstEvent: events[id])
+      }
+    }
+  }
+  public func dailyUsage(days: Int, keyID: String?, model: String?) async throws
+    -> [DailyUsageBucket]
+  {
+    guard (1...31).contains(days) else { throw ExecutionError.invalidCommand }
+    let end = Int64(Date().timeIntervalSince1970) / 86400 * 86400 + 86400
+    let query = try UsageQuery(
+      startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
+    return try await read { db in try Self.daily(db, query) }
+  }
   private func read<T: Sendable>(_ operation: @escaping @Sendable (SQLiteConnection) throws -> T)
     async throws -> T
   {

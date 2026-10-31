@@ -25,7 +25,7 @@
 
 ## 合成检查
 
-`python3 scripts/verify_migration_cutback.py --binary <codexone>` 使用独立 legacy SQLite、私有一致性备份、单目标真实 loopback HTTP 转发及实际 CodexOne 进程。检查活动请求阻止切换、暂停时拒绝、换 Key/剩余额度、不同数据前缀、实际 settled/unknown、新增责任带回旧账、备份与新账保留及不重放。可选 `--previous-binary <实际兼容旧v8可执行文件>` 进一步在同一真实执行库换回不同旧二进制、再升级，核对完整 admission/evidence/绑定不变、原 Key 仍认证且耗尽配额继续拒绝，不调用提供者。fixture 不实现 WebSocket/TLS、真实 OAuth 或完整旧产品；这些能力由各自真实协议/TLS/授权场景与后续客户端验收覆盖，不能据此声明 O13 全部完成。
+`python3 scripts/verify_migration_cutback.py --binary <codexone>` 使用独立 legacy SQLite、私有一致性备份、单目标真实 loopback HTTP 转发及实际 CodexOne 进程。检查活动请求阻止切换、暂停时拒绝、换 Key/剩余额度、不同数据前缀、实际 settled/unknown、新增责任带回旧账、备份与新账保留及不重放。可选 `--previous-binary <实际兼容旧v9可执行文件>` 进一步在同一真实执行库换回不同旧二进制、再升级，核对完整 admission/evidence/绑定不变、原 Key 仍认证且耗尽配额继续拒绝，不调用提供者。fixture 不实现 WebSocket/TLS、真实 OAuth 或完整旧产品；这些能力由各自真实协议/TLS/授权场景与后续客户端验收覆盖，不能据此声明 O13 全部完成。
 
 同 schema 的二进制回退使用同一卷和原密钥；旧快照恢复必须走[快照维护](snapshot-maintenance.md)的维护态/缺失区间核对。两者不能相互替代。实际镜像回退命令与验收入口见 [Linux 安装](linux-installation.md)。
 

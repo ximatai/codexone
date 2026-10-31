@@ -196,7 +196,7 @@ private func keyAdmission(
   }
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v8-")
+    $0.contains(".pre-v9-")
   }
   #expect(backups.count == 1)
   let backup = directory + "/" + backups[0]
@@ -406,4 +406,67 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
       #expect(throws: (any Error).self) { try decodedKeyPolicy(bad) }
     }
   }
+}
+
+@Test func round2KeyExpirationRejectsBeforeAdmissionAndPreservesDispatchedWork() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let digest = String(repeating: "a", count: 64)
+  let key = try await store.createKey(
+    id: "expiry", principal: "expiry", digest: digest,
+    policy: .init(models: ["synthetic-text"], limits: syntheticLimits))
+  let now = Int64(Date().timeIntervalSince1970)
+  for revision in [Int64(0), -1, 1_000_001] {
+    await #expect(throws: ExecutionError.invalidCommand) {
+      try await store.setKeyExpiration(id: key.id, revision: revision, expiresAtUnixSeconds: nil)
+    }
+  }
+  let future = try await store.setKeyExpiration(
+    id: key.id, revision: key.revision, expiresAtUnixSeconds: now + 3600)
+  #expect(
+    try await store.authenticateKey(digest: digest).expiresAtUnixSeconds
+      == future.expiresAtUnixSeconds)
+  func command(_ id: String, revision: Int64) -> ExecutionAdmission {
+    .init(
+      attempt: id,
+      owner: .init(principal: "expiry", key: "expiry", namespace: "synthetic", identity: "single"),
+      window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
+      keyRevision: revision, model: "synthetic-text")
+  }
+  try await store.admit(command("dispatched", revision: future.revision))
+  let expired = try await store.setKeyExpiration(
+    id: key.id, revision: future.revision, expiresAtUnixSeconds: now)
+  await #expect(throws: ExecutionError.keyExpired) {
+    try await store.authenticateKey(digest: digest)
+  }
+  await #expect(throws: ExecutionError.keyExpired) {
+    try await store.admit(command("denied", revision: expired.revision))
+  }
+  await #expect(throws: ExecutionError.keyExpired) {
+    try await store.admit(command("stale-expired", revision: future.revision))
+  }
+  await #expect(throws: ExecutionError.unknownAttempt) {
+    try await store.snapshot(attempt: "denied")
+  }
+  #expect(protocolFailure(ExecutionError.keyExpired).status == 401)
+  #expect(protocolFailure(ExecutionError.keyExpired).code == "api_key_expired")
+  try await store.finalize(attempt: "dispatched", evidence: usage(amount: 1))
+  #expect(try await store.snapshot(attempt: "dispatched").state == .settled)
+  let extended = try await store.setKeyExpiration(
+    id: key.id, revision: expired.revision, expiresAtUnixSeconds: now + 7200)
+  #expect(try await store.authenticateKey(digest: digest).revision == extended.revision)
+  let cleared = try await store.setKeyExpiration(
+    id: key.id, revision: extended.revision, expiresAtUnixSeconds: nil)
+  #expect(cleared.expiresAtUnixSeconds == nil)
+  await #expect(throws: ExecutionError.invalidCommand) {
+    try await store.setKeyExpiration(
+      id: key.id, revision: cleared.revision, expiresAtUnixSeconds: 0)
+  }
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  #expect(try await reopened.authenticateKey(digest: digest).expiresAtUnixSeconds == nil)
+  await reopened.close()
 }

@@ -120,7 +120,7 @@ def verify_initializer(binary):
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
-def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None):
+def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None, incompatible_schema=6):
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
@@ -214,7 +214,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert run(['docker', 'exec', name, 'id', '-u']).stdout.strip() == str(uid).encode()
             manifest = json.loads(run(['docker', 'exec', name, 'cat', '/opt/release.json']).stdout)
             assert manifest['revision'] == identifier['Config']['Labels']['org.opencontainers.image.revision']
-            assert manifest['schemaVersion'] == 8
+            assert manifest['schemaVersion'] == 9
             storage_status, storage_body = request('/api/runtime/storage', token=admin)
             assert storage_status == 200 and json.loads(storage_body)['reserveTargetBytes'] == 64 * 1024 * 1024
             licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/swift', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
@@ -295,7 +295,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                             except AssertionError: pass
                             time.sleep(0.2)
                         else: raise AssertionError('Old schema rejection lacks a successful startup control')
-                        assert maintenance('sqlite3', ['-readonly', '/var/lib/codexone/schema-control/core.sqlite', 'PRAGMA user_version;']).stdout.strip() == b'6'
+                        assert maintenance('sqlite3', ['-readonly', '/var/lib/codexone/schema-control/core.sqlite', 'PRAGMA user_version;']).stdout.strip() == str(incompatible_schema).encode()
                         assert maintenance('stat', ['-c', '%a:%u:%g', '/var/lib/codexone/schema-control/core.sqlite']).stdout == maintenance('stat', ['-c', '%a:%u:%g', database]).stdout
                     finally:
                         run(['docker', 'stop', '--time', '10', control], ok=False, timeout=20)
@@ -332,15 +332,15 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                         if request('/api/runtime/storage', token=admin)[0] == 200: break
                     except AssertionError: pass
                     time.sleep(0.2)
-                else: raise AssertionError('Upgrade did not restore current v8 observation')
+                else: raise AssertionError('Upgrade did not restore current v9 observation')
                 assert truth() == before_switch
                 run([*compose, 'stop'], timeout=40)
                 checks = []
-                if previous_image: checks.append('distinct compatible v8 rollback/re-upgrade')
-                if incompatible_image: checks.append('old v6 positive startup control and v8 rejection')
+                if previous_image: checks.append('distinct compatible v9 rollback/re-upgrade')
+                if incompatible_image: checks.append(f'old v{incompatible_schema} positive startup control and v9 rejection')
                 print('PASS: ' + '; '.join(checks) + '; same-volume Key and unknown obligation retained')
             # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
-            fixture_sql = "BEGIN IMMEDIATE; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
+            fixture_sql = "BEGIN IMMEDIATE; ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
             assert maintenance('sqlite3', [database, fixture_sql]).stdout.strip() == b'ok'
             before_legacy = run(['docker', 'logs', name])
             run([*compose, 'start'])
@@ -356,10 +356,10 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert b'LISTENING' not in rejected_logs and b'Service startup or shutdown failed.' in rejected_logs
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
-            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v8-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
+            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v9-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
             assert len(backups) == 1
             backup, mode, owner = backups[0].split()
-            assert re.fullmatch('core.sqlite.pre-v8-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
+            assert re.fullmatch('core.sqlite.pre-v9-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
             for path, version in (('/var/lib/codexone/' + backup, 5), (database, 8)):
                 rows = maintenance('sqlite3', ['-readonly', path, 'PRAGMA quick_check; PRAGMA user_version; SELECT id FROM managed_keys;']).stdout.decode().splitlines()
                 assert rows == ['ok', str(version), key_id]
@@ -405,12 +405,12 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--browser-output', type=Path)
+    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--incompatible-schema', type=int, choices=[6, 7, 8], default=6); parser.add_argument('--browser-output', type=Path)
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
     if args.browser_output: assert args.browser, '--browser-output requires --browser'
     verify_initializer(args.binary)
     if args.previous_image or args.incompatible_image: assert args.image
-    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image, args.browser_output)
+    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image, args.browser_output, args.incompatible_schema)
 
 if __name__ == '__main__': main()

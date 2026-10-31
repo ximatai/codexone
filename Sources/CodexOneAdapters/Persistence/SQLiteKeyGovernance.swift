@@ -12,6 +12,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         try Self.decodeKey($0)
       }
       guard let key = values.first, key.enabled else { throw ExecutionError.unauthorized }
+      try Self.checkKeyExpiration(key)
       return key
     }
   }
@@ -57,11 +58,43 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         try Self.checkKeyCapacity(db, revocation: revoking)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1, enabled: enabled,
-          policy: policy, createdAtUnixSeconds: old.createdAtUnixSeconds)
+          policy: policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
           [.text(try Self.encodeKey(key)), .text(id)])
         try Self.auditKey(db, key: key, action: revoking ? "disable" : "update")
+        return key
+      }
+    }
+  }
+  static func checkKeyExpiration(_ key: ManagedKey) throws {
+    if let expires = key.expiresAtUnixSeconds, expires <= Int64(Date().timeIntervalSince1970) {
+      throw ExecutionError.keyExpired
+    }
+  }
+  public func setKeyExpiration(id: String, revision: Int64, expiresAtUnixSeconds: Int64?)
+    async throws -> ManagedKey
+  {
+    try Self.validateKeyID(id)
+    guard (1...1_000_000).contains(revision),
+      expiresAtUnixSeconds.map({ (1...1_000_000_000_000).contains($0) }) ?? true
+    else {
+      throw ExecutionError.invalidCommand
+    }
+    return try await perform(optional: true) { db in
+      try db.transaction {
+        let old = try Self.loadKey(db, id)
+        guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        try Self.checkKeyCapacity(db)
+        let key = ManagedKey(
+          id: old.id, principal: old.principal, revision: revision + 1,
+          enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          expiresAtUnixSeconds: expiresAtUnixSeconds)
+        try db.write(
+          "UPDATE managed_keys SET metadata_json=? WHERE id=?",
+          [.text(try Self.encodeKey(key)), .text(id)])
+        try Self.auditKey(db, key: key, action: "expiration")
         return key
       }
     }
@@ -78,7 +111,8 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         else { throw ExecutionError.conflict }
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
-          enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds)
+          enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds)
         try db.write(
           "UPDATE managed_keys SET digest=?,metadata_json=? WHERE id=?",
           [.text(digest), .text(try Self.encodeKey(key)), .text(id)])
@@ -101,7 +135,9 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   static func checkKeyAdmission(_ db: SQLiteConnection, _ command: ExecutionAdmission) throws {
     guard let revision = command.keyRevision else { return }
     let key = try loadKey(db, command.owner.key)
-    guard key.enabled, key.revision == revision, key.principal == command.owner.principal else {
+    guard key.enabled else { throw ExecutionError.unauthorized }
+    try checkKeyExpiration(key)
+    guard key.revision == revision, key.principal == command.owner.principal else {
       throw ExecutionError.unauthorized
     }
     guard let model = command.model,
@@ -149,7 +185,9 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try validateKeyID(key.id)
       try validateKeyID(key.principal)
       try key.policy.validate()
-      guard (1...1_000_000).contains(key.revision), key.createdAtUnixSeconds >= 0 else {
+      guard (1...1_000_000).contains(key.revision), key.createdAtUnixSeconds >= 0,
+        key.expiresAtUnixSeconds.map({ (1...1_000_000_000_000).contains($0) }) ?? true
+      else {
         throw ExecutionError.storageUnavailable
       }
       return key

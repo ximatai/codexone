@@ -7,6 +7,7 @@ public enum AccountAuthorization: String, Sendable, Codable {
   case authUncertain = "auth_uncertain"
 }
 public struct ManagedAccount: Sendable, Equatable, Encodable {
+  public let displayName: String?
   public let id: String
   public let namespace: String
   public let revision: Int64
@@ -19,7 +20,7 @@ public struct ManagedAccount: Sendable, Equatable, Encodable {
   public init(
     id: String, namespace: String, revision: Int64, credentialVersion: Int64,
     mode: AccountMode, authorization: AccountAuthorization, refreshIntent: String?,
-    createdAtUnixSeconds: Int64
+    createdAtUnixSeconds: Int64, displayName: String? = nil
   ) throws {
     _ = try AccountCredentialContext(identity: id, namespace: namespace, version: credentialVersion)
     guard Self.validID(id), (1...1_000_000).contains(revision), createdAtUnixSeconds > 0,
@@ -27,6 +28,8 @@ public struct ManagedAccount: Sendable, Equatable, Encodable {
       authorization != .refreshing || refreshIntent != nil,
       authorization != .ready || refreshIntent == nil
     else { throw ExecutionError.invalidCommand }
+    try Self.validateDisplayName(displayName)
+    self.displayName = displayName
     self.id = id
     self.namespace = namespace
     self.revision = revision
@@ -35,6 +38,20 @@ public struct ManagedAccount: Sendable, Equatable, Encodable {
     self.authorization = authorization
     self.refreshIntent = refreshIntent
     self.createdAtUnixSeconds = createdAtUnixSeconds
+  }
+  public static func validateDisplayName(_ value: String?) throws {
+    guard
+      value.map({
+        (1...64).contains($0.unicodeScalars.count)
+          && !$0.unicodeScalars.contains {
+            CharacterSet.controlCharacters.contains($0)
+              || CharacterSet.illegalCharacters.contains($0)
+              || $0.properties.generalCategory == .format
+              || $0.properties.generalCategory == .lineSeparator
+              || $0.properties.generalCategory == .paragraphSeparator
+          }
+      }) ?? true
+    else { throw ExecutionError.invalidCommand }
   }
   public static func validID(_ value: String) -> Bool {
     !value.isEmpty && value.utf8.count <= 64
@@ -64,6 +81,8 @@ public protocol AccountGovernanceStore: Sendable {
     -> ManagedAccount
   func accountCredential(id: String) async throws -> StoredAccountCredential
   func listAccounts(after: String?) async throws -> [ManagedAccount]
+  func setAccountDisplayName(id: String, revision: Int64, displayName: String?) async throws
+    -> ManagedAccount
   func setAccountMode(id: String, revision: Int64, mode: AccountMode) async throws -> ManagedAccount
   func beginAccountRefresh(id: String, revision: Int64, intent: String) async throws
     -> StoredAccountCredential

@@ -57,6 +57,28 @@ extension SQLiteUsageReader {
         + (query.keyID == nil ? "" : " WHERE key_id=?"),
       query.keyID.map { [.text($0)] } ?? []
     ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1), sqlite3_column_int64($0, 2)) }[0]
+    let timing = try db.rows(
+      """
+      SELECT AVG(json_extract(outcome_json,'$.firstEventMilliseconds')),
+        AVG(json_extract(outcome_json,'$.totalMilliseconds')),
+        COUNT(json_extract(outcome_json,'$.firstEventMilliseconds')) FROM attempts WHERE \(attempts.sql)
+      """, attempts.values
+    ) { row in
+      (
+        sqlite3_column_type(row, 0) == SQLITE_NULL ? nil : sqlite3_column_double(row, 0),
+        sqlite3_column_type(row, 1) == SQLITE_NULL ? nil : sqlite3_column_double(row, 1),
+        sqlite3_column_int64(row, 2)
+      )
+    }[0]
+    let p95: Int64? =
+      timing.2 == 0
+      ? nil
+      : try db.scalar(
+        """
+        SELECT json_extract(outcome_json,'$.firstEventMilliseconds') FROM attempts
+        WHERE \(attempts.sql) AND json_extract(outcome_json,'$.firstEventMilliseconds') IS NOT NULL
+        ORDER BY json_extract(outcome_json,'$.firstEventMilliseconds') LIMIT 1 OFFSET ?
+        """, attempts.values + [.number((timing.2 * 95 + 99) / 100 - 1)])
     let totals = try db.rows(
       """
       SELECT COUNT(*),COALESCE(SUM(state='intent'),0),COALESCE(SUM(state='unknown'),0),
@@ -79,7 +101,8 @@ extension SQLiteUsageReader {
         historicalWithoutTime: untimed, unresolvedExposureMicros: sqlite3_column_int64(row, 8),
         lifetimeInFlight: lifetime.0, lifetimeUnknown: lifetime.1,
         lifetimeExposureMicros: lifetime.2,
-        metrics: try metrics(row, offset: 9))
+        metrics: try metrics(row, offset: 9), averageFirstEventMilliseconds: timing.0,
+        p95FirstEventMilliseconds: p95, averageTotalMilliseconds: timing.1)
     }[0]
     let grouped = try db.rows(
       "SELECT created_at_epoch/3600*3600,COUNT(*),SUM(state!='settled') FROM attempts WHERE \(attempts.sql) GROUP BY created_at_epoch/3600",
@@ -152,7 +175,7 @@ extension SQLiteUsageReader {
     return .init(
       totals: totals, buckets: buckets, rows: rows, nextCursor: more ? rows.last?.cursor : nil)
   }
-  private static func metrics(_ row: OpaquePointer, offset: Int32) throws -> UsageMetrics {
+  static func metrics(_ row: OpaquePointer, offset: Int32) throws -> UsageMetrics {
     func number(_ index: Int32) throws -> Int64? {
       if sqlite3_column_type(row, index) == SQLITE_NULL { return nil }
       guard sqlite3_column_type(row, index) == SQLITE_INTEGER, sqlite3_column_int64(row, index) >= 0
@@ -165,5 +188,63 @@ extension SQLiteUsageReader {
       estimatedMicros: number(offset + 4), imageInputTokens: number(offset + 5),
       imageOutputTokens: number(offset + 6), imageInputTextTokens: number(offset + 7),
       imageInputImageTokens: number(offset + 8))
+  }
+}
+
+extension SQLiteUsageReader {
+  static func daily(_ db: SQLiteConnection, _ query: UsageQuery) throws -> [DailyUsageBucket] {
+    var terms = ["created_at_epoch>=?", "created_at_epoch<?"]
+    var values: [SQLiteConnection.Value] = [
+      .number(query.startUnixSeconds), .number(query.endUnixSeconds),
+    ]
+    if let key = query.keyID {
+      terms.append("key_id=?")
+      values.append(.text(key))
+    }
+    if let model = query.model {
+      terms.append("json_extract(admission_json,'$.model')=?")
+      values.append(.text(model))
+    }
+    let predicate = terms.joined(separator: " AND ")
+    let rows = try db.rows(
+      """
+      SELECT created_at_epoch/86400*86400,COUNT(*),
+        COALESCE(SUM(json_extract(outcome_json,'$.kind')='succeeded'),0),
+        COALESCE(SUM(json_extract(outcome_json,'$.kind')='failed'),0),
+        COALESCE(SUM(json_extract(outcome_json,'$.kind')='cancelled'),0),
+        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
+        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
+        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM attempts WHERE \(predicate) GROUP BY created_at_epoch/86400
+      """, values
+    ) { row in
+      (
+        sqlite3_column_int64(row, 0), sqlite3_column_int64(row, 1), sqlite3_column_int64(row, 2),
+        sqlite3_column_int64(row, 3), sqlite3_column_int64(row, 4), try metrics(row, offset: 5)
+      )
+    }
+    let failures = try db.rows(
+      """
+      SELECT created_at_epoch/86400*86400,json_extract(outcome_json,'$.failure'),COUNT(*) FROM attempts
+      WHERE \(predicate) AND json_extract(outcome_json,'$.failure') IS NOT NULL
+      GROUP BY created_at_epoch/86400,json_extract(outcome_json,'$.failure')
+      """, values
+    ) {
+      (
+        sqlite3_column_int64($0, 0), String(cString: sqlite3_column_text($0, 1)),
+        sqlite3_column_int64($0, 2)
+      )
+    }
+    let indexed = Dictionary(uniqueKeysWithValues: rows.map { ($0.0, $0) })
+    let empty = UsageMetrics(
+      inputTokens: nil, outputTokens: nil, cachedTokens: nil, images: nil, estimatedMicros: nil)
+    return stride(from: query.startUnixSeconds, to: query.endUnixSeconds, by: 86400).map { at in
+      let row = indexed[at]
+      return DailyUsageBucket(
+        atUnixSeconds: at, requests: row?.1 ?? 0, succeeded: row?.2 ?? 0,
+        failed: row?.3 ?? 0, cancelled: row?.4 ?? 0,
+        failures: Dictionary(
+          uniqueKeysWithValues: failures.filter { $0.0 == at }.map { ($0.1, $0.2) }),
+        metrics: row?.5 ?? empty)
+    }
   }
 }

@@ -49,7 +49,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
           mode: .disabled, authorization: .ready, refreshIntent: nil,
           createdAtUnixSeconds: Int64(Date().timeIntervalSince1970))
         try db.write(
-          "INSERT INTO accounts VALUES(?,?,?,?,?,?,?,NULLIF(?,''),?)",
+          "INSERT INTO accounts VALUES(?,?,?,?,?,?,?,NULLIF(?,''),?,?)",
           Self.accountValues(account, envelope: envelope))
         try Self.auditAccount(db, account, action: "create_verified")
         return account
@@ -65,6 +65,31 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     return try await perform { db in
       try db.rows("SELECT * FROM accounts WHERE id>? ORDER BY id LIMIT 64", [.text(after ?? "")]) {
         try Self.decodeAccount($0).account
+      }
+    }
+  }
+  public func setAccountDisplayName(id: String, revision: Int64, displayName: String?) async throws
+    -> ManagedAccount
+  {
+    try Self.validateAccountID(id)
+    try ManagedAccount.validateDisplayName(displayName)
+    guard (1...1_000_000).contains(revision) else { throw ExecutionError.invalidCommand }
+    return try await perform(optional: true) { db in
+      try db.transaction {
+        let stored = try Self.loadAccount(db, id)
+        let old = stored.account
+        guard old.revision == revision else { throw ExecutionError.conflict }
+        let next = try Self.nextAccount(old)
+        try Self.checkAccountCapacity(db)
+        let account = try ManagedAccount(
+          id: old.id, namespace: old.namespace, revision: next.revision,
+          credentialVersion: old.credentialVersion, mode: old.mode,
+          authorization: old.authorization,
+          refreshIntent: old.refreshIntent, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          displayName: displayName)
+        try Self.saveAccount(db, account, envelope: stored.envelope)
+        try Self.auditAccount(db, account, action: "display_name")
+        return account
       }
     }
   }
@@ -203,7 +228,8 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     return try ManagedAccount(
       id: old.id, namespace: old.namespace, revision: old.revision + 1,
       credentialVersion: credentialVersion ?? old.credentialVersion, mode: mode ?? old.mode,
-      authorization: auth, refreshIntent: pending, createdAtUnixSeconds: old.createdAtUnixSeconds)
+      authorization: auth, refreshIntent: pending, createdAtUnixSeconds: old.createdAtUnixSeconds,
+      displayName: old.displayName)
   }
   private static func validateAccountID(_ value: String) throws {
     guard ManagedAccount.validID(value) else { throw ExecutionError.invalidCommand }
@@ -235,7 +261,8 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       credentialVersion: sqlite3_column_int64(row, 3), mode: mode,
       authorization: authorization,
       refreshIntent: sqlite3_column_type(row, 7) == SQLITE_NULL ? nil : string(7),
-      createdAtUnixSeconds: sqlite3_column_int64(row, 8))
+      createdAtUnixSeconds: sqlite3_column_int64(row, 8),
+      displayName: sqlite3_column_type(row, 9) == SQLITE_NULL ? nil : string(9))
     let envelope = string(6)
     try validateAccountEnvelope(envelope)
     return StoredAccountCredential(account: account, envelope: envelope)
@@ -247,7 +274,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       .text(account.id), .text(account.namespace), .number(account.revision),
       .number(account.credentialVersion), .text(account.mode.rawValue),
       .text(account.authorization.rawValue), .text(envelope), .text(account.refreshIntent ?? ""),
-      .number(account.createdAtUnixSeconds),
+      .number(account.createdAtUnixSeconds), account.displayName.map { .text($0) } ?? .null,
     ]
   }
   private static func saveAccount(
@@ -255,7 +282,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
   ) throws {
     let values = accountValues(account, envelope: envelope)
     try db.write(
-      "UPDATE accounts SET namespace=?,revision=?,credential_version=?,mode=?,authorization=?,sealed_credential=?,refresh_intent=NULLIF(?,''),created_at_epoch=? WHERE id=?",
+      "UPDATE accounts SET namespace=?,revision=?,credential_version=?,mode=?,authorization=?,sealed_credential=?,refresh_intent=NULLIF(?,''),created_at_epoch=?,display_name=? WHERE id=?",
       Array(values.dropFirst()) + [values[0]])
   }
   private static func checkAccountCapacity(

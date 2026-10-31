@@ -39,3 +39,13 @@
 - 后端：每个接口的授权、参数边界、空数据、跨 Key 筛选；按日序列与逐条账本对账一致；进行中列表在执行结束后消失；Key 到期在准入前拒绝且不影响已派发；显示名边界与持久化；schema 升级与回退拒绝（如有）。
 - 前端：vitest 与 Playwright 覆盖首页、用量、账号、Key 的新交互；1440×900 大屏走查与 subagent 界面评审。
 - 完整 `verify.sh --backend`、`--web --chrome` 与 Linux verification；部署测试实例后浏览器实测（合成或本地实例，不登录生产管理域名）。
+
+## 后端实现口径
+
+- 显示名需要独立持久真相；accounts 无元数据字段，account_events 是有界审计，不用作可变状态。新增 v9 可空 display_name；沿用显式备份迁移，v8 启动先拒绝，旧二进制拒绝 v9。恢复旧 v7/v8 bundle 只升级私有 staging，不修改源。
+- 按日序列统计已准入 attempts（不是可丢弃的拒绝诊断），以准入时间分桶，含今日的 UTC 日；成功、failed、cancelled 分列，failure 类别包含取消等全部非空失败分类。未最终化/缺终态不推断为成功。缺失 token/费用保持 null；native Images 与现有查询同口径。新接口不改变现有小时 buckets。
+- 用量合计继续使用 totals.admitted/failed/cancelled/metrics，新增平均首事件、P95 首事件、平均总耗时；全部在同一筛选快照计算，不受 limit/after 影响。P95 为非空样本 nearest-rank（ceil(0.95*n)）；空样本返回 null，平均值为毫秒数值。
+- 进行中为 state=intent，未知但已结束的执行不算进行中。仅安全元数据；时间缺失为 null，运行时上下文结束/不存在时首事件状态为 null。观测字典归执行存储持有，最多16项（与 finalizer ticket 上限一致），上下文结束清理；不参与账本或恢复判断。
+- 两个编辑能力使用独立 PUT 子路径 + revision CAS；显示名 null 清除，1—64 Unicode 标量，拒绝控制/格式/非法字符及换行分隔符（最多256 UTF-8字节）；到期为正 UTC 整秒（上限10^12），null 清除，允许设置过去时间。到期边界为 now>=expires，数据面401 api_key_expired；认证与持久准入事务双重检查，既有派发不受影响。
+- 日序列、合计与进行中复用单只读 reader、单在途、1秒扫描预算和取消门禁。31天/200行上限；已有 attempts_created 覆盖时间窗口，新 v9 部分索引 attempts_in_flight 覆盖 intent 倒序。模型最多在窗口内检查 JSON，不为每个筛选组合建索引；以10万 attempts 合成样本验证。
+- v9 无法用原 v8 peer 做兼容回退；本轮验证 v8 拒绝且数据不变。Linux候选/安装脚本改用旧v8作不兼容拒绝与迁移验证；同schema回退须待受信旧v9候选，不能把旧v8标成兼容。Linux执行验收仍交主Agent。

@@ -146,7 +146,10 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   _ = try await SQLiteKeyMaintenance.reencrypt(
     path: path, protection: ring, backupDestination: root + "/old")
   // A historical v7 completed bundle uses the identical envelope/maintenance columns.
-  try rawSQL(root + "/old/snapshot.sqlite", "PRAGMA user_version=7")
+  try rawSQL(
+    root + "/old/snapshot.sqlite",
+    "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=7"
+  )
   let hash = try SQLiteSnapshotMaintenance.fingerprint(root + "/old/snapshot.sqlite")
   let manifestURL = URL(fileURLWithPath: root + "/old/manifest.json")
   var manifest = try #require(
@@ -203,7 +206,7 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   #expect(object["verifiedRestoreIDs"] as? [String] == [restored.id])
   #expect(object["verifiedLegacySHA256"] as? [String] == [hash.1])
   let restoredDB = try SQLiteConnection(path: root + "/drill/core.sqlite", existingOnly: true)
-  #expect(try restoredDB.scalar("PRAGMA user_version") == 8)
+  #expect(try restoredDB.scalar("PRAGMA user_version") == 9)
   restoredDB.shutdown()
   #expect(object["requiredCurrentKeyIDs"] as? [String] == [ring.keyID])
   #expect(
@@ -218,7 +221,7 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   db.shutdown()
 }
 
-@Test(arguments: [7, 8])
+@Test(arguments: [7, 8, 9])
 func backupSchemaMislabelIsRejectedBeforeVerificationRetirementOrTargetCreation(actualSchema: Int)
   async throws
 {
@@ -229,7 +232,12 @@ func backupSchemaMislabelIsRejectedBeforeVerificationRetirementOrTargetCreation(
   let cipher = try AccountCredentialCipher(hexKey: keyOld)
   _ = try await SQLiteSnapshotMaintenance.backup(
     path: path, destination: root + "/bundle", protection: cipher)
-  if actualSchema == 7 { try rawSQL(root + "/bundle/snapshot.sqlite", "PRAGMA user_version=7") }
+  if actualSchema < 9 {
+    try rawSQL(
+      root + "/bundle/snapshot.sqlite",
+      "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; PRAGMA user_version=\(actualSchema)"
+    )
+  }
   let hash = try SQLiteSnapshotMaintenance.fingerprint(root + "/bundle/snapshot.sqlite")
   let file = URL(fileURLWithPath: root + "/bundle/manifest.json")
   var manifest = try #require(

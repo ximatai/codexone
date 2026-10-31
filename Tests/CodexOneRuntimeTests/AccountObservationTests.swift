@@ -253,6 +253,11 @@ private actor ObservationScanStore: AccountObservationStore {
   {
     try await base.createVerifiedAccount(id: id, namespace: namespace, envelope: envelope)
   }
+  func setAccountDisplayName(id: String, revision: Int64, displayName: String?) async throws
+    -> ManagedAccount
+  {
+    try await base.setAccountDisplayName(id: id, revision: revision, displayName: displayName)
+  }
   func setAccountMode(id: String, revision: Int64, mode: AccountMode) async throws -> ManagedAccount
   {
     try await base.setAccountMode(id: id, revision: revision, mode: mode)

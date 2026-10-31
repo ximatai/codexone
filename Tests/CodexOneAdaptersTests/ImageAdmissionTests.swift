@@ -66,7 +66,7 @@ import Testing
   // v5 has the same physical tables; only persisted semantic guarantees change in v6.
   try rawSQL(
     path,
-    "UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5"
+    "ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: limits)
@@ -74,7 +74,7 @@ import Testing
   try await SQLiteExecutionStore.migrate(path: path)
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v8-")
+    $0.contains(".pre-v9-")
   }
   #expect(backups.count == 1)
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: limits)
@@ -83,7 +83,7 @@ import Testing
     #expect(
       !key.policy.visionInput && !key.policy.imageGeneration && key.policy.imageModels.isEmpty)
     let version = try await reopened.perform { try $0.scalar("PRAGMA user_version") }
-    #expect(version == 8)
+    #expect(version == 9)
   } catch {
     await reopened.close()
     throw error

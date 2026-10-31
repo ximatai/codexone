@@ -48,6 +48,17 @@ public struct AccountAdminAPI: Sendable {
       _ = try await observing.observeAccount(id: id)
       return try await Self.response(observability(id: id, detail: true))
     }
+    routes.put(":id", "display-name") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let document = try Self.body(request, allowed: ["revision", "displayName"])
+      guard let revision = document["revision"]?.integer,
+        document["displayName"] == .null || document["displayName"]?.string != nil
+      else { throw ExecutionError.invalidCommand }
+      let account = try await store.setAccountDisplayName(
+        id: request.parameters.get("id") ?? "",
+        revision: revision, displayName: document["displayName"]?.string)
+      return try Self.response(.object(["account": Self.metadata(account)]))
+    }
     routes.put(":id") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision", "mode"])
       guard let revision = document["revision"]?.integer,
@@ -118,6 +129,7 @@ public struct AccountAdminAPI: Sendable {
   }
   private static func metadata(_ account: ManagedAccount) -> JSONValue {
     .object([
+      "displayName": account.displayName.map { .string($0) } ?? .null,
       "id": .string(account.id), "revision": .number(Decimal(account.revision)),
       "credentialVersion": .number(Decimal(account.credentialVersion)),
       "mode": .string(account.mode.rawValue),

@@ -333,3 +333,65 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   }
   await store.close()
 }
+
+@Test func round2AccountDisplayNameBoundariesCASAndRestart() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let (_, context, envelope) = try accountFixture()
+  let created = try await store.createVerifiedAccount(
+    id: context.identity, namespace: context.namespace, envelope: envelope)
+  for name in ["", String(repeating: "a", count: 65), "bad\nname", "bad\u{202E}name"] {
+    await #expect(throws: ExecutionError.invalidCommand) {
+      try await store.setAccountDisplayName(
+        id: created.id, revision: created.revision, displayName: name)
+    }
+  }
+  for revision in [Int64(0), -1, 1_000_001] {
+    await #expect(throws: ExecutionError.invalidCommand) {
+      try await store.setAccountDisplayName(id: created.id, revision: revision, displayName: nil)
+    }
+  }
+  let named = try await store.setAccountDisplayName(
+    id: created.id, revision: 1, displayName: String(repeating: "名", count: 64))
+  await #expect(throws: ExecutionError.conflict) {
+    try await store.setAccountDisplayName(id: created.id, revision: 1, displayName: "stale")
+  }
+  let enabled = try await store.setAccountMode(
+    id: named.id, revision: named.revision, mode: .enabled)
+  #expect(enabled.displayName == named.displayName)
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  #expect(try await reopened.listAccounts().first?.displayName == named.displayName)
+  let cleared = try await reopened.setAccountDisplayName(
+    id: named.id, revision: enabled.revision, displayName: nil)
+  #expect(cleared.displayName == nil)
+  await reopened.close()
+}
+
+@Test func round2DisplayNameCannotConsumeReservedRefreshCompletionRevision() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let (_, context, envelope) = try accountFixture()
+  _ = try await store.createVerifiedAccount(
+    id: context.identity, namespace: context.namespace, envelope: envelope)
+  try await store.perform { db in
+    try db.write(
+      "UPDATE accounts SET revision=999999,authorization='refreshing',refresh_intent='synthetic-refresh' WHERE id=?",
+      [.text(context.identity)])
+  }
+  await #expect(throws: ExecutionError.conflict) {
+    try await store.setAccountDisplayName(
+      id: context.identity, revision: 999999, displayName: "must preserve completion slot")
+  }
+  let finished = try await store.failAccountRefresh(
+    id: context.identity, credentialVersion: 1,
+    intent: "synthetic-refresh", authorizationRequired: true)
+  #expect(finished.revision == 1_000_000 && finished.authorization == .requiresAuth)
+  await store.close()
+}

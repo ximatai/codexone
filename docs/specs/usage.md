@@ -45,3 +45,7 @@
 “缺失证据不得记零”的唯一提供者拒绝例外：Responses/compact/Images 收到 HTTP 4xx 响应头（含429、正文不可读），或提供者 WS 握手4xx；以及 SSE/WS 首个解析事件为 error/response.failed，且有明确4xx状态或已识别的请求/权限/认证/额度错误码，没有输出条目或delta。状态存在时以状态为准，5xx不能被错误码改成零费用。已识别码包括 invalid_request_error/invalid_request、permission_denied/access_denied、model_not_found、content_policy_violation、unsupported_parameter 及既有认证/限流码；未知机器码不足以证明拒绝。首个非拒绝生命周期/未知事件也关闭此证据入口，采取保守边界。
 
 上述执行记 settled、outcome failed，failure 保留既有分类，可信计数及费用为0、完整度complete，usage JSON 可选 `providerRejectedBeforeOutput: true` 注明依据；最终化释放预留和未知暴露。原生Images的图片计数为0，宿主token仍不适用、查询返回null；费用为可信0。拒绝不自动重放。无 schema 变化，历史 unknown 不回填。5xx、超时、断线、取消、已有输出后的错误、代理CONNECT拒绝或无法确认依据仍沿用 unknown/partial；已有可信用量不被清零。查询中可见真实零费用，不使用缺失值替代。
+
+## U14：管理趋势与筛选合计
+
+按日序列提供最近1—31天（缺省7、含今日UTC日）的已准入账本分桶，按Key/模型可筛选；请求、成功、failed、cancelled及非空failure分类独立计数，指标与逐条账本同口径，历史缺失不补零。尚无终态不记成功；拒绝诊断不混入该序列。现有查询totals提供所有筛选匹配项的合计与可空平均/P95首事件耗时、平均总耗时，不受分页影响。P95用非空样本nearest-rank；耗时不参与结算。进行中仅列intent，最多200条，不含正文/凭证；运行时未知观测保持未知。查询继承单只读快照、容量、超时与取消约束。API字段见[管理面](control-plane.md)。

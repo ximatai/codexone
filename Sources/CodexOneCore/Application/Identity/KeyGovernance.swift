@@ -71,10 +71,12 @@ public struct ManagedKey: Sendable, Equatable, Codable {
   public let enabled: Bool
   public let policy: KeyPolicy
   public let createdAtUnixSeconds: Int64
+  public let expiresAtUnixSeconds: Int64?
   public init(
     id: String, principal: String, revision: Int64, enabled: Bool, policy: KeyPolicy,
-    createdAtUnixSeconds: Int64
+    createdAtUnixSeconds: Int64, expiresAtUnixSeconds: Int64? = nil
   ) {
+    self.expiresAtUnixSeconds = expiresAtUnixSeconds
     self.id = id
     self.principal = principal
     self.revision = revision
@@ -90,6 +92,8 @@ public protocol KeyGovernanceStore: Sendable {
   func createKey(id: String, principal: String, digest: String, policy: KeyPolicy) async throws
     -> ManagedKey
   func updateKey(id: String, revision: Int64, enabled: Bool, policy: KeyPolicy) async throws
+    -> ManagedKey
+  func setKeyExpiration(id: String, revision: Int64, expiresAtUnixSeconds: Int64?) async throws
     -> ManagedKey
   func rotateKey(id: String, revision: Int64, digest: String) async throws
     -> ManagedKey

@@ -48,7 +48,7 @@ public struct UsageQuery: Sendable {
     self.limit = limit
   }
 }
-public struct UsageMetrics: Sendable {
+public struct UsageMetrics: Sendable, Encodable {
   public let inputTokens: Int64?
   public let outputTokens: Int64?
   public let cachedTokens: Int64?
@@ -89,14 +89,21 @@ public struct UsageTotals: Sendable {
   public let lifetimeInFlight: Int64
   public let lifetimeUnknown: Int64
   public let lifetimeExposureMicros: Int64
+  public let averageFirstEventMilliseconds: Double?
+  public let p95FirstEventMilliseconds: Int64?
+  public let averageTotalMilliseconds: Double?
   public let metrics: UsageMetrics
   public init(
     admitted: Int64, rejected: Int64, inFlight: Int64, unknown: Int64,
     complete: Int64, partial: Int64, unavailable: Int64, failed: Int64, cancelled: Int64,
     historicalWithoutTime: Int64, unresolvedExposureMicros: Int64,
     lifetimeInFlight: Int64, lifetimeUnknown: Int64, lifetimeExposureMicros: Int64,
-    metrics: UsageMetrics
+    metrics: UsageMetrics, averageFirstEventMilliseconds: Double? = nil,
+    p95FirstEventMilliseconds: Int64? = nil, averageTotalMilliseconds: Double? = nil
   ) {
+    self.averageFirstEventMilliseconds = averageFirstEventMilliseconds
+    self.p95FirstEventMilliseconds = p95FirstEventMilliseconds
+    self.averageTotalMilliseconds = averageTotalMilliseconds
     self.admitted = admitted
     self.rejected = rejected
     self.inFlight = inFlight
@@ -215,6 +222,8 @@ public struct KeyUsageSummary: Sendable {
   }
 }
 public protocol UsageQuerying: Sendable {
+  func dailyUsage(days: Int, keyID: String?, model: String?) async throws -> [DailyUsageBucket]
+  func inFlightUsage(limit: Int) async throws -> [InFlightUsageRow]
   func queryUsage(_ query: UsageQuery) async throws -> UsageReport
   func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary])
   func usageOptions() async throws -> (
@@ -225,4 +234,60 @@ public protocol ExecutionDiagnosticsStore: Sendable {
   func recordRejection(
     requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
   ) async throws
+}
+
+public struct DailyUsageBucket: Sendable {
+  public let atUnixSeconds: Int64
+  public let requests: Int64
+  public let succeeded: Int64
+  public let failed: Int64
+  public let cancelled: Int64
+  public let failures: [String: Int64]
+  public let metrics: UsageMetrics
+  public init(
+    atUnixSeconds: Int64, requests: Int64, succeeded: Int64, failed: Int64,
+    cancelled: Int64, failures: [String: Int64], metrics: UsageMetrics
+  ) {
+    self.atUnixSeconds = atUnixSeconds
+    self.requests = requests
+    self.succeeded = succeeded
+    self.failed = failed
+    self.cancelled = cancelled
+    self.failures = failures
+    self.metrics = metrics
+  }
+}
+public struct InFlightUsageRow: Sendable, Encodable {
+  public let id: String
+  public let keyID: String
+  public let principal: String?
+  public let model: String?
+  public let mode: ExecutionMode
+  public let accountID: String
+  public let accountDisplayName: String?
+  public let startedAtUnixSeconds: Int64?
+  public let elapsedSeconds: Int64?
+  public let hasFirstEvent: Bool?
+  public init(
+    id: String, keyID: String, principal: String?, model: String?, mode: ExecutionMode,
+    accountID: String, accountDisplayName: String?, startedAtUnixSeconds: Int64?,
+    elapsedSeconds: Int64?, hasFirstEvent: Bool?
+  ) {
+    self.id = id
+    self.keyID = keyID
+    self.principal = principal
+    self.model = model
+    self.mode = mode
+    self.accountID = accountID
+    self.accountDisplayName = accountDisplayName
+    self.startedAtUnixSeconds = startedAtUnixSeconds
+    self.elapsedSeconds = elapsedSeconds
+    self.hasFirstEvent = hasFirstEvent
+  }
+}
+/// Bounded by the existing finalizer ticket capacity; observations have no effect on settlement.
+public protocol ExecutionLiveObserving: Sendable {
+  func executionStarted(attempt: String)
+  func executionReceivedFirstEvent(attempt: String)
+  func executionObservationEnded(attempt: String)
 }

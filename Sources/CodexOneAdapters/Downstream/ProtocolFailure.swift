@@ -30,6 +30,7 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   }
   if let error = error as? ExecutionError {
     switch error {
+    case .keyExpired: return .init(401, "api_key_expired")
     case .unauthorized: return .init(401, "invalid_api_key")
     case .storagePressure: return .init(503, "storage_pressure")
     case .maintenanceRequired: return .init(503, "maintenance_required")
