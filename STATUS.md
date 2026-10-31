@@ -8,7 +8,7 @@
 |---|---|---|
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
 | M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议[开放透传](docs/changes/open-protocol-passthrough/proposal.md)、[模型目录透传](docs/changes/model-catalog-passthrough/proposal.md)与[Desktop辅助接口透传](docs/changes/desktop-control-passthrough/proposal.md)（独立搜索、记忆摘要、realtime SDP、thread goal、jwks；analytics本地接受）；真实Desktop+真实订阅三模型对话、视觉输入、工具往返通过 | 压缩、长任务/中断恢复的真实验收及M5恢复读取 |
-| M3 | 管理登录/CSRF、Key（含[显式无限额](docs/changes/unlimited-key-limits/proposal.md)）、账号授权/刷新、路由及用量观测；[管理台产品化第一轮](docs/changes/admin-productization/proposal.md)（运营概览、账号窗口与重置倒计时、Key今日用量/搜索、请求详情与耗时、美元估算与面向用户术语）；[第二轮](docs/changes/admin-round2/proposal.md)（首页KPI七日趋势与错误率、进行中/最近请求自动刷新、首事件/总耗时、账号显示名、Key到期）；真实OAuth授权、额度观测与单Key摘要导入已在测试实例使用 | 多账号路由、长期刷新、全部Key正式迁移与切回 |
+| M3 | 管理登录/CSRF、Key（含[显式无限额](docs/changes/unlimited-key-limits/proposal.md)）、账号授权/刷新、路由及用量观测；[管理台产品化第一轮](docs/changes/admin-productization/proposal.md)（运营概览、账号窗口与重置倒计时、Key今日用量/搜索、请求详情与耗时、美元估算与面向用户术语）；[第二轮](docs/changes/admin-round2/proposal.md)（首页KPI七日趋势与错误率、进行中/最近请求自动刷新、首事件/总耗时、账号显示名、Key到期）；真实OAuth授权、额度观测与单Key摘要导入已在测试实例使用 | 多账号路由真实验证（目前仅一个订阅账号，无法实测，暂不验收）；长期刷新真实验证（[提前刷新](docs/changes/proactive-account-refresh/proposal.md)进行中）；全部Key正式迁移与切回（用户决定暂缓，当前为开发试用阶段） |
 | M4 | Images改为[原生端点透传](docs/changes/images-native-passthrough/proposal.md)（独立并发舱壁、原生usage计量），[Desktop图片对齐](docs/changes/desktop-image-parity/proposal.md)（含图压缩、32 MiB请求、共享请求体预算）；测试实例经网关真实生成1张、multipart编辑1次并核对账本；真实Desktop生图与编辑通过（客户端须按[客户端配置](docs/client-setup.md)） | 真实Desktop含图压缩验收；非Codex UA客户端被提供者403的处理待定；原生SSE与429冷却真实形状 |
 | M5 | 已核对恢复关联及已有输出读取的限定实验 | 正式恢复读取契约不充分，未实现生产正文缓存 |
 | M6 | schema v8候选安装/升级/兼容回退、合成迁移切回、TLS、快照/密钥维护、低盘保护及容量样本 | 完整O14/目标弱宿主、async任务观测、实际旧服务替代、远程CI与发行 |
@@ -107,6 +107,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；全部Key正式迁移（含5枚需图片权限的Key）与切回预案（真实切换前须用户确认）；管理台后续：Key自助查询页、模型/客户端分布、CSV导出、深色模式、账号检查按钮，以及首页旧运营卡片与新KPI去重。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)实现中，部署后确认真实刷新；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；后续方向与用户讨论后排期（候选：管理台Key自助查询、模型/客户端分布、CSV导出、深色模式、首页卡片去重）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
