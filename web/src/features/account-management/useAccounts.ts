@@ -12,6 +12,7 @@ export function useAccounts() {
   const [checking, setChecking] = useState(true);
   const proof = useRef<string | null>(owner.session?.csrf ?? null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [readAt, setReadAt] = useState<number | null>(null);
   const [configured, setConfigured] = useState(true);
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(true);
@@ -58,6 +59,7 @@ export function useAccounts() {
       const list = await api.fetchAccounts(signal);
       if (!current(version)) return false;
       setAccounts(list);
+      setReadAt(Date.now() / 1000);
       setConfigured(true);
       setLocked(false);
       owner.lock("accounts", false);
@@ -216,6 +218,7 @@ export function useAccounts() {
   }
   return {
     accounts,
+    readAt,
     configured,
     checking,
     busy: busy || managed.busy,

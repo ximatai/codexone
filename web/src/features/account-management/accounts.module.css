@@ -35,6 +35,14 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
+.cards > * {
+  min-width: 0;
+}
+.cardIdentity {
+  min-width: 0;
+  flex: 1 1 200px;
+  overflow-wrap: anywhere;
+}
 @media (min-width: 1200px) {
   .cards {
     grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));

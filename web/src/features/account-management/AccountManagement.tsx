@@ -4,6 +4,8 @@ import {
 } from "../../shared/account-presentation";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/States";
 import { useState } from "react";
+import { useSearchParams } from "react-router";
+import { localTime } from "../../shared/presentation";
 import {
   ActionIcon,
   Tooltip,
@@ -38,6 +40,7 @@ import {
 import { QuotaWindowBar } from "./QuotaWindowBar";
 export function AccountManagement() {
   const state = useAccounts();
+  const [params, setParams] = useSearchParams();
   const [confirm, setConfirm] = useState<{
     account: api.Account;
     mode: api.AccountMode;
@@ -46,7 +49,18 @@ export function AccountManagement() {
     if (mode === "enabled") state.setMode(account, mode);
     else setConfirm({ account, mode });
   }
-  const [selected, setSelected] = useState<string | null>(null);
+  const selected = params.get("target");
+  function setSelected(id: string | null) {
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (id) next.set("target", id);
+        else next.delete("target");
+        return next;
+      },
+      { replace: true },
+    );
+  }
   const account = state.accounts.find((item) => item.id === selected);
   const blocked = state.busy || state.locked || !!state.flow;
   function begin(value: api.Account | null) {
@@ -109,7 +123,20 @@ export function AccountManagement() {
           <Text size="sm">正在处理账号操作…</Text>
         </Group>
       )}
-      {!state.configured ? (
+      {state.error && state.readAt && (
+        <Text size="sm" c="dimmed">
+          上次成功读取：{localTime(state.readAt)}；当前快照可能已过时。
+        </Text>
+      )}
+      {selected && state.readAt && !account && !state.error && (
+        <Alert color="yellow">
+          目标账号已不存在。
+          <Button variant="subtle" onClick={() => setSelected(null)}>
+            返回账号列表
+          </Button>
+        </Alert>
+      )}
+      {!state.readAt && state.error ? null : !state.configured ? (
         <Paper withBorder p="xl">
           <Title order={2}>账号接入尚未开启</Title>
           <Text c="dimmed" mt="sm">
@@ -149,8 +176,8 @@ export function AccountManagement() {
             return (
               <Paper withBorder p="lg" key={item.id}>
                 <Group justify="space-between" align="start" mb="md">
-                  <div aria-label="账号">
-                    <Text fw={700} size="xl">
+                  <div aria-label="账号" className={styles.cardIdentity}>
+                    <Text fw={700} size="xl" className="wrap-anywhere">
                       {accountName(item.id, [], item.displayName)}
                     </Text>
                     <Text size="xs" c="dimmed">
@@ -178,8 +205,19 @@ export function AccountManagement() {
                             : "gray"
                       }
                     >
-                      {modes[item.mode]} ·{" "}
-                      <span>{authorization[item.authorization]}</span>
+                      {modes[item.mode]}
+                    </Badge>
+                    <Badge
+                      variant="light"
+                      color={
+                        item.authorization === "ready"
+                          ? "green"
+                          : item.authorization === "requires_auth"
+                            ? "red"
+                            : "yellow"
+                      }
+                    >
+                      {authorization[item.authorization]}
                     </Badge>
                   </div>
                 </Group>
