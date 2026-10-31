@@ -1,4 +1,5 @@
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -51,7 +52,7 @@ async function finishAuthorization(buttonName) {
   await expect(page.getByRole("button", { name: "重新读取账号", exact: true })).toBeEnabled();
 }
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await openChrome();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.route("**/*", route => {
     const url = new URL(route.request().url());

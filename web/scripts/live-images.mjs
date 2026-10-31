@@ -1,5 +1,6 @@
 // Actual production SPA with a synthetic gateway. Credentials travel over stdin only.
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -8,7 +9,7 @@ assert([adminPort, dataPort].every(x => Number.isInteger(x) && x > 0 && x <= 655
 let input = ""; for await (const chunk of process.stdin) { input += chunk; assert(input.length < 4096); }
 const { credential } = JSON.parse(input);
 const origin = `http://127.0.0.1:${adminPort}`;
-const browser = await chromium.launch({ channel: "chrome", headless: true });
+const browser = await openChrome();
 try {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1100 } });
   await context.route(url => url.origin !== origin, route => route.abort());

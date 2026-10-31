@@ -1,5 +1,6 @@
 // Real built SPA + temporary gateway. All accounts, commands and content are synthetic.
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -33,7 +34,7 @@ async function capture(name) {
   await page.screenshot({ path: resolve(output, name), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator("input.secret-value")] });
 }
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await openChrome();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.route(url => url.origin !== origin, route => route.abort());
   await context.addInitScript(() => {

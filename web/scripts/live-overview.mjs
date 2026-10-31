@@ -1,5 +1,6 @@
 // Synthetic integration harness: built UI + real temporary gateway, no mocked management API.
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import { createServer, request } from "node:http";
 import { readFile, mkdir } from "node:fs/promises";
 import { resolve, sep, extname } from "node:path";
@@ -32,7 +33,7 @@ const server = createServer(async (incoming, outgoing) => {
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 let browser;
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await openChrome();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await expect(page.getByRole("heading", { name: ready ? "网关已就绪" : "网关尚未就绪" })).toBeVisible();

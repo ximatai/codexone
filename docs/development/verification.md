@@ -30,7 +30,7 @@ python3 scripts/check_docs.py
 
 Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。
 
-前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。依赖安装/浏览器准备与可运行命令查根 STATUS，CI 使用锁文件，测试默认不读账号/外部上游。
+前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。设置 `PW_TEST_CONNECT_WS_ENDPOINT` 时 Playwright 与 `web/scripts` 的实际界面脚本改为连接外部浏览器（`web/scripts/browser-server.mjs` 启动），供无法启动 Chrome 的 macOS 沙箱执行者使用。依赖安装/浏览器准备与可运行命令查根 STATUS，CI 使用锁文件，测试默认不读账号/外部上游。
 
 默认客户端候选出口通过verify.sh的显式--client入口提供固定客户端路径及版本，缺少客户端或版本不符必须失败；不能以普通后端CI通过代替。脚本新建私有CODEX_HOME/空工作区、loopback合成身份及实际trial_provider序列化，分别验证默认内置目录/显式受信目录、文本三轮/工具往返/压缩续接与三种传输；断言客户端完成、实际传输无回退、上游次数与持久账本。默认路径通过--require-lite要求实际覆盖Lite工具包（可在WS预热中出现）。仅未支持web_search显式关闭，压缩场景显式降低阈值；不读取个人登录或修改个人配置。这是固定CLI合成兼容证据，不能替代Desktop UI或真实提供者。
 
