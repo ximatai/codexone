@@ -278,6 +278,7 @@ public struct ResponsesDataService: Service {
       try await PoolWebSocketSession.run(
         downstream: downstream, firstBody: firstBody, first: first,
         executor: authorized, digest: digest)
+      try await downstream.closeNormally()
     }
   }
 
@@ -288,84 +289,106 @@ public struct ResponsesDataService: Service {
     let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
     let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
-    try await withThrowingTaskGroup(of: WebSocketBody?.self) { lanes in
-      defer { lanes.cancelAll() }
-      var known = Set<String>()
-      lanes.addTask { firstBody }
-      while let result = try await lanes.next(), let body = result {
-        let lane = try webSocketLane(JSONValue.decode(body.data))
-        let fresh = !known.contains(lane)
-        guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
-          throw GatewayProtocolError(503, "websocket_lane_capacity")
-        }
-        activity.begin()
-        do {
-          try await withExecutionDeadline(seconds: 5) {
-            try await commands.pushBody(body, lane: lane)
-          }
-        } catch {
-          activity.end()
-          throw error
-        }
-        if fresh {
-          known.insert(lane)
-          let firstTurn = known.count == 1 ? initial : nil
-          lanes.addTask {
-            var pending = firstTurn
-            let tools = WebSocketToolState()
-            while !Task.isCancelled {
-              let body = try await commands.nextBody(lane: lane)
-              defer { body.release() }
-              defer { activity.end() }
-              let initialTurn = pending
-              pending = nil
-              let requestID = initialTurn?.requestID ?? UUID().uuidString
-              var requested: ResponseRequest?
-              do {
-                let request = try webSocketCreate(
-                  body.data, imageConfiguration: executor.configuration.imageGeneration,
-                  previousTools: tools.snapshot)
-                requested = request
-                if let initialTurn {
-                  let model = try executor.executionModel(request)
-                  try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
-                  try await executor.exchange(
-                    request, context: initialTurn.context, model: model, peer: upstream, lane: lane
-                  ) { event in
-                    try await downstream.send(event)
-                    tools.observe(event, request: request)
-                  }
-                  initialTurn.start.finishTurn()
-                } else {
-                  let current = try await executor.authorized(digest)
-                  try await current.execute(
-                    request, requestID: requestID, peer: upstream, lane: lane
-                  ) { event in
-                    try await downstream.send(event)
-                    tools.observe(event, request: request)
-                  }
-                }
-              } catch {
-                if let requested {
-                  await executor.recordRejection(requested, requestID: requestID, error: error)
-                }
-                initialTurn?.start.close(error)
-                if initialTurn == nil {
-                  try? await sendWebSocketError(
-                    error, requestID: requestID, lane: lane, to: downstream)
-                  // A provider error event ended only this turn; the pinned socket stays usable.
-                  if (error as? GatewayProtocolError)?.providerError != nil { continue }
-                }
-                throw error
-              }
-            }
-            return nil
-          }
-        }
+    do {
+      try await withThrowingTaskGroup(of: WebSocketBody?.self) { lanes in
+        defer { lanes.cancelAll() }
         lanes.addTask {
-          try await activity.read { try await downstream.nextBody() }
+          await upstream.waitForClose()
+          try await activity.waitUntilIdle()
+          try Task.checkCancellation()
+          throw WebSocketUpstreamClosed()
+        }
+        var known = Set<String>()
+        lanes.addTask { firstBody }
+        while let result = try await lanes.next(), let body = result {
+          guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
+          let lane = try webSocketLane(JSONValue.decode(body.data))
+          let fresh = !known.contains(lane)
+          guard !fresh || lane.isEmpty || known.filter({ !$0.isEmpty }).count < 32 else {
+            throw GatewayProtocolError(503, "websocket_lane_capacity")
+          }
+          activity.begin()
+          do {
+            try await withExecutionDeadline(seconds: 5) {
+              try await commands.pushBody(body, lane: lane)
+            }
+          } catch {
+            activity.end()
+            throw error
+          }
+          if fresh {
+            known.insert(lane)
+            let firstTurn = known.count == 1 ? initial : nil
+            lanes.addTask {
+              var pending = firstTurn
+              let tools = WebSocketToolState()
+              while !Task.isCancelled {
+                let body = try await commands.nextBody(lane: lane)
+                defer { body.release() }
+                defer { activity.end() }
+                let initialTurn = pending
+                pending = nil
+                let requestID = initialTurn?.requestID ?? UUID().uuidString
+                var requested: ResponseRequest?
+                do {
+                  guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
+                  let request = try webSocketCreate(
+                    body.data, imageConfiguration: executor.configuration.imageGeneration,
+                    previousTools: tools.snapshot)
+                  requested = request
+                  if let initialTurn {
+                    let model = try executor.executionModel(request)
+                    try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
+                    try await executor.exchange(
+                      request, context: initialTurn.context, model: model, peer: upstream,
+                      lane: lane
+                    ) { event in
+                      try await downstream.send(event)
+                      tools.observe(event, request: request)
+                    }
+                    initialTurn.start.finishTurn()
+                  } else {
+                    let current = try await executor.authorized(digest)
+                    try await current.execute(
+                      request, requestID: requestID, peer: upstream, lane: lane
+                    ) { event in
+                      try await downstream.send(event)
+                      tools.observe(event, request: request)
+                    }
+                  }
+                } catch {
+                  if upstream.isClosed {
+                    if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
+                      try? await sendWebSocketError(
+                        error, requestID: requestID, lane: lane, to: downstream)
+                    }
+                    initialTurn?.start.close(WebSocketUpstreamClosed())
+                    throw WebSocketUpstreamClosed()
+                  }
+                  if let requested {
+                    await executor.recordRejection(requested, requestID: requestID, error: error)
+                  }
+                  initialTurn?.start.close(error)
+                  if initialTurn == nil {
+                    try? await sendWebSocketError(
+                      error, requestID: requestID, lane: lane, to: downstream)
+                    // A provider error event ended only this turn; the pinned socket stays usable.
+                    if (error as? GatewayProtocolError)?.providerError != nil { continue }
+                  }
+                  throw error
+                }
+              }
+              return nil
+            }
+          }
+          lanes.addTask {
+            try await activity.read { try await downstream.nextBody() }
+          }
         }
       }
+    } catch {
+      guard upstream.isClosed else { throw error }
+      throw WebSocketUpstreamClosed()
     }
   }
 

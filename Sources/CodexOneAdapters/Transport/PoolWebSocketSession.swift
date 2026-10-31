@@ -114,6 +114,9 @@ enum PoolWebSocketSession {
         }
         while try await tasks.next() != nil {}
       }
+    } catch is WebSocketUpstreamClosed {
+      // Both sibling owners have ended and handed off their finalization responsibility.
+      return
     } catch {
       await executor.recordRejection(first, requestID: requestID, error: error)
       if start.claimError() {

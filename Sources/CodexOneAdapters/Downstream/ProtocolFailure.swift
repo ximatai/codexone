@@ -4,6 +4,10 @@ import Foundation
 
 func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? GatewayProtocolError { return error }
+  // HTTP→WS bridges retain their existing failure contract; native connections consume this signal.
+  if error is WebSocketUpstreamClosed {
+    return .init(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
+  }
   if let error = error as? HTTPClientError {
     if error == .proxyAuthenticationRequired {
       return .init(502, "upstream_proxy_authentication_required", upstreamStatus: 407)

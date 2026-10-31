@@ -115,6 +115,11 @@ class Provider(BaseHTTPRequestHandler):
                     if self.connection.recv(1) == b'':
                         self.server.cancelled.set()
                     return
+                if create['input'] == 'close-gated':
+                    self.server.close_ready.set()
+                    assert self.server.close_release.wait(4)
+                    send(self.connection, b'\x03\xe8', opcode=8)
+                    return
                 if create['input'] == 'abrupt':
                     return
                 previous = create.get('previous_response_id')
@@ -149,6 +154,10 @@ class Provider(BaseHTTPRequestHandler):
                     send(self.connection, {'type': 'response.completed', 'response': response})
                 if create['input'] == 'trailing-event':
                     send(self.connection, {'type': 'response.output_text.delta', 'delta': 'OLD_TURN_TRAILING_SYNTHETIC'})
+                if create['input'] == 'idle-close':
+                    time.sleep(.05)
+                    send(self.connection, b'\x03\xe8', opcode=8)
+                    return
                 if create['input'] == 'terminal-eof':
                     return
         except (EOFError, ConnectionResetError, BrokenPipeError, TimeoutError):
@@ -178,6 +187,8 @@ def main():
     provider.daemon_threads = True
     provider.guard = threading.Lock()
     provider.calls = provider.connections = 0
+    provider.close_ready = threading.Event()
+    provider.close_release = threading.Event()
     provider.stalled = threading.Event()
     provider.cancelled = threading.Event()
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
@@ -293,6 +304,60 @@ def main():
                     assert status == 200 and b'completed' in body
                     assert latest(db, 'settled')['estimatedMicros'] == 8
                 print('PASS: native handshake is local; masking/fragmentation/ping; same-socket continuation; HTTP JSON/SSE to WS bridges')
+                for prompt in ('idle-close', 'terminal-eof'):
+                    with sqlite3.connect(db) as connection:
+                        before = connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+                    count = provider.calls
+                    with sqlite3.connect(db) as connection:
+                        rejected_before = connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0]
+                        unknown_before = connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0]
+                    with dial(ports['data']) as downstream:
+                        assert turn(downstream, {'model': 'synthetic-text', 'input': prompt})[-1]['type'] == 'response.completed'
+                        # A create sent after EOF but before consuming the close cannot dispatch.
+                        time.sleep(.15)
+                        send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'late'}, masked=True)
+                        assert receive(downstream) == (8, b'\x03\xe8')
+                    with sqlite3.connect(db) as connection:
+                        assert connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == before + 1
+                        assert connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0] == unknown_before
+                        assert connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0] == rejected_before
+                    assert provider.calls == count + 1
+                    with dial(ports['data']) as downstream:
+                        assert turn(downstream, {'model': 'synthetic-text', 'input': 'fresh'})[-1]['type'] == 'response.completed'
+                for multi in (False, True):
+                    provider.close_ready.clear(); provider.close_release.clear()
+                    with sqlite3.connect(db) as connection:
+                        mark = connection.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0]
+                    count = provider.calls
+                    with dial(ports['data']) as downstream:
+                        if multi:
+                            assert turn(downstream, {'stream_id': 'idle', 'model': 'synthetic-text', 'input': 'first'})[-1]['type'] == 'response.completed'
+                        create = {'type': 'response.create', 'stream_id': 'busy', 'model': 'synthetic-text', 'input': 'close-gated'}
+                        send(downstream, create, masked=True)
+                        assert provider.close_ready.wait(3)
+                        # This is owned by the same-lane queue, before upstream EOF.
+                        send(downstream, {**create, 'input': 'queued'}, masked=True)
+                        time.sleep(.05)
+                        provider.close_release.set()
+                        # Cross EOF/consumer cancellation while the connection owner is unwinding.
+                        for _ in range(2):
+                            send(downstream, {**create, 'input': 'closing-race'}, masked=True)
+                        for _ in range(8):
+                            opcode, data = receive(downstream)
+                            if opcode == 8:
+                                assert data == b'\x03\xe8'
+                                break
+                        else: raise AssertionError('No normal close after active EOF')
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            with sqlite3.connect(db) as connection:
+                                rows = connection.execute('SELECT state FROM attempts WHERE rowid>?', (mark,)).fetchall()
+                            if sorted(row[0] for row in rows) == (['settled', 'unknown'] if multi else ['unknown']):
+                                break
+                            time.sleep(.02)
+                        else: raise AssertionError(rows)
+                    assert provider.calls == count + (2 if multi else 1)
+                print('PASS: idle close frame/TCP EOF sends 1000; fresh connection works; queued/late creates never dispatch; active/multi-lane EOF keeps unknown without replay')
                 with dial(ports['data'], '/backend-api/codex/responses') as downstream:
                     events = turn(downstream, {'model': 'synthetic-text', 'input': 'terminal-eof'})
                     assert events[-1]['type'] == 'response.completed'

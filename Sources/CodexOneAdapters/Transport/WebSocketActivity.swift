@@ -8,6 +8,11 @@ final class WebSocketActivity: Sendable {
     var last = ContinuousClock.now
   }
   private let state = Mutex(State())
+  func waitUntilIdle() async throws {
+    while state.withLock({ $0.count != 0 }) {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+  }
   func begin() { state.withLock { $0.count += 1 } }
   func end() {
     state.withLock {
