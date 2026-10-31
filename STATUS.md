@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · 首页需要处理提醒 | macOS arm64构建、Swift258项、全部后端标准脚本、Vitest96项、Chrome12项及真实生产SPA管理UI/CSP逐项通过（失败项修正后定向补验）；1440×900与窄屏走查、前端subagent评审完成；未跑Linux/部署 | [提醒验证](docs/changes/admin-attention/verification.md) |
 | 2026-10-31 · 管理台基础层阶段 2 | macOS arm64 `verify.sh --web --chrome`（Vitest 91、Chrome 12）、codexone/ExecutionProbe 构建、两项真实本机合成 UI/CSP 入口通过；阶段 2 评审返工 1–18 已处理；四页与详情/菜单共13张桌面/手机截图已更新、subagent复核完成 | [基础层验证](docs/changes/admin-ui-foundation/verification.md) |
 | 2026-10-31 · 账号提前刷新 | macOS arm64完整`verify.sh --backend`（Swift 245项）与`--web --chrome`（Vitest 74、Playwright 6）通过；15/5分钟窗口、单飞/失败分类、loopback连接拒绝、管理时间字段与1440×900账号详情；subagent评审问题已修复 | [提前刷新](docs/changes/proactive-account-refresh/verification.md) |
 | 2026-10-31 · 管理台第二轮 | macOS `verify.sh --backend`、`--web --chrome`（vitest 71、Playwright 6）；1440×900合成走查与subagent评审；Linux amd64 verification；测试实例v9显式迁移（私有备份）后API实测：日趋势、进行中、耗时合计、显示名设置/恢复、过期Key准入前401 | [管理台第二轮](docs/changes/admin-round2/verification.md) |
@@ -109,7 +110,9 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1 已合并（PR #18）并完成 Linux verification；阶段 2 按“C 结构 + A 克制”完成四页迁移、侧栏与窄屏导航、图表/DataTable、账号共享修改及 CSS 清理，本机完整前端和两项合成生产 CSP 入口通过。阶段 2 一轮评审返工已完成，含 Key 创建后设置到期的部分失败提示与一次性秘密回归；当前在 `codex/admin-ui-phase2`，未 push；下一步由主 Agent 核对交付和 Linux verification，阶段 3 深色开关未开始。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
+管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1 已合并（PR #18）并完成 Linux verification；阶段 2 按“C 结构 + A 克制”完成四页迁移、侧栏与窄屏导航、图表/DataTable、账号共享修改及 CSS 清理，本机完整前端和两项合成生产 CSP 入口通过。阶段 2 一轮评审返工已完成，含 Key 创建后设置到期的部分失败提示与一次性秘密回归；阶段 2 成果作为本次提醒工作的基线，仍待主 Agent 核对交付和 Linux verification；阶段 3 深色开关未开始。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
+
+首页[需要处理提醒](docs/changes/admin-attention/proposal.md)在 `codex/admin-attention` 完成本机后端/前端闭环：只读汇总、来源失败提示、进程内32名称集合、首页提醒与导航红点；规范、边界/失败测试、桌面与窄屏走查、完整本机验证已完成（失败项修正后定向补验）。分组提交，未 push/PR，未运行Docker/Linux或部署；下一步主 Agent 最终评审与Linux verification，再按授权安排测试实例，随后推进用量分析。
 
 测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（v9管理到期字段为null，最近更新来自提交审计）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；[客户端协议跟踪](docs/development/client-protocol-watch.md)按已定治理执行（部署前手动比对，未知名称进首页提醒）；后续排期（2026-10-31 用户确认）：管理台阶段 2 → [首页需要处理提醒](docs/changes/admin-attention/proposal.md) → [用量分析](docs/changes/usage-analytics/proposal.md)（模型/客户端分布、CSV导出）→ [Key自助查询](docs/changes/key-self-service/proposal.md)；完成后单独讨论全部Key迁移、Nginx切换与观察回退；深色模式待排。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
