@@ -14,4 +14,8 @@
 - [ ] vitest/Playwright 与界面走查。
 
 ## 出口
-- [ ] 主 Agent 评审、Linux verification、部署测试实例。
+- [ ] 维护者 评审、Linux verification、安装兼容验收。
+
+## 相关文档
+
+[文档导航](../../README.md)

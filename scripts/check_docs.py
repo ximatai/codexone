@@ -8,13 +8,26 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = (
-    'README.md', 'AGENTS.md', 'STATUS.md', 'HANDOFF.md', 'LICENSE',
+    'README.md', 'README.en.md', 'AGENTS.md', 'STATUS.md', 'LICENSE',
+    'CONTRIBUTING.md', 'SECURITY.md', 'CODE_OF_CONDUCT.md',
+    'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md',
     'docs/README.md', 'docs/governance.md', 'docs/requirements/product.md',
-    'docs/specs/README.md', 'docs/architecture/ARCHITECTURE.md',
-    'docs/decisions/README.md', 'docs/plans/roadmap.md',
+    'docs/reference/specs/README.md', 'docs/architecture/ARCHITECTURE.md',
+    'docs/architecture/decisions/README.md',
     'docs/development/layout.md', 'docs/development/verification.md',
-    'docs/architecture/ownership.md', 'docs/specs/execution-lifecycle.md',
-    'docs/evidence/README.md',
+    'docs/development/releasing.md', 'docs/architecture/ownership.md',
+    'docs/reference/specs/execution-lifecycle.md',
+    'docs/guide/README.md', 'docs/guide/linux-installation.md',
+    'docs/guide/configuration.md', 'docs/guide/client-setup.md',
+    'docs/guide/admin.md', 'docs/guide/backup-upgrade.md',
+    'docs/guide/migration.md', 'docs/guide/faq.md',
+    'docs/operations/README.md', 'docs/reference/README.md',
+    'docs/reference/configuration.md', 'docs/reference/admin-api.md',
+    'docs/reference/compatibility.md', 'docs/reference/provenance.md',
+    'docs/assets/overview.png', 'docs/assets/keys.png',
+    '.github/ISSUE_TEMPLATE/bug_report.yml',
+    '.github/ISSUE_TEMPLATE/feature_request.yml',
+    '.github/pull_request_template.md',
 )
 # Logical/target directories evolve with implementation; validate stable
 # documentation contracts, not the initial placeholder tree or a task name.
@@ -37,12 +50,24 @@ errors = []
 for name in REQUIRED:
     if not (ROOT / name).is_file():
         errors.append(f'Missing required file: {name}')
+for name in ('overview.png', 'keys.png'):
+    asset = ROOT / 'docs/assets' / name
+    if asset.is_file() and asset.stat().st_size > 400_000:
+        errors.append(f'Documentation screenshot exceeds 400 KB: {name}')
 checked = 0
 for path in markdown_files():
     rel = path.relative_to(ROOT)
     text = path.read_text(encoding='utf-8')
     if not text.strip() or not text.endswith('\n'):
         errors.append(f'Empty file or missing final newline: {rel}')
+    if rel.parts[0] == 'docs':
+        lines = text.splitlines()
+        if not lines or not re.fullmatch(r'# [^#].+', lines[0]):
+            errors.append(f'Missing document title: {rel}')
+        if len(lines) < 3 or not lines[2].strip() or lines[2].startswith(('#', '- ', '|', '```')):
+            errors.append(f'Missing purpose paragraph after title: {rel}')
+        if not re.search(r'^## 相关文档\n\n.+', text, re.M):
+            errors.append(f'Missing related-document section: {rel}')
     checked += 1
     for link in re.findall(r'\]\(([^)]+)\)', text):
         target = link.strip().strip('<>')
@@ -77,6 +102,6 @@ if changes.exists():
 if errors:
     print('\n'.join(errors), file=sys.stderr)
     sys.exit(1)
-print(f'PASS: {checked} Markdown documents, required entries, local links and change artifacts.')
+print(f'PASS: {checked} Markdown documents, required entries, document frames, local links, screenshot sizes and change artifacts.')
 print('Dependency/build directories excluded; logical source directories are not frozen.')
 print('Scope: local file links only; no anchor, remote URL, code, protocol or runtime validation.')

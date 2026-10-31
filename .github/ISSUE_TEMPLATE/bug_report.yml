@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a problem with a synthetic reproduction
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues: use Security → Report a vulnerability.
+        Use synthetic data only. Never paste credentials, login files, callbacks,
+        request bodies, database files, private hosts, or raw logs.
+  - type: input
+    id: version
+    attributes:
+      label: Version and platform
+      description: Gateway version/revision, OS, installation method, client version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Minimal steps and sanitized placeholder configuration
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include a sanitized error code; do not paste raw logs or user content
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Checks already performed
+      description: Commands and outcomes using synthetic fixtures only

@@ -1,9 +1,0 @@
-# 验证记录
-
-2026-10-24：发布候选5f7efc1实际服务器程序与已验runtime/verification的SHA-256一致；原实例103笔settled/无未决，官方备份bundle生成后升级，Key及原数据保留。旧服务健康、配置及Nginx没有修改。旧目录合成指导经检查发现后，改为私有客户端缓存0.164.0的literal instructions_template；不拼入persistent/runtime权限指令，实际公开TLS目录比对通过。此来源不等于该版本Desktop已验收。
-
-经既有服务器HTTP代理，额度GET200（primary used2%），上游WSS握手101且未发生成frame；随后公开native WSS首笔文本预检失败invalid_upstream_turn，Reference 9B894C99-DA0F-434C-AAB2-B765DB272C41，账本unknown/failed、无可信usage。私有SQLite副本在服务器/本机一致，SHA-256 8ae98a1edc61e09d719f1d0b34f5a957bf873e66eee180008d18d9ee8bcb7d31；诊断Key撤销、用户Key维持暂停，没有第二笔生成。粗分类不能证明唯一根因；外部固定源码另外确认了本地stream组包错误，不能事后改写原证据。
-
-诊断版本77e85fb的7项定向单元测试、39次独立socket负例通过；后续确认订阅WS stream差异后，未完成的全量/跨平台运行已停止，不能计为最终通过。最终版本及实际验证在出口核实后补记。
-
-订阅WS修正7777f24：7项定向单元检查、314次参数socket及45次reader失败socket通过；集中review未发现P1/P2或来源/隐私问题。补强45次检查为逐个JSON/SSE/native请求UUID均须在日志匹配对应reason，定向重跑通过；不是只检查进程中出现一条相同原因。最终Mac/Linux出口仍在执行。
