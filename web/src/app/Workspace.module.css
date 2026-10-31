@@ -77,3 +77,11 @@
     padding: 84px 14px 32px;
   }
 }
+
+.attentionDot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--mantine-color-red-7);
+}

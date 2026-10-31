@@ -62,6 +62,10 @@ try {
   assert(cookie && cookie.secure && cookie.httpOnly && cookie.sameSite === "Strict", "Secure browser session not established");
   secrets.push(cookie.value);
   assert(await page.evaluate(() => localStorage.length === 0 && sessionStorage.length === 0), "Unexpected persistent browser storage");
+  stage = "overview attention";
+  await page.getByRole("link", { name: "服务概览", exact: true }).click();
+  await expect(page.getByRole("region", { name: "需要处理", exact: true })).toContainText("暂无需要处理的事项");
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   stage = "create and one-time secret";
   await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   await page.getByLabel("主体标识", { exact: true }).fill("browser-team");

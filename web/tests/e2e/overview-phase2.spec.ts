@@ -30,6 +30,38 @@ test("overview keeps accessible trends, principal names, details and responsive 
     };
     const report = reportFixture();
     const data: Record<string, unknown> = {
+      "/api/attention": {
+        generatedAtUnixSeconds: 1,
+        items: [
+          {
+            kind: "account_requires_auth",
+            severity: "critical",
+            subjectType: "account",
+            subjectID: account.id,
+            subjectName: "合成订阅账号",
+            detail: {},
+            sinceUnixSeconds: 1,
+          },
+          {
+            kind: "key_expiring",
+            severity: "warning",
+            subjectType: "key",
+            subjectID: "synthetic-key",
+            subjectName: "合成工作站",
+            detail: {},
+            sinceUnixSeconds: 1,
+          },
+          {
+            kind: "client_protocol_extension",
+            severity: "warning",
+            subjectType: "protocol",
+            subjectID: null,
+            subjectName: "x-codex-" + "n".repeat(120),
+            detail: { overflow: false },
+            sinceUnixSeconds: 1,
+          },
+        ],
+      },
       "/api/session": { authenticated: true, csrf: "ac1_" + "a".repeat(43) },
       "/api/system": {
         service: "codexone",
@@ -115,6 +147,24 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page.getByText("合成工作站 · synthetic-text").first(),
   ).toBeVisible();
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "需要处理", exact: true }),
+  ).toContainText("合成订阅账号：账号需要重新授权");
+  await expect(
+    page.getByRole("region", { name: "需要处理", exact: true }),
+  ).toContainText("合成工作站：访问密钥已到期或将在 7 天内到期");
+  await expect(
+    page.getByRole("link", { name: "服务概览（有需要处理的事项）" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "需要处理", exact: true })
+      .getByRole("link", { name: /账号需要重新授权/ }),
+  ).toHaveAttribute("href", "#/accounts");
+  await mkdir("../artifacts/admin-attention", { recursive: true });
+  await page.screenshot({
+    path: "../artifacts/admin-attention/overview.png",
+  });
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.waitForTimeout(400);
   await page.screenshot({ path: screenshots + "/overview-1440.png" });
@@ -141,6 +191,14 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  const longReminder = page.getByRole("link", { name: /x-codex-n+/ });
+  await expect(longReminder).toBeVisible();
+  expect(
+    await longReminder.evaluate(
+      (node) =>
+        node.parentElement!.scrollWidth <= node.parentElement!.clientWidth,
+    ),
+  ).toBeTruthy();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(350);
   await page.screenshot({ path: screenshots + "/overview-390.png" });

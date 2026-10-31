@@ -1,3 +1,5 @@
+import { AttentionPanel } from "./AttentionPanel";
+import { attentionQueryKey, fetchAttention } from "./attention-api";
 import { quotaStale } from "../account-management/quota";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 import { ActivityOverview } from "./ActivityOverview";
@@ -50,6 +52,8 @@ export function AdminOverview() {
   }, []);
   const [params, setParams] = useSearchParams();
   const overlay = !!owner.session && params.get("storage") === "details";
+  const protocolOverlay =
+    !!owner.session && params.get("protocol") === "details";
   const accounts = useQuery({
     queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
@@ -68,9 +72,19 @@ export function AdminOverview() {
     enabled: !!owner.session,
     ...polling,
   });
-  const unauthorized = [accounts.error, usage.error, storage.error].some(
-    (error) => error instanceof ManagementError && error.status === 401,
-  );
+  const attention = useQuery({
+    queryKey: attentionQueryKey,
+    queryFn: ({ signal }) => fetchAttention(signal),
+    enabled: !!owner.session,
+    retry: false,
+    ...polling,
+  });
+  const unauthorized = [
+    accounts.error,
+    usage.error,
+    storage.error,
+    attention.error,
+  ].some((error) => error instanceof ManagementError && error.status === 401);
   useEffect(() => {
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
@@ -108,7 +122,15 @@ export function AdminOverview() {
       )}
       <ActivityOverview
         refresh={refresh}
-        extraQueries={[accounts, usage, storage]}
+        extraQueries={[accounts, usage, storage, attention]}
+        attention={
+          <AttentionPanel
+            items={attention.data?.items}
+            loading={attention.isPending}
+            error={attention.isError}
+            retry={() => void attention.refetch()}
+          />
+        }
         sidebar={
           <>
             <Paper withBorder p="md">
@@ -231,6 +253,41 @@ export function AdminOverview() {
           </>
         }
       />
+      <Drawer
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={protocolOverlay || undefined}
+        opened={protocolOverlay}
+        onClose={() => setParams({})}
+        title="客户端协议扩展"
+        position="right"
+        closeButtonProps={{ "aria-label": "关闭" }}
+      >
+        <Stack>
+          <Text size="sm">
+            本进程启动以来观察到的未知协议名称；仅记录名称，重启后清空。请结合客户端版本核对兼容性。
+          </Text>
+          {attention.data?.items
+            .filter((item) => item.kind === "client_protocol_extension")
+            .map((item, index) => (
+              <Stack key={index} gap="xs">
+                <Text size="sm" className="wrap-anywhere">
+                  {item.subjectName ?? item.subjectID ?? "未知名称"}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  首次出现：
+                  {item.sinceUnixSeconds == null
+                    ? "不可用"
+                    : new Date(item.sinceUnixSeconds * 1000).toLocaleString()}
+                </Text>
+                {item.detail.overflow === true && (
+                  <Text size="sm" c="orange">
+                    名称集合已达上限，后续新名称未记录。
+                  </Text>
+                )}
+              </Stack>
+            ))}
+        </Stack>
+      </Drawer>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}
         data-ui-overlay={overlay || undefined}

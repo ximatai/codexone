@@ -45,6 +45,7 @@ export function ActivityOverview({
   refresh,
   extraQueries = [],
   sidebar,
+  attention,
 }: {
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
@@ -53,6 +54,7 @@ export function ActivityOverview({
     refetch: () => Promise<unknown>;
   }[];
   sidebar?: ReactNode;
+  attention?: ReactNode;
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
@@ -125,6 +127,7 @@ export function ActivityOverview({
           }
         />
       </div>
+      {attention}
       {queries.some((q) => q.isError) && (
         <ErrorState
           retry={() => {

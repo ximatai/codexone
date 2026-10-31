@@ -57,7 +57,9 @@ test("round two overview, usage, account name and key expiration", async ({
           : { error: { code: "unauthorized" } },
       });
     }
-    if (path === "/api/system")
+    if (path === "/api/attention")
+      json = { items: [], generatedAtUnixSeconds: 1 };
+    else if (path === "/api/system")
       json = { service: "codexone", ready: true, checks: [] };
     else if (path === "/api/accounts")
       json = { accounts: [account], nextCursor: null };

@@ -47,6 +47,9 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
         : { error: { code: "unauthorized" } },
     });
   });
+  await page.route("**/api/attention", (route) =>
+    route.fulfill({ json: { items: [], generatedAtUnixSeconds: 1 } }),
+  );
   await page.route("**/api/system", (route) =>
     route.fulfill({ json: { service: "codexone", ready: true, checks: [] } }),
   );
