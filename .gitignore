@@ -36,3 +36,6 @@ __pycache__/
 *.py[cod]
 
 *.sqlite.settlement-reserve
+
+# Vite regenerates theme variables from app/theme.ts on dev and build
+web/src/app/generated/
