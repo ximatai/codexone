@@ -5,7 +5,7 @@ import { useManagedMutation } from "../../shared/useManagedMutation";
 import { useEffect, useRef, useState } from "react";
 import { useManagementSession } from "../../shared/session";
 import * as api from "./api";
-import type { KeyCreated, ManagedKey } from "./api";
+import type { KeyCreated, ManagedKey, KeyDraft } from "./api";
 function message(error: unknown): string {
   if (!(error instanceof api.ManagementError))
     return "无法连接管理服务，请稍后重试。";
@@ -34,6 +34,7 @@ export function useKeys() {
   const [rotating, setRotating] = useState<ManagedKey | null>(null);
   const [created, setCreated] = useState<KeyCreated | null>(null);
   const partialCreation = useRef(false);
+  const partialEdit = useRef(false);
   const [expirationFailure, setExpirationFailure] = useState(false);
   const [copyState, setCopyState] = useState("");
   useEffect(() => {
@@ -122,7 +123,9 @@ export function useKeys() {
     errorMessage: () =>
       partialCreation.current
         ? "密钥已创建但到期设置失败，请保存凭证并刷新列表核对到期时间；勿重复创建。"
-        : undefined,
+        : partialEdit.current
+          ? "权限与限额已保存，显示名未保存或结果待核对；请核对刷新后的列表再操作。"
+          : undefined,
     invalidMessage: "提交内容不符合要求，请检查模型、限额与到期时间。",
     invalidate: [
       queryKeys.keys.all,
@@ -148,6 +151,7 @@ export function useKeys() {
     if (loading) return false;
     return mutation.run(async (csrf, signal) => {
       partialCreation.current = false;
+      partialEdit.current = false;
       const result = await operation(csrf, signal);
       if (signal.aborted) return;
       let key = "secret" in result ? result.key : result;
@@ -177,6 +181,58 @@ export function useKeys() {
       setRotating(null);
       setCreating(false);
     }, success);
+  }
+  async function saveEdit(
+    key: ManagedKey,
+    draft: KeyDraft,
+    csrf: string,
+    signal: AbortSignal,
+  ) {
+    const policyChanged =
+      (draft.displayName ?? null) === (key.displayName ?? null) ||
+      JSON.stringify([
+        key.models,
+        key.limits,
+        key.visionInput ?? false,
+        key.imageGeneration ?? false,
+        key.imageModels ?? [],
+      ]) !==
+        JSON.stringify([
+          draft.models,
+          draft.limits,
+          draft.visionInput ?? false,
+          draft.imageGeneration ?? false,
+          draft.imageModels ?? [],
+        ]);
+    let updated = key;
+    if (policyChanged)
+      updated = await api.updateKey(
+        key,
+        key.enabled,
+        draft.models,
+        draft.limits,
+        csrf,
+        signal,
+        draft,
+      );
+    if ((draft.displayName ?? null) === (updated.displayName ?? null))
+      return updated;
+    try {
+      return await api.setDisplayName(
+        updated,
+        draft.displayName ?? null,
+        csrf,
+        signal,
+      );
+    } catch (error) {
+      if (policyChanged && !signal.aborted) {
+        partialEdit.current = true;
+        setEditing(null);
+        if (!(await reload(signal, true)))
+          throw new Error("Partial key edit requires reconciliation");
+      }
+      throw error;
+    }
   }
   async function copySecret() {
     const target = created;
@@ -214,6 +270,7 @@ export function useKeys() {
     copyState,
     expirationFailure,
     mutate,
+    saveEdit,
     copySecret,
     reload: () => {
       const signal = lifetime.current?.signal;

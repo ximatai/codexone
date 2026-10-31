@@ -389,3 +389,13 @@ private struct AttentionStorage: StorageMonitoring {
   #expect(items.first?.kind == "storage_pressure" && items.first?.severity == "critical")
   #expect(items.filter { $0.kind == "attention_source_unavailable" }.count == 3)
 }
+
+@Test func attentionKeyDisplayNamePrecedesStablePrincipal() throws {
+  let key = ManagedKey(
+    id: "named-key", principal: "stable-principal", revision: 1,
+    enabled: true, policy: try .init(models: ["synthetic-model"], limits: syntheticLimits),
+    createdAtUnixSeconds: 1, expiresAtUnixSeconds: attentionNow, displayName: "合成显示名")
+  #expect(
+    AttentionRules.key(key, requests: 0, budget: 0, now: attentionNow).first?.subjectName == "合成显示名"
+  )
+}

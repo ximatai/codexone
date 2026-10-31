@@ -304,7 +304,7 @@ private struct UsageFixture {
       try db.write("DELETE FROM managed_keys WHERE id='alpha'")
     }
     let deleted = try await f.reader.queryUsage(query)
-    #expect(deleted.rows.allSatisfy { $0.principal == nil })
+    #expect(deleted.rows.allSatisfy { $0.principal == nil && $0.displayName == nil })
     #expect(deleted.rows.contains { $0.keyID == "ghost" })
     #expect(deleted.rows.first { $0.id == "boundary" }?.totalMilliseconds == 34)
     #expect(deleted.totals.metrics.estimatedMicros == historical.totals.metrics.estimatedMicros)

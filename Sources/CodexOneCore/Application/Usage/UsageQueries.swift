@@ -148,6 +148,7 @@ public struct UsageRow: Sendable {
   public let failure: ExecutionFailure?
   public let completeness: UsageEvidence.Completeness?
   public let metrics: UsageMetrics
+  public let displayName: String?
   public let principal: String?
   public let firstEventMilliseconds: Int64?
   public let totalMilliseconds: Int64?
@@ -158,7 +159,8 @@ public struct UsageRow: Sendable {
     accountID: String?, requestID: String?, state: ExecutionSnapshot.State?,
     outcome: ExecutionOutcome.Kind?,
     failure: ExecutionFailure?, completeness: UsageEvidence.Completeness?, metrics: UsageMetrics,
-    cursor: UsageCursor, principal: String? = nil, firstEventMilliseconds: Int64? = nil,
+    cursor: UsageCursor, principal: String? = nil, displayName: String? = nil,
+    firstEventMilliseconds: Int64? = nil,
     totalMilliseconds: Int64? = nil
   ) {
     self.kind = kind
@@ -174,6 +176,7 @@ public struct UsageRow: Sendable {
     self.failure = failure
     self.completeness = completeness
     self.metrics = metrics
+    self.displayName = displayName
     self.principal = principal
     self.firstEventMilliseconds = firstEventMilliseconds
     self.totalMilliseconds = totalMilliseconds
@@ -196,9 +199,11 @@ public struct UsageReport: Sendable {
 }
 public struct UsageKeyOption: Sendable {
   public let id: String
+  public let displayName: String?
   public let principal: String?
-  public init(id: String, principal: String?) {
+  public init(id: String, principal: String?, displayName: String? = nil) {
     self.id = id
+    self.displayName = displayName
     self.principal = principal
   }
 }
@@ -260,6 +265,7 @@ public struct DailyUsageBucket: Sendable {
 public struct InFlightUsageRow: Sendable, Encodable {
   public let id: String
   public let keyID: String
+  public let displayName: String?
   public let principal: String?
   public let model: String?
   public let mode: ExecutionMode
@@ -271,10 +277,11 @@ public struct InFlightUsageRow: Sendable, Encodable {
   public init(
     id: String, keyID: String, principal: String?, model: String?, mode: ExecutionMode,
     accountID: String, accountDisplayName: String?, startedAtUnixSeconds: Int64?,
-    elapsedSeconds: Int64?, hasFirstEvent: Bool?
+    elapsedSeconds: Int64?, hasFirstEvent: Bool?, displayName: String? = nil
   ) {
     self.id = id
     self.keyID = keyID
+    self.displayName = displayName
     self.principal = principal
     self.model = model
     self.mode = mode

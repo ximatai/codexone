@@ -131,6 +131,17 @@ public struct KeyAdminAPI: Sendable {
         enabled: dto.enabled, policy: dto.policy())
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
+    routes.put(":id", "display-name") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let document = try Self.body(request, allowed: ["revision", "displayName"])
+      guard let revision = document["revision"]?.integer,
+        document["displayName"] == .null || document["displayName"]?.string != nil
+      else { throw ExecutionError.invalidCommand }
+      let key = try await store.setKeyDisplayName(
+        id: request.parameters.get("id") ?? "", revision: revision,
+        displayName: document["displayName"]?.string)
+      return try Self.response(.object(["key": Self.metadata(key)]))
+    }
     routes.put(":id", "expiration") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
       let document = try Self.body(request, allowed: ["revision", "expiresAtUnixSeconds"])
@@ -186,6 +197,7 @@ public struct KeyAdminAPI: Sendable {
   private static func metadata(_ key: ManagedKey) -> JSONValue {
     .object([
       "expiresAtUnixSeconds": key.expiresAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
+      "displayName": key.displayName.map { .string($0) } ?? .null,
       "id": .string(key.id), "principal": .string(key.principal),
       "revision": .number(Decimal(key.revision)),
       "enabled": .bool(key.enabled), "models": .array(key.policy.models.map { .string($0) }),

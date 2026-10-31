@@ -41,6 +41,7 @@ const flight = z.object({
       z.object({
         id: z.string(),
         keyID: z.string(),
+        displayName: z.string().nullish(),
         principal: z.string().nullish(),
         model: z.string().nullish(),
         mode: z.string(),

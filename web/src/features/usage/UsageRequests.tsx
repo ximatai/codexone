@@ -1,3 +1,4 @@
+import { KeyName } from "../../shared/KeyName";
 import { Button } from "@mantine/core";
 import { DataTable } from "../../shared/ui/DataTable";
 import {
@@ -47,7 +48,7 @@ export function UsageRequests({
             title: "Key / 模型",
             render: (row) => (
               <>
-                <span title={row.keyID}>{row.principal ?? "主体未记录"}</span>
+                <span title={row.keyID}>{<KeyName {...row} />}</span>
                 <small>{row.model ?? "模型未记录"}</small>
               </>
             ),

@@ -29,6 +29,7 @@ vi.mock("./api", async (original) => ({
   createKey: vi.fn(),
   updateKey: vi.fn(),
   setExpiration: vi.fn(),
+  setDisplayName: vi.fn(),
 }));
 const key: api.ManagedKey = {
   id: "key-1",
@@ -421,4 +422,94 @@ it("does not revive a dismissed secret when a delayed expiration response arrive
   await act(async () => finish({ ...key, revision: 2 }));
   expect(screen.queryByLabelText("新 API Key")).toBeNull();
   expect(api.createKey).toHaveBeenCalledTimes(1);
+});
+
+it.each([false, true])(
+  "edits display name with conflict=%s and searches the alias",
+  async (conflict) => {
+    const named = { ...key, displayName: "合成别名" };
+    vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+    vi.mocked(api.fetchKeys).mockResolvedValue([named]);
+    vi.mocked(api.fetchOptions).mockResolvedValue({
+      models: ["synthetic-text"],
+      imageModels: [],
+    });
+    vi.mocked(api.updateKey).mockResolvedValue({ ...named, revision: 2 });
+    if (conflict)
+      vi.mocked(api.setDisplayName).mockRejectedValue(
+        new api.ManagementError(409, "revision_conflict"),
+      );
+    else
+      vi.mocked(api.setDisplayName).mockResolvedValue({
+        ...named,
+        revision: 3,
+        displayName: null,
+      });
+    render(<KeyManagement />);
+    expect(await screen.findByText("合成别名")).toBeVisible();
+    expect(screen.getByText("team")).toBeVisible();
+    fireEvent.change(screen.getByPlaceholderText(/搜索/), {
+      target: { value: "合成别名" },
+    });
+    expect(screen.getByRole("button", { name: "编辑" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("显示名"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+    await waitFor(() =>
+      expect(api.setDisplayName).toHaveBeenCalledWith(
+        expect.objectContaining({ revision: 1 }),
+        null,
+        "synthetic-csrf",
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "保存修改" }),
+      ).not.toBeInTheDocument(),
+    );
+    if (conflict) {
+      await waitFor(() => expect(api.fetchKeys).toHaveBeenCalledTimes(2));
+      expect(api.setDisplayName).toHaveBeenCalledTimes(1);
+    }
+  },
+);
+
+it("refreshes and closes the editor when policy commits but name is rejected", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([key]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: ["synthetic-text"],
+    imageModels: [],
+  });
+  vi.mocked(api.updateKey).mockResolvedValue({
+    ...key,
+    revision: 2,
+    visionInput: true,
+  });
+  vi.mocked(api.setDisplayName).mockRejectedValue(
+    new api.ManagementError(400, "invalid_command"),
+  );
+  render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  fireEvent.change(screen.getByLabelText("显示名"), {
+    target: { value: "合成别名" },
+  });
+  fireEvent.click(screen.getByLabelText("视觉输入"));
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(api.fetchKeys).toHaveBeenCalledTimes(2));
+  expect(api.updateKey).toHaveBeenCalledTimes(1);
+  expect(api.setDisplayName).toHaveBeenCalledWith(
+    expect.objectContaining({ revision: 2 }),
+    "合成别名",
+    "synthetic-csrf",
+    expect.any(AbortSignal),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "保存修改" }),
+    ).not.toBeInTheDocument(),
+  );
 });

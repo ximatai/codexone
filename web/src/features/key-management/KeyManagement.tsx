@@ -48,7 +48,8 @@ export function KeyManagement() {
   const keys = state.keys
     .filter(
       (key) =>
-        (key.principal.toLowerCase().includes(search.toLowerCase()) ||
+        ((key.displayName ?? "").toLowerCase().includes(search.toLowerCase()) ||
+          key.principal.toLowerCase().includes(search.toLowerCase()) ||
           key.id.toLowerCase().includes(search.toLowerCase())) &&
         (!status ||
           (status === "expiring"
@@ -98,7 +99,7 @@ export function KeyManagement() {
       <Paper withBorder p="md" mb="md" className={styles.toolbar}>
         <TextInput
           aria-label="搜索主体名"
-          placeholder="搜索主体名或标识…"
+          placeholder="搜索显示名、主体名或标识…"
           leftSection={<IconSearch size={18} />}
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
@@ -229,16 +230,8 @@ export function KeyManagement() {
               state.editing
                 ? state.mutate(
                     (csrf, signal) =>
-                      api.updateKey(
-                        state.editing!,
-                        state.editing!.enabled,
-                        draft.models,
-                        draft.limits,
-                        csrf,
-                        signal,
-                        draft,
-                      ),
-                    "权限与限额已更新。",
+                      state.saveEdit(state.editing!, draft, csrf, signal),
+                    "密钥设置已更新。",
                   )
                 : state.mutate(
                     (csrf, signal) => api.createKey(draft, csrf, signal),

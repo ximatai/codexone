@@ -1,3 +1,4 @@
+import { KeyName } from "../../shared/KeyName";
 import {
   ActionIcon,
   Code,
@@ -74,7 +75,9 @@ export function UsageDetail({
                 ],
                 [
                   "Key",
-                  `${detail.principal ?? "主体未记录"} · ${detail.keyID}`,
+                  <span>
+                    <KeyName {...detail} /> · {detail.keyID}
+                  </span>,
                 ],
                 ["账号", detail.accountID ?? "未派发"],
                 ["模型", detail.model ?? "未记录"],

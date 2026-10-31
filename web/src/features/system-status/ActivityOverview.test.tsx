@@ -1,3 +1,5 @@
+import { reportFixture } from "../usage/usage.test-data";
+import { parseUsage } from "../usage/api";
 import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { renderPrivate } from "../../../tests/render";
@@ -57,6 +59,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       id: "synthetic-flight",
       keyID: "hidden-key-identifier",
       principal: "合成工作站",
+      displayName: "工作站别名",
       model: "synthetic-text",
       mode: "generation",
       accountID: null,
@@ -64,7 +67,16 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       hasFirstEvent: false,
     },
   ]);
-  vi.mocked(api.fetchRecent).mockResolvedValue({ rows: [], truncated: false });
+  vi.mocked(api.fetchRecent).mockResolvedValue({
+    rows: [
+      {
+        ...parseUsage(reportFixture()).rows[0],
+        displayName: "最近别名",
+        principal: "recent-principal",
+      },
+    ],
+    truncated: false,
+  });
   renderPrivate(<ActivityOverview />);
   expect(
     await screen.findByRole("img", { name: "今日请求近 7 天：4" }),
@@ -72,9 +84,12 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(
     screen.getByRole("img", { name: "Token近 7 天：不可用" }),
   ).toBeVisible();
-  expect(await screen.findByText("合成工作站 · synthetic-text")).toBeVisible();
+  expect(await screen.findByText("工作站别名")).toBeVisible();
+  expect(screen.getByText(/合成工作站/)).toBeVisible();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
   expect(screen.getByText("等待首事件")).toBeVisible();
+  expect(await screen.findByText("最近别名")).toBeVisible();
+  expect(screen.queryByText(/object Object/)).toBeNull();
 });
 
 it("renders only skeletons in KPI cards before the daily response", async () => {

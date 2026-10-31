@@ -66,6 +66,7 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
 /// Safe metadata. Verification material is deliberately absent from list/update responses.
 public struct ManagedKey: Sendable, Equatable, Codable {
   public let id: String
+  public let displayName: String?
   public let principal: String
   public let revision: Int64
   public let enabled: Bool
@@ -74,8 +75,9 @@ public struct ManagedKey: Sendable, Equatable, Codable {
   public let expiresAtUnixSeconds: Int64?
   public init(
     id: String, principal: String, revision: Int64, enabled: Bool, policy: KeyPolicy,
-    createdAtUnixSeconds: Int64, expiresAtUnixSeconds: Int64? = nil
+    createdAtUnixSeconds: Int64, expiresAtUnixSeconds: Int64? = nil, displayName: String? = nil
   ) {
+    self.displayName = displayName
     self.expiresAtUnixSeconds = expiresAtUnixSeconds
     self.id = id
     self.principal = principal
@@ -92,6 +94,8 @@ public protocol KeyGovernanceStore: Sendable {
   func createKey(id: String, principal: String, digest: String, policy: KeyPolicy) async throws
     -> ManagedKey
   func updateKey(id: String, revision: Int64, enabled: Bool, policy: KeyPolicy) async throws
+    -> ManagedKey
+  func setKeyDisplayName(id: String, revision: Int64, displayName: String?) async throws
     -> ManagedKey
   func setKeyExpiration(id: String, revision: Int64, expiresAtUnixSeconds: Int64?) async throws
     -> ManagedKey

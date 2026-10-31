@@ -48,7 +48,14 @@ public struct UsageAdminAPI: Sendable {
       do {
         let rows = try await querying.inFlightUsage(limit: limit)
         return try Self.response(
-          .object(["rows": try JSONValue.decode(JSONEncoder().encode(rows))]))
+          .object([
+            "rows": .array(
+              try rows.map { row in
+                var object = try JSONValue.decode(JSONEncoder().encode(row)).object!
+                object["displayName"] = row.displayName.map { .string($0) } ?? .null
+                return .object(object)
+              })
+          ]))
       } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
     }
     routes.get("options") { request async throws -> Response in
@@ -60,6 +67,7 @@ public struct UsageAdminAPI: Sendable {
           "keyOptions": .array(
             options.keyOptions.map {
               .object([
+                "displayName": $0.displayName.map { .string($0) } ?? .null,
                 "id": .string($0.id), "principal": $0.principal.map { .string($0) } ?? .null,
               ])
             }),
@@ -80,6 +88,7 @@ public struct UsageAdminAPI: Sendable {
               report.keys.map { value in
                 .object([
                   "keyID": .string(value.key.id),
+                  "displayName": value.key.displayName.map { .string($0) } ?? .null,
                   "principal": value.key.principal.map { .string($0) } ?? .null,
                   "admitted": .number(Decimal(value.admitted)),
                   "failed": .number(Decimal(value.failed)),
@@ -241,6 +250,7 @@ public struct UsageAdminAPI: Sendable {
             "kind": .string(value.kind.rawValue), "id": .string(value.id),
             "atUnixSeconds": count(value.atUnixSeconds),
             "principal": text(value.principal),
+            "displayName": text(value.displayName),
             "firstEventMilliseconds": value.firstEventMilliseconds.map(count) ?? .null,
             "totalMilliseconds": value.totalMilliseconds.map(count) ?? .null,
             "keyID": .string(value.keyID), "model": text(value.model),
