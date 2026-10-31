@@ -1,6 +1,9 @@
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/States";
 import { useState } from "react";
 import {
+  ActionIcon,
+  Tooltip,
+  Menu,
   Alert,
   Anchor,
   Badge,
@@ -17,6 +20,8 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { IconDots, IconRefresh } from "@tabler/icons-react";
+import { quotaStale } from "./quota";
 import * as api from "./api";
 import { AccountObservability, utc } from "./AccountObservability";
 import { observeAccount, observationNotice } from "./observation-api";
@@ -131,70 +136,52 @@ export function AccountManagement() {
                     : !summary || summary.quota.state === "unavailable"
                       ? "额度不可用"
                       : summary &&
-                          (summary.quota.state === "stale" ||
-                            (Math.max(state.clock, performance.now()) -
-                              summary.receivedAt) /
-                              1000 >=
-                              summary.quota.freshForSeconds)
+                          quotaStale(
+                            summary,
+                            Math.max(state.clock, performance.now()),
+                          )
                         ? "额度观测已陈旧"
                         : null;
             return (
               <Paper withBorder p="lg" key={item.id}>
-                <div className={styles.cardSection} aria-label="账号">
-                  <Text fw={600} size="sm" className={styles.id}>
-                    {item.displayName ?? item.id}
-                  </Text>
-                  {item.displayName && (
-                    <Text size="xs" c="dimmed" className={styles.id}>
-                      {item.id}
+                <Group justify="space-between" align="start" mb="md">
+                  <div aria-label="账号">
+                    <Text fw={700} size="xl">
+                      {item.displayName ?? item.id}
                     </Text>
-                  )}
-                </div>
-                <div className={styles.cardSection} aria-label="使用策略">
-                  <Badge
-                    variant="light"
-                    color={
-                      item.mode === "enabled"
-                        ? "green"
-                        : item.mode === "draining"
-                          ? "yellow"
-                          : "gray"
-                    }
-                  >
-                    {modes[item.mode]}
-                  </Badge>
-                </div>
-                <div className={styles.cardSection} aria-label="授权">
-                  <Badge
-                    variant="outline"
-                    color={item.authorization === "ready" ? "green" : "yellow"}
-                  >
-                    {authorization[item.authorization]}
-                  </Badge>
-                </div>
+                    {item.displayName && (
+                      <Text size="xs" c="dimmed" className={styles.id}>
+                        {item.id}
+                      </Text>
+                    )}
+                  </div>
+                  <div aria-label="使用策略">
+                    <Badge
+                      variant="light"
+                      color={
+                        item.mode === "enabled"
+                          ? "green"
+                          : item.mode === "draining"
+                            ? "yellow"
+                            : "gray"
+                      }
+                    >
+                      {modes[item.mode]} ·{" "}
+                      <span>{authorization[item.authorization]}</span>
+                    </Badge>
+                  </div>
+                </Group>
                 <div className={styles.cardSection} aria-label="额度与健康">
-                  <QuotaWindowBar
-                    title="主窗口"
-                    value={quota?.primary ?? null}
-                  />
-                  <QuotaWindowBar
-                    title="次窗口"
-                    value={quota?.secondary ?? null}
-                  />
-                  <Text size="xs" c="dimmed">
-                    {!summary
-                      ? "尚无观测"
-                      : summary.quota.state === "unavailable"
-                        ? "额度不可用"
-                        : summary.quota.state === "stale" ||
-                            (Math.max(state.clock, performance.now()) -
-                              summary.receivedAt) /
-                              1000 >=
-                              summary.quota.freshForSeconds
-                          ? "额度观测已陈旧"
-                          : "额度观测新鲜"}
-                    {summary?.quota.failure ? " · 最近读取失败" : ""}
-                  </Text>
+                  <div className={styles.windows}>
+                    <QuotaWindowBar
+                      title="主窗口"
+                      value={quota?.primary ?? null}
+                    />
+                    <QuotaWindowBar
+                      title="次窗口"
+                      value={quota?.secondary ?? null}
+                    />
+                  </div>
                   {attention && (
                     <Text size="xs" c="orange">
                       {attention}
@@ -210,20 +197,36 @@ export function AccountManagement() {
                     >
                       额度与健康详情
                     </Button>
-                    <Button
-                      variant="subtle"
-                      size="xs"
-                      color={item.mode === "disabled" ? "green" : "red"}
-                      disabled={blocked}
-                      onClick={() =>
-                        changeMode(
-                          item,
-                          item.mode === "disabled" ? "enabled" : "disabled",
-                        )
-                      }
-                    >
-                      {item.mode === "disabled" ? "启用" : "禁用"}
-                    </Button>
+                    {item.mode === "disabled" ? (
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        disabled={blocked}
+                        onClick={() => changeMode(item, "enabled")}
+                      >
+                        启用
+                      </Button>
+                    ) : (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="default"
+                            aria-label={`${item.displayName ?? item.id} 更多操作`}
+                          >
+                            <IconDots size={17} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            color="red"
+                            disabled={blocked}
+                            onClick={() => changeMode(item, "disabled")}
+                          >
+                            禁用
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    )}
                   </Group>
                 </div>
               </Paper>
@@ -232,6 +235,7 @@ export function AccountManagement() {
         </div>
       )}
       <Modal
+        zIndex={400}
         opened={!!confirm}
         onClose={() => {
           if (!state.busy) setConfirm(null);
@@ -274,13 +278,29 @@ export function AccountManagement() {
         </Stack>
       </Modal>
       <Drawer
-        opened={!!account && !state.flow && !confirm}
+        opened={!!account && !state.flow}
         onClose={() => setSelected(null)}
-        title="账号详情"
+        title={
+          <Group component="span">
+            <Text component="span" size="xl" fw={700}>
+              账号详情
+            </Text>
+            <Tooltip label="重新读取账号">
+              <ActionIcon
+                variant="subtle"
+                aria-label="重新读取账号"
+                disabled={state.busy}
+                onClick={() => void state.reread()}
+              >
+                <IconRefresh size={18} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+        }
         position="right"
         size="lg"
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay={(!!account && !state.flow && !confirm) || undefined}
+        data-ui-overlay={(!!account && !state.flow) || undefined}
         closeButtonProps={{ "aria-label": "关闭" }}
       >
         {account && (
@@ -301,13 +321,7 @@ export function AccountManagement() {
                 {state.notice}
               </Alert>
             )}
-            <Button
-              variant="default"
-              disabled={state.busy}
-              onClick={() => void state.reread()}
-            >
-              重新读取账号
-            </Button>
+
             <div>
               <Text fw={600} className={styles.id}>
                 {account.id}
@@ -377,14 +391,23 @@ export function AccountManagement() {
                 >
                   刷新授权
                 </Button>
-                <Button
-                  variant="default"
-                  disabled={blocked || account.authorization === "refreshing"}
-                  onClick={() => begin(account)}
-                >
-                  重新授权
-                </Button>
               </Group>
+            </section>
+            <section aria-label="危险操作">
+              <Title order={3} size="h5" mb="sm">
+                危险操作
+              </Title>
+              <Text size="sm" c="dimmed" mb="sm">
+                重新登录并替换账号授权；刷新授权仅更新现有凭证。
+              </Text>
+              <Button
+                color="red"
+                variant="outline"
+                disabled={blocked || account.authorization === "refreshing"}
+                onClick={() => begin(account)}
+              >
+                重新授权
+              </Button>
             </section>
             <AccountObservability
               key={account.id}

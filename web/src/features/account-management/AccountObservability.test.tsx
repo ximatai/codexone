@@ -37,7 +37,7 @@ it("blocks passive reading after detail failure until a successful retry", async
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "读取上游额度" })).toBeEnabled(),
   );
-  expect(screen.getByText("已用 0%")).toBeVisible();
+  expect(screen.getByText("剩余 100%")).toBeVisible();
   expect(screen.getByText("上游未提供")).toBeVisible();
 });
 it("ignores a late detail response after its account is removed", async () => {
@@ -60,7 +60,7 @@ it("ignores a late detail response after its account is removed", async () => {
   fireEvent.click(screen.getByRole("button", { name: "额度与健康详情" }));
   view.unmount();
   await act(async () => finish(api.parseObservability(observationFixture())));
-  expect(screen.queryByText("已用 0%")).not.toBeInTheDocument();
+  expect(screen.queryByText("剩余 100%")).not.toBeInTheDocument();
 });
 
 it("returns expired detail reads to the page authentication owner", async () => {

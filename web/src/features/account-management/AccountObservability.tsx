@@ -1,3 +1,4 @@
+import { quotaStale } from "./quota";
 import { useEffect, useRef, useState } from "react";
 import { ErrorState } from "../../shared/ui/States";
 import { Button, Skeleton } from "@mantine/core";
@@ -28,19 +29,16 @@ function Window({
 }) {
   return (
     <div className={styles.window}>
-      <strong>{title}</strong>
       {!value ? (
-        <p className={styles.subtle}>上游未提供</p>
+        <p className={styles.subtle}>
+          {title} · <span>上游未提供</span>
+        </p>
       ) : (
         <>
           <span className={styles.subtle}>
             {duration(value.durationSeconds)}
           </span>
-          <p>
-            {value.usedPercent === null
-              ? "用量比例未提供"
-              : `已用 ${value.usedPercent}%`}
-          </p>
+
           <QuotaWindowBar title={title} value={value} />
         </>
       )}
@@ -65,12 +63,8 @@ function LimitStatus({ value }: { value: QuotaLimit | undefined }) {
 }
 function state(value: Snapshot, now: number) {
   if (value.quota.state === "unavailable") return "额度不可用";
-  if (
-    value.quota.state === "stale" ||
-    (now - value.receivedAt) / 1000 >= value.quota.freshForSeconds
-  )
-    return "额度观测已陈旧";
-  return "额度观测新鲜";
+  if (quotaStale(value, now)) return "额度观测已陈旧";
+  return "";
 }
 export function AccountObservability({
   account,
@@ -139,10 +133,7 @@ export function AccountObservability({
         {value ? state(value, current) : "额度尚无观测"}
         {value?.quota.failure ? " · 最近读取失败" : ""}
       </small>
-      {base?.primary?.usedPercent !== undefined &&
-        base.primary.usedPercent !== null && (
-          <small>主窗口已用 {base.primary.usedPercent}%</small>
-        )}
+
       {(base?.allowed === false || base?.limitReached === true) && (
         <small className={styles.attention}>
           上游额度报告受限，请查看窗口详情

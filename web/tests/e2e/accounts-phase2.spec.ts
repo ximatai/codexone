@@ -69,6 +69,16 @@ test("account drawer refreshes a conflicting name and saves on explicit retry", 
   await page.screenshot({
     path: "../artifacts/ui-phase2/accounts-drawer-1440.png",
   });
+  await drawer.getByText("排空", { exact: true }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "排空账号",
+    exact: true,
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByLabel("账号显示名")).toHaveValue("合成新名称");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(drawer).toBeVisible();
   await drawer.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(drawer).not.toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

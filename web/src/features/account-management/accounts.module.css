@@ -37,7 +37,7 @@
 }
 @media (min-width: 1200px) {
   .cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
   }
 }
 .subtle {
@@ -91,4 +91,11 @@
   .windows {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.quotaWindow {
+  padding: 12px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-gray-0);
 }

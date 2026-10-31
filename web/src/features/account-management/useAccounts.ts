@@ -132,6 +132,7 @@ export function useAccounts() {
   }
   const managed = useManagedMutation({
     scope: "accounts",
+    successNotification: false,
     errorMessage: (cause) =>
       cause instanceof sessionAPI.ManagementError &&
       cause.code === "authorization_required"
@@ -154,7 +155,8 @@ export function useAccounts() {
         if (signal.aborted) return;
         const refreshed = await read(epoch.current, signal);
         if (!refreshed) throw new Error("Account refresh failed");
-        if (typeof success !== "string") {
+        if (typeof success === "string") setNotice(success);
+        else {
           const notice = success(result);
           setNotice(notice.text, notice.warning ? "warning" : "success");
         }
