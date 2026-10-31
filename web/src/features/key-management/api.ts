@@ -24,6 +24,7 @@ export interface ManagedKey {
   imageModels?: string[];
   limits: KeyLimits;
   createdAtUnixSeconds: number;
+  expiresAtUnixSeconds?: number | null;
 }
 export interface ImagePermissions {
   visionInput?: boolean;
@@ -103,6 +104,14 @@ export function parseKey(value: unknown): ManagedKey {
   const limits = record(data.limits);
   return {
     id: data.id,
+    ...(data.expiresAtUnixSeconds === undefined
+      ? {}
+      : {
+          expiresAtUnixSeconds:
+            data.expiresAtUnixSeconds === null
+              ? null
+              : boundedNumber(data.expiresAtUnixSeconds),
+        }),
     principal: data.principal,
     enabled: data.enabled,
     revision: boundedNumber(data.revision, 1, 1_000_000),
@@ -217,4 +226,43 @@ export async function rotateKey(
       signal,
     }),
   );
+}
+
+export async function setExpiration(
+  key: ManagedKey,
+  expiresAtUnixSeconds: number | null,
+  csrf: string,
+  signal?: AbortSignal,
+): Promise<ManagedKey> {
+  return parseKey(
+    record(
+      await request("/api/keys/" + encodeURIComponent(key.id) + "/expiration", {
+        method: "PUT",
+        body: { revision: key.revision, expiresAtUnixSeconds },
+        csrf,
+        signal,
+      }),
+    ).key,
+  );
+}
+export function expirationState(
+  expires: number | null | undefined,
+  now = Date.now() / 1000,
+): "none" | "expired" | "soon" | "active" {
+  if (expires == null) return "none";
+  if (now >= expires) return "expired";
+  return expires - now <= 7 * 86400 ? "soon" : "active";
+}
+export function expirationLabel(
+  expires: number | null | undefined,
+  now = Date.now() / 1000,
+): string {
+  const state = expirationState(expires, now);
+  return state === "none"
+    ? "永不过期"
+    : state === "expired"
+      ? "已到期"
+      : state === "soon"
+        ? "7 天内将到期"
+        : "有效期内";
 }

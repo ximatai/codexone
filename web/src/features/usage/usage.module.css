@@ -1,0 +1,11 @@
+.summary strong {
+  overflow-wrap: anywhere;
+}
+.wideMetric {
+  width: 9%;
+}
+@media (max-width: 70em) {
+  .wideMetric {
+    display: none;
+  }
+}

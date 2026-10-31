@@ -60,3 +60,12 @@ API方法/参数/字段见[管理规范](../../specs/control-plane.md)，取舍�
 - `docs/development/`：`account-credentials.md`、`key-governance.md`、`linux-installation.md`、`master-key-maintenance.md`、`migration-cutback.md`、`snapshot-maintenance.md`。
 - `docs/specs/`：`control-plane.md`、`identity.md`、`operations.md`、`usage.md`。
 - `scripts/`：`verify.sh`、`verify_accounts.py`、`verify_admin.py`、`verify_admin_round2.py`、`verify_installation.py`、`verify_keys.py`、`verify_snapshot_restore.py`、`verify_storage_pressure.py`。
+
+## 前端实现与验证（2026-10-31）
+
+平台：macOS arm64，合成 fixture，无真实账号或生成调用。
+
+- 范围：首页四张 KPI（七日趋势、较昨日变化、错误率主要类别，客户端取消不计入错误类别，错误率变化按百分点）；进行中与最近已结束请求（15 秒自动刷新、隐藏页暂停、回到页面仅刷新陈旧数据；最近请求每分钟刷新，31 天内最多 20 条、扫描上限 1000 条并提示）；用量页缓存 Token、首事件/总耗时列与汇总；账号显示名编辑/清除（列表保留账号标识副行）；Key UTC 到期日、+30/+90 天（至少保留整 N 天）、清除与状态。
+- `./scripts/verify.sh --web --chrome`：退出码 0；vitest 18 文件 71 项通过，Chrome Playwright 6/6 通过（含 `admin-round2.spec.ts`）。
+- 1440×900 真实合成后端走查：登录、首页 KPI/进行中/最近请求与详情、Key 设置 +30 天到期并保存、用量页汇总与明细；账号页在无主密钥 fixture 下正确显示“未开启”，显示名由 E2E 与 `verify_admin_round2.py` 覆盖。
+- subagent 界面评审无 P0；已修正：三类查询拆分独立失败、最近请求降频、账号标识可区分、错误率零请求日不计 0、百分点变化、更新时间计时局部重渲染、趋势线拉伸填充与可读 aria 标签、本地时间标注、到期快捷日期、显示名去空白与未变更禁用、“首事件耗时”术语统一。保留 P2：首页原运营卡片与新 KPI 有部分重复；用量明细“用量”列在大屏仍较密。

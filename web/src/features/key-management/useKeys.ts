@@ -13,7 +13,7 @@ function message(error: unknown, mutation = false): string {
   if (error.status === 409)
     return "记录已被其他操作修改，列表已刷新，请重新确认后操作。";
   if (error.status === 400 || error.status === 413)
-    return "提交内容不符合要求，请检查模型与限额。";
+    return "提交内容不符合要求，请检查模型、限额与到期时间。";
   if (mutation) return "操作结果尚未确认，请先刷新列表核对，再继续操作。";
   return "管理服务暂时不可用，请稍后重试。";
 }

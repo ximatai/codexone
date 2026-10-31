@@ -1,3 +1,5 @@
+import { UsageDetail } from "./UsageDetail";
+import styles from "./usage.module.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ManagementError } from "../../shared/management";
@@ -7,11 +9,9 @@ import {
   Alert,
   Button,
   Checkbox,
-  Drawer,
   Group,
   NativeSelect,
   Paper,
-  Stack,
   Table,
   Text,
   TextInput,
@@ -30,6 +30,11 @@ import {
   estimateNote,
 } from "../../shared/presentation";
 export { failures } from "../../shared/presentation";
+export function duration(value: number | null | undefined) {
+  return value == null
+    ? "不可用"
+    : `${value.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} ms`;
+}
 function number(value: string | null | undefined, lower = false) {
   return value == null
     ? "不可用"
@@ -125,13 +130,6 @@ export function UsageOverview({
   const [detail, setDetail] = useState<api.UsageReport["rows"][number] | null>(
     null,
   );
-  const [copied, setCopied] = useState("");
-  const overlay = !!detail && !paused;
-  useEffect(() => {
-    if (!overlay) return;
-    document.body.classList.add("management-overlay-open");
-    return () => document.body.classList.remove("management-overlay-open");
-  }, [overlay]);
   const [draft, setDraft] = useState<api.UsageFilters>(
     () => initialFilters ?? { ...api.defaults(), key: selection?.keyID ?? "" },
   );
@@ -219,7 +217,6 @@ export function UsageOverview({
       if (cause instanceof ManagementError && cause.status === 401) {
         setReport(null);
         setDetail(null);
-        setCopied("");
         setOptions({ keys: [], models: [], failures: [] });
         unauthorized.current();
       } else {
@@ -480,7 +477,45 @@ export function UsageOverview({
               {applied?.failedOnly ? "仅异常结果" : "全部结果"}
             </p>
           )}
-          <div className="usage-summary">
+          <div className={`usage-summary ${styles.summary}`}>
+            <div>
+              <span>Token 合计</span>
+              <strong>
+                {report.totals.metrics.inputTokens == null ||
+                report.totals.metrics.outputTokens == null
+                  ? "不可用"
+                  : (incomplete ? "≥ " : "") +
+                    (
+                      BigInt(report.totals.metrics.inputTokens) +
+                      BigInt(report.totals.metrics.outputTokens)
+                    ).toLocaleString("zh-CN") +
+                    " Token"}
+              </strong>
+              <small>输入含缓存 + 输出；图片工具单列</small>
+            </div>
+            <div>
+              <span title="首个上游事件耗时，并非下游首个 Token">
+                平均首事件耗时
+              </span>
+              <strong>
+                {duration(report.totals.averageFirstEventMilliseconds)}
+              </strong>
+              <small>首个上游事件，非下游首 Token</small>
+            </div>
+            <div>
+              <span>P95 首事件耗时</span>
+              <strong>
+                {duration(report.totals.p95FirstEventMilliseconds)}
+              </strong>
+              <small>仅非空观测样本</small>
+            </div>
+            <div>
+              <span>平均总耗时</span>
+              <strong>
+                {duration(report.totals.averageTotalMilliseconds)}
+              </strong>
+              <small>仅非空观测样本</small>
+            </div>
             <div>
               <span>请求</span>
               <strong>{report.totals.admitted.toLocaleString()}</strong>
@@ -588,6 +623,14 @@ export function UsageOverview({
                     <th>归属 / 模式</th>
                     <th>请求结果</th>
                     <th>用量</th>
+                    <th className={styles.wideMetric}>缓存 Token</th>
+                    <th
+                      className={styles.wideMetric}
+                      title="首个上游事件耗时，并非下游首个 Token"
+                    >
+                      首事件耗时
+                    </th>
+                    <th className={styles.wideMetric}>总耗时</th>
                     <th>详情</th>
                   </tr>
                 </thead>
@@ -661,13 +704,25 @@ export function UsageOverview({
                           </>
                         )}
                       </td>
+                      <td className={styles.wideMetric} data-label="缓存 Token">
+                        {number(row.metrics.cachedTokens)}
+                      </td>
+                      <td
+                        className={styles.wideMetric}
+                        data-label="首事件耗时"
+                        title="首个上游事件耗时，并非下游首个 Token"
+                      >
+                        {duration(row.firstEventMilliseconds)}
+                      </td>
+                      <td className={styles.wideMetric} data-label="总耗时">
+                        {duration(row.totalMilliseconds)}
+                      </td>
                       <td data-label="详情">
                         <Button
                           variant="subtle"
                           size="compact-sm"
                           onClick={() => {
                             setDetail(row);
-                            setCopied("");
                           }}
                         >
                           查看详情
@@ -713,93 +768,7 @@ export function UsageOverview({
           </div>
         </div>
       )}
-      <Drawer
-        lockScroll={false}
-        opened={!!detail}
-        onClose={() => {
-          setDetail(null);
-          setCopied("");
-        }}
-        title="请求详情"
-        position="right"
-        size="lg"
-        closeButtonProps={{ "aria-label": "关闭" }}
-      >
-        {detail && (
-          <Stack>
-            <Text className="wrap-anywhere">
-              请求 ID：{detail.requestID ?? detail.id}
-            </Text>
-            <Button
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(
-                    detail.requestID ?? detail.id,
-                  );
-                  setCopied("已复制请求 ID");
-                } catch {
-                  setCopied("复制失败，请手动选择请求 ID");
-                }
-              }}
-            >
-              复制请求 ID
-            </Button>
-            {copied && <Text role="status">{copied}</Text>}
-            <Text title={timeTitle(detail.atUnixSeconds)}>
-              {localTime(detail.atUnixSeconds)} / {utc(detail.atUnixSeconds)}
-            </Text>
-            <Text>
-              Key：{detail.principal ?? "主体未记录"} · {detail.keyID}
-            </Text>
-            <Text>
-              账号：{detail.accountID ?? "未派发"} · 模型：
-              {detail.model ?? "未记录"} · {modes[detail.mode]}
-            </Text>
-            <Text>
-              结果：{detail.outcome ? outcomes[detail.outcome] : "未记录"} ·{" "}
-              {detail.state ? states[detail.state] : "无执行租约"}
-            </Text>
-            <Text>
-              错误：
-              {detail.failure
-                ? (failures[detail.failure] ?? "其他异常")
-                : "无已记录错误"}
-            </Text>
-            <Text>
-              首事件耗时：
-              {detail.firstEventMilliseconds == null
-                ? "不可用"
-                : `${detail.firstEventMilliseconds} ms`}{" "}
-              · 总耗时：
-              {detail.totalMilliseconds == null
-                ? "不可用"
-                : `${detail.totalMilliseconds} ms`}
-            </Text>
-            <Text size="sm">
-              耗时从准入后开始观测；历史记录或无首事件时不可用。{estimateNote}。
-            </Text>
-            <Text>
-              用量：
-              {detail.completeness === "complete"
-                ? "完整"
-                : detail.completeness === "partial"
-                  ? "部分证据，数值为下界"
-                  : "不可用"}
-            </Text>
-            {Object.entries(metricLabels).map(([key, label]) => (
-              <Text key={key}>
-                {label}：
-                {key === "estimatedMicros"
-                  ? money(detail.metrics.estimatedMicros)
-                  : number(
-                      detail.metrics[key as keyof api.Metrics],
-                      detail.completeness === "partial",
-                    )}
-              </Text>
-            ))}
-          </Stack>
-        )}
-      </Drawer>
+      <UsageDetail detail={detail} onClose={() => setDetail(null)} />
     </Paper>
   );
 }

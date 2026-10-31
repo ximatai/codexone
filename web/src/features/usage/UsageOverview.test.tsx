@@ -229,3 +229,25 @@ it("keeps the completed-hour window through pagination across an hour and renews
     ).toBe(String(Date.parse("2026-10-31T11:00:00Z") / 1000)),
   );
 });
+
+it("shows filtered aggregate latency and dedicated request metric columns", async () => {
+  setup();
+  const report = api.parseUsage(reportFixture());
+  report.totals.averageFirstEventMilliseconds = 12.5;
+  report.totals.p95FirstEventMilliseconds = 60;
+  report.totals.averageTotalMilliseconds = 300;
+  report.rows[0].firstEventMilliseconds = 15;
+  report.rows[0].totalMilliseconds = 200;
+  vi.mocked(api.fetchUsage).mockResolvedValue(report);
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  await screen.findByText("12.5 ms");
+  expect(screen.getByText("60 ms")).toBeVisible();
+  expect(screen.getByText("300 ms")).toBeVisible();
+  expect(
+    screen.getByRole("columnheader", { name: "缓存 Token" }),
+  ).toBeVisible();
+  expect(screen.getByText("15 ms")).toBeInTheDocument();
+  expect(screen.getByText("200 ms")).toBeInTheDocument();
+});
