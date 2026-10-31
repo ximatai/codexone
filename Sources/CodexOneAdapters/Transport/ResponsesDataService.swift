@@ -158,7 +158,9 @@ public struct ResponsesDataService: Service {
                 do {
                   _ = try await executor.access.policy(
                     executor.access.digest(head.headers["authorization"]))
-                  guard normalChannels.register(channel) else { throw ExecutionError.capacity }
+                  guard normalChannels.register(channel, retained: true) else {
+                    throw ExecutionError.capacity
+                  }
                   return HTTPHeaders()
                 } catch { return nil }
               }
@@ -202,6 +204,7 @@ public struct ResponsesDataService: Service {
             }
             .flatMapError { error in
               timeout.cancel()
+              normalChannels.release(channel)
               return channel.close().flatMapThrowing { throw error }
             }
         }
@@ -222,6 +225,7 @@ public struct ResponsesDataService: Service {
                       case .webSocket(
                         let socket, let digest, let reservations, let headers, let diagnosticHeaders
                       ):
+                        defer { normalChannels.release(socket.channel) }
                         var executor = executor
                         executor.clientHeaders = headers
                         executor.protocolClientHeaders = diagnosticHeaders
@@ -319,13 +323,22 @@ public struct ResponsesDataService: Service {
         var known = Set<String>()
         var controlRate = WebSocketControlRate()
         lanes.addTask { firstBody }
-        while let result = try await lanes.next(), let body = result {
+        while let result = try await lanes.next() {
+          guard let body = result else { continue }
+          if downstream.isClosed {
+            body.release()
+            commands.finish(CancellationError())
+            try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
+            throw CancellationError()
+          }
           guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
           if try await handleWebSocketControl(
             body, upstream: upstream, downstream: downstream,
             headers: executor.protocolClientHeaders, rate: &controlRate
           ) {
-            lanes.addTask { try await activity.read { try await downstream.nextBody() } }
+            lanes.addTask {
+              try await readWebSocketCommand(downstream, activity: activity, commands: commands)
+            }
             continue
           }
           let lane = try webSocketLane(JSONValue.decode(body.data))
@@ -349,7 +362,11 @@ public struct ResponsesDataService: Service {
               var pending = firstTurn
               let tools = WebSocketToolState()
               while !Task.isCancelled {
-                let body = try await commands.nextBody(lane: lane)
+                let body: WebSocketBody
+                do { body = try await commands.nextBody(lane: lane) } catch {
+                  if downstream.isClosed { return nil }
+                  throw error
+                }
                 defer { body.release() }
                 defer { activity.end() }
                 let initialTurn = pending
@@ -357,32 +374,41 @@ public struct ResponsesDataService: Service {
                 let requestID = initialTurn?.requestID ?? UUID().uuidString
                 var requested: ResponseRequest?
                 do {
+                  guard !downstream.isClosed else { throw CancellationError() }
                   guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
                   let request = try webSocketCreate(
                     body.data, imageConfiguration: executor.configuration.imageGeneration,
                     previousTools: tools.snapshot)
                   requested = request
-                  if let initialTurn {
-                    let model = try executor.executionModel(request)
-                    try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
-                    try await executor.exchange(
-                      request, context: initialTurn.context, model: model, peer: upstream,
-                      lane: lane
-                    ) { event in
-                      try await downstream.send(event)
-                      tools.observe(event, request: request)
-                    }
-                    initialTurn.start.finishTurn()
-                  } else {
-                    let current = try await executor.authorized(digest)
-                    try await current.execute(
-                      request, requestID: requestID, peer: upstream, lane: lane
-                    ) { event in
-                      try await downstream.send(event)
-                      tools.observe(event, request: request)
+                  try await withWebSocketSettlement(
+                    downstream: downstream, upstream: upstream, lane: lane
+                  ) {
+                    if let initialTurn {
+                      let model = try executor.executionModel(request)
+                      try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
+                      try await executor.exchange(
+                        request, context: initialTurn.context, model: model, peer: upstream,
+                        lane: lane
+                      ) { event in
+                        try await downstream.send(event)
+                        tools.observe(event, request: request)
+                      }
+                      initialTurn.start.finishTurn()
+                    } else {
+                      let current = try await executor.authorized(digest)
+                      try await current.execute(
+                        request, requestID: requestID, peer: upstream, lane: lane
+                      ) { event in
+                        try await downstream.send(event)
+                        tools.observe(event, request: request)
+                      }
                     }
                   }
                 } catch {
+                  if downstream.isClosed {
+                    initialTurn?.start.close(error)
+                    continue
+                  }
                   if upstream.isClosed {
                     if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
                       try? await sendWebSocketError(
@@ -408,7 +434,7 @@ public struct ResponsesDataService: Service {
             }
           }
           lanes.addTask {
-            try await activity.read { try await downstream.nextBody() }
+            try await readWebSocketCommand(downstream, activity: activity, commands: commands)
           }
         }
       }

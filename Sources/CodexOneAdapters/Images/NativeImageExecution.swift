@@ -10,6 +10,7 @@ func forwardedClientHeaders(
 ) -> HTTPHeaders {
   let allowed: Set<String> = [
     "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
+    "x-codex-beta-features", "x-codex-window-id", "x-codex-parent-thread-id",
     "x-codex-image-turn-id", "x-codex-turn-state", "x-session-id", "conversation_id",
     "x-conversation-id",
   ]

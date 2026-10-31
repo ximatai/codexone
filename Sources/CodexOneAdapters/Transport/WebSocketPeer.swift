@@ -124,6 +124,7 @@ final class WebSocketInbox: Sendable {
       try await withCheckedThrowingContinuation { continuation in
         let ready = state.withLock {
           value -> (Result<WebSocketBody, any Error>?, CheckedContinuation<Void, any Error>?) in
+          if Task.isCancelled { return (.failure(CancellationError()), nil) }
           if value.queues[lane]?.isEmpty == false {
             let data = value.queues[lane]!.removeFirst()
             value.bytes -= data.data.count
@@ -148,7 +149,9 @@ final class WebSocketInbox: Sendable {
         if let result = ready.0 { continuation.resume(with: result) }
       }
     } onCancel: {
-      self.finish(CancellationError(), discard: true)
+      // A cancelled lane must not poison the other lanes that share this inbox.
+      let waiter = self.state.withLock { $0.waiters.removeValue(forKey: lane) }
+      waiter?.resume(throwing: CancellationError())
     }
   }
 
@@ -188,10 +191,17 @@ struct WebSocketPeer: Sendable {
   private let inbox: WebSocketInbox
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
-  var isClosed: Bool { turns?.isClosed ?? false }
+  private let closure: WebSocketTurns
+  var isClosed: Bool { closure.isClosed }
+  func markInterrupted(responseID: String, lane: String) {
+    turns?.markInterrupted(responseID: responseID, lane: lane)
+  }
+  func wasInterrupted(lane: String) -> Bool { turns?.wasInterrupted(lane: lane) == true }
+  func permitSettlement() { closure.permitSettlement() }
   func interruptLane(responseID: String) -> String? { turns?.interruptLane(responseID: responseID) }
-  func waitForClose() async { await turns?.waitForClose() }
+  func waitForClose() async { await closure.waitForClose() }
   func closeNormally() async throws {
+    guard !isClosed else { return }
     try await writer.send(Data([3, 232]), opcode: .connectionClose)
   }
   func beginTurn(lane: String = "", compaction: Bool = false) throws {
@@ -206,8 +216,14 @@ struct WebSocketPeer: Sendable {
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
   func nextBody() async throws -> WebSocketBody { try await inbox.nextBody() }
   func send(_ value: JSONValue) async throws {
-    try await writer.send(
-      value.data(escapingSlashes: false))
+    guard turns != nil || !isClosed else { return }
+    do {
+      try await writer.send(value.data(escapingSlashes: false))
+    } catch {
+      guard turns == nil, !(error is CancellationError), !Task.isCancelled else { throw error }
+      closure.close()
+      inbox.finish(error)
+    }
   }
 
   static func run(
@@ -224,7 +240,8 @@ struct WebSocketPeer: Sendable {
     try await socket.executeThenClose { inbound, outbound in
       let inbox = WebSocketInbox(
         capacity: client ? ImageLimits.eventBytes : RequestBodyLimits.budgetBytes)
-      let turns = client ? WebSocketTurns() : nil
+      let closure = WebSocketTurns()
+      let turns = client ? closure : nil
       let writer = WebSocketWriter(writer: outbound, channel: socket.channel, client: client)
       try await withThrowingTaskGroup(of: Bool.self) { tasks in
         tasks.addTask {
@@ -259,26 +276,26 @@ struct WebSocketPeer: Sendable {
               case .ping: try await writer.send(data, opcode: .pong)
               case .pong: break
               case .connectionClose:
-                turns?.close()
+                closure.close()
                 try? await writer.send(data, opcode: .connectionClose)
                 inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
-                return !client
+                return !client && !closure.settlementPermitted
               default: throw GatewayProtocolError(400, "unsupported_websocket_frame")
               }
             }
           } catch {
-            turns?.close()
-            inbox.finish(error)
             // A cancelled consumer is already unwinding its operation. Let that owner finish
             // (including a normal close frame) even if another downstream create arrives.
             if !client && error is CancellationError { return false }
+            closure.close()
+            inbox.finish(error)
           }
-          turns?.close()
+          closure.close()
           inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
-          return !client
+          return !client && !closure.settlementPermitted
         }
         tasks.addTask {
-          try await operation(.init(inbox: inbox, writer: writer, turns: turns))
+          try await operation(.init(inbox: inbox, writer: writer, turns: turns, closure: closure))
           return true
         }
         tasks.addTask {
@@ -287,11 +304,14 @@ struct WebSocketPeer: Sendable {
           } onCancel: {
             socket.channel.close(promise: nil)
           }
-          if !client { inbox.finish(GatewayProtocolError(502, "execution_indeterminate")) }
-          return !client
+          if !client {
+            closure.close()
+            inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
+          }
+          return !client && !closure.settlementPermitted
         }
         defer {
-          turns?.close()
+          closure.close()
           inbox.finish(CancellationError(), discard: true)
           reservations?.close()
           socket.channel.close(promise: nil)

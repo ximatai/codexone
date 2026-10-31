@@ -15,6 +15,7 @@ final class WebSocketTurns: Sendable {
     struct Lane {
       var phase = Phase.idle
       var receivedCreated = false
+      var interrupted = false
       var evidence: (@Sendable (JSONValue) throws -> Void)?
     }
     var lanes: [String: Lane] = [:]
@@ -32,6 +33,8 @@ final class WebSocketTurns: Sendable {
       if ended.count > 1024 { endedLanes.removeValue(forKey: ended.removeFirst()) }
     }
     var closed = false
+    var settlementPermitted = false
+    var closeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     mutating func start(_ id: String, lane: String) {
       guard startedSet.insert(id).inserted else { return }
       started.append(id)
@@ -45,19 +48,34 @@ final class WebSocketTurns: Sendable {
   }
 
   private let state = Mutex(State())
-  private let closure: AsyncStream<Void>
-  private let closed: AsyncStream<Void>.Continuation
-  init() {
-    (closure, closed) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
-  }
   var isClosed: Bool { state.withLock { $0.closed } }
+  var settlementPermitted: Bool { state.withLock { $0.settlementPermitted } }
+  func permitSettlement() { state.withLock { $0.settlementPermitted = true } }
+  // Independent cancellation: completing one turn must not end other close waiters.
   func waitForClose() async {
-    for await _ in closure { return }
+    let id = UUID()
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        let ready = state.withLock { value in
+          guard !value.closed, !Task.isCancelled else { return true }
+          value.closeWaiters[id] = continuation
+          return false
+        }
+        if ready { continuation.resume() }
+      }
+    } onCancel: {
+      let waiter = self.state.withLock { $0.closeWaiters.removeValue(forKey: id) }
+      waiter?.resume()
+    }
   }
   func close() {
-    state.withLock { $0.closed = true }
-    closed.yield(())
-    closed.finish()
+    let waiters = state.withLock { value in
+      value.closed = true
+      let waiters = Array(value.closeWaiters.values)
+      value.closeWaiters.removeAll()
+      return waiters
+    }
+    for waiter in waiters { waiter.resume() }
   }
   func begin(lane: String = "", compaction: Bool = false) throws {
     try state.withLock { value in
@@ -78,6 +96,7 @@ final class WebSocketTurns: Sendable {
       guard active < 16 else { throw GatewayProtocolError(503, "websocket_turn_capacity") }
       value.lanes[lane]!.phase = .awaitingCreated
       value.lanes[lane]!.receivedCreated = false
+      value.lanes[lane]!.interrupted = false
     }
   }
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
@@ -94,6 +113,16 @@ final class WebSocketTurns: Sendable {
     }
   }
   func detachEvidence(lane: String) { state.withLock { $0.lanes[lane]?.evidence = nil } }
+
+  func markInterrupted(responseID: String, lane: String) {
+    state.withLock { value in
+      guard case .active(let id) = value.lanes[lane]?.phase, id == responseID else { return }
+      value.lanes[lane]?.interrupted = true
+    }
+  }
+  func wasInterrupted(lane: String) -> Bool {
+    state.withLock { $0.lanes[lane]?.interrupted == true }
+  }
 
   func interruptLane(responseID: String) -> String? {
     state.withLock { value in

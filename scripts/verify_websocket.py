@@ -60,8 +60,8 @@ def receive(sock, *, masked=False):
     return first & 15, data
 
 
-def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None):
-    sock = socket.create_connection(('127.0.0.1', port), timeout=5)
+def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None, timeout=5):
+    sock = socket.create_connection(('127.0.0.1', port), timeout=timeout)
     key = base64.b64encode(os.urandom(16)).decode()
     auth = 'Authorization: Bearer ' + token + '\r\n' if authorized else ''
     auth += ''.join(f'{name}: {value}\r\n' for name, value in (headers or {}).items())

@@ -42,10 +42,14 @@ import Testing
   }
   #expect(try turns.observe(event("response.created", response: true)) == "synthetic_lane")
   #expect(turns.interruptLane(responseID: "synthetic_response") == "synthetic_lane")
+  turns.markInterrupted(responseID: "synthetic_response", lane: "synthetic_lane")
+  #expect(turns.wasInterrupted(lane: "synthetic_lane"))
   #expect(try turns.delivery(event("response.interrupt.accepted"))?.detached == true)
   _ = try turns.observe(event("response.completed", response: true))
   #expect(turns.interruptLane(responseID: "synthetic_response") == nil)
   try turns.begin(lane: "synthetic_lane")
+  turns.markInterrupted(responseID: "synthetic_response", lane: "synthetic_lane")
+  #expect(!turns.wasInterrupted(lane: "synthetic_lane"))
   let late = try turns.delivery(event("response.interrupt.accepted"))
   #expect(late?.lane == "synthetic_lane" && late?.detached == true)
 }
@@ -106,4 +110,34 @@ func interruptionRequiresCreatedAndUnexpectedLifecycleStopsDispatch(_ unexpected
       "type": .string("response.interrupt.accepted"), "response_id": .string("synthetic_long"),
     ]).data())
   #expect(late?.lane == "long" && late?.detached == true)
+}
+
+@Test(.timeLimit(.minutes(1))) func cancellingOneLaneDoesNotCancelSiblingInbox() async throws {
+  let inbox = WebSocketInbox()
+  let cancelled = Task { try await inbox.next(lane: "cancelled") }
+  let sibling = Task { try await inbox.next(lane: "sibling") }
+  cancelled.cancel()
+  do {
+    _ = try await cancelled.value
+    Issue.record("Cancelled lane continued")
+  } catch is CancellationError {}
+  let data = Data("synthetic".utf8)
+  try await inbox.push(data, lane: "sibling")
+  #expect(try await sibling.value == data)
+}
+
+@Test(.timeLimit(.minutes(1))) func closingPeerWakesAllRemainingWaitersAfterOneCancels()
+  async throws
+{
+  let turns = WebSocketTurns()
+  let cancelled = Task { await turns.waitForClose() }
+  let first = Task { await turns.waitForClose() }
+  let second = Task { await turns.waitForClose() }
+  cancelled.cancel()
+  await cancelled.value
+  #expect(!turns.isClosed)
+  turns.close()
+  await first.value
+  await second.value
+  #expect(turns.isClosed)
 }

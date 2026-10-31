@@ -87,6 +87,7 @@ enum PoolWebSocketSession {
             }
           } catch {
             start.close(error)
+            if downstream.isClosed { return }
             throw error
           }
         }
@@ -103,6 +104,7 @@ enum PoolWebSocketSession {
               selection.authorization, headers: executor.clientHeaders
             ).run(
               detachedEvent: { data, lane in
+                guard !downstream.isClosed else { return }
                 var event = try JSONValue.decode(data).object!
                 if !lane.isEmpty { event["stream_id"] = .string(lane) }
                 if event["type"]?.string == "error" {

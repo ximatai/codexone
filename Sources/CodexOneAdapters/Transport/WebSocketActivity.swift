@@ -38,3 +38,37 @@ final class WebSocketActivity: Sendable {
     }
   }
 }
+
+/// The connection owner stops intake and waits for its owned turns before cancelling idle workers.
+func readWebSocketCommand(
+  _ downstream: WebSocketPeer, activity: WebSocketActivity, commands: WebSocketInbox
+) async throws -> WebSocketBody {
+  do {
+    return try await activity.read { try await downstream.nextBody() }
+  } catch {
+    guard downstream.isClosed, !Task.isCancelled else { throw error }
+    commands.finish(CancellationError())
+    try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
+    throw CancellationError()
+  }
+}
+
+/// Structured child tasks retain the existing execution deadline and runtime cancellation path.
+func withWebSocketSettlement(
+  downstream: WebSocketPeer, upstream: WebSocketPeer, lane: String,
+  operation: @escaping @Sendable () async throws -> Void
+) async throws {
+  try await withThrowingTaskGroup(of: Void.self) { tasks in
+    defer { tasks.cancelAll() }
+    tasks.addTask { try await operation() }
+    tasks.addTask {
+      await downstream.waitForClose()
+      try Task.checkCancellation()
+      if upstream.wasInterrupted(lane: lane) {
+        try await Task.sleep(for: .seconds(10))
+      }
+      throw CancellationError()
+    }
+    try await tasks.next()
+  }
+}

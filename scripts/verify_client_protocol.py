@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import sqlite3
+import socket
 import tempfile
 import threading
 import time
@@ -30,6 +31,8 @@ class Provider(BaseHTTPRequestHandler):
         assert self.headers['x-codex-future-header'] == 'synthetic-value'
         assert self.headers.get('x-openai-actor-authorization') is None
         assert self.headers.get('chatgpt-account-id') is None
+        for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
+            assert self.headers[name] == 'synthetic-known'
         key = self.headers['Sec-WebSocket-Key']
         self.send_response(101)
         self.send_header('Upgrade', 'websocket')
@@ -49,6 +52,16 @@ class Provider(BaseHTTPRequestHandler):
                     response, lane, prompt = pending.pop(value['response_id'])
                     with self.server.guard:
                         self.server.interrupts += 1
+                    if prompt.startswith('settlement-'):
+                        self.server.interrupted.set()
+                        if prompt == 'settlement-abrupt':
+                            time.sleep(.2)
+                            return
+                        if prompt in ('settlement-timeout', 'settlement-shutdown'):
+                            self.connection.settimeout(15)
+                            assert self.connection.recv(1) == b''
+                            return
+                        assert self.server.settle_release.wait(5)
                     ack = dict(type='response.interrupt.accepted', response_id=response['id'])
                     done = dict(type='response.completed', response=response, **lane)
                     for item in ([done, ack] if prompt == 'cancel-after' else [ack, done]):
@@ -70,7 +83,7 @@ class Provider(BaseHTTPRequestHandler):
                         usage=dict(input_tokens=5, output_tokens=3, input_tokens_details=dict(cached_tokens=0)))
                     lane = dict(stream_id=value['stream_id']) if 'stream_id' in value else {}
                     send(self.connection, dict(type='response.created', response={**response, 'status': 'in_progress', 'usage': None}, **lane))
-                    if value['input'] in ('cancel-before', 'cancel-after', 'drain'):
+                    if value['input'] in ('cancel-before', 'cancel-after', 'drain') or value['input'].startswith('settlement-'):
                         pending[response['id']] = response, lane, value['input']
                     else:
                         send(self.connection, dict(type='response.completed', response=response, **lane))
@@ -86,6 +99,108 @@ def counts(db):
         return connection.execute('SELECT state,usage_json,admission_json FROM attempts ORDER BY rowid').fetchall()
 
 
+def verify_settlement(binary, provider, directory, configuration, headers):
+    directory.mkdir()
+    config = directory / 'identity.json'
+    config.write_text(json.dumps(configuration))
+    config.chmod(0o600)
+    process, ports = start(binary, config, directory)
+    db = directory / 'state/core.sqlite'
+    try:
+        def begin_settlement(prompt, interrupt=True):
+            sock = dial(ports['data'], headers=headers)
+            send(sock, dict(type='response.create', model='synthetic-text', input=prompt), masked=True)
+            created = event(sock)
+            assert created['type'] == 'response.created', created
+            rid = created['response']['id']
+            if interrupt:
+                provider.interrupted.clear()
+                send(sock, dict(type='response.interrupt', response_id=rid), masked=True)
+                assert provider.interrupted.wait(3)
+            sock.close()
+
+        def await_rows(total, states, timeout=5):
+            until = time.monotonic() + timeout
+            while True:
+                rows = counts(db)
+                if len(rows) == total and [row[0] for row in rows[-len(states):]] == states:
+                    return rows[-len(states):]
+                assert time.monotonic() < until, rows
+                time.sleep(.02)
+
+        baseline = len(counts(db))
+        before = provider.creates
+        # Eight closed downstreams retain all eight connection slots until settlement.
+        for _ in range(8):
+            begin_settlement('settlement-success')
+        assert len(counts(db)) == baseline + 8
+        assert all(row[0] == 'intent' for row in counts(db)[-8:])
+        rejected = False
+        try:
+            with dial(ports['data'], headers=headers, timeout=.25):
+                pass
+        except (AssertionError, EOFError, ConnectionResetError, socket.timeout):
+            rejected = True
+        assert rejected, 'Settlement released connection capacity early'
+        provider.settle_release.set()
+        settled = await_rows(baseline + 8, ['settled'] * 8)
+        assert all(json.loads(row[1])['inputTokens'] == 5 and json.loads(row[1])['outputTokens'] == 3
+                   and json.loads(row[1])['estimatedMicros'] == 8 for row in settled)
+        # Upstream EOF, no interrupt, and the ten-second ceiling preserve unknown responsibility.
+        begin_settlement('settlement-abrupt')
+        await_rows(baseline + 9, ['unknown'])
+        begin_settlement('settlement-no-interrupt', interrupt=False)
+        await_rows(baseline + 10, ['unknown'])
+        began = time.monotonic()
+        begin_settlement('settlement-timeout')
+        await_rows(baseline + 11, ['unknown'], timeout=12)
+        assert 9.5 <= time.monotonic() - began < 12
+        assert provider.creates == before + 11, 'Unexpected replay'
+        # A fresh connection/turn succeeds after drain resources have been released.
+        with dial(ports['data'], headers=headers) as sock:
+            assert turn(sock, dict(model='synthetic-text', input='after-settlement'))[-1]['type'] == 'response.completed'
+        await_rows(baseline + 12, ['settled'])
+        # Cancelling the first lane must not cancel an interrupted sibling lane.
+        provider.settle_release.clear()
+        sock = dial(ports['data'], headers=headers)
+        send(sock, dict(type='response.create', model='synthetic-text', input='drain'), masked=True)
+        assert event(sock)['type'] == 'response.created'
+        send(sock, dict(type='response.create', model='synthetic-text', input='settlement-success', stream_id='sibling'), masked=True)
+        rid = event(sock)['response']['id']
+        provider.interrupted.clear()
+        send(sock, dict(type='response.interrupt', response_id=rid), masked=True)
+        assert provider.interrupted.wait(3)
+        sock.close()
+        await_rows(baseline + 14, ['unknown', 'intent'])
+        provider.settle_release.set()
+        await_rows(baseline + 14, ['unknown', 'settled'])
+        begin_settlement('settlement-shutdown')
+        began = time.monotonic()
+        process.terminate()
+        assert process.wait(10) == 0
+        assert time.monotonic() - began < 5, 'Shutdown waited for settlement timeout'
+        await_rows(baseline + 15, ['unknown'])
+        assert process.returncode == 0
+        logs = process.stdout.read()
+        for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
+            assert ('protocol_name=' + name).encode() not in logs
+        print('PASS: interrupted disconnect settles usage; retained connection capacity; EOF/10s timeout/no interrupt remain unknown without replay; resources release; shutdown cancels drain; known headers forward without warnings')
+        short_root = directory / 'short-deadline'
+        short_root.mkdir()
+        short_config = short_root / 'identity.json'
+        short_config.write_text(json.dumps({**configuration, 'executionTimeoutSeconds': 2}))
+        short_config.chmod(0o600)
+        process, ports = start(binary, short_config, short_root)
+        db = short_root / 'state/core.sqlite'
+        began = time.monotonic()
+        begin_settlement('settlement-timeout')
+        await_rows(1, ['unknown'], timeout=4)
+        assert time.monotonic() - began < 4, 'Settlement extended the execution deadline'
+        print('PASS: interrupted settlement retains the original shorter execution deadline')
+    finally:
+        stop(process)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -95,6 +210,8 @@ def main():
     provider.guard = threading.Lock()
     provider.creates = provider.controls = provider.interrupts = 0
     provider.control_bytes = []
+    provider.interrupted = threading.Event()
+    provider.settle_release = threading.Event()
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     try:
@@ -103,7 +220,7 @@ def main():
             config = root/'identity.json'
             config.write_text(json.dumps(dict(principal='synthetic-principal', keyID='synthetic-key',
                 keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(), namespace='synthetic-provider', identity='synthetic-account',
-                reservedMicros=10, executionTimeoutSeconds=10,
+                reservedMicros=10, executionTimeoutSeconds=30, dataConnections=8,
                 models=[dict(id='synthetic-text', inputMicrosPerMillion=1000000, outputMicrosPerMillion=1000000)],
                 upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport='websocket')))
             config.chmod(0o600)
@@ -111,6 +228,7 @@ def main():
             db = root/'state/core.sqlite'
             try:
                 headers = {'x-codex-future-header': 'synthetic-value', 'x-openai-actor-authorization': 'synthetic-gate', 'chatgpt-account-id': 'synthetic-forged'}
+                headers.update({name: 'synthetic-known' for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id')})
                 with dial(ports['data'], headers=headers) as sock:
                     send(sock, dict(type='synthetic.unbound', payload=PRIVATE), masked=True)
                     assert event(sock)['status'] == 400
@@ -128,6 +246,7 @@ def main():
                     for prompt in ('cancel-before', 'cancel-after', 'drain'):
                         send(sock, dict(type='response.create', model='synthetic-text', input=prompt, stream_id=prompt), masked=True)
                         created = event(sock)
+                        assert created['type'] == 'response.created', created
                         rid = created['response']['id']
                         send(sock, dict(type='response.interrupt', response_id=rid, mode='discard_partial_items'), masked=True)
                         replies = [event(sock), event(sock)]
@@ -225,12 +344,15 @@ def main():
                 process.terminate()
                 assert process.wait(10) == 0
                 logs = process.stdout.read()
+                for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):
+                    assert ('protocol_name=' + name).encode() not in logs
                 for name in ('synthetic.unbound', 'synthetic.future', 'synthetic.generation', 'synthetic.burst', 'x-codex-future-header'):
                     assert ('protocol_name=' + name).encode() in logs
                 assert b'outcome=recorded_unknown' in logs and b'outcome=unknown_record_failed' in logs
                 assert b'client_category=other' in logs and b'client_version=unknown' in logs
                 assert PRIVATE.encode() not in logs and TOKEN.encode() not in logs and temporary.encode() not in logs
                 print('PASS: native Cancel before/after terminal, Drain, ended/foreign IDs, multi-lane, unknown controls, rate rejection, terminal ledger, unadmitted unknown without replay, prefix handshake and content-free logs')
+                verify_settlement(binary, provider, root / 'settlement', json.loads(config.read_text()), headers)
             finally:
                 stop(process)
     finally:
