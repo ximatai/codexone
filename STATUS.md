@@ -9,7 +9,7 @@
 | M0/M1 | 本机骨架、SQLite持久执行/归属/结算与恢复责任闭环 | 不据此宣称首版可替代旧服务 |
 | M2 | HTTP JSON/SSE、桥接/native WS、模型/profile、工具/上下文/压缩；协议[开放透传](docs/changes/open-protocol-passthrough/proposal.md)、[模型目录透传](docs/changes/model-catalog-passthrough/proposal.md)与[Desktop辅助接口透传](docs/changes/desktop-control-passthrough/proposal.md)（独立搜索、记忆摘要、realtime SDP、thread goal、jwks；analytics本地接受）；真实Desktop+真实订阅三模型对话、视觉输入、工具往返通过 | 压缩、长任务/中断恢复的真实验收及M5恢复读取 |
 | M3 | 管理登录/CSRF、Key（含[显式无限额](docs/changes/unlimited-key-limits/proposal.md)）、账号授权/刷新、路由及用量观测；[管理台产品化第一轮](docs/changes/admin-productization/proposal.md)（运营概览、账号窗口与重置倒计时、Key今日用量/搜索、请求详情与耗时、美元估算与面向用户术语）；真实OAuth授权、额度观测与单Key摘要导入已在测试实例使用 | 多账号路由、长期刷新、全部Key正式迁移与切回 |
-| M4 | Images改为[原生端点透传](docs/changes/images-native-passthrough/proposal.md)（独立并发舱壁、原生usage计量），[Desktop图片对齐](docs/changes/desktop-image-parity/proposal.md)（含图压缩、32 MiB请求、共享请求体预算）；测试实例经网关真实生成1张、multipart编辑1次并核对账本 | 真实Desktop生图/编辑/含图压缩验收；非Codex UA客户端被提供者403的处理待定；原生SSE与429冷却真实形状 |
+| M4 | Images改为[原生端点透传](docs/changes/images-native-passthrough/proposal.md)（独立并发舱壁、原生usage计量），[Desktop图片对齐](docs/changes/desktop-image-parity/proposal.md)（含图压缩、32 MiB请求、共享请求体预算）；测试实例经网关真实生成1张、multipart编辑1次并核对账本；真实Desktop生图与编辑通过（客户端须按[客户端配置](docs/client-setup.md)） | 真实Desktop含图压缩验收；非Codex UA客户端被提供者403的处理待定；原生SSE与429冷却真实形状 |
 | M5 | 已核对恢复关联及已有输出读取的限定实验 | 正式恢复读取契约不充分，未实现生产正文缓存 |
 | M6 | schema v8候选安装/升级/兼容回退、合成迁移切回、TLS、快照/密钥维护、低盘保护及容量样本 | 完整O14/目标弱宿主、async任务观测、实际旧服务替代、远程CI与发行 |
 
@@ -19,6 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
+| 2026-10-31 · 真实Desktop生图 | Windows Desktop 26.1027.30824原Key经测试实例原生Images生成、编辑各1次，200且完整结算；门控头不转发上游的回归测试 | [图片](docs/changes/images-native-passthrough/verification.md) |
 | 2026-10-31 · 管理台产品化 | macOS `verify.sh --backend`（Swift 218项）与 `--web --chrome`（vitest 54、Playwright 5）、真实Chrome管理/账号live脚本通过；1440×900合成走查 | [管理台](docs/changes/admin-productization/verification.md) |
 | 2026-10-31 · 代码46829d3+测试实例 | macOS `verify.sh --backend`（Swift 217项）、Linux amd64全部Docker无网络verification（含图片原生与控制透传）通过；部署后网关真实生图/编辑各1次、控制接口公网冒烟（jwks两路径200、analytics 202、未列路径404） | [图片](docs/changes/images-native-passthrough/verification.md)、[控制](docs/changes/desktop-control-passthrough/verification.md) |
 | 2026-10-30 · 代码a8a3e1b测试实例 | Linux amd64 release及全部Docker无网络verification通过；部署后真实Desktop新会话（原Key改地址）三模型对话、视觉输入、本地命令工具成功，当日17次准入全部完整结算；冒烟2次真实调用 | [Desktop验收](docs/changes/open-protocol-passthrough/verification.md) |
@@ -103,6 +104,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试实例已通过真实Desktop文本/视觉/工具验收，图片与辅助接口已部署。下一步：用户在Desktop验收生图/编辑/含图压缩与独立搜索；决定非Codex客户端UA处理与“明确的提供者4xx是否按零费用结算而非unknown”；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；数据面连接上限评估；管理台下一轮：账号显示名（需schema）、Key到期、待核对处理等需用户决策项。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具验收，图片与辅助接口已部署。下一步：用户在Desktop验收含图压缩与独立搜索；决定非Codex客户端UA处理与“明确的提供者4xx是否按零费用结算而非unknown”；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；数据面连接上限评估；管理台下一轮：账号显示名（需schema）、Key到期、待核对处理等需用户决策项。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
