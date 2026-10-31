@@ -27,6 +27,7 @@ const UsagePage = lazy(() =>
   })),
 );
 import { ManagementSession } from "./shared/session";
+import { busyRetryDelay, retryWhenBusy } from "./shared/query-retry";
 import { theme } from "./app/theme";
 function OwnedQueries({ children }: { children: ReactNode }) {
   const [client] = useState(
@@ -34,7 +35,8 @@ function OwnedQueries({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            retry: false,
+            retry: retryWhenBusy,
+            retryDelay: (attempt) => busyRetryDelay(attempt),
             gcTime: 0,
             refetchOnWindowFocus: false,
             refetchOnReconnect: false,

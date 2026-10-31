@@ -40,7 +40,6 @@ export function KeyManagement() {
     queryKey: [...queryKeys.usage.keys(), state.keys, refresh],
     queryFn: ({ signal }) => fetchKeyUsage(signal),
     enabled: !state.checking && !state.busy && !state.loading,
-    retry: false,
   });
   useEffect(() => {
     if (usage.error instanceof ManagementError && usage.error.status === 401)
