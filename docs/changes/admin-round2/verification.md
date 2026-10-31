@@ -69,3 +69,9 @@ API方法/参数/字段见[管理规范](../../specs/control-plane.md)，取舍�
 - `./scripts/verify.sh --web --chrome`：退出码 0；vitest 18 文件 71 项通过，Chrome Playwright 6/6 通过（含 `admin-round2.spec.ts`）。
 - 1440×900 真实合成后端走查：登录、首页 KPI/进行中/最近请求与详情、Key 设置 +30 天到期并保存、用量页汇总与明细；账号页在无主密钥 fixture 下正确显示“未开启”，显示名由 E2E 与 `verify_admin_round2.py` 覆盖。
 - subagent 界面评审无 P0；已修正：三类查询拆分独立失败、最近请求降频、账号标识可区分、错误率零请求日不计 0、百分点变化、更新时间计时局部重渲染、趋势线拉伸填充与可读 aria 标签、本地时间标注、到期快捷日期、显示名去空白与未变更禁用、“首事件耗时”术语统一。保留 P2：首页原运营卡片与新 KPI 有部分重复；用量明细“用量”列在大屏仍较密。
+
+## 出口：Linux 与测试实例（2026-10-31）
+
+- Linux amd64：运行镜像与 `--target verification` 构建通过（前端在镜像内重新构建）。
+- 测试实例：停止网关 → 新镜像 `--migrate`（输出迁移完成，数据卷内生成权限 600 的 `pre-v9` 备份）→ 启动，`/health/live`、`/health/ready` 200。
+- 管理 API 实测：`/api/usage/daily?days=7` 与 `/api/usage/in-flight` 200；24 小时合计含平均/P95 首事件与平均总耗时；账号显示名设置后恢复为空；临时 Key 设为过去到期后数据请求 `401 api_key_expired`（准入前，无上游调用），清除到期后停用。
