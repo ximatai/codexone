@@ -110,6 +110,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1（静态主题、共享修改钩子与界面组件、Key 页试点）已合并（PR #18）并完成 Linux verification；阶段 2 页面迁移待用户选定渲染图风格后排期。
 
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（v9管理到期字段为null，最近更新来自提交审计）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；后续方向与用户讨论后排期（候选：管理台Key自助查询、模型/客户端分布、CSV导出、深色模式、首页卡片去重）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（v9管理到期字段为null，最近更新来自提交审计）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；后续排期（2026-10-31 用户确认）：管理台阶段 2 → [用量分析](docs/changes/usage-analytics/proposal.md)（模型/客户端分布、CSV导出）→ [Key自助查询](docs/changes/key-self-service/proposal.md)；完成后单独讨论全部Key迁移、Nginx切换与观察回退；深色模式、首页异常提醒待排。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
