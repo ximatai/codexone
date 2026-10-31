@@ -1,6 +1,8 @@
 import Foundation
 import Synchronization
 
+struct WebSocketUpstreamClosed: Error {}
+
 /// Per-lane turn ownership, updated by the sole reader before it queues an event.
 /// Only lifecycle identity is enforced; other provider events belong to the active turn as-is.
 final class WebSocketTurns: Sendable {
@@ -26,12 +28,23 @@ final class WebSocketTurns: Sendable {
   }
 
   private let state = Mutex(State())
-  func close() { state.withLock { $0.closed = true } }
+  private let closure: AsyncStream<Void>
+  private let closed: AsyncStream<Void>.Continuation
+  init() {
+    (closure, closed) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+  }
+  var isClosed: Bool { state.withLock { $0.closed } }
+  func waitForClose() async {
+    for await _ in closure { return }
+  }
+  func close() {
+    state.withLock { $0.closed = true }
+    closed.yield(())
+    closed.finish()
+  }
   func begin(lane: String = "", compaction: Bool = false) throws {
     try state.withLock { value in
-      guard !value.closed else {
-        throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
-      }
+      guard !value.closed else { throw WebSocketUpstreamClosed() }
       if value.lanes[lane] == nil {
         guard lane.isEmpty || value.lanes.keys.filter({ !$0.isEmpty }).count < 32 else {
           throw GatewayProtocolError(503, "websocket_lane_capacity")
@@ -52,7 +65,8 @@ final class WebSocketTurns: Sendable {
   func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
   {
     try state.withLock { value in
-      guard !value.closed, var current = value.lanes[lane], case .awaitingCreated = current.phase,
+      guard !value.closed else { throw WebSocketUpstreamClosed() }
+      guard var current = value.lanes[lane], case .awaitingCreated = current.phase,
         current.evidence == nil
       else {
         throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)

@@ -14,7 +14,7 @@ def event(sock):
 def create(command, lane=None):
     value = {"type": "response.create", "model": "synthetic-text", "input": command.get("input", "synthetic")}
     for field in ("previous_response_id", "generate", "tools", "store", "max_output_tokens", "temperature", "top_p",
-                  "truncation", "metadata", "prompt_cache_retention", "service_tier"):
+                  "truncation", "metadata", "prompt_cache_retention", "service_tier", "include"):
         if field in command:
             value[field] = command[field]
     if lane:
@@ -32,7 +32,21 @@ def main():
             op = command.get("op", "turn")
             if op == "close":
                 return
-            if op == "multi":
+            if op == "expect_close":
+                if command.get("race"):
+                    send(sock, create(command), masked=True)
+                observed = []
+                for _ in range(16):
+                    opcode, body = receive(sock)
+                    if opcode == 8:
+                        assert body[:2] == b'\x03\xe8', body
+                        break
+                    assert opcode == 1
+                    observed.append(json.loads(body)["type"])
+                else:
+                    raise AssertionError("No bounded normal close")
+                result = {"closed": 1000, "events": observed}
+            elif op == "multi":
                 send(sock, create({"input": "hold"}, "slow"), masked=True)
                 send(sock, create({}, "fast"), masked=True)
                 events = [event(sock) for _ in range(4)]

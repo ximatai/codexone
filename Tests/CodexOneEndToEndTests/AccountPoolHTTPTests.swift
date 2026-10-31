@@ -1600,3 +1600,49 @@ func poolFirstEventRefusalsSettleButOutputThenErrorRemainsUnknown() async throws
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketUpstreamCloseDrainsAndRejectsQueuedCreates() async throws {
+  for active in [false, true] {
+    try await withPoolHTTP(transport: "websocket") { h in
+      let client = try PoolWSClient(h)
+      defer { client.close() }
+      _ = try await client.read()
+      #expect(try await client.command()["type"]?.string == "response.completed")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      if active {
+        _ = try await client.command([
+          "op": .string("send"), "input": .string("stallbody"), "lane": .string("busy"),
+        ])
+        try await awaitOAuth { h.calls.count == 2 }
+        // Same-lane FIFO request is queued before EOF and must never acquire an execution.
+        _ = try await client.command([
+          "op": .string("send"), "lane": .string("busy"),
+        ])
+      }
+      let channels = h.state.value.withLock { Array($0.channels.values) }
+      for channel in channels { try await channel.close().get() }
+      // Allow the upstream reader to observe EOF while the downstream close remains unread.
+      try await Task.sleep(for: .milliseconds(100))
+      let result = try await client.command(["op": .string("expect_close"), "race": .bool(true)])
+      #expect(result["closed"]?.integer == 1000)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
+      let unknown = try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+      }
+      #expect(total == (active ? 2 : 1) && unknown == (active ? 1 : 0))
+      #expect(h.calls.count == (active ? 2 : 1))
+      let rejected = try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics")
+      }
+      #expect(rejected == 0)
+      try await awaitOAuth { h.state.value.withLock { $0.channels.isEmpty } }
+      let next = try PoolWSClient(h)
+      defer { next.close() }
+      _ = try await next.read()
+      #expect(try await next.command()["type"]?.string == "response.completed")
+      #expect(h.calls.count == (active ? 3 : 2))
+    }
+  }
+}

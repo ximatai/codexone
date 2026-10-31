@@ -51,7 +51,8 @@ def main():
                         for route in (('json','sse') if transport=='http' else ('json','sse','native')):
                             base=dict(model='synthetic-contract',input='synthetic parameter probe',instructions='synthetic instructions',
                                       prompt_cache_key='synthetic-cache',client_metadata={'label':'synthetic'},parallel_tool_calls=True)
-                            good = [dict(service_tier='priority'),dict(store=False),dict(temperature=None,top_p=None,max_output_tokens=None,
+                            good = [dict(include=['reasoning.encrypted_content', 'output.encrypted_content']),
+                                    dict(service_tier='priority'),dict(store=False),dict(temperature=None,top_p=None,max_output_tokens=None,
                                     metadata=None,truncation=None,prompt_cache_retention=None,service_tier=None)]
                             if contract=='responses':
                                 good += [dict(temperature=0,top_p=0,max_output_tokens=16,service_tier='flex',truncation='disabled',prompt_cache_retention='24h'),
@@ -76,6 +77,7 @@ def main():
                                 else:
                                     assert wire['input']==base['input']
                                     assert all(wire[key]==value for key,value in extra.items())
+                                if 'include' in extra: assert wire['include'] == extra['include']
                                 if 'synthetic_future_field' in extra: assert wire['synthetic_future_field']=={'enabled':True}
                             # Only explicit constraints the subscription backend cannot honor fail before dispatch.
                             negative=([*unsupported]+([] if route=='native' else [dict(previous_response_id='synthetic-previous')]) if contract=='codex-subscription' else [])

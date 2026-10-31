@@ -188,6 +188,11 @@ struct WebSocketPeer: Sendable {
   private let inbox: WebSocketInbox
   let writer: WebSocketWriter
   private let turns: WebSocketTurns?
+  var isClosed: Bool { turns?.isClosed ?? false }
+  func waitForClose() async { await turns?.waitForClose() }
+  func closeNormally() async throws {
+    try await writer.send(Data([3, 232]), opcode: .connectionClose)
+  }
   func beginTurn(lane: String = "", compaction: Bool = false) throws {
     try turns?.begin(lane: lane, compaction: compaction)
   }
@@ -241,7 +246,13 @@ struct WebSocketPeer: Sendable {
               default: throw GatewayProtocolError(400, "unsupported_websocket_frame")
               }
             }
-          } catch { inbox.finish(error) }
+          } catch {
+            turns?.close()
+            inbox.finish(error)
+            // A cancelled consumer is already unwinding its operation. Let that owner finish
+            // (including a normal close frame) even if another downstream create arrives.
+            if !client && error is CancellationError { return false }
+          }
           turns?.close()
           inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
           return !client

@@ -16,6 +16,8 @@ func upstreamRejection(status: HTTPResponseStatus, headers: HTTPHeaders, compact
 }
 func executionFailure(_ error: any Error) -> ExecutionFailure {
   if error is CancellationError { return .clientCancelled }
+  // Raised only before a turn is written upstream: the pinned socket was already gone.
+  if error is WebSocketUpstreamClosed { return .upstreamUnavailable }
   if let error = error as? GatewayProtocolError {
     switch error.code {
     case "upstream_authentication_rejected": return .authenticationRejected
