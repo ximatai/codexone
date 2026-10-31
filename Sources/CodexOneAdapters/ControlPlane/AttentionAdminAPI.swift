@@ -47,6 +47,13 @@ public protocol AttentionReading: Sendable {
 }
 
 enum AttentionThresholds {
+  static let capacityWarning = 0.8
+  static let unknownPercent = 20.0
+  static let minimumUnknown: Int64 = 10
+  static let rateWindowSeconds: Int64 = 600
+  static let rateMinimum: Int64 = 60
+  static let rateMultiplier: Int64 = 5
+  static let rankingWindowSeconds: Int64 = 5 * 3600
   static let maximumItems = 50
   static let quotaWarning = 90.0
   static let quotaCritical = 98.0
@@ -235,6 +242,44 @@ enum AttentionRules {
     }
     return result
   }
+  static func capacity(_ value: GovernanceCapacity) -> [AttentionItem] {
+    guard let current = value.current,
+      Double(current) / Double(value.limit) >= AttentionThresholds.capacityWarning
+    else { return [] }
+    return [
+      .init(
+        "capacity_reference",
+        detail: [
+          "metric": .string(value.name), "current": .string(String(current)),
+          "limit": .string(String(value.limit)), "exceeded": .bool(current > value.limit),
+        ])
+    ]
+  }
+  static func accountCapacity(id: String, peak: Int64, recent: Int64, baseline: Int64)
+    -> [AttentionItem]
+  {
+    var items: [AttentionItem] = []
+    if Double(peak) / Double(ExecutionLimits.accountConcurrency)
+      >= AttentionThresholds.capacityWarning
+    {
+      items.append(
+        .init(
+          "account_concurrency_high", type: "account", id: id,
+          detail: [
+            "peak": .number(Decimal(peak)),
+            "limit": .number(Decimal(ExecutionLimits.accountConcurrency)),
+          ]))
+    }
+    if recent >= AttentionThresholds.rateMinimum
+      && recent >= baseline * AttentionThresholds.rateMultiplier
+    {
+      items.append(
+        .init(
+          "account_rate_surge", type: "account", id: id,
+          detail: ["count": .number(Decimal(recent)), "median": .number(Decimal(baseline))]))
+    }
+    return items
+  }
   static func executions(
     admitted: Int64, failed: Int64, unknown: Int64, since: Int64?, unresolved: Int64? = nil,
     limit: Int64 = ExecutionLimits.unresolvedCapacity
@@ -242,14 +287,15 @@ enum AttentionRules {
     -> [AttentionItem]
   {
     var items: [AttentionItem] = []
-    let occupied = unresolved ?? unknown
-    if Double(occupied) / Double(limit) >= 0.5 {
+    if unknown >= AttentionThresholds.minimumUnknown, admitted > 0,
+      Double(unknown) / Double(admitted) * 100 >= AttentionThresholds.unknownPercent
+    {
       items.append(
         .init(
-          "unresolved_executions", critical: Double(occupied) / Double(limit) >= 0.8,
+          "observation_quality",
           detail: [
-            "count": .number(Decimal(unknown)), "unresolvedCount": .number(Decimal(occupied)),
-            "limit": .number(Decimal(limit)),
+            "count": .number(Decimal(unknown)), "admitted": .number(Decimal(admitted)),
+            "percent": .number(Decimal(Double(unknown) / Double(admitted) * 100)),
           ], since: since))
     }
     if admitted >= AttentionThresholds.minimumAdmitted,
