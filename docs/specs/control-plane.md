@@ -104,6 +104,9 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | key_limit_near | 启用 Key 当日请求数或治理预算占用 ≥90% | warning |
 | unresolved_executions | 全时间未结占用达到全局上限 50%，80% 升 critical | warning/critical |
 | error_rate_high | 滚动60分钟已准入 ≥20 且失败率 ≥10%，客户端取消不计失败 | critical |
+| backup_disabled | 未配置在线备份目录 | warning |
+| backup_stale | 最近成功（无成功则本次启用时间）距今严格超过 36h / 72h | warning / critical |
+| backup_size | 目录总量严格超过 5 GiB 或单完成 bundle 超过 768 MiB | warning |
 | storage_pressure | 现有低盘保护 degraded/blocked | critical |
 | client_protocol_extension | 本进程出现未知 WS 控制类型或未知 x-codex-* 头名 | warning |
 | attention_source_unavailable | accounts/keys/executions/storage 来源不可读取 | warning |
@@ -130,3 +133,8 @@ Key 显示名与账号共用校验：1—64 个 Unicode 标量、最多 256 UTF-
 displayName 存于现有 managed_keys.metadata_json；旧记录缺字段视为 null，不新增 schema。全量策略更新、到期设置、轮换及恢复禁用均保留显示名。显示名不参与认证、归属、治理或结算，不要求唯一。
 
 所有 Key 管理 DTO、用量 keyOptions、按 Key 今日摘要、用量明细及进行中请求返回可空 displayName，按当前 Key 元数据关联，未知或已删除为 null。attention 的 Key subjectName 优先显示名，缺失回退 principal。界面优先显示名，主体名以次要灰字保留（原生筛选选项以文本并列），搜索同时匹配显示名。编辑抽屉允许留空清除；策略和显示名分两次 CAS 修改，部分成功须提示核对，不自动重放，409 刷新后重新确认。
+
+
+`GET /api/runtime/storage` 新增 `backup` 对象，复用管理员认证、只读/no-store：enabled、enabledUnixSeconds、lastSuccessUnixSeconds、lastFailureUnixSeconds、lastFailure、lastSkippedUnixSeconds、skippedPressure、retainedCount、totalBytes、largestBundleBytes。未发生的可空时间/分类省略；未启用为 enabled=false、零计数。固定失败分类 directory_unavailable/insufficient_space/snapshot_failed/verification_failed/retention_failed/cancelled，不含原始错误、路径或凭证；成功时间从保留 manifest 恢复，失败/跳过仅在当前进程保留。压力下仍可读健康快照，不增加采样或备份任务。
+
+严格超过 36/72 小时才升级，恰好边界保留前一等级；无成功的宽限从本次启动计时，已有成功则跨重启沿用其时间。备份提醒链接现有存储详情，系统状态与详情展示最近成功时间，缺失、未启用和尚无成功明确区分，不新增备份页面。体积提醒提示人工容量与异地保存，不自动删旧份。
