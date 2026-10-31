@@ -1,4 +1,5 @@
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -23,7 +24,7 @@ async function query() {
   await expect(panel().getByRole("button", { name: "查询用量", exact: true })).toBeEnabled();
 }
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await openChrome();
   const context = await browser.newContext({ viewport: { width: 1600, height: 1080 } });
   await context.route(url => url.origin !== origin, route => route.abort());
   page = await context.newPage(); const errors = [];

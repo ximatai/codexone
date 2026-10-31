@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
+from browser_env import browser_env
 
 CLIENT = 'app_EMoamEEZ73f0CkXaXp7hrann'
 ADMIN = 'synthetic-account-ui-admin-' + 'a' * 32
@@ -125,7 +126,7 @@ def verify(binary, usage=False):
                 port = int(re.search(rb'ADMIN_PORT (\d+)', output)[1])
                 result = subprocess.run(['node', str(root / ('web/scripts/live-usage.mjs' if usage else 'web/scripts/live-accounts.mjs')), str(port), str(provider.server_port), str(root / ('artifacts/usage-ui' if usage else 'artifacts/account-management-ui'))],
                                         input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=120,
-                                        env={'PATH': os.environ.get('PATH', os.defpath)})
+                                        env=browser_env())
                 browser_output = result.stdout + result.stderr
                 assert len(browser_output) < 65536 and ADMIN.encode() not in browser_output and str(work).encode() not in browser_output
                 assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', browser_output) is None

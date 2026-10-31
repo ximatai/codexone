@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from browser_env import browser_env
 
 TOKEN = "synthetic-client-token-for-local-tests"
 
@@ -229,7 +230,7 @@ def web_smoke(port, state):
     root = Path(__file__).resolve().parents[1]
     subprocess.run(["node", str(root / "web/scripts/live-overview.mjs"), str(port), state,
                     str(root / "artifacts/single-identity-ui")],
-                   env={"PATH": os.environ.get("PATH", os.defpath)}, check=True, timeout=30)
+                   env=browser_env(), check=True, timeout=30)
 
 
 def verify_model_profiles(binary):

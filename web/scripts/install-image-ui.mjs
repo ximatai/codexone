@@ -1,6 +1,7 @@
 // Browser exercises the packaged SPA and actual container API through a curl relay.
 // HTTPS route fulfillment supplies browser cookie semantics; it does not test TLS/Nginx.
-import { chromium, expect } from "@playwright/test";
+import { openChrome } from "./browser.mjs";
+import { expect } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -14,7 +15,7 @@ const origin = "https://admin.example.invalid";
 const secrets = [credential];
 let browser, page, stage = "launch";
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await openChrome();
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
   await context.route("**/*", async route => {
