@@ -1,7 +1,7 @@
 .brand-mark {
   display: grid;
   place-items: center;
-  background: #204c3f;
+  background: var(--mantine-color-green-8);
   color: white;
   border-radius: 10px;
   width: 34px;
@@ -70,7 +70,7 @@
 :where(.account-management, .system-status) button {
   border: 0;
   border-radius: 8px;
-  background: #204c3f;
+  background: var(--mantine-color-green-8);
   color: white;
   padding: 11px 17px;
   cursor: pointer;
@@ -134,7 +134,7 @@
   padding: 10px 11px;
   font: inherit;
   font-size: 14px;
-  color: #21302b;
+  color: var(--app-text);
   background: #fff;
 }
 :where(.account-management, .system-status) input:focus-visible {
@@ -142,7 +142,7 @@
   outline-offset: 1px;
 }
 :where(.account-management, .system-status) input:disabled {
-  background: #f5f7f5;
+  background: var(--app-surface);
 }
 .field-hint {
   font-size: 12px;
@@ -175,7 +175,7 @@
   overflow-wrap: anywhere;
 }
 .model-choice input {
-  accent-color: #204c3f;
+  accent-color: var(--mantine-color-green-8);
   margin-top: 3px;
 }
 .model-choice small {
@@ -303,7 +303,7 @@
   width: min(540px, calc(100% - 36px));
   max-height: calc(100% - 48px);
   overflow: auto;
-  color: #21302b;
+  color: var(--app-text);
   box-shadow: 0 24px 70px #173d3026;
 }
 :where(.account-management, .system-status) dialog::backdrop {
@@ -563,12 +563,12 @@
 }
 :root {
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #21302b;
-  background: #f5f7f5;
+  color: var(--app-text);
+  background: var(--app-surface);
 }
 body {
   margin: 0;
-  background: #f5f7f5;
+  background: var(--app-surface);
 }
 .editor-fieldset {
   border: 0;
@@ -607,25 +607,6 @@ body {
   margin-bottom: 28px;
 }
 @media (max-width: 700px) {
-}
-/* Static theme variables preserve the management service's strict style-src 'self' CSP. */
-:root {
-  --mantine-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  --mantine-color-green-0: #edf5f0;
-  --mantine-color-green-1: #dcebe2;
-  --mantine-color-green-2: #b8d5c5;
-  --mantine-color-green-3: #91bca7;
-  --mantine-color-green-4: #6ca48b;
-  --mantine-color-green-5: #4f8e73;
-  --mantine-color-green-6: #317257;
-  --mantine-color-green-7: #245d46;
-  --mantine-color-green-8: #204c3f;
-  --mantine-color-green-9: #173d30;
-  --mantine-primary-color-filled: var(--mantine-color-green-8);
-  --mantine-primary-color-filled-hover: var(--mantine-color-green-9);
-  --mantine-primary-color-light: #edf5f0;
-  --mantine-primary-color-light-hover: #dcebe2;
-  --mantine-primary-color-light-color: #204c3f;
 }
 .model-id {
   text-transform: none;
@@ -730,4 +711,13 @@ body.management-overlay-open {
 
 .wrap-anywhere {
   overflow-wrap: anywhere;
+}
+
+/* Keep Mantine wheel/touch isolation, replacing its injected scrollbar CSS. */
+body:has([data-ui-overlay="true"]) {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+html {
+  scrollbar-gutter: stable;
 }

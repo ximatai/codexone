@@ -46,17 +46,17 @@ export function AdminOverview() {
     return () => document.body.classList.remove("management-overlay-open");
   }, [overlay]);
   const accounts = useQuery({
-    queryKey: ["overview-accounts"],
+    queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
     enabled: !!owner.session,
   });
   const usage = useQuery({
-    queryKey: ["overview-key-usage"],
+    queryKey: ["overview", "key-usage"],
     queryFn: ({ signal }) => fetchKeyUsage(signal),
     enabled: !!owner.session,
   });
   const storage = useQuery({
-    queryKey: ["overview-storage"],
+    queryKey: ["overview", "storage"],
     queryFn: ({ signal }) => fetchStorage(signal),
     enabled: !!owner.session,
   });

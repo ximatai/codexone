@@ -1,0 +1,31 @@
+.table {
+  table-layout: fixed;
+  width: 100%;
+}
+.table td,
+.table th {
+  overflow-wrap: anywhere;
+}
+.label {
+  display: none;
+}
+@media (max-width: 750px) {
+  .table thead {
+    display: none;
+  }
+  .table tr {
+    display: block;
+    border-bottom: 1px solid var(--mantine-color-default-border);
+    padding: var(--mantine-spacing-sm) 0;
+  }
+  .table td {
+    display: block;
+    width: 100%;
+    padding: 6px;
+  }
+  .label {
+    display: block;
+    font-size: var(--mantine-font-size-xs);
+    color: var(--mantine-color-dimmed);
+  }
+}

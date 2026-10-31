@@ -105,7 +105,7 @@ export function ActivityOverview({
     retry: false as const,
   };
   const daily = useQuery({
-    queryKey: ["overview-daily"],
+    queryKey: ["overview", "daily"],
     queryFn: async ({ signal }) => {
       await refreshOverview();
       return fetchDaily(signal);
@@ -113,13 +113,13 @@ export function ActivityOverview({
     ...options,
   });
   const flight = useQuery({
-    queryKey: ["overview-in-flight"],
+    queryKey: ["overview", "in-flight"],
     queryFn: ({ signal }) => fetchInFlight(signal),
     ...options,
   });
   // Recent rows may page through the usage window, so they refresh less often.
   const recent = useQuery({
-    queryKey: ["overview-recent"],
+    queryKey: ["overview", "recent"],
     queryFn: ({ signal }) => fetchRecent(signal),
     ...options,
     refetchInterval: refresh.interval && 60000,

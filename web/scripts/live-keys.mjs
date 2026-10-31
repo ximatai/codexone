@@ -93,7 +93,7 @@ try {
   await edit.getByText("本地治理限额", { exact: true }).click();
   await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
   await edit.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("alert")).toContainText("记录已被其他操作修改");
+  await expect(page.locator("#management-keys")).toContainText("数据已被修改，请确认后重试");
   await expect(edit).toHaveCount(0);
   assert((await admin("/api/keys")).keys[0].limits.requests === 4, "Conflict overwrote authoritative policy");
   // A second conflict whose synchronization fails must retain uncertainty, not claim a refresh.
@@ -105,8 +105,8 @@ try {
   await edit.getByLabel("每日请求（UTC）", { exact: true }).fill("3");
   await page.route("**/api/keys", route => route.request().method() === "GET" ? route.abort() : route.fallback(), { times: 1 });
   await edit.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByRole("alert")).toContainText("刷新未完成");
-  await expect(page.getByRole("alert")).not.toContainText("列表已刷新");
+  await expect(page.locator("#management-keys")).toContainText("刷新未完成");
+  await expect(page.locator("#management-keys")).not.toContainText("列表已刷新");
   await expect(row.getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeDisabled();
   assert((await admin("/api/keys")).keys[0].limits.requests === 5, "Failed synchronization overwrote policy");
@@ -126,9 +126,19 @@ try {
   assert((await data("/v1/models", firstSecret)).document.data.map(model => model.id).join() === "synthetic-other");
   assert((await data("/v1/responses", firstSecret, { model: "synthetic-text", input: "synthetic", stream: false })).status === 403);
   assert((await data("/v1/responses", firstSecret, { model: "synthetic-other", input: "synthetic", stream: false })).status === 200);
+  stage = "CSP expiration and scroll isolation";
+  await row.getByRole("button", { name: /更多操作/ }).click();
+  await page.getByRole("menuitem", { name: "设置到期时间", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "设置 Key 到期时间" })).toBeVisible();
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  await expect(page.locator("style")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "设置 Key 到期时间" })).toHaveCount(0);
   stage = "disabled rotation and limits";
   await row.getByRole("button", { name: /更多操作/ }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  await expect(page.locator("style")).toHaveCount(0);
   await page.getByRole("button", { name: "确认禁用", exact: true }).click();
   await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   assert((await data("/v1/models", firstSecret)).status === 401);
@@ -154,7 +164,7 @@ try {
   stage = "read retry";
   await page.route("**/api/keys", route => route.request().method() === "GET" ? route.abort() : route.fallback(), { times: 1 });
   await page.getByRole("button", { name: "刷新列表", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("管理服务暂时不可用");
+  await expect(page.getByRole("alert").filter({ hasText: "管理服务暂时不可用" })).toBeVisible();
   await page.getByRole("button", { name: "刷新列表", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   stage = "committed mutation with lost response";
@@ -164,7 +174,7 @@ try {
   await row.getByRole("button", { name: /更多操作/ }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
   await page.getByRole("button", { name: "确认禁用", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("操作结果尚未确认");
+  await expect(page.locator("#management-keys")).toContainText("操作结果尚未确认");
   await expect(page.getByRole("button", { name: "创建密钥", exact: true })).toBeDisabled();
   const authoritative = (await admin("/api/keys")).keys[0];
   assert(!authoritative.enabled && authoritative.revision === key.revision + 1 && dropped === 1, "Uncertain mutation replayed or failed to persist");
@@ -178,7 +188,7 @@ try {
     return route.fallback();
   });
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("服务端登出尚未确认");
+  await expect(page.getByRole("alert").filter({ hasText: "服务端登出尚未确认" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "访问密钥" })).toHaveCount(0);
   assert(await page.evaluate(async () => (await fetch("/api/session")).status === 200), "Fixture did not preserve unconfirmed session");
   await page.getByRole("button", { name: "重试登出", exact: true }).click();

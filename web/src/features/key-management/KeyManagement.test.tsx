@@ -1,3 +1,4 @@
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { renderPrivate as render } from "../../../tests/render";
 import * as sessions from "../../shared/management";
 import { beforeEach } from "vitest";
@@ -77,7 +78,17 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
       ),
     },
   });
-  const view = render(<KeyManagement />);
+  let client!: QueryClient;
+  function CacheProbe() {
+    client = useQueryClient();
+    return null;
+  }
+  const view = render(
+    <>
+      <KeyManagement />
+      <CacheProbe />
+    </>,
+  );
   await screen.findByText("尚未创建密钥。");
   fireEvent.click(screen.getByRole("button", { name: "创建密钥" }));
   fireEvent.change(screen.getByLabelText("主体标识"), {
@@ -91,6 +102,17 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
   expect(screen.getByLabelText("新 API Key")).toHaveValue(
     "synthetic-one-time-secret",
   );
+  const cached = JSON.stringify({
+    queries: client
+      .getQueryCache()
+      .getAll()
+      .map((item) => item.state),
+    mutations: client
+      .getMutationCache()
+      .getAll()
+      .map((item) => item.state),
+  });
+  expect(cached).not.toContain("synthetic-one-time-secret");
   fireEvent.click(screen.getByText("复制凭证"));
   await act(async () => {
     vi.advanceTimersByTime(300_000);
@@ -254,4 +276,28 @@ it("requires explicit confirmation before disabling, and cancellation leaves the
   fireEvent.click(screen.getByRole("button", { name: "确认禁用" }));
   await waitFor(() => expect(api.updateKey).toHaveBeenCalledOnce());
   expect(vi.mocked(api.updateKey).mock.calls[0][1]).toBe(false);
+});
+
+it("retains the editor draft after validation rejection", async () => {
+  vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
+  vi.mocked(api.fetchKeys).mockResolvedValue([key]);
+  vi.mocked(api.fetchOptions).mockResolvedValue({
+    models: key.models,
+    imageModels: [],
+  });
+  vi.mocked(api.updateKey).mockRejectedValue(
+    new api.ManagementError(400, "invalid_request"),
+  );
+  render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  fireEvent.click(screen.getByText("本地治理限额"));
+  fireEvent.change(screen.getByLabelText("每日请求（UTC）"), {
+    target: { value: "7" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(api.updateKey).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled(),
+  );
+  expect(screen.getByLabelText("每日请求（UTC）")).toHaveValue("7");
 });
