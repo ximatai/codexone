@@ -106,6 +106,6 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：中断后客户端断开时短暂续读上游终态以减少 unknown；协议变化周检与新版CLI金丝雀定期任务；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；管理台下一轮：账号显示名（需schema）、Key到期、进行中请求列表、7天趋势与错误率等（见竞品摸排结论）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
+测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：中断后客户端断开时短暂续读上游终态以减少 unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；全部Key正式迁移（含5枚需图片权限的Key）与切回预案；管理台下一轮：账号显示名（需schema）、Key到期、进行中请求列表、7天趋势与错误率等（见竞品摸排结论）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 
 配置与维护分别见[Key治理](docs/development/key-governance.md)、[账号凭证](docs/development/account-credentials.md)、[快照维护](docs/development/snapshot-maintenance.md)、[主密钥维护](docs/development/master-key-maintenance.md)。迁移或回退须保留新执行责任及解密依赖，不能恢复旧余额或原地降schema。
