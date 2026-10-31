@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
 
@@ -8,6 +8,11 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
 }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const duplicateKeys: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("Encountered two children with the same key"))
+      duplicateKeys.push(message.text());
+  });
   let authenticated = false,
     mutations = 0,
     reads = 0;
@@ -129,7 +134,7 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
       firstEventMilliseconds: 12,
       totalMilliseconds: 34,
     }));
-    return route.fulfill({ json: { ...report, rows } });
+    return route.fulfill({ json: { ...report, rows, nextCursor: null } });
   });
   await page.goto("/#/keys");
   await page
@@ -142,6 +147,10 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();
   await expect(page.getByText(/允许准入/)).toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: "synthetic-team" }),
+  ).toHaveCount(1);
+  expect(duplicateKeys).toEqual([]);
   await expect(page.getByText("今日请求 / 失败", { exact: true })).toHaveCount(
     0,
   );
@@ -153,15 +162,9 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await page.getByLabel("搜索主体名").fill("synthetic");
   await expect(page.getByText("other-team", { exact: true })).toBeHidden();
-  await page
-    .getByRole("radiogroup", { name: "密钥状态" })
-    .getByText("禁用", { exact: true })
-    .click();
+  await page.getByLabel("可用状态", { exact: true }).selectOption("disabled");
   await expect(page.getByText("没有匹配的密钥。")).toBeVisible();
-  await page
-    .getByRole("radiogroup", { name: "密钥状态" })
-    .getByText("启用", { exact: true })
-    .click();
+  await page.getByLabel("可用状态", { exact: true }).selectOption("available");
   await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
   await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "禁用 API Key" });
@@ -176,10 +179,7 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await confirm.getByRole("button", { name: "确认禁用" }).click();
   await expect(confirm).toBeHidden();
   expect(mutations).toBe(1);
-  await page
-    .getByRole("radiogroup", { name: "密钥状态" })
-    .getByText("禁用", { exact: true })
-    .click();
+  await page.getByLabel("可用状态", { exact: true }).selectOption("disabled");
   const row = page.getByRole("row").filter({ hasText: "synthetic-team" });
   await expect(row).toContainText("禁用");
   await page.screenshot({
@@ -190,6 +190,11 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await expect(page.getByLabel("Key 主体")).toHaveValue("alpha");
   await expect(page.locator(".usage-table")).toContainText("synthetic-team");
   expect(reads).toBeGreaterThan(0);
+  // Leave a desktop chart tooltip behind before opening the request drawer.
+  const chart = page.locator(".recharts-wrapper");
+  const chartBox = (await chart.boundingBox())!;
+  await chart.hover({ position: { x: chartBox.width - 40, y: 100 } });
+  await expect(page.locator(".recharts-tooltip-wrapper")).toBeVisible();
   await page.getByRole("button", { name: "查看详情" }).first().click();
   const detail = page.getByRole("dialog", { name: "请求详情" });
   await expect(detail).toContainText("12 ms");

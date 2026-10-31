@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
@@ -160,7 +160,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page
       .getByRole("region", { name: "需要处理", exact: true })
       .getByRole("link", { name: /账号需要重新授权/ }),
-  ).toHaveAttribute("href", "#/accounts");
+  ).toHaveAttribute("href", "#/accounts?target=synthetic-account");
   await mkdir("../artifacts/admin-attention", { recursive: true });
   await page.screenshot({
     path: "../artifacts/admin-attention/overview.png",

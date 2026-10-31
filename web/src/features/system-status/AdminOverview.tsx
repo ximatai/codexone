@@ -12,7 +12,7 @@ import { quotaStale } from "../account-management/quota";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 import { ActivityOverview } from "./ActivityOverview";
 import styles from "./overview.module.css";
-import { EmptyState, ErrorState } from "../../shared/ui/States";
+import { EmptyState } from "../../shared/ui/States";
 import { useQuery } from "@tanstack/react-query";
 import {
   Drawer,
@@ -177,24 +177,18 @@ export function AdminOverview() {
           </Button>
         </Alert>
       )}
-      {(accounts.isError || usage.isError || storage.isError) && (
-        <ErrorState
-          retryLabel="重新读取概览"
-          retry={() => {
-            void accounts.refetch();
-            void usage.refetch();
-            void storage.refetch();
-          }}
-        >
-          部分概览读取失败或未开启，未将缺失值记为零。
-        </ErrorState>
-      )}
       <ActivityOverview
         refresh={refresh}
         accounts={accounts.data}
-        extraQueries={[accounts, usage, storage, attention]}
+        extraQueries={[
+          { ...accounts, source: "订阅账号" },
+          { ...usage, source: "Key 用量摘要" },
+          { ...storage, source: "存储状态" },
+          { ...attention, source: "需要处理提醒" },
+        ]}
         attention={
           <AttentionPanel
+            aggregateErrors
             items={attention.data?.items}
             accounts={accounts.data}
             release={(item: AttentionItem) => {
@@ -229,7 +223,10 @@ export function AdminOverview() {
                   );
                   return (
                     <Stack gap="xs" key={account.id} className="wrap-anywhere">
-                      <Anchor component={Link} to="/accounts">
+                      <Anchor
+                        component={Link}
+                        to={`/accounts?target=${encodeURIComponent(account.id)}`}
+                      >
                         {accountName(account.id, [], account.displayName)}
                       </Anchor>
                       <Text size="xs" c="dimmed">
@@ -281,7 +278,7 @@ export function AdminOverview() {
                     label: "可用账号",
                     value: `${available ?? "—"} · 授权异常 ${abnormal ?? "—"}`,
                     to: "/accounts",
-                    good: available != null && available > 0,
+                    good: available != null && available > 0 && abnormal === 0,
                   },
                   {
                     label: terms.pending,

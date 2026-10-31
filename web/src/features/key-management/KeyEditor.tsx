@@ -61,7 +61,7 @@ import {
   limitLabels,
   dollarsToMicros,
   microsToDollars,
-  money,
+  moneyThreshold,
   estimateNote,
 } from "../../shared/presentation";
 const fields = Object.entries(limitLabels) as [keyof KeyLimits, string][];
@@ -269,8 +269,8 @@ export function KeyEditor({
                 {form.values.limits.active ?? "不限"} · 待核对{" "}
                 {form.values.limits.unresolved ?? "不限"}
                 <br />
-                每日 {money(form.values.limits.budgetMicros, true)} · 待核对占用{" "}
-                {money(form.values.limits.unresolvedMicros, true)}
+                每日 {moneyThreshold(form.values.limits.budgetMicros)} ·
+                待核对占用 {moneyThreshold(form.values.limits.unresolvedMicros)}
               </Text>
             </Accordion.Control>
             <Accordion.Panel>
@@ -396,6 +396,12 @@ export function KeyEditor({
               所选日期 UTC 00:00 起失效（快捷项至少保留整 N
               天）；到期后拒绝新请求，已派发请求继续。
             </Text>
+            {expiration !== "never" &&
+              Date.parse(expirationDate + "T00:00:00Z") <= Date.now() && (
+                <Alert color="yellow">
+                  所选时间已过去，保存后立即拒绝新请求。
+                </Alert>
+              )}
           </Stack>
         )}
         <Group justify="flex-end">

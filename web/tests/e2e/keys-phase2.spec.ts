@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 
 test("key status filters, menu actions, create drawer and narrow navigation", async ({
@@ -72,18 +72,12 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/keys");
   await expect(page.getByText("desktop-team", { exact: true })).toBeVisible();
-  await page
-    .getByRole("radiogroup", { name: "密钥状态" })
-    .getByText("即将到期", { exact: true })
-    .click();
+  await page.getByLabel("可用状态", { exact: true }).selectOption("expiring");
   await expect(page.getByText("ci-team", { exact: true })).toBeVisible();
   await expect(page.getByText("desktop-team", { exact: true })).toBeHidden();
   await expect(page.getByText("retired-team", { exact: true })).toBeHidden();
   await expect(page.getByText("共 1 个", { exact: true })).toBeVisible();
-  await page
-    .getByRole("radiogroup", { name: "密钥状态" })
-    .getByText("全部", { exact: true })
-    .click();
+  await page.getByLabel("可用状态", { exact: true }).selectOption("");
   await expect(
     page.getByRole("row").filter({ hasText: "ci-team" }),
   ).toContainText("7 天内到期");

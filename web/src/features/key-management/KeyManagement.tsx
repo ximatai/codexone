@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -6,7 +6,7 @@ import {
   Group,
   Modal,
   Paper,
-  SegmentedControl,
+  NativeSelect,
   Stack,
   Text,
   TextInput,
@@ -28,12 +28,49 @@ import { KeyList } from "./KeyList";
 import { ExpirationEditor } from "./ExpirationEditor";
 import { ErrorState, StatusBadge, LoadingState } from "../../shared/ui/States";
 import { queryKeys } from "../../shared/query-keys";
+import { useLocation, useNavigationType, useSearchParams } from "react-router";
+import { readPage } from "../../shared/view-memory";
+import { KeyName } from "../../shared/KeyName";
+import { localTime } from "../../shared/presentation";
 export function KeyManagement() {
+  const navigationType = useNavigationType();
+  const locationKey = useLocation().key;
+  const positionedLocation = useRef<string | null>(null);
   const state = useKeys();
   const owner = useManagementSession();
   const [refresh, setRefresh] = useState(0);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  const [params, setParams] = useSearchParams();
+  const search = params.get("q") ?? "";
+  const status = params.get("status") ?? "";
+  const target = params.get("target");
+  const list = useRef<HTMLDivElement>(null);
+  const paging = useRef<number | null>(null);
+  const menuTrigger = useRef<HTMLElement | null>(null);
+  function rememberMenuTrigger(key: api.ManagedKey) {
+    const row = [
+      ...(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? []),
+    ].find((element) => element.dataset.rowId === key.id);
+    menuTrigger.current =
+      row?.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ?? null;
+  }
+  function returnToMenuTrigger() {
+    if (document.querySelector('[data-ui-overlay="true"]')) return;
+    if (menuTrigger.current?.isConnected)
+      menuTrigger.current.focus({ preventScroll: true });
+  }
+  const pageSize = 50;
+  function filter(name: string, value: string) {
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (value) next.set(name, value);
+        else next.delete(name);
+        next.delete("page");
+        return next;
+      },
+      { replace: true },
+    );
+  }
   const [expiring, setExpiring] = useState<api.ManagedKey | null>(null);
   const [disabling, setDisabling] = useState<api.ManagedKey | null>(null);
   const usage = useQuery({
@@ -51,16 +88,83 @@ export function KeyManagement() {
         ((key.displayName ?? "").toLowerCase().includes(search.toLowerCase()) ||
           key.principal.toLowerCase().includes(search.toLowerCase()) ||
           key.id.toLowerCase().includes(search.toLowerCase())) &&
-        (!status ||
-          (status === "expiring"
-            ? api.expirationState(key.expiresAtUnixSeconds) === "soon"
-            : key.enabled === (status === "enabled"))),
+        api.matchesAvailability(key, status),
     )
     .sort(
       (a, b) =>
         Number(b.enabled) - Number(a.enabled) ||
         a.principal.localeCompare(b.principal),
     );
+  const pageCount = Math.max(1, Math.ceil(keys.length / pageSize));
+  const requestedPage = readPage(params.get("page"), 6);
+  const targetIndex = target ? keys.findIndex((key) => key.id === target) : -1;
+  const page =
+    targetIndex >= 0
+      ? Math.floor(targetIndex / pageSize) + 1
+      : Math.min(pageCount, requestedPage);
+  const identity = params.toString();
+  useEffect(() => {
+    if (!state.readAt || state.loading || usage.isPending) return;
+    if (page !== requestedPage) {
+      setParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.set("page", String(page));
+          return next;
+        },
+        { replace: true },
+      );
+      return;
+    }
+    const memoryKey = `keys:${identity}`;
+    const saved = owner.views.get(memoryKey) as number | undefined;
+    const frame = requestAnimationFrame(() => {
+      // A pending filter render must not consume a later page button's scroll.
+      if (paging.current !== null && paging.current !== page) return;
+      if (positionedLocation.current === locationKey) return;
+      positionedLocation.current = locationKey;
+      if (paging.current === page) {
+        paging.current = null;
+        list.current?.scrollIntoView?.({ block: "start" });
+        list.current?.focus({ preventScroll: true });
+      } else if (targetIndex >= 0) {
+        const row = [
+          ...(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ??
+            []),
+        ].find((element) => element.dataset.rowId === target);
+        row?.scrollIntoView?.({ block: "center" });
+        row?.focus({ preventScroll: true });
+      } else window.scrollTo?.(0, navigationType === "POP" ? (saved ?? 0) : 0);
+    });
+    const remember = () => owner.views.set(memoryKey, window.scrollY);
+    window.addEventListener("scroll", remember);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", remember);
+    };
+  }, [
+    identity,
+    navigationType,
+    locationKey,
+    state.readAt,
+    state.loading,
+    usage.isPending,
+    page,
+    requestedPage,
+    targetIndex,
+    target,
+    owner.views,
+    setParams,
+  ]);
+  function changePage(nextPage: number) {
+    paging.current = nextPage;
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("page", String(nextPage));
+      next.delete("target");
+      return next;
+    });
+  }
   function toggle(key: api.ManagedKey) {
     return state.mutate(
       (csrf, signal) =>
@@ -102,50 +206,119 @@ export function KeyManagement() {
           placeholder="搜索显示名、主体名或标识…"
           leftSection={<IconSearch size={18} />}
           value={search}
-          onChange={(e) => setSearch(e.currentTarget.value)}
+          onChange={(e) => filter("q", e.currentTarget.value)}
         />
-        <SegmentedControl
-          aria-label="密钥状态"
+        <NativeSelect
+          label="可用状态"
           value={status}
-          onChange={setStatus}
+          onChange={(event) => filter("status", event.currentTarget.value)}
           data={[
             { value: "", label: "全部" },
-            { value: "enabled", label: "启用" },
-            { value: "disabled", label: "禁用" },
+            { value: "available", label: "可用" },
             { value: "expiring", label: "即将到期" },
+            { value: "expired", label: "已到期" },
+            { value: "disabled", label: "已禁用" },
           ]}
         />
         <Text size="sm" c="dimmed">
-          共 {keys.length} 个
+          {state.readAt === null ? "数量不可用" : `共 ${keys.length} 个`}
         </Text>
       </Paper>
+      <Text size="xs" c="dimmed" mb="sm">
+        可用：启用且未到期；即将到期：可用且 7
+        天内到期；已到期：不论开关；已禁用：未到期但关闭。仅按开关与有效期筛选，其他准入限制仍独立生效。
+      </Text>
       <Text size="xs" c="dimmed" mb="md">
         今日统计按 UTC · {estimateNote}。
         {usage.isError ? "今日摘要读取失败，请刷新列表重试。" : ""}
       </Text>
-      {state.error && (
-        <ErrorState retry={state.reload}>{state.error}</ErrorState>
+      {state.error && state.readAt !== null && (
+        <ErrorState retry={state.reload}>
+          {state.error}
+          {state.readAt
+            ? ` 上次成功读取：${localTime(state.readAt)}；快照可能已过时。`
+            : ""}
+        </ErrorState>
+      )}
+      {target && state.readAt && !state.error && targetIndex < 0 && (
+        <Alert color="yellow" mb="sm">
+          {state.keys.some((key) => key.id === target)
+            ? "目标密钥被筛选隐藏。"
+            : "目标密钥已不存在。"}
+          <Button
+            variant="subtle"
+            onClick={() =>
+              setParams(
+                state.keys.some((key) => key.id === target) ? { target } : {},
+                { replace: true },
+              )
+            }
+          >
+            重置筛选
+          </Button>
+        </Alert>
       )}
       {state.checking ? (
         <LoadingState>正在读取密钥…</LoadingState>
       ) : state.unavailable ? (
         <Alert>管理入口尚未启用</Alert>
       ) : (
-        <Paper withBorder radius="md" p="md">
+        <Paper
+          withBorder
+          radius="md"
+          p="md"
+          ref={list}
+          tabIndex={-1}
+          className={styles.list}
+        >
           <KeyList
-            keys={keys}
+            keys={keys.slice((page - 1) * pageSize, page * pageSize)}
+            highlightedID={target}
             state={state}
+            setRotating={(key) => {
+              rememberMenuTrigger(key);
+              state.setRotating(key);
+            }}
             usage={usage}
-            setExpiring={setExpiring}
-            setDisabling={setDisabling}
+            setExpiring={(key) => {
+              rememberMenuTrigger(key);
+              setExpiring(key);
+            }}
+            setDisabling={(key) => {
+              rememberMenuTrigger(key);
+              setDisabling(key);
+            }}
             toggle={toggle}
           />
+          {state.readAt !== null && (
+            <Group mt="md" justify="flex-end">
+              <Text size="sm">
+                第 {page} / {pageCount} 页 · 每页 {pageSize} 个
+              </Text>
+              <Button
+                variant="default"
+                disabled={page <= 1}
+                onClick={() => changePage(page - 1)}
+              >
+                上一页
+              </Button>
+              <Button
+                variant="default"
+                disabled={page >= pageCount}
+                onClick={() => changePage(page + 1)}
+              >
+                下一页
+              </Button>
+            </Group>
+          )}
         </Paper>
       )}
       <Modal
         removeScrollProps={{ removeScrollBar: false }}
         data-ui-overlay={!!expiring || undefined}
         opened={!!expiring}
+        returnFocus={false}
+        onExitTransitionEnd={returnToMenuTrigger}
         onClose={() => {
           if (!state.busy) setExpiring(null);
         }}
@@ -174,6 +347,7 @@ export function KeyManagement() {
       </Modal>
       <ConfirmModal
         opened={!!disabling}
+        returnFocusTo={returnToMenuTrigger}
         title="禁用 API Key"
         label="确认禁用"
         busy={state.busy}
@@ -244,6 +418,7 @@ export function KeyManagement() {
       </Drawer>
       <ConfirmModal
         opened={!!state.rotating}
+        returnFocusTo={returnToMenuTrigger}
         title="轮换 API Key"
         label="确认轮换"
         busy={state.busy}
@@ -257,6 +432,20 @@ export function KeyManagement() {
         }
         destructive={false}
       >
+        {state.rotating && (
+          <Stack gap="xs">
+            <Text className="wrap-anywhere">
+              <KeyName {...state.rotating} />
+            </Text>
+            <TextInput
+              label="密钥完整 ID"
+              readOnly
+              value={state.rotating.id}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <Text>当前开关：{state.rotating.enabled ? "启用" : "禁用"}</Text>
+          </Stack>
+        )}
         <Text>旧凭证将立即失效。主体、限额与历史计数保留，启用状态不变。</Text>
         <Text>新凭证只显示一次。</Text>
       </ConfirmModal>
@@ -275,9 +464,9 @@ export function KeyManagement() {
                 密钥已创建但到期设置失败，请保存凭证后刷新列表，核对并重新设置到期时间。
               </Alert>
             )}
-            <Text>
+            <Text component="div">
               {state.created.key.principal} ·{" "}
-              <StatusBadge color={state.created.key.enabled ? "green" : "gray"}>
+              <StatusBadge color="gray">
                 {state.created.key.enabled ? "已启用" : "当前禁用"}
               </StatusBadge>
             </Text>
