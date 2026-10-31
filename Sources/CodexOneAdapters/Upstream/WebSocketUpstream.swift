@@ -12,11 +12,13 @@ struct WebSocketUpstream: Sendable {
   let group: any EventLoopGroup
   let configuration: ResponsesConfiguration
   let token: String?
+  var clientHeaders = HTTPHeaders()
   var proxy: UpstreamHTTPProxy? = nil
   var authorization: SubscriptionDataAccess? = nil
-  func authorized(_ authorization: SubscriptionDataAccess?) -> Self {
+  func authorized(_ authorization: SubscriptionDataAccess?, headers: HTTPHeaders) -> Self {
     Self(
-      group: group, configuration: configuration, token: token, proxy: proxy,
+      group: group, configuration: configuration, token: token, clientHeaders: headers,
+      proxy: proxy,
       authorization: authorization)
   }
 
@@ -35,7 +37,7 @@ struct WebSocketUpstream: Sendable {
       try channel.pipeline.syncOperations.addHandler(
         NIOHTTP1ProxyConnectHandler(
           targetHost: targetHost, targetPort: targetPort, headers: [:],
-          deadline: .now() + .seconds(5), promise: promise))
+          deadline: .now() + .seconds(10), promise: promise))
     } catch { promise.fail(error) }
     return promise.futureResult.flatMap {
       channel.pipeline.removeHandler(name: "upstream-proxy-decoder").flatMap {
@@ -57,7 +59,7 @@ struct WebSocketUpstream: Sendable {
     let channels = ProtocolChannels(limit: 1)
     do {
       try await withTaskCancellationHandler {
-        let negotiated = try await ClientBootstrap(group: group).connectTimeout(.seconds(5))
+        let negotiated = try await ClientBootstrap(group: group).connectTimeout(.seconds(10))
           .channelOption(
             ChannelOptions.recvAllocator,
             value: AdaptiveRecvByteBufferAllocator(minimum: 1024, initial: 4096, maximum: 65_536)
@@ -67,7 +69,7 @@ struct WebSocketUpstream: Sendable {
             guard channels.register(channel) else {
               return channel.close().flatMapThrowing { throw CancellationError() }
             }
-            let timeout = channel.eventLoop.scheduleTask(in: .seconds(5)) {
+            let timeout = channel.eventLoop.scheduleTask(in: .seconds(10)) {
               channel.close(promise: nil)
             }
             let ready = establishProxy(
@@ -79,9 +81,9 @@ struct WebSocketUpstream: Sendable {
                   try channel.pipeline.syncOperations.addHandler(
                     NIOSSLClientHandler(context: tlsContext, serverHostname: host))
                 }
-                var headers: HTTPHeaders = [
-                  "host": url.port.map { host + ":" + String($0) } ?? host
-                ]
+                var headers = clientHeaders
+                headers.replaceOrAdd(
+                  name: "host", value: url.port.map { host + ":" + String($0) } ?? host)
                 if let authorization {
                   for header in authorization.headers {
                     headers.add(name: header.name, value: header.value)
@@ -154,7 +156,9 @@ private final class UpstreamUpgradeStatus: ChannelInboundHandler, RemovableChann
       failure.withLock {
         $0 =
           mapped.code == "upstream_rejected"
-          ? .init(502, "upstream_upgrade_rejected", upstreamStatus: Int(head.status.code)) : mapped
+          ? .init(
+            502, "upstream_upgrade_rejected", upstreamStatus: Int(head.status.code),
+            explicitProviderRejection: (400...499).contains(Int(head.status.code))) : mapped
       }
     }
     context.fireChannelRead(data)

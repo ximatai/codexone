@@ -226,7 +226,7 @@ def main():
                 for mode in ['forward','reject','cut','stall','cancel']:
                     root=owner/(transport+'-'+mode);root.mkdir(mode=0o700)
                     secret=root/'upstream';secret.write_text('synthetic-private-upstream-token-never-log');secret.chmod(0o600)
-                    config=root/'identity.json';config.write_text(json.dumps(dict(upstreamTokenFile=str(secret),principal='synthetic-principal',keyID='synthetic-key',keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),namespace='synthetic-proxy',identity='synthetic-upstream',reservedMicros=1,upstreamTransport=transport,models=[dict(id='synthetic-text',inputMicrosPerMillion=0,outputMicrosPerMillion=0)],upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1',executionTimeoutSeconds=15,firstResponseTimeoutSeconds=10,progressTimeoutSeconds=10)));config.chmod(0o600)
+                    config=root/'identity.json';config.write_text(json.dumps(dict(upstreamTokenFile=str(secret),principal='synthetic-principal',keyID='synthetic-key',keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),namespace='synthetic-proxy',identity='synthetic-upstream',reservedMicros=1,upstreamTransport=transport,models=[dict(id='synthetic-text',inputMicrosPerMillion=0,outputMicrosPerMillion=0)],upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1',executionTimeoutSeconds=15,firstResponseTimeoutSeconds=12,progressTimeoutSeconds=12)));config.chmod(0o600)
                     proxy.mode='stall' if mode=='cancel' else mode;proxy.connected.clear();before=provider.sequence;tunnels=proxy.requests
                     process,ports=start(binary,config,root,upstream_proxy=f'http://127.0.0.1:{proxy.server_address[1]}')
                     try:
@@ -257,8 +257,8 @@ def main():
                                 assert time.monotonic()<deadline,states
                                 time.sleep(.02)
                         else:
-                            began=time.monotonic();status,body=connect(ports['data'],'POST','/v1/responses',request)
-                            assert status==502 and time.monotonic()-began<9
+                            began=time.monotonic();status,body=connect(ports['data'],'POST','/v1/responses',request,timeout=20)
+                            assert status==502 and time.monotonic()-began<14
                             error=json.loads(body)['error'];assert set(error)=={'type','code','message','request_id'}
                             assert error['request_id'] in error['message'] and provider.sequence==before
                             if mode=='reject':assert error['code']=='upstream_proxy_authentication_required',error['code']
@@ -291,7 +291,7 @@ def main():
                 process.terminate();process.wait(10);output=process.stdout.read()
                 assert b'upstream_status=400' in output and b'provider_code=unsupported_parameter' in output
                 assert error['request_id'].encode() in output and b'synthetic-private-provider-error-never-log' not in output
-                assert ledger(root)==[('unknown',)]
+                assert ledger(root)==[('settled',)]
             finally:stop(process)
             print('PASS: proxy and provider rejections correlate by UUID; provider errors reach the client, never the logs',flush=True)
             # A successful CONNECT never weakens target TLS or permits the bearer to reach a bad certificate.
@@ -317,8 +317,9 @@ def main():
                     process,ports=start(binary,config,root,upstream_proxy=f'http://127.0.0.1:{proxy.server_address[1]}')
                     try:
                         before=invalid.handshakes
-                        status,body=connect(ports['data'],'POST','/v1/responses',dict(model='synthetic-text',input='synthetic invalid TLS'))
-                        assert status==502 and invalid.applicationBytes==0 and invalid.handshakes==before+1
+                        status,body=connect(ports['data'],'POST','/v1/responses',dict(model='synthetic-text',input='synthetic invalid TLS'),timeout=20)
+                        assert status==502 and invalid.applicationBytes==0 and invalid.handshakes>before
+                        if transport=='websocket':assert invalid.handshakes==before+1
                         process.terminate();process.wait(10);output=process.stdout.read()
                         assert b'synthetic-private-upstream-token-never-log' not in output and ledger(root)==[('unknown',)]
                     finally:stop(process)

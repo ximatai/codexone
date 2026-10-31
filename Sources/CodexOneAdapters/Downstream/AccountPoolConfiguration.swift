@@ -3,6 +3,8 @@ import Dispatch
 import Foundation
 
 public struct AccountPoolConfiguration: Sendable, Decodable {
+  public let clientFingerprint: ClientFingerprint?
+  public let dataConnections: Int?
   public let imageConcurrency: Int?
   public let imageGeneration: ImageConfiguration?
   public var models: [SingleIdentityConfiguration.Model]
@@ -25,11 +27,15 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
         [
           "models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport",
           "imageGeneration", "firstResponseTimeoutSeconds", "progressTimeoutSeconds",
-          "modelProfilesFile", "imageConcurrency",
+          "modelProfilesFile", "imageConcurrency", "clientFingerprint", "dataConnections",
         ].contains(
           $0.stringValue)
       })
     else { throw ExecutionError.invalidCommand }
+    clientFingerprint = try values.decodeIfPresent(
+      ClientFingerprint.self, forKey: Field(stringValue: "clientFingerprint")!)
+    dataConnections = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "dataConnections")!)
     imageConcurrency = try values.decodeIfPresent(
       Int.self, forKey: Field(stringValue: "imageConcurrency")!)
     imageGeneration = try values.decodeIfPresent(
@@ -64,6 +70,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     }
   }
   public func validate() throws {
+    try clientFingerprint?.validate()
+    guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
     _ = try ExecutionBudget(
       total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
       idle: progressTimeoutSeconds)
@@ -81,7 +89,9 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       upstreamTransport: upstreamTransport ?? "http",
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
       progressTimeoutSeconds: progressTimeoutSeconds, requestContract: .codexSubscription,
-      imageGeneration: imageGeneration)
+      imageGeneration: imageGeneration,
+      clientFingerprint: (clientFingerprint ?? .init()).resolved(models: models),
+      dataConnections: dataConnections ?? 128)
   }
   func policy(key: ManagedKey) throws -> AccountPoolPolicy {
     let encoder = JSONEncoder()

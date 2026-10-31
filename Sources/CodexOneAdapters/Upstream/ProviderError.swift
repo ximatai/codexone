@@ -14,6 +14,16 @@ enum ProviderError {
     "invalid_api_key", "invalid_token", "authentication_error", "unauthorized", "token_expired",
   ]
 
+  static func isExplicitRejection(status: Int?, error: JSONValue?) -> Bool {
+    if let status { return (400...499).contains(status) }
+    let code = error?["code"]?.string ?? error?["type"]?.string ?? ""
+    return rateLimitCodes.contains(code) || authenticationCodes.contains(code)
+      || [
+        "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
+        "model_not_found", "content_policy_violation", "unsupported_parameter",
+      ].contains(code)
+  }
+
   static func sanitized(_ value: JSONValue?) -> JSONValue? {
     guard let object = value?.object else {
       guard let message = value?.string else { return nil }
@@ -48,28 +58,36 @@ enum ProviderError {
   static func failure(
     status: Int?, error: JSONValue?, retryAfter: Int64? = nil, compact: Bool = false
   ) -> GatewayProtocolError {
+    let rejected = isExplicitRejection(status: status, error: error)
     let code = error?["code"]?.string ?? error?["type"]?.string ?? ""
     let forwarded = sanitized(error)
     let cooldown =
       retryAfter ?? error?["resets_in_seconds"]?.integer.map { min(3600, max(1, $0)) }
-    if status == 401 || authenticationCodes.contains(code) {
-      // The provider credential belongs to the gateway, not the caller.
-      return .init(502, "upstream_authentication_rejected", upstreamStatus: status)
-    }
-    if status == 429 || rateLimitCodes.contains(code) {
-      return .init(
-        429, "upstream_rate_limited", cooldownSeconds: cooldown, upstreamStatus: status,
-        providerError: forwarded)
-    }
-    if let status, (500...599).contains(status) || code == "server_is_overloaded" {
+    if let status, (500...599).contains(status) {
       return .init(
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
         upstreamStatus: status, providerError: forwarded)
     }
+    if status == 401 || authenticationCodes.contains(code) {
+      // The provider credential belongs to the gateway, not the caller.
+      return .init(
+        502, "upstream_authentication_rejected", upstreamStatus: status,
+        explicitProviderRejection: rejected)
+    }
+    if status == 429 || rateLimitCodes.contains(code) {
+      return .init(
+        429, "upstream_rate_limited", cooldownSeconds: cooldown, upstreamStatus: status,
+        providerError: forwarded, explicitProviderRejection: rejected)
+    }
+    if let status, (500...599).contains(status) || code == "server_is_overloaded" {
+      return .init(
+        status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
+        upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
+    }
     let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? 502
     return .init(
       downstream, compact ? "upstream_compact_rejected" : "upstream_rejected",
-      upstreamStatus: status, providerError: forwarded)
+      upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
   }
 
   /// Reads a bounded non-success body; unparsable bodies keep only the status classification.

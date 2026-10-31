@@ -3,13 +3,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 backend() {
+  local swiftpm_flags=()
+  if [[ "${CODEXONE_SWIFTPM_DISABLE_SANDBOX:-0}" == "1" ]]; then
+    swiftpm_flags+=(--disable-sandbox)
+  fi
   python3 scripts/check_docs.py
   python3 scripts/check_architecture.py
   swift format lint --strict --recursive Sources Tests Package.swift
-  swift build -j "${CODEXONE_BUILD_JOBS:-4}"
-  swift test --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
+  swift build "${swiftpm_flags[@]}" -j "${CODEXONE_BUILD_JOBS:-4}"
+  swift test "${swiftpm_flags[@]}" --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
   local backend_bin_dir
-  backend_bin_dir="$(swift build --show-bin-path)"
+  backend_bin_dir="$(swift build "${swiftpm_flags[@]}" --show-bin-path)"
   python3 scripts/verify_storage_pressure.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_key_maintenance.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_snapshot_restore.py --binary "$backend_bin_dir/codexone"
@@ -29,6 +33,7 @@ backend() {
   python3 scripts/verify_context.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_compaction_stream.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_images.py --binary "$backend_bin_dir/codexone"
+  python3 scripts/verify_migration_readiness.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_control.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_keys.py --binary "$backend_bin_dir/codexone"
   python3 scripts/verify_model_profiles_import.py

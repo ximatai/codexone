@@ -27,6 +27,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let principal: String?
   public let keyID: String?
   public let keySHA256: String?
+  public let clientFingerprint: ClientFingerprint?
+  public let dataConnections: Int?
   public let imageConcurrency: Int?
   public let imageGeneration: ImageConfiguration?
   public let managedKeys: Bool?
@@ -44,7 +46,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let upstreamContract: String?
 
   private enum CodingKeys: String, CodingKey, CaseIterable {
-    case principal, keyID, keySHA256, imageConcurrency, imageGeneration, managedKeys, namespace,
+    case clientFingerprint, dataConnections, principal, keyID, keySHA256, imageConcurrency,
+      imageGeneration, managedKeys, namespace,
       identity, models, upstreamBaseURL, upstreamTokenFile, reservedMicros, executionTimeoutSeconds,
       firstResponseTimeoutSeconds, progressTimeoutSeconds, modelProfilesFile, upstreamTransport,
       upstreamContract
@@ -52,6 +55,9 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public init(from decoder: any Decoder) throws {
     try rejectUnknownImageFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
     let fields = try decoder.container(keyedBy: CodingKeys.self)
+    clientFingerprint = try fields.decodeIfPresent(
+      ClientFingerprint.self, forKey: .clientFingerprint)
+    dataConnections = try fields.decodeIfPresent(Int.self, forKey: .dataConnections)
     principal = try fields.decodeIfPresent(String.self, forKey: .principal)
     keyID = try fields.decodeIfPresent(String.self, forKey: .keyID)
     keySHA256 = try fields.decodeIfPresent(String.self, forKey: .keySHA256)
@@ -92,6 +98,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   }
 
   public func validate() throws {
+    try clientFingerprint?.validate()
+    guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
     _ = try ExecutionBudget(
       total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
       idle: progressTimeoutSeconds)

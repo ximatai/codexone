@@ -115,6 +115,7 @@ final class WebSocketTurns: Sendable {
           try finish(&current, type: type, event: event)
         }
       }
+      try current.evidence?(event)
       return lane
     }
   }
@@ -122,7 +123,6 @@ final class WebSocketTurns: Sendable {
   private func finish(_ lane: inout State.Lane, type: String, event: JSONValue) throws {
     guard ProviderObservation.terminalEvents.contains(type) else { return }
     // Preserve classified evidence before any other lane can cancel queued delivery.
-    try lane.evidence?(event)
     lane.phase = .idle
   }
 }

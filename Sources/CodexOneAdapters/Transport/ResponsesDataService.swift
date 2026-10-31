@@ -101,11 +101,11 @@ public struct ResponsesDataService: Service {
     let token = try source.tokenFile.map { try readRuntimeSecret($0) }
     var pool = HTTPClient.Configuration.ConnectionPool(
       idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 16)
-    pool.retryConnectionEstablishment = false
+    pool.retryConnectionEstablishment = true
     var clientConfiguration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
       timeout: .init(
-        connect: .seconds(5),
+        connect: .seconds(10),
         read: .seconds(
           Int64(max(300, max(configuration.budget.first, configuration.budget.idle)) + 5))),
       connectionPool: pool, proxy: proxy?.clientProxy,
@@ -122,10 +122,9 @@ public struct ResponsesDataService: Service {
       report: { await readiness() },
       access: .init(source: source, token: token, store: store, finalizer: finalizer),
       gateway: nil, effectiveModels: [])
-    // Eight additional accepted sockets let a saturated control bulkhead return HTTP 429.
-    // Non-control HTTP and native WS retain their original eight-connection envelope.
-    let channels = ProtocolChannels(limit: 16)
-    let normalChannels = ProtocolChannels(limit: 8)
+    // Dedicated control headroom lets saturation return HTTP 429.
+    let channels = ProtocolChannels(limit: configuration.dataConnections + 16)
+    let normalChannels = ProtocolChannels(limit: configuration.dataConnections)
     do {
       let server = try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -171,7 +170,9 @@ public struct ResponsesDataService: Service {
                   try configureWebSocket(
                     channel, client: false, budget: bodyBudget,
                     reservations: reservations),
-                  try executor.access.digest(head.headers["authorization"]), reservations)
+                  try executor.access.digest(head.headers["authorization"]), reservations,
+                  forwardedClientHeaders(head.headers, fingerprint: configuration.clientFingerprint)
+                )
               }
             })
           var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(
@@ -213,7 +214,9 @@ public struct ResponsesDataService: Service {
                         try await Self.serve(
                           socket, executor: executor, budget: bodyBudget,
                           normalChannels: normalChannels)
-                      case .webSocket(let socket, let digest, let reservations):
+                      case .webSocket(let socket, let digest, let reservations, let headers):
+                        var executor = executor
+                        executor.clientHeaders = headers
                         try await Self.serveWebSocket(
                           socket, executor: executor, digest: digest, reservations: reservations)
                       }
@@ -272,17 +275,9 @@ public struct ResponsesDataService: Service {
           to: downstream)
         throw error
       }
-      if case .pool = authorized.gateway {
-        try await PoolWebSocketSession.run(
-          downstream: downstream, firstBody: firstBody, first: first,
-          executor: authorized, digest: digest)
-      } else {
-        try await executor.webSocket.run { upstream in
-          try await serveTurns(
-            downstream: downstream, upstream: upstream, firstBody: firstBody,
-            executor: authorized, digest: digest)
-        }
-      }
+      try await PoolWebSocketSession.run(
+        downstream: downstream, firstBody: firstBody, first: first,
+        executor: authorized, digest: digest)
     }
   }
 
@@ -509,7 +504,8 @@ public struct ResponsesDataService: Service {
     }
     var executor = try await executor.authorized(
       executor.access.digest(head.headers["authorization"]))
-    executor.clientHeaders = forwardedClientHeaders(head.headers)
+    executor.clientHeaders = forwardedClientHeaders(
+      head.headers, fingerprint: executor.configuration.clientFingerprint)
     if endpoint == "/models", head.method == .GET {
       let codexDirectory =
         URLComponents(string: head.uri)?.queryItems?.contains {
@@ -575,7 +571,7 @@ public struct ResponsesDataService: Service {
 
 private enum NegotiatedProtocol: Sendable {
   case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>)
-  case webSocket(ProtocolWebSocket, String?, WebSocketBodyReservations)
+  case webSocket(ProtocolWebSocket, String?, WebSocketBodyReservations, HTTPHeaders)
 }
 
 private actor ProtocolResponseWriter {

@@ -16,8 +16,10 @@ import Testing
     "chatgpt-account-id": "forged-downstream-account",
     "x-client-private": "synthetic-client-header",
   ])
-  #expect(forwarded.first(name: "user-agent") == "synthetic-desktop")
-  #expect(forwarded.first(name: "originator") == "synthetic-originator")
+  #expect(
+    forwarded.first(name: "user-agent")
+      == "codex_cli_rs/0.163.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10")
+  #expect(forwarded.first(name: "originator") == "codex_cli_rs")
   #expect(forwarded.first(name: "x-codex-image-turn-id") == "synthetic-turn")
   for name in [
     "x-openai-actor-authorization", "authorization", "chatgpt-account-id", "x-client-private",

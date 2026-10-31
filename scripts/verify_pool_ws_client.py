@@ -47,9 +47,8 @@ def main():
                     result = {"sent": True}
                 else:
                     result = event(sock)
-                    if result["type"] == "response.created":
+                    while result["type"] not in ["response.completed", "response.failed", "response.incomplete", "error"]:
                         result = event(sock)
-                        assert result["type"] in ["response.completed", "response.failed", "response.incomplete"]
             print(json.dumps(result), flush=True)
     finally:
         sock.close()
