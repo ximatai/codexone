@@ -1,4 +1,8 @@
 import { KeyName } from "../../shared/KeyName";
+import {
+  accountName,
+  type AccountName,
+} from "../../shared/account-presentation";
 import { useQuery } from "@tanstack/react-query";
 import {
   Anchor,
@@ -47,6 +51,7 @@ export function ActivityOverview({
   extraQueries = [],
   sidebar,
   attention,
+  accounts = [],
 }: {
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
@@ -56,6 +61,7 @@ export function ActivityOverview({
   }[];
   sidebar?: ReactNode;
   attention?: ReactNode;
+  accounts?: readonly AccountName[];
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
@@ -174,9 +180,11 @@ export function ActivityOverview({
                       </Text>
                       <Text size="xs" c="dimmed">
                         {modes[row.mode] ?? "其他模式"} ·{" "}
-                        {row.accountDisplayName ??
-                          row.accountID ??
-                          "账号未记录"}
+                        {accountName(
+                          row.accountID,
+                          accounts,
+                          row.accountDisplayName,
+                        )}
                       </Text>
                     </Stack>
                   ),
@@ -289,7 +297,11 @@ export function ActivityOverview({
           </aside>
         )}
       </div>
-      <UsageDetail detail={detail} onClose={() => setDetail(null)} />
+      <UsageDetail
+        accounts={accounts}
+        detail={detail}
+        onClose={() => setDetail(null)}
+      />
     </Stack>
   );
 }

@@ -14,6 +14,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let storage: SQLiteStorageGuard
   public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
   let limits: ExecutionLimits
+  let unresolvedCapacity: Int64
   private let restoration: RestoreRecord?
   public var hasRestoredSnapshot: Bool { restoration != nil }
   public var isAdmissionReady: Bool {
@@ -30,7 +31,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
 
   init(
     connection: SQLiteConnection, limits: ExecutionLimits, path: String,
-    restoration: RestoreRecord? = nil, storage: SQLiteStorageGuard? = nil
+    restoration: RestoreRecord? = nil, storage: SQLiteStorageGuard? = nil,
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
   ) throws {
     self.storage = try storage ?? SQLiteStorageGuard(path: path, policy: .standard)
     if storage == nil { try self.storage.refresh(connection, maintenance: false) }
@@ -38,19 +40,25 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     self.restoration = restoration
     self.connection = connection
     self.limits = limits
+    self.unresolvedCapacity = unresolvedCapacity
   }
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
-  public static func open(path: String, limits: ExecutionLimits) async throws
+  public static func open(
+    path: String, limits: ExecutionLimits,
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
+  ) async throws
     -> SQLiteExecutionStore
   {
     try await open(
-      path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available)
+      path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
+      unresolvedCapacity: unresolvedCapacity)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
-    available: @escaping @Sendable (String) throws -> Int64
+    available: @escaping @Sendable (String) throws -> Int64,
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
   ) async throws -> SQLiteExecutionStore {
-    guard
+    guard unresolvedCapacity > 0, unresolvedCapacity <= 1_000_000_000_000,
       [
         limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
         limits.unresolvedMicros,
@@ -96,7 +104,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           continuation.resume(
             returning: try SQLiteExecutionStore(
               connection: connection, limits: limits, path: path,
-              restoration: try connection.restoreRecord(), storage: storage))
+              restoration: try connection.restoreRecord(), storage: storage,
+              unresolvedCapacity: unresolvedCapacity))
         } catch { continuation.resume(throwing: error) }
       }
     }
@@ -201,12 +210,16 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
 
   public func admit(_ command: ExecutionAdmission) async throws {
     try validateAdmission(command)
-    try await perform(admission: true) { [limits] db in
-      try db.transaction { try Self.admitTransaction(db, command, limits: limits) }
+    try await perform(admission: true) { [limits, unresolvedCapacity] db in
+      try db.transaction {
+        try Self.admitTransaction(
+          db, command, limits: limits, unresolvedCapacity: unresolvedCapacity)
+      }
     }
   }
   static func admitTransaction(
-    _ db: SQLiteConnection, _ command: ExecutionAdmission, limits: ExecutionLimits
+    _ db: SQLiteConnection, _ command: ExecutionAdmission, limits: ExecutionLimits,
+    unresolvedCapacity: Int64
   ) throws {
     try validateAdmission(command)
     if let restored = try db.restoreRecord() {
@@ -219,7 +232,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       let existingCount = try db.scalar("SELECT COUNT(*) FROM attempts WHERE state!='settled'")
       let existingMicros = try db.scalar(
         "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE state!='settled'")
-      guard let unresolved = limits.unresolved, let unresolvedMicros = limits.unresolvedMicros,
+      let unresolved = unresolvedCapacity
+      guard let unresolvedMicros = limits.unresolvedMicros,
         missingCount < unresolved, existingCount < unresolved - missingCount,
         missingMicros <= unresolvedMicros,
         command.reservedMicros <= unresolvedMicros - missingMicros,
@@ -261,8 +275,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       let unresolvedMicros = try db.scalar(
         "SELECT COALESCE(SUM(MAX(reserved,estimated)),0) FROM attempts WHERE \(scope) AND state!='settled'",
         parameters)
+      let scopeLimits = ExecutionLimits(
+        requests: limits.requests, active: limits.active,
+        unresolved: scope == "principal=?" ? limits.unresolved : unresolvedCapacity,
+        budgetMicros: limits.budgetMicros, unresolvedMicros: limits.unresolvedMicros)
       guard
-        limits.allows(
+        scopeLimits.allows(
           requestCount: requests, activeCount: counts.1, unresolvedCount: counts.2,
           exposureMicros: exposure, unresolvedExposureMicros: unresolvedMicros,
           reservedMicros: command.reservedMicros)
@@ -405,11 +423,14 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           try db.write(
             "UPDATE attempts SET evidence_floor=? WHERE id=?", [.number(retired), .text(attempt)])
         }
+        // An audited manual release remains settled when late evidence is still incomplete.
         if snapshot.usage == nil || evidence.revision > snapshot.usage!.revision {
           try db.write(
             "UPDATE attempts SET state=?,usage_json=?,estimated=? WHERE id=?",
             [
-              .text(evidence.completeness == .complete ? "settled" : "unknown"),
+              .text(
+                snapshot.state == .settled || evidence.completeness == .complete
+                  ? "settled" : "unknown"),
               .text(try encode(evidence)),
               .number(evidence.estimatedMicros), .text(attempt),
             ])
@@ -530,4 +551,29 @@ extension SQLiteExecutionStore: ExecutionLiveObserving {
   public func executionObservationEnded(attempt: String) {
     liveFirstEvents.withLock { _ = $0.removeValue(forKey: attempt) }
   }
+}
+
+extension SQLiteExecutionStore: UnknownExecutionReleasing {
+  public func releaseUnknown(beforeUnixSeconds: Int64, expectedCount: Int64) async throws -> Int64 {
+    guard beforeUnixSeconds >= 0, expectedCount >= 0 else { throw ExecutionError.invalidCommand }
+    return try await perform(essential: true) { db in
+      try db.transaction {
+        let count = try db.scalar(
+          "SELECT COUNT(*) FROM attempts WHERE state='unknown' AND created_at_epoch<?",
+          [.number(beforeUnixSeconds)])
+        guard count == expectedCount else { throw ExecutionError.conflict }
+        try db.write(
+          "UPDATE attempts SET state='settled' WHERE state='unknown' AND created_at_epoch<?",
+          [.number(beforeUnixSeconds)])
+        let record = try encode(ReleaseAudit(released: count, beforeUnixSeconds: beforeUnixSeconds))
+        try SQLiteSnapshotMaintenance.audit(
+          db, action: "release_unknown", record: record, at: Int64(Date().timeIntervalSince1970))
+        return count
+      }
+    }
+  }
+}
+private struct ReleaseAudit: Encodable {
+  let released: Int64
+  let beforeUnixSeconds: Int64
 }

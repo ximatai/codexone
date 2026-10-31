@@ -83,3 +83,6 @@ DB 执行使用专用串行队列，普通命令最多 16 个、最终化命令�
 审计核对显式绑定 restore ID、CAS 版本、非秘密审计编号、缺失未结数量/金额和冻结截止时间。首次核对的冻结至少覆盖核对当日 UTC 窗口及恢复日窗口，并继承更长的既有冻结；新窗口和新授权配额不代表旧余额恢复。缺失未结按额外聚合全局暴露保留，不能伪造每 Key 归属或随窗口自动释放，原已知 unknown 继续按原归属计数。后续新证据修订同样 CAS/追加审计，不能覆盖历史或自动退款。未核对/冻结中的准入返回 maintenance_required，管理查询仍可用。恢复时间在复制复核后记录；审计覆盖快照至首次核对的风险区间。恢复库拒绝旧静态单身份配置，须转托管 Key 或账号池，避免虚假就绪。复制前须同步新目标的父目录及持久 restore-pending，失败不得发布。命令和保守额度选择见 [维护操作](../development/snapshot-maintenance.md)。
 
 首页管理提醒通过现有 `StorageMonitoring.storageObservation` 只读快照呈现低盘保护：degraded（可选工作退让）或 blocked（停止新准入）均为 critical `storage_pressure`；unknown 或核心不可用显示 `attention_source_unavailable`。不为提醒增加采样任务或改变水位、滞回与结算空间责任，接口契约见[管理产品规范](control-plane.md)。
+
+
+未结人工释放使用现有有界 maintenance_events 治理审计，action 为 release_unknown，记录数量、截止时间及执行时间，不记录请求正文、凭证或请求标识列表。审计容量耗尽或写入失败时整体事务回滚，不解除部分容量；恢复及后续证据仍遵守 U07。

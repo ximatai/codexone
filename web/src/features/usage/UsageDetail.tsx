@@ -1,5 +1,9 @@
 import { KeyName } from "../../shared/KeyName";
 import {
+  accountName,
+  type AccountName,
+} from "../../shared/account-presentation";
+import {
   ActionIcon,
   Code,
   Drawer,
@@ -28,9 +32,11 @@ import styles from "./usage.module.css";
 export function UsageDetail({
   detail,
   onClose,
+  accounts = [],
 }: {
   detail: UsageReport["rows"][number] | null;
   onClose: () => void;
+  accounts?: readonly AccountName[];
 }) {
   return (
     <Drawer
@@ -79,7 +85,12 @@ export function UsageDetail({
                     <KeyName {...detail} /> · {detail.keyID}
                   </span>,
                 ],
-                ["账号", detail.accountID ?? "未派发"],
+                [
+                  "账号",
+                  detail.accountID
+                    ? accountName(detail.accountID, accounts)
+                    : "未派发",
+                ],
                 ["模型", detail.model ?? "未记录"],
                 ["模式", modes[detail.mode]],
                 ["结果", detail.outcome ? outcomes[detail.outcome] : "未记录"],
@@ -123,9 +134,7 @@ export function UsageDetail({
               用量：
               {detail.completeness === "complete"
                 ? "完整"
-                : detail.completeness === "partial"
-                  ? "部分证据，数值为下界"
-                  : "不可用"}
+                : "完整用量不可用，已有数值为下界"}
             </Text>
             <dl className={styles.detailGrid}>
               {Object.entries(metricLabels).map(([key, label]) => (
@@ -133,10 +142,10 @@ export function UsageDetail({
                   <dt>{label}</dt>
                   <dd>
                     {key === "estimatedMicros"
-                      ? money(detail.metrics.estimatedMicros)
+                      ? `${detail.completeness !== "complete" && detail.metrics.estimatedMicros != null ? "≥ " : ""}${money(detail.metrics.estimatedMicros)}`
                       : number(
                           detail.metrics[key as keyof Metrics],
-                          detail.completeness === "partial",
+                          detail.completeness !== "complete",
                         )}
                   </dd>
                 </Group>

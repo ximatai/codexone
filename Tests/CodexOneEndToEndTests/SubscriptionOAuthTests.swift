@@ -281,7 +281,7 @@ private struct AccountAdminClient: Sendable {
   let session: URLSession
   func call(
     _ method: String, _ path: String, body: JSONValue? = nil, headers: [String: String] = [:]
-  ) async throws -> (Int, JSONValue, String?) {
+  ) async throws -> (Int, JSONValue, String?, String?) {
     var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)" + path)!)
     request.httpMethod = method
     request.timeoutInterval = 5
@@ -294,7 +294,8 @@ private struct AccountAdminClient: Sendable {
     let response = try #require(raw as? HTTPURLResponse)
     return (
       response.statusCode, try JSONValue.decode(bytes),
-      response.value(forHTTPHeaderField: "set-cookie")
+      response.value(forHTTPHeaderField: "set-cookie"),
+      response.value(forHTTPHeaderField: "cache-control")
     )
   }
 }
@@ -307,10 +308,11 @@ private struct AccountAdminClient: Sendable {
     let path = h.root.appendingPathComponent("admin")
     try Data(secret.utf8).write(to: path)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
-    let keys = try await KeyAdminAPI.load(path: path.path, store: h.store)
+    let releasing = SyntheticReleaseCapacity(store: h.store)
+    let keys = try await KeyAdminAPI.load(path: path.path, store: h.store, executions: releasing)
     let authorization = try AccountAuthorizationSupervisor(application: h.app, provider: h.provider)
     let accounts = AccountAdminAPI(
-      store: h.store, authorization: authorization, refreshing: h.supervisor)
+      store: h.store, authorization: authorization, refreshing: h.supervisor, credentials: h.app)
     let port = AccountAdminPort()
     let admin = AdminService(
       group: h.group, port: 0, reportProvider: { .init(checks: []) }, keys: keys,
@@ -328,6 +330,46 @@ private struct AccountAdminClient: Sendable {
       let client = AccountAdminClient(port: port.value.withLock { $0 }, session: session)
       let bearer = ["authorization": "Bearer " + secret]
       #expect(try await client.call("GET", "/api/accounts").0 == 401)
+      let releasePath = "/api/executions/unknown/release"
+      let releaseBody: JSONValue = .object([
+        "beforeUnixSeconds": .number(0), "expectedCount": .number(0),
+      ])
+      let denied = try await client.call(
+        "POST", releasePath, body: releaseBody,
+        headers: ["origin": "http://127.0.0.1:\(client.port)"])
+      #expect(denied.0 == 401 && denied.3 == "no-store")
+      #expect(
+        try await client.call(
+          "POST", releasePath, body: releaseBody,
+          headers: ["authorization": "Bearer " + secret, "origin": "https://untrusted.example"]
+        ).0 == 403)
+      for invalid: JSONValue in [
+        .object([:]), .object(["beforeUnixSeconds": .number(0)]),
+        .object(["expectedCount": .number(0)]),
+        .object(["beforeUnixSeconds": .string("0"), "expectedCount": .number(0)]),
+        .object(["beforeUnixSeconds": .number(0), "expectedCount": .null]),
+        .object(["beforeUnixSeconds": .number(-1), "expectedCount": .number(0)]),
+        .object(["beforeUnixSeconds": .number(0), "expectedCount": .number(-1)]),
+        .object([
+          "beforeUnixSeconds": .number(Decimal(string: "0.5")!), "expectedCount": .number(0),
+        ]),
+        .object([
+          "beforeUnixSeconds": .number(0), "expectedCount": .number(Decimal(string: "0.5")!),
+        ]),
+        .object(["beforeUnixSeconds": .number(0), "expectedCount": .number(0), "extra": .null]),
+        .object(["beforeUnixSeconds": .bool(false), "expectedCount": .number(0)]),
+      ] {
+        let invalidResponse = try await client.call(
+          "POST", releasePath, body: invalid, headers: bearer)
+        #expect(invalidResponse.0 == 400 && invalidResponse.3 == "no-store")
+      }
+      let released = try await client.call("POST", releasePath, body: releaseBody, headers: bearer)
+      #expect(released.0 == 200 && released.1["released"]?.integer == 0 && released.3 == "no-store")
+      let conflict = try await client.call(
+        "POST", releasePath,
+        body: .object(["beforeUnixSeconds": .number(0), "expectedCount": .number(1)]),
+        headers: bearer)
+      #expect(conflict.0 == 409 && conflict.3 == "no-store")
       let origin = "http://127.0.0.1:\(client.port)"
       let login = try await client.call(
         "POST", "/api/session", body: .object(["secret": .string(secret)]),
@@ -336,6 +378,18 @@ private struct AccountAdminClient: Sendable {
       let cookie = try #require(login.2?.split(separator: ";").first.map(String.init))
       let csrf = try #require(login.1["csrf"]?.string)
       let browser = ["origin": origin, "cookie": cookie, "x-codexone-csrf": csrf]
+      #expect(
+        try await client.call(
+          "POST", releasePath, body: releaseBody,
+          headers: ["origin": origin, "cookie": cookie]
+        ).0 == 403)
+      #expect(
+        try await client.call("POST", releasePath, body: releaseBody, headers: browser).0 == 200)
+      #expect(
+        try await client.call(
+          "POST", releasePath + "?unexpected=1", body: releaseBody, headers: browser
+        ).0 == 400)
+
       #expect(
         try await client.call(
           "POST", "/api/accounts/authorization", body: .object(["target": .null]),
@@ -369,6 +423,7 @@ private struct AccountAdminClient: Sendable {
       let completed = try await client.call("POST", completionPath, body: document, headers: bearer)
       #expect(completed.0 == 200)
       let account = try #require(completed.1["account"])
+      #expect(account["accessExpiresAtUnixSeconds"]?.integer != nil)
       let id = try #require(account["id"]?.string)
       #expect(account["mode"]?.string == "disabled" && account["authorization"]?.string == "ready")
       #expect(
@@ -438,6 +493,18 @@ private struct AccountAdminClient: Sendable {
       #expect(reauthorized.0 == 200 && final["id"]?.string == id)
       #expect(final["authorization"]?.string == "ready" && final["mode"]?.string == "enabled")
       #expect(h.server.counts.calls == 3 && h.server.counts.invalid == 0)
+      _ = try await h.store.createVerifiedAccount(
+        id: "synthetic-bad-envelope", namespace: "synthetic",
+        envelope: "v1." + String(repeating: "a", count: 32) + "."
+          + Data(repeating: 0, count: 28).base64EncodedString())
+      let failedMetadata = try await client.call("GET", "/api/accounts", headers: bearer)
+      #expect(
+        failedMetadata.1["accounts"]?.array?.first {
+          $0["id"]?.string == "synthetic-bad-envelope"
+        }?["accessExpiresAtUnixSeconds"] == .null)
+      await releasing.setBusy()
+      let busy = try await client.call("POST", releasePath, body: releaseBody, headers: bearer)
+      #expect(busy.0 == 503 && busy.3 == "no-store")
       _ = try await client.call("DELETE", "/api/session", headers: browser)
       #expect(try await client.call("GET", "/api/accounts", headers: browser).0 == 401)
       owner.cancel()
@@ -548,5 +615,17 @@ func refusedOAuthConnectionPreservesValidCredentialAndClosesIntentWithoutRotatio
     #expect(current.refreshIntent == nil)
     #expect(current.credentialVersion == account.credentialVersion)
     #expect(h.server.counts.calls == 1)
+  }
+}
+
+private actor SyntheticReleaseCapacity: UnknownExecutionReleasing {
+  let store: SQLiteExecutionStore
+  var busy = false
+  init(store: SQLiteExecutionStore) { self.store = store }
+  func setBusy() { busy = true }
+  func releaseUnknown(beforeUnixSeconds: Int64, expectedCount: Int64) async throws -> Int64 {
+    if busy { throw ExecutionError.capacity }
+    return try await store.releaseUnknown(
+      beforeUnixSeconds: beforeUnixSeconds, expectedCount: expectedCount)
   }
 }

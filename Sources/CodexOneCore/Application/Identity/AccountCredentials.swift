@@ -107,6 +107,12 @@ public struct AccountCredentials: Sendable {
     return false
   }
   /// Only expiry metadata leaves this application boundary; plaintext stays transient.
+  public func accessExpiresAtUnixSeconds(id: String) async throws -> Int64 {
+    let stored = try await store.accountCredential(id: id)
+    let context = try AccountCredentialContext(
+      identity: id, namespace: stored.account.namespace, version: stored.account.credentialVersion)
+    return try protection.open(stored.envelope, context: context).expiresAtUnixSeconds
+  }
   public func needsProactiveRefresh(id: String, windowSeconds: Int64) async throws -> Bool {
     let stored = try await store.accountCredential(id: id)
     guard stored.account.mode != .disabled, stored.account.authorization == .ready else {

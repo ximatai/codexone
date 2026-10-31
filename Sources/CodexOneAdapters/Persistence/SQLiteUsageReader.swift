@@ -25,7 +25,7 @@ extension SQLiteExecutionStore {
 public final class SQLiteUsageReader: UsageQuerying, Sendable {
   private let queue: DispatchQueue
   private let connection: SQLiteConnection
-  private let primary: SQLiteExecutionStore
+  let primary: SQLiteExecutionStore
   private let gate = Mutex((accepting: true, active: false))
   private init(primary: SQLiteExecutionStore, connection: SQLiteConnection, queue: DispatchQueue) {
     self.primary = primary

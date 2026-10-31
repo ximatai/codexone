@@ -1,3 +1,11 @@
+import {
+  accountName,
+  credentialExpiry,
+} from "../../shared/account-presentation";
+import { ConfirmModal } from "../../shared/ui/ConfirmModal";
+import { useManagedMutation } from "../../shared/useManagedMutation";
+import { releaseUnknown, type AttentionItem } from "./attention-api";
+import { useQueryClient } from "@tanstack/react-query";
 import { AttentionPanel } from "./AttentionPanel";
 import { attentionQueryKey, fetchAttention } from "./attention-api";
 import { quotaStale } from "../account-management/quota";
@@ -8,6 +16,8 @@ import { EmptyState, ErrorState } from "../../shared/ui/States";
 import { useQuery } from "@tanstack/react-query";
 import {
   Drawer,
+  Alert,
+  Button,
   Anchor,
   Paper,
   Stack,
@@ -40,6 +50,29 @@ async function fetchStorage(signal: AbortSignal) {
 export function AdminOverview() {
   const owner = useManagementSession();
   const refresh = useOverviewRefresh();
+  const client = useQueryClient();
+  const [release, setRelease] = useState<{
+    before: number;
+    count: number;
+  } | null>(null);
+  const mutation = useManagedMutation({
+    scope: "executions",
+    invalidate: [["overview"], ["usage"]],
+    refresh: async (signal) => {
+      try {
+        const report = await fetchAttention(signal);
+        client.setQueryData(attentionQueryKey, report);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    onFailure: () => setRelease(null),
+    errorMessage: (error) =>
+      error instanceof ManagementError && error.status === 409
+        ? "待核对数量已变化；请先确认提醒已刷新，再重新核对释放。"
+        : undefined,
+  });
   const polling = {
     refetchInterval: refresh.interval,
     staleTime: 15000,
@@ -107,6 +140,23 @@ export function AdminOverview() {
   }
   return (
     <Stack mb="xl" aria-label="管理概览">
+      {owner.locked("executions") && !mutation.busy && (
+        <Alert color="yellow" role="alert">
+          上次释放结果尚未确认，请先刷新提醒核对后再操作。
+          <Button
+            size="xs"
+            variant="light"
+            ml="sm"
+            onClick={() => {
+              void attention.refetch().then((result) => {
+                if (result.isSuccess) owner.lock("executions", false);
+              });
+            }}
+          >
+            刷新并核对释放结果
+          </Button>
+        </Alert>
+      )}
       {(accounts.isError || usage.isError || storage.isError) && (
         <ErrorState
           retryLabel="重新读取概览"
@@ -121,10 +171,21 @@ export function AdminOverview() {
       )}
       <ActivityOverview
         refresh={refresh}
+        accounts={accounts.data}
         extraQueries={[accounts, usage, storage, attention]}
         attention={
           <AttentionPanel
             items={attention.data?.items}
+            accounts={accounts.data}
+            release={(item: AttentionItem) => {
+              const count = item.detail.count;
+              if (
+                typeof count === "number" &&
+                Number.isSafeInteger(count) &&
+                count >= 0
+              )
+                setRelease({ before: Math.floor(Date.now() / 1000), count });
+            }}
             loading={attention.isPending}
             error={attention.isError}
             retry={() => void attention.refetch()}
@@ -149,8 +210,11 @@ export function AdminOverview() {
                   return (
                     <Stack gap="xs" key={account.id} className="wrap-anywhere">
                       <Anchor component={Link} to="/accounts">
-                        {account.displayName ?? account.id}
+                        {accountName(account.id, [], account.displayName)}
                       </Anchor>
+                      <Text size="xs" c="dimmed">
+                        {credentialExpiry(account.accessExpiresAtUnixSeconds)}
+                      </Text>
                       <QuotaWindowBar
                         title="主窗口"
                         value={base?.primary ?? null}
@@ -252,6 +316,35 @@ export function AdminOverview() {
           </>
         }
       />
+      <ConfirmModal
+        opened={!!release}
+        title="核对并释放待核对执行"
+        busy={mutation.busy}
+        disabled={mutation.busy || owner.locked("executions")}
+        close={() => setRelease(null)}
+        label="确认释放"
+        confirm={() => {
+          if (!release) return;
+          const snapshot = release;
+          void mutation
+            .run(async (csrf, signal) => {
+              await releaseUnknown(
+                snapshot.before,
+                snapshot.count,
+                csrf,
+                signal,
+              );
+            }, "已释放容量占用，统计仍显示用量未知。")
+            .then((success) => {
+              if (success) setRelease(null);
+            });
+        }}
+      >
+        <Text>
+          将释放 {release?.count}{" "}
+          条待核对执行。这些请求的真实用量无法得知；释放只解除容量占用，统计中仍显示用量未知。
+        </Text>
+      </ConfirmModal>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}
         data-ui-overlay={protocolOverlay || undefined}
