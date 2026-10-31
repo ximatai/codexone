@@ -1,0 +1,27 @@
+# 下游断开时由网关补发中断并续读终态
+
+日期：2026-10-31。扩展[中断后断开时续读上游终态](../interrupt-settlement/proposal.md)，修改[协议](../../specs/protocol.md)原生 WebSocket 下游断开的最终化规则。
+
+## 问题
+
+试运行中 Desktop 停止回复多次留下 unknown（`client_cancelled`）。当前客户端的 `response.interrupt` 仍在 feature flag 后，默认不发送，停止时直接断开连接；既有续读只在“已转发过中断”时生效，因此几乎不触发。每个 unknown 占用未结容量，统计也缺失真实用量。旧服务在同样场景下也只记断开，没有用量。
+
+## 行为
+
+- 下游连接关闭时，若某个在途 turn 的上游是原生 WebSocket、已发出请求且尚未收到终态，并且尚未转发过中断：网关向上游发送与客户端中断同构的 `response.interrupt`（仅针对该 turn，不含客户端数据），随后按既有续读规则读取，直到终态或 10 秒（不超过原执行期限）：
+  - 读到终态与可信用量：按现有规则结算，outcome 仍为 `cancelled`/`client_cancelled`；
+  - 超时、上游断开、上游返回错误或不认识该消息：维持现状（unknown，不重放）。
+- 补发只使用已有 turn 状态与身份：请求已 dispatch 但生命周期响应 ID 尚未到达时，在同一10秒期限内等到 ID 后再定向补发；没有身份不广播中断。未 dispatch、已终态或上游已关闭时不补发。
+- 已转发过客户端中断的 turn 不重复补发，断开后的 outcome 同样保留客户端取消。HTTP/SSE（含 HTTP→WS 桥接）与原生 Images 路径不变。
+- 续读期间不向下游写入，不接受新请求；连接槽、lane 与预留保持到续读结束；网关停止时续读随运行时取消。
+- 补发中断不产生新的准入或计费。
+
+## 验收
+
+- 合成上游：下游断开（未发中断）→ 上游收到网关的 interrupt → 10 秒内终态 → settled 且用量正确、outcome 为客户端取消。
+- 上游不回终态 / 超时 / 断开 / 返回 error：unknown，不重放，资源按时释放。
+- 已转发客户端中断：只发送一次，不重复补发。
+- 尚未发出上游请求或已终态时断开：不补发。
+- HTTP/SSE 上游与 Images：行为不变。
+- 运行时停止时续读被取消。
+- 执行者完整 `verify.sh --backend`；主 Agent Linux verification；部署后 Desktop 停止回复不再新增 unknown。

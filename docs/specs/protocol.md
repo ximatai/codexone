@@ -73,7 +73,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 `response.create` 保持完整解析、授权、持久准入及 lane FIFO。`response.interrupt` 只在 response_id 属于本连接已收到 `response.created`、仍在途的响应时原字节转发至固定身份上游，不新增执行、不占准入、不改变 lane FIFO；可按 response_id 定位省略 stream_id 的控制。ID 未知、已结束或显式 lane 不匹配时，在请求 lane 本地回复带 response_id 的 `response.interrupt.failed`，不写上游且保持连接。上游 accepted/failed 确认按已知响应归属下发，确认先于或晚于终态均不影响账本，账本只按原终态证据结算。
 
-已成功转发过 `response.interrupt` 的在途 turn 在下游关闭后，由原连接 owner 继续读取至终态或断开后最多10秒，且不超过原执行期限。续读期间停止请求接收和排队请求的 dispatch，不再向下游写入内容；连接槽、lane、请求体预留保持至续读结束后释放，Runtime 停止时取消并等待续读子任务。可信终态与用量按原规则结算；超时、上游断开或无可信终态保持 unknown，不重连、不重放。未转发中断的 turn 仍在下游断开时立即取消；同连接其他 lane 的取消不提前终止已中断 turn 的续读。确认 accepted/failed 本身不构成结算证据。
+原生 WS 下游关闭时，已 dispatch 且尚未终态的 turn 由原连接 owner 继续读取至终态或断开后最多10秒，且不超过原执行期限。若该 turn 尚未转发客户端中断，网关补发一次 `response.interrupt`，仅带该 turn 的 `response_id` 及非默认 lane 所需的 `stream_id`；不携带客户端其他字段，不新增准入或计费。已转发客户端中断的 turn 不重复补发。请求已 dispatch 但响应身份尚未到达时，在同一期限内等待其生命周期 ID 后再定向补发，不发送无目标中断；未 dispatch、已终态或上游已关闭时不补发。续读期间停止请求接收和排队请求的 dispatch，不再向下游写入内容；连接槽、lane、请求体预留保持至续读结束后释放，Runtime 停止时取消并等待续读子任务。可信终态与用量按原规则结算，续读中观察到的结果仍记 `cancelled`/`client_cancelled`；超时、上游断开、返回 error 或未知事件后没有可信终态时保持 unknown，不重连、不重放。同连接其他 lane 的失败或取消不提前终止该 turn 的续读。HTTP/SSE（包括 HTTP→WS 桥接）与原生 Images 下游断开行为不变。确认 accepted/failed 本身不构成结算证据。
 
 未知类型的对象消息在绑定上游后原字节转发；绑定前、或顶层含 input/model/tools 成员（含 null）时本地400拒绝。每连接独立令牌桶每秒恢复10条、突发20条，超速本地400且连接保持；控制沿用单消息32 MiB、共享正文预算、单reader/串行writer及5秒写期限。计数和最近响应归属随连接释放。未知控制每次放行/拒绝记录 codexone.protocol 结构化warning，仅含有界机器类型名、客户端version/UA类别与结果，不记录消息成员或内容。
 
