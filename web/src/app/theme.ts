@@ -32,7 +32,11 @@ export const theme = createTheme({
   },
   headings: { fontFamily: "inherit", fontWeight: "600" },
   components: {
+    Anchor: { defaultProps: { c: "green.8" } },
     Button: { defaultProps: { radius: "md" } },
+    Paper: { defaultProps: { radius: "md", shadow: "none" } },
+    Drawer: { defaultProps: { shadow: "none" } },
+    Notification: { defaultProps: { withBorder: true, radius: "md" } },
     Table: { defaultProps: { verticalSpacing: "md", highlightOnHover: true } },
   },
   colors: {
@@ -50,7 +54,7 @@ export const theme = createTheme({
     ],
   },
   other: {
-    surface: { light: "#f5f7f5", dark: "#17221d" },
+    surface: { light: "#f6f8fa", dark: "#17221d" },
     text: { light: "#21302b", dark: "#edf5f0" },
   },
 });

@@ -19,14 +19,17 @@
     "format:check": "prettier --check src tests *.ts *.json .oxlintrc.json"
   },
   "dependencies": {
+    "@mantine/charts": "9.7.3",
     "@mantine/core": "9.7.3",
     "@mantine/form": "9.7.3",
     "@mantine/hooks": "9.7.3",
     "@mantine/notifications": "9.7.3",
+    "@tabler/icons-react": "3.35.0",
     "@tanstack/react-query": "5.104.5",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-router": "8.5.0",
+    "recharts": "3.9.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

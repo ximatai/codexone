@@ -1,6 +1,6 @@
 import { Table, UnstyledButton } from "@mantine/core";
 import { useState, type ReactNode } from "react";
-import { EmptyState, ErrorState } from "./States";
+import { EmptyState, ErrorState, LoadingState } from "./States";
 import styles from "./DataTable.module.css";
 export interface DataColumn<T> {
   id: string;
@@ -18,6 +18,7 @@ export function DataTable<T>({
   retry,
   empty = "暂无数据。",
   loadingText = "正在读取…",
+  onRowClick,
 }: {
   rows: T[];
   columns: DataColumn<T>[];
@@ -27,11 +28,12 @@ export function DataTable<T>({
   retry: () => void;
   empty?: string;
   loadingText?: string;
+  onRowClick?: (row: T) => void;
 }) {
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
   );
-  if (loading) return <p role="status">{loadingText}</p>;
+  if (loading) return <LoadingState>{loadingText}</LoadingState>;
   if (error) return <ErrorState retry={retry}>{error}</ErrorState>;
   if (!rows.length) return <EmptyState>{empty}</EmptyState>;
   const column = columns.find((item) => item.id === sort?.id);
@@ -91,7 +93,25 @@ export function DataTable<T>({
       </Table.Thead>
       <Table.Tbody>
         {ordered.map((row) => (
-          <Table.Tr key={rowKey(row)}>
+          <Table.Tr
+            key={rowKey(row)}
+            className={onRowClick ? styles.clickable : undefined}
+            tabIndex={onRowClick ? 0 : undefined}
+            onClick={onRowClick ? () => onRowClick(row) : undefined}
+            onKeyDown={
+              onRowClick
+                ? (event) => {
+                    if (
+                      event.target === event.currentTarget &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                      onRowClick(row);
+                    }
+                  }
+                : undefined
+            }
+          >
             {columns.map((item) => (
               <Table.Td key={item.id}>
                 <span className={styles.label}>{item.label ?? item.title}</span>

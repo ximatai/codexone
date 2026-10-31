@@ -24,7 +24,7 @@ export function ConfirmModal({
   return (
     <Modal
       removeScrollProps={{ removeScrollBar: false }}
-      data-ui-overlay="true"
+      data-ui-overlay={opened || undefined}
       opened={opened}
       onClose={() => {
         if (!busy) close();
