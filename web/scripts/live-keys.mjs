@@ -181,6 +181,21 @@ try {
   await page.getByRole("button", { name: "刷新列表", exact: true }).click();
   await expect(row.getByRole("button", { name: /更多操作/ })).toBeEnabled();
   await capture("keys-desktop.png");
+  stage = "production CSP pages and charts";
+  await page.getByRole("link", { name: "服务概览", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "今日运营概览" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /^今日请求近 7 天/ })).toBeVisible();
+  await expect(page.locator("style")).toHaveCount(0);
+  await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "请求明细" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /UTC 按.*请求趋势/ })).toBeVisible();
+  await page.getByRole("button", { name: "查看详情", exact: true }).first().click();
+  const requestDetail = page.getByRole("dialog", { name: "请求详情" });
+  await expect(requestDetail).toBeVisible();
+  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  await expect(page.locator("style")).toHaveCount(0);
+  await requestDetail.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   stage = "logout retry";
   let dropLogout = true;
   await page.route("**/api/session", route => {
