@@ -88,3 +88,25 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | PUT /api/keys/:id/expiration | JSON revision、expiresAtUnixSeconds（正UTC秒或null） | key（含expiresAtUnixSeconds与新revision）；Key列表/创建/其他变更返回同字段 |
 
 日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。
+
+## 首页需要处理提醒
+
+`GET /api/attention` 无查询参数，仅管理员可读，复用 A10/A11 的认证、来源、no-store、连接与共享管理容量；GET 不要求 CSRF。返回 `generatedAtUnixSeconds` 与 `items`，最多 50 条，critical 优先，同严重度按 `sinceUnixSeconds` 升序（未知时间最后），再按 kind/主体稳定排序。每项包含 kind、severity（critical/warning）、subjectType（account/key/system/protocol）、可空 subjectID/subjectName、detail、可空 sinceUnixSeconds。detail 仅包含固定枚举、布尔标记或数值，不包含错误正文、头值或凭证。
+
+| kind | 条件 | severity |
+|---|---|---|
+| account_requires_auth / account_auth_uncertain | 对应账号授权状态 | critical |
+| account_cooldown | 当前仍有执行健康冷却 | warning |
+| quota_high | 新鲜主/次窗口已用 ≥90%，≥98% 升 critical | warning/critical |
+| quota_stale | 观测失败、不可用或超过 U10 新鲜期 | warning |
+| key_expiring | 启用 Key 到期时间距当前 ≤7天（含已到期） | warning |
+| key_limit_near | 启用 Key 当日请求数或治理预算占用 ≥90% | warning |
+| unresolved_executions | 全时间 unknown 执行存在 | warning |
+| error_rate_high | 滚动60分钟已准入 ≥20 且失败率 ≥10%，客户端取消不计失败 | critical |
+| storage_pressure | 现有低盘保护 degraded/blocked | critical |
+| client_protocol_extension | 本进程出现未知 WS 控制类型或未知 x-codex-* 头名 | warning |
+| attention_source_unavailable | accounts/keys/executions/storage 来源不可读取 | warning |
+
+汇总共享用量只读 reader 的单在途、扫描预算与取消门禁；繁忙返回429，读取失败不能表现为无异常。低盘保护暂停可选读取时跳过统计快照，为 accounts/keys/executions 返回来源不可用项，仍返回存储压力提醒；不绕过可选工作门禁。Key预算占用沿用准入治理，包含未结预留，不是提供者订阅余额。协议名称由入口持有并注入数据与管理入口的并发安全集合记录，最多32个名称，每名称1–128字节可打印ASCII，去重保留首次UTC秒；溢出不再新增并在 detail.overflow 标记，重启清空，不记录值或消息内容。
+
+首页在页头下展示提醒，critical 红、warning 琥珀，提供对应账号/Key、诊断或存储详情链接；空态与读取失败/重试态明确区分。提醒沿用 overview 查询分组的刷新与暂停，有 critical 时导航“服务概览”显示带可访问名称的小红点；不持久化忽略或已读状态。

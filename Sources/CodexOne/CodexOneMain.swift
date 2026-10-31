@@ -264,6 +264,7 @@ struct CodexOneMain {
     } else {
       usageReader = nil
     }
+    let protocolExtensions = ClientProtocolExtensionRegistry()
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
@@ -273,7 +274,11 @@ struct CodexOneMain {
           \.id) ?? [],
         imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?
           .imageGeneration?.models.map(\.id) ?? [],
-        usage: usageReader.map { UsageAdminAPI(querying: $0) }, storageMonitoring: store)
+        usage: usageReader.map { UsageAdminAPI(querying: $0) },
+        attention: usageReader.map {
+          AttentionAdminAPI(reader: $0, storage: store, registry: protocolExtensions)
+        },
+        storageMonitoring: store)
     } else {
       keyAdmin = nil
     }
@@ -310,7 +315,8 @@ struct CodexOneMain {
         poolDataService = try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: poolConfiguration, store: store, finalizer: finalizer,
-          credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy
+          credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy,
+          protocolExtensions: protocolExtensions
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
@@ -325,7 +331,7 @@ struct CodexOneMain {
         try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: identityConfiguration, store: store, finalizer: finalizer,
-          proxy: upstreamProxy
+          proxy: upstreamProxy, protocolExtensions: protocolExtensions
         ) { announce("data", port: $0) })
     } else {
       services.append(

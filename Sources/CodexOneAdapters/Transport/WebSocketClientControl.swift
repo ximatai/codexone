@@ -46,7 +46,8 @@ enum ClientProtocolDiagnostics {
 
 func handleWebSocketControl(
   _ body: WebSocketBody, upstream: WebSocketPeer?, downstream: WebSocketPeer,
-  headers: HTTPHeaders, rate: inout WebSocketControlRate
+  headers: HTTPHeaders, rate: inout WebSocketControlRate,
+  registry: ClientProtocolExtensionRegistry? = nil
 ) async throws -> Bool {
   let document = try JSONValue.decode(body.data)
   guard let fields = document.object, let type = fields["type"]?.string else {
@@ -82,6 +83,7 @@ func handleWebSocketControl(
   } else {
     outcome = "forwarded"
   }
+  registry?.record(name: type)
   ClientProtocolDiagnostics.record(name: type, outcome: outcome, headers: headers)
   if outcome == "forwarded" {
     try await upstream!.writer.send(body.data)

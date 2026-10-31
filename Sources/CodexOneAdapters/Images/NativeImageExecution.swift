@@ -6,7 +6,8 @@ import NIOHTTP1
 
 /// Client metadata only; credentials, routing and arbitrary internal headers never cross.
 func forwardedClientHeaders(
-  _ headers: HTTPHeaders, fingerprint: ClientFingerprint = .init().resolved(models: [])
+  _ headers: HTTPHeaders, fingerprint: ClientFingerprint = .init().resolved(models: []),
+  registry: ClientProtocolExtensionRegistry? = nil
 ) -> HTTPHeaders {
   let allowed: Set<String> = [
     "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
@@ -30,6 +31,7 @@ func forwardedClientHeaders(
       guard codexCount < 32 else { continue }
       codexCount += 1
       if !allowed.contains(header.name.lowercased()) {
+        registry?.record(name: header.name.lowercased())
         ClientProtocolDiagnostics.record(
           name: header.name.lowercased(), outcome: "forwarded", headers: headers)
       }
@@ -71,7 +73,7 @@ extension HTTPResponseExecution {
         var upstream = HTTPClientRequest(url: url.string!)
         upstream.method = .POST
         upstream.headers = forwardedClientHeaders(
-          headers, fingerprint: configuration.clientFingerprint)
+          headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
         upstream.headers.add(name: "content-type", value: "application/json")
         upstream.headers.add(
           name: "accept", value: request.streaming ? "text/event-stream" : "application/json")

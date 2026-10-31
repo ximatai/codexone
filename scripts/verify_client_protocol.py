@@ -13,6 +13,8 @@ import threading
 import time
 from verify_protocol import TOKEN, start, stop
 from verify_websocket import dial, send, receive, turn
+from verify_admin import request, document
+from verify_keys import ADMIN
 
 PRIVATE = 'synthetic-payload-must-not-enter-logs'
 
@@ -224,7 +226,10 @@ def main():
                 models=[dict(id='synthetic-text', inputMicrosPerMillion=1000000, outputMicrosPerMillion=1000000)],
                 upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport='websocket')))
             config.chmod(0o600)
-            process, ports = start(binary, config, root)
+            admin = root / "admin"
+            admin.write_text(ADMIN)
+            admin.chmod(0o600)
+            process, ports = start(binary, config, root, admin_token_file=admin)
             db = root/'state/core.sqlite'
             try:
                 headers = {'x-codex-future-header': 'synthetic-value', 'x-openai-actor-authorization': 'synthetic-gate', 'chatgpt-account-id': 'synthetic-forged'}
@@ -341,6 +346,15 @@ def main():
                     except (EOFError, ConnectionResetError):
                         pass
                 assert len(counts(db)) == 13 and provider.creates == before + 3
+                attention = document(request(ports["admin"], "GET", "/api/attention",
+                    headers={"Authorization": "Bearer " + ADMIN}))
+                names = {item["subjectName"] for item in attention["items"]
+                         if item["kind"] == "client_protocol_extension"}
+                assert {"synthetic.unbound", "synthetic.future", "synthetic.generation",
+                        "synthetic.burst", "x-codex-future-header"}.issubset(names)
+                assert "upstream.lifecycle" not in names
+                payload = json.dumps(attention)
+                assert all(secret not in payload for secret in (PRIVATE, TOKEN, ADMIN, "synthetic-value", "synthetic-gate"))
                 process.terminate()
                 assert process.wait(10) == 0
                 logs = process.stdout.read()

@@ -40,8 +40,8 @@
   background: var(--mantine-color-gray-0);
 }
 .link[aria-current="page"] {
-  background: var(--mantine-color-green-0);
-  color: var(--mantine-color-green-8);
+  background: var(--mantine-primary-color-light);
+  color: var(--mantine-primary-color-light-color);
   font-weight: 600;
 }
 .content {
@@ -76,4 +76,12 @@
     margin-left: 0;
     padding: 84px 14px 32px;
   }
+}
+
+.attentionDot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--mantine-color-red-7);
 }

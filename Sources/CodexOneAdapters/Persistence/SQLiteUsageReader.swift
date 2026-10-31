@@ -147,7 +147,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
     return try await read { db in try Self.daily(db, query) }
   }
-  private func read<T: Sendable>(_ operation: @escaping @Sendable (SQLiteConnection) throws -> T)
+  func read<T: Sendable>(_ operation: @escaping @Sendable (SQLiteConnection) throws -> T)
     async throws -> T
   {
     try Task.checkCancellation()

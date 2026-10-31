@@ -1,3 +1,4 @@
+import { AttentionNavigationObserver } from "./shared/attention-navigation";
 import { Notifications } from "@mantine/notifications";
 import { WorkspaceFrame } from "./app/WorkspaceFrame";
 import { MantineProvider } from "@mantine/core";
@@ -59,6 +60,7 @@ function Workspace() {
       <main>
         <ManagementSession publicView={location.pathname === "/"}>
           <OwnedQueries>
+            <AttentionNavigationObserver />
             <Suspense
               key={location.pathname}
               fallback={<p role="status">正在打开页面…</p>}

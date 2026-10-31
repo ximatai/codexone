@@ -109,7 +109,7 @@ def verify(binary):
         port = f.ports['admin']
         assert request(port, 'GET', '/api/session')[0] == 401
         assert request(port, 'GET', '/api/usage/keys')[0] == 401
-        for path in ('/api/usage/daily', '/api/usage/in-flight'):
+        for path in ('/api/usage/daily', '/api/usage/in-flight', '/api/attention'):
             assert request(port, 'GET', path)[0] == 401
         assert request(port, 'POST', '/api/session', {'secret': ADMIN})[0] == 403
         assert request(port, 'POST', '/api/session', {'secret': 'synthetic-wrong-admin'}, origin=f.origin)[0] == 401
@@ -121,6 +121,16 @@ def verify(binary):
         assert request(port, 'GET', '/api/usage/keys', cookie=cookie, origin='https://foreign.example')[0] == 403
         assert request(port, 'GET', '/api/usage/keys?extra=1', cookie=cookie)[0] == 400
         assert document(request(port, 'GET', '/api/usage/keys', cookie=cookie))['keys'] == []
+        assert request(port, 'GET', '/api/attention', cookie=cookie, origin='https://foreign.example')[0] == 403
+        assert request(port, 'GET', '/api/attention', cookie=cookie, headers={'Sec-Fetch-Site': 'cross-site'})[0] == 403
+        assert request(port, 'GET', '/api/attention', cookie=cookie, headers={'Authorization': 'Bearer ' + ADMIN})[0] == 403
+        assert request(port, 'GET', '/api/attention', headers={'Authorization': 'Bearer synthetic-wrong-admin'})[0] == 401
+        assert request(port, 'GET', '/api/attention?extra=1', cookie=cookie)[0] == 400
+        # GET needs no CSRF proof; both browser session and headless Bearer use the same no-store DTO.
+        attention = document(request(port, 'GET', '/api/attention', cookie=cookie))
+        assert attention['items'] == [] and isinstance(attention['generatedAtUnixSeconds'], int)
+        assert document(request(port, 'GET', '/api/attention', headers={'Authorization': 'Bearer ' + ADMIN}))['items'] == []
+
         for path in ('/api/usage/daily?days=0', '/api/usage/daily?days=32', '/api/usage/daily?days=x',
                      '/api/usage/daily?days=7&days=8', '/api/usage/daily?key=', '/api/usage/daily?extra=1',
                      '/api/usage/in-flight?limit=0', '/api/usage/in-flight?limit=201', '/api/usage/in-flight?limit=x',
@@ -171,6 +181,11 @@ def verify(binary):
             assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == before_expired
         key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time()) + 3600), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert request(f.ports['data'], 'GET', '/v1/models', headers={'Authorization': 'Bearer ' + secret})[0] == 200
+        attention = document(request(port, 'GET', '/api/attention', cookie=cookie))
+        assert any(item['kind'] == 'key_expiring' and item['subjectID'] == key['id'] for item in attention['items'])
+        rendered = json.dumps(attention)
+        assert all(value not in rendered for value in f.secrets + [ADMIN])
+        assert all(value not in rendered for value in ('digest', 'envelope', 'refreshToken', 'accessToken', 'namespace'))
         key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=None), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert key['expiresAtUnixSeconds'] is None
         # Real coordinator/runtime observation, with expiry while already dispatched.

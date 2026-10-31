@@ -43,8 +43,8 @@ export function UsageTrend({ report }: { report: UsageReport }) {
           type="stacked"
           withLegend
           series={[
-            { name: "admitted", label: "已准入", color: "green.8" },
-            { name: "rejected", label: "已记录准入前拒绝", color: "green.3" },
+            { name: "admitted", label: "已准入", color: "brand.7" },
+            { name: "rejected", label: "已记录准入前拒绝", color: "brand.3" },
           ]}
           barProps={{ isAnimationActive: false }}
         />

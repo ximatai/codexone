@@ -5,8 +5,8 @@ import {
   defaultCssVariablesResolver,
 } from "@mantine/core";
 export const theme = createTheme({
-  primaryColor: "green",
-  primaryShade: { light: 8, dark: 4 },
+  primaryColor: "brand",
+  primaryShade: { light: 7, dark: 4 },
   defaultRadius: "md",
   fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
   fontSizes: {
@@ -32,7 +32,7 @@ export const theme = createTheme({
   },
   headings: { fontFamily: "inherit", fontWeight: "600" },
   components: {
-    Anchor: { defaultProps: { c: "green.8" } },
+    Anchor: { defaultProps: { c: "brand.7" } },
     Button: { defaultProps: { radius: "md" } },
     Paper: { defaultProps: { radius: "md", shadow: "none" } },
     Drawer: { defaultProps: { shadow: "none" } },
@@ -40,22 +40,23 @@ export const theme = createTheme({
     Table: { defaultProps: { verticalSpacing: "md", highlightOnHover: true } },
   },
   colors: {
-    green: [
-      "#edf5f0",
-      "#dcebe2",
-      "#b8d5c5",
-      "#91bca7",
-      "#6ca48b",
-      "#4f8e73",
-      "#317257",
-      "#245d46",
-      "#204c3f",
-      "#173d30",
+    // Graphite blue keeps the primary apart from the status colors.
+    brand: [
+      "#eef2f8",
+      "#dde5f1",
+      "#b9c9e1",
+      "#93aacf",
+      "#6f8bbb",
+      "#5373a8",
+      "#3d5d92",
+      "#2f4b7c",
+      "#263e67",
+      "#1d3050",
     ],
   },
   other: {
-    surface: { light: "#f6f8fa", dark: "#17221d" },
-    text: { light: "#21302b", dark: "#edf5f0" },
+    surface: { light: "#f6f7f9", dark: "#161b22" },
+    text: { light: "#1b2330", dark: "#e8edf4" },
   },
 });
 /** The provider and Vite share the exact same resolved theme, without runtime style tags. */
