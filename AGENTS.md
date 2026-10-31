@@ -32,7 +32,7 @@
 
 按里程碑依赖顺序推进，以一个可操作、可验收的业务闭环为阶段，不把每个内部技术切片当完整阶段。
 
-主 Agent 负责指挥：理解目标、拆分阶段与分支、先行校准提案/规范、写 brief、调度执行者、核实与评审、汇报；节奏由主 Agent 控制。主体实现与成规模返工交给 Codex 执行者，在专用 worktree 与分支中按 brief 一次完成并自测（默认用 `scripts/codex_executor.sh WORKTREE BRIEF LOG` 启动：经用户决定为完全权限、低推理，可直接运行 Chrome；设 `CODEX_EXECUTOR_SANDBOX=workspace-write` 可恢复沙箱，此时需浏览器加 `--browser`，Chrome 在沙箱外运行、测试经 `PW_TEST_CONNECT_WS_ENDPOINT` 连接）。完全权限不放宽授权边界：brief 必须重申禁止 SSH/访问部署实例、真实订阅链路、私有部署目录与主 checkout，只在自己的 worktree 内改动。brief 一次给齐：先读清单、本阶段范围与明确不做项、约束、需覆盖的失败路径测试、自测命令、分组提交要求（禁止 push/开 PR）及结束输出格式。执行者使用开发者自己的 Codex 额度做开发，不属于本产品的真实账号调用，但不得调用本项目的部署实例或真实订阅链路。
+主 Agent 负责指挥：理解目标、拆分阶段与分支、先行校准提案/规范、写 brief、调度执行者、核实与评审、汇报；节奏由主 Agent 控制。主体实现与成规模返工交给 Codex 执行者，在专用 worktree 与分支中按 brief 一次完成并自测（默认用 `scripts/codex_executor.sh WORKTREE BRIEF LOG` 启动：经用户决定为完全权限、高推理、倍速（fast tier），可用 `CODEX_EXECUTOR_EFFORT`/`CODEX_EXECUTOR_TIER` 覆盖，可直接运行 Chrome；设 `CODEX_EXECUTOR_SANDBOX=workspace-write` 可恢复沙箱，此时需浏览器加 `--browser`，Chrome 在沙箱外运行、测试经 `PW_TEST_CONNECT_WS_ENDPOINT` 连接）。完全权限不放宽授权边界：brief 必须重申禁止 SSH/访问部署实例、真实订阅链路、私有部署目录与主 checkout，只在自己的 worktree 内改动。brief 一次给齐：先读清单、本阶段范围与明确不做项、约束、需覆盖的失败路径测试、自测命令、分组提交要求（禁止 push/开 PR）及结束输出格式。执行者使用开发者自己的 Codex 额度做开发，不属于本产品的真实账号调用，但不得调用本项目的部署实例或真实订阅链路。
 
 执行者交付后，主 Agent 读日志、核实验证命令真实通过并检查提交与越界；评审按 P0/P1/P2 一次汇总，最多一轮返工：设计取舍或跨多文件问题交回执行者，局部机械问题主 Agent 直接改。未经核实的“已完成”不转述、不写入 STATUS。阶段内运行受影响的定向测试即可，不要求每次全量跨平台验证。阶段出口集中执行完整验证和跨平台检查；没有新增改动、失败或明确风险时，不重复已通过检查。达到验收出口后再进入下一阶段，不把未验证项写成完成。关键安全与失败路径仍须验证。
 
