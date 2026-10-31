@@ -59,7 +59,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1, enabled: enabled,
           policy: policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
-          expiresAtUnixSeconds: old.expiresAtUnixSeconds)
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: old.displayName)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
           [.text(try Self.encodeKey(key)), .text(id)])
@@ -71,6 +71,29 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   static func checkKeyExpiration(_ key: ManagedKey) throws {
     if let expires = key.expiresAtUnixSeconds, expires <= Int64(Date().timeIntervalSince1970) {
       throw ExecutionError.keyExpired
+    }
+  }
+  public func setKeyDisplayName(id: String, revision: Int64, displayName: String?) async throws
+    -> ManagedKey
+  {
+    try Self.validateKeyID(id)
+    try ManagedAccount.validateDisplayName(displayName)
+    guard (1...1_000_000).contains(revision) else { throw ExecutionError.invalidCommand }
+    return try await perform(optional: true) { db in
+      try db.transaction {
+        let old = try Self.loadKey(db, id)
+        guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
+        try Self.checkKeyCapacity(db)
+        let key = ManagedKey(
+          id: old.id, principal: old.principal, revision: revision + 1,
+          enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: displayName)
+        try db.write(
+          "UPDATE managed_keys SET metadata_json=? WHERE id=?",
+          [.text(try Self.encodeKey(key)), .text(id)])
+        try Self.auditKey(db, key: key, action: "display_name")
+        return key
+      }
     }
   }
   public func setKeyExpiration(id: String, revision: Int64, expiresAtUnixSeconds: Int64?)
@@ -90,7 +113,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
           enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
-          expiresAtUnixSeconds: expiresAtUnixSeconds)
+          expiresAtUnixSeconds: expiresAtUnixSeconds, displayName: old.displayName)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
           [.text(try Self.encodeKey(key)), .text(id)])
@@ -112,7 +135,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1,
           enabled: old.enabled, policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
-          expiresAtUnixSeconds: old.expiresAtUnixSeconds)
+          expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: old.displayName)
         try db.write(
           "UPDATE managed_keys SET digest=?,metadata_json=? WHERE id=?",
           [.text(digest), .text(try Self.encodeKey(key)), .text(id)])
@@ -185,6 +208,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       try validateKeyID(key.id)
       try validateKeyID(key.principal)
       try key.policy.validate()
+      try ManagedAccount.validateDisplayName(key.displayName)
       guard (1...1_000_000).contains(key.revision), key.createdAtUnixSeconds >= 0,
         key.expiresAtUnixSeconds.map({ (1...1_000_000_000_000).contains($0) }) ?? true
       else {

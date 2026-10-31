@@ -58,6 +58,7 @@ export interface UsageReport {
     kind: "admitted" | "rejected";
     id: string;
     atUnixSeconds: number;
+    displayName?: string | null;
     principal?: string | null;
     firstEventMilliseconds?: number | null;
     totalMilliseconds?: number | null;
@@ -76,7 +77,11 @@ export interface UsageReport {
 }
 export interface UsageOptions {
   keys: string[];
-  keyOptions?: { id: string; principal: string | null }[];
+  keyOptions?: {
+    id: string;
+    displayName?: string | null;
+    principal: string | null;
+  }[];
   models: string[];
   failures: string[];
 }
@@ -236,6 +241,7 @@ export function parseUsage(raw: unknown): UsageReport {
       kind,
       id: text(item.id),
       atUnixSeconds: at,
+      displayName: nullableText(item.displayName ?? null, 256),
       principal: nullableText(item.principal ?? null, 64),
       firstEventMilliseconds:
         item.firstEventMilliseconds == null
@@ -354,6 +360,7 @@ export async function fetchUsageOptions(
               const item = object(raw);
               return {
                 id: text(item.id),
+                displayName: nullableText(item.displayName ?? null, 256),
                 principal: nullableText(item.principal, 64),
               };
             });
@@ -365,6 +372,7 @@ export async function fetchUsageOptions(
 
 export interface KeyUsage {
   keyID: string;
+  displayName?: string | null;
   principal: string | null;
   admitted: number;
   failed: number;
@@ -388,6 +396,7 @@ export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsage[]> {
     const item = object(raw);
     return {
       keyID: text(item.keyID),
+      displayName: nullableText(item.displayName ?? null, 256),
       principal: nullableText(item.principal, 64),
       admitted: integer(item.admitted),
       failed: integer(item.failed),

@@ -123,8 +123,10 @@ Runtime 额度 owner 统一手动/周期单飞，最多 64 个账号工作/64 �
 
 图片能力要求（路由、视觉输入、公开图片模型）随执行 admission 持久保存，SQLite 同事务复核当前 Key revision 与权限。此语义自 schema v6 引入，当前版本与显式离线迁移/备份见 [O16](operations.md)；历史缺失能力要求的执行仍按纯对话解释。配置与权限细节见[图片配置](../development/images.md)和[Key 治理](../development/key-governance.md)。
 
-## I16：账号显示名与Key到期
+## I16：显示名与Key到期
 
 账号可空显示名是管理员可编辑的持久元数据，1—64 Unicode标量（最多256 UTF-8字节），不含控制/格式/非法字符与换行分隔符；null清除。revision CAS编辑不改凭证版本、授权或路由身份，刷新/重授权/模式变更保留显示名。schema v9显式备份迁移，旧二进制拒绝打开。
 
 托管Key元数据可带expiresAtUnixSeconds；null/历史缺失为永不过期。正UTC整秒，上限10^12，now>=expires时在认证及持久准入屏障拒绝新请求/WS turn，401 api_key_expired，不建立执行记录；已派发仍正常结算。管理员可通过revision CAS设置、延长、清除，轮换/策略变更保留到期时间。到期不删除密钥或账本，不重置用量。
+
+Key 可空 displayName 使用与账号相同的校验，存入既有 Key 元数据 JSON，缺字段为 null；CAS 编辑并审计，不改 schema。显示名可重复，不作为认证、归属或结算标识。轮换、权限/到期更新保留显示名，主体标识仍不可修改。

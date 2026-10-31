@@ -18,6 +18,16 @@ import type { KeyDraft, KeyLimits, ManagedKey } from "./api";
 const integer = z.number().int().min(1).max(1_000_000_000_000).nullable();
 const schema = z
   .object({
+    displayName: z
+      .string()
+      .refine(
+        (value) =>
+          value === "" ||
+          ([...value].length <= 64 &&
+            new TextEncoder().encode(value).length <= 256 &&
+            !/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)),
+        "显示名须为1–64个Unicode标量，且不含控制字符",
+      ),
     principal: z
       .string()
       .regex(/^[A-Za-z0-9._-]{1,64}$/, "使用1–64位字母、数字或 . _ -"),
@@ -82,6 +92,7 @@ export function KeyEditor({
   const [expirationDate, setExpirationDate] = useState("");
   const form = useForm({
     initialValues: {
+      displayName: entry?.displayName ?? "",
       principal: entry?.principal ?? "",
       models: entry?.models ?? [],
       visionInput: entry?.visionInput ?? false,
@@ -155,7 +166,11 @@ export function KeyEditor({
           form.setFieldError("principal", "请选择有效到期日期");
           return;
         }
-        void submit(result.data, expires);
+        const { displayName, ...draft } = result.data;
+        void submit(
+          entry ? { ...draft, displayName: displayName || null } : draft,
+          expires,
+        );
       }}
     >
       <Stack gap="lg">
@@ -169,6 +184,14 @@ export function KeyEditor({
           maxLength={64}
           {...form.getInputProps("principal")}
         />
+        {entry && (
+          <TextInput
+            label="显示名"
+            description="留空恢复主体标识"
+            disabled={disabled}
+            {...form.getInputProps("displayName")}
+          />
+        )}
         {!entry && (
           <Text size="xs" c="dimmed">
             主体隔离会话，创建后不可修改。

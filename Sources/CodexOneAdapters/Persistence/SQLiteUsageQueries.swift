@@ -124,7 +124,7 @@ extension SQLiteUsageReader {
         unresolved: activity[at]?.1 ?? 0)
     }
     var sql = """
-      SELECT history.*, (SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id) FROM (
+      SELECT history.*, (SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id), (SELECT json_extract(metadata_json,'$.displayName') FROM managed_keys WHERE id=history.key_id) FROM (
       SELECT 'admitted' kind,'a:'||id cursor_id,id,created_at_epoch at_epoch,key_id,
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
         identity,request_id,state,json_extract(outcome_json,'$.kind') outcome,
@@ -167,6 +167,7 @@ extension SQLiteUsageReader {
         failure: failure,
         completeness: completeness, metrics: try metrics(row, offset: 13),
         cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(24),
+        displayName: string(25),
         firstEventMilliseconds: sqlite3_column_type(row, 22) == SQLITE_NULL
           ? nil : sqlite3_column_int64(row, 22),
         totalMilliseconds: sqlite3_column_type(row, 23) == SQLITE_NULL

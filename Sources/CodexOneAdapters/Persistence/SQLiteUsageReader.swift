@@ -64,12 +64,14 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   ) {
     try await read { db in
       let keys = try db.rows(
-        "SELECT ids.id,json_extract(k.metadata_json,'$.principal') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
+        "SELECT ids.id,json_extract(k.metadata_json,'$.principal'),json_extract(k.metadata_json,'$.displayName') FROM (SELECT id FROM managed_keys UNION SELECT key_id FROM attempts UNION SELECT key_id FROM request_diagnostics) ids LEFT JOIN managed_keys k ON k.id=ids.id ORDER BY ids.id LIMIT 257"
       ) {
         UsageKeyOption(
           id: String(cString: sqlite3_column_text($0, 0)),
           principal: sqlite3_column_type($0, 1) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text($0, 1)))
+            ? nil : String(cString: sqlite3_column_text($0, 1)),
+          displayName: sqlite3_column_type($0, 2) == SQLITE_NULL
+            ? nil : String(cString: sqlite3_column_text($0, 2)))
       }
       let models = try db.rows("SELECT model FROM health_models ORDER BY model LIMIT 49") {
         String(cString: sqlite3_column_text($0, 0))
@@ -89,7 +91,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state!='settled' ELSE 0 END),0),
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN
             CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
-          MAX(a.created_at_epoch)
+          MAX(a.created_at_epoch),json_extract(k.metadata_json,'$.displayName')
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         GROUP BY k.id ORDER BY k.id LIMIT 257
         """, (0..<4).flatMap { _ in [.number(start), .number(start + 86400)] }
@@ -97,7 +99,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
         KeyUsageSummary(
           key: .init(
             id: String(cString: sqlite3_column_text(row, 0)),
-            principal: String(cString: sqlite3_column_text(row, 1))),
+            principal: String(cString: sqlite3_column_text(row, 1)),
+            displayName: sqlite3_column_type(row, 7) == SQLITE_NULL
+              ? nil : String(cString: sqlite3_column_text(row, 7))),
           admitted: sqlite3_column_int64(row, 2), failed: sqlite3_column_int64(row, 3),
           pending: sqlite3_column_int64(row, 4),
           estimatedMicros: sqlite3_column_type(row, 5) == SQLITE_NULL
@@ -117,7 +121,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       return try db.rows(
         """
         SELECT a.id,a.key_id,json_extract(k.metadata_json,'$.principal'),json_extract(a.admission_json,'$.model'),
-          COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch
+          COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch,json_extract(k.metadata_json,'$.displayName')
         FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id LEFT JOIN accounts c ON c.id=a.identity
         WHERE a.state='intent' ORDER BY a.created_at_epoch DESC,a.id DESC LIMIT ?
         """, [.number(Int64(limit))]
@@ -134,7 +138,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
         return InFlightUsageRow(
           id: id, keyID: key, principal: text(2), model: text(3), mode: mode,
           accountID: account, accountDisplayName: text(6), startedAtUnixSeconds: start,
-          elapsedSeconds: start.map { max(0, now - $0) }, hasFirstEvent: events[id])
+          elapsedSeconds: start.map { max(0, now - $0) }, hasFirstEvent: events[id],
+          displayName: text(8))
       }
     }
   }

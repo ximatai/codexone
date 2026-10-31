@@ -82,9 +82,10 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | 方法/路径 | 参数 | 返回新增字段 |
 |---|---|---|
 | GET /api/usage/daily | days=1..31（缺省7）、可选key/model | timezone=UTC、days、buckets（按日升序）：atUnixSeconds、requests、succeeded、failed、cancelled、failures（类别→次数）、metrics |
-| GET /api/usage/in-flight | limit=1..200（缺省200） | rows：id、keyID、principal、model、mode、accountID、accountDisplayName、startedAtUnixSeconds、elapsedSeconds、hasFirstEvent；按开始时间/id倒序 |
+| GET /api/usage/in-flight | limit=1..200（缺省200） | rows：id、keyID、principal、displayName、model、mode、accountID、accountDisplayName、startedAtUnixSeconds、elapsedSeconds、hasFirstEvent；按开始时间/id倒序 |
 | GET /api/usage | 原有start/end与筛选、limit=1..100、after | totals新增averageFirstEventMilliseconds、p95FirstEventMilliseconds、averageTotalMilliseconds；现有admitted/failed/cancelled/metrics即筛选合计 |
 | PUT /api/accounts/:id/display-name | JSON revision、displayName（字符串或null） | account（含displayName与新revision）；账号列表/其他变更返回同字段 |
+| PUT /api/keys/:id/display-name | JSON revision、displayName（字符串或null） | key（含可空displayName与新revision）；Key列表/创建/其他变更返回同字段 |
 | PUT /api/keys/:id/expiration | JSON revision、expiresAtUnixSeconds（正UTC秒或null） | key（含expiresAtUnixSeconds与新revision）；Key列表/创建/其他变更返回同字段 |
 
 日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。
@@ -111,7 +112,6 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 首页在页头下展示提醒，critical 红、warning 琥珀，提供对应账号/Key、诊断或存储详情链接；空态与读取失败/重试态明确区分。提醒沿用 overview 查询分组的刷新与暂停，有 critical 时导航“服务概览”显示带可访问名称的小红点；不持久化忽略或已读状态。
 
-
 ### 试运行治理操作与账号展示
 
 `POST /api/executions/unknown/release` 复用 A10/A11 管理员认证、来源/CSRF、no-store、请求体和共享管理容量，拒绝 query 参数。JSON 两个必填字段 beforeUnixSeconds、expectedCount 均为非负整数，未知字段拒绝；成功返回 `{ "released": n }`，CAS 不符为 409，容量/存储不可用为 503，所有响应 no-store。事务与证据语义见 U07。
@@ -121,3 +121,12 @@ unresolved_executions.detail 含 count（可核对 unknown 数）、unresolvedCo
 账号读取 accessExpiresAtUnixSeconds 为应用层解密后提取的真实 Unix 秒；未知/取值失败为 null，不传出凭证明文、不改 schema。账号页及首页额度卡显示相对到期时间。15 分钟提前刷新沿用既有授权/额度失败提醒；临近到期本身不冒充刷新失败，无法确定是否刷新时不造失败证据。
 
 全站账号名优先 displayName；未命名统一“未命名账号 · <ID 前 8 位>”。活动、用量与提醒只有 accountID 时使用账号列表映射，找不到也用相同回退；账号页提示可设置名称。
+
+
+## Key 显示名
+
+Key 显示名与账号共用校验：1—64 个 Unicode 标量、最多 256 UTF-8 字节，拒绝控制、格式、非法字符及行/段分隔符；空字符串非法，null 清除。编辑接口使用 revision CAS，冲突返回 409 revision_conflict；身份、来源、CSRF、容量与审计沿用 Key 修改契约。
+
+displayName 存于现有 managed_keys.metadata_json；旧记录缺字段视为 null，不新增 schema。全量策略更新、到期设置、轮换及恢复禁用均保留显示名。显示名不参与认证、归属、治理或结算，不要求唯一。
+
+所有 Key 管理 DTO、用量 keyOptions、按 Key 今日摘要、用量明细及进行中请求返回可空 displayName，按当前 Key 元数据关联，未知或已删除为 null。attention 的 Key subjectName 优先显示名，缺失回退 principal。界面优先显示名，主体名以次要灰字保留（原生筛选选项以文本并列），搜索同时匹配显示名。编辑抽屉允许留空清除；策略和显示名分两次 CAS 修改，部分成功须提示核对，不自动重放，409 刷新后重新确认。

@@ -294,9 +294,10 @@ export function UsageOverview({
                 ]),
               ].map((id) => ({
                 value: id,
-                label:
-                  options.keyOptions?.find((k) => k.id === id)?.principal ??
-                  `主体未记录 · ${id}`,
+                label: options.keyOptions?.find((k) => k.id === id)?.displayName
+                  ? `${options.keyOptions.find((k) => k.id === id)!.displayName} · ${options.keyOptions.find((k) => k.id === id)!.principal ?? id}`
+                  : (options.keyOptions?.find((k) => k.id === id)?.principal ??
+                    `主体未记录 · ${id}`),
               })),
             ]}
           />
@@ -408,7 +409,9 @@ export function UsageOverview({
               : `${applied?.start} 至 ${applied?.end}（UTC）`}{" "}
             ·{" "}
             {options.keyOptions?.find((k) => k.id === applied?.key)
-              ?.principal ??
+              ?.displayName ??
+              options.keyOptions?.find((k) => k.id === applied?.key)
+                ?.principal ??
               (applied?.key || "全部 Key")}
             {applied?.model ? ` · 模型 ${applied.model}` : ""}
             {applied?.mode ? ` · ${modes[applied.mode]}` : ""}
