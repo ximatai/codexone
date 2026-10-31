@@ -16,7 +16,6 @@ export function KeyLimitsSummary({
     queryKey: [...queryKeys.keys.all, "limits", keyID, refresh],
     queryFn: ({ signal }) => fetchKeys(signal),
     enabled: !!keyID,
-    retry: false,
     gcTime: 0,
   });
   const key = query.data?.find((entry) => entry.id === keyID);

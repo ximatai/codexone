@@ -117,7 +117,6 @@ export function UsageOverview({
             cursors[index],
             AbortSignal.any([signal, abort.signal]),
           ),
-        retry: false,
         staleTime: 0,
         gcTime: 0,
       });

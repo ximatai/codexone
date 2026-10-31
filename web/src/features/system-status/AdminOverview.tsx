@@ -76,7 +76,6 @@ export function AdminOverview() {
     queryKey: attentionQueryKey,
     queryFn: ({ signal }) => fetchAttention(signal),
     enabled: !!owner.session,
-    retry: false,
     ...polling,
   });
   const unauthorized = [
