@@ -37,3 +37,51 @@ KeyManagement.tsx：584 → 287 行；useKeys.ts：233 → 197 行。原 78 行�
 有意变化：主题 resolver 统一按钮/徽章绿色；可排序主体表头；窄屏显式标签替代 data-label 伪元素；列表行和标签间距小幅统一；修改反馈进入通知。导航、业务字段、限制、权限和弹层文案不变，窄屏抽屉宽度可操作。
 
 subagent 只读评审提出两项 P2（校验失败草稿与 secret 测试强度），已修复并复核；截图动画捕获问题已重生成，subagent 最终复核 16 张均完整、无裁切或布局退化，无剩余评审阻塞。主 Agent 最终评审与 Linux verification 不属于本执行者完成项，任务末项保持未勾选。
+
+## 阶段 2：页面迁移
+
+日期：2026-10-31；平台：macOS arm64、本机 Chrome、新建合成会话。只修改本 worktree；未访问部署实例、真实订阅/OpenAI 端点，未运行 Docker/Linux、push 或 PR。
+
+完成浅色侧栏、当前路由高亮、顶部退出与窄屏 Burger/导航 Drawer；主题保持 8px 圆角、细边框、无阴影及深绿，仍生成两套静态变量但不开放深色切换。依赖精确固定 `@mantine/charts 9.7.3`、`recharts 3.9.0`、`@tabler/icons-react 3.35.0`，锁文件同步。
+
+概览 KPI 使用 AreaChart，缺失值保持 null 与可访问趋势文本；请求 DataTable、订阅额度/系统侧栏保留自动刷新、暂停、更新时间与 overview 查询分组。用量保留 URL/游标窗口与全部统计证据，常用筛选加更多筛选、六项汇总、堆叠柱状图、键盘/行点击详情和 CopyButton。账号改卡片/详情 Drawer、SegmentedControl，共享 mutation 保留 409 刷新但不重放、401、未知结果锁与授权失效分类。Key 工具栏增加七天内即将到期筛选，图标操作/菜单保留确认和一次性凭证的局部持有、五分钟清除及不入缓存/通知行为。
+
+所有弹层禁用动态滚动条补偿，仅打开时设置静态滚动标记，删除手写锁类全部残留。EmptyState/ErrorState/Skeleton 通过共享组件及表格在四页复用；旧全局 feature 样式清除。
+
+### 命令与证据
+
+| 命令 | 退出码 | 耗时 | 关键结果 |
+|---|---:|---:|---|
+| Key/共享层定向 Vitest | 0 | 1.92 秒 | 7 files / 29 tests passed |
+| 账号定向 Vitest | 0 | 1.36 秒 | 4 files / 26 tests passed |
+| 概览定向 Vitest | 0 | 1.68 秒 | 5 files / 18 tests passed |
+| 用量定向 Vitest | 0 | 1.18 秒 | 2 files / 9 tests passed |
+| `./scripts/verify.sh --web --chrome` | 0 | 21.72 秒 | lint/format/typecheck、Vitest 86、生产构建、Chrome 12 passed |
+| `CODEXONE_BUILD_JOBS=12 CODEXONE_SWIFTPM_DISABLE_SANDBOX=1 swift build --product codexone --disable-sandbox -j 12 --skip-update` | 0 | 73.03 秒 | Build complete（编译 35.30 秒） |
+| 同环境 `swift build --product ExecutionProbe --disable-sandbox -j 12 --skip-update` | 0 | 9.42 秒 | Build complete |
+| `python3 scripts/verify_admin_ui.py --binary .build/debug/codexone` | 0 | 10.75 秒 | real Chrome login/create/copy/CAS/rotation/quota/lost response/logout passed |
+| `python3 scripts/verify_account_admin_ui.py --binary .build/debug/ExecutionProbe` | 0 | 13.49 秒 | OAuth/PKCE、CAS、未知结果锁、重新授权、额度失败保留/陈旧/恢复 passed |
+| `cd web && npx playwright test accounts-phase2 --project=chrome`（仅截图过渡等待调整后） | 0 | 8.8 秒 | 1 passed，更新三张稳定截图 |
+| `python3 scripts/check_docs.py` | 0 | 0.05 秒 | PASS: 189 Markdown documents |
+
+账号脚本需要 test-only 运行时组装，使用既有 ExecutionProbe 产品而非正式 codexone。正式产品另已构建。首次 Swift 构建的公开 GitHub 拉取停滞，终止后验证本机已有缓存包含 Package.resolved 的全部锁定提交，复制到本 worktree 忽略的本地镜像，再禁用更新完成构建；未改变 Package.resolved、后端或公开配置。原始本机路径不进入提交。
+
+Chrome 新增四个阶段 2 场景：用量筛选/分页与详情字段、账号 Drawer 内409与显式重试成功、Key 菜单/即将到期筛选、手机导航 Drawer。原有八个场景保留行为覆盖，仅适配 SegmentedControl/Drawer/通知结构。生产巡检扩展至概览图表、用量堆叠图与详情 Drawer；账号脚本保留全部合成失败流程并校验零 style 标签。两入口均监听 pageerror/CSP 拒绝，全部通过；后端 CSP 未改。
+
+迭代修正：SegmentedControl 的 Playwright 操作改点击可见标签；关闭 Drawer 空 root 不再保留滚动锁标记；所有响应式 Grid 改静态 CSS；保留账号授权失效专用提示。一次误并发完整入口造成 Playwright trace 文件清理冲突，已改串行单次复验通过；之后收敛用量统计条，再次运行完整入口通过。生产 chunk 大小、Vite 配置未来加载方式提示、原合成 fixture 重复行 key/未拦截本机读取告警不影响通过，不将这些告警作为真实上游证据。
+
+### 截图、差异与评审
+
+忽略目录 `artifacts/ui-phase2/` 共 13 张：四页各 1440×900 与 390×844；另有概览请求详情、用量详情、账号详情、Key 菜单及创建 Drawer。截图仅合成数据；已逐张检查尺寸与桌面/手机布局。账号通知额外等待过渡稳定后更新截图。
+
+与渲染图的主要差异及原因：
+
+- AppShell 9.7.3 无条件渲染 InlineStyles；采用等价静态侧栏布局配 Mantine Burger/Drawer，满足严格 CSP。不是更改 CSP 或替换库内部实现。
+- 不展示密钥前缀；概览使用主体名。账号凭证到期 null 显示不可用，不编造套餐、健康或时间。
+- 保留完整统计、待核对占用、拒绝诊断和陈旧语义；用量六项汇总后直接展示趋势，其余统计折叠、治理证据在下方。详情仅展示已有字段，不虚构结束时间或推理 Token。
+- Key 创建沿用真实 API 表单和模型/图片权限、独立限额展开；到期仍经既有独立操作设置，不将渲染图未支持字段写入创建请求。
+- 多账号额度逐账号列出；公共连接/运行状态继续可见。小屏卡片纵排并保留全部字段与可访问操作。
+
+subagent 检查了代码和桌面/手机截图，无剩余 P0/P1；提出的 P2（链接主色、页头间距/数值字号、账号共享错误组件、截图尺寸/动画）已修正。主 Agent 最终评审与 Linux verification 留给主 Agent，不据本机合成通过宣称真实订阅或部署验收。
+
+行数（起点 → 本次）：styles.css 723→55；AdminOverview 252→263、ActivityOverview 361→286、SystemOverview 76→77；UsagePage 46→47、UsageOverview 774→492、UsageDetail 131→142；AccountManagement 587→564、useAccounts 270→237；KeyManagement 288→303、KeyList 215→239。图表/表格内容拆到 feature 内部组件，移动代码不计作净删；账号/Key 保留完整能力，不为压低单文件行数删除业务字段。

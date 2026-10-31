@@ -51,3 +51,9 @@ Mantine 9、TanStack Query、zod 本身成熟，但页面之上没有共用层�
 - 修改流程：409、401、网络失败、取消、成功各有测试；不在缓存保存一次性秘密。
 - 删除被替代的重复代码；页面文件明显变小。
 - 执行者 `verify.sh --web --chrome` 通过；主 Agent 评审、subagent 界面评审与浏览器走查；Linux verification。
+
+## 阶段 2 实现校准
+
+保持管理契约与原有能力：Key 增加基于已有七天到期分类的客户端筛选；用量常用筛选/更多筛选、六项汇总及可展开证据，行点击与键盘进入详情。所有数据来自已校验管理 DTO，不显示密钥片段。账号与用量详情继续保留不可用、完整度、观测陈旧及未知执行的解释。
+
+Mantine 9.7.3 AppShell 根组件无条件生成 InlineStyles，和 `style-src 'self'` 不兼容；外框采用等价的静态侧栏布局与 Mantine Burger/Drawer，不修改 CSP、不替换库内部实现。图表/主题通过静态 CSS import，响应式布局用 CSS Modules。阶段 2 验收增加窄屏导航、即将到期筛选、详情 Drawer、账号共享修改的409/成功路径及实际生产 CSP 巡检。
