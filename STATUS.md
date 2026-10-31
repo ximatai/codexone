@@ -19,7 +19,7 @@ M2/M4/M5/M6及首版整体不标完成。多架构、多管理员和多上游继
 
 | 日期/对象 | 已验证范围 | 依据 |
 |---|---|---|
-| 2026-10-31 · 管理台基础层阶段 2 | macOS arm64 `verify.sh --web --chrome`（Vitest 86、Chrome 12）、codexone/ExecutionProbe 构建、两项真实本机合成 UI/CSP 入口通过；四页与详情/菜单共13张桌面/手机截图、subagent评审完成 | [基础层验证](docs/changes/admin-ui-foundation/verification.md) |
+| 2026-10-31 · 管理台基础层阶段 2 | macOS arm64 `verify.sh --web --chrome`（Vitest 91、Chrome 12）、codexone/ExecutionProbe 构建、两项真实本机合成 UI/CSP 入口通过；阶段 2 评审返工 1–18 已处理；四页与详情/菜单共13张桌面/手机截图已更新、subagent复核完成 | [基础层验证](docs/changes/admin-ui-foundation/verification.md) |
 | 2026-10-31 · 账号提前刷新 | macOS arm64完整`verify.sh --backend`（Swift 245项）与`--web --chrome`（Vitest 74、Playwright 6）通过；15/5分钟窗口、单飞/失败分类、loopback连接拒绝、管理时间字段与1440×900账号详情；subagent评审问题已修复 | [提前刷新](docs/changes/proactive-account-refresh/verification.md) |
 | 2026-10-31 · 管理台第二轮 | macOS `verify.sh --backend`、`--web --chrome`（vitest 71、Playwright 6）；1440×900合成走查与subagent评审；Linux amd64 verification；测试实例v9显式迁移（私有备份）后API实测：日趋势、进行中、耗时合计、显示名设置/恢复、过期Key准入前401 | [管理台第二轮](docs/changes/admin-round2/verification.md) |
 | 2026-10-31 · 断线与前向兼容 | 上游WS空闲关闭同步关闭下游；`response.interrupt`、未知WS控制与`x-codex-*`头默认转发（含兜底与日志）；Linux amd64 verification通过，部署后用户在Desktop验收停止与中途追加消息无报错 | [断线](docs/changes/ws-upstream-idle-close/verification.md)、[前向兼容](docs/changes/client-protocol-forward-compat/verification.md) |
@@ -109,7 +109,7 @@ python3 scripts/verify_images.py --binary .build/debug/codexone --browser
 
 ## 当前交付与下一步
 
-管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1 已合并（PR #18）并完成 Linux verification；阶段 2 按“C 结构 + A 克制”完成四页迁移、侧栏与窄屏导航、图表/DataTable、账号共享修改及 CSS 清理，本机完整前端和两项合成生产 CSP 入口通过。当前在 `codex/admin-ui-phase2`，未 push；下一步由主 Agent 最终评审和 Linux verification，阶段 3 深色开关未开始。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
+管理台[前端基础层](docs/changes/admin-ui-foundation/proposal.md)阶段 1 已合并（PR #18）并完成 Linux verification；阶段 2 按“C 结构 + A 克制”完成四页迁移、侧栏与窄屏导航、图表/DataTable、账号共享修改及 CSS 清理，本机完整前端和两项合成生产 CSP 入口通过。阶段 2 一轮评审返工已完成，含 Key 创建后设置到期的部分失败提示与一次性秘密回归；当前在 `codex/admin-ui-phase2`，未 push；下一步由主 Agent 核对交付和 Linux verification，阶段 3 深色开关未开始。因 AppShell 自身注入 style，采用静态等价外框，严格 CSP 不变。
 
 测试实例已通过真实Desktop文本/视觉/工具/生图验收，非Codex客户端标识统一、明确拒绝零费用结算、可配置连接上限与公开价格估算已部署。下一步：当前为开发试用阶段（单订阅账号，全部Key迁移暂缓）。[账号凭证提前刷新](docs/changes/proactive-account-refresh/proposal.md)本机实现与合成验证完成，下一步由主Agent执行Linux verification，再按授权部署并确认真实刷新（v9管理到期字段为null，最近更新来自提交审计）；日常巡检中以账本确认中断结算（PR #12）在真实Desktop停止时减少unknown；不定期提醒用户讨论[客户端协议跟踪](docs/development/client-protocol-watch.md)的治理思路（不设定时任务，部署前手动比对）；后续方向与用户讨论后排期（候选：管理台Key自助查询、模型/客户端分布、CSV导出、深色模式、首页卡片去重）。构建侧若Rosetta下swift-build再次死锁，评估以本地镜像GNU SDK交叉编译。
 

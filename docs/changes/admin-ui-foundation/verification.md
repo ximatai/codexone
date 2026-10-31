@@ -85,3 +85,47 @@ Chrome 新增四个阶段 2 场景：用量筛选/分页与详情字段、账号
 subagent 检查了代码和桌面/手机截图，无剩余 P0/P1；提出的 P2（链接主色、页头间距/数值字号、账号共享错误组件、截图尺寸/动画）已修正。主 Agent 最终评审与 Linux verification 留给主 Agent，不据本机合成通过宣称真实订阅或部署验收。
 
 行数（起点 → 本次）：styles.css 723→55；AdminOverview 252→263、ActivityOverview 361→286、SystemOverview 76→77；UsagePage 46→47、UsageOverview 774→492、UsageDetail 131→142；AccountManagement 587→564、useAccounts 270→237；KeyManagement 288→303、KeyList 215→239。图表/表格内容拆到 feature 内部组件，移动代码不计作净删；账号/Key 保留完整能力，不为压低单文件行数删除业务字段。
+
+## 阶段 2：一轮评审返工
+
+日期：2026-10-31；平台：macOS arm64、本机 Chrome、全新合成会话。只在本 worktree 修改；未访问服务器、私有部署目录、真实订阅或 OpenAI，未运行 Docker/Linux 构建，未 push/开 PR；沿用已有本机构建的 codexone/ExecutionProbe。
+
+### 评审逐项处理
+
+1. DataTable 排序按钮继承字号和颜色；未排序淡色 ↕、aria-hidden，保留 aria-sort。
+2. Key 综合徽章按禁用 > 已到期（红）> 七天内到期（橙）> 启用（绿）；日期在第二行，永不过期保留。
+3. 用量预设由成功应用的范围推导，filled + aria-pressed；展开自定义不改变选中态，失败保留原应用范围。
+4. 当前结果和已应用筛选合并为一行摘要，统计口径折叠；待核对占用、缺少准入时间和额外证据折叠；图表 200px，请求明细紧接 1440×900 首屏下沿，符合接近首屏要求。
+5. 概览副标题精简；KPI 口径进入支持鼠标/键盘的 Tooltip；刷新开关、更新时间和按钮进入 PageHeader actions。
+6. 系统卡删除重复的请求/失败/费用，只保留账号、待核对、存储准入、可选工作键值行；整行链接、状态点和 ›。
+7. daily 等待时四张 KPI 只渲染 Skeleton；移除额外加载行，通过 aria-busy 和可访问名称保留加载断言。
+8. 最近请求设列宽与时间 nowrap、统一 ms/s 耗时；移除详情按钮列，整行点击/Enter/Space 可达并带 ›；进行中右上链接删除。
+9. 两页共享请求抽屉放大标题，分区降级；请求 ID 为 Code + Tooltip/ActionIcon，成功有可访问反馈，仅复制失败时提示；字段为两列键值网格，本地时间显示、UTC 在 title；性能区无费用说明。
+10. 账号名加大、策略/授权合并标题行徽章；主次窗口并排小卡，大字剩余比例和重置时间；新鲜不显示提示，陈旧/失败橙色；单卡铺满，宽屏多卡 minmax(480px, 1fr)；共享 quotaStale 用于账号卡、详情和概览。
+11. 账号详情删除重复已用比例，仅保留 QuotaWindowBar；标题旁刷新图标；通知移至 bottom-right，账号成功反馈仅保留内联 Alert，避免重复通知；重新授权移入危险操作并区分刷新现有凭证。
+12. Key 限额使用 Mantine Accordion 和摘要副标题；统一“创建密钥”、必填星号、加大标题；创建可设永不过期/7/30/90 天/UTC 自定义日期。创建 API 不变，后续调用现有到期接口；失败明确“密钥已创建但到期设置失败”，不重复创建，秘密仍只在局部显示一次。
+13. Key 三个行内图标统一 default variant 并加 Tooltip。
+14. KPI 较昨日置于数值旁，带 ↑/↓；错误率涨红跌绿，其余中性；费用显示 $1.25，估算说明在注释。
+15. 390px KPI 2×2 且隐藏 sparkline；Key 手机卡以主体名开头，移除重复主体标签。
+16. 策略确认 Modal 叠于仍打开的账号 Drawer 上，取消保留抽屉和表单。
+17. daily queryFn 只取 daily；accounts/key-usage/storage/daily/in-flight/recent 独立查询，同一 15 秒间隔与暂停条件，保留 overview key 失效；新增初挂载各读取一次断言。
+18. 账号禁用进入 ⋯ 菜单并保留确认；已禁用账号仍提供直接启用按钮。
+
+两步创建另加成功、到期失败和“关闭秘密后迟到到期响应不复活秘密”测试。新秘密不经 mutation 返回值或 Query 缓存，既有秘密清除/缓存/未知结果回归保留。结构变化只调整测试定位，授权失效、CAS、未知结果锁、额度失败保留和恢复均由生产合成入口实测。
+
+### 最终命令
+
+| 命令 | 退出码 | 耗时 | 关键结果 |
+|---|---:|---:|---|
+| `./scripts/verify.sh --web --chrome` | 0 | 22.11 秒 | lint/format/typecheck、Vitest 91、构建、Chrome 12 passed |
+| `cd web && npm run build` | 0 | 0.85 秒 | 生产构建完成 |
+| `python3 scripts/verify_admin_ui.py --binary .build/debug/codexone` | 0 | 11.82 秒 | 登录、创建/复制/清除、有效策略/CAS、禁用轮换/额度、读取重试、丢响应锁与登出重试；零动态 style/CSP 拒绝 |
+| `python3 scripts/verify_account_admin_ui.py --binary .build/debug/ExecutionProbe` | 0 | 9.67 秒 | OAuth/PKCE、CAS、未知结果核对、授权失效/重新授权、额度失败保留/陈旧/恢复；生产 CSP 通过 |
+| Key 定向 Vitest（最终通知清理修复后） | 0 | 1.60 秒 | 10 passed，含延迟到期响应秘密不复活 |
+| 概览定向 Vitest（增加初挂载读取次数断言） | 0 | 0.93 秒 | 3 passed，含手动暂停后陈旧推进 |
+| `python3 scripts/check_docs.py` | 0 | 0.05 秒 | PASS: 189 Markdown documents、必需入口、本地链接与变更文件 |
+
+
+首次生产 Key 入口因上一轮 bottom-right 错误通知遮住下一次编辑提交按钮而失败（39.03 秒）；细化步骤定位后确认不是 Accordion/CSP 问题。重新打开创建/编辑时清除旧通知，定向 Key 回归与重建后仅重跑失败的生产入口，通过。完整前端入口后没有重复运行无关全量检查。非阻塞告警仍为既有合成 fixture 的重复 key/未拦截 loopback 读取和构建 chunk 提示，不代表真实上游验证。
+
+13 张截图覆盖更新在忽略目录 `artifacts/ui-phase2/`：四页 1440×900/390×844，以及概览/用量请求详情、账号详情、Key 菜单和创建抽屉。手机概览截图显式回到顶部；subagent 只读复核全部截图和代码，最初发现的一次性秘密迟到复活、窗口空值标题、Clipboard API 缺失提示与 Tooltip 键盘访问问题已修复，最终无剩余 P0/P1/P2。未新增后端/API/CSP 变更；Linux、推送与部署交由主 Agent 按授权推进。
