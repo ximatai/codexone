@@ -38,6 +38,15 @@ class WatchTests(unittest.TestCase):
         with redirect_stdout(output): code = watch.summary(self.state,since)
         self.assertLessEqual(len(output.getvalue().splitlines()),25)
         return code, output.getvalue()
+    def test_capacity_boundary_is_critical_without_automatic_rollback(self):
+        self.sample(headroom=[dict(metric='daily_requests',percent=79.99)])
+        self.assertEqual(self.check()['status'],'ok')
+        self.sample(headroom=[dict(metric='daily_requests',percent=80)])
+        row = self.check()
+        self.assertEqual(row['status'],'critical')
+        self.assertFalse(row['hard_fault'])
+        self.assertEqual(self.cli_loop(self.config).returncode,0)
+        self.assertFalse(self.counter.exists())
     def test_normal_and_summary(self):
         self.assertEqual(self.summary()[0],3)
         self.assertEqual(self.check()['status'],'ok'); self.assertEqual(self.summary()[0],0)
@@ -143,8 +152,9 @@ class WatchTests(unittest.TestCase):
                 admin_base_url=f'http://127.0.0.1:{fixture.ports["admin"]}')
             config = dict(transport=['env','PATH='+str(binpath)+':'+__import__('os').environ['PATH'],'sh','-c'],remote=remote,rollback='exit 0')
             row = watch.check(config,self.state)
-            self.assertEqual(row['status'],'ok',row)
-            self.assertEqual(row['attention'],[])  # actual API currently returns 404
+            self.assertEqual(row['status'],'warn',row)
+            self.assertEqual([x['kind'] for x in row['attention']],['backup_disabled'])
+            self.assertTrue(any(x['metric']=='detail_rows' for x in row['headroom']))
             self.assertEqual(fixture.provider.calls,0)
             for path in self.state.iterdir(): self.assertNotIn(ADMIN,path.read_text())
     def test_remote_attention_present(self):

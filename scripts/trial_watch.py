@@ -40,7 +40,7 @@ def api(path, optional=False):
         if optional and status == 404: return {}
         if status == 200:
             expected = ('quota' if path.endswith('/observation') else 'accounts' if path.startswith('/api/accounts')
-                else 'buckets' if path.startswith('/api/usage/daily') else 'rows' if path.startswith('/api/usage/in-flight') else 'items')
+                else 'capacities' if path.startswith('/api/usage/headroom') else 'buckets' if path.startswith('/api/usage/daily') else 'rows' if path.startswith('/api/usage/in-flight') else 'items')
             if expected in body: return body
     except Exception: pass
     unavailable.add(path.split('?')[0].split('/')[2])
@@ -84,16 +84,30 @@ else: raise ValueError('pagination')
 daily = api('/api/usage/daily?days=31').get('buckets', [])
 inflight = api('/api/usage/in-flight?limit=200').get('rows', [])
 attention = api('/api/attention', True).get('items', [])
+capacity = api('/api/usage/headroom')
+headroom = []
+for value in capacity.get('capacities', []):
+    if value.get('current') is not None and int(value['limit']) > 0:
+        headroom.append({'metric':value['name'], 'percent':int(value['current'])/int(value['limit'])*100})
+accounts_capacity = capacity.get('accounts', [])
+if accounts_capacity:
+    headroom.append({'metric':'account_concurrency', 'percent':max(max(a['current'],a['peak24Hours'])/a['limit']*100 for a in accounts_capacity)})
+s = capacity.get('storage', {}); limits = capacity.get('storageLimits', {})
+if limits.get('stopWALBytes'):
+    headroom.append({'metric':'wal_bytes', 'percent':s.get('walBytes',0)/limits['stopWALBytes']*100})
+if s.get('availableBytes') is not None and limits.get('stopAvailableBytes'):
+    headroom.append({'metric':'disk_safety_watermark', 'percent':limits['stopAvailableBytes']/max(1,s['availableBytes'])*100})
 # Subject names and IDs may be user text; retain subject type only.
 items = [{'kind':a['kind'], 'severity':a['severity'], 'subject':a.get('subjectType','system')} for a in attention]
 result = {'observed_at':now,'ready_status':ready,'ready_seconds':elapsed,'containers':containers,'logs':dict(levels),
 'upstream':dict(upstream),'protocols':sorted(protocols),'daily':daily,
 'in_flight':len(inflight),'longest_seconds':max((a['elapsedSeconds'] for a in inflight),default=0),
-'accounts':accounts,'attention':items,'sources_unavailable':sorted(unavailable)}
+'accounts':accounts,'headroom':headroom,'attention':items,'sources_unavailable':sorted(unavailable)}
 output = json.dumps(result,separators=(',',':'))
 if secret and secret in output: raise ValueError('unsafe')
 print(output)
 '''
+CAPACITY_CRITICAL_PERCENT = 80
 DEFAULTS = dict(failure_critical=0.10, failure_warn=0.05, minimum_admitted=20,
                 longest_seconds=7200, quota_percent=95, ready_failures=3,
                 container_failures=3, probe_timeout=90)
@@ -168,6 +182,7 @@ def sanitized(raw):
                     failed=number(b['failed']), failures=counts(b['failures'])) for b in raw['daily']],
         in_flight=number(raw['in_flight']), longest_seconds=number(raw['longest_seconds']),
         accounts=[dict(authorization=safe_name(a['authorization']),quota_percent=number(a['quota_percent'])) for a in raw['accounts']],
+        headroom=[dict(metric=safe_name(a['metric']),percent=number(a['percent'])) for a in raw.get('headroom',[])],
         attention=[{k:safe_name(a[k]) for k in ('kind','severity','subject')} for a in raw.get('attention',[])])
 
 
@@ -226,6 +241,7 @@ def check(config, directory):
         if result['admitted'] >= t['minimum_admitted'] and rate >= t['failure_critical']: flag('failure_rate_critical',2)
         elif rate >= t['failure_warn']: flag('failure_rate_warn')
         if data['longest_seconds'] > t['longest_seconds']: flag('long_request')
+        if any(value['percent'] >= CAPACITY_CRITICAL_PERCENT for value in data['headroom']): flag('capacity_high',2)
         if any(a['authorization'] in ('requires_auth','auth_uncertain') for a in data['accounts']): flag('account_auth',2)
         if any(a['quota_percent'] >= t['quota_percent'] for a in data['accounts']): flag('quota_high')
         if data['logs'].get('critical',0): flag('critical_logs')
