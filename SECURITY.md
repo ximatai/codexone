@@ -8,7 +8,7 @@
 
 ## 私密报告
 
-在 GitHub 仓库 **Security → Report a vulnerability** 使用 Private vulnerability reporting 联系维护者：[私密漏洞报告入口](https://github.com/aruis/codexone/security/advisories/new)。不要先发公开 Issue。若入口不可用，不在公开渠道粘贴敏感细节，可先提交不含细节的请求，请维护者启用私密入口。
+在 GitHub 仓库 **Security → Report a vulnerability** 使用 Private vulnerability reporting 联系维护者：[私密漏洞报告入口](https://github.com/ximatai/codexone/security/advisories/new)。不要先发公开 Issue。若入口不可用，不在公开渠道粘贴敏感细节，可先提交不含细节的请求，请维护者启用私密入口。
 
 提供受影响版本、合成最小复现、预期/实际行为、影响和可行缓解方式。不要上传真实凭证、登录文件、回调、正文、图片、数据库、原始日志或私人部署信息。使用占位符替换配置；必要细节仅通过已确认的私密报告继续沟通。
 
