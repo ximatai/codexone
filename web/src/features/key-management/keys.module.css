@@ -3,6 +3,9 @@
   align-items: center;
   gap: 16px;
 }
+.list {
+  scroll-margin-top: 80px;
+}
 .toolbar > :first-child {
   flex: 1;
   min-width: 160px;
