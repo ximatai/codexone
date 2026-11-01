@@ -81,6 +81,10 @@ for (const width of [1440, 390]) {
     ).toBeVisible();
     await expect(confirm.getByText(/到期：/)).toBeVisible();
     expect(calls).toHaveLength(0);
+    await confirm
+      .getByRole("button", { name: "确认使用", exact: true })
+      .click({ trial: true });
+    await expect(confirm).toHaveCSS("opacity", "1");
     await page.screenshot({
       animations: "disabled",
       path: testInfo.outputPath(`reset-confirm-${width}.png`),

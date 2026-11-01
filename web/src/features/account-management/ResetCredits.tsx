@@ -248,6 +248,7 @@ export function ResetCredits({
           保存重置卡设置
         </Button>
         <ConfirmModal
+          zIndex={400}
           opened={!!selection}
           title={
             selection?.kind === "reconcile"
