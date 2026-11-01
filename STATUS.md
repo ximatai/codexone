@@ -4,13 +4,13 @@
 
 ## 版本与能力
 
-当前版本为 **[v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1)**（2026-11-01），核心数据库 schema v10。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前版本为 **[v0.26.2](https://github.com/ximatai/codexone/releases/tag/v0.26.2)**（2026-11-01），核心数据库 schema v10。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
-项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移。
+项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启。
 
 ## 已知限制
 
-- 单节点、单管理员；容器目标为 Linux amd64 Docker Engine，本地开发为 macOS。其他平台需独立验证。
+- 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。
 - 多账号选择机制已有实现，完整多账号路由仍需独立验收；用量和费用可为部分或未知，不用于对外结算或绝对封顶。
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。
 - 内部协议可能变化。官方客户端标识与 OAuth ID 的使用可能违反提供者条款、触发风控或账号限制，详见[兼容与风险](docs/reference/compatibility.md)。
@@ -19,9 +19,8 @@
 
 ## 路线图
 
-- [设备码账号授权](docs/changes/device-code-auth/proposal.md)：默认流程与合成验收已完成，保留回调备用；维护者真实账号验收待完成。
-- [网关自动重启](docs/changes/gateway-restart/proposal.md)：宿主机重启或进程意外退出后自动恢复，维护命令不自动重试。
-- [局域网模式](docs/changes/lan-mode/proposal.md)：开发版本已实现私有地址双监听、来源过滤、HTTP 会话和风险提示；尚未发布，真实 Codex HTTP/WS 验收待维护者完成。
+- v0.26.2 收尾验收：[设备码授权](docs/changes/device-code-auth/tasks.md)真实账号登录、[网关自动重启](docs/changes/gateway-restart/tasks.md)实例升级确认、[局域网模式](docs/changes/lan-mode/tasks.md)真实账号生成请求。
+- Node.js 运行时与 GitHub Actions 依赖的大版本升级。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。

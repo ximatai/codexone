@@ -14,8 +14,8 @@
 从 GHCR 拉取精确版本并解析本机不可变 ID，也可以按下节从源码构建 candidate：
 
 ```sh
-docker pull ghcr.io/ximatai/codexone:0.26.1
-docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}'
+docker pull ghcr.io/ximatai/codexone:0.26.2
+docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}'
 ```
 
 下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。该 ID 只在本机有意义：containerd 镜像存储下等于拉取的 registry digest，传统存储下等于镜像配置 digest（Release 的 `image-id.txt`）；跨机器核对以 registry digest 和来源证明为准。正式版镜像提供精确版本与 latest；预发布只提供精确版本，不更新 latest，也不提供年份浮动标签。
@@ -27,7 +27,7 @@ docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}'
 ```sh
 docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
-  --build-arg VERSION=0.26.1 -f deploy/Dockerfile -t codexone:candidate .
+  --build-arg VERSION=0.26.2 -f deploy/Dockerfile -t codexone:candidate .
 python3 scripts/verify_installation.py --image codexone:candidate
 # 本机有 Chrome 且已安装 web 锁文件依赖时，可增加 --browser 验收打包界面。
 # python3 scripts/verify_installation.py --image codexone:candidate --browser
@@ -46,7 +46,7 @@ Release 工作流的手动 dry-run 接受 ref，构建并执行 Linux 合成 soc
 
 ## 局域网（无域名）
 
-先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)。本功能尚未发布，v0.26.1 镜像不支持；须使用包含该功能的源码构建或后续发行镜像。准备不可变镜像 ID 后，四步路线见 [README](../../README.md#局域网部署无域名)：初始化、配置模型、启动、打开管理页面。
+先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)。局域网模式从 v0.26.2 起提供。准备不可变镜像 ID 后，四步路线见 [README](../../README.md#局域网部署无域名)：初始化、配置模型、启动、打开管理页面。
 
 ```sh
 python3 deploy/init-install.py ../codexone-private \
