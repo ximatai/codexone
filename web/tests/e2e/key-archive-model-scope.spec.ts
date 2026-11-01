@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import type { ManagedKey } from "../../src/features/key-management/api";
 
@@ -132,5 +133,5 @@ test("desktop archive, recycle bin, restore and independent all-model scopes", a
     path: testInfo.outputPath("restored-mobile.png"),
     fullPage: true,
   });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
 });

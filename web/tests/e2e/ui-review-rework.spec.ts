@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, test, gotoUsage } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 
 test("P2-1: collapsing fifty reminders returns the toggle to view with focus", async ({
@@ -42,7 +42,7 @@ test("P2-2 Usage: pages keep separate POP positions and fresh entry ignores page
   page,
 }) => {
   await reviewFixture(page);
-  await page.goto("/#/usage");
+  await gotoUsage(page);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeAttached();
   await page.evaluate(() => scrollTo(0, 1800));
@@ -78,7 +78,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
 }) => {
   const state = await reviewFixture(page);
   state.failures["/api/usage"] = 503;
-  await page.goto("/#/usage");
+  await gotoUsage(page);
   await expect(page.getByRole("alert")).toContainText("查询失败或繁忙");
   await expect(page.getByRole("alert")).not.toContainText("快照");
   for (const path of [
@@ -122,7 +122,7 @@ for (const status of [503, 429]) {
     page,
   }) => {
     const state = await reviewFixture(page);
-    await page.goto("/#/usage");
+    await gotoUsage(page);
     await expect(page.getByText("第 1 页", { exact: true })).toBeAttached();
     state.failures["/api/usage"] = status;
     await page.getByRole("button", { name: "下一页", exact: true }).click();

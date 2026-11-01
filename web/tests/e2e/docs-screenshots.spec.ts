@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { mkdir } from "node:fs/promises";
 import { expect, test } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
@@ -119,6 +120,6 @@ test("render synthetic documentation screenshots", async ({ page }) => {
     page.getByText("desktop", { exact: true }).first(),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1440);
+  await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: "../docs/assets/keys.png" });
 });

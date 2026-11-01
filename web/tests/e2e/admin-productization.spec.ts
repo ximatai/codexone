@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
@@ -222,9 +223,9 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await detail.getByRole("button", { name: "关闭", exact: true }).click();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.screenshot({
     path: testInfo.outputPath("admin-usage-390.png"),
     fullPage: true,

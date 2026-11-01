@@ -1,4 +1,5 @@
-import { expect, test } from "./fixtures";
+import { expectNoHorizontalOverflow } from "./layout";
+import { expect, test, gotoUsage } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 
 test("O01 O03: anchors reminders to objects and bounds fifty reminders", async ({
@@ -99,9 +100,7 @@ test("A01 A02: long account names fit all viewports and authorization warns inde
     [390, 844],
   ]) {
     await page.setViewportSize({ width, height });
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
+    await expectNoHorizontalOverflow(page);
     const name = page.getByText("LongUnbrokenAccountDisplayName".repeat(2), {
       exact: true,
     });
@@ -221,7 +220,7 @@ test("U02 U03: usage page turns start at the list and back retains page and posi
   page,
 }) => {
   await reviewFixture(page);
-  await page.goto("/#/usage");
+  await gotoUsage(page);
   await expect(page.getByText("第 1 页", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "下一页", exact: true }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeAttached();

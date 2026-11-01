@@ -1,4 +1,4 @@
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 
 /** Every test owns a synthetic API boundary, including reads it did not explicitly mock. */
 export const test = base.extend<{ syntheticBoundary: void }>({
@@ -21,3 +21,13 @@ export const test = base.extend<{ syntheticBoundary: void }>({
   ],
 });
 export { expect };
+
+/** Keep the initial read from replacing the URL while the next interaction starts. */
+export async function gotoUsage(page: Page, now = new Date()) {
+  await page.clock.setFixedTime(now);
+  const start = new Date(now.getTime() - 6 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  const end = now.toISOString().slice(0, 10);
+  await page.goto(`/#/usage?start=${start}&end=${end}&page=1`);
+}
