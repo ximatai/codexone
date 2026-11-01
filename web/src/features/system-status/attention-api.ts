@@ -12,6 +12,7 @@ const item = z.object({
     "account_auth_uncertain",
     "account_cooldown",
     "quota_high",
+    "reset_credits",
     "quota_stale",
     "key_expiring",
     "key_limit_near",
@@ -63,6 +64,7 @@ const messages: Record<AttentionItem["kind"], string> = {
   account_auth_uncertain: "账号授权结果待确认",
   account_cooldown: "账号正在执行健康冷却",
   quota_high: "订阅额度即将用尽",
+  reset_credits: "重置卡操作需要查看",
   quota_stale: "订阅额度观测失败或已陈旧",
   key_expiring: "访问密钥已到期或将在 7 天内到期",
   key_limit_near: "访问密钥今日用量接近限额",
@@ -90,7 +92,13 @@ export function attentionMessage(
   const message =
     item.kind === "unresolved_executions"
       ? `未结执行占用 ${item.detail.unresolvedCount ?? item.detail.count} / ${item.detail.limit ?? "—"}，其中 ${item.detail.count} 条待核对`
-      : messages[item.kind];
+      : item.kind === "reset_credits"
+        ? item.detail.code === "reset"
+          ? "已自动使用重置卡，请查看账号"
+          : item.detail.code === "unknown"
+            ? "重置卡使用结果未知，请核对原操作"
+            : "重置卡自动处理连续失败，请检查账号"
+        : messages[item.kind];
   const extra =
     item.kind === "capacity_reference"
       ? ` · ${item.detail.metric === "daily_requests" ? "今日请求" : item.detail.metric === "daily_estimated_micros" ? "今日估算费用（微美元）" : "明细行数"} ${item.detail.current} / ${item.detail.limit}${item.detail.exceeded ? "，已超过参考上限" : ""}`

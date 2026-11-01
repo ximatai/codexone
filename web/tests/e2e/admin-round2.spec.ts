@@ -73,7 +73,19 @@ test("round two overview, usage, account name and key expiration", async ({
       json = { service: "codexone", ready: true, checks: [] };
     else if (path === "/api/accounts")
       json = { accounts: [account], nextCursor: null };
-    else if (path === "/api/accounts/synthetic-account/display-name") {
+    else if (path.includes("/reset-credits")) {
+      const state = {
+        revision: account.revision,
+        settings: { autoUseBeforeExpiry: false, leadHours: 24 },
+        pending: false,
+        pendingCreditID: null,
+        lastCode: null,
+        lastAttemptAt: null,
+      };
+      json = path.endsWith("/state")
+        ? state
+        : { credits: [], availableCount: 0, state };
+    } else if (path === "/api/accounts/synthetic-account/display-name") {
       const body = route.request().postDataJSON();
       expect(body.revision).toBe(account.revision);
       account.displayName = body.displayName;

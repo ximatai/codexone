@@ -1,3 +1,4 @@
+import { ResetCredits } from "./ResetCredits";
 import { authorizationFailureMessage } from "./authorization-failure";
 import {
   accountName,
@@ -464,6 +465,14 @@ export function AccountManagement() {
                 重新授权
               </Button>
             </section>
+            <ResetCredits
+              key={`reset-${account.id}`}
+              account={account}
+              disabled={blocked}
+              reloadToken={state.readAt}
+              mutation={state.mutation}
+              onUnauthorized={state.invalidate}
+            />
             <AccountObservability
               key={account.id}
               account={account}
