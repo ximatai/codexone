@@ -91,6 +91,16 @@ HTTPS 路线首次浏览器登录从私有 `secrets/admin` 文件取得秘密，
 
 gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止提权；data 与 backups 本地卷可写、secrets 文件只读、`/tmp` 为有界 tmpfs。短命 init-data 仅以 root 和 CHOWN/FOWNER/DAC_OVERRIDE 设置空卷目录归属，根只读且无网络、不挂 secrets，完成后 gateway 才启动。768 MiB / 128 PID 是安装候选的限制，不是弱服务器容量承诺。live 只检查进程存活；ready 为 503 不触发自动重启。host network 的端口冲突须先处理，不能用映射端口改变回环隔离。
 
+## 自动重启与维护停机
+
+gateway 使用 `restart: unless-stopped`：进程意外退出后由 Docker 自动拉起；宿主机重启后，随 Docker Engine 启动恢复原先运行的 gateway（须启用 Engine 开机启动）。init-data 保持不重启。每次启动仍校验配置、schema、密钥和实例锁并完成恢复，不自动迁移，也不重放可能已执行的请求。ready 503 或 unhealthy 本身不触发重启。
+
+需要保持停机时，在安装目录执行 `python3 compose-install.py stop`；`down` 则同时删除容器，保留命名数据卷。两者都不会因 Engine 或宿主机重启自动拉起，恢复服务须显式执行 `python3 compose-install.py up -d`。升级现有安装须更新 compose.yaml 与 compose-install.py 后执行 `up -d`，仅 `restart` 不会应用模板变更。
+
+执行 `--migrate`、离线 `--backup`、`--restore` 或密钥维护前，必须先 `stop` gateway，维护成功后再 `up -d`。安装入口为所有 `run` 强制启用 `--rm` 并拒绝关闭；这是 [Compose 文档](https://docs.docker.com/reference/cli/docker/compose/run/)明确保证覆盖服务重启策略的方式，失败的一次性命令也会退出并移除，不自动重试。
+
+配置错误以 78 退出且不开 listener；连续失败由 Docker 递增退避，普通日志仍受 10 MiB × 5 轮转限制。自动重启不能修复配置或代替故障排查。trial watch 仍对 RestartCount 增量报 `container_restarted`，自动恢复也须检查原因。
+
 ## 定时备份与日志轮转
 
 Compose 的独立 backups 命名卷挂载 `/var/backups/codexone` 并设置 `CODEXONE_BACKUP_DIRECTORY`；init-data 同时检查两卷归属与 0700 权限。launcher 校验两卷均属于唯一安装标识，剥离宿主同名环境覆盖。旧安装升级模板后若 `.env` 未含备份卷字段，launcher 从原 project 派生同一隔离卷名；显式字段不一致则拒绝。

@@ -93,7 +93,7 @@ services:
       CODEXONE_LISTEN_ADDRESS: ${CODEXONE_LISTEN_ADDRESS:-}
       CODEXONE_ALLOWED_NETWORKS: ${CODEXONE_ALLOWED_NETWORKS:-}
       CODEXONE_ADMIN_PUBLIC_ORIGIN: ${CODEXONE_ADMIN_PUBLIC_ORIGIN:?Set the exact management origin}
-    restart: "no"
+    restart: unless-stopped
     stop_grace_period: 30s
     depends_on:
       init-data:
