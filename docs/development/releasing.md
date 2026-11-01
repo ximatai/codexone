@@ -4,11 +4,11 @@
 
 ## 版本与标签
 
-公开版本为 `0.<两位年份>.<序号>`，首个公开版本计划为 `v0.26.1`，尚未发布。序号从 1 起在对应年份递增，不带前导零；年份变化不代表兼容性变化。预发布使用 `v0.26.2-rc.1`，rc 序号同样从 1 起。未来进入大版本 1.x。
+公开版本为 `0.<两位年份>.<序号>`，首个公开版本为 `v0.26.1`（2026-11-01）。序号从 1 起在对应年份递增，不带前导零；年份变化不代表兼容性变化。预发布使用 `v0.26.2-rc.1`，rc 序号同样从 1 起。未来进入大版本 1.x。
 
 每个版本的 CHANGELOG 段落必须以非空“升级注意”开头，说明 schema、配置、客户端兼容性、备份与迁移要求，不能从版本号推断无损升级或回退。Release 正文取该版本段落（不含版本标题），顶部保留“升级注意”，末尾追加镜像 digest、拉取及来源证明核验命令。
 
-发布渠道为 GHCR `ghcr.io/ximatai/codexone`，首个版本发布后可用，仅支持 Linux amd64。每次只推精确版本（如 `0.26.1` 或 `0.26.2-rc.1`），正式版另更新 `latest`；预发布不动 `latest`，不提供 `0.26` 浮动标签。安装使用 digest 或本地不可变 image ID，不能以 `latest` 作为可追溯部署记录。
+发布渠道为 GHCR `ghcr.io/ximatai/codexone`，仅支持 Linux amd64。每次只推精确版本（如 `0.26.1` 或 `0.26.2-rc.1`），正式版另更新 `latest`；预发布不动 `latest`，不提供 `0.26` 浮动标签。安装使用 digest 或本地不可变 image ID，不能以 `latest` 作为可追溯部署记录。
 
 ## 维护者发版步骤
 
@@ -16,7 +16,7 @@
 2. 合并到 `main`，确认常规 Verify 和所需平台验收通过。建议先运行一次下述 dry-run，检查产物；模板存在不等于远端验证成功。
 3. 在 `main` 历史上的选定提交创建并推送标签，例如 `git tag -a v0.26.1 -m 'Release v0.26.1'`、`git push origin v0.26.1`。不要改写已有发布标签。标签工作流拒绝非法格式、非 main 历史的提交、缺失/重复版本段落或仍标为未发布的标题。
 4. 观察 Release 工作流：验证 job 构建 verification target 和携带 SOURCE_REVISION/VERSION 的 runtime，执行本地真实 TLS 反代及实际 Compose 安装验证；验证通过后转交保存的同一镜像，发布 job 登录 GHCR、推送并生成来源证明，最后独立 job 创建 GitHub Release。相同标签串行且不取消在途发布。
-5. **维护者首次发布后须在 GHCR 包设置中确认可见性为 Public，并确认关联 `ximatai/codexone` 仓库。** 镜像带 source 标签，但不能由工作流定义推断包可见性或现有包权限；若历史包不允许 GITHUB_TOKEN 写入，须先在包设置授予仓库 Actions 访问。检查未登录客户端能拉取精确版本。
+5. **维护者首次发布后须在 GHCR 包设置中确认可见性为 Public，并确认关联 `ximatai/codexone` 仓库。** 镜像带 source 标签，但不能由工作流定义推断包可见性或现有包权限；若历史包不允许 GITHUB_TOKEN 写入，须先在包设置授予仓库 Actions 访问。组织设置默认可能禁止公开包，须先由组织管理员在 Packages 设置中允许 Public。检查未登录客户端能拉取精确版本。
 6. 核验附件、镜像和来源证明，再更新 STATUS 的实际可用状态。GitHub Private vulnerability reporting、fork PR 首次贡献者审批及 Actions/包权限设置仍须维护者核对。
 
 ## Dry-run
@@ -46,14 +46,17 @@ Dry-run 的 `image-digest.txt` 明确记录未发布和本地 image ID；它不�
 ```sh
 # 在下载全部 Release 附件的目录执行
 sha256sum --check SHA256SUMS
-sha256sum --check binary-sha256.txt
 # 将版本替换为要核验的精确版本；不使用 latest 作为记录
 ver=0.26.1
 gh attestation verify "oci://ghcr.io/ximatai/codexone:$ver" -R ximatai/codexone
 docker pull "ghcr.io/ximatai/codexone@$(cat image-digest.txt)"
-docker image inspect "ghcr.io/ximatai/codexone@$(cat image-digest.txt)" --format '{{.Id}}'
-cat image-id.txt
+# 二进制只在镜像内，取出后核对
+cid="$(docker create "ghcr.io/ximatai/codexone@$(cat image-digest.txt)")"
+docker cp "$cid:/usr/local/bin/codexone" codexone-linux-amd64 && docker rm "$cid"
+sha256sum --check binary-sha256.txt
 ```
+
+按 digest 拉取时 Docker 会校验内容。`image-id.txt` 是镜像配置 digest，与 `docker image inspect --format '{{.Id}}'` 的对应关系取决于本机镜像存储：传统存储下相同，containerd 镜像存储下 `Id` 显示 registry digest。
 
 来源证明绑定 registry digest、源码与工作流身份（`gh attestation verify oci://ghcr.io/ximatai/codexone:<ver> -R ximatai/codexone`）；SHA256SUMS 用于完整性，不能独立证明来源。下载附件仍须来自受信 Release。镜像有来源证明不表示真实订阅、Desktop、弱服务器容量或部署环境已验收。
 
