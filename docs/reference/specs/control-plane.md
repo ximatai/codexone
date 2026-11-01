@@ -178,6 +178,21 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 创建/更新必须显式提供 models：null 表示跟随全部当前配置对话模型，数组最多32个，[] 保持无对话授权（仅图片 Key）的语义。imageGeneration=true 时 imageModels 可为 null 表示全部配置图片模型；关闭时 null 与 [] 等价，缺失能力字段的关闭语义不变。管理与导入原样返回数组/null，策略版本包含 null。目录、准入、Responses 图片工具及 Images 共用当前配置与权限交集；配置生效后的新增/移除立即影响 null 范围 Key。列表与详情显示“全部模型”。不新增配置热重载。旧二进制不能解码 null 模型范围，回退前须转为显式清单，见[Key治理](../../guide/key-governance.md#兼容回退前提)。
 
+## A18：账号重置卡
+
+所有接口复用 A10/A11 管理认证、精确 Origin/CSRF、共享 16 并发、8 KiB 输入、no-store 与安全错误；数据 Key 无权限，不接受客户端 request ID、owner 或提供者 URL。
+
+| 接口 | 输入与结果 |
+| --- | --- |
+| GET `/api/accounts/:id/reset-credits` | 无 query；实时 credits（id/type/status/grantedAt/expiresAt/title/description）、availableCount 和 state |
+| GET `/:id/reset-credits/state` | 仅本地元数据，提供者不可用仍可核对；revision、settings、pending、pendingCreditID、lastCode、lastAttemptAt |
+| POST `/:id/reset-credits/consume` | 空 JSON 或可选非空 creditID；返回 code、windowsReset；不接收客户端幂等 ID |
+| PUT `/:id/reset-credits/settings` | revision、autoUseBeforeExpiry、整数 leadHours（1—168）；返回本地 state，递增账号 revision |
+
+列表边界与消费屏障见 I21，设置与修订同一 writer 快照读取。消费四个已知结果分别解释“重置成功”“当前没有可重置的用量，卡未消耗”“没有可用的重置卡”“该操作已处理”；unknown 明确结果待确认，只确认核对原操作，不另选卡。卡名与到期时间在确认框显示，默认选择明确由提供者选择、到期未知。GET 不消费；未知操作禁用新卡/默认选择按钮。列表读取失败保留旧列表并禁用选择，必须重新读取；会话未知结果锁继续按 A13 核对账号，服务端 intent 始终阻止换 ID 重试。
+
+设置显示默认关闭与周期、提前小时范围、无到期卡跳过；设置可在禁用/待重授权账号保存，但自动执行只认 enabled/ready。`reset_credits` attention 链接账号详情，detail.code 为 reset/unknown/repeated_failure，不带提供者原文或请求 ID。
+
 ## 相关文档
 
 [文档导航](../../README.md)

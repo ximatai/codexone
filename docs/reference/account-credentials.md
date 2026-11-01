@@ -64,7 +64,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 `AccountCredentials.prepareDispatch` 读取当前密文并按身份/namespace/version 解密，只返回脱敏诊断的瞬时 work。正常新请求须 enabled/ready，应用已经核实身份续接时才可请求 draining；过期 access 需要既有刷新 owner，不能重复派发。work 不是租约，传输必须把其中非秘密快照交给准入事务（I17），再按持久执行责任发送一次。
 
-当前 v10 不自动升级，已有 v1—v9 须停服显式 migrate，备份保存源版本与未恢复 intent；普通启动才完成 unknown/uncertain 恢复。旧快照恢复的 requires_auth、旧 Key 失效及维护门禁见[快照维护](../operations/snapshot-maintenance.md)。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
+当前 v11 不自动升级，已有 v1—v10 须停服显式 migrate，备份保存源版本与未恢复 intent；普通启动才完成 unknown/uncertain 恢复。旧快照恢复的 requires_auth、旧 Key 失效及维护门禁见[快照维护](../operations/snapshot-maintenance.md)。旧快照与主密钥依赖仍须一起规划，不能把恢复旧库当作回退期间没有新执行/刷新。
 
 ## 订阅账号池的 HTTP 入口配置
 
@@ -97,7 +97,7 @@ HTTP JSON/SSE 与普通/独立压缩共用既有协议边界。没有可用 acce
 
 池私有配置的 `clientFingerprint`、`dataConnections` 字段、边界、缺省和示例共用[离线客户端标识与数据连接](../development/single-identity.md#离线客户端标识与数据连接)。它们不改变账号调度或价格。数据请求发送前连接重试不适用于OAuth交换、刷新或被动额度观测。
 
-显示名通过 `PUT /api/accounts/:id/display-name`（revision、displayName）编辑；null清除，其他账号编辑/刷新保留。显示名只供管理员辨认，不参与提供者身份/路由/密文关联。v10 升级步骤见[Key治理](../guide/key-governance.md)和[快照维护](../operations/snapshot-maintenance.md)。
+显示名通过 `PUT /api/accounts/:id/display-name`（revision、displayName）编辑；null清除，其他账号编辑/刷新保留。显示名只供管理员辨认，不参与提供者身份/路由/密文关联。v11 升级步骤见[Key治理](../guide/key-governance.md)和[快照维护](../operations/snapshot-maintenance.md)。
 
 ## 相关文档
 

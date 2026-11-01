@@ -24,7 +24,7 @@ v1 信封和 AAD 不变：新导入/重新授权/刷新只用 active，读取按
 
 ## 再加密与中断续作
 
-空库 schema v10；已有 v1—v9 先停服 `codexone --migrate`，保留 `.pre-v10-<id>.sqlite`。v8 防止旧 v7 二进制绕过再加密检查点，不能原地换回旧版本。先把新 active 和全部仍有引用的旧 decrypt-only 配置到私有 keyring，再执行：
+空库 schema v11；已有 v1—v10 先停服 `codexone --migrate`，保留 `.pre-v11-<id>.sqlite`。v8 防止旧 v7 二进制绕过再加密检查点，不能原地换回旧版本。先把新 active 和全部仍有引用的旧 decrypt-only 配置到私有 keyring，再执行：
 
 ```sh
 codexone --key-status
@@ -51,7 +51,7 @@ codexone --resume-reencryption
 codexone --verify-backup /private-backups/before-new-key
 ```
 
-只读验证完成 bundle 的权限、摘要、schema/来源与全部账号密文，manifest 的 requiredKeyIDs 是**实际信封引用的有序去重集合**，不是当前 active 或 keyring 全集。旧 v7/v8/v9 和当前 v10 完成 bundle 都可验证；显式恢复 v7/v8/v9 bundle 时，在保留原 bundle 的前提下将私有 staging 升到 v10，无需修改只读源。恢复仍进入[快照维护](snapshot-maintenance.md)，不绕过旧授权失效、未知执行和额度基线核对。
+只读验证完成 bundle 的权限、摘要、schema/来源与全部账号密文，manifest 的 requiredKeyIDs 是**实际信封引用的有序去重集合**，不是当前 active 或 keyring 全集。旧 v7/v8/v9/v10 和当前 v11 完成 bundle 都可验证；显式恢复 v7/v8/v9/v10 bundle 时，在保留原 bundle 的前提下将私有 staging 升到 v11，无需修改只读源。恢复仍进入[快照维护](snapshot-maintenance.md)，不绕过旧授权失效、未知执行和额度基线核对。
 
 验证恢复时设置另一个全新私有数据目录，配置同一候选 keyring，运行 `--restore ABSOLUTE_BUNDLE`。恢复目标保留 restore ID/backup ID 作为来源证据；这只证明本地解密和维护恢复，不证明真实账号重新授权、无损切换或掉电。
 
