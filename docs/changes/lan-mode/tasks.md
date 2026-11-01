@@ -40,6 +40,10 @@
 
 任务 6 留给维护者：记录真实 Codex CLI/Desktop 日期与版本，使用 LAN base_url 分别验收 HTTP/SSE 与 WebSocket 的实际请求、客户端设置接受情况和用量。合成 socket、代理浏览器与安装静态检查不证明真实客户端兼容、真实账号可生成或 Linux/Docker 安装可用；不因此勾选任务 6。
 
+### 本机局域网实测（2026-11-01，维护方）
+
+macOS 本机以 `--lan` 初始化并用私网地址运行本地构建：两个入口在回环与私网地址同时监听；经私网地址登录得到 `codexone_admin`（HttpOnly、SameSite=Strict、无 Secure），系统状态为 `lan_http`，缺少 CSRF 返回 403，创建 Key 成功。Codex CLI 0.165.0 以 `http://<私网 IP>:18080/backend-api/codex` 发送 HTTP 请求，合法 Key 到达网关并因无账号返回 503，错误 Key 返回 401；WS 升级在私网地址返回 101（与回环一致）。来源网段收窄到不含本机的范围后，私网连接被直接重置，回环不受影响；公网地址退出 78。未授权真实账号，生成链路沿用已在 HTTPS 部署验收的同一路径。
+
 ## 相关文档
 
 [文档导航](../../README.md)

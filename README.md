@@ -22,29 +22,33 @@
 
 ## 选择部署路线
 
-- **局域网（无域名）**：在可信私有网络直接用 HTTP，四步完成，不需要 Nginx 或证书；先阅读[明文风险](docs/operations/tls-proxy.md#局域网-http-风险)。
-- **公网或有域名**：使用下方的 [HTTPS 部署](#部署到自己的服务器https)，保留 TLS 反代。
+- **局域网（无域名）**：家里或办公室的可信内网，用 HTTP 直接访问，不需要域名、证书和 Nginx，十分钟左右完成。
+- **公网或有域名**：需要在外网使用，或者网络不完全可信时，走下方的 [HTTPS 部署](#部署到自己的服务器https)。
 
 ## 局域网部署（无域名）
 
-需要 Linux amd64、Docker Engine/Compose v2、Python 3、自己的订阅账号，以及服务器上固定的私有 IP（示例 `192.168.1.10`，请换成自己的地址）。**此功能尚未发布，v0.26.1 镜像不含 LAN 模式**；先在包含本功能的源码 checkout 中按[源码构建](docs/guide/linux-installation.md#从源码构建)得到镜像，再把完整不可变 ID 放入 `CODEXONE_IMAGE_ID`。后续发布可直接使用包含该功能的发行镜像。
+> [!WARNING]
+> 局域网模式不加密：管理员秘密、登录会话、Key 和请求内容都以明文在局域网中传输，同一网络里的设备可以截获。只在自己信任的私有网络使用；不要在公共或不可信的 Wi-Fi 上使用，不要用路由器端口转发把它暴露到公网。需要在外面访问时，改用 HTTPS 部署或 Tailscale 等私有网络。详见[局域网 HTTP 风险](docs/operations/tls-proxy.md#局域网-http-风险)。
 
-### 1. 初始化
+需要：一台 Linux amd64 服务器，装好 Docker Engine 与 Compose v2、Python 3、Git，并有固定的局域网 IP；以及自己的 ChatGPT 订阅账号。局域网模式从 v0.26.2 起提供。
 
-在源码目录执行，安装目录须尚不存在且位于源码之外：
+### 1. 下载并初始化
 
 ```sh
+git clone --depth 1 --branch v0.26.2 https://github.com/ximatai/codexone.git
+cd codexone
+docker pull ghcr.io/ximatai/codexone:0.26.2
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}')"
+hostname -I   # 查看服务器的局域网 IP，下面以 192.168.1.10 为例
 python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
 cd ../codexone-private
 ```
 
-安装器会打印风险、管理地址及客户端 `base_url`。普通非 root 用户默认使用当前 UID/GID；以 root 安装时追加 `--uid 10001 --gid 10001`。只允许 10/8、172.16/12、192.168/16、100.64/10 或 fc00::/7 内的地址字面量，不接受主机名、公网或通配地址。可选 `--lan-allow 192.168.1.0/24` 收窄来源，通常无需填写；与 `--origin` 互斥。
+初始化会打印风险提示、管理地址和客户端地址。用 root 执行时加上 `--uid 10001 --gid 10001`。IP 必须是局域网地址（10.x、172.16–31.x、192.168.x、Tailscale 的 100.64–127.x 等）。想只允许某个网段访问，可以加 `--lan-allow 192.168.1.0/24`，一般不需要。
 
-### 2. 配置模型
+### 2. 配置模型并启动
 
-编辑 `secrets/pool.json`，把 `configure-model-before-use` 换成自己订阅可用的模型名；未知费率先填 0。[配置字段](docs/guide/configuration.md)。
-
-### 3. 检查并启动
+编辑 `secrets/pool.json`，把 `configure-model-before-use` 换成你的订阅在 Codex 里能选到的模型名，费率不确定就填 0（字段见[配置网关](docs/guide/configuration.md)）。然后：
 
 ```sh
 python3 compose-install.py run --rm gateway --check-config
@@ -52,9 +56,31 @@ python3 compose-install.py up -d
 python3 compose-install.py ps
 ```
 
-### 4. 打开管理页面
+### 3. 登录管理页面，授权账号并创建 Key
 
-在服务器执行 `cat secrets/admin`，浏览器打开 `http://192.168.1.10:18081`，以 `admin` 和该秘密登录；按[管理面板](docs/guide/admin.md)授权并启用自己的账号，再为设备创建 Key。客户端按[接入说明](docs/guide/client-setup.md#局域网-http)配置 `base_url = "http://192.168.1.10:18080/backend-api/codex"`。启用账号前 ready 为 503 是正常的。模式切换见[安装指南](docs/guide/linux-installation.md#切换局域网与-https)。
+1. 执行 `cat secrets/admin` 取得管理员秘密，在同一局域网的电脑上打开 `http://192.168.1.10:18081`，用户名填 `admin`。页面顶部会一直显示明文传输提示，这是正常的。
+2. 在“账号”页添加并授权自己的账号，授权完成后点击“启用”。
+3. 在“访问密钥”页为每台设备创建一个 Key，Key 只显示一次，请立即保存。
+
+### 4. 接入 Codex
+
+在客户端设备上把 Key 放进环境变量 `CODEXONE_API_KEY`，在 `~/.codex/config.toml` 中添加：
+
+```toml
+model = "<第 2 步配置的模型名>"
+model_provider = "codexone"
+
+[model_providers.codexone]
+name = "openai"
+base_url = "http://192.168.1.10:18080/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+env_key = "CODEXONE_API_KEY"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "codexone" }
+```
+
+重启 Codex 并新建会话发一条消息，管理页面的用量里能看到这次请求就说明成功了。以后要改成 HTTPS，见[切换局域网与 HTTPS](docs/guide/linux-installation.md#切换局域网与-https)。
 
 ## 部署到自己的服务器（HTTPS）
 

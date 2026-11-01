@@ -22,29 +22,33 @@ All accounts, models, and requests below are synthetic.
 
 ## Choose a deployment route
 
-- **LAN (no domain)**: four steps over HTTP on a trusted private network, without Nginx or certificates. Read the [plaintext risks](docs/operations/tls-proxy.md#局域网-http-风险) first.
-- **Public access or a domain**: follow the [HTTPS deployment](#deploy-on-your-own-server-https) below with a TLS proxy.
+- **LAN (no domain)**: a trusted home or office network, accessed directly over HTTP. No domain, certificate, or Nginx; about ten minutes.
+- **Public access or a domain**: if you need access from outside or the network is not fully trusted, follow the [HTTPS deployment](#deploy-on-your-own-server-https) below.
 
 ## LAN deployment (no domain)
 
-You need Linux amd64, Docker Engine/Compose v2, Python 3, your own subscription, and a fixed private IP on the server (`192.168.1.10` below is an example to replace). **This feature is unreleased; the v0.26.1 image does not support LAN mode.** First [build from source](docs/guide/linux-installation.md#从源码构建) in a checkout containing this feature and put its full immutable image ID in `CODEXONE_IMAGE_ID`. Once released, an image containing the feature can be used directly.
+> [!WARNING]
+> LAN mode is not encrypted: the admin secret, sign-in session, keys, and request contents travel in plaintext, and any device on the same network can capture them. Use it only on a private network you trust. Never use it on public or untrusted Wi-Fi, and never expose it to the internet with router port forwarding. For access from outside, use the HTTPS deployment or a private network such as Tailscale. See [LAN HTTP risks](docs/operations/tls-proxy.md#局域网-http-风险).
 
-### 1. Initialize
+You need a Linux amd64 server with Docker Engine and Compose v2, Python 3, Git, and a fixed LAN IP, plus your own ChatGPT subscription. LAN mode is available from v0.26.2.
 
-Run from the source directory; the private installation directory must be new and outside the checkout:
+### 1. Download and initialize
 
 ```sh
+git clone --depth 1 --branch v0.26.2 https://github.com/ximatai/codexone.git
+cd codexone
+docker pull ghcr.io/ximatai/codexone:0.26.2
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}')"
+hostname -I   # the server's LAN IP; 192.168.1.10 below is an example
 python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
 cd ../codexone-private
 ```
 
-The installer prints the risk, admin URL, and client `base_url`. Non-root users default to their current UID/GID; when running as root, add `--uid 10001 --gid 10001`. Only literal addresses in 10/8, 172.16/12, 192.168/16, 100.64/10, or fc00::/7 are accepted; hostnames, public addresses, and wildcards are refused. Optionally narrow sources with `--lan-allow 192.168.1.0/24`; most users can omit it. `--lan` and `--origin` are mutually exclusive.
+The installer prints the risk notice, the admin URL, and the client URL. When running as root, add `--uid 10001 --gid 10001`. The IP must be a private address (10.x, 172.16–31.x, 192.168.x, Tailscale's 100.64–127.x, and so on). To allow only one subnet, add `--lan-allow 192.168.1.0/24`; most users can skip it.
 
-### 2. Configure models
+### 2. Configure models and start
 
-Edit `secrets/pool.json`, replacing `configure-model-before-use` with a model available to your subscription. Use 0 for unknown rates. See [configuration fields](docs/guide/configuration.md).
-
-### 3. Check and start
+Edit `secrets/pool.json` and replace `configure-model-before-use` with a model your subscription offers in Codex; use 0 for unknown rates (see [configuration](docs/guide/configuration.md)). Then:
 
 ```sh
 python3 compose-install.py run --rm gateway --check-config
@@ -52,9 +56,31 @@ python3 compose-install.py up -d
 python3 compose-install.py ps
 ```
 
-### 4. Open the admin page
+### 3. Sign in, authorize your account, and create keys
 
-Run `cat secrets/admin` on the server, open `http://192.168.1.10:18081`, and sign in as `admin` with that secret. Follow the [admin guide](docs/guide/admin.md) to authorize and enable your own account, then create a device Key. Set `base_url = "http://192.168.1.10:18080/backend-api/codex"` as described in [client setup](docs/guide/client-setup.md#局域网-http). Readiness being 503 before enabling an account is normal. See [switching modes](docs/guide/linux-installation.md#切换局域网与-https).
+1. Run `cat secrets/admin` for the admin secret, open `http://192.168.1.10:18081` from a computer on the same LAN, and sign in as `admin`. A plaintext notice stays at the top of every page; this is expected.
+2. On the Accounts page, add and authorize your account, then click Enable.
+3. On the Access Keys page, create one key per device. Each key is shown only once; save it right away.
+
+### 4. Connect Codex
+
+On the client device, put the key in `CODEXONE_API_KEY` and add to `~/.codex/config.toml`:
+
+```toml
+model = "<model name from step 2>"
+model_provider = "codexone"
+
+[model_providers.codexone]
+name = "openai"
+base_url = "http://192.168.1.10:18080/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+env_key = "CODEXONE_API_KEY"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "codexone" }
+```
+
+Restart Codex, start a new session, and send a message. If the request appears under usage in the admin page, it works. To switch to HTTPS later, see [switching modes](docs/guide/linux-installation.md#切换局域网与-https).
 
 ## Deploy on your own server (HTTPS)
 
