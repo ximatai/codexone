@@ -97,7 +97,9 @@ import Testing
       try await store.finalize(attempt: id, evidence: id == "complete-old" ? usage() : nil)
     }
   }
-  _ = try await store.releaseUnknown(beforeUnixSeconds: now + 1, expectedCount: 3)
+  // Admissions may cross a second boundary on slow runners; cut off after all of them.
+  _ = try await store.releaseUnknown(
+    beforeUnixSeconds: Int64(Date().timeIntervalSince1970) + 1, expectedCount: 3)
   try await store.perform { db in
     try db.write("UPDATE attempts SET created_at_epoch=?", [.number(oldDay)])
     try db.write(
