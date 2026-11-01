@@ -14,7 +14,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       guard let key = values.first, key.enabled, key.archivedAtUnixSeconds == nil else {
         throw ExecutionError.unauthorized
       }
-      try Self.checkKeyExpiration(key)
+      try Self.checkKeyExpiration(key, now: db.clock.unixSeconds)
       return key
     }
   }
@@ -35,7 +35,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         else { throw ExecutionError.conflict }
         let key = ManagedKey(
           id: id, principal: principal, revision: 1, enabled: true, policy: policy,
-          createdAtUnixSeconds: Int64(Date().timeIntervalSince1970))
+          createdAtUnixSeconds: db.clock.unixSeconds)
         try db.write(
           "INSERT INTO managed_keys VALUES(?,?,?)",
           [.text(id), .text(digest), .text(try Self.encodeKey(key))])
@@ -71,8 +71,8 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       }
     }
   }
-  static func checkKeyExpiration(_ key: ManagedKey) throws {
-    if let expires = key.expiresAtUnixSeconds, expires <= Int64(Date().timeIntervalSince1970) {
+  static func checkKeyExpiration(_ key: ManagedKey, now: Int64) throws {
+    if let expires = key.expiresAtUnixSeconds, expires <= now {
       throw ExecutionError.keyExpired
     }
   }
@@ -169,7 +169,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
           id: old.id, principal: old.principal, revision: revision + 1, enabled: false,
           policy: old.policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
           expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: old.displayName,
-          archivedAtUnixSeconds: archived ? Int64(Date().timeIntervalSince1970) : nil)
+          archivedAtUnixSeconds: archived ? db.clock.unixSeconds : nil)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
           [.text(try Self.encodeKey(key)), .text(id)])
@@ -193,7 +193,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     guard let revision = command.keyRevision else { return }
     let key = try loadKey(db, command.owner.key)
     guard key.enabled, key.archivedAtUnixSeconds == nil else { throw ExecutionError.unauthorized }
-    try checkKeyExpiration(key)
+    try checkKeyExpiration(key, now: db.clock.unixSeconds)
     guard key.revision == revision, key.principal == command.owner.principal else {
       throw ExecutionError.unauthorized
     }
@@ -271,7 +271,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       "INSERT INTO key_events VALUES(?,?,?,?,?,?)",
       [
         .text(UUID().uuidString), .text(key.id), .number(key.revision), .text(action),
-        .number(Int64(Date().timeIntervalSince1970)), .text(try encodeKey(key)),
+        .number(db.clock.unixSeconds), .text(try encodeKey(key)),
       ])
   }
   static func validateKeyID(_ id: String) throws {

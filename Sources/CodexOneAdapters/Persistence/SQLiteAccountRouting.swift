@@ -27,7 +27,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           """
           SELECT DISTINCT b.identity,b.namespace FROM bindings b
           JOIN accounts a ON a.id=b.identity AND a.namespace=b.namespace
-          WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=? LIMIT 2
+          WHERE b.expires_at_epoch>\(db.clock.unixSeconds) AND b.principal=? AND b.object_type=? AND b.raw_id=? LIMIT 2
           """, [.text(principal), .text(hint.type), .text(hint.rawID)]
         ) { statement in
           try AccountRouteIdentity(
@@ -95,7 +95,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
             [
               .number(
-                Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds),
+                db.clock.unixSeconds + ExecutionLimits.bindingContinuationSeconds),
               .text(admission.owner.principal), .text(admission.owner.namespace),
               .text(admission.owner.identity), .text(reference.type), .text(reference.rawID),
             ])
@@ -113,7 +113,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
       var sql = """
         SELECT DISTINCT b.identity,b.namespace FROM bindings b
         JOIN accounts a ON a.id=b.identity AND a.namespace=b.namespace
-        WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=?
+        WHERE b.expires_at_epoch>\(db.clock.unixSeconds) AND b.principal=? AND b.object_type=? AND b.raw_id=?
         """
       var values: [SQLiteConnection.Value] = [
         .text(principal), .text(reference.type), .text(reference.rawID),

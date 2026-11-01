@@ -7,6 +7,7 @@ import Synchronization
 public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let queue = DispatchQueue(label: "codexone.core-database")
   private let connection: SQLiteConnection
+  var clock: WallClock { connection.clock }
   let path: String
   let usageReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
@@ -19,7 +20,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public var hasRestoredSnapshot: Bool { restoration != nil }
   public var isAdmissionReady: Bool {
     isAvailable && storage.snapshot.admissionAllowed
-      && (restoration?.allowsAdmission(at: Int64(Date().timeIntervalSince1970)) ?? true)
+      && (restoration?.allowsAdmission(at: connection.clock.unixSeconds) ?? true)
   }
   private let gate = Mutex(
     (
@@ -34,7 +35,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     restoration: RestoreRecord? = nil, storage: SQLiteStorageGuard? = nil,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
   ) throws {
-    self.storage = try storage ?? SQLiteStorageGuard(path: path, policy: .standard)
+    self.storage =
+      try storage ?? SQLiteStorageGuard(path: path, policy: .standard, clock: connection.clock)
     if storage == nil { try self.storage.refresh(connection, maintenance: false) }
     self.path = path
     self.restoration = restoration
@@ -45,18 +47,18 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
   public static func open(
     path: String, limits: ExecutionLimits,
-    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system
   ) async throws
     -> SQLiteExecutionStore
   {
     try await open(
       path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
-      unresolvedCapacity: unresolvedCapacity)
+      unresolvedCapacity: unresolvedCapacity, clock: clock)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
     available: @escaping @Sendable (String) throws -> Int64,
-    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system
   ) async throws -> SQLiteExecutionStore {
     guard unresolvedCapacity > 0, unresolvedCapacity <= 1_000_000_000_000,
       [
@@ -71,12 +73,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let connection = try SQLiteConnection(path: path)
+          let connection = try SQLiteConnection(path: path, clock: clock)
           guard try connection.reencryptionCheckpoint()?.complete != false else {
             throw KeyMaintenanceError.incompleteReencryption
           }
           let storage = try SQLiteStorageGuard(
-            path: path, policy: storagePolicy, available: available)
+            path: path, policy: storagePolicy, available: available, clock: clock)
           try storage.refresh(connection, maintenance: true)
           try storage.prepare(connection, admission: false, optional: false, essential: true)
           try connection.transaction {
@@ -96,16 +98,16 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             )
             try connection.write(
               "INSERT INTO account_concurrency SELECT namespace,identity,?,COUNT(*) FROM attempts WHERE state='intent' GROUP BY namespace,identity ON CONFLICT(namespace,identity,at_epoch) DO UPDATE SET peak=MAX(peak,excluded.peak)",
-              [.number(Int64(Date().timeIntervalSince1970))])
+              [.number(connection.clock.unixSeconds)])
             // All intents belonged to the previous owner, whose instance lock is now ours.
             try connection.write(
               "UPDATE attempts SET state='unknown',unknown_since_epoch=? WHERE state='intent'",
-              [.number(Int64(Date().timeIntervalSince1970))])
+              [.number(connection.clock.unixSeconds)])
             try Self.recoverAccountRefreshes(connection)
             if storage.snapshot.optionalWorkAllowed {
               try connection.write(
                 "DELETE FROM request_diagnostics WHERE at_epoch<?",
-                [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
+                [.number(connection.clock.unixSeconds - 30 * 86400)])
             }
           }
           try storage.refresh(connection, maintenance: false)
@@ -120,12 +122,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   }
 
   /// Offline, instance-locked upgrade; a consistent private backup precedes any schema change.
-  public static func migrate(path: String) async throws {
+  public static func migrate(path: String, clock: WallClock = .system) async throws {
     try await withCheckedThrowingContinuation {
       (continuation: CheckedContinuation<Void, any Error>) in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let connection = try SQLiteConnection(path: path, migrating: true)
+          let connection = try SQLiteConnection(path: path, migrating: true, clock: clock)
           connection.shutdown()
           continuation.resume()
         } catch { continuation.resume(throwing: error) }
@@ -203,7 +205,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         let original = try Self.load(db, attempt).admission
         let command = ExecutionAdmission(
           attempt: UUID().uuidString, owner: original.owner,
-          window: "utc-day-\(Int64(Date().timeIntervalSince1970) / 86400)",
+          window: "utc-day-\(db.clock.unixSeconds / 86400)",
           policyVersion: original.policyVersion, pricingVersion: original.pricingVersion,
           reservedMicros: original.reservedMicros, requestID: UUID().uuidString,
           mode: .generation, keyRevision: original.keyRevision,
@@ -228,7 +230,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   ) throws {
     try validateAdmission(command)
     if let restored = try db.restoreRecord() {
-      let now = Int64(Date().timeIntervalSince1970)
+      let now = db.clock.unixSeconds
       guard restored.allowsAdmission(at: now), command.keyRevision != nil,
         command.window == "utc-day-\(now / 86400)"
       else { throw ExecutionError.maintenanceRequired }
@@ -252,12 +254,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       ]
       guard
         try db.scalar(
-          "SELECT COUNT(*) FROM bindings WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=? AND expires_at_epoch>strftime('%s','now')",
+          "SELECT COUNT(*) FROM bindings WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=? AND expires_at_epoch>\(db.clock.unixSeconds)",
           values) == 1
       else { throw ExecutionError.unknownObject }
       try db.write(
         "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
-        [.number(Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds)]
+        [.number(db.clock.unixSeconds + ExecutionLimits.bindingContinuationSeconds)]
           + values)
     }
     try Self.insertAttempt(db, command, state: "intent")
@@ -276,8 +278,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
         .text(command.policyVersion), .text(command.pricingVersion),
         .number(command.reservedMicros), .text(state), .text(try encode(command)),
-        .number(Int64(Date().timeIntervalSince1970)), command.requestID.map { .text($0) } ?? .null,
-        state == "unknown" ? .number(Int64(Date().timeIntervalSince1970)) : .null,
+        .number(db.clock.unixSeconds), command.requestID.map { .text($0) } ?? .null,
+        state == "unknown" ? .number(db.clock.unixSeconds) : .null,
       ])
     if state == "intent" { try Self.recordAccountConcurrency(db, owner: command.owner) }
   }
@@ -288,7 +290,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       [.text(owner.namespace), .text(owner.identity)])
     // A newer sample dominates older samples of equal/lower concurrency for every future window.
     // Keep a monotone frontier (at most 16 values/account), rather than one row per request/second.
-    let now = Int64(Date().timeIntervalSince1970)
+    let now = db.clock.unixSeconds
     try db.write(
       "DELETE FROM account_concurrency WHERE namespace=? AND identity=? AND at_epoch<=? AND peak<=?",
       [.text(owner.namespace), .text(owner.identity), .number(now), .number(current)])
@@ -321,7 +323,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",
             [
               .number(
-                Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds)
+                db.clock.unixSeconds + ExecutionLimits.bindingContinuationSeconds)
             ] + values)
           return
         }
@@ -330,7 +332,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           values + [
             .text(attempt),
             .number(
-              Int64(Date().timeIntervalSince1970) + ExecutionLimits.bindingContinuationSeconds),
+              db.clock.unixSeconds + ExecutionLimits.bindingContinuationSeconds),
           ])
       }
     }
@@ -343,7 +345,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let namespace { try validateStrings([namespace], maximum: 512) }
     return try await perform { db in
       var sql =
-        "SELECT a.admission_json FROM bindings b JOIN attempts a ON a.id=b.attempt WHERE b.expires_at_epoch>strftime('%s','now') AND b.principal=? AND b.object_type=? AND b.raw_id=?"
+        "SELECT a.admission_json FROM bindings b JOIN attempts a ON a.id=b.attempt WHERE b.expires_at_epoch>\(db.clock.unixSeconds) AND b.principal=? AND b.object_type=? AND b.raw_id=?"
       var values: [SQLiteConnection.Value] = [
         .text(principal), .text(object.type), .text(object.rawID),
       ]
@@ -378,7 +380,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           if snapshot.state == .intent {
             try db.write(
               "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?) WHERE id=?",
-              [.number(Int64(Date().timeIntervalSince1970)), .text(attempt)])
+              [.number(db.clock.unixSeconds), .text(attempt)])
           }
           return
         }
@@ -444,7 +446,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
                   || evidence.completeness == .complete
                   ? "settled" : "unknown"),
               .text(try encode(evidence)),
-              .number(evidence.estimatedMicros), .number(Int64(Date().timeIntervalSince1970)),
+              .number(evidence.estimatedMicros), .number(db.clock.unixSeconds),
               .text(evidence.completeness.rawValue), .text(attempt),
             ])
         }
@@ -553,7 +555,7 @@ extension SQLiteExecutionStore: StorageMonitoring {
       {
         try db.write(
           "DELETE FROM request_diagnostics WHERE request_id IN (SELECT request_id FROM request_diagnostics WHERE at_epoch<? ORDER BY at_epoch LIMIT 100)",
-          [.number(Int64(Date().timeIntervalSince1970) - 30 * 86400)])
+          [.number(db.clock.unixSeconds - 30 * 86400)])
       }
     }
   }
@@ -586,7 +588,7 @@ extension SQLiteExecutionStore: UnknownExecutionReleasing {
             "SELECT id FROM attempts WHERE state='unknown' AND created_at_epoch<?",
             [.number(beforeUnixSeconds)]
           ) { String(cString: sqlite3_column_text($0, 0)) }, before: beforeUnixSeconds,
-          automatic: false, now: Int64(Date().timeIntervalSince1970))
+          automatic: false, now: db.clock.unixSeconds)
         return count
       }
     }

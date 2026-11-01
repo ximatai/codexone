@@ -35,6 +35,7 @@ enum StorageCapacity {
 /// Mutable disk operations stay on the primary writer queue. Only the cached view crosses queues.
 final class SQLiteStorageGuard: @unchecked Sendable {
   private static let magic = Data("CodexOneSettlementReserveV1\n".utf8)
+  private let clock: WallClock
   let policy: StorageSpacePolicy
   private let directory: String
   private let path: String
@@ -44,8 +45,10 @@ final class SQLiteStorageGuard: @unchecked Sendable {
   var snapshot: StorageObservation { view.withLock { $0 } }
   init(
     path: String, policy: StorageSpacePolicy,
-    available: @escaping @Sendable (String) throws -> Int64 = StorageCapacity.available
+    available: @escaping @Sendable (String) throws -> Int64 = StorageCapacity.available,
+    clock: WallClock = .system
   ) throws {
+    self.clock = clock
     self.path = path
     self.directory = (path as NSString).deletingLastPathComponent
     self.policy = policy
@@ -183,7 +186,7 @@ final class SQLiteStorageGuard: @unchecked Sendable {
     next.pressure = policy.pressure(
       availableBytes: next.availableBytes, reserveBytes: next.reserveBytes,
       walBytes: next.walBytes, previous: next.pressure)
-    next.sampledUnixSeconds = Int64(Date().timeIntervalSince1970)
+    next.sampledUnixSeconds = clock.unixSeconds
     if maintenance {
       var usage = rusage()
       #if canImport(Darwin)

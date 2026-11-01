@@ -30,11 +30,11 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
     self.beforeStep = beforeStep
     state.withLock {
       $0.observation.enabled = true
-      $0.observation.enabledUnixSeconds = Int64(Date().timeIntervalSince1970)
+      $0.observation.enabledUnixSeconds = primary.clock.unixSeconds
     }
     do { try refreshInventory() } catch {
       state.withLock {
-        $0.observation.lastFailureUnixSeconds = Int64(Date().timeIntervalSince1970)
+        $0.observation.lastFailureUnixSeconds = primary.clock.unixSeconds
         $0.observation.lastFailure = .verificationFailed
       }
     }
@@ -74,9 +74,9 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
       }
       failure = .snapshotFailed
       try beforeCopy()
-      let source = try SQLiteConnection(readOnlyPath: primary.path)
+      let source = try SQLiteConnection(readOnlyPath: primary.path, clock: primary.clock)
       defer { source.shutdown() }
-      let name = "online-\(Int64(Date().timeIntervalSince1970 * 1_000_000))-\(UUID().uuidString)"
+      let name = "online-\(primary.clock.unixMicroseconds)-\(UUID().uuidString)"
       let partial = directory + "/" + name + ".partial"
       _ = try SQLiteSnapshotMaintenance.backup(
         source, destination: partial, protection: protection, online: true,
@@ -88,7 +88,7 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
       try check()
       try beforeVerify(partial)
       let manifest = try SQLiteSnapshotMaintenance.verifyBackup(
-        bundle: partial, protection: protection, check: check)
+        bundle: partial, protection: protection, clock: primary.clock, check: check)
       try check()
       // A final name means copy AND self-verification have completed. Old backups survive any failure above.
       try FileManager.default.moveItem(atPath: partial, toPath: directory + "/" + name)
@@ -104,7 +104,7 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
       try refreshInventory()
     } catch let skip as Skipped {
       state.withLock {
-        $0.observation.lastSkippedUnixSeconds = Int64(Date().timeIntervalSince1970)
+        $0.observation.lastSkippedUnixSeconds = primary.clock.unixSeconds
         $0.observation.skippedPressure = skip.pressure
       }
       try? refreshInventory()
@@ -113,7 +113,7 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
         failure = .cancelled
       } else if !primary.storageObservation.optionalWorkAllowed {
         state.withLock {
-          $0.observation.lastSkippedUnixSeconds = Int64(Date().timeIntervalSince1970)
+          $0.observation.lastSkippedUnixSeconds = primary.clock.unixSeconds
           $0.observation.skippedPressure = primary.storageObservation.pressure
         }
         try? refreshInventory()
@@ -124,7 +124,7 @@ public final class SQLiteOnlineBackup: BackupMaintaining, Sendable {
         failure = .insufficientSpace
       }
       state.withLock {
-        $0.observation.lastFailureUnixSeconds = Int64(Date().timeIntervalSince1970)
+        $0.observation.lastFailureUnixSeconds = primary.clock.unixSeconds
         $0.observation.lastFailure = failure
       }
       try? refreshInventory()

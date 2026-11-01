@@ -51,7 +51,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           guard primary.isAvailable else { throw ExecutionError.closed }
           result.resume(
             returning: SQLiteUsageReader(
-              primary: primary, connection: try SQLiteConnection(readOnlyPath: path), queue: queue,
+              primary: primary,
+              connection: try SQLiteConnection(readOnlyPath: path, clock: primary.clock),
+              queue: queue,
               readTimeout: readTimeout))
         } catch { result.resume(throwing: error) }
       }
@@ -93,7 +95,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   }
   public func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary]) {
     try await read { db in
-      let start = Int64(Date().timeIntervalSince1970) / 86400 * 86400
+      let start = db.clock.unixSeconds / 86400 * 86400
       let rows = try db.rows(
         """
         SELECT k.id,json_extract(k.metadata_json,'$.principal'),
@@ -130,7 +132,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     guard (1...200).contains(limit) else { throw ExecutionError.invalidCommand }
     return try await read { [primary] db in
       let events = primary.liveFirstEvents.withLock { $0 }
-      let now = Int64(Date().timeIntervalSince1970)
+      let now = db.clock.unixSeconds
       return try db.rows(
         """
         SELECT a.id,a.key_id,json_extract(k.metadata_json,'$.principal'),json_extract(a.admission_json,'$.model'),
@@ -165,7 +167,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     async throws -> [DailyUsageBucket]
   {
     guard (1...31).contains(days) else { throw ExecutionError.invalidCommand }
-    let end = endUnixSeconds ?? (Int64(Date().timeIntervalSince1970) / 86400 * 86400 + 86400)
+    let end = endUnixSeconds ?? (primary.clock.unixSeconds / 86400 * 86400 + 86400)
     guard end >= Int64(days) * 86400, end % 86400 == 0 else { throw ExecutionError.invalidCommand }
     let query = try UsageQuery(
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)

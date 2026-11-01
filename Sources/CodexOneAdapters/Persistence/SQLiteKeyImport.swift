@@ -25,21 +25,22 @@ private struct KeyImportManifest: Decodable {
 extension SQLiteExecutionStore {
   /// Offline, new-target-only import. A digest is verification material and never returned.
   public static func importKeys(
-    path: String, manifestFile: String, adminCredentialFile: String
+    path: String, manifestFile: String, adminCredentialFile: String, clock: WallClock = .system
   ) async throws -> KeyImportResult {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         continuation.resume(
           with: Result {
             try importKeysOffline(
-              path: path, manifestFile: manifestFile, adminCredentialFile: adminCredentialFile)
+              path: path, manifestFile: manifestFile, adminCredentialFile: adminCredentialFile,
+              clock: clock)
           })
       }
     }
   }
 
   private static func importKeysOffline(
-    path: String, manifestFile: String, adminCredentialFile: String
+    path: String, manifestFile: String, adminCredentialFile: String, clock: WallClock
   ) throws -> KeyImportResult {
     guard path.hasPrefix("/"), manifestFile.hasPrefix("/"), adminCredentialFile.hasPrefix("/")
     else { throw ExecutionError.invalidCommand }
@@ -61,7 +62,7 @@ extension SQLiteExecutionStore {
       }) == true
     else { throw ExecutionError.invalidCommand }
     let manifest = try JSONDecoder().decode(KeyImportManifest.self, from: data)
-    let now = Int64(Date().timeIntervalSince1970)
+    let now = clock.unixSeconds
     guard manifest.capturedAtUnixSeconds >= now - 300,
       manifest.capturedAtUnixSeconds <= now + 60, manifest.version == 1,
       (1...256).contains(manifest.entries.count),
@@ -87,7 +88,7 @@ extension SQLiteExecutionStore {
     try FileManager.default.createDirectory(
       atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     try StorageCapacity.require(directory, additionalBytes: 8 * 1024 * 1024, optional: true)
-    let db = try SQLiteConnection(path: path)
+    let db = try SQLiteConnection(path: path, clock: clock)
     defer { db.shutdown() }
     try db.transaction {
       guard try db.restoreRecord() == nil,
@@ -101,7 +102,7 @@ extension SQLiteExecutionStore {
         let key = ManagedKey(
           id: entry.id, principal: entry.principal, revision: 1, enabled: false,
           policy: entry.policy,
-          createdAtUnixSeconds: Int64(Date().timeIntervalSince1970))
+          createdAtUnixSeconds: clock.unixSeconds)
         try db.write(
           "INSERT INTO managed_keys VALUES(?,?,?)",
           [.text(key.id), .text(entry.digest), .text(try encodeKey(key))])

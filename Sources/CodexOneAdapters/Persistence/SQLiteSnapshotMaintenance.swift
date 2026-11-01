@@ -34,11 +34,14 @@ public enum SQLiteSnapshotMaintenance {
       }
     }
   }
-  public static func backup(path: String, destination: String, protection: AccountCredentialCipher?)
+  public static func backup(
+    path: String, destination: String, protection: AccountCredentialCipher?,
+    clock: WallClock = .system
+  )
     async throws -> SnapshotManifest
   {
     try await run {
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       return try backup(db, destination: destination, protection: protection)
     }
@@ -66,7 +69,7 @@ public enum SQLiteSnapshotMaintenance {
     try copy(db, to: partial, optional: true, online: online, check: check)
     try check()
     // Read metadata from the completed copy, never a later live-source revision.
-    let snapshot = try SQLiteConnection(readOnlyPath: partial)
+    let snapshot = try SQLiteConnection(readOnlyPath: partial, clock: db.clock)
     defer { snapshot.shutdown() }
     let keys = try verifyCredentials(snapshot, protection)
     let hash = try fingerprint(partial, check: check)
@@ -76,7 +79,7 @@ public enum SQLiteSnapshotMaintenance {
     guard generation.count == 1 else { throw ExecutionError.storageUnavailable }
     let manifest = SnapshotManifest(
       format: 1, id: UUID().uuidString,
-      createdUnixSeconds: Int64(Date().timeIntervalSince1970),
+      createdUnixSeconds: db.clock.unixSeconds,
       schema: Int(try snapshot.scalar("PRAGMA user_version")),
       sourceGeneration: generation[0], databaseBytes: hash.0, databaseSHA256: hash.1,
       requiredKeyIDs: keys)
@@ -93,19 +96,22 @@ public enum SQLiteSnapshotMaintenance {
     return manifest
   }
 
-  public static func restore(bundle: String, path: String, protection: AccountCredentialCipher?)
+  public static func restore(
+    bundle: String, path: String, protection: AccountCredentialCipher?, clock: WallClock = .system
+  )
     async throws -> RestoreRecord
   {
-    try await restore(bundle: bundle, path: path, protection: protection, syncParent: syncDirectory)
+    try await restore(
+      bundle: bundle, path: path, protection: protection, clock: clock, syncParent: syncDirectory)
   }
 
   // Internal fault seam verifies parent-directory synchronization failures before any copied page.
   static func restore(
-    bundle: String, path: String, protection: AccountCredentialCipher?,
+    bundle: String, path: String, protection: AccountCredentialCipher?, clock: WallClock = .system,
     syncParent: @escaping @Sendable (String) throws -> Void
   ) async throws -> RestoreRecord {
     try await run {
-      let verified = try verifiedSnapshot(bundle: bundle, protection: protection)
+      let verified = try verifiedSnapshot(bundle: bundle, protection: protection, clock: clock)
       defer {
         verified.source.shutdown()
         close(verified.lockFD)
@@ -139,8 +145,8 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(
-        path: staging, existingOnly: true, restoringV7: manifest.schema < 10)
-      let completedCopyAt = Int64(Date().timeIntervalSince1970)
+        path: staging, existingOnly: true, restoringV7: manifest.schema < 10, clock: clock)
+      let completedCopyAt = clock.unixSeconds
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
         snapshotUnixSeconds: manifest.createdUnixSeconds, restoredUnixSeconds: completedCopyAt,
@@ -156,7 +162,8 @@ public enum SQLiteSnapshotMaintenance {
               .text(try encode(record)),
             ])
           try target.write(
-            "UPDATE attempts SET state='unknown',unknown_since_epoch=strftime('%s','now') WHERE state='intent'"
+            "UPDATE attempts SET state='unknown',unknown_since_epoch=? WHERE state='intent'",
+            [.number(clock.unixSeconds)]
           )
           // Old context and revocations after the snapshot cannot be reconstructed.
           try target.write("DELETE FROM bindings")
@@ -212,7 +219,7 @@ public enum SQLiteSnapshotMaintenance {
     let path: String
   }
   private static func verifiedSnapshot(
-    bundle: String, protection: AccountCredentialCipher?,
+    bundle: String, protection: AccountCredentialCipher?, clock: WallClock,
     check: @escaping @Sendable () throws -> Void = {}
   ) throws
     -> VerifiedSnapshot
@@ -220,7 +227,7 @@ public enum SQLiteSnapshotMaintenance {
     try privateDirectory(bundle)
     let manifest: SnapshotManifest = try JSONDecoder().decode(
       SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
-    let now = Int64(Date().timeIntervalSince1970)
+    let now = clock.unixSeconds
     guard manifest.format == 1, [7, 8, 9, 10].contains(manifest.schema),
       UUID(uuidString: manifest.id) != nil,
       manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
@@ -240,7 +247,7 @@ public enum SQLiteSnapshotMaintenance {
       guard actual.0 == manifest.databaseBytes, actual.1 == manifest.databaseSHA256 else {
         throw ExecutionError.invalidCommand
       }
-      let source = try SQLiteConnection(readOnlyPath: snapshot)
+      let source = try SQLiteConnection(readOnlyPath: snapshot, clock: clock)
       let budget = SnapshotReadCheck(check: check)
       sqlite3_progress_handler(
         source.handle, 1000,
@@ -272,16 +279,19 @@ public enum SQLiteSnapshotMaintenance {
       throw error
     }
   }
-  public static func verifyBackup(bundle: String, protection: AccountCredentialCipher?) async throws
+  public static func verifyBackup(
+    bundle: String, protection: AccountCredentialCipher?, clock: WallClock = .system
+  ) async throws
     -> SnapshotManifest
   {
-    try await run { try verifyBackup(bundle: bundle, protection: protection) }
+    try await run { try verifyBackup(bundle: bundle, protection: protection, clock: clock) }
   }
   static func verifyBackup(
-    bundle: String, protection: AccountCredentialCipher?,
+    bundle: String, protection: AccountCredentialCipher?, clock: WallClock = .system,
     check: @escaping @Sendable () throws -> Void = {}
   ) throws -> SnapshotManifest {
-    let verified = try verifiedSnapshot(bundle: bundle, protection: protection, check: check)
+    let verified = try verifiedSnapshot(
+      bundle: bundle, protection: protection, clock: clock, check: check)
     defer {
       verified.source.shutdown()
       close(verified.lockFD)
@@ -289,30 +299,33 @@ public enum SQLiteSnapshotMaintenance {
     return verified.manifest
   }
 
-  public static func status(path: String) async throws -> RestoreRecord? {
+  public static func status(path: String, clock: WallClock = .system) async throws -> RestoreRecord?
+  {
     try await run {
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       return try db.restoreRecord()
     }
   }
-  public static func reconcileFile(path: String, baselineFile: String) async throws -> RestoreRecord
+  public static func reconcileFile(path: String, baselineFile: String, clock: WallClock = .system)
+    async throws -> RestoreRecord
   {
     let baseline = try await run {
       try JSONDecoder().decode(RestoreBaseline.self, from: readFile(baselineFile, limit: 8192))
     }
-    return try await reconcile(path: path, baseline: baseline)
+    return try await reconcile(path: path, baseline: baseline, clock: clock)
   }
-  public static func reconcile(path: String, baseline: RestoreBaseline) async throws
+  public static func reconcile(path: String, baseline: RestoreBaseline, clock: WallClock = .system)
+    async throws
     -> RestoreRecord
   {
     try baseline.validate()
     return try await run {
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       return try db.transaction {
         guard let current = try db.restoreRecord() else { throw ExecutionError.conflict }
-        let record = try current.reconciling(baseline, at: Int64(Date().timeIntervalSince1970))
+        let record = try current.reconciling(baseline, at: clock.unixSeconds)
         if record == current { return current }
         try db.write(
           "UPDATE maintenance_state SET restore_json=? WHERE id=1", [.text(try encode(record))])

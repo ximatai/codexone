@@ -20,7 +20,7 @@ extension SQLiteExecutionStore {
           account.revision == candidate.snapshot.revision,
           account.credentialVersion == candidate.snapshot.credentialVersion,
           account.authorization == .ready, account.mode == .enabled,
-          candidate.snapshot.accessExpiresAtUnixSeconds > Int64(Date().timeIntervalSince1970)
+          candidate.snapshot.accessExpiresAtUnixSeconds > db.clock.unixSeconds
         else { continue }
         let health = try Self.loadHealth(db, account: account)
         guard !health.authenticationRejected, health.cooldowns.isEmpty else { continue }

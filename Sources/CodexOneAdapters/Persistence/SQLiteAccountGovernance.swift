@@ -23,7 +23,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     else { throw ExecutionError.conflict }
     guard account.authorization == .ready,
       account.mode == .enabled || (account.mode == .draining && snapshot.continuation),
-      snapshot.accessExpiresAtUnixSeconds > Int64(Date().timeIntervalSince1970)
+      snapshot.accessExpiresAtUnixSeconds > db.clock.unixSeconds
     else { throw ExecutionError.denied }
     try Self.checkAccountHealth(db, account: account, model: model)
   }
@@ -47,7 +47,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
         let account = try ManagedAccount(
           id: id, namespace: namespace, revision: 1, credentialVersion: 1,
           mode: .disabled, authorization: .ready, refreshIntent: nil,
-          createdAtUnixSeconds: Int64(Date().timeIntervalSince1970))
+          createdAtUnixSeconds: db.clock.unixSeconds)
         try db.write(
           "INSERT INTO accounts VALUES(?,?,?,?,?,?,?,NULLIF(?,''),?,?)",
           Self.accountValues(account, envelope: envelope))
@@ -333,7 +333,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       "INSERT INTO account_events VALUES(?,?,?,?,?,?)",
       [
         .text(UUID().uuidString), .text(account.id), .number(account.revision), .text(action),
-        .text(String(decoding: data, as: UTF8.self)), .number(Int64(Date().timeIntervalSince1970)),
+        .text(String(decoding: data, as: UTF8.self)), .number(db.clock.unixSeconds),
       ])
   }
 }
