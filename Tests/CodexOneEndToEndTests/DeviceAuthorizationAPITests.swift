@@ -8,6 +8,10 @@ import Testing
 
 @testable import CodexOneAdapters
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 @Test(.timeLimit(.minutes(1))) func deviceSocketAdminAPIDefaultMethodStatusAndCancellationGuards()
   async throws
 {

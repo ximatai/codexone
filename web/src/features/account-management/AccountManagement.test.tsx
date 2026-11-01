@@ -507,13 +507,9 @@ it("uses device authorization for the selected account and retains its revision 
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
   await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "重新授权", exact: true }),
-    ).toBeEnabled(),
+    expect(screen.getByRole("button", { name: /^重新授权$/ })).toBeEnabled(),
   );
-  fireEvent.click(
-    screen.getByRole("button", { name: "重新授权", exact: true }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: /^重新授权$/ }));
   await screen.findByLabelText("设备码");
   expect(api.beginAuthorization).toHaveBeenCalledWith(
     account,
