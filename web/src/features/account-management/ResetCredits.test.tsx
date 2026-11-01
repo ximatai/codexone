@@ -145,7 +145,7 @@ it("defaults automation off and saves minute lead time and retries with the obse
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
   fireEvent.change(screen.getByLabelText("提前小时数"), {
-    target: { value: "48" },
+    target: { value: "12" },
   });
   fireEvent.change(screen.getByLabelText("提前分钟数"), {
     target: { value: "7" },
@@ -153,13 +153,13 @@ it("defaults automation off and saves minute lead time and retries with the obse
   fireEvent.change(screen.getByLabelText("失败后重试次数"), {
     target: { value: "2" },
   });
-  expect(screen.getByText(/到期前 48 小时 7 分钟自动使用/)).toBeInTheDocument();
+  expect(screen.getByText(/到期前 12 小时 7 分钟自动使用/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "保存重置卡设置" }));
   await waitFor(() =>
     expect(api.saveResetCreditSettings).toHaveBeenCalledWith(
       account.id,
       1,
-      { autoUseBeforeExpiry: true, leadMinutes: 2887, retryCount: 2 },
+      { autoUseBeforeExpiry: true, leadMinutes: 727, retryCount: 2 },
       "synthetic-csrf",
       undefined,
     ),
@@ -216,13 +216,13 @@ it("requires the retry budget to fit before expiry and allows a one-minute lead 
   );
 });
 
-it("rejects a combined lead beyond a week and restores the stored minute/retry values", async () => {
+it("rejects a combined lead beyond a day and restores the stored minute/retry values", async () => {
   setup({
     ...saved,
-    settings: { autoUseBeforeExpiry: true, leadMinutes: 10080, retryCount: 5 },
+    settings: { autoUseBeforeExpiry: true, leadMinutes: 1440, retryCount: 5 },
   });
   await screen.findByText(/上次读取可用/);
-  expect(screen.getByLabelText("提前小时数")).toHaveValue("168");
+  expect(screen.getByLabelText("提前小时数")).toHaveValue("24");
   expect(screen.getByLabelText("提前分钟数")).toHaveValue("0");
   expect(screen.getByLabelText("失败后重试次数")).toHaveValue("5");
   fireEvent.change(screen.getByLabelText("提前分钟数"), {

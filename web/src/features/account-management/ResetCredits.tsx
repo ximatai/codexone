@@ -94,13 +94,13 @@ export function ResetCredits({
       (v) => typeof v === "number" && Number.isInteger(v),
     ) &&
     Number(hours) >= 0 &&
-    Number(hours) <= 168 &&
+    Number(hours) <= 24 &&
     Number(minutes) >= 0 &&
     Number(minutes) <= 59 &&
     Number(retries) >= 0 &&
     Number(retries) <= 5 &&
     leadMinutes >= 1 &&
-    leadMinutes <= 10080 &&
+    leadMinutes <= 1440 &&
     leadMinutes >= Number(retries) + 1;
   async function consume() {
     if (!selection) return;
@@ -227,10 +227,10 @@ export function ResetCredits({
         <NumberInput
           aria-label="提前小时数"
           label="提前小时数"
-          description="总提前量 1 分钟至 168 小时，默认 24 小时。"
+          description="总提前量 1 分钟至 24 小时，默认 24 小时。"
           value={hours}
           min={0}
-          max={168}
+          max={24}
           allowDecimal={false}
           disabled={disabled || loading || !state}
           onChange={setHours}
@@ -263,8 +263,8 @@ export function ResetCredits({
           </Text>
         ) : (
           <Text size="sm" c="red" role="alert">
-            请输入整数：提前量须为 1–10080 分钟，且至少为重试次数加 1
-            分钟，以便重试在到期前完成。
+            请输入整数：提前量须为 1–1440 分钟（最多 24
+            小时），且至少为重试次数加 1 分钟，以便重试在到期前完成。
           </Text>
         )}
         <Button

@@ -164,7 +164,7 @@ Key 可空 displayName 使用与账号相同的校验，存入既有 Key 元数�
 
 每账号最多一个未完成 intent（服务生成 UUID redeem_request_id、可选 creditID、来源标记），发送前与审计占位同事务提交。每次网络消费占一个独立审计行（最多 4096），结果回写预留行，结束走 critical 队列，不消耗账号刷新/禁用预留；满时发送前拒绝。reset/nothing_to_reset/no_credit/already_redeemed 为终态，其他代码、断流、超时、取消和本地结果提交失败保留原 ID。下一次同卡或默认核对沿用原请求/卡；其他卡冲突，不产生新 ID。未知代码归 unknown，不记录原文。
 
-Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadMinutes 为整数 1—10080（默认 1440），retryCount 为额外重试次数 0—5（默认 3），固定 retryIntervalMinutes=1；leadMinutes 至少为 retryCount * retryIntervalMinutes + 1，按账号 revision CAS 保存。设置仍在 account_reset_credits.record_json（4096 字节上限），不升级 schema；只有 leadHours 的旧记录按小时乘 60、重试默认 3 解码。新记录同时写 leadHours=clamp(ceil(leadMinutes/60),1,168)，v0.26.4 可读取回退，但回退后只有整小时/30 分钟周期行为，没有分钟调度与本次重试保证。
+Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadMinutes 为整数 1—1440（最多提前 24 小时，默认 1440；旧记录超过 24 小时按 1440 读取），retryCount 为额外重试次数 0—5（默认 3），固定 retryIntervalMinutes=1；leadMinutes 至少为 retryCount * retryIntervalMinutes + 1，按账号 revision CAS 保存。设置仍在 account_reset_credits.record_json（4096 字节上限），不升级 schema；只有 leadHours 的旧记录按小时乘 60、重试默认 3 解码。新记录同时写 leadHours=clamp(ceil(leadMinutes/60),1,24)，v0.26.4 可读取回退，但回退后只有整小时/30 分钟周期行为，没有分钟调度与本次重试保证。
 
 每 30 分钟读取列表学习最多 64 个账号的到期时间；观察快照的可用卡计数可触发 64 条有界提示，仍受常规周期门槛，设置修订变化例外，立即重算。仅 enabled/ready 且已开启自动使用的账号参与；手动未知 intent 只人工确认核对。Runtime 每账号只保留一个最早 available 卡的 expiresAt - leadMinutes 到期时间和一个有界重试状态，一个结构化定时任务等待最近到期/重试/常规周期（最长一分钟），到点优先处理已学习的截止时间。扫描最多四个结构化工作并共享手动容量门禁，长扫描在工作释放时优先复查已到点账号，不等待其他账号全部读取完成；容量可用且 I/O 正常时，在到点后约一分钟内开始，容量占用时不排无限队列。每次列表/设置变化重算；不持久化列表、定时器或重试队列，重启首次扫描重建，已过阈值但未过期立即尝试。
 

@@ -90,12 +90,13 @@ public struct AccountAdminAPI: Sendable {
       let retries: Int64
       if body["leadHours"] != nil {
         guard body["leadMinutes"] == nil, body["retryCount"] == nil,
-          let hours = body["leadHours"]?.integer, (1...168).contains(hours)
+          let hours = body["leadHours"]?.integer, (1...24).contains(hours)
         else { throw ExecutionError.invalidCommand }
         minutes = hours * 60
         retries = 3
       } else {
-        guard let value = body["leadMinutes"]?.integer, (1...10080).contains(value),
+        guard let value = body["leadMinutes"]?.integer,
+          (1...Int64(ResetCreditSettings.maximumLeadMinutes)).contains(value),
           let count = body["retryCount"]?.integer, (0...5).contains(count)
         else { throw ExecutionError.invalidCommand }
         minutes = value

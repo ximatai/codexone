@@ -84,7 +84,7 @@ import Testing
       let list = try await client.call("GET", base, headers: browser)
       #expect(list.0 == 200 && list.3 == "no-store")
       #expect(list.1["state"]?["settings"]?["autoUseBeforeExpiry"] == .bool(false))
-      for hours in [0, 169] {
+      for hours in [0, 25] {
         #expect(
           try await client.call(
             "PUT", base + "/settings",
@@ -96,7 +96,7 @@ import Testing
       }
       for fields: [String: JSONValue] in [
         ["leadMinutes": .number(0), "retryCount": .number(0)],
-        ["leadMinutes": .number(10081), "retryCount": .number(3)],
+        ["leadMinutes": .number(1441), "retryCount": .number(3)],
         ["leadMinutes": .number(3), "retryCount": .number(3)],
         ["leadMinutes": .number(60), "retryCount": .number(-1)],
         ["leadMinutes": .number(60), "retryCount": .number(6)],
@@ -114,17 +114,17 @@ import Testing
             == 400)
       }
       let settings: JSONValue = .object([
-        "revision": .number(1), "autoUseBeforeExpiry": .bool(true), "leadHours": .number(48),
+        "revision": .number(1), "autoUseBeforeExpiry": .bool(true), "leadHours": .number(12),
       ])
       #expect(
         try await client.call("PUT", base + "/settings", body: settings, headers: browser).0 == 200)
       #expect(
         try await client.call("PUT", base + "/settings", body: settings, headers: browser).0 == 409)
       let legacy = try await client.call("GET", base + "/state", headers: browser)
-      #expect(legacy.1["settings"]?["leadMinutes"] == .number(2880))
+      #expect(legacy.1["settings"]?["leadMinutes"] == .number(720))
       #expect(legacy.1["settings"]?["retryCount"] == .number(3))
-      #expect(legacy.1["settings"]?["leadHours"] == .number(48))
-      for (revision, minutes, retries, hours) in [(2, 1, 0, 1), (3, 10080, 5, 168), (4, 61, 3, 2)] {
+      #expect(legacy.1["settings"]?["leadHours"] == .number(12))
+      for (revision, minutes, retries, hours) in [(2, 1, 0, 1), (3, 1440, 5, 24), (4, 61, 3, 2)] {
         let updated = try await client.call(
           "PUT", base + "/settings",
           body: .object([

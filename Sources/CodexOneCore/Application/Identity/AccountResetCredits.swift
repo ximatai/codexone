@@ -75,14 +75,16 @@ public struct ResetCreditList: Sendable, Equatable, Codable {
 public struct ResetCreditSettings: Sendable, Equatable, Codable {
   public let autoUseBeforeExpiry: Bool
   public static let retryIntervalMinutes = 1
+  /// Cards are kept for last-moment use, so automatic use starts at most a day early.
+  public static let maximumLeadMinutes = 1440
   public let leadMinutes: Int
   public let retryCount: Int
   /// Retained in JSON so v0.26.4 can read records after rollback.
-  public var leadHours: Int { min(168, max(1, (leadMinutes + 59) / 60)) }
+  public var leadHours: Int { min(24, max(1, (leadMinutes + 59) / 60)) }
   public init(
     autoUseBeforeExpiry: Bool = false, leadMinutes: Int = 1440, retryCount: Int = 3
   ) throws {
-    guard (1...10080).contains(leadMinutes), (0...5).contains(retryCount),
+    guard (1...Self.maximumLeadMinutes).contains(leadMinutes), (0...5).contains(retryCount),
       leadMinutes >= retryCount * Self.retryIntervalMinutes + 1
     else { throw ExecutionError.invalidCommand }
     self.autoUseBeforeExpiry = autoUseBeforeExpiry
@@ -100,7 +102,8 @@ public struct ResetCreditSettings: Sendable, Equatable, Codable {
     } else {
       let hours = try values.decode(Int.self, forKey: .leadHours)
       guard (1...168).contains(hours) else { throw ExecutionError.invalidCommand }
-      minutes = hours * 60
+      // v0.26.4 allowed up to 168 hours; longer leads now start one day before expiry.
+      minutes = min(hours * 60, Self.maximumLeadMinutes)
     }
     try self.init(
       autoUseBeforeExpiry: values.decode(Bool.self, forKey: .autoUseBeforeExpiry),

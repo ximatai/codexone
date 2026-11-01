@@ -187,7 +187,7 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 | GET `/api/accounts/:id/reset-credits` | 无 query；实时 credits（id/type/status/grantedAt/expiresAt/title/description）、availableCount 和 state |
 | GET `/:id/reset-credits/state` | 仅本地元数据，提供者不可用仍可核对；revision、settings、pending、pendingCreditID、lastCode、lastAttemptAt |
 | POST `/:id/reset-credits/consume` | 空 JSON 或可选非空 creditID；返回 code、windowsReset；不接收客户端幂等 ID |
-| PUT `/:id/reset-credits/settings` | revision、autoUseBeforeExpiry、整数 leadMinutes（1—10080）和 retryCount（0—5）；提前分钟数至少为重试次数加 1。兼容只传 leadHours（1—168，转分钟并默认重试 3 次），拒绝与新字段混用；返回本地 state，递增账号 revision |
+| PUT `/:id/reset-credits/settings` | revision、autoUseBeforeExpiry、整数 leadMinutes（1—1440）和 retryCount（0—5）；提前分钟数至少为重试次数加 1。兼容只传 leadHours（1—24，转分钟并默认重试 3 次），拒绝与新字段混用；返回本地 state，递增账号 revision |
 
 列表边界与消费屏障见 I21，设置与修订同一 writer 快照读取。GET settings 同时返回 leadMinutes、retryCount 和兼容字段 leadHours（分钟向上取整到小时）。设置成功通知调度 owner 重算。表单以小时和分钟输入总提前量，展示“到期前 X 小时 Y 分钟自动使用”和重试次数，说明每隔一分钟重试、永不过期后发送及预算须在到期前放得下。消费四个已知结果分别解释“重置成功”“当前没有可重置的用量，卡未消耗”“没有可用的重置卡”“该操作已处理”；unknown 明确结果待确认，只确认核对原操作，不另选卡。卡名与到期时间在确认框显示，默认选择明确由提供者选择、到期未知。GET 不消费；未知操作禁用新卡/默认选择按钮。列表读取失败保留旧列表并禁用选择，必须重新读取；会话未知结果锁继续按 A13 核对账号，服务端 intent 始终阻止换 ID 重试。
 
