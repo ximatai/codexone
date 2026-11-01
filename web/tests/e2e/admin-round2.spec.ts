@@ -76,7 +76,11 @@ test("round two overview, usage, account name and key expiration", async ({
     else if (path.includes("/reset-credits")) {
       const state = {
         revision: account.revision,
-        settings: { autoUseBeforeExpiry: false, leadHours: 24 },
+        settings: {
+          autoUseBeforeExpiry: false,
+          leadMinutes: 1440,
+          retryCount: 3,
+        },
         pending: false,
         pendingCreditID: null,
         lastCode: null,
