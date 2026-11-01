@@ -60,7 +60,7 @@ python3 scripts/check_ci.py
 
 前端使用含浏览器/系统库的官方 Playwright Noble 镜像，不在每次运行时 apt/download 浏览器；镜像 tag 必须与 package-lock 中的 Playwright 版本一致，并固定 registry digest。e2e 用严格端口的 Vite preview 服务生产 dist；完整入口只构建一次，单独跑 e2e 前须 build，见[贡献指南](../../CONTRIBUTING.md)。
 
-Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、两个 Verify 容器与缓存 key；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
+Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、两个 Verify 容器与缓存 key；TLS harness 的 runtime pin 同步 Dockerfile runtime，Release 缓存随 Dockerfile/workflow 的组合 hash 失效；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
 
 ### Node 与 Actions 工具链约定
 
@@ -111,7 +111,21 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 
 成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Dockerfile 的弱机器默认仍为 1，优化选项与每批 1 文件不变），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
 
-维护者须运行冷/热 dry-run，分别记录 build、最长分片、TLS/安装、gate 和总时间，检查两并发编译有无内存压力；再验证检查失败/取消、摘要错误均阻断发布。目标未实测前不更新公开发行完成状态，待验收项见[任务](../changes/release-ci-speed/tasks.md)。
+候选制品保留 1 天，过期后重试须重新运行 build；成功 gate 的 verified 制品仍保留 7 天。维护者须运行冷/热 dry-run，分别记录 build、最长分片、TLS/安装、gate 和总时间，检查两并发编译有无内存压力；再验证检查失败/取消、摘要错误均阻断发布。目标未实测前不更新公开发行完成状态，待验收项见[任务](../changes/release-ci-speed/tasks.md)。
+
+### 优化构建缓存与测量
+
+Release 复用现有 SHA pin 的 `actions/cache/restore` / `save` 保存 BuildKit 的 [local cache](https://docs.docker.com/build/cache/backends/local/)。使用临时 `docker-container` builder（BuildKit v0.33.1 固定 registry digest），避免依赖 runner 默认 Docker driver 是否开启 containerd image store；两个顺序构建共享同一 builder，结束或失败均清理。优化二进制用 scratch `verification-export` 直接导出，不把 SDK 镜像作为验证制品上传；runtime 单独 `--load`，发布来源证明仍只在 publish 对推送 digest 生成。
+
+缓存 key 为 runner OS、独立 `release-buildkit-v1` 命名空间、`deploy/Dockerfile` 与 Release workflow 的组合 hash（包含 Swift/Node/runtime/BuildKit pins、构建命令与参数）和解析后的源码 revision；前缀只回退相同 Dockerfile/workflow。BuildKit 继续按 COPY 输入、命令和 build args 匹配层，不能因为 Actions 前缀命中而跳过源码失效；参见[缓存失效规则](https://docs.docker.com/build/cache/invalidation/)。不复用 PR 的 debug `.build`，不导出 SwiftPM 可写 cache mount。许可证与 codexone 必须在同一 RUN 从构建结果导出，否则层命中后空 mount 会丢失许可证；probe 依赖也可从空 mount 重建。
+
+只导出 `verification-export` 和 runtime 两张构建图，绝不构建或缓存 `verification` 的测试 RUN 层，也不缓存分片/TLS/安装结果。即使所有编译层命中，本次四分片、TLS、安装及 gate 仍完整执行；命中不成为发布条件。缓存仍在 GitHub Actions 的分支/tag 访问边界内，仅受信 tag push 或手动 Release 可以写入该命名空间；不扩大 PR 缓存权限，不使用 registry 凭证构建。SHA256SUMS 不能证明缓存未被污染，来源证明也不表示无缓存、可复现编译或真实提供者兼容；缓存输出必须经过同一次完整验证。
+
+优化输出与 runtime 分别导出 `mode=max` 图；只有非精确命中才保存新 key，保存前用当前图替换恢复目录，避免 local cache 旧 blob 不断堆积。缓存缺失按冷构建执行，导出失败不跳过验证，精确命中免去重复导出/上传。缓存可能占用较大配额并与其他 CI 缓存竞争；源码改变仍可能完整重编译，不能把重复 dry-run 的热命中时间当作每版发行保证。缓存也会保留 apt 层；需要刷新系统包时关闭缓存或提升 key 中的 `v1` 代数，再执行完整验证。
+
+手动 dry-run 的 `build_cache` 默认开启，关闭时既不恢复也不导出/保存缓存，便于同一 revision 比较；tag 流程默认使用缓存。[GitHub 缓存访问范围](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache) 仍适用：在 main 上运行的 dry-run 可为 tag 提供热缓存，tag 自身写入的缓存不会自动变成以后新 tag 的可见缓存。维护者应分别记录未命中、同源码精确命中、源码变化后前缀命中的耗时，不能只看 `cache-hit` 判断编译是否实际复用。
+
+预计关键路径为“构建 + 最长验证分片 + 制品/gate 交接”：两并发冷构建以约 10–13 分钟为待测目标，同源码完整层命中预计约 4–7 分钟；这是依据旧编译时间和 PR 分片时间的估算，尚无本分支 Linux 实测，源码变化、编译串行段、内存压力、网络和并发排队可能使结果更慢。缓存开销若抵消收益，可用 `build_cache=false` 比较；编译内存不足则将 Release 的两处 `BUILD_JOBS=2` 同步改回 1。回退这些优化不能移除 gate 或任何验证。
 
 工作流/版本政策修改的本地检查：
 
@@ -124,7 +138,7 @@ docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7
 python3 scripts/check_docs.py
 ```
 
-这组检查验证 tag 格式、CHANGELOG 段落/预发布、真实本地 Git 祖先关系、分片覆盖、制品交接及工作流语法；gate 回归执行全部 64 种成功/失败/取消/跳过组合，不构建 Linux 镜像。源代码/安装包/许可归档与校验和的交付、推送后 digest/image ID 比对及来源证明只有实际运行 Release CI 后才有证据。未经明确授权，不运行真实订阅或部署验收。
+这组检查验证 tag 格式、CHANGELOG 段落/预发布、真实本地 Git 祖先关系、分片覆盖、制品交接及工作流语法；gate 回归执行全部 64 种成功/失败/取消/跳过组合；构建 shell 通过 Docker 记录桩检查关闭/未命中/前缀/精确命中的缓存参数和失败清理，不运行镜像构建；三个镜像交接点执行合成归档篡改拒绝检查，不构建 Linux 镜像。源代码/安装包/许可归档与校验和的交付、推送后 digest/image ID 比对及来源证明只有实际运行 Release CI 后才有证据。未经明确授权，不运行真实订阅或部署验收。
 
 ## 首版替代验收记录要求
 

@@ -53,7 +53,7 @@ TLS socket 实际验证 CA 链和主机名，并拒绝不可信 CA/错误主机�
 Linux amd64 release 的隔离复现（先完成候选构建）：
 
 ```sh
-docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:tls-base .
+docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 # 按 Linux 安装文档构建 codexone:candidate，传入实际 SOURCE_REVISION。
 docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
 docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \

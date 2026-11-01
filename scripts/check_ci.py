@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check workflow pins that must move together without installing YAML dependencies."""
+"""Check CI pins and optimized release gates without installing YAML dependencies."""
 
 import json
 from pathlib import Path
@@ -37,6 +37,16 @@ def check_release(release, dockerfile, tls, backend_scripts):
         'Optimized shard checks must run offline against the downloaded executables')
     assert '"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -' in shards, 'Check the binary archive against build output'
     assert '--target verification-export' in jobs['build'], 'Build the optimized probe without serial tests'
+    assert set(re.findall(r'--target ([\w-]+)', jobs['build'])) == {'verification-export'}, (
+        'Build cache must never contain verification RUN layers')
+    assert 'build_cache:' in release and 'USE_BUILD_CACHE' in jobs['build'], 'Keep cold-build measurement available'
+    cache_epochs = re.findall(r'-release-buildkit-v([1-9][0-9]*)-' + re.escape(
+        "${{ hashFiles('deploy/Dockerfile', '.github/workflows/release.yml') }}-"), jobs['build'])
+    assert len(cache_epochs) == 2 and len(set(cache_epochs)) == 1, (
+        'Release cache must be isolated and follow all Dockerfile/workflow toolchain pins')
+    assert re.search(r'--driver-opt image=moby/buildkit:v[\d.]+@sha256:[0-9a-f]{64}\b', jobs['build']), (
+        'The release BuildKit daemon must be digest-pinned')
+    assert '${{ steps.metadata.outputs.revision }}' in jobs['build'], 'Cache must identify the resolved build source'
     assert 'cmp binaries/codexone optimized-output/codexone' in jobs['build'], 'Candidate and build binary must match'
     assert 'docker cp "$container:/usr/local/bin/codexone" binaries/codexone' in jobs['build'], (
         'Shards must verify the executable extracted from the candidate image')
@@ -55,7 +65,6 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert limit in jobs['image-checks'], f'Retain TLS isolation: {limit}'
     assert 'COPY --from=bundle /usr/local/bin/codexone /output/codexone' in tls, 'TLS must use the candidate binary'
     assert 'COPY --from=bundle /opt/codexone/web/ /test/web/dist/' in tls, 'TLS must use the candidate SPA'
-    assert '--target verification ' not in jobs['build'], 'Do not cache or serialize release verification'
     assert 'docker build' not in jobs['publish'] and 'buildx' not in jobs['publish'], 'Publish must never rebuild'
     assert 'subject-digest: ${{ steps.push.outputs.digest }}' in jobs['publish'], 'Attest the pushed digest'
     assert '''test "$(docker image inspect "$IMAGE@$digest" --format '{{.Id}}')" = "$(cat artifacts/image-id.txt)"''' in jobs['publish'], (

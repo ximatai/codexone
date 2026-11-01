@@ -21,7 +21,7 @@
 
 ## Dry-run
 
-在 Actions → Release → Run workflow 中选择包含该工作流的分支，输入 `ref`（默认 `main`，可为分支、提交或标签）。手动运行始终只构建、执行全部上述验证并上传产物，不登录 registry、不推送镜像、不生成远端来源证明、不创建 Release。未发布 CHANGELOG 标题在 dry-run 中允许；分支/提交使用 CHANGELOG 首个版本，标签仍须格式合法且在 main 历史上。
+在 Actions → Release → Run workflow 中选择包含该工作流的分支，输入 `ref`（默认 `main`，可为分支、提交或标签）。手动运行始终只构建、执行全部上述验证并上传产物，不登录 registry、不推送镜像、不生成远端来源证明、不创建 Release。可关闭 `build_cache` 来测量冷构建；保持开启后重复同一 ref 测量热缓存。构建并发、缓存范围和待测耗时见[验证约定](verification.md)。未发布 CHANGELOG 标题在 dry-run 中允许；分支/提交使用 CHANGELOG 首个版本，标签仍须格式合法且在 main 历史上。
 
 替代原手动 Linux candidate 工作流。固定 v8 revision 的 peer 构建、旧二进制专项迁移/拒绝检查与 peer 分发只服务当次 schema 迁移，不适合作为每版依赖，因此从通用发版流程移除；不改变 v10 的回退约束。`verify_installation.py` 的 `--incompatible-image` / `--previous-image` 原本已可选，继续保留给有实际旧产物的定向演练。通用流程的优化二进制分片仍执行原 verification target 的迁移/切回失败检查，以及真实安装的 v5 合成旧库拒绝、备份迁移、锁、持久化和重启检查；这些不等同于真实旧二进制兼容验收。
 

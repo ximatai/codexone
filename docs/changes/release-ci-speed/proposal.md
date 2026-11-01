@@ -6,7 +6,7 @@
 
 成功 dry-run [41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、ExecutionProbe 10秒、串行脚本 429.4秒；TLS 26秒、安装 44秒。仅分片仍受编译限制。采用一次构建、四个后端分片、独立 TLS/安装、最终 gate；Release 专用 BUILD_JOBS=2，保留 Dockerfile 默认单并发，峰值内存与加速效果待 CI 测量。
 
-优化构建使用独立 BuildKit 层缓存，按 Dockerfile 与源码 revision 分 key，允许恢复同 Dockerfile 的前一次缓存。缓存只加速构建，不保存验证结果；每次重新执行所有分片、TLS 和安装。缓存缺失须能冷构建。SwiftPM 可写 cache mount 不跨运行导出，避免引入 PR 的 debug .build；许可证与产品二进制在同一 RUN 输出，避免层命中后依赖空 cache mount。相同源码预期复用编译层，源码变更仍可能完整重编译，不能承诺增量收益。
+优化构建使用独立 BuildKit 层缓存，按 Dockerfile/workflow 组合 hash 与源码 revision 分 key，允许恢复相同构建定义的前一次缓存。缓存只加速构建，不保存验证结果；每次重新执行所有分片、TLS 和安装。缓存缺失须能冷构建。SwiftPM 可写 cache mount 不跨运行导出，避免引入 PR 的 debug .build；许可证与产品二进制在同一 RUN 输出，避免层命中后依赖空 cache mount。相同源码预期复用编译层，源码变更仍可能完整重编译，不能承诺增量收益。
 
 ## 契约与验收
 

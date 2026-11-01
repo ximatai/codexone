@@ -9,6 +9,10 @@ on:
         required: true
         default: main
         type: string
+      build_cache:
+        description: 'Reuse optimized build layers (disable for a cold-build measurement)'
+        default: true
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -57,17 +61,53 @@ jobs:
           python3 scripts/prepare_release.py "${args[@]}" --output-dir artifacts --github-output "$GITHUB_OUTPUT"
           python3 scripts/check_docs.py
           python3 scripts/check_ci.py
-      - name: Build optimized executables once
-        run: >-
-          docker build --platform linux/amd64 --target verification-export
-          --build-arg BUILD_JOBS=2 --output type=local,dest=optimized-output -f deploy/Dockerfile .
-      - name: Build runtime from the same optimized backend
+      # This namespace is separate from PR debug .build caches. No verification results are cached.
+      - name: Restore optimized BuildKit layers
+        if: github.event_name == 'push' || inputs.build_cache
+        id: build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/release-buildkit
+          key: ${{ runner.os }}-release-buildkit-v1-${{ hashFiles('deploy/Dockerfile', '.github/workflows/release.yml') }}-${{ steps.metadata.outputs.revision }}
+          restore-keys: |
+            ${{ runner.os }}-release-buildkit-v1-${{ hashFiles('deploy/Dockerfile', '.github/workflows/release.yml') }}-
+      - name: Build optimized executables and runtime once
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          REVISION: ${{ steps.metadata.outputs.revision }}
+          USE_BUILD_CACHE: ${{ github.event_name == 'push' || inputs.build_cache }}
+          CACHE_HIT: ${{ steps.build-cache.outputs.cache-hit }}
+        run: |
+          docker buildx create --name codexone-release --driver docker-container \
+            --driver-opt image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          trap 'docker buildx rm --force codexone-release >/dev/null 2>&1 || true' EXIT
+          cache_from=()
+          optimized_cache_to=()
+          runtime_cache_to=()
+          if [[ "$USE_BUILD_CACHE" == true ]]; then
+            for target in optimized runtime; do
+              if [[ -f "$RUNNER_TEMP/release-buildkit/$target/index.json" ]]; then
+                cache_from+=(--cache-from "type=local,src=$RUNNER_TEMP/release-buildkit/$target")
+              fi
+            done
+            if [[ "$CACHE_HIT" != true ]]; then
+              optimized_cache_to+=(--cache-to "type=local,dest=$RUNNER_TEMP/release-buildkit-next/optimized,mode=max,ignore-error=true")
+              runtime_cache_to+=(--cache-to "type=local,dest=$RUNNER_TEMP/release-buildkit-next/runtime,mode=max,ignore-error=true")
+            fi
+          fi
+          # Export only executables, never verification RUN layers or the SDK image.
+          docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
+            "${cache_from[@]}" "${optimized_cache_to[@]}" --target verification-export \
+            --build-arg BUILD_JOBS=2 --output type=local,dest=optimized-output -f deploy/Dockerfile .
+          docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
+            "${cache_from[@]}" "${runtime_cache_to[@]}" --load --provenance=false \
+            --build-arg BUILD_JOBS=2 --build-arg SOURCE_REVISION="$REVISION" \
+            --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
+      - name: Check candidate platform and source labels
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
           REVISION: ${{ steps.metadata.outputs.revision }}
         run: |
-          docker build --platform linux/amd64 --build-arg BUILD_JOBS=2 --build-arg SOURCE_REVISION="$REVISION" \
-            --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
           docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
           test "$(docker image inspect codexone:candidate --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
           test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
@@ -101,6 +141,21 @@ jobs:
           (cd image && sha256sum codexone-linux-amd64.tar.gz) > artifacts/image-archive-sha256.txt
           printf 'image_archive_sha256=%s\n' "$(cut -d ' ' -f 1 artifacts/image-archive-sha256.txt)" >> "$GITHUB_OUTPUT"
           (cd artifacts && sha256sum -- * > SHA256SUMS)
+      - name: Keep only the current build's exported cache graphs
+        if: (github.event_name == 'push' || inputs.build_cache) && steps.build-cache.outputs.cache-hit != 'true'
+        id: cache-export
+        run: |
+          if [[ -f "$RUNNER_TEMP/release-buildkit-next/optimized/index.json" && -f "$RUNNER_TEMP/release-buildkit-next/runtime/index.json" ]]; then
+            rm -rf "$RUNNER_TEMP/release-buildkit"
+            mv "$RUNNER_TEMP/release-buildkit-next" "$RUNNER_TEMP/release-buildkit"
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Save optimized build layers without verification results
+        if: steps.cache-export.outputs.ready == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/release-buildkit
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           archive: true
