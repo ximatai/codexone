@@ -3,6 +3,7 @@ import {
   beginAuthorization,
   completeAuthorization,
   fetchAccounts,
+  fetchAuthorizationStatus,
   parseAccount,
   setDisplayName,
 } from "./api";
@@ -151,3 +152,54 @@ it("defaults to device and validates its public fields without retaining private
     beginAuthorization(null, "synthetic-csrf"),
   ).rejects.toMatchObject({ code: "invalid_response" });
 });
+
+it.each([
+  "provider_rejected",
+  "exchange_failed",
+  "identity_mismatch",
+  "verification_failed",
+  "revision_conflict",
+  "device_code_unavailable",
+  "authorization_failed",
+  "future_failure",
+])(
+  "accepts failure code %s in creation and status responses",
+  async (failureCode) => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        reply({
+          flowID: "synthetic-flow",
+          method: "device",
+          expiresInSeconds: 900,
+          failureCode,
+        }),
+      )
+      .mockResolvedValueOnce(
+        reply({ status: "failed", expiresInSeconds: 899, failureCode }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    expect((await beginAuthorization(null, "synthetic-csrf")).failureCode).toBe(
+      failureCode,
+    );
+    expect((await fetchAuthorizationStatus("synthetic-flow")).failureCode).toBe(
+      failureCode,
+    );
+  },
+);
+it.each([42, null, "private provider prose", "a".repeat(65), "bad\ncode"])(
+  "rejects malformed failure code %s",
+  async (failureCode) => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          reply({ status: "failed", expiresInSeconds: 899, failureCode }),
+        ),
+    );
+    await expect(
+      fetchAuthorizationStatus("synthetic-flow"),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+  },
+);

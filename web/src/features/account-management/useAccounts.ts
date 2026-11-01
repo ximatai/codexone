@@ -1,9 +1,13 @@
+import { knownAuthorizationFailureMessage } from "./authorization-failure";
 import { useManagedMutation } from "../../shared/useManagedMutation";
 import { useManagementSession } from "../../shared/session";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import * as sessionAPI from "../../shared/management";
 import * as api from "./api";
 import type { Account, AccountMode, AuthorizationFlow } from "./api";
+// Keep authorization diagnostics local to this command; other account CAS errors use shared messages.
+class AuthorizationCompletionError extends sessionAPI.ManagementError {}
+
 export function useAccounts() {
   const owner = useManagementSession();
   const [session, setSession] = useState<sessionAPI.AdminSession | null>(
@@ -130,7 +134,13 @@ export function useAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (!flow || (flowStatus && flowStatus.status !== "pending")) return;
+    if (
+      !flow ||
+      (flowStatus && flowStatus.status !== "pending") ||
+      (flow.method !== "device" && flowStatus?.status === "pending")
+    )
+      return;
+    // Once a callback is submitted, the backend exchange deadline owns its lifetime.
     const timer = window.setInterval(() => {
       const seconds = Math.max(
         0,
@@ -243,10 +253,12 @@ export function useAccounts() {
     scope: "accounts",
     successNotification: false,
     errorMessage: (cause) =>
-      cause instanceof sessionAPI.ManagementError &&
-      cause.code === "authorization_required"
-        ? "上游授权已失效。请重新读取账号后重新授权。"
-        : undefined,
+      cause instanceof AuthorizationCompletionError
+        ? knownAuthorizationFailureMessage(cause.code)
+        : cause instanceof sessionAPI.ManagementError &&
+            cause.code === "authorization_required"
+          ? "上游授权已失效。请重新读取账号后重新授权。"
+          : undefined,
     invalidMessage: "提交内容无效，请检查显示名或授权信息后重试。",
     invalidate: [],
     refresh: async (signal) => !!(await read(epoch.current, signal)),
@@ -310,17 +322,57 @@ export function useAccounts() {
     if (!flow || !callback.trim() || !remaining || busy || locked) return;
     const pending = flow,
       value = callback.trim();
-    clearFlow();
+    setCallback("");
+    setFlow({ ...pending, authorizationURL: undefined });
+    setFlowStatus({ status: "pending", expiresInSeconds: remaining });
+    const version = epoch.current;
+    const generation = flowEpoch.current;
     await mutation(
       async (csrf, signal) => {
         try {
-          return await api.completeAuthorization(
+          const account = await api.completeAuthorization(
             pending.flowID,
             value,
             csrf,
             signal,
           );
+          if (current(version) && generation === flowEpoch.current) clearFlow();
+          return account;
+        } catch (cause) {
+          let diagnosed = false;
+          let failureCode = "authorization_failed";
+          // Read the consumed flow before discarding it; never retain or replay the callback.
+          try {
+            const result = await api.fetchAuthorizationStatus(
+              pending.flowID,
+              signal,
+            );
+            if (
+              !signal?.aborted &&
+              current(version) &&
+              generation === flowEpoch.current &&
+              result.status === "failed"
+            ) {
+              diagnosed = true;
+              if (knownAuthorizationFailureMessage(result.failureCode))
+                failureCode = result.failureCode!;
+              setFlowStatus(result);
+            }
+          } catch {
+            /* The original mutation still owns unknown-result recovery. */
+          }
+          if (
+            !diagnosed &&
+            current(version) &&
+            generation === flowEpoch.current
+          )
+            clearFlow();
+          if (diagnosed && cause instanceof sessionAPI.ManagementError)
+            throw new AuthorizationCompletionError(cause.status, failureCode);
+          throw cause;
         } finally {
+          if (current(version) && generation === flowEpoch.current)
+            flowRef.current = null;
           void api.discardAuthorization(pending.flowID, csrf).catch(() => {});
         }
       },

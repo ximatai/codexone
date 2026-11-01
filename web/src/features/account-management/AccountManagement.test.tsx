@@ -537,3 +537,121 @@ it("uses device authorization for the selected account and retains its revision 
     "callback",
   );
 });
+
+it.each([
+  ["provider_rejected", "提供者拒绝了设备码授权请求"],
+  ["exchange_failed", "授权码兑换失败"],
+  ["identity_mismatch", "登录的 ChatGPT 账号与要重新授权的账号不一致"],
+  ["verification_failed", "授权安全校验失败"],
+  ["revision_conflict", "账号版本或状态已变化"],
+  ["device_code_unavailable", "设备码登录暂不可用"],
+  ["authorization_failed", "授权未能完成"],
+  ["future_failure", "授权未能完成"],
+])(
+  "explains device failure %s in the authorization dialog",
+  async (code, message) => {
+    deviceSetup();
+    vi.mocked(api.beginAuthorization).mockResolvedValue({
+      flowID: "synthetic-failure",
+      method: "device",
+      expiresInSeconds: 900,
+      failureCode: code,
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "发起账号授权" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+    const dialog = await screen.findByRole("dialog", { name: "接入订阅账号" });
+    expect(dialog).toHaveTextContent(message);
+    expect(dialog).not.toHaveTextContent(code);
+    expect(screen.queryByLabelText("设备码")).toBeNull();
+  },
+);
+
+it("keeps the callback failure reason in the dialog and clears the one-time input", async () => {
+  deviceSetup();
+  vi.mocked(api.beginAuthorization).mockResolvedValue({
+    flowID: "callback-flow",
+    method: "callback",
+    expiresInSeconds: 600,
+    authorizationURL: "https://auth.openai.com/oauth/authorize?state=synthetic",
+  });
+  vi.mocked(api.completeAuthorization).mockRejectedValue(
+    new sessions.ManagementError(409, "account_conflict"),
+  );
+  vi.mocked(api.fetchAuthorizationStatus).mockResolvedValue({
+    status: "failed",
+    expiresInSeconds: 599,
+    failureCode: "identity_mismatch",
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  const input = await screen.findByLabelText("2. 粘贴完整回调地址");
+  fireEvent.change(input, { target: { value: "synthetic-private-callback" } });
+  fireEvent.click(screen.getByRole("button", { name: "3. 验证并保存" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("dialog", { name: "接入订阅账号" }),
+    ).toHaveTextContent("登录的 ChatGPT 账号与要重新授权的账号不一致"),
+  );
+  expect(screen.queryByLabelText("2. 粘贴完整回调地址")).toBeNull();
+  expect(document.body.textContent).not.toContain("synthetic-private-callback");
+  expect(api.completeAuthorization).toHaveBeenCalledTimes(1);
+  expect(api.discardAuthorization).toHaveBeenCalledWith(
+    "callback-flow",
+    "synthetic-csrf",
+  );
+});
+
+it("lets the backend own the submitted callback deadline after clearing its input", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] });
+  try {
+    let finish: (value: api.Account) => void = () => {};
+    vi.mocked(api.beginAuthorization).mockResolvedValue({
+      flowID: "synthetic-short-callback",
+      method: "callback",
+      expiresInSeconds: 1,
+      authorizationURL:
+        "https://auth.openai.com/oauth/authorize?state=synthetic",
+    });
+    vi.mocked(api.completeAuthorization).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    setup();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "发起账号授权" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+    const input = await screen.findByLabelText("2. 粘贴完整回调地址");
+    fireEvent.change(input, {
+      target: { value: "synthetic-private-callback" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "3. 验证并保存" }));
+    await screen.findByText("正在验证并保存授权…");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(
+      screen.getByRole("dialog", { name: "接入订阅账号" }),
+    ).toHaveTextContent("正在验证并保存授权…");
+    expect(screen.queryByLabelText("2. 粘贴完整回调地址")).toBeNull();
+    expect(api.discardAuthorization).not.toHaveBeenCalled();
+    await act(async () => {
+      finish(account);
+    });
+    await waitFor(() =>
+      expect(api.discardAuthorization).toHaveBeenCalledTimes(1),
+    );
+    expect(api.completeAuthorization).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});

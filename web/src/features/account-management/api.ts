@@ -175,15 +175,7 @@ export async function beginAuthorization(
       expiresInSeconds: integer(value.expiresInSeconds, 900),
     };
     if (value.failureCode !== undefined) {
-      if (
-        ![
-          "device_code_unavailable",
-          "authorization_failed",
-          "revision_conflict",
-        ].includes(String(value.failureCode))
-      )
-        throw invalid();
-      return { ...flow, failureCode: String(value.failureCode) };
+      return { ...flow, failureCode: failureCode(value.failureCode) };
     }
     if (
       typeof value.userCode !== "string" ||
@@ -209,6 +201,12 @@ export async function beginAuthorization(
     ),
     expiresInSeconds: integer(value.expiresInSeconds, 600),
   };
+}
+// Accept future safe codes while rejecting prose, payloads and unbounded values.
+function failureCode(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(value))
+    throw invalid();
+  return value;
 }
 function authorizationLink(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length > 8192) throw invalid();
@@ -256,22 +254,14 @@ export async function fetchAuthorizationStatus(
     value.expiresInSeconds > 900
   )
     throw invalid();
-  if (
-    value.failureCode !== undefined &&
-    ![
-      "device_code_unavailable",
-      "authorization_failed",
-      "revision_conflict",
-    ].includes(String(value.failureCode))
-  )
-    throw invalid();
+
   return {
     status: value.status as AuthorizationStatus["status"],
     expiresInSeconds: value.expiresInSeconds,
     ...(value.status === "completed" ? { accountID: id(value.accountID) } : {}),
     ...(value.failureCode === undefined
       ? {}
-      : { failureCode: String(value.failureCode) }),
+      : { failureCode: failureCode(value.failureCode) }),
   };
 }
 
