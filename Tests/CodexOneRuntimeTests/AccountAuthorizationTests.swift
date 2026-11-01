@@ -86,6 +86,8 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
   let created = try await service.complete(
     owner: "session-a", flowID: flow.flowID, callbackURL: url)
   #expect(created.mode == .disabled && created.authorization == .ready)
+  let status = try await service.status(owner: "session-a", flowID: flow.flowID)
+  #expect(status.status == .completed && status.accountID == created.id)
   await #expect(throws: AccountRefreshError.conflict) {
     try await service.complete(owner: "session-a", flowID: flow.flowID, callbackURL: url)
   }
@@ -171,6 +173,7 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
       }
     }
     try await authorizationWait { await provider.active == 4 }
+    #expect(try await service.status(owner: "session", flowID: flows[0].flowID).status == .pending)
     await #expect(throws: AccountRefreshError.capacity) {
       try await service.complete(
         owner: "session", flowID: flows[4].flowID, callbackURL: callback(flows[4]))

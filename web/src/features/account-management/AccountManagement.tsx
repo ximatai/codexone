@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { localTime } from "../../shared/presentation";
 import {
+  CopyButton,
   ActionIcon,
   Tooltip,
   Menu,
@@ -518,57 +519,63 @@ export function AccountManagement() {
                   ? "重新授权保持账号身份与使用策略。"
                   : "新账号授权后默认禁用，核对后再启用。"}
               </Text>
-              <Anchor
-                href={state.flow.authorizationURL}
-                target="_blank"
-                rel="noopener noreferrer"
-                referrerPolicy="no-referrer"
-              >
-                1. 在新窗口打开授权页面 ↗
-              </Anchor>
-              <Text size="sm" c="dimmed">
-                登录后复制完整 localhost
-                回调地址。即使回调页无法连接，也可复制地址栏。剩余{" "}
-                {state.remaining} 秒。
-              </Text>
-              <PasswordInput
-                label="2. 粘贴完整回调地址"
-                aria-label="2. 粘贴完整回调地址"
-                autoComplete="off"
-                spellCheck={false}
-                maxLength={7000}
-                value={state.callback}
-                onChange={(event) =>
-                  state.setCallback(event.currentTarget.value)
-                }
-                disabled={state.busy || state.locked}
-                required
-                visibilityToggleButtonProps={{
-                  "aria-label": "显示或隐藏回调地址",
-                }}
-                description="含一次性授权码，提交或离开后清除，请勿分享。"
-              />
-              <Group justify="flex-end">
-                <Button
-                  type="button"
-                  variant="default"
-                  disabled={state.busy || state.locked}
-                  onClick={() => void state.cancel()}
-                >
-                  取消本次授权
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={
-                    state.busy ||
-                    state.locked ||
-                    !state.callback.trim() ||
-                    !state.remaining
-                  }
-                >
-                  3. 验证并保存
-                </Button>
-              </Group>
+              {state.flow.method === "device" ? (
+                <DeviceAuthorization state={state} />
+              ) : (
+                <>
+                  <Anchor
+                    href={state.flow.authorizationURL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    referrerPolicy="no-referrer"
+                  >
+                    1. 在新窗口打开授权页面 ↗
+                  </Anchor>
+                  <Text size="sm" c="dimmed">
+                    登录后复制完整 localhost
+                    回调地址。即使回调页无法连接，也可复制地址栏。剩余{" "}
+                    {state.remaining} 秒。
+                  </Text>
+                  <PasswordInput
+                    label="2. 粘贴完整回调地址"
+                    aria-label="2. 粘贴完整回调地址"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={7000}
+                    value={state.callback}
+                    onChange={(event) =>
+                      state.setCallback(event.currentTarget.value)
+                    }
+                    disabled={state.busy || state.locked}
+                    required
+                    visibilityToggleButtonProps={{
+                      "aria-label": "显示或隐藏回调地址",
+                    }}
+                    description="含一次性授权码，提交或离开后清除，请勿分享。"
+                  />
+                  <Group justify="flex-end">
+                    <Button
+                      type="button"
+                      variant="default"
+                      disabled={state.busy || state.locked}
+                      onClick={() => void state.cancel()}
+                    >
+                      取消本次授权
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={
+                        state.busy ||
+                        state.locked ||
+                        !state.callback.trim() ||
+                        !state.remaining
+                      }
+                    >
+                      3. 验证并保存
+                    </Button>
+                  </Group>
+                </>
+              )}
             </Stack>
           </form>
         )}
@@ -637,4 +644,103 @@ export function credentialTime(
       ? "刚刚"
       : `约 ${Math.round(absolute / (absolute < 3600 ? 60 : absolute < 86400 ? 3600 : 86400))} ${absolute < 3600 ? "分钟" : absolute < 86400 ? "小时" : "天"}${seconds >= 0 ? "后" : "前"}`;
   return `${new Date(value * 1000).toLocaleString()}（${relative}）`;
+}
+
+function DeviceAuthorization({
+  state,
+}: {
+  state: ReturnType<typeof useAccounts>;
+}) {
+  const result = state.flowStatus;
+  const completed = state.accounts.find(
+    (item) => item.id === result?.accountID,
+  );
+  const pending = !result || result.status === "pending";
+  return (
+    <Stack gap="md">
+      {pending && (
+        <>
+          <Text size="sm">
+            在验证页面登录自己的账号，输入下方设备码。请勿分享设备码。
+          </Text>
+          <TextInput
+            label="设备码"
+            value={state.flow?.userCode ?? ""}
+            readOnly
+            autoComplete="off"
+          />
+          <CopyButton value={state.flow?.userCode ?? ""}>
+            {({ copied, copy }) => (
+              <Button variant="light" onClick={copy}>
+                {copied ? "已复制设备码" : "复制设备码"}
+              </Button>
+            )}
+          </CopyButton>
+          <Anchor
+            href={state.flow?.verificationURL}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+          >
+            打开验证页面 ↗
+          </Anchor>
+          <CopyButton value={state.flow?.verificationURL ?? ""}>
+            {({ copied, copy }) => (
+              <Button variant="subtle" onClick={copy}>
+                {copied ? "已复制验证链接" : "复制验证链接"}
+              </Button>
+            )}
+          </CopyButton>
+          <Text role="status">等待授权完成…剩余 {state.remaining} 秒。</Text>
+        </>
+      )}
+      {result?.status === "completed" && (
+        <>
+          <Alert color="green" role="status">
+            {state.flow?.accountID
+              ? "重新授权已完成，账号身份与使用策略保持不变。"
+              : "授权已验证并保存，新账号默认禁用。"}
+          </Alert>
+          {!state.flow?.accountID && completed?.mode === "disabled" && (
+            <Button
+              disabled={state.busy || state.locked}
+              onClick={() => state.setMode(completed, "enabled")}
+            >
+              启用
+            </Button>
+          )}
+          {!state.flow?.accountID && completed?.mode === "enabled" && (
+            <Text>账号已启用。</Text>
+          )}
+        </>
+      )}
+      {result?.status === "failed" && (
+        <Alert color="red" role="alert">
+          {result.failureCode === "device_code_unavailable"
+            ? "设备码登录暂不可用，可改用浏览器回调方式。也可能需要在 ChatGPT 安全设置中开启设备码登录。"
+            : result.failureCode === "revision_conflict"
+              ? "账号身份或版本冲突，请重新读取账号后重新授权。"
+              : "授权未能完成，请核对账号列表后重新发起。"}
+        </Alert>
+      )}
+      {result?.status === "expired" && (
+        <Alert color="yellow" role="alert">
+          授权流程已过期，请关闭后重新发起。
+        </Alert>
+      )}
+      <Button variant="default" onClick={() => void state.cancel()}>
+        {pending ? "取消本次授权" : "关闭授权结果"}
+      </Button>
+      {result?.status !== "completed" && (
+        <Anchor
+          component="button"
+          type="button"
+          disabled={state.busy || state.locked}
+          onClick={() => void state.switchToCallback()}
+        >
+          改用浏览器回调方式
+        </Anchor>
+      )}
+    </Stack>
+  );
 }

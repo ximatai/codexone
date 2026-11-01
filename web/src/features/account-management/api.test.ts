@@ -58,7 +58,7 @@ it("rejects unexpected authorization destinations and never replays a callback",
     .mockRejectedValueOnce(new Error("private provider diagnostic"));
   vi.stubGlobal("fetch", fetch);
   await expect(
-    beginAuthorization(null, "synthetic-csrf"),
+    beginAuthorization(null, "synthetic-csrf", undefined, "callback"),
   ).rejects.toMatchObject({ code: "invalid_response" });
   const timeout = vi.spyOn(AbortSignal, "timeout");
   await expect(
@@ -119,4 +119,35 @@ it("parses only safe credential timestamps and rejects malformed values", () => 
     for (const value of [0, -1, "secret", 1.5])
       expect(() => parseAccount({ ...account, [field]: value })).toThrow();
   }
+});
+
+it("defaults to device and validates its public fields without retaining private provider data", async () => {
+  const fetch = vi.fn().mockResolvedValue(
+    reply({
+      flowID: "device-flow",
+      method: "device",
+      expiresInSeconds: 900,
+      userCode: "SYNTH-CODE",
+      verificationURL: "https://auth.openai.com/codex/device",
+      intervalSeconds: 3,
+      device_auth_id: "private-provider-material",
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const flow = await beginAuthorization(null, "synthetic-csrf");
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    target: null,
+    method: "device",
+  });
+  expect(flow).not.toHaveProperty("device_auth_id");
+  expect(JSON.stringify(flow)).not.toContain("private-provider-material");
+  fetch.mockResolvedValue(
+    reply({
+      ...flow,
+      verificationURL: "https://elsewhere.invalid/codex/device",
+    }),
+  );
+  await expect(
+    beginAuthorization(null, "synthetic-csrf"),
+  ).rejects.toMatchObject({ code: "invalid_response" });
 });

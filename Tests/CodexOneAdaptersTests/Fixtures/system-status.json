@@ -1,4 +1,5 @@
 {
+  "transportMode": "loopback",
   "service": "codexone",
   "ready": false,
   "checks": [

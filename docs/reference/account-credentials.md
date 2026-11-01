@@ -36,15 +36,15 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 `SubscriptionOAuthProvider` 自身是受监督 Service，启动时创建专用 HTTP client，停止时关闭并等待网络资源。生产 authority 固定；合成 loopback factory 仅供显式依赖注入，其 realm 参与 namespace，不能生成生产 namespace。容量、总期限、响应上限与失败分类见 [I15](specs/identity.md)。不跟随重定向、不重试连接或刷新，不读取个人登录缓存。
 
-授权码交换使用 PKCE S256 和 Form grant，刷新使用 JSON grant。初次登录核对 nonce、ID audience、issuer、期限，以及 ID/access 的 subject 和订阅 account 一致性。后续刷新必须保持同一 namespace；缺省刷新 token 或 ID token 只能在新 access 已通过身份核对后沿用。这里的声明可信度来自固定 token 端点的直接可信传输，不是 JWT 签名验证器，禁止把任意上传 JWT 交给已验证导入路径。调用者仍须拥有有界、过期、一次性消费的 state/nonce/verifier 流程；管理 API 负责公开授权入口与会话校验。
+授权码交换使用 PKCE S256 和 Form grant，刷新使用 JSON grant。回调初次登录核对 nonce、ID audience、issuer、期限，以及 ID/access 的 subject 和订阅 account 一致性。设备码兑换复用相同身份校验，仅因没有本地 nonce 而不做 nonce 比对，信任仍来自固定端点的直接传输。后续刷新必须保持同一 namespace；缺省刷新 token 或 ID token 只能在新 access 已通过身份核对后沿用。这里的声明可信度来自固定 token 端点的直接可信传输，不是 JWT 签名验证器，禁止把任意上传 JWT 交给已验证导入路径。调用者仍须拥有有界、过期、一次性消费的流程；管理 API 负责公开授权入口与会话校验。
 
 [官方认证说明](https://developers.openai.com/codex/auth)描述 ChatGPT 登录与自动刷新，但不承诺内部 token wire 稳定。此适配仍需真实订阅独立验收；合成测试不消耗真实额度，也不能证明生产 TLS/实际账号兼容。
 
 ## 授权流程 owner
 
-`AccountAuthorizationSupervisor` 注入 Core `AccountAuthorizationProvider` 和凭证用例；订阅 adapter 通过协议桥接，不使 Runtime 依赖 HTTP/加密框架。开始返回 flow ID、登录地址和剩余秒数，完成只接受同一 owner 的一次性回调；重新授权另携带账号 id/revision。容量、期限和取消语义见 I16。flow ID 不是认证凭证，必须同时核对管理 owner。
+`AccountAuthorizationSupervisor` 注入 Core `AccountAuthorizationProvider` 和凭证用例；订阅 adapter 通过协议桥接，不使 Runtime 依赖 HTTP/加密框架。开始默认返回设备码、验证链接、期限与轮询建议，也可显式选择回调登录地址；同一 owner 可读状态或取消。设备码创建、轮询和兑换由 Runtime 的结构化子任务拥有，与回调共享容量，停止时取消并等待；重新授权另携带账号 id/revision。容量、期限和取消语义见 I16。flow ID 不是认证凭证，必须同时核对管理 owner。
 
-远程部署通过管理面板执行 code-flow：在管理员自己的浏览器打开登录地址，再粘贴最终回调地址；本 owner 不在远端占用操作者的 localhost 端口，也不宣称已有 device-flow 支持。公开 API、会话和生产主密钥已在入口组装；用户须自行确认其账号的使用条款。
+远程部署默认通过设备码授权：在管理员自己的浏览器打开验证链接并输入设备码，管理面板轮询显示结果。备用回调方式可从弹窗底部切换，再粘贴最终回调地址；不在远端占用操作者的 localhost 端口。device_auth_id 仅为 Runtime 子任务的内存值，user code 仅在创建与本 owner 状态响应中出现，均不入库或日志。公开 API、会话和生产主密钥已在入口组装；用户须自行确认其账号的使用条款。
 
 ## 管理 API
 
@@ -55,9 +55,9 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 ## 浏览器操作与合成装配
 
-控制台的“订阅账号”复用管理 session；未配置账号主密钥时提示安全配置尚未开启。初次与重新授权采用 I16 的 code-flow；新窗口完成登录后，将最终回调地址粘贴到隐藏输入，再一次性提交。前端不会自行探测或访问 localhost callback 服务，不保存浏览器本地/会话存储；取消和超时应重新开始流程。未知 mutation 或 CAS 冲突先读列表核对，不能直接重发。
+控制台的“订阅账号”复用管理 session；未配置账号主密钥时提示安全配置尚未开启。初次与重新授权默认采用 I16 的设备码流程，弹窗保留倒计时、轮询状态与结果；新账号需独立点击“启用”。不可用时提示 ChatGPT 安全设置可能需要开启设备码登录，可切换回调方式；新窗口完成登录后，将最终回调地址粘贴到隐藏输入，再一次性提交。前端不会自行探测或访问 localhost callback 服务，不保存浏览器本地/会话存储；取消和超时应重新开始流程。未知 mutation 或 CAS 冲突先读列表核对，不能直接重发。
 
-`ExecutionProbe --account-admin-ui` 是测试可执行文件的专用合成组装，生产 codexone 没有该参数或认证地址覆盖。它启动真实管理 API、Runtime owner、AES/SQLite 与显式合成 loopback OAuth。浏览器脚本允许访问临时管理 origin 和合成登录页，拒绝其他地址；只读取合成回调链接而不访问真实 localhost callback 端口。截图输入掩码，日志与 DB/WAL 核对无合成 token/主密钥原文；不替代真实订阅或 Desktop 验收。
+`ExecutionProbe --account-admin-ui` 是测试可执行文件的专用合成组装，生产 codexone 没有该参数或认证地址覆盖。它启动真实管理 API、Runtime owner、AES/SQLite 与显式合成 loopback OAuth。浏览器脚本允许访问临时管理 origin 和合成登录页，拒绝其他地址；设备码在合成验证页确认，备用回调只读取合成链接而不访问真实 localhost callback 端口。截图只用合成数据并掩码敏感输入，日志与 DB/WAL 核对无合成 token、主密钥、user code 或 device_auth_id 原文；不替代真实订阅或 Desktop 验收。
 
 
 ## Dispatch 准备与持久快照

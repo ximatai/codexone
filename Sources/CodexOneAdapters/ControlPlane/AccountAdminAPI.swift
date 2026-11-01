@@ -86,7 +86,17 @@ public struct AccountAdminAPI: Sendable {
       guard let owner = request.storage[AdminOwnerKey.self] else {
         throw ExecutionError.unauthorized
       }
-      let document = try Self.body(request, allowed: ["target"])
+      let document = try Self.body(request, allowed: ["target"], optional: ["method"])
+      let method: AccountAuthorizationMethod
+      if document["method"] == nil {
+        method = .device
+      } else if let raw = document["method"]?.string,
+        let parsed = AccountAuthorizationMethod(rawValue: raw)
+      {
+        method = parsed
+      } else {
+        throw ExecutionError.invalidCommand
+      }
       let target: AccountAuthorizationTarget
       if document["target"] == .null {
         target = .create
@@ -96,12 +106,28 @@ public struct AccountAdminAPI: Sendable {
         else { throw ExecutionError.invalidCommand }
         target = .reauthorize(id: id, revision: revision)
       }
-      let started = try await authorization.begin(owner: owner, target: target)
-      return try Self.response(
-        .object([
-          "flowID": .string(started.flowID), "authorizationURL": .string(started.authorizationURL),
-          "expiresInSeconds": .number(Decimal(started.expiresInSeconds)),
-        ]))
+      let started = try await authorization.begin(owner: owner, target: target, method: method)
+      var dto: [String: JSONValue] = [
+        "flowID": .string(started.flowID), "method": .string(started.method.rawValue),
+        "expiresInSeconds": .number(Decimal(started.expiresInSeconds)),
+      ]
+      if method == .callback { dto["authorizationURL"] = .string(started.authorizationURL) }
+      if let code = started.userCode { dto["userCode"] = .string(code) }
+      if let url = started.verificationURL { dto["verificationURL"] = .string(url) }
+      if let interval = started.intervalSeconds {
+        dto["intervalSeconds"] = .number(Decimal(interval))
+      }
+      if let failure = started.failureCode { dto["failureCode"] = .string(failure) }
+      return try Self.response(.object(dto))
+    }
+    routes.get("authorization", ":flowID") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      guard let owner = request.storage[AdminOwnerKey.self] else {
+        throw ExecutionError.unauthorized
+      }
+      let status = try await authorization.status(
+        owner: owner, flowID: request.parameters.get("flowID") ?? "")
+      return try Self.response(JSONValue.decode(JSONEncoder().encode(status)))
     }
     routes.post("authorization", ":flowID") { request async throws -> Response in
       guard let owner = request.storage[AdminOwnerKey.self] else {
@@ -119,7 +145,10 @@ public struct AccountAdminAPI: Sendable {
       guard let owner = request.storage[AdminOwnerKey.self] else {
         throw ExecutionError.unauthorized
       }
-      await authorization.discard(owner: owner, flowID: request.parameters.get("flowID") ?? "")
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let id = request.parameters.get("flowID") ?? ""
+      _ = try await authorization.status(owner: owner, flowID: id)
+      await authorization.discard(owner: owner, flowID: id)
       return try Self.response(.object(["discarded": .bool(true)]))
     }
   }
@@ -147,7 +176,9 @@ public struct AccountAdminAPI: Sendable {
       "createdAtUnixSeconds": .number(Decimal(account.createdAtUnixSeconds)),
     ])
   }
-  private static func body(_ request: Request, allowed: Set<String>) throws -> JSONValue {
+  private static func body(_ request: Request, allowed: Set<String>, optional: Set<String> = [])
+    throws -> JSONValue
+  {
     guard request.headers["content-type"].count == 1,
       request.headers.first(name: "content-type")?.lowercased().split(separator: ";").first?
         .trimmingCharacters(in: .whitespaces) == "application/json",
@@ -155,7 +186,9 @@ public struct AccountAdminAPI: Sendable {
       let buffer = request.body.data
     else { throw ExecutionError.invalidCommand }
     let document = try JSONValue.decode(Data(buffer.readableBytesView))
-    guard let object = document.object, Set(object.keys) == allowed else {
+    guard let object = document.object, allowed.isSubset(of: Set(object.keys)),
+      Set(object.keys).isSubset(of: allowed.union(optional))
+    else {
       throw ExecutionError.invalidCommand
     }
     return document

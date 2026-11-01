@@ -1,6 +1,7 @@
 export interface SystemStatus {
   service: "codexone";
   ready: boolean;
+  transportMode?: "loopback" | "lan_http";
   checks: { name: string; ready: boolean }[];
 }
 
@@ -11,7 +12,9 @@ export function parseSystemStatus(value: unknown): SystemStatus {
   if (
     data.service !== "codexone" ||
     typeof data.ready !== "boolean" ||
-    !Array.isArray(data.checks)
+    !Array.isArray(data.checks) ||
+    (data.transportMode !== undefined &&
+      !["loopback", "lan_http"].includes(data.transportMode as string))
   ) {
     throw new Error("Invalid system response");
   }
@@ -25,7 +28,14 @@ export function parseSystemStatus(value: unknown): SystemStatus {
       throw new Error("Invalid system response");
     }
   }
-  return { service: "codexone", ready: data.ready, checks: data.checks };
+  return {
+    service: "codexone",
+    ready: data.ready,
+    checks: data.checks,
+    ...(data.transportMode === undefined
+      ? {}
+      : { transportMode: data.transportMode as SystemStatus["transportMode"] }),
+  };
 }
 
 export async function fetchSystemStatus(

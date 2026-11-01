@@ -21,6 +21,8 @@ final class AdminSessions: Sendable {
     var sessions: [String: Session] = [:]
   }
   static let cookieName = "__Host-codexone_admin"
+  let isLANHTTP: Bool
+  var sessionCookieName: String { isLANHTTP ? "codexone_admin" : Self.cookieName }
   private let digest: String
   private let publicOrigin: String?
   static let idleLifetime = 24 * 60 * 60
@@ -30,11 +32,16 @@ final class AdminSessions: Sendable {
   private let now: @Sendable () -> ContinuousClock.Instant
 
   init(
-    digest: String, publicOrigin: String?,
+    digest: String, publicOrigin: String?, listenAddress: String? = nil,
     now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
   ) throws {
     self.digest = digest
-    self.publicOrigin = try publicOrigin.map(Self.canonicalOrigin)
+    self.publicOrigin = try publicOrigin.map {
+      try Self.canonicalOrigin($0, listenAddress: listenAddress)
+    }
+    isLANHTTP =
+      self.publicOrigin?.hasPrefix("http://") == true
+      && !["127.0.0.1", "localhost"].contains(URLComponents(string: self.publicOrigin!)!.host!)
     self.now = now
   }
   func bind(port: Int) {
@@ -129,7 +136,7 @@ final class AdminSessions: Sendable {
     let matches = values[0].split(separator: ";").compactMap { component -> String? in
       let pair = component.trimmingCharacters(in: .whitespaces).split(
         separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-      guard pair.count == 2, pair[0] == Self.cookieName else { return nil }
+      guard pair.count == 2, pair[0] == sessionCookieName else { return nil }
       return String(pair[1])
     }
     guard matches.count == 1, matches[0].hasPrefix("as1_"), matches[0].utf8.count == 47,
@@ -140,13 +147,16 @@ final class AdminSessions: Sendable {
     else { throw ExecutionError.unauthorized }
     return matches[0]
   }
-  static func canonicalOrigin(_ input: String) throws -> String {
+  static func canonicalOrigin(_ input: String, listenAddress: String? = nil) throws -> String {
     guard input.utf8.count <= 2048, input.utf8.allSatisfy({ $0 > 32 && $0 < 127 }),
       var url = URLComponents(string: input), url.user == nil, url.password == nil,
       url.query == nil, url.fragment == nil, ["", "/"].contains(url.path),
       let host = url.host, !host.isEmpty,
       url.port == nil || (1...65535).contains(url.port!),
-      url.scheme == "https" || (url.scheme == "http" && ["127.0.0.1", "localhost"].contains(host))
+      url.scheme == "https"
+        || (url.scheme == "http"
+          && (["127.0.0.1", "localhost"].contains(host)
+            || matchesListenAddress(host, listenAddress)))
     else { throw ExecutionError.invalidCommand }
     url.host = host.lowercased()
     url.path = ""
@@ -155,6 +165,16 @@ final class AdminSessions: Sendable {
     }
     guard let normalized = url.string else { throw ExecutionError.invalidCommand }
     return normalized
+  }
+  private static func matchesListenAddress(_ host: String, _ listenAddress: String?) -> Bool {
+    guard let listenAddress, let ip = IPAddress(listenAddress),
+      (try? ListenerConfiguration(address: listenAddress)) != nil
+    else { return false }
+    return ip == IPAddress(host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")))
+  }
+  func cookie(_ token: String, age: Int) -> String {
+    sessionCookieName + "=" + token + "; Path=/; Max-Age=\(age); HttpOnly;"
+      + (isLANHTTP ? "" : " Secure;") + " SameSite=Strict"
   }
   private static func nonce(prefix: String) -> String {
     prefix + String(generateKeySecret().dropFirst(4))

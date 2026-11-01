@@ -308,7 +308,7 @@ def verify_account_configuration(binary):
         cookie, csrf = login(f)
         auth = dict(cookie=cookie, csrf=csrf, origin=f.origin)
         assert document(request(port, 'GET', '/api/accounts', cookie=cookie))['accounts'] == []
-        flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None}, **auth))
+        flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None, 'method': 'callback'}, **auth))
         assert flow['authorizationURL'].startswith('https://auth.openai.com/oauth/authorize?')
         # Wrong state consumes before any network dispatch, then replay conflicts.
         body = {'callbackURL': 'http://localhost:1455/auth/callback?code=synthetic&state=wrong'}

@@ -12,6 +12,8 @@
 | `CODEXONE_IDENTITY_CONFIG` | [受控单身份配置](../development/single-identity.md)，主要用于合成验证 |
 | `CODEXONE_ADMIN_TOKEN_FILE` | 独立管理员秘密文件，非数据 Key |
 | `CODEXONE_ACCOUNT_MASTER_KEY_FILE` | 独立 32 字节 hex 主密钥或私有 keyring |
+| `CODEXONE_LISTEN_ADDRESS` | 空为仅回环；显式私有 IP 增加数据/管理第二监听，范围与拒绝规则见 [O12](specs/operations.md#o12基础进程与健康契约) |
+| `CODEXONE_ALLOWED_NETWORKS` | 空为私有网段加回环；可逗号分隔 CIDR 收窄第二监听的来源，最多 64 项 |
 | `CODEXONE_ADMIN_PUBLIC_ORIGIN` | 与浏览器地址完全一致的受信 origin |
 | `CODEXONE_WEB_DIRECTORY` | 管理 SPA 目录，启动加载安全快照 |
 | `CODEXONE_BACKUP_DIRECTORY` | 已存在的私有备份绝对目录；省略则不启用在线备份 |
