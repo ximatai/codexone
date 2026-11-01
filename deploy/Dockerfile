@@ -25,7 +25,7 @@ RUN set -eu; npm ls --omit=dev --all --parseable > /tmp/runtime-dependencies; \
         -exec cp --parents --target-directory="/licenses/$relative" -- {} +; \
     done < /tmp/runtime-dependencies
 
-FROM ${SWIFT_BUILD_IMAGE} AS backend
+FROM ${SWIFT_BUILD_IMAGE} AS verification-tools
 # Optional Ubuntu mirror for this install only; the original sources are restored afterwards.
 ARG APT_MIRROR=
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
@@ -33,6 +33,8 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources 
     && apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 openssl \
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 WORKDIR /build
+
+FROM verification-tools AS backend
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
 COPY Tests/ Tests/
@@ -46,13 +48,12 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
     && swift build --force-resolved-versions --build-system native -c release --product codexone -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc ${SWIFT_BATCH_LIMIT} \
     && mkdir /output && cp .build/release/codexone /output/codexone \
-    && strip --strip-debug /output/codexone
-RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
-    mkdir /output/licenses && cd .build/checkouts \
+    && strip --strip-debug /output/codexone \
+    && mkdir /output/licenses && cd .build/checkouts \
     && find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
        -exec cp --parents --target-directory=/output/licenses -- {} +
 
-FROM backend AS verification
+FROM backend AS verification-binaries
 # Test-only fixture executable; it is never copied into the runtime image.
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     --mount=type=bind,from=swiftpm-mirrors,target=/mirrors \
@@ -62,6 +63,11 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
     && swift build --force-resolved-versions --build-system native -c release --product ExecutionProbe -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc ${SWIFT_BATCH_LIMIT} \
     && cp .build/release/ExecutionProbe /output/ExecutionProbe
+
+FROM scratch AS verification-export
+COPY --from=verification-binaries /output/codexone /output/ExecutionProbe /
+
+FROM verification-binaries AS verification
 COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
     && python3 scripts/verify_websocket.py --binary /output/codexone \
