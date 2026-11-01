@@ -16,7 +16,7 @@
 - E07：同 lane FIFO，跨 lane 有总容量限制；每个上游 socket 单 reader、串行 writer，禁止共享迭代器并发读取或交错消息分片。
 - E08：任务/continuation 必须有 owner 和单次结束路径；队列按字节与条目双限，入 task/actor mailbox 前取得容量。慢消费者/拥塞超时关闭整连接，并逐 turn 最终化。
 - E09：channel inactive、超时和显式取消汇入统一关闭路径，关闭 I/O 并取消/等待子任务；网络关闭不得反向等待结算造成循环。原生 WS 的下游关闭先按 [P14a](protocol.md#p14a原生-ws-客户端控制与前向兼容)停止接收并进行最多 10 秒的有界终态续读；直连与 TLS 反代适用同一契约，不能把下游关闭误等同于立即关闭上游。
-- E10：warmup、生成、后台执行不能混用生命周期或默认假设免费；只开放有独立契约和验收的模式。未知终态不能伪造成成功。
+- E10：warmup、生成、后台执行不能混用生命周期或默认假设免费；只开放有独立契约和验收的模式。未知终态不能伪造成成功。I22 的 priming 使用同一准入/finalizer 责任，以内部主体记录，丢弃输出不代表免费或无需结算。
 
 运行 owner 与依赖位置见 [ownership](../../architecture/ownership.md)，能力与重试规则见 [protocol](protocol.md)。
 

@@ -193,6 +193,14 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 设置显示默认关闭与周期、提前小时范围、无到期卡跳过；设置可在禁用/待重授权账号保存，但自动执行只认 enabled/ready。`reset_credits` attention 链接账号详情，detail.code 为 reset/unknown/repeated_failure，不带提供者原文或请求 ID。
 
+## A19：账号空闲窗口预热设置
+
+GET/PUT `/api/accounts/:id/quota-priming` 继承 A10/A11 管理认证、精确 Origin/CSRF、共享并发、8 KiB、no-store，拒绝 query 和未知/重复字段；普通数据 Key 无权限。GET 返回 revision、settings（enabled、可空/缺省 model、message）、models（当前配置对话模型）、defaultModel、lastAttemptAt、lastResult、attention（均可空）。默认 false/hello，未存 model 时使用 defaultModel。
+
+PUT 严格要求 revision、enabled、model、message，model 必须在当前配置中，消息约束见 I22；无模型无法保存启用，非法输入 400，账号 revision CAS 冲突 409，成功递增修订。设置可在禁用或待重授权账号保存；实际发送重新检查 I22。模型移除和三次失败自动关闭也推进账号修订，不覆盖管理员并发修改；保存设置不解除窗口屏障。
+
+lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结果与 usage 完整度分开理解；unknown 不自动重发。`quota_priming` warning attention 的 detail.code 为 model_removed/repeated_failure，链接账号详情。UI 提供默认关闭开关、配置模型下拉、纯文本编辑和字符计数、最近时间/结果；说明合成流量消耗额度及可能增加风控/账号受限风险，无时间段/推理/输出上限编辑入口。
+
 ## 相关文档
 
 [文档导航](../../README.md)

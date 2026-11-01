@@ -33,6 +33,9 @@ python3 compose-install.py ps
 
 恢复旧快照会丢失新区间的本地记录，但不会撤销上游已执行请求。应先保存新库 bundle，按维护态流程披露缺失区间并核对；不得恢复旧余额、自动退款或重放未知请求。不要运行 `down -v`。
 
+
+开发分支的同一 v11 迁移包含空闲配额窗口预热设置/屏障/审计。预热恢复后默认关闭，窗口屏障保留，未知生成不自动重发；回退保留对应账本证据。未发布旧开发 v11 库须从 v10 备份迁移或重建，不能只改 user_version。
+
 ## 相关文档
 
 [主密钥](../operations/master-key-maintenance.md) · [快照维护](../operations/snapshot-maintenance.md) · [版本规则](../development/releasing.md)
