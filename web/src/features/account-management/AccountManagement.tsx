@@ -1,3 +1,4 @@
+import { QuotaPriming } from "./QuotaPriming";
 import { ResetCredits } from "./ResetCredits";
 import { authorizationFailureMessage } from "./authorization-failure";
 import {
@@ -467,6 +468,14 @@ export function AccountManagement() {
             </section>
             <ResetCredits
               key={`reset-${account.id}`}
+              account={account}
+              disabled={blocked}
+              reloadToken={state.readAt}
+              mutation={state.mutation}
+              onUnauthorized={state.invalidate}
+            />
+            <QuotaPriming
+              key={`priming-${account.id}`}
               account={account}
               disabled={blocked}
               reloadToken={state.readAt}

@@ -185,6 +185,16 @@ test("round two overview, usage, account name and key expiration", async ({
           totalMilliseconds: 34,
         })),
       };
+    } else if (path.endsWith("/quota-priming")) {
+      json = {
+        revision: account.revision,
+        settings: { enabled: false, model: null, message: "hello" },
+        models: ["synthetic-text"],
+        defaultModel: "synthetic-text",
+        lastAttemptAt: null,
+        lastResult: null,
+        attention: null,
+      };
     } else throw new Error("Unmocked synthetic API " + path);
     return route.fulfill({ json });
   });

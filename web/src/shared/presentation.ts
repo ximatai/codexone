@@ -74,6 +74,7 @@ export const failures: Record<string, string> = {
   indeterminate: "执行结果未明",
 };
 export const modes: Record<string, string> = {
+  priming: "配额窗口预热",
   generation: "生成",
   warmup: "预热",
   compact: "压缩",

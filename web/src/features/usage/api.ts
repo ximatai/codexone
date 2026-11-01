@@ -280,7 +280,7 @@ export function parseUsage(raw: unknown): UsageReport {
         item.totalMilliseconds == null ? null : integer(item.totalMilliseconds),
       keyID: text(item.keyID),
       model: nullableText(item.model, 128),
-      mode: oneOf(item.mode, ["generation", "warmup", "compact"]),
+      mode: oneOf(item.mode, ["generation", "warmup", "compact", "priming"]),
       accountID: nullableText(item.accountID),
       requestID: nullableText(item.requestID),
       state: optionalEnum(item.state, [
