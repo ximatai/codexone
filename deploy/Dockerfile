@@ -21,7 +21,7 @@ RUN set -eu; npm ls --omit=dev --all --parseable > /tmp/runtime-dependencies; \
       case "$dependency" in /build/web/node_modules/*) ;; *) continue ;; esac; \
       relative="${dependency#/build/web/node_modules/}"; mkdir -p "/licenses/$relative"; \
       cd "$dependency"; \
-      find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
+      find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
         -exec cp --parents --target-directory="/licenses/$relative" -- {} +; \
     done < /tmp/runtime-dependencies
 
@@ -49,7 +49,7 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
     && strip --strip-debug /output/codexone
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     mkdir /output/licenses && cd .build/checkouts \
-    && find . -type f \( -iname 'license*' -o -iname 'notice*' -o -iname 'copying*' \) \
+    && find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
        -exec cp --parents --target-directory=/output/licenses -- {} +
 
 FROM backend AS verification
