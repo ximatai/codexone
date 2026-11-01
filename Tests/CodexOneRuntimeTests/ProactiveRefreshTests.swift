@@ -34,12 +34,16 @@ private actor ProactiveProvider: AccountRefreshProvider, AccountQuotaProvider {
     return try SubscriptionQuota(limits: [])
   }
 }
+/// Waits on elapsed time, not a yield count: storage work runs off the cooperative pool, so a
+/// slow runner can exhaust any fixed number of yields before it completes.
 private func spinUntil(_ condition: @Sendable () async throws -> Bool) async throws {
-  for _ in 0..<100_000 {
+  let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+  while ContinuousClock.now < deadline {
     if try await condition() { return }
-    await Task.yield()
+    try await Task.sleep(for: .milliseconds(1))
   }
-  throw AccountRefreshError.unavailable
+  Issue.record("Condition not reached within 30 seconds")
+  throw CancellationError()
 }
 
 @Test(.timeLimit(.minutes(1)))
