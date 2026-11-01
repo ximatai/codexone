@@ -170,6 +170,14 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await store.bind(attempt: "a", object: .init(type: "response", rawID: "r"))
   }
+  #expect(!store.isAvailable)
+  #expect(!store.isAdmissionReady)
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await store.admit(admission("blocked"))
+  }
+  // RAISE(ABORT) rolls back the binding, but cannot clear the latched core fault.
+  // The next monitor cycle propagates it even if subsequent SQL would be writable.
+  await #expect(throws: ExecutionError.storageUnavailable) { try await store.maintainStorage() }
   await #expect(throws: ExecutionError.unknownObject) {
     try await store.resolve(principal: "p", object: .init(type: "response", rawID: "r"))
   }

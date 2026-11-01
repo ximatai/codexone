@@ -12,12 +12,35 @@ import selectors
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from browser_env import browser_env
 
 TOKEN = "synthetic-client-token-for-local-tests"
+GATEWAY_OUTPUT_LIMIT = 65536
+
+
+def dump_gateway_failure(process, *, output=b""):
+    """Snapshot a synthetic gateway before cleanup, without waiting for pipe EOF."""
+    status = process.poll()
+    captured = getattr(process, "gateway_startup_output", b"") + output
+    # Bound both pipe draining and the printed tail, including a noisy live child.
+    if process.stdout is not None and not process.stdout.closed:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            remaining = GATEWAY_OUTPUT_LIMIT
+            while remaining and selector.select(timeout=0):
+                chunk = os.read(process.stdout.fileno(), min(8192, remaining))
+                if not chunk:
+                    break
+                captured += chunk
+                remaining -= len(chunk)
+    for marker in getattr(process, "gateway_redactions", (TOKEN,)):
+        captured = captured.replace(marker.encode(), b"[redacted]")
+    tail = captured[-GATEWAY_OUTPUT_LIMIT:].decode(errors="replace")
+    print(f"Gateway failure: process.poll()={status!r}; stdout/stderr tail (bounded):\n{tail}", file=sys.stderr)
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -184,6 +207,8 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
     if account_master_key_file is not None:
         environment['CODEXONE_ACCOUNT_MASTER_KEY_FILE'] = str(account_master_key_file)
     process = subprocess.Popen([binary], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    process.gateway_startup_output = b""
+    process.gateway_redactions = (TOKEN, str(directory), str(binary), "synthetic-header", "synthetic output")
     try:
         ports = {}
         output = b""
@@ -194,12 +219,14 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
                 assert process.poll() is None, "Configured gateway exited"
                 for key, _ in selector.select(timeout=0.2):
                     output += os.read(key.fd, 8192)
+                    process.gateway_startup_output = output[-GATEWAY_OUTPUT_LIMIT:]
                     assert len(output) < 131072
                     for name, port in re.findall(rb"LISTENING (data|admin) 127\.0\.0\.1:(\d+)", output):
                         ports[name.decode()] = int(port)
             assert len(ports) == 2, "Configured gateway did not listen"
         return process, ports
     except BaseException:
+        dump_gateway_failure(process)
         stop(process)
         raise
 
@@ -277,6 +304,9 @@ def verify_model_profiles(binary):
                         else:
                             assert status == 503 and b"model_catalog_unavailable" in body and b'"models"' not in body
                 assert not sqlite3.connect(root / "state/core.sqlite").execute("SELECT 1 FROM attempts").fetchall()
+            except BaseException:
+                dump_gateway_failure(process)
+                raise
             finally:
                 stop(process)
     print("PASS: Codex catalog requires explicit complete profiles; parsed version queries select view, not authorization; OpenAI model list remains available")
@@ -308,6 +338,7 @@ def main():
                 "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1"}))
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, directory)
+            output = b""
             try:
                 port = ports["data"]
                 db_path = directory / "state/core.sqlite"
@@ -391,18 +422,6 @@ def main():
                 assert upstream.cancelled.wait(timeout=5), "Upstream socket was not cancelled after downstream close"
                 latest(db_path, "unknown")
                 print("PASS: downstream close cancels silent upstream and finalizes unknown execution")
-                with sqlite3.connect(db_path) as db:
-                    db.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
-                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})
-                assert status == 503 and b"resp_" not in body
-                assert latest(db_path, "settled")["inputTokens"] == 5
-                assert connect(port, "GET", "/health/ready")[0] == 503
-                if args.web_smoke:
-                    web_smoke(ports["admin"], "not-ready")
-                count = upstream.calls
-                assert connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})[0] == 503
-                assert upstream.calls == count
-                print("PASS: binding write failure blocks exposure and later dispatch, preserves usage and lowers readiness")
                 process.terminate()
                 exit_code = process.wait(timeout=8)
                 output = process.stdout.read()
@@ -415,6 +434,37 @@ def main():
                         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         probe.bind(("127.0.0.1", bound_port))
                 print("PASS: configured protocol shutdown awaits sockets and avoids payload/credential/path logging")
+                stop(process)
+                process, ports = start(str(args.binary.resolve()), configuration, directory)
+                output = b""
+                port = ports["data"]
+                with sqlite3.connect(db_path) as db:
+                    mark = db.execute("SELECT coalesce(max(rowid),0) FROM attempts").fetchone()[0]
+                    db.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
+                count = upstream.calls
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})
+                assert status == 503 and b"resp_" not in body
+                # Core failure shuts down the ServiceGroup (I20/O09). Do not race a ready
+                # probe or SIGTERM against that failure, or mistake it for capacity pressure.
+                assert process.wait(timeout=8) == 1
+                output = process.stdout.read()
+                assert b"Service startup or shutdown failed." in output
+                for marker in (TOKEN, "synthetic-header", "synthetic output", str(directory)):
+                    assert marker.encode() not in output
+                for bound_port in ports.values():
+                    with socket.socket() as probe:
+                        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        probe.bind(("127.0.0.1", bound_port))
+                with sqlite3.connect(db_path) as db:
+                    rows = db.execute("SELECT id,state,usage_json FROM attempts WHERE rowid>?", (mark,)).fetchall()
+                    assert len(rows) == 1 and rows[0][1] == "settled", rows
+                    assert json.loads(rows[0][2])["inputTokens"] == 5
+                    assert db.execute("SELECT COUNT(*) FROM bindings WHERE attempt=?", (rows[0][0],)).fetchone()[0] == 0
+                assert upstream.calls == count + 1
+                print("PASS: binding failure hides IDs, preserves trusted usage and exits with both listeners released")
+            except BaseException:
+                dump_gateway_failure(process, output=output)
+                raise
             finally:
                 stop(process)
     finally:

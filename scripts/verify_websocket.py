@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 import argparse
-from verify_protocol import TOKEN, connect, start, stop, latest
+from verify_protocol import TOKEN, connect, start, stop, latest, dump_gateway_failure
 
 
 def exact(sock, size):
@@ -145,6 +145,12 @@ class Provider(BaseHTTPRequestHandler):
                 if create['input'] == 'invalid-upstream-lane':
                     lane = {'stream_id': 'invalid lane'}
                 send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}, **lane})
+                if create['input'] == 'barrier-failure':
+                    # Keep this fixture free of terminal evidence regardless of CPU scheduling.
+                    # The failed binding must close the upstream before any ID can be exposed.
+                    self.connection.settimeout(5)
+                    assert receive(self.connection, masked=True)[0] == 8
+                    return
                 if create['input'] in ('multi-slow', 'mixed-known'):
                     pending = (lane, response)
                     continue
@@ -216,6 +222,7 @@ def main():
                 'upstreamBaseURL': f'http://127.0.0.1:{provider.server_port}/v1', 'upstreamTransport': 'websocket'}))
             config.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), config, directory)
+            output = b''
             db = directory / 'state/core.sqlite'
             try:
                 with dial(ports['data'], extension_offer=True) as downstream:
@@ -416,15 +423,6 @@ def main():
                     assert provider.stalled.wait(3)
                 assert provider.cancelled.wait(12)
                 latest(db, 'unknown')
-                with sqlite3.connect(db) as connection:
-                    connection.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
-                with dial(ports['data']) as downstream:
-                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'barrier-failure'})
-                    assert events[-1]['type'] == 'error' and b'resp_' not in json.dumps(events).encode()
-                # response.created failed before a terminal was read; intent remains unknown.
-                latest(db, 'unknown')
-                assert connect(ports['data'], 'GET', '/health/ready')[0] == 503
-                print('PASS: queued default-lane turns preserve FIFO; persistent binding failure prevents ID exposure')
                 # Include an accepted socket whose HTTP/upgrade head never completes at shutdown.
                 pending = socket.create_connection(('127.0.0.1', ports['data']), timeout=5)
                 pending.sendall(b'GET /v1/responses HTTP/1.1\r\n')
@@ -440,6 +438,46 @@ def main():
                 output = process.stdout.read()
                 assert TOKEN.encode() not in output and temporary.encode() not in output
                 print('PASS: silent downstream close cancels provider; shutdown owns pending negotiations and releases sockets')
+                stop(process)
+                process, ports = start(str(args.binary.resolve()), config, directory)
+                output = b''
+                with sqlite3.connect(db) as connection:
+                    mark = connection.execute('SELECT coalesce(max(rowid),0) FROM attempts').fetchone()[0]
+                    connection.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
+                count = provider.calls
+                with dial(ports['data']) as downstream:
+                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'barrier-failure'})
+                    assert events[-1]['type'] == 'error' and b'resp_' not in json.dumps(events).encode()
+                # A core fault latches admission closed; StorageMonitor propagates it to the
+                # ServiceGroup. A ready probe races listener teardown (I20, O09, E03/E05).
+                assert process.wait(timeout=8) == 1
+                output = process.stdout.read()
+                assert b'Service startup or shutdown failed.' in output
+                assert TOKEN.encode() not in output and temporary.encode() not in output
+                for port in ports.values():
+                    with socket.socket() as probe:
+                        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        probe.bind(('127.0.0.1', port))
+                with sqlite3.connect(db) as connection:
+                    rows = connection.execute('SELECT id,state,usage_json FROM attempts WHERE rowid>?', (mark,)).fetchall()
+                    # Shutdown can precede finalization; E05 permits durable intent until recovery.
+                    assert len(rows) == 1 and rows[0][1] in ('intent', 'unknown') and rows[0][2] is None, rows
+                    attempt = rows[0][0]
+                    assert connection.execute('SELECT COUNT(*) FROM bindings WHERE attempt=?', (attempt,)).fetchone()[0] == 0
+                    connection.execute('DROP TRIGGER fail_binding')
+                assert provider.calls == count + 1
+                stop(process)
+                process, ports = start(str(args.binary.resolve()), config, directory)
+                output = b''
+                assert connect(ports['data'], 'GET', '/health/ready')[0] == 200
+                with sqlite3.connect(db) as connection:
+                    assert connection.execute('SELECT state,usage_json FROM attempts WHERE id=?', (attempt,)).fetchone() == ('unknown', None)
+                    assert connection.execute('SELECT COUNT(*) FROM attempts WHERE rowid>?', (mark,)).fetchone()[0] == 1
+                assert provider.calls == count + 1, 'Restart replayed an unknown execution'
+                print('PASS: binding failure hides IDs; core fault exits and releases listeners; restart preserves unknown without replay')
+            except BaseException:
+                dump_gateway_failure(process, output=output)
+                raise
             finally:
                 stop(process)
     finally:

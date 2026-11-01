@@ -19,6 +19,7 @@
   ],
   [
     "verify_protocol.py",
+    "verify_gateway_diagnostics.py",
     "verify_client_protocol.py",
     "verify_websocket.py",
     "verify_admin_assets.py",
