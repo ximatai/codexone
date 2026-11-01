@@ -1,6 +1,7 @@
 import { render } from "../../../tests/render";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useEffect, useState } from "react";
 import { UsageOverview } from "./UsageOverview";
 import * as api from "./api";
 import { reportFixture } from "./usage.test-data";
@@ -494,4 +495,97 @@ it("P2-2 P2-5 preserves POP scroll through a slow failed restore and retry", asy
   fireEvent.click(screen.getByRole("button", { name: "重试翻页" }));
   await waitFor(() => expect(scroll).toHaveBeenCalledWith(0, 900));
   expect(screen.getByText("第 2 页")).toBeVisible();
+});
+
+// Mirrors UsagePage: onApplied writes filters/page back into the props, but the
+// test decides when that URL echo arrives relative to the user's next action.
+function EchoingOverview({
+  echoes,
+  view,
+}: {
+  echoes: (() => void)[];
+  view: { filters: api.UsageFilters; page: number };
+}) {
+  const [shown, setShown] = useState(view);
+  useEffect(() => setShown(view), [view]);
+  return (
+    <UsageOverview
+      initialFilters={shown.filters}
+      requestedPage={shown.page}
+      selection={null}
+      paused={false}
+      onUnauthorized={vi.fn()}
+      onApplied={(filters, navigation) =>
+        echoes.push(() =>
+          setShown({ filters: { ...filters }, page: navigation?.page ?? 0 }),
+        )
+      }
+    />
+  );
+}
+
+it("a late URL echo of the applied view keeps the user's next-page read running", async () => {
+  setup();
+  const echoes: (() => void)[] = [];
+  render(
+    <EchoingOverview
+      echoes={echoes}
+      view={{ filters: api.defaults(), page: 0 }}
+    />,
+  );
+  await screen.findByText("第 1 页");
+  act(() => echoes.shift()!());
+  // The user applies a new filter; its URL echo is still pending.
+  fireEvent.change(screen.getByLabelText("Key 主体"), {
+    target: { value: "beta" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "查询用量" }));
+  await waitFor(() => expect(echoes).toHaveLength(1));
+  let finish!: (value: api.UsageReport) => void;
+  let signal: AbortSignal | undefined;
+  vi.mocked(api.fetchUsage).mockImplementationOnce((_f, _c, owned) => {
+    signal = owned;
+    return new Promise((resolve) => (finish = resolve));
+  });
+  fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+  await waitFor(() => expect(signal).toBeDefined());
+  // The filter's echo lands after the click.
+  act(() => echoes.shift()!());
+  expect(signal!.aborted).toBe(false);
+  await act(async () => finish(api.parseUsage(reportFixture())));
+  expect(await screen.findByText("第 2 页")).toBeVisible();
+  expect(screen.getByRole("button", { name: "查询用量" })).toBeEnabled();
+});
+
+it("navigating back to the shown view retires an in-flight read and clears busy", async () => {
+  setup();
+  const echoes: (() => void)[] = [];
+  const shown = { filters: api.defaults(), page: 0 };
+  const view = render(<EchoingOverview echoes={echoes} view={shown} />);
+  await screen.findByText("第 1 页");
+  act(() => echoes.shift()!());
+  let signal: AbortSignal | undefined;
+  vi.mocked(api.fetchUsage).mockImplementationOnce((_f, _c, owned) => {
+    signal = owned;
+    return new Promise(() => {});
+  });
+  // A route change to another view starts a read; POP back to S before it ends.
+  view.rerender(
+    <EchoingOverview
+      echoes={echoes}
+      view={{ filters: { ...shown.filters, key: "beta" }, page: 0 }}
+    />,
+  );
+  await waitFor(() => expect(signal).toBeDefined());
+  expect(screen.getByRole("button", { name: "正在查询…" })).toBeDisabled();
+  view.rerender(
+    <EchoingOverview
+      echoes={echoes}
+      view={{ filters: { ...shown.filters }, page: 0 }}
+    />,
+  );
+  await waitFor(() => expect(signal!.aborted).toBe(true));
+  expect(screen.getByRole("button", { name: "查询用量" })).toBeEnabled();
+  expect(screen.getByText("第 1 页")).toBeVisible();
+  expect(screen.getByLabelText("Key 主体")).toHaveValue("");
 });

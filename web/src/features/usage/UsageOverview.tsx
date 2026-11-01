@@ -155,7 +155,20 @@ export function UsageOverview({
   const initial = useRef(initialFilters);
   initial.current = initialFilters;
   const filterIdentity = JSON.stringify(initialFilters);
+  // The view this owner last reported through onApplied. Its URL echo must not
+  // retire a newer read the user started meanwhile (for example the next page).
+  const appliedEcho = useRef<string | null>(null);
   const optionsLoaded = useRef(false);
+  useEffect(
+    () => () => {
+      // Unmount retires whichever read is current; route echoes do not.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      ++epoch.current;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      controller.current?.abort();
+    },
+    [],
+  );
   async function load(
     filters: api.UsageFilters,
     cursors: (string | null)[] = [null],
@@ -224,6 +237,7 @@ export function UsageOverview({
         scroll: restore ? restoreScroll : 0,
       };
       activeNavigation.current = navigation;
+      appliedEcho.current = usageNavigationKey(filters, index);
       onApplied?.(filters, navigation);
       setHistory(cursors);
       setPage(index);
@@ -275,19 +289,25 @@ export function UsageOverview({
       (selection
         ? { ...lastDraft.current, key: selection.keyID }
         : (lastApplied.current ?? lastDraft.current));
-    if (
-      initial.current &&
-      JSON.stringify(lastApplied.current) === JSON.stringify(next) &&
-      requestedPage === page
-    )
-      return () => {
-        // Numeric owner generation, not a rendered DOM reference.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        ++epoch.current;
-        // Abort the most recent owned read, not a DOM element captured at mount.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        controller.current?.abort();
-      };
+    if (initial.current) {
+      const identity = usageNavigationKey(next, requestedPage);
+      const echo = appliedEcho.current === identity;
+      appliedEcho.current = null;
+      if (
+        JSON.stringify(lastApplied.current) === JSON.stringify(next) &&
+        requestedPage === page
+      ) {
+        // Navigation back to the shown view supersedes an in-flight read; the
+        // echo of our own report leaves a newer user read running.
+        if (!echo) {
+          ++epoch.current;
+          controller.current?.abort();
+          setBusy(false);
+          setDraft(next);
+        }
+        return;
+      }
+    }
     setDraft(next);
     const saved = restoreView
       ? (navigationStore?.get(usageNavigationKey(next, requestedPage)) as
@@ -309,12 +329,7 @@ export function UsageOverview({
       void load(next);
     }
     if (selection) heading.current?.scrollIntoView?.({ block: "start" });
-    return () => {
-      // Numeric owner generation intentionally retires the last owned read.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      ++epoch.current;
-      controller.current?.abort();
-    };
+    // A replacing read aborts its predecessor in load(); unmount is owned above.
     // The parent owns authentication; this effect owns the read-only view's requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, paused, filterIdentity, requestedPage, restoreView]);
