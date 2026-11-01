@@ -18,7 +18,16 @@ public protocol AccountAuthorizationProvider: Sendable {
   func authorize(code: String, verifier: String, expectedNonce: String) async throws
     -> VerifiedAccountAuthorization
 }
-public struct AccountAuthorizationStart: Sendable, Encodable {
+public struct AccountAuthorizationStart: Sendable, Encodable, CustomStringConvertible,
+  CustomDebugStringConvertible
+{
+  public var description: String { "AccountAuthorizationStart(redacted)" }
+  public var debugDescription: String { description }
+  public var method: AccountAuthorizationMethod = .callback
+  public var userCode: String?
+  public var verificationURL: String?
+  public var intervalSeconds: Int?
+  public var failureCode: String?
   public let flowID: String
   public let authorizationURL: String
   public let expiresInSeconds: Int
@@ -33,6 +42,9 @@ public enum AccountAuthorizationTarget: Sendable {
   case reauthorize(id: String, revision: Int64)
 }
 public protocol AccountAuthorizing: Sendable {
+  func begin(owner: String, target: AccountAuthorizationTarget, method: AccountAuthorizationMethod)
+    async throws -> AccountAuthorizationStart
+  func status(owner: String, flowID: String) async throws -> AccountAuthorizationStatus
   func begin(owner: String, target: AccountAuthorizationTarget) async throws
     -> AccountAuthorizationStart
   func complete(owner: String, flowID: String, callbackURL: String) async throws -> ManagedAccount
