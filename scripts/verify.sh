@@ -81,8 +81,8 @@ frontend() {
     cd web
     npm run lint
     npm run format:check
-    npm run typecheck
     npm test
+    # build includes typecheck; Playwright only serves this bundle via preview.
     npm run build
     if [[ "${1:-}" == "--chrome" ]]; then
       npm run test:e2e:chrome
