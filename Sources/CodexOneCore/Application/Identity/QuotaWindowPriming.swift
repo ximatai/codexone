@@ -17,6 +17,15 @@ public struct QuotaPrimingSettings: Sendable, Equatable, Codable {
     self.message = message
   }
 }
+extension ExecutionFailure {
+  /// Failures where the provider may have accepted the request keep the priming barrier.
+  public var mayHaveStartedWindow: Bool {
+    switch self {
+    case .invalidUpstreamResponse, .deadlineExceeded, .clientCancelled, .indeterminate: true
+    default: false
+    }
+  }
+}
 public enum QuotaWindowKind: String, Sendable, Codable, CaseIterable {
   case fiveHour = "five_hour"
   case weekly
@@ -76,14 +85,42 @@ public struct QuotaPrimingState: Sendable, Codable {
   public init() throws { settings = try .init() }
   public mutating func observe(_ observation: AccountQuotaObservation, now: Int64) {
     guard let at = observation.observedAtUnixSeconds else { return }
+    var notStarted = false
     for (kind, status) in QuotaIdleDetection.windows(observation, now: now) {
-      guard case .active(let reset) = status, var saved = windows[kind.rawValue],
+      guard var saved = windows[kind.rawValue], saved.awaitingActive,
         let attempted = saved.lastAttemptAt, at > attempted
       else { continue }
-      saved.awaitingActive = false
-      saved.activeResetAt = reset
+      switch status {
+      case .active(let reset):
+        saved.awaitingActive = false
+        saved.activeResetAt = reset
+        failures = 0
+      case .idle where at - attempted >= Self.notStartedSeconds:
+        // The attempt left the window idle; count it as a failure instead of blocking forever.
+        saved.awaitingActive = false
+        notStarted = true
+      default: continue
+      }
       windows[kind.rawValue] = saved
     }
+    // A failed or unknown completion already counted this attempt.
+    if notStarted && lastResult == "success" { recordFailure("not_started") }
+  }
+  /// Fresh idle evidence this long after an attempt shows the attempt did not start the window.
+  public static let notStartedSeconds: Int64 = 900
+  /// Returns true when this failure stops automatic priming.
+  @discardableResult
+  public mutating func recordFailure(_ result: String) -> Bool {
+    lastResult = result
+    failures = min(1_000_000, failures + 1)
+    guard failures >= 3, settings.enabled else { return false }
+    settings.enabled = false
+    attention = "repeated_failure"
+    return true
+  }
+  /// A definite failure releases the barrier of the windows that attempt was meant to start.
+  public mutating func releaseBarrier(_ kinds: [QuotaWindowKind]) {
+    for kind in kinds { windows[kind.rawValue]?.awaitingActive = false }
   }
   public func eligible(_ observation: AccountQuotaObservation, now: Int64) -> [QuotaWindowKind] {
     guard settings.enabled, failures < 3, !windows.values.contains(where: { $0.awaitingActive })

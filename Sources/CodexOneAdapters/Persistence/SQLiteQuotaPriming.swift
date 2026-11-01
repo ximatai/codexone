@@ -126,25 +126,32 @@ extension SQLiteExecutionStore: QuotaPrimingStore {
         [.text(command.attempt)]) == 1
     else { return }
     var state = try loadQuotaPriming(db, command.owner.identity)
-    state.lastResult = result
-    state.failures = result == "success" ? 0 : min(1_000_000, state.failures + 1)
-    if state.failures >= 3 {
-      if state.settings.enabled {
-        let account = try loadAccount(db, command.owner.identity)
-        if account.account.revision
-          < (account.account.authorization == .refreshing ? 999_999 : 1_000_000)
-        {
-          let next = try nextAccount(account.account)
-          try saveAccount(db, next, envelope: account.envelope)
-        }
+    if result == "success" {
+      // Only a later active observation proves the window started and clears failures.
+      state.lastResult = result
+    } else {
+      if let failure = ExecutionFailure(rawValue: result), !failure.mayHaveStartedWindow {
+        let kinds = try db.rows(
+          "SELECT windows_json FROM quota_priming_events WHERE id=?", [.text(command.attempt)]
+        ) { try decode([QuotaWindowKind].self, String(cString: sqlite3_column_text($0, 0))) }
+        state.releaseBarrier(kinds.first ?? [])
       }
-      state.settings.enabled = false
-      state.attention = "repeated_failure"
+      if state.recordFailure(result) { try bumpPrimingRevision(db, command.owner.identity) }
     }
     try saveQuotaPriming(db, command.owner.identity, state)
     try db.write(
       "UPDATE quota_priming_events SET result=? WHERE id=?",
       [.text(result), .text(command.attempt)])
+  }
+  /// Automatic disable is an account change, so admin CAS sees it like any other edit.
+  static func bumpPrimingRevision(_ db: SQLiteConnection, _ id: String) throws {
+    let account = try loadAccount(db, id)
+    if account.account.revision
+      < (account.account.authorization == .refreshing ? 999_999 : 1_000_000)
+    {
+      let next = try nextAccount(account.account)
+      try saveAccount(db, next, envelope: account.envelope)
+    }
   }
   static func recoverQuotaPriming(_ db: SQLiteConnection) throws {
     let commands = try db.rows(

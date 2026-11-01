@@ -131,10 +131,10 @@ private struct PrimingFixture {
     try await f.store.finalize(
       attempt: command.attempt, evidence: nil,
       outcome: .init(failure: .indeterminate, atUnixSeconds: f.time.clock.unixSeconds))
-    f.time.advance(seconds: 1)
-    try await f.observation(active: true)
-    f.time.advance(seconds: 1)
+    // Fresh idle evidence releases the barrier without counting the same attempt twice.
+    f.time.advance(seconds: QuotaPrimingState.notStartedSeconds)
     try await f.observation()
+    #expect(try await f.store.quotaPrimingState(id: "account").failures == index + 1)
     await #expect(throws: ExecutionError.denied) {
       try await f.store.admit(f.command("early-\(index)"))
     }
@@ -228,4 +228,76 @@ private struct PrimingFixture {
     #expect(body["tools"]?.array?.isEmpty == true)
     #expect(body["input"]?.array?.first?["content"] == .string("<hello>"))
   }
+}
+@Test func quotaPrimingDefiniteFailureReleasesBarrierAndRetriesAfterSpacing() async throws {
+  let f = try await PrimingFixture.make()
+  try await f.enable()
+  try await f.observation()
+  let command = try await f.command("rejected")
+  try await f.store.admit(command)
+  try await f.store.finalize(
+    attempt: command.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: f.time.clock.unixSeconds))
+  var state = try await f.store.quotaPrimingState(id: "account")
+  #expect(state.windows.values.allSatisfy { !$0.awaitingActive })
+  #expect(state.failures == 1 && state.lastResult == "upstream_unavailable")
+  f.time.advance(seconds: 60)
+  try await f.observation()
+  await #expect(throws: ExecutionError.denied) { try await f.store.admit(f.command("spaced")) }
+  f.time.advance(seconds: 3600)
+  try await f.observation()
+  try await f.store.admit(f.command("retry"))
+  state = try await f.store.quotaPrimingState(id: "account")
+  #expect(state.windows.values.allSatisfy { $0.awaitingActive })
+  await f.close()
+}
+@Test func quotaPrimingSuccessThatLeavesWindowIdleCountsAsFailureAndStops() async throws {
+  let f = try await PrimingFixture.make()
+  try await f.enable()
+  let usage = UsageEvidence(
+    revision: 1, inputTokens: 1, outputTokens: 1, cachedTokens: 0, images: 0, estimatedMicros: 2,
+    completeness: .complete)
+  try await f.observation()
+  var before: Int64 = 0
+  for index in 0..<3 {
+    let command = try await f.command("idle-\(index)")
+    try await f.store.admit(command)
+    try await f.store.finalize(
+      attempt: command.attempt, evidence: usage,
+      outcome: .init(failure: nil, atUnixSeconds: f.time.clock.unixSeconds))
+    f.time.advance(seconds: QuotaPrimingState.notStartedSeconds - 1)
+    try await f.observation()
+    let waiting = try await f.store.quotaPrimingState(id: "account")
+    #expect(waiting.windows.values.allSatisfy(\.awaitingActive) && waiting.failures == index)
+    f.time.advance(seconds: 3600)
+    // Fresh idle evidence long after the attempt releases the barrier as a failure.
+    before = try await f.store.accountCredential(id: "account").account.revision
+    try await f.observation()
+  }
+  let state = try await f.store.quotaPrimingState(id: "account")
+  #expect(state.windows.values.allSatisfy { !$0.awaitingActive })
+  #expect(
+    state.failures == 3 && state.lastResult == "not_started" && !state.settings.enabled
+      && state.attention == "repeated_failure")
+  let revision = try await f.store.accountCredential(id: "account").account.revision
+  #expect(revision == before + 1)
+  await f.close()
+}
+@Test func quotaPrimingActiveWindowClearsFailures() async throws {
+  let f = try await PrimingFixture.make()
+  try await f.enable()
+  try await f.observation()
+  let command = try await f.command("started")
+  try await f.store.admit(command)
+  try await f.store.finalize(
+    attempt: command.attempt, evidence: nil,
+    outcome: .init(failure: .deadlineExceeded, atUnixSeconds: f.time.clock.unixSeconds))
+  var state = try await f.store.quotaPrimingState(id: "account")
+  // A deadline may have reached the provider, so the barrier stays until evidence arrives.
+  #expect(state.failures == 1 && state.windows.values.allSatisfy(\.awaitingActive))
+  f.time.advance(seconds: 1)
+  try await f.observation(active: true)
+  state = try await f.store.quotaPrimingState(id: "account")
+  #expect(state.failures == 0 && state.windows.values.allSatisfy { !$0.awaitingActive })
+  await f.close()
 }

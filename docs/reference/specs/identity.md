@@ -164,7 +164,7 @@ Key 可空 displayName 使用与账号相同的校验，存入既有 Key 元数�
 
 每账号最多一个未完成 intent（服务生成 UUID redeem_request_id、可选 creditID、来源标记），发送前与审计占位同事务提交。每次网络消费占一个独立审计行（最多 4096），结果回写预留行，结束走 critical 队列，不消耗账号刷新/禁用预留；满时发送前拒绝。reset/nothing_to_reset/no_credit/already_redeemed 为终态，其他代码、断流、超时、取消和本地结果提交失败保留原 ID。下一次同卡或默认核对沿用原请求/卡；其他卡冲突，不产生新 ID。未知代码归 unknown，不记录原文。
 
-Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadHours 默认 24、范围 1—168，以账号 revision CAS 保存。每 30 分钟顺序扫描最多 64 个账号；观察快照的可用卡计数可触发同一有界提示流，仍受每账号 30 分钟门槛。仅 enabled/ready 且已开启自动使用的账号参与；手动未知 intent 只人工确认核对，自动未知 intent 优先沿原 ID 核对。新自动操作选择 now < expiresAt <= now + leadHours 的 available 卡，最早到期、同时间按 id，每账号每轮最多一张；永不自动选择无到期卡。nothing_to_reset 结束本次 intent，卡未消耗，下周期可再试。
+Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadHours 默认 24、范围 1—168，以账号 revision CAS 保存。每 30 分钟顺序扫描最多 64 个账号；观察快照的可用卡计数可触发同一有界提示流，仍受每账号 30 分钟门槛。仅 enabled/ready 且已开启自动使用的账号参与；手动未知 intent 只人工确认核对，自动未知 intent 优先沿原 ID 核对。新自动操作选择 now < expiresAt <= now + leadHours 的 available 卡，最早到期、同时间按 id，每账号每轮最多一张；永不自动选择无到期卡。nothing_to_reset 结束本次 intent，卡未消耗，下周期可再试。扫描中账号被删除或修改只跳过该账号，仅存储不可用停止 Runtime。
 
 自动操作明确返回 reset 时保留 24 小时提醒；already_redeemed 只表示原操作已处理，不推断原操作实际重置的窗口或卡消耗。未知 intent 持续 critical 提醒，连续三次失败提醒。审计仅固定动作/结果、账号 ID、卡 SHA-256、来源与时间；日志只账号 ID、卡摘要/默认标记与固定结果，不输出标题/正文/身份头。停服拒绝新工作，取消并 await 网络及 critical 收尾，未确认 intent 跨重启保留；恢复自动关闭见 O16。此能力不代表官方客户端菜单透传或按用量压力自动使用。
 
@@ -174,7 +174,7 @@ Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每�
 
 只检查 wham/usage 的 codex 主配额，窗口时长必须明确为 18000 或 604800 秒。idle 要求 used_percent=0、reset_after_seconds 等于完整时长、reset_at 与观察时刻加时长差不超过 5 秒；allowed=false、limit_reached=true、缺失、重复时长、矛盾或未知字段都不触发。观察须成功且满足 U10 的 300 秒新鲜期。0% 可能经过取整，此判定仍是保守推断，尚无真实订阅验收；无 reset 字段不视为未启动。任一已知窗口 idle 可触发一次请求，两个 idle 仍只发一次。
 
-同一正常准入事务保存每窗口最近尝试时刻、观察 reset_at、等待活跃屏障，并写独立审计占位和执行 intent；之后的空闲 reset_at 移动不算新窗口。任何已尝试窗口仍等待活跃时，整个账号都不再发送。必须有晚于尝试的新鲜成功观察证明对应窗口活跃（有未来 reset_at，已用大于零或剩余时间小于完整时长减 60 秒，reset_after 如存在须一致），并等该活跃 reset_at 到期，才允许后续预热；每窗口至少间隔一小时。重启保留屏障和 unknown，绝不重放预热。连续三次失败/未知自动关闭并提醒 repeated_failure；管理员保存可清除停止原因和失败计数，不能清除窗口屏障。
+同一正常准入事务保存每窗口最近尝试时刻、观察 reset_at、等待活跃屏障，并写独立审计占位和执行 intent；之后的空闲 reset_at 移动不算新窗口。任何已尝试窗口仍等待活跃时，整个账号都不再发送。必须有晚于尝试的新鲜成功观察证明对应窗口活跃（有未来 reset_at，已用大于零或剩余时间小于完整时长减 60 秒，reset_after 如存在须一致），并等该活跃 reset_at 到期，才允许后续预热；每窗口至少间隔一小时。确定未被提供者接受的失败（非超时、取消、无效上游响应或 indeterminate）解除对应窗口屏障；成功后尝试 900 秒以上的新鲜观察仍为空闲时解除屏障并记 not_started 失败；只有观察到窗口活跃才清零失败计数。重启保留屏障和 unknown，绝不重放预热。连续三次失败/未知/not_started 自动关闭（账号修订递增）并提醒 repeated_failure；管理员保存可清除停止原因和失败计数，不能清除窗口屏障。
 
 仅 enabled/ready、凭证有效、无认证阻止或所选模型 cooldown、账号并发低于 16、可选存储门禁开放才准入。内部 principal/key 标签 internal:quota-priming 没有凭证，不属于客户端 Key；mode=priming。复用执行协调器、账号快照/健康/并发检查、订阅身份头、配置指纹/显式代理、正常 Responses HTTP/WS、用量证据与 finalizer，不选池或跨账号重试。tools=[]、无图片/引用、store=false；固定最短回答指令、提供者目录未明确不支持时的低 verbosity、目录声明的最低推理档位（无声明采用 low）。订阅契约不支持 max_output_tokens，故不发送，不能承诺一个 token 的硬上限。输出仅丢弃，不进入正文历史。
 

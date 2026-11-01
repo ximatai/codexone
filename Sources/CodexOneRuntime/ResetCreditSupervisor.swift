@@ -145,6 +145,15 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
     }
   }
   private func cycleAccount(_ id: String) async throws {
+    do { try await automaticCycle(id) } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      // An account removed or edited mid-scan only skips that account; storage failure alone
+      // stops the Runtime, as in the other owners.
+      if error as? ExecutionError == .storageUnavailable { throw error }
+    }
+  }
+  private func automaticCycle(_ id: String) async throws {
     guard isAccepting, store.allowsOptionalStorageWork else { return }
     let account = try await store.accountCredential(id: id).account
     guard account.mode == .enabled, account.authorization == .ready else { return }

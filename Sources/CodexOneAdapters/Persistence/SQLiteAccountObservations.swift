@@ -42,7 +42,11 @@ extension SQLiteExecutionStore: AccountObservationStore {
           [.text(account.id), .text(try encode(updated))])
         var priming = try Self.loadQuotaPriming(db, account.id)
         if !priming.windows.isEmpty {
+          let enabled = priming.settings.enabled
           priming.observe(updated, now: db.clock.unixSeconds)
+          if enabled && !priming.settings.enabled {
+            try Self.bumpPrimingRevision(db, account.id)
+          }
           try Self.saveQuotaPriming(db, account.id, priming)
         }
         return updated

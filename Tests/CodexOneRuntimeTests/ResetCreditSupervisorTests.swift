@@ -215,3 +215,28 @@ func resetCreditAutomaticUnknownHintsReuseIDAndFailuresAreConsecutive() async th
   _ = await owner.result
   await f.close()
 }
+
+@Test(.timeLimit(.minutes(1)))
+func resetCreditHintForRemovedAccountKeepsRuntimeRunning() async throws {
+  let time = Mutex<Int64>(1_800_000_000)
+  let clock = WallClock { Double(time.withLock { $0 }) }
+  let f = try await RefreshFixture.make(count: 1, clock: clock)
+  let provider = try ResetProviderProbe(now: clock.unixSeconds)
+  let supervisor = try ResetCreditSupervisor(
+    store: f.store, credentials: f.app, provider: provider, clock: clock)
+  let owner = Task { try await GatewayRuntime(services: [supervisor]).run(handleSignals: false) }
+  do {
+    try await awaitRefreshCondition { supervisor.isAccepting }
+    #expect(ManagedAccount.validID("removed-account"))
+    supervisor.observedResetCredits(id: "removed-account")
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(supervisor.isAccepting)
+    #expect(await provider.listed == 0)
+  } catch {
+    owner.cancel()
+    throw error
+  }
+  owner.cancel()
+  _ = try? await owner.value
+  await f.close()
+}
