@@ -74,6 +74,21 @@ extension SQLiteUsageReader: AttentionReading {
               old.kind, critical: old.severity == "critical", type: old.subjectType,
               id: old.subjectID, name: old.subjectName, detail: detail, since: old.sinceUnixSeconds)
           }
+          let reset = try SQLiteExecutionStore.loadResetCreditState(db, id)
+          if reset.intent != nil || reset.failures >= 3
+            || reset.lastAutoResetAt.map({ now >= $0 && now - $0 < 86400 }) == true
+          {
+            accountItems.append(
+              .init(
+                "reset_credits", critical: reset.intent != nil, type: "account", id: id, name: name,
+                detail: [
+                  "code": .string(
+                    reset.intent != nil
+                      ? "unknown" : reset.failures >= 3 ? "repeated_failure" : "reset")
+                ],
+                since: reset.intent != nil || reset.failures >= 3
+                  ? reset.lastAttemptAt : reset.lastAutoResetAt))
+          }
           result += accountItems
         }
         return result

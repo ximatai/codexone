@@ -7,8 +7,10 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
   public func resetCreditState(id: String) async throws -> ResetCreditState {
     guard ManagedAccount.validID(id) else { throw ExecutionError.invalidCommand }
     return try await perform { db in
-      _ = try Self.loadAccount(db, id)
-      return try Self.loadResetCreditState(db, id)
+      let account = try Self.loadAccount(db, id).account
+      var state = try Self.loadResetCreditState(db, id)
+      state.revision = account.revision
+      return state
     }
   }
   public func setResetCreditSettings(id: String, revision: Int64, settings: ResetCreditSettings)
@@ -28,6 +30,7 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
         try Self.saveAccount(db, next, envelope: stored.envelope)
         try Self.auditAccount(db, next, action: "reset_credit_settings")
         var state = try Self.loadResetCreditState(db, id)
+        state.revision = next.revision
         state.settings = settings
         try Self.saveResetCreditState(db, id, state)
         return state
@@ -63,7 +66,9 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
           intent = .init(requestID: UUID().uuidString, creditID: creditID, automatic: automatic)
         }
         try Self.checkResetCreditAuditCapacity(db)
-        let attempt = ResetCreditAttempt(intent: intent, auditID: UUID().uuidString)
+        let attempt = ResetCreditAttempt(
+          intent: intent, auditID: UUID().uuidString,
+          creditHash: intent.creditID.map(Self.resetCreditHash))
         try Self.resetCreditAudit(
           db, id: account.id, auditID: attempt.auditID, action: "consume", code: "unknown",
           automatic: automatic, creditID: intent.creditID)
@@ -114,6 +119,16 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
       }
     }
   }
+  public func recordResetCreditPollSuccess(id: String) async throws {
+    try await perform(optional: true) { db in
+      try db.transaction {
+        var state = try Self.loadResetCreditState(db, id)
+        guard state.failures > 0, state.intent == nil else { return }
+        state.failures = 0
+        try Self.saveResetCreditState(db, id, state)
+      }
+    }
+  }
   private static func checkResetCreditAuditCapacity(_ db: SQLiteConnection) throws {
     guard try db.scalar("SELECT COUNT(*) FROM reset_credit_events") < 4096 else {
       throw ExecutionError.capacity
@@ -123,15 +138,16 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
     _ db: SQLiteConnection, id: String, auditID: String, action: String, code: String,
     automatic: Bool, creditID: String?
   ) throws {
-    let hash = creditID.map {
-      SHA256.hash(data: Data($0.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
+    let hash = creditID.map(Self.resetCreditHash)
     try db.write(
       "INSERT INTO reset_credit_events VALUES(?,?,?,?,?,?,?)",
       [
         .text(auditID), .text(id), .text(action), .text(code), .number(automatic ? 1 : 0),
         hash.map { .text($0) } ?? .null, .number(db.clock.unixSeconds),
       ])
+  }
+  private static func resetCreditHash(_ id: String) -> String {
+    SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
   }
   static func loadResetCreditState(_ db: SQLiteConnection, _ id: String) throws -> ResetCreditState
   {

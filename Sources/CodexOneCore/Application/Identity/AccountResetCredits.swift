@@ -108,6 +108,7 @@ public struct ResetCreditIntent: Sendable, Equatable, Codable {
   }
 }
 public struct ResetCreditState: Sendable, Codable {
+  public var revision: Int64
   public var settings: ResetCreditSettings
   public var intent: ResetCreditIntent?
   public var lastCode: ResetCreditCode?
@@ -115,6 +116,7 @@ public struct ResetCreditState: Sendable, Codable {
   public var lastAttemptAt: Int64?
   public var lastAutoResetAt: Int64?
   public init() throws {
+    revision = 1
     settings = try .init()
     intent = nil
     lastCode = nil
@@ -126,9 +128,11 @@ public struct ResetCreditState: Sendable, Codable {
 public struct ResetCreditAttempt: Sendable {
   public let intent: ResetCreditIntent
   public let auditID: String
-  public init(intent: ResetCreditIntent, auditID: String) {
+  public let creditHash: String?
+  public init(intent: ResetCreditIntent, auditID: String, creditHash: String? = nil) {
     self.intent = intent
     self.auditID = auditID
+    self.creditHash = creditHash
   }
 }
 public protocol AccountResetCreditProvider: Sendable {
@@ -145,6 +149,7 @@ public protocol AccountResetCreditStore: AccountObservationStore {
   func finishResetCreditAttempt(id: String, attempt: ResetCreditAttempt, result: ResetCreditResult)
     async throws
   func recordResetCreditPollFailure(id: String) async throws
+  func recordResetCreditPollSuccess(id: String) async throws
 }
 public protocol AccountResetCreditManaging: Sendable {
   func listResetCredits(id: String) async throws -> ResetCreditList

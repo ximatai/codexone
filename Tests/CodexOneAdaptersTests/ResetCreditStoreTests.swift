@@ -125,3 +125,62 @@ import Testing
     try await restored.accountCredential(id: account.id).account.authorization == .requiresAuth)
   await restored.close()
 }
+
+@Test func resetCreditAuditCapacityCannotStealCompletionOrAccountRevocationSpace() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
+  let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
+  let account = try await app.importVerified(
+    id: "account", namespace: "synthetic/account",
+    credential: .init(
+      accessToken: "synthetic", refreshToken: "synthetic", idToken: nil,
+      expiresAtUnixSeconds: 2_000_000_000))
+  let attempt = try await store.beginResetCreditAttempt(
+    account: account, creditID: nil, automatic: false)
+  try rawSQL(
+    path,
+    "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<4095) INSERT INTO reset_credit_events SELECT 'fill-'||x,'account','list','unavailable',1,NULL,1 FROM n"
+  )
+  await #expect(throws: ExecutionError.capacity) {
+    try await store.beginResetCreditAttempt(account: account, creditID: nil, automatic: false)
+  }
+  try await store.finishResetCreditAttempt(
+    id: account.id, attempt: attempt, result: .init(code: .reset, windowsReset: 1))
+  #expect(try await store.resetCreditState(id: account.id).intent == nil)
+  _ = try await store.setAccountMode(id: account.id, revision: account.revision, mode: .disabled)
+  await store.close()
+}
+
+@Test func resetCreditV10SchemaFailureRollsBackVersionAndPartialTables() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  await store.close()
+  try rawSQL(
+    path,
+    "DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; CREATE TABLE reset_credit_events(id TEXT); PRAGMA user_version=10"
+  )
+  await #expect(throws: ExecutionError.storageUnavailable) {
+    try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
+  }
+  var connection: OpaquePointer?
+  #expect(sqlite3_open(path, &connection) == SQLITE_OK)
+  defer { sqlite3_close(connection) }
+  var statement: OpaquePointer?
+  #expect(
+    sqlite3_prepare_v2(
+      connection,
+      "SELECT (SELECT user_version FROM pragma_user_version), COUNT(*) FROM sqlite_master WHERE name='account_reset_credits'",
+      -1, &statement, nil) == SQLITE_OK)
+  defer { sqlite3_finalize(statement) }
+  #expect(sqlite3_step(statement) == SQLITE_ROW)
+  #expect(sqlite3_column_int64(statement, 0) == 10 && sqlite3_column_int64(statement, 1) == 0)
+}

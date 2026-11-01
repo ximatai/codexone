@@ -34,15 +34,20 @@ public struct SubscriptionQuotaLimit: Sendable, Equatable, Codable {
     self.secondary = secondary
   }
 }
-/// Normalized quota only. No provider account identifiers, credits or raw response.
+/// Normalized quota only. No provider account identifiers or raw response.
 public struct SubscriptionQuota: Sendable, Equatable, Codable {
   public let limits: [SubscriptionQuotaLimit]
-  public init(limits: [SubscriptionQuotaLimit]) throws {
+  public let availableResetCredits: Int?
+  public init(limits: [SubscriptionQuotaLimit], availableResetCredits: Int? = nil) throws {
     guard limits.count <= 17, limits.filter({ $0.id != "codex" }).count <= 16,
       Set(limits.map(\.id)).count == limits.count
     else {
       throw ExecutionError.invalidCommand
     }
+    guard availableResetCredits.map({ (0...128).contains($0) }) ?? true else {
+      throw ExecutionError.invalidCommand
+    }
+    self.availableResetCredits = availableResetCredits
     self.limits = limits
   }
   public func validate() throws {
@@ -56,7 +61,7 @@ public struct SubscriptionQuota: Sendable, Equatable, Codable {
         id: limit.id, allowed: limit.allowed, limitReached: limit.limitReached,
         primary: limit.primary, secondary: limit.secondary)
     }
-    _ = try Self(limits: limits)
+    _ = try Self(limits: limits, availableResetCredits: availableResetCredits)
   }
 }
 public enum QuotaObservationFailure: String, Error, Sendable, Codable {
