@@ -156,8 +156,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       return VerifiedAccountRefresh(namespace: namespace, credential: refreshed)
     } catch { throw AccountRefreshError.unavailable }
   }
-  private func verifyLogin(_ response: JSONValue, nonce: String) throws -> VerifiedSubscriptionLogin
-  {
+  func verifyLogin(_ response: JSONValue, nonce: String?) throws -> VerifiedSubscriptionLogin {
     let accessToken = try requiredString(response, "access_token")
     let idToken = try requiredString(response, "id_token")
     let identity = try SubscriptionClaims.idToken(
@@ -187,7 +186,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     }
     return claims.expires
   }
-  private func requiredString(_ value: JSONValue, _ key: String) throws -> String {
+  func requiredString(_ value: JSONValue, _ key: String) throws -> String {
     guard let result = value[key]?.string, !result.isEmpty, result.utf8.count <= 16_384 else {
       throw AccountRefreshError.unavailable
     }
@@ -197,7 +196,10 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     guard value[key] != nil else { return nil }
     return try requiredString(value, key)
   }
-  private func post(_ fields: [String: String], form: Bool = false) async throws -> JSONValue {
+  func post(
+    _ fields: [String: String], form: Bool = false, path: String = "/oauth/token",
+    device: Bool = false
+  ) async throws -> JSONValue {
     let client = try state.withLock { value in
       guard let client = value.client else { throw AccountRefreshError.closed }
       guard value.active < 4 else { throw AccountRefreshError.capacity }
@@ -226,7 +228,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
             body = try encoder.encode(fields)
           }
           guard body.count <= 65_536 else { throw AccountRefreshError.invalidCommand }
-          var request = HTTPClientRequest(url: realm + "/oauth/token")
+          var request = HTTPClientRequest(url: realm + path)
           request.method = .POST
           request.headers = [
             "content-type": form ? "application/x-www-form-urlencoded" : "application/json",
@@ -236,6 +238,14 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
           let response = try await client.execute(
             request, deadline: .now() + .milliseconds(Int64(timeoutMilliseconds)))
           let bytes = try await response.body.collect(upTo: 65_536)
+          if device {
+            if path.hasSuffix("/usercode"), response.status == .notFound {
+              throw AccountDeviceAuthorizationError.unavailable
+            }
+            if path.hasSuffix("/token"), [.forbidden, .notFound].contains(response.status) {
+              return .null
+            }
+          }
           guard response.headers["content-type"].count == 1,
             response.headers["content-encoding"].isEmpty,
             response.headers["content-type"][0].split(
@@ -266,6 +276,9 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
         return result
       }
     } catch {
+      if error is AccountDeviceAuthorizationError {
+        throw AccountDeviceAuthorizationError.unavailable
+      }
       // No HTTP request can reach the provider before a connection is established.
       if let transport = error as? IOError, transport.errnoCode == ECONNREFUSED {
         throw AccountRefreshError.notCompleted
@@ -288,7 +301,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"].contains(
       document["error"]?["code"]?.string ?? "")
   }
-  private static func unreserved(_ value: String, minimum: Int, maximum: Int) -> Bool {
+  static func unreserved(_ value: String, minimum: Int, maximum: Int) -> Bool {
     (minimum...maximum).contains(value.utf8.count)
       && value.utf8.allSatisfy {
         (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)

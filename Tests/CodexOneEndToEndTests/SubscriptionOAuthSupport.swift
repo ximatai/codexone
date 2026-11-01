@@ -64,6 +64,9 @@ final class OAuthServer: Sendable {
   struct State {
     var plan: OAuthPlan
     var calls = 0
+    var paths: [String: Int] = [:]
+    var devicePlans: [String: OAuthPlan] = [:]
+    var deviceRedirect = false
     var invalidRequests = 0
     var expectedVerifier: String? = oauthVerifier
     var expectedChallenge: String?
@@ -127,7 +130,8 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
       let plan = state.mutex.withLock { value in
         value.calls += 1
         if !valid { value.invalidRequests += 1 }
-        return value.plan
+        value.paths[head?.uri ?? "", default: 0] += 1
+        return value.devicePlans[head?.uri ?? ""] ?? value.plan
       }
       switch plan {
       case .reply(let data, let type, let status):
@@ -165,6 +169,16 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
         } == true
         && head.headers["x-openai-codex-luna-reserve"].isEmpty
     }
+    if let head, head.method == .POST, head.uri.hasPrefix("/api/accounts/deviceauth/") {
+      guard head.headers["authorization"].isEmpty,
+        head.headers.first(name: "content-type") == "application/json",
+        let fields = try? JSONSerialization.jsonObject(with: body) as? [String: String]
+      else { return false }
+      if head.uri.hasSuffix("/usercode") {
+        return fields == ["client_id": SubscriptionOAuthProvider.clientID]
+      }
+      return fields == ["device_auth_id": "synthetic-device-id-private", "user_code": "SYNTH-CODE"]
+    }
     guard let head, head.method == .POST, head.uri == "/oauth/token",
       head.headers["authorization"].isEmpty
     else { return false }
@@ -192,7 +206,9 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
         && fields["code"]?.hasPrefix("synthetic-code") == true
         && fields["code"]?.hasSuffix("+/=") == true
         && verifierMatches
-        && fields["redirect_uri"] == SubscriptionOAuthProvider.callbackURI
+        && (state.mutex.withLock { $0.deviceRedirect }
+          ? fields["redirect_uri"]?.hasSuffix("/deviceauth/callback") == true
+          : fields["redirect_uri"] == SubscriptionOAuthProvider.callbackURI)
     }
     guard let document = try? JSONSerialization.jsonObject(with: body) as? [String: String] else {
       return false

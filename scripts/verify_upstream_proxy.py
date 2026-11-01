@@ -146,7 +146,7 @@ def authorization_and_quota(binary):
                         response=connection.getresponse();payload=response.read();assert response.status==200
                         return json.loads(payload)
                     finally:connection.close()
-                flow=api('authorization',dict(target=None));query=parse_qs(urlsplit(flow['authorizationURL']).query)
+                flow=api('authorization',dict(target=None, method="callback"));query=parse_qs(urlsplit(flow['authorizationURL']).query)
                 provider.control.update(challenge=query['code_challenge'][0],nonce=query['nonce'][0])
                 callback='http://localhost:1455/auth/callback?'+urlencode(dict(state=query['state'][0],code='synthetic-code+/='))
                 account=api('authorization/'+flow['flowID'],dict(callbackURL=callback))['account']

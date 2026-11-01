@@ -11,11 +11,23 @@ public struct VerifiedAccountAuthorization: Sendable, CustomStringConvertible,
   }
 }
 public protocol AccountAuthorizationProvider: Sendable {
+  func requestDeviceCode() async throws -> AccountDeviceCode
+  func pollDeviceCode(_ device: AccountDeviceCode) async throws -> AccountDeviceGrant?
+  func authorizeDevice(_ grant: AccountDeviceGrant) async throws -> VerifiedAccountAuthorization
   func authorizationURL(state: String, nonce: String, verifier: String) throws -> String
   func authorize(code: String, verifier: String, expectedNonce: String) async throws
     -> VerifiedAccountAuthorization
 }
-public struct AccountAuthorizationStart: Sendable, Encodable {
+public struct AccountAuthorizationStart: Sendable, Encodable, CustomStringConvertible,
+  CustomDebugStringConvertible
+{
+  public var description: String { "AccountAuthorizationStart(redacted)" }
+  public var debugDescription: String { description }
+  public var method: AccountAuthorizationMethod = .callback
+  public var userCode: String?
+  public var verificationURL: String?
+  public var intervalSeconds: Int?
+  public var failureCode: String?
   public let flowID: String
   public let authorizationURL: String
   public let expiresInSeconds: Int
@@ -30,8 +42,26 @@ public enum AccountAuthorizationTarget: Sendable {
   case reauthorize(id: String, revision: Int64)
 }
 public protocol AccountAuthorizing: Sendable {
+  func begin(owner: String, target: AccountAuthorizationTarget, method: AccountAuthorizationMethod)
+    async throws -> AccountAuthorizationStart
+  func status(owner: String, flowID: String) async throws -> AccountAuthorizationStatus
   func begin(owner: String, target: AccountAuthorizationTarget) async throws
     -> AccountAuthorizationStart
   func complete(owner: String, flowID: String, callbackURL: String) async throws -> ManagedAccount
   func discard(owner: String, flowID: String) async
+}
+
+// Callback-only synthetic providers remain useful for focused callback tests.
+extension AccountAuthorizationProvider {
+  public func requestDeviceCode() async throws -> AccountDeviceCode {
+    throw AccountDeviceAuthorizationError.unavailable
+  }
+  public func pollDeviceCode(_ device: AccountDeviceCode) async throws -> AccountDeviceGrant? {
+    throw AccountRefreshError.unavailable
+  }
+  public func authorizeDevice(_ grant: AccountDeviceGrant) async throws
+    -> VerifiedAccountAuthorization
+  {
+    throw AccountRefreshError.unavailable
+  }
 }

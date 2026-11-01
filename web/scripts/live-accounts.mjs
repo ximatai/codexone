@@ -24,12 +24,26 @@ async function admin(path = "/api/accounts", method = "GET", body) {
 async function capture(name) {
   const html = await page.content();
   assert(secrets.every(secret => !html.includes(secret)), "Private material in rendered DOM");
-  await page.screenshot({ path: resolve(output, name), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] });
+  await page.screenshot({ path: resolve(output, name), fullPage: true, animations: "disabled", mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] });
 }
-async function finishAuthorization(buttonName) {
+async function finishAuthorization(buttonName, method = "callback") {
   const prefix = stage;
   stage = prefix + "-start";
   await page.getByRole("button", { name: buttonName, exact: true }).click();
+  if (method === "device") {
+    await expect(page.getByLabel("设备码", { exact: true })).toHaveValue("SYNTH-CODE");
+    await capture("device-desktop.png");
+    const popupPromise = page.waitForEvent("popup");
+    await page.getByRole("link", { name: "打开验证页面" }).click();
+    const popup = await popupPromise;
+    await popup.getByRole("link", { name: "Approve synthetic device" }).click();
+    await expect(popup.getByRole("heading", { name: "Device approved" })).toBeVisible();
+    await popup.close();
+    await expect(page.getByText("授权已验证并保存，新账号默认禁用。", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "关闭授权结果" }).click();
+    return;
+  }
+  await page.getByRole("button", { name: "改用浏览器回调方式" }).click();
   stage = prefix + "-popup";
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("link", { name: "1. 在新窗口打开授权页面" }).click();
@@ -53,10 +67,10 @@ async function finishAuthorization(buttonName) {
 }
 try {
   browser = await openChrome();
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.route("**/*", route => {
     const url = new URL(route.request().url());
-    return url.origin === origin || (url.origin === oauthOrigin && url.pathname === "/oauth/authorize" && route.request().method() === "GET") ? route.continue() : route.abort();
+    return url.origin === origin || (url.origin === oauthOrigin && ["/oauth/authorize", "/codex/device", "/__approve"].includes(url.pathname) && route.request().method() === "GET") ? route.continue() : route.abort();
   });
   page = await context.newPage();
   await page.clock.install();
@@ -82,8 +96,8 @@ try {
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "发起账号授权", exact: true })).toBeEnabled();
   stage = "authorize";
-  await finishAuthorization("发起账号授权");
-  await expect(page.getByText(/已禁用 ·/)).toBeVisible();
+  await finishAuthorization("发起账号授权", "device");
+  await expect(page.getByText("已禁用", { exact: true })).toBeVisible();
   await expect(page.getByText("授权有效", { exact: true }).first()).toBeVisible();
   await capture("account-desktop.png");
   let account = (await admin()).accounts[0];
@@ -96,11 +110,12 @@ try {
   await expect(page.getByRole("button", { name: "启用", exact: true })).toBeEnabled();
   stage = "enable";
   await page.getByRole("button", { name: "启用", exact: true }).click();
-  await expect(page.getByText(/允许使用 ·/)).toBeVisible();
+  await expect(page.getByText("允许使用", { exact: true })).toBeVisible();
   account = (await admin()).accounts[0];
   assert.equal(account.mode, "enabled");
   stage = "replaced-flow-owner";
   await page.getByRole("button", { name: "发起账号授权", exact: true }).click();
+  await page.getByRole("button", { name: "改用浏览器回调方式" }).click();
   await expect(page.getByLabel("2. 粘贴完整回调地址", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "重新读取账号", exact: true })).toBeEnabled();
   assert.equal(await page.evaluate(async secret => (await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", secret }) })).status, credential), 200);
@@ -117,7 +132,7 @@ try {
   await expect(page.getByRole("menuitem", { name: "禁用", exact: true })).toBeEnabled();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
-  await expect(page.getByText(/排空中 ·/)).toBeVisible();
+  await expect(page.getByText("排空中", { exact: true })).toBeVisible();
   stage = "unknown-write";
   account = (await admin()).accounts[0];
   await page.route("**/api/accounts/" + id, async route => {
@@ -140,7 +155,7 @@ try {
   await page.keyboard.press("Escape");
   await page.unroute("**/api/accounts");
   await page.getByRole("button", { name: "重新读取账号", exact: true }).click();
-  await expect(page.getByText(/已禁用 ·/)).toBeVisible();
+  await expect(page.getByText("已禁用", { exact: true })).toBeVisible();
   assert.equal((await admin()).accounts[0].revision, account.revision + 1);
   stage = "rejected-refresh";
   await page.getByRole("button", { name: "额度与健康详情", exact: true }).click();
@@ -252,7 +267,7 @@ try {
   console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; passive quota GET, failure retention/staleness/recovery; private storage and large-screen captures");
 } catch (error) {
   console.error("Account assertion line=" + (error?.stack?.match(/live-accounts\.mjs:(\d+)/)?.[1] ?? "unknown") + "; class=" + error?.name);
-  await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
+  await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, animations: "disabled", mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
   console.error(`Browser account check failed at stage: ${stage}; private diagnostics excluded.`);
   process.exitCode = 1;
 } finally { await browser?.close(); }

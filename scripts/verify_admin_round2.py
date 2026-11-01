@@ -64,7 +64,7 @@ def verify_accounts(probe):
             process, port = start()
             auth = {'headers': {'Authorization': 'Bearer ' + ADMIN}}
             try:
-                flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None}, **auth))
+                flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None, 'method': 'callback'}, **auth))
                 query = parse_qs(urlsplit(flow['authorizationURL']).query)
                 with server.guard:
                     server.control.update(challenge=query['code_challenge'][0], nonce=query['nonce'][0])

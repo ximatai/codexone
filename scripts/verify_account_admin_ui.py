@@ -55,6 +55,12 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 'primary_window': {'used_percent': 25, 'limit_window_seconds': 18000, 'reset_at': int(time.time()) + 3600},
                 'secondary_window': {'used_percent': 45, 'limit_window_seconds': 604800, 'reset_at': int(time.time()) + 86400}},
                 'additional_rate_limits': [{'metered_feature': 'synthetic-extra', 'rate_limit': {'primary_window': {'used_percent': 10}}}]})
+        if self.path == '/codex/device':
+            return self.reply(b'<!doctype html><html><title>Synthetic device</title><h1>Device authorization</h1><a href="/__approve">Approve synthetic device</a></html>', content_type='text/html; charset=utf-8')
+        if self.path == '/__approve':
+            with self.server.guard:
+                self.server.control['device_approved'] = True
+            return self.reply(b'<!doctype html><html><h1>Device approved</h1></html>', content_type='text/html; charset=utf-8')
         query = parse_qs(urlsplit(self.path).query)
         assert urlsplit(self.path).path == '/oauth/authorize'
         callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
@@ -68,6 +74,20 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
             with self.server.guard:
                 self.server.control.update(value)
             return self.reply({'ok': True})
+        if self.path == '/api/accounts/deviceauth/usercode':
+            assert json.loads(raw) == {'client_id': CLIENT}
+            with self.server.guard:
+                self.server.control.update(device_approved=False)
+            return self.reply({'device_auth_id': 'synthetic-device-id-private', 'user_code': 'SYNTH-CODE', 'interval': '3'})
+        if self.path == '/api/accounts/deviceauth/token':
+            assert json.loads(raw) == {'device_auth_id': 'synthetic-device-id-private', 'user_code': 'SYNTH-CODE'}
+            with self.server.guard:
+                approved = self.server.control.get('device_approved', False)
+            if not approved:
+                return self.reply({}, status=403)
+            verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+            return self.reply({'authorization_code': 'synthetic-code+/=', 'code_verifier': verifier,
+                               'code_challenge': encoded(hashlib.sha256(verifier.encode()).digest())})
         assert self.path == '/oauth/token'
         if self.headers.get('content-type') == 'application/x-www-form-urlencoded':
             value = {key: values[0] for key, values in parse_qs(raw.decode()).items()}
@@ -79,8 +99,12 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
         assert value['client_id'] == CLIENT
         if value['grant_type'] == 'authorization_code':
             assert value['code'] == 'synthetic-code+/='
-            assert value['redirect_uri'] == 'http://localhost:1455/auth/callback'
-            assert encoded(hashlib.sha256(value['code_verifier'].encode()).digest()) == control['challenge']
+            if value['redirect_uri'].endswith('/deviceauth/callback'):
+                assert value['redirect_uri'] == 'http://127.0.0.1:' + str(self.server.server_port) + '/deviceauth/callback'
+                assert value['code_verifier'] == 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+            else:
+                assert value['redirect_uri'] == 'http://localhost:1455/auth/callback'
+                assert encoded(hashlib.sha256(value['code_verifier'].encode()).digest()) == control['challenge']
         else:
             assert value['grant_type'] == 'refresh_token' and value['refresh_token'].startswith('synthetic-refresh-')
             if control.get('mode') == 'reject':
@@ -88,7 +112,7 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
         scope = {'chatgpt_account_id': 'synthetic-account', 'chatgpt_user_id': 'synthetic-user'}
         common = {'iss': 'https://auth.openai.com', 'sub': 'synthetic-subject', 'exp': int(time.time()) + 3600,
                   'https://api.openai.com/auth': scope}
-        tokens = {'access_token': jwt(common), 'id_token': jwt(dict(common, aud=CLIENT, nonce=control['nonce'])),
+        tokens = {'access_token': jwt(common), 'id_token': jwt(dict(common, aud=CLIENT, nonce=control.get('nonce', 'synthetic-device-no-nonce'))),
                   'refresh_token': 'synthetic-refresh-' + str(self.server.calls), 'token_type': 'Bearer', 'expires_in': 3600}
         with self.server.guard:
             self.server.issued.extend(tokens[key] for key in ['access_token', 'id_token', 'refresh_token'])
@@ -136,7 +160,7 @@ def verify(binary, usage=False):
                     issued = list(provider.issued)
                     assert (provider.calls == 0 and provider.quota_calls == 0) if usage else (provider.calls == 3 and provider.quota_calls >= 3)
                 for file in (work / 'state').glob('core.sqlite*'):
-                    assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32, 'synthetic-private-quota-marker'])
+                    assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32, 'synthetic-private-quota-marker', 'SYNTH-CODE', 'synthetic-device-id-private'])
             finally:
                 process.terminate()
                 try:
@@ -147,7 +171,7 @@ def verify(binary, usage=False):
                     raise AssertionError('Synthetic UI assembly failed to stop')
                 assert process.returncode == 0
                 assert len(output) < 65536 and ADMIN.encode() not in output and str(work).encode() not in output
-                assert all(value.encode() not in output for value in provider.issued)
+                assert all(value.encode() not in output for value in provider.issued + ['SYNTH-CODE', 'synthetic-device-id-private'])
     finally:
         provider.shutdown()
         provider.server_close()

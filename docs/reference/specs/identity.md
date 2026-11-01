@@ -68,7 +68,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 首个订阅适配固定 HTTPS 认证 authority 和数据 origin/协议，不提供任意地址或组织/项目头覆盖。专用 AHC client 只用 HTTP/1、每连接一次请求、最多 4 个调用，禁止重定向、连接建立重试、压缩及代理继承；单次请求含正文总期限默认 10 秒、最大 30 秒，响应最多 64 KiB，由 Service 拥有和关闭。测试工厂只允许显式 127.0.0.1 合成端口，认证 realm 进入 namespace，不能借此铸造生产命名空间。
 
-授权码请求使用 form/PKCE，刷新使用独立 JSON 请求；state/nonce 和一次性消费必须由管理授权用例持有。ID/access 只在来自固定 token endpoint 的可信直接响应中解析：校验 issuer、ID audience/nonce/当前有效期、subject/account 范围及新 access 有效期，namespace 包含认证 realm、客户端、数据 origin/协议、subject 和 account。此路径以可信直接传输为来源，不是通用 JWT 签名验证器，禁止用于授权任意上传或本地缓存的 JWT。生产传输使用系统 TLS 验证，合成 HTTP 结果不等于真实订阅验收。
+授权码请求使用 form/PKCE，刷新使用独立 JSON 请求；state/nonce 和一次性消费必须由管理授权用例持有。ID/access 只在来自固定 token endpoint 的可信直接响应中解析：校验 issuer、ID audience/当前有效期、subject/account 范围及新 access 有效期；回调兑换另核对本地 nonce，设备码兑换没有本地 nonce，不做 nonce 比对。namespace 包含认证 realm、客户端、数据 origin/协议、subject 和 account。设备码同样依赖固定端点的可信直接传输，不是通用 JWT 签名验证器，禁止用于授权任意上传或本地缓存的 JWT。生产传输使用系统 TLS 验证，合成 HTTP 结果不等于真实订阅验收。
 
 刷新先校验已保存可信 ID 的范围（可过期，仅作身份基线）与命名空间，再请求新 token；新 access 必须证明同一 subject/account，双方有 user 声明时也须一致。新 ID 若提供须校验 audience/当前有效期及相同范围；ID/refresh 字段缺省仅可在新 access 范围已确认后保留原值，显式 null/空字段拒绝。expires_in 如提供须为有效正整数，生效期限取其与 access exp 的较早值。身份缺失/冲突、过期、畸形或网络不明均不能发布 ready。
 
@@ -76,9 +76,11 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 ## I16：初次授权流程责任
 
-管理授权流程绑定已认证管理 session 的不透明 owner（独立 headless 管理凭证也有独立 owner），state/nonce/PKCE verifier 只驻留内存。最多 8 个流程含在途工作、最多 4 个并行完成；待授权期限最长 10 分钟，用单调时钟判断。完成调用有最长 30 秒总期限。管理员输入固定 localhost:1455/auth/callback URL，校验 scheme/host/port/path、state、单个 code，拒绝认证信息、fragment、重复或未知参数；可忽略有界 scope。回调正文、授权码和 verifier 不进入日志或公开 DTO。
+管理授权流程绑定已认证管理 session 的不透明 owner（独立 headless 管理凭证也有独立 owner）。设备码与回调是同一 owner 的两种流程，共享最多 8 个流程（含创建、在途工作及期限内终态结果）、最多 4 个并行完成；全局容量同时约束每 owner。回调 state/nonce/PKCE verifier 和设备码 device_auth_id 只驻留内存。回调待授权最长 10 分钟，设备码期限取提供者有效期与 15 分钟的较小值，用单调时钟判断。完成调用最长 30 秒，设备码兑换另受流程期限限制。管理员回调输入固定 localhost:1455/auth/callback URL，校验 scheme/host/port/path、state、单个 code，拒绝认证信息、fragment、重复或未知参数；可忽略有界 scope。回调正文、授权码和 verifier 不进入日志或公开 DTO。
 
-正确 owner 取得待授权流程后，在解析回调及任何 token POST 之前一次性消费；错误 owner 不得消费。容量拒绝不消费尚未派发的流程。失败、过期、请求取消或响应丢失不自动恢复/重放，只能核对账号列表或开始新的授权流程。HTTP 管理连接断开不等于应用任务取消，已接收的操作可继续收尾，须读列表核对而非自动重发。应用任务的结构化作用域拥有交换；Service 停止先拒绝新流程，取消并等待全部在途交换和已开始的原子持久操作，不留下后台任务。尚未开始的凭证提交在停止后拒绝。
+设备码创建 POST 固定 issuer 的 /api/accounts/deviceauth/usercode（JSON client_id），404 返回 device_code_unavailable。Runtime Service 的结构化子任务拥有创建、间隔等待、轮询与一次性兑换。POST /api/accounts/deviceauth/token 携带内存 device_auth_id/user_code，间隔取提供者字符串 interval 并夹在 [3,30] 秒；403/404 为 pending，其他状态、畸形响应或网络不明结束为 failed，不重试。成功响应的 authorization_code/code_challenge/code_verifier 经 PKCE 核对后，只在固定 token endpoint 兑换一次，redirect_uri 固定为 issuer/deviceauth/callback。没有本地 nonce 的信任依据仍是该端点的可信直接传输（I15），不允许上传 JWT。user code 仅在创建响应与本 owner 的 pending 状态读取中显示；device_auth_id 不进入 DTO、日志、审计或存储。终态清除 user code，状态为 pending/completed/failed/expired，completed 带 accountID，failed 带安全 failureCode。记录在原期限内可读取，后续创建可回收已过期的非活动记录。
+
+正确 owner 取得回调流程后，在解析回调及任何 token POST 之前一次性消费；错误 owner 不得消费、读取或取消。容量拒绝不消费尚未派发的回调；设备码成功轮询后若完成容量不足则失败，不再轮询或兑换。失败、过期、请求取消或响应丢失不自动恢复/重放，只能核对账号列表或开始新流程。HTTP 管理连接断开不等于应用任务取消，已接收的操作可继续收尾，须读列表核对。DELETE 取消并等待本流程网络和已开始的提交收敛；Service 停止拒绝新流程、取消并等待所有创建、轮询、兑换和已开始的原子持久操作，不留下后台任务。尚未开始的凭证提交在停止或取消后拒绝。
 
 初次账号生成内部 ID 并以 disabled/ready 保存；明确启用是后续独立管理动作。重新授权绑定 id/revision，保持相同 namespace 和最新 CAS；不能把另一订阅账号原地覆盖，失败不改变原有身份/凭证版本。此契约不授权读取个人缓存或调用真实账号，具体产品入口和真实订阅验收另行记录。
 

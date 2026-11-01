@@ -278,8 +278,8 @@ func realOAuthLoginRequiresExpectedNonceAudienceAndCurrentMatchingClaims() async
 #if canImport(FoundationNetworking)
   import FoundationNetworking
 #endif
-private final class AccountAdminPort: Sendable { let value = Mutex(0) }
-private struct AccountAdminClient: Sendable {
+final class AccountAdminPort: Sendable { let value = Mutex(0) }
+struct AccountAdminClient: Sendable {
   let port: Int
   let session: URLSession
   func call(
@@ -405,7 +405,8 @@ private struct AccountAdminClient: Sendable {
           "GET", "/api/accounts", headers: ["origin": origin, "authorization": "Bearer " + secret]
         ).0 == 403)
       let start = try await client.call(
-        "POST", "/api/accounts/authorization", body: .object(["target": .null]), headers: bearer)
+        "POST", "/api/accounts/authorization",
+        body: .object(["target": .null, "method": .string("callback")]), headers: bearer)
       #expect(start.0 == 200)
       let flowID = try #require(start.1["flowID"]?.string)
       let query = try #require(
@@ -460,7 +461,10 @@ private struct AccountAdminClient: Sendable {
       let previous = try #require(listed.1["accounts"]?.array?.first)
       let restart = try await client.call(
         "POST", "/api/accounts/authorization",
-        body: .object(["target": .object(["id": .string(id), "revision": previous["revision"]!])]),
+        body: .object([
+          "target": .object(["id": .string(id), "revision": previous["revision"]!]),
+          "method": .string("callback"),
+        ]),
         headers: browser)
       let restartID = try #require(restart.1["flowID"]?.string)
       let restartQuery = try #require(

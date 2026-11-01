@@ -27,6 +27,12 @@ export function useAccounts() {
   const [flow, setFlow] = useState<
     (AuthorizationFlow & { accountID?: string }) | null
   >(null);
+  const flowRef = useRef<{ flowID: string; csrf: string } | null>(null);
+  const targetRef = useRef<Account | null>(null);
+  const flowEpoch = useRef(0);
+  const [flowStatus, setFlowStatus] = useState<api.AuthorizationStatus | null>(
+    null,
+  );
   const [callback, setCallback] = useState("");
   const [remaining, setRemaining] = useState(0);
   const controller = useRef<AbortController | null>(null);
@@ -36,6 +42,9 @@ export function useAccounts() {
     return version === epoch.current && !controller.current?.signal.aborted;
   }
   function clearFlow() {
+    ++flowEpoch.current;
+    flowRef.current = null;
+    setFlowStatus(null);
     setFlow(null);
     setCallback("");
     setRemaining(0);
@@ -50,6 +59,11 @@ export function useAccounts() {
       if (!current(version)) return false;
       const replaced = !!proof.current && proof.current !== fresh.csrf;
       if (replaced) {
+        const pending = flowRef.current;
+        if (pending)
+          void api
+            .discardAuthorization(pending.flowID, pending.csrf)
+            .catch(() => {});
         clearFlow();
         setNotice("管理会话已更新，请重新发起需要的授权流程。");
       }
@@ -103,6 +117,12 @@ export function useAccounts() {
       // This numeric epoch deliberately retires the current owner on exit.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       ++epoch.current;
+      const pending = flowRef.current;
+      flowRef.current = null;
+      if (pending)
+        void api
+          .discardAuthorization(pending.flowID, pending.csrf)
+          .catch(() => {});
       abort.abort();
       window.clearInterval(timer);
     };
@@ -110,7 +130,7 @@ export function useAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (!flow) return;
+    if (!flow || (flowStatus && flowStatus.status !== "pending")) return;
     const timer = window.setInterval(() => {
       const seconds = Math.max(
         0,
@@ -118,12 +138,99 @@ export function useAccounts() {
       );
       setRemaining(seconds);
       if (!seconds) {
-        clearFlow();
-        setError("授权流程已过期，请重新发起。");
+        const pending = flowRef.current;
+        if (pending)
+          void api
+            .discardAuthorization(pending.flowID, pending.csrf)
+            .catch(() => {});
+        flowRef.current = null;
+        if (flow.method === "device") {
+          setFlowStatus({ status: "expired", expiresInSeconds: 0 });
+          setFlow({ ...flow, userCode: undefined });
+        } else {
+          clearFlow();
+          setError("授权流程已过期，请重新发起。");
+        }
       }
     }, 500);
     return () => window.clearInterval(timer);
-  }, [flow]);
+  }, [flow, flowStatus]);
+  useEffect(() => {
+    if (
+      flow?.method !== "device" ||
+      flow.failureCode ||
+      (flowStatus && flowStatus.status !== "pending")
+    )
+      return;
+    const abort = new AbortController();
+    const version = epoch.current;
+    const generation = flowEpoch.current;
+    let timer: number | undefined;
+    async function poll() {
+      try {
+        const result = await api.fetchAuthorizationStatus(
+          flow!.flowID,
+          abort.signal,
+        );
+        if (
+          abort.signal.aborted ||
+          !current(version) ||
+          generation !== flowEpoch.current
+        )
+          return;
+        if (result.status === "pending") {
+          // The server's deadline can shorten the local countdown, never extend it.
+          deadline.current = Math.min(
+            deadline.current,
+            performance.now() + result.expiresInSeconds * 1000,
+          );
+          timer = window.setTimeout(() => void poll(), 1000);
+          return;
+        }
+        setFlowStatus(result);
+        setFlow((previous) =>
+          previous ? { ...previous, userCode: undefined } : null,
+        );
+        if (result.status === "completed")
+          await read(version, controller.current?.signal);
+      } catch (cause) {
+        if (
+          abort.signal.aborted ||
+          !current(version) ||
+          generation !== flowEpoch.current
+        )
+          return;
+        if (
+          cause instanceof sessionAPI.ManagementError &&
+          cause.status === 401
+        ) {
+          owner.invalidate();
+          clearFlow();
+          return;
+        }
+        setFlowStatus({
+          status: "failed",
+          expiresInSeconds: 0,
+          failureCode: "status_unavailable",
+        });
+        setFlow((previous) =>
+          previous ? { ...previous, userCode: undefined } : null,
+        );
+        const pending = flowRef.current;
+        if (pending)
+          void api
+            .discardAuthorization(pending.flowID, pending.csrf)
+            .catch(() => {});
+      }
+    }
+    timer = window.setTimeout(() => void poll(), 1000);
+    return () => {
+      abort.abort();
+      window.clearTimeout(timer);
+    };
+    // The flow id owns this read loop; terminal state retires it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow?.flowID, flowStatus?.status]);
   async function reread() {
     setBusy(true);
     setError("");
@@ -166,11 +273,33 @@ export function useAccounts() {
       typeof success === "string" ? success : "额度观测已完成。",
     );
   }
-  async function begin(account: Account | null) {
+  async function begin(
+    account: Account | null,
+    method: "device" | "callback" = "device",
+  ) {
+    targetRef.current = account;
+    const generation = ++flowEpoch.current;
     const version = epoch.current;
     await mutation(async (csrf, signal) => {
-      const value = await api.beginAuthorization(account, csrf, signal);
-      if (signal?.aborted || !current(version)) return;
+      const value = await api.beginAuthorization(account, csrf, signal, method);
+      if (
+        signal?.aborted ||
+        !current(version) ||
+        generation !== flowEpoch.current
+      ) {
+        void api.discardAuthorization(value.flowID, csrf).catch(() => {});
+        return;
+      }
+      flowRef.current = { flowID: value.flowID, csrf };
+      setFlowStatus(
+        value.failureCode
+          ? {
+              status: "failed",
+              failureCode: value.failureCode,
+              expiresInSeconds: 0,
+            }
+          : null,
+      );
       deadline.current = performance.now() + value.expiresInSeconds * 1000;
       setRemaining(value.expiresInSeconds);
       setFlow({ ...value, ...(account ? { accountID: account.id } : {}) });
@@ -183,21 +312,39 @@ export function useAccounts() {
       value = callback.trim();
     clearFlow();
     await mutation(
-      (csrf, signal) =>
-        api.completeAuthorization(pending.flowID, value, csrf, signal),
+      async (csrf, signal) => {
+        try {
+          return await api.completeAuthorization(
+            pending.flowID,
+            value,
+            csrf,
+            signal,
+          );
+        } finally {
+          void api.discardAuthorization(pending.flowID, csrf).catch(() => {});
+        }
+      },
       pending.accountID
         ? "重新授权已完成，账号身份与使用策略保持不变。"
         : "授权已验证并保存，新账号默认禁用。",
     );
   }
   async function cancel() {
-    if (!flow || !session) return;
-    const id = flow.flowID;
+    const pending = flowRef.current;
     clearFlow();
-    await mutation(
-      (csrf, signal) => api.discardAuthorization(id, csrf, signal),
-      "本次授权已取消。",
-    );
+    if (pending) {
+      try {
+        await api.discardAuthorization(pending.flowID, pending.csrf);
+      } catch {
+        if (proof.current === pending.csrf)
+          setError("取消结果尚未确认，流程会在期限结束后失效。");
+      }
+    }
+  }
+  async function switchToCallback() {
+    const target = targetRef.current;
+    await cancel();
+    await begin(target, "callback");
   }
   function setMode(account: Account, mode: AccountMode) {
     void mutation(
@@ -228,6 +375,8 @@ export function useAccounts() {
     noticeTone,
     clock,
     flow,
+    flowStatus,
+    switchToCallback,
     callback,
     setCallback,
     remaining,
