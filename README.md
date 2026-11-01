@@ -35,10 +35,10 @@
 ### 1. 下载并初始化
 
 ```sh
-git clone --depth 1 --branch v0.26.3 https://github.com/ximatai/codexone.git
+git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
 cd codexone
-docker pull ghcr.io/ximatai/codexone:0.26.3
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.3 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.4
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 hostname -I   # 查看服务器的局域网 IP，下面以 192.168.1.10 为例
 python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
 cd ../codexone-private
@@ -84,7 +84,7 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 ## 部署到自己的服务器（HTTPS）
 
-下面以当前版本 [v0.26.3](https://github.com/ximatai/codexone/releases/tag/v0.26.3) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
+下面以当前版本 [v0.26.4](https://github.com/ximatai/codexone/releases/tag/v0.26.4) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
 
 ### 0. 准备
 
@@ -100,10 +100,10 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 部署脚本随源码发布，镜像来自 GHCR：
 
 ```sh
-git clone --depth 1 --branch v0.26.3 https://github.com/ximatai/codexone.git
+git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
 cd codexone
-docker pull ghcr.io/ximatai/codexone:0.26.3
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.3 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.4
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # 应输出 sha256: 开头的完整 ID
 ```
 
