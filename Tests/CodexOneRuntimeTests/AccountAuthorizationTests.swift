@@ -127,6 +127,9 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
     await #expect(throws: AccountRefreshError.invalidCommand) {
       try await service.complete(owner: "session", flowID: flow.flowID, callbackURL: bad)
     }
+    #expect(
+      try await service.status(owner: "session", flowID: flow.flowID).failureCode
+        == "verification_failed")
     await #expect(throws: AccountRefreshError.conflict) {
       try await service.complete(owner: "session", flowID: flow.flowID, callbackURL: valid)
     }
@@ -188,6 +191,13 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
         #expect(error as? AccountRefreshError == (mode == "deadline" ? .unavailable : .closed))
       }
     }
+    if mode == "deadline" {
+      for flow in flows.prefix(4) {
+        #expect(
+          try await service.status(owner: "session", flowID: flow.flowID).failureCode
+            == "exchange_failed")
+      }
+    }
     #expect(await provider.active == 0)
     #expect(try await fixture.store.listAccounts(after: nil).isEmpty)
     if mode == "cancel" {
@@ -222,6 +232,9 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
   await #expect(throws: AccountRefreshError.conflict) {
     try await service.complete(owner: "session", flowID: flow.flowID, callbackURL: callback(flow))
   }
+  #expect(
+    try await service.status(owner: "session", flowID: flow.flowID).failureCode
+      == "revision_conflict")
   let retry = try await service.begin(
     owner: "session", target: .reauthorize(id: changed.id, revision: changed.revision))
   let refreshed = try await service.complete(
@@ -234,6 +247,9 @@ private func callback(_ flow: AccountAuthorizationStart, stateOverride: String? 
   await #expect(throws: AccountRefreshError.conflict) {
     try await service.complete(owner: "session", flowID: wrong.flowID, callbackURL: callback(wrong))
   }
+  #expect(
+    try await service.status(owner: "session", flowID: wrong.flowID).failureCode
+      == "identity_mismatch")
   #expect(try await fixture.store.accountCredential(id: account.id).account == refreshed)
   owner.cancel()
   try await owner.value

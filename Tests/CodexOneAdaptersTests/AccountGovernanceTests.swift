@@ -53,7 +53,7 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
     try await store.finishAccountRefresh(
       id: enabled.id, credentialVersion: 1, intent: "operation", envelope: nextEnvelope)
   }
-  await #expect(throws: ExecutionError.conflict) {
+  await #expect(throws: AccountAuthorizationFailure(.identityMismatch)) {
     try await store.replaceVerifiedAccountCredential(
       id: finished.id, revision: finished.revision, namespace: "synthetic/other",
       envelope: nextEnvelope)

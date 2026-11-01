@@ -37,8 +37,9 @@ public struct AccountCredentials: Sendable {
     id: String, revision: Int64, namespace: String, credential: AccountCredential
   ) async throws -> ManagedAccount {
     let old = try await store.accountCredential(id: id).account
-    guard old.revision == revision, old.namespace == namespace, old.authorization != .refreshing
+    guard old.revision == revision, old.authorization != .refreshing
     else { throw ExecutionError.conflict }
+    guard old.namespace == namespace else { throw AccountAuthorizationFailure(.identityMismatch) }
     let context = try AccountCredentialContext(
       identity: id, namespace: namespace, version: old.credentialVersion + 1)
     return try await store.replaceVerifiedAccountCredential(

@@ -245,7 +245,7 @@ func deviceSocketExpirySharedCapacityAndReauthorizationIdentityConflict() async 
       }
       #expect(
         try await service.status(owner: "session", flowID: other.flowID).failureCode
-          == "revision_conflict")
+          == "identity_mismatch")
       #expect(try await h.store.accountCredential(id: id).account == original)
       #expect(calls(h, "/oauth/token") == 2 && h.server.counts.invalid == 0)
     } catch {

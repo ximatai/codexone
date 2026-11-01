@@ -87,6 +87,7 @@ let package = Package(
       name: "CodexOneEndToEndTests",
       dependencies: [
         "CodexOneCore", "CodexOneAdapters", "CodexOneRuntime",
+        .product(name: "Logging", package: "swift-log"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),

@@ -1,5 +1,6 @@
 import CodexOneCore
 import Foundation
+import Logging
 import ServiceLifecycle
 
 /// Owns both flow kinds. Device workers are children of run; callback exchanges belong to complete.
@@ -23,6 +24,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     case finished
     case stop
   }
+  private let logger: Logger
   private let application: AccountCredentials
   private let provider: any AccountAuthorizationProvider
   private let lifetime: Duration
@@ -43,6 +45,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     application: AccountCredentials, provider: any AccountAuthorizationProvider,
     lifetime: Duration = .seconds(600), exchangeTimeout: Duration = .seconds(30),
     deviceLifetime: Duration = .seconds(900),
+    logger: Logger = Logger(label: "codexone.account-authorization"),
     now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
     pollWait: @escaping @Sendable (Duration) async throws -> Void = {
       try await Task.sleep(for: $0)
@@ -51,6 +54,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     guard lifetime > .zero, lifetime <= .seconds(600), deviceLifetime > .zero,
       deviceLifetime <= .seconds(900), exchangeTimeout > .zero, exchangeTimeout <= .seconds(30)
     else { throw AccountRefreshError.invalidCommand }
+    self.logger = logger
     self.application = application
     self.provider = provider
     self.lifetime = lifetime
@@ -271,16 +275,30 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
   }
   private func fail(_ id: String, error: any Error) {
     guard let flow = flows[id], flow.result == .pending else { return }
-    flows[id]?.result = flow.deadline <= now() ? .expired : .failed
     flows[id]?.userCode = nil
-    flows[id]?.failureCode =
-      flow.deadline <= now()
-      ? nil
-      : error is AccountDeviceAuthorizationError
-        ? "device_code_unavailable"
-        : error as? AccountRefreshError == .conflict || error as? ExecutionError == .conflict
-          ? "revision_conflict" : "authorization_failed"
+    guard flow.deadline > now() else {
+      flows[id]?.result = .expired
+      return
+    }
+    let failure: AccountAuthorizationFailure
+    if let typed = error as? AccountAuthorizationFailure {
+      failure = typed
+    } else if error is AccountDeviceAuthorizationError {
+      failure = AccountAuthorizationFailure(.deviceCodeUnavailable)
+    } else if error as? AccountRefreshError == .conflict || error as? ExecutionError == .conflict {
+      failure = AccountAuthorizationFailure(.revisionConflict)
+    } else {
+      failure = AccountAuthorizationFailure(.authorizationFailed)
+    }
+    flows[id]?.result = .failed
+    flows[id]?.failureCode = failure.code.rawValue
+    var metadata: Logger.Metadata = [
+      "method": .string(flow.method.rawValue), "failure_code": .string(failure.code.rawValue),
+    ]
+    if let status = failure.providerStatus { metadata["provider_status"] = .string(String(status)) }
+    logger.warning("Account authorization failed", metadata: metadata)
   }
+
   public func complete(owner: String, flowID: String, callbackURL: String) async throws
     -> ManagedAccount
   {
@@ -295,7 +313,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     guard flow.deadline > now() else { throw AccountRefreshError.conflict }
     let code: String
     do { code = try Self.code(callbackURL, expectedState: flow.state) } catch {
-      fail(flowID, error: error)
+      fail(flowID, error: AccountAuthorizationFailure(.verificationFailed))
       throw error
     }
     let (stop, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -345,7 +363,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       }
       group.addTask { [exchangeTimeout] in
         try await Task.sleep(for: timeout ?? exchangeTimeout)
-        throw AccountRefreshError.unavailable
+        throw AccountAuthorizationFailure(.exchangeFailed)
       }
       return try await group.next()!
     }
@@ -363,6 +381,12 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     }
   }
   private static func safe(_ error: any Error) -> AccountRefreshError {
+    if let failure = error as? AccountAuthorizationFailure {
+      switch failure.code {
+      case .identityMismatch, .revisionConflict: return .conflict
+      default: return .unavailable
+      }
+    }
     if let safe = error as? AccountRefreshError { return safe }
     switch error as? ExecutionError {
     case .conflict: return .conflict
