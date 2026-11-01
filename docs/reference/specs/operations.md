@@ -51,6 +51,8 @@ swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/respon
 
 数据/管理入口的 `GET /health/live` 表示进程存活；`GET /health/ready` 只有实际执行先决条件满足才为 200，否则 503，不能由监听成功推导可接单。未配置的生成请求须明确拒绝。ServiceLifecycle 统一拥有信号/子服务寿命；部分启动失败或取消应关闭并等待其他服务释放。健康连接的关闭不得等待客户端补齐未完成的请求体；信号回归须同时覆盖空闲连接和半截请求。
 
+安装 Compose 的 gateway 使用 `unless-stopped`，进程意外退出或宿主机重启后由 Docker 恢复；显式 `stop`/`down` 后保持停止，直至操作者重新启动。init-data 与一次性维护命令不自动重试；安装入口为 `run` 强制 `--rm` 覆盖重启策略，维护前须先停止 gateway。自动启动仍遵守 O02/O03，不自动迁移或重放未知执行；ready 503、账号耗尽或 unhealthy 本身不触发重启。配置错误以 78 退出且不开 listener，连续失败须递增退避，普通日志受 10 MiB × 5 轮转约束。重启增量必须可观测，trial watch 保留 `container_restarted` 提醒，不把自动恢复视为无故障。
+
 ## O13：旧服务替代与可回退切换
 
 首版必须有 CodexLB→CodexOne 的独立迁移方案和演练：域名/反代、端点前缀、客户端 provider 配置、账号凭证、Key/主体/策略、必要的用量基线及历史归属去向。采用脱敏/合成数据演练，真实导入和切换另经授权；不直接复制旧 SQLite 并视为新服务库。

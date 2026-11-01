@@ -32,7 +32,17 @@ def main():
             # logs owns -f as --follow; --file remains a forbidden selector.
             forbidden = tuple(flag for flag in forbidden if flag != '-f')
         if arguments and arguments[0] in ('run', 'exec'):
+            value_flags = ('--cap-add', '--cap-drop', '--entrypoint', '-e', '--env', '--env-from-file',
+                           '-l', '--label', '--name', '-p', '--publish', '--pull', '-u', '--user',
+                           '-v', '--volume', '-w', '--workdir', '--index')
+            option_value = False
             for index, argument in enumerate(arguments[1:], 1):
+                if option_value:
+                    option_value = False
+                    continue
+                if argument in value_flags:
+                    option_value = True
+                    continue
                 if argument in ('gateway', 'init-data'):
                     selectors = arguments[:index]
                     break
@@ -41,6 +51,13 @@ def main():
                 (flag in ('-f', '-p') and arg.startswith(flag))
                 for arg in selectors for flag in forbidden):
             raise ValueError('Use a Compose command without installation selectors')
+        if arguments[0] == 'run':
+            # Compose documents --rm as overriding the service restart policy:
+            # https://docs.docker.com/reference/cli/docker/compose/run/
+            # Do not depend on a particular Compose version clearing it implicitly.
+            if any(arg.startswith('--rm=') and arg != '--rm=true' for arg in selectors):
+                raise ValueError('One-off installation commands must use --rm')
+            arguments = ['run', '--rm', *arguments[1:]]
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith(('CODEXONE_', 'COMPOSE_'))}
         # Derive the same isolated backup volume for installations created before this field existed.
@@ -50,7 +67,7 @@ def main():
                    '--project-name', project, *arguments]
         os.execvpe(command[0], command, environment)
     except (OSError, ValueError, KeyError, UnicodeError):
-        print('Installation command refused. Check the private manifest and use a Compose command without installation selectors.', file=sys.stderr)
+        print('Installation command refused. Check the private manifest, omit installation selectors and keep --rm enabled for run.', file=sys.stderr)
         return 1
 
 
