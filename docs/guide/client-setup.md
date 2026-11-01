@@ -33,7 +33,7 @@ provider 名称和本地门控值是兼容设置，不代表官方授权；网�
 
 显式以 `--lan` 安装后，只需把上面的 `base_url` 换成安装器打印的地址，例如 `base_url = "http://192.168.1.10:18080/backend-api/codex"`；IPv6 示例为 `http://[fd00::10]:18080/backend-api/codex`。其余 provider、Key 和工具配置保持相同。先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)，不要通过端口转发公开此地址。
 
-HTTP SSE 与 `ws://` 入口由同一来源网段规则保护。真实 Codex 版本的 HTTP/WS 兼容仍需维护者按[LAN 任务 6](../changes/lan-mode/tasks.md)记录日期、版本及结果；合成 socket/浏览器测试不替代真实客户端验收。
+HTTP SSE 与 `ws://` 入口由同一来源网段规则保护。2026-11-01 已用 Codex CLI 0.165.0 在局域网 HTTP 下验证 HTTP 与 `ws://` 接入、Key 认证及来源网段收窄；真实账号转发与 HTTPS 部署走同一网关路径，由 HTTPS 部署的真实验收覆盖。其他客户端版本仍以实际接入结果为准。
 
 ## 注意
 
