@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 
@@ -109,7 +110,7 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   });
   await create.getByRole("button", { name: "取消", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await expect(
     page.getByRole("link", { name: "订阅账号", exact: true }),
   ).toBeHidden();

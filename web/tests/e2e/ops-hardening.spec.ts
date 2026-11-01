@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
@@ -131,5 +132,5 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await page.getByRole("link", { name: "订阅账号", exact: true }).click();
   await expect(page.getByText("可在账号详情中设置名称")).toBeVisible();
   await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1440);
+  await expectNoHorizontalOverflow(page);
 });

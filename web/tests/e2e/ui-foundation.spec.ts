@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -88,7 +89,7 @@ for (const [width, height] of [
     ).toBeVisible();
     await capture("disable");
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
+    await expectNoHorizontalOverflow(page);
     expect(violations).toEqual([]);
   });
 }

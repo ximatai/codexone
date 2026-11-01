@@ -54,17 +54,22 @@ func observeExecution(
   _ context: ExecutionContext, operation: @Sendable () async throws -> UsageEvidence?
 ) async throws -> UsageEvidence? {
   do { return try await operation() } catch {
-    if let error = error as? GatewayProtocolError, error.explicitProviderRejection,
-      !context.hasProviderEvents
-    {
-      try? observeProviderRejection(context)
-    }
-    try? context.observeOutcome(
-      .init(
-        failure: executionFailure(error), atUnixSeconds: Int64(Date().timeIntervalSince1970),
-        cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+    observeExecutionFailure(error, context: context)
     throw error
   }
+}
+
+/// Record known evidence before notifying sibling tasks whose cancellation may hide the error.
+func observeExecutionFailure(_ error: any Error, context: ExecutionContext) {
+  if let error = error as? GatewayProtocolError, error.explicitProviderRejection,
+    !context.hasProviderEvents
+  {
+    try? observeProviderRejection(context)
+  }
+  try? context.observeOutcome(
+    .init(
+      failure: executionFailure(error), atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
 }
 
 /// A failed terminal response can carry complete usage. Result and evidence are independent.

@@ -1,6 +1,7 @@
 name: Verify
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -11,7 +12,7 @@ concurrency:
 jobs:
   backend-linux:
     runs-on: ubuntu-24.04
-    container: swift:6.4-noble
+    container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

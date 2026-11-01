@@ -13,12 +13,14 @@ final class PoolWebSocketStart: Sendable {
   private let selected: AsyncThrowingStream<Selection, any Error>.Continuation
   private let results: AsyncThrowingStream<Void, any Error>
   private let result: AsyncThrowingStream<Void, any Error>.Continuation
-  private let reported = Mutex((finished: false, reported: false))
+  private let reported = Mutex(
+    (finished: false, reported: false, context: ExecutionContext?.none))
   init() {
     (selections, selected) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
     (results, result) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
   }
   func publish(_ selection: Selection) {
+    reported.withLock { $0.context = selection.context }
     selected.yield(selection)
     selected.finish()
   }
@@ -32,11 +34,19 @@ final class PoolWebSocketStart: Sendable {
     guard try await iterator.next() != nil else { throw CancellationError() }
   }
   func finishTurn() {
-    reported.withLock { $0.finished = true }
+    reported.withLock {
+      $0.finished = true
+      $0.context = nil
+    }
     result.yield(())
     result.finish()
   }
   func close(_ error: any Error) {
+    // The socket sibling can throw and cancel the execution owner's deadline group
+    // before waitForTurn delivers this error. Preserve evidence before waking either.
+    if let context = reported.withLock({ $0.finished ? nil : $0.context }) {
+      observeExecutionFailure(error, context: context)
+    }
     selected.finish(throwing: error)
     result.finish(throwing: error)
   }

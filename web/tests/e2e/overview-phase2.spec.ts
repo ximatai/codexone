@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
@@ -199,7 +200,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .getByRole("button", { name: "关闭", exact: true })
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   const longReminder = page.getByRole("link", { name: /x-codex-n+/ });
   await expect(longReminder).toBeVisible();
   expect(

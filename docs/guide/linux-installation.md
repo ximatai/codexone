@@ -18,7 +18,7 @@ docker pull ghcr.io/ximatai/codexone:0.26.1
 docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}'
 ```
 
-下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。镜像仅提供精确版本与 latest。
+下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。正式版镜像提供精确版本与 latest；预发布只提供精确版本，不更新 latest，也不提供年份浮动标签。
 
 ## 从源码构建
 
@@ -42,7 +42,7 @@ GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖�
 
 项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
 
-CI 的 Linux candidate 工作流手动触发，构建、合成安装测试并上传带源码归档/标识、镜像 ID 和 SHA256SUMS 的候选包。它不登录 registry 或推送/发布。下载包后先核对校验和，再 `docker load --input codexone-linux-amd64.tar.gz`；校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
+Release 工作流的手动 dry-run 接受 ref，构建并执行 Linux 合成 socket、TLS 反代与真实安装验证，上传源码、二进制、许可、镜像 ID、校验和与独立镜像归档，不登录 registry 或推送/发布。将两个验证产物分别解压到 `verified-release-files/` 与 `verified-linux-amd64-image/` 后，在前者执行 `sha256sum --check SHA256SUMS`，再在后者用 `sha256sum --check ../verified-release-files/image-archive-sha256.txt` 核对归档，然后 `docker load --input codexone-linux-amd64.tar.gz`。正式 tag 流程验证后才推送同一镜像、生成来源证明并创建 Release；附件清单和 `gh attestation verify` 命令见[发版规则](../development/releasing.md)。校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 
 ## 新安装
 
@@ -92,20 +92,20 @@ data/备份卷名保存在私有 `.env` 的 CODEXONE_DATA_VOLUME/CODEXONE_BACKUP
 
 同 schema 的兼容二进制回退与恢复旧库是两回事。恢复旧快照可能丢失新区间的已执行项，不得直接复制旧库后重启接单；O03/O04 要求维护态、披露缺失区间和审计额度基线。显式旧快照恢复与审计核对使用[核心快照维护](../operations/snapshot-maintenance.md)，不能用迁移前单文件备份替代完成 bundle。迁移失败保持停止，检查私有资料并保留源库；不要自动重试覆盖或通过删除 data 绕过问题。旧服务替代、弱服务器混合容量和真实客户端兼容按 [验收定义](../development/verification.md) 独立执行，具体交付状态只查 [STATUS](../../STATUS.md)。
 
-## 当前候选的回退演练
+## 可选旧产物的回退演练
 
 ```sh
 python3 scripts/verify_installation.py --image codexone:candidate \
   --incompatible-image codexone:rollback-peer --incompatible-schema 8 --browser
 ```
 
-当前schema v10不能用v9及更旧版本作同库兼容回退。CI保留固定v8旧revision产品源码，以实际旧二进制验证正向启动控制、显式备份迁移及拒绝v10且不修改数据；安装脚本的incompatible-schema缺省6，也可选7/8/9。镜像须实际存在，脚本解析不可变ID。未来有受信、验证过当前schema/信封/配置兼容的旧v10候选后，才可用previous-image验证同库回退；必须是不同实际二进制，不能同一二进制换tag，也不能改数据库版本号。旧版本不支持 v10，不能通过改数据库版本号绕过校验。
+当前schema v10不能用v9及更旧版本作同库兼容回退。上述命令仅在另行准备受信的实际v8镜像后运行，通用Release CI不再构建固定v8历史peer；删除理由和保留的通用检查见[发版规则](../development/releasing.md)。安装脚本的incompatible-schema缺省6，也可选7/8/9。镜像须实际存在，脚本解析不可变ID。未来有受信、验证过当前schema/信封/配置兼容的旧v10候选后，才可用previous-image验证同库回退；必须是不同实际二进制，不能同一二进制换tag，也不能改数据库版本号。旧版本不支持 v10，不能通过改数据库版本号绕过校验。
 
 回退到不支持 null 限额的旧二进制前，先通过管理入口把所有不限 Key 改为五项显式数值；schema 相同也不代表旧版本可解码 null，否则旧版本可能拒绝启动或拒绝这些 Key。此调整不清除历史账本或 unknown 责任。
 
 实际运维回退先暂停入口/收敛并停服，保存新库一致性 bundle 与全部解密依赖；在私有 `.env` 仅替换已验兼容的不可变镜像引用，保留原卷和原 secrets，运行 `--check-config` 后启动并检查。schema 不兼容时停止，不运行旧版本 migration 或删除新库。恢复旧快照须走维护态流程；合成旧服务转换与新增用量核对见[迁移切回](migration-cutback.md)。
 
-发行候选归档应保留精确源码 revision/归档、镜像 ID、实际二进制 SHA-256 和整体 SHA256SUMS；同时交付已验兼容 peer 的镜像、旧产品 revision、实际构建源码归档（含编译配置补丁）和二进制摘要，避免只有回退说明却没有可用旧产物。校验标签与真实产物，不因流水线模板存在便声明远端运行成功。
+发行候选归档应保留精确源码 revision/归档、镜像 ID、实际二进制 SHA-256 和整体 SHA256SUMS；若执行了旧peer演练，还须交付该peer的镜像、旧产品 revision、实际构建源码归档（含编译配置补丁）和二进制摘要，避免只有回退说明却没有可用旧产物。校验标签与真实产物，不因流水线模板存在便声明远端运行成功。
 
 ### 可选HTTP出网代理
 

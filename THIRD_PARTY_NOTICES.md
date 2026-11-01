@@ -1,10 +1,10 @@
 # 第三方许可清单
 
-离线记录锁定依赖的版本、声明许可和本地许可正文可用性。
+记录锁定依赖的版本、许可声明、正文核验范围与可追溯来源。
 
 ## 范围与分发
 
-本项目主体使用 MIT；第三方代码继续受各自许可约束。本清单基于当前锁文件及本 worktree 离线安装所得文件，不是依赖漏洞审计或法律意见。没有联网补查，也不从包名推断许可证。平台可选包未安装时标为待核验。
+本项目主体使用 MIT；第三方代码继续受各自许可约束。本清单基于当前锁文件、本地随包文件，以及 2026-11-01 对此前待核验项的联网补查：67 个 npm 精确版本的官方 registry 元数据、29 个 SwiftPM 锁定 revision 的根许可正文及可取得的 NOTICE。npm 的许可声明核验与正文阅读分开标明；未从包名或组织推断许可。它不是依赖漏洞审计或法律意见。
 
 容器构建在 `deploy/Dockerfile` 中收集 Swift checkouts 与 npm 生产依赖的 LICENSE/NOTICE/COPYING，分发到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，项目 LICENSE 在 `/opt/codexone/LICENSE`；系统包原有版权材料须保留。安装验证要求运行依赖具有许可正文，不能因清单存在就声称实际镜像已验收。
 
@@ -12,9 +12,9 @@
 
 ## npm 锁定依赖
 
-“正文已读”表示实际读取本地随包许可文件，不表示对所有嵌入代码完成权利审查；声明来自锁文件。MIT AND ISC AND BSD-3-Clause 必须同时保留，MIT OR CC0-1.0 保留双许可选择，不擅自替依赖改许可。MPL-2.0 的 lightningcss 为构建依赖；分发或修改工具本身须核对 MPL 的文件级及源码义务。
+“正文已读”表示实际读取本地随包许可文件，不表示对所有嵌入代码完成权利审查；原有声明来自锁文件。“registry 声明已核验”表示联网读取精确版本的 license 字段并与锁文件声明一致，不声称平台包的许可正文已读。MIT AND ISC AND BSD-3-Clause 必须同时保留，MIT OR CC0-1.0 保留双许可选择，不擅自替依赖改许可。MPL-2.0 的 lightningcss 为构建依赖；分发或修改工具本身须核对 MPL 的文件级及源码义务。
 
-| 包 | 版本 | 声明许可 | 离线正文 |
+| 包 | 版本 | 声明许可 | 核验与来源 |
 |---|---|---|---|
 | `@adobe/css-tools` | 4.5.0 | MIT | 正文已读：`LICENSE` |
 | `@asamuzakjp/css-color` | 7.1.7 | MIT | 正文已读：`LICENSE` |
@@ -45,44 +45,44 @@
 | `@mantine/notifications` | 9.7.3 | MIT | 正文已读：`LICENSE` |
 | `@mantine/store` | 9.7.3 | MIT | 正文已读：`LICENSE` |
 | `@oxc-project/types` | 0.155.0 | MIT | 正文已读：`LICENSE` |
-| `@oxlint/binding-android-arm-eabi` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-android-arm64` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-darwin-arm64` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-darwin-x64` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-freebsd-x64` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-arm-gnueabihf` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-arm-musleabihf` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-arm64-gnu` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-arm64-musl` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-ppc64-gnu` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-riscv64-gnu` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-riscv64-musl` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-s390x-gnu` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-x64-gnu` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-linux-x64-musl` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-openharmony-arm64` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-win32-arm64-msvc` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-win32-ia32-msvc` | 1.89.0 | MIT | 待核验（本地无许可正文） |
-| `@oxlint/binding-win32-x64-msvc` | 1.89.0 | MIT | 待核验（本地无许可正文） |
+| `@oxlint/binding-android-arm-eabi` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm-eabi/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-android-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm64/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-darwin-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-darwin-arm64/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-darwin-x64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-darwin-x64/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-freebsd-x64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-freebsd-x64/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-arm-gnueabihf` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-arm-gnueabihf/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-arm-musleabihf` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-arm-musleabihf/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-arm64-gnu` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-arm64-gnu/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-arm64-musl` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-arm64-musl/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-ppc64-gnu` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-ppc64-gnu/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-riscv64-gnu` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-riscv64-gnu/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-riscv64-musl` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-riscv64-musl/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-s390x-gnu` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-s390x-gnu/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-x64-gnu` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-x64-gnu/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-linux-x64-musl` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-linux-x64-musl/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-openharmony-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-openharmony-arm64/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-win32-arm64-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-arm64-msvc/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-win32-ia32-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-ia32-msvc/1.89.0)；正文未在本地安装 |
+| `@oxlint/binding-win32-x64-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-x64-msvc/1.89.0)；正文未在本地安装 |
 | `@playwright/test` | 1.64.1 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
 | `@reduxjs/toolkit` | 2.13.0 | MIT | 正文已读：`LICENSE` |
 | `immer` | 11.2.9 | MIT | 正文已读：`LICENSE` |
 | `@remix-run/route-pattern` | 0.22.1 | MIT | 正文已读：`LICENSE` |
-| `@rolldown/binding-android-arm-eabi` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-android-arm64` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-darwin-arm64` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-darwin-x64` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-freebsd-x64` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-arm-gnueabihf` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-arm64-gnu` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-arm64-musl` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-ppc64-gnu` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-s390x-gnu` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-x64-gnu` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-linux-x64-musl` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-openharmony-arm64` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-win32-arm64-msvc` | 1.2.15 | MIT | 待核验（本地无许可正文） |
-| `@rolldown/binding-win32-x64-msvc` | 1.2.15 | MIT | 待核验（本地无许可正文） |
+| `@rolldown/binding-android-arm-eabi` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm-eabi/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-android-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm64/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-darwin-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-arm64/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-darwin-x64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-x64/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-freebsd-x64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-freebsd-x64/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-arm-gnueabihf` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm-gnueabihf/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-arm64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-gnu/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-arm64-musl` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-musl/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-ppc64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-ppc64-gnu/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-s390x-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-s390x-gnu/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-x64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-gnu/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-linux-x64-musl` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-musl/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-openharmony-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-openharmony-arm64/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-win32-arm64-msvc` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-arm64-msvc/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-win32-x64-msvc` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-x64-msvc/1.2.15)；正文未在本地安装 |
 | `@rolldown/pluginutils` | 1.0.1 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/spec` | 1.1.0 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/utils` | 0.3.0 | MIT | 正文已读：`LICENSE` |
@@ -111,26 +111,26 @@
 | `@types/react` | 19.3.0 | MIT | 正文已读：`LICENSE` |
 | `@types/react-dom` | 19.3.0 | MIT | 正文已读：`LICENSE` |
 | `@types/use-sync-external-store` | 0.0.6 | MIT | 正文已读：`LICENSE` |
-| `@typescript/typescript-aix-ppc64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
+| `@typescript/typescript-aix-ppc64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-aix-ppc64/7.0.2)；正文未在本地安装 |
 | `@typescript/typescript-darwin-arm64` | 7.0.2 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE.txt` |
-| `@typescript/typescript-darwin-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-freebsd-arm64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-freebsd-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-arm` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-arm64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-loong64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-mips64el` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-ppc64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-riscv64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-s390x` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-linux-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-netbsd-arm64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-netbsd-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-openbsd-arm64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-openbsd-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-sunos-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-win32-arm64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
-| `@typescript/typescript-win32-x64` | 7.0.2 | Apache-2.0 | 待核验（本地无许可正文） |
+| `@typescript/typescript-darwin-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-darwin-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-freebsd-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-freebsd-arm64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-freebsd-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-freebsd-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-arm` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-arm/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-arm64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-loong64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-loong64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-mips64el` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-mips64el/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-ppc64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-ppc64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-riscv64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-riscv64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-s390x` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-s390x/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-linux-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-linux-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-netbsd-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-netbsd-arm64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-netbsd-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-netbsd-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-openbsd-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-openbsd-arm64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-openbsd-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-openbsd-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-sunos-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-sunos-x64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-win32-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-arm64/7.0.2)；正文未在本地安装 |
+| `@typescript/typescript-win32-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-x64/7.0.2)；正文未在本地安装 |
 | `@vitejs/plugin-react` | 6.1.2 | MIT | 正文已读：`LICENSE` |
 | `@vitest/mocker` | 5.0.5 | MIT | 正文已读：`LICENSE` |
 | `@vitest/spy` | 5.0.5 | MIT | 正文已读：`LICENSE` |
@@ -157,8 +157,8 @@
 | `d3-time-format` | 4.1.0 | ISC | 正文已读：`LICENSE` |
 | `d3-timer` | 3.0.1 | ISC | 正文已读：`LICENSE` |
 | `data-urls` | 8.0.0 | MIT | 正文已读：`LICENSE.txt` |
-| `decimal.js` | 10.6.0 | MIT | 待核验（本地无许可正文） |
-| `decimal.js-light` | 2.5.1 | MIT | 待核验（本地无许可正文） |
+| `decimal.js` | 10.6.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/decimal.js/10.6.0)；正文未在本地安装 |
+| `decimal.js-light` | 2.5.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/decimal.js-light/2.5.1)；正文未在本地安装 |
 | `dequal` | 2.0.3 | MIT | 正文已读：`license` |
 | `detect-libc` | 2.1.2 | Apache-2.0 | 正文已读：`LICENSE` |
 | `detect-node-es` | 1.1.0 | MIT | 正文已读：`LICENSE` |
@@ -183,17 +183,17 @@
 | `jsdom` | 30.1.3 | MIT | 正文已读：`LICENSE.txt` |
 | `klona` | 2.0.6 | MIT | 正文已读：`license` |
 | `lightningcss` | 1.33.0 | MPL-2.0 | 正文已读：`LICENSE` |
-| `lightningcss-android-arm64` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
+| `lightningcss-android-arm64` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-android-arm64/1.33.0)；正文未在本地安装 |
 | `lightningcss-darwin-arm64` | 1.33.0 | MPL-2.0 | 正文已读：`LICENSE` |
-| `lightningcss-darwin-x64` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-freebsd-x64` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-linux-arm-gnueabihf` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-linux-arm64-gnu` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-linux-arm64-musl` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-linux-x64-gnu` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-linux-x64-musl` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-win32-arm64-msvc` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
-| `lightningcss-win32-x64-msvc` | 1.33.0 | MPL-2.0 | 待核验（本地无许可正文） |
+| `lightningcss-darwin-x64` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-darwin-x64/1.33.0)；正文未在本地安装 |
+| `lightningcss-freebsd-x64` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-freebsd-x64/1.33.0)；正文未在本地安装 |
+| `lightningcss-linux-arm-gnueabihf` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/1.33.0)；正文未在本地安装 |
+| `lightningcss-linux-arm64-gnu` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-linux-arm64-gnu/1.33.0)；正文未在本地安装 |
+| `lightningcss-linux-arm64-musl` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-linux-arm64-musl/1.33.0)；正文未在本地安装 |
+| `lightningcss-linux-x64-gnu` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-linux-x64-gnu/1.33.0)；正文未在本地安装 |
+| `lightningcss-linux-x64-musl` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-linux-x64-musl/1.33.0)；正文未在本地安装 |
+| `lightningcss-win32-arm64-msvc` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-win32-arm64-msvc/1.33.0)；正文未在本地安装 |
+| `lightningcss-win32-x64-msvc` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-win32-x64-msvc/1.33.0)；正文未在本地安装 |
 | `loose-envify` | 1.4.0 | MIT | 正文已读：`LICENSE` |
 | `lru-cache` | 11.5.3 | BlueOak-1.0.0 | 正文已读：`LICENSE.md` |
 | `lz-string` | 1.5.0 | MIT | 正文已读：`LICENSE` |
@@ -232,10 +232,10 @@
 | `require-from-string` | 2.0.2 | MIT | 正文已读：`license` |
 | `reselect` | 5.2.0 | MIT | 正文已读：`LICENSE` |
 | `rolldown` | 1.2.15 | MIT | 正文已读：`LICENSE` |
-| `saxes` | 6.0.0 | ISC | 待核验（本地无许可正文） |
+| `saxes` | 6.0.0 | ISC | [registry 声明已核验](https://registry.npmjs.org/saxes/6.0.0)；正文未在本地安装 |
 | `scheduler` | 0.28.0 | MIT | 正文已读：`LICENSE` |
 | `source-map-js` | 1.2.2 | BSD-3-Clause | 正文已读：`LICENSE` |
-| `std-env` | 4.3.0 | MIT | 待核验（本地无许可正文） |
+| `std-env` | 4.3.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/std-env/4.3.0)；正文未在本地安装 |
 | `strip-indent` | 3.0.0 | MIT | 正文已读：`license` |
 | `tabbable` | 6.5.0 | MIT | 正文已读：`LICENSE` |
 | `tagged-tag` | 1.0.0 | MIT | 正文已读：`license` |
@@ -269,39 +269,45 @@
 
 ## Swift 锁定依赖
 
-本 worktree 无 `.build/checkouts`，Package.resolved 未提供许可字段；以下全部待核验，不以组织或惯例猜测许可。发版前须读取锁定源码的 LICENSE/NOTICE/COPYING，特别核对 swift-crypto、swift-nio-ssl 及其嵌入加密库的多来源通知。
+来源链接固定到 Package.resolved 的完整 revision；以下读取的是包根许可证，不把根许可自动扩展为全部嵌入代码的唯一许可。Swift runtime exception 按正文注明，不省略。构建收集机制仍须由实际镜像安装验证确认。
 
-| 包 | 锁定版本 | 许可证 |
-|---|---|---|
-| `async-http-client` | 1.36.2 | 待核验（无本地 checkout） |
-| `async-kit` | 1.22.0 | 待核验（无本地 checkout） |
-| `console-kit` | 4.16.2 | 待核验（无本地 checkout） |
-| `multipart-kit` | 4.7.1 | 待核验（无本地 checkout） |
-| `routing-kit` | 4.9.3 | 待核验（无本地 checkout） |
-| `swift-algorithms` | 1.2.1 | 待核验（无本地 checkout） |
-| `swift-asn1` | 1.7.3 | 待核验（无本地 checkout） |
-| `swift-async-algorithms` | 1.1.7 | 待核验（无本地 checkout） |
-| `swift-atomics` | 1.3.1 | 待核验（无本地 checkout） |
-| `swift-certificates` | 1.21.0 | 待核验（无本地 checkout） |
-| `swift-collections` | 1.7.3 | 待核验（无本地 checkout） |
-| `swift-configuration` | 1.3.0 | 待核验（无本地 checkout） |
-| `swift-crypto` | 4.5.2 | 待核验（无本地 checkout） |
-| `swift-distributed-tracing` | 1.7.2 | 待核验（无本地 checkout） |
-| `swift-http-structured-headers` | 1.7.0 | 待核验（无本地 checkout） |
-| `swift-http-types` | 1.8.0 | 待核验（无本地 checkout） |
-| `swift-log` | 1.16.1 | 待核验（无本地 checkout） |
-| `swift-metrics` | 2.12.0 | 待核验（无本地 checkout） |
-| `swift-nio` | 2.104.0 | 待核验（无本地 checkout） |
-| `swift-nio-extras` | 1.35.1 | 待核验（无本地 checkout） |
-| `swift-nio-http2` | 1.46.0 | 待核验（无本地 checkout） |
-| `swift-nio-ssl` | 2.37.5 | 待核验（无本地 checkout） |
-| `swift-nio-transport-services` | 1.28.0 | 待核验（无本地 checkout） |
-| `swift-numerics` | 1.1.1 | 待核验（无本地 checkout） |
-| `swift-service-context` | 1.5.1 | 待核验（无本地 checkout） |
-| `swift-service-lifecycle` | 2.13.0 | 待核验（无本地 checkout） |
-| `swift-system` | 1.8.1 | 待核验（无本地 checkout） |
-| `vapor` | 4.122.2 | 待核验（无本地 checkout） |
-| `websocket-kit` | 2.16.2 | 待核验（无本地 checkout） |
+| 包 | 锁定版本 | 根许可证 | 已读来源 |
+|---|---|---|---|
+| `async-http-client` | 1.36.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/4c005f955e83f888d5616e579717a36d2dfc6301/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/4c005f955e83f888d5616e579717a36d2dfc6301/NOTICE.txt) |
+| `async-kit` | 1.22.0 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/async-kit/6bbb83cbf9d886623a967a965c8fb1b73e6566f9/LICENSE) |
+| `console-kit` | 4.16.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/console-kit/04ebb8ff6424fc01f2c3b665a7e84a83226bfb76/LICENSE) |
+| `multipart-kit` | 4.7.1 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/multipart-kit/3498e60218e6003894ff95192d756e238c01f44e/LICENSE) |
+| `routing-kit` | 4.9.3 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/routing-kit/1a10ccea61e4248effd23b6e814999ce7bdf0ee0/LICENSE) |
+| `swift-algorithms` | 1.2.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-algorithms/87e50f483c54e6efd60e885f7f5aa946cee68023/LICENSE.txt) |
+| `swift-asn1` | 1.7.3 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-asn1/3b6410f7dee09eb33cdd26260c5fd47fda19b0e2/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-asn1/3b6410f7dee09eb33cdd26260c5fd47fda19b0e2/NOTICE.txt) |
+| `swift-async-algorithms` | 1.1.7 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-async-algorithms/13713a4ffdee8abd929f92568ee9462a46ae26e0/LICENSE.txt) |
+| `swift-atomics` | 1.3.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-atomics/0442cb5a3f98ab802acb777929fdb446bda11a34/LICENSE.txt) |
+| `swift-certificates` | 1.21.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-certificates/ff86b924ead66f853b8baf91f3c41926a8f36177/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-certificates/ff86b924ead66f853b8baf91f3c41926a8f36177/NOTICE.txt) |
+| `swift-collections` | 1.7.3 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-collections/35a1edcb8ebd2bfe251d587f0b69e62af28f508c/LICENSE.txt) |
+| `swift-configuration` | 1.3.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-configuration/4e916072eb34f3c136ae64bd2859d6072cdb1b6e/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-configuration/4e916072eb34f3c136ae64bd2859d6072cdb1b6e/NOTICE.txt) |
+| `swift-crypto` | 4.5.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-crypto/da9d28d69ebe3894b18376c8f2395c2f37b8448f/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-crypto/da9d28d69ebe3894b18376c8f2395c2f37b8448f/NOTICE.txt) |
+| `swift-distributed-tracing` | 1.7.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-distributed-tracing/297b5b9c82a5631e3199ce3ec0993a3cfb0fbb84/LICENSE.txt) |
+| `swift-http-structured-headers` | 1.7.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-structured-headers/933538faa42c432d385f02e07df0ace7c5ecfc47/LICENSE.txt) |
+| `swift-http-types` | 1.8.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/NOTICE.txt) |
+| `swift-log` | 1.16.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-log/4038b6a4f74a1426f47eb1dd5b4bb5628a15d597/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-log/4038b6a4f74a1426f47eb1dd5b4bb5628a15d597/NOTICE.txt) |
+| `swift-metrics` | 2.12.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-metrics/9467f9cc3c32b4386fad1ecc4618328887ef5758/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-metrics/9467f9cc3c32b4386fad1ecc4618328887ef5758/NOTICE.txt) |
+| `swift-nio` | 2.104.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio/6db9d9abd92ad7399b8a564cafbb87d3507245fa/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio/6db9d9abd92ad7399b8a564cafbb87d3507245fa/NOTICE.txt) |
+| `swift-nio-extras` | 1.35.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/41449336c8ecfadac6b4b5be75f9c3c306e61ced/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/41449336c8ecfadac6b4b5be75f9c3c306e61ced/NOTICE.txt) |
+| `swift-nio-http2` | 1.46.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-http2/0f3e54e29c944c2e835ad52159da7d9e1c94ac69/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-http2/0f3e54e29c944c2e835ad52159da7d9e1c94ac69/NOTICE.txt) |
+| `swift-nio-ssl` | 2.37.5 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/322f3c2a4a21df31c84ca416bf65ee5e9059e440/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/322f3c2a4a21df31c84ca416bf65ee5e9059e440/NOTICE.txt) |
+| `swift-nio-transport-services` | 1.28.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-transport-services/67787bb645a5e67d2edcdfbe48a216cc549222d5/LICENSE.txt) |
+| `swift-numerics` | 1.1.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-numerics/0c0290ff6b24942dadb83a929ffaaa1481df04a2/LICENSE.txt) |
+| `swift-service-context` | 1.5.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/NOTICE.txt) |
+| `swift-service-lifecycle` | 2.13.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/NOTICE.txt) |
+| `swift-system` | 1.8.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-system/869129b7bf4ecc57b97d0193ad29690ca2134750/LICENSE.txt) |
+| `vapor` | 4.122.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/vapor/33e61d0a02a9ddc9f025f8398a0dc24774f6cbe1/LICENSE) |
+| `websocket-kit` | 2.16.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/websocket-kit/90bbbdab3ede12c803cfbe91646f291c092517a3/LICENSE) |
+
+### 嵌入组件的剩余核验边界
+
+`swift-nio-ssl` 的锁定 NOTICE 已明确声明 BoringSSL 为 ISC 与 OpenSSL 组合许可；须保留其多来源通知，不能仅分发包根 Apache-2.0。`swift-crypto` 的锁定 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0；测试材料不因出现在源码归档就免除许可保留。
+
+**待核验：两个包内嵌加密代码的完整许可正文与适用文件集合。** 在这两个锁定 revision 查询 `Sources/CCryptoBoringSSL` / `Sources/CNIOBoringSSL` 下的 LICENSE、LICENSE.txt、NOTICE、COPYING 均返回 HTTP 404；递归源码树元数据也未列出独立的组件许可文件。根 NOTICE 提及的 `license/LICENSE.<component>.txt` 未在树中取得，不能用浮动上游许可替代锁定产物的证据。正式分发前须检查实际 SwiftPM checkout 与镜像许可归档；若组件通知仍缺失，维护者应补全后再发布。
 
 ## 相关文档
 

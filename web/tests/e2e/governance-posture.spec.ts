@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
@@ -62,7 +63,7 @@ test("explains closed unknown usage, reasons and detail retention on large and s
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: "../artifacts/governance-posture/usage-390.png",

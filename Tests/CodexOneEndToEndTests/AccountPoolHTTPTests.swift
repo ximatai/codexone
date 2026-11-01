@@ -1222,7 +1222,7 @@ func poolWebSocketUpgradeRejectionsClassifyHealthBeforeAnyCreateAndNeverReconnec
           let unknown = try await h.store.perform {
             try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
           }
-          #expect(unknown == (status >= 500 ? 1 : 0))
+          #expect(unknown == (status >= 500 ? 1 : 0), "native=\(native), status=\(status)")
         } catch {
           await h.close()
           throw error

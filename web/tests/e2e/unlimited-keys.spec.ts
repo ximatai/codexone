@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 
@@ -73,5 +74,5 @@ test("desktop unlimited Key editing, payload and usage policy display", async ({
     path: testInfo.outputPath("unlimited-usage-desktop.png"),
     fullPage: true,
   });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1600);
+  await expectNoHorizontalOverflow(page);
 });

@@ -10,7 +10,7 @@ private struct UsageFixture {
   let store: SQLiteExecutionStore
   let reader: SQLiteUsageReader
   let hour: Int64
-  static func make() async throws -> Self {
+  static func make(readTimeout: Duration = .seconds(1)) async throws -> Self {
     let path = try temporaryExecutionPath()
     let store = try await SQLiteExecutionStore.open(
       path: path,
@@ -25,7 +25,7 @@ private struct UsageFixture {
     }
     try await store.configureHealthModels(["synthetic-text"])
     return Self(
-      path: path, store: store, reader: try await store.makeUsageReader(),
+      path: path, store: store, reader: try await store.makeUsageReader(readTimeout: readTimeout),
       hour: Int64(Date().timeIntervalSince1970) / 3600 * 3600)
   }
   func insert(
@@ -148,7 +148,8 @@ private struct UsageFixture {
 
 @Test func usageLargeIntegerMetricsStayExactAndQueryCapacityDoesNotStopCriticalWrites() async throws
 {
-  let f = try await UsageFixture.make()
+  // This verifies aggregation and admission gates, not shared-runner throughput.
+  let f = try await UsageFixture.make(readTimeout: .seconds(60))
   do {
     let huge = UsageEvidence(
       revision: 1, inputTokens: 1_000_000_000_000, outputTokens: 0, cachedTokens: 0, images: 0,
@@ -186,6 +187,33 @@ private struct UsageFixture {
     #expect(results.contains(false) && results.contains(true))
     try await f.store.finalize(
       attempt: "seed", evidence: usage(revision: 2, amount: 1_000_000_000_000))
+    #expect(f.store.isAvailable)
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
+@Test func usageExpiredReadBudgetReturnsCapacityAndReleasesSnapshotAndGate() async throws {
+  // Already expired: no scheduler delay or machine-speed threshold is needed.
+  let f = try await UsageFixture.make(readTimeout: .zero)
+  do {
+    await #expect(throws: ExecutionError.capacity) {
+      try await f.reader.read { db in
+        try db.rows(
+          "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<1000) SELECT SUM(i) FROM n"
+        ) { sqlite3_column_int64($0, 0) }
+      }
+    }
+    #expect(!f.store.usageActivity.withLock { $0 })
+    // A tiny read needs no progress callback; BEGIN proves rollback and gate release.
+    let recovered = try await f.reader.read { db in
+      #expect(sqlite3_get_autocommit(db.handle) == 0)
+      return try db.rows("SELECT 1") { sqlite3_column_int64($0, 0) }
+    }
+    #expect(recovered == [1])
+    try await f.insert("after-timeout", at: f.hour, evidence: usage(amount: 1))
     #expect(f.store.isAvailable)
   } catch {
     await f.close()
@@ -340,7 +368,8 @@ private struct UsageFixture {
     #expect(
       emptyReport.totals.averageFirstEventMilliseconds == nil
         && emptyReport.totals.p95FirstEventMilliseconds == nil)
-    let empty = try await f.reader.dailyUsage(days: 7, keyID: nil, model: nil)
+    let empty = try await f.reader.dailyUsage(
+      days: 7, keyID: nil, model: nil, endUnixSeconds: today + 86400)
     #expect(
       empty.count == 7 && empty.allSatisfy { $0.requests == 0 && $0.metrics.inputTokens == nil })
     for i in 1...20 {
@@ -357,7 +386,8 @@ private struct UsageFixture {
       }
     }
     try await f.insert("other-key", key: "beta", at: today, evidence: usage(amount: 100))
-    let daily = try await f.reader.dailyUsage(days: 2, keyID: "alpha", model: "synthetic-text")
+    let daily = try await f.reader.dailyUsage(
+      days: 2, keyID: "alpha", model: "synthetic-text", endUnixSeconds: today + 86400)
     #expect(daily.count == 2 && daily.map(\.requests) == [10, 10])
     #expect(
       daily[0].failed == 1 && daily[0].succeeded == 9 && daily[0].failures["deadline_exceeded"] == 1
@@ -377,9 +407,14 @@ private struct UsageFixture {
     #expect(
       daily.reduce(0) { $0 + ($1.metrics.estimatedMicros ?? 0) }
         == report.totals.metrics.estimatedMicros)
-    #expect(try await f.reader.dailyUsage(days: 31, keyID: nil, model: nil).count == 31)
     #expect(
-      try await f.reader.dailyUsage(days: 1, keyID: "alpha", model: "missing").first?.requests == 0)
+      try await f.reader.dailyUsage(
+        days: 31, keyID: nil, model: nil, endUnixSeconds: today + 86400
+      ).count == 31)
+    #expect(
+      try await f.reader.dailyUsage(
+        days: 1, keyID: "alpha", model: "missing", endUnixSeconds: today + 86400
+      ).first?.requests == 0)
     for days in [0, 32] {
       await #expect(throws: ExecutionError.invalidCommand) {
         try await f.reader.dailyUsage(days: days, keyID: nil, model: nil)
@@ -432,7 +467,8 @@ private struct UsageFixture {
 }
 
 @Test func round2UsageQueriesStayBoundedAtOneHundredThousandAttempts() async throws {
-  let f = try await UsageFixture.make()
+  // This verifies aggregation and admission gates, not shared-runner throughput.
+  let f = try await UsageFixture.make(readTimeout: .seconds(60))
   do {
     try await f.insert("scale-seed", at: f.hour, evidence: usage(amount: 1))
     try await f.store.perform { db in
@@ -471,7 +507,9 @@ private struct UsageFixture {
       report.totals.averageFirstEventMilliseconds == 1
         && report.totals.p95FirstEventMilliseconds == 1)
     #expect(
-      try await f.reader.dailyUsage(days: 1, keyID: nil, model: nil).first?.requests == 100000)
+      try await f.reader.dailyUsage(
+        days: 1, keyID: nil, model: nil, endUnixSeconds: f.hour / 86400 * 86400 + 86400
+      ).first?.requests == 100000)
     #expect(try await f.reader.inFlightUsage(limit: 200).isEmpty)
   } catch {
     await f.close()

@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "@playwright/test";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { mkdir } from "node:fs/promises";
@@ -80,7 +81,7 @@ test("backup attention opens storage details with last success on desktop and mo
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("link", { name: /^最近备份/ }).click();
   await expect(drawer.getByText("保留备份：7")).toBeVisible();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/online-backup/storage-390.png" });
 });

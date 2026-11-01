@@ -1,0 +1,235 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, commit or tag to verify (dry-run only)'
+        required: true
+        default: main
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.ref || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      revision: ${{ steps.metadata.outputs.revision }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release policy and extract CHANGELOG
+        id: metadata
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_TAG: ${{ github.ref_name }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          args=()
+          if [[ "$EVENT" == push ]]; then
+            args+=(--tag "$PUSH_TAG")
+          else
+            args+=(--dry-run)
+            if [[ "$INPUT_REF" == refs/tags/* ]]; then
+              args+=(--tag "${INPUT_REF#refs/tags/}")
+            elif git show-ref --verify --quiet "refs/tags/$INPUT_REF"; then
+              args+=(--tag "$INPUT_REF")
+            fi
+          fi
+          python3 scripts/test_prepare_release.py
+          python3 scripts/prepare_release.py "${args[@]}" --output-dir artifacts --github-output "$GITHUB_OUTPUT"
+          python3 scripts/check_docs.py
+      - name: Verify optimized Linux binary with synthetic socket failures
+        run: docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:tls-base .
+      - name: Build runtime once from locked source
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          REVISION: ${{ steps.metadata.outputs.revision }}
+        run: |
+          docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$REVISION" \
+            --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
+          docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
+          test "$(docker image inspect codexone:candidate --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
+          test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+      - name: Verify real local TLS reverse proxy
+        run: |
+          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
+          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
+            --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
+            codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
+      - name: Verify actual private installation
+        run: python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)"
+      - name: Export verified image, source, binary and licenses
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          image_id="$(cat artifacts/image-id.txt)"
+          test "$(docker image inspect codexone:candidate --format '{{.Id}}')" = "$image_id"
+          git archive --format=tar.gz --prefix="codexone-$VERSION/" --output="artifacts/codexone-$VERSION-source.tar.gz" HEAD
+          container="$(docker create "$image_id")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/usr/local/bin/codexone" artifacts/codexone-linux-amd64
+          verified_binary="$(docker run --rm --network none --read-only --entrypoint sha256sum codexone:tls-base /output/codexone | cut -d ' ' -f 1)"
+          test "$(sha256sum artifacts/codexone-linux-amd64 | cut -d ' ' -f 1)" = "$verified_binary"
+          # The binary needs the image's Swift runtime; publish only its digest, not a standalone download.
+          sha256sum artifacts/codexone-linux-amd64 | sed 's|artifacts/||' > artifacts/binary-sha256.txt
+          rm artifacts/codexone-linux-amd64
+          mkdir "$RUNNER_TEMP/licenses"
+          docker cp "$container:/opt/codexone/licenses/." "$RUNNER_TEMP/licenses/"
+          docker cp "$container:/opt/codexone/LICENSE" "$RUNNER_TEMP/licenses/LICENSE"
+          cp THIRD_PARTY_NOTICES.md "$RUNNER_TEMP/licenses/"
+          tar -czf artifacts/licenses.tar.gz -C "$RUNNER_TEMP/licenses" .
+          printf 'Not published; local image ID: %s\n' "$image_id" > artifacts/image-digest.txt
+          mkdir image
+          docker save "$image_id" | gzip > image/codexone-linux-amd64.tar.gz
+          (cd image && sha256sum codexone-linux-amd64.tar.gz) > artifacts/image-archive-sha256.txt
+          (cd artifacts && sha256sum -- * > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-release-files
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-linux-amd64-image
+          path: image/
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    if: github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      IMAGE: ghcr.io/ximatai/codexone
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-release-files
+          path: artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-linux-amd64-image
+          path: image
+      - name: Restore exactly the verified image
+        run: |
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          (cd image && sha256sum --check ../artifacts/image-archive-sha256.txt)
+          docker load --input image/codexone-linux-amd64.tar.gz
+          image_id="$(cat artifacts/image-id.txt)"
+          test "$(docker image inspect "$image_id" --format '{{.Id}}')" = "$image_id"
+          test "$(docker image inspect "$image_id" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          docker tag "$image_id" "$IMAGE:$VERSION"
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push verified image and check registry digest and image ID
+        id: push
+        run: |
+          docker push "$IMAGE:$VERSION" | tee "$RUNNER_TEMP/push.log"
+          digest="$(sed -nE 's/^.*: digest: (sha256:[0-9a-f]{64}) size: [0-9]+$/\1/p' "$RUNNER_TEMP/push.log")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker pull --platform linux/amd64 "$IMAGE@$digest"
+          test "$(docker image inspect "$IMAGE@$digest" --format '{{.Id}}')" = "$(cat artifacts/image-id.txt)"
+          printf '%s\n' "$digest" > artifacts/image-digest.txt
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Attest published image digest
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ghcr.io/ximatai/codexone
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Update latest for stable releases only
+        if: needs.verify.outputs.prerelease == 'false'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          docker tag "$(cat artifacts/image-id.txt)" "$IMAGE:latest"
+          docker push "$IMAGE:latest" | tee "$RUNNER_TEMP/latest.log"
+          latest_digest="$(sed -nE 's/^.*: digest: (sha256:[0-9a-f]{64}) size: [0-9]+$/\1/p' "$RUNNER_TEMP/latest.log")"
+          test "$latest_digest" = "$DIGEST"
+      - name: Finalize release notes and checksums
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cat >> artifacts/release-notes.md <<EOF_NOTES
+
+          ### 镜像（Linux amd64）
+
+          Digest: \`$DIGEST\`
+
+          \`\`\`sh
+          docker pull $IMAGE:$VERSION
+          docker pull $IMAGE@$DIGEST
+          gh attestation verify oci://$IMAGE:$VERSION -R ximatai/codexone
+          \`\`\`
+          EOF_NOTES
+          rm artifacts/SHA256SUMS
+          (cd artifacts && sha256sum -- * > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-release-files
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
+  release:
+    if: github.event_name == 'push'
+    needs: [verify, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: published-release-files
+          path: artifacts
+      - name: Create GitHub Release with verified artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ximatai/codexone
+          TAG: ${{ needs.verify.outputs.tag }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        shell: bash
+        run: |
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          args=(--latest)
+          if [[ "$PRERELEASE" == true ]]; then args=(--prerelease --latest=false); fi
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file artifacts/release-notes.md "${args[@]}" \
+            artifacts/*-source.tar.gz artifacts/licenses.tar.gz \
+            artifacts/SHA256SUMS artifacts/image-digest.txt artifacts/image-id.txt \
+            artifacts/binary-sha256.txt artifacts/source-revision.txt artifacts/release.json \
+            artifacts/release-notes.md artifacts/image-archive-sha256.txt

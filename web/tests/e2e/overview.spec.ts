@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
@@ -26,7 +27,7 @@ test("overview displays real contract fields at desktop and mobile sizes", async
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("button", { name: "刷新状态" })).toBeVisible();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
 });
 
 test("connection failure provides a working retry", async ({ page }) => {

@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 
@@ -124,7 +125,7 @@ test("browser login form and request effort evidence", async ({ page }) => {
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.screenshot({
     path: "../artifacts/session-effort-390.png",
     fullPage: true,

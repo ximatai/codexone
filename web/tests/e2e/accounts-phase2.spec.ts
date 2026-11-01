@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
@@ -84,9 +85,5 @@ test("account drawer refreshes a conflicting name and saves on explicit retry", 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/ui-phase2/accounts-390.png" });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expectNoHorizontalOverflow(page);
 });

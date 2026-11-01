@@ -1,10 +1,21 @@
-import { expect, test } from "./fixtures";
+import { expectNoHorizontalOverflow } from "./layout";
+import { expect, test, gotoUsage } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 
 test("usage filters, cursor pages and request drawer stay usable on desktop and mobile", async ({
   page,
 }) => {
+  const now = new Date("2026-10-31T23:41:00Z");
+  const presetEnd = Date.parse("2026-10-31T23:00:00Z") / 1000;
+  const isPresetQuery = (url: URL) =>
+    url.pathname === "/api/usage" &&
+    url.searchParams.get("start") === String(presetEnd - 86400) &&
+    url.searchParams.get("end") === String(presetEnd);
+  let releasePresetRead!: () => void;
+  const presetRead = new Promise<void>((resolve) => {
+    releasePresetRead = resolve;
+  });
   let authenticated = false;
   const queries: URL[] = [];
   await page.route("**/api/**", async (route) => {
@@ -29,6 +40,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
       });
     if (url.pathname === "/api/usage") {
       queries.push(url);
+      if (isPresetQuery(url)) await presetRead;
       const report = reportFixture();
       return route.fulfill({
         json: {
@@ -61,7 +73,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   });
   await mkdir("../artifacts/ui-phase2", { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/#/usage");
+  await gotoUsage(page, now);
   await page
     .getByLabel("管理员凭证", { exact: true })
     .fill("synthetic-admin-only");
@@ -70,19 +82,33 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
     page.getByRole("heading", { name: "用量与诊断", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("第 1 页", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "最近 24 小时" }).click();
-  await expect.poll(() => queries.length).toBe(2);
-  await expect(
-    page.getByRole("button", { name: "最近 24 小时" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveURL(/page=1/);
+  const presetButton = page.getByRole("button", { name: "最近 24 小时" });
+  const presetResponse = page.waitForResponse((response) =>
+    isPresetQuery(new URL(response.url())),
+  );
+  await presetButton.click();
+  await expect.poll(() => queries.some(isPresetQuery)).toBe(true);
+  // Dispatch is not completion: the applied preset must wait for the response.
+  await expect(presetButton).toBeDisabled();
+  await expect(presetButton).toHaveAttribute("aria-pressed", "false");
+  releasePresetRead();
+  const response = await presetResponse;
+  await expect(presetButton).toBeEnabled();
+  await expect(presetButton).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("button", { name: "自定义", exact: true }),
   ).toHaveAttribute("aria-pressed", "false");
-  const firstStart = queries[1].searchParams.get("start");
+  const firstStart = new URL(response.url()).searchParams.get("start");
+  const nextPageResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return isPresetQuery(url) && url.searchParams.has("after");
+  });
   await page.getByRole("button", { name: "下一页" }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
-  expect(queries[2].searchParams.get("after")).toBe("synthetic_cursor");
-  expect(queries[2].searchParams.get("start")).toBe(firstStart);
+  const nextPage = new URL((await nextPageResponse).url());
+  expect(nextPage.searchParams.get("after")).toBe("synthetic_cursor");
+  expect(nextPage.searchParams.get("start")).toBe(firstStart);
   await page.getByText("更多筛选", { exact: true }).click();
   await page.getByLabel("执行模式").selectOption("compact");
   await page.getByRole("button", { name: "查询用量", exact: true }).click();
@@ -112,7 +138,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await expect(drawer).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.screenshot({
     path: "../artifacts/ui-phase2/usage-390.png",
   });

@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 
@@ -101,6 +102,6 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
   await expect(
     page.getByText("legacy-synthetic", { exact: true }),
   ).toBeVisible();
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 390);
+  await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: "../artifacts/key-display-name/keys-390.png" });
 });

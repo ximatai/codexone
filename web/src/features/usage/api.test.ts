@@ -1,6 +1,8 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { parseUsage, usageParameters } from "./api";
 import { reportFixture } from "./usage.test-data";
+
+afterEach(() => vi.useRealTimers());
 it("keeps exact large integers and missing metrics, rejecting unsafe numeric transport and inconsistent buckets", () => {
   const fixture = reportFixture();
   expect(parseUsage(fixture).totals.metrics.inputTokens).toBe(
@@ -59,6 +61,8 @@ it("uses inclusive UTC days and strictly bounds the calendar range", () => {
 });
 
 it("queries a rolling 24 completed UTC hours instead of the calendar day", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-10-31T23:41:00Z"));
   const parameters = usageParameters({
     start: "2026-10-01",
     end: "2026-10-31",
@@ -70,7 +74,7 @@ it("queries a rolling 24 completed UTC hours instead of the calendar day", () =>
     failedOnly: false,
     range: "24h",
   });
-  const end = Math.floor(Date.now() / 3600000) * 3600;
+  const end = Date.parse("2026-10-31T23:00:00Z") / 1000;
   expect(Number(parameters.get("end"))).toBe(end);
   expect(Number(parameters.get("start"))).toBe(end - 86400);
 });
