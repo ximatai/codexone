@@ -115,6 +115,10 @@ for (const width of [1440, 390]) {
       dialog.getByRole("button", { name: "复制设备码", exact: true }),
     ).toBeVisible();
     await expectNoHorizontalOverflow(page);
+    await page.screenshot({
+      path: `../artifacts/device-code-auth/device-${width}.png`,
+      animations: "disabled",
+    });
     await page.clock.runFor(1100);
     await expect(dialog).toContainText("授权已验证并保存，新账号默认禁用。");
     expect(enabled).toBe(0);

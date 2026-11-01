@@ -25,7 +25,7 @@ final class DevicePollGate: Sendable {
     var tokens = 0
     var waiting: [(UUID, AsyncStream<Void>.Continuation)] = []
   }
-  let state = Mutex(State())
+  private let state = Mutex(State())
   func pulse() {
     state.withLock { value in
       while !value.waiting.isEmpty {

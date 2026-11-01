@@ -24,7 +24,7 @@ async function admin(path = "/api/accounts", method = "GET", body) {
 async function capture(name) {
   const html = await page.content();
   assert(secrets.every(secret => !html.includes(secret)), "Private material in rendered DOM");
-  await page.screenshot({ path: resolve(output, name), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] });
+  await page.screenshot({ path: resolve(output, name), fullPage: true, animations: "disabled", mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] });
 }
 async function finishAuthorization(buttonName, method = "callback") {
   const prefix = stage;
@@ -267,7 +267,7 @@ try {
   console.log("PASS: actual Chrome account UI: login, cancel/code+PKCE, default disabled, enable/CAS, unknown write/read lock, rejected refresh/reauthorization, session replacement/logout retry; passive quota GET, failure retention/staleness/recovery; private storage and large-screen captures");
 } catch (error) {
   console.error("Account assertion line=" + (error?.stack?.match(/live-accounts\.mjs:(\d+)/)?.[1] ?? "unknown") + "; class=" + error?.name);
-  await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
+  await page?.screenshot({ path: resolve(output, "failure-desktop.png"), fullPage: true, animations: "disabled", mask: [page.locator('input[type="password"]'), page.locator('a[href*="oauth/authorize"]')] }).catch(() => {});
   console.error(`Browser account check failed at stage: ${stage}; private diagnostics excluded.`);
   process.exitCode = 1;
 } finally { await browser?.close(); }

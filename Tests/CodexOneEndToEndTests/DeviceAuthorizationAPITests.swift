@@ -79,6 +79,18 @@ import Testing
       #expect(try await client.call("DELETE", path, headers: bearer).0 == 200)
       #expect(h.provider.activeRequests == 0 && calls(h, "/oauth/token") == 0)
       #expect(try await client.call("GET", path, headers: bearer).0 == 409)
+      // DELETE must also await an already dispatched exchange, not only the polling POST.
+      try prepareDevice(h)
+      h.server.set(.headersStall)
+      let exchanging = try await client.call(
+        "POST", "/api/accounts/authorization", body: .object(["target": .null]), headers: bearer)
+      let exchangePath =
+        "/api/accounts/authorization/" + (try #require(exchanging.1["flowID"]?.string))
+      gate.pulse()
+      try await awaitDevice { calls(h, "/oauth/token") == 1 }
+      #expect(try await client.call("DELETE", exchangePath, headers: bearer).0 == 200)
+      #expect(h.provider.activeRequests == 0 && calls(h, "/oauth/token") == 1)
+      #expect(try await h.store.listAccounts(after: nil).isEmpty)
       try noDeviceMaterialInDatabase(h)
     } catch {
       owner.cancel()
