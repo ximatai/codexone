@@ -15,7 +15,8 @@ export default defineConfig({
     { name: "chrome", use: { browserName: "chromium", channel: "chrome" } },
   ],
   webServer: {
-    command: `npm run dev -- --port ${port} --strictPort`,
+    // Build first (verify.sh --web does this once); exercise the shipped bundle.
+    command: `npm run preview -- --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
     timeout: 30_000,
