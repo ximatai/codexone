@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 import argparse
-from verify_protocol import TOKEN, connect, start, stop, latest
+from verify_protocol import TOKEN, connect, start, stop, latest, dump_gateway_failure
 
 
 def exact(sock, size):
@@ -216,6 +216,7 @@ def main():
                 'upstreamBaseURL': f'http://127.0.0.1:{provider.server_port}/v1', 'upstreamTransport': 'websocket'}))
             config.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), config, directory)
+            output = b''
             db = directory / 'state/core.sqlite'
             try:
                 with dial(ports['data'], extension_offer=True) as downstream:
@@ -440,6 +441,9 @@ def main():
                 output = process.stdout.read()
                 assert TOKEN.encode() not in output and temporary.encode() not in output
                 print('PASS: silent downstream close cancels provider; shutdown owns pending negotiations and releases sockets')
+            except BaseException:
+                dump_gateway_failure(process, output=output)
+                raise
             finally:
                 stop(process)
     finally:

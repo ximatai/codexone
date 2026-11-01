@@ -12,12 +12,35 @@ import selectors
 import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from browser_env import browser_env
 
 TOKEN = "synthetic-client-token-for-local-tests"
+GATEWAY_OUTPUT_LIMIT = 65536
+
+
+def dump_gateway_failure(process, *, output=b""):
+    """Snapshot a synthetic gateway before cleanup, without waiting for pipe EOF."""
+    status = process.poll()
+    captured = getattr(process, "gateway_startup_output", b"") + output
+    # Bound both pipe draining and the printed tail, including a noisy live child.
+    if process.stdout is not None and not process.stdout.closed:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            remaining = GATEWAY_OUTPUT_LIMIT
+            while remaining and selector.select(timeout=0):
+                chunk = os.read(process.stdout.fileno(), min(8192, remaining))
+                if not chunk:
+                    break
+                captured += chunk
+                remaining -= len(chunk)
+    for marker in getattr(process, "gateway_redactions", (TOKEN,)):
+        captured = captured.replace(marker.encode(), b"[redacted]")
+    tail = captured[-GATEWAY_OUTPUT_LIMIT:].decode(errors="replace")
+    print(f"Gateway failure: process.poll()={status!r}; stdout/stderr tail (bounded):\n{tail}", file=sys.stderr)
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -184,6 +207,8 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
     if account_master_key_file is not None:
         environment['CODEXONE_ACCOUNT_MASTER_KEY_FILE'] = str(account_master_key_file)
     process = subprocess.Popen([binary], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    process.gateway_startup_output = b""
+    process.gateway_redactions = (TOKEN, str(directory), str(binary), "synthetic-header", "synthetic output")
     try:
         ports = {}
         output = b""
@@ -194,12 +219,14 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
                 assert process.poll() is None, "Configured gateway exited"
                 for key, _ in selector.select(timeout=0.2):
                     output += os.read(key.fd, 8192)
+                    process.gateway_startup_output = output[-GATEWAY_OUTPUT_LIMIT:]
                     assert len(output) < 131072
                     for name, port in re.findall(rb"LISTENING (data|admin) 127\.0\.0\.1:(\d+)", output):
                         ports[name.decode()] = int(port)
             assert len(ports) == 2, "Configured gateway did not listen"
         return process, ports
     except BaseException:
+        dump_gateway_failure(process)
         stop(process)
         raise
 
@@ -277,6 +304,9 @@ def verify_model_profiles(binary):
                         else:
                             assert status == 503 and b"model_catalog_unavailable" in body and b'"models"' not in body
                 assert not sqlite3.connect(root / "state/core.sqlite").execute("SELECT 1 FROM attempts").fetchall()
+            except BaseException:
+                dump_gateway_failure(process)
+                raise
             finally:
                 stop(process)
     print("PASS: Codex catalog requires explicit complete profiles; parsed version queries select view, not authorization; OpenAI model list remains available")
@@ -308,6 +338,7 @@ def main():
                 "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1"}))
             configuration.chmod(0o600)
             process, ports = start(str(args.binary.resolve()), configuration, directory)
+            output = b""
             try:
                 port = ports["data"]
                 db_path = directory / "state/core.sqlite"
@@ -415,6 +446,9 @@ def main():
                         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         probe.bind(("127.0.0.1", bound_port))
                 print("PASS: configured protocol shutdown awaits sockets and avoids payload/credential/path logging")
+            except BaseException:
+                dump_gateway_failure(process, output=output)
+                raise
             finally:
                 stop(process)
     finally:
