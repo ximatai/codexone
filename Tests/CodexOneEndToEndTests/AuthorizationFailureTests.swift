@@ -36,7 +36,7 @@ private final class AuthorizationLogs: Sendable {
     }
   }
   func expectFailure(_ code: String, method: String, status: Int?) {
-    let captured = entries.withLock { $0 }
+    let captured = entries.withLock { $0 }.filter { $0.level != .info }
     #expect(captured.count == 1)
     guard let entry = captured.first else { return }
     #expect(entry.level == .warning && !entry.hasError)
@@ -159,7 +159,11 @@ private final class AuthorizationLogs: Sendable {
         }
         let flow = try await service.begin(
           owner: "synthetic-session", target: target, method: .device)
-        if scenario != "unavailable" { gate.pulse() }
+        // Transport-only poll failures retry a bounded number of times before failing.
+        let pulses =
+          scenario == "unavailable"
+          ? 0 : scenario == "poll-drop" ? AccountAuthorizationSupervisor.pollTransportRetries : 1
+        for _ in 0..<pulses { gate.pulse() }
         try await awaitDevice {
           try await service.status(owner: "synthetic-session", flowID: flow.flowID).status
             == .failed
@@ -243,5 +247,40 @@ private final class AuthorizationLogs: Sendable {
       owner.cancel()
       try await owner.value
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func devicePollRecoversFromTransportFailure() async throws {
+  try await withOAuth { h in
+    try prepareDevice(h, poll: .abort)
+    let logs = AuthorizationLogs()
+    let gate = DevicePollGate()
+    let service = try AccountAuthorizationSupervisor(
+      application: h.app, provider: h.provider, logger: logs.logger, pollWait: gate.wait)
+    let owner = Task { try await service.run() }
+    do {
+      try await awaitDevice { await service.isAccepting }
+      let flow = try await service.begin(
+        owner: "synthetic-session", target: .create, method: .device)
+      gate.pulse()
+      try await awaitDevice { logs.entries.withLock { $0.contains { $0.level == .info } } }
+      #expect(
+        try await service.status(owner: "synthetic-session", flowID: flow.flowID).status
+          == .pending)
+      try prepareDevice(h)
+      gate.pulse()
+      try await awaitDevice {
+        try await service.status(owner: "synthetic-session", flowID: flow.flowID).status
+          == .completed
+      }
+      #expect(logs.entries.withLock { $0 }.allSatisfy { $0.level == .info })
+      #expect(try await h.store.listAccounts().count == 1)
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      throw error
+    }
+    owner.cancel()
+    try await owner.value
   }
 }

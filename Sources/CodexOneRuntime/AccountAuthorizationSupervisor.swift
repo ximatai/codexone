@@ -227,23 +227,25 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       response.resume(returning: start)
       throw error
     }
+    var transportFailures = 0
     while true {
       try checkPending(id)
       flows[id]?.stage = "poll"
       // Race sleep/network against the actual remaining lifetime, also when no frontend reads status.
-      let grant = try await withThrowingTaskGroup(of: AccountDeviceGrant?.self) { group in
-        defer { group.cancelAll() }
-        group.addTask { [provider, pollWait] in
-          try await pollWait(.seconds(device.intervalSeconds))
-          try Task.checkCancellation()
-          return try await provider.pollDeviceCode(device)
-        }
-        let duration = now().duration(to: flows[id]!.deadline)
-        group.addTask {
-          try await Task.sleep(for: duration)
-          throw AccountRefreshError.conflict
-        }
-        return try await group.next()!
+      let grant: AccountDeviceGrant?
+      do {
+        grant = try await pollOnce(id, device: device)
+        transportFailures = 0
+      } catch let failure as AccountAuthorizationFailure
+        where failure.code == .authorizationFailed && failure.providerStatus == nil
+      {
+        // No HTTP response: polling consumes nothing, so the next interval may retry. Bounded.
+        transportFailures += 1
+        guard transportFailures < Self.pollTransportRetries else { throw failure }
+        logger.info(
+          "Account authorization poll retry",
+          metadata: ["cause": .string(failure.cause ?? "unknown")])
+        continue
       }
       try checkPending(id)
       guard let grant else { continue }
@@ -264,6 +266,26 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       flows[id]?.accountID = account.id
       flows[id]?.userCode = nil
       return
+    }
+  }
+  /// Consecutive poll attempts without any HTTP response that end a device flow.
+  public static let pollTransportRetries = 6
+  private func pollOnce(_ id: String, device: AccountDeviceCode) async throws
+    -> AccountDeviceGrant?
+  {
+    try await withThrowingTaskGroup(of: AccountDeviceGrant?.self) { group in
+      defer { group.cancelAll() }
+      group.addTask { [provider, pollWait] in
+        try await pollWait(.seconds(device.intervalSeconds))
+        try Task.checkCancellation()
+        return try await provider.pollDeviceCode(device)
+      }
+      let duration = now().duration(to: flows[id]!.deadline)
+      group.addTask {
+        try await Task.sleep(for: duration)
+        throw AccountRefreshError.conflict
+      }
+      return try await group.next()!
     }
   }
   private func remaining(_ id: String) -> Int {
