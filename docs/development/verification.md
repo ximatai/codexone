@@ -111,7 +111,7 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 
 成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Dockerfile 的弱机器默认仍为 1，优化选项与每批 1 文件不变），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
 
-候选制品保留 1 天，过期后重试须重新运行 build；成功 gate 的 verified 制品仍保留 7 天。维护者须运行冷/热 dry-run，分别记录 build、最长分片、TLS/安装、gate 和总时间，检查两并发编译有无内存压力；再验证检查失败/取消、摘要错误均阻断发布。目标未实测前不更新公开发行完成状态，待验收项见[任务](../changes/release-ci-speed/tasks.md)。
+候选制品保留 1 天，过期后重试须重新运行 build；成功 gate 的 verified 制品仍保留 7 天。2026-11-01 实测：原串行发行验证约 24 分钟；冷缓存 dry-run 约 14.5 分钟（build 10.7 分钟，四分片与 TLS/安装并行约 3.5 分钟），同一 ref 热缓存约 6 分钟（build 2 分钟）；v0.26.4 tag 发布约 16 分钟，镜像 revision、registry digest 与来源证明核对通过。检查失败/取消与摘要篡改阻断 gate 由 `scripts/test_check_ci.py` 覆盖。
 
 ### 优化构建缓存与测量
 

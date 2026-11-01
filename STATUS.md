@@ -16,13 +16,12 @@
 - 多账号选择机制已有实现，完整多账号路由仍需独立验收；用量和费用可为部分或未知，不用于对外结算或绝对封顶。
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。
 - 内部协议可能变化。官方客户端标识与 OAuth ID 的使用可能违反提供者条款、触发风控或账号限制，详见[兼容与风险](docs/reference/compatibility.md)。
-- v10 不能使用 v9 或更旧程序原库回退；升级、备份恢复与迁移须按[维护指南](docs/guide/backup-upgrade.md)执行。
+- v11 不能使用 v10 或更旧程序原库回退；升级、备份恢复与迁移须按[维护指南](docs/guide/backup-upgrade.md)执行。
 - 发版验证在 GitHub Actions 的合成环境中运行；真实订阅、客户端组合与具体服务器容量仍需各自部署验证。
 
 ## 路线图
 
-- [发行 CI 并行验证与缓存](docs/changes/release-ci-speed/proposal.md)的冷/热 dry-run、耗时和镜像交接验收。
-- Node.js 26 与 GitHub Actions 大版本升级后的 Linux CI、开发容器和发行流程验收。
+- 重置卡使用与空闲窗口预热的真实订阅验收（需维护者在场确认）。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。

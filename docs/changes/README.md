@@ -6,7 +6,6 @@
 
 ## 活动提案
 
-- [release-ci-speed](release-ci-speed/proposal.md) · [任务](release-ci-speed/tasks.md)
 - [usage-analytics](usage-analytics/proposal.md) · [任务](usage-analytics/tasks.md)
 - [key-self-service](key-self-service/proposal.md) · [任务](key-self-service/tasks.md)
 
