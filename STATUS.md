@@ -20,7 +20,7 @@
 ## 路线图
 
 - v0.26.2 收尾验收：[设备码授权](docs/changes/device-code-auth/tasks.md)真实账号登录、[网关自动重启](docs/changes/gateway-restart/tasks.md)实例升级确认、[局域网模式](docs/changes/lan-mode/tasks.md)真实账号生成请求。
-- Node.js 运行时与 GitHub Actions 依赖的大版本升级。
+- Node.js 26 与 GitHub Actions 大版本升级后的 Linux CI、开发容器和发行流程验收。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。

@@ -58,6 +58,35 @@ python3 scripts/check_ci.py
 
 Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、两个 Verify 容器与缓存 key；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
 
+### Node 与 Actions 工具链约定
+
+前端开发、Verify 的 `setup-node`、开发容器和发行 Dockerfile 的 web 构建阶段统一固定 Node.js 26.13.0 LTS；`web/.nvmrc` 同步，`engines.node` 为 `>=26.13.0`，Node 类型定义使用 26.x。不继续承诺 Node 22/24 开发兼容，避免类型允许调用未验证运行时的 API。开发容器按 x64/arm64 分别固定官方 [SHASUMS256.txt](https://nodejs.org/dist/v26.13.0/SHASUMS256.txt) 中的 Linux `.tar.xz` 校验值；发行 Node 镜像同时固定 tag 与 registry digest。更新时须一起维护这些位置；`check_ci.py` 继续检查开发容器与 CI 的 Node 相等。Playwright 镜像及依赖保持独立的版本一致性检查。
+
+Actions 大版本升级的输入与行为边界如下；Action 自身使用 runner 提供的 Node 24，与项目 Node 26 分开，要求 Actions Runner 至少 2.327.1，当前使用 GitHub 托管的 Ubuntu 24.04。
+
+| Action | 上游差异与本仓库处理 |
+| --- | --- |
+| [checkout v7](https://github.com/actions/checkout/blob/v7.0.1/README.md) | v5 改用 Node 24；v6 将持久凭证移到 `RUNNER_TEMP` 的独立文件，默认 `persist-credentials: true` 未改，容器 Action 内认证 Git 要求 runner 2.329.0；现有显式 `false` 保留，其余沿用默认。v7 改用 ESM，并默认拒绝 `pull_request_target` / `workflow_run` 下检出 fork PR；本仓库使用 `pull_request`，不启用 `allow-unsafe-pr-checkout`。完整历史与发行 ref 选择保持原配置。 |
+| [upload-artifact v7](https://github.com/actions/upload-artifact/releases/tag/v7.0.0) | v5/v6 完成 Node 24 迁移，v7 改用 ESM，新增 `archive: false` 单文件直传，此模式忽略 `name` 并用文件名命名。全部显式 `archive: true` 保留命名 ZIP 包装；`include-hidden-files: false` 明确沿用 v4.4 起的默认值。产物名称、保留天数与缺文件策略保持原配置；执行权限仍靠内部 tar 保存。隐藏文件过滤不检查 tar 内部内容，内部范围由显式打包命令控制，源码归档由 `git archive` 产生。 |
+| [download-artifact v8](https://github.com/actions/download-artifact/releases/tag/v8.0.0) | v5 将单 ID（以及只匹配一个产物的 pattern）下载统一为直接写入目标目录；`name` 仍优先于 `pattern`，多产物默认分目录，`merge-multiple: true` 才合并。v6/v7 完成 Node 24 迁移；v8 改用 ESM，按 Content-Type 决定是否解压，新增 `skip-decompress`，哈希不符由警告改为失败。全部继续精确 `name` 下载并默认解压，显式 `digest-mismatch: error`；不使用 pattern、ID 或合并。 |
+| [setup-node v7](https://github.com/actions/setup-node/blob/v7.1.0/README.md) | v5 改用 Node 24 并引入包管理器自动缓存，v6 限为声明 npm 的项目并删除 `always-auth`，v7 改用 ESM 并移除虚拟 `NODE_AUTH_TOKEN` 回退。保留显式 `cache: npm` 和锁文件路径，设置 `package-manager-cache: false` 关闭隐式探测（显式缓存仍生效）；未设置 registry 认证或已删除的输入，无需新增令牌。 |
+| [cache restore/save v6](https://github.com/actions/cache/blob/v6.1.0/README.md) | v5 改用 Node 24，v6 改用 ESM 和新版 toolkit。主 key、按顺序的前缀恢复、`cache-hit` 只对精确命中为 true、`cache-primary-key` 输出保持兼容；未命中不失败。保留所有运行恢复、仅 main push 非精确命中保存的策略，以及 tar/zstd 前置依赖。只读缓存令牌写入被拒绝时上游警告后跳过，不以缓存成功替代构建成功。 |
+| [login-action v4](https://github.com/docker/login-action/releases/tag/v4.0.0) | 改用 Node 24、ESM；现用 GHCR 的 registry/username/password 输入兼容，默认 job 结束 logout 保留。新增的多 registry 认证、scope 等可选输入不影响此单 registry 流程。 |
+| [attest-build-provenance v4](https://github.com/actions/attest-build-provenance/blob/v4.2.2/action.yml) | v3 改用 Node 24 并改进 checksum 解析；v4 包装通用 `actions/attest`，支持自定义 predicate。仍只传无 tag 的镜像名及 push 输出的 digest，`push-to-registry: true`。新增默认开启的组织存储记录显式设为 `create-storage-record: false`，无需新增 `artifact-metadata: write`；现有 `contents: read`、`packages: write`、`id-token: write`、`attestations: write` 满足镜像证明与推送。 |
+
+跨 job 产物须保持下列对应关系；ZIP 外包装由 Action 自动解压，内部 tar/gzip 由现有命令处理，现有 SHA256SUMS、image ID 与推送 digest 比对仍保留：
+
+| 产物名 | 上传内容 | 下载位置及消费者 |
+| --- | --- | --- |
+| `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
+| `verified-release-files` | `artifacts/` 下的发行说明、校验和等 | publish 的 `artifacts/` |
+| `verified-linux-amd64-image` | `image/codexone-linux-amd64.tar.gz` | publish 的 `image/`，校验后 `docker load` |
+| `published-release-files` | 更新镜像 digest 与校验和后的 `artifacts/` | release 的 `artifacts/`，校验后创建 Release |
+
+本地静态检查与前端测试不能证明这些新版 Actions 的跨 job 传输、容器执行或 registry 证明兼容。Linux 镜像构建、开发容器及 Release dry-run/发版流程由维护者在 CI 验证。
+
+### Release 验证
+
 Release 的 tag 流程和手动 dry-run 共用 Linux amd64 验证：verification target 的优化后二进制合成 socket/迁移失败检查、实际本地 TLS 反代和真实 OCI/Compose 安装。安装覆盖非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。手动流程允许未发布 CHANGELOG，只上传产物；tag 流程须通过版本/主分支历史/CHANGELOG 检查后才可能发布，详见[发版规则](releasing.md)。
 
 工作流/版本政策修改的本地检查：

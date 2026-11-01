@@ -202,7 +202,7 @@ Restart Codex Desktop or the CLI, start a new session and send a message. If the
 
 ## Requirements and limits
 
-Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development works on Linux, macOS, and Windows (WSL2) with Swift 6.4, Node.js 22.23.0, and Python 3, or in the repository dev container. See [contributing](CONTRIBUTING.md).
+Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development works on Linux, macOS, and Windows (WSL2) with Swift 6.4, Node.js 26.13.0, and Python 3, or in the repository dev container. See [contributing](CONTRIBUTING.md).
 
 Single node and administrator only. Full multi-account routing validation remains pending. No billing service, multi-admin RBAC, or high availability. Costs are estimates, quotas are observations, and token/cost limits are not absolute caps. Client-facing body/image recovery caching is not implemented; output recovery after disconnection or restart is not guaranteed. See [compatibility](docs/reference/compatibility.md).
 

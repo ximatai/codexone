@@ -11,7 +11,7 @@
 
 ## 合成验收记录
 
-2026-11-01，本地 macOS 27.2 / arm64，Swift 6.4.2、Node.js 22.22.0、npm 10.9.4。Node 实际版本较贡献指南的 22.23.0 低，未升级环境或依赖。未执行 Linux/Docker 构建，未调用真实 OpenAI/ChatGPT 端点。schema 保持 v10；流程只在内存，回退无需数据迁移。
+2026-11-01，本地 macOS 27.2 / arm64，Swift 6.4.2、Node.js 22.22.0、npm 10.9.4。Node 实际版本较当时贡献指南的 22.23.0 低，未升级环境或依赖。未执行 Linux/Docker 构建，未调用真实 OpenAI/ChatGPT 端点。schema 保持 v10；流程只在内存，回退无需数据迁移。
 
 - `swift format lint --strict --recursive Sources Tests Package.swift`、`python3 scripts/check_architecture.py`：通过。
 - `CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend`：通过，316 项 Swift 测试和 33 项进程、存储、协议及管理验收脚本。首次构建的测试 helper 访问级别问题修复后重跑该入口通过。
