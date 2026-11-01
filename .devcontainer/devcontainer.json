@@ -1,0 +1,9 @@
+{
+  "name": "CodexOne",
+  "build": { "dockerfile": "Dockerfile" },
+  "postCreateCommand": "npm --prefix web ci --no-audit --no-fund && cd web && npx playwright install --with-deps chromium",
+  "forwardPorts": [5179, 18081],
+  "customizations": {
+    "vscode": { "extensions": ["swiftlang.swift-vscode"] }
+  }
+}
