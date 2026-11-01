@@ -12,7 +12,7 @@ Runtime 每次进入 failed 仅写一条 warning，字段仅 method、failure_co
 
 合成 socket 覆盖轮询 400/429/500、兑换拒绝/超时/畸形、PKCE/nonce/JWT、重新授权身份冲突、重复绑定、CAS 与存储失败；断言单条安全日志、无秘密和无重放。前端单测覆盖所有文案及未知代码，浏览器检查大屏和窄屏失败对话框。执行 brief 指定的文档、前端和最终一次后端全量验证。
 
-API failureCode 增加枚举值，UI 和 API 客户端必须接受新值并为未知代码回退；回调 POST 保持既有安全 HTTP 错误，详细分类从同 owner 的流程状态读取。无 schema/持久格式变更，旧代码保留通用回退，二进制回退无需迁移；流程仍只在内存，重启后重新发起。
+API failureCode 增加枚举值，UI 和 API 客户端必须接受新值并为未知代码回退；回调 POST 沿用安全错误格式，兑换失败统一为 503/account_unavailable（过去可识别的 invalid_grant 曾返回 409/authorization_required）；详细分类从同 owner 的流程状态读取。无 schema/持久格式变更，旧代码保留通用回退，二进制回退无需迁移；流程仍只在内存，重启后重新发起。
 
 ## 相关文档
 

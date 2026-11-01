@@ -45,6 +45,8 @@ POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,
 
 账号禁用/排空和 Key 禁用/轮换须先确认影响。账号排空不接收新会话请求，已有身份关联续接仍可派发；禁用阻止后续派发（包括续接），两者均不主动取消已经派发的请求。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
 
+授权失败 failureCode 取 I16 的 provider_rejected、exchange_failed、identity_mismatch、verification_failed、revision_conflict、device_code_unavailable、authorization_failed；最后一项保留通用回退。API 客户端必须接受新增代码并对未来未知代码回退，不把新代码当作响应损坏。前端仅接受有界代码标识，不显示未知原文；每种已知代码在授权对话框有中文解释。回调 POST 沿用安全错误格式，兑换失败统一为 503/account_unavailable（过去可识别的 invalid_grant 曾返回 409/authorization_required）；前端失败后先 GET 本 owner 的已消费流程状态，再 DELETE；清除一次性输入及授权链接，只保留终态解释，不重发 callback。读取失败仍沿用未知结果锁与账号核对。旧客户端可能拒绝新代码，升级须同步 UI/API 客户端；无 schema 变更，内存流程不会跨版本/重启恢复。
+
 账号页面分别展示使用策略与授权状态；新账号保持禁用，刷新失效/授权未知引导重新授权，不能以刷新按钮自动重用失效令牌。设备码默认弹窗显示可复制 user code/验证链接、倒计时与轮询状态，完成结果保留在同一弹窗，新账号提供独立“启用”操作。底部允许切换回调；device_code_unavailable 提示 ChatGPT 安全设置可能需要开启设备码登录。关闭或离开取消流程。备用一次性回调以隐藏输入接受，提交前即清除；流程仅页面内存保留、期限到期或离开页面清除本地信息。远程操作者可在新窗口登录并复制最终 localhost 回调地址，不自动访问操作者的 callback 服务。账号列表不能包含 token；不把订阅授权状态称为可用余额。
 
 CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败不能谎报已核对。成功写入后若后续读取失败，同样保持锁定；回调不再显示或提供重发。登录/登出失败给出明确重试，登出未确认也清本页授权信息。前端 API 与 session/CSRF 客户端是实际复用的 shared 模块，不把账号依赖放进 Key feature。
