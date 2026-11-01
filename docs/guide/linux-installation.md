@@ -2,12 +2,12 @@
 
 在 Linux amd64 上使用 Docker Compose 安装和维护网关。
 
-使用 Linux Docker Engine 与 Compose v2、Python 3、本地可靠磁盘。Compose 使用 host network，使服务仍只监听宿主 `127.0.0.1:18080/18081`；不要把此模式直接迁移到 macOS/Windows Docker Desktop。data 与 backups 使用 Engine 本地磁盘上的命名 volume，不使用宿主共享 bind 或网络盘。外部 HTTPS 由宿主反代提供，管理域名必须与配置的 origin 完全一致。其他平台需单独验收。
+使用 Linux Docker Engine 与 Compose v2、Python 3、本地可靠磁盘。Compose 使用 host network，使服务默认只监听宿主 `127.0.0.1:18080/18081`，可显式增加私有 LAN 地址；不要把此模式直接迁移到 macOS/Windows Docker Desktop。data 与 backups 使用 Engine 本地磁盘上的命名 volume，不使用宿主共享 bind 或网络盘。外部 HTTPS 由宿主反代提供，管理域名必须与配置的 origin 完全一致。其他平台需单独验收。
 
 
 ## 前提
 
-使用 Linux amd64 Docker Engine、Compose v2、Python 3 和可靠本地磁盘，准备精确 HTTPS 管理 origin 和 TLS 证书。
+使用 Linux amd64 Docker Engine、Compose v2、Python 3 和可靠本地磁盘，按路线准备：可信局域网可用固定私有 IP；公网或域名路线准备精确 HTTPS 管理 origin 和 TLS 证书。
 
 ## 获取镜像
 
@@ -44,7 +44,32 @@ GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖�
 
 Release 工作流的手动 dry-run 接受 ref，构建并执行 Linux 合成 socket、TLS 反代与真实安装验证，上传源码、二进制、许可、镜像 ID、校验和与独立镜像归档，不登录 registry 或推送/发布。将两个验证产物分别解压到 `verified-release-files/` 与 `verified-linux-amd64-image/` 后，在前者执行 `sha256sum --check SHA256SUMS`，再在后者用 `sha256sum --check ../verified-release-files/image-archive-sha256.txt` 核对归档，然后 `docker load --input codexone-linux-amd64.tar.gz`。正式 tag 流程验证后才推送同一镜像、生成来源证明并创建 Release；附件清单和 `gh attestation verify` 命令见[发版规则](../development/releasing.md)。校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 
-## 新安装
+## 局域网（无域名）
+
+先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)。本功能尚未发布，v0.26.1 镜像不支持；须使用包含该功能的源码构建或后续发行镜像。准备不可变镜像 ID 后，四步路线见 [README](../../README.md#局域网部署无域名)：初始化、配置模型、启动、打开管理页面。
+
+```sh
+python3 deploy/init-install.py ../codexone-private \
+  --image sha256:REPLACE_WITH_LOCAL_IMAGE_ID --lan 192.168.1.10
+# 可选收窄来源：追加 --lan-allow 192.168.1.0/24
+cd ../codexone-private
+# 编辑 secrets/pool.json 的模型名后：
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py up -d
+```
+
+`--lan` 与 `--origin` 互斥，`--lan-allow` 只可与 `--lan` 一起使用。安装器自动写入私有 `.env`：`CODEXONE_LISTEN_ADDRESS=192.168.1.10`、`CODEXONE_ALLOWED_NETWORKS=`（空为默认私有网段加回环）、`CODEXONE_ADMIN_PUBLIC_ORIGIN=http://192.168.1.10:18081`，并打印风险、管理 URL 与客户端 base_url。IP 必须配置在本机网卡上；网关同时保留 `127.0.0.1`，健康检查无需改动。允许的地址为 10/8、172.16/12、192.168/16、100.64/10、fc00::/7；不接受公网、通配、主机名或 IPv6 zone ID。可选来源 CIDR 只能收窄这些私有网段或回环；至多 64 项，以逗号连接，不含空白。访问地址必须精确匹配管理 origin，不能用另一个别名登录。
+
+## 切换局域网与 HTTPS
+
+沿用原安装目录、卷、主密钥和管理员秘密。先执行 `python3 compose-install.py stop`；只编辑私有 `.env`，不要重新初始化：
+
+- 转到 LAN：设置 `CODEXONE_LISTEN_ADDRESS=192.168.1.10`、`CODEXONE_ALLOWED_NETWORKS=`（或收窄 CIDR）、`CODEXONE_ADMIN_PUBLIC_ORIGIN=http://192.168.1.10:18081`。先确认明文风险与本机 IP；HTTP 非回环 origin 的主机必须等于监听地址。
+- 回到 HTTPS：删除或清空 `CODEXONE_LISTEN_ADDRESS` 与 `CODEXONE_ALLOWED_NETWORKS`，设置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=https://admin.example.invalid`，配置下文的 TLS 反代。客户端 base_url 同步改回 HTTPS。
+
+随后执行 `python3 compose-install.py run --rm gateway --check-config`、`python3 compose-install.py up -d`，用新地址重新登录并检查健康/客户端连接。重启使内存 session 失效；无 schema 变更。回退到不支持 LAN 的旧版本前必须先恢复 HTTPS `.env`，确认旧程序与当前 schema 兼容，避免旧程序忽略新变量后无法访问。
+
+## 新安装（HTTPS）
 
 以下占位值须替换。安装目录放在源码 checkout 外，且必须不存在；初始化拒绝覆盖现有目录或链接。默认运行 UID/GID 为执行初始化的非 root 用户；root 初始化时必须显式给出非 root `--uid` 和 `--gid`。运行用户须能访问本地数据盘。
 
@@ -62,7 +87,7 @@ python3 compose-install.py ps
 
 初始化生成 0700 安装/secrets 目录和 0600 文件，并生成唯一 Compose project、data 与 backups volume 名称；此时尚不创建卷。首次 Compose 会创建卷并执行隔离的 init-data：无网络、只挂数据与备份卷、只为新空卷设定运行 UID/GID 与 0700 权限，非空卷归属不符明确拒绝；不递归改写既有文件。管理员秘密、账号主密钥只写入独立文件，不打印值、不进入 `.env`。先私下编辑 `secrets/pool.json` 的模型/profile、价格和边界，再以实际二进制 `--check-config` 校验。示例模型是占位符；没有账号时仍能管理，readiness 为 503。账户授权操作参见[账号凭证](../reference/account-credentials.md)，不要把私人配置提交到仓库。
 
-首次浏览器登录从私有 `secrets/admin` 文件取得秘密，经精确 HTTPS 管理 origin 登录。管理 session 的 Secure cookie 要求 HTTPS；不要把明文 HTTP 直接暴露外网。数据面 Key 与管理员秘密互不替代。
+HTTPS 路线首次浏览器登录从私有 `secrets/admin` 文件取得秘密，经精确 HTTPS 管理 origin 登录。该路线管理 session 的 Secure cookie 要求 HTTPS；不要把明文 HTTP 直接暴露外网。数据面 Key 与管理员秘密互不替代。
 
 gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止提权；data 与 backups 本地卷可写、secrets 文件只读、`/tmp` 为有界 tmpfs。短命 init-data 仅以 root 和 CHOWN/FOWNER/DAC_OVERRIDE 设置空卷目录归属，根只读且无网络、不挂 secrets，完成后 gateway 才启动。768 MiB / 128 PID 是安装候选的限制，不是弱服务器容量承诺。live 只检查进程存活；ready 为 503 不触发自动重启。host network 的端口冲突须先处理，不能用映射端口改变回环隔离。
 

@@ -49,6 +49,10 @@ swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/respon
 
 启动配置必须先校验再打开 listener；端口只允许 0...65535，非零数据/管理端口不得相同。基础入口默认仅 loopback，0 用于临时分配。无效配置错误不得回显原始值；`--check-config` 不启动服务。
 
+显式 `CODEXONE_LISTEN_ADDRESS` 增加同端口的第二个数据/管理 listener，回环保留。仅接受本机私有 IP 字面量：IPv4 10/8、172.16/12、192.168/16、100.64/10，IPv6 fc00::/7；禁止公网、通配、主机名、zone ID。配置无效返回 78，不回显值；本机地址由实际 bind 确认，部分绑定失败关闭并等待已建 listener/连接。`CODEXONE_ALLOWED_NETWORKS` 缺省或空为上述私有网段加 127/8、::1/128；非空为至多 64 个逗号分隔的私有/回环子网 CIDR，不接受空项、空白、畸形或扩大范围的 CIDR。只在第二个 listener 的 accepted socket 上按真实 peer 校验，HTTP decoder/请求读取前关闭不允许连接，不采用任何 forwarded 头；回环 listener 不受来源限制。两 listener 共享既有连接/执行容量与关闭 owner，不另增额度。
+
+LAN 启动只输出一行明文风险警告，不打印秘密或配置值。`GET /api/system` 增加 `transportMode`：默认/反代为 `loopback`，启用第二监听地址为 `lan_http`；它表示网关监听模式，不判断上游或反代 TLS。LAN `--check-config` 增加 `transportMode=lan_http` 而不输出地址，默认输出保持原样。管理员每页（包括登录页）常驻中文风险提示及[风险说明](../../operations/tls-proxy.md#局域网-http-风险)链接。
+
 数据/管理入口的 `GET /health/live` 表示进程存活；`GET /health/ready` 只有实际执行先决条件满足才为 200，否则 503，不能由监听成功推导可接单。未配置的生成请求须明确拒绝。ServiceLifecycle 统一拥有信号/子服务寿命；部分启动失败或取消应关闭并等待其他服务释放。健康连接的关闭不得等待客户端补齐未完成的请求体；信号回归须同时覆盖空闲连接和半截请求。
 
 安装 Compose 的 gateway 使用 `unless-stopped`，进程意外退出或宿主机重启后由 Docker 恢复；显式 `stop`/`down` 后保持停止，直至操作者重新启动。init-data 与一次性维护命令不自动重试；安装入口为 `run` 强制 `--rm` 覆盖重启策略，维护前须先停止 gateway。自动启动仍遵守 O02/O03，不自动迁移或重放未知执行；ready 503、账号耗尽或 unhealthy 本身不触发重启。配置错误以 78 退出且不开 listener，连续失败须递增退避，普通日志受 10 MiB × 5 轮转约束。重启增量必须可观测，trial watch 保留 `container_restarted` 提醒，不把自动恢复视为无故障。

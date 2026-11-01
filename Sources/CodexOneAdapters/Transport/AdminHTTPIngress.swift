@@ -9,23 +9,28 @@ import Vapor
 /// Bounded NIO ingress feeds only complete bodies to Vapor's application routes.
 struct AdminHTTPIngress: Sendable {
   let group: any EventLoopGroup
+  let listeners: ListenerConfiguration
   let port: Int
   let app: Application
   let onBound: @Sendable (Int) -> Void
 
   func run() async throws {
     let channels = ProtocolChannels(limit: 32)
-    do {
-      let server = try await ServerBootstrap(group: group)
+    func bind(host: String, port: Int) async throws -> NIOAsyncChannel<AdminConnection, Never> {
+      try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
         .childChannelOption(
           ChannelOptions.recvAllocator,
           value: AdaptiveRecvByteBufferAllocator(minimum: 1024, initial: 4096, maximum: 16_384)
         )
         .bind(
-          host: "127.0.0.1", port: port,
+          host: host, port: port,
           serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 8)
         ) { channel -> EventLoopFuture<AdminConnection> in
+          guard host == "127.0.0.1" || listeners.allows(peer: channel.remoteAddress?.ipAddress)
+          else {
+            return channel.close().flatMapThrowing { throw ExecutionError.unauthorized }
+          }
           guard channels.register(channel) else {
             return channel.close().flatMapThrowing { throw ExecutionError.capacity }
           }
@@ -45,14 +50,29 @@ struct AdminHTTPIngress: Sendable {
               return channel.close().flatMapThrowing { throw error }
             }
         }
-      onBound(server.channel.localAddress!.port!)
+    }
+    var servers: [NIOAsyncChannel<AdminConnection, Never>] = []
+    do {
+      let loopback = try await bind(host: "127.0.0.1", port: port)
+      servers.append(loopback)
+      if let address = listeners.additionalAddress {
+        servers.append(try await bind(host: address, port: loopback.channel.localAddress!.port!))
+      }
+      onBound(loopback.channel.localAddress!.port!)
+      let activeServers = servers
       try await cancelWhenGracefulShutdown {
         do {
           try await withTaskCancellationHandler {
-            try await server.executeThenClose { inbound in
-              try await withThrowingDiscardingTaskGroup { tasks in
-                for try await connection in inbound {
-                  tasks.addTask { do { try await serve(connection) } catch {} }
+            try await withThrowingDiscardingTaskGroup { listeners in
+              for server in activeServers {
+                listeners.addTask {
+                  try await server.executeThenClose { inbound in
+                    try await withThrowingDiscardingTaskGroup { tasks in
+                      for try await connection in inbound {
+                        tasks.addTask { do { try await serve(connection) } catch {} }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -62,6 +82,7 @@ struct AdminHTTPIngress: Sendable {
         } catch { guard Task.isCancelled else { throw error } }
       }
     } catch {
+      for server in servers { try? await server.channel.close().get() }
       await channels.shutdown()
       throw error
     }

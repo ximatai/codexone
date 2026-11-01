@@ -8,14 +8,17 @@ import Synchronization
 
 public struct DataPlaneService: Service {
   private let group: any EventLoopGroup
+  private let listeners: ListenerConfiguration
   private let port: Int
   private let report: ReadinessReport
   private let onBound: @Sendable (Int) -> Void
 
   public init(
     group: any EventLoopGroup, port: Int, report: ReadinessReport,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.listeners = listeners
     self.group = group
     self.port = port
     self.report = report
@@ -23,46 +26,78 @@ public struct DataPlaneService: Service {
   }
 
   public func run() async throws {
-    let quiescing = ServerQuiescingHelper(group: group)
+    var helpers: [ServerQuiescingHelper] = []
     let capacity = ConnectionCapacity(limit: 128)
     let router = HealthRouter(report: report)
-    let server = try await ServerBootstrap(group: group)
-      .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-      .serverChannelInitializer { channel in
-        do {
-          try channel.pipeline.syncOperations.addHandler(
-            quiescing.makeServerChannelHandler(channel: channel))
-          return channel.eventLoop.makeSucceededVoidFuture()
-        } catch {
-          return channel.eventLoop.makeFailedFuture(error)
+    func bind(host: String, port: Int, quiescing: ServerQuiescingHelper) async throws -> any Channel
+    {
+      try await ServerBootstrap(group: group)
+        .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+        .serverChannelInitializer { channel in
+          do {
+            try channel.pipeline.syncOperations.addHandler(
+              quiescing.makeServerChannelHandler(channel: channel))
+            return channel.eventLoop.makeSucceededVoidFuture()
+          } catch {
+            return channel.eventLoop.makeFailedFuture(error)
+          }
         }
+        .childChannelInitializer { channel in
+          // Reject on the accepted socket before installing any reader or HTTP decoder.
+          guard host == "127.0.0.1" || listeners.allows(peer: channel.remoteAddress?.ipAddress)
+          else {
+            return channel.close()
+          }
+          guard capacity.acquire() else { return channel.close() }
+          channel.closeFuture.whenComplete { _ in capacity.release() }
+          do {
+            try channel.pipeline.syncOperations.addHandler(BootstrapShutdownHandler())
+          } catch {
+            return channel.eventLoop.makeFailedFuture(error)
+          }
+          return channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
+            try channel.pipeline.syncOperations.addHandlers([
+              IdleStateHandler(readTimeout: .seconds(10)), HealthHTTPHandler(router: router),
+            ])
+          }
+        }
+        .bind(host: host, port: port).get()
+    }
+    var servers: [any Channel] = []
+    do {
+      let loopbackHelper = ServerQuiescingHelper(group: group)
+      helpers.append(loopbackHelper)
+      let loopback = try await bind(host: "127.0.0.1", port: port, quiescing: loopbackHelper)
+      servers.append(loopback)
+      if let address = listeners.additionalAddress {
+        let lanHelper = ServerQuiescingHelper(group: group)
+        helpers.append(lanHelper)
+        servers.append(
+          try await bind(host: address, port: loopback.localAddress!.port!, quiescing: lanHelper))
       }
-      .childChannelInitializer { channel in
-        guard capacity.acquire() else { return channel.close() }
-        channel.closeFuture.whenComplete { _ in capacity.release() }
-        do {
-          try channel.pipeline.syncOperations.addHandler(BootstrapShutdownHandler())
-        } catch {
-          return channel.eventLoop.makeFailedFuture(error)
-        }
-        return channel.pipeline.configureHTTPServerPipeline().flatMapThrowing {
-          try channel.pipeline.syncOperations.addHandlers([
-            IdleStateHandler(readTimeout: .seconds(10)), HealthHTTPHandler(router: router),
-          ])
-        }
+    } catch {
+      for helper in helpers {
+        let stopped = group.next().makePromise(of: Void.self)
+        helper.initiateShutdown(promise: stopped)
+        try? await stopped.futureResult.get()
       }
-      .bind(host: "127.0.0.1", port: port).get()
-    onBound(server.localAddress!.port!)
+      throw error
+    }
+    onBound(servers[0].localAddress!.port!)
     let closed = AsyncStream<Void> { continuation in
-      server.closeFuture.whenComplete { _ in continuation.finish() }
+      for server in servers {
+        server.closeFuture.whenComplete { _ in continuation.finish() }
+      }
     }
     // Stream cancellation wakes a silent listener without an unowned Task.
     await cancelWhenGracefulShutdown {
       for await _ in closed {}
     }
-    let stopped = group.next().makePromise(of: Void.self)
-    quiescing.initiateShutdown(promise: stopped)
-    try await stopped.futureResult.get()
+    for helper in helpers {
+      let stopped = group.next().makePromise(of: Void.self)
+      helper.initiateShutdown(promise: stopped)
+      try await stopped.futureResult.get()
+    }
   }
 }
 

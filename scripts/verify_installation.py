@@ -73,6 +73,49 @@ def verify_initializer(binary):
             other = command.copy(); other[2] = str(parent / 'bad')
             assert run([*other, '--pool-config', str(malformed)], ok=False).returncode != 0
             assert not (parent / 'bad').exists()
+        # Static LAN initialization: no containers, interfaces or external services needed.
+        assert b'--lan' in run(['python3', str(REPO / 'deploy/init-install.py'), '--help']).stdout
+        lan_command = command.copy()
+        index = lan_command.index('--origin')
+        lan_command[index:index + 2] = ['--lan', '192.168.1.10']
+        for number, (address, allowed, host) in enumerate((
+                ('192.168.1.10', None, '192.168.1.10'),
+                ('100.64.0.10', '100.64.0.0/24', '100.64.0.10'),
+                ('fd00::10', 'fd00::/64,::1/128', '[fd00::10]'))):
+            other = lan_command.copy(); other[2] = str(parent / f'lan-{number}')
+            other[other.index('--lan') + 1] = address
+            if allowed is not None: other += ['--lan-allow', allowed]
+            result = run(other)
+            settings = (Path(other[2]) / '.env').read_text()
+            assert f'CODEXONE_LISTEN_ADDRESS={address}\n' in settings
+            assert f'CODEXONE_ALLOWED_NETWORKS={allowed or ""}\n' in settings
+            assert f'CODEXONE_ADMIN_PUBLIC_ORIGIN=http://{host}:18081\n' in settings
+            assert '明文传输'.encode() in result.stdout
+            assert f'http://{host}:18081'.encode() in result.stdout
+            assert f'http://{host}:18080/backend-api/codex'.encode() in result.stdout
+            for secret in credentials: assert secret not in result.stdout + result.stderr
+            assert (Path(other[2]) / '.env').stat().st_mode & 0o777 == 0o600
+        for address in ('8.8.8.8', '0.0.0.0', '::', '2001:db8::1', '127.0.0.2',
+                        '169.254.1.10', 'localhost', '192.168.1.10/24', 'fd00::1%en0'):
+            other = lan_command.copy(); other[2] = str(parent / 'bad')
+            other[other.index('--lan') + 1] = address
+            result = run(other, ok=False)
+            assert result.returncode != 0 and not (parent / 'bad').exists()
+            assert address.encode() not in result.stdout + result.stderr
+        for suffix in (['--origin', ORIGIN], ['--lan-allow', 'bad'],
+                       ['--lan-allow', '192.168.0.0/33'], ['--lan-allow', '0.0.0.0/0'],
+                       ['--lan-allow', 'fd00::/129'], ['--lan-allow', '192.168.0.0/16,'],
+                       ['--lan-allow', '192.168.1.0/255.255.255.0'],
+                       ['--lan-allow', '192.168.1.0/0.0.0.255'],
+                       ['--lan-allow', '192.168.1.0/２４'], ['--lan-allow', '192.168.1.0/+24']):
+            other = lan_command.copy(); other[2] = str(parent / 'bad')
+            assert run([*other, *suffix], ok=False).returncode != 0
+            assert not (parent / 'bad').exists()
+        other = command.copy(); other[2] = str(parent / 'bad')
+        assert run([*other, '--lan-allow', '192.168.0.0/16'], ok=False).returncode != 0
+        template = (REPO / 'deploy/compose.yaml').read_text()
+        for field in ('CODEXONE_LISTEN_ADDRESS', 'CODEXONE_ALLOWED_NETWORKS'):
+            assert f'{field}: ${{{field}:-}}' in template
         # Ambient project/service settings must not select another installation.
         pollution = {'COMPOSE_FILE': 'synthetic-unrelated-compose.yaml',
             'COMPOSE_PROJECT_NAME': 'synthetic-unrelated-project',
@@ -146,7 +189,7 @@ def verify_initializer(binary):
             rejected = subprocess.run([str(binary.resolve()), '--check-config'], env=env, capture_output=True, timeout=10)
             assert rejected.returncode != 0
             assert all(secret not in checked.stdout + checked.stderr + rejected.stdout + rejected.stderr for secret in credentials)
-    print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation, Compose isolation and forced one-off removal'
+    print('PASS: static LAN flags, origin exclusion, private env/risk/URLs, public/CIDR rejection; private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation, Compose isolation and forced one-off removal'
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 

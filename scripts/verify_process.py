@@ -59,7 +59,20 @@ def main():
     bad = subprocess.run([binary, "--check-config"], env=environment(CODEXONE_DATA_PORT="private-invalid-value"), capture_output=True, text=True, timeout=10)
     assert bad.returncode == 78
     assert "private-invalid-value" not in bad.stderr
-    print("PASS: configuration check and redacted invalid configuration")
+    for field, value in (("CODEXONE_LISTEN_ADDRESS", "192.0.2.10"),
+                         ("CODEXONE_LISTEN_ADDRESS", "0.0.0.0"),
+                         ("CODEXONE_LISTEN_ADDRESS", "private-host.invalid"),
+                         ("CODEXONE_ALLOWED_NETWORKS", "192.168.1.0/33")):
+        bad = subprocess.run([binary, "--check-config"], env=environment(**{field: value}),
+                             capture_output=True, text=True, timeout=10)
+        assert bad.returncode == 78 and value not in bad.stderr + bad.stdout
+    lan = subprocess.run([binary, "--check-config"],
+                         env=environment(CODEXONE_LISTEN_ADDRESS="192.168.1.10"),
+                         capture_output=True, text=True, timeout=10)
+    assert lan.returncode == 0 and json.loads(lan.stdout) == {
+        "host": "127.0.0.1", "dataPort": 0, "adminPort": 0, "transportMode": "lan_http"}
+    assert "192.168.1.10" not in lan.stdout + lan.stderr
+    print("PASS: configuration check, LAN mode and redacted invalid configuration (exit 78)")
 
     process = subprocess.Popen([binary], env=environment(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     ports = {}
