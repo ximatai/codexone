@@ -6,7 +6,15 @@
 
 先读 [README](README.md)、[STATUS](STATUS.md)、[文档导航](docs/README.md)，检查 `git status --short --branch`，保留未知工作。按任务阅读[产品目标](docs/requirements/product.md)、[规范](docs/reference/specs/README.md)、[架构](docs/architecture/ARCHITECTURE.md)和[目录约定](docs/development/layout.md)，不依赖旧聊天或私有部署记录。
 
-源码开发需要 macOS 15+、Swift 6.4 工具链（容器构建固定 6.4.1）、Node.js 22.23.0、npm 和 Python 3。Linux 后端需要 SQLite 开发库；容器运行目标是 Linux amd64 Docker Engine/Compose v2。浏览器验证使用独立 Chromium 或本机 Chrome，不读取个人浏览数据。
+Linux、macOS 都可以开发，Windows 请使用 WSL2 中的 Ubuntu。CI 在 Ubuntu 24.04 上运行全部后端与前端验证，与下表的 Linux 环境一致。
+
+| 平台 | 需要安装 |
+| --- | --- |
+| Linux（Ubuntu 24.04 等） | Swift 6.4（CI 固定 6.4.1）、`libsqlite3-dev`、Node.js 22.23.0 与 npm、Python 3、Git |
+| macOS 15+ | Xcode 或 Swift 6.4 工具链、Node.js 22.23.0 与 npm、Python 3（系统自带 SQLite） |
+| Windows | 安装 WSL2 与 Ubuntu 24.04，在其中按 Linux 准备；不支持原生 Windows 构建 |
+
+最省事的方式是使用仓库的[开发容器](.devcontainer/devcontainer.json)：VS Code Dev Containers 或 GitHub Codespaces 打开仓库即可得到与 CI 相同的 Swift 镜像、SQLite、固定版本 Node.js 和 Playwright Chromium，Mac、Windows、Linux 通用。容器运行目标仍是 Linux amd64 Docker Engine/Compose v2。浏览器验证使用独立 Chromium 或本机 Chrome，不读取个人浏览数据。
 
 ```sh
 npm --prefix web ci --ignore-scripts --no-audit --no-fund
@@ -26,7 +34,7 @@ npm --prefix web run build
 ```sh
 python3 scripts/check_docs.py
 ./scripts/verify.sh --backend
-./scripts/verify.sh --web --chrome
+./scripts/verify.sh --web --chrome   # Linux 或开发容器中用 --web，使用 Playwright Chromium
 ```
 
 定向前端检查为 `npm --prefix web run lint`、`npm --prefix web run format:check`、`npm --prefix web run typecheck` 和 `npm --prefix web test`。标准 Chromium 首次准备可在 web 下执行 `npx playwright install chromium --only-shell`。依赖/浏览器安装需要网络；离线环境缺依赖时报告限制，不声称通过。

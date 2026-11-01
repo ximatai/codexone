@@ -25,7 +25,13 @@ def check():
     assert len(swift) == 2 and len(set(swift)) == 1, 'Build and shards must use the same Swift image'
     cache_pins = re.findall(r'\$\{\{ runner.os \}\}-swift-([0-9a-f]{64})-', workflow)
     assert len(cache_pins) == 3 and set(cache_pins) == set(swift), 'Cache must follow the Swift digest'
-    print(f'PASS: Playwright {image[0]} matches lockfile; Swift build/shards/cache pins match')
+    container = (root / '.devcontainer/Dockerfile').read_text()
+    assert re.findall(r'^FROM swift:[^\s]+@sha256:([0-9a-f]{64})$', container, re.M) == [swift[0]], (
+        'Dev container must use the CI Swift digest')
+    node = re.findall(r'node-version: ([\d.]+)', workflow)
+    assert node and set(node) == set(re.findall(r'^ARG NODE_VERSION=([\d.]+)$', container, re.M)), (
+        'Dev container Node.js must match CI')
+    print(f'PASS: Playwright {image[0]} matches lockfile; Swift build/shards/cache and dev container pins match')
 
 
 if __name__ == '__main__':
