@@ -243,7 +243,8 @@ struct CodexOneMain {
       if let path = configuration.adminTokenFile {
         try await KeyAdminAPI.validateCredential(
           path: path, forbiddenDigest: identityConfiguration?.keySHA256,
-          publicOrigin: configuration.adminPublicOrigin)
+          publicOrigin: configuration.adminPublicOrigin,
+          listenAddress: configuration.listeners.additionalAddress)
       }
       var checked: [String: Any] = [
         "host": "127.0.0.1", "dataPort": configuration.dataPort,
@@ -289,6 +290,7 @@ struct CodexOneMain {
       keyAdmin = try await KeyAdminAPI.load(
         path: path, store: store, forbiddenDigest: identityConfiguration?.keySHA256,
         publicOrigin: configuration.adminPublicOrigin,
+        listenAddress: configuration.listeners.additionalAddress,
         availableModels: poolConfiguration?.models.map(\.id) ?? identityConfiguration?.models.map(
           \.id) ?? [],
         imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?

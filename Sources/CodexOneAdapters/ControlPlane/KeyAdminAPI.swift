@@ -8,6 +8,7 @@ import Vapor
 public struct KeyAdminAPI: Sendable {
   private let digest: String
   private let store: any KeyGovernanceStore
+  var usesLANHTTP: Bool { sessions.isLANHTTP }
   private let sessions: AdminSessions
   private let availableModels: [String]
   private let imageModels: [String]
@@ -18,7 +19,8 @@ public struct KeyAdminAPI: Sendable {
   private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
-    publicOrigin: String? = nil, availableModels: [String] = [], imageModels: [String] = [],
+    publicOrigin: String? = nil, listenAddress: String? = nil, availableModels: [String] = [],
+    imageModels: [String] = [],
     usage: UsageAdminAPI? = nil, attention: AttentionAdminAPI? = nil,
     executions: (any UnknownExecutionReleasing)? = nil,
     storageMonitoring: (any StorageMonitoring)? = nil, backup: (any BackupMaintaining)? = nil
@@ -30,15 +32,19 @@ public struct KeyAdminAPI: Sendable {
     else { throw ExecutionError.invalidCommand }
     return Self(
       digest: digest, store: store,
-      sessions: try AdminSessions(digest: digest, publicOrigin: publicOrigin),
+      sessions: try AdminSessions(
+        digest: digest, publicOrigin: publicOrigin, listenAddress: listenAddress),
       availableModels: availableModels, imageModels: imageModels, usage: usage,
       executions: executions, attention: attention,
       backup: backup, storageMonitoring: storageMonitoring)
   }
   public static func validateCredential(
-    path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil
+    path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil,
+    listenAddress: String? = nil
   ) async throws {
-    if let publicOrigin { _ = try AdminSessions.canonicalOrigin(publicOrigin) }
+    if let publicOrigin {
+      _ = try AdminSessions.canonicalOrigin(publicOrigin, listenAddress: listenAddress)
+    }
     guard try await loadDigest(path) != forbiddenDigest else { throw ExecutionError.invalidCommand }
   }
   private static func loadDigest(_ path: String) async throws -> String {
@@ -102,7 +108,7 @@ public struct KeyAdminAPI: Sendable {
     api.delete("session") { request async throws -> Response in
       try sessions.logout(request.headers)
       let response = try Self.response(.object(["authenticated": .bool(false)]))
-      response.headers.add(name: "set-cookie", value: Self.cookie("", age: 0))
+      response.headers.add(name: "set-cookie", value: sessions.cookie("", age: 0))
       return response
     }
     routes.get("options") { _ async throws -> Response in
@@ -199,10 +205,6 @@ public struct KeyAdminAPI: Sendable {
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
   }
-  fileprivate static func cookie(_ token: String, age: Int) -> String {
-    AdminSessions.cookieName + "=" + token
-      + "; Path=/; Max-Age=\(age); HttpOnly; Secure; SameSite=Strict"
-  }
   private static func body(
     _ request: Request, allowed: Set<String>, optional: Set<String> = []
   ) throws -> JSONValue {
@@ -277,7 +279,7 @@ private struct AdminCookieMiddleware: AsyncMiddleware {
     if let session = request.storage[AdminSessionRenewalKey.self] {
       response.headers.replaceOrAdd(
         name: "set-cookie",
-        value: KeyAdminAPI.cookie(
+        value: sessions.cookie(
           session.token, age: sessions.cookieAge(session)))
     }
     return response

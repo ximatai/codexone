@@ -165,3 +165,62 @@ private func sessionHeaders(_ session: AdminSessions.Created, mutation: Bool = f
   clock.withLock { $0 = $0.advanced(by: .seconds(2)) }
   #expect(sessions.cookieAge(session) == 0)
 }
+
+@Test(arguments: ["http://192.168.1.10:18081", "http://[fd00::10]:18081"])
+func lanHTTPSessionsKeepHostOriginCSRFAndLogoutRules(_ origin: String) throws {
+  let address = origin.contains("[") ? "fd00::10" : "192.168.1.10"
+  let sessions = try AdminSessions(
+    digest: keyDigest(syntheticAdminSecret), publicOrigin: origin, listenAddress: address)
+  sessions.bind(port: 18081)
+  let host = String(origin.dropFirst(7))
+  let login: HTTPHeaders = ["host": host, "origin": origin, "sec-fetch-site": "same-origin"]
+  let session = try sessions.login(username: "admin", secret: syntheticAdminSecret, headers: login)
+  #expect(
+    sessions.cookie(session.token, age: 10)
+      == "codexone_admin=\(session.token); Path=/; Max-Age=10; HttpOnly; SameSite=Strict")
+  #expect(
+    sessions.cookie("", age: 0) == "codexone_admin=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")
+  var proof = login
+  proof.add(name: "cookie", value: "codexone_admin=" + session.token)
+  #expect(try sessions.authorize(proof, mutation: false) == session.csrf)
+  #expect(throws: GatewayProtocolError.self) { try sessions.authorize(proof, mutation: true) }
+  proof.add(name: "x-codexone-csrf", value: session.csrf)
+  #expect(try sessions.authorize(proof, mutation: true) == session.csrf)
+  for header in ["host", "origin", "sec-fetch-site"] {
+    var wrong = proof
+    wrong.replaceOrAdd(name: header, value: "synthetic-foreign")
+    wrong.add(name: "x-forwarded-host", value: host)
+    wrong.add(name: "x-forwarded-proto", value: "http")
+    #expect(throws: GatewayProtocolError.self) { try sessions.authorize(wrong, mutation: true) }
+  }
+  var wrongCookie = proof
+  wrongCookie.replaceOrAdd(name: "cookie", value: AdminSessions.cookieName + "=" + session.token)
+  #expect(throws: ExecutionError.unauthorized) {
+    try sessions.authorize(wrongCookie, mutation: true)
+  }
+  try sessions.logout(proof)
+  #expect(throws: ExecutionError.unauthorized) { try sessions.authorize(proof, mutation: false) }
+}
+
+@Test(
+  arguments: [nil, "https://admin.example", "http://127.0.0.1:19876", "http://localhost:19876"]
+    as [String?])
+func httpsAndLoopbackCookiesStayByteForByteUnchanged(_ origin: String?) throws {
+  let sessions = try AdminSessions(digest: keyDigest(syntheticAdminSecret), publicOrigin: origin)
+  #expect(
+    sessions.cookie("synthetic", age: 123)
+      == "__Host-codexone_admin=synthetic; Path=/; Max-Age=123; HttpOnly; Secure; SameSite=Strict")
+  #expect(
+    sessions.cookie("", age: 0)
+      == "__Host-codexone_admin=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict")
+}
+
+@Test func httpOriginRequiresThePrivateListenAddressEvenInAdapterAssembly() throws {
+  for listen in [nil, "192.168.1.11", "0.0.0.0", "8.8.8.8"] as [String?] {
+    #expect(throws: ExecutionError.invalidCommand) {
+      try AdminSessions(
+        digest: keyDigest(syntheticAdminSecret), publicOrigin: "http://192.168.1.10:18081",
+        listenAddress: listen)
+    }
+  }
+}
