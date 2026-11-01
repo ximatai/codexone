@@ -5,7 +5,8 @@ import Foundation
 import Synchronization
 
 extension SQLiteExecutionStore {
-  public func makeUsageReader() async throws -> SQLiteUsageReader {
+  public func makeUsageReader(readTimeout: Duration = .seconds(1)) async throws -> SQLiteUsageReader
+  {
     guard
       usageReaderGate.withLock({ value in
         if value { return false }
@@ -15,7 +16,9 @@ extension SQLiteExecutionStore {
     else {
       throw ExecutionError.conflict
     }
-    do { return try await SQLiteUsageReader.open(primary: self, path: path) } catch {
+    do {
+      return try await SQLiteUsageReader.open(primary: self, path: path, readTimeout: readTimeout)
+    } catch {
       usageReaderGate.withLock { $0 = false }
       throw error
     }
@@ -27,12 +30,18 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
   private let connection: SQLiteConnection
   let primary: SQLiteExecutionStore
   private let gate = Mutex((accepting: true, active: false))
-  private init(primary: SQLiteExecutionStore, connection: SQLiteConnection, queue: DispatchQueue) {
+  private let readTimeout: Duration
+  private init(
+    primary: SQLiteExecutionStore, connection: SQLiteConnection, queue: DispatchQueue,
+    readTimeout: Duration
+  ) {
+    self.readTimeout = readTimeout
     self.primary = primary
     self.connection = connection
     self.queue = queue
   }
-  fileprivate static func open(primary: SQLiteExecutionStore, path: String) async throws
+  fileprivate static func open(primary: SQLiteExecutionStore, path: String, readTimeout: Duration)
+    async throws
     -> SQLiteUsageReader
   {
     let queue = DispatchQueue(label: "codexone.usage-reader")
@@ -42,7 +51,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           guard primary.isAvailable else { throw ExecutionError.closed }
           result.resume(
             returning: SQLiteUsageReader(
-              primary: primary, connection: try SQLiteConnection(readOnlyPath: path), queue: queue))
+              primary: primary, connection: try SQLiteConnection(readOnlyPath: path), queue: queue,
+              readTimeout: readTimeout))
         } catch { result.resume(throwing: error) }
       }
     }
@@ -181,7 +191,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
         primary.usageActivity.withLock { $0 = false }
       }
     }
-    let budget = UsageReadBudget(optionalAllowed: { self.primary.allowsOptionalStorageWork })
+    let budget = UsageReadBudget(
+      timeout: readTimeout, optionalAllowed: { self.primary.allowsOptionalStorageWork })
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { result in
         queue.async { [connection] in
@@ -220,9 +231,12 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
 }
 private final class UsageReadBudget: Sendable {
   let cancelled = Mutex(false)
-  private let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+  private let deadline: ContinuousClock.Instant
   private let optionalAllowed: @Sendable () -> Bool
-  init(optionalAllowed: @escaping @Sendable () -> Bool) { self.optionalAllowed = optionalAllowed }
+  init(timeout: Duration, optionalAllowed: @escaping @Sendable () -> Bool) {
+    deadline = ContinuousClock.now.advanced(by: timeout)
+    self.optionalAllowed = optionalAllowed
+  }
   var shouldStop: Bool {
     cancelled.withLock { $0 } || !optionalAllowed() || ContinuousClock.now >= deadline
   }
