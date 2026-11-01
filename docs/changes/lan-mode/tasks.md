@@ -11,7 +11,7 @@
 
 ## 验收记录（2026-11-01）
 
-本机 macOS 27.2 arm64、Apple Swift 6.4.2、Node 22.22.0、Python 3.9.6、Chrome 156.0.8078.80。Node 与贡献指南固定的 22.23.0 有小版本差异；未运行 Linux/容器构建、SSH/远端部署操作或调用真实提供者端点。
+本机 macOS 27.2 arm64、Apple Swift 6.4.2、Node 22.22.0、Python 3.9.6、Chrome 156.0.8078.80。Node 与当时贡献指南固定的 22.23.0 有小版本差异；未运行 Linux/容器构建、SSH/远端部署操作或调用真实提供者端点。
 
 - 配置表覆盖全部允许范围、100.64/10、IPv6、范围边界、主机名/公网/通配/zone ID/非规范 IPv4、畸形及扩大范围的 CIDR、HTTP origin 不匹配；进程验证退出 78 且不回显值。
 - 三种传输入口通过真实 socket 检查第二监听、静默越界 peer 在读取 HTTP 前关闭、回环不受限制、取消后两地址可重新 bind；另验收第二地址端口占用时回滚首个绑定。内部 `ListenerConfiguration(testLoopbackAddress:...)` 只供 `@testable` 测试使用，macOS 用 ::1、Linux 分支用 127.0.0.2，生产初始化继续拒绝这些地址。Linux 分支尚未在本次运行。

@@ -203,7 +203,7 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 ## 系统要求与已知限制
 
 - 容器面向 **Linux amd64**，使用 host network 与本地命名卷，默认仅监听回环，由宿主 TLS 反代接入；可显式开启私有地址 LAN HTTP；不直接适用 Docker Desktop。模板设 768 MiB 内存上限，这不是最低宿主配置或吞吐承诺。
-- 源码开发支持 Linux、macOS 与 Windows（WSL2），需要 Swift 6.4、Node.js 22.23.0 和 Python 3；也可直接用仓库的开发容器。见[贡献指南](CONTRIBUTING.md)。
+- 源码开发支持 Linux、macOS 与 Windows（WSL2），需要 Swift 6.4、Node.js 26.13.0 和 Python 3；也可直接用仓库的开发容器。见[贡献指南](CONTRIBUTING.md)。
 - 单节点、单管理员；多账号路由还需完整验收，不提供支付结算、多管理员 RBAC 或高可用。
 - 费用是本地估算，订阅额度是观察值，未知用量不计零；不保证金额/token 绝对封顶。
 - 正文/图片恢复缓存尚未交付，不保证任意断线或重启后恢复已有输出。协议与客户端兼容有边界，见[兼容说明](docs/reference/compatibility.md)。
