@@ -520,8 +520,6 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                     last_death = None
             assert len(delays) >= 3 and max(delays) >= 1 and delays[-1] > delays[0]
             # Inspect actual retained json-file logs as well as the rotation config.
-            # Mount only this owned container's log directory, read-only, into a
-            # short-lived helper. No dependence on runner access to Engine files.
             assert state['HostConfig']['RestartPolicy']['Name'] == 'unless-stopped'
             assert state['HostConfig']['LogConfig'] == {'Type': 'json-file', 'Config': {'max-size': '10m', 'max-file': '5'}}
             log_path = Path(state['LogPath'])
@@ -532,8 +530,9 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             logs = failed_logs.stdout + failed_logs.stderr
             assert b'Invalid port configuration: CODEXONE_DATA_PORT.' in logs and b'LISTENING' not in logs
             assert invalid_port.encode() not in logs and all(secret.encode() not in logs for secret in secrets)
-            retained = run([*compose, 'run', '--no-deps', '--user', '0:0', '--volume', f'{log_path.parent}:/probe:ro',
-                            '--entrypoint', 'find', 'gateway', '/probe', '-maxdepth', '1', '-type', 'f',
+            # The runtime image has no shell utilities; read only this owned
+            # container's log directory on the host (CI runners allow sudo -n).
+            retained = run(['sudo', '-n', 'find', str(log_path.parent), '-maxdepth', '1', '-type', 'f',
                             '-name', '*-json.log*', '-printf', '%f %s\n']).stdout.decode().splitlines()
             assert 1 <= len(retained) <= 5
             for record in retained:
