@@ -35,13 +35,13 @@
 ### 1. 下载并初始化
 
 ```sh
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.4-source.tar.gz: OK
-tar -xzf codexone-0.26.4-source.tar.gz
-cd codexone-0.26.4
-docker pull ghcr.io/ximatai/codexone:0.26.4
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/codexone-0.26.5-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.5-source.tar.gz: OK
+tar -xzf codexone-0.26.5-source.tar.gz
+cd codexone-0.26.5
+docker pull ghcr.io/ximatai/codexone:0.26.5
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.5 --format '{{.Id}}')"
 hostname -I   # 查看服务器的局域网 IP，下面以 192.168.1.10 为例
 python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
 cd ../codexone-private
@@ -87,7 +87,7 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 ## 部署到自己的服务器（HTTPS）
 
-下面以当前版本 [v0.26.4](https://github.com/ximatai/codexone/releases/tag/v0.26.4) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
+下面以当前版本 [v0.26.5](https://github.com/ximatai/codexone/releases/tag/v0.26.5) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
 
 ### 0. 准备
 
@@ -103,13 +103,13 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 部署脚本在发布页的源码包里（只需 curl，不需要 Git），镜像来自 GHCR。校验和不通过就停止，不要继续：
 
 ```sh
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.4-source.tar.gz: OK
-tar -xzf codexone-0.26.4-source.tar.gz
-cd codexone-0.26.4
-docker pull ghcr.io/ximatai/codexone:0.26.4
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/codexone-0.26.5-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.5-source.tar.gz: OK
+tar -xzf codexone-0.26.5-source.tar.gz
+cd codexone-0.26.5
+docker pull ghcr.io/ximatai/codexone:0.26.5
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.5 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # 应输出 sha256: 开头的完整 ID
 ```
 
