@@ -49,6 +49,7 @@ private actor ResetProviderProbe: AccountResetCreditProvider {
       ], availableCount: 4)
   }
   func setListFailure(_ value: Bool) { failsList = value }
+  func removeCredits() throws { list = try .init(credits: [], availableCount: 0) }
   func setBlocked() { blocked = true }
   func setCode(_ code: ResetCreditCode) { self.code = code }
   func resetCredits(_ work: AccountObservationWork) async throws -> ResetCreditList {
@@ -517,6 +518,43 @@ func resetCreditExpiryCrossedDuringFreshListNeverSends() async throws {
     try await t.cycle(after: 135)
     #expect(t.time.clock.unixSeconds == testUnixSeconds + 375)
     #expect(await t.provider.intents.isEmpty)
+    #expect(try await t.f.store.resetCreditState(id: t.id).intent == nil)
+  } catch {
+    await t.close()
+    throw error
+  }
+  await t.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func resetCreditConcurrentCyclesDoNotReplayACompletedAutomaticCycle() async throws {
+  let t = try await ResetTimingFixture.make(minutes: 60, expiry: 3000, code: .nothingToReset)
+  do {
+    t.time.advance(seconds: 1800)
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+      for _ in 0..<8 { tasks.addTask { try await t.supervisor.scheduleCycle() } }
+      try await tasks.waitForAll()
+    }
+    #expect(await t.provider.intents.count == 2)
+    #expect(await t.provider.listed == 2)
+    #expect(t.supervisor.activeOperations == 0)
+  } catch {
+    await t.close()
+    throw error
+  }
+  await t.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func resetCreditLostResultCanReconcileDisappearedCreditBeforeLearnedExpiry() async throws {
+  let t = try await ResetTimingFixture.make(expiry: 240)
+  do {
+    let original = try #require(await t.provider.intents.first)
+    try await t.provider.removeCredits()
+    await t.provider.setCode(.alreadyRedeemed)
+    try await t.cycle(after: 60)
+    #expect(await t.provider.intents.count == 2)
+    #expect(await t.provider.intents.last?.requestID == original.requestID)
     #expect(try await t.f.store.resetCreditState(id: t.id).intent == nil)
   } catch {
     await t.close()

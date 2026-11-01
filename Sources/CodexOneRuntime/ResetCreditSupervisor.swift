@@ -36,11 +36,11 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
       signal?.finish()
     }
   }
-  private struct Target: Sendable {
+  private struct Target: Sendable, Equatable {
     let id: String
     let expiresAt: TimeInterval
   }
-  private struct Schedule: Sendable {
+  private struct Schedule: Sendable, Equatable {
     let revision: Int64
     var nextPoll: Int64
     var due: TimeInterval?
@@ -88,12 +88,12 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
     guard ManagedAccount.validID(id), isAccepting else { return }
     hint.yield(id)
   }
-  private func acquire(_ id: String) throws -> Job {
+  private func acquire(_ id: String, eligible: (State) -> Bool = { _ in true }) throws -> Job {
     guard ManagedAccount.validID(id) else { throw ExecutionError.invalidCommand }
     guard store.allowsOptionalStorageWork else { throw ExecutionError.capacity }
     return try state.withLock { value in
       guard value.accepting else { throw QuotaObservationFailure.closed }
-      guard value.active[id] == nil else { throw ExecutionError.conflict }
+      guard value.active[id] == nil, eligible(value) else { throw ExecutionError.conflict }
       guard value.active.count < 4 else { throw ExecutionError.capacity }
       let job = Job()
       value.active[id] = job
@@ -240,7 +240,8 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
       return
     }
     let now = clock.unixSeconds
-    var schedule = state.withLock { $0.schedules[id] }
+    let previous = state.withLock { $0.schedules[id] }
+    var schedule = previous
     if schedule?.revision != account.revision {
       schedule = Schedule(
         revision: account.revision, nextPoll: now,
@@ -256,11 +257,15 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
         ?? (next.due.map { Double(now) >= $0 } == true || now >= next.nextPoll)
     else { return }
     let job: Job
-    do { job = try acquire(id) } catch ExecutionError.conflict { return } catch ExecutionError
+    do {
+      // Recheck the snapshot atomically with admission. Another cycle may finish
+      // between reading its schedule and acquiring the per-account gate.
+      job = try acquire(id) { $0.schedules[id] == previous }
+    } catch ExecutionError.conflict { return } catch ExecutionError
       .capacity
     { return }
     defer { release(id, job) }
-    // Reserve this account's next cycle before yielding. A concurrent hint cannot create work.
+    // The account gate owns the schedule until the updated deadline is committed on release.
     next.nextPoll = now + intervalSeconds
     next.due = nil
     next.retryAt = nil
@@ -288,12 +293,14 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
       let target: Target?
       if let pending = saved.intent {
         // Reconcile the same request even if the provider already marks the card used.
-        // An unlisted or expiry-less pending card never authorizes an automatic send.
-        target = list.credits.first { $0.id == pending.creditID }.flatMap { credit in
-          credit.expiresAt.flatMap(ResetCredit.timestamp).map {
-            Target(id: credit.id, expiresAt: $0)
-          }
-        }
+        // If the card disappeared after a lost response, the same ID can still be
+        // reconciled before its already learned expiry. Restart must relearn expiry.
+        target =
+          list.credits.first { $0.id == pending.creditID }.flatMap { credit in
+            credit.expiresAt.flatMap(ResetCredit.timestamp).map {
+              Target(id: credit.id, expiresAt: $0)
+            }
+          } ?? next.target.flatMap { $0.id == pending.creditID ? $0 : nil }
       } else if retrying, let previous = next.target {
         target = list.credits.first { $0.id == previous.id && $0.status == "available" }
           .flatMap { credit in
