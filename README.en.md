@@ -84,7 +84,7 @@ Restart Codex, start a new session, and send a message. If the request appears u
 
 ## Deploy on your own server (HTTPS)
 
-These steps deploy the current release, [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
+These steps deploy the current release, [v0.26.2](https://github.com/ximatai/codexone/releases/tag/v0.26.2), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
 ### 0. Prerequisites
 
@@ -100,10 +100,10 @@ These steps deploy the current release, [v0.26.1](https://github.com/ximatai/cod
 The deployment scripts ship with the source; the image comes from GHCR:
 
 ```sh
-git clone --depth 1 --branch v0.26.1 https://github.com/ximatai/codexone.git
+git clone --depth 1 --branch v0.26.2 https://github.com/ximatai/codexone.git
 cd codexone
-docker pull ghcr.io/ximatai/codexone:0.26.1
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.2
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # a full ID starting with sha256:
 ```
 

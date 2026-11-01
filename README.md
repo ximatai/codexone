@@ -84,7 +84,7 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 ## 部署到自己的服务器（HTTPS）
 
-下面以当前版本 [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
+下面以当前版本 [v0.26.2](https://github.com/ximatai/codexone/releases/tag/v0.26.2) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
 
 ### 0. 准备
 
@@ -100,10 +100,10 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 部署脚本随源码发布，镜像来自 GHCR：
 
 ```sh
-git clone --depth 1 --branch v0.26.1 https://github.com/ximatai/codexone.git
+git clone --depth 1 --branch v0.26.2 https://github.com/ximatai/codexone.git
 cd codexone
-docker pull ghcr.io/ximatai/codexone:0.26.1
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.1 --format '{{.Id}}')"
+docker pull ghcr.io/ximatai/codexone:0.26.2
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # 应输出 sha256: 开头的完整 ID
 ```
 
