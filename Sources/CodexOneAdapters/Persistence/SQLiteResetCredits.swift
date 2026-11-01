@@ -93,8 +93,9 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
         else { throw ExecutionError.conflict }
         state.lastCode = result.code
         state.failures = result.code == .unknown ? min(state.failures + 1, 1_000_000) : 0
+        state.lastFailureAt = result.code == .unknown ? db.clock.unixSeconds : nil
         if result.code != .unknown { state.intent = nil }
-        if attempt.intent.automatic && (result.code == .reset || result.code == .alreadyRedeemed) {
+        if attempt.intent.automatic && result.code == .reset {
           state.lastAutoResetAt = db.clock.unixSeconds
         }
         try Self.saveResetCreditState(db, id, state)
@@ -114,7 +115,7 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
           automatic: true, creditID: nil)
         var state = try Self.loadResetCreditState(db, id)
         state.failures = min(state.failures + 1, 1_000_000)
-        state.lastAttemptAt = db.clock.unixSeconds
+        state.lastFailureAt = db.clock.unixSeconds
         try Self.saveResetCreditState(db, id, state)
       }
     }
@@ -125,6 +126,7 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
         var state = try Self.loadResetCreditState(db, id)
         guard state.failures > 0, state.intent == nil else { return }
         state.failures = 0
+        state.lastFailureAt = nil
         try Self.saveResetCreditState(db, id, state)
       }
     }

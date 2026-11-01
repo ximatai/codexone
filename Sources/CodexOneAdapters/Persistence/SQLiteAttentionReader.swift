@@ -86,8 +86,9 @@ extension SQLiteUsageReader: AttentionReading {
                     reset.intent != nil
                       ? "unknown" : reset.failures >= 3 ? "repeated_failure" : "reset")
                 ],
-                since: reset.intent != nil || reset.failures >= 3
-                  ? reset.lastAttemptAt : reset.lastAutoResetAt))
+                since: reset.intent != nil
+                  ? reset.lastAttemptAt
+                  : reset.failures >= 3 ? reset.lastFailureAt : reset.lastAutoResetAt))
           }
           result += accountItems
         }

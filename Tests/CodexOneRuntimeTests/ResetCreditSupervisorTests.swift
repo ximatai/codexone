@@ -189,6 +189,7 @@ func resetCreditAutomaticUnknownHintsReuseIDAndFailuresAreConsecutive() async th
       try await f.store.resetCreditState(id: a.id).intent == nil && supervisor.activeOperations == 0
     }
     #expect(await provider.intents.last?.requestID == original.requestID)
+    #expect(try await f.store.resetCreditState(id: a.id).lastAutoResetAt == nil)
     await provider.setListFailure(true)
     for _ in 0..<3 {
       time.withLock { $0 += 1800 }

@@ -115,6 +115,7 @@ public struct ResetCreditState: Sendable, Codable {
   public var failures: Int
   public var lastAttemptAt: Int64?
   public var lastAutoResetAt: Int64?
+  public var lastFailureAt: Int64?
   public init() throws {
     revision = 1
     settings = try .init()
@@ -123,6 +124,7 @@ public struct ResetCreditState: Sendable, Codable {
     failures = 0
     lastAttemptAt = nil
     lastAutoResetAt = nil
+    lastFailureAt = nil
   }
 }
 public struct ResetCreditAttempt: Sendable {
