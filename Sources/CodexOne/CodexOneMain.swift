@@ -19,6 +19,8 @@ struct CodexOneMain {
     } catch let error as RuntimeConfiguration.ConfigurationError {
       let message: String
       switch error {
+      case .invalidListenAddress: message = "Invalid private listen address configuration."
+      case .invalidAllowedNetworks: message = "Invalid allowed source networks configuration."
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
       case .invalidIdentityConfiguration: message = "Invalid single-identity configuration."
       case .invalidAdminOrigin: message = "Invalid public admin origin configuration."
@@ -70,7 +72,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners are loopback-only."
+        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners default to loopback; CODEXONE_LISTEN_ADDRESS adds a private literal address; CODEXONE_ALLOWED_NETWORKS optionally restricts source CIDRs."
       )
       return
     }
@@ -243,11 +245,12 @@ struct CodexOneMain {
           path: path, forbiddenDigest: identityConfiguration?.keySHA256,
           publicOrigin: configuration.adminPublicOrigin)
       }
-      let data = try JSONSerialization.data(
-        withJSONObject: [
-          "host": "127.0.0.1", "dataPort": configuration.dataPort,
-          "adminPort": configuration.adminPort,
-        ], options: [.sortedKeys])
+      var checked: [String: Any] = [
+        "host": "127.0.0.1", "dataPort": configuration.dataPort,
+        "adminPort": configuration.adminPort,
+      ]
+      if configuration.listeners.additionalAddress != nil { checked["transportMode"] = "lan_http" }
+      let data = try JSONSerialization.data(withJSONObject: checked, options: [.sortedKeys])
       FileHandle.standardOutput.write(data + Data([10]))
       return
     }
@@ -343,7 +346,7 @@ struct CodexOneMain {
           group: group, port: configuration.dataPort,
           configuration: poolConfiguration, store: store, finalizer: finalizer,
           credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy,
-          protocolExtensions: protocolExtensions, clock: clock
+          protocolExtensions: protocolExtensions, clock: clock, listeners: configuration.listeners
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
@@ -359,11 +362,15 @@ struct CodexOneMain {
         try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: identityConfiguration, store: store, finalizer: finalizer,
-          proxy: upstreamProxy, protocolExtensions: protocolExtensions, clock: clock
+          proxy: upstreamProxy, protocolExtensions: protocolExtensions, clock: clock,
+          listeners: configuration.listeners
         ) { announce("data", port: $0) })
     } else {
       services.append(
-        DataPlaneService(group: group, port: configuration.dataPort, report: report) {
+        DataPlaneService(
+          group: group, port: configuration.dataPort, report: report,
+          listeners: configuration.listeners
+        ) {
           announce("data", port: $0)
         })
     }
@@ -383,11 +390,18 @@ struct CodexOneMain {
               ready: (identityConfiguration != nil || poolConfiguration != nil)
                 && finalizer?.isAccepting == true),
           ])
-        }, keys: keyAdmin, webBundle: webBundle, accounts: accountAdmin
+        }, keys: keyAdmin, webBundle: webBundle, accounts: accountAdmin,
+        listeners: configuration.listeners
       ) {
         announce("admin", port: $0)
       })
     if let finalizer { services.insert(finalizer, at: 0) }
+    if configuration.listeners.additionalAddress != nil {
+      FileHandle.standardError.write(
+        Data(
+          "WARNING: LAN HTTP mode: administrator secrets, sessions, Keys and request contents travel in plaintext. Use only a trusted private network.\n"
+            .utf8))
+    }
     let runtime = GatewayRuntime(services: services)
     do {
       try await runtime.run()

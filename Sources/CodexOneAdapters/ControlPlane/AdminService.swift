@@ -5,6 +5,7 @@ import Vapor
 
 public struct AdminService: Service {
   private let group: any EventLoopGroup
+  private let listeners: ListenerConfiguration
   private let port: Int
   private let keys: KeyAdminAPI?
   private let accounts: AccountAdminAPI?
@@ -14,17 +15,22 @@ public struct AdminService: Service {
 
   public init(
     group: any EventLoopGroup, port: Int, report: ReadinessReport,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
-    self.init(group: group, port: port, reportProvider: { report }, onBound: onBound)
+    self.init(
+      group: group, port: port, reportProvider: { report }, listeners: listeners,
+      onBound: onBound)
   }
 
   public init(
     group: any EventLoopGroup, port: Int,
     reportProvider: @escaping @Sendable () async -> ReadinessReport, keys: KeyAdminAPI? = nil,
     webBundle: AdminWebBundle? = nil, accounts: AccountAdminAPI? = nil,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.listeners = listeners
     self.accounts = accounts
     self.webBundle = webBundle
     self.keys = keys
@@ -65,7 +71,7 @@ public struct AdminService: Service {
     do {
       try await app.asyncBoot()
       try await AdminHTTPIngress(
-        group: group, port: port, app: app,
+        group: group, listeners: listeners, port: port, app: app,
         onBound: { boundPort in
           keys?.bind(port: boundPort)
           onBound(boundPort)
