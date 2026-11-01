@@ -148,6 +148,8 @@ for (const status of [503, 429]) {
 test("P2-6: login, Key targets and cancel/Escape transfer focus to the intended controls", async ({
   page,
 }) => {
+  // Crosses four routes; a cold dev server compiles each on first visit.
+  test.slow();
   const state = await reviewFixture(page);
   state.anonymous = true;
   await page.goto("/");
