@@ -112,14 +112,24 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       Self.unreserved(verifier, minimum: 43, maximum: 128),
       Self.unreserved(expectedNonce, minimum: 32, maximum: 128)
     else { throw AccountRefreshError.invalidCommand }
+    do {
+      return try await authorizeCallback(
+        code: code, verifier: verifier, expectedNonce: expectedNonce)
+    } catch { throw AccountRefreshError.unavailable }
+  }
+  func authorizeCallback(code: String, verifier: String, expectedNonce: String) async throws
+    -> VerifiedSubscriptionLogin
+  {
+    guard !code.isEmpty, code.utf8.count <= 4096, code.utf8.allSatisfy({ $0 > 32 && $0 < 127 }),
+      Self.unreserved(verifier, minimum: 43, maximum: 128),
+      Self.unreserved(expectedNonce, minimum: 32, maximum: 128)
+    else { throw AccountAuthorizationFailure(.verificationFailed) }
     let response = try await post(
       [
         "grant_type": "authorization_code", "client_id": Self.clientID, "code": code,
         "code_verifier": verifier, "redirect_uri": Self.callbackURI,
-      ], form: true)
-    do { return try verifyLogin(response, nonce: expectedNonce) } catch {
-      throw AccountRefreshError.unavailable
-    }
+      ], form: true, authorizationFailure: .exchangeFailed)
+    return try verifyAuthorizationResponse(response, nonce: expectedNonce)
   }
   public func refresh(credential: AccountCredential, namespace: String) async throws
     -> VerifiedAccountRefresh
@@ -155,6 +165,23 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
         idToken: idToken, expiresAtUnixSeconds: expiry(response, claims: access))
       return VerifiedAccountRefresh(namespace: namespace, credential: refreshed)
     } catch { throw AccountRefreshError.unavailable }
+  }
+  func verifyAuthorizationResponse(_ response: JSONValue, nonce: String?) throws
+    -> VerifiedSubscriptionLogin
+  {
+    do {
+      for key in ["access_token", "id_token", "refresh_token"] {
+        _ = try requiredString(response, key)
+      }
+      if let value = response["expires_in"] {
+        guard let seconds = value.integer, (1...2_592_000).contains(seconds) else {
+          throw AccountRefreshError.unavailable
+        }
+      }
+    } catch { throw AccountAuthorizationFailure(.exchangeFailed, providerStatus: 200) }
+    do { return try verifyLogin(response, nonce: nonce) } catch {
+      throw AccountAuthorizationFailure(.verificationFailed, providerStatus: 200)
+    }
   }
   func verifyLogin(_ response: JSONValue, nonce: String?) throws -> VerifiedSubscriptionLogin {
     let accessToken = try requiredString(response, "access_token")
@@ -198,7 +225,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
   }
   func post(
     _ fields: [String: String], form: Bool = false, path: String = "/oauth/token",
-    device: Bool = false
+    device: Bool = false, authorizationFailure: AccountAuthorizationFailure.Code? = nil
   ) async throws -> JSONValue {
     let client = try state.withLock { value in
       guard let client = value.client else { throw AccountRefreshError.closed }
@@ -237,36 +264,51 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
           request.body = .bytes(ByteBuffer(data: body))
           let response = try await client.execute(
             request, deadline: .now() + .milliseconds(Int64(timeoutMilliseconds)))
-          let bytes = try await response.body.collect(upTo: 65_536)
-          if device {
-            if path.hasSuffix("/usercode"), response.status == .notFound {
-              throw AccountDeviceAuthorizationError.unavailable
+          // Status diagnostics never depend on (or retain) an error response body.
+          if let authorizationFailure {
+            if device, path.hasSuffix("/usercode"), response.status == .notFound {
+              throw AccountAuthorizationFailure(.deviceCodeUnavailable, providerStatus: 404)
             }
-            if path.hasSuffix("/token"), [.forbidden, .notFound].contains(response.status) {
+            if device, path.hasSuffix("/token"), [.forbidden, .notFound].contains(response.status) {
               return .null
             }
-          }
-          guard response.headers["content-type"].count == 1,
-            response.headers["content-encoding"].isEmpty,
-            response.headers["content-type"][0].split(
-              separator: ";", omittingEmptySubsequences: false
-            )
-            .first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json"
-          else { throw AccountRefreshError.unavailable }
-          let document = try JSONValue.decode(Data(bytes.readableBytesView))
-          guard document.object != nil else { throw AccountRefreshError.unavailable }
-          guard response.status == .ok else {
-            if Self.authorizationRejected(document, status: Int(response.status.code)) {
-              throw AccountRefreshError.authorizationRequired
+            guard response.status == .ok else {
+              throw AccountAuthorizationFailure(
+                authorizationFailure, providerStatus: Int(response.status.code))
             }
-            throw AccountRefreshError.unavailable
           }
-          if let tokenType = document["token_type"] {
-            guard tokenType.string?.lowercased() == "bearer" else {
+          do {
+            let bytes = try await response.body.collect(upTo: 65_536)
+            guard response.headers["content-type"].count == 1,
+              response.headers["content-encoding"].isEmpty,
+              response.headers["content-type"][0].split(
+                separator: ";", omittingEmptySubsequences: false
+              )
+              .first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json"
+            else { throw AccountRefreshError.unavailable }
+            let document = try JSONValue.decode(Data(bytes.readableBytesView))
+            guard document.object != nil else { throw AccountRefreshError.unavailable }
+            guard response.status == .ok else {
+              if Self.authorizationRejected(document, status: Int(response.status.code)) {
+                throw AccountRefreshError.authorizationRequired
+              }
               throw AccountRefreshError.unavailable
             }
+            if let tokenType = document["token_type"] {
+              guard tokenType.string?.lowercased() == "bearer" else {
+                throw AccountRefreshError.unavailable
+              }
+            }
+            return document
+          } catch {
+            if let authorizationFailure {
+              throw AccountAuthorizationFailure(
+                authorizationFailure == .providerRejected
+                  ? .authorizationFailed : authorizationFailure,
+                providerStatus: Int(response.status.code))
+            }
+            throw error
           }
-          return document
         }
         tasks.addTask { [timeoutMilliseconds] in
           try await Task.sleep(for: .milliseconds(timeoutMilliseconds))
@@ -276,8 +318,10 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
         return result
       }
     } catch {
-      if error is AccountDeviceAuthorizationError {
-        throw AccountDeviceAuthorizationError.unavailable
+      if let failure = error as? AccountAuthorizationFailure { throw failure }
+      if let authorizationFailure {
+        throw AccountAuthorizationFailure(
+          authorizationFailure == .providerRejected ? .authorizationFailed : authorizationFailure)
       }
       // No HTTP request can reach the provider before a connection is established.
       if let transport = error as? IOError, transport.errnoCode == ECONNREFUSED {

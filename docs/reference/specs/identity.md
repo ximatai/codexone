@@ -85,6 +85,25 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 初次账号生成内部 ID 并以 disabled/ready 保存；明确启用是后续独立管理动作。重新授权绑定 id/revision，保持相同 namespace 和最新 CAS；不能把另一订阅账号原地覆盖，失败不改变原有身份/凭证版本。此契约不授权读取个人缓存或调用真实账号，具体产品入口和真实订阅验收另行记录。
 
 
+### I16 授权失败诊断
+
+设备码与回调的 failed 流程使用封闭的安全 failureCode：
+
+| 代码 | 含义 |
+| --- | --- |
+| provider_rejected | 设备码创建/轮询得到非成功、非等待 HTTP 状态（创建 404 除外）；不解析拒绝正文 |
+| exchange_failed | 固定 token endpoint 兑换失败，包括拒绝、网络/超时、畸形响应或缺失 token 字段 |
+| verification_failed | 设备 PKCE、回调格式/state、nonce 或 JWT 声明校验失败 |
+| identity_mismatch | 可信身份 namespace 与重新授权目标不同，或创建时该 namespace 已绑定其他内部账号 |
+| revision_conflict | 目标 revision、状态等持久 CAS 条件不满足（身份不同单独分类） |
+| device_code_unavailable | 设备码创建端点返回 404 |
+| authorization_failed | 未分类错误，包括持久化失败、设备码网络/响应格式不明 |
+
+分类由适配器/用例边界的类型化错误产生，不匹配错误消息，不把 HTTP/数据库框架类型引入 Core。namespace 唯一性在创建事务复核；重新授权先核对 revision/状态，再核对 namespace，并在提交事务再次复核。失败不能改变既有账号、凭证或身份。
+
+Runtime 每个流程首次进入 failed 写一条固定 warning `Account authorization failed`，结构字段仅 method、failure_code，以及可用时的数字 provider_status；设备码创建失败的两层收尾不能重复记录。provider_status 不进入管理 DTO。不记录 owner、flow ID、提供者账号/邮箱、namespace、URL、user code、device_auth_id、token、授权码/verifier、错误原文或响应正文。expired 不写失败日志；取消/停止仍按既有 owner 责任取消并等待，不新增恢复或重试。
+
+
 ## I17：托管账号 dispatch 的持久复核
 
 Core 凭证准备只产生瞬时 work，不代表已取得执行租约。准备须 ready，enabled 可用于新请求；draining 仅供应用已独立核实对象归属或连接身份固定的续接，disabled 不可用。访问凭证剩余有效期不超过5分钟返回需要刷新，不能把它当成失效刷新令牌或自动改写 requires_auth。

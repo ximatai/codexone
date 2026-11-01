@@ -1,3 +1,4 @@
+import { authorizationFailureMessage } from "./authorization-failure";
 import {
   accountName,
   credentialExpiry,
@@ -519,8 +520,11 @@ export function AccountManagement() {
                   ? "重新授权保持账号身份与使用策略。"
                   : "新账号授权后默认禁用，核对后再启用。"}
               </Text>
-              {state.flow.method === "device" ? (
+              {state.flow.method === "device" ||
+              state.flowStatus?.status === "failed" ? (
                 <DeviceAuthorization state={state} />
+              ) : state.flowStatus?.status === "pending" ? (
+                <Text role="status">正在验证并保存授权…</Text>
               ) : (
                 <>
                   <Anchor
@@ -716,11 +720,7 @@ function DeviceAuthorization({
       )}
       {result?.status === "failed" && (
         <Alert color="red" role="alert">
-          {result.failureCode === "device_code_unavailable"
-            ? "设备码登录暂不可用，可改用浏览器回调方式。也可能需要在 ChatGPT 安全设置中开启设备码登录。"
-            : result.failureCode === "revision_conflict"
-              ? "账号身份或版本冲突，请重新读取账号后重新授权。"
-              : "授权未能完成，请核对账号列表后重新发起。"}
+          {authorizationFailureMessage(result.failureCode)}
         </Alert>
       )}
       {result?.status === "expired" && (
@@ -731,7 +731,7 @@ function DeviceAuthorization({
       <Button variant="default" onClick={() => void state.cancel()}>
         {pending ? "取消本次授权" : "关闭授权结果"}
       </Button>
-      {result?.status !== "completed" && (
+      {state.flow?.method === "device" && result?.status !== "completed" && (
         <Anchor
           component="button"
           type="button"

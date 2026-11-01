@@ -41,9 +41,11 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
         }
         guard
           try db.scalar(
-            "SELECT COUNT(*) FROM accounts WHERE id=? OR namespace=?",
-            [.text(id), .text(namespace)]) == 0
+            "SELECT COUNT(*) FROM accounts WHERE id=?", [.text(id)]) == 0
         else { throw ExecutionError.conflict }
+        guard
+          try db.scalar("SELECT COUNT(*) FROM accounts WHERE namespace=?", [.text(namespace)]) == 0
+        else { throw AccountAuthorizationFailure(.identityMismatch) }
         let account = try ManagedAccount(
           id: id, namespace: namespace, revision: 1, credentialVersion: 1,
           mode: .disabled, authorization: .ready, refreshIntent: nil,
@@ -213,10 +215,13 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
     return try await perform(optional: true) { db in
       try db.transaction {
         let old = try Self.loadAccount(db, id).account
-        guard old.revision == revision, old.namespace == namespace,
+        guard old.revision == revision,
           old.authorization != .refreshing,
           old.credentialVersion < 1_000_000
         else { throw ExecutionError.conflict }
+        guard old.namespace == namespace else {
+          throw AccountAuthorizationFailure(.identityMismatch)
+        }
         try Self.checkAccountCapacity(db)
         let account = try Self.nextAccount(
           old, authorization: .ready, intent: nil, credentialVersion: old.credentialVersion + 1)

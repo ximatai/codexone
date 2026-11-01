@@ -37,7 +37,8 @@ func deviceProviderBoundsCreationAndRetainsTrustedIdentityValidation() async thr
   ] {
     try await withOAuth { h in
       h.server.state.mutex.withLock { $0.devicePlans[path] = .reply(data) }
-      await #expect(throws: AccountRefreshError.unavailable) {
+      await #expect(throws: AccountAuthorizationFailure(.authorizationFailed, providerStatus: 200))
+      {
         try await h.provider.requestDeviceCode()
       }
       #expect(h.server.counts.calls == 1 && h.provider.activeRequests == 0)

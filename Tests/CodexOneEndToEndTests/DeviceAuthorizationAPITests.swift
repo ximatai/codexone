@@ -95,6 +95,22 @@ import Testing
       #expect(try await client.call("DELETE", exchangePath, headers: bearer).0 == 200)
       #expect(h.provider.activeRequests == 0 && calls(h, "/oauth/token") == 1)
       #expect(try await h.store.listAccounts(after: nil).isEmpty)
+      try prepareDevice(h, poll: .reply(Data("synthetic-private-body".utf8), status: 429))
+      let rejected = try await client.call(
+        "POST", "/api/accounts/authorization", body: .object(["target": .null]), headers: bearer)
+      let rejectedPath =
+        "/api/accounts/authorization/" + (try #require(rejected.1["flowID"]?.string))
+      gate.pulse()
+      try await awaitDevice {
+        try await client.call("GET", rejectedPath, headers: bearer).1["status"]?.string == "failed"
+      }
+      let failed = try await client.call("GET", rejectedPath, headers: bearer)
+      #expect(failed.0 == 200 && failed.3 == "no-store")
+      #expect(failed.1["status"]?.string == "failed")
+      #expect(failed.1["failureCode"]?.string == "provider_rejected")
+      #expect(failed.1["providerStatus"] == nil && failed.1["userCode"] == nil)
+      #expect(
+        !String(decoding: try failed.1.data(), as: UTF8.self).contains("synthetic-private-body"))
       try noDeviceMaterialInDatabase(h)
     } catch {
       owner.cancel()
