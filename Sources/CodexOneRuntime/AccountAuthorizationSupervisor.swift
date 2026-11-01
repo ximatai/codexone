@@ -18,6 +18,8 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     var userCode: String?
     var accountID: String?
     var failureCode: String?
+    /// Last step entered, for the failure log only.
+    var stage = "request"
   }
   private enum Event: Sendable {
     case device(String, CheckedContinuation<AccountAuthorizationStart, any Error>)
@@ -227,6 +229,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     }
     while true {
       try checkPending(id)
+      flows[id]?.stage = "poll"
       // Race sleep/network against the actual remaining lifetime, also when no frontend reads status.
       let grant = try await withThrowingTaskGroup(of: AccountDeviceGrant?.self) { group in
         defer { group.cancelAll() }
@@ -248,12 +251,14 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       guard completions < 4 else { throw AccountRefreshError.capacity }
       completions += 1
       defer { completions -= 1 }
+      flows[id]?.stage = "exchange"
       let verified = try await exchange(
         timeout: min(exchangeTimeout, now().duration(to: flows[id]!.deadline))
       ) {
         [provider] in try await provider.authorizeDevice(grant)
       }
       try checkPending(id)
+      flows[id]?.stage = "persist"
       let account = try await persist(verified, target: flows[id]!.target)
       flows[id]?.result = .completed
       flows[id]?.accountID = account.id
@@ -294,6 +299,8 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     flows[id]?.failureCode = failure.code.rawValue
     var metadata: Logger.Metadata = [
       "method": .string(flow.method.rawValue), "failure_code": .string(failure.code.rawValue),
+      "stage": .string(flow.stage),
+      "cause": .string(failure.cause ?? AccountAuthorizationFailure.safeCause(error)),
     ]
     if let status = failure.providerStatus { metadata["provider_status"] = .string(String(status)) }
     logger.warning("Account authorization failed", metadata: metadata)
@@ -316,6 +323,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       fail(flowID, error: AccountAuthorizationFailure(.verificationFailed))
       throw error
     }
+    flows[flowID]?.stage = "exchange"
     let (stop, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     active[flowID] = signal
     completions += 1
@@ -341,6 +349,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       }
       try Task.checkCancellation()
       guard accepting, flows[flowID] != nil else { throw AccountRefreshError.closed }
+      flows[flowID]?.stage = "persist"
       let account = try await persist(verified, target: flow.target)
       flows[flowID]?.result = .completed
       flows[flowID]?.accountID = account.id

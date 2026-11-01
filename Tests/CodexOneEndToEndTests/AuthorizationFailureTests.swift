@@ -44,7 +44,15 @@ private final class AuthorizationLogs: Sendable {
     var expected: Logger.Metadata = ["method": .string(method), "failure_code": .string(code)]
     if let status { expected["provider_status"] = .string(String(status)) }
     // An exact allowlist excludes tokens, user/device codes, identities, bodies and raw errors.
-    #expect(entry.metadata == expected)
+    var metadata = entry.metadata
+    let stage = metadata.removeValue(forKey: "stage")
+    let cause = metadata.removeValue(forKey: "cause")
+    #expect(metadata == expected)
+    #expect(["request", "poll", "exchange", "persist"].contains(stage.map { "\($0)" } ?? ""))
+    // A type or payload-free enum case name only.
+    #expect(
+      cause.map { "\($0)" }?.allSatisfy { $0.isLetter || $0.isNumber || "._<>, ".contains($0) }
+        == true)
     let line = entry.message + String(describing: entry.metadata)
     for secret in [
       "SYNTH-CODE", "synthetic-device-id-private", "synthetic-code", oauthVerifier,

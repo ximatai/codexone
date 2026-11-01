@@ -101,7 +101,7 @@ Provider namespace 包含规范化可信 origin、协议种类、提供者稳定
 
 分类由适配器/用例边界的类型化错误产生，不匹配错误消息，不把 HTTP/数据库框架类型引入 Core。namespace 唯一性在创建事务复核；重新授权先核对 revision/状态，再核对 namespace，并在提交事务再次复核。失败不能改变既有账号、凭证或身份。
 
-Runtime 每个流程首次进入 failed 写一条固定 warning `Account authorization failed`，结构字段仅 method、failure_code，以及可用时的数字 provider_status；设备码创建失败的两层收尾不能重复记录。provider_status 不进入管理 DTO。不记录 owner、flow ID、提供者账号/邮箱、namespace、URL、user code、device_auth_id、token、授权码/verifier、错误原文或响应正文。expired 不写失败日志；取消/停止仍按既有 owner 责任取消并等待，不新增恢复或重试。
+Runtime 每个流程首次进入 failed 写一条固定 warning `Account authorization failed`，结构字段仅 method、failure_code、stage（request/poll/exchange/persist，最后进入的步骤）、cause（底层错误的类型名，无负载枚举附 case 名，不超过 80 字符），以及可用时的数字 provider_status；设备码创建失败的两层收尾不能重复记录。provider_status 不进入管理 DTO。不记录 owner、flow ID、提供者账号/邮箱、namespace、URL、user code、device_auth_id、token、授权码/verifier、错误原文或响应正文。expired 不写失败日志；取消/停止仍按既有 owner 责任取消并等待，不新增恢复或重试。
 
 
 ## I17：托管账号 dispatch 的持久复核

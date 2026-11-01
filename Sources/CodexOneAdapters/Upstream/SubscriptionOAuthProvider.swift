@@ -321,7 +321,8 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       if let failure = error as? AccountAuthorizationFailure { throw failure }
       if let authorizationFailure {
         throw AccountAuthorizationFailure(
-          authorizationFailure == .providerRejected ? .authorizationFailed : authorizationFailure)
+          authorizationFailure == .providerRejected ? .authorizationFailed : authorizationFailure,
+          cause: AccountAuthorizationFailure.safeCause(error))
       }
       // No HTTP request can reach the provider before a connection is established.
       if let transport = error as? IOError, transport.errnoCode == ECONNREFUSED {
