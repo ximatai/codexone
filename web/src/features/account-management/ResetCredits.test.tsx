@@ -27,7 +27,7 @@ const account = {
 };
 const saved: api.ResetCreditState = {
   revision: 1,
-  settings: { autoUseBeforeExpiry: false, leadHours: 24 },
+  settings: { autoUseBeforeExpiry: false, leadMinutes: 1440, retryCount: 3 },
   pending: false,
   pendingCreditID: null,
   lastCode: null,
@@ -137,7 +137,7 @@ it("pending operations only reconcile the persisted selection through a fresh co
     ),
   );
 });
-it("defaults automation off and saves bounded lead hours with the observed revision", async () => {
+it("defaults automation off and saves minute lead time and retries with the observed revision", async () => {
   vi.mocked(api.saveResetCreditSettings).mockResolvedValue(saved);
   setup();
   await screen.findByText(/上次读取可用/);
@@ -145,14 +145,21 @@ it("defaults automation off and saves bounded lead hours with the observed revis
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
   fireEvent.change(screen.getByLabelText("提前小时数"), {
-    target: { value: "48" },
+    target: { value: "12" },
   });
+  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+    target: { value: "7" },
+  });
+  fireEvent.change(screen.getByLabelText("失败后重试次数"), {
+    target: { value: "2" },
+  });
+  expect(screen.getByText(/到期前 12 小时 7 分钟自动使用/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "保存重置卡设置" }));
   await waitFor(() =>
     expect(api.saveResetCreditSettings).toHaveBeenCalledWith(
       account.id,
       1,
-      { autoUseBeforeExpiry: true, leadHours: 48 },
+      { autoUseBeforeExpiry: true, leadMinutes: 727, retryCount: 2 },
       "synthetic-csrf",
       undefined,
     ),
@@ -174,4 +181,52 @@ it("cancels a pending read and ignores stale results when the details close", as
   view.unmount();
   expect(signal.aborted).toBe(true);
   await act(async () => resolve(saved));
+});
+
+it("requires the retry budget to fit before expiry and allows a one-minute lead with no retries", async () => {
+  vi.mocked(api.saveResetCreditSettings).mockResolvedValue(saved);
+  setup();
+  await screen.findByText(/上次读取可用/);
+  fireEvent.change(screen.getByLabelText("提前小时数"), {
+    target: { value: "0" },
+  });
+  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+    target: { value: "3" },
+  });
+  expect(screen.getByRole("button", { name: "保存重置卡设置" })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "至少为重试次数加 1 分钟",
+  );
+  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+    target: { value: "1" },
+  });
+  fireEvent.change(screen.getByLabelText("失败后重试次数"), {
+    target: { value: "0" },
+  });
+  expect(screen.getByText(/到期前 0 小时 1 分钟自动使用/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "保存重置卡设置" }));
+  await waitFor(() =>
+    expect(api.saveResetCreditSettings).toHaveBeenCalledWith(
+      account.id,
+      1,
+      { autoUseBeforeExpiry: false, leadMinutes: 1, retryCount: 0 },
+      "synthetic-csrf",
+      undefined,
+    ),
+  );
+});
+
+it("rejects a combined lead beyond a day and restores the stored minute/retry values", async () => {
+  setup({
+    ...saved,
+    settings: { autoUseBeforeExpiry: true, leadMinutes: 1440, retryCount: 5 },
+  });
+  await screen.findByText(/上次读取可用/);
+  expect(screen.getByLabelText("提前小时数")).toHaveValue("24");
+  expect(screen.getByLabelText("提前分钟数")).toHaveValue("0");
+  expect(screen.getByLabelText("失败后重试次数")).toHaveValue("5");
+  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+    target: { value: "1" },
+  });
+  expect(screen.getByRole("button", { name: "保存重置卡设置" })).toBeDisabled();
 });

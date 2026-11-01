@@ -35,7 +35,8 @@ const stateSchema = z.object({
   revision: z.number().int().min(1).max(1_000_000),
   settings: z.object({
     autoUseBeforeExpiry: z.boolean(),
-    leadHours: z.number().int().min(1).max(168),
+    leadMinutes: z.number().int().min(1).max(1440),
+    retryCount: z.number().int().min(0).max(5),
   }),
   pending: z.boolean(),
   pendingCreditID: identifier.nullable(),

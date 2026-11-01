@@ -44,6 +44,8 @@ export function ResetCredits({
   const [selection, setSelection] = useState<Selection | null>(null);
   const [auto, setAuto] = useState(false);
   const [hours, setHours] = useState<string | number>(24);
+  const [minutes, setMinutes] = useState<string | number>(0);
+  const [retries, setRetries] = useState<string | number>(3);
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   useEffect(() => {
@@ -56,13 +58,17 @@ export function ResetCredits({
         if (abort.signal.aborted) return;
         setState(saved);
         setAuto(saved.settings.autoUseBeforeExpiry);
-        setHours(saved.settings.leadHours);
+        setHours(Math.floor(saved.settings.leadMinutes / 60));
+        setMinutes(saved.settings.leadMinutes % 60);
+        setRetries(saved.settings.retryCount);
         const live = await api.fetchResetCredits(account.id, abort.signal);
         if (!abort.signal.aborted) {
           setList(live);
           setState(live.state);
           setAuto(live.state.settings.autoUseBeforeExpiry);
-          setHours(live.state.settings.leadHours);
+          setHours(Math.floor(live.state.settings.leadMinutes / 60));
+          setMinutes(live.state.settings.leadMinutes % 60);
+          setRetries(live.state.settings.retryCount);
         }
       } catch (cause) {
         if (abort.signal.aborted) return;
@@ -82,11 +88,20 @@ export function ResetCredits({
   const blocked =
     disabled || loading || !state || account.authorization !== "ready";
   const selectable = !blocked && !error && !state?.pending;
-  const validHours =
-    typeof hours === "number" &&
-    Number.isInteger(hours) &&
-    hours >= 1 &&
-    hours <= 168;
+  const leadMinutes = Number(hours) * 60 + Number(minutes);
+  const validSettings =
+    [hours, minutes, retries].every(
+      (v) => typeof v === "number" && Number.isInteger(v),
+    ) &&
+    Number(hours) >= 0 &&
+    Number(hours) <= 24 &&
+    Number(minutes) >= 0 &&
+    Number(minutes) <= 59 &&
+    Number(retries) >= 0 &&
+    Number(retries) <= 5 &&
+    leadMinutes >= 1 &&
+    leadMinutes <= 1440 &&
+    leadMinutes >= Number(retries) + 1;
   async function consume() {
     if (!selection) return;
     const creditID =
@@ -212,31 +227,68 @@ export function ResetCredits({
         <NumberInput
           aria-label="提前小时数"
           label="提前小时数"
-          description="1–168 小时，默认 24 小时。每 30 分钟检查一次。"
+          description="总提前量 1 分钟至 24 小时，默认 24 小时。"
           value={hours}
-          min={1}
-          max={168}
+          min={0}
+          max={24}
           allowDecimal={false}
           disabled={disabled || loading || !state}
           onChange={setHours}
         />
+        <NumberInput
+          aria-label="提前分钟数"
+          label="提前分钟数"
+          value={minutes}
+          min={0}
+          max={59}
+          allowDecimal={false}
+          disabled={disabled || loading || !state}
+          onChange={setMinutes}
+        />
+        <NumberInput
+          aria-label="失败后重试次数"
+          label="失败后重试次数"
+          description="0–5 次，默认 3 次。失败后每隔 1 分钟重试，绝不会在到期时或到期后使用。手动使用不会自动重试。"
+          value={retries}
+          min={0}
+          max={5}
+          allowDecimal={false}
+          disabled={disabled || loading || !state}
+          onChange={setRetries}
+        />
+        {validSettings ? (
+          <Text size="sm" role="status">
+            到期前 {Number(hours)} 小时 {Number(minutes)}{" "}
+            分钟自动使用；失败后最多重试 {Number(retries)} 次。
+          </Text>
+        ) : (
+          <Text size="sm" c="red" role="alert">
+            请输入整数：提前量须为 1–1440 分钟（最多 24
+            小时），且至少为重试次数加 1 分钟，以便重试在到期前完成。
+          </Text>
+        )}
         <Button
           disabled={
             disabled ||
             loading ||
             !state ||
-            !validHours ||
+            !validSettings ||
             (auto === state.settings.autoUseBeforeExpiry &&
-              hours === state.settings.leadHours)
+              leadMinutes === state.settings.leadMinutes &&
+              retries === state.settings.retryCount)
           }
           onClick={async () => {
-            if (!state || !validHours) return;
+            if (!state || !validSettings) return;
             await mutation(
               (csrf, signal) =>
                 api.saveResetCreditSettings(
                   account.id,
                   state.revision,
-                  { autoUseBeforeExpiry: auto, leadHours: Number(hours) },
+                  {
+                    autoUseBeforeExpiry: auto,
+                    leadMinutes,
+                    retryCount: Number(retries),
+                  },
                   csrf,
                   signal,
                 ),

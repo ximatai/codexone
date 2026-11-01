@@ -99,7 +99,7 @@ export function attentionMessage(
           ? "已自动使用重置卡，请查看账号"
           : item.detail.code === "unknown"
             ? "重置卡使用结果未知，请核对原操作"
-            : "重置卡自动处理连续失败，请检查账号"
+            : `重置卡自动处理连续失败${item.detail.attempts ? `（已尝试 ${item.detail.attempts} 次）` : ""}，请检查账号`
         : messages[item.kind];
   const extra =
     item.kind === "capacity_reference"

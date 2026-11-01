@@ -9,7 +9,11 @@ for (const width of [1440, 390]) {
     fixture.accounts[0].displayName = "合成重置卡账号";
     const state = {
       revision: 1,
-      settings: { autoUseBeforeExpiry: false, leadHours: 24 },
+      settings: {
+        autoUseBeforeExpiry: false,
+        leadMinutes: 1440,
+        retryCount: 3,
+      },
       pending: false,
       pendingCreditID: null as string | null,
       lastCode: null as string | null,
@@ -53,7 +57,8 @@ for (const width of [1440, 390]) {
         expect(body.revision).toBe(state.revision);
         state.settings = {
           autoUseBeforeExpiry: body.autoUseBeforeExpiry,
-          leadHours: body.leadHours,
+          leadMinutes: body.leadMinutes,
+          retryCount: body.retryCount,
         };
         state.revision++;
         fixture.accounts[0].revision = state.revision;
@@ -120,12 +125,18 @@ for (const width of [1440, 390]) {
     ).toBeEnabled();
     expect(calls.at(-1)).toEqual({});
     await drawer.getByLabel("到期前自动使用", { exact: true }).check();
-    await drawer.getByLabel("提前小时数", { exact: true }).fill("48");
+    await drawer.getByLabel("提前小时数", { exact: true }).fill("12");
+    await drawer.getByLabel("提前分钟数", { exact: true }).fill("7");
+    await drawer.getByLabel("失败后重试次数", { exact: true }).fill("2");
+    await expect(
+      drawer.getByText(/到期前 12 小时 7 分钟自动使用/),
+    ).toBeVisible();
     await drawer.getByRole("button", { name: "保存重置卡设置" }).click();
     await expect(drawer.getByText("重置卡自动使用设置已保存。")).toBeVisible();
     expect(state.settings).toEqual({
       autoUseBeforeExpiry: true,
-      leadHours: 48,
+      leadMinutes: 727,
+      retryCount: 2,
     });
     await page.screenshot({
       animations: "disabled",

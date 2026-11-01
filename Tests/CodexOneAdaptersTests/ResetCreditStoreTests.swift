@@ -104,7 +104,7 @@ import Testing
       expiresAtUnixSeconds: 2_000_000_000))
   _ = try await store.setResetCreditSettings(
     id: account.id, revision: account.revision,
-    settings: .init(autoUseBeforeExpiry: true, leadHours: 48))
+    settings: .init(autoUseBeforeExpiry: true, leadMinutes: 1381))
   account = try await store.accountCredential(id: account.id).account
   let attempt = try await store.beginResetCreditAttempt(
     account: account, creditID: "credit", automatic: false)
@@ -119,7 +119,8 @@ import Testing
     path: root + "/restored/core.sqlite", limits: syntheticLimits, clock: testClock)
   let state = try await restored.resetCreditState(id: account.id)
   #expect(
-    !state.settings.autoUseBeforeExpiry && state.settings.leadHours == 48
+    !state.settings.autoUseBeforeExpiry && state.settings.leadMinutes == 1381
+      && state.settings.retryCount == 3
       && state.intent == attempt.intent)
   #expect(!restored.isAdmissionReady)
   #expect(
@@ -184,4 +185,45 @@ import Testing
   defer { sqlite3_finalize(statement) }
   #expect(sqlite3_step(statement) == SQLITE_ROW)
   #expect(sqlite3_column_int64(statement, 0) == 10 && sqlite3_column_int64(statement, 1) == 0)
+}
+
+@Test func resetCreditMinuteSettingsValidateAndRoundTripLegacyRecords() throws {
+  for (minutes, retries) in [(1, 0), (4, 3), (6, 5), (1440, 5)] {
+    let settings = try ResetCreditSettings(leadMinutes: minutes, retryCount: retries)
+    #expect(
+      try JSONDecoder().decode(ResetCreditSettings.self, from: JSONEncoder().encode(settings))
+        == settings)
+  }
+  for (minutes, retries) in [(0, 0), (1441, 3), (10080, 3), (3, 3), (5, 5), (60, -1), (60, 6)] {
+    #expect(throws: ExecutionError.invalidCommand) {
+      try ResetCreditSettings(leadMinutes: minutes, retryCount: retries)
+    }
+  }
+  let old = Data(
+    #"{"revision":1,"settings":{"autoUseBeforeExpiry":true,"leadHours":48},"failures":0}"#.utf8)
+  let decoded = try JSONDecoder().decode(ResetCreditState.self, from: old)
+  #expect(decoded.settings.leadMinutes == 1440 && decoded.settings.retryCount == 3)
+  // This is the complete v0.26.4 settings field set; unknown new fields are ignored.
+  struct LegacySettings: Decodable {
+    let autoUseBeforeExpiry: Bool
+    let leadHours: Int
+  }
+  struct LegacyRecord: Decodable {
+    let revision: Int64
+    let settings: LegacySettings
+    let intent: ResetCreditIntent?
+    let lastCode: ResetCreditCode?
+    let failures: Int
+    let lastAttemptAt: Int64?
+    let lastAutoResetAt: Int64?
+    let lastFailureAt: Int64?
+  }
+  for (minutes, hours) in [(1, 1), (61, 2), (1440, 24)] {
+    var record = try ResetCreditState()
+    record.settings = try .init(autoUseBeforeExpiry: true, leadMinutes: minutes, retryCount: 0)
+    let data = try JSONEncoder().encode(record)
+    #expect(data.count <= 4096)
+    let legacy = try JSONDecoder().decode(LegacyRecord.self, from: data)
+    #expect(legacy.settings.leadHours == hours && legacy.settings.autoUseBeforeExpiry)
+  }
 }

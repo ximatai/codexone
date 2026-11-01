@@ -59,12 +59,12 @@ public struct ResetCreditList: Sendable, Equatable, Codable {
     self.credits = credits
     self.availableCount = availableCount
   }
-  public func expiringCredit(now: Int64, leadHours: Int) -> ResetCredit? {
+  public func expiringCredit(now: Int64, leadMinutes: Int) -> ResetCredit? {
     credits.filter {
       guard $0.status == "available", let raw = $0.expiresAt,
         let expires = ResetCredit.timestamp(raw)
       else { return false }
-      return expires > Double(now) && expires <= Double(now + Int64(leadHours) * 3600)
+      return expires > Double(now) && expires <= Double(now + Int64(leadMinutes) * 60)
     }.sorted {
       let a = ResetCredit.timestamp($0.expiresAt!)!
       let b = ResetCredit.timestamp($1.expiresAt!)!
@@ -74,11 +74,47 @@ public struct ResetCreditList: Sendable, Equatable, Codable {
 }
 public struct ResetCreditSettings: Sendable, Equatable, Codable {
   public let autoUseBeforeExpiry: Bool
-  public let leadHours: Int
-  public init(autoUseBeforeExpiry: Bool = false, leadHours: Int = 24) throws {
-    guard (1...168).contains(leadHours) else { throw ExecutionError.invalidCommand }
+  public static let retryIntervalMinutes = 1
+  /// Cards are kept for last-moment use, so automatic use starts at most a day early.
+  public static let maximumLeadMinutes = 1440
+  public let leadMinutes: Int
+  public let retryCount: Int
+  /// Retained in JSON so v0.26.4 can read records after rollback.
+  public var leadHours: Int { min(24, max(1, (leadMinutes + 59) / 60)) }
+  public init(
+    autoUseBeforeExpiry: Bool = false, leadMinutes: Int = 1440, retryCount: Int = 3
+  ) throws {
+    guard (1...Self.maximumLeadMinutes).contains(leadMinutes), (0...5).contains(retryCount),
+      leadMinutes >= retryCount * Self.retryIntervalMinutes + 1
+    else { throw ExecutionError.invalidCommand }
     self.autoUseBeforeExpiry = autoUseBeforeExpiry
-    self.leadHours = leadHours
+    self.leadMinutes = leadMinutes
+    self.retryCount = retryCount
+  }
+  private enum CodingKeys: String, CodingKey {
+    case autoUseBeforeExpiry, leadMinutes, retryCount, leadHours
+  }
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    let minutes: Int
+    if let value = try values.decodeIfPresent(Int.self, forKey: .leadMinutes) {
+      minutes = value
+    } else {
+      let hours = try values.decode(Int.self, forKey: .leadHours)
+      guard (1...168).contains(hours) else { throw ExecutionError.invalidCommand }
+      // v0.26.4 allowed up to 168 hours; longer leads now start one day before expiry.
+      minutes = min(hours * 60, Self.maximumLeadMinutes)
+    }
+    try self.init(
+      autoUseBeforeExpiry: values.decode(Bool.self, forKey: .autoUseBeforeExpiry),
+      leadMinutes: minutes, retryCount: values.decodeIfPresent(Int.self, forKey: .retryCount) ?? 3)
+  }
+  public func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(autoUseBeforeExpiry, forKey: .autoUseBeforeExpiry)
+    try values.encode(leadMinutes, forKey: .leadMinutes)
+    try values.encode(retryCount, forKey: .retryCount)
+    try values.encode(leadHours, forKey: .leadHours)
   }
 }
 public enum ResetCreditCode: String, Sendable, Codable {
