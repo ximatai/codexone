@@ -10,7 +10,41 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select checks from changed paths
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          if [[ "$EVENT" == pull_request ]]; then
+            git diff --name-only -z --no-renames "$BASE...$HEAD" > "$RUNNER_TEMP/changed-paths"
+            bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths" >> "$GITHUB_OUTPUT"
+          else
+            bash scripts/ci_changes.sh --all >> "$GITHUB_OUTPUT"
+          fi
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 scripts/check_docs.py
+      - run: python3 scripts/check_architecture.py
   backend-linux:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
     timeout-minutes: 35
@@ -21,6 +55,8 @@ jobs:
       - name: Verify Swift modules and executable lifecycle
         run: ./scripts/verify.sh --backend
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -43,3 +79,28 @@ jobs:
           name: browser-failure-evidence
           path: web/test-results/
           retention-days: 7
+  verify:
+    if: always()
+    needs: [changes, docs, backend-linux, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require successful selected checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ['RESULTS'])
+          selected = needs['changes']['outputs']
+          required = {'changes', 'docs'}
+          if selected.get('backend') == 'true':
+              required.add('backend-linux')
+          if selected.get('frontend') == 'true':
+              required.add('frontend')
+          for job, details in needs.items():
+              result = details['result']
+              print(f'{job}: {result}')
+              if result != 'success' and (job in required or result != 'skipped'):
+                  raise SystemExit(f'{job} did not succeed')
+          PY
