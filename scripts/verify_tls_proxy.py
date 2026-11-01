@@ -83,10 +83,21 @@ class SyntheticProvider(BaseHTTPRequestHandler):
                     index = self.server.calls
                 previous = create.get('previous_response_id')
                 assert previous is None or previous.startswith(f'resp_ws_tls_{connection}_')
-                if create['input'] == 'tls-ws-cancel':
+                if create['input'] in ('tls-ws-cancel', 'tls-ws-interrupt'):
                     stalled = True; self.server.entered.set()
-                    self.connection.settimeout(5)
+                    # Outlive P14a's 10s settlement window and the client's 12s
+                    # assertion. A stub timeout must never masquerade as cancellation.
+                    self.connection.settimeout(15)
                     try:
+                        if create['input'] == 'tls-ws-interrupt':
+                            response = dict(id=f'resp_ws_tls_{connection}_{index}', status='in_progress', output=[], usage=None)
+                            send(self.connection, dict(type='response.created', response=response))
+                            opcode, data = receive(self.connection, masked=True)
+                            assert opcode == 1 and json.loads(data) == dict(type='response.interrupt', response_id=response['id'])
+                            self.server.interrupted.set()
+                            assert self.server.release.wait(3), 'Settlement terminal was not released'
+                            response.update(status='completed', usage=dict(input_tokens=5, output_tokens=3, input_tokens_details=dict(cached_tokens=0)))
+                            send(self.connection, dict(type='response.completed', response=response))
                         opcode, _ = receive(self.connection, masked=True)
                         assert opcode == 8
                         self.server.cancelled.set()
@@ -239,12 +250,13 @@ def fixture(args, parent, tls, context, transport):
         provider.calls = provider.connections = 0
         provider.guard = threading.Lock()
         provider.entered = threading.Event(); provider.release = threading.Event(); provider.cancelled = threading.Event()
+        provider.interrupted = threading.Event()
         admin_secret = secrets.token_urlsafe(40)
         admin = root / 'admin'; admin.write_text(admin_secret); admin.chmod(0o600)
         public_ports = reserve_ports()
         config = root / 'identity.json'
         config.write_text(json.dumps(dict(managedKeys=True, namespace='synthetic-tls', identity='synthetic-account',
-            reservedMicros=10, executionTimeoutSeconds=8, upstreamTransport=transport,
+            reservedMicros=10, executionTimeoutSeconds=15 if transport == 'websocket' else 8, upstreamTransport=transport,
             upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1',
             models=[dict(id=MODEL, inputMicrosPerMillion=0, outputMicrosPerMillion=0,
                          catalog=dict(baseInstructions='Explicit synthetic TLS fixture guidance'))])))
@@ -390,34 +402,75 @@ def stream_checks(f, key):
     print('PASS: both TLS data prefixes, JSON, incremental unbuffered SSE and cancellation -> upstream close/unknown without replay')
 
 
+@contextmanager
+def websocket(f, key, prefix):
+    with socket.create_connection(('127.0.0.1', f['ports'][0]), timeout=4) as raw:
+        with f['context'].wrap_socket(raw, server_hostname='localhost') as sock:
+            nonce = base64.b64encode(os.urandom(16)).decode()
+            sock.sendall((f'GET {prefix}/responses HTTP/1.1\r\nHost: localhost:{f["ports"][0]}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {nonce}\r\nAuthorization: Bearer {key}\r\n\r\n').encode())
+            header = bytearray()
+            while not header.endswith(b'\r\n\r\n'):
+                header.extend(exact(sock, 1)); assert len(header) < 16384
+            assert b' 101 ' in header
+            expected = base64.b64encode(hashlib.sha1((nonce + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
+            assert expected.lower() in header.lower()
+            yield sock
+
+
 def websocket_checks(f, key):
     for prefix in ('/v1', '/backend-api/codex'):
-        with socket.create_connection(('127.0.0.1', f['ports'][0]), timeout=4) as raw:
-            with f['context'].wrap_socket(raw, server_hostname='localhost') as sock:
-                nonce = base64.b64encode(os.urandom(16)).decode()
-                sock.sendall((f'GET {prefix}/responses HTTP/1.1\r\nHost: localhost:{f["ports"][0]}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {nonce}\r\nAuthorization: Bearer {key}\r\n\r\n').encode())
-                header = bytearray()
-                while not header.endswith(b'\r\n\r\n'):
-                    header.extend(exact(sock, 1)); assert len(header) < 16384
-                assert b' 101 ' in header
-                expected = base64.b64encode(hashlib.sha1((nonce + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
-                assert expected.lower() in header.lower()
-                first = turn(sock, {'model': MODEL, 'input': 'tls-first', 'store': False})[-1]
-                assert first['type'] == 'response.completed'
-                assert turn(sock, {'model': MODEL, 'input': 'tls-next', 'previous_response_id': first['response']['id']})[-1]['type'] == 'response.completed'
-                if prefix == '/backend-api/codex':
-                    f['provider'].entered.clear(); f['provider'].cancelled.clear()
-                    before = f['provider'].calls
-                    send(sock, {'type': 'response.create', 'model': MODEL, 'input': 'tls-ws-cancel'}, masked=True)
-                    assert f['provider'].entered.wait(3)
-                else:
-                    send(sock, b'\x03\xe8', masked=True, opcode=8)
-        if prefix == '/backend-api/codex':
-            assert f['provider'].cancelled.wait(3), 'WSS cancellation did not close provider'
-            latest(f['root'] / 'state/core.sqlite', 'unknown')
-            assert f['provider'].calls == before + 1
+        with websocket(f, key, prefix) as sock:
+            first = turn(sock, {'model': MODEL, 'input': 'tls-first', 'store': False})[-1]
+            assert first['type'] == 'response.completed'
+            assert turn(sock, {'model': MODEL, 'input': 'tls-next', 'previous_response_id': first['response']['id']})[-1]['type'] == 'response.completed'
+            send(sock, b'\x03\xe8', masked=True, opcode=8)
     assert request(f, 'data', 'POST', '/v1/responses', {'model': MODEL, 'input': 'tls-bridge', 'stream': True}, {'Authorization': 'Bearer ' + key})[0] == 200
-    print('PASS: real WSS upgrade/accept, both prefixes, same-connection follow-up, WSS cancellation/unknown without replay and HTTP-to-WS bridge over TLS')
+    print('PASS: real WSS upgrade/accept, both prefixes, same-connection follow-up and HTTP-to-WS bridge over TLS')
+
+
+def websocket_cancellation_checks(f, key):
+    provider = f['provider']
+    # The silent third turn has no lifecycle ID. P14a owns a 10s settlement
+    # window after EOF, independently of Nginx's 1830s idle timeout.
+    # Use a 15s execution/stub deadline so neither can end the test early.
+    for prompt in ('tls-ws-cancel', 'tls-ws-interrupt'):
+        provider.entered.clear(); provider.cancelled.clear(); provider.interrupted.clear(); provider.release.clear()
+        with websocket(f, key, '/backend-api/codex') as sock:
+            first = turn(sock, {'model': MODEL, 'input': 'tls-first'})[-1]
+            turn(sock, {'model': MODEL, 'input': 'tls-next', 'previous_response_id': first['response']['id']})
+            latest(f['root'] / 'state/core.sqlite', 'settled')
+            before_calls, before_attempts = provider.calls, ledger(f)
+            send(sock, {'type': 'response.create', 'model': MODEL, 'input': prompt}, masked=True)
+            assert provider.entered.wait(3)
+            if prompt == 'tls-ws-interrupt':
+                opcode, data = receive(sock)
+                assert opcode == 1 and json.loads(data)['type'] == 'response.created'
+            closed = time.monotonic()
+            # Exit closes TLS/TCP directly, with neither WS close nor TLS unwrap.
+        if prompt == 'tls-ws-cancel':
+            assert not provider.cancelled.wait(3), 'Silent turn skipped P14a settlement'
+            assert provider.cancelled.wait(9), 'WSS settlement did not close provider within 10s + scheduling margin'
+            elapsed = time.monotonic() - closed
+            assert 9 <= elapsed < 12, 'WSS silent cancellation did not follow the settlement deadline'
+            assert latest(f['root'] / 'state/core.sqlite', 'unknown') is None
+            with sqlite3.connect(f['root'] / 'state/core.sqlite') as db:
+                assert db.execute('SELECT reserved,estimated FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone() == (10, 0)
+            print(f'PASS: WSS EOF before response ID -> provider close in {elapsed:.2f}s, unknown, reserved exposure only')
+        else:
+            # A targeted interrupt proves downstream EOF reached the gateway
+            # promptly through Nginx; release usage only after that proof.
+            assert provider.interrupted.wait(3), 'WSS EOF did not promptly trigger targeted interrupt'
+            interrupted = time.monotonic() - closed
+            assert not provider.cancelled.is_set()
+            provider.release.set()
+            assert provider.cancelled.wait(3), 'WSS terminal settlement did not release provider'
+            usage = latest(f['root'] / 'state/core.sqlite', 'settled')
+            assert usage['inputTokens'] == 5 and usage['outputTokens'] == 3
+            with sqlite3.connect(f['root'] / 'state/core.sqlite') as db:
+                outcome = json.loads(db.execute('SELECT outcome_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])
+                assert outcome['kind'] == 'cancelled' and outcome['failure'] == 'client_cancelled'
+            print(f'PASS: WSS EOF -> targeted interrupt in {interrupted:.2f}s, gated terminal usage retained as cancelled')
+        assert provider.calls == before_calls + 1 and ledger(f) == before_attempts + 1, 'WSS cancellation replayed or added an execution'
 
 
 def timeout_checks(f, key):
@@ -522,6 +575,8 @@ def main():
     parser.add_argument('--openssl', default=shutil.which('openssl'))
     parser.add_argument('--browser', action='store_true')
     parser.add_argument('--cleanup-failure-only', action='store_true')
+    parser.add_argument('--websocket-repetitions', type=int, choices=range(1, 11), default=1, metavar='1..10',
+                        help='repeat both WSS disconnect/settlement probes (default: 1)')
     args = parser.parse_args()
     assert args.nginx and args.openssl and (args.web / 'index.html').is_file(), 'Nginx, OpenSSL and built SPA are required'
     previous = os.umask(0o077)
@@ -539,7 +594,9 @@ def main():
                         trust_checks(f); admin_checks(f, key); limits_checks(f, key); stream_checks(f, key)
                         if args.browser: browser_checks(f, pin)
                         timeout_checks(f, key)
-                    else: websocket_checks(f, key)
+                    else:
+                        websocket_checks(f, key)
+                        for _ in range(args.websocket_repetitions): websocket_cancellation_checks(f, key)
                     for path in (f['proxy'].root / 'process.log', f['proxy'].root / 'error.log'):
                         if path.exists():
                             contents = path.read_bytes()
