@@ -1,4 +1,8 @@
+import CodexOneCore
+import Foundation
+
 public struct RuntimeConfiguration: Sendable, Equatable {
+  public let listeners: ListenerConfiguration
   public let dataPort: Int
   public let adminPort: Int
   public let backupDirectory: String?
@@ -12,6 +16,8 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let upstreamHTTPProxy: String?
 
   public enum ConfigurationError: Error, Equatable {
+    case invalidListenAddress
+    case invalidAllowedNetworks
     case invalidPort(String)
     case conflictingPorts
     case invalidBackupDirectory
@@ -25,6 +31,15 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   }
 
   public init(environment: [String: String]) throws {
+    do {
+      listeners = try ListenerConfiguration(
+        address: environment["CODEXONE_LISTEN_ADDRESS"],
+        allowedNetworks: environment["CODEXONE_ALLOWED_NETWORKS"])
+    } catch ListenerConfiguration.ConfigurationError.invalidAddress {
+      throw ConfigurationError.invalidListenAddress
+    } catch {
+      throw ConfigurationError.invalidAllowedNetworks
+    }
     func port(_ key: String, fallback: Int) throws -> Int {
       guard let value = environment[key] else { return fallback }
       guard !value.isEmpty, value.allSatisfy({ $0.isASCII && $0.isNumber }),
@@ -90,6 +105,14 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       guard !origin.isEmpty, origin.utf8.count <= 2048, !origin.utf8.contains(0),
         adminTokenFile != nil
       else { throw ConfigurationError.invalidAdminOrigin }
+      if let url = URLComponents(string: origin), url.scheme == "http",
+        let host = url.host, !["127.0.0.1", "localhost"].contains(host)
+      {
+        let literal = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard let address = listeners.additionalAddress,
+          let ip = IPAddress(literal), ip == IPAddress(address)
+        else { throw ConfigurationError.invalidAdminOrigin }
+      }
       adminPublicOrigin = origin
     } else {
       adminPublicOrigin = nil

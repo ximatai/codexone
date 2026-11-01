@@ -2,9 +2,15 @@
 
 为数据和管理入口配置 HTTPS 及正确的 SSE/WS 转发。
 
+## 局域网 HTTP 风险
+
+没有域名和证书时，可显式选择[局域网安装](../guide/linux-installation.md#局域网无域名)，用 `http://<私有 IP>:18081` 管理、`http://<私有 IP>:18080/backend-api/codex` 接入客户端，不需要反代。同一网络的设备可截获管理员秘密、session、Key 与请求内容；私有 IP、来源网段过滤和 HttpOnly 均不提供传输加密。仅在知情接受风险的可信私有网络使用。
+
+不要在公共或不可信 Wi-Fi 使用；不要用路由器端口转发将明文入口暴露到公网。需要跨网络访问时改用 HTTPS 或 Tailscale 等私有网络。管理页面会常驻风险提示，启动日志也会警告。LAN 模式不内置 TLS、证书或 mDNS；IPv6 使用带方括号的 URL，例如 `http://[fd00::10]:18081`。
+
 ## 前提
 
-使用与 Linux 安装同一宿主网络的 Nginx，将两个独立 HTTPS 域转发到网关数据/管理 loopback。网关本身继续只监听回环；不要把明文端口公开到外网。安装入口见 [Linux 安装](../guide/linux-installation.md)，运行约束见 [O06/O10/O11](../reference/specs/operations.md)。
+使用与 Linux 安装同一宿主网络的 Nginx，将两个独立 HTTPS 域转发到网关数据/管理 loopback。HTTPS 模式下网关继续只监听回环；不要把明文端口公开到外网。安装入口见 [Linux 安装](../guide/linux-installation.md)，运行约束见 [O06/O10/O11](../reference/specs/operations.md)。
 
 ## 接入配置
 

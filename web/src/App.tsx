@@ -20,6 +20,7 @@ const AdminOverview = lazy(() =>
     default: module.AdminOverview,
   })),
 );
+import { LANRiskBanner } from "./features/system-status/LANRiskBanner";
 import { SystemOverview } from "./features/system-status/SystemOverview";
 const UsagePage = lazy(() =>
   import("./features/usage/UsagePage").then((module) => ({
@@ -60,6 +61,7 @@ function Workspace() {
   return (
     <WorkspaceFrame>
       <main>
+        <LANRiskBanner />
         <ManagementSession publicView={location.pathname === "/"}>
           <OwnedQueries>
             <AttentionNavigationObserver />

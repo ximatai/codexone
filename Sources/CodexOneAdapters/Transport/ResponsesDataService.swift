@@ -13,6 +13,7 @@ public struct ResponsesDataService: Service {
   private let clock: WallClock
   private let protocolExtensions: ClientProtocolExtensionRegistry?
   private let group: any EventLoopGroup
+  private let listeners: ListenerConfiguration
   private let port: Int
   private let proxy: UpstreamHTTPProxy?
   private let source: ResponsesSource
@@ -30,9 +31,11 @@ public struct ResponsesDataService: Service {
     store: any ExecutionStore, finalizer: any FinalizationSink, proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try configuration.validate()
+    self.listeners = listeners
     self.clock = clock
     self.protocolExtensions = protocolExtensions
     self.group = group
@@ -52,12 +55,14 @@ public struct ResponsesDataService: Service {
     provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try self.init(
       group: group, port: port, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
       target: .openAI, proxy: proxy, protocolExtensions: protocolExtensions, clock: clock,
+      listeners: listeners,
       onBound: onBound)
   }
   init(
@@ -68,9 +73,11 @@ public struct ResponsesDataService: Service {
     proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
+    listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void
   ) throws {
     try configuration.validate()
+    self.listeners = listeners
     self.clock = clock
     self.protocolExtensions = protocolExtensions
     self.group = group
@@ -139,18 +146,24 @@ public struct ResponsesDataService: Service {
     // Dedicated control headroom lets saturation return HTTP 429.
     let channels = ProtocolChannels(limit: configuration.dataConnections + 16)
     let normalChannels = ProtocolChannels(limit: configuration.dataConnections)
-    do {
-      let server = try await ServerBootstrap(group: group)
+    func bind(host: String, port: Int) async throws
+      -> NIOAsyncChannel<EventLoopFuture<NegotiatedProtocol>, Never>
+    {
+      try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
         .childChannelOption(
           ChannelOptions.recvAllocator,
           value: AdaptiveRecvByteBufferAllocator(minimum: 1024, initial: 4096, maximum: 65_536)
         )
         .bind(
-          host: "127.0.0.1", port: port,
+          host: host, port: port,
           serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 16)
         ) {
           channel -> EventLoopFuture<EventLoopFuture<NegotiatedProtocol>> in
+          guard host == "127.0.0.1" || listeners.allows(peer: channel.remoteAddress?.ipAddress)
+          else {
+            return channel.close().flatMapThrowing { throw ExecutionError.unauthorized }
+          }
           guard channels.register(channel) else {
             return channel.close().flatMapThrowing { throw ExecutionError.capacity }
           }
@@ -228,32 +241,49 @@ public struct ResponsesDataService: Service {
               return channel.close().flatMapThrowing { throw error }
             }
         }
-      onBound(server.channel.localAddress!.port!)
+    }
+    var servers: [NIOAsyncChannel<EventLoopFuture<NegotiatedProtocol>, Never>] = []
+    do {
+      let loopback = try await bind(host: "127.0.0.1", port: port)
+      servers.append(loopback)
+      if let address = listeners.additionalAddress {
+        servers.append(try await bind(host: address, port: loopback.channel.localAddress!.port!))
+      }
+      onBound(loopback.channel.localAddress!.port!)
+      let activeServers = servers
       try await cancelWhenGracefulShutdown {
         do {
           try await withTaskCancellationHandler {
-            try await server.executeThenClose { inbound in
-              try await withThrowingDiscardingTaskGroup { tasks in
-                for try await connection in inbound {
-                  tasks.addTask {
-                    do {
-                      switch try await connection.get() {
-                      case .http(let socket):
-                        try await Self.serve(
-                          socket, executor: executor, budget: bodyBudget,
-                          normalChannels: normalChannels)
-                      case .webSocket(
-                        let socket, let digest, let reservations, let headers, let diagnosticHeaders
-                      ):
-                        defer { normalChannels.release(socket.channel) }
-                        var executor = executor
-                        executor.clientHeaders = headers
-                        executor.protocolClientHeaders = diagnosticHeaders
-                        try await Self.serveWebSocket(
-                          socket, executor: executor, digest: digest, reservations: reservations)
-                      }
-                    } catch {}
+            try await withThrowingDiscardingTaskGroup { listeners in
+              for server in activeServers {
+                listeners.addTask {
+                  try await server.executeThenClose { inbound in
+                    try await withThrowingDiscardingTaskGroup { tasks in
+                      for try await connection in inbound {
+                        tasks.addTask {
+                          do {
+                            switch try await connection.get() {
+                            case .http(let socket):
+                              try await Self.serve(
+                                socket, executor: executor, budget: bodyBudget,
+                                normalChannels: normalChannels)
+                            case .webSocket(
+                              let socket, let digest, let reservations, let headers,
+                              let diagnosticHeaders
+                            ):
+                              defer { normalChannels.release(socket.channel) }
+                              var executor = executor
+                              executor.clientHeaders = headers
+                              executor.protocolClientHeaders = diagnosticHeaders
+                              try await Self.serveWebSocket(
+                                socket, executor: executor, digest: digest,
+                                reservations: reservations)
+                            }
+                          } catch {}
 
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -267,6 +297,7 @@ public struct ResponsesDataService: Service {
         }
       }
     } catch {
+      for server in servers { try? await server.channel.close().get() }
       await channels.shutdown()
       try await client.shutdown()
       throw error

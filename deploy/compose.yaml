@@ -1,4 +1,4 @@
-# Linux Docker Engine only: loopback listeners stay on the host's loopback network.
+# Linux Docker Engine only: host networking preserves loopback and opt-in private LAN listeners.
 services:
   init-data:
     image: ${CODEXONE_IMAGE:?Set an immutable candidate image reference}
@@ -90,7 +90,9 @@ services:
       CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json
       CODEXONE_ACCOUNT_MASTER_KEY_FILE: /run/codexone/master
       CODEXONE_ADMIN_TOKEN_FILE: /run/codexone/admin
-      CODEXONE_ADMIN_PUBLIC_ORIGIN: ${CODEXONE_ADMIN_PUBLIC_ORIGIN:?Set the exact HTTPS management origin}
+      CODEXONE_LISTEN_ADDRESS: ${CODEXONE_LISTEN_ADDRESS:-}
+      CODEXONE_ALLOWED_NETWORKS: ${CODEXONE_ALLOWED_NETWORKS:-}
+      CODEXONE_ADMIN_PUBLIC_ORIGIN: ${CODEXONE_ADMIN_PUBLIC_ORIGIN:?Set the exact management origin}
     restart: unless-stopped
     stop_grace_period: 30s
     depends_on:

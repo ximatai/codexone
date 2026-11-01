@@ -20,7 +20,69 @@ All accounts, models, and requests below are synthetic.
 
 ![Access keys](docs/assets/keys.png)
 
-## Deploy on your own server
+## Choose a deployment route
+
+- **LAN (no domain)**: a trusted home or office network, accessed directly over HTTP. No domain, certificate, or Nginx; about ten minutes.
+- **Public access or a domain**: if you need access from outside or the network is not fully trusted, follow the [HTTPS deployment](#deploy-on-your-own-server-https) below.
+
+## LAN deployment (no domain)
+
+> [!WARNING]
+> LAN mode is not encrypted: the admin secret, sign-in session, keys, and request contents travel in plaintext, and any device on the same network can capture them. Use it only on a private network you trust. Never use it on public or untrusted Wi-Fi, and never expose it to the internet with router port forwarding. For access from outside, use the HTTPS deployment or a private network such as Tailscale. See [LAN HTTP risks](docs/operations/tls-proxy.md#局域网-http-风险).
+
+You need a Linux amd64 server with Docker Engine and Compose v2, Python 3, Git, and a fixed LAN IP, plus your own ChatGPT subscription. LAN mode is available from v0.26.2.
+
+### 1. Download and initialize
+
+```sh
+git clone --depth 1 --branch v0.26.2 https://github.com/ximatai/codexone.git
+cd codexone
+docker pull ghcr.io/ximatai/codexone:0.26.2
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.2 --format '{{.Id}}')"
+hostname -I   # the server's LAN IP; 192.168.1.10 below is an example
+python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
+cd ../codexone-private
+```
+
+The installer prints the risk notice, the admin URL, and the client URL. When running as root, add `--uid 10001 --gid 10001`. The IP must be a private address (10.x, 172.16–31.x, 192.168.x, Tailscale's 100.64–127.x, and so on). To allow only one subnet, add `--lan-allow 192.168.1.0/24`; most users can skip it.
+
+### 2. Configure models and start
+
+Edit `secrets/pool.json` and replace `configure-model-before-use` with a model your subscription offers in Codex; use 0 for unknown rates (see [configuration](docs/guide/configuration.md)). Then:
+
+```sh
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py up -d
+python3 compose-install.py ps
+```
+
+### 3. Sign in, authorize your account, and create keys
+
+1. Run `cat secrets/admin` for the admin secret, open `http://192.168.1.10:18081` from a computer on the same LAN, and sign in as `admin`. A plaintext notice stays at the top of every page; this is expected.
+2. On the Accounts page, add and authorize your account, then click Enable.
+3. On the Access Keys page, create one key per device. Each key is shown only once; save it right away.
+
+### 4. Connect Codex
+
+On the client device, put the key in `CODEXONE_API_KEY` and add to `~/.codex/config.toml`:
+
+```toml
+model = "<model name from step 2>"
+model_provider = "codexone"
+
+[model_providers.codexone]
+name = "openai"
+base_url = "http://192.168.1.10:18080/backend-api/codex"
+wire_api = "responses"
+supports_websockets = true
+env_key = "CODEXONE_API_KEY"
+requires_openai_auth = false
+http_headers = { "x-openai-actor-authorization" = "codexone" }
+```
+
+Restart Codex, start a new session, and send a message. If the request appears under usage in the admin page, it works. To switch to HTTPS later, see [switching modes](docs/guide/linux-installation.md#切换局域网与-https).
+
+## Deploy on your own server (HTTPS)
 
 These steps deploy the current release, [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
@@ -134,13 +196,13 @@ Restart Codex Desktop or the CLI, start a new session and send a message. If the
 ### Troubleshooting
 
 - **`docker pull` is slow or stalls**: if dockerd uses a proxy, make sure it works for `ghcr.io` and `pkg-containers.githubusercontent.com`, or add both to dockerd's `NO_PROXY`.
-- **Admin sign-in fails**: the browser address must match `--origin` exactly (scheme, domain, port) and use HTTPS.
+- **Admin sign-in fails**: the browser address must match `--origin` exactly (scheme, domain, port) and use HTTPS for the HTTPS route. For LAN mode, use the IP and port printed by the installer.
 - **Readiness stays 503**: the account must be authorized **and** enabled; the admin overview lists the reason.
 - **Upgrades, backups and rollback**: read [backup and upgrades](docs/guide/backup-upgrade.md) before upgrading.
 
 ## Requirements and limits
 
-Linux amd64 containers use host networking, loopback listeners, and local named volumes behind a host TLS proxy; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development uses macOS 15+, Swift 6.4, Node.js 22.23.0, and Python 3; Linux builds require SQLite development headers.
+Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development uses macOS 15+, Swift 6.4, Node.js 22.23.0, and Python 3; Linux builds require SQLite development headers.
 
 Single node and administrator only. Full multi-account routing validation remains pending. No billing service, multi-admin RBAC, or high availability. Costs are estimates, quotas are observations, and token/cost limits are not absolute caps. Client-facing body/image recovery caching is not implemented; output recovery after disconnection or restart is not guaranteed. See [compatibility](docs/reference/compatibility.md).
 
