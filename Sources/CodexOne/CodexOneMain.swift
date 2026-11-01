@@ -335,14 +335,18 @@ struct CodexOneMain {
       let refreshing = try AccountRefreshSupervisor(application: application, provider: provider)
       let quota = try SubscriptionQuotaProvider(
         group: group, verifier: provider, proxy: upstreamProxy)
+      let resetCredits = try ResetCreditSupervisor(
+        store: store, credentials: application, provider: quota, clock: clock)
       let observing = try AccountObservationSupervisor(
-        store: store, application: application, refresher: refreshing, provider: quota, clock: clock
+        store: store, application: application, refresher: refreshing, provider: quota,
+        clock: clock, resetCredits: resetCredits
       )
       services.append(provider)
       services.append(quota)
       services.append(authorization)
       services.append(refreshing)
       services.append(observing)
+      services.append(resetCredits)
       if let poolConfiguration, let finalizer {
         poolDataService = try ResponsesDataService(
           group: group, port: configuration.dataPort,
@@ -353,7 +357,7 @@ struct CodexOneMain {
       }
       accountAdmin = AccountAdminAPI(
         store: store, authorization: authorization, refreshing: refreshing, observing: observing,
-        credentials: application, clock: clock)
+        credentials: application, clock: clock, resetCredits: resetCredits)
     } else {
       accountAdmin = nil
     }
