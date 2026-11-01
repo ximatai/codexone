@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-当前版本为 **[v0.26.4](https://github.com/ximatai/codexone/releases/tag/v0.26.4)**（2026-11-01），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前版本为 **[v0.26.5](https://github.com/ximatai/codexone/releases/tag/v0.26.5)**（2026-11-02），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启；v0.26.4 起提供订阅重置卡查看/确认使用/到期前自动使用，以及空闲 5 小时/每周配额窗口预热（均按账号默认关闭）。
 

@@ -14,8 +14,8 @@
 从 GHCR 拉取精确版本并解析本机不可变 ID，也可以按下节从源码构建 candidate：
 
 ```sh
-docker pull ghcr.io/ximatai/codexone:0.26.4
-docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}'
+docker pull ghcr.io/ximatai/codexone:0.26.5
+docker image inspect ghcr.io/ximatai/codexone:0.26.5 --format '{{.Id}}'
 ```
 
 下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。该 ID 只在本机有意义：containerd 镜像存储下等于拉取的 registry digest，传统存储下等于镜像配置 digest（Release 的 `image-id.txt`）；跨机器核对以 registry digest 和来源证明为准。正式版镜像提供精确版本与 latest；预发布只提供精确版本，不更新 latest，也不提供年份浮动标签。
@@ -27,7 +27,7 @@ docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}'
 ```sh
 docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
-  --build-arg VERSION=0.26.4 -f deploy/Dockerfile -t codexone:candidate .
+  --build-arg VERSION=0.26.5 -f deploy/Dockerfile -t codexone:candidate .
 python3 scripts/verify_installation.py --image codexone:candidate
 # 本机有 Chrome 且已安装 web 锁文件依赖时，可增加 --browser 验收打包界面。
 # python3 scripts/verify_installation.py --image codexone:candidate --browser

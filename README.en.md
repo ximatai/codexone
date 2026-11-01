@@ -35,13 +35,13 @@ You need a Linux amd64 server with Docker Engine and Compose v2, Python 3, and a
 ### 1. Download and initialize
 
 ```sh
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.4-source.tar.gz: OK
-tar -xzf codexone-0.26.4-source.tar.gz
-cd codexone-0.26.4
-docker pull ghcr.io/ximatai/codexone:0.26.4
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/codexone-0.26.5-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.5-source.tar.gz: OK
+tar -xzf codexone-0.26.5-source.tar.gz
+cd codexone-0.26.5
+docker pull ghcr.io/ximatai/codexone:0.26.5
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.5 --format '{{.Id}}')"
 hostname -I   # the server's LAN IP; 192.168.1.10 below is an example
 python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
 cd ../codexone-private
@@ -87,7 +87,7 @@ Restart Codex, start a new session, and send a message. If the request appears u
 
 ## Deploy on your own server (HTTPS)
 
-These steps deploy the current release, [v0.26.4](https://github.com/ximatai/codexone/releases/tag/v0.26.4), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
+These steps deploy the current release, [v0.26.5](https://github.com/ximatai/codexone/releases/tag/v0.26.5), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
 ### 0. Prerequisites
 
@@ -103,13 +103,13 @@ These steps deploy the current release, [v0.26.4](https://github.com/ximatai/cod
 The deployment scripts come from the source archive on the release page (curl only, no Git needed); the image comes from GHCR. Stop if the checksum does not match:
 
 ```sh
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
-curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.4-source.tar.gz: OK
-tar -xzf codexone-0.26.4-source.tar.gz
-cd codexone-0.26.4
-docker pull ghcr.io/ximatai/codexone:0.26.4
-CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/codexone-0.26.5-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.5/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.5-source.tar.gz: OK
+tar -xzf codexone-0.26.5-source.tar.gz
+cd codexone-0.26.5
+docker pull ghcr.io/ximatai/codexone:0.26.5
+CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.5 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # a full ID starting with sha256:
 ```
 
