@@ -86,7 +86,14 @@ import Testing
       do {
         try await awaitDevice { await service.isAccepting }
         let flow = try await service.begin(owner: "session", target: .create, method: .device)
-        gate.pulse()
+        // A dropped poll has no HTTP response and is retried a bounded number of times.
+        let pulses: Int
+        if case .abort = variant {
+          pulses = AccountAuthorizationSupervisor.pollTransportRetries
+        } else {
+          pulses = 1
+        }
+        for _ in 0..<pulses { gate.pulse() }
         try await awaitDevice {
           try await service.status(owner: "session", flowID: flow.flowID).status == .failed
         }

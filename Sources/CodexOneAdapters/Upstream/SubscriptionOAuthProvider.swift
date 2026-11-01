@@ -322,7 +322,9 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       if let authorizationFailure {
         throw AccountAuthorizationFailure(
           authorizationFailure == .providerRejected ? .authorizationFailed : authorizationFailure,
-          cause: AccountAuthorizationFailure.safeCause(error))
+          // HTTPClientError describes itself by case name only ("HTTPClientError.readTimeout").
+          cause: error is HTTPClientError
+            ? String(describing: error) : AccountAuthorizationFailure.safeCause(error))
       }
       // No HTTP request can reach the provider before a connection is established.
       if let transport = error as? IOError, transport.errnoCode == ECONNREFUSED {
