@@ -1,10 +1,18 @@
 import Foundation
 
 public struct SubscriptionQuotaWindow: Sendable, Equatable, Codable {
+  public let resetAfterSeconds: Int64?
   public let usedPercent: Double?
   public let durationSeconds: Int64?
   public let resetsAtUnixSeconds: Int64?
-  public init(usedPercent: Double?, durationSeconds: Int64?, resetsAtUnixSeconds: Int64?) throws {
+  public init(
+    usedPercent: Double?, durationSeconds: Int64?, resetsAtUnixSeconds: Int64?,
+    resetAfterSeconds: Int64? = nil
+  ) throws {
+    guard resetAfterSeconds.map({ (0...31_536_000).contains($0) }) ?? true else {
+      throw ExecutionError.invalidCommand
+    }
+    self.resetAfterSeconds = resetAfterSeconds
     guard usedPercent.map({ $0.isFinite && (0...10_000).contains($0) }) ?? true,
       durationSeconds.map({ (1...31_536_000).contains($0) }) ?? true,
       resetsAtUnixSeconds.map({ (1...1_000_000_000_000).contains($0) }) ?? true
@@ -55,7 +63,8 @@ public struct SubscriptionQuota: Sendable, Equatable, Codable {
       for window in [limit.primary, limit.secondary].compactMap({ $0 }) {
         _ = try SubscriptionQuotaWindow(
           usedPercent: window.usedPercent, durationSeconds: window.durationSeconds,
-          resetsAtUnixSeconds: window.resetsAtUnixSeconds)
+          resetsAtUnixSeconds: window.resetsAtUnixSeconds,
+          resetAfterSeconds: window.resetAfterSeconds)
       }
       _ = try SubscriptionQuotaLimit(
         id: limit.id, allowed: limit.allowed, limitReached: limit.limitReached,

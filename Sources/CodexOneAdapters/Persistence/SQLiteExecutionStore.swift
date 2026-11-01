@@ -104,6 +104,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               "UPDATE attempts SET state='unknown',unknown_since_epoch=? WHERE state='intent'",
               [.number(connection.clock.unixSeconds)])
             try Self.recoverAccountRefreshes(connection)
+            try Self.recoverQuotaPriming(connection)
             if storage.snapshot.optionalWorkAllowed {
               try connection.write(
                 "DELETE FROM request_diagnostics WHERE at_epoch<?",
@@ -231,7 +232,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     try validateAdmission(command)
     if let restored = try db.restoreRecord() {
       let now = db.clock.unixSeconds
-      guard restored.allowsAdmission(at: now), command.keyRevision != nil,
+      guard restored.allowsAdmission(at: now),
+        command.keyRevision != nil || command.executionMode == .priming,
         command.window == "utc-day-\(now / 86400)"
       else { throw ExecutionError.maintenanceRequired }
 
@@ -247,6 +249,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     guard active < ExecutionLimits.accountConcurrency else {
       throw ExecutionError.accountConcurrency
     }
+    if command.executionMode == .priming { try Self.admitQuotaPriming(db, command) }
     for reference in command.references ?? [] {
       let values: [SQLiteConnection.Value] = [
         .text(command.owner.principal), .text(command.owner.namespace),
@@ -375,7 +378,13 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
         }
-        if let outcome { try Self.recordOutcome(db, snapshot: snapshot, outcome: outcome) }
+        if let outcome {
+          try Self.recordOutcome(db, snapshot: snapshot, outcome: outcome)
+          try Self.finishQuotaPriming(
+            db, snapshot.admission,
+            result: outcome.failure?.rawValue
+              ?? (evidence?.completeness == .complete ? "success" : "unknown"))
+        }
         guard let evidence else {
           if snapshot.state == .intent {
             try db.write(

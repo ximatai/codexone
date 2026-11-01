@@ -4,6 +4,7 @@ import Vapor
 
 /// Registers only beneath the shared, authenticated management route group.
 public struct AccountAdminAPI: Sendable {
+  private let priming: (any QuotaPrimingExecuting)?
   private let resetCredits: (any AccountResetCreditManaging)?
   private let clock: WallClock
   private let credentials: AccountCredentials?
@@ -15,8 +16,10 @@ public struct AccountAdminAPI: Sendable {
     store: any AccountGovernanceStore, authorization: any AccountAuthorizing,
     refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil,
     credentials: AccountCredentials? = nil, clock: WallClock = .system,
-    resetCredits: (any AccountResetCreditManaging)? = nil
+    resetCredits: (any AccountResetCreditManaging)? = nil,
+    priming: (any QuotaPrimingExecuting)? = nil
   ) {
+    self.priming = priming
     self.resetCredits = resetCredits
     self.clock = clock
     self.credentials = credentials
@@ -43,6 +46,22 @@ public struct AccountAdminAPI: Sendable {
           "accounts": .array(metadata),
           "nextCursor": accounts.count == 64 ? .string(accounts.last!.id) : .null,
         ]))
+    }
+    routes.get(":id", "quota-priming") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))
+    }
+    routes.put(":id", "quota-priming") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let body = try Self.body(request, allowed: ["revision", "enabled", "model", "message"])
+      guard let revision = body["revision"]?.integer, let enabled = body["enabled"]?.bool,
+        let model = body["model"]?.string, let message = body["message"]?.string,
+        priming?.models.contains(model) == true, let store = store as? any QuotaPrimingStore
+      else { throw ExecutionError.invalidCommand }
+      _ = try await store.setQuotaPrimingSettings(
+        id: request.parameters.get("id") ?? "", revision: revision,
+        settings: .init(enabled: enabled, model: model, message: message))
+      return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))
     }
     routes.get(":id", "reset-credits") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
@@ -195,6 +214,19 @@ public struct AccountAdminAPI: Sendable {
       await authorization.discard(owner: owner, flowID: id)
       return try Self.response(.object(["discarded": .bool(true)]))
     }
+  }
+  private func primingDTO(id: String) async throws -> JSONValue {
+    guard let store = store as? any QuotaPrimingStore else { throw QuotaObservationFailure.closed }
+    let state = try await store.quotaPrimingState(id: id)
+    return .object([
+      "revision": .number(Decimal(state.revision)),
+      "settings": try JSONValue.decode(JSONEncoder().encode(state.settings)),
+      "models": .array((priming?.models ?? []).map { .string($0) }),
+      "defaultModel": priming?.defaultModel.map { .string($0) } ?? .null,
+      "lastAttemptAt": state.lastAttemptAt.map { .number(Decimal($0)) } ?? .null,
+      "lastResult": state.lastResult.map { .string($0) } ?? .null,
+      "attention": state.attention.map { .string($0) } ?? .null,
+    ])
   }
   private func resetCreditStateDTO(id: String) async throws -> JSONValue {
     guard let resetStore = store as? any AccountResetCreditStore else {

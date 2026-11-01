@@ -1,5 +1,6 @@
 /// Build a physical pre-v5 fixture, rather than stamping an incompatible new schema old.
-let removeResetCreditSchema = "DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; "
+let removeResetCreditSchema =
+  "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; "
 
 let removeObservationSchema =
   removeResetCreditSchema + """

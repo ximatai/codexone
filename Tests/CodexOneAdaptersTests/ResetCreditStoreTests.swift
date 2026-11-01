@@ -82,7 +82,8 @@ import Testing
     path: path, limits: syntheticLimits, clock: testClock)
   await store.close()
   try rawSQL(
-    path, "DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; PRAGMA user_version=10"
+    path,
+    "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; PRAGMA user_version=10"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
@@ -166,7 +167,7 @@ import Testing
   await store.close()
   try rawSQL(
     path,
-    "DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; CREATE TABLE reset_credit_events(id TEXT); PRAGMA user_version=10"
+    "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; CREATE TABLE reset_credit_events(id TEXT); PRAGMA user_version=10"
   )
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await SQLiteExecutionStore.migrate(path: path, clock: testClock)

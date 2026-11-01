@@ -222,7 +222,8 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
       }
       return try .init(
         usedPercent: used, durationSeconds: integer(value["limit_window_seconds"]),
-        resetsAtUnixSeconds: integer(value["reset_at"]))
+        resetsAtUnixSeconds: integer(value["reset_at"]),
+        resetAfterSeconds: integer(value["reset_after_seconds"]))
     }
     func limit(_ value: JSONValue, id: String) throws -> SubscriptionQuotaLimit {
       guard value.object != nil else { throw QuotaObservationFailure.invalidResponse }

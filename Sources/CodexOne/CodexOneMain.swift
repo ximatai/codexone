@@ -337,14 +337,27 @@ struct CodexOneMain {
         group: group, verifier: provider, proxy: upstreamProxy)
       let resetCredits = try ResetCreditSupervisor(
         store: store, credentials: application, provider: quota, clock: clock)
+      let primingExecutor = poolConfiguration.flatMap { config in
+        finalizer.map { finalizer in
+          SubscriptionWindowPriming(
+            group: group, configuration: config, store: store,
+            finalizer: finalizer, credentials: application, refresher: refreshing,
+            provider: provider, proxy: upstreamProxy, clock: clock)
+        }
+      }
+      let primingOwner = primingExecutor.map {
+        QuotaPrimingSupervisor(store: store, executor: $0, clock: clock)
+      }
       let observing = try AccountObservationSupervisor(
         store: store, application: application, refresher: refreshing, provider: quota,
-        clock: clock, resetCredits: resetCredits
+        clock: clock, resetCredits: resetCredits, priming: primingOwner
       )
       services.append(provider)
       services.append(quota)
       services.append(authorization)
       services.append(refreshing)
+      if let primingExecutor { services.append(primingExecutor) }
+      if let primingOwner { services.append(primingOwner) }
       services.append(observing)
       services.append(resetCredits)
       if let poolConfiguration, let finalizer {
@@ -357,7 +370,8 @@ struct CodexOneMain {
       }
       accountAdmin = AccountAdminAPI(
         store: store, authorization: authorization, refreshing: refreshing, observing: observing,
-        credentials: application, clock: clock, resetCredits: resetCredits)
+        credentials: application, clock: clock, resetCredits: resetCredits, priming: primingExecutor
+      )
     } else {
       accountAdmin = nil
     }

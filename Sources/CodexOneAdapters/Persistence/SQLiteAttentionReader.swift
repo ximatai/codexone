@@ -90,6 +90,13 @@ extension SQLiteUsageReader: AttentionReading {
                   ? reset.lastAttemptAt
                   : reset.failures >= 3 ? reset.lastFailureAt : reset.lastAutoResetAt))
           }
+          let priming = try SQLiteExecutionStore.loadQuotaPriming(db, id)
+          if let code = priming.attention {
+            accountItems.append(
+              .init(
+                "quota_priming", critical: false, type: "account", id: id, name: name,
+                detail: ["code": .string(code)], since: priming.lastAttemptAt))
+          }
           result += accountItems
         }
         return result

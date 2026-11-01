@@ -433,10 +433,14 @@ final class SQLiteConnection: @unchecked Sendable {
   ]
 
   static let resetCreditSchema = """
+    CREATE TABLE account_quota_priming(account_id TEXT PRIMARY KEY REFERENCES accounts(id),record_json TEXT NOT NULL CHECK(length(record_json)<=8192));
+    CREATE TABLE quota_priming_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),windows_json TEXT NOT NULL,model TEXT NOT NULL,result TEXT NOT NULL,at_epoch INTEGER NOT NULL);
     CREATE TABLE account_reset_credits(account_id TEXT PRIMARY KEY REFERENCES accounts(id),record_json TEXT NOT NULL CHECK(length(record_json)<=4096));
     CREATE TABLE reset_credit_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),action TEXT NOT NULL,code TEXT NOT NULL,automatic INTEGER NOT NULL,credit_hash TEXT,at_epoch INTEGER NOT NULL);
     """
   private static let resetCreditColumns: [(String, [String])] = [
+    ("account_quota_priming", ["account_id", "record_json"]),
+    ("quota_priming_events", ["id", "account_id", "windows_json", "model", "result", "at_epoch"]),
     ("account_reset_credits", ["account_id", "record_json"]),
     (
       "reset_credit_events",

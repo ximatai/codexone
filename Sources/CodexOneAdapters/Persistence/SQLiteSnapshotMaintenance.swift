@@ -172,6 +172,9 @@ public enum SQLiteSnapshotMaintenance {
           try target.write(
             "UPDATE account_reset_credits SET record_json=json_set(record_json,'$.settings.autoUseBeforeExpiry',json('false'))"
           )
+          try target.write(
+            "UPDATE account_quota_priming SET record_json=json_set(record_json,'$.settings.enabled',json('false'))"
+          )
           let keys = try target.rows("SELECT id,metadata_json FROM managed_keys LIMIT 257") { row in
             guard sqlite3_column_bytes(row, 0) <= 64, sqlite3_column_bytes(row, 1) <= 16384 else {
               throw ExecutionError.capacity
