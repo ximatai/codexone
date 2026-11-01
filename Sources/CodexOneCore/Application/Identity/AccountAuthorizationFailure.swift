@@ -23,7 +23,9 @@ public struct AccountAuthorizationFailure: Error, Sendable, Equatable {
   public static func safeCause(_ error: any Error) -> String {
     let type = String(describing: Swift.type(of: error))
     let mirror = Mirror(reflecting: error)
-    guard mirror.displayStyle == .enum, mirror.children.isEmpty else { return String(type.prefix(80)) }
+    guard mirror.displayStyle == .enum, mirror.children.isEmpty else {
+      return String(type.prefix(80))
+    }
     return String((type + "." + String(describing: error)).prefix(80))
   }
 }
