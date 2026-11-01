@@ -8,9 +8,6 @@
 
 - [usage-analytics](usage-analytics/proposal.md) · [任务](usage-analytics/tasks.md)
 - [key-self-service](key-self-service/proposal.md) · [任务](key-self-service/tasks.md)
-- [device-code-auth](device-code-auth/proposal.md) · [任务](device-code-auth/tasks.md)
-- [gateway-restart](gateway-restart/proposal.md) · [任务](gateway-restart/tasks.md)
-- [lan-mode](lan-mode/proposal.md) · [任务](lan-mode/tasks.md)
 
 ## 相关文档
 
