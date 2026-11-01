@@ -30,13 +30,16 @@
 > [!WARNING]
 > 局域网模式不加密：管理员秘密、登录会话、Key 和请求内容都以明文在局域网中传输，同一网络里的设备可以截获。只在自己信任的私有网络使用；不要在公共或不可信的 Wi-Fi 上使用，不要用路由器端口转发把它暴露到公网。需要在外面访问时，改用 HTTPS 部署或 Tailscale 等私有网络。详见[局域网 HTTP 风险](docs/operations/tls-proxy.md#局域网-http-风险)。
 
-需要：一台 Linux amd64 服务器，装好 Docker Engine 与 Compose v2、Python 3、Git，并有固定的局域网 IP；以及自己的 ChatGPT 订阅账号。局域网模式从 v0.26.2 起提供。
+需要：一台 Linux amd64 服务器，装好 Docker Engine 与 Compose v2、Python 3，并有固定的局域网 IP；以及自己的 ChatGPT 订阅账号。局域网模式从 v0.26.2 起提供。
 
 ### 1. 下载并初始化
 
 ```sh
-git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
-cd codexone
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.4-source.tar.gz: OK
+tar -xzf codexone-0.26.4-source.tar.gz
+cd codexone-0.26.4
 docker pull ghcr.io/ximatai/codexone:0.26.4
 CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 hostname -I   # 查看服务器的局域网 IP，下面以 192.168.1.10 为例
@@ -90,18 +93,21 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 | 需要什么 | 说明 |
 | --- | --- |
-| 一台 Linux amd64 服务器 | 安装 Docker Engine 与 Compose v2（`docker compose version` 能输出版本）、Python 3、Git。不支持 macOS/Windows 的 Docker Desktop。 |
+| 一台 Linux amd64 服务器 | 安装 Docker Engine 与 Compose v2（`docker compose version` 能输出版本）、Python 3。不支持 macOS/Windows 的 Docker Desktop。 |
 | 两个 HTTPS 域名 | 一个给客户端调用（下文称**数据域名**，如 `gateway.example.com`），一个给浏览器管理（**管理域名**，如 `admin.example.com`），都解析到这台服务器并有可信证书。 |
 | Nginx | 在宿主机上终止 TLS，转发到只监听本机回环的网关。 |
 | 自己的 ChatGPT 订阅账号 | 稍后在管理页面里授权。 |
 
 ### 1. 下载部署工具并拉取镜像
 
-部署脚本随源码发布，镜像来自 GHCR：
+部署脚本在发布页的源码包里（只需 curl，不需要 Git），镜像来自 GHCR。校验和不通过就停止，不要继续：
 
 ```sh
-git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
-cd codexone
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # 应输出 codexone-0.26.4-source.tar.gz: OK
+tar -xzf codexone-0.26.4-source.tar.gz
+cd codexone-0.26.4
 docker pull ghcr.io/ximatai/codexone:0.26.4
 CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # 应输出 sha256: 开头的完整 ID

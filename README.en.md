@@ -30,13 +30,16 @@ All accounts, models, and requests below are synthetic.
 > [!WARNING]
 > LAN mode is not encrypted: the admin secret, sign-in session, keys, and request contents travel in plaintext, and any device on the same network can capture them. Use it only on a private network you trust. Never use it on public or untrusted Wi-Fi, and never expose it to the internet with router port forwarding. For access from outside, use the HTTPS deployment or a private network such as Tailscale. See [LAN HTTP risks](docs/operations/tls-proxy.md#局域网-http-风险).
 
-You need a Linux amd64 server with Docker Engine and Compose v2, Python 3, Git, and a fixed LAN IP, plus your own ChatGPT subscription. LAN mode is available from v0.26.2.
+You need a Linux amd64 server with Docker Engine and Compose v2, Python 3, and a fixed LAN IP, plus your own ChatGPT subscription. LAN mode is available from v0.26.2.
 
 ### 1. Download and initialize
 
 ```sh
-git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
-cd codexone
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.4-source.tar.gz: OK
+tar -xzf codexone-0.26.4-source.tar.gz
+cd codexone-0.26.4
 docker pull ghcr.io/ximatai/codexone:0.26.4
 CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 hostname -I   # the server's LAN IP; 192.168.1.10 below is an example
@@ -90,18 +93,21 @@ These steps deploy the current release, [v0.26.4](https://github.com/ximatai/cod
 
 | What | Notes |
 | --- | --- |
-| A Linux amd64 server | Docker Engine with Compose v2 (`docker compose version` works), Python 3, Git. Docker Desktop on macOS/Windows is not supported. |
+| A Linux amd64 server | Docker Engine with Compose v2 (`docker compose version` works), Python 3. Docker Desktop on macOS/Windows is not supported. |
 | Two HTTPS domains | One for clients (the **data domain**, e.g. `gateway.example.com`) and one for the browser admin page (the **admin domain**, e.g. `admin.example.com`), both pointing at the server with trusted certificates. |
 | Nginx | Terminates TLS on the host and forwards to the loopback-only gateway. |
 | Your own ChatGPT subscription | Authorized later in the admin page. |
 
 ### 1. Get the deployment tools and the image
 
-The deployment scripts ship with the source; the image comes from GHCR:
+The deployment scripts come from the source archive on the release page (curl only, no Git needed); the image comes from GHCR. Stop if the checksum does not match:
 
 ```sh
-git clone --depth 1 --branch v0.26.4 https://github.com/ximatai/codexone.git
-cd codexone
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/codexone-0.26.4-source.tar.gz
+curl -fLO https://github.com/ximatai/codexone/releases/download/v0.26.4/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS   # must print codexone-0.26.4-source.tar.gz: OK
+tar -xzf codexone-0.26.4-source.tar.gz
+cd codexone-0.26.4
 docker pull ghcr.io/ximatai/codexone:0.26.4
 CODEXONE_IMAGE_ID="$(docker image inspect ghcr.io/ximatai/codexone:0.26.4 --format '{{.Id}}')"
 echo "$CODEXONE_IMAGE_ID"   # a full ID starting with sha256:
