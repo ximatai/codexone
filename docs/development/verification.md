@@ -83,7 +83,10 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 | 产物名 | 上传内容 | 下载位置及消费者 |
 | --- | --- | --- |
 | `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
-| `verified-release-files` | `artifacts/` 下的发行说明、校验和等 | publish 的 `artifacts/` |
+| `optimized-backend-binaries` | 候选镜像的 codexone 与同次构建的 ExecutionProbe tar | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
+| `candidate-release-files` | `artifacts/` 下的发行说明、校验和等 | image-checks 和 verify gate 的 `artifacts/`，保留 1 天 |
+| `candidate-linux-amd64-image` | `image/codexone-linux-amd64.tar.gz` | image-checks 和 verify gate 的 `image/`，保留 1 天 |
+| `verified-release-files` | gate 校验后的发行说明、校验和等 | publish 的 `artifacts/`，保留 7 天 |
 | `verified-linux-amd64-image` | `image/codexone-linux-amd64.tar.gz` | publish 的 `image/`，校验后 `docker load` |
 | `published-release-files` | 更新镜像 digest 与校验和后的 `artifacts/` | release 的 `artifacts/`，校验后创建 Release |
 
@@ -91,18 +94,37 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 
 ### Release 验证
 
-Release 的 tag 流程和手动 dry-run 共用 Linux amd64 验证：verification target 的优化后二进制合成 socket/迁移失败检查、实际本地 TLS 反代和真实 OCI/Compose 安装。安装覆盖非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。手动流程允许未发布 CHANGELOG，只上传产物；tag 流程须通过版本/主分支历史/CHANGELOG 检查后才可能发布，详见[发版规则](releasing.md)。
+Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (1/4…4/4) + image-checks (TLS、installation) → verify gate → publish → release`。build 先检查版本/主分支历史/CHANGELOG，解析一次 revision；后续检验 job 检出这个不可变提交，不再次解析分支或标签。dry-run 允许未发布 CHANGELOG，只运行到 gate 并上传产物；不登录 registry、不推送、不创建 Release。详见[发版规则](releasing.md)。
+
+| Job | 运行内容及制品 |
+| --- | --- |
+| build | `verification-export` 仅构建优化 codexone/ExecutionProbe，runtime 复用同一 backend；提取候选镜像中的 codexone，与构建输出逐字节比较；导出源码、许可、镜像及归档 hash |
+| backend-scripts 四分片 | 下载优化二进制 tar，核对 build 的 hash；只构建 `verification-tools`（固定 SDK、Python/OpenSSL/SQLite，不编译产品），在 `--network none` 容器中复用 `verify.sh --backend-scripts` |
+| image-checks TLS | 下载并校验候选镜像 hash/image ID；测试镜像直接复制候选二进制和 SPA，在原非 root、只读、无网络、768 MiB 约束下验证真实 Nginx TLS |
+| image-checks installation | 独立下载同一镜像，以不可变 image ID 执行原 `verify_installation.py` 的 OCI/Compose 安装检查 |
+| verify | `always()` gate 拒绝任一失败、取消或跳过；再次核对 build 输出的镜像归档 hash，才上传原名称的 `verified-*` 制品 |
+| publish / release | publish 仅消费 gate 的 verified 制品，校验 gate 输出的同一归档 hash，加载而不重建；推送后按 digest 回拉核对 image ID，对推送 digest attestation，最后创建 Release |
+
+四分片每次执行现有全部 34 项后端脚本，包含旧 Dockerfile verification target 的全部 18 项；`check_ci.py` 检查这层覆盖和所有分片入口，`backend_shards.py --check` 保证每项恰好归属一个分片。优化 codexone 来自候选镜像，ExecutionProbe 为同次 release 配置构建的测试程序，不进入产品镜像。传统 `docker build --target verification` 仍保留原检查供源码验收使用。Release 原本没有 Swift 单元测试/格式检查或前端完整测试，本次仍由常规 Verify 承担，不声称 Release 已增加这些证据。
+
+安装检查保留非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。只用合成数据和 loopback 上游。
+
+成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Dockerfile 的弱机器默认仍为 1，优化选项与每批 1 文件不变），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
+
+维护者须运行冷/热 dry-run，分别记录 build、最长分片、TLS/安装、gate 和总时间，检查两并发编译有无内存压力；再验证检查失败/取消、摘要错误均阻断发布。目标未实测前不更新公开发行完成状态，待验收项见[任务](../changes/release-ci-speed/tasks.md)。
 
 工作流/版本政策修改的本地检查：
 
 ```sh
 python3 scripts/test_prepare_release.py
+python3 scripts/test_check_ci.py
+python3 scripts/check_ci.py
 python3 scripts/prepare_release.py --dry-run --output-dir artifacts/release-policy
 docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7
 python3 scripts/check_docs.py
 ```
 
-这组检查验证 tag 格式、CHANGELOG 段落/预发布、真实本地 Git 祖先关系及工作流语法，不构建 Linux 镜像。源代码/安装包/许可归档与校验和的交付、推送后 digest/image ID 比对及来源证明只有实际运行 Release CI 后才有证据。未经明确授权，不运行真实订阅或部署验收。
+这组检查验证 tag 格式、CHANGELOG 段落/预发布、真实本地 Git 祖先关系、分片覆盖、制品交接及工作流语法；gate 回归执行全部 64 种成功/失败/取消/跳过组合，不构建 Linux 镜像。源代码/安装包/许可归档与校验和的交付、推送后 digest/image ID 比对及来源证明只有实际运行 Release CI 后才有证据。未经明确授权，不运行真实订阅或部署验收。
 
 ## 首版替代验收记录要求
 

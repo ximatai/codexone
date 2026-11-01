@@ -15,14 +15,16 @@ concurrency:
   group: release-${{ inputs.ref || github.ref_name }}
   cancel-in-progress: false
 jobs:
-  verify:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 45
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       tag: ${{ steps.metadata.outputs.tag }}
       revision: ${{ steps.metadata.outputs.revision }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
+      image_archive_sha256: ${{ steps.export.outputs.image_archive_sha256 }}
+      binaries_archive_sha256: ${{ steps.export.outputs.binaries_archive_sha256 }}
     defaults:
       run:
         shell: bash
@@ -51,33 +53,27 @@ jobs:
             fi
           fi
           python3 scripts/test_prepare_release.py
+          python3 scripts/test_check_ci.py
           python3 scripts/prepare_release.py "${args[@]}" --output-dir artifacts --github-output "$GITHUB_OUTPUT"
           python3 scripts/check_docs.py
-      - name: Verify optimized Linux binary with synthetic socket failures
-        run: docker build --platform linux/amd64 --target verification -f deploy/Dockerfile -t codexone:tls-base .
-      - name: Build runtime once from locked source
+          python3 scripts/check_ci.py
+      - name: Build optimized executables once
+        run: >-
+          docker build --platform linux/amd64 --target verification-export
+          --build-arg BUILD_JOBS=2 --output type=local,dest=optimized-output -f deploy/Dockerfile .
+      - name: Build runtime from the same optimized backend
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
           REVISION: ${{ steps.metadata.outputs.revision }}
         run: |
-          docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$REVISION" \
+          docker build --platform linux/amd64 --build-arg BUILD_JOBS=2 --build-arg SOURCE_REVISION="$REVISION" \
             --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
           docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
           test "$(docker image inspect codexone:candidate --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
           test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
           test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
-      - name: Verify real local TLS reverse proxy
-        run: |
-          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
-          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
-            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
-            --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
-            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
-            --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
-            codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
-      - name: Verify actual private installation
-        run: python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)"
-      - name: Export verified image, source, binary and licenses
+      - name: Export candidate image, optimized binaries, source and licenses
+        id: export
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
@@ -86,12 +82,14 @@ jobs:
           git archive --format=tar.gz --prefix="codexone-$VERSION/" --output="artifacts/codexone-$VERSION-source.tar.gz" HEAD
           container="$(docker create "$image_id")"
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
-          docker cp "$container:/usr/local/bin/codexone" artifacts/codexone-linux-amd64
-          verified_binary="$(docker run --rm --network none --read-only --entrypoint sha256sum codexone:tls-base /output/codexone | cut -d ' ' -f 1)"
-          test "$(sha256sum artifacts/codexone-linux-amd64 | cut -d ' ' -f 1)" = "$verified_binary"
-          # The binary needs the image's Swift runtime; publish only its digest, not a standalone download.
-          sha256sum artifacts/codexone-linux-amd64 | sed 's|artifacts/||' > artifacts/binary-sha256.txt
-          rm artifacts/codexone-linux-amd64
+          mkdir binaries
+          docker cp "$container:/usr/local/bin/codexone" binaries/codexone
+          cp optimized-output/ExecutionProbe binaries/ExecutionProbe
+          cmp binaries/codexone optimized-output/codexone
+          # Publish only the digest: the executable needs the image's Swift runtime.
+          sha256sum binaries/codexone | sed 's|binaries/codexone|codexone-linux-amd64|' > artifacts/binary-sha256.txt
+          tar -czf binaries/backend-binaries.tar.gz -C binaries codexone ExecutionProbe
+          printf 'binaries_archive_sha256=%s\n' "$(sha256sum binaries/backend-binaries.tar.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/licenses"
           docker cp "$container:/opt/codexone/licenses/." "$RUNNER_TEMP/licenses/"
           docker cp "$container:/opt/codexone/LICENSE" "$RUNNER_TEMP/licenses/LICENSE"
@@ -101,7 +99,163 @@ jobs:
           mkdir image
           docker save "$image_id" | gzip > image/codexone-linux-amd64.tar.gz
           (cd image && sha256sum codexone-linux-amd64.tar.gz) > artifacts/image-archive-sha256.txt
+          printf 'image_archive_sha256=%s\n' "$(cut -d ' ' -f 1 artifacts/image-archive-sha256.txt)" >> "$GITHUB_OUTPUT"
           (cd artifacts && sha256sum -- * > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: true
+          include-hidden-files: false
+          name: candidate-release-files
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: true
+          include-hidden-files: false
+          name: candidate-linux-amd64-image
+          path: image/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: true
+          include-hidden-files: false
+          name: optimized-backend-binaries
+          path: binaries/backend-binaries.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  backend-scripts:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/4, 2/4, 3/4, 4/4]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: optimized-backend-binaries
+          path: binaries
+      - name: Restore the candidate's optimized executables
+        env:
+          BINARIES_ARCHIVE_SHA256: ${{ needs.build.outputs.binaries_archive_sha256 }}
+        run: |
+          printf '%s  binaries/backend-binaries.tar.gz\n' "$BINARIES_ARCHIVE_SHA256" | sha256sum --check -
+          tar -xzf binaries/backend-binaries.tar.gz -C binaries
+      - name: Build verification tools without compiling the product
+        run: docker build --platform linux/amd64 --target verification-tools -f deploy/Dockerfile -t codexone:verification-tools .
+      - name: Verify optimized protocol and lifecycle shard without external network
+        run: |
+          docker run --rm --platform linux/amd64 --network none \
+            --env PYTHONDONTWRITEBYTECODE=1 --env CODEXONE_BACKEND_BIN_DIR=/binaries \
+            --mount "type=bind,src=$PWD,dst=/build,readonly" \
+            --mount "type=bind,src=$PWD/binaries,dst=/binaries,readonly" \
+            codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
+  image-checks:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [tls, installation]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: candidate-release-files
+          path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: candidate-linux-amd64-image
+          path: image
+      - name: Restore the exact candidate image
+        env:
+          IMAGE_ARCHIVE_SHA256: ${{ needs.build.outputs.image_archive_sha256 }}
+        run: |
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          (cd image && sha256sum --check ../artifacts/image-archive-sha256.txt)
+          printf '%s  image/codexone-linux-amd64.tar.gz\n' "$IMAGE_ARCHIVE_SHA256" | sha256sum --check -
+          docker load --input image/codexone-linux-amd64.tar.gz
+          image_id="$(cat artifacts/image-id.txt)"
+          test "$(docker image inspect "$image_id" --format '{{.Id}}')" = "$image_id"
+          test "$(docker image inspect "$image_id" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          docker tag "$image_id" codexone:candidate
+      - name: Verify real local TLS reverse proxy with the candidate binary and SPA
+        if: matrix.suite == 'tls'
+        run: |
+          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
+          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
+            --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
+            codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
+      - name: Verify actual private installation
+        if: matrix.suite == 'installation'
+        run: python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)"
+  verify:
+    if: always()
+    needs: [build, backend-scripts, image-checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ needs.build.outputs.version }}
+      tag: ${{ needs.build.outputs.tag }}
+      revision: ${{ needs.build.outputs.revision }}
+      prerelease: ${{ needs.build.outputs.prerelease }}
+      image_archive_sha256: ${{ needs.build.outputs.image_archive_sha256 }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require every optimized binary and image check to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY_GATE'
+          import json, os
+          for job, details in json.loads(os.environ['RESULTS']).items():
+              result = details['result']
+              print(f'{job}: {result}')
+              if result != 'success':
+                  raise SystemExit(f'{job} did not succeed')
+          PY_GATE
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: candidate-release-files
+          path: artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: candidate-linux-amd64-image
+          path: image
+      - name: Bind verified artifacts to the build's exact image archive hash
+        env:
+          IMAGE_ARCHIVE_SHA256: ${{ needs.build.outputs.image_archive_sha256 }}
+        run: |
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          (cd image && sha256sum --check ../artifacts/image-archive-sha256.txt)
+          printf '%s  image/codexone-linux-amd64.tar.gz\n' "$IMAGE_ARCHIVE_SHA256" | sha256sum --check -
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           archive: true
@@ -136,6 +290,7 @@ jobs:
     env:
       IMAGE: ghcr.io/ximatai/codexone
       VERSION: ${{ needs.verify.outputs.version }}
+      IMAGE_ARCHIVE_SHA256: ${{ needs.verify.outputs.image_archive_sha256 }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -151,6 +306,7 @@ jobs:
         run: |
           (cd artifacts && sha256sum --check SHA256SUMS)
           (cd image && sha256sum --check ../artifacts/image-archive-sha256.txt)
+          printf '%s  image/codexone-linux-amd64.tar.gz\n' "$IMAGE_ARCHIVE_SHA256" | sha256sum --check -
           docker load --input image/codexone-linux-amd64.tar.gz
           image_id="$(cat artifacts/image-id.txt)"
           test "$(docker image inspect "$image_id" --format '{{.Id}}')" = "$image_id"

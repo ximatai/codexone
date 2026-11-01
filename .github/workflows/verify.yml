@@ -45,6 +45,7 @@ jobs:
       - run: python3 scripts/check_architecture.py
       - run: python3 scripts/backend_shards.py --check
       - run: python3 scripts/check_ci.py
+      - run: python3 scripts/test_check_ci.py
   backend-build:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
