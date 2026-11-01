@@ -42,18 +42,51 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: python3 scripts/check_docs.py
       - run: python3 scripts/check_architecture.py
-  backend-linux:
+      - run: python3 scripts/backend_shards.py --check
+  backend-build:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install verification prerequisite
         run: apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev
       - name: Verify Swift modules and executable lifecycle
-        run: ./scripts/verify.sh --backend
+        run: ./scripts/verify.sh --backend-build
+      - name: Package debug executables with their executable modes
+        run: tar -czf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug codexone ExecutionProbe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-binaries
+          path: ${{ runner.temp }}/backend-binaries.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  backend-scripts:
+    needs: [changes, backend-build]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/4, 2/4, 3/4, 4/4]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install verification prerequisite
+        run: apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: backend-binaries
+          path: ${{ runner.temp }}
+      - name: Restore debug executables
+        run: |
+          mkdir -p .build/debug
+          tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug
+      - name: Verify protocol and lifecycle shard
+        run: ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
@@ -81,7 +114,7 @@ jobs:
           retention-days: 7
   verify:
     if: always()
-    needs: [changes, docs, backend-linux, frontend]
+    needs: [changes, docs, backend-build, backend-scripts, frontend]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -95,7 +128,7 @@ jobs:
           selected = needs['changes']['outputs']
           required = {'changes', 'docs'}
           if selected.get('backend') == 'true':
-              required.add('backend-linux')
+              required.update({'backend-build', 'backend-scripts'})
           if selected.get('frontend') == 'true':
               required.add('frontend')
           for job, details in needs.items():
