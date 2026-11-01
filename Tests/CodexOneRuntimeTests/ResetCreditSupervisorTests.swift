@@ -9,6 +9,10 @@ import Testing
 private actor ResetProviderProbe: AccountResetCreditProvider {
   var failsList = false
   var failsConsume = false
+  var listBlockedAccounts = Set<String>()
+  var consumedAccounts: [String] = []
+  func blockLists(_ ids: Set<String>) { listBlockedAccounts = ids }
+  func releaseList(_ id: String) { listBlockedAccounts.remove(id) }
   var afterList: (@Sendable () -> Void)?
   func setAfterList(_ action: @escaping @Sendable () -> Void) { afterList = action }
   var attemptTimes: [Int64] = []
@@ -55,6 +59,9 @@ private actor ResetProviderProbe: AccountResetCreditProvider {
   func resetCredits(_ work: AccountObservationWork) async throws -> ResetCreditList {
     listed += 1
     listTimes.append(clock.unixSeconds)
+    while listBlockedAccounts.contains(work.account.id) {
+      try await Task.sleep(for: .milliseconds(5))
+    }
     if failsList { throw QuotaObservationFailure.unavailable }
     afterList?()
     return list
@@ -63,6 +70,7 @@ private actor ResetProviderProbe: AccountResetCreditProvider {
     -> ResetCreditResult
   {
     intents.append(intent)
+    consumedAccounts.append(work.account.id)
     attemptTimes.append(clock.unixSeconds)
     if failsConsume { throw QuotaObservationFailure.unavailable }
     do { while blocked { try await Task.sleep(for: .milliseconds(5)) } } catch {
@@ -561,4 +569,46 @@ func resetCreditLostResultCanReconcileDisappearedCreditBeforeLearnedExpiry() asy
     throw error
   }
   await t.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func resetCreditDueWorkDoesNotWaitForAnEntireLongAccountScan() async throws {
+  let time = TestWallClock()
+  let f = try await RefreshFixture.make(count: 8, clock: time.clock)
+  for account in f.accounts {
+    let enabled = try await f.store.setAccountMode(id: account.id, revision: 1, mode: .enabled)
+    _ = try await f.store.setResetCreditSettings(
+      id: account.id, revision: enabled.revision,
+      settings: .init(autoUseBeforeExpiry: true, leadMinutes: 4))
+  }
+  let provider = try ResetProviderProbe(now: time.clock.unixSeconds)
+  await provider.setClock(time.clock)
+  try await provider.setExpiry(now: time.clock.unixSeconds, offset: 300)
+  await provider.setCode(.reset)
+  await provider.blockLists(Set(f.accounts.dropFirst().map(\.id)))
+  let supervisor = try ResetCreditSupervisor(
+    store: f.store, credentials: f.app,
+    provider: provider, clock: time.clock)
+  let owner = Task { try await supervisor.run() }
+  do {
+    // The first account learned its deadline and yielded its worker to account 4.
+    try await awaitRefreshCondition { await provider.listed == 5 }
+    #expect(await provider.consumedAccounts.isEmpty)
+    time.advance(seconds: 60)
+    await provider.releaseList(f.accounts[1].id)
+    try await awaitRefreshCondition {
+      await provider.consumedAccounts.contains(f.accounts[0].id)
+    }
+    #expect(await provider.attemptTimes.allSatisfy { $0 == testUnixSeconds + 60 })
+    #expect(supervisor.activeOperations <= 4)
+  } catch {
+    owner.cancel()
+    _ = await owner.result
+    await f.close()
+    throw error
+  }
+  owner.cancel()
+  _ = await owner.result
+  #expect(supervisor.activeOperations == 0)
+  await f.close()
 }

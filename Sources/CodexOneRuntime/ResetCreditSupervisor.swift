@@ -204,17 +204,54 @@ public final class ResetCreditSupervisor: Service, AccountResetCreditManaging,
         return left == right ? a.id < b.id : left < right
       }
     }
-    try await withThrowingTaskGroup(of: Void.self) { tasks in
+    try await withThrowingTaskGroup(of: String.self) { tasks in
       var iterator = ordered.makeIterator()
+      var inFlight = Set<String>()
+      var dispatched: [String: Int64] = [:]
+      func nextAccount() -> String? {
+        // A scan can outlast a learned deadline. Revisit due accounts as workers
+        // finish, without waiting for every other account's list request to finish.
+        let urgent = state.withLock { value in
+          value.schedules.filter { id, schedule in
+            !inFlight.contains(id) && value.active[id] == nil && ids.contains(id)
+              // Capacity or optional-storage rejection must not spin within this scan.
+              && (dispatched[id].map {
+                clock.unixSeconds - $0 >= Int64(ResetCreditSettings.retryIntervalMinutes * 60)
+              } ?? true)
+              && (schedule.retryAt.map { $0 <= clock.unixSeconds }
+                ?? schedule.due.map { $0 <= nowTime } ?? false)
+          }.min { a, b in
+            let left = a.value.retryAt.map(Double.init) ?? a.value.due!
+            let right = b.value.retryAt.map(Double.init) ?? b.value.due!
+            return left == right ? a.key < b.key : left < right
+          }?.key
+        }
+        if let urgent { return urgent }
+        while let account = iterator.next() {
+          if dispatched[account.id] == nil { return account.id }
+        }
+        return nil
+      }
       for _ in 0..<4 {
-        if let account = iterator.next() {
-          tasks.addTask { try await self.cycleAccount(account.id) }
+        if let id = nextAccount() {
+          inFlight.insert(id)
+          dispatched[id] = clock.unixSeconds
+          tasks.addTask {
+            try await self.cycleAccount(id)
+            return id
+          }
         }
       }
-      while try await tasks.next() != nil {
+      while let completed = try await tasks.next() {
+        inFlight.remove(completed)
         try Task.checkCancellation()
-        if let account = iterator.next() {
-          tasks.addTask { try await self.cycleAccount(account.id) }
+        if let id = nextAccount() {
+          inFlight.insert(id)
+          dispatched[id] = clock.unixSeconds
+          tasks.addTask {
+            try await self.cycleAccount(id)
+            return id
+          }
         }
       }
     }
