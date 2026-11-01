@@ -53,8 +53,11 @@ public struct AdminService: Service {
         return Self.response(reply)
       }
     }
+    let isLANHTTP = listeners.additionalAddress != nil || keys?.usesLANHTTP == true
     app.get("api", "system") { _ -> Response in
-      let body = try JSONEncoder().encode(SystemStatusResponse(report: await reportProvider()))
+      let body = try JSONEncoder().encode(
+        SystemStatusResponse(
+          report: await reportProvider(), transportMode: isLANHTTP ? .lanHTTP : .loopback))
       return Self.response(HTTPReply(status: 200, body: body))
     }
     if let webBundle {

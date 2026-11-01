@@ -17,7 +17,18 @@ describe("system contract", () => {
   it("accepts the backend's shared fixture", () => {
     expect(parseSystemStatus(fixture).ready).toBe(false);
   });
+  it("accepts the explicit LAN transport mode", () => {
+    expect(
+      parseSystemStatus({
+        service: "codexone",
+        ready: false,
+        checks: [],
+        transportMode: "lan_http",
+      }).transportMode,
+    ).toBe("lan_http");
+  });
   it.each([
+    { service: "codexone", ready: false, checks: [], transportMode: "unknown" },
     null,
     {},
     { service: "other", ready: false, checks: [] },

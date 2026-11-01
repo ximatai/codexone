@@ -6,6 +6,13 @@ import Foundation
 @main struct ExecutionProbe {
   static func main() async {
     do {
+      if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--lan-admin-ui",
+        let port = Int(CommandLine.arguments[4])
+      {
+        try await runLANAdminUI(
+          root: CommandLine.arguments[2], web: CommandLine.arguments[3], port: port)
+        return
+      }
       if CommandLine.arguments.count == 5,
         ["--account-admin-ui", "--usage-admin-ui"].contains(CommandLine.arguments[1]),
         let port = Int(CommandLine.arguments[4])
