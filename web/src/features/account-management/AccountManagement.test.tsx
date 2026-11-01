@@ -29,6 +29,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 function setup() {
+  vi.mocked(api.discardAuthorization).mockResolvedValue(undefined);
   vi.mocked(sessions.fetchSession).mockResolvedValue({
     csrf: "synthetic-csrf",
   });
@@ -373,5 +374,170 @@ it("shows local and relative credential times in account details", async () => {
   expect(screen.getByText(/最近凭证更新：.*约 3 小时前/)).toBeVisible();
   expect(screen.getByText(/访问凭证到期：/).textContent).toContain(
     new Date(expiry * 1000).toLocaleString(),
+  );
+});
+
+function deviceSetup(expires = 900) {
+  vi.mocked(api.beginAuthorization).mockResolvedValue({
+    flowID: "device-flow",
+    method: "device",
+    userCode: "SYNTH-CODE",
+    verificationURL: "https://auth.openai.com/codex/device",
+    intervalSeconds: 3,
+    expiresInSeconds: expires,
+  });
+  vi.mocked(api.fetchAuthorizationStatus).mockResolvedValue({
+    status: "pending",
+    expiresInSeconds: expires,
+  });
+  return setup();
+}
+it("shows the default device code and keeps success and explicit enable in the same dialog", async () => {
+  deviceSetup();
+  vi.mocked(api.fetchAuthorizationStatus).mockResolvedValue({
+    status: "completed",
+    accountID: account.id,
+    expiresInSeconds: 899,
+  });
+  vi.mocked(api.setMode).mockResolvedValue({
+    ...account,
+    mode: "enabled",
+    revision: 2,
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  expect(await screen.findByLabelText("设备码")).toHaveValue("SYNTH-CODE");
+  expect(api.beginAuthorization).toHaveBeenCalledWith(
+    null,
+    "synthetic-csrf",
+    expect.any(AbortSignal),
+    "device",
+  );
+  await screen.findByText(
+    "授权已验证并保存，新账号默认禁用。",
+    {},
+    { timeout: 3000 },
+  );
+  expect(screen.queryByLabelText("设备码")).toBeNull();
+  expect(api.setMode).not.toHaveBeenCalled();
+  const dialog = screen.getByRole("dialog", { name: "接入订阅账号" });
+  const { within } = await import("@testing-library/react");
+  fireEvent.click(within(dialog).getByRole("button", { name: "启用" }));
+  await waitFor(() => expect(api.setMode).toHaveBeenCalledTimes(1));
+});
+it("explains unavailable device login and switches explicitly to the callback flow", async () => {
+  deviceSetup();
+  vi.mocked(api.beginAuthorization)
+    .mockResolvedValueOnce({
+      flowID: "unavailable",
+      method: "device",
+      expiresInSeconds: 900,
+      failureCode: "device_code_unavailable",
+    })
+    .mockResolvedValueOnce({
+      flowID: "callback",
+      method: "callback",
+      authorizationURL:
+        "https://auth.openai.com/oauth/authorize?state=synthetic",
+      expiresInSeconds: 600,
+    });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  await screen.findByText(/ChatGPT 安全设置/);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "改用浏览器回调方式" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "改用浏览器回调方式" }));
+  await screen.findByLabelText("2. 粘贴完整回调地址");
+  expect(api.discardAuthorization).toHaveBeenCalledWith(
+    "unavailable",
+    "synthetic-csrf",
+  );
+  expect(vi.mocked(api.beginAuthorization).mock.calls[1][3]).toBe("callback");
+});
+it("cancels device polling when the dialog closes and when the page leaves", async () => {
+  const view = deviceSetup();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  await screen.findByLabelText("设备码");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  await waitFor(() =>
+    expect(api.discardAuthorization).toHaveBeenCalledTimes(1),
+  );
+  expect(screen.queryByLabelText("设备码")).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  await screen.findByLabelText("设备码");
+  view.unmount();
+  expect(api.discardAuthorization).toHaveBeenCalledTimes(2);
+});
+it("expires the device countdown without restarting authorization", async () => {
+  deviceSetup(1);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "发起账号授权" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "发起账号授权" }));
+  await screen.findByLabelText("设备码");
+  await screen.findByText(
+    "授权流程已过期，请关闭后重新发起。",
+    {},
+    { timeout: 3000 },
+  );
+  expect(screen.queryByLabelText("设备码")).toBeNull();
+  expect(api.discardAuthorization).toHaveBeenCalledTimes(1);
+  expect(api.beginAuthorization).toHaveBeenCalledTimes(1);
+});
+
+it("uses device authorization for the selected account and retains its revision when switching", async () => {
+  deviceSetup();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "重新授权", exact: true }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "重新授权", exact: true }),
+  );
+  await screen.findByLabelText("设备码");
+  expect(api.beginAuthorization).toHaveBeenCalledWith(
+    account,
+    "synthetic-csrf",
+    expect.any(AbortSignal),
+    "device",
+  );
+  vi.mocked(api.beginAuthorization).mockResolvedValueOnce({
+    flowID: "callback",
+    method: "callback",
+    authorizationURL: "https://auth.openai.com/oauth/authorize?state=synthetic",
+    expiresInSeconds: 600,
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "改用浏览器回调方式" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "改用浏览器回调方式" }));
+  await screen.findByLabelText("2. 粘贴完整回调地址");
+  expect(api.beginAuthorization).toHaveBeenLastCalledWith(
+    account,
+    "synthetic-csrf",
+    expect.any(AbortSignal),
+    "callback",
   );
 });

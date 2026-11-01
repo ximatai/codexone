@@ -20,7 +20,12 @@ export interface Account {
 }
 export interface AuthorizationFlow {
   flowID: string;
-  authorizationURL: string;
+  method?: "device" | "callback";
+  authorizationURL?: string;
+  userCode?: string;
+  verificationURL?: string;
+  intervalSeconds?: number;
+  failureCode?: string;
   expiresInSeconds: number;
 }
 const invalid = () => new ManagementError(0, "invalid_response");
@@ -150,25 +155,66 @@ export async function beginAuthorization(
   account: Account | null,
   csrf: string,
   signal?: AbortSignal,
+  method: "device" | "callback" = "device",
 ): Promise<AuthorizationFlow> {
   const value = object(
     await request("/api/accounts/authorization", {
       method: "POST",
       body: {
+        method,
         target: account ? { id: account.id, revision: account.revision } : null,
       },
       csrf,
       signal,
     }),
   );
-  if (
-    typeof value.authorizationURL !== "string" ||
-    value.authorizationURL.length > 8192
-  )
-    throw invalid();
+  if (method === "device") {
+    const flow = {
+      flowID: id(value.flowID),
+      method,
+      expiresInSeconds: integer(value.expiresInSeconds, 900),
+    };
+    if (value.failureCode !== undefined) {
+      if (
+        ![
+          "device_code_unavailable",
+          "authorization_failed",
+          "revision_conflict",
+        ].includes(String(value.failureCode))
+      )
+        throw invalid();
+      return { ...flow, failureCode: String(value.failureCode) };
+    }
+    if (
+      typeof value.userCode !== "string" ||
+      !/^[\x20-\x7e]{1,128}$/.test(value.userCode)
+    )
+      throw invalid();
+    return {
+      ...flow,
+      userCode: value.userCode,
+      verificationURL: authorizationLink(
+        value.verificationURL,
+        "/codex/device",
+      ),
+      intervalSeconds: integer(value.intervalSeconds, 30),
+    };
+  }
+  return {
+    flowID: id(value.flowID),
+    method,
+    authorizationURL: authorizationLink(
+      value.authorizationURL,
+      "/oauth/authorize",
+    ),
+    expiresInSeconds: integer(value.expiresInSeconds, 600),
+  };
+}
+function authorizationLink(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.length > 8192) throw invalid();
   let url: URL;
   try {
-    url = new URL(value.authorizationURL);
+    url = new URL(value);
   } catch {
     throw invalid();
   }
@@ -176,19 +222,59 @@ export async function beginAuthorization(
     url.username ||
     url.password ||
     url.hash ||
-    url.pathname !== "/oauth/authorize" ||
+    url.pathname !== path ||
     !(
       url.origin === "https://auth.openai.com" ||
       (url.protocol === "http:" && url.hostname === "127.0.0.1" && url.port)
     )
   )
     throw invalid();
+  return value;
+}
+export interface AuthorizationStatus {
+  status: "pending" | "completed" | "failed" | "expired";
+  accountID?: string;
+  failureCode?: string;
+  expiresInSeconds: number;
+}
+export async function fetchAuthorizationStatus(
+  flowID: string,
+  signal?: AbortSignal,
+): Promise<AuthorizationStatus> {
+  const value = object(
+    await request("/api/accounts/authorization/" + encodeURIComponent(flowID), {
+      signal,
+    }),
+  );
+  if (
+    !["pending", "completed", "failed", "expired"].includes(
+      String(value.status),
+    ) ||
+    typeof value.expiresInSeconds !== "number" ||
+    !Number.isInteger(value.expiresInSeconds) ||
+    value.expiresInSeconds < 0 ||
+    value.expiresInSeconds > 900
+  )
+    throw invalid();
+  if (
+    value.failureCode !== undefined &&
+    ![
+      "device_code_unavailable",
+      "authorization_failed",
+      "revision_conflict",
+    ].includes(String(value.failureCode))
+  )
+    throw invalid();
   return {
-    flowID: id(value.flowID),
-    authorizationURL: value.authorizationURL,
-    expiresInSeconds: integer(value.expiresInSeconds, 600),
+    status: value.status as AuthorizationStatus["status"],
+    expiresInSeconds: value.expiresInSeconds,
+    ...(value.status === "completed" ? { accountID: id(value.accountID) } : {}),
+    ...(value.failureCode === undefined
+      ? {}
+      : { failureCode: String(value.failureCode) }),
   };
 }
+
 export async function completeAuthorization(
   flowID: string,
   callbackURL: string,
