@@ -6,8 +6,6 @@
 
 ## 活动提案
 
-- [reset-credit-timing](reset-credit-timing/proposal.md) · [任务](reset-credit-timing/tasks.md)
-
 - [usage-analytics](usage-analytics/proposal.md) · [任务](usage-analytics/tasks.md)
 - [key-self-service](key-self-service/proposal.md) · [任务](key-self-service/tasks.md)
 
