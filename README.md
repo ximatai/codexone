@@ -20,7 +20,43 @@
 
 ![访问密钥](docs/assets/keys.png)
 
-## 部署到自己的服务器
+## 选择部署路线
+
+- **局域网（无域名）**：在可信私有网络直接用 HTTP，四步完成，不需要 Nginx 或证书；先阅读[明文风险](docs/operations/tls-proxy.md#局域网-http-风险)。
+- **公网或有域名**：使用下方的 [HTTPS 部署](#部署到自己的服务器https)，保留 TLS 反代。
+
+## 局域网部署（无域名）
+
+需要 Linux amd64、Docker Engine/Compose v2、Python 3、自己的订阅账号，以及服务器上固定的私有 IP（示例 `192.168.1.10`，请换成自己的地址）。**此功能尚未发布，v0.26.1 镜像不含 LAN 模式**；先在包含本功能的源码 checkout 中按[源码构建](docs/guide/linux-installation.md#从源码构建)得到镜像，再把完整不可变 ID 放入 `CODEXONE_IMAGE_ID`。后续发布可直接使用包含该功能的发行镜像。
+
+### 1. 初始化
+
+在源码目录执行，安装目录须尚不存在且位于源码之外：
+
+```sh
+python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
+cd ../codexone-private
+```
+
+安装器会打印风险、管理地址及客户端 `base_url`。普通非 root 用户默认使用当前 UID/GID；以 root 安装时追加 `--uid 10001 --gid 10001`。只允许 10/8、172.16/12、192.168/16、100.64/10 或 fc00::/7 内的地址字面量，不接受主机名、公网或通配地址。可选 `--lan-allow 192.168.1.0/24` 收窄来源，通常无需填写；与 `--origin` 互斥。
+
+### 2. 配置模型
+
+编辑 `secrets/pool.json`，把 `configure-model-before-use` 换成自己订阅可用的模型名；未知费率先填 0。[配置字段](docs/guide/configuration.md)。
+
+### 3. 检查并启动
+
+```sh
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py up -d
+python3 compose-install.py ps
+```
+
+### 4. 打开管理页面
+
+在服务器执行 `cat secrets/admin`，浏览器打开 `http://192.168.1.10:18081`，以 `admin` 和该秘密登录；按[管理面板](docs/guide/admin.md)授权并启用自己的账号，再为设备创建 Key。客户端按[接入说明](docs/guide/client-setup.md#局域网-http)配置 `base_url = "http://192.168.1.10:18080/backend-api/codex"`。启用账号前 ready 为 503 是正常的。模式切换见[安装指南](docs/guide/linux-installation.md#切换局域网与-https)。
+
+## 部署到自己的服务器（HTTPS）
 
 下面以当前版本 [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1) 为例，从零部署到一台 Linux 服务器。全部完成大约需要 20–30 分钟，大部分时间花在 HTTPS 证书和账号授权上。
 
@@ -134,13 +170,13 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 ### 遇到问题
 
 - **`docker pull` 很慢或卡住**：如果 dockerd 配置了代理，检查代理对 `ghcr.io` 和 `pkg-containers.githubusercontent.com` 是否可用，必要时把这两个域名加入 dockerd 的 `NO_PROXY`。
-- **管理页面登录失败**：确认浏览器地址与 `--origin` 完全一致（协议、域名、端口），并且是通过 HTTPS 访问的。
+- **管理页面登录失败**：确认浏览器地址与 `--origin` 完全一致（协议、域名、端口），HTTPS 路线须通过 HTTPS；LAN 路线须使用安装器打印的 IP 和端口。
 - **ready 一直是 503**：账号是否已授权**并且已启用**；管理页面首页的提醒会给出具体原因。
 - **升级、备份与回退**：见[备份升级与回退](docs/guide/backup-upgrade.md)，升级前务必先阅读。
 
 ## 系统要求与已知限制
 
-- 容器面向 **Linux amd64**，使用 host network 与本地命名卷，仅监听回环，由宿主 TLS 反代接入；不直接适用 Docker Desktop。模板设 768 MiB 内存上限，这不是最低宿主配置或吞吐承诺。
+- 容器面向 **Linux amd64**，使用 host network 与本地命名卷，默认仅监听回环，由宿主 TLS 反代接入；可显式开启私有地址 LAN HTTP；不直接适用 Docker Desktop。模板设 768 MiB 内存上限，这不是最低宿主配置或吞吐承诺。
 - 源码开发需要 macOS 15+、Swift 6.4、Node.js 22.23.0 和 Python 3；Linux 源码构建需 SQLite 开发库。见[贡献指南](CONTRIBUTING.md)。
 - 单节点、单管理员；多账号路由还需完整验收，不提供支付结算、多管理员 RBAC 或高可用。
 - 费用是本地估算，订阅额度是观察值，未知用量不计零；不保证金额/token 绝对封顶。

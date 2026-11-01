@@ -20,7 +20,43 @@ All accounts, models, and requests below are synthetic.
 
 ![Access keys](docs/assets/keys.png)
 
-## Deploy on your own server
+## Choose a deployment route
+
+- **LAN (no domain)**: four steps over HTTP on a trusted private network, without Nginx or certificates. Read the [plaintext risks](docs/operations/tls-proxy.md#局域网-http-风险) first.
+- **Public access or a domain**: follow the [HTTPS deployment](#deploy-on-your-own-server-https) below with a TLS proxy.
+
+## LAN deployment (no domain)
+
+You need Linux amd64, Docker Engine/Compose v2, Python 3, your own subscription, and a fixed private IP on the server (`192.168.1.10` below is an example to replace). **This feature is unreleased; the v0.26.1 image does not support LAN mode.** First [build from source](docs/guide/linux-installation.md#从源码构建) in a checkout containing this feature and put its full immutable image ID in `CODEXONE_IMAGE_ID`. Once released, an image containing the feature can be used directly.
+
+### 1. Initialize
+
+Run from the source directory; the private installation directory must be new and outside the checkout:
+
+```sh
+python3 deploy/init-install.py ../codexone-private --image "$CODEXONE_IMAGE_ID" --lan 192.168.1.10
+cd ../codexone-private
+```
+
+The installer prints the risk, admin URL, and client `base_url`. Non-root users default to their current UID/GID; when running as root, add `--uid 10001 --gid 10001`. Only literal addresses in 10/8, 172.16/12, 192.168/16, 100.64/10, or fc00::/7 are accepted; hostnames, public addresses, and wildcards are refused. Optionally narrow sources with `--lan-allow 192.168.1.0/24`; most users can omit it. `--lan` and `--origin` are mutually exclusive.
+
+### 2. Configure models
+
+Edit `secrets/pool.json`, replacing `configure-model-before-use` with a model available to your subscription. Use 0 for unknown rates. See [configuration fields](docs/guide/configuration.md).
+
+### 3. Check and start
+
+```sh
+python3 compose-install.py run --rm gateway --check-config
+python3 compose-install.py up -d
+python3 compose-install.py ps
+```
+
+### 4. Open the admin page
+
+Run `cat secrets/admin` on the server, open `http://192.168.1.10:18081`, and sign in as `admin` with that secret. Follow the [admin guide](docs/guide/admin.md) to authorize and enable your own account, then create a device Key. Set `base_url = "http://192.168.1.10:18080/backend-api/codex"` as described in [client setup](docs/guide/client-setup.md#局域网-http). Readiness being 503 before enabling an account is normal. See [switching modes](docs/guide/linux-installation.md#切换局域网与-https).
+
+## Deploy on your own server (HTTPS)
 
 These steps deploy the current release, [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
@@ -134,13 +170,13 @@ Restart Codex Desktop or the CLI, start a new session and send a message. If the
 ### Troubleshooting
 
 - **`docker pull` is slow or stalls**: if dockerd uses a proxy, make sure it works for `ghcr.io` and `pkg-containers.githubusercontent.com`, or add both to dockerd's `NO_PROXY`.
-- **Admin sign-in fails**: the browser address must match `--origin` exactly (scheme, domain, port) and use HTTPS.
+- **Admin sign-in fails**: the browser address must match `--origin` exactly (scheme, domain, port) and use HTTPS for the HTTPS route. For LAN mode, use the IP and port printed by the installer.
 - **Readiness stays 503**: the account must be authorized **and** enabled; the admin overview lists the reason.
 - **Upgrades, backups and rollback**: read [backup and upgrades](docs/guide/backup-upgrade.md) before upgrading.
 
 ## Requirements and limits
 
-Linux amd64 containers use host networking, loopback listeners, and local named volumes behind a host TLS proxy; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development uses macOS 15+, Swift 6.4, Node.js 22.23.0, and Python 3; Linux builds require SQLite development headers.
+Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development uses macOS 15+, Swift 6.4, Node.js 22.23.0, and Python 3; Linux builds require SQLite development headers.
 
 Single node and administrator only. Full multi-account routing validation remains pending. No billing service, multi-admin RBAC, or high availability. Costs are estimates, quotas are observations, and token/cost limits are not absolute caps. Client-facing body/image recovery caching is not implemented; output recovery after disconnection or restart is not guaranteed. See [compatibility](docs/reference/compatibility.md).
 

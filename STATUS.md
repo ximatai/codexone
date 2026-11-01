@@ -20,7 +20,7 @@
 ## 路线图
 
 - [设备码账号授权](docs/changes/device-code-auth/proposal.md)：默认免复制回调，保留回调方式备用。
-- [局域网模式](docs/changes/lan-mode/proposal.md)：无域名时直接以局域网 HTTP 访问，明确告知明文风险。
+- [局域网模式](docs/changes/lan-mode/proposal.md)：开发版本已实现私有地址双监听、来源过滤、HTTP 会话和风险提示；尚未发布，真实 Codex HTTP/WS 验收待维护者完成。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。

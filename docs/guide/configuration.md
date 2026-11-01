@@ -14,7 +14,7 @@
 4. 需要客户端模型元数据时，使用已审核的[模型 profile](../reference/model-profiles.md)，将文件放在私有 secrets 目录，配置容器内绝对路径。不要把真实模型基础指导提交到仓库。
 5. 运行 `python3 compose-install.py run --rm gateway --check-config`。运行中的配置是启动快照，修改后按维护步骤重启。
 
-安装工具生成独立管理员秘密和账号主密钥；二者与下游 Key 不可互换。默认数据/管理端口为 18080/18081，仅监听 loopback。管理公开 origin 必须与浏览器 HTTPS 地址完全一致。
+安装工具生成独立管理员秘密和账号主密钥；二者与下游 Key 不可互换。默认数据/管理端口为 18080/18081，仅监听 loopback。管理公开 origin 必须与浏览器地址完全一致；默认部署使用 HTTPS。无域名时可显式选择[局域网 HTTP](linux-installation.md#局域网无域名)，接受明文风险。
 
 可选出网代理设置 `CODEXONE_UPSTREAM_HTTP_PROXY`，只支持无认证 HTTP CONNECT，失败不直连回退；完整字段和约束见[配置参考](../reference/configuration.md)。
 

@@ -17,7 +17,7 @@
 
 ## A10：本机 Key 管理 API
 
-仅在配置独立管理员凭证文件时提供 `/api/keys` 的创建/有界分页、更新及轮换命令。文件按 owner/权限/类型和容量校验；管理员 Bearer 与普通 Key 分离，不接受 `co1_` 数据 Key 格式或复用 legacy Key 摘要。此入口仅 loopback、不启用 CORS。无浏览器管理客户端可用独立 Bearer，但该分支拒绝 Origin、Sec-Fetch-Site 和 Cookie；浏览器按 A11 使用 session，混合两种认证明确拒绝。
+仅在配置独立管理员凭证文件时提供 `/api/keys` 的创建/有界分页、更新及轮换命令。文件按 owner/权限/类型和容量校验；管理员 Bearer 与普通 Key 分离，不接受 `co1_` 数据 Key 格式或复用 legacy Key 摘要。此入口默认仅 loopback，允许 O12 的显式 LAN 例外，不启用 CORS。无浏览器管理客户端可用独立 Bearer，但该分支拒绝 Origin、Sec-Fetch-Site 和 Cookie；浏览器按 A11 使用 session，混合两种认证明确拒绝。
 
 输入/输出 DTO 与领域对象分离：时间为 Unix UTC 秒，金额为微单位估算，limits 必须显式包含 requests/active/unresolved/budgetMicros/unresolvedMicros，每项为正整数（≤10¹²）或 null（该 Key 维度不限），缺字段及无效值拒绝；创建/更新/读取保留 null。界面逐项选择“不限”并在列表、详情和用量显示。创建/轮换仅在成功响应返回一次 secret，列表与普通更新不返回原文或摘要；若成功响应丢失，应查询元数据后显式轮换，不能找回旧原文。更新/轮换携 revision，冲突返回 409；未知字段拒绝。错误 envelope 仅含安全 code/message/request_id，响应 no-store。
 
@@ -27,7 +27,7 @@
 
 `POST /api/session` 接受必填 username（精确等于命名常量 admin）、独立管理员 secret 和可信浏览器来源，返回一次 CSRF 证明并设置 `__Host-codexone_admin`：HttpOnly、Secure、SameSite=Strict、Path=/、Max-Age 为绝对剩余秒数（最长 604800）、无 Domain。`GET` 获取当前证明，`DELETE` 校验后撤销并清 Cookie。session 由管理服务持有，最多 16 个，滑动空闲寿命 24 小时、绝对寿命 7 天（均为命名常量），边界时刻过期；每次认证通过刷新活动时间及 Cookie，续期不越过绝对截止，访问时清理过期记录；只保存 token 摘要和内存 CSRF，重启失效。用户名缺失、错误、大小写不同与密码错误返回相同 401/code/message（request_id 每请求独立），未知字段拒绝。登录采用标准 form，默认 admin 的 username 输入框使用 name=username、autocomplete=username；密码框使用 name=password、autocomplete=current-password，支持浏览器识别凭证保存，前端不在本地存储保存凭证。独立 headless Bearer 路径不变；现有连接/并发/期限限制保持，基线无单独登录失败次数限速，本次不新增策略。重新登录可替换当前 session，旧/过期 Cookie 不得造成无法重新登录。管理员文件更换须重启生效。
 
-所有浏览器请求严格校验 Host；变更须同时有精确可信 Origin 和 CSRF，读请求有 Origin 时也须一致。Sec-Fetch-Site 若提供只接受 same-origin，重复/混合认证和重复 Cookie 拒绝。默认 origin 来自实际 loopback 监听端口；反代须显式配置公开 HTTPS origin，不信任任意转发头，不从请求 Host 推导来源。HTTP 仅允许 loopback；不为兼容浏览器降低安全 Cookie 属性。
+所有浏览器请求严格校验 Host；变更须同时有精确可信 Origin 和 CSRF，读请求有 Origin 时也须一致。Sec-Fetch-Site 若提供只接受 same-origin，重复/混合认证和重复 Cookie 拒绝。默认 origin 来自实际 loopback 监听端口；反代须显式配置公开 HTTPS origin，不信任任意转发头，不从请求 Host 推导来源。HTTP 非回环 origin 只允许 O12 LAN 模式，主机字面量须与配置监听地址相同（按 IP 值比较）；不接受别名或从请求推导。只有此种 origin 的 session cookie 改名 `codexone_admin` 并去掉 Secure，保留 HttpOnly、SameSite=Strict、Path=/、无 Domain 及原 Max-Age/续期/清除规则。HTTPS 与回环 HTTP 的 cookie header 保持逐字节不变。Host/Origin、CSRF、重复/混合认证、寿命与容量规则全部保留。
 
 `GET /api/keys/options` 提供配置的模型 ID 供表单选择，不含上游指导或凭证。Key 界面分别选择对话与图片模型的“全部模型（跟随配置）/指定模型”以及五类治理限额，不把它们称为订阅余额；本功能不代表图片权限或账号池已交付。创建/轮换成功后原文仅保留在当前页面内存，关闭、离开、登出或五分钟后清除，不写浏览器持久存储。CAS 冲突刷新并由用户重新确认；写入结果未知不自动重试，刷新核对后才能继续；登出未确认须清本页秘密并明确提供重试。
 
