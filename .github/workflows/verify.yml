@@ -10,18 +10,109 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  backend-linux:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select checks from changed paths
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          if [[ "$EVENT" == pull_request ]]; then
+            git diff --name-only -z --no-renames "$BASE...$HEAD" > "$RUNNER_TEMP/changed-paths"
+            bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths" >> "$GITHUB_OUTPUT"
+          else
+            bash scripts/ci_changes.sh --all >> "$GITHUB_OUTPUT"
+          fi
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 scripts/check_docs.py
+      - run: python3 scripts/check_architecture.py
+      - run: python3 scripts/backend_shards.py --check
+      - run: python3 scripts/check_ci.py
+  backend-build:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install verification prerequisite
-        run: apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev tar zstd gzip
+          tar --version && zstd --version && gzip --version
+      # Every run restores; only main pushes save, so PR pushes cannot fill the cache quota.
+      - name: Restore incremental Swift build cache
+        id: swift-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .build
+          key: ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-${{ hashFiles('Package.resolved') }}-${{ hashFiles('Package.swift', 'Sources/**', 'Tests/**') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-${{ hashFiles('Package.resolved') }}-
+            ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-
       - name: Verify Swift modules and executable lifecycle
-        run: ./scripts/verify.sh --backend
-  frontend:
+        run: ./scripts/verify.sh --backend-build
+      - name: Save Swift build cache from main
+        if: github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .build
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
+      - name: Package debug executables with their executable modes
+        run: tar -czf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug codexone ExecutionProbe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-binaries
+          path: ${{ runner.temp }}/backend-binaries.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+  backend-scripts:
+    needs: [changes, backend-build]
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
+    container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/4, 2/4, 3/4, 4/4]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install verification prerequisite
+        run: apt-get update && apt-get install -y --no-install-recommends python3 libsqlite3-dev tar gzip
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: backend-binaries
+          path: ${{ runner.temp }}
+      - name: Restore debug executables
+        run: |
+          mkdir -p .build/debug
+          tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug
+      - name: Verify protocol and lifecycle shard
+        run: ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+      options: --init --ipc=host
     timeout-minutes: 15
     defaults:
       run:
@@ -34,7 +125,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium --only-shell
       - run: ../scripts/verify.sh --web
       - name: Upload browser failure evidence
         if: failure()
@@ -43,3 +133,28 @@ jobs:
           name: browser-failure-evidence
           path: web/test-results/
           retention-days: 7
+  verify:
+    if: always()
+    needs: [changes, docs, backend-build, backend-scripts, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require successful selected checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ['RESULTS'])
+          selected = needs['changes']['outputs']
+          required = {'changes', 'docs'}
+          if selected.get('backend') == 'true':
+              required.update({'backend-build', 'backend-scripts'})
+          if selected.get('frontend') == 'true':
+              required.add('frontend')
+          for job, details in needs.items():
+              result = details['result']
+              print(f'{job}: {result}')
+              if result != 'success' and (job in required or result != 'skipped'):
+                  raise SystemExit(f'{job} did not succeed')
+          PY

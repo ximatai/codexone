@@ -38,7 +38,25 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 ## 发版 CI 验证边界
 
-Verify 在 main push、PR 和手动运行时保留后端/前端检查；后端 Swift 容器与 Dockerfile 使用相同的 6.4.1 digest。Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新，更新 PR 仍须通过相关验证，Swift 容器与构建镜像的工具链固定需一同核对。
+Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
+
+后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+
+本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
+
+```sh
+CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-build
+CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-scripts 1/4
+CODEXONE_BACKEND_BIN_DIR=.build/debug ./scripts/verify.sh --backend-scripts 4/4
+python3 scripts/backend_shards.py --check
+python3 scripts/check_ci.py
+```
+
+分片清单在 `scripts/backend_shards.json`，按实测耗时分配；`verify.sh` 保留完整调用顺序，自检要求其中每个脚本恰好归属一个分片。新增后端检查时两处一起更新。
+
+前端使用含浏览器/系统库的官方 Playwright Noble 镜像，不在每次运行时 apt/download 浏览器；镜像 tag 必须与 package-lock 中的 Playwright 版本一致，并固定 registry digest。e2e 用严格端口的 Vite preview 服务生产 dist；完整入口只构建一次，单独跑 e2e 前须 build，见[贡献指南](../../CONTRIBUTING.md)。
+
+Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、两个 Verify 容器与缓存 key；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
 
 Release 的 tag 流程和手动 dry-run 共用 Linux amd64 验证：verification target 的优化后二进制合成 socket/迁移失败检查、实际本地 TLS 反代和真实 OCI/Compose 安装。安装覆盖非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。手动流程允许未发布 CHANGELOG，只上传产物；tag 流程须通过版本/主分支历史/CHANGELOG 检查后才可能发布，详见[发版规则](releasing.md)。
 
