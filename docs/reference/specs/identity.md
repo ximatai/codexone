@@ -164,9 +164,15 @@ Key 可空 displayName 使用与账号相同的校验，存入既有 Key 元数�
 
 每账号最多一个未完成 intent（服务生成 UUID redeem_request_id、可选 creditID、来源标记），发送前与审计占位同事务提交。每次网络消费占一个独立审计行（最多 4096），结果回写预留行，结束走 critical 队列，不消耗账号刷新/禁用预留；满时发送前拒绝。reset/nothing_to_reset/no_credit/already_redeemed 为终态，其他代码、断流、超时、取消和本地结果提交失败保留原 ID。下一次同卡或默认核对沿用原请求/卡；其他卡冲突，不产生新 ID。未知代码归 unknown，不记录原文。
 
-Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadHours 默认 24、范围 1—168，以账号 revision CAS 保存。每 30 分钟顺序扫描最多 64 个账号；观察快照的可用卡计数可触发同一有界提示流，仍受每账号 30 分钟门槛。仅 enabled/ready 且已开启自动使用的账号参与；手动未知 intent 只人工确认核对，自动未知 intent 优先沿原 ID 核对。新自动操作选择 now < expiresAt <= now + leadHours 的 available 卡，最早到期、同时间按 id，每账号每轮最多一张；永不自动选择无到期卡。nothing_to_reset 结束本次 intent，卡未消耗，下周期可再试。扫描中账号被删除或修改只跳过该账号，仅存储不可用停止 Runtime。
+Runtime ResetCreditSupervisor 是自动周期与手动工作共同 owner，每账号一个工作、总共最多四个，无待执行修改队列。自动设置默认关闭，leadMinutes 为整数 1—10080（默认 1440），retryCount 为额外重试次数 0—5（默认 3），固定 retryIntervalMinutes=1；leadMinutes 至少为 retryCount * retryIntervalMinutes + 1，按账号 revision CAS 保存。设置仍在 account_reset_credits.record_json（4096 字节上限），不升级 schema；只有 leadHours 的旧记录按小时乘 60、重试默认 3 解码。新记录同时写 leadHours=clamp(ceil(leadMinutes/60),1,168)，v0.26.4 可读取回退，但回退后只有整小时/30 分钟周期行为，没有分钟调度与本次重试保证。
 
-自动操作明确返回 reset 时保留 24 小时提醒；already_redeemed 只表示原操作已处理，不推断原操作实际重置的窗口或卡消耗。未知 intent 持续 critical 提醒，连续三次失败提醒。审计仅固定动作/结果、账号 ID、卡 SHA-256、来源与时间；日志只账号 ID、卡摘要/默认标记与固定结果，不输出标题/正文/身份头。停服拒绝新工作，取消并 await 网络及 critical 收尾，未确认 intent 跨重启保留；恢复自动关闭见 O16。此能力不代表官方客户端菜单透传或按用量压力自动使用。
+每 30 分钟读取列表学习最多 64 个账号的到期时间；观察快照的可用卡计数可触发 64 条有界提示，仍受常规周期门槛，设置修订变化例外，立即重算。仅 enabled/ready 且已开启自动使用的账号参与；手动未知 intent 只人工确认核对。Runtime 每账号只保留一个最早 available 卡的 expiresAt - leadMinutes 到期时间和一个有界重试状态，一个结构化定时任务等待最近到期/重试/常规周期（最长一分钟），到点优先处理已学习的截止时间。扫描最多四个结构化工作并共享手动容量门禁；容量可用且 I/O 正常时，在到点后约一分钟内开始，容量占用时不排无限队列。每次列表/设置变化重算；不持久化列表、定时器或重试队列，重启首次扫描重建，已过阈值但未过期立即尝试。
+
+新自动消费必须重新读取列表，选择 now < expiresAt <= now + leadMinutes 的 available 卡，最早到期、同时间按 id，每账号每轮最多一张；永不选择无到期卡，在凭证准备、持久 intent 提交后发送前再次检查，now >= expiresAt 不发送。自动未知 intent 优先沿原 ID/原卡核对，必须通过新列表确认原卡到期时间仍在未来；已被标记使用的原卡可沿同一 ID 核对，绝不换卡或新 ID。列表缺原卡/到期时间不自动发送。扫描中账号被删除或修改只跳过该账号，仅存储不可用停止 Runtime。
+
+自动列表失败、网络错误/超时、提供者 5xx、unknown/丢响应至多进行初次加 retryCount 次尝试；失败后至少一分钟再试，有已知到期时间时仅安排 retryAt < expiresAt 的重试，并在实际发送前复核。首次列表失败尚无到期信息时只重试读取，读取成功确认到期后才可能消费。每次失败列表/网络消费继续写独立有界审计；消费失败与中途列表失败共同占用预算。未知 intent 的失败计数跨重启保留，预算耗尽后保留人工核对屏障，不自动创建新 ID。reset/already_redeemed/no_credit 停止重试；nothing_to_reset 结束 intent，卡未消耗，不扣失败预算，在下个常规周期可再试。手动使用不自动重试。
+
+自动明确返回 reset 保留 24 小时提醒；already_redeemed 只表示原操作已处理，不推断实际重置窗口或卡消耗。未知 intent 持续 critical 提醒，初次加配置重试预算均失败后显示 repeated_failure 及实际失败尝试次数；手动未知仍保留原三次失败提醒阈值。审计仅固定动作/结果、账号 ID、卡 SHA-256、来源与时间；日志只账号 ID、卡摘要/默认标记、固定结果和尝试序号，不输出标题/正文/身份头。停服拒绝新工作，取消并 await 定时器、网络及 critical 收尾，未确认 intent 跨重启保留；恢复自动关闭见 O16。此能力不代表官方客户端菜单透传或按用量压力自动使用。
 
 ## I22：空闲配额窗口预热
 

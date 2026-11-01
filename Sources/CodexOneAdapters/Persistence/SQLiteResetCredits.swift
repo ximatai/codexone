@@ -18,7 +18,8 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
   {
     guard ManagedAccount.validID(id) else { throw ExecutionError.invalidCommand }
     _ = try ResetCreditSettings(
-      autoUseBeforeExpiry: settings.autoUseBeforeExpiry, leadHours: settings.leadHours)
+      autoUseBeforeExpiry: settings.autoUseBeforeExpiry, leadMinutes: settings.leadMinutes,
+      retryCount: settings.retryCount)
     return try await perform(
       optional: settings.autoUseBeforeExpiry, essential: !settings.autoUseBeforeExpiry
     ) { db in
@@ -159,7 +160,9 @@ extension SQLiteExecutionStore: AccountResetCreditStore {
     guard let raw = records.first else { return try ResetCreditState() }
     let state = try decode(ResetCreditState.self, raw)
     _ = try ResetCreditSettings(
-      autoUseBeforeExpiry: state.settings.autoUseBeforeExpiry, leadHours: state.settings.leadHours)
+      autoUseBeforeExpiry: state.settings.autoUseBeforeExpiry,
+      leadMinutes: state.settings.leadMinutes,
+      retryCount: state.settings.retryCount)
     guard (0...1_000_000).contains(state.failures),
       state.intent.map({
         UUID(uuidString: $0.requestID) != nil

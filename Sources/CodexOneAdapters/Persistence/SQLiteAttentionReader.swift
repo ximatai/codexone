@@ -75,7 +75,11 @@ extension SQLiteUsageReader: AttentionReading {
               id: old.subjectID, name: old.subjectName, detail: detail, since: old.sinceUnixSeconds)
           }
           let reset = try SQLiteExecutionStore.loadResetCreditState(db, id)
-          if reset.intent != nil || reset.failures >= 3
+          let resetExhausted =
+            reset.failures
+            >= (reset.intent?.automatic == false
+              ? 3 : reset.settings.retryCount + 1)
+          if reset.intent != nil || resetExhausted
             || reset.lastAutoResetAt.map({ now >= $0 && now - $0 < 86400 }) == true
           {
             accountItems.append(
@@ -83,12 +87,13 @@ extension SQLiteUsageReader: AttentionReading {
                 "reset_credits", critical: reset.intent != nil, type: "account", id: id, name: name,
                 detail: [
                   "code": .string(
-                    reset.intent != nil
-                      ? "unknown" : reset.failures >= 3 ? "repeated_failure" : "reset")
+                    resetExhausted && reset.intent?.automatic != false
+                      ? "repeated_failure" : reset.intent != nil ? "unknown" : "reset"),
+                  "attempts": .number(Decimal(reset.failures)),
                 ],
                 since: reset.intent != nil
                   ? reset.lastAttemptAt
-                  : reset.failures >= 3 ? reset.lastFailureAt : reset.lastAutoResetAt))
+                  : resetExhausted ? reset.lastFailureAt : reset.lastAutoResetAt))
           }
           let priming = try SQLiteExecutionStore.loadQuotaPriming(db, id)
           if let code = priming.attention {

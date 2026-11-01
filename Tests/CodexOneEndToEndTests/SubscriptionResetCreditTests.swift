@@ -103,3 +103,80 @@ func resetCreditTrustedSocketParsingCodesAndLostResponseRetrySameID() async thro
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)), arguments: ["5xx", "timeout", "lost", "list5xx"])
+func resetCreditAutomaticSocketFailuresRetryAtMinuteWithDurableID(failure: String) async throws {
+  try await withOAuth(timeout: 3000) { h in
+    let time = TestWallClock()
+    let login = try await h.login()
+    let imported = try await h.app.importVerified(
+      id: "account", namespace: login.namespace,
+      credential: login.credential)
+    let account = try await h.store.setAccountMode(id: imported.id, revision: 1, mode: .enabled)
+    let listPath = "/backend-api/wham/rate-limit-reset-credits"
+    let consumePath = listPath + "/consume"
+    let list = try JSONSerialization.data(withJSONObject: [
+      "credits": [
+        [
+          "id": "synthetic-credit", "reset_type": "synthetic", "status": "available",
+          "granted_at": "2026-01-01T00:00:00Z",
+          "expires_at": Date(timeIntervalSince1970: Double(testUnixSeconds + 600)).ISO8601Format(),
+        ]
+      ], "available_count": 1,
+    ])
+    h.server.state.mutex.withLock {
+      $0.quotaAuthorization = (login.credential.accessToken, "synthetic-workspace")
+      $0.devicePlans[listPath] = failure == "list5xx" ? .reply(Data(), status: 503) : .reply(list)
+      $0.devicePlans[consumePath] =
+        failure == "lost"
+        ? .redeemWithLostResponse
+        : failure == "timeout" ? .headersStall : .reply(Data(), status: 503)
+    }
+    let provider = try SubscriptionQuotaProvider(
+      group: h.group, verifier: h.provider,
+      target: .syntheticLoopback(port: h.server.port), timeoutMilliseconds: 500)
+    let supervisor = try ResetCreditSupervisor(
+      store: h.store, credentials: h.app,
+      provider: provider, clock: time.clock,
+      sleep: { _ in try await Task.sleep(for: .seconds(3600)) })
+    let owner = Task {
+      try await GatewayRuntime(services: [provider, supervisor]).run(handleSignals: false)
+    }
+    do {
+      try await awaitOAuth { supervisor.isAccepting && provider.isAccepting }
+      _ = try await h.store.setResetCreditSettings(
+        id: account.id, revision: account.revision,
+        settings: .init(autoUseBeforeExpiry: true, leadMinutes: 10, retryCount: 3))
+      try await supervisor.scheduleCycle()
+      try await awaitOAuth { supervisor.activeOperations == 0 }
+      let original = try await h.store.resetCreditState(id: account.id).intent
+      #expect((original != nil) == (failure != "list5xx"))
+      let calls = h.server.counts.calls
+      time.advance(seconds: 59)
+      try await supervisor.scheduleCycle()
+      #expect(h.server.counts.calls == calls)
+      h.server.state.mutex.withLock {
+        $0.devicePlans[listPath] = .reply(list)
+        if failure != "lost" {
+          $0.devicePlans[consumePath] = .reply(Data(#"{"code":"reset","windows_reset":1}"#.utf8))
+        }
+      }
+      time.advance(seconds: 1)
+      try await supervisor.scheduleCycle()
+      let sent = h.server.state.mutex.withLock { $0.redemptionRequests }
+      #expect(sent.count == (failure == "list5xx" ? 1 : 2))
+      if let original {
+        #expect(sent.allSatisfy { $0.0 == original.requestID && $0.1 == "synthetic-credit" })
+      }
+      #expect(try await h.store.resetCreditState(id: account.id).intent == nil)
+      #expect(h.server.counts.invalid == 0)
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      throw error
+    }
+    owner.cancel()
+    _ = await owner.result
+    #expect(provider.activeRequests == 0 && supervisor.activeOperations == 0)
+  }
+}

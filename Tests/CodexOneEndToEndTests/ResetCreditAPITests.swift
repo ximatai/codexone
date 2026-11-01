@@ -94,6 +94,25 @@ import Testing
             ]), headers: browser
           ).0 == 400)
       }
+      for fields: [String: JSONValue] in [
+        ["leadMinutes": .number(0), "retryCount": .number(0)],
+        ["leadMinutes": .number(10081), "retryCount": .number(3)],
+        ["leadMinutes": .number(3), "retryCount": .number(3)],
+        ["leadMinutes": .number(60), "retryCount": .number(-1)],
+        ["leadMinutes": .number(60), "retryCount": .number(6)],
+        ["leadMinutes": .number(1.5), "retryCount": .number(0)],
+        ["leadMinutes": .number(60), "retryCount": .number(1.5)],
+        ["leadMinutes": .number(60)],
+        ["leadHours": .number(1), "leadMinutes": .number(60), "retryCount": .number(3)],
+        ["leadHours": .number(1), "retryCount": .number(3)],
+      ] {
+        var body = fields
+        body["revision"] = .number(1)
+        body["autoUseBeforeExpiry"] = .bool(false)
+        #expect(
+          try await client.call("PUT", base + "/settings", body: .object(body), headers: browser).0
+            == 400)
+      }
       let settings: JSONValue = .object([
         "revision": .number(1), "autoUseBeforeExpiry": .bool(true), "leadHours": .number(48),
       ])
@@ -101,6 +120,22 @@ import Testing
         try await client.call("PUT", base + "/settings", body: settings, headers: browser).0 == 200)
       #expect(
         try await client.call("PUT", base + "/settings", body: settings, headers: browser).0 == 409)
+      let legacy = try await client.call("GET", base + "/state", headers: browser)
+      #expect(legacy.1["settings"]?["leadMinutes"] == .number(2880))
+      #expect(legacy.1["settings"]?["retryCount"] == .number(3))
+      #expect(legacy.1["settings"]?["leadHours"] == .number(48))
+      for (revision, minutes, retries, hours) in [(2, 1, 0, 1), (3, 10080, 5, 168), (4, 61, 3, 2)] {
+        let updated = try await client.call(
+          "PUT", base + "/settings",
+          body: .object([
+            "revision": .number(Decimal(revision)), "autoUseBeforeExpiry": .bool(false),
+            "leadMinutes": .number(Decimal(minutes)), "retryCount": .number(Decimal(retries)),
+          ]), headers: browser)
+        #expect(updated.0 == 200)
+        #expect(updated.1["settings"]?["leadMinutes"] == .number(Decimal(minutes)))
+        #expect(updated.1["settings"]?["retryCount"] == .number(Decimal(retries)))
+        #expect(updated.1["settings"]?["leadHours"] == .number(Decimal(hours)))
+      }
       h.server.set(.reply(Data("{\"code\":\"nothing_to_reset\",\"windows_reset\":0}".utf8)))
       let consumed = try await client.call(
         "POST", base + "/consume", body: .object([:]), headers: browser)

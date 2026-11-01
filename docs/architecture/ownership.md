@@ -11,7 +11,7 @@
 | 刷新与身份验证 | Core/Application/Identity | Runtime AccountRefreshSupervisor 的有界队列/共享任务 | 通过上游/凭证端口执行；等待者取消不取消共享刷新，关闭信号取消网络并 await/收敛 intent |
 | 被动额度观察 | Core/Application 定义凭证/观察端口 | Runtime AccountObservationSupervisor 单飞有界工作；Adapters 独立 HTTP owner | 等待者取消不取消工作；关闭 await，提交核对身份/版本，不占刷新网络容量 |
 | 空闲窗口预热 | Core/Application/Identity 检测、设置与持久屏障；复用 ExecutionCoordinator | Runtime QuotaPrimingSupervisor 单顺序 worker/64 提示/60 秒扫描；Adapters SubscriptionWindowPriming 拥有 transport | 正常执行准入原子锁窗口与审计；关闭取消并 await，finalizer 独立收敛，不重放 |
-| 重置卡 | Core/Application/Identity 的卡/设置/持久消费端口 | Runtime ResetCreditSupervisor 每账号单飞、四工作、30 分钟周期/有界提示流；复用独立配额 HTTP client | 先提交 intent/审计，再发送；未知沿原 ID；关闭取消并 await 网络与 critical 收尾 |
+| 重置卡 | Core/Application/Identity 的卡/设置/持久消费端口 | Runtime ResetCreditSupervisor 每账号单飞、四工作、30 分钟列表周期/有界提示流、单分钟定时任务/每账号一个到期与重试状态；复用独立配额 HTTP client | 先提交 intent/审计，再发送；未知沿原 ID；关闭取消并 await 网络与 critical 收尾 |
 | 用量查询 | Core/Application/Usage 查询值与端口 | Adapters 单一只读 WAL reader/专用队列 | 一个在途快照、有总预算/取消；入口先关闭 reader 再关闭主库，不占 writer 队列 |
 | SQL 原子操作 | Core/Application 定义命令端口 | Adapters/Persistence 有界 DB 执行 | 一次命令一个事务；不跨网络持有，不向核心返回 SQL row |
 | 恢复授权与代际 | Core/Application/Recovery | Runtime 监督缓存 worker；Transport 只交内容 | 先查核心归属/当前策略，后调缓存端口；restore 用例协调新 generation/清理 |

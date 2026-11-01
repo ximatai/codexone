@@ -79,16 +79,34 @@ public struct AccountAdminAPI: Sendable {
     }
     routes.put(":id", "reset-credits", "settings") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
-      let body = try Self.body(request, allowed: ["revision", "autoUseBeforeExpiry", "leadHours"])
+      let body = try Self.body(
+        request, allowed: ["revision", "autoUseBeforeExpiry"],
+        optional: ["leadMinutes", "retryCount", "leadHours"])
       guard let revision = body["revision"]?.integer,
         let enabled = body["autoUseBeforeExpiry"]?.bool,
-        let hours = body["leadHours"]?.integer, (1...168).contains(hours),
         let resetStore = store as? any AccountResetCreditStore
       else { throw ExecutionError.invalidCommand }
+      let minutes: Int64
+      let retries: Int64
+      if body["leadHours"] != nil {
+        guard body["leadMinutes"] == nil, body["retryCount"] == nil,
+          let hours = body["leadHours"]?.integer, (1...168).contains(hours)
+        else { throw ExecutionError.invalidCommand }
+        minutes = hours * 60
+        retries = 3
+      } else {
+        guard let value = body["leadMinutes"]?.integer, (1...10080).contains(value),
+          let count = body["retryCount"]?.integer, (0...5).contains(count)
+        else { throw ExecutionError.invalidCommand }
+        minutes = value
+        retries = count
+      }
       let id = request.parameters.get("id") ?? ""
       _ = try await resetStore.setResetCreditSettings(
         id: id, revision: revision,
-        settings: .init(autoUseBeforeExpiry: enabled, leadHours: Int(hours)))
+        settings: .init(
+          autoUseBeforeExpiry: enabled, leadMinutes: Int(minutes), retryCount: Int(retries)))
+      (resetCredits as? any AccountResetCreditScheduling)?.observedResetCredits(id: id)
       return try await Self.response(self.resetCreditStateDTO(id: id))
     }
     routes.post(":id", "reset-credits", "consume") { request async throws -> Response in
