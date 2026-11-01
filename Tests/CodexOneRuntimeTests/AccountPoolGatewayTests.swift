@@ -31,16 +31,17 @@ private struct PoolFixture {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let path = directory.appendingPathComponent("core.sqlite").path
     let limits = ExecutionLimits(requests: 100, active: 4, unresolved: 4, budgetMicros: 100)
-    let store = try await SQLiteExecutionStore.open(path: path, limits: limits)
+    let store = try await SQLiteExecutionStore.open(path: path, limits: limits, clock: testClock)
     let credentials = AccountCredentials(
       store: store,
-      protection: try AccountCredentialCipher(hexKey: String(repeating: "6d", count: 32)))
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "6d", count: 32)),
+      clock: testClock)
     for id in ["a", "b"] {
       let account = try await credentials.importVerified(
         id: id, namespace: "synthetic/\(id)",
         credential: AccountCredential(
           accessToken: "synthetic-\(id)", refreshToken: "synthetic-refresh-\(id)", idToken: nil,
-          expiresAtUnixSeconds: remaining.map { Int64(Date().timeIntervalSince1970) + $0 }
+          expiresAtUnixSeconds: remaining.map { testUnixSeconds + $0 }
             ?? (expired ? 1 : 2_000_000_000)))
       _ = try await store.setAccountMode(id: id, revision: account.revision, mode: .enabled)
     }
@@ -57,7 +58,8 @@ private struct PoolFixture {
       path: path, store: store, credentials: credentials, finalizer: finalizer, worker: worker,
       policy: policy,
       gateway: AccountPoolGateway(
-        policy: policy, store: store, credentials: credentials, finalizer: finalizer))
+        policy: policy, store: store, credentials: credentials, finalizer: finalizer,
+        clock: testClock))
   }
   func close() async throws {
     finalizer.stopAccepting()
@@ -177,7 +179,7 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
   try await poolWait { refresh.isAccepting }
   let gateway = AccountPoolGateway(
     policy: f.policy, store: f.store, credentials: f.credentials, finalizer: f.finalizer,
-    refresher: refresh)
+    refresher: refresh, clock: testClock)
   let probe = PoolProbe()
   let first = Task {
     try await gateway.execute(model: "synthetic-text", references: []) { context, _ in
@@ -223,7 +225,7 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
     try await poolWait { refresh.isAccepting }
     let gateway = AccountPoolGateway(
       policy: f.policy, store: f.store, credentials: f.credentials, finalizer: f.finalizer,
-      refresher: refresh)
+      refresher: refresh, clock: testClock)
     let probe = PoolProbe()
     await #expect(throws: failure) {
       try await gateway.execute(model: "synthetic-text", references: []) { context, _ in
@@ -256,7 +258,7 @@ func accountPoolRefreshSharesOwnerWhileCancelledRequestReleasesTicket() async th
     try await poolWait { refresh.isAccepting }
     let gateway = AccountPoolGateway(
       policy: f.policy, store: f.store, credentials: f.credentials, finalizer: f.finalizer,
-      refresher: refresh)
+      refresher: refresh, clock: testClock)
     let probe = PoolProbe()
     let request = Task {
       try await gateway.execute(model: "synthetic-text", references: []) { context, _ in

@@ -47,7 +47,7 @@ struct RefreshFixture {
   let store: SQLiteExecutionStore
   let app: AccountCredentials
   let accounts: [ManagedAccount]
-  static func make(count: Int = 1) async throws -> Self {
+  static func make(count: Int = 1, clock: WallClock = .system) async throws -> Self {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: false,
@@ -58,8 +58,8 @@ struct RefreshFixture {
     let cipher = try await AccountCredentialCipher.load(path: key.path)
     let store = try await SQLiteExecutionStore.open(
       path: root.appendingPathComponent("core.sqlite").path,
-      limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100))
-    let app = AccountCredentials(store: store, protection: cipher)
+      limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100), clock: clock)
+    let app = AccountCredentials(store: store, protection: cipher, clock: clock)
     var accounts: [ManagedAccount] = []
     for index in 0..<count {
       accounts.append(

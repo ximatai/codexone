@@ -37,18 +37,21 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
   let original = SingleIdentityConfiguration.Model(
     id: "synthetic", inputMicrosPerMillion: 123,
     outputMicrosPerMillion: 456, visionInput: false, imageGeneration: false)
-  let loaded = try ModelProfileSnapshot.apply(path: file.path, models: [original])
+  let loaded = try ModelProfileSnapshot.apply(
+    path: file.path, models: [original], now: testUnixSeconds)
   #expect(loaded.count == 1 && loaded[0].inputMicrosPerMillion == 123)
   #expect(loaded[0].visionInput == false && loaded[0].imageGeneration == false)
-  let catalog = try modelCatalog(loaded, requireCodexProfile: true)
+  let catalog = try modelCatalog(loaded, requireCodexProfile: true, now: testUnixSeconds)
   #expect(catalog["models"]?.array?.first?["context_window"]?.integer == 272000)
   #expect(catalog["models"]?.array?.first?["max_context_window"]?.integer == 872000)
   #expect(catalog["models"]?.array?.first?["codexone_profile"]?["stale"]?.bool == true)
   // A running snapshot remains usable after the source becomes invalid; a new import must fail.
   try Data("{}".utf8).write(to: file)
-  #expect(try modelCatalog(loaded, requireCodexProfile: true)["models"]?.array?.count == 1)
+  #expect(
+    try modelCatalog(loaded, requireCodexProfile: true, now: testUnixSeconds)["models"]?.array?
+      .count == 1)
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: file.path, models: [original])
+    try ModelProfileSnapshot.apply(path: file.path, models: [original], now: testUnixSeconds)
   }
 }
 @Test func explicitCatalogOverridesAsAWholeAndMissingModelsFailClosed() throws {
@@ -60,7 +63,8 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
     from: Data(
       #"{"id":"synthetic","inputMicrosPerMillion":1,"outputMicrosPerMillion":1,"catalog":{"baseInstructions":"Explicit override"}}"#
         .utf8))
-  let result = try ModelProfileSnapshot.apply(path: file.path, models: [model])[0]
+  let result = try ModelProfileSnapshot.apply(
+    path: file.path, models: [model], now: testUnixSeconds)[0]
   #expect(result.catalog?.baseInstructions == "Explicit override")
   #expect(result.catalog?.contextWindow == nil)
   #expect(result.profileProvenance?.overridden == true)
@@ -71,7 +75,7 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
     from: Data(
       #"{"id":"missing","inputMicrosPerMillion":1,"outputMicrosPerMillion":1}"#.utf8))
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: file.path, models: [missing])
+    try ModelProfileSnapshot.apply(path: file.path, models: [missing], now: testUnixSeconds)
   }
 }
 @Test func profileRejectsLinksPermissionsAmbiguousAndUnsupportedClaims() throws {
@@ -90,19 +94,19 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
       }
     }
     #expect(throws: (any Error).self) {
-      try ModelProfileSnapshot.apply(path: file.path, models: [model])
+      try ModelProfileSnapshot.apply(path: file.path, models: [model], now: testUnixSeconds)
     }
   }
   try writeProfile(file)
   try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    try ModelProfileSnapshot.apply(path: file.path, models: [model], now: testUnixSeconds)
   }
   try writeProfile(file)
   let link = root.appendingPathComponent("link.json")
   try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: link.path, models: [model])
+    try ModelProfileSnapshot.apply(path: link.path, models: [model], now: testUnixSeconds)
   }
 }
 @Test func executionBudgetsRejectUnboundedOrContradictoryValues() throws {
@@ -142,13 +146,14 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
   try writeProfile(file) { $0["models"] = [["id": "synthetic", "upstream": upstream]] }
   let model = SingleIdentityConfiguration.Model(
     id: "synthetic", inputMicrosPerMillion: 1, outputMicrosPerMillion: 2)
-  let loaded = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  let loaded = try ModelProfileSnapshot.apply(
+    path: file.path, models: [model], now: testUnixSeconds)
   for vision in [false, true] {
     for transport in ["http", "websocket"] {
       var effective = loaded
       effective[0].visionInput = vision
       let directory = try modelCatalog(
-        effective, requireCodexProfile: true, upstreamTransport: transport)
+        effective, requireCodexProfile: true, upstreamTransport: transport, now: testUnixSeconds)
       var actual = try #require(directory["models"]?.array?.first?.object)
       #expect(actual.removeValue(forKey: "codexone_profile") != nil)
       var expected = try #require(
@@ -164,10 +169,12 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
     displayName: nil, description: nil, contextWindow: nil,
     maxContextWindow: nil, reasoningEfforts: nil, defaultReasoningEffort: nil,
     baseInstructions: "Synthetic override")
-  let overridden = try ModelProfileSnapshot.apply(path: file.path, models: [override])
+  let overridden = try ModelProfileSnapshot.apply(
+    path: file.path, models: [override], now: testUnixSeconds)
   #expect(overridden[0].upstream == nil)
   #expect(
-    try modelCatalog(overridden)["models"]?.array?.first?["shell_type"] == .string("unified_exec"))
+    try modelCatalog(overridden, now: testUnixSeconds)["models"]?.array?.first?["shell_type"]
+      == .string("unified_exec"))
   #expect(overridden[0].profileProvenance?.overridden == true)
 }
 
@@ -183,7 +190,7 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
   ] {
     try writeProfile(file) { $0["models"] = [["id": "synthetic", "upstream": upstream]] }
     #expect(throws: (any Error).self) {
-      try ModelProfileSnapshot.apply(path: file.path, models: [model])
+      try ModelProfileSnapshot.apply(path: file.path, models: [model], now: testUnixSeconds)
     }
   }
   try writeProfile(file) {
@@ -195,7 +202,7 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
     ]
   }
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    try ModelProfileSnapshot.apply(path: file.path, models: [model], now: testUnixSeconds)
   }
   // A valid file above the old 1 MiB limit still imports.
   try writeProfile(file) {
@@ -211,14 +218,15 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
   var padded = try Data(contentsOf: file)
   padded.append(Data(repeating: 32, count: 1_048_576))
   try padded.write(to: file)
-  let loaded = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+  let loaded = try ModelProfileSnapshot.apply(
+    path: file.path, models: [model], now: testUnixSeconds)
   #expect(loaded[0].upstream?["base_instructions"]?.string?.count == 40_000)
   try writeProfile(file)
   var oversized = try Data(contentsOf: file)
   oversized.append(Data(repeating: 32, count: 4_194_305))
   try oversized.write(to: file)
   #expect(throws: (any Error).self) {
-    try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    try ModelProfileSnapshot.apply(path: file.path, models: [model], now: testUnixSeconds)
   }
 }
 
@@ -256,7 +264,8 @@ private func writeProfile(_ path: URL, change: (inout [String: Any]) -> Void = {
         ]
       ]
     }
-    pool.models = try ModelProfileSnapshot.apply(path: file.path, models: [model])
+    pool.models = try ModelProfileSnapshot.apply(
+      path: file.path, models: [model], now: testUnixSeconds)
     identity.models = pool.models
     let poolPolicy = try pool.policy(key: key)
     let identityPolicy = try identity.makePolicy(token: nil)

@@ -80,8 +80,10 @@ import Testing
     #expect(policy.pricingVersion == originalPolicy.pricingVersion)
     #expect(policy.models == originalPolicy.models)
   }
-  let originalCatalog = try modelCatalog(first.models, requireCodexProfile: true)
-  let reversedCatalog = try modelCatalog(reversed.models, requireCodexProfile: true)
+  let originalCatalog = try modelCatalog(
+    first.models, requireCodexProfile: true, now: testUnixSeconds)
+  let reversedCatalog = try modelCatalog(
+    reversed.models, requireCodexProfile: true, now: testUnixSeconds)
   #expect(originalCatalog["data"]?.array?.first?["id"]?.string == ids[0])
   #expect(reversedCatalog["data"]?.array?.first?["id"]?.string == ids[1])
   #expect(try configuration(ids).policy(key: key).policyVersion == originalPolicy.policyVersion)

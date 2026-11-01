@@ -33,7 +33,7 @@ extension ExecutionProbe {
           attempt: id, evidence: evidence,
           outcome: .init(
             failure: index == 2 ? .clientCancelled : index == 3 ? .upstreamRejected : nil,
-            atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+            atUnixSeconds: WallClock.system.unixSeconds))
       }
     }
     try await store.recordRejection(

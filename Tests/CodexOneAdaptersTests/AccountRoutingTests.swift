@@ -9,12 +9,15 @@ private struct RoutingFixture {
   let store: SQLiteExecutionStore
   let app: AccountCredentials
   let policy: AccountPoolPolicy
-  static func make(limits: ExecutionLimits = syntheticLimits) async throws -> Self {
+  static func make(limits: ExecutionLimits = syntheticLimits, clock: WallClock = testClock)
+    async throws -> Self
+  {
     let path = try temporaryExecutionPath()
-    let store = try await SQLiteExecutionStore.open(path: path, limits: limits)
+    let store = try await SQLiteExecutionStore.open(path: path, limits: limits, clock: clock)
     let app = AccountCredentials(
       store: store,
-      protection: try AccountCredentialCipher(hexKey: String(repeating: "6b", count: 32)))
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "6b", count: 32)),
+      clock: clock)
     for id in ["a", "b"] {
       let account = try await app.importVerified(
         id: id, namespace: "synthetic/\(id)",
@@ -71,7 +74,8 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   try await f.store.finalize(attempt: tie.attempt, evidence: routeUsage)
   let repeatCommand = try await f.command("repeated")
   await f.store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock)
   let repeated = try await reopened.admitSelectingAccount(repeatCommand)
   #expect(tie.owner == repeated.owner)
   await reopened.close()
@@ -189,7 +193,7 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   try await f.store.configureHealthModels(["synthetic-text"])
   let first = try await f.store.admitSelectingAccount(f.command("health-auth"))
   let outcome = try ExecutionOutcome(
-    failure: .authenticationRejected, atUnixSeconds: Int64(Date().timeIntervalSince1970))
+    failure: .authenticationRejected, atUnixSeconds: testUnixSeconds)
   try await f.store.finalize(attempt: first.attempt, evidence: nil, outcome: outcome)
   #expect(try await f.store.accountHealth(id: first.owner.identity).authenticationRejected)
   let other = try await f.store.admitSelectingAccount(f.command("health-other"))
@@ -219,7 +223,7 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   try await f.store.configureHealthModels(["synthetic-text"])
   let failed = try await f.store.admitSelectingAccount(f.command("health-limited"))
   let outcome = try ExecutionOutcome(
-    failure: .rateLimited, atUnixSeconds: Int64(Date().timeIntervalSince1970), cooldownSeconds: 60)
+    failure: .rateLimited, atUnixSeconds: testUnixSeconds, cooldownSeconds: 60)
   try await f.store.finalize(attempt: failed.attempt, evidence: nil, outcome: outcome)
   let health = try await f.store.accountHealth(id: failed.owner.identity)
   #expect(health.cooldowns.count == 1 && !health.authenticationRejected)
@@ -232,7 +236,8 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   }
   let candidate = try await f.command("health-healthy")
   await f.store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock)
   let healthy = try await reopened.admitSelectingAccount(candidate)
   #expect(healthy.owner.identity != failed.owner.identity)
   #expect(try await reopened.accountHealth(id: failed.owner.identity) == health)
@@ -297,5 +302,37 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
     #expect(admitted.owner.identity == "a")
     try await f.store.finalize(attempt: admitted.attempt, evidence: nil)
   }
+  await f.close()
+}
+
+@Test func accountCooldownRejectsPinnedDispatchUntilExactEndAcrossRestart() async throws {
+  let time = TestWallClock()
+  let f = try await RoutingFixture.make(clock: time.clock)
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let failed = try await f.store.admitSelectingAccount(f.command("cooldown-start"))
+  let identity = try routeIdentity(failed)
+  try await f.store.finalize(
+    attempt: failed.attempt, evidence: nil,
+    outcome: .init(
+      failure: .rateLimited, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 60))
+  time.advance(seconds: 59)
+  let blocked = try await f.command("cooldown-blocked", connection: identity, continuation: true)
+  await #expect(throws: AccountDispatchError.unavailable) {
+    try await f.store.admitSelectingAccount(blocked)
+  }
+  await #expect(throws: ExecutionError.unknownAttempt) {
+    try await f.store.snapshot(attempt: "cooldown-blocked")
+  }
+  await f.store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: time.clock)
+  #expect(try await reopened.accountHealth(id: identity.id).cooldowns.count == 1)
+  time.advance(seconds: 1)
+  #expect(try await reopened.accountHealth(id: identity.id).cooldowns.isEmpty)
+  // The prepared snapshot is still current: the durable cooldown alone blocked admission.
+  let admitted = try await reopened.admitSelectingAccount(blocked)
+  #expect(admitted.owner.identity == identity.id)
+  try await reopened.finalize(attempt: admitted.attempt, evidence: routeUsage)
+  await reopened.close()
   await f.close()
 }

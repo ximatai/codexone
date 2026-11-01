@@ -303,18 +303,18 @@ import Testing
   #expect(ordered.owner == reordered.owner)
   #expect(ordered.pricingVersion == reordered.pricingVersion)
   #expect(ordered.policyVersion != reordered.policyVersion)
-  #expect(try modelCatalog(basic.models)["models"] == nil)
+  #expect(try modelCatalog(basic.models, now: testUnixSeconds)["models"] == nil)
   let partial =
     detailed.models + [
       SingleIdentityConfiguration.Model(
         id: "unconfigured", inputMicrosPerMillion: 0, outputMicrosPerMillion: 0)
     ]
-  #expect(try modelCatalog(partial)["data"]?.array?.count == 2)
-  #expect(try modelCatalog(partial)["models"] == nil)
+  #expect(try modelCatalog(partial, now: testUnixSeconds)["data"]?.array?.count == 2)
+  #expect(try modelCatalog(partial, now: testUnixSeconds)["models"] == nil)
   #expect(throws: (any Error).self) {
-    try modelCatalog(basic.models, requireCodexProfile: true)
+    try modelCatalog(basic.models, requireCodexProfile: true, now: testUnixSeconds)
   }
-  let directory = try modelCatalog(detailed.models, requireCodexProfile: true)
+  let directory = try modelCatalog(detailed.models, requireCodexProfile: true, now: testUnixSeconds)
   #expect(directory["data"]?.array?.count == 1)
   #expect(directory["data"]?.array?.first?["id"]?.string == "synthetic")
   let entry = try #require(directory["models"]?.array?.first)

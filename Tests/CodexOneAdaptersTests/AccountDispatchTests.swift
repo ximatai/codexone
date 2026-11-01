@@ -10,14 +10,18 @@ private struct DispatchFixture {
   let store: SQLiteExecutionStore
   let app: AccountCredentials
   let account: ManagedAccount
-  static func make(mode: AccountMode = .enabled, expires: Int64 = 2_000_000_000) async throws
+  static func make(
+    mode: AccountMode = .enabled, expires: Int64 = 2_000_000_000, clock: WallClock = testClock
+  ) async throws
     -> Self
   {
     let path = try temporaryExecutionPath()
-    let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    let store = try await SQLiteExecutionStore.open(
+      path: path, limits: syntheticLimits, clock: clock)
     let app = AccountCredentials(
       store: store,
-      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)))
+      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)),
+      clock: clock)
     var account = try await app.importVerified(
       id: "managed-account", namespace: "synthetic/managed-account",
       credential: AccountCredential(
@@ -48,13 +52,10 @@ private func dispatchAdmission(
 
 @Test func preparedDispatchCannotSurviveDisableRefreshReauthorizationOrExpiry() async throws {
   for change in ["disable", "refresh", "reauthorize", "expiry"] {
+    let time = TestWallClock()
     let f = try await DispatchFixture.make(
-      expires: change == "expiry" ? Int64(Date().timeIntervalSince1970) + 2 : 2_000_000_000)
-    let preparation = AccountCredentials(
-      store: f.store,
-      protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)),
-      now: { Int64(Date().timeIntervalSince1970) - 301 })
-    let work = try await preparation.prepareDispatch(id: f.account.id, continuation: false)
+      expires: change == "expiry" ? testUnixSeconds + 301 : 2_000_000_000, clock: time.clock)
+    let work = try await f.app.prepareDispatch(id: f.account.id, continuation: false)
     let snapshot = work.snapshot
     switch change {
     case "disable":
@@ -69,7 +70,7 @@ private func dispatchAdmission(
           accessToken: "synthetic-new-access", refreshToken: "synthetic-new-refresh", idToken: nil,
           expiresAtUnixSeconds: 2_000_000_000))
     default:
-      try await Task.sleep(for: .milliseconds(2100))
+      time.advance(seconds: 301)  // Exactly at expiry, atomic admission must fail closed.
     }
     await #expect(throws: change == "expiry" ? ExecutionError.denied : ExecutionError.conflict) {
       try await f.store.admit(dispatchAdmission("stale", work: work, snapshot: snapshot))
@@ -175,9 +176,9 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
       + "PRAGMA user_version=\(version)"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
-    try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+    try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits, clock: testClock)
   }
-  try await SQLiteExecutionStore.migrate(path: f.path)
+  try await SQLiteExecutionStore.migrate(path: f.path, clock: testClock)
   let directory = (f.path as NSString).deletingLastPathComponent
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
     $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
@@ -197,13 +198,14 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   #expect(String(cString: sqlite3_column_text(statement, 2)) == "refreshing")
   sqlite3_finalize(statement)
   sqlite3_close(db)
-  let reopened = try await SQLiteExecutionStore.open(path: f.path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.snapshot(attempt: "historical").state == .unknown)
   #expect(try await reopened.snapshot(attempt: "historical").admission.accountSnapshot == nil)
   #expect(
     try await reopened.accountCredential(id: f.account.id).account.authorization == .authUncertain)
   await reopened.close()
-  try await SQLiteExecutionStore.migrate(path: f.path)
+  try await SQLiteExecutionStore.migrate(path: f.path, clock: testClock)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).filter {
       $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
@@ -214,7 +216,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
 @Test func maximumManagedNamespaceCanAdmitBindAndResolveWithoutWideningOtherIDs() async throws {
   let f = try await DispatchFixture.make()
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32))
-  let app = AccountCredentials(store: f.store, protection: cipher)
+  let app = AccountCredentials(store: f.store, protection: cipher, clock: testClock)
   let namespace = "synthetic/" + String(repeating: "n", count: 502)
   #expect(namespace.utf8.count == 512)
   let account = try await app.importVerified(
@@ -248,7 +250,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
     let app = AccountCredentials(
       store: f.store,
       protection: try AccountCredentialCipher(hexKey: String(repeating: "7c", count: 32)),
-      now: { 2_000_000_000 - remaining })
+      clock: WallClock { TimeInterval(2_000_000_000 - remaining) })
     if remaining > 300 {
       #expect(
         try await app.prepareDispatch(id: f.account.id, continuation: false).account.id

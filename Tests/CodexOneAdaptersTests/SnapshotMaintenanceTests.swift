@@ -19,7 +19,8 @@ private func privateSnapshotRoot() throws -> String {
   try FileManager.default.createDirectory(
     atPath: root + "/source", withIntermediateDirectories: false,
     attributes: [.posixPermissions: 0o700])
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   _ = try await store.createKey(
     id: "key", principal: "p", digest: String(repeating: "a", count: 64),
     policy: .init(models: ["m"], limits: syntheticLimits))
@@ -27,20 +28,22 @@ private func privateSnapshotRoot() throws -> String {
   try await store.bind(attempt: "in-flight", object: .init(type: "response", rawID: "old-response"))
   await #expect(throws: ExecutionError.instanceLocked) {
     try await SQLiteSnapshotMaintenance.backup(
-      path: path, destination: root + "/online", protection: nil)
+      path: path, destination: root + "/online", protection: nil, clock: testClock)
   }
   await store.close()
   let manifest = try await SQLiteSnapshotMaintenance.backup(
-    path: path, destination: root + "/backup", protection: nil)
+    path: path, destination: root + "/backup", protection: nil, clock: testClock)
   #expect(manifest.schema == 10 && manifest.databaseBytes > 0)
-  let current = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let current = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   try await current.admit(admission("absent-after-snapshot"))
   await current.close()
   let destination = root + "/restored/core.sqlite"
   let report = try await SQLiteSnapshotMaintenance.restore(
-    bundle: root + "/backup", path: destination, protection: nil)
+    bundle: root + "/backup", path: destination, protection: nil, clock: testClock)
   #expect(report.backupID == manifest.id && report.baseline == nil)
-  let restored = try await SQLiteExecutionStore.open(path: destination, limits: syntheticLimits)
+  let restored = try await SQLiteExecutionStore.open(
+    path: destination, limits: syntheticLimits, clock: testClock)
   #expect(restored.isAvailable && !restored.isAdmissionReady)
   #expect(try await restored.snapshot(attempt: "in-flight").state == .unknown)
   await #expect(throws: ExecutionError.unknownAttempt) {
@@ -61,15 +64,17 @@ private func privateSnapshotRoot() throws -> String {
     restoreID: report.id, auditReference: "synthetic-ticket-1", missingUnresolvedRequests: 2,
     missingUnresolvedMicros: 25, freezeUntilUnixSeconds: report.minimumFreezeUntilUnixSeconds)
   let reconciled = try await SQLiteSnapshotMaintenance.reconcile(
-    path: destination, baseline: baseline)
+    path: destination, baseline: baseline, clock: testClock)
   #expect(reconciled.baseline == baseline)
   #expect(
-    try await SQLiteSnapshotMaintenance.reconcile(path: destination, baseline: baseline)
+    try await SQLiteSnapshotMaintenance.reconcile(
+      path: destination, baseline: baseline, clock: testClock)
       == reconciled)
-  let frozen = try await SQLiteExecutionStore.open(path: destination, limits: syntheticLimits)
+  let frozen = try await SQLiteExecutionStore.open(
+    path: destination, limits: syntheticLimits, clock: testClock)
   #expect(!frozen.isAdmissionReady)
   await frozen.close()
-  let state = try await SQLiteSnapshotMaintenance.status(path: destination)
+  let state = try await SQLiteSnapshotMaintenance.status(path: destination, clock: testClock)
   #expect(state?.unresolvedRequests == 2 && state?.unresolvedMicros == 25)
 }
 
@@ -78,7 +83,8 @@ private func privateSnapshotRoot() throws -> String {
   defer { try? FileManager.default.removeItem(atPath: root) }
   let path = root + "/core.sqlite"
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let context = try AccountCredentialContext(
     identity: "account", namespace: "synthetic/account", version: 1)
   let credential = try AccountCredential(
@@ -90,27 +96,29 @@ private func privateSnapshotRoot() throws -> String {
   await store.close()
   await #expect(throws: ExecutionError.unauthorized) {
     try await SQLiteSnapshotMaintenance.backup(
-      path: path, destination: root + "/missing-key", protection: nil)
+      path: path, destination: root + "/missing-key", protection: nil, clock: testClock)
   }
   let manifest = try await SQLiteSnapshotMaintenance.backup(
-    path: path, destination: root + "/backup", protection: cipher)
+    path: path, destination: root + "/backup", protection: cipher, clock: testClock)
   #expect(manifest.requiredKeyIDs == [cipher.keyID])
   let wrong = try AccountCredentialCipher(hexKey: String(repeating: "6b", count: 32))
   await #expect(throws: ExecutionError.invalidCommand) {
     try await SQLiteSnapshotMaintenance.restore(
-      bundle: root + "/backup", path: root + "/wrong/core.sqlite", protection: wrong)
+      bundle: root + "/backup", path: root + "/wrong/core.sqlite", protection: wrong,
+      clock: testClock)
   }
   #expect(!FileManager.default.fileExists(atPath: root + "/wrong"))
   let destination = root + "/restored/core.sqlite"
   _ = try await SQLiteSnapshotMaintenance.restore(
-    bundle: root + "/backup", path: destination, protection: cipher)
-  let restored = try await SQLiteExecutionStore.open(path: destination, limits: syntheticLimits)
+    bundle: root + "/backup", path: destination, protection: cipher, clock: testClock)
+  let restored = try await SQLiteExecutionStore.open(
+    path: destination, limits: syntheticLimits, clock: testClock)
   #expect(
     try await restored.accountCredential(id: "account").account.authorization == .requiresAuth)
   await restored.close()
   await #expect(throws: ExecutionError.conflict) {
     try await SQLiteSnapshotMaintenance.restore(
-      bundle: root + "/backup", path: destination, protection: cipher)
+      bundle: root + "/backup", path: destination, protection: cipher, clock: testClock)
   }
   let file = root + "/backup/snapshot.sqlite"
   let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: file))
@@ -119,7 +127,8 @@ private func privateSnapshotRoot() throws -> String {
   try handle.close()
   await #expect(throws: ExecutionError.invalidCommand) {
     try await SQLiteSnapshotMaintenance.restore(
-      bundle: root + "/backup", path: root + "/corrupt/core.sqlite", protection: cipher)
+      bundle: root + "/backup", path: root + "/corrupt/core.sqlite", protection: cipher,
+      clock: testClock)
   }
   #expect(!FileManager.default.fileExists(atPath: root + "/corrupt"))
 }
@@ -130,7 +139,7 @@ private func privateSnapshotRoot() throws -> String {
   let path = root + "/core.sqlite"
   try Data("synthetic".utf8).write(to: URL(fileURLWithPath: path + ".restore-pending"))
   await #expect(throws: SnapshotMaintenanceError.self) {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
   }
   #expect(!FileManager.default.fileExists(atPath: path))
 }
@@ -138,39 +147,44 @@ private func privateSnapshotRoot() throws -> String {
 @Test func reconciliationRejectsWrongIdentityAndEarlyWindowWithoutGloballyBlockingOnGap()
   async throws
 {
+  let time = TestWallClock()
   let root = try privateSnapshotRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let source = root + "/core.sqlite"
-  let store = try await SQLiteExecutionStore.open(path: source, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: source, limits: syntheticLimits, clock: time.clock)
   await store.close()
   _ = try await SQLiteSnapshotMaintenance.backup(
-    path: source, destination: root + "/backup", protection: nil)
+    path: source, destination: root + "/backup", protection: nil, clock: time.clock)
   let path = root + "/restored/core.sqlite"
   let report = try await SQLiteSnapshotMaintenance.restore(
-    bundle: root + "/backup", path: path, protection: nil)
+    bundle: root + "/backup", path: path, protection: nil, clock: time.clock)
   let wrong = try RestoreBaseline(
     restoreID: UUID().uuidString, auditReference: "ticket", missingUnresolvedRequests: 0,
     missingUnresolvedMicros: 0, freezeUntilUnixSeconds: report.minimumFreezeUntilUnixSeconds)
   await #expect(throws: ExecutionError.conflict) {
-    try await SQLiteSnapshotMaintenance.reconcile(path: path, baseline: wrong)
+    try await SQLiteSnapshotMaintenance.reconcile(path: path, baseline: wrong, clock: time.clock)
   }
   let early = try RestoreBaseline(
     restoreID: report.id, auditReference: "ticket", missingUnresolvedRequests: 0,
     missingUnresolvedMicros: 0, freezeUntilUnixSeconds: report.restoredUnixSeconds)
   await #expect(throws: ExecutionError.conflict) {
-    try await SQLiteSnapshotMaintenance.reconcile(path: path, baseline: early)
+    try await SQLiteSnapshotMaintenance.reconcile(path: path, baseline: early, clock: time.clock)
   }
   let baseline = try RestoreBaseline(
     restoreID: report.id, auditReference: "external-audit-1", missingUnresolvedRequests: 3,
     missingUnresolvedMicros: 80, freezeUntilUnixSeconds: report.minimumFreezeUntilUnixSeconds)
-  _ = try await SQLiteSnapshotMaintenance.reconcile(path: path, baseline: baseline)
-  // Simulate the next UTC day only in the synthetic persisted time fixture; no product clock override.
-  let now = Int64(Date().timeIntervalSince1970)
-  try rawSQL(
-    path,
-    "UPDATE maintenance_state SET restore_json=json_set(restore_json,'$.snapshotUnixSeconds',\(now-172800),'$.restoredUnixSeconds',\(now-86400),'$.baseline.freezeUntilUnixSeconds',\(now/86400*86400))"
-  )
-  let ready = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  _ = try await SQLiteSnapshotMaintenance.reconcile(
+    path: path, baseline: baseline, clock: time.clock)
+  time.advance(seconds: report.minimumFreezeUntilUnixSeconds - testUnixSeconds - 1)
+  let frozen = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: time.clock)
+  #expect(!frozen.isAdmissionReady)
+  await frozen.close()
+  time.advance(seconds: 1)
+  let now = time.clock.unixSeconds
+  let ready = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: time.clock)
   #expect(ready.isAdmissionReady)
   let key = try await ready.createKey(
     id: "fresh", principal: "p", digest: String(repeating: "b", count: 64),
@@ -192,39 +206,44 @@ private func privateSnapshotRoot() throws -> String {
   let root = try privateSnapshotRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let path = root + "/core.sqlite"
-  let source = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let source = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   await source.close()
   _ = try await SQLiteSnapshotMaintenance.backup(
-    path: path, destination: root + "/first", protection: nil)
+    path: path, destination: root + "/first", protection: nil, clock: testClock)
   let restored = root + "/restored/core.sqlite"
   let report = try await SQLiteSnapshotMaintenance.restore(
-    bundle: root + "/first", path: restored, protection: nil)
+    bundle: root + "/first", path: restored, protection: nil, clock: testClock)
   let baseline = try RestoreBaseline(
     restoreID: report.id, auditReference: "audit-1", missingUnresolvedRequests: 4,
     missingUnresolvedMicros: 40, freezeUntilUnixSeconds: report.minimumFreezeUntilUnixSeconds)
-  _ = try await SQLiteSnapshotMaintenance.reconcile(path: restored, baseline: baseline)
+  _ = try await SQLiteSnapshotMaintenance.reconcile(
+    path: restored, baseline: baseline, clock: testClock)
   let amendment = try RestoreBaseline(
     restoreID: report.id, auditReference: "external-evidence-2", missingUnresolvedRequests: 2,
     missingUnresolvedMicros: 20, freezeUntilUnixSeconds: report.minimumFreezeUntilUnixSeconds,
     expectedRevision: 1)
-  let changed = try await SQLiteSnapshotMaintenance.reconcile(path: restored, baseline: amendment)
+  let changed = try await SQLiteSnapshotMaintenance.reconcile(
+    path: restored, baseline: amendment, clock: testClock)
   #expect(changed.baselineRevision == 2 && changed.unresolvedRequests == 2)
   #expect(
-    try await SQLiteSnapshotMaintenance.reconcile(path: restored, baseline: amendment) == changed)
+    try await SQLiteSnapshotMaintenance.reconcile(
+      path: restored, baseline: amendment, clock: testClock) == changed)
   await #expect(throws: ExecutionError.conflict) {
-    try await SQLiteSnapshotMaintenance.reconcile(path: restored, baseline: baseline)
+    try await SQLiteSnapshotMaintenance.reconcile(
+      path: restored, baseline: baseline, clock: testClock)
   }
   _ = try await SQLiteSnapshotMaintenance.backup(
-    path: restored, destination: root + "/second", protection: nil)
+    path: restored, destination: root + "/second", protection: nil, clock: testClock)
   let next = root + "/second-restore/core.sqlite"
   let inherited = try await SQLiteSnapshotMaintenance.restore(
-    bundle: root + "/second", path: next, protection: nil)
+    bundle: root + "/second", path: next, protection: nil, clock: testClock)
   #expect(inherited.unresolvedRequests == 2 && inherited.unresolvedMicros == 20)
   let drop = try RestoreBaseline(
     restoreID: inherited.id, auditReference: "forgotten-old-gap", missingUnresolvedRequests: 0,
     missingUnresolvedMicros: 0, freezeUntilUnixSeconds: inherited.minimumFreezeUntilUnixSeconds)
   await #expect(throws: ExecutionError.conflict) {
-    try await SQLiteSnapshotMaintenance.reconcile(path: next, baseline: drop)
+    try await SQLiteSnapshotMaintenance.reconcile(path: next, baseline: drop, clock: testClock)
   }
 }
 
@@ -232,14 +251,14 @@ private func privateSnapshotRoot() throws -> String {
   let root = try privateSnapshotRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let source = try await SQLiteExecutionStore.open(
-    path: root + "/core.sqlite", limits: syntheticLimits)
+    path: root + "/core.sqlite", limits: syntheticLimits, clock: testClock)
   await source.close()
   _ = try await SQLiteSnapshotMaintenance.backup(
-    path: root + "/core.sqlite", destination: root + "/bundle", protection: nil)
+    path: root + "/core.sqlite", destination: root + "/bundle", protection: nil, clock: testClock)
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await SQLiteSnapshotMaintenance.restore(
       bundle: root + "/bundle", path: root + "/new/core.sqlite", protection: nil,
-      syncParent: { _ in throw ExecutionError.storageUnavailable })
+      clock: testClock, syncParent: { _ in throw ExecutionError.storageUnavailable })
   }
   #expect(try FileManager.default.contentsOfDirectory(atPath: root + "/new").isEmpty)
 }

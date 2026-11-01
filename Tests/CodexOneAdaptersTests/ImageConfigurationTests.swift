@@ -154,7 +154,7 @@ private func imagePool(_ mutate: (inout [String: Any]) -> Void = { _ in }) throw
   #expect(original.policyVersion != current.policyVersion)
   let catalog = try modelCatalog(
     changed.models.filter { current.models.contains($0.id) },
-    images: changed.imageGeneration!.effective(for: policy))
+    images: changed.imageGeneration!.effective(for: policy), now: testUnixSeconds)
   #expect(Set(catalog["data"]!.array!.compactMap { $0["id"]?.string }) == current.models)
   let explicit = ManagedKey(
     id: key.id, principal: key.principal, revision: 1, enabled: true,

@@ -10,7 +10,8 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let reader = try await store.makeUsageReader()
   for id in ["old", "boundary", "intent", "settled"] {
     try await store.admit(admission(id))
@@ -55,7 +56,8 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   for id in ["first", "second"] {
     try await store.admit(admission(id))
     try await store.finalize(attempt: id, evidence: nil)
@@ -78,7 +80,7 @@ import Testing
     let store = try await SQLiteExecutionStore.open(
       path: path,
       limits: .init(requests: 100, active: 10, unresolved: 2, budgetMicros: 1000),
-      unresolvedCapacity: 2)
+      unresolvedCapacity: 2, clock: testClock)
     for i in 0..<2 {
       try await store.admit(
         admission("a\(i)", principal: "p\(i)", identity: sameIdentity ? "same" : "i\(i)"))
@@ -104,7 +106,7 @@ import Testing
   for sameIdentity in [false, true] {
     let path = try temporaryExecutionPath()
     let limits = ExecutionLimits(requests: 100, active: 10, unresolved: 32, budgetMicros: 1000)
-    let store = try await SQLiteExecutionStore.open(path: path, limits: limits)
+    let store = try await SQLiteExecutionStore.open(path: path, limits: limits, clock: testClock)
     for i in 0..<35 {
       try await store.admit(
         admission("a\(i)", principal: "p\(i)", identity: sameIdentity ? "same" : "i\(i)"))
@@ -118,7 +120,7 @@ import Testing
     try await store.admit(
       admission("principal-unblocked", principal: "unchanged", identity: "fresh"))
     await store.close()
-    let reopened = try await SQLiteExecutionStore.open(path: path, limits: limits)
+    let reopened = try await SQLiteExecutionStore.open(path: path, limits: limits, clock: testClock)
     #expect(reopened.limits.unresolved == 32 && reopened.unresolvedCapacity == 1024)
     await reopened.close()
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
@@ -132,13 +134,14 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let reader = try await store.makeUsageReader()
   try await store.admit(admission("partial"))
   try await store.finalize(attempt: "partial", evidence: usage(amount: 2, complete: false))
   #expect(try await store.releaseUnknown(beforeUnixSeconds: Int64.max, expectedCount: 1) == 1)
   #expect(try await store.snapshot(attempt: "partial").usage == usage(amount: 2, complete: false))
-  let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+  let hour = testUnixSeconds / 3600 * 3600
   let report = try await reader.queryUsage(
     .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
   #expect(
@@ -163,7 +166,7 @@ import Testing
   let store = try await SQLiteExecutionStore.open(
     path: path,
     limits: .init(requests: 100, active: 10, unresolved: 100, budgetMicros: 1000),
-    unresolvedCapacity: 100)
+    unresolvedCapacity: 100, clock: testClock)
   let reader = try await store.makeUsageReader()
   try await store.admit(admission("intent"))
   let record = RestoreRecord(

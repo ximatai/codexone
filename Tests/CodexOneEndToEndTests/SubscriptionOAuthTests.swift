@@ -57,7 +57,8 @@ import Testing
   async throws
 {
   for mode in [
-    "account", "subject", "audience", "expired", "missing", "malformed", "oversized", "empty-type",
+    "account", "subject", "audience", "expired", "at-expiry", "missing", "malformed", "oversized",
+    "empty-type",
     "abort", "private-error", "auth-required", "revoked", "contradictory-rejection",
     "auth-marker-failure",
   ] {
@@ -71,7 +72,8 @@ import Testing
       case "subject": plan = .reply(try oauthTokens(subject: "other-user"))
       case "audience": plan = .reply(try oauthTokens(idAudience: "other-client"))
       case "expired":
-        plan = .reply(try oauthTokens(accessExpiry: Int64(Date().timeIntervalSince1970) - 60))
+        plan = .reply(try oauthTokens(accessExpiry: testUnixSeconds - 60))
+      case "at-expiry": plan = .reply(try oauthTokens(accessExpiry: testUnixSeconds))
       case "missing": plan = .reply(try oauthTokens(missingAccount: true))
       case "oversized": plan = .oversized
       case "empty-type": plan = .reply(try oauthTokens(), type: "")
@@ -212,14 +214,15 @@ func realOAuthHeaderAndProgressingBodyDeadlinesAndShutdownCloseSockets() async t
 
 @Test(.timeLimit(.minutes(1)))
 func realOAuthLoginRequiresExpectedNonceAudienceAndCurrentMatchingClaims() async throws {
-  for mode in ["nonce", "audience", "scope", "expired", "issuer", "algorithm"] {
+  for mode in ["nonce", "audience", "scope", "expired", "at-expiry", "issuer", "algorithm"] {
     try await withOAuth { h in
       let bytes: Data
       switch mode {
       case "nonce": bytes = try oauthTokens(nonce: String(repeating: "x", count: 43))
       case "audience": bytes = try oauthTokens(idAudience: "other-client")
       case "scope": bytes = try oauthTokens(accessAccount: "other-workspace")
-      case "expired": bytes = try oauthTokens(idExpiry: Int64(Date().timeIntervalSince1970) - 60)
+      case "expired": bytes = try oauthTokens(idExpiry: testUnixSeconds - 60)
+      case "at-expiry": bytes = try oauthTokens(idExpiry: testUnixSeconds)
       case "issuer": bytes = try oauthTokens(idIssuer: "https://foreign.example")
       default: bytes = try oauthTokens(idAlgorithm: "none")
       }
@@ -312,7 +315,8 @@ private struct AccountAdminClient: Sendable {
     let keys = try await KeyAdminAPI.load(path: path.path, store: h.store, executions: releasing)
     let authorization = try AccountAuthorizationSupervisor(application: h.app, provider: h.provider)
     let accounts = AccountAdminAPI(
-      store: h.store, authorization: authorization, refreshing: h.supervisor, credentials: h.app)
+      store: h.store, authorization: authorization, refreshing: h.supervisor, credentials: h.app,
+      clock: testClock)
     let port = AccountAdminPort()
     let admin = AdminService(
       group: h.group, port: 0, reportProvider: { .init(checks: []) }, keys: keys,
@@ -539,13 +543,13 @@ func subscriptionDataAccessUsesVerifiedScopeAndSeparatesSyntheticTargets() async
         try h.provider.dataAccess(work: work, target: .syntheticLoopback(port: port))
       }
     }
-    let production = try SubscriptionOAuthProvider(group: h.group)
+    let production = try SubscriptionOAuthProvider(group: h.group, clock: testClock)
     #expect(throws: AccountDispatchError.unavailable) {
       try production.dataAccess(work: work, target: .syntheticLoopback(port: 12345))
     }
     #expect(throws: AccountDispatchError.unavailable) { try production.dataAccess(work: work) }
     let claims = try SubscriptionClaims.idToken(
-      #require(login.credential.idToken), nonce: nil, requireCurrent: false)
+      #require(login.credential.idToken), nonce: nil, requireCurrent: false, now: testUnixSeconds)
     let productionNamespace = try production.identityNamespace(claims)
     let productionAccount = try await h.app.importVerified(
       id: "production-fixture", namespace: productionNamespace, credential: login.credential)
@@ -567,7 +571,7 @@ func subscriptionDataAccessRejectsChangedScopeAndAcceptsExpiredTrustedIDBaseline
   for mode in ["account", "subject", "namespace", "expired-id", "expired-access", "missing-id"] {
     try await withOAuth { h in
       let login = try await h.login()
-      let now = Int64(Date().timeIntervalSince1970)
+      let now = testUnixSeconds
       let data = try oauthTokens(
         subject: mode == "subject" ? "other-subject" : "synthetic-user",
         accessExpiry: mode == "expired-access" ? now - 1 : now + 3600,
