@@ -312,8 +312,18 @@ export function useAccounts() {
       value = callback.trim();
     clearFlow();
     await mutation(
-      (csrf, signal) =>
-        api.completeAuthorization(pending.flowID, value, csrf, signal),
+      async (csrf, signal) => {
+        try {
+          return await api.completeAuthorization(
+            pending.flowID,
+            value,
+            csrf,
+            signal,
+          );
+        } finally {
+          void api.discardAuthorization(pending.flowID, csrf).catch(() => {});
+        }
+      },
       pending.accountID
         ? "重新授权已完成，账号身份与使用策略保持不变。"
         : "授权已验证并保存，新账号默认禁用。",

@@ -12,6 +12,7 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     let nonce: String
     let verifier: String
     var deadline: ContinuousClock.Instant
+    var consumed = false
     var result: AccountAuthorizationStatus.State = .pending
     var userCode: String?
     var accountID: String?
@@ -273,10 +274,12 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     flows[id]?.result = flow.deadline <= now() ? .expired : .failed
     flows[id]?.userCode = nil
     flows[id]?.failureCode =
-      error is AccountDeviceAuthorizationError
-      ? "device_code_unavailable"
-      : error as? AccountRefreshError == .conflict || error as? ExecutionError == .conflict
-        ? "revision_conflict" : "authorization_failed"
+      flow.deadline <= now()
+      ? nil
+      : error is AccountDeviceAuthorizationError
+        ? "device_code_unavailable"
+        : error as? AccountRefreshError == .conflict || error as? ExecutionError == .conflict
+          ? "revision_conflict" : "authorization_failed"
   }
   public func complete(owner: String, flowID: String, callbackURL: String) async throws
     -> ManagedAccount
@@ -287,12 +290,12 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     }
     guard completions < 4 else { throw AccountRefreshError.capacity }
     // Consume before parsing; retain the owner record so DELETE can stop an active callback exchange.
-    guard flow.result == .pending else { throw AccountRefreshError.conflict }
-    flows[flowID]?.result = .failed
+    guard flow.result == .pending, !flow.consumed else { throw AccountRefreshError.conflict }
+    flows[flowID]?.consumed = true
     guard flow.deadline > now() else { throw AccountRefreshError.conflict }
     let code: String
     do { code = try Self.code(callbackURL, expectedState: flow.state) } catch {
-      flows.removeValue(forKey: flowID)
+      fail(flowID, error: error)
       throw error
     }
     let (stop, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -300,7 +303,6 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     completions += 1
     defer {
       completions -= 1
-      flows.removeValue(forKey: flowID)
       finished(flowID)
     }
     do {
@@ -321,8 +323,12 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
       }
       try Task.checkCancellation()
       guard accepting, flows[flowID] != nil else { throw AccountRefreshError.closed }
-      return try await persist(verified, target: flow.target)
+      let account = try await persist(verified, target: flow.target)
+      flows[flowID]?.result = .completed
+      flows[flowID]?.accountID = account.id
+      return account
     } catch {
+      fail(flowID, error: error)
       if error is CancellationError || !accepting { throw AccountRefreshError.closed }
       throw Self.safe(error)
     }
