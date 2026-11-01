@@ -37,6 +37,8 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
   private let store: any AccountObservationStore
   private let application: AccountCredentials
   private let refresher: any AccountDispatchRefreshing
+  private let priming: (any QuotaPrimingScheduling)?
+  private let resetCredits: (any AccountResetCreditScheduling)?
   private let provider: any AccountQuotaProvider
   private let intervalMilliseconds: Int
   private let timeoutMilliseconds: Int
@@ -48,7 +50,8 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
     refresher: any AccountDispatchRefreshing, provider: any AccountQuotaProvider,
     intervalMilliseconds: Int = 60_000, timeoutMilliseconds: Int = 20_000,
     refreshWindowSeconds: Int64 = AccountObservationSupervisor.proactiveRefreshWindowSeconds,
-    clock: WallClock = .system
+    clock: WallClock = .system, resetCredits: (any AccountResetCreditScheduling)? = nil,
+    priming: (any QuotaPrimingScheduling)? = nil
   ) throws {
     guard (1...300_000).contains(intervalMilliseconds), (1...30_000).contains(timeoutMilliseconds),
       (0...86_400).contains(refreshWindowSeconds)
@@ -56,6 +59,8 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       throw QuotaObservationFailure.unavailable
     }
     self.refreshWindowSeconds = refreshWindowSeconds
+    self.priming = priming
+    self.resetCredits = resetCredits
     self.clock = clock
     self.store = store
     self.application = application
@@ -275,6 +280,10 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       guard isAccepting, !Task.isCancelled else { throw QuotaObservationFailure.closed }
       let stored = try await store.recordQuotaObservation(
         account: observed.1, atUnixSeconds: clock.unixSeconds, result: observed.0)
+      if stored.failure == nil { priming?.observedQuota(id: job.id) }
+      if (stored.quota?.availableResetCredits ?? 0) > 0 {
+        resetCredits?.observedResetCredits(id: job.id)
+      }
       finish(job, result: .success(stored))
     } catch {
       finish(job, result: .failure(error))

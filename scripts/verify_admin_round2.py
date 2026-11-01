@@ -118,7 +118,7 @@ def verify_accounts(probe):
 
 
 def verify_previous(binary, previous):
-    with tempfile.TemporaryDirectory(prefix='codexone-v10-upgrade-') as directory:
+    with tempfile.TemporaryDirectory(prefix='codexone-v11-upgrade-') as directory:
         root = Path(directory)
         state = root / 'state'
         env = environment(CODEXONE_DATA_DIRECTORY=str(state))
@@ -130,13 +130,13 @@ def verify_previous(binary, previous):
         database = state / 'core.sqlite'
         with sqlite3.connect(database) as db:
             previous_version = db.execute('PRAGMA user_version').fetchone()[0]
-            assert previous_version in (8,9)
+            assert previous_version in (8,9,10)
         before = hashlib.sha256(database.read_bytes()).digest()
         refused = subprocess.run([binary], env=env, capture_output=True, timeout=10)
         assert refused.returncode != 0 and hashlib.sha256(database.read_bytes()).digest() == before
         migrated = subprocess.run([binary, '--migrate'], env=env, capture_output=True, timeout=10)
         assert migrated.returncode == 0
-        backups = list(state.glob('core.sqlite.pre-v10-*.sqlite'))
+        backups = list(state.glob('core.sqlite.pre-v11-*.sqlite'))
         assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
         with sqlite3.connect(backups[0]) as db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == previous_version
@@ -146,13 +146,13 @@ def verify_previous(binary, previous):
         finally:
             release(process)
         with sqlite3.connect(database) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 10
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 11
             assert 'display_name' in [row[1] for row in db.execute('PRAGMA table_info(accounts)')]
         before = hashlib.sha256(database.read_bytes()).digest()
         refused = subprocess.run([previous], env=env, capture_output=True, timeout=10)
         assert refused.returncode != 0 and hashlib.sha256(database.read_bytes()).digest() == before
         assert not list(state.glob('*.partial'))
-        print(f'PASS: actual v{previous_version} binary startup control; v10 refuses unmigrated v{previous_version}; offline backup migration; v{previous_version} refuses v10 without database changes')
+        print(f'PASS: actual v{previous_version} binary startup control; v11 refuses unmigrated v{previous_version}; offline backup migration; v{previous_version} refuses v11 without database changes')
 
 
 if __name__ == '__main__':

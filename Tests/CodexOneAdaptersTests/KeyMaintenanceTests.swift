@@ -207,7 +207,7 @@ private func seedKeys(_ path: String, count: Int = 20) async throws {
   #expect(object["verifiedRestoreIDs"] as? [String] == [restored.id])
   #expect(object["verifiedLegacySHA256"] as? [String] == [hash.1])
   let restoredDB = try SQLiteConnection(path: root + "/drill/core.sqlite", existingOnly: true)
-  #expect(try restoredDB.scalar("PRAGMA user_version") == 10)
+  #expect(try restoredDB.scalar("PRAGMA user_version") == 11)
   restoredDB.shutdown()
   #expect(object["requiredCurrentKeyIDs"] as? [String] == [ring.keyID])
   #expect(

@@ -23,7 +23,7 @@ public struct ExecutionOwner: Sendable, Equatable, Codable {
   }
 }
 
-public enum ExecutionMode: String, Sendable, Codable { case generation, warmup, compact }
+public enum ExecutionMode: String, Sendable, Codable { case generation, warmup, compact, priming }
 
 public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let references: [ObjectBinding]?

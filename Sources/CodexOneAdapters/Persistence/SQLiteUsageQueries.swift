@@ -149,7 +149,7 @@ extension SQLiteUsageReader {
         unresolved: activity[at]?.1 ?? 0)
     }
     var sql = """
-      SELECT history.*, (SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id), (SELECT json_extract(metadata_json,'$.displayName') FROM managed_keys WHERE id=history.key_id) FROM (
+      SELECT history.*, COALESCE((SELECT json_extract(metadata_json,'$.principal') FROM managed_keys WHERE id=history.key_id),CASE WHEN history.mode='priming' THEN 'internal:quota-priming' END), (SELECT json_extract(metadata_json,'$.displayName') FROM managed_keys WHERE id=history.key_id) FROM (
       SELECT 'admitted' kind,'a:'||id cursor_id,id,created_at_epoch at_epoch,key_id,
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
         identity,request_id,CASE WHEN closed_unknown_at_epoch IS NOT NULL THEN 'closed_unknown' ELSE state END state,json_extract(outcome_json,'$.kind') outcome,

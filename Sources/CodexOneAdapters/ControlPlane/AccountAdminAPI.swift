@@ -4,6 +4,8 @@ import Vapor
 
 /// Registers only beneath the shared, authenticated management route group.
 public struct AccountAdminAPI: Sendable {
+  private let priming: (any QuotaPrimingExecuting)?
+  private let resetCredits: (any AccountResetCreditManaging)?
   private let clock: WallClock
   private let credentials: AccountCredentials?
   private let store: any AccountGovernanceStore
@@ -13,8 +15,12 @@ public struct AccountAdminAPI: Sendable {
   public init(
     store: any AccountGovernanceStore, authorization: any AccountAuthorizing,
     refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil,
-    credentials: AccountCredentials? = nil, clock: WallClock = .system
+    credentials: AccountCredentials? = nil, clock: WallClock = .system,
+    resetCredits: (any AccountResetCreditManaging)? = nil,
+    priming: (any QuotaPrimingExecuting)? = nil
   ) {
+    self.priming = priming
+    self.resetCredits = resetCredits
     self.clock = clock
     self.credentials = credentials
     self.store = store
@@ -40,6 +46,63 @@ public struct AccountAdminAPI: Sendable {
           "accounts": .array(metadata),
           "nextCursor": accounts.count == 64 ? .string(accounts.last!.id) : .null,
         ]))
+    }
+    routes.get(":id", "quota-priming") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))
+    }
+    routes.put(":id", "quota-priming") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let body = try Self.body(request, allowed: ["revision", "enabled", "model", "message"])
+      guard let revision = body["revision"]?.integer, let enabled = body["enabled"]?.bool,
+        let model = body["model"]?.string, let message = body["message"]?.string,
+        priming?.models.contains(model) == true, let store = store as? any QuotaPrimingStore
+      else { throw ExecutionError.invalidCommand }
+      _ = try await store.setQuotaPrimingSettings(
+        id: request.parameters.get("id") ?? "", revision: revision,
+        settings: .init(enabled: enabled, model: model, message: message))
+      return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))
+    }
+    routes.get(":id", "reset-credits") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      guard let resetCredits else { throw QuotaObservationFailure.closed }
+      let id = request.parameters.get("id") ?? ""
+      let list = try await resetCredits.listResetCredits(id: id)
+      var dto = try JSONValue.decode(JSONEncoder().encode(list)).object!
+      dto["state"] = try await self.resetCreditStateDTO(id: id)
+      return try Self.response(.object(dto))
+    }
+    routes.get(":id", "reset-credits", "state") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      return try await Self.response(
+        self.resetCreditStateDTO(id: request.parameters.get("id") ?? ""))
+    }
+    routes.put(":id", "reset-credits", "settings") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let body = try Self.body(request, allowed: ["revision", "autoUseBeforeExpiry", "leadHours"])
+      guard let revision = body["revision"]?.integer,
+        let enabled = body["autoUseBeforeExpiry"]?.bool,
+        let hours = body["leadHours"]?.integer, (1...168).contains(hours),
+        let resetStore = store as? any AccountResetCreditStore
+      else { throw ExecutionError.invalidCommand }
+      let id = request.parameters.get("id") ?? ""
+      _ = try await resetStore.setResetCreditSettings(
+        id: id, revision: revision,
+        settings: .init(autoUseBeforeExpiry: enabled, leadHours: Int(hours)))
+      return try await Self.response(self.resetCreditStateDTO(id: id))
+    }
+    routes.post(":id", "reset-credits", "consume") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let body = try Self.body(request, allowed: [], optional: ["creditID"])
+      if let value = body["creditID"] {
+        guard let id = value.string, ResetCredit.validIdentifier(id) else {
+          throw ExecutionError.invalidCommand
+        }
+      }
+      guard let resetCredits else { throw QuotaObservationFailure.closed }
+      let result = try await resetCredits.consumeResetCredit(
+        id: request.parameters.get("id") ?? "", creditID: body["creditID"]?.string)
+      return try Self.response(JSONValue.decode(JSONEncoder().encode(result)))
     }
     routes.get(":id", "observation") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
@@ -151,6 +214,33 @@ public struct AccountAdminAPI: Sendable {
       await authorization.discard(owner: owner, flowID: id)
       return try Self.response(.object(["discarded": .bool(true)]))
     }
+  }
+  private func primingDTO(id: String) async throws -> JSONValue {
+    guard let store = store as? any QuotaPrimingStore else { throw QuotaObservationFailure.closed }
+    let state = try await store.quotaPrimingState(id: id)
+    return .object([
+      "revision": .number(Decimal(state.revision)),
+      "settings": try JSONValue.decode(JSONEncoder().encode(state.settings)),
+      "models": .array((priming?.models ?? []).map { .string($0) }),
+      "defaultModel": priming?.defaultModel.map { .string($0) } ?? .null,
+      "lastAttemptAt": state.lastAttemptAt.map { .number(Decimal($0)) } ?? .null,
+      "lastResult": state.lastResult.map { .string($0) } ?? .null,
+      "attention": state.attention.map { .string($0) } ?? .null,
+    ])
+  }
+  private func resetCreditStateDTO(id: String) async throws -> JSONValue {
+    guard let resetStore = store as? any AccountResetCreditStore else {
+      throw QuotaObservationFailure.closed
+    }
+    let state = try await resetStore.resetCreditState(id: id)
+    return .object([
+      "revision": .number(Decimal(state.revision)),
+      "settings": try JSONValue.decode(JSONEncoder().encode(state.settings)),
+      "pending": .bool(state.intent != nil),
+      "pendingCreditID": state.intent?.creditID.map { .string($0) } ?? .null,
+      "lastCode": state.lastCode.map { .string($0.rawValue) } ?? .null,
+      "lastAttemptAt": state.lastAttemptAt.map { .number(Decimal($0)) } ?? .null,
+    ])
   }
   private func observability(id: String, detail: Bool) async throws -> JSONValue {
     guard let observations = store as? any AccountObservationStore,

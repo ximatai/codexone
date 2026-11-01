@@ -77,7 +77,7 @@ struct HTTPResponseExecution: Sendable {
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
-    guard request.mode == .generation || request.streamCompaction else {
+    guard request.mode == .generation || request.mode == .priming || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
     let model = try executionModel(request)

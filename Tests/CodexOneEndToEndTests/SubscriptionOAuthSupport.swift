@@ -16,7 +16,7 @@ enum OAuthPlan: Sendable {
   case reply(Data, type: String = "application/json", status: Int = 200)
   case replyAfterDelay(Data)
   case redirect(String)
-  case headersStall, bodyDrip, oversized, abort
+  case headersStall, bodyDrip, oversized, abort, redeemWithLostResponse
 }
 func oauthJWT(_ claims: [String: Any], algorithm: String = "RS256") throws -> String {
   let header = SubscriptionOAuthProvider.base64URL(
@@ -71,6 +71,7 @@ final class OAuthServer: Sendable {
     var expectedVerifier: String? = oauthVerifier
     var expectedChallenge: String?
     var quotaAuthorization: (String, String)?
+    var redemptionRequests: [(String, String?)] = []
     var channels: [ObjectIdentifier: any Channel] = [:]
   }
   let state: OAuthServerShared
@@ -155,6 +156,16 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
           promise: nil)
         drip(context)
       case .oversized: reply(context, data: Data(repeating: 32, count: 65_537))
+      case .redeemWithLostResponse:
+        let duplicate = state.mutex.withLock { value in
+          guard let last = value.redemptionRequests.last else { return false }
+          return value.redemptionRequests.filter { $0.0 == last.0 }.count > 1
+        }
+        if duplicate {
+          reply(context, data: Data("{\"code\":\"already_redeemed\",\"windows_reset\":0}".utf8))
+        } else {
+          context.close(promise: nil)
+        }
       case .abort: context.close(promise: nil)
       }
     }
@@ -162,12 +173,29 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
   private func validateRequest() -> Bool {
     if let head, head.method == .GET {
       let expected = state.mutex.withLock { $0.quotaAuthorization }
-      return head.uri == "/backend-api/wham/usage" && body.isEmpty
+      return ["/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits"].contains(
+        head.uri) && body.isEmpty
         && expected.map {
           head.headers["authorization"] == ["Bearer " + $0.0]
             && head.headers["chatgpt-account-id"] == [$0.1]
         } == true
         && head.headers["x-openai-codex-luna-reserve"].isEmpty
+    }
+    if let head, head.method == .POST,
+      head.uri == "/backend-api/wham/rate-limit-reset-credits/consume"
+    {
+      guard let fields = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+        let id = fields["redeem_request_id"], UUID(uuidString: id) != nil,
+        Set(fields.keys).isSubset(of: ["redeem_request_id", "credit_id"]),
+        head.headers["content-type"] == ["application/json"]
+      else { return false }
+      return state.mutex.withLock { value in
+        value.redemptionRequests.append((id, fields["credit_id"]))
+        return value.quotaAuthorization.map {
+          head.headers["authorization"] == ["Bearer " + $0.0]
+            && head.headers["chatgpt-account-id"] == [$0.1]
+        } == true
+      }
     }
     if let head, head.method == .POST, head.uri.hasPrefix("/api/accounts/deviceauth/") {
       guard head.headers["authorization"].isEmpty,

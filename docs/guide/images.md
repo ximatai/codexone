@@ -27,7 +27,7 @@
 
 非流式响应最多 48 MiB，原字节回传；200 且 data 至少含一个有效、非空 base64 b64_json 才判为结果成功。空 data/非 JSON 的 200 原样回传但结果记失败；超限为 502，未知责任保留。stream=true 时 SSE 原字节转发（包括注释、event 行、换行与 DONE），仅 image_generation.completed / image_edit.completed 加有效最终图片形成完成证据；预览、EOF 和 DONE 本身不授予成功。缺完成、提供者错误、畸形事件/图片或超限失败，不重放。SSE 单事件及总正文上限均为 48 MiB；此合成契约仍需真实提供者核对。
 
-原生 Images usage.input_tokens/output_tokens 映射到 imageInputTokens/imageOutputTokens；可选 input_tokens_details.text_tokens/image_tokens 映射到 imageInputTextTokens/imageInputImageTokens。图片数按有效 data[].b64_json（SSE 完成事件的 b64_json 或 data）计数。无可信计数时对应指标不可用，不填零；费用按图片模型费率向上取整估算，缺全部 token 时费用不可用。缺完整用量保持 partial/unknown；结果成功与结清独立。当前 schema v10 的 usage JSON 保留图片计数；新增可选计数不回填历史。原生证据携带可选 nativeImages 标记，仅对此类记录隐藏不适用的宿主指标；旧 Images→Responses 记录的宿主用量保持可见。
+原生 Images usage.input_tokens/output_tokens 映射到 imageInputTokens/imageOutputTokens；可选 input_tokens_details.text_tokens/image_tokens 映射到 imageInputTextTokens/imageInputImageTokens。图片数按有效 data[].b64_json（SSE 完成事件的 b64_json 或 data）计数。无可信计数时对应指标不可用，不填零；费用按图片模型费率向上取整估算，缺全部 token 时费用不可用。缺完整用量保持 partial/unknown；结果成功与结清独立。当前 schema v11 的 usage JSON 保留图片计数；新增可选计数不回填历史。原生证据携带可选 nativeImages 标记，仅对此类记录隐藏不适用的宿主指标；旧 Images→Responses 记录的宿主用量保持可见。
 
 Responses 托管 image_generation 工具仍单独解析和计量，图片 token 不加到宿主 token；宿主与工具费率分别估算后相加。工具模型缺省取部署默认值，须在 Key 有效 imageModels 内，对话模型须经 Key 授权并声明 imageGeneration。含图历史/图片工具可与 compact 和流式压缩组合；历史 image_generation_call 的 ID 仍须同主体/身份归属验证。图片内容与 prompt 不写入核心库。
 

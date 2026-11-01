@@ -135,7 +135,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       let now = db.clock.unixSeconds
       return try db.rows(
         """
-        SELECT a.id,a.key_id,json_extract(k.metadata_json,'$.principal'),json_extract(a.admission_json,'$.model'),
+        SELECT a.id,a.key_id,COALESCE(json_extract(k.metadata_json,'$.principal'),CASE WHEN json_extract(a.admission_json,'$.mode')='priming' THEN a.principal END),json_extract(a.admission_json,'$.model'),
           COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch,json_extract(k.metadata_json,'$.displayName')
         FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id LEFT JOIN accounts c ON c.id=a.identity
         WHERE a.state='intent' ORDER BY a.created_at_epoch DESC,a.id DESC LIMIT ?

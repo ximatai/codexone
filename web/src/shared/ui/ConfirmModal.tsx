@@ -11,6 +11,7 @@ export function ConfirmModal({
   children,
   destructive = false,
   returnFocusTo,
+  zIndex,
 }: {
   opened: boolean;
   title: string;
@@ -22,9 +23,11 @@ export function ConfirmModal({
   children: ReactNode;
   destructive?: boolean;
   returnFocusTo?: () => void;
+  zIndex?: number;
 }) {
   return (
     <Modal
+      zIndex={zIndex}
       removeScrollProps={{ removeScrollBar: false }}
       data-ui-overlay={opened || undefined}
       opened={opened}

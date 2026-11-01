@@ -167,6 +167,18 @@ export async function reviewFixture(page: Page) {
         },
       });
     }
+    if (path.endsWith("/quota-priming"))
+      return route.fulfill({
+        json: {
+          revision: 1,
+          settings: { enabled: false, model: null, message: "hello" },
+          models: ["synthetic-text"],
+          defaultModel: "synthetic-text",
+          lastAttemptAt: null,
+          lastResult: null,
+          attention: null,
+        },
+      });
     if (path.endsWith("/observation"))
       return route.fulfill({ json: observationFixture() });
     return route.fulfill({

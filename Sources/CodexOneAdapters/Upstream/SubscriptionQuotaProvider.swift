@@ -5,8 +5,10 @@ import NIOCore
 import ServiceLifecycle
 import Synchronization
 
-/// Passive quota GETs have their own network capacity; they cannot consume refresh slots.
-public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sendable {
+/// Quota and reset-credit I/O share bounded capacity independent of credential refresh.
+public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
+  AccountResetCreditProvider, Sendable
+{
   private struct State {
     var started = false
     var client: HTTPClient?
@@ -79,6 +81,27 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
     try await client.shutdown()
   }
   public func observe(_ work: AccountObservationWork) async throws -> SubscriptionQuota {
+    do { return try Self.parse(await request(work, endpoint: "usage")) } catch {
+      throw error as? QuotaObservationFailure ?? .invalidResponse
+    }
+  }
+  public func resetCredits(_ work: AccountObservationWork) async throws -> ResetCreditList {
+    try Self.parseResetCredits(await request(work, endpoint: "rate-limit-reset-credits"))
+  }
+  public func consumeResetCredit(_ work: AccountObservationWork, intent: ResetCreditIntent)
+    async throws -> ResetCreditResult
+  {
+    guard UUID(uuidString: intent.requestID) != nil,
+      intent.creditID.map({ ResetCredit.validIdentifier($0) }) ?? true
+    else { throw ExecutionError.invalidCommand }
+    var body: [String: JSONValue] = ["redeem_request_id": .string(intent.requestID)]
+    if let id = intent.creditID { body["credit_id"] = .string(id) }
+    return try Self.parseResetCreditResult(
+      await request(work, endpoint: "rate-limit-reset-credits/consume", body: .object(body)))
+  }
+  private func request(_ work: AccountObservationWork, endpoint: String, body: JSONValue? = nil)
+    async throws -> JSONValue
+  {
     let access = try verifier.quotaAccess(work: work, target: target)
     let client = try state.withLock { value in
       guard let client = value.client else { throw QuotaObservationFailure.closed }
@@ -88,12 +111,17 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
     }
     defer { state.withLock { $0.active -= 1 } }
     do {
-      return try await withThrowingTaskGroup(of: SubscriptionQuota.self) { tasks in
+      return try await withThrowingTaskGroup(of: JSONValue.self) { tasks in
         defer { tasks.cancelAll() }
         tasks.addTask { [timeoutMilliseconds] in
-          var request = HTTPClientRequest(url: access.baseURL)
-          request.method = .GET
+          var request = HTTPClientRequest(
+            url: String(access.baseURL.dropLast("usage".count)) + endpoint)
+          request.method = body == nil ? .GET : .POST
+          if let body {
+            request.body = .bytes(try body.data())
+          }
           request.headers = access.headers
+          if body != nil { request.headers.add(name: "content-type", value: "application/json") }
           request.headers.add(name: "accept", value: "application/json")
           request.headers.add(name: "user-agent", value: "codex-cli")
           let response = try await client.execute(
@@ -122,9 +150,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
               throw QuotaObservationFailure.invalidResponse
             }
           }
-          do { return try Self.parse(document) } catch {
-            throw QuotaObservationFailure.invalidResponse
-          }
+          return document
         }
         tasks.addTask { [timeoutMilliseconds] in
           try await Task.sleep(for: .milliseconds(timeoutMilliseconds))
@@ -137,6 +163,38 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
       if Task.isCancelled { throw QuotaObservationFailure.closed }
       throw error as? QuotaObservationFailure ?? .unavailable
     }
+  }
+  static func parseResetCredits(_ value: JSONValue) throws -> ResetCreditList {
+    guard let entries = value["credits"]?.array, entries.count <= 128,
+      let count = value["available_count"]?.integer, (0...128).contains(count)
+    else { throw QuotaObservationFailure.invalidResponse }
+    do {
+      func optional(_ object: JSONValue, _ key: String) throws -> String? {
+        guard let value = object[key], value != .null else { return nil }
+        guard let text = value.string else { throw QuotaObservationFailure.invalidResponse }
+        return text
+      }
+      let credits = try entries.map { entry in
+        guard let id = entry["id"]?.string, let type = entry["reset_type"]?.string,
+          let status = entry["status"]?.string, let granted = entry["granted_at"]?.string
+        else { throw QuotaObservationFailure.invalidResponse }
+        return try ResetCredit(
+          id: id, type: type, status: status, grantedAt: granted,
+          expiresAt: optional(entry, "expires_at"), title: optional(entry, "title"),
+          description: optional(entry, "description"))
+      }
+      return try ResetCreditList(credits: credits, availableCount: Int(count))
+    } catch { throw QuotaObservationFailure.invalidResponse }
+  }
+  static func parseResetCreditResult(_ value: JSONValue) throws -> ResetCreditResult {
+    guard let raw = value["code"]?.string else { throw QuotaObservationFailure.invalidResponse }
+    guard let code = ResetCreditCode(rawValue: raw), code != .unknown else {
+      return try .init(code: .unknown)
+    }
+    guard let windows = value["windows_reset"]?.integer, (0...128).contains(windows) else {
+      throw QuotaObservationFailure.invalidResponse
+    }
+    return try .init(code: code, windowsReset: Int(windows))
   }
   static func parse(_ value: JSONValue) throws -> SubscriptionQuota {
     guard value.object != nil else { throw QuotaObservationFailure.invalidResponse }
@@ -164,7 +222,8 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
       }
       return try .init(
         usedPercent: used, durationSeconds: integer(value["limit_window_seconds"]),
-        resetsAtUnixSeconds: integer(value["reset_at"]))
+        resetsAtUnixSeconds: integer(value["reset_at"]),
+        resetAfterSeconds: integer(value["reset_after_seconds"]))
     }
     func limit(_ value: JSONValue, id: String) throws -> SubscriptionQuotaLimit {
       guard value.object != nil else { throw QuotaObservationFailure.invalidResponse }
@@ -188,6 +247,15 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
         }
       }
     }
-    return try .init(limits: limits)
+    let resetCount: Int?
+    if let credits = value["rate_limit_reset_credits"], credits != .null {
+      guard let count = credits["available_count"]?.integer, (0...128).contains(count) else {
+        throw QuotaObservationFailure.invalidResponse
+      }
+      resetCount = Int(count)
+    } else {
+      resetCount = nil
+    }
+    return try .init(limits: limits, availableResetCredits: resetCount)
   }
 }

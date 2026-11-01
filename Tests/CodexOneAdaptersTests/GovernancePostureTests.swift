@@ -205,7 +205,7 @@ import Testing
       "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='unknown_since_epoch'") == 0)
   failed.shutdown()
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
+    $0.contains(".pre-v11-") && $0.hasSuffix(".sqlite")
   }
   #expect(backups.count == 1)
   let backup = try SQLiteConnection(readOnlyPath: directory + "/" + backups[0])
@@ -216,7 +216,7 @@ import Testing
   try rawSQL(path, "DROP TABLE usage_daily")
   try await SQLiteExecutionStore.migrate(path: path)
   let migrated = try SQLiteConnection(path: path)
-  #expect(try migrated.scalar("PRAGMA user_version") == 10)
+  #expect(try migrated.scalar("PRAGMA user_version") == 11)
   #expect(try migrated.scalar("PRAGMA auto_vacuum") == 2)
   migrated.shutdown()
 }

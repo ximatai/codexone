@@ -69,6 +69,7 @@ private final class PoolHTTPState: Sendable {
   struct State {
     var expected: [String: String] = [:]
     var calls: [Call] = []
+    var stall = false
     var invalid = 0
     var upgrades = 0
     var upgradeAccounts: [String] = []
@@ -142,6 +143,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
               body: body, headers: head.headers))
           return value.calls.count
         }
+        if state.value.withLock({ $0.stall }) { return }
         if let input = poolInput(request), input.hasPrefix("http"),
           let status = Int(input.dropFirst(4))
         {
@@ -354,7 +356,8 @@ private struct PoolHTTPHarness {
           withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in })
         ).flatMap { channel.pipeline.addHandler(http) }
       }
-      return channel.pipeline.configureHTTPServerPipeline().flatMap {
+      // Keep reading FIN while a synthetic provider deliberately withholds its response.
+      return channel.pipeline.configureHTTPServerPipeline(withPipeliningAssistance: false).flatMap {
         channel.pipeline.addHandler(http)
       }
     }.bind(host: "127.0.0.1", port: 0).get()
@@ -735,7 +738,8 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         value.calls.append(
           .init(
             account: account, path: "/backend-api/codex/responses",
-            previous: request["previous_response_id"]?.string))
+            previous: request["previous_response_id"]?.string,
+            body: Data(frame.unmaskedData.readableBytesView), headers: value.upgradeHeaders.last))
         return value.calls.count
       }
       if poolInput(request) == "abort" {
@@ -1799,5 +1803,148 @@ func poolNullModelScopesAuthorizeImagesAndToolsOnlyWithinConfiguredCatalog() asy
       }
       await h.close()
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func quotaPrimingUsesPinnedNormalResponsesAndPersistsUsage(_ transport: String)
+  async throws
+{
+  try await withOAuth { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, transport: transport)
+    let configuration = try JSONDecoder().decode(
+      AccountPoolConfiguration.self,
+      from: Data(
+        """
+        {"models":[{"id":"synthetic-text","inputMicrosPerMillion":1000000,"outputMicrosPerMillion":1000000,
+        "catalog":{"reasoningEfforts":["low","minimal","high"]}}],"reservedMicros":1,"upstreamTransport":"\(transport)"}
+        """.utf8))
+    let priming = SubscriptionWindowPriming(
+      group: oauth.group, configuration: configuration,
+      store: h.store, finalizer: h.finalizer, credentials: oauth.app, refresher: oauth.supervisor,
+      provider: oauth.provider, target: .syntheticLoopback(port: h.listener.localAddress!.port!),
+      clock: testClock)
+    let owner = Task { try await GatewayRuntime(services: [priming]).run(handleSignals: false) }
+    do {
+      let account = try await h.store.accountCredential(id: "b").account
+      _ = try await h.store.setQuotaPrimingSettings(
+        id: account.id, revision: account.revision,
+        settings: .init(enabled: true, model: "synthetic-text"))
+      let now = testClock.unixSeconds
+      _ = try await h.store.recordQuotaObservation(
+        account: account, atUnixSeconds: now,
+        result: .success(
+          .init(limits: [
+            .init(
+              id: "codex", allowed: true, limitReached: false,
+              primary: .init(
+                usedPercent: 0, durationSeconds: 18000, resetsAtUnixSeconds: now + 18000,
+                resetAfterSeconds: 18000),
+              secondary: .init(
+                usedPercent: 0, durationSeconds: 604800, resetsAtUnixSeconds: now + 604800,
+                resetAfterSeconds: 604800))
+          ])))
+      // Transport startup is local; wait for its accepting state without issuing requests.
+      try await awaitOAuth { priming.isAccepting }
+      try await priming.executePriming(
+        id: "b", settings: .init(enabled: true, model: "synthetic-text"))
+      #expect(h.calls.count == 1 && h.calls.first?.account == "synthetic-b")
+      let call = try #require(h.calls.first)
+      let body = try JSONValue.decode(try #require(call.body))
+      #expect(poolInput(body) == "hello" && body["store"] == .bool(false))
+      #expect(body["tools"]?.array?.isEmpty == true && body["max_output_tokens"] == nil)
+      #expect(body["reasoning"]?["effort"] == .string("minimal"))
+      #expect(call.headers?.first(name: "originator") == "codex_cli_rs")
+      #expect(call.headers?.first(name: "user-agent")?.hasPrefix("codex_cli_rs/") == true)
+      try await awaitOAuth { try await h.store.quotaPrimingState(id: "b").lastResult == "success" }
+      #expect(
+        try await h.store.perform {
+          try $0.scalar(
+            "SELECT COUNT(*) FROM attempts WHERE principal='internal:quota-priming' AND state='settled' AND estimated=3"
+          )
+        } == 1)
+      await #expect(throws: ExecutionError.denied) {
+        try await priming.executePriming(
+          id: "b", settings: .init(enabled: true, model: "synthetic-text"))
+      }
+      #expect(h.calls.count == 1)
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      await h.close()
+      throw error
+    }
+    owner.cancel()
+    _ = await owner.result
+    await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) func quotaPrimingShutdownClosesRealSocketAndRetainsUnknown()
+  async throws
+{
+  try await withOAuth { oauth in
+    let h = try await PoolHTTPHarness.open(oauth)
+    h.state.value.withLock { $0.stall = true }
+    let config = try JSONDecoder().decode(
+      AccountPoolConfiguration.self,
+      from: Data(
+        """
+        {"models":[{"id":"synthetic-text","inputMicrosPerMillion":1,"outputMicrosPerMillion":1}],"reservedMicros":1}
+        """.utf8))
+    let priming = SubscriptionWindowPriming(
+      group: oauth.group, configuration: config,
+      store: h.store, finalizer: h.finalizer, credentials: oauth.app, refresher: oauth.supervisor,
+      provider: oauth.provider, target: .syntheticLoopback(port: h.listener.localAddress!.port!),
+      clock: testClock)
+    let supervisor = QuotaPrimingSupervisor(store: h.store, executor: priming, clock: testClock)
+    let account = try await h.store.accountCredential(id: "b").account
+    _ = try await h.store.setQuotaPrimingSettings(
+      id: account.id, revision: account.revision,
+      settings: .init(enabled: true, model: "synthetic-text"))
+    let now = testClock.unixSeconds
+    _ = try await h.store.recordQuotaObservation(
+      account: account, atUnixSeconds: now,
+      result: .success(
+        .init(limits: [
+          .init(
+            id: "codex", allowed: true, limitReached: false,
+            primary: .init(
+              usedPercent: 0, durationSeconds: 18000, resetsAtUnixSeconds: now + 18000,
+              resetAfterSeconds: 18000), secondary: nil)
+        ])))
+    let owner = Task {
+      try await GatewayRuntime(services: [priming, supervisor]).run(handleSignals: false)
+    }
+    do {
+      try await awaitOAuth("priming transport accepting") {
+        priming.isAccepting && supervisor.isAccepting
+      }
+      supervisor.observedQuota(id: "b")
+      try await awaitOAuth("priming request sent") { h.calls.count == 1 }
+      owner.cancel()
+      _ = await owner.result
+      try await awaitOAuth("priming socket closed") {
+        h.state.value.withLock { $0.channels.isEmpty }
+      }
+      try await awaitOAuth("priming finalized") {
+        try await h.store.quotaPrimingState(id: "b").lastResult != "pending"
+      }
+      #expect(
+        try await h.store.perform {
+          try $0.scalar(
+            "SELECT COUNT(*) FROM attempts WHERE principal='internal:quota-priming' AND state='unknown'"
+          )
+        } == 1)
+      #expect(
+        try await h.store.quotaPrimingState(id: "b").windows["five_hour"]?.awaitingActive == true)
+      #expect(h.calls.count == 1)
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      await h.close()
+      throw error
+    }
+    await h.close()
   }
 }

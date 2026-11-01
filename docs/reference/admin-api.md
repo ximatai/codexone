@@ -13,6 +13,8 @@
 | `POST/GET/DELETE /api/session` | 登录、读取会话和退出；空闲 24 小时、最长 7 天 |
 | `/api/keys`、`/api/keys/options` | [创建、分页、revision 更新、轮换、归档/恢复](../guide/key-governance.md) |
 | `/api/accounts`、账号 authorization/refresh | [账号元数据、模式与一次性授权](account-credentials.md) |
+| `/api/accounts/:id/quota-priming` | [空闲窗口预热设置、模型验证与最近结果](specs/control-plane.md#a19账号空闲窗口预热设置) |
+| `/api/accounts/:id/reset-credits`、`/state`、`/consume`、`/settings` | [实时卡片、持久幂等消费与自动到期设置](specs/control-plane.md#a18账号重置卡) |
 | `/api/usage`、`/api/usage/keys`、`/api/usage/daily`、`/api/usage/in-flight` | [查询、按 Key 统计、日趋势与进行中](specs/usage.md) |
 | `/api/usage/headroom`、`/api/runtime/storage` | [治理余量与存储水位](../operations/storage-pressure.md) |
 | `/api/attention` | [待处理提醒](specs/control-plane.md) |

@@ -143,7 +143,7 @@ func rawSQL(_ path: String, _ sql: String) throws {
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   }
-  try rawSQL(path, "PRAGMA user_version=10")
+  try rawSQL(path, "PRAGMA user_version=11")
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
   await reopened.close()
   let legacy = try temporaryExecutionPath()

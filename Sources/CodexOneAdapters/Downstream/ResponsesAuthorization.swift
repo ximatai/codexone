@@ -43,6 +43,9 @@ enum ResponsesPolicy: Sendable {
   }
 }
 enum ResponsesGateway: Sendable {
+  case priming(
+    ExecutionCoordinator, ExecutionAdmission, AccountDispatchWork, SubscriptionOAuthProvider,
+    SubscriptionDataTarget)
   case single(SingleIdentityGateway)
   case pool(AccountPoolGateway, SubscriptionOAuthProvider, SubscriptionDataTarget)
   func execute(
@@ -53,6 +56,15 @@ enum ResponsesGateway: Sendable {
     operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
+    case .priming(let coordinator, let command, let work, let provider, let target):
+      guard mode == .priming, model == command.model, references.isEmpty else {
+        throw ExecutionError.denied
+      }
+      try await coordinator.execute(command) { context in
+        try await observeExecution(context) {
+          try await operation(context, provider.dataAccess(work: work, target: target))
+        }
+      }
     case .single(let gateway):
       try await gateway.execute(
         model: model, references: references, requestID: requestID, mode: mode,

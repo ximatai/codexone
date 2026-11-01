@@ -40,6 +40,15 @@ extension SQLiteExecutionStore: AccountObservationStore {
         try db.write(
           "INSERT INTO account_quota VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET record_json=excluded.record_json",
           [.text(account.id), .text(try encode(updated))])
+        var priming = try Self.loadQuotaPriming(db, account.id)
+        if !priming.windows.isEmpty {
+          let enabled = priming.settings.enabled
+          priming.observe(updated, now: db.clock.unixSeconds)
+          if enabled && !priming.settings.enabled {
+            try Self.bumpPrimingRevision(db, account.id)
+          }
+          try Self.saveQuotaPriming(db, account.id, priming)
+        }
         return updated
       }
     }

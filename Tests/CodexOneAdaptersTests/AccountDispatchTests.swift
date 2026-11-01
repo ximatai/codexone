@@ -181,7 +181,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path, clock: testClock)
   let directory = (f.path as NSString).deletingLastPathComponent
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
+    $0.contains(".pre-v11-") && $0.hasSuffix(".sqlite")
   }
   #expect(backups.count == 1)
   var db: OpaquePointer?
@@ -208,7 +208,7 @@ func legacyExplicitMigrationBacksUpPendingTruthBeforeV9StartupRecovery(version: 
   try await SQLiteExecutionStore.migrate(path: f.path, clock: testClock)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-      $0.contains(".pre-v10-") && $0.hasSuffix(".sqlite")
+      $0.contains(".pre-v11-") && $0.hasSuffix(".sqlite")
     }.count == 1)
   await f.close()
 }

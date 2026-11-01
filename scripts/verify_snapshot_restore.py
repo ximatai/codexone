@@ -86,7 +86,7 @@ def main():
         stopped(f.process);f.process = None
         bundle = f.root / 'bundle'
         manifest = command(binary, f.root / 'state', '--backup', bundle)
-        assert manifest['schema'] == 10 and len(manifest['databaseSHA256']) == 64
+        assert manifest['schema'] == 11 and len(manifest['databaseSHA256']) == 64
         assert hashlib.sha256((bundle / 'snapshot.sqlite').read_bytes()).hexdigest() == manifest['databaseSHA256']
         assert bundle.stat().st_mode & 511 == 448
         for path in bundle.iterdir():assert path.stat().st_mode & 511 == 384
