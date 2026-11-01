@@ -384,6 +384,9 @@ public actor AccountAuthorizationSupervisor: Service, AccountAuthorizing {
     if let failure = error as? AccountAuthorizationFailure {
       switch failure.code {
       case .identityMismatch, .revisionConflict: return .conflict
+      // A rejected code exchange means the user must start a new authorization, as before.
+      case .exchangeFailed where [400, 401].contains(failure.providerStatus ?? 0):
+        return .authorizationRequired
       default: return .unavailable
       }
     }

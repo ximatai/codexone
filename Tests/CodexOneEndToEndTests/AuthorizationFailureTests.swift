@@ -211,7 +211,9 @@ private final class AuthorizationLogs: Sendable {
           : SubscriptionOAuthProvider.callbackURI + "?state=" + state + "&code=synthetic-code"
         await #expect(
           throws: scenario == "malformed-callback"
-            ? AccountRefreshError.invalidCommand : .unavailable
+            ? AccountRefreshError.invalidCommand
+            : scenario.hasPrefix("exchange") && scenario != "exchange"
+              ? .authorizationRequired : .unavailable
         ) {
           try await service.complete(
             owner: "synthetic-session", flowID: flow.flowID, callbackURL: url)
