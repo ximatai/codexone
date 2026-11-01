@@ -40,7 +40,7 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
 
-后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。
+后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
 
 本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
 
