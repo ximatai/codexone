@@ -22,7 +22,10 @@ extension SubscriptionOAuthProvider {
     guard deviceID.utf8.count <= 4096, userCode.utf8.count <= 128,
       deviceID.utf8.allSatisfy({ $0 > 32 && $0 < 127 }),
       userCode.utf8.allSatisfy({ $0 >= 32 && $0 < 127 }),
-      let interval = response["interval"]?.string, let seconds = Int(interval), seconds > 0
+      // The official client sends a string; accept a JSON number as well.
+      let seconds = response["interval"]?.string.flatMap({
+        Int($0.trimmingCharacters(in: .whitespaces))
+      }) ?? response["interval"]?.integer.map({ Int(clamping: $0) }), seconds > 0
     else { throw AccountRefreshError.unavailable }
     var expiry = 900
     if let value = response["expires_in"] {

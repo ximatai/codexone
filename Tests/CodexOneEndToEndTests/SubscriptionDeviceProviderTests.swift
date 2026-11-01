@@ -8,7 +8,8 @@ import Testing
 @Test(.timeLimit(.minutes(1)))
 func deviceProviderBoundsCreationAndRetainsTrustedIdentityValidation() async throws {
   let path = "/api/accounts/deviceauth/usercode"
-  for interval in ["1", "3", "30", "999"] {
+  // The official client sends the interval as a string; a JSON number is accepted too.
+  for interval in ["1", "3", "30", "999", " 5 ", 7] as [Any] {
     try await withOAuth { h in
       let data = try JSONSerialization.data(withJSONObject: [
         "device_auth_id": "synthetic-device-id-private", "user_code": "SYNTH-CODE",
@@ -16,7 +17,9 @@ func deviceProviderBoundsCreationAndRetainsTrustedIdentityValidation() async thr
       ])
       h.server.state.mutex.withLock { $0.devicePlans[path] = .reply(data) }
       let device = try await h.provider.requestDeviceCode()
-      #expect(device.intervalSeconds == min(30, max(3, Int(interval)!)))
+      let seconds =
+        (interval as? Int) ?? Int((interval as! String).trimmingCharacters(in: .whitespaces))!
+      #expect(device.intervalSeconds == min(30, max(3, seconds)))
       #expect(device.expiresInSeconds == 900)
       #expect(device.verificationURL == "http://127.0.0.1:\(h.server.port)/codex/device")
       #expect(String(reflecting: device) == "AccountDeviceCode(redacted)")
@@ -25,7 +28,7 @@ func deviceProviderBoundsCreationAndRetainsTrustedIdentityValidation() async thr
   }
   for data in [
     Data(#"{"device_auth_id":"synthetic","user_code":"SYNTH-CODE","interval":"oops"}"#.utf8),
-    Data(#"{"device_auth_id":"synthetic","user_code":"SYNTH-CODE","interval":3}"#.utf8),
+    Data(#"{"device_auth_id":"synthetic","user_code":"SYNTH-CODE","interval":-3}"#.utf8),
     Data(#"{"device_auth_id":"synthetic","user_code":"SYNTH-CODE","interval":"0"}"#.utf8),
     Data(
       #"{"device_auth_id":"synthetic","user_code":"SYNTH-CODE","interval":"3","expires_in":0}"#.utf8
