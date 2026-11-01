@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-当前版本为 **[v0.26.2](https://github.com/ximatai/codexone/releases/tag/v0.26.2)**（2026-11-01），核心数据库 schema v10。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前版本为 **[v0.26.3](https://github.com/ximatai/codexone/releases/tag/v0.26.3)**（2026-11-01），核心数据库 schema v10。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启。
 
@@ -19,7 +19,7 @@
 
 ## 路线图
 
-- v0.26.2 收尾验收：[设备码授权](docs/changes/device-code-auth/tasks.md)真实账号登录、[网关自动重启](docs/changes/gateway-restart/tasks.md)实例升级确认、[局域网模式](docs/changes/lan-mode/tasks.md)真实账号生成请求。
+- 发布后收尾验收：[设备码授权](docs/changes/device-code-auth/tasks.md)真实账号登录、[网关自动重启](docs/changes/gateway-restart/tasks.md)实例升级确认、[局域网模式](docs/changes/lan-mode/tasks.md)真实账号生成请求。
 - Node.js 26 与 GitHub Actions 大版本升级后的 Linux CI、开发容器和发行流程验收。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
