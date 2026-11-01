@@ -22,7 +22,7 @@ Docker 对 `unless-stopped` 的连续失败使用递增退避，日志受现有 
 1. `deploy/compose.yaml`：gateway 改为 `restart: unless-stopped`；init-data 保持 `"no"`，宿主机重启后不重新执行（卷已初始化，Docker 只按策略重启 gateway 本身）。
 2. 维护命令：`compose-install.py run gateway --migrate` 等一次性容器必须不继承自动重启。如 Compose 的 `run` 不能保证这一点，入口须显式覆盖为不重启，并有验证。
 3. 手动停止语义：`compose-install.py stop`/`down` 后不会被 dockerd 或宿主机重启拉起；维护流程仍要求先停止 gateway 再执行维护命令，文档明确这一点。
-4. 安装验证 `scripts/verify_installation.py`：断言新策略；在真实 Docker 中覆盖进程被 SIGKILL 后自动恢复且 ready 回到 200、`stop` 后保持停止、一次性维护容器失败后不被重启、配置错误时有界退避且不打开 listener。
+4. 安装验证 `scripts/verify_installation.py`：断言新策略；在真实 Docker 中覆盖进程被 SIGKILL 后自动恢复且 ready 回到原有状态（无账号的合成安装为 503）、`stop` 后保持停止、一次性维护容器失败后不被重启、配置错误时有界退避且不打开 listener。
 5. 文档：Linux 安装指南说明重启策略、宿主机重启后的行为、如何临时禁止自动启动；运维规范 O12 增加重启策略条款；trial watch 已有 `container_restarted` 提醒，说明自动恢复仍会被观测到，不能被当作正常。
 
 ## 不做
