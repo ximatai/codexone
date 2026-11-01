@@ -145,7 +145,7 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(
-        path: staging, existingOnly: true, restoringV7: manifest.schema < 10, clock: clock)
+        path: staging, existingOnly: true, restoringV7: manifest.schema < 11, clock: clock)
       let completedCopyAt = clock.unixSeconds
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
@@ -168,6 +168,10 @@ public enum SQLiteSnapshotMaintenance {
           // Old context and revocations after the snapshot cannot be reconstructed.
           try target.write("DELETE FROM bindings")
           try target.write("UPDATE accounts SET authorization='requires_auth',refresh_intent=NULL")
+          // Preserve unknown redemption IDs; restored automation requires explicit opt-in.
+          try target.write(
+            "UPDATE account_reset_credits SET record_json=json_set(record_json,'$.settings.autoUseBeforeExpiry',json('false'))"
+          )
           let keys = try target.rows("SELECT id,metadata_json FROM managed_keys LIMIT 257") { row in
             guard sqlite3_column_bytes(row, 0) <= 64, sqlite3_column_bytes(row, 1) <= 16384 else {
               throw ExecutionError.capacity
@@ -228,7 +232,7 @@ public enum SQLiteSnapshotMaintenance {
     let manifest: SnapshotManifest = try JSONDecoder().decode(
       SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
     let now = clock.unixSeconds
-    guard manifest.format == 1, [7, 8, 9, 10].contains(manifest.schema),
+    guard manifest.format == 1, [7, 8, 9, 10, 11].contains(manifest.schema),
       UUID(uuidString: manifest.id) != nil,
       manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
       manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,

@@ -136,7 +136,7 @@ def verify_previous(binary, previous):
         assert refused.returncode != 0 and hashlib.sha256(database.read_bytes()).digest() == before
         migrated = subprocess.run([binary, '--migrate'], env=env, capture_output=True, timeout=10)
         assert migrated.returncode == 0
-        backups = list(state.glob('core.sqlite.pre-v10-*.sqlite'))
+        backups = list(state.glob('core.sqlite.pre-v11-*.sqlite'))
         assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
         with sqlite3.connect(backups[0]) as db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == previous_version
@@ -146,7 +146,7 @@ def verify_previous(binary, previous):
         finally:
             release(process)
         with sqlite3.connect(database) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 10
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 11
             assert 'display_name' in [row[1] for row in db.execute('PRAGMA table_info(accounts)')]
         before = hashlib.sha256(database.read_bytes()).digest()
         refused = subprocess.run([previous], env=env, capture_output=True, timeout=10)

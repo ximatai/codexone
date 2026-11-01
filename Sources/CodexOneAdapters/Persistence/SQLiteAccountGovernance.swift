@@ -248,7 +248,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       account.refreshIntent == intent
     else { throw ExecutionError.conflict }
   }
-  private static func nextAccount(
+  static func nextAccount(
     _ old: ManagedAccount, mode: AccountMode? = nil, authorization: AccountAuthorization? = nil,
     intent: String? = nil, credentialVersion: Int64? = nil
   ) throws -> ManagedAccount {
@@ -309,7 +309,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       .number(account.createdAtUnixSeconds), account.displayName.map { .text($0) } ?? .null,
     ]
   }
-  private static func saveAccount(
+  static func saveAccount(
     _ db: SQLiteConnection, _ account: ManagedAccount, envelope: String
   ) throws {
     let values = accountValues(account, envelope: envelope)
@@ -317,7 +317,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       "UPDATE accounts SET namespace=?,revision=?,credential_version=?,mode=?,authorization=?,sealed_credential=?,refresh_intent=NULLIF(?,''),created_at_epoch=?,display_name=? WHERE id=?",
       Array(values.dropFirst()) + [values[0]])
   }
-  private static func checkAccountCapacity(
+  static func checkAccountCapacity(
     _ db: SQLiteConnection, disabling: Bool = false, startingRefresh: Bool = false
   ) throws {
     let events = try db.scalar("SELECT COUNT(*) FROM account_events")
@@ -327,7 +327,7 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       throw ExecutionError.capacity
     }
   }
-  private static func auditAccount(
+  static func auditAccount(
     _ db: SQLiteConnection, _ account: ManagedAccount, action: String
   ) throws {
     guard try db.scalar("SELECT COUNT(*) FROM account_events") < 4160 else {

@@ -33,7 +33,7 @@ private func privateSnapshotRoot() throws -> String {
   await store.close()
   let manifest = try await SQLiteSnapshotMaintenance.backup(
     path: path, destination: root + "/backup", protection: nil, clock: testClock)
-  #expect(manifest.schema == 10 && manifest.databaseBytes > 0)
+  #expect(manifest.schema == 11 && manifest.databaseBytes > 0)
   let current = try await SQLiteExecutionStore.open(
     path: path, limits: syntheticLimits, clock: testClock)
   try await current.admit(admission("absent-after-snapshot"))
