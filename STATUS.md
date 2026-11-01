@@ -19,7 +19,7 @@
 
 ## 路线图
 
-- [设备码账号授权](docs/changes/device-code-auth/proposal.md)：默认免复制回调，保留回调方式备用。
+- [设备码账号授权](docs/changes/device-code-auth/proposal.md)：默认流程与合成验收已完成，保留回调备用；维护者真实账号验收待完成。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。
