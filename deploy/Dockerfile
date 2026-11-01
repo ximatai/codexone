@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG SWIFT_BUILD_IMAGE=swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
 ARG SWIFT_RUNTIME_IMAGE=swift:6.4.1-noble-slim@sha256:46c3f2b7b5f9ad083a941af264fec95b3dcd66e41885d6458606316c62e0d5c8
-ARG NODE_IMAGE=node:22.23.0-bookworm-slim@sha256:d9f850096136edbc402debdd8729579a288aac64574ada0ff4db26b6ae58b0b2
+ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
 # Optional pinned dependency mirrors: --build-context swiftpm-mirrors=<dir of OWNER/REPO.git>.
 # Empty by default; Package.resolved revisions still select the exact sources.
 FROM scratch AS swiftpm-mirrors
