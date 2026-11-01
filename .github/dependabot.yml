@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mantine:
+        patterns: ['@mantine/*']
+      testing:
+        patterns: ['@testing-library/*', '@vitest/*', vitest, '@playwright/*', playwright, playwright-core]
+      react:
+        patterns: [react, react-dom, '@types/react', '@types/react-dom']
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      swift-images:
+        patterns: ['swift']
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      swift-nio:
+        patterns: ['*swift-nio*']
+      vapor:
+        patterns: ['*vapor*', '*async-kit*', '*console-kit*', '*routing-kit*', '*multipart-kit*', '*websocket-kit*']

@@ -22,7 +22,7 @@ All accounts, models, and requests below are synthetic.
 
 ## Quick start
 
-**v0.26.1 has not been released.** GHCR images will be available after the first release. Until then, [build from source](docs/guide/linux-installation.md). The runtime target is Linux amd64 Docker Engine with Compose v2, Python 3, reliable local storage, and a host HTTPS reverse proxy.
+**v0.26.1 has not been released.** GHCR images will be available after the first release. Until then, [build from source](docs/guide/linux-installation.md). [Release automation](docs/development/releasing.md) is ready for its first CI run. The runtime target is Linux amd64 Docker Engine with Compose v2, Python 3, reliable local storage, and a host HTTPS reverse proxy.
 
 From the source checkout:
 

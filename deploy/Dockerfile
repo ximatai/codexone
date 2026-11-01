@@ -95,6 +95,8 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources 
 ARG SOURCE_REVISION
 ARG VERSION=0.0.0-dev
 LABEL org.opencontainers.image.title="CodexOne" \
+      org.opencontainers.image.source="https://github.com/ximatai/codexone" \
+      org.opencontainers.image.description="Personal self-hosted gateway for subscription accounts and device keys" \
       org.opencontainers.image.version=${VERSION} \
       org.opencontainers.image.revision=${SOURCE_REVISION} \
       org.opencontainers.image.licenses="MIT"
