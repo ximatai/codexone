@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Group,
-  Modal,
   NumberInput,
   Paper,
   Stack,
@@ -12,6 +11,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { ConfirmModal } from "../../shared/ui/ConfirmModal";
 import { ManagementError } from "../../shared/management";
 import { accountName } from "../../shared/account-presentation";
 import type { Account } from "./api";
@@ -247,17 +247,18 @@ export function ResetCredits({
         >
           保存重置卡设置
         </Button>
-        <Modal
-          zIndex={400}
+        <ConfirmModal
           opened={!!selection}
-          onClose={() => setSelection(null)}
           title={
             selection?.kind === "reconcile"
               ? "确认核对上次操作"
               : "确认使用重置卡"
           }
-          removeScrollProps={{ removeScrollBar: false }}
-          data-ui-overlay={!!selection || undefined}
+          busy={disabled}
+          disabled={blocked}
+          close={() => setSelection(null)}
+          confirm={() => void consume()}
+          label={selection?.kind === "reconcile" ? "确认核对" : "确认使用"}
         >
           <Stack>
             <Text>{accountName(account.id, [], account.displayName)}</Text>
@@ -276,16 +277,8 @@ export function ResetCredits({
             <Text size="sm">
               重置成功会消耗一张卡。当前没有可重置的用量时，卡不会消耗。
             </Text>
-            <Group justify="flex-end">
-              <Button variant="default" onClick={() => setSelection(null)}>
-                取消
-              </Button>
-              <Button disabled={blocked} onClick={() => void consume()}>
-                {selection?.kind === "reconcile" ? "确认核对" : "确认使用"}
-              </Button>
-            </Group>
           </Stack>
-        </Modal>
+        </ConfirmModal>
       </Stack>
     </section>
   );
