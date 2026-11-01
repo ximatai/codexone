@@ -58,9 +58,13 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider, Sen
     var pool = HTTPClient.Configuration.ConnectionPool(
       idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 4)
     pool.retryConnectionEstablishment = false
+    // Connection setup may use the whole request deadline: through an explicit proxy it includes
+    // the CONNECT tunnel and TLS handshake, which can approach 3 s on a healthy path.
     var configuration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
-      timeout: .init(connect: .seconds(3), read: .seconds(5)), connectionPool: pool,
+      timeout: .init(
+        connect: .milliseconds(Int64(timeoutMilliseconds)), read: .seconds(5)),
+      connectionPool: pool,
       proxy: proxy?.clientProxy, decompression: .disabled)
     configuration.httpVersion = .http1Only
     configuration.maximumUsesPerConnection = 1
