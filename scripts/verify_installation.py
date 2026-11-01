@@ -100,7 +100,10 @@ def verify_initializer(binary):
             assert address.encode() not in result.stdout + result.stderr
         for suffix in (['--origin', ORIGIN], ['--lan-allow', 'bad'],
                        ['--lan-allow', '192.168.0.0/33'], ['--lan-allow', '0.0.0.0/0'],
-                       ['--lan-allow', 'fd00::/129'], ['--lan-allow', '192.168.0.0/16,']):
+                       ['--lan-allow', 'fd00::/129'], ['--lan-allow', '192.168.0.0/16,'],
+                       ['--lan-allow', '192.168.1.0/255.255.255.0'],
+                       ['--lan-allow', '192.168.1.0/0.0.0.255'],
+                       ['--lan-allow', '192.168.1.0/２４'], ['--lan-allow', '192.168.1.0/+24']):
             other = lan_command.copy(); other[2] = str(parent / 'bad')
             assert run([*other, *suffix], ok=False).returncode != 0
             assert not (parent / 'bad').exists()

@@ -28,7 +28,7 @@ def lan_settings(address, allow):
         if not allow or len(parts) > 64:
             raise ValueError('Use a bounded list of source CIDRs.')
         for part in parts:
-            if '/' not in part or any(c.isspace() for c in part) or '%' in part:
+            if not re.fullmatch(r'[0-9A-Fa-f:.]+/[0-9]+', part):
                 raise ValueError('Use literal source CIDRs.')
             network = ipaddress.ip_network(part, strict=False)
             if not any(network.version == parent.version and network.subnet_of(parent) for parent in DEFAULT_NETWORKS):
