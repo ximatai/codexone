@@ -8,16 +8,20 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 import re
 import secrets as random_secrets
+import signal
+import socket
 import subprocess
+import sys
 import tempfile
+import time
 
 REPO = Path(__file__).resolve().parents[1]
 IMAGE_ID = 'sha256:' + 'a' * 64
 ORIGIN = 'https://admin.example.invalid'
 
 
-def run(command, *, data=None, ok=True, timeout=30):
-    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout)
+def run(command, *, data=None, ok=True, timeout=30, env=None):
+    result = subprocess.run(command, input=data, capture_output=True, timeout=timeout, env=env)
     if ok:
         assert result.returncode == 0, 'Synthetic installation command failed; private diagnostics withheld'
     return result
@@ -105,9 +109,31 @@ def verify_initializer(binary):
         assert document['volumes']['data']['name'] == document['name'].replace('codexone-', 'codexone-data-', 1)
         assert config['environment']['CODEXONE_ADMIN_PUBLIC_ORIGIN'] == ORIGIN
         assert config['image'] == IMAGE_ID
-        assert config['read_only'] and config['network_mode'] == 'host' and config['restart'] == 'no'
+        assert config['read_only'] and config['network_mode'] == 'host' and config['restart'] == 'unless-stopped'
+        assert bootstrap['restart'] == 'no'
         assert not config.get('ports') and config['user'].split(':')[0] != '0'
         assert all(secret not in output for secret in credentials)
+        # Exercise the installed entry point without starting containers (also on macOS).
+        probe = parent / 'probe-bin'; probe.mkdir()
+        docker = probe / 'docker'
+        docker.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
+        docker.chmod(0o700)
+        probe_environment = {**os.environ, 'PATH': str(probe) + os.pathsep + os.environ['PATH']}
+        for service, payload in (('gateway', ['--migrate']), ('gateway', ['--backup', '/synthetic/bundle']),
+                                 ('gateway', ['--restore', '/synthetic/bundle']), ('init-data', [])):
+            arguments = ['run', '--no-deps', service, *payload]
+            forwarded = json.loads(run([*launcher, *arguments], env=probe_environment).stdout)
+            command_index = forwarded.index('--project-name') + 2
+            assert forwarded[command_index:] == ['run', '--rm', *arguments[1:]]
+        for disabling in ('--rm=false', '--rm=0', '--rm=FALSE'):
+            for options in ([], ['--name', 'gateway'], ['--entrypoint', 'gateway']):
+                refused = run([*launcher, 'run', *options, disabling, 'gateway', '--migrate'], env=probe_environment, ok=False)
+                assert refused.returncode != 0 and not refused.stdout
+        # Service names used as option values must not hide launcher options, while
+        # flags after the real service still belong to the container's command.
+        arguments = ['run', '--name', 'gateway', '--entrypoint', 'find', 'gateway', '/tmp', '-print']
+        forwarded = json.loads(run([*launcher, *arguments], env=probe_environment).stdout)
+        assert forwarded[forwarded.index('--project-name') + 2:] == ['run', '--rm', *arguments[1:]]
         if binary and os.geteuid() != 0:
             (target / 'check-data').mkdir(mode=0o700)
             env = {'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(target / 'check-data'),
@@ -120,11 +146,12 @@ def verify_initializer(binary):
             rejected = subprocess.run([str(binary.resolve()), '--check-config'], env=env, capture_output=True, timeout=10)
             assert rejected.returncode != 0
             assert all(secret not in checked.stdout + checked.stderr + rejected.stdout + rejected.stderr for secret in credentials)
-    print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation and Compose isolation'
+    print('PASS: private exclusive initialization, ownership/modes, no overwrite/symlink/interpolation, Compose isolation and forced one-off removal'
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
 def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None, incompatible_schema=6):
+    assert sys.platform == 'linux', 'Actual OCI checks require a local Linux Docker Engine'
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
@@ -156,6 +183,18 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             return int(status), payload
         def maintenance(entrypoint, arguments, *, ok=True):
             return run([*compose, 'run', '--rm', '--no-deps', '--entrypoint', entrypoint, 'gateway', *arguments], ok=ok)
+        def inspect():
+            return json.loads(run(['docker', 'inspect', name], timeout=5).stdout)[0]
+        def events(container, since):
+            output = run(['docker', 'events', '--since', str(since), '--until', str(time.time()),
+                          '--filter', 'type=container', '--filter', 'container=' + container,
+                          '--format', '{{json .}}'], timeout=10).stdout
+            return [json.loads(line) for line in output.splitlines()]
+        def assert_no_listeners():
+            for port in (18080, 18081):
+                with socket.socket() as connection:
+                    connection.settimeout(0.2)
+                    assert connection.connect_ex(('127.0.0.1', port)) != 0, 'Failed configuration opened a listener'
         try:
             root_target = run([*compose, 'run', '--rm', '--no-deps', '--env', 'TARGET_UID=0', 'init-data'], ok=False)
             assert root_target.returncode != 0
@@ -169,7 +208,6 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             run([*compose, 'up', '-d'])
             name = run([*compose, 'ps', '-q', 'gateway']).stdout.decode().strip()
             assert re.fullmatch('[0-9a-f]{12,64}', name)
-            import time
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
                 try:
@@ -179,6 +217,8 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             else: raise AssertionError('OCI candidate did not become live')
             running = json.loads(run(['docker', 'inspect', name]).stdout)[0]
             host = running['HostConfig']
+            assert host['RestartPolicy']['Name'] == 'unless-stopped'
+            assert running['RestartCount'] == 0
             assert host['ReadonlyRootfs'] and not host['Privileged'] and host['NetworkMode'] == 'host'
             assert 'ALL' in host['CapDrop'] and 'no-new-privileges:true' in host['SecurityOpt']
             assert host['Memory'] == 768 * 1024 * 1024 and host['PidsLimit'] == 128
@@ -245,11 +285,61 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             refused_owner = run([*compose, 'run', '--rm', '--no-deps', '--env', f'TARGET_UID={wrong_uid}', 'init-data'], ok=False)
             assert refused_owner.returncode != 0 and b'Existing volume ownership differs' in refused_owner.stderr + refused_owner.stdout
             assert run(['docker', 'exec', name, 'stat', '-c', '%u:%g', '/var/lib/codexone']).stdout.strip() == f'{uid}:{gid}'.encode()
-            locked = run([*compose, 'run', '--rm', 'gateway', '--migrate'], ok=False)
-            assert locked.returncode != 0
+            # Kill the actual host PID, not `docker kill`: Engine treats its kill API
+            # as a manual stop and suppresses unless-stopped restarts. The CI Engine
+            # is local, and this process runs as the initializer's UID.
+            ready_before = request('/health/ready')[0]
+            assert ready_before == 503  # The synthetic installation has no authorized account.
+            running = inspect()
+            restart_count = running['RestartCount']
+            process_id = running['State']['Pid']
+            assert process_id > 1 and Path(f'/proc/{process_id}').stat().st_uid == uid
+            container_namespace = run(['docker', 'exec', name, 'readlink', '/proc/1/ns/pid']).stdout.decode().strip()
+            assert os.readlink(f'/proc/{process_id}/ns/pid') == container_namespace
+            killed_at = time.time()
+            os.kill(process_id, signal.SIGKILL)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                recovered = inspect()
+                if recovered['RestartCount'] > restart_count and recovered['State']['Running'] and not recovered['State']['Restarting']:
+                    try:
+                        if request('/health/live')[0] == 200 and request('/health/ready')[0] == ready_before: break
+                    except AssertionError: pass
+                time.sleep(0.2)
+            else: raise AssertionError('SIGKILL recovery did not restore the prior readiness within 30 seconds')
+            assert recovered['RestartCount'] == restart_count + 1 and not recovered['State']['OOMKilled']
+            deaths = [event for event in events(name, killed_at) if event['Action'] == 'die']
+            assert len(deaths) == 1 and deaths[0]['Actor']['Attributes']['exitCode'] == '137'
+            restart_count = recovered['RestartCount']
+            # Deliberately omit --rm: the installed launcher must add the documented
+            # override even when a maintenance command fails to acquire the lock.
+            oneoff = project + '-maintenance-failure'
+            failed_at = time.time()
+            locked = run([*compose, 'run', '--no-deps', '--name', oneoff, 'gateway', '--migrate'], ok=False)
+            assert locked.returncode == 1
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                missing = run(['docker', 'inspect', oneoff], ok=False)
+                oneoff_events = events(oneoff, failed_at)
+                if missing.returncode != 0 and any(event['Action'] == 'destroy' for event in oneoff_events): break
+                time.sleep(0.2)
+            else: raise AssertionError('Failed maintenance container was not removed')
+            # Removal is terminal; it cannot be restarted later by the policy.
+            assert sum(event['Action'] == 'start' for event in oneoff_events) == 1
+            deaths = [event for event in oneoff_events if event['Action'] == 'die']
+            assert len(deaths) == 1 and deaths[0]['Actor']['Attributes']['exitCode'] == '1'
+            assert sum(event['Action'] == 'destroy' for event in oneoff_events) == 1
             run([*compose, 'stop'], timeout=40)
-            state = json.loads(run(['docker', 'inspect', name]).stdout)[0]
-            assert state['State']['ExitCode'] == 0 and not state['State']['OOMKilled'] and state['RestartCount'] == 0
+            state = inspect()
+            assert state['State']['ExitCode'] == 0 and not state['State']['OOMKilled']
+            assert state['RestartCount'] == restart_count
+            stopped_at = state['State']['FinishedAt']
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                state = inspect()
+                assert not state['State']['Running'] and not state['State']['Restarting']
+                assert state['RestartCount'] == restart_count and state['State']['FinishedAt'] == stopped_at
+                time.sleep(0.2)
             run([*compose, 'run', '--rm', 'gateway', '--key-status'])
             run([*compose, 'run', '--rm', 'gateway', '--backup', '/var/lib/codexone/installation-bundle'])
             run([*compose, 'run', '--rm', 'gateway', '--verify-backup', '/var/lib/codexone/installation-bundle'])
@@ -351,9 +441,13 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 legacy = json.loads(run(['docker', 'inspect', name]).stdout)[0]['State']
-                if not legacy['Running']: break
+                if legacy['Restarting'] and legacy['ExitCode'] == 1: break
                 time.sleep(0.2)
-            assert not legacy['Running'] and legacy['ExitCode'] == 1 and not legacy['OOMKilled']
+            else: raise AssertionError('Legacy schema did not fail into restart backoff')
+            assert legacy['ExitCode'] == 1 and not legacy['OOMKilled']
+            # Starting an incompatible schema now enters automatic backoff. Stop it
+            # before offline migration so a later retry cannot race the instance lock.
+            run([*compose, 'stop'], timeout=40)
             after_legacy = run(['docker', 'logs', name])
             assert after_legacy.stdout.startswith(before_legacy.stdout) and after_legacy.stderr.startswith(before_legacy.stderr)
             rejected_logs = after_legacy.stdout[len(before_legacy.stdout):] + after_legacy.stderr[len(before_legacy.stderr):]
@@ -390,6 +484,64 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             logs = result.stdout + result.stderr
             assert all(secret.encode() not in logs for secret in secrets)
             assert str(root).encode() not in logs
+            run([*compose, 'stop'], timeout=40)
+            assert_no_listeners()
+            # Recreate the real service with a synthetic invalid port; using `run`
+            # here would test the one-off policy instead of the installed gateway.
+            template = root / 'compose.yaml'
+            contents = template.read_text()
+            marker = '      CODEXONE_BACKUP_DIRECTORY: /var/backups/codexone\n'
+            assert contents.count(marker) == 1
+            invalid_port = 'synthetic-invalid-port'
+            template.write_text(contents.replace(marker, marker + f'      CODEXONE_DATA_PORT: {invalid_port}\n'))
+            failed_at = time.time()
+            run([*compose, 'up', '--no-deps', '-d', 'gateway'])
+            name = run([*compose, 'ps', '-a', '-q', 'gateway']).stdout.decode().strip()
+            assert re.fullmatch('[0-9a-f]{12,64}', name)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                assert_no_listeners()
+                state = inspect()
+                assert state['RestartCount'] <= 10 and not state['State']['OOMKilled'], 'Configuration failure restarted too rapidly'
+                time.sleep(0.1)
+            failure_events = events(name, failed_at)
+            deaths = [event for event in failure_events if event['Action'] == 'die']
+            assert 4 <= len(deaths) <= 10
+            assert all(event['Actor']['Attributes']['exitCode'] == '78' for event in deaths)
+            assert state['RestartCount'] >= 4
+            # Event timestamps measure actual stopped intervals, excluding process
+            # startup time. Allow scheduler/Engine overhead; require visible backoff.
+            delays = []
+            last_death = None
+            for event in failure_events:
+                if event['Action'] == 'die': last_death = event['timeNano']
+                elif event['Action'] == 'start' and last_death is not None:
+                    delays.append((event['timeNano'] - last_death) / 1e9)
+                    last_death = None
+            assert len(delays) >= 3 and max(delays) >= 1 and delays[-1] > delays[0]
+            # Inspect actual retained json-file logs as well as the rotation config.
+            # Mount only this owned container's log directory, read-only, into a
+            # short-lived helper. No dependence on runner access to Engine files.
+            assert state['HostConfig']['RestartPolicy']['Name'] == 'unless-stopped'
+            assert state['HostConfig']['LogConfig'] == {'Type': 'json-file', 'Config': {'max-size': '10m', 'max-file': '5'}}
+            log_path = Path(state['LogPath'])
+            assert log_path.is_absolute() and log_path.name == state['Id'] + '-json.log'
+            run([*compose, 'stop'], timeout=40)
+            assert_no_listeners()
+            failed_logs = run(['docker', 'logs', name])
+            logs = failed_logs.stdout + failed_logs.stderr
+            assert b'Invalid port configuration: CODEXONE_DATA_PORT.' in logs and b'LISTENING' not in logs
+            assert invalid_port.encode() not in logs and all(secret.encode() not in logs for secret in secrets)
+            retained = run([*compose, 'run', '--no-deps', '--user', '0:0', '--volume', f'{log_path.parent}:/probe:ro',
+                            '--entrypoint', 'find', 'gateway', '/probe', '-maxdepth', '1', '-type', 'f',
+                            '-name', '*-json.log*', '-printf', '%f %s\n']).stdout.decode().splitlines()
+            assert 1 <= len(retained) <= 5
+            for record in retained:
+                filename, size = record.split()
+                assert re.fullmatch(re.escape(log_path.name) + r'(\.[1-4])?', filename)
+                assert 0 < int(size) <= 10 * 1024 * 1024
+            print('PASS: SIGKILL recovery to prior ready state, restart count, graceful stop/no restart for 5s, failed one-off removal; '
+                  'invalid config exits 78 without listeners, backs off over 20s and retains bounded rotated logs')
         finally:
             run([*compose, 'down', '--timeout', '30'], ok=False, timeout=40)
             # A timed-out `compose run` can outlive its CLI. Remove only this owned project.
