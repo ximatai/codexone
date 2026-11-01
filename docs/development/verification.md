@@ -30,6 +30,10 @@ python3 scripts/check_docs.py
 
 ## 测试框架与入口职责
 
+`verify_protocol.py` 与 `verify_websocket.py` 的 binding 故障注入使用 SQLite `RAISE(ABORT)`：插入回滚，但适配器将错误映射为核心存储故障并锁住准入。关键最终化仍可尝试提交，StorageMonitor 下轮传播故障，ServiceGroup 取消服务并关闭 listener；这符合 [O09/O12](../reference/specs/operations.md)、[I20](../reference/specs/identity.md) 和 [E03/E05](../reference/specs/execution-lifecycle.md)。故障后的 ready=503 只在关闭前短暂可见，不能将它作为必须成功建立的新连接。脚本等待非零退出，检查持久状态、ID 未暴露和端口释放；WS 另验证重启不重放 unknown。正常 SIGTERM 与半截握手关闭在故障注入之前独立验收。容量/水位降级的存活及 503 由存储压力检查覆盖，不与核心故障混用。
+
+两脚本失败时在清理前打印 `process.poll()`、保留的启动输出及当前可读的 stdout/stderr（合并流，尾部最多 64 KiB），不等待运行中进程的 EOF；临时目录、二进制路径和已知合成秘密会替换。该诊断只用于脚本自己创建的合成进程，不采集部署日志或真实账号数据。`verify_gateway_diagnostics.py` 覆盖启动失败、非零退出、无 EOF 的活进程、输出上限与脱敏。
+
 Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。
 
 前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。设置 `PW_TEST_CONNECT_WS_ENDPOINT` 时 Playwright 与 `web/scripts` 的实际界面脚本改为连接外部浏览器（`web/scripts/browser-server.mjs` 启动），供无法启动 Chrome 的 macOS 沙箱贡献者使用。依赖安装、浏览器准备和运行命令见贡献指南，CI 使用锁文件，测试默认不读账号/外部上游。

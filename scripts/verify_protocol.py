@@ -422,18 +422,6 @@ def main():
                 assert upstream.cancelled.wait(timeout=5), "Upstream socket was not cancelled after downstream close"
                 latest(db_path, "unknown")
                 print("PASS: downstream close cancels silent upstream and finalizes unknown execution")
-                with sqlite3.connect(db_path) as db:
-                    db.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
-                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})
-                assert status == 503 and b"resp_" not in body
-                assert latest(db_path, "settled")["inputTokens"] == 5
-                assert connect(port, "GET", "/health/ready")[0] == 503
-                if args.web_smoke:
-                    web_smoke(ports["admin"], "not-ready")
-                count = upstream.calls
-                assert connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})[0] == 503
-                assert upstream.calls == count
-                print("PASS: binding write failure blocks exposure and later dispatch, preserves usage and lowers readiness")
                 process.terminate()
                 exit_code = process.wait(timeout=8)
                 output = process.stdout.read()
@@ -446,6 +434,34 @@ def main():
                         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         probe.bind(("127.0.0.1", bound_port))
                 print("PASS: configured protocol shutdown awaits sockets and avoids payload/credential/path logging")
+                stop(process)
+                process, ports = start(str(args.binary.resolve()), configuration, directory)
+                output = b""
+                port = ports["data"]
+                with sqlite3.connect(db_path) as db:
+                    mark = db.execute("SELECT coalesce(max(rowid),0) FROM attempts").fetchone()[0]
+                    db.execute("CREATE TRIGGER fail_binding BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'synthetic fault'); END")
+                count = upstream.calls
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "text"})
+                assert status == 503 and b"resp_" not in body
+                # Core failure shuts down the ServiceGroup (I20/O09). Do not race a ready
+                # probe or SIGTERM against that failure, or mistake it for capacity pressure.
+                assert process.wait(timeout=8) == 1
+                output = process.stdout.read()
+                assert b"Service startup or shutdown failed." in output
+                for marker in (TOKEN, "synthetic-header", "synthetic output", str(directory)):
+                    assert marker.encode() not in output
+                for bound_port in ports.values():
+                    with socket.socket() as probe:
+                        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        probe.bind(("127.0.0.1", bound_port))
+                with sqlite3.connect(db_path) as db:
+                    rows = db.execute("SELECT id,state,usage_json FROM attempts WHERE rowid>?", (mark,)).fetchall()
+                    assert len(rows) == 1 and rows[0][1] == "settled", rows
+                    assert json.loads(rows[0][2])["inputTokens"] == 5
+                    assert db.execute("SELECT COUNT(*) FROM bindings WHERE attempt=?", (rows[0][0],)).fetchone()[0] == 0
+                assert upstream.calls == count + 1
+                print("PASS: binding failure hides IDs, preserves trusted usage and exits with both listeners released")
             except BaseException:
                 dump_gateway_failure(process, output=output)
                 raise

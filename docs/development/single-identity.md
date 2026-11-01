@@ -40,7 +40,7 @@
 python3 scripts/verify_protocol.py --binary .build/debug/codexone --web-smoke
 ```
 
-使用本机 Chrome 的独立临时上下文，构建后的 UI 连接真实临时网关管理 API，验证正常、存储失败及刷新，并将合成桌面截图放入被 Git 忽略的 `artifacts/single-identity-ui/`。这只是验证用静态服务器，不属于发行 Web 服务。
+使用本机 Chrome 的独立临时上下文，构建后的 UI 连接真实临时网关管理 API，验证正常就绪及刷新，并将合成桌面截图放入被 Git 忽略的 `artifacts/single-identity-ui/`。核心存储故障由进程验收检查退出及持久责任，不把故障关闭前短暂的 503 当作稳定浏览器状态。这只是验证用静态服务器，不属于发行 Web 服务。
 
 ## WebSocket 传输
 
