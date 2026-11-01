@@ -13,6 +13,7 @@ final class SQLiteConnection: @unchecked Sendable {
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
   private var readOnly = false
+  let clock: WallClock
   let filePath: String
   enum Value: Sendable {
     case text(String)
@@ -20,9 +21,13 @@ final class SQLiteConnection: @unchecked Sendable {
     case null
   }
 
-  init(path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false)
+  init(
+    path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false,
+    clock: WallClock = .system
+  )
     throws
   {
+    self.clock = clock
     filePath = path
     guard path != ":memory:", !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
     let canonical = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
@@ -125,7 +130,7 @@ final class SQLiteConnection: @unchecked Sendable {
               "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
             )
           }
-          try exec(Self.governanceSchema)
+          try exec(Self.governanceSchema(now: clock.unixSeconds))
           try exec("PRAGMA user_version=10")
         }
       }
@@ -155,7 +160,7 @@ final class SQLiteConnection: @unchecked Sendable {
               "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
             )
           }
-          try exec(Self.governanceSchema)
+          try exec(Self.governanceSchema(now: clock.unixSeconds))
           try exec("PRAGMA user_version=10")
         }
       }
@@ -174,7 +179,8 @@ final class SQLiteConnection: @unchecked Sendable {
   }
 
   /// The already locked primary store owns this one read-only WAL connection.
-  init(readOnlyPath: String) throws {
+  init(readOnlyPath: String, clock: WallClock = .system) throws {
+    self.clock = clock
     readOnly = true
     filePath = readOnlyPath
     guard let resolved = readOnlyPath.withCString({ realpath($0, nil) }) else {
@@ -387,13 +393,14 @@ final class SQLiteConnection: @unchecked Sendable {
     ("maintenance_events", ["id", "action", "record_json", "at_epoch"]),
   ]
 
-  static let governanceSchema = """
+  static func governanceSchema(now: Int64) -> String {
+    """
     ALTER TABLE attempts ADD COLUMN unknown_since_epoch INTEGER;
     ALTER TABLE attempts ADD COLUMN closed_unknown_at_epoch INTEGER;
-    UPDATE attempts SET unknown_since_epoch=COALESCE(json_extract(outcome_json,'$.atUnixSeconds'),created_at_epoch,strftime('%s','now')) WHERE state='unknown';
-    UPDATE attempts SET closed_unknown_at_epoch=COALESCE(created_at_epoch,strftime('%s','now')) WHERE state='settled' AND COALESCE(json_extract(usage_json,'$.completeness'),'')!='complete';
+    UPDATE attempts SET unknown_since_epoch=COALESCE(json_extract(outcome_json,'$.atUnixSeconds'),created_at_epoch,\(now)) WHERE state='unknown';
+    UPDATE attempts SET closed_unknown_at_epoch=COALESCE(created_at_epoch,\(now)) WHERE state='settled' AND COALESCE(json_extract(usage_json,'$.completeness'),'')!='complete';
     ALTER TABLE bindings ADD COLUMN expires_at_epoch INTEGER;
-    UPDATE bindings SET expires_at_epoch=strftime('%s','now')+\(ExecutionLimits.bindingContinuationSeconds);
+    UPDATE bindings SET expires_at_epoch=\(now)+\(ExecutionLimits.bindingContinuationSeconds);
     CREATE INDEX bindings_expiry ON bindings(expires_at_epoch);
     CREATE INDEX attempts_active_identity ON attempts(namespace,identity) WHERE state='intent';
     CREATE INDEX attempts_retention ON attempts(created_at_epoch,id) WHERE state='settled';
@@ -408,6 +415,7 @@ final class SQLiteConnection: @unchecked Sendable {
       PRIMARY KEY(day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown));
     CREATE INDEX usage_daily_key ON usage_daily(key_id,last_used_epoch);
     """
+  }
   private static let governanceColumns: [(String, [String])] = [
     ("account_concurrency", ["namespace", "identity", "at_epoch", "peak"]),
     (

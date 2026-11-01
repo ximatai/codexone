@@ -10,6 +10,7 @@ import Synchronization
 
 /// Configured data-plane lifetime. All connection tasks are children of this service.
 public struct ResponsesDataService: Service {
+  private let clock: WallClock
   private let protocolExtensions: ClientProtocolExtensionRegistry?
   private let group: any EventLoopGroup
   private let port: Int
@@ -28,9 +29,11 @@ public struct ResponsesDataService: Service {
     group: any EventLoopGroup, port: Int, configuration: SingleIdentityConfiguration,
     store: any ExecutionStore, finalizer: any FinalizationSink, proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
+    clock: WallClock = .system,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try configuration.validate()
+    self.clock = clock
     self.protocolExtensions = protocolExtensions
     self.group = group
     self.port = port
@@ -48,12 +51,14 @@ public struct ResponsesDataService: Service {
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
     provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
+    clock: WallClock = .system,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try self.init(
       group: group, port: port, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
-      target: .openAI, proxy: proxy, protocolExtensions: protocolExtensions, onBound: onBound)
+      target: .openAI, proxy: proxy, protocolExtensions: protocolExtensions, clock: clock,
+      onBound: onBound)
   }
   init(
     group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
@@ -62,9 +67,11 @@ public struct ResponsesDataService: Service {
     provider: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
     proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
+    clock: WallClock = .system,
     onBound: @escaping @Sendable (Int) -> Void
   ) throws {
     try configuration.validate()
+    self.clock = clock
     self.protocolExtensions = protocolExtensions
     self.group = group
     self.port = port
@@ -127,7 +134,7 @@ public struct ResponsesDataService: Service {
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
-      access: .init(source: source, token: token, store: store, finalizer: finalizer),
+      access: .init(source: source, token: token, store: store, finalizer: finalizer, clock: clock),
       gateway: nil, effectiveModels: [])
     // Dedicated control headroom lets saturation return HTTP 429.
     let channels = ProtocolChannels(limit: configuration.dataConnections + 16)
@@ -608,7 +615,8 @@ public struct ResponsesDataService: Service {
           executor.effectiveModels, requireCodexProfile: codexDirectory,
           images: executor.effectiveImageModels,
           runtimeBudget: executor.configuration.budgetSummary,
-          upstreamTransport: executor.configuration.upstreamTransport
+          upstreamTransport: executor.configuration.upstreamTransport,
+          now: executor.access.clock.unixSeconds
         ))
       return
     }

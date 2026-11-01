@@ -8,7 +8,9 @@ private struct UsagePredicate {
   var sql: String { terms.isEmpty ? "1" : terms.joined(separator: " AND ") }
 }
 extension SQLiteUsageReader {
-  private static func predicate(_ query: UsageQuery, diagnostic: Bool, timed: Bool = true)
+  private static func predicate(
+    _ query: UsageQuery, diagnostic: Bool, timed: Bool = true, now: Int64
+  )
     -> UsagePredicate
   {
     var result = UsagePredicate()
@@ -17,7 +19,7 @@ extension SQLiteUsageReader {
       result.values.append(value)
     }
     let epoch = diagnostic ? "at_epoch" : "created_at_epoch"
-    if diagnostic { add("at_epoch>=?", .number(Int64(Date().timeIntervalSince1970) - 30 * 86400)) }
+    if diagnostic { add("at_epoch>=?", .number(now - 30 * 86400)) }
     if timed {
       add("\(epoch)>=?", .number(query.startUnixSeconds))
       add("\(epoch)<?", .number(query.endUnixSeconds))
@@ -61,9 +63,10 @@ extension SQLiteUsageReader {
     return result
   }
   static func query(_ db: SQLiteConnection, _ query: UsageQuery) throws -> UsageReport {
-    let attempts = predicate(query, diagnostic: false)
-    let rejected = predicate(query, diagnostic: true)
-    let base = predicate(query, diagnostic: false, timed: false)
+    let now = db.clock.unixSeconds
+    let attempts = predicate(query, diagnostic: false, now: now)
+    let rejected = predicate(query, diagnostic: true, now: now)
+    let base = predicate(query, diagnostic: false, timed: false, now: now)
     let untimed = try db.scalar(
       "SELECT COUNT(*) FROM attempts WHERE created_at_epoch IS NULL AND \(base.sql)", base.values)
     let rejectionCount = try db.scalar(

@@ -23,11 +23,13 @@ public enum SQLiteKeyMaintenance {
       }
     }
   }
-  public static func status(path: String, protection: AccountCredentialCipher) async throws
+  public static func status(
+    path: String, protection: AccountCredentialCipher, clock: WallClock = .system
+  ) async throws
     -> KeyMaintenanceStatus
   {
     try await run {
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       return try status(db, protection)
     }
@@ -42,20 +44,22 @@ public enum SQLiteKeyMaintenance {
   }
   /// A new job requires an independently completed pre-maintenance bundle; nil explicitly resumes.
   public static func reencrypt(
-    path: String, protection: AccountCredentialCipher, backupDestination: String?
+    path: String, protection: AccountCredentialCipher, backupDestination: String?,
+    clock: WallClock = .system
   ) async throws -> KeyMaintenanceStatus {
     try await reencrypt(
-      path: path, protection: protection, backupDestination: backupDestination,
+      path: path, protection: protection, backupDestination: backupDestination, clock: clock,
       beforePageCommit: { _ in }, afterPageCommit: { _ in })
   }
   // Fault seams are package-only, used by tests and the credential-free subprocess probe.
   package static func reencrypt(
     path: String, protection: AccountCredentialCipher, backupDestination: String?,
+    clock: WallClock = .system,
     beforePageCommit: @escaping @Sendable (CredentialReencryptionCheckpoint) throws -> Void,
     afterPageCommit: @escaping @Sendable (CredentialReencryptionCheckpoint) throws -> Void
   ) async throws -> KeyMaintenanceStatus {
     try await run {
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       var checkpoint: CredentialReencryptionCheckpoint
       let old = try db.reencryptionCheckpoint()
@@ -71,7 +75,7 @@ public enum SQLiteKeyMaintenance {
           db, destination: backupDestination, protection: protection)
         checkpoint = try CredentialReencryptionCheckpoint(
           jobID: UUID().uuidString, backupID: backup.id,
-          targetKeyID: protection.keyID, startedUnixSeconds: Int64(Date().timeIntervalSince1970))
+          targetKeyID: protection.keyID, startedUnixSeconds: db.clock.unixSeconds)
         try db.transaction { try save(db, checkpoint) }
       } else {
         guard let old else { throw ExecutionError.conflict }
@@ -139,7 +143,7 @@ public enum SQLiteKeyMaintenance {
     try SQLiteSnapshotMaintenance.audit(
       db, action: "credential_reencryption",
       record: String(decoding: JSONEncoder().encode(checkpoint), as: UTF8.self),
-      at: Int64(Date().timeIntervalSince1970))
+      at: db.clock.unixSeconds)
   }
 
   private struct RetirementInventory: Decodable {
@@ -164,7 +168,8 @@ public enum SQLiteKeyMaintenance {
   }
   /// Checks a proposed keyring, not deletion. The operator attests the complete retained inventory.
   public static func checkRetirement(
-    path: String, protection: AccountCredentialCipher, inventoryFile: String
+    path: String, protection: AccountCredentialCipher, inventoryFile: String,
+    clock: WallClock = .system
   ) async throws -> Data {
     try await run {
       let inventory = try JSONDecoder().decode(
@@ -195,7 +200,7 @@ public enum SQLiteKeyMaintenance {
           })
         else { throw ExecutionError.invalidCommand }
       }
-      let db = try SQLiteConnection(path: path, existingOnly: true)
+      let db = try SQLiteConnection(path: path, existingOnly: true, clock: clock)
       defer { db.shutdown() }
       guard try db.reencryptionCheckpoint()?.complete != false else {
         throw KeyMaintenanceError.incompleteReencryption
@@ -205,7 +210,7 @@ public enum SQLiteKeyMaintenance {
       var requiredBackupKeys = Set<String>()
       for bundle in inventory.retainedBackups {
         let manifest = try SQLiteSnapshotMaintenance.verifyBackup(
-          bundle: bundle, protection: protection)
+          bundle: bundle, protection: protection, clock: clock)
         requiredBackupKeys.formUnion(manifest.requiredKeyIDs)
         guard backups.insert(manifest.id).inserted else { throw ExecutionError.conflict }
       }
@@ -217,7 +222,7 @@ public enum SQLiteKeyMaintenance {
           }
         }
         let original = try SQLiteSnapshotMaintenance.fingerprint(file)
-        let legacy = try SQLiteConnection(readOnlyPath: file)
+        let legacy = try SQLiteConnection(readOnlyPath: file, clock: clock)
         defer { legacy.shutdown() }
         guard
           try legacy.rows(
@@ -235,7 +240,8 @@ public enum SQLiteKeyMaintenance {
       var drilled = Set<String>()
       var restores = Set<String>()
       for directory in inventory.restoreDrills {
-        let drill = try SQLiteConnection(path: directory + "/core.sqlite", existingOnly: true)
+        let drill = try SQLiteConnection(
+          path: directory + "/core.sqlite", existingOnly: true, clock: clock)
         defer { drill.shutdown() }
         guard try drill.reencryptionCheckpoint()?.complete != false,
           let record = try drill.restoreRecord(), backups.contains(record.backupID),
@@ -256,7 +262,7 @@ public enum SQLiteKeyMaintenance {
       try db.transaction {
         try SQLiteSnapshotMaintenance.audit(
           db, action: "key_retirement_checked", record: String(decoding: encoded, as: UTF8.self),
-          at: Int64(Date().timeIntervalSince1970))
+          at: db.clock.unixSeconds)
       }
       return encoded
     }

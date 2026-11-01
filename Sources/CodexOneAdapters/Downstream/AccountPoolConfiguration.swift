@@ -55,14 +55,15 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       String.self, forKey: Field(stringValue: "upstreamTransport")!)
     try validate()
   }
-  public static func load(path: String) async throws -> Self {
+  public static func load(path: String, clock: WallClock = .system) async throws -> Self {
     try await withCheckedThrowingContinuation { result in
       DispatchQueue.global(qos: .utility).async {
         do {
           var configuration = try JSONDecoder().decode(
             Self.self, from: readPrivateData(path, maximum: 65_536))
           configuration.models = try ModelProfileSnapshot.apply(
-            path: configuration.modelProfilesFile, models: configuration.models)
+            path: configuration.modelProfilesFile, models: configuration.models,
+            now: clock.unixSeconds)
           try configuration.validate()
           result.resume(returning: configuration)
         } catch { result.resume(throwing: ExecutionError.invalidCommand) }

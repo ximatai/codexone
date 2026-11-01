@@ -22,7 +22,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (_, context, envelope) = try accountFixture()
   let created = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)
@@ -68,7 +69,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (_, context, envelope) = try accountFixture()
   let created = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)
@@ -88,7 +90,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
     rolledBack.envelope == envelope && rolledBack.account.authorization == .refreshing
       && rolledBack.account.credentialVersion == 1)
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let uncertain = try await reopened.accountCredential(id: created.id)
   #expect(
     uncertain.account.authorization == .authUncertain
@@ -115,7 +118,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   for index in 0..<64 {
     let id = "account-" + String(index)
     let (_, context, envelope) = try accountFixture("account-" + String(index))
@@ -137,7 +141,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
     try await store.setAccountMode(id: "account-0", revision: 4, mode: .enabled)
   }
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let recovered = try await reopened.listAccounts()
   #expect(
     recovered.count == 64
@@ -149,7 +154,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let policy = try KeyPolicy(models: ["synthetic"], limits: syntheticLimits)
   let key = try await store.createKey(
     id: "key", principal: "p", digest: String(repeating: "a", count: 64), policy: policy)
@@ -160,12 +166,12 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
       + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=2"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
   }
   // The second table fails after CREATE accounts; neither it nor the version may survive.
   try rawSQL(path, "CREATE TABLE account_events(id TEXT)")
   await #expect(throws: ExecutionError.storageUnavailable) {
-    try await SQLiteExecutionStore.migrate(path: path)
+    try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   }
   var db: OpaquePointer?
   #expect(sqlite3_open(path, &db) == SQLITE_OK)
@@ -181,8 +187,9 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   sqlite3_finalize(statement)
   sqlite3_close(db)
   try rawSQL(path, "DROP TABLE account_events")
-  try await SQLiteExecutionStore.migrate(path: path)
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.listKeys() == [key])
   #expect(try await reopened.listAccounts().isEmpty)
   await reopened.close()
@@ -193,16 +200,17 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
-  let app = AccountCredentials(store: store, protection: cipher)
+  let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
   let credential = try AccountCredential(
     accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: nil,
     expiresAtUnixSeconds: 2_000_000_000)
   let account = try await app.importVerified(
     id: "account", namespace: "synthetic/account", credential: credential)
   let wrongKey = try AccountCredentialCipher(hexKey: String(repeating: "3c", count: 32))
-  let wrong = AccountCredentials(store: store, protection: wrongKey)
+  let wrong = AccountCredentials(store: store, protection: wrongKey, clock: testClock)
   await #expect(throws: ExecutionError.invalidCommand) {
     try await wrong.beginRefresh(id: account.id, revision: account.revision)
   }
@@ -238,9 +246,10 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
-  let app = AccountCredentials(store: store, protection: cipher)
+  let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
   let credential = try AccountCredential(
     accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: nil,
     expiresAtUnixSeconds: 2_000_000_000)
@@ -269,18 +278,20 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (cipher, context, envelope) = try accountFixture()
   let account = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)
-  let app = AccountCredentials(store: store, protection: cipher)
+  let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
   let work = try await app.beginRefresh(id: account.id, revision: account.revision)
   let rejected = try await app.failRefresh(work, authorizationRequired: true)
   #expect(rejected.authorization == .requiresAuth && rejected.credentialVersion == 1)
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.accountCredential(id: account.id).account == rejected)
-  let nextApp = AccountCredentials(store: reopened, protection: cipher)
+  let nextApp = AccountCredentials(store: reopened, protection: cipher, clock: testClock)
   await #expect(throws: ExecutionError.conflict) {
     try await nextApp.beginRefresh(id: account.id, revision: rejected.revision)
   }
@@ -299,7 +310,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (_, context, envelope) = try accountFixture()
   let account = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)
@@ -310,7 +322,7 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
       try db.write(
         "INSERT INTO account_model_health VALUES(?,?,?,?)",
         [
-          .text(account.id), .text(model), .number(Int64(Date().timeIntervalSince1970) + 3600),
+          .text(account.id), .text(model), .number(testUnixSeconds + 3600),
           .text("rate_limited"),
         ])
     }
@@ -339,7 +351,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (_, context, envelope) = try accountFixture()
   let created = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)
@@ -363,7 +376,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
     id: named.id, revision: named.revision, mode: .enabled)
   #expect(enabled.displayName == named.displayName)
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.listAccounts().first?.displayName == named.displayName)
   let cleared = try await reopened.setAccountDisplayName(
     id: named.id, revision: enabled.revision, displayName: nil)
@@ -376,7 +390,8 @@ private func accountFixture(_ id: String = "account", version: Int64 = 1) throws
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let (_, context, envelope) = try accountFixture()
   _ = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace, envelope: envelope)

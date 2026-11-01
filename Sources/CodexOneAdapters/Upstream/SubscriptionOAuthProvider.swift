@@ -34,6 +34,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
   }
   private let state = Mutex(State())
   private let group: any EventLoopGroup
+  let clock: WallClock
   let realm: String
   private let timeoutMilliseconds: Int
   private let proxy: UpstreamHTTPProxy?
@@ -42,11 +43,12 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
 
   public init(
     group: any EventLoopGroup, authority: Authority = .openAI, timeoutMilliseconds: Int = 10_000,
-    proxy: UpstreamHTTPProxy? = nil
+    proxy: UpstreamHTTPProxy? = nil, clock: WallClock = .system
   ) throws {
     guard (1...30_000).contains(timeoutMilliseconds) else {
       throw AccountRefreshError.invalidCommand
     }
+    self.clock = clock
     self.proxy = proxy
     self.group = group
     self.timeoutMilliseconds = timeoutMilliseconds
@@ -125,7 +127,8 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     let baseline: SubscriptionClaims
     do {
       guard let idToken = credential.idToken else { throw AccountRefreshError.invalidCommand }
-      baseline = try SubscriptionClaims.idToken(idToken, nonce: nil, requireCurrent: false)
+      baseline = try SubscriptionClaims.idToken(
+        idToken, nonce: nil, requireCurrent: false, now: clock.unixSeconds)
       guard try identityNamespace(baseline) == namespace else {
         throw AccountRefreshError.invalidCommand
       }
@@ -136,13 +139,14 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
     ])
     do {
       let accessToken = try requiredString(response, "access_token")
-      let access = try SubscriptionClaims.accessToken(accessToken)
+      let access = try SubscriptionClaims.accessToken(accessToken, now: clock.unixSeconds)
       guard baseline.matches(access) else { throw AccountRefreshError.unavailable }
       let idToken = try optionalString(response, "id_token") ?? credential.idToken
       if let freshID = response["id_token"]?.string {
         guard
           baseline.matches(
-            try SubscriptionClaims.idToken(freshID, nonce: nil, requireCurrent: true))
+            try SubscriptionClaims.idToken(
+              freshID, nonce: nil, requireCurrent: true, now: clock.unixSeconds))
         else { throw AccountRefreshError.unavailable }
       }
       let refreshed = try AccountCredential(
@@ -156,8 +160,9 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
   {
     let accessToken = try requiredString(response, "access_token")
     let idToken = try requiredString(response, "id_token")
-    let identity = try SubscriptionClaims.idToken(idToken, nonce: nonce, requireCurrent: true)
-    let access = try SubscriptionClaims.accessToken(accessToken)
+    let identity = try SubscriptionClaims.idToken(
+      idToken, nonce: nonce, requireCurrent: true, now: clock.unixSeconds)
+    let access = try SubscriptionClaims.accessToken(accessToken, now: clock.unixSeconds)
     guard identity.matches(access) else { throw AccountRefreshError.unavailable }
     let credential = try AccountCredential(
       accessToken: accessToken, refreshToken: requiredString(response, "refresh_token"),
@@ -178,7 +183,7 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       guard let seconds = value.integer, (1...2_592_000).contains(seconds) else {
         throw AccountRefreshError.unavailable
       }
-      return min(claims.expires, Int64(Date().timeIntervalSince1970) + seconds)
+      return min(claims.expires, clock.unixSeconds + seconds)
     }
     return claims.expires
   }

@@ -3,9 +3,14 @@ import Foundation
 import Vapor
 
 public struct UsageAdminAPI: Sendable {
+  private let clock: WallClock
   private let querying: any UsageQuerying
   private let defaultReasoningEfforts: [String: String]
-  public init(querying: any UsageQuerying, models: [SingleIdentityConfiguration.Model] = []) {
+  public init(
+    querying: any UsageQuerying, models: [SingleIdentityConfiguration.Model] = [],
+    clock: WallClock = .system
+  ) {
+    self.clock = clock
     self.querying = querying
     defaultReasoningEfforts = Dictionary(
       uniqueKeysWithValues: models.compactMap { model in
@@ -22,7 +27,7 @@ public struct UsageAdminAPI: Sendable {
         throw ExecutionError.invalidCommand
       }
       do {
-        let now = Int64(Date().timeIntervalSince1970)
+        let now = clock.unixSeconds
         let report = try await reader.governanceHeadroom(now: now)
         return try Self.response(
           .object([

@@ -1,3 +1,4 @@
+import CodexOneCore
 import Foundation
 import Synchronization
 
@@ -18,9 +19,11 @@ public final class ClientProtocolExtensionRegistry: Sendable {
     var overflow = false
   }
   private let state = Mutex(State())
-  public init() {}
+  private let clock: WallClock
+  public init(clock: WallClock = .system) { self.clock = clock }
 
-  public func record(name: String, atUnixSeconds: Int64 = Int64(Date().timeIntervalSince1970)) {
+  public func record(name: String, atUnixSeconds: Int64? = nil) {
+    let atUnixSeconds = atUnixSeconds ?? clock.unixSeconds
     guard (1...Self.maximumNameBytes).contains(name.utf8.count),
       name.utf8.allSatisfy({ (32...126).contains($0) })
     else { return }

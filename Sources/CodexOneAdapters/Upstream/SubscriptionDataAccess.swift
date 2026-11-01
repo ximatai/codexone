@@ -32,7 +32,7 @@ extension SubscriptionOAuthProvider {
     }
     do {
       guard work.credential.idToken != nil,
-        work.credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970),
+        work.credential.expiresAtUnixSeconds > clock.unixSeconds,
         work.snapshot.credentialVersion == work.account.credentialVersion,
         work.snapshot.revision == work.account.revision,
         work.snapshot.accessExpiresAtUnixSeconds == work.credential.expiresAtUnixSeconds
@@ -68,10 +68,11 @@ extension SubscriptionOAuthProvider {
     -> HTTPHeaders
   {
     guard let id = credential.idToken,
-      credential.expiresAtUnixSeconds > Int64(Date().timeIntervalSince1970)
+      credential.expiresAtUnixSeconds > clock.unixSeconds
     else { throw AccountDispatchError.unavailable }
-    let identity = try SubscriptionClaims.idToken(id, nonce: nil, requireCurrent: false)
-    let access = try SubscriptionClaims.accessToken(credential.accessToken)
+    let identity = try SubscriptionClaims.idToken(
+      id, nonce: nil, requireCurrent: false, now: clock.unixSeconds)
+    let access = try SubscriptionClaims.accessToken(credential.accessToken, now: clock.unixSeconds)
     guard identity.matches(access), try identityNamespace(identity) == account.namespace else {
       throw AccountDispatchError.unavailable
     }

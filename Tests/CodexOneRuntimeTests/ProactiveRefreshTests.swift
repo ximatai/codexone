@@ -1,7 +1,6 @@
 import CodexOneCore
 import CodexOneRuntime
 import Foundation
-import Synchronization
 import Testing
 
 @testable import CodexOneAdapters
@@ -35,22 +34,24 @@ private actor ProactiveProvider: AccountRefreshProvider, AccountQuotaProvider {
     return try SubscriptionQuota(limits: [])
   }
 }
+/// Waits on elapsed time, not a yield count: storage work runs off the cooperative pool, so a
+/// slow runner can exhaust any fixed number of yields before it completes.
 private func spinUntil(_ condition: @Sendable () async throws -> Bool) async throws {
-  for _ in 0..<100_000 {
+  let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+  while ContinuousClock.now < deadline {
     if try await condition() { return }
-    await Task.yield()
+    try await Task.sleep(for: .milliseconds(1))
   }
-  throw AccountRefreshError.unavailable
+  Issue.record("Condition not reached within 30 seconds")
+  throw CancellationError()
 }
 
 @Test(.timeLimit(.minutes(1)))
 func proactiveRefreshWindowCyclesAndConcurrentWaitersShareOneRotation() async throws {
-  let f = try await RefreshFixture.make()
-  let clock = Mutex<Int64>(2_000_000_000 - 901)
-  let app = AccountCredentials(
-    store: f.store,
-    protection: try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32)),
-    now: { clock.withLock { $0 } })
+  let time = TestWallClock(2_000_000_000 - 901)
+  let clock = time.clock
+  let f = try await RefreshFixture.make(clock: clock)
+  let app = f.app
   var account = try await f.store.setAccountMode(
     id: f.accounts[0].id,
     revision: f.accounts[0].revision, mode: .enabled)
@@ -59,14 +60,14 @@ func proactiveRefreshWindowCyclesAndConcurrentWaitersShareOneRotation() async th
   let refresh = try AccountRefreshSupervisor(application: app, provider: provider)
   let observer = try AccountObservationSupervisor(
     store: f.store, application: app,
-    refresher: refresh, provider: provider, intervalMilliseconds: 300_000)
+    refresher: refresh, provider: provider, intervalMilliseconds: 300_000, clock: clock)
   let refreshOwner = Task { try await refresh.run() }
   try await spinUntil { refresh.isAccepting }
   let observationOwner = Task { try await observer.run() }
   try await spinUntil { observer.isAccepting }
   _ = try await observer.observeAccount(id: account.id)
   #expect(await provider.refreshes == 0)
-  clock.withLock { $0 += 1 }
+  time.advance(seconds: 1)
   try await observer.scheduleCycle()
   try await spinUntil { await provider.refreshes == 1 }
   let captured = account
@@ -93,11 +94,9 @@ func proactiveRefreshWindowCyclesAndConcurrentWaitersShareOneRotation() async th
 @Test(.timeLimit(.minutes(1)))
 func proactiveRefreshFailureClassificationAndRetryPreserveCredentialSafety() async throws {
   for failure: AccountRefreshError in [.notCompleted, .authorizationRequired, .unavailable] {
-    let f = try await RefreshFixture.make()
-    let app = AccountCredentials(
-      store: f.store,
-      protection: try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32)),
-      now: { 2_000_000_000 - 900 })
+    let clock = WallClock { TimeInterval(2_000_000_000 - 900) }
+    let f = try await RefreshFixture.make(clock: clock)
+    let app = f.app
     let account = try await f.store.setAccountMode(
       id: f.accounts[0].id,
       revision: f.accounts[0].revision, mode: .draining)
@@ -105,7 +104,7 @@ func proactiveRefreshFailureClassificationAndRetryPreserveCredentialSafety() asy
     let refresh = try AccountRefreshSupervisor(application: app, provider: provider)
     let observer = try AccountObservationSupervisor(
       store: f.store, application: app,
-      refresher: refresh, provider: provider, intervalMilliseconds: 300_000)
+      refresher: refresh, provider: provider, intervalMilliseconds: 300_000, clock: clock)
     let refreshOwner = Task { try await refresh.run() }
     try await spinUntil { refresh.isAccepting }
     let observationOwner = Task { try await observer.run() }
@@ -139,16 +138,14 @@ func proactiveRefreshFailureClassificationAndRetryPreserveCredentialSafety() asy
 
 @Test(.timeLimit(.minutes(1)))
 func proactiveRefreshNeverRefreshesDisabledAccountsEvenOnManualObservation() async throws {
-  let f = try await RefreshFixture.make()
-  let app = AccountCredentials(
-    store: f.store,
-    protection: try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32)),
-    now: { 2_000_000_000 - 300 })
+  let clock = WallClock { TimeInterval(2_000_000_000 - 300) }
+  let f = try await RefreshFixture.make(clock: clock)
+  let app = f.app
   let provider = ProactiveProvider()
   let refresh = try AccountRefreshSupervisor(application: app, provider: provider)
   let observer = try AccountObservationSupervisor(
     store: f.store, application: app,
-    refresher: refresh, provider: provider)
+    refresher: refresh, provider: provider, clock: clock)
   let owner = Task { try await observer.run() }
   try await spinUntil { observer.isAccepting }
   try await observer.scheduleCycle()
@@ -162,11 +159,9 @@ func proactiveRefreshNeverRefreshesDisabledAccountsEvenOnManualObservation() asy
 
 @Test(.timeLimit(.minutes(1)))
 func proactiveRefreshAlsoRecoversReadyExpiredCredentials() async throws {
-  let f = try await RefreshFixture.make()
-  let app = AccountCredentials(
-    store: f.store,
-    protection: try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32)),
-    now: { 2_000_000_001 })
+  let clock = WallClock { TimeInterval(2_000_000_001) }
+  let f = try await RefreshFixture.make(clock: clock)
+  let app = f.app
   let account = try await f.store.setAccountMode(
     id: f.accounts[0].id,
     revision: f.accounts[0].revision, mode: .enabled)
@@ -174,7 +169,7 @@ func proactiveRefreshAlsoRecoversReadyExpiredCredentials() async throws {
   let refresh = try AccountRefreshSupervisor(application: app, provider: provider)
   let observer = try AccountObservationSupervisor(
     store: f.store, application: app,
-    refresher: refresh, provider: provider)
+    refresher: refresh, provider: provider, clock: clock)
   let refreshOwner = Task { try await refresh.run() }
   try await spinUntil { refresh.isAccepting }
   let observerOwner = Task { try await observer.run() }

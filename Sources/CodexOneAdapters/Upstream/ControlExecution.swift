@@ -192,7 +192,7 @@ extension HTTPResponseExecution {
               account: AccountRouteCandidate(work: work),
               outcome: .init(
                 failure: executionFailure(error),
-                atUnixSeconds: Int64(Date().timeIntervalSince1970),
+                atUnixSeconds: access.clock.unixSeconds,
                 cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
           }
           throw error

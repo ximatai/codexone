@@ -10,7 +10,7 @@ extension SQLiteExecutionStore: ExecutionDiagnosticsStore {
       ),
       model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true
     else { throw ExecutionError.invalidCommand }
-    let now = Int64(Date().timeIntervalSince1970)
+    let now = clock.unixSeconds
     try await perform(optional: true) { db in
       try db.transaction {
         // A committed intent already owns its outcome, including cancellation between

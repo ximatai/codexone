@@ -51,7 +51,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
     guard blocked == 0,
       try db.scalar(
         "SELECT COUNT(*) FROM account_model_health WHERE account_id=? AND model=? AND until_epoch>?",
-        [.text(account.id), .text(model), .number(Int64(Date().timeIntervalSince1970))]) == 0
+        [.text(account.id), .text(model), .number(db.clock.unixSeconds)]) == 0
     else { throw ExecutionError.denied }
   }
   static func loadHealth(_ db: SQLiteConnection, account: ManagedAccount) throws
@@ -68,7 +68,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
     }
     let cooldowns = try db.rows(
       "SELECT model,until_epoch,failure FROM account_model_health WHERE account_id=? AND until_epoch>? ORDER BY model LIMIT 49",
-      [.text(account.id), .number(Int64(Date().timeIntervalSince1970))]
+      [.text(account.id), .number(db.clock.unixSeconds)]
     ) { row -> AccountModelCooldown in
       guard let failure = ExecutionFailure(rawValue: String(cString: sqlite3_column_text(row, 2))),
         failure == .rateLimited || failure == .upstreamUnavailable

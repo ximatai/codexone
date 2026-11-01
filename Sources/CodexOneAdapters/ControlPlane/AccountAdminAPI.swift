@@ -4,6 +4,7 @@ import Vapor
 
 /// Registers only beneath the shared, authenticated management route group.
 public struct AccountAdminAPI: Sendable {
+  private let clock: WallClock
   private let credentials: AccountCredentials?
   private let store: any AccountGovernanceStore
   private let authorization: any AccountAuthorizing
@@ -12,8 +13,9 @@ public struct AccountAdminAPI: Sendable {
   public init(
     store: any AccountGovernanceStore, authorization: any AccountAuthorizing,
     refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil,
-    credentials: AccountCredentials? = nil
+    credentials: AccountCredentials? = nil, clock: WallClock = .system
   ) {
+    self.clock = clock
     self.credentials = credentials
     self.store = store
     self.authorization = authorization
@@ -128,7 +130,8 @@ public struct AccountAdminAPI: Sendable {
     let quota = try await observations.quotaObservation(id: id)
     let status = try await health.accountHealth(id: id)
     return accountObservationDTO(
-      quota, health: status, observing: observing?.isAccepting == true, detail: detail)
+      quota, health: status, observing: observing?.isAccepting == true, detail: detail,
+      now: clock.unixSeconds)
   }
   private func metadata(_ account: ManagedAccount) async throws -> JSONValue {
     let updated = try await store.credentialUpdatedAtUnixSeconds(id: account.id)

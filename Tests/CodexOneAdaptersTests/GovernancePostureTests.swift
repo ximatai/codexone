@@ -11,7 +11,8 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   // A single synthetic transaction makes a large unknown population; no provider calls.
   try await store.perform { db in
     try db.transaction {
@@ -28,7 +29,7 @@ import Testing
   try await store.admit(admission("after-release"))
   // Neither the legacy global daily budget nor requests/unresolved prevent admission.
   let reader = try await store.makeUsageReader()
-  let headroom = try await reader.governanceHeadroom(now: Int64(Date().timeIntervalSince1970))
+  let headroom = try await reader.governanceHeadroom(now: testUnixSeconds)
   #expect(headroom.accounts.first?.current == 16 && headroom.accounts.first?.peak24Hours == 16)
   #expect(headroom.capacities.first?.current == 2017)
   #expect(
@@ -42,8 +43,9 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
-  let now = Int64(Date().timeIntervalSince1970)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let now = testUnixSeconds
   try await store.perform { db in
     try db.transaction {
       for i in 0..<202 {
@@ -61,7 +63,8 @@ import Testing
       try $0.scalar("SELECT COUNT(*) FROM attempts WHERE closed_unknown_at_epoch IS NOT NULL")
     } == 100)
   await store.close()  // no in-memory cursor; next owner continues safely
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   try await reopened.maintainExecutions(now: now)
   try await reopened.maintainExecutions(now: now)
   #expect(try await reopened.snapshot(attempt: "expiry-201").state == .unknown)
@@ -88,8 +91,9 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
-  let now = Int64(Date().timeIntervalSince1970)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let now = testUnixSeconds
   let oldDay = now / 86400 * 86400 - 91 * 86400
   for id in ["complete-old", "unknown-old", "intent-old", "closed-old", "boundary-old"] {
     try await store.admit(admission(id))
@@ -97,9 +101,8 @@ import Testing
       try await store.finalize(attempt: id, evidence: id == "complete-old" ? usage() : nil)
     }
   }
-  // Admissions may cross a second boundary on slow runners; cut off after all of them.
   _ = try await store.releaseUnknown(
-    beforeUnixSeconds: Int64(Date().timeIntervalSince1970) + 1, expectedCount: 3)
+    beforeUnixSeconds: now + 1, expectedCount: 3)
   try await store.perform { db in
     try db.write("UPDATE attempts SET created_at_epoch=?", [.number(oldDay)])
     try db.write(
@@ -124,7 +127,8 @@ import Testing
   #expect(try await store.perform { try $0.scalar("SELECT COUNT(*) FROM usage_daily") } == 0)
   await reader.close()
   await store.close()
-  let retryStore = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let retryStore = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let retryReader = try await retryStore.makeUsageReader()
   try await retryStore.perform { try $0.exec("DROP TRIGGER fail_retention") }
   try await retryStore.maintainExecutions(now: now)
@@ -140,6 +144,13 @@ import Testing
   #expect(try await retryStore.snapshot(attempt: "boundary-old").state == .closedUnknown)
   #expect(
     try await retryStore.perform { try $0.scalar("SELECT SUM(requests) FROM usage_daily") } == 2)
+  // The exact cutoff remains detailed; one second later it is eligible for atomic rollup.
+  try await retryStore.maintainExecutions(now: now + 1)
+  await #expect(throws: ExecutionError.unknownAttempt) {
+    try await retryStore.snapshot(attempt: "boundary-old")
+  }
+  #expect(try await retryStore.snapshot(attempt: "unknown-old").state == .unknown)
+  #expect(try await retryStore.snapshot(attempt: "intent-old").state == .unknown)
   await retryReader.close()
   await retryStore.close()
 }
@@ -172,7 +183,8 @@ import Testing
   let path = try temporaryExecutionPath()
   let directory = (path as NSString).deletingLastPathComponent
   defer { try? FileManager.default.removeItem(atPath: directory) }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   try await store.admit(admission("pre-migration"))
   await store.close()
   try rawSQL(
@@ -181,7 +193,7 @@ import Testing
       + "PRAGMA user_version=9; PRAGMA auto_vacuum=NONE; VACUUM; CREATE TABLE usage_daily(synthetic INTEGER);"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
   }
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await SQLiteExecutionStore.migrate(path: path)
@@ -214,8 +226,9 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
-  let now = Int64(Date().timeIntervalSince1970)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let now = testUnixSeconds
   let object = ObjectBinding(type: "response", rawID: "synthetic-response")
   try await store.admit(admission("binding-live"))
   try await store.bind(attempt: "binding-live", object: object)
@@ -254,8 +267,8 @@ import Testing
     reserveBytes: 1_048_576, stopBytes: 2_097_152, resumeBytes: 3_145_728, optionalBytes: 4_194_304)
   let store = try await SQLiteExecutionStore.open(
     path: path, limits: syntheticLimits, storagePolicy: policy,
-    available: { _ in available.withLock { $0 } })
-  let now = Int64(Date().timeIntervalSince1970)
+    available: { _ in available.withLock { $0 } }, clock: testClock)
+  let now = testUnixSeconds
   try await store.perform { db in
     try db.exec(
       "CREATE TABLE synthetic_pages(payload BLOB); INSERT INTO synthetic_pages VALUES(zeroblob(1048576)); DELETE FROM synthetic_pages;"
@@ -285,8 +298,9 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
-  let now = Int64(Date().timeIntervalSince1970)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let now = testUnixSeconds
   let envelope =
     "v1." + String(repeating: "a", count: 32) + "."
     + Data(repeating: 7, count: 28).base64EncodedString()
@@ -350,7 +364,8 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   for (id, limit) in [
     (
       "pending-key",
@@ -401,9 +416,10 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   try await store.admit(admission("peak-active"))
-  let now = Int64(Date().timeIntervalSince1970)
+  let now = testUnixSeconds
   try await store.perform { db in
     for offset in 1...40 {
       try db.write(
@@ -412,7 +428,8 @@ import Testing
     }
   }
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(
     try await reopened.perform { try $0.scalar("SELECT COUNT(*) FROM account_concurrency") } == 1)
   try await reopened.admit(admission("peak-release"))
@@ -430,7 +447,8 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   _ = try await store.createKey(
     id: "key", principal: "p", digest: String(repeating: "b", count: 64),
     policy: .init(models: ["m"], limits: syntheticLimits))
@@ -442,7 +460,7 @@ import Testing
   try await store.perform { try $0.exec("UPDATE attempts SET created_at_epoch=0") }
   let reader = try await store.makeUsageReader()
   #expect(try await reader.keyUsage().keys.first?.lastUsedAtUnixSeconds == 0)
-  try await store.maintainExecutions(now: Int64(Date().timeIntervalSince1970))
+  try await store.maintainExecutions(now: testUnixSeconds)
   let archived = try await reader.keyUsage().keys
   let daily = try await reader.dailyUsage(days: 1, keyID: "key", model: nil, endUnixSeconds: 86400)
   #expect(daily.first?.requests == 1 && daily.first?.metrics.inputTokens == 12)

@@ -14,7 +14,8 @@ private struct UsageFixture {
     let path = try temporaryExecutionPath()
     let store = try await SQLiteExecutionStore.open(
       path: path,
-      limits: .init(requests: 100000, active: 64, unresolved: 64, budgetMicros: 1_000_000_000_000))
+      limits: .init(requests: 100000, active: 64, unresolved: 64, budgetMicros: 1_000_000_000_000),
+      clock: testClock)
     for (id, digest) in [("alpha", "a"), ("beta", "b")] {
       _ = try await store.createKey(
         id: id, principal: id, digest: String(repeating: digest, count: 64),
@@ -26,7 +27,7 @@ private struct UsageFixture {
     try await store.configureHealthModels(["synthetic-text"])
     return Self(
       path: path, store: store, reader: try await store.makeUsageReader(readTimeout: readTimeout),
-      hour: Int64(Date().timeIntervalSince1970) / 3600 * 3600)
+      hour: testUnixSeconds / 3600 * 3600)
   }
   func insert(
     _ id: String, key: String = "alpha", mode: ExecutionMode = .generation, at: Int64?,
@@ -40,7 +41,7 @@ private struct UsageFixture {
         requestID: "request-" + id, mode: mode, keyRevision: 1, model: "synthetic-text"))
     try await store.finalize(
       attempt: id, evidence: evidence,
-      outcome: .init(failure: failure, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+      outcome: .init(failure: failure, atUnixSeconds: testUnixSeconds))
     try await store.perform { db in
       try db.write(
         "UPDATE attempts SET created_at_epoch=? WHERE id=?",
@@ -301,7 +302,7 @@ private struct UsageFixture {
 @Test func keyUsageUsesUTCDayAndNamesWithoutInventingHistoricalTiming() async throws {
   let f = try await UsageFixture.make()
   do {
-    let start = Int64(Date().timeIntervalSince1970) / 86400 * 86400
+    let start = testUnixSeconds / 86400 * 86400
     try await f.insert("before", at: start - 1, evidence: usage(amount: 70))
     try await f.insert("boundary", at: start, evidence: usage(amount: 3))
     try await f.insert("failed-today", at: start + 1, evidence: nil, failure: .upstreamRejected)

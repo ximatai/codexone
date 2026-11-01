@@ -386,7 +386,8 @@ private struct PoolHTTPHarness {
     if wrongMaster {
       await oauth.store.close()
       store = try await SQLiteExecutionStore.open(
-        path: oauth.root.appendingPathComponent("core.sqlite").path, limits: limits)
+        path: oauth.root.appendingPathComponent("core.sqlite").path, limits: limits,
+        clock: testClock)
     } else {
       store = oauth.store
     }
@@ -396,12 +397,14 @@ private struct PoolHTTPHarness {
       wrongMaster
       ? AccountCredentials(
         store: store,
-        protection: try AccountCredentialCipher(hexKey: String(repeating: "7b", count: 32)))
+        protection: try AccountCredentialCipher(hexKey: String(repeating: "7b", count: 32)),
+        clock: testClock)
       : oauth.app
     let service = try ResponsesDataService(
       group: oauth.group, port: 0, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: oauth.supervisor,
-      provider: oauth.provider, target: .syntheticLoopback(port: listener.localAddress!.port!)
+      provider: oauth.provider, target: .syntheticLoopback(port: listener.localAddress!.port!),
+      clock: testClock
     ) { port in bound.withLock { $0 = port } }
     let owner = Task {
       try await GatewayRuntime(services: [finalizer, service]).run(handleSignals: false)
@@ -558,7 +561,7 @@ func poolHTTPDisableAndKeyRevocationRefuseContinuationWithoutSwitching() async t
         idToken: work.credential.idToken, expiresAtUnixSeconds: 1))
     let tokens = try oauthTokens(
       account: selected, subject: "synthetic-user-\(accountID)",
-      accessExpiry: Int64(Date().timeIntervalSince1970) + 7200)
+      accessExpiry: testUnixSeconds + 7200)
     let response = try #require(JSONSerialization.jsonObject(with: tokens) as? [String: Any])
     let token = try #require(response["access_token"] as? String)
     h.state.value.withLock { $0.expected[selected] = token }
@@ -1105,7 +1108,8 @@ func poolNativeWebSocketDisconnectAndRuntimeCancellationCloseOwnedHandshakeAndTu
             // Prove the durable intent becomes unknown on a real cold reopen.
             await h.store.close()
             ledger = try await SQLiteExecutionStore.open(
-              path: oauth.root.appendingPathComponent("core.sqlite").path, limits: h.store.limits)
+              path: oauth.root.appendingPathComponent("core.sqlite").path, limits: h.store.limits,
+              clock: testClock)
           } else {
             ledger = h.store
           }
@@ -1253,7 +1257,7 @@ func poolUsageAutomaticallyCollectsHTTPModesFailuresAndPreAdmissionRejectionsWit
       #expect(try await h.request(key: "synthetic-unauthorized-key").0 == 401)
       #expect(h.calls.count == before)
       try await awaitOAuth { h.finalizer.outstanding == 0 }
-      let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+      let hour = testUnixSeconds / 3600 * 3600
       let report = try await reader.queryUsage(
         .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
       #expect(report.totals.admitted == 5 && report.totals.rejected == 2)
@@ -1291,7 +1295,7 @@ func poolUsageCollectsNativeWarmupAndFailedTerminalAcrossNativeAndBridgedWebSock
           == "response.failed")
       #expect(try await h.request("terminal-failed", stream: true).0 == 200)
       try await awaitOAuth { h.finalizer.outstanding == 0 }
-      let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+      let hour = testUnixSeconds / 3600 * 3600
       let report = try await reader.queryUsage(
         .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
       #expect(
@@ -1561,7 +1565,7 @@ private func assertPoolRefusalSettled(_ h: PoolHTTPHarness) async throws {
   try await awaitOAuth { h.finalizer.outstanding == 0 }
   let reader = try await h.store.makeUsageReader()
   do {
-    let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+    let hour = testUnixSeconds / 3600 * 3600
     let report = try await reader.queryUsage(
       .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
     #expect(report.totals.complete == 1 && report.totals.failed == 1 && report.totals.unknown == 0)

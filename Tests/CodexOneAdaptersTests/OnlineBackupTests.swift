@@ -93,21 +93,19 @@ private func backupNames(_ root: String) throws -> [String] {
 }
 
 @Test func onlineBackupRetainsSevenOnlyAfterVerifiedPublicationAndCleansPartial() async throws {
+  let time = TestWallClock()
   let root = try backupRoot()
   defer { try? FileManager.default.removeItem(atPath: root) }
   let store = try await SQLiteExecutionStore.open(
-    path: root + "/core.sqlite", limits: syntheticLimits)
+    path: root + "/core.sqlite", limits: syntheticLimits, clock: time.clock)
   let backup = try store.makeOnlineBackup(directory: root, protection: nil)
+  #expect(backup.backupObservation.enabledUnixSeconds == time.clock.unixSeconds)
   await backup.performBackup()
   let first = try #require(backupNames(root).first)
-  // Make the first snapshot unambiguously oldest without delaying the test for a wall-clock tick.
-  let manifestPath = root + "/" + first + "/manifest.json"
-  var manifest = try #require(
-    JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: manifestPath)))
-      as? [String: Any])
-  manifest["createdUnixSeconds"] = 1
-  try JSONSerialization.data(withJSONObject: manifest).write(to: URL(fileURLWithPath: manifestPath))
-  for _ in 0..<6 { await backup.performBackup() }
+  for _ in 0..<6 {
+    time.advance(seconds: 1)
+    await backup.performBackup()
+  }
   #expect(try backupNames(root).count == 7)
   let old = try backupNames(root)
   let fails = try SQLiteOnlineBackup(
@@ -115,6 +113,7 @@ private func backupNames(_ root: String) throws -> [String] {
     beforeStep: { throw ExecutionError.storagePressure })
   await fails.performBackup()
   #expect(fails.backupObservation.lastFailure == .insufficientSpace)
+  #expect(fails.backupObservation.lastFailureUnixSeconds == time.clock.unixSeconds)
   #expect(try backupNames(root) == old)
   let invalid = try SQLiteOnlineBackup(
     primary: store, directory: root, protection: nil,
@@ -129,6 +128,7 @@ private func backupNames(_ root: String) throws -> [String] {
   #expect(try backupNames(root) == old)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: root).contains { $0.hasSuffix(".partial") })
+  time.advance(seconds: 1)
   await backup.performBackup()
   #expect(try backupNames(root).count == 7)
   #expect(!FileManager.default.fileExists(atPath: root + "/" + first))
@@ -136,7 +136,7 @@ private func backupNames(_ root: String) throws -> [String] {
     try !FileManager.default.contentsOfDirectory(atPath: root).contains { $0.hasSuffix(".partial") }
   )
   let restarted = try store.makeOnlineBackup(directory: root, protection: nil)
-  #expect(restarted.backupObservation.lastSuccessUnixSeconds != nil)
+  #expect(restarted.backupObservation.lastSuccessUnixSeconds == time.clock.unixSeconds)
   #expect(restarted.backupObservation.retainedCount == 7)
   #expect(restarted.backupObservation.totalBytes > restarted.backupObservation.largestBundleBytes)
   try await store.admit(admission("still-serving"))

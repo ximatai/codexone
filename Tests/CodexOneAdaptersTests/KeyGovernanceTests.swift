@@ -30,7 +30,8 @@ private func keyAdmission(
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let secret = generateKeySecret()
   let key = try await store.createKey(
     id: "k", principal: "p", digest: keyDigest(secret), policy: keyPolicy())
@@ -68,7 +69,8 @@ private func keyAdmission(
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let key = try await store.createKey(
     id: "k", principal: "p", digest: keyDigest("synthetic-governance-token"),
     policy: keyPolicy(unresolved: 2))
@@ -90,7 +92,8 @@ private func keyAdmission(
     id: "other", principal: "p", digest: keyDigest("synthetic-other-token"), policy: keyPolicy())
   try await store.admit(keyAdmission("other", key: other))
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   await #expect(throws: ExecutionError.denied) {
     try await reopened.admit(keyAdmission("new-window", key: key, window: "new-window"))
   }
@@ -103,7 +106,8 @@ private func keyAdmission(
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let key = try await store.createKey(
     id: "k", principal: "p", digest: keyDigest("synthetic-old-token"),
     policy: keyPolicy(requests: 1))
@@ -137,7 +141,8 @@ private func keyAdmission(
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let digest = keyDigest("synthetic-governance-token")
   let key = try await store.createKey(id: "k", principal: "p", digest: digest, policy: keyPolicy())
   try rawSQL(
@@ -158,7 +163,8 @@ private func keyAdmission(
     path,
     "DROP TRIGGER fail_audit; WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4095) INSERT INTO key_events SELECT 'audit-'||i,'k',1,'synthetic',1,'{}' FROM n"
   )
-  let recovered = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let recovered = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   await #expect(throws: ExecutionError.capacity) {
     try await recovered.updateKey(id: "k", revision: 1, enabled: true, policy: key.policy)
   }
@@ -179,11 +185,12 @@ private func keyAdmission(
   let path = try temporaryExecutionPath()
   let directory = (path as NSString).deletingLastPathComponent
   defer { try? FileManager.default.removeItem(atPath: directory) }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   try await store.admit(admission("old"))
   try await store.bind(attempt: "old", object: .init(type: "response", rawID: "r"))
   await #expect(throws: ExecutionError.instanceLocked) {
-    try await SQLiteExecutionStore.migrate(path: path)
+    try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   }
   await store.close()
   try rawSQL(
@@ -192,9 +199,9 @@ private func keyAdmission(
       + "DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=1"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
   }
-  try await SQLiteExecutionStore.migrate(path: path)
+  try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
     $0.contains(".pre-v10-")
   }
@@ -212,7 +219,8 @@ private func keyAdmission(
   #expect(String(cString: sqlite3_column_text(statement, 0)) == "intent")
   sqlite3_finalize(statement)
   sqlite3_close(db)
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.snapshot(attempt: "old").state == .unknown)
   #expect(
     try await reopened.resolve(principal: "p", object: .init(type: "response", rawID: "r")).key
@@ -224,7 +232,8 @@ private func keyAdmission(
   let path = try temporaryExecutionPath()
   let directory = (path as NSString).deletingLastPathComponent
   defer { try? FileManager.default.removeItem(atPath: directory) }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   await store.close()
   try rawSQL(
     path,
@@ -233,7 +242,7 @@ private func keyAdmission(
   )
   // An index name conflict occurs after both CREATE TABLE statements, inside the migration transaction.
   await #expect(throws: ExecutionError.storageUnavailable) {
-    try await SQLiteExecutionStore.migrate(path: path)
+    try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   }
   var db: OpaquePointer?
   #expect(sqlite3_open(path, &db) == SQLITE_OK)
@@ -249,8 +258,9 @@ private func keyAdmission(
   sqlite3_finalize(statement)
   sqlite3_close(db)
   try rawSQL(path, "DROP INDEX attempts_key")
-  try await SQLiteExecutionStore.migrate(path: path)
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   await reopened.close()
 }
 
@@ -282,7 +292,8 @@ private func keyAdmission(
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let policy = try keyPolicy()
   for index in 0..<256 {
     _ = try await store.createKey(
@@ -308,7 +319,8 @@ private func keyAdmission(
     try await store.authenticateKey(digest: keyDigest("synthetic-public-revocation-token-255"))
   }
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.listKeys(after: nil).allSatisfy { !$0.enabled })
   await reopened.close()
 }
@@ -328,7 +340,8 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
     // Pair it with every other bounded dimension to prove those still refuse.
     for bounded in [unlimited] + limitNames.filter({ $0 != unlimited }) {
       let path = try temporaryExecutionPath()
-      let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+      let store = try await SQLiteExecutionStore.open(
+        path: path, limits: syntheticLimits, clock: testClock)
       var limits = Dictionary(uniqueKeysWithValues: limitNames.map { ($0, 100 as Any) })
       limits[bounded] = bounded.contains("Micros") ? 10 : 1
       var key = try await store.createKey(
@@ -362,7 +375,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   }
   let store = try await SQLiteExecutionStore.open(
     path: path,
-    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100))
+    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100), clock: testClock)
   let policy = try decodedKeyPolicy(
     Dictionary(uniqueKeysWithValues: limitNames.map { ($0, NSNull()) }))
   let key = try await store.createKey(
@@ -382,7 +395,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(
     path: path,
-    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100))
+    limits: .init(requests: 105, active: 4, unresolved: 4, budgetMicros: 100), clock: testClock)
   #expect(try await reopened.listKeys(after: nil).first?.policy == policy)
   await reopened.close()
 }
@@ -411,12 +424,13 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let digest = String(repeating: "a", count: 64)
   let key = try await store.createKey(
     id: "expiry", principal: "expiry", digest: digest,
     policy: .init(models: ["synthetic-text"], limits: syntheticLimits))
-  let now = Int64(Date().timeIntervalSince1970)
+  let now = testUnixSeconds
   for revision in [Int64(0), -1, 1_000_001] {
     await #expect(throws: ExecutionError.invalidCommand) {
       try await store.setKeyExpiration(id: key.id, revision: revision, expiresAtUnixSeconds: nil)
@@ -464,7 +478,8 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
       id: key.id, revision: cleared.revision, expiresAtUnixSeconds: 0)
   }
   await store.close()
-  let reopened = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   #expect(try await reopened.authenticateKey(digest: digest).expiresAtUnixSeconds == nil)
   await reopened.close()
 }
@@ -474,7 +489,8 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let digest = keyDigest("synthetic-name-token")
   var key = try await store.createKey(
     id: "named", principal: "owner", digest: digest, policy: keyPolicy())
@@ -521,7 +537,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   #expect(try await reader.usageOptions().keyOptions.first { $0.id == key.id }?.displayName == name)
   #expect(try await reader.keyUsage().keys.first { $0.key.id == key.id }?.key.displayName == name)
   #expect(try await reader.inFlightUsage(limit: 10).first?.displayName == name)
-  let hour = Int64(Date().timeIntervalSince1970) / 3600 * 3600
+  let hour = testUnixSeconds / 3600 * 3600
   let report = try await reader.queryUsage(
     .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
   #expect(report.rows.first?.displayName == name)
@@ -538,7 +554,8 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   let digest = keyDigest("synthetic-archive")
   var key = try await store.createKey(
     id: "archive", principal: "p", digest: digest, policy: keyPolicy())
@@ -590,7 +607,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   #expect(option.archived && option.displayName == "Synthetic key")
   #expect(try await reader.keyUsage().keys.first?.admitted == 1)
   #expect(
-    try await reader.attentionItems(now: Int64(Date().timeIntervalSince1970)).allSatisfy {
+    try await reader.attentionItems(now: testUnixSeconds).allSatisfy {
       $0.subjectID != key.id
     })
   key = try await store.setKeyArchived(id: key.id, revision: key.revision, archived: false)
@@ -616,7 +633,8 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
   for index in 0..<130 {
     let id = String(format: "key-%03d", index)
     var key = try await store.createKey(

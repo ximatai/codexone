@@ -27,6 +27,7 @@ struct DataPlaneAuthorization: Sendable {
   let token: String?
   let store: any ExecutionStore
   let finalizer: any FinalizationSink
+  var clock: WallClock = .system
   var diagnostics: (any ExecutionDiagnosticsStore)? { store as? any ExecutionDiagnosticsStore }
 
   func digest(_ headers: [String]) throws -> String? {
@@ -53,7 +54,7 @@ struct DataPlaneAuthorization: Sendable {
   func gateway(_ policy: ResponsesPolicy) throws -> ResponsesGateway {
     switch (source, policy) {
     case (.single, .single(let policy)):
-      return .single(.init(policy: policy, store: store, finalizer: finalizer))
+      return .single(.init(policy: policy, store: store, finalizer: finalizer, clock: clock))
     case (.pool(_, let credentials, let refresher, let provider, let target), .pool(let policy)):
       guard let routing = store as? any AccountRoutingStore else {
         throw ExecutionError.invalidCommand
@@ -61,7 +62,7 @@ struct DataPlaneAuthorization: Sendable {
       return .pool(
         .init(
           policy: policy, store: routing, credentials: credentials, finalizer: finalizer,
-          refresher: refresher), provider, target)
+          refresher: refresher, clock: clock), provider, target)
     default: throw ExecutionError.invalidCommand
     }
   }

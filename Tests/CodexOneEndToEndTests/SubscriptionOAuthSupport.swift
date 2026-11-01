@@ -33,7 +33,7 @@ func oauthTokens(
   accessAccount: String? = nil, idExpiry: Int64? = nil,
   idIssuer: String = SubscriptionOAuthProvider.issuer, idAlgorithm: String = "RS256"
 ) throws -> Data {
-  let now = Int64(Date().timeIntervalSince1970)
+  let now = testUnixSeconds
   let auth: [String: Any] =
     missingAccount
     ? [:] : ["chatgpt_account_id": accessAccount ?? account, "chatgpt_user_id": "synthetic-member"]
@@ -259,12 +259,12 @@ struct OAuthHarness: Sendable {
       let cipher = try await AccountCredentialCipher.load(path: key.path)
       let database = try await SQLiteExecutionStore.open(
         path: root.appendingPathComponent("core.sqlite").path,
-        limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100))
+        limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100), clock: testClock)
       store = database
-      let app = AccountCredentials(store: database, protection: cipher)
+      let app = AccountCredentials(store: database, protection: cipher, clock: testClock)
       let provider = try SubscriptionOAuthProvider(
-        group: group, authority: .syntheticLoopback(port: server.port), timeoutMilliseconds: timeout
-      )
+        group: group, authority: .syntheticLoopback(port: server.port),
+        timeoutMilliseconds: timeout, clock: testClock)
       let supervisor = try AccountRefreshSupervisor(application: app, provider: provider)
       let task = Task {
         try await GatewayRuntime(services: [provider, supervisor]).run(handleSignals: false)

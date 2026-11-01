@@ -2,6 +2,7 @@ import Foundation
 
 /// Per-execution structured application work; no detached tasks or unbounded credential cache.
 public struct AccountPoolGateway: Sendable {
+  private let clock: WallClock
   private let policy: AccountPoolPolicy
   private let store: any AccountRoutingStore
   private let credentials: AccountCredentials
@@ -9,13 +10,15 @@ public struct AccountPoolGateway: Sendable {
   private let coordinator: ExecutionCoordinator
   public init(
     policy: AccountPoolPolicy, store: any AccountRoutingStore, credentials: AccountCredentials,
-    finalizer: any FinalizationSink, refresher: (any AccountDispatchRefreshing)? = nil
+    finalizer: any FinalizationSink, refresher: (any AccountDispatchRefreshing)? = nil,
+    clock: WallClock = .system
   ) {
+    self.clock = clock
     self.policy = policy
     self.store = store
     self.credentials = credentials
     self.refresher = refresher
-    coordinator = ExecutionCoordinator(store: store, finalizer: finalizer)
+    coordinator = ExecutionCoordinator(store: store, finalizer: finalizer, clock: clock)
   }
   public func execute(
     model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
@@ -39,7 +42,7 @@ public struct AccountPoolGateway: Sendable {
             principal: policy.key.principal, hints: affinityHints) : nil
         let works = try await prepareWorks(affinity: affinity, preferred: preferred)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
-        let day = Int64(Date().timeIntervalSince1970 / 86_400)
+        let day = clock.utcDay
         let command = try AccountPoolAdmission(
           attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
           requestID: requestID, mode: mode, references: references, connection: connection,

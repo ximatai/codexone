@@ -5,6 +5,7 @@ public struct ExecutionContext: Sendable {
   public func recordUnexpectedExecution() async throws {
     try await store.recordUnexpectedExecution(basedOn: admission.attempt)
   }
+  public let clock: WallClock
   public let admission: ExecutionAdmission
   private let store: any ExecutionStore
   private let observation = UsageObservation()
@@ -12,7 +13,8 @@ public struct ExecutionContext: Sendable {
   public func observeProviderEvent() -> Bool { observation.recordProviderEvent() }
   public var hasProviderEvents: Bool { observation.hasProviderEvents }
   public var providerRejectedBeforeOutput: Bool { observation.isProviderRejection }
-  init(admission: ExecutionAdmission, store: any ExecutionStore) {
+  init(admission: ExecutionAdmission, store: any ExecutionStore, clock: WallClock = .system) {
+    self.clock = clock
     self.admission = admission
     self.store = store
     (store as? any ExecutionLiveObserving)?.executionStarted(attempt: admission.attempt)
@@ -138,9 +140,13 @@ private final class UsageObservation: Sendable {
 }
 
 public struct ExecutionCoordinator: Sendable {
+  private let clock: WallClock
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
-  public init(store: any ExecutionStore, finalizer: any FinalizationSink) {
+  public init(
+    store: any ExecutionStore, finalizer: any FinalizationSink, clock: WallClock = .system
+  ) {
+    self.clock = clock
     self.store = store
     self.finalizer = finalizer
   }
@@ -191,7 +197,7 @@ public struct ExecutionCoordinator: Sendable {
       finalizer.abandon(ticket)
       throw error
     }
-    let context = ExecutionContext(admission: admitted.0, store: store)
+    let context = ExecutionContext(admission: admitted.0, store: store, clock: clock)
     defer {
       let (evidence, outcome) = context.finishObservation()
       finalizer.handoff(
@@ -205,12 +211,12 @@ public struct ExecutionCoordinator: Sendable {
         try context.observeUsage(terminal)
       }
       try context.observeOutcome(
-        .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+        .init(failure: nil, atUnixSeconds: clock.unixSeconds))
     } catch {
       let failure: ExecutionFailure =
         Task.isCancelled || error is CancellationError ? .clientCancelled : .indeterminate
       try? context.observeOutcome(
-        .init(failure: failure, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+        .init(failure: failure, atUnixSeconds: clock.unixSeconds))
       throw error
     }
   }

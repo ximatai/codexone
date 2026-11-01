@@ -66,6 +66,7 @@ struct CodexOneMain {
   }
 
   private static func run() async throws {
+    let clock = WallClock.system
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
@@ -100,7 +101,8 @@ struct CodexOneMain {
       guard let directory = configuration.dataDirectory, let admin = configuration.adminTokenFile
       else { throw ExecutionError.invalidCommand }
       let result = try await SQLiteExecutionStore.importKeys(
-        path: directory + "/core.sqlite", manifestFile: arguments[1], adminCredentialFile: admin)
+        path: directory + "/core.sqlite", manifestFile: arguments[1], adminCredentialFile: admin,
+        clock: clock)
       FileHandle.standardOutput.write(try JSONEncoder().encode(result) + Data([10]))
       return
     }
@@ -108,7 +110,7 @@ struct CodexOneMain {
       guard let directory = configuration.dataDirectory else {
         throw RuntimeConfiguration.ConfigurationError.invalidDataDirectory
       }
-      try await SQLiteExecutionStore.migrate(path: directory + "/core.sqlite")
+      try await SQLiteExecutionStore.migrate(path: directory + "/core.sqlite", clock: clock)
       print("Schema migration completed; any pre-upgrade backup is beside the database.")
       return
     }
@@ -121,7 +123,8 @@ struct CodexOneMain {
       if let keyFile = configuration.accountMasterKeyFile {
         let maintenanceIdentity: SingleIdentityConfiguration?
         if let identityPath = configuration.identityConfigurationPath {
-          maintenanceIdentity = try await SingleIdentityConfiguration.load(path: identityPath)
+          maintenanceIdentity = try await SingleIdentityConfiguration.load(
+            path: identityPath, clock: clock)
         } else {
           maintenanceIdentity = nil
         }
@@ -133,7 +136,7 @@ struct CodexOneMain {
       }
       if arguments[0] == "--verify-backup" {
         let manifest = try await SQLiteSnapshotMaintenance.verifyBackup(
-          bundle: arguments[1], protection: protection)
+          bundle: arguments[1], protection: protection, clock: clock)
         FileHandle.standardOutput.write(try JSONEncoder().encode(manifest) + Data([10]))
         return
       }
@@ -147,15 +150,17 @@ struct CodexOneMain {
         let result: Data
         if arguments[0] == "--check-key-retirement" {
           result = try await SQLiteKeyMaintenance.checkRetirement(
-            path: path, protection: protection, inventoryFile: arguments[1])
+            path: path, protection: protection, inventoryFile: arguments[1], clock: clock)
         } else {
           let status: KeyMaintenanceStatus
           if arguments[0] == "--key-status" {
-            status = try await SQLiteKeyMaintenance.status(path: path, protection: protection)
+            status = try await SQLiteKeyMaintenance.status(
+              path: path, protection: protection, clock: clock)
           } else {
             status = try await SQLiteKeyMaintenance.reencrypt(
               path: path, protection: protection,
-              backupDestination: arguments[0] == "--reencrypt-credentials" ? arguments[1] : nil)
+              backupDestination: arguments[0] == "--reencrypt-credentials" ? arguments[1] : nil,
+              clock: clock)
           }
           result = try JSONEncoder().encode(status)
         }
@@ -164,25 +169,25 @@ struct CodexOneMain {
       }
       if arguments[0] == "--backup" {
         let manifest = try await SQLiteSnapshotMaintenance.backup(
-          path: path, destination: arguments[1], protection: protection)
+          path: path, destination: arguments[1], protection: protection, clock: clock)
         FileHandle.standardOutput.write(try JSONEncoder().encode(manifest) + Data([10]))
       } else {
         let record: RestoreRecord?
         switch arguments[0] {
         case "--restore":
           record = try await SQLiteSnapshotMaintenance.restore(
-            bundle: arguments[1], path: path, protection: protection)
+            bundle: arguments[1], path: path, protection: protection, clock: clock)
         case "--reconcile-restored":
           record = try await SQLiteSnapshotMaintenance.reconcileFile(
-            path: path, baselineFile: arguments[1])
-        default: record = try await SQLiteSnapshotMaintenance.status(path: path)
+            path: path, baselineFile: arguments[1], clock: clock)
+        default: record = try await SQLiteSnapshotMaintenance.status(path: path, clock: clock)
         }
         let state =
           record == nil
           ? "normal"
           : record!.baseline == nil
             ? "restored_unreconciled"
-            : record!.allowsAdmission(at: Int64(Date().timeIntervalSince1970))
+            : record!.allowsAdmission(at: clock.unixSeconds)
               ? "reconciled" : "frozen"
         let encoded = try record.map {
           try JSONSerialization.jsonObject(with: JSONEncoder().encode($0))
@@ -190,7 +195,7 @@ struct CodexOneMain {
         let report: [String: Any] = [
           "state": state, "restore": encoded ?? NSNull(),
           "minimumFreezeUntilUnixSeconds": record?.minimumReconciliationFreeze(
-            at: Int64(Date().timeIntervalSince1970)) as Any?
+            at: clock.unixSeconds) as Any?
             ?? NSNull(),
           "missingUnresolvedRequests": record?.unresolvedRequests ?? 0,
           "missingUnresolvedMicros": record?.unresolvedMicros ?? 0,
@@ -202,7 +207,7 @@ struct CodexOneMain {
     }
     let identityConfiguration: SingleIdentityConfiguration?
     if let path = configuration.identityConfigurationPath {
-      identityConfiguration = try await SingleIdentityConfiguration.load(path: path)
+      identityConfiguration = try await SingleIdentityConfiguration.load(path: path, clock: clock)
     } else {
       identityConfiguration = nil
     }
@@ -211,7 +216,7 @@ struct CodexOneMain {
     }
     let poolConfiguration: AccountPoolConfiguration?
     if let path = configuration.accountPoolConfigurationPath {
-      poolConfiguration = try await AccountPoolConfiguration.load(path: path)
+      poolConfiguration = try await AccountPoolConfiguration.load(path: path, clock: clock)
     } else {
       poolConfiguration = nil
     }
@@ -255,7 +260,8 @@ struct CodexOneMain {
         path: directory + "/core.sqlite",
         limits: .init(
           requests: 10_000, active: ExecutionLimits.accountConcurrency, unresolved: 32,
-          budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity)
+          budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity,
+        clock: clock)
     } else {
       store = nil
     }
@@ -274,7 +280,7 @@ struct CodexOneMain {
     let backup = try configuration.backupDirectory.flatMap { directory in
       try store?.makeOnlineBackup(directory: directory, protection: credentialProtection)
     }
-    let protocolExtensions = ClientProtocolExtensionRegistry()
+    let protocolExtensions = ClientProtocolExtensionRegistry(clock: clock)
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
@@ -286,11 +292,12 @@ struct CodexOneMain {
           .imageGeneration?.models.map(\.id) ?? [],
         usage: usageReader.map {
           UsageAdminAPI(
-            querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [])
+            querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [],
+            clock: clock)
         },
         attention: usageReader.map {
           AttentionAdminAPI(
-            reader: $0, storage: store, registry: protocolExtensions, backup: backup)
+            reader: $0, storage: store, registry: protocolExtensions, backup: backup, clock: clock)
         },
         executions: store, storageMonitoring: store, backup: backup)
     } else {
@@ -309,21 +316,23 @@ struct CodexOneMain {
     var services: [any Service] = []
     if let store {
       services.append(StorageMonitor(storage: store))
-      services.append(ExecutionMaintenanceSupervisor(maintenance: store))
+      services.append(ExecutionMaintenanceSupervisor(maintenance: store, clock: clock))
     }
     if let backup { services.append(OnlineBackupSupervisor(backup: backup)) }
     let accountAdmin: AccountAdminAPI?
     var poolDataService: ResponsesDataService?
     if let credentialProtection, let store {
-      let application = AccountCredentials(store: store, protection: credentialProtection)
-      let provider = try SubscriptionOAuthProvider(group: group, proxy: upstreamProxy)
+      let application = AccountCredentials(
+        store: store, protection: credentialProtection, clock: clock)
+      let provider = try SubscriptionOAuthProvider(group: group, proxy: upstreamProxy, clock: clock)
       let authorization = try AccountAuthorizationSupervisor(
         application: application, provider: provider)
       let refreshing = try AccountRefreshSupervisor(application: application, provider: provider)
       let quota = try SubscriptionQuotaProvider(
         group: group, verifier: provider, proxy: upstreamProxy)
       let observing = try AccountObservationSupervisor(
-        store: store, application: application, refresher: refreshing, provider: quota)
+        store: store, application: application, refresher: refreshing, provider: quota, clock: clock
+      )
       services.append(provider)
       services.append(quota)
       services.append(authorization)
@@ -334,12 +343,12 @@ struct CodexOneMain {
           group: group, port: configuration.dataPort,
           configuration: poolConfiguration, store: store, finalizer: finalizer,
           credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy,
-          protocolExtensions: protocolExtensions
+          protocolExtensions: protocolExtensions, clock: clock
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
         store: store, authorization: authorization, refreshing: refreshing, observing: observing,
-        credentials: application)
+        credentials: application, clock: clock)
     } else {
       accountAdmin = nil
     }
@@ -350,7 +359,7 @@ struct CodexOneMain {
         try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: identityConfiguration, store: store, finalizer: finalizer,
-          proxy: upstreamProxy, protocolExtensions: protocolExtensions
+          proxy: upstreamProxy, protocolExtensions: protocolExtensions, clock: clock
         ) { announce("data", port: $0) })
     } else {
       services.append(

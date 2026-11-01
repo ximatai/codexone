@@ -33,6 +33,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
   private let state = Mutex(State())
   private let stream: AsyncStream<Job>
   private let continuation: AsyncStream<Job>.Continuation
+  private let clock: WallClock
   private let store: any AccountObservationStore
   private let application: AccountCredentials
   private let refresher: any AccountDispatchRefreshing
@@ -46,7 +47,8 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
     store: any AccountObservationStore, application: AccountCredentials,
     refresher: any AccountDispatchRefreshing, provider: any AccountQuotaProvider,
     intervalMilliseconds: Int = 60_000, timeoutMilliseconds: Int = 20_000,
-    refreshWindowSeconds: Int64 = AccountObservationSupervisor.proactiveRefreshWindowSeconds
+    refreshWindowSeconds: Int64 = AccountObservationSupervisor.proactiveRefreshWindowSeconds,
+    clock: WallClock = .system
   ) throws {
     guard (1...300_000).contains(intervalMilliseconds), (1...30_000).contains(timeoutMilliseconds),
       (0...86_400).contains(refreshWindowSeconds)
@@ -54,6 +56,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       throw QuotaObservationFailure.unavailable
     }
     self.refreshWindowSeconds = refreshWindowSeconds
+    self.clock = clock
     self.store = store
     self.application = application
     self.refresher = refresher
@@ -271,7 +274,7 @@ public final class AccountObservationSupervisor: Service, AccountQuotaObserving,
       }
       guard isAccepting, !Task.isCancelled else { throw QuotaObservationFailure.closed }
       let stored = try await store.recordQuotaObservation(
-        account: observed.1, atUnixSeconds: Int64(Date().timeIntervalSince1970), result: observed.0)
+        account: observed.1, atUnixSeconds: clock.unixSeconds, result: observed.0)
       finish(job, result: .success(stored))
     } catch {
       finish(job, result: .failure(error))
