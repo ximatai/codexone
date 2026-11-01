@@ -125,17 +125,17 @@ for (const width of [1440, 390]) {
     ).toBeEnabled();
     expect(calls.at(-1)).toEqual({});
     await drawer.getByLabel("到期前自动使用", { exact: true }).check();
-    await drawer.getByLabel("提前小时数", { exact: true }).fill("48");
+    await drawer.getByLabel("提前小时数", { exact: true }).fill("12");
     await drawer.getByLabel("提前分钟数", { exact: true }).fill("7");
     await drawer.getByLabel("失败后重试次数", { exact: true }).fill("2");
     await expect(
-      drawer.getByText(/到期前 48 小时 7 分钟自动使用/),
+      drawer.getByText(/到期前 12 小时 7 分钟自动使用/),
     ).toBeVisible();
     await drawer.getByRole("button", { name: "保存重置卡设置" }).click();
     await expect(drawer.getByText("重置卡自动使用设置已保存。")).toBeVisible();
     expect(state.settings).toEqual({
       autoUseBeforeExpiry: true,
-      leadMinutes: 2887,
+      leadMinutes: 727,
       retryCount: 2,
     });
     await page.screenshot({
