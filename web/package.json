@@ -20,11 +20,11 @@
     "format:check": "prettier --check src tests *.ts *.json .oxlintrc.json"
   },
   "dependencies": {
-    "@mantine/charts": "9.7.3",
-    "@mantine/core": "9.7.3",
-    "@mantine/form": "9.7.3",
-    "@mantine/hooks": "9.7.3",
-    "@mantine/notifications": "9.7.3",
+    "@mantine/charts": "9.7.4",
+    "@mantine/core": "9.7.4",
+    "@mantine/form": "9.7.4",
+    "@mantine/hooks": "9.7.4",
+    "@mantine/notifications": "9.7.4",
     "@tabler/icons-react": "3.35.0",
     "@tanstack/react-query": "5.104.5",
     "react": "19.3.1",
