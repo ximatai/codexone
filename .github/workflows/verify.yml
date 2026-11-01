@@ -16,6 +16,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      devcontainer: ${{ steps.filter.outputs.devcontainer }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -133,9 +134,27 @@ jobs:
           name: browser-failure-evidence
           path: web/test-results/
           retention-days: 7
+  devcontainer:
+    needs: changes
+    if: needs.changes.outputs.devcontainer == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build the development container
+        run: docker build -t codexone-dev .devcontainer
+      - name: Build backend and check frontend inside it
+        run: >-
+          docker run --rm -v "$PWD":/workspace -w /workspace codexone-dev bash -c
+          'set -e; node --version; swift --version; python3 --version;
+          swift build --product codexone;
+          npm --prefix web ci --ignore-scripts --no-audit --no-fund;
+          npm --prefix web run typecheck'
   verify:
     if: always()
-    needs: [changes, docs, backend-build, backend-scripts, frontend]
+    needs: [changes, docs, backend-build, backend-scripts, frontend, devcontainer]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -152,6 +171,8 @@ jobs:
               required.update({'backend-build', 'backend-scripts'})
           if selected.get('frontend') == 'true':
               required.add('frontend')
+          if selected.get('devcontainer') == 'true':
+              required.add('devcontainer')
           for job, details in needs.items():
               result = details['result']
               print(f'{job}: {result}')
