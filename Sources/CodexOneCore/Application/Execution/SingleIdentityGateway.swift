@@ -30,15 +30,18 @@ public struct SingleIdentityPolicy: Sendable {
 
 /// Application authorization owns object checks and durable admission, independent of wire transport.
 public struct SingleIdentityGateway: Sendable {
+  private let clock: WallClock
   private let policy: SingleIdentityPolicy
   private let store: any ExecutionStore
   private let coordinator: ExecutionCoordinator
   public init(
-    policy: SingleIdentityPolicy, store: any ExecutionStore, finalizer: any FinalizationSink
+    policy: SingleIdentityPolicy, store: any ExecutionStore, finalizer: any FinalizationSink,
+    clock: WallClock = .system
   ) {
+    self.clock = clock
     self.policy = policy
     self.store = store
-    coordinator = .init(store: store, finalizer: finalizer)
+    coordinator = .init(store: store, finalizer: finalizer, clock: clock)
   }
   public func execute(
     model: String, references: [ObjectBinding], requestID: String? = nil,
@@ -62,7 +65,7 @@ public struct SingleIdentityGateway: Sendable {
       }
     }
     // UTC daily admission window; the persisted policy/pricing snapshots explain its interpretation.
-    let day = Int64(Date().timeIntervalSince1970 / 86_400)
+    let day = clock.utcDay
     let admission = ExecutionAdmission(
       attempt: UUID().uuidString, owner: policy.owner,
       window: "utc-day-\(day)", policyVersion: policy.policyVersion,

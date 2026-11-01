@@ -79,14 +79,17 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     upstreamContract = try fields.decodeIfPresent(String.self, forKey: .upstreamContract)
   }
 
-  public static func load(path: String) async throws -> SingleIdentityConfiguration {
+  public static func load(path: String, clock: WallClock = .system) async throws
+    -> SingleIdentityConfiguration
+  {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         do {
           let data = try readPrivateData(path, maximum: 65_536)
           var configuration = try JSONDecoder().decode(Self.self, from: data)
           configuration.models = try ModelProfileSnapshot.apply(
-            path: configuration.modelProfilesFile, models: configuration.models)
+            path: configuration.modelProfilesFile, models: configuration.models,
+            now: clock.unixSeconds)
           try configuration.validate()
           if let tokenPath = configuration.upstreamTokenFile {
             _ = try readRuntimeSecret(tokenPath)

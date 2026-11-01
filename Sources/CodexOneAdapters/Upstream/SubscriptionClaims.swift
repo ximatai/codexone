@@ -12,7 +12,9 @@ struct SubscriptionClaims: Sendable {
     subject == other.subject && account == other.account
       && (user == nil || other.user == nil || user == other.user)
   }
-  static func idToken(_ token: String, nonce: String?, requireCurrent: Bool) throws -> Self {
+  static func idToken(_ token: String, nonce: String?, requireCurrent: Bool, now: Int64) throws
+    -> Self
+  {
     let document = try jwt(token)
     let audiences: [String]
     if let audience = document["aud"]?.string {
@@ -33,12 +35,13 @@ struct SubscriptionClaims: Sendable {
         throw AccountRefreshError.unavailable
       }
     }
-    return try claims(document, requireCurrent: requireCurrent)
+    return try claims(document, requireCurrent: requireCurrent, now: now)
   }
-  static func accessToken(_ token: String) throws -> Self {
-    try claims(jwt(token), requireCurrent: true)
+  static func accessToken(_ token: String, now: Int64) throws -> Self {
+    try claims(jwt(token), requireCurrent: true, now: now)
   }
-  private static func claims(_ document: JSONValue, requireCurrent: Bool) throws -> Self {
+  private static func claims(_ document: JSONValue, requireCurrent: Bool, now: Int64) throws -> Self
+  {
     guard
       [SubscriptionOAuthProvider.issuer, SubscriptionOAuthProvider.issuer + "/"].contains(
         document["iss"]?.string ?? ""),
@@ -57,7 +60,6 @@ struct SubscriptionClaims: Sendable {
       user = nil
     }
     if requireCurrent {
-      let now = Int64(Date().timeIntervalSince1970)
       guard expires > now else { throw AccountRefreshError.unavailable }
       for field in ["iat", "nbf"] {
         if let value = document[field] {

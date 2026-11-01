@@ -3,7 +3,7 @@ import Foundation
 
 func accountObservationDTO(
   _ quota: AccountQuotaObservation, health: AccountHealth, observing: Bool,
-  detail: Bool, now: Int64 = Int64(Date().timeIntervalSince1970)
+  detail: Bool, now: Int64
 ) -> JSONValue {
   func time(_ value: Int64?) -> JSONValue { value.map { .number(Decimal($0)) } ?? .null }
   func window(_ value: SubscriptionQuotaWindow?) -> JSONValue {

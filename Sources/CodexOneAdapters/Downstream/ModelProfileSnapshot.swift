@@ -26,7 +26,7 @@ struct ModelProfileSnapshot: Decodable {
   let models: [Entry]
 
   static func apply(
-    path: String?, models: [SingleIdentityConfiguration.Model]
+    path: String?, models: [SingleIdentityConfiguration.Model], now: Int64
   ) throws -> [SingleIdentityConfiguration.Model] {
     guard let path else { return models }
     let data = try readPrivateData(path, maximum: 4_194_304)
@@ -59,7 +59,7 @@ struct ModelProfileSnapshot: Decodable {
     }
     guard snapshot.version == 1, identifier(snapshot.source), identifier(snapshot.revision),
       snapshot.capturedAtUnixSeconds > 0,
-      snapshot.capturedAtUnixSeconds <= Int64(Date().timeIntervalSince1970) + 60,
+      snapshot.capturedAtUnixSeconds <= now + 60,
       !snapshot.clientVersions.isEmpty, snapshot.clientVersions.count <= 8,
       Set(snapshot.clientVersions).count == snapshot.clientVersions.count,
       snapshot.clientVersions.allSatisfy(identifier),

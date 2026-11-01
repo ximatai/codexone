@@ -1,10 +1,11 @@
+import CodexOneCore
 import Foundation
 
 /// Both directory forms use the same effective model set. Metadata does not grant capabilities.
 func modelCatalog(
   _ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false,
   images: [ImageConfiguration.Model] = [], runtimeBudget: JSONValue? = nil,
-  upstreamTransport: String? = nil
+  upstreamTransport: String? = nil, now: Int64
 )
   throws -> JSONValue
 {
@@ -78,7 +79,7 @@ func modelCatalog(
         "client_versions": .array(profile.clientVersions.map { .string($0) }),
         "overridden": .bool(profile.overridden),
         "stale": .bool(
-          profile.capturedAtUnixSeconds < Int64(Date().timeIntervalSince1970) - 2_592_000),
+          profile.capturedAtUnixSeconds < now - 2_592_000),
       ])
     }
     if let effort = metadata?.defaultReasoningEffort {

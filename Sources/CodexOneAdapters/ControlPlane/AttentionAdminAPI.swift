@@ -64,14 +64,17 @@ enum AttentionThresholds {
 }
 
 public struct AttentionAdminAPI: Sendable {
+  private let clock: WallClock
   private let reader: any AttentionReading
   private let storage: (any StorageMonitoring)?
   private let backup: (any BackupMaintaining)?
   private let registry: ClientProtocolExtensionRegistry?
   public init(
     reader: any AttentionReading, storage: (any StorageMonitoring)? = nil,
-    registry: ClientProtocolExtensionRegistry? = nil, backup: (any BackupMaintaining)? = nil
+    registry: ClientProtocolExtensionRegistry? = nil, backup: (any BackupMaintaining)? = nil,
+    clock: WallClock = .system
   ) {
+    self.clock = clock
     self.reader = reader
     self.storage = storage
     self.registry = registry
@@ -81,7 +84,7 @@ public struct AttentionAdminAPI: Sendable {
     routes.get("attention") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
       do {
-        let now = Int64(Date().timeIntervalSince1970)
+        let now = clock.unixSeconds
         let items = try await self.items(now: now)
         return Response(
           status: .ok, headers: ["content-type": "application/json", "cache-control": "no-store"],

@@ -152,5 +152,5 @@ func webSocketCreate(
 private func observeDisconnectedOutcome(_ downstream: WebSocketPeer?, context: ExecutionContext) {
   guard downstream?.isClosed == true else { return }
   try? context.observeOutcome(
-    .init(failure: .clientCancelled, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+    .init(failure: .clientCancelled, atUnixSeconds: context.clock.unixSeconds))
 }

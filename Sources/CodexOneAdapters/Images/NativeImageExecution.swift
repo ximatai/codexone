@@ -156,14 +156,14 @@ extension HTTPResponseExecution {
             try context.observeOutcome(
               .init(
                 failure: .invalidUpstreamResponse,
-                atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+                atUnixSeconds: context.clock.unixSeconds))
           }
           try await begin(replyHeaders)
           try await emit(body)
         }
         try await finish()
         try context.observeOutcome(
-          .init(failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970)))
+          .init(failure: nil, atUnixSeconds: context.clock.unixSeconds))
       }
       return nil
     }

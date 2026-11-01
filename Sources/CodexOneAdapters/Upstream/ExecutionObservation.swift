@@ -68,7 +68,7 @@ func observeExecutionFailure(_ error: any Error, context: ExecutionContext) {
   }
   try? context.observeOutcome(
     .init(
-      failure: executionFailure(error), atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      failure: executionFailure(error), atUnixSeconds: context.clock.unixSeconds,
       cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
 }
 
@@ -82,7 +82,7 @@ func observeTerminalOutcome(_ event: JSONValue, context: ExecutionContext) throw
   try context.observeOutcome(
     .init(
       failure: type == "response.failed" ? .upstreamRejected : .indeterminate,
-      atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      atUnixSeconds: context.clock.unixSeconds,
       actualServiceTier: requestMetadataValue(event["response"]?["service_tier"])))
 }
 
@@ -91,7 +91,7 @@ func observeSubmittedTerminal(_ event: JSONValue, context: ExecutionContext) thr
   guard event["type"]?.string == "response.completed" else { return }
   try context.observeOutcome(
     .init(
-      failure: nil, atUnixSeconds: Int64(Date().timeIntervalSince1970),
+      failure: nil, atUnixSeconds: context.clock.unixSeconds,
       actualServiceTier: requestMetadataValue(event["response"]?["service_tier"])))
 }
 
