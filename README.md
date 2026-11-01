@@ -22,7 +22,7 @@
 
 ## 快速开始
 
-**v0.26.1 尚未发布。** 以下 GHCR 镜像在首个版本发布后可用；现在可按[安装指南](docs/guide/linux-installation.md)从源码构建；[发版自动化](docs/development/releasing.md)已就绪，尚待首次发布验证。运行目标为 Linux amd64 Docker Engine，准备 Compose v2、Python 3、本地磁盘和 HTTPS 反代。
+当前版本 [v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1)，镜像核验见[发版规则](docs/development/releasing.md)，也可按[安装指南](docs/guide/linux-installation.md)从源码构建。运行目标为 Linux amd64 Docker Engine，准备 Compose v2、Python 3、本地磁盘和 HTTPS 反代。
 
 从源码目录初始化独立安装目录，镜像必须解析为不可变 ID：
 

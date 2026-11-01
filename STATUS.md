@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-首个公开版本计划为 **v0.26.1（尚未发布）**，核心数据库 schema v10。GHCR `ghcr.io/ximatai/codexone` 将在首个版本发布后提供镜像；当前可以从源码构建，公开发版自动化与依赖更新配置已就绪，尚未远端运行验收。
+当前版本为 **[v0.26.1](https://github.com/ximatai/codexone/releases/tag/v0.26.1)**（2026-11-01），核心数据库 schema v10。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移。
 
@@ -15,11 +15,10 @@
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。
 - 内部协议可能变化。官方客户端标识与 OAuth ID 的使用可能违反提供者条款、触发风控或账号限制，详见[兼容与风险](docs/reference/compatibility.md)。
 - v10 不能使用 v9 或更旧程序原库回退；升级、备份恢复与迁移须按[维护指南](docs/guide/backup-upgrade.md)执行。
-- CI 定义存在不等于远端成功；尚无正式 Release 或 GHCR 发布。仓库安全报告与外部贡献审批设置需维护者核对。
+- 发版验证在 GitHub Actions 的合成环境中运行；真实订阅、客户端组合与具体服务器容量仍需各自部署验证。
 
 ## 路线图
 
-- 首次运行公开发版 CI，核验 GHCR 可见性、来源证明与 Release 附件。
 - 多账号路由与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。
