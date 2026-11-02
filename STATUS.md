@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-当前版本为 **[v0.26.6](https://github.com/ximatai/codexone/releases/tag/v0.26.6)**（2026-11-02），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前版本为 **[v0.26.7](https://github.com/ximatai/codexone/releases/tag/v0.26.7)**（2026-11-03），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启；v0.26.4 起提供订阅重置卡查看/确认使用/到期前自动使用，以及空闲 5 小时/每周配额窗口预热（均按账号默认关闭）。
 
@@ -22,7 +22,7 @@ v0.26.5 起重置卡自动使用支持分钟级提前量和有界分钟重试，
 
 每日Token限制的验证与平台边界见[验证记录](docs/changes/daily-token-limit/verification.md)。
 
-未发布修复：统一跨传输会话软亲和与双向协议元数据；真实续接 token 独立约束来源，未知状态明确拒绝；辅助 5xx 按端点隔离，429/401 保留账号级保护。契约与验收见[会话路由任务](docs/changes/session-routing-metadata/tasks.md)。
+v0.26.7 起统一跨传输会话软亲和与双向协议元数据；真实续接 token 独立约束来源，未知状态明确拒绝；辅助 5xx 按端点隔离，429/401 保留账号级保护。契约与验收见[会话路由任务](docs/changes/session-routing-metadata/tasks.md)。
 
 ## 已知限制
 
