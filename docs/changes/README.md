@@ -6,6 +6,7 @@
 
 ## 活动提案
 
+- [overload-pacing](overload-pacing/proposal.md) · [任务](overload-pacing/tasks.md)
 - [usage-analytics](usage-analytics/proposal.md) · [任务](usage-analytics/tasks.md)
 - [key-self-service](key-self-service/proposal.md) · [任务](key-self-service/tasks.md)
 
