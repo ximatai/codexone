@@ -155,3 +155,66 @@ import Testing
     #expect(responseMetadataTurnState(event) == nil)
   }
 }
+
+@Test func turnStateLookupSlidesTTLAndRefreshesEvictionOrder() throws {
+  let clock = Mutex(ContinuousClock.now)
+  let owners = TurnStateOwners(now: { clock.withLock { $0 } })
+  let account = try AccountRouteIdentity(id: "a", namespace: "synthetic")
+  owners.observe(key: "key", token: "live", account: account)
+  for _ in 0..<3 {
+    clock.withLock { $0 = $0.advanced(by: .seconds(3599)) }
+    #expect(try owners.owner(key: "key", token: "live") == account)
+  }
+  for index in 0..<1023 {
+    clock.withLock { $0 = $0.advanced(by: .milliseconds(1)) }
+    owners.observe(key: "key", token: "state-\(index)", account: account)
+  }
+  clock.withLock { $0 = $0.advanced(by: .seconds(1)) }
+  #expect(try owners.owner(key: "key", token: "live") == account)
+  owners.observe(key: "key", token: "new", account: account)
+  #expect(try owners.owner(key: "key", token: "live") == account)
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "state-0") }
+  clock.withLock { $0 = $0.advanced(by: .seconds(3600)) }
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "live") }
+}
+
+@Test func turnStateMissAndConflictLookupDoNotRefreshEntries() throws {
+  let clock = Mutex(ContinuousClock.now)
+  let owners = TurnStateOwners(now: { clock.withLock { $0 } })
+  let a = try AccountRouteIdentity(id: "a", namespace: "synthetic")
+  let b = try AccountRouteIdentity(id: "b", namespace: "synthetic")
+  owners.observe(key: "key", token: "conflict", account: a)
+  owners.observe(key: "key", token: "conflict", account: b)
+  owners.observe(key: "key", token: "unused", account: a)
+  clock.withLock { $0 = $0.advanced(by: .seconds(3599)) }
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "conflict") }
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "other", token: "unused") }
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "missing") }
+  clock.withLock { $0 = $0.advanced(by: .seconds(1)) }
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "unused") }
+  // After the original tombstone expires, a new observation may establish an owner.
+  owners.observe(key: "key", token: "conflict", account: a)
+  #expect(try owners.owner(key: "key", token: "conflict") == a)
+  #expect(throws: GatewayProtocolError.self) { try owners.owner(key: "key", token: "missing") }
+}
+
+@Test func responseMetadataArrayUsesOnlyFirstElementWithSameValidation() {
+  for value in [JSONValue.string("synthetic"), .array([.string("synthetic"), .bool(true)])] {
+    #expect(
+      responseMetadataTurnState(
+        .object([
+          "type": .string("response.metadata"), "headers": .object(["x-codex-turn-state": value]),
+        ])) == "synthetic")
+  }
+  for value in [
+    JSONValue.array([]), .array([.bool(true), .string("synthetic")]),
+    .array([.string("")]), .array([.string(String(repeating: "x", count: 8193))]),
+    .array([.string("invalid\nstate")]), .object([:]), .null,
+  ] {
+    #expect(
+      responseMetadataTurnState(
+        .object([
+          "type": .string("response.metadata"), "headers": .object(["x-codex-turn-state": value]),
+        ])) == nil)
+  }
+}

@@ -231,13 +231,18 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
             events.append(
               .object(["type": .string("response.created"), "response": .object(created)]))
           }
-          events.append(
-            .object([
-              "type": .string("response.metadata"),
-              "headers": .object([
-                "x-codex-turn-state": .string("synthetic-message-state-\(account)")
-              ]),
-            ]))
+          for (type, suffix) in [("codex.response.metadata", ""), ("response.metadata", "-second")]
+          {
+            events.append(
+              .object([
+                "type": .string(type),
+                "headers": .object([
+                  "x-codex-turn-state": .array([
+                    .string("synthetic-message-state-\(account)\(suffix)")
+                  ])
+                ]),
+              ]))
+          }
           let prefix = try events.reduce(into: Data()) { data, event in
             data.append(Data("data: \(String(decoding: try event.data(), as: UTF8.self))\n\n".utf8))
           }
@@ -818,12 +823,25 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         poolRefusalEvents(poolInput(request), response: .object(document))
         ?? [JSONValue.object(created), JSONValue.object(completed)]
       if poolInput(request) == "metadata-only" {
-        var metadata: [String: JSONValue] = [
-          "type": .string("codex.response.metadata"),
-          "headers": .object(["x-codex-turn-state": .string("synthetic-message-state-\(account)")]),
-        ]
-        if let lane = request["stream_id"] { metadata["stream_id"] = lane }
-        wire.insert(.object(metadata), at: 0)
+        for (type, suffix) in [("response.metadata", "-second"), ("codex.response.metadata", "")] {
+          var metadata: [String: JSONValue] = [
+            "type": .string(type),
+            "headers": .object([
+              "x-codex-turn-state": .array([.string("synthetic-message-state-\(account)\(suffix)")])
+            ]),
+          ]
+          if let lane = request["stream_id"] { metadata["stream_id"] = lane }
+          wire.insert(.object(metadata), at: 0)
+        }
+      }
+      if poolInput(request) == "metadata-detached" {
+        wire.append(
+          .object([
+            "type": .string("response.metadata"), "response_id": document["id"]!,
+            "headers": .object([
+              "x-codex-turn-state": .array([.string("synthetic-detached-state-\(account)")])
+            ]),
+          ]))
       }
       let bytes = try wire.map { try $0.data() }
       let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
@@ -2449,10 +2467,15 @@ func metadataOnlyReturnsStateBeforeHTTPCommit(transport: String, stream: Bool) a
       #expect(token == "synthetic-message-state-\(account)")
       try await awaitOAuth { h.finalizer.outstanding == 0 }
       _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
-      request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
-      let (_, follow) = try await session.data(for: request)
-      #expect((follow as! HTTPURLResponse).statusCode == 200)
-      #expect(h.calls.last?.account == account)
+      for state in [token, token + "-second"] {
+        request.setValue(state, forHTTPHeaderField: "x-codex-turn-state")
+        let (_, follow) = try await session.data(for: request)
+        #expect((follow as! HTTPURLResponse).statusCode == 200)
+        #expect(
+          (follow as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state") == token)
+        #expect(h.calls.last?.account == account)
+        try await awaitOAuth { h.finalizer.outstanding == 0 }
+      }
     } catch {
       await h.close()
       throw error
@@ -2593,5 +2616,27 @@ func nativeTurnStateIsPerMessageAndCannotChangeConnectionOwner() async throws {
     ])
     #expect(denied["status"]?.integer == 503)
     #expect(h.calls.count == 4)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func detachedWebSocketMetadataRecordsContinuationSource() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    #expect(
+      try await client.command(["input": .string("metadata-detached")])["type"]?.string
+        == "response.completed")
+    let account = try #require(h.calls.last?.account)
+    let event = try await client.command(["op": .string("receive")])
+    #expect(event["type"]?.string == "response.metadata")
+    let state = "synthetic-detached-state-\(account)"
+    #expect(event["headers"]?["x-codex-turn-state"]?.array?.first?.string == state)
+    #expect(
+      try await client.command([
+        "client_metadata": .object(["x-codex-turn-state": .string(state)])
+      ])["type"]?.string == "response.completed")
+    #expect(h.calls.last?.account == account)
   }
 }

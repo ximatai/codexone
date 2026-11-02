@@ -77,6 +77,13 @@ extension HTTPResponseExecution {
       guard downstream?.isClosed != true else { throw CancellationError() }
       peer.markDispatched(lane: lane)
       try await peer.send(.object(create))
+      let account: AccountRouteIdentity?
+      if let gateway, case .pool = gateway {
+        account = try .init(
+          id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
+      } else {
+        account = nil
+      }
       var total = 0
       var observedMetadata = false
       while true {
@@ -105,17 +112,7 @@ extension HTTPResponseExecution {
         }
         observeDisconnectedOutcome(downstream, context: context)
         let type = try ProviderObservation.eventType(event)
-        if !observedMetadata, let token = responseMetadataTurnState(event) {
-          let account: AccountRouteIdentity?
-          if let gateway, case .pool = gateway {
-            account = try .init(
-              id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
-          } else {
-            account = nil
-          }
-          await observeResponseHeaders(["x-codex-turn-state": token], account: account)
-          observedMetadata = true
-        }
+        await observeResponseMetadata(event, account: account, returned: &observedMetadata)
         if type == "error" { throw ProviderObservation.providerFailure(event) }
         if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
         {

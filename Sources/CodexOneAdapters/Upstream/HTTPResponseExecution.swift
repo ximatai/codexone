@@ -201,11 +201,8 @@ struct HTTPResponseExecution: Sendable {
               {
                 throw GatewayProtocolError(502, "invalid_upstream_turn")
               }
-              if !observedMetadata, let token = responseMetadataTurnState(event) {
-                await observeResponseHeaders(
-                  ["x-codex-turn-state": token], account: authorization?.identity)
-                observedMetadata = true
-              }
+              await observeResponseMetadata(
+                event, account: authorization?.identity, returned: &observedMetadata)
               // Trusted usage must survive later binding/output failures.
               if ProviderObservation.terminalEvents.contains(type),
                 !context.providerRejectedBeforeOutput

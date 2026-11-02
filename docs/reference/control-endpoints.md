@@ -26,11 +26,11 @@ POST `/backend-api/codex/analytics-events/events` 本地返回 202 `{}`。其他
 
 账号池应用用例复用生成路径的凭证准备/刷新，实际选择时复核 Key revision、启用/到期、账号状态与凭证有效期；按亲和、活跃生成数、账号 ID 排序，不创建生成 intent。辅助 5xx 仅冷却同账号/端点（服务内最多 1024 项、最长一小时）；429 不猜测为端点级，保留账号级配额保护，401 保留当前凭证认证屏障。凭证准备完成后在存储选择点读取最新单调截止；纯冷却导致无候选时返回 503 与适用 Retry-After。凭证版本变化后的迟到账号级结果不影响新凭证，派发不重试。
 
-软位置与续接来源由数据服务分别维护，均按 Key 隔离、保存摘要，分别最多 1024 项、一小时单调 TTL。soft 标签包括 thread-id、session-id 及既有旧头；thread 可更新自身位置，process/session seed 只首次初始化，不被兄弟线程回退覆盖。辅助请求不更新这些标签。来源状态只观察提供者返回的有界 turn-state；跨账号出现同值标记不可用，不把请求携带的 token 重新归属给所选账号。
+软位置与续接来源由数据服务分别维护，均按 Key 隔离、保存摘要，分别最多 1024 项、一小时单调 TTL；续接来源在成功查找时刷新期限与淘汰顺序，未命中与冲突墓碑不刷新。soft 标签包括 thread-id、session-id 及既有旧头；thread 可更新自身位置，process/session seed 只首次初始化，不被兄弟线程回退覆盖。辅助请求不更新这些标签。来源状态只观察提供者返回的有界 turn-state；跨账号出现同值标记不可用，不把请求携带的 token 重新归属给所选账号。
 
 已知 turn-state 约束候选账号，但不授予对象授权或 draining 资格；未知/过期/淘汰/重启丢失/冲突 token 在账号池返回 503 continuation_owner_unavailable，来源账号不可用或与强对象/固定连接冲突时拒绝，不换号、不删 token 重放。可信 single 部署可以原样转发未知有效 token；池内临时只剩一个账号不构成此例外。辅助端点冷却也不能使带状态请求换账号。软历史/会话偏好才可按既有健康规则回退。
 
-HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。HTTP→WS 把本次请求明确状态转入 client_metadata；原生 WS 仅首条 create 可兼容握手状态，后续消息只用自身字段，载体冲突/重复/畸形状态在 intent 前拒绝。上游 response.metadata / codex.response.metadata 事件的首个有效状态也被观察；普通事件内容继续透传，JSON 聚合只返回终态。SSE 已提交头后不能补头；原生 WS 已升级不能追加 HTTP 头。不提前上游连接、不注入跨轮缓存状态。thread/goal 等辅助 body 原样转发；官方 App Server JSON-RPC 字段不构成这些 HTTP 端点的路由契约，不据此推断 owner。
+HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。HTTP→WS 把本次请求明确状态转入 client_metadata；原生 WS 仅首条 create 可兼容握手状态，后续消息只用自身字段，载体冲突/重复/畸形状态在 intent 前拒绝。上游 response.metadata / codex.response.metadata 事件接受字符串或非空数组首元素中的有效字符串，沿用有界校验，其他形状忽略；每个有效状态均记录来源，包括 WS 轮次外转发的事件，只有每个执行首个有效事件状态可用于返回头；普通事件内容继续透传，JSON 聚合只返回终态。SSE 已提交头后不能补头；原生 WS 已升级不能追加 HTTP 头。不提前上游连接、不注入跨轮缓存状态。thread/goal 等辅助 body 原样转发；官方 App Server JSON-RPC 字段不构成这些 HTTP 端点的路由契约，不据此推断 owner。
 
 状态头先在原始载体上验证，重复、超长或声明为逐跳成员的状态返回 400，不能由转发过滤变成无状态请求；有效状态优先占用既有 32 个 x-codex 头中的一席。WS 握手状态无效时拒绝升级；首条 create 的状态畸形或与握手冲突时，记录拒绝并尽力发送带 status 的标准 error 帧，不建立上游或创建 intent。HTTP SSE 与 WS 共用 metadata 状态提取规则；SSE 头已提交仍记录事件状态来源，供后续明确续接使用。
 

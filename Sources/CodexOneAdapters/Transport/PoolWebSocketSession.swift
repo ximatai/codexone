@@ -126,6 +126,8 @@ enum PoolWebSocketSession {
               detachedEvent: { data, lane in
                 guard !downstream.isClosed else { return }
                 var event = try JSONValue.decode(data).object!
+                executor.recordResponseMetadata(
+                  .object(event), account: selection.authorization?.identity)
                 if !lane.isEmpty { event["stream_id"] = .string(lane) }
                 if event["type"]?.string == "error" {
                   try await sendWebSocketError(

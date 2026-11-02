@@ -47,7 +47,9 @@ func responseMetadataTurnState(_ event: JSONValue) -> String? {
     let fields = event["headers"]?.object
   else { return nil }
   let tokens = fields.filter { $0.key.lowercased() == "x-codex-turn-state" }
-  guard tokens.count == 1, let token = tokens.first?.value.string, validTurnState(token) else {
+  guard tokens.count == 1, let value = tokens.first?.value else { return nil }
+  let token = value.string ?? value.array?.first?.string
+  guard let token, validTurnState(token) else {
     return nil
   }
   return token
@@ -67,10 +69,13 @@ final class TurnStateOwners: Sendable {
   }
   func owner(key: String, token: String) throws -> AccountRouteIdentity {
     try entries.withLock { entries in
-      entries = entries.filter { $0.value.at.duration(to: now()) < .seconds(3600) }
-      guard let account = entries[digest(key: key, token: token)]?.account else {
+      let instant = now()
+      entries = entries.filter { $0.value.at.duration(to: instant) < .seconds(3600) }
+      let label = digest(key: key, token: token)
+      guard let account = entries[label]?.account else {
         throw GatewayProtocolError(503, "continuation_owner_unavailable")
       }
+      entries[label] = Entry(account: account, at: instant)
       return account
     }
   }

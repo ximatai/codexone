@@ -49,6 +49,25 @@ extension HTTPResponseExecution {
     }
   }
 
+  /// Record every state, while only the first metadata state can supply HTTP headers.
+  func observeResponseMetadata(
+    _ event: JSONValue, account: AccountRouteIdentity?, returned: inout Bool
+  ) async {
+    guard let token = recordResponseMetadata(event, account: account) else { return }
+    guard !returned else { return }
+    returned = true
+    await receiveResponseHeaders(["x-codex-turn-state": token])
+  }
+
+  @discardableResult
+  func recordResponseMetadata(_ event: JSONValue, account: AccountRouteIdentity?) -> String? {
+    guard let token = responseMetadataTurnState(event) else { return nil }
+    if let account, let key = currentKeyID {
+      turnStateOwners.observe(key: key, token: token, account: account)
+    }
+    return token
+  }
+
   func observeResponseHeaders(_ headers: HTTPHeaders, account: AccountRouteIdentity?) async {
     let safe = forwardedResponseHeaders(headers)
     if let account, let key = currentKeyID, let token = safe.first(name: "x-codex-turn-state") {
