@@ -28,7 +28,7 @@ codexone --migrate
 
 打开实际管理地址，选择“访问密钥”，使用用户名 admin 和独立管理员文件中的凭证登录。浏览器只在登录正文发送一次原文，默认以 HttpOnly/Secure/SameSite=Strict Cookie 维持空闲 24 小时、绝对最长 7 天的内存会话，认证活动续期但不越过绝对截止；不保存到 localStorage/sessionStorage。默认使用 `http://127.0.0.1:<管理端口>`，须用支持 loopback 安全 Cookie 的浏览器。远程反代必须配置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=https://admin.example.invalid`，保持同源、转发正确 Host（公开 authority 或实际 loopback authority），不得依赖 X-Forwarded-* 推导来源。显式[LAN HTTP](linux-installation.md#局域网无域名) 可用匹配监听私有 IP 的 HTTP origin，仅该模式采用无 Secure 的 `codexone_admin` cookie；其他属性、Host/Origin/CSRF 校验保持，须接受明文风险。HTTPS 与回环 HTTP 的 cookie 不变。
 
-创建时分别选择对话/图片模型范围（全部模型跟随配置，或指定模型）和本地限额。编辑使用 revision；冲突后核对刷新列表再修改。禁用 Key 可以先轮换并保存新凭证，再显式启用，轮换保持当前启用状态与计数。一次性秘密关闭/离开/登出或五分钟后清除；响应丢失无法找回原文，核对后显式轮换。写入结果未知不会自动重发；登出失败显示待重试，不能据页面已清空推导服务端会话已撤销。
+创建时分别选择对话/图片模型范围（全部模型跟随配置，或指定模型）、最大并发和每日Token上限。编辑使用 revision；冲突后核对刷新列表再修改。禁用 Key 可以先轮换并保存新凭证，再显式启用，轮换保持当前启用状态与计数。一次性秘密关闭/离开/登出或五分钟后清除；响应丢失无法找回原文，核对后显式轮换。写入结果未知不会自动重发；登出失败显示待重试，不能据页面已清空推导服务端会话已撤销。
 
 同源会话为 `POST/GET/DELETE /api/session`；变更请求需精确可信 Origin 和 `X-CodexOne-CSRF`，不得混用 Bearer。模型选项为认证后的 `GET /api/keys/options`。服务重启清除所有 session；修改管理员文件后须重启。无管理员配置时仅概览可用，Key 登录明确不可用。
 
@@ -42,7 +42,7 @@ codexone --migrate
 
 `principal` 为稳定非秘密标识，1—64 字节 ASCII 字母/数字/点/横线/下划线；不能在已有 Key 上改主体。`models` 必须显式出现，可为 `null`（全部对话模型，跟随当前加载配置）或最多 32 个不重复模型 ID（每项 ≤128 UTF-8 字节）；`[]` 仅在启用图片生成时有效，表示无对话模型。有效目录/执行取与当前上游配置交集，无交集返回空目录。配置新增/移除模型在配置生效后立即影响全部模型 Key，无需改写 Key；配置文件加载与重启沿用现有入口，不新增热重载。策略版本包含模型数组/null。
 
-`limits` 必须显式提供五个字段，每项为正整数（≤10¹²）或 `null`（该 Key 的该维度不限）：`requests`（UTC 日请求）、`active`（在途 turn）、`unresolved`（未完整结算执行）、`budgetMicros`（UTC 日估算费用）、`unresolvedMicros`（跨窗口未结暴露）。缺字段、0、负数、超范围和字符串拒绝；元数据保留显式 `null`，策略版本反映数值/null 变化。准入跳过 null 维度，仍受每账号 16 并发及存储安全约束；全局请求/费用、未结与明细行数只作参考提醒。管理界面每项可选择“不限”，与数值输入互斥；列表、编辑详情和用量页均显示“不限”。预热/压缩也计入请求；缺用量不记零。轮换不重置计数，禁用不抹除未结暴露。
+`limits` 仅包含tokens和active两项，分别为UTC每日Token上限与最大并发，均为1–10^12整数或null（不限）。不再接受请求次数或美元配置。界面单位切换不改变数量。输入（含缓存）加输出，达到已观测上限后拒绝新请求，已开始请求继续，故可能超额。缺失用量显示未知下界。旧Key请求次数不转换成Token，升级前备份，升级后明确设置Token上限。账本与重启责任不变，不重放未知请求。
 
 元数据为 `id/principal/revision/enabled/models/imageModels/limits/createdAtUnixSeconds/archivedAtUnixSeconds`，时间是 UTC Unix 秒；不返回摘要或旧 secret。权限变更和轮换需使用最新 revision，冲突为 409。创建/轮换响应丢失时，先查询元数据，再显式轮换，不能读取已丢失的原文。普通禁用停止下一执行，已准入执行继续结算；原生 WS 每 turn 查当前权限。禁用/轮换后的权限在每次新执行重新核对；已准入执行继续结算。
 

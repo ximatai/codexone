@@ -19,7 +19,7 @@
 
 仅在配置独立管理员凭证文件时提供 `/api/keys` 的创建/有界分页、更新及轮换命令。文件按 owner/权限/类型和容量校验；管理员 Bearer 与普通 Key 分离，不接受 `co1_` 数据 Key 格式或复用 legacy Key 摘要。此入口默认仅 loopback，允许 O12 的显式 LAN 例外，不启用 CORS。无浏览器管理客户端可用独立 Bearer，但该分支拒绝 Origin、Sec-Fetch-Site 和 Cookie；浏览器按 A11 使用 session，混合两种认证明确拒绝。
 
-输入/输出 DTO 与领域对象分离：时间为 Unix UTC 秒，金额为微单位估算，limits 必须显式包含 requests/active/unresolved/budgetMicros/unresolvedMicros，每项为正整数（≤10¹²）或 null（该 Key 维度不限），缺字段及无效值拒绝；创建/更新/读取保留 null。界面逐项选择“不限”并在列表、详情和用量显示。创建/轮换仅在成功响应返回一次 secret，列表与普通更新不返回原文或摘要；若成功响应丢失，应查询元数据后显式轮换，不能找回旧原文。更新/轮换携 revision，冲突返回 409；未知字段拒绝。错误 envelope 仅含安全 code/message/request_id，响应 no-store。
+输入/输出 DTO 与领域对象分离：时间为 Unix UTC 秒，金额为微单位估算，limits 必须显式包含 tokens/active，每项为正整数（≤10¹²）或 null（该 Key 维度不限），缺字段及无效值拒绝；创建/更新/读取保留 null。界面逐项选择“不限”并在列表、详情和用量显示。创建/轮换仅在成功响应返回一次 secret，列表与普通更新不返回原文或摘要；若成功响应丢失，应查询元数据后显式轮换，不能找回旧原文。更新/轮换携 revision，冲突返回 409；未知字段拒绝。错误 envelope 仅含安全 code/message/request_id，响应 no-store。
 
 管理入口最多 32 个连接，Key/账号管理用例共享最多 16 个并发，另受数据库普通队列容量约束。NIO 在进入 Vapor 路由前收齐正文：最多 8 KiB，从接受连接开始绝对读取期限 10 秒，超时关闭连接、不派发用例，持续小片段不能延长期限，不保证超时 JSON envelope。单请求响应关闭连接，输出最多 1 MiB、写入期限 5 秒。Key 总数最多 256（含已归档），列表按 ID 每页最多 64；archived 缺省/false 只列未归档，true 只列已归档，同一过滤内按 after 游标分页。普通变更最多消耗 4096 条审计；另预留 256 条供 enabled→disabled 的真实撤销，总上限 4352。普通容量满后禁止创建/启用/轮换及重复禁用，因此不会消耗新撤销位置，所有现存活动 Key 仍可各禁用一次并持久审计。审计记录动作、revision、UTC 时间和非秘密权限快照；不删除历史。此临时容量边界须在后续诊断/保留策略功能收敛，不代表长期容量验收。
 
@@ -43,7 +43,7 @@ PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态�
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权；可选 method 为 device（默认）或 callback，拒绝其他值及未知字段。设备码创建响应为 flowID/method/userCode/verificationURL/expiresInSeconds/intervalSeconds；创建失败返回 flowID/method/expiresInSeconds/failureCode（404 未开启为 device_code_unavailable），不包含设备私有 ID。回调响应为 flowID/method/authorizationURL/expiresInSeconds。GET `/authorization/:flowID` 返回 status（pending/completed/failed/expired）、expiresInSeconds，pending 设备码包含 userCode，completed 包含 accountID，failed 包含 failureCode。POST `/authorization/:flowID` 只接受 callbackURL，且仅用于回调流程；DELETE 取消并等待本 owner 的流程退出。GET/DELETE 对错误 owner 或未知流程返回安全 409，不泄露流程是否存在；状态读取拒绝查询参数。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。流程信息不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 
 
-账号禁用/排空和 Key 禁用/轮换须先确认影响。账号排空不接收新会话请求，已有身份关联续接仍可派发；禁用阻止后续派发（包括续接），两者均不主动取消已经派发的请求。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
+管理页面仅提供账号启用/禁用，禁用及 Key 禁用/轮换须先确认影响。历史排空账号保持原状态并明确提示，可显式切换启用/禁用；底层排空协议保留兼容。账号排空不接收新会话请求，已有身份关联续接仍可派发；禁用阻止后续派发（包括续接），两者均不主动取消已经派发的请求。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
 
 授权失败 failureCode 取 I16 的 provider_rejected、exchange_failed、identity_mismatch、verification_failed、revision_conflict、device_code_unavailable、authorization_failed；最后一项保留通用回退。API 客户端必须接受新增代码并对未来未知代码回退，不把新代码当作响应损坏。前端仅接受有界代码标识，不显示未知原文；每种已知代码在授权对话框有中文解释。回调 POST 沿用安全错误格式，令牌端点以 400/401 拒绝兑换时返回 409/authorization_required（按状态判断，不读取错误响应体），其他兑换失败为 503/account_unavailable；前端失败后先 GET 本 owner 的已消费流程状态，再 DELETE；清除一次性输入及授权链接，只保留终态解释，不重发 callback。读取失败仍沿用未知结果锁与账号核对。旧客户端可能拒绝新代码，升级须同步 UI/API 客户端；无 schema 变更，内存流程不会跨版本/重启恢复。
 
@@ -69,7 +69,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 保持静态管理资源的严格 CSP，不启用 unsafe-inline/unsafe-eval。主题使用外部CSS，Zod关闭JIT，弹层滚动锁用有owner的外部CSS class代替库的运行时样式标签；焦点/菜单/弹层行为复用组件库。管理响应在原1 MiB/5秒限制内等待最终socket flush完成后关闭，不把已排队当发送完成。
 
-账号治理采用列表→账号详情/一次性授权抽屉：列表分别展示策略、授权和额度摘要，详情承载启停/排空、刷新/重新授权及额度窗口；创建授权成功仍默认禁用。抽屉内保留元数据重新读取入口和失败提示，未知结果不能被关闭/重新打开绕过；详情关闭或账号更换取消只读请求，授权关闭清除回调并按现有一次性丢弃契约处理。
+账号治理采用列表→账号详情/一次性授权抽屉：列表分别展示状态、授权和额度摘要，右上角单一“查看详情”入口，启用/禁用统一置于详情设置页，详情承载启停、刷新/重新授权及额度窗口；创建授权成功仍默认禁用。抽屉内保留元数据重新读取入口和失败提示，未知结果不能被关闭/重新打开绕过；详情关闭或账号更换取消只读请求，授权关闭清除回调并按现有一次性丢弃契约处理。
 
 ## A14：受控离线摘要导入
 
@@ -77,7 +77,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ### 管理产品化的兼容增量
 
-`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 无查询参数，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项仅有keyID、可空principal、admitted、failed、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 无查询参数，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项仅有keyID、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
 
 ## 管理台第二轮 API
 
@@ -92,7 +92,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 | PUT /api/keys/:id/display-name | JSON revision、displayName（字符串或null） | key（含可空displayName与新revision）；Key列表/创建/其他变更返回同字段 |
 | PUT /api/keys/:id/expiration | JSON revision、expiresAtUnixSeconds（正UTC秒或null） | key（含expiresAtUnixSeconds与新revision）；Key列表/创建/其他变更返回同字段 |
 
-日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。
+日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。管理界面请求明细每页查询10条，沿用游标翻页。 自定义日期无效时阻止读取并展示日期错误；收起后点击查询须重新展开错误。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。
 
 ## 首页需要处理提醒
 
@@ -189,7 +189,7 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 | POST `/:id/reset-credits/consume` | 空 JSON 或可选非空 creditID；返回 code、windowsReset；不接收客户端幂等 ID |
 | PUT `/:id/reset-credits/settings` | revision、autoUseBeforeExpiry、整数 leadMinutes（1—1440）和 retryCount（0—5）；提前分钟数至少为重试次数加 1。兼容只传 leadHours（1—24，转分钟并默认重试 3 次），拒绝与新字段混用；返回本地 state，递增账号 revision |
 
-列表边界与消费屏障见 I21，设置与修订同一 writer 快照读取。GET settings 同时返回 leadMinutes、retryCount 和兼容字段 leadHours（分钟向上取整到小时）。设置成功通知调度 owner 重算。表单以小时和分钟输入总提前量，展示“到期前 X 小时 Y 分钟自动使用”和重试次数，说明每隔一分钟重试、永不过期后发送及预算须在到期前放得下。消费四个已知结果分别解释“重置成功”“当前没有可重置的用量，卡未消耗”“没有可用的重置卡”“该操作已处理”；unknown 明确结果待确认，只确认核对原操作，不另选卡。卡名与到期时间在确认框显示，默认选择明确由提供者选择、到期未知。GET 不消费；未知操作禁用新卡/默认选择按钮。列表读取失败保留旧列表并禁用选择，必须重新读取；会话未知结果锁继续按 A13 核对账号，服务端 intent 始终阻止换 ID 重试。
+列表边界与消费屏障见 I21，设置与修订同一 writer 快照读取。GET settings 同时返回 leadMinutes、retryCount 和兼容字段 leadHours（分钟向上取整到小时）。设置成功通知调度 owner 重算。表单用单一提前量输入框配分钟/小时单位选择（总时长1–1440分钟）；整小时默认小时，其他默认分钟，切换单位保留实际时长，保存要求整数分钟，以输入布局展示提前量和重试次数，说明每隔一分钟重试、永不过期后发送及预算须在到期前放得下。消费四个已知结果分别解释“重置成功”“当前没有可重置的用量，卡未消耗”“没有可用的重置卡”“该操作已处理”；unknown 明确结果待确认，只确认核对原操作，不另选卡。卡名与到期时间在确认框显示，默认选择明确由提供者选择、到期未知。GET 不消费；未知操作禁用新卡/默认选择按钮。列表读取失败保留旧列表并禁用选择，必须重新读取；会话未知结果锁继续按 A13 核对账号，服务端 intent 始终阻止换 ID 重试。
 
 设置显示默认关闭与周期、提前小时范围、无到期卡跳过；设置可在禁用/待重授权账号保存，但自动执行只认 enabled/ready。`reset_credits` attention 链接账号详情，detail.code 为 reset/unknown/repeated_failure，不带提供者原文或请求 ID。
 
@@ -204,3 +204,21 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 ## 相关文档
 
 [文档导航](../../README.md)
+
+首页展示 UTC 当日全部托管 Key 的结果汇总，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
+
+大屏首页将生成就绪检查与管理连接状态合并到运行状态面板，账号并发随订阅账号展示。Key 摘要新增 inFlight（当日 intent 数）；结果未明为 admitted 减 succeeded、failed、cancelled、inFlight，不根据用量 pending 推断结果。
+
+进行中只读投影补充可空 reasoningEffort、requestMetadataRecorded，来自既有 admission 元数据；显式强度原样显示，参数已记录但缺少强度显示未指定，历史未记录显示未记录，不推断实际生效值。列表独立显示 Key、模型/模式、推理强度、订阅账号、运行时长与首事件；首事件不代表生成完成。
+
+首页明确账号 ID 的详情入口使用首页 account 查询参数就地打开复用的账号详情抽屉，不切换到订阅账号模块；关闭只移除该参数，保持滚动和其他查询字段，刷新/浏览器历史可恢复选择。账号不存在、未启用或读取失败在抽屉中反馈；会话失效清理所选账号。账号操作仍沿用管理授权、CSRF、取消与未知结果约束，变更后刷新首页观测。
+
+账号详情按概览、自动化、设置组织；概览展示已有额度/健康与有界并发快照，缺失不补零。固定标题、关闭入口与页签，仅面板内容滚动。重置卡/预热配置在用户展开时读取，不因进入详情而启用自动操作；同一账号切换页签/折叠保留已加载表单草稿，保存仍按原分区事务与确认处理。版本和UTC等技术信息置于可展开详情。常规字段由分组和列标题说明，避免重复辅助标签；正常额度布尔值不重复展示，未知/受限状态和有后果操作提示仍明确显示。
+
+## 访问密钥展示
+
+列表以密钥身份、概括权限、主要状态、今日用量与最近使用为主，详情底部仅保留创建时间，不重复展示Key ID；模型清单和全部治理限制在详情可查。主要状态优先归档、到期、启用/禁用，临近到期另提示；可用状态不代表绕过权限和额度准入。今日已观测Token与当前Token上限合并展示，费用仅保留在用量统计明细；读取缺失不补零。
+
+列表单一查看详情入口打开连续单页抽屉，依次排列用量概况、名称与权限、使用上限、管理操作及直接展示的密钥信息；固定标题和关闭入口，正文独立滚动；本地治理限额作为固定分组直接展示，不折叠。移除页签及重复的概况卡，用量/模型能力/限制采用卡片分组；保存与管理操作统一在固定底栏，保存按钮关联现有编辑表单，关闭由头部统一完成。用量进度仅表达已观测比例，未知保留下界标识。权限编辑复用原修订、部分成功及未知结果约束；保存成功或需核对时关闭编辑并刷新，校验拒绝保留草稿。归档密钥仍可查看只读策略，恢复后保持停用。到期、轮换、禁用与归档沿用独立确认，创建及一次性凭证流程不变。
+
+Key 配置只包含 tokens（UTC每日Token上限）和active（最大并发），不接受旧请求次数/金额/未结限制字段。单位Token/万Token/百万Token切换保留实际整数数量，保存基础Token数或null，不将旧请求数换算为Token。摘要返回tokens整数字符串与tokenUsageIncomplete，不完整时显示已观测下界。具体准入计量见[用量规范](usage.md)。
