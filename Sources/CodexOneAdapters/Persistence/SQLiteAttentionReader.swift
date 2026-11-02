@@ -115,13 +115,8 @@ extension SQLiteUsageReader: AttentionReading {
         var result: [AttentionItem] = []
         for key in keys where key.enabled && key.archivedAtUnixSeconds == nil {
           try key.policy.validate()
-          let values: [SQLiteConnection.Value] = [.text(key.id), .text("utc-day-\(now / 86400)")]
-          let requests = try db.scalar(
-            "SELECT COUNT(*) FROM attempts WHERE key_id=? AND window_id=?", values)
-          let budget = try db.scalar(
-            "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE key_id=? AND window_id=?",
-            values)
-          result += AttentionRules.key(key, requests: requests, budget: budget, now: now)
+          let usage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: key.id)
+          result += AttentionRules.key(key, requests: 0, budget: 0, now: now, tokens: usage.tokens)
         }
         return result
       }

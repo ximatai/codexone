@@ -197,7 +197,7 @@ def launch(binary, config, root):
     try:
         status, document = call(ports['admin'], 'POST', '/api/keys', dict(principal='synthetic',
             models=['synthetic-text'], imageGeneration=True, imageModels=['synthetic-image'],
-            limits=dict(requests=10000, active=64, unresolved=100, budgetMicros=1000000, unresolvedMicros=1000000)))
+            limits=dict(tokens=1000000, active=64)))
         assert status == 201
         TOKEN = document['secret']
         ADMIN_PORT = ports['admin']

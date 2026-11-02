@@ -30,7 +30,7 @@ def convert(source, approval, configured_models=None):
     assert all(isinstance(x,str) and 0<len(x.encode())<=128 for x in models)
     assert limits == 'source' or isinstance(limits, dict)
     if limits != 'source':
-        assert set(limits)=={'requests','active','unresolved','budgetMicros','unresolvedMicros'}
+        assert set(limits)=={'tokens','active'}
         assert all(type(n) is int and 1<=n<=10**12 for n in limits.values())
     assert isinstance(approval['selectedName'],str) and 0<len(approval['selectedName'].encode())<=256
     path=Path(source).resolve(strict=True)
@@ -80,7 +80,7 @@ def convert(source, approval, configured_models=None):
         if reasons:
             quarantine.append(dict(keyID=new_id,reasons=reasons));continue
         entries.append(dict(id=new_id,principal='legacy-p-'+reference,digest=digest,
-            policy=dict(models=allowed,limits=({name:None for name in ('requests','active','unresolved','budgetMicros','unresolvedMicros')} if limits == 'source' else limits),visionInput=False,imageGeneration=False,imageModels=[]),
+            policy=dict(models=allowed,limits=({name:None for name in ('tokens','active')} if limits == 'source' else limits),visionInput=False,imageGeneration=False,imageModels=[]),
             sourceActive=True,sourceExpiresAtUnixSeconds=None,policyEquivalent=True))
     selected_id=next(m['keyID'] for m in mapping if m['selected'])
     assert any(e['id']==selected_id for e in entries),'Selected key cannot be represented safely'

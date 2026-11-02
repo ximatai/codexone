@@ -87,6 +87,7 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
   public static let detailRetentionSeconds: Int64 = 90 * 86400
   public static let detailReferenceRows: Int64 = 100_000
   public static let maintenanceBatch = 100
+  public let tokens: Int64?
   public let requests: Int64?
   public let active: Int64?
   public let unresolved: Int64?
@@ -94,8 +95,9 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
   public let unresolvedMicros: Int64?
   public init(
     requests: Int64?, active: Int64?, unresolved: Int64?, budgetMicros: Int64?,
-    unresolvedMicros: Int64?
+    unresolvedMicros: Int64?, tokens: Int64? = nil
   ) {
+    self.tokens = tokens
     self.requests = requests
     self.active = active
     self.unresolved = unresolved
@@ -109,10 +111,19 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
       budgetMicros: budgetMicros, unresolvedMicros: budgetMicros)
   }
   private enum CodingKeys: String, CodingKey, CaseIterable {
-    case requests, active, unresolved, budgetMicros, unresolvedMicros
+    case tokens, requests, active, unresolved, budgetMicros, unresolvedMicros
   }
   public init(from decoder: any Decoder) throws {
     let fields = try decoder.container(keyedBy: CodingKeys.self)
+    tokens = try fields.decodeIfPresent(Int64.self, forKey: .tokens)
+    if fields.contains(.tokens) && !fields.contains(.requests) {
+      active = try fields.decode(Int64?.self, forKey: .active)
+      requests = nil
+      unresolved = nil
+      budgetMicros = nil
+      unresolvedMicros = nil
+      return
+    }
     // decode(Optional.self) requires the field while accepting an explicit null.
     requests = try fields.decode(Int64?.self, forKey: .requests)
     active = try fields.decode(Int64?.self, forKey: .active)
@@ -122,6 +133,7 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
   }
   public func encode(to encoder: any Encoder) throws {
     var fields = encoder.container(keyedBy: CodingKeys.self)
+    try fields.encodeIfPresent(tokens, forKey: .tokens)
     try fields.encode(requests, forKey: .requests)
     try fields.encode(active, forKey: .active)
     try fields.encode(unresolved, forKey: .unresolved)

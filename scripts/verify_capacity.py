@@ -208,7 +208,7 @@ def worker(root, duration, transport):
         for index in range(5):
             status,body=response(18081,'/api/keys',admin,{'principal':('synthetic-capacity-disconnect' if index==4 else f'synthetic-capacity-{index}'),
                 'models':[MODEL],'visionInput':True,'imageGeneration':True,'imageModels':['synthetic-image'],
-                'limits':{'requests':5000,'active':8,'unresolved':8,'budgetMicros':1000000,'unresolvedMicros':1000000}})
+                'limits':{'tokens':1000000,'active':8}})
             assert status==201
             keys.append(json.loads(body)['secret'])
         abrupt_key=keys.pop()

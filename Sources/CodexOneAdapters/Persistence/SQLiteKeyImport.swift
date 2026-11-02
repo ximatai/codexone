@@ -57,7 +57,7 @@ extension SQLiteExecutionStore {
             ["models", "limits", "visionInput", "imageGeneration", "imageModels"].contains($0)
           }) == true
           && Set(entry["policy"]?["limits"]?.object?.keys.map { $0 } ?? []) == [
-            "requests", "active", "unresolved", "budgetMicros", "unresolvedMicros",
+            "tokens", "active",
           ]
       }) == true
     else { throw ExecutionError.invalidCommand }

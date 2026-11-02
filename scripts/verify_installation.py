@@ -290,7 +290,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             csrf = json.loads(login)['csrf']; secrets.extend([session.value, csrf])
             browser_headers = ['Cookie: __Host-codexone_admin=' + session.value, 'Host: admin.example.invalid', 'Origin: ' + ORIGIN]
             create = {'principal': 'synthetic-install', 'models': ['configure-model-before-use'],
-                'limits': {'requests': 10, 'active': 2, 'unresolved': 2, 'budgetMicros': 1000000, 'unresolvedMicros': 1000000}}
+                'limits':{'tokens':1000000,'active':2}}
             assert request('/api/keys', headers=browser_headers, body=create)[0] == 403
             assert request('/api/keys', headers=[*browser_headers, 'X-CodexOne-CSRF: wrong'], body=create)[0] == 403
             status, body = request('/api/keys', headers=[*browser_headers, 'X-CodexOne-CSRF: ' + csrf], body=create)

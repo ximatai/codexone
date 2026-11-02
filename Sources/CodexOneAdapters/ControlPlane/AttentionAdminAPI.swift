@@ -217,7 +217,8 @@ enum AttentionRules {
     }
     return result
   }
-  static func key(_ key: ManagedKey, requests: Int64, budget: Int64, now: Int64) -> [AttentionItem]
+  static func key(_ key: ManagedKey, requests: Int64, budget: Int64, now: Int64, tokens: Int64 = 0)
+    -> [AttentionItem]
   {
     guard key.enabled, key.archivedAtUnixSeconds == nil else { return [] }
     var result: [AttentionItem] = []
@@ -230,8 +231,7 @@ enum AttentionRules {
           detail: ["expiresAtUnixSeconds": .number(Decimal(expiration))], since: expiration))
     }
     for (metric, value, limit) in [
-      ("requests", requests, key.policy.limits.requests),
-      ("budgetMicros", budget, key.policy.limits.budgetMicros),
+      ("tokens", tokens, key.policy.limits.tokens)
     ] {
       if let limit, Double(value) / Double(limit) * 100 >= AttentionThresholds.quotaWarning {
         result.append(

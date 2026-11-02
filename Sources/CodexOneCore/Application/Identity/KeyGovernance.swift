@@ -18,13 +18,14 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
       ),
       (models ?? []).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }),
       [
-        limits.requests, limits.active, limits.unresolved, limits.budgetMicros,
-        limits.unresolvedMicros,
+        limits.tokens, limits.active,
       ]
       .allSatisfy({ $0.map { (1...1_000_000_000_000).contains($0) } ?? true })
     else { throw ExecutionError.invalidCommand }
     self.models = models
-    self.limits = limits
+    self.limits = ExecutionLimits(
+      requests: nil, active: limits.active, unresolved: nil, budgetMicros: nil,
+      unresolvedMicros: nil, tokens: limits.tokens)
     self.visionInput = visionInput
     self.imageGeneration = imageGeneration
     self.imageModels = imageModels
@@ -34,6 +35,7 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
       models: models, limits: limits, visionInput: visionInput,
       imageGeneration: imageGeneration, imageModels: imageModels)
   }
+  private enum TokenLimitKeys: String, CodingKey { case tokens, active }
   private enum CodingKeys: String, CodingKey {
     case models, limits, visionInput, imageGeneration, imageModels
   }
@@ -50,7 +52,9 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
   public func encode(to encoder: any Encoder) throws {
     var fields = encoder.container(keyedBy: CodingKeys.self)
     try fields.encode(models, forKey: .models)
-    try fields.encode(limits, forKey: .limits)
+    var limitFields = fields.nestedContainer(keyedBy: TokenLimitKeys.self, forKey: .limits)
+    try limitFields.encode(limits.tokens, forKey: .tokens)
+    try limitFields.encode(limits.active, forKey: .active)
     try fields.encode(visionInput, forKey: .visionInput)
     try fields.encode(imageGeneration, forKey: .imageGeneration)
     try fields.encode(imageModels, forKey: .imageModels)

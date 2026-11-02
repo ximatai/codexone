@@ -202,28 +202,33 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     else {
       throw ExecutionError.unauthorized
     }
-    let limits = key.policy.limits
-    let values: [SQLiteConnection.Value] = [.text(command.owner.key)]
-    let counts = try db.rows(
+    let active = try db.scalar(
+      "SELECT COUNT(*) FROM attempts WHERE key_id=? AND state='intent'", [.text(command.owner.key)])
+    if let cap = key.policy.limits.active, active >= cap { throw ExecutionError.denied }
+    if let cap = key.policy.limits.tokens {
+      let usage = try keyTokenUsage(db, keyID: command.owner.key)
+      if usage.tokens >= cap { throw ExecutionError.denied }
+    }
+  }
+  static func keyTokenUsage(_ db: SQLiteConnection, keyID: String) throws -> (
+    tokens: Int64, incomplete: Bool
+  ) {
+    let day = db.clock.unixSeconds / 86400 * 86400
+    let rows = try db.rows(
       """
-      SELECT COALESCE(SUM(CASE WHEN state='intent' THEN 1 ELSE 0 END),0),
-      COALESCE(SUM(CASE WHEN state!='settled' THEN 1 ELSE 0 END),0),
-      COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0)
-      FROM attempts WHERE key_id=?
-      """, values
-    ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1), sqlite3_column_int64($0, 2)) }[0]
-    let window = values + [.text(command.window)]
-    let requests = try db.scalar(
-      "SELECT COUNT(*) FROM attempts WHERE key_id=? AND window_id=?", window)
-    let exposure = try db.scalar(
-      "SELECT COALESCE(SUM(estimated + CASE WHEN state!='settled' THEN MAX(reserved-estimated,0) ELSE 0 END),0) FROM attempts WHERE key_id=? AND window_id=?",
-      window)
-    guard
-      limits.allows(
-        requestCount: requests, activeCount: counts.0, unresolvedCount: counts.1,
-        exposureMicros: exposure, unresolvedExposureMicros: counts.2,
-        reservedMicros: command.reservedMicros)
-    else { throw ExecutionError.denied }
+      SELECT COALESCE(SUM(input_count),0)+COALESCE(SUM(output_count),0),COALESCE(SUM(missing),0)
+      FROM (
+        SELECT CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageInputTokens') ELSE json_extract(usage_json,'$.inputTokens') END AS input_count,
+          CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageOutputTokens') ELSE json_extract(usage_json,'$.outputTokens') END AS output_count,
+          CASE WHEN usage_json IS NULL OR json_extract(usage_json,'$.completeness')!='complete' OR (json_extract(usage_json,'$.nativeImages')=1 AND (json_extract(usage_json,'$.imageInputTokens') IS NULL OR json_extract(usage_json,'$.imageOutputTokens') IS NULL)) THEN 1 ELSE 0 END AS missing
+        FROM attempts WHERE key_id=? AND created_at_epoch>=? AND created_at_epoch<?
+        UNION ALL
+        SELECT COALESCE(input_tokens,image_input_tokens),COALESCE(output_tokens,image_output_tokens),CASE WHEN completeness!='complete' OR usage_unknown=1 OR COALESCE(input_tokens,image_input_tokens) IS NULL OR COALESCE(output_tokens,image_output_tokens) IS NULL THEN 1 ELSE 0 END
+        FROM usage_daily WHERE key_id=? AND day_epoch=?
+      )
+      """, [.text(keyID), .number(day), .number(day + 86400), .text(keyID), .number(day)]
+    ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1) > 0) }
+    return rows[0]
   }
   static func loadKey(_ db: SQLiteConnection, _ id: String) throws -> ManagedKey {
     guard
