@@ -22,6 +22,8 @@ v0.26.5 起重置卡自动使用支持分钟级提前量和有界分钟重试，
 
 每日Token限制的验证与平台边界见[验证记录](docs/changes/daily-token-limit/verification.md)。
 
+未发布修复：统一跨传输会话软亲和与双向协议元数据；真实续接 token 独立约束来源，未知状态明确拒绝；辅助 5xx 按端点隔离，429/401 保留账号级保护。契约与验收见[会话路由任务](docs/changes/session-routing-metadata/tasks.md)。
+
 ## 已知限制
 
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。
