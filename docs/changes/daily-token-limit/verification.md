@@ -16,9 +16,15 @@ Frontend build/typecheck and 205 unit tests passed. Four existing Key browser fl
 
 Updated the proposal, operator rollback guides and control-plane spec to prohibit direct original-database rollback after Token-policy writes. No downgrade converter or transitional configuration was added. Preserve the current verified full bundle; prefer a forward fix, or use a verified compatible pre-upgrade bundle in a new empty target with the existing reconciliation and maintenance gates. Documentation/link and diff checks passed. No application code or production state changed; backend/browser suites were not rerun for this documentation-only clarification.
 
+## CI script corrections
+
+2026-11-02: Linux PR CI passed docs, frontend, backend build and script shards 1/4 and 4/4, but exposed an old unresolved field in the Images fixture and a provider-event read inheriting the settlement handshake's 1-second socket timeout. Removed the obsolete Images field; separated the short handshake deadline from the normal 5-second event read, without retrying creates or changing connection-capacity/settlement deadline assertions. Also updated the cutback fixture's old request/money policy to an explicitly granted eight-Token policy: unknown first, then known usage exhausts the grant, with old baseline and new settled/unknown evidence still audited separately. No request/money-to-Token conversion is claimed.
+
+macOS loopback verify_images.py passed for HTTP and WebSocket, verify_migration_cutback.py passed, and verify_client_protocol.py passed before and after the read-timeout correction, including cancellation, no replay, resource release and the shorter original execution deadline. Documentation and shard-ownership checks passed. Full Linux acceptance remains gated on the rerun of the PR workflow.
+
 ## Limits
 
-No Linux/container or real provider/client verification was performed. Node is below the declared version. Full backend shard script collection was not rerun; relevant Key and import socket verifications were run. Existing Token counts are observations, not a hard ceiling; incomplete usage remains a lower bound. No production service was modified.
+Initial local verification did not include Linux/container or a real provider/client; Linux PR CI progress is recorded above and must be assessed from the final workflow result. Node is below the declared version. Full backend shard script collection was not rerun; relevant Key and import socket verifications were run. Existing Token counts are observations, not a hard ceiling; incomplete usage remains a lower bound. No production service was modified.
 
 ## 相关文档
 
