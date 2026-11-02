@@ -43,3 +43,27 @@ it("recovers from a failed fetch after explicit retry", async () => {
     await screen.findByRole("heading", { name: "网关尚未就绪" }),
   ).toBeVisible();
 });
+
+it("separates management connectivity from generation readiness and explains missing checks", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({ service: "codexone", ready: false, checks: [] }),
+          ),
+      ),
+  );
+  const { render: renderWithProviders } = await import("../../../tests/render");
+  renderWithProviders(<SystemOverview compact />);
+  expect(await screen.findByText("生成服务")).toBeVisible();
+  expect(screen.getByText("未就绪")).toBeVisible();
+  expect(screen.getByText("管理服务")).toBeVisible();
+  expect(
+    screen.getByText("未提供就绪检查，暂无法确认生成可用。"),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "刷新服务状态" }));
+  expect(await screen.findByText("未就绪")).toBeVisible();
+});

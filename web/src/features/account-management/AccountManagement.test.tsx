@@ -42,24 +42,31 @@ function setup() {
   );
 }
 it("locks writes after unknown results until a successful account read", async () => {
+  vi.mocked(observations.fetchObservation).mockRejectedValue(
+    new Error("synthetic unavailable"),
+  );
   vi.mocked(api.setMode).mockRejectedValue(
     new sessions.ManagementError(0, "connection_failed"),
   );
   setup();
-  await screen.findByRole("button", { name: "启用" });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "启用" })).toBeEnabled(),
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "启用" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  await screen.findByRole("radio", { name: "启用" });
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
   await screen.findByText(/操作结果尚未确认/);
-  expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "启用" })).toBeDisabled();
   vi.mocked(api.fetchAccounts).mockRejectedValueOnce(new Error("network"));
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
   await screen.findByText(/账号读取失败/);
-  expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "启用" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "启用" })).toBeEnabled(),
+    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
   );
   expect(api.setMode).toHaveBeenCalledTimes(1);
 });
@@ -123,14 +130,15 @@ it("clears account data and permits only logout retry while logout is unconfirme
   expect(
     screen.queryByRole("button", { name: "重新读取账号" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "启用" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("radio", { name: "启用" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "重试登出" }));
   await screen.findByRole("heading", { name: "管理员登录" });
   expect(logout).toHaveBeenCalledTimes(2);
 });
 it("refreshes replaced session proof and discards its old-owner authorization flow", async () => {
+  vi.mocked(observations.fetchObservation).mockRejectedValue(
+    new Error("synthetic unavailable"),
+  );
   vi.mocked(api.beginAuthorization).mockResolvedValue({
     flowID: "flow",
     authorizationURL: "https://auth.openai.com/oauth/authorize?state=old",
@@ -158,10 +166,14 @@ it("refreshes replaced session proof and discards its old-owner authorization fl
   expect(
     screen.queryByLabelText("2. 粘贴完整回调地址"),
   ).not.toBeInTheDocument();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "启用" })).toBeEnabled(),
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "启用" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
   await waitFor(() =>
     expect(api.setMode).toHaveBeenCalledWith(
       account,
@@ -248,7 +260,7 @@ it("cancels the detail read when its drawer closes", async () => {
   await waitFor(() => expect(signal?.aborted).toBe(true));
 });
 
-it("confirms draining from details and explains that associated continuations and in-flight requests continue", async () => {
+it("confirms disabling from details and preserves in-flight requests", async () => {
   vi.mocked(sessions.fetchSession).mockResolvedValue({
     csrf: "synthetic-csrf",
   });
@@ -260,23 +272,25 @@ it("confirms draining from details and explains that associated continuations an
   );
   vi.mocked(api.setMode).mockResolvedValue({
     ...account,
-    mode: "draining",
+    mode: "disabled",
     revision: 2,
   });
   render(<AccountManagement />);
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
-  fireEvent.click(await screen.findByRole("radio", { name: "排空" }));
-  expect(
-    await screen.findByText(/已有身份关联的续接请求仍可派发/),
-  ).toHaveTextContent("在途请求继续");
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  expect(screen.queryByRole("radio", { name: "排空" })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("radio", { name: "禁用" }));
+  expect(await screen.findByText(/禁用后不再发送新请求/)).toHaveTextContent(
+    "进行中的请求继续",
+  );
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
   expect(api.setMode).not.toHaveBeenCalled();
-  fireEvent.click(await screen.findByRole("radio", { name: "排空" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认排空" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "禁用" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认禁用" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalledOnce());
-  expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("draining");
+  expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("disabled");
 });
 
 it("shows unavailable quota before elapsed freshness for an account with no successful observation", async () => {
@@ -310,6 +324,7 @@ it("edits display names, refreshing a conflicting revision before retry", async 
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
   fireEvent.change(await screen.findByLabelText("账号显示名"), {
     target: { value: "合成账号" },
   });
@@ -335,6 +350,7 @@ it("clears an existing display name explicitly", async () => {
   render(<AccountManagement />);
   await screen.findByText("合成账号");
   fireEvent.click(screen.getByRole("button", { name: "额度与健康详情" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
   fireEvent.click(await screen.findByRole("button", { name: "清除显示名" }));
   await waitFor(() =>
     expect(api.setDisplayName).toHaveBeenCalledWith(
@@ -351,6 +367,8 @@ it("shows unavailable credential times in account details", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  fireEvent.click(screen.getByText("技术信息", { exact: true }));
   expect(screen.getByText("访问凭证到期：不可用")).toBeVisible();
   expect(screen.getByText("最近凭证更新：不可用")).toBeVisible();
 });
@@ -370,6 +388,8 @@ it("shows local and relative credential times in account details", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  fireEvent.click(screen.getByText("技术信息", { exact: true }));
   expect(screen.getByText(/访问凭证到期：.*约 3 小时后/)).toBeVisible();
   expect(screen.getByText(/最近凭证更新：.*约 3 小时前/)).toBeVisible();
   expect(screen.getByText(/访问凭证到期：/).textContent).toContain(
@@ -506,10 +526,13 @@ it("uses device authorization for the selected account and retains its revision 
   fireEvent.click(
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: /^重新授权$/ })).toBeEnabled(),
+    expect(
+      screen.getByRole("button", { name: /^重新登录授权$/ }),
+    ).toBeEnabled(),
   );
-  fireEvent.click(screen.getByRole("button", { name: /^重新授权$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^重新登录授权$/ }));
   await screen.findByLabelText("设备码");
   expect(api.beginAuthorization).toHaveBeenCalledWith(
     account,
@@ -654,4 +677,28 @@ it("lets the backend own the submitted callback deadline after clearing its inpu
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("keeps a legacy draining account explicit without offering draining as an action", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, mode: "draining" },
+  ]);
+  vi.mocked(observations.fetchObservation).mockRejectedValue(
+    new Error("synthetic unavailable"),
+  );
+  render(<AccountManagement />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "额度与健康详情" }),
+  );
+  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
+  expect(screen.getByText(/当前仅允许已有会话继续/)).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "启用" })).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "禁用" })).not.toBeChecked();
+  expect(screen.queryByRole("radio", { name: "排空" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
+  await waitFor(() => expect(api.setMode).toHaveBeenCalled());
+  expect(vi.mocked(api.setMode).mock.calls.at(-1)![1]).toBe("enabled");
 });

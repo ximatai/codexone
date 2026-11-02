@@ -49,12 +49,16 @@ test("P2-2 Usage: pages keep separate POP positions and fresh entry ignores page
   const position = await page.evaluate(() => scrollY);
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await page.goBack();
-  await expect(page.getByText("request-50", { exact: true })).toBeAttached();
+  await expect(
+    page.locator('[data-row-id="admittedexecution-10"]'),
+  ).toBeAttached();
   await expect.poll(() => page.evaluate(() => scrollY)).toBe(position);
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
   await expect(page.getByText("第 1 页", { exact: true })).toBeAttached();
-  await expect(page.getByText("request-0", { exact: true })).toBeAttached();
+  await expect(
+    page.locator('[data-row-id="admittedexecution-0"]'),
+  ).toBeAttached();
   await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
 });
 
@@ -97,9 +101,8 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   for (const source of [
     "运营指标",
     "进行中请求",
-    "最近请求",
+    "今日 Key 汇总",
     "订阅账号",
-    "Key 用量摘要",
     "存储状态",
     "需要处理提醒",
     "治理余量",
@@ -137,7 +140,9 @@ for (const status of [503, 429]) {
     const failed = state.reads.filter((r) => r.path === "/api/usage").at(-1)!;
     state.failures = {};
     await retry.click();
-    await expect(page.getByText("request-50", { exact: true })).toBeAttached();
+    await expect(
+      page.locator('[data-row-id="admittedexecution-10"]'),
+    ).toBeAttached();
     await expect(page.getByText("第 2 页", { exact: true })).toBeAttached();
     expect(state.reads.filter((r) => r.path === "/api/usage").at(-1)).toEqual(
       failed,
@@ -165,17 +170,23 @@ test("P2-6: login, Key targets and cancel/Escape transfer focus to the intended 
     .getByRole("button", { name: "取消", exact: true })
     .click();
   await expect(create).toBeFocused();
-  const more = row.getByRole("button", { name: "team-201 更多操作" });
+  const more = row.getByRole("button", { name: "查看详情" });
+  await more.click();
+  const rotate = page.getByRole("button", { name: "轮换凭证", exact: true });
   for (const close of ["cancel", "escape"]) {
-    await more.click();
-    await page.getByRole("menuitem", { name: "轮换", exact: true }).click();
+    await rotate.click();
     const dialog = page.getByRole("dialog", { name: "轮换 API Key" });
     await expect(dialog).toBeVisible();
     if (close === "cancel")
       await dialog.getByRole("button", { name: "取消" }).click();
     else await page.keyboard.press("Escape");
-    await expect(more).toBeFocused();
+    await expect(rotate).toBeFocused();
   }
+  await page
+    .getByRole("dialog", { name: "密钥详情" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(more).toBeFocused();
   await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
   const detail = page
     .getByRole("button", { name: "查看详情", exact: true })
@@ -194,13 +205,13 @@ test("Colors: expired switches are neutral, disclosure links use primary and abn
   const enabled = page
     .locator("tbody tr")
     .first()
-    .getByText("启用", { exact: true })
+    .getByText("已到期", { exact: true })
     .locator("..");
   expect(
     await enabled.evaluate((e) =>
       (e as HTMLElement).style.getPropertyValue("--badge-color"),
     ),
-  ).toContain("gray");
+  ).toContain("red");
   await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
   const summary = page.getByText("更多筛选", { exact: true });
   const primaryColor = await page
@@ -225,7 +236,7 @@ test("Quota: an account name opens that account's details", async ({
     .getByLabel("订阅额度与系统状态")
     .getByRole("link", { name: "合成账号 3", exact: true })
     .click();
-  await expect(page).toHaveURL(/accounts\?target=synthetic-account-3/);
+  await expect(page).toHaveURL(/#\/\?account=synthetic-account-3/);
   await expect(page.getByRole("dialog", { name: "账号详情" })).toContainText(
     "合成账号 3",
   );
@@ -236,12 +247,12 @@ test("P2-6 Colors: rotating an expired Key keeps focus in the secret dialog and 
 }) => {
   await reviewFixture(page);
   await page.goto("/#/keys?q=team-2&status=expired");
-  const more = page.getByRole("button", {
-    name: "team-2 更多操作",
-    exact: true,
-  });
+  const more = page
+    .locator("tbody tr")
+    .first()
+    .getByRole("button", { name: "查看详情" });
   await more.click();
-  await page.getByRole("menuitem", { name: "轮换", exact: true }).click();
+  await page.getByRole("button", { name: "轮换凭证", exact: true }).click();
   const old = page.getByRole("dialog", { name: "轮换 API Key" });
   await old.getByRole("button", { name: "确认轮换", exact: true }).click();
   const secret = page.getByRole("dialog", { name: "保存一次性凭证" });

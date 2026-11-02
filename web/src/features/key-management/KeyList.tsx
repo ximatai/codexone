@@ -1,283 +1,125 @@
-import { Tooltip, Badge, ActionIcon, Group, Menu, Text } from "@mantine/core";
-import {
-  IconChartBar,
-  IconPencil,
-  IconDots,
-  IconClock,
-  IconRefresh,
-  IconBan,
-  IconCheck,
-} from "@tabler/icons-react";
-import { Link } from "react-router";
+import { Badge, Button, Group, Text } from "@mantine/core";
 import * as api from "./api";
 import type { useKeys } from "./useKeys";
 import type { KeyUsage } from "../usage/api";
 import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { StatusBadge } from "../../shared/ui/States";
-import { TimeText, MoneyText } from "../../shared/ui/TimeText";
-import { timeTitle } from "../../shared/presentation";
+import { TimeText } from "../../shared/ui/TimeText";
 import { KeyName } from "../../shared/KeyName";
 export function KeyList({
   keys,
   state,
   usage,
-  setArchiving,
-  setExpiring,
-  setDisabling,
-  setRotating,
-  toggle,
+  onDetails,
   highlightedID,
 }: {
   keys: api.ManagedKey[];
   state: ReturnType<typeof useKeys>;
   usage: { data?: KeyUsage[]; isError?: boolean; isPending?: boolean };
   highlightedID?: string | null;
-  setArchiving: (key: api.ManagedKey) => void;
-  setExpiring: (key: api.ManagedKey) => void;
-  setDisabling: (key: api.ManagedKey) => void;
-  setRotating: (key: api.ManagedKey) => void;
-  toggle: (key: api.ManagedKey) => Promise<boolean>;
+  onDetails: (key: api.ManagedKey) => void;
 }) {
   const columns: DataColumn<api.ManagedKey>[] = [
     {
-      id: "col0",
-      title: "主体 / 标识",
-      mobileTitle: true,
-      sortValue: (key) => key.principal,
-      render: (key) => (
-        <>
-          <KeyName {...key} stacked />
-          <Text size="xs" c="dimmed" className="identifier" title={key.id}>
-            {key.id}
-          </Text>
-          <Text
-            size="xs"
-            c="dimmed"
-            title={timeTitle(key.createdAtUnixSeconds)}
-          >
-            创建：
-            <TimeText value={key.createdAtUnixSeconds} />
-          </Text>
-        </>
-      ),
+      id: "identity",
+      title: "密钥",
+      sortValue: (key) => key.displayName ?? key.principal,
+      render: (key) => <KeyName {...key} stacked />,
     },
     {
-      id: "col1",
+      id: "permissions",
       title: "权限",
       render: (key) => (
-        <>
-          <Group gap={5}>
-            {(key.models === null ? ["全部模型"] : key.models).map((model) => (
-              <Badge className="model-id" variant="light" key={model}>
-                {model}
-              </Badge>
-            ))}
-            {key.visionInput && <Badge variant="outline">视觉</Badge>}
-            {key.imageGeneration && (
-              <Badge variant="outline">
-                图片生成 / 编辑{key.imageModels === null ? " · 全部模型" : ""}
-              </Badge>
-            )}
-          </Group>
-        </>
+        <Group gap={5}>
+          <Badge variant="light" title={key.models?.join("、")}>
+            {key.models === null ? "全部模型" : `${key.models.length} 个模型`}
+          </Badge>
+          {key.visionInput && <Badge variant="outline">视觉</Badge>}
+          {key.imageGeneration && <Badge variant="outline">图片</Badge>}
+        </Group>
       ),
     },
     {
-      id: "col2",
+      id: "status",
       title: "状态",
-      render: (key) => (
-        <>
-          <StatusBadge
-            color={
-              key.enabled &&
-              api.expirationState(key.expiresAtUnixSeconds) !== "expired"
-                ? "green"
-                : "gray"
-            }
-          >
-            {key.archivedAtUnixSeconds != null
-              ? "已归档"
-              : key.enabled
-                ? "启用"
-                : "禁用"}
-          </StatusBadge>
-          <StatusBadge
-            color={
-              api.expirationState(key.expiresAtUnixSeconds) === "expired"
-                ? "red"
-                : api.expirationState(key.expiresAtUnixSeconds) === "soon"
-                  ? "orange"
-                  : "gray"
-            }
-          >
-            {api.expirationState(key.expiresAtUnixSeconds) === "expired"
-              ? "已到期"
-              : api.expirationState(key.expiresAtUnixSeconds) === "soon"
-                ? "7 天内到期"
-                : key.expiresAtUnixSeconds == null
-                  ? "永不过期"
-                  : "未到期"}
-          </StatusBadge>
-          {key.expiresAtUnixSeconds != null && (
-            <Text size="xs" title={timeTitle(key.expiresAtUnixSeconds)}>
-              <TimeText value={key.expiresAtUnixSeconds} mode="utc" />
-            </Text>
-          )}
-        </>
-      ),
-    },
-    {
-      id: "col3",
-      title: "本地限制",
-      render: (key) => (
-        <>
-          <Text size="sm">{api.formatKeyLimit(key.limits.requests)} / 日</Text>
-          <Text size="xs" c="dimmed">
-            {api.formatKeyLimit(key.limits.active)} 并发 ·{" "}
-            {api.formatKeyLimit(key.limits.unresolved)} 待核对
-          </Text>
-        </>
-      ),
-    },
-    {
-      id: "col4",
-      title: "今日 / 最近使用",
-      render: (key) => (
-        <>
-          <Text size="sm">
-            {(usage.isError
-              ? undefined
-              : usage.data?.find((item) => item.keyID === key.id)?.admitted) ??
-              "—"}{" "}
-            请求 / {api.formatKeyLimit(key.limits.requests)} 上限
-          </Text>
-          <Text size="xs">
-            费用：
-            <MoneyText
-              value={
-                usage.isError
-                  ? null
-                  : usage.data?.find((item) => item.keyID === key.id)
-                      ?.estimatedMicros
-              }
-            />
-          </Text>
-          <Text
-            size="xs"
-            title={timeTitle(
-              usage.data?.find((item) => item.keyID === key.id)
-                ?.lastUsedAtUnixSeconds,
-            )}
-          >
-            最近：
-            {usage.isPending ? (
-              "正在读取"
-            ) : usage.isError ||
-              !usage.data?.some((item) => item.keyID === key.id) ? (
-              "不可用"
-            ) : usage.data?.find((item) => item.keyID === key.id)
-                ?.lastUsedAtUnixSeconds == null ? (
-              "从未使用"
-            ) : (
-              <TimeText
-                value={
-                  usage.data?.find((item) => item.keyID === key.id)
-                    ?.lastUsedAtUnixSeconds
-                }
-              />
-            )}
-          </Text>
-        </>
-      ),
-    },
-    {
-      id: "col5",
-      title: "操作",
-      render: (key) => (
-        <>
-          <Group gap="xs">
-            <Tooltip label="用量">
-              <ActionIcon
-                size="md"
-                variant="default"
-                aria-label="用量"
-                component={Link}
-                to={`/usage?key=${encodeURIComponent(key.id)}`}
-              >
-                <IconChartBar size={17} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="编辑">
-              <ActionIcon
-                size="md"
-                variant="default"
-                aria-label="编辑"
-                disabled={state.disabled || key.archivedAtUnixSeconds != null}
-                onClick={() => state.setEditing(key)}
-              >
-                <IconPencil size={17} />
-              </ActionIcon>
-            </Tooltip>
-            <Menu position="bottom-end">
-              <Tooltip label="更多操作">
-                <Menu.Target>
-                  <ActionIcon
-                    size="md"
-                    variant="default"
-                    disabled={state.disabled}
-                    aria-label={`${key.principal} 更多操作`}
-                  >
-                    <IconDots size={17} />
-                  </ActionIcon>
-                </Menu.Target>
-              </Tooltip>
-              <Menu.Dropdown>
-                <Menu.Item
-                  disabled={key.enabled}
-                  title={key.enabled ? "请先停用密钥，再归档" : undefined}
-                  onClick={() => setArchiving(key)}
-                >
-                  {key.archivedAtUnixSeconds != null
-                    ? "恢复"
+      render: (key) => {
+        const expiry = api.expirationState(key.expiresAtUnixSeconds);
+        return (
+          <>
+            <StatusBadge
+              color={
+                key.archivedAtUnixSeconds != null
+                  ? "gray"
+                  : expiry === "expired"
+                    ? "red"
                     : key.enabled
-                      ? "归档（请先停用）"
-                      : "归档"}
-                </Menu.Item>
-                {key.archivedAtUnixSeconds == null && (
-                  <>
-                    <Menu.Item
-                      leftSection={<IconClock size={16} />}
-                      onClick={() => setExpiring(key)}
-                    >
-                      设置到期时间
-                    </Menu.Item>
-                    <Menu.Item
-                      leftSection={<IconRefresh size={16} />}
-                      onClick={() => setRotating(key)}
-                    >
-                      轮换
-                    </Menu.Item>
-                    <Menu.Item
-                      color={key.enabled ? "red" : undefined}
-                      leftSection={
-                        key.enabled ? (
-                          <IconBan size={16} />
-                        ) : (
-                          <IconCheck size={16} />
-                        )
-                      }
-                      onClick={() =>
-                        key.enabled ? setDisabling(key) : void toggle(key)
-                      }
-                    >
-                      {key.enabled ? "禁用" : "启用"}
-                    </Menu.Item>
-                  </>
-                )}
-              </Menu.Dropdown>
-            </Menu>
-          </Group>
-        </>
+                      ? "green"
+                      : "gray"
+              }
+            >
+              {key.archivedAtUnixSeconds != null
+                ? "已归档"
+                : expiry === "expired"
+                  ? "已到期"
+                  : key.enabled
+                    ? "可用"
+                    : "已禁用"}
+            </StatusBadge>
+            {key.archivedAtUnixSeconds == null &&
+              key.enabled &&
+              expiry === "soon" && (
+                <Text size="xs" c="orange">
+                  7 天内到期
+                </Text>
+              )}
+          </>
+        );
+      },
+    },
+    {
+      id: "usage",
+      title: "今日 Token",
+      render: (key) => {
+        const summary = usage.isError
+          ? undefined
+          : usage.data?.find((item) => item.keyID === key.id);
+        return (
+          <>
+            <Text size="sm">
+              {summary?.tokens == null
+                ? "不可用"
+                : `${summary.tokenUsageIncomplete ? "≥ " : ""}${BigInt(summary.tokens).toLocaleString("zh-CN")}`}{" "}
+              / {api.formatKeyLimit(key.limits.tokens)} Token
+            </Text>
+          </>
+        );
+      },
+    },
+    {
+      id: "lastUsed",
+      title: "最近使用",
+      render: (key) => {
+        const summary = usage.isError
+          ? undefined
+          : usage.data?.find((item) => item.keyID === key.id);
+        return usage.isPending ? (
+          "读取中"
+        ) : !summary ? (
+          "不可用"
+        ) : summary.lastUsedAtUnixSeconds == null ? (
+          "从未使用"
+        ) : (
+          <TimeText value={summary.lastUsedAtUnixSeconds} />
+        );
+      },
+    },
+    {
+      id: "actions",
+      title: "",
+      render: (key) => (
+        <Button variant="subtle" size="xs" onClick={() => onDetails(key)}>
+          查看详情
+        </Button>
       ),
     },
   ];

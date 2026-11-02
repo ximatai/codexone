@@ -1,3 +1,5 @@
+import { UsageDisclosure } from "./UsageDisclosure";
+import { Tooltip } from "@mantine/core";
 import { metricLabels, money, estimateNote } from "../../shared/presentation";
 import type { UsageReport, Metrics } from "./api";
 import { failures } from "../../shared/presentation";
@@ -32,15 +34,15 @@ export function UsageSummary({ report }: { report: UsageReport }) {
       duration(totals.p95FirstEventMilliseconds),
       "仅非空观测样本",
     ],
-    ["估算费用", money(totals.metrics.estimatedMicros), "估算，非账单"],
   ];
   return (
     <div className={styles.summary}>
       {items.map(([label, value, note]) => (
         <div key={label}>
-          <span>{label}</span>
+          <Tooltip label={note} multiline maw={280} withArrow>
+            <span tabIndex={0}>{label}</span>
+          </Tooltip>
           <strong>{value}</strong>
-          <small>{note}</small>
         </div>
       ))}
     </div>
@@ -56,8 +58,7 @@ export function UsageEvidence({
   const { totals } = report;
   const incomplete = totals.partial + totals.unavailable > 0;
   return (
-    <details className={styles.moreFilters} open={expanded || undefined}>
-      <summary hidden={expanded}>统计明细</summary>
+    <EvidenceContainer expanded={expanded}>
       <div className={styles.metrics}>
         <div>
           <span>平均总耗时</span>
@@ -118,6 +119,22 @@ export function UsageEvidence({
         小时自动关闭，用量仍为未知。 图片工具 token 与宿主响应 token
         分别统计，不相加；缺失工具证据显示不可用。
       </p>
-    </details>
+    </EvidenceContainer>
+  );
+}
+
+function EvidenceContainer({
+  expanded,
+  children,
+}: {
+  expanded: boolean;
+  children: React.ReactNode;
+}) {
+  return expanded ? (
+    <div>{children}</div>
+  ) : (
+    <UsageDisclosure title="统计明细" className={styles.moreFilters}>
+      {children}
+    </UsageDisclosure>
   );
 }

@@ -5,6 +5,7 @@ import {
   Button,
   Group,
   NumberInput,
+  NativeSelect,
   Paper,
   Stack,
   Switch,
@@ -29,7 +30,9 @@ export function ResetCredits({
   reloadToken,
   mutation,
   onUnauthorized,
+  hideTitle = false,
 }: {
+  hideTitle?: boolean;
   account: Account;
   disabled: boolean;
   reloadToken: unknown;
@@ -43,8 +46,8 @@ export function ResetCredits({
   const [version, setVersion] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [auto, setAuto] = useState(false);
-  const [hours, setHours] = useState<string | number>(24);
-  const [minutes, setMinutes] = useState<string | number>(0);
+  const [minutes, setMinutes] = useState<string | number>(1440);
+  const [unit, setUnit] = useState<"minutes" | "hours">("hours");
   const [retries, setRetries] = useState<string | number>(3);
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
@@ -58,16 +61,18 @@ export function ResetCredits({
         if (abort.signal.aborted) return;
         setState(saved);
         setAuto(saved.settings.autoUseBeforeExpiry);
-        setHours(Math.floor(saved.settings.leadMinutes / 60));
-        setMinutes(saved.settings.leadMinutes % 60);
+        setMinutes(saved.settings.leadMinutes);
+        setUnit(saved.settings.leadMinutes % 60 === 0 ? "hours" : "minutes");
         setRetries(saved.settings.retryCount);
         const live = await api.fetchResetCredits(account.id, abort.signal);
         if (!abort.signal.aborted) {
           setList(live);
           setState(live.state);
           setAuto(live.state.settings.autoUseBeforeExpiry);
-          setHours(Math.floor(live.state.settings.leadMinutes / 60));
-          setMinutes(live.state.settings.leadMinutes % 60);
+          setMinutes(live.state.settings.leadMinutes);
+          setUnit(
+            live.state.settings.leadMinutes % 60 === 0 ? "hours" : "minutes",
+          );
           setRetries(live.state.settings.retryCount);
         }
       } catch (cause) {
@@ -88,15 +93,14 @@ export function ResetCredits({
   const blocked =
     disabled || loading || !state || account.authorization !== "ready";
   const selectable = !blocked && !error && !state?.pending;
-  const leadMinutes = Number(hours) * 60 + Number(minutes);
+  const leadMinutes = Math.round(Number(minutes));
   const validSettings =
-    [hours, minutes, retries].every(
-      (v) => typeof v === "number" && Number.isInteger(v),
-    ) &&
-    Number(hours) >= 0 &&
-    Number(hours) <= 24 &&
+    typeof minutes === "number" &&
+    Math.abs(minutes - leadMinutes) < 0.000001 &&
+    typeof retries === "number" &&
+    Number.isInteger(retries) &&
     Number(minutes) >= 0 &&
-    Number(minutes) <= 59 &&
+    Number(minutes) <= 1440 &&
     Number(retries) >= 0 &&
     Number(retries) <= 5 &&
     leadMinutes >= 1 &&
@@ -120,16 +124,19 @@ export function ResetCredits({
   return (
     <section aria-label="重置卡">
       <Stack gap="sm">
-        <Group justify="space-between">
-          <Title order={3} size="h5">
-            重置卡
-          </Title>
+        <Group justify={hideTitle ? "flex-end" : "space-between"}>
+          {!hideTitle && (
+            <Title order={3} size="h5">
+              重置卡
+            </Title>
+          )}
           <Button
             variant="subtle"
             disabled={loading || disabled}
             onClick={() => setVersion((v) => v + 1)}
+            aria-label="重新读取重置卡"
           >
-            重新读取重置卡
+            刷新
           </Button>
         </Group>
         {loading && <Text role="status">正在读取重置卡…</Text>}
@@ -181,16 +188,19 @@ export function ResetCredits({
                             : "其他状态"}
                     </Badge>
                   </Group>
-                  <Text size="xs" className="wrap-anywhere">
-                    标识：{credit.id} · 类型：{credit.type} · 状态：
-                    {credit.status}
-                  </Text>
                   {credit.description && (
                     <Text size="sm" className="wrap-anywhere">
                       {credit.description}
                     </Text>
                   )}
-                  <Text size="xs">发放：{expiry(credit.grantedAt)}</Text>
+                  <details>
+                    <summary>详情</summary>{" "}
+                    <Text size="xs" className="wrap-anywhere">
+                      标识：{credit.id} · 类型：{credit.type} · 状态：
+                      {credit.status}
+                    </Text>
+                    <Text size="xs">发放：{expiry(credit.grantedAt)}</Text>
+                  </details>
                   <Text size="sm">到期：{expiry(credit.expiresAt)}</Text>
                   <Button
                     variant="light"
@@ -219,36 +229,55 @@ export function ResetCredits({
         <Switch
           aria-label="到期前自动使用"
           label="到期前自动使用"
-          description="默认关闭；仅在账号启用且授权正常时，每轮最多使用一张最早到期卡。无到期时间的卡不会自动使用。"
+          title="仅对启用且授权正常的账号生效；每轮一张最早到期卡，无到期时间的卡不自动使用。"
           checked={auto}
           disabled={disabled || loading || !state}
           onChange={(event) => setAuto(event.currentTarget.checked)}
         />
         <NumberInput
-          aria-label="提前小时数"
-          label="提前小时数"
-          description="总提前量 1 分钟至 24 小时，默认 24 小时。"
-          value={hours}
+          aria-label="提前量"
+          label="提前量"
+          title={`1–1440 分钟（最多 24 小时）；当前 ${minutes} 分钟`}
+          value={
+            typeof minutes === "number" && unit === "hours"
+              ? Number((minutes / 60).toFixed(8))
+              : minutes
+          }
           min={0}
-          max={24}
-          allowDecimal={false}
+          max={unit === "hours" ? 24 : 1440}
+          step={1}
+          hideControls
+          rightSectionWidth={90}
+          rightSection={
+            <NativeSelect
+              w={90}
+              styles={{ input: { paddingLeft: 10, paddingRight: 24 } }}
+              aria-label="提前量单位"
+              value={unit}
+              onChange={(event) =>
+                setUnit(event.currentTarget.value as "minutes" | "hours")
+              }
+              data={[
+                { value: "minutes", label: "分钟" },
+                { value: "hours", label: "小时" },
+              ]}
+              variant="unstyled"
+              disabled={disabled || loading || !state}
+            />
+          }
           disabled={disabled || loading || !state}
-          onChange={setHours}
-        />
-        <NumberInput
-          aria-label="提前分钟数"
-          label="提前分钟数"
-          value={minutes}
-          min={0}
-          max={59}
-          allowDecimal={false}
-          disabled={disabled || loading || !state}
-          onChange={setMinutes}
+          onChange={(value) =>
+            setMinutes(
+              typeof value === "number"
+                ? value * (unit === "hours" ? 60 : 1)
+                : value,
+            )
+          }
         />
         <NumberInput
           aria-label="失败后重试次数"
           label="失败后重试次数"
-          description="0–5 次，默认 3 次。失败后每隔 1 分钟重试，绝不会在到期时或到期后使用。手动使用不会自动重试。"
+          description="每隔1分钟重试，到期即止；手动使用不自动重试。"
           value={retries}
           min={0}
           max={5}
@@ -257,13 +286,13 @@ export function ResetCredits({
           onChange={setRetries}
         />
         {validSettings ? (
-          <Text size="sm" role="status">
-            到期前 {Number(hours)} 小时 {Number(minutes)}{" "}
-            分钟自动使用；失败后最多重试 {Number(retries)} 次。
+          <Text size="sm" role="status" className="visually-hidden">
+            到期前 {Number(minutes)} 分钟自动使用；失败后最多重试{" "}
+            {Number(retries)} 次。
           </Text>
         ) : (
           <Text size="sm" c="red" role="alert">
-            请输入整数：提前量须为 1–1440 分钟（最多 24
+            提前量须为整数分钟：范围为 1–1440 分钟（最多 24
             小时），且至少为重试次数加 1 分钟，以便重试在到期前完成。
           </Text>
         )}
@@ -296,8 +325,9 @@ export function ResetCredits({
             );
             setVersion((v) => v + 1);
           }}
+          aria-label="保存重置卡设置"
         >
-          保存重置卡设置
+          保存
         </Button>
         <ConfirmModal
           zIndex={400}

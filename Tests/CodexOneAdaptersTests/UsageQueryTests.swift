@@ -307,6 +307,8 @@ private struct UsageFixture {
     try await f.insert("boundary", at: start, evidence: usage(amount: 3))
     try await f.insert("failed-today", at: start + 1, evidence: nil, failure: .upstreamRejected)
     try await f.insert("after", at: start + 86400, evidence: usage(amount: 80))
+    try await f.insert("cancelled-today", at: start + 2, evidence: nil, failure: .clientCancelled)
+    try await f.insert("success-unknown-usage", at: start + 3, evidence: nil)
     try await f.store.admit(
       .init(
         attempt: "in-flight",
@@ -316,9 +318,15 @@ private struct UsageFixture {
     let summary = try await f.reader.keyUsage()
     let alpha = try #require(summary.keys.first { $0.key.id == "alpha" })
     #expect(summary.startUnixSeconds == start && summary.keys.count == 2)
-    #expect(alpha.admitted == 3 && alpha.failed == 1 && alpha.pending == 2)
+    #expect(
+      alpha.admitted == 5 && alpha.failed == 1 && alpha.pending == 4
+        && alpha.succeeded == 2 && alpha.cancelled == 1 && alpha.inFlight == 1)
     #expect(alpha.estimatedMicros == 3 && alpha.lastUsedAtUnixSeconds == start + 86400)
     #expect(alpha.key.principal == "alpha")
+    let beta = try #require(summary.keys.first { $0.key.id == "beta" })
+    #expect(
+      beta.admitted == 0 && beta.succeeded == 0 && beta.failed == 0 && beta.cancelled == 0
+        && beta.inFlight == 0)
     let query = try UsageQuery(startUnixSeconds: start, endUnixSeconds: start + 86400)
     let historical = try await f.reader.queryUsage(query)
     #expect(historical.rows.allSatisfy { $0.principal == "alpha" && $0.totalMilliseconds == nil })
@@ -441,11 +449,21 @@ private struct UsageFixture {
           owner: .init(
             principal: "alpha", key: "alpha", namespace: "synthetic", identity: "single"),
           window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
-          keyRevision: 1, model: "synthetic-text"))
+          keyRevision: 1, model: "synthetic-text", reasoningEffort: i == 3 ? "xhigh" : nil))
+    }
+    try await f.store.perform { db in
+      try db.write(
+        "UPDATE attempts SET admission_json=json_remove(admission_json,'$.reasoningEffort','$.requestMetadataRecorded') WHERE id='live-1'"
+      )
     }
     f.store.executionStarted(attempt: "live-3")
     let initial = try await f.reader.inFlightUsage(limit: 1)
     #expect(initial.count == 1 && initial[0].id == "live-3" && initial[0].hasFirstEvent == false)
+    #expect(initial[0].reasoningEffort == "xhigh" && initial[0].requestMetadataRecorded == true)
+    let all = try await f.reader.inFlightUsage(limit: 200)
+    #expect(all.first { $0.id == "live-2" }?.reasoningEffort == nil)
+    #expect(all.first { $0.id == "live-2" }?.requestMetadataRecorded == true)
+    #expect(all.first { $0.id == "live-1" }?.requestMetadataRecorded == nil)
     f.store.executionReceivedFirstEvent(attempt: "live-3")
     #expect(try await f.reader.inFlightUsage(limit: 200).first?.hasFirstEvent == true)
     let encoded = String(decoding: try JSONEncoder().encode(initial), as: UTF8.self)

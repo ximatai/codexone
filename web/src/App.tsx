@@ -27,7 +27,7 @@ const UsagePage = lazy(() =>
     default: module.UsagePage,
   })),
 );
-import { ManagementSession } from "./shared/session";
+import { useManagementSession, ManagementSession } from "./shared/session";
 import { busyRetryDelay, retryWhenBusy } from "./shared/query-retry";
 import { theme } from "./app/theme";
 function OwnedQueries({ children }: { children: ReactNode }) {
@@ -56,6 +56,10 @@ function OwnedQueries({ children }: { children: ReactNode }) {
   );
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
+function PublicSystemStatus() {
+  const owner = useManagementSession();
+  return owner.session ? null : <SystemOverview />;
+}
 function Workspace() {
   const location = useLocation();
   return (
@@ -75,7 +79,7 @@ function Workspace() {
                   element={
                     <>
                       <AdminOverview />
-                      <SystemOverview />
+                      <PublicSystemStatus />
                     </>
                   }
                 />

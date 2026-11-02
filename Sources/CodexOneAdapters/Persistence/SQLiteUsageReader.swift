@@ -106,12 +106,17 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
             CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
           CASE WHEN MAX(a.created_at_epoch) IS NULL THEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)
             WHEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id) IS NULL THEN MAX(a.created_at_epoch)
-            ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName')
+            ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName'),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='succeeded' ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='cancelled' ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state='intent' ELSE 0 END),0)
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         GROUP BY k.id ORDER BY k.id LIMIT 257
-        """, (0..<4).flatMap { _ in [.number(start), .number(start + 86400)] }
+        """, (0..<7).flatMap { _ in [.number(start), .number(start + 86400)] }
       ) { row in
-        KeyUsageSummary(
+        let id = String(cString: sqlite3_column_text(row, 0))
+        let tokenUsage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: id)
+        return KeyUsageSummary(
           key: .init(
             id: String(cString: sqlite3_column_text(row, 0)),
             principal: String(cString: sqlite3_column_text(row, 1)),
@@ -122,7 +127,10 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           estimatedMicros: sqlite3_column_type(row, 5) == SQLITE_NULL
             ? nil : sqlite3_column_int64(row, 5),
           lastUsedAtUnixSeconds: sqlite3_column_type(row, 6) == SQLITE_NULL
-            ? nil : sqlite3_column_int64(row, 6))
+            ? nil : sqlite3_column_int64(row, 6),
+          succeeded: sqlite3_column_int64(row, 8), cancelled: sqlite3_column_int64(row, 9),
+          inFlight: sqlite3_column_int64(row, 10), tokens: tokenUsage.tokens,
+          tokenUsageIncomplete: tokenUsage.incomplete)
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }
       return (start, rows)
@@ -136,7 +144,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       return try db.rows(
         """
         SELECT a.id,a.key_id,COALESCE(json_extract(k.metadata_json,'$.principal'),CASE WHEN json_extract(a.admission_json,'$.mode')='priming' THEN a.principal END),json_extract(a.admission_json,'$.model'),
-          COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch,json_extract(k.metadata_json,'$.displayName')
+          COALESCE(json_extract(a.admission_json,'$.mode'),'generation'),a.identity,c.display_name,a.created_at_epoch,json_extract(k.metadata_json,'$.displayName'),
+          json_extract(a.admission_json,'$.reasoningEffort'),json_extract(a.admission_json,'$.requestMetadataRecorded')
         FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id LEFT JOIN accounts c ON c.id=a.identity
         WHERE a.state='intent' ORDER BY a.created_at_epoch DESC,a.id DESC LIMIT ?
         """, [.number(Int64(limit))]
@@ -154,7 +163,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           id: id, keyID: key, principal: text(2), model: text(3), mode: mode,
           accountID: account, accountDisplayName: text(6), startedAtUnixSeconds: start,
           elapsedSeconds: start.map { max(0, now - $0) }, hasFirstEvent: events[id],
-          displayName: text(8))
+          displayName: text(8), reasoningEffort: text(9).map(RequestMetadataValue.sanitize),
+          requestMetadataRecorded: sqlite3_column_type(row, 10) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 10) != 0)
       }
     }
   }

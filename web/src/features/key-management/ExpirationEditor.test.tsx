@@ -15,6 +15,10 @@ it("K06 preserves original seconds even after editing a date and restoring it", 
       save={save}
     />,
   );
+  fireEvent.input(screen.getByLabelText("到期日期（UTC）"), {
+    target: { value: "2026-02-30" },
+  });
+  expect(screen.getByRole("button", { name: "保存到期时间" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("到期日期（UTC）"), {
     target: { value: "2026-11-04" },
   });

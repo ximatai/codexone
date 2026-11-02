@@ -4,7 +4,7 @@ import { renderPrivate } from "../../../tests/render";
 import { AdminOverview } from "./AdminOverview";
 import * as management from "../../shared/management";
 import * as accounts from "../account-management/api";
-import * as usage from "../usage/api";
+import * as usage from "./round2-api";
 import { parseObservability } from "../account-management/observation-api";
 import { observationFixture } from "../account-management/observation.test-data";
 vi.mock("../../shared/management", async (original) => ({
@@ -13,7 +13,10 @@ vi.mock("../../shared/management", async (original) => ({
   request: vi.fn(),
 }));
 vi.mock("../account-management/api", () => ({ fetchAccounts: vi.fn() }));
-vi.mock("../usage/api", () => ({ fetchKeyUsage: vi.fn() }));
+vi.mock("./round2-api", async (original) => ({
+  ...(await original<typeof usage>()),
+  fetchKeySummary: vi.fn(),
+}));
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
@@ -43,15 +46,16 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
       createdAtUnixSeconds: 1,
     },
   ]);
-  vi.mocked(usage.fetchKeyUsage).mockResolvedValue([
+  vi.mocked(usage.fetchKeySummary).mockResolvedValue([
     {
       keyID: "alpha",
       principal: "synthetic-team",
       admitted: 2,
       failed: 1,
       pending: 1,
-      estimatedMicros: "1250000",
-      lastUsedAtUnixSeconds: 1,
+      inFlight: 0,
+      succeeded: 1,
+      cancelled: 0,
     },
     {
       keyID: "beta",
@@ -59,14 +63,15 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
       admitted: 1,
       failed: 0,
       pending: 1,
-      estimatedMicros: null,
-      lastUsedAtUnixSeconds: 1,
+      inFlight: 0,
+      succeeded: 0,
+      cancelled: 0,
     },
   ]);
   const view = renderPrivate(<AdminOverview />);
   await screen.findByText(/允许准入/);
   expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
-  expect(usage.fetchKeyUsage).toHaveBeenCalledTimes(1);
+  expect(usage.fetchKeySummary).toHaveBeenCalledTimes(1);
   expect(
     vi
       .mocked(management.request)
@@ -105,7 +110,7 @@ it.each(["fresh", "unavailable"] as const)(
       admissionAllowed: true,
       optionalWorkAllowed: true,
     });
-    vi.mocked(usage.fetchKeyUsage).mockResolvedValue([]);
+    vi.mocked(usage.fetchKeySummary).mockResolvedValue([]);
     vi.useFakeTimers({
       toFake: ["setInterval", "clearInterval", "performance"],
     });

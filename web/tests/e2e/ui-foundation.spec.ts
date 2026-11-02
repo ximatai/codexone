@@ -1,3 +1,4 @@
+import { openKeyDetails } from "./key-details";
 import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
@@ -26,11 +27,8 @@ for (const [width, height] of [
       enabled: true,
       models: ["synthetic-text"],
       limits: {
-        requests: 100,
+        tokens: 100,
         active: 2,
-        unresolved: 10,
-        budgetMicros: null,
-        unresolvedMicros: null,
       },
       createdAtUnixSeconds: 1700000000,
       expiresAtUnixSeconds: null,
@@ -64,8 +62,8 @@ for (const [width, height] of [
       });
     };
     await capture("list");
-    await page.getByRole("button", { name: "编辑", exact: true }).click();
-    const editor = page.getByRole("dialog", { name: "编辑密钥权限" });
+    await openKeyDetails(page);
+    const editor = page.getByRole("dialog", { name: "密钥详情" });
     await expect(editor).toBeVisible();
     if (process.env.UI_FOUNDATION_SNAPSHOTS !== "before") {
       await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
@@ -74,16 +72,16 @@ for (const [width, height] of [
       );
     }
     await capture("edit");
-    await editor.getByRole("button", { name: "取消", exact: true }).click();
-    await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
-    await page.getByRole("menuitem", { name: "设置到期时间" }).click();
+    await editor.getByRole("button", { name: "关闭", exact: true }).click();
+    await openKeyDetails(page);
+    await page.getByRole("button", { name: "设置到期时间" }).click();
     await expect(
       page.getByRole("dialog", { name: "设置 Key 到期时间" }),
     ).toBeVisible();
     await capture("expiration");
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
-    await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+    await openKeyDetails(page);
+    await page.getByRole("button", { name: "禁用", exact: true }).click();
     await expect(
       page.getByRole("dialog", { name: "禁用 API Key" }),
     ).toBeVisible();

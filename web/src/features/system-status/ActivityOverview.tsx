@@ -11,7 +11,6 @@ import {
   Paper,
   Stack,
   Switch,
-  Tooltip,
   Text,
   Title,
 } from "@mantine/core";
@@ -21,14 +20,13 @@ import { DataTable } from "../../shared/ui/DataTable";
 import { ErrorState, StatusBadge } from "../../shared/ui/States";
 import styles from "./overview.module.css";
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { duration } from "../usage/format";
 import { OverviewStats } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
-import { localTime, outcomes, modes } from "../../shared/presentation";
-import { UsageDetail } from "../usage/UsageDetail";
-import type { UsageReport } from "../usage/api";
-import { fetchDaily, fetchInFlight, fetchRecent } from "./round2-api";
+import { localTime, modes } from "../../shared/presentation";
+import type { CapacityMetric } from "./overview-format";
+import { KeyResults } from "./KeyResults";
+import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 function UpdatedAgo({ updated }: { updated: number }) {
   const [now, setNow] = useState(Date.now());
@@ -52,6 +50,7 @@ export function ActivityOverview({
   sidebar,
   attention,
   accounts = [],
+  capacities,
 }: {
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
@@ -64,13 +63,11 @@ export function ActivityOverview({
   sidebar?: ReactNode;
   attention?: ReactNode;
   accounts?: readonly AccountName[];
+  capacities?: CapacityMetric[];
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const control = refresh ?? localRefresh;
-  const [detail, setDetail] = useState<UsageReport["rows"][number] | null>(
-    null,
-  );
   const options = {
     enabled: !!owner.session,
     refetchInterval: control.interval,
@@ -89,16 +86,16 @@ export function ActivityOverview({
     ...options,
   });
   // All overview snapshots share the same pause and refresh cadence.
-  const recent = useQuery({
-    queryKey: ["overview", "recent"],
-    queryFn: ({ signal }) => fetchRecent(signal),
+  const keySummary = useQuery({
+    queryKey: ["overview", "keys"],
+    queryFn: ({ signal }) => fetchKeySummary(signal),
     ...options,
   });
-  const queries = [daily, flight, recent];
+  const queries = [daily, flight, keySummary];
   const allQueries = [
     ...queries.map((query, index) => ({
       ...query,
-      source: ["运营指标", "进行中请求", "最近请求"][index],
+      source: ["运营指标", "进行中请求", "今日 Key 汇总"][index],
     })),
     ...extraQueries,
   ];
@@ -159,35 +156,33 @@ export function ActivityOverview({
           。缺失值未记为零，请重试。
         </ErrorState>
       )}
-      <Tooltip
-        events={{ hover: true, focus: true, touch: true }}
-        label="近 7 天 · UTC；今日未结束，与昨日完整日比较。Token 为已观测输入与输出之和，缓存包含在输入中；缺失用量保持不可用，Token 与费用为已观测下界。"
-      >
-        <Text size="xs" c="dimmed" w="fit-content" tabIndex={0}>
-          KPI 统计口径 ⓘ
-        </Text>
-      </Tooltip>
       {daily.isError && !daily.data ? (
         <Text size="sm" c="dimmed">
           运营指标读取失败，请重试。
         </Text>
       ) : (
-        <OverviewStats buckets={daily.data ?? []} loading={daily.isPending} />
+        <OverviewStats
+          buckets={daily.data ?? []}
+          loading={daily.isPending}
+          capacities={capacities}
+        />
       )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
+          <KeyResults query={keySummary} />
           <Paper withBorder p="md">
             <Group justify="space-between" mb="xs">
               <Title order={3} size="h4">
                 进行中请求
               </Title>
             </Group>
-            <Text size="xs" c="dimmed" mb="sm">
-              最多显示 200 条；随自动刷新更新。
-            </Text>
             {flight.isError && !flight.data ? (
               <Text size="sm" c="dimmed">
                 进行中请求读取失败。请重试。
+              </Text>
+            ) : flight.data?.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                当前没有进行中的请求。
               </Text>
             ) : (
               <DataTable
@@ -199,26 +194,68 @@ export function ActivityOverview({
                 columns={[
                   {
                     id: "principal",
-                    title: "主体 / 模型",
+                    title: "Key",
+                    width: "22%",
+                    render: (row) => <KeyName {...row} />,
+                  },
+                  {
+                    id: "model",
+                    title: "模型 / 模式",
+                    width: "20%",
                     render: (row) => (
                       <Stack gap={2}>
-                        <Text size="sm">
-                          {<KeyName {...row} />} · {row.model ?? "模型未记录"}
-                        </Text>
+                        <Text size="sm">{row.model ?? "模型未记录"}</Text>
                         <Text size="xs" c="dimmed">
-                          {modes[row.mode] ?? "其他模式"} ·{" "}
-                          {accountName(
-                            row.accountID,
-                            accounts,
-                            row.accountDisplayName,
-                          )}
+                          {modes[row.mode] ?? "其他模式"}
                         </Text>
                       </Stack>
                     ),
                   },
                   {
+                    id: "reasoning",
+                    title: "推理强度",
+                    width: "12%",
+                    render: (row) => (
+                      <Text
+                        size="sm"
+                        title={
+                          row.reasoningEffort
+                            ? "请求中记录的推理强度，非提供者实际执行强度证明。"
+                            : row.requestMetadataRecorded
+                              ? "请求未显式指定推理强度，不推断实际生效值。"
+                              : "该执行未记录请求参数。"
+                        }
+                      >
+                        {row.reasoningEffort ??
+                          (row.requestMetadataRecorded ? "未指定" : "未记录")}
+                      </Text>
+                    ),
+                  },
+                  {
+                    id: "account",
+                    title: "订阅账号",
+                    width: "22%",
+                    render: (row) =>
+                      row.accountID ? (
+                        <Anchor
+                          component={Link}
+                          to={`/?account=${encodeURIComponent(row.accountID)}`}
+                          size="sm"
+                        >
+                          {accountName(
+                            row.accountID,
+                            accounts,
+                            row.accountDisplayName,
+                          )}
+                        </Anchor>
+                      ) : (
+                        accountName(null, accounts)
+                      ),
+                  },
+                  {
                     id: "elapsed",
                     title: "运行时长",
+                    width: "12%",
                     render: (row) =>
                       row.elapsedSeconds == null
                         ? "耗时不可用"
@@ -226,99 +263,28 @@ export function ActivityOverview({
                   },
                   {
                     id: "event",
-                    title: "最新状态",
+                    title: "首事件",
+                    width: "12%",
                     render: (row) => (
-                      <StatusBadge color={row.hasFirstEvent ? "green" : "gray"}>
-                        {row.hasFirstEvent == null
-                          ? "首事件状态不可用"
-                          : row.hasFirstEvent
-                            ? "已收到首事件"
-                            : "等待首事件"}
-                      </StatusBadge>
-                    ),
-                  },
-                ]}
-              />
-            )}
-          </Paper>
-          <Paper withBorder p="md">
-            <Group justify="space-between" mb="xs">
-              <Title order={3} size="h4">
-                最近请求
-              </Title>
-              <Anchor component={Link} to="/usage">
-                查看全部用量
-              </Anchor>
-            </Group>
-            <Text size="xs" c="dimmed" mb="sm">
-              最近 31 天内的 20
-              条已结束请求，随自动刷新更新；待核对结果不代表成功。
-            </Text>
-            {recent.data?.truncated && (
-              <Text c="orange" size="xs">
-                扫描已达上限，可到用量页查询更早请求。
-              </Text>
-            )}
-            {recent.isError && !recent.data ? (
-              <Text size="sm" c="dimmed">
-                最近请求读取失败。请重试。
-              </Text>
-            ) : (
-              <DataTable
-                onRowClick={setDetail}
-                rows={recent.data?.rows ?? []}
-                rowKey={(row) => row.id}
-                retry={() => void recent.refetch()}
-                loading={recent.isPending}
-                empty="暂无已结束的请求。"
-                columns={[
-                  {
-                    id: "time",
-                    title: "开始时间（本地）",
-                    width: "25%",
-                    nowrap: true,
-                    render: (row) => localTime(row.atUnixSeconds),
-                  },
-                  {
-                    id: "principal",
-                    title: "Key / 模型",
-                    render: (row) => (
-                      <span>
-                        <KeyName {...row} /> · {row.model ?? "未记录"}
+                      <span
+                        title={
+                          row.hasFirstEvent == null
+                            ? "该执行没有首事件观测，不能据此判断是否已收到上游事件。"
+                            : "首事件是首个上游协议事件，不代表输出完成。"
+                        }
+                        tabIndex={0}
+                      >
+                        <StatusBadge
+                          color={row.hasFirstEvent ? "green" : "gray"}
+                        >
+                          {row.hasFirstEvent == null
+                            ? "未观测"
+                            : row.hasFirstEvent
+                              ? "已收到首事件"
+                              : "等待首事件"}
+                        </StatusBadge>
                       </span>
                     ),
-                  },
-                  {
-                    id: "outcome",
-                    title: "结果",
-                    width: "13%",
-                    render: (row) => (
-                      <StatusBadge
-                        color={
-                          row.outcome === "succeeded"
-                            ? "green"
-                            : row.outcome === "failed"
-                              ? "red"
-                              : "gray"
-                        }
-                      >
-                        {row.outcome
-                          ? (outcomes[row.outcome] ?? "待核对")
-                          : "待核对"}
-                      </StatusBadge>
-                    ),
-                  },
-                  {
-                    id: "timing",
-                    title: "首事件 / 总耗时",
-                    render: (row) =>
-                      `${duration(row.firstEventMilliseconds)} / ${duration(row.totalMilliseconds)}`,
-                  },
-                  {
-                    id: "open",
-                    title: "",
-                    width: "4%",
-                    render: () => <span aria-hidden="true">›</span>,
                   },
                 ]}
               />
@@ -331,11 +297,6 @@ export function ActivityOverview({
           </aside>
         )}
       </div>
-      <UsageDetail
-        accounts={accounts}
-        detail={detail}
-        onClose={() => setDetail(null)}
-      />
     </Stack>
   );
 }

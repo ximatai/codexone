@@ -359,7 +359,7 @@ import Testing
   await store.close()
 }
 
-@Test func governanceOnlyExplicitKeyUnresolvedAndBudgetLimitsRejectTheirOwnKey() async throws {
+@Test func governanceRemovedManagedLimitsDoNotRejectUnknownUsage() async throws {
   let path = try temporaryExecutionPath()
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
@@ -400,12 +400,8 @@ import Testing
     try await store.admit(command("key-unknown-\(i)", key: "pending-key"))
     try await store.finalize(attempt: "key-unknown-\(i)", evidence: nil)
   }
-  await #expect(throws: ExecutionError.denied) {
-    try await store.admit(command("pending-rejected", key: "pending-key"))
-  }
-  await #expect(throws: ExecutionError.denied) {
-    try await store.admit(command("budget-rejected", key: "budget-key"))
-  }
+  try await store.admit(command("pending-observed", key: "pending-key"))
+  try await store.admit(command("legacy-budget-ignored", key: "budget-key"))
   try await store.admit(command("other-key-accepted", key: "unlimited-key"))
   #expect(protocolFailure(ExecutionError.accountConcurrency).status == 429)
   await store.close()

@@ -16,7 +16,7 @@ function message(error: unknown): string {
       : "当前页面来源或会话验证不通过，请使用正确的管理地址。";
   return "管理服务暂时不可用，请稍后重试。";
 }
-export function useKeys(archived = false) {
+export function useKeys(archived = false, closeDetails?: () => void) {
   const [creating, setCreating] = useState(false);
   const owner = useManagementSession();
   const [checking, setChecking] = useState(true);
@@ -51,6 +51,7 @@ export function useKeys(archived = false) {
     setImageModels([]);
     setCreated(null);
     setEditing(null);
+    closeDetails?.();
     setRotating(null);
     setCreating(false);
   }
@@ -138,6 +139,7 @@ export function useKeys(archived = false) {
     onFailure: () => {
       setCreating(false);
       setEditing(null);
+      closeDetails?.();
       setRotating(null);
     },
   });
@@ -186,6 +188,7 @@ export function useKeys(archived = false) {
             : old,
       );
       setEditing(null);
+      closeDetails?.();
       setRotating(null);
       setCreating(false);
     }, success);
@@ -236,6 +239,7 @@ export function useKeys(archived = false) {
       if (policyChanged && !signal.aborted) {
         partialEdit.current = true;
         setEditing(null);
+        closeDetails?.();
         if (!(await reload(signal, true)))
           throw new Error("Partial key edit requires reconciliation");
       }

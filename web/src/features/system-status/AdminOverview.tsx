@@ -27,21 +27,33 @@ import {
   Skeleton,
 } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError, request } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
-import { fetchKeyUsage } from "../usage/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
-import { terms } from "../../shared/presentation";
+import { SystemOverview } from "./SystemOverview";
 
 import { z } from "../../shared/schema";
+
+const InlineAccountDetails = lazy(() =>
+  import("../account-management/AccountManagement").then((module) => ({
+    default: module.AccountManagement,
+  })),
+);
 
 const backupSchema = z.object({
   enabled: z.boolean(),
   lastSuccessUnixSeconds: z.number().nullable().optional(),
   retainedCount: z.number().int().nonnegative(),
 });
+function quotaLabel(seconds: number | null | undefined, fallback: string) {
+  if (seconds === 18000) return "5 小时额度";
+  if (seconds === 604800) return "每周额度";
+  return seconds && seconds % 3600 === 0
+    ? `${seconds / 3600} 小时额度`
+    : fallback;
+}
 function backupTime(backup: z.infer<typeof backupSchema> | undefined) {
   if (!backup) return "未提供";
   if (!backup.enabled) return "未启用";
@@ -107,18 +119,18 @@ export function AdminOverview() {
     return () => window.clearInterval(timer);
   }, []);
   const [params, setParams] = useSearchParams();
+  const [accountDrawerMounted, setAccountDrawerMounted] = useState(() =>
+    params.has("account"),
+  );
+  useEffect(() => {
+    if (params.has("account")) setAccountDrawerMounted(true);
+  }, [params]);
   const overlay = !!owner.session && params.get("storage") === "details";
   const protocolOverlay =
     !!owner.session && params.get("protocol") === "details";
   const accounts = useQuery({
     queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
-  const usage = useQuery({
-    queryKey: ["overview", "key-usage"],
-    queryFn: ({ signal }) => fetchKeyUsage(signal),
     enabled: !!owner.session,
     ...polling,
   });
@@ -142,7 +154,6 @@ export function AdminOverview() {
   });
   const unauthorized = [
     accounts.error,
-    usage.error,
     storage.error,
     attention.error,
     headroom.error,
@@ -151,8 +162,6 @@ export function AdminOverview() {
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  const todayUsage = `/usage?start=${today}&end=${today}`;
   const available = accounts.data?.filter(
     (account) =>
       account.mode === "enabled" &&
@@ -165,9 +174,6 @@ export function AdminOverview() {
       account.authorization !== "ready" ||
       account.observability?.health.authenticationRejected,
   ).length;
-  function total(field: "admitted" | "failed" | "pending") {
-    return usage.data?.reduce((sum, item) => sum + item[field], 0) ?? "—";
-  }
   return (
     <Stack mb="xl" aria-label="管理概览">
       {owner.locked("executions") && !mutation.busy && (
@@ -193,9 +199,9 @@ export function AdminOverview() {
       <ActivityOverview
         refresh={refresh}
         accounts={accounts.data}
+        capacities={headroom.data?.capacities}
         extraQueries={[
           { ...accounts, source: "订阅账号" },
-          { ...usage, source: "Key 用量摘要" },
           { ...storage, source: "存储状态" },
           { ...attention, source: "需要处理提醒" },
           { ...headroom, source: "治理余量" },
@@ -203,6 +209,7 @@ export function AdminOverview() {
         attention={
           <AttentionPanel
             aggregateErrors
+            inlineAccounts
             items={attention.data?.items}
             accounts={accounts.data}
             release={(item: AttentionItem) => {
@@ -239,21 +246,46 @@ export function AdminOverview() {
                     <Stack gap="xs" key={account.id} className="wrap-anywhere">
                       <Anchor
                         component={Link}
-                        to={`/accounts?target=${encodeURIComponent(account.id)}`}
+                        to={`/?account=${encodeURIComponent(account.id)}`}
                       >
                         {accountName(account.id, [], account.displayName)}
                       </Anchor>
                       <Text size="xs" c="dimmed">
-                        {credentialExpiry(account.accessExpiresAtUnixSeconds)}
+                        {account.mode === "disabled"
+                          ? "已禁用"
+                          : account.authorization !== "ready"
+                            ? "需要重新授权"
+                            : account.observability?.health.cooldownCount
+                              ? "冷却中"
+                              : account.mode === "draining"
+                                ? "排空中"
+                                : "已启用"}{" "}
+                        · {credentialExpiry(account.accessExpiresAtUnixSeconds)}
                       </Text>
-                      <QuotaWindowBar
-                        title="主窗口"
-                        value={base?.primary ?? null}
-                      />
-                      <QuotaWindowBar
-                        title="次窗口"
-                        value={base?.secondary ?? null}
-                      />
+                      <div className={styles.quotaPair}>
+                        <QuotaWindowBar
+                          title={quotaLabel(
+                            base?.primary?.durationSeconds,
+                            "主窗口",
+                          )}
+                          value={base?.primary ?? null}
+                        />
+                        <QuotaWindowBar
+                          title={quotaLabel(
+                            base?.secondary?.durationSeconds,
+                            "次窗口",
+                          )}
+                          value={base?.secondary ?? null}
+                        />
+                      </div>
+                      {headroom.data?.accounts
+                        .filter((value) => value.id === account.id)
+                        .map((value) => (
+                          <Text key={value.id} size="xs" c="dimmed">
+                            并发 {value.current} / {value.limit} · 24 小时峰值{" "}
+                            {value.peak24Hours}
+                          </Text>
+                        ))}
                       <Text
                         size="xs"
                         c={
@@ -282,28 +314,18 @@ export function AdminOverview() {
                 })}
               </Stack>
             </Paper>
-            <CapacityPanel
-              query={headroom}
-              accounts={accounts.data}
-              onRelease={(before, count) => setRelease({ before, count })}
-            />
             <Paper withBorder p="md">
               <Title order={3} size="h4" mb="md">
-                系统状态
+                运行状态
               </Title>
+              <SystemOverview compact />
               <Stack gap="xs">
                 {[
                   {
                     label: "可用账号",
-                    value: `${available ?? "—"} · 授权异常 ${abnormal ?? "—"}`,
+                    value: `${available ?? "—"} 可用 · ${accounts.data?.filter((a) => a.mode === "disabled").length ?? "—"} 禁用 · ${abnormal ?? "—"} 授权异常`,
                     to: "/accounts",
                     good: available != null && available > 0 && abnormal === 0,
-                  },
-                  {
-                    label: terms.pending,
-                    value: String(total("pending")),
-                    to: todayUsage,
-                    good: total("pending") === 0,
                   },
                   {
                     label: "存储与准入",
@@ -362,9 +384,21 @@ export function AdminOverview() {
                 ))}
               </Stack>
             </Paper>
+            <CapacityPanel
+              query={headroom}
+              accounts={accounts.data}
+              mergedAccounts
+              mergedMetrics
+              onRelease={(before, count) => setRelease({ before, count })}
+            />
           </>
         }
       />
+      {accountDrawerMounted && (
+        <Suspense fallback={null}>
+          <InlineAccountDetails embedded />
+        </Suspense>
+      )}
       <ConfirmModal
         opened={!!release}
         title="核对并释放待核对执行"

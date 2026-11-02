@@ -25,7 +25,7 @@ def main():
     binary=str(parser.parse_args().binary.resolve())
     with tempfile.TemporaryDirectory(prefix='codexone-key-import-') as temporary:
         root=Path(temporary); admin=root/'admin';admin.write_text(ADMIN);admin.chmod(0o600)
-        policy=dict(models=['synthetic-text'],limits={**LIMITS,'requests':2})
+        policy=dict(models=['synthetic-text'],limits={**LIMITS,'tokens':13})
         entries=[dict(id='import-'+str(n),principal='import-principal-'+str(n),
             digest=hashlib.sha256(secret.encode()).hexdigest(),policy=copy.deepcopy(policy),
             sourceActive=True,sourceExpiresAtUnixSeconds=None,policyEquivalent=True)

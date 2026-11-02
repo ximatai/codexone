@@ -37,11 +37,8 @@ const key: keys.ManagedKey = {
   enabled: true,
   models: ["synthetic-text"],
   limits: {
-    requests: 10,
+    tokens: 10,
     active: 2,
-    unresolved: 4,
-    budgetMicros: 100,
-    unresolvedMicros: 100,
   },
   createdAtUnixSeconds: 1,
 };
@@ -70,7 +67,8 @@ afterEach(() => {
 it("links a Key to a standalone URL-owned usage filter without a duplicate report fetch", async () => {
   render(<App />);
   await screen.findByText("team");
-  fireEvent.click(screen.getByRole("link", { name: "用量" }));
+  fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+  fireEvent.click(await screen.findByRole("link", { name: "查看用量与诊断" }));
   await screen.findByText("请求明细");
   expect(window.location.hash).toContain("/usage?");
   expect(window.location.hash).toContain("key=key-1");
@@ -80,7 +78,7 @@ it("links a Key to a standalone URL-owned usage filter without a duplicate repor
     null,
     expect.any(AbortSignal),
   );
-  fireEvent.change(screen.getByLabelText("模型"), {
+  fireEvent.change(screen.getByRole("combobox", { name: "模型" }), {
     target: { value: "historical-model" },
   });
   fireEvent.click(screen.getByRole("button", { name: "查询用量" }));

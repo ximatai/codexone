@@ -247,7 +247,7 @@ def verify(binary, duration, transport):
             db = root / 'state/core.sqlite'; samples = []
             try:
                 def key(principal):
-                    status, result = call(ports['admin'], 'POST', '/api/keys', {'principal': principal, 'models': [MODEL], 'visionInput': True, 'imageGeneration': True, 'imageModels': ['synthetic-image'], 'limits': {**LIMITS, 'requests': 1000}})
+                    status, result = call(ports['admin'], 'POST', '/api/keys', {'principal': principal, 'models': [MODEL], 'visionInput': True, 'imageGeneration': True, 'imageModels': ['synthetic-image'], 'limits': {**LIMITS, 'tokens': 1000000}})
                     assert status == 201; return result['secret']
                 secret = key('normal'); cancelled = key('cancelled')
                 def sample():

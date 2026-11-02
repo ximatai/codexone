@@ -186,7 +186,11 @@ def verify_settlement(binary, provider, directory, configuration, headers):
                 try:
                     remaining = until - time.monotonic()
                     assert remaining > 0, 'Connection slot did not become free'
-                    return dial(ports['data'], headers=headers, timeout=min(1, remaining))
+                    sock = dial(ports['data'], headers=headers, timeout=min(1, remaining))
+                    # Bound the upgrade separately from normal provider-event reads.
+                    # No create is retried; retain the normal bounded provider read timeout.
+                    sock.settimeout(5)
+                    return sock
                 except WebSocketHandshakeRejected as error:
                     assert error.status == 503, error
                     assert time.monotonic() < until, 'Connection slot did not become free'

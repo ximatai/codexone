@@ -43,12 +43,12 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
 }) => {
   const state = await reviewFixture(page);
   state.failures["/api/usage/in-flight"] = 503;
-  state.failures["/api/usage"] = 503;
+  state.failures["/api/usage/keys"] = 503;
   await page.goto("/");
   await expect(page.getByText("进行中请求读取失败。请重试。")).toBeVisible();
-  await expect(page.getByText("最近请求读取失败。请重试。")).toBeVisible();
+  await expect(page.getByText("今日 Key 汇总读取失败。请重试。")).toBeVisible();
   await expect(page.getByText("当前没有进行中的请求。")).toHaveCount(0);
-  await expect(page.getByText("暂无已结束的请求。")).toHaveCount(0);
+  await expect(page.getByText("暂无托管 Key。")).toHaveCount(0);
   for (const status of [503, 429]) {
     state.failures["/api/accounts"] = status;
     await page.goto("/#/accounts");
@@ -69,7 +69,7 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await expect(page.getByText(/接入第一个账号/)).toBeVisible();
   await page.goto("/");
   await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
-  await expect(page.getByText("暂无已结束的请求。")).toBeVisible();
+  await expect(page.getByText("暂无托管 Key。")).toBeVisible();
 });
 
 test("A01 A02: long account names fit all viewports and authorization warns independently", async ({
@@ -126,20 +126,21 @@ test("K03 K04 K06: confirms target, preserves exact expiry and handles summary f
   const expires = Date.parse("2026-11-03T12:42:56Z") / 1000;
   state.keys[0].expiresAtUnixSeconds = expires;
   await page.goto("/#/keys?q=team-0");
-  await expect(page.getByText("2026-11-03 12:42:56 UTC")).toBeVisible();
+
   await page
-    .getByRole("button", { name: "team-0 更多操作", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "team-0" })
+    .first()
+    .getByRole("button", { name: "查看详情" })
     .click();
-  await page.getByRole("menuitem", { name: "轮换", exact: true }).click();
+  await page.getByRole("button", { name: "轮换凭证", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "轮换 API Key" });
   await expect(dialog).toContainText("team-0");
   await expect(dialog.getByLabel("密钥完整 ID")).toHaveValue("synthetic-key-0");
   await expect(dialog).toContainText("当前开关：启用");
   await dialog.getByRole("button", { name: "取消" }).click();
-  await page
-    .getByRole("button", { name: "team-0 更多操作", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "设置到期时间" }).click();
+
+  await page.getByRole("button", { name: "设置到期时间", exact: true }).click();
   await page.getByRole("button", { name: "保存到期时间" }).click();
   await expect.poll(() => state.writes.length).toBe(1);
   expect(state.writes[0].body.expiresAtUnixSeconds).toBe(expires);
@@ -147,7 +148,7 @@ test("K03 K04 K06: confirms target, preserves exact expiry and handles summary f
   await page.getByRole("button", { name: "刷新列表" }).click();
   await expect(page.getByText(/今日摘要读取失败/)).toBeVisible();
   await expect(page.locator("tbody")).not.toContainText("从未使用");
-  await expect(page.locator("tbody")).toContainText("最近：不可用");
+  await expect(page.locator("tbody")).toContainText("不可用");
 });
 
 test("K01 K02 K05: availability filters, pagination top, sticky header and back restoration", async ({
@@ -157,17 +158,23 @@ test("K01 K02 K05: availability filters, pagination top, sticky header and back 
   state.keys[3].expiresAtUnixSeconds = Math.floor(Date.now() / 1000) + 86400;
   await page.goto("/#/keys");
   await expect(page.locator("tbody tr")).toHaveCount(50);
-  await page.getByLabel("可用状态", { exact: true }).selectOption("available");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "可用", exact: true }).click();
   await expect(page.locator("tbody")).not.toContainText("已到期");
-  await page.getByLabel("可用状态", { exact: true }).selectOption("expiring");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "即将到期", exact: true }).click();
   await expect(page.getByText("team-3", { exact: true })).toHaveCount(0);
-  await page.getByLabel("可用状态", { exact: true }).selectOption("expired");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "已到期", exact: true }).click();
   await expect(page.locator("tbody tr").first()).toContainText("已到期");
-  await page.getByLabel("可用状态", { exact: true }).selectOption("");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "全部", exact: true }).click();
   await expect(page).toHaveURL(/#\/keys$/);
   // Both the expired and unfiltered first pages have 50 rows. The URL can
   // update before React commits the new filter, so also wait for its controls.
-  await expect(page.getByLabel("可用状态", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("combobox", { name: "可用状态", exact: true }),
+  ).toHaveValue("全部");
   await expect(page.getByText("共 204 个", { exact: true })).toBeVisible();
   await expect(page.locator("tbody tr")).toHaveCount(50);
   await page.getByRole("button", { name: "下一页", exact: true }).click();
@@ -236,7 +243,9 @@ test("U02 U03: usage page turns start at the list and back retains page and posi
   ).toBeVisible();
   await page.goBack();
   await expect(page.getByText("第 2 页", { exact: true })).toBeAttached();
-  await expect(page.getByText("request-50", { exact: true })).toBeAttached();
+  await expect(
+    page.locator('[data-row-id="admittedexecution-10"]'),
+  ).toBeAttached();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scroll);
   expect(new URL(page.url()).hash).not.toContain("cursor");
 });
@@ -248,31 +257,38 @@ test("K07 K08 L01 L02: past-time warning, exact thresholds and discoverable busy
   await page.goto("/#/keys");
   await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   const drawer = page.getByRole("dialog", { name: "创建密钥", exact: true });
-  await drawer.getByLabel("到期时间", { exact: true }).selectOption("custom");
+  await drawer.getByRole("combobox", { name: "到期时间", exact: true }).click();
+  await page.getByRole("option", { name: "自定义日期", exact: true }).click();
   await drawer
     .getByLabel("到期日期（UTC）", { exact: true })
     .fill("2020-01-01");
   await expect(
     drawer.getByText("所选时间已过去，保存后立即拒绝新请求。"),
   ).toBeVisible();
-  await drawer.getByRole("button", { name: /本地治理限额/ }).click();
   await drawer
-    .getByLabel("每日估算阈值（美元）", { exact: true })
-    .fill("0.000001");
-  await drawer.getByRole("button", { name: /本地治理限额/ }).click();
+    .getByRole("combobox", { name: "Token 单位", exact: true })
+    .click();
+  await page.getByRole("option", { name: "Token", exact: true }).click();
+  await drawer.getByLabel("每日 Token 上限", { exact: true }).fill("1");
   await expect(
-    drawer.getByRole("button", { name: /本地治理限额/ }),
-  ).toContainText("每日 $0.000001");
+    drawer.getByLabel("每日 Token 上限", { exact: true }),
+  ).toHaveValue("1");
   await drawer.getByRole("button", { name: "取消", exact: true }).click();
   await page
-    .getByRole("button", { name: "team-0 更多操作", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "team-0" })
+    .first()
+    .getByRole("button", { name: "查看详情" })
     .click();
-  await page.getByRole("menuitem", { name: "设置到期时间" }).click();
+  await page.getByRole("button", { name: "设置到期时间", exact: true }).click();
   await page.getByLabel("到期日期（UTC）", { exact: true }).fill("2020-01-01");
   await expect(
     page.getByText("所选时间已过去，保存后立即拒绝新请求。"),
   ).toBeVisible();
-  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "设置 Key 到期时间" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
   state.anonymous = true;
   await page.goto("/");
   await page.getByRole("button", { name: "管理员登录", exact: true }).click();

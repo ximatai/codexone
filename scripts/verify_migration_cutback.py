@@ -169,10 +169,10 @@ def verify(binary, previous_binary=None):
                 backup_hash = hashlib.sha256(backup.read_bytes()).digest()
                 with database(old) as db:
                     baseline = db.execute('SELECT * FROM baseline').fetchone()
-                # This single-principal fixture carries old exposure by reducing fresh grants.
-                # Multi-principal/unknown attribution requires a separately approved baseline.
-                limits = dict(requests=100-baseline[0], active=4, unresolved=8-baseline[2],
-                              budgetMicros=1000-baseline[1]-baseline[3], unresolvedMicros=1000-baseline[3])
+                # This synthetic owner explicitly grants eight observed Tokens on the new side.
+                # Legacy request/money baselines are separate audit evidence, not Token conversions.
+                # Unknown usage is retained and carried back; it does not manufacture known Tokens.
+                limits = dict(tokens=8, active=4)
                 key, fresh = create(f.ports['admin'], principal='synthetic-migrated', limits=limits)
                 f.secrets.append(fresh)
                 legacy_accepting.clear()
@@ -181,10 +181,10 @@ def verify(binary, previous_binary=None):
                 before = f.provider.calls
                 assert call(proxy.server_port, OLD_TOKEN)[0] == 401
                 assert f.provider.calls == before
-                assert call(proxy.server_port, fresh, prefix='/backend-api/codex')[0] == 200
-                latest(f.root / 'state/core.sqlite', 'settled')
                 assert call(proxy.server_port, fresh, prompt='abrupt')[0] == 200
                 latest(f.root / 'state/core.sqlite', 'unknown')
+                assert call(proxy.server_port, fresh, prefix='/backend-api/codex')[0] == 200
+                latest(f.root / 'state/core.sqlite', 'settled')
                 assert f.provider.calls == before + 2
                 assert key['limits'] == limits
                 assert call(proxy.server_port, fresh)[0] == 429
@@ -194,7 +194,7 @@ def verify(binary, previous_binary=None):
                 with database(f.root / 'state/core.sqlite') as db:
                     assert db.execute('SELECT COUNT(*) FROM accounts').fetchone()[0] == 0
                     rows = db.execute('SELECT state,reserved,estimated FROM attempts ORDER BY rowid').fetchall()
-                    assert len(rows) == 2 and [row[0] for row in rows] == ['settled', 'unknown']
+                    assert len(rows) == 2 and [row[0] for row in rows] == ['unknown', 'settled']
                 with route.condition: route.paused = True
                 assert call(proxy.server_port, fresh)[0] == 503
                 shutdown(f.process, f.root, f.secrets); f.process = None

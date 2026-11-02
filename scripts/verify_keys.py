@@ -18,7 +18,7 @@ from verify_protocol import Upstream, TOKEN, start, stop, latest
 from verify_websocket import Provider, dial, turn
 
 ADMIN = 'synthetic-admin-credential-for-local-key-tests'
-LIMITS = dict(requests=100, active=4, unresolved=8, budgetMicros=1000000, unresolvedMicros=1000000)
+LIMITS = dict(tokens=1000000, active=4)
 
 
 def call(port, method, path, body=None, token=ADMIN, extra=None):
@@ -314,7 +314,7 @@ def main():
                             events = turn(downstream, request)
                             assert events[-1]['type'] == 'error' and events[-1]['error']['code'] == 'invalid_api_key'
                             assert provider.calls == count
-                    limited, limited_secret = create(ports['admin'], principal='limited', limits={**LIMITS, 'requests': 1})
+                    limited, limited_secret = create(ports['admin'], principal='limited', limits={**LIMITS, 'tokens': 1})
                     secrets.append(limited_secret)
                     assert call(ports['data'], 'POST', '/v1/responses', request, token=limited_secret)[0] == 200
                     latest(db_path, 'settled')
@@ -330,13 +330,14 @@ def main():
                     unlimited, unlimited_secret = create(ports['admin'], principal='unlimited', limits=dict.fromkeys(LIMITS))
                     secrets.append(unlimited_secret)
                     assert unlimited['limits']==dict.fromkeys(LIMITS)
-                    status, changed=update(ports['admin'], unlimited, limits={**dict.fromkeys(LIMITS),'requests':1})
-                    assert status==200 and changed['key']['limits']['requests']==1
+                    status, changed=update(ports['admin'], unlimited, limits={**dict.fromkeys(LIMITS),'tokens':1})
+                    assert status==200 and changed['key']['limits']['tokens']==1
                     status, changed=update(ports['admin'], changed['key'], limits=dict.fromkeys(LIMITS))
                     assert status==200 and changed['key']['limits']==dict.fromkeys(LIMITS)
                     for _ in range(3):
                         assert call(ports['data'], 'POST', '/v1/responses', request, token=unlimited_secret)[0]==200
                         latest(db_path,'settled')
+                    assert call(ports['admin'],'POST','/api/keys',dict(principal='old-limit',models=['synthetic-text'],limits={'tokens':100,'active':4,'unresolved':8,'budgetMicros':1000000,'unresolvedMicros':1000000}))[0]==400
                     for field in LIMITS:
                         for invalid in (-1,0,10**12+1,'invalid'):
                             assert call(ports['admin'],'POST','/api/keys',dict(principal='invalid',models=['synthetic-text'],limits={**dict.fromkeys(LIMITS),field:invalid}))[0]==400

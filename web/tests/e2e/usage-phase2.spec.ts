@@ -39,6 +39,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
         },
       });
     if (url.pathname === "/api/usage") {
+      expect(url.searchParams.get("limit")).toBe("10");
       queries.push(url);
       if (isPresetQuery(url)) await presetRead;
       const report = reportFixture();
@@ -110,7 +111,8 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   expect(nextPage.searchParams.get("after")).toBe("synthetic_cursor");
   expect(nextPage.searchParams.get("start")).toBe(firstStart);
   await page.getByText("更多筛选", { exact: true }).click();
-  await page.getByLabel("执行模式").selectOption("compact");
+  await page.getByRole("combobox", { name: "执行模式", exact: true }).click();
+  await page.getByRole("option", { name: "压缩", exact: true }).click();
   await page.getByRole("button", { name: "查询用量", exact: true }).click();
   await expect
     .poll(() => queries.at(-1)?.searchParams.get("mode"))
