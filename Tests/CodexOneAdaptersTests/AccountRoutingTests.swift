@@ -1,5 +1,6 @@
 import CodexOneCore
 import Foundation
+import Synchronization
 import Testing
 
 @testable import CodexOneAdapters
@@ -420,7 +421,7 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
       f.command("paced-pinned", connection: routeIdentity(first), continuation: true))
   }
   let second = try await f.store.admitSelectingAccount(
-    f.command("paced-other", preferred: routeIdentity(first)))
+    f.command("paced-other"))
   #expect(second.owner.identity != first.owner.identity)
   try await f.store.finalize(
     attempt: second.attempt, evidence: nil,
@@ -566,4 +567,107 @@ func overloadReleasedWaitersRecheckAccountConcurrencyAndKeyLimits() async throws
     await store.close()
     await f.close()
   }
+}
+
+private final class RoutingFinalizer: FinalizationSink, Sendable {
+  let results = Mutex<[Finalization]>([])
+  var isAccepting: Bool { true }
+  func reserve() throws -> UUID { UUID() }
+  func canExecute(_ ticket: UUID) -> Bool { true }
+  func abandon(_ ticket: UUID) {}
+  func handoff(_ ticket: UUID, finalization: Finalization) {
+    results.withLock { $0.append(finalization) }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadSoftPreferredWaitsThenGatewayReselectsPreferred() async throws {
+  let time = TestWallClock()
+  let waits = AsyncStream<Double>.makeStream()
+  let f = try await RoutingFixture.make(clock: time.clock) { seconds in
+    waits.continuation.yield(seconds)
+    time.advance(seconds: Int64(seconds))
+  }
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("preferred-start"))
+  let hint = ObjectBinding(type: "response", rawID: "synthetic-soft-history")
+  try await f.store.bind(attempt: first.attempt, object: hint)
+  try await f.store.finalize(
+    attempt: first.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  let preferred = try routeIdentity(first)
+  do {
+    _ = try await f.store.admitSelectingAccount(f.command("preferred-wait", preferred: preferred))
+    Issue.record("Expected soft preference pacing wait")
+  } catch let wait as AccountPacingRequired { #expect(wait.seconds == 1) }
+  #expect(
+    try await f.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
+    } == 0)
+  let finalizer = RoutingFinalizer()
+  let gateway = AccountPoolGateway(
+    policy: f.policy, store: f.store, credentials: f.app, finalizer: finalizer, clock: time.clock)
+  try await gateway.execute(model: "synthetic-text", references: [], affinityHints: [hint]) {
+    context, work in
+    #expect(context.admission.owner.identity == preferred.id)
+    #expect(work.account.id == preferred.id)
+    return routeUsage
+  }
+  waits.continuation.finish()
+  var observed: [Double] = []
+  for await seconds in waits.stream { observed.append(seconds) }
+  #expect(observed == [1])
+  #expect(finalizer.results.withLock { $0.count } == 1)
+  await f.close()
+}
+
+@Test(arguments: ["long-overload", "429", "capacity", "paced-capacity"])
+func overloadSoftPreferredFallsBackWhenNotOnlyShortPacing(blocker: String) async throws {
+  let time = TestWallClock()
+  let limits = ExecutionLimits(requests: 100, active: 32, unresolved: 100, budgetMicros: 1000)
+  let f = try await RoutingFixture.make(limits: limits, clock: time.clock)
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let preferred = try AccountRouteIdentity(id: "a", namespace: "synthetic/a")
+  let first = try await f.store.admitSelectingAccount(
+    f.command("fallback-start", preferred: preferred))
+  if blocker.contains("capacity") {
+    for index in 1..<ExecutionLimits.accountConcurrency {
+      _ = try await f.store.admitSelectingAccount(
+        f.command("held-\(index)", preferred: preferred))
+    }
+    if blocker == "paced-capacity" {
+      let work = try await f.app.prepareDispatch(id: preferred.id, continuation: false)
+      try await f.store.recordControlOutcome(
+        account: AccountRouteCandidate(work: work),
+        outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+    }
+  } else {
+    try await f.store.finalize(
+      attempt: first.attempt, evidence: nil,
+      outcome: .init(
+        failure: blocker == "429" ? .rateLimited : .upstreamUnavailable,
+        atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 4))
+  }
+  let selected = try await f.store.admitSelectingAccount(
+    f.command("fallback", preferred: preferred))
+  #expect(selected.owner.identity == "b")
+  await f.close()
+}
+
+@Test func overloadSoftPreferredChecksKeyBeforeWaiting() async throws {
+  let time = TestWallClock()
+  let f = try await RoutingFixture.make(clock: time.clock)
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("key-start"))
+  try await f.store.finalize(
+    attempt: first.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  _ = try await f.store.updateKey(
+    id: f.policy.key.id, revision: f.policy.key.revision, enabled: false,
+    policy: f.policy.key.policy)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await f.store.admitSelectingAccount(
+      f.command("key-revoked", preferred: routeIdentity(first)))
+  }
+  await f.close()
 }

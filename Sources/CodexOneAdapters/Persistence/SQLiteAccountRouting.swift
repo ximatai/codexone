@@ -55,16 +55,19 @@ extension SQLiteExecutionStore: AccountRoutingStore {
         var ranked: [(AccountRouteCandidate, Int64, UInt64)] = []
         var atCapacity = false
         var shortestWait: Double?
+        var preferredWait: Double?
         for candidate in command.candidates {
           guard affinity == nil || affinity == candidate.identity,
             candidate.snapshot.continuation == (affinity == candidate.identity)
           else { continue }
           let admission = command.selecting(candidate)
+          var candidateWait: Double?
           do { try Self.checkAccountAdmission(db, admission) } catch let pacing
             as AccountPacingRequired
           {
             shortestWait = min(shortestWait ?? pacing.seconds, pacing.seconds)
-            continue
+            guard candidate.identity == command.preferred else { continue }
+            candidateWait = pacing.seconds
           } catch let cooldown as AccountCooldownUnavailable {
             shortestWait = min(shortestWait ?? cooldown.seconds, cooldown.seconds)
             continue
@@ -81,11 +84,20 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             atCapacity = true
             continue
           }
+          if let candidateWait {
+            preferredWait = candidateWait
+            continue
+          }
           let entry = (
             candidate, active,
             Self.routeTie(command.requestID ?? command.attempt, candidate.identity)
           )
           ranked.append(entry)
+        }
+        if let preferredWait {
+          // Preserve soft history across short overloads only when account capacity permits.
+          try Self.checkKeyAdmission(db, command.selecting(command.candidates[0]))
+          throw AccountPacingRequired(seconds: preferredWait)
         }
         ranked.sort {
           let leftPreferred = $0.0.identity == command.preferred
