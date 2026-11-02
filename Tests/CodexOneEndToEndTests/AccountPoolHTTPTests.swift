@@ -36,14 +36,17 @@ private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
   ])
 }
 private func poolRefusalEvents(_ input: String?, response: JSONValue) -> [JSONValue]? {
-  guard let input, ["refuse-error", "refuse-failed", "output-error"].contains(input) else {
+  guard let input,
+    ["refuse-error", "refuse-failed", "output-error", "overload-error"].contains(input)
+  else {
     return nil
   }
   let error = JSONValue.object([
-    "code": .string("invalid_request_error"), "message": .string("Synthetic refusal"),
+    "code": .string(input == "overload-error" ? "server_is_overloaded" : "invalid_request_error"),
+    "message": .string("Synthetic refusal"),
   ])
   let failure = JSONValue.object(["type": .string("error"), "error": error])
-  if input == "refuse-error" { return [failure] }
+  if input == "refuse-error" || input == "overload-error" { return [failure] }
   if input == "refuse-failed" {
     var document = response.object!
     document["status"] = .string("failed")
@@ -407,7 +410,7 @@ private struct PoolHTTPHarness {
       group: oauth.group, port: 0, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: oauth.supervisor,
       provider: oauth.provider, target: .syntheticLoopback(port: listener.localAddress!.port!),
-      clock: testClock
+      clock: store.clock
     ) { port in bound.withLock { $0 = port } }
     let owner = Task {
       try await GatewayRuntime(services: [finalizer, service]).run(handleSignals: false)
@@ -1946,5 +1949,185 @@ func quotaPrimingUsesPinnedNormalResponsesAndPersistsUsage(_ transport: String)
       throw error
     }
     await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadHTTPWaitsBeforeIntentEscalatesAndReturnsRetryAfter() async throws {
+  let time = TestWallClock()
+  let waits = Mutex([Double]())
+  let oauth = try await OAuthHarness.open(timeout: 3000, clock: time.clock) { seconds in
+    waits.withLock { $0.append(seconds) }
+    time.advance(seconds: Int64(ceil(seconds)))
+  }
+  let h = try await PoolHTTPHarness.open(oauth)
+  do {
+    let b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+    _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+    for _ in 0..<3 {
+      _ = try await h.request("overload-error", stream: true)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+    }
+    #expect(waits.withLock { $0 } == [1, 2])
+    #expect(h.calls.count == 3)
+    #expect(try await h.readiness().0 == 503)
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"),
+    ]).data()
+    let session = URLSession(configuration: .ephemeral)
+    let (_, response) = try await session.data(for: request)
+    session.invalidateAndCancel()
+    let http = try #require(response as? HTTPURLResponse)
+    #expect(http.statusCode == 503 && http.value(forHTTPHeaderField: "retry-after") == "4")
+    #expect(h.calls.count == 3)
+    time.advance(seconds: 1)
+    #expect(try await h.readiness().0 == 200)
+    #expect(try await h.request().0 == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(waits.withLock { $0 } == [1, 2, 3])
+    #expect(try await h.store.accountHealth(id: "a").cooldowns.isEmpty)
+    _ = try await h.request("overload-error", stream: true)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(
+      try await h.store.accountHealth(id: "a").cooldowns.first?.untilUnixSeconds == time.clock
+        .unixSeconds + 1)
+  } catch {
+    await h.close()
+    await oauth.close()
+    throw error
+  }
+  await h.close()
+  await oauth.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadNativeWebSocketWaitsOnPinnedAccountWithHealthyAlternative() async throws {
+  let time = TestWallClock()
+  let waits = Mutex([Double]())
+  let oauth = try await OAuthHarness.open(timeout: 3000, clock: time.clock) { seconds in
+    waits.withLock { $0.append(seconds) }
+    time.advance(seconds: Int64(ceil(seconds)))
+  }
+  let h = try await PoolHTTPHarness.open(oauth, transport: "websocket")
+  do {
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    #expect(
+      try await client.command(["input": .string("overload-error")])["type"]?.string == "error")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    for _ in 0..<2 {
+      #expect(
+        try await client.command(["input": .string("overload-error")])["type"]?.string == "error")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+    }
+    let unavailable = try await client.command()
+    #expect(unavailable["status"]?.integer == 503)
+    #expect(unavailable["error"]?["code"]?.string == "account_unavailable")
+    #expect(unavailable["headers"]?["retry-after"]?.string == "4")
+    #expect(h.calls.count == 4)
+    #expect(waits.withLock { $0 } == [1, 2])
+    #expect(h.calls.count == 4 && Set(h.calls.map(\.account)).count == 1)
+    #expect(h.state.value.withLock { $0.upgrades } == 1)
+  } catch {
+    await h.close()
+    await oauth.close()
+    throw error
+  }
+  await h.close()
+  await oauth.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadDisconnectDuringWaitLeavesNoIntentOrHealthFailure() async throws {
+  for native in [false, true] {
+    let waiting = AsyncStream<Void>.makeStream()
+    let oauth = try await OAuthHarness.open(timeout: 3000) { _ in
+      waiting.continuation.yield(())
+      try await Task.sleep(for: .seconds(3600))
+    }
+    let h = try await PoolHTTPHarness.open(oauth, transport: native ? "websocket" : "http")
+    do {
+      let b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+      _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+      _ = try await h.request("overload-error", stream: true)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let before = try await h.store.accountHealth(id: "a")
+      let client = native ? try PoolWSClient(h) : nil
+      defer { client?.close() }
+      if let client {
+        _ = try await client.read()
+        _ = try await client.command(["op": .string("send")])
+      }
+      let next = native ? nil : Task { try await h.request() }
+      var iterator = waiting.stream.makeAsyncIterator()
+      _ = await iterator.next()
+      #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+      #expect(
+        try await h.store.perform {
+          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
+        } == 0)
+      client?.close()
+      next?.cancel()
+      _ = await next?.result
+      try await awaitOAuth { h.store.pacingWaiters.count == 0 && h.finalizer.outstanding == 0 }
+      #expect(try await h.store.accountHealth(id: "a") == before)
+      #expect(h.calls.count == 1)
+    } catch {
+      await h.close()
+      await oauth.close()
+      throw error
+    }
+    await h.close()
+    await oauth.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadInitialWebSocketWaitAndHTTPDeadlineEndBeforeAdmission() async throws {
+  for deadline in [false, true] {
+    let time = TestWallClock()
+    let waited = Mutex(false)
+    let oauth = try await OAuthHarness.open(timeout: 3000, clock: time.clock) { seconds in
+      waited.withLock { $0 = true }
+      if deadline {
+        try await Task.sleep(for: .seconds(3600))
+      } else {
+        time.advance(seconds: Int64(ceil(seconds)))
+      }
+    }
+    let h = try await PoolHTTPHarness.open(oauth, transport: "websocket", executionTimeout: 1)
+    do {
+      let b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+      _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+      _ = try await h.request("overload-error", stream: true)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      if deadline {
+        let before = try await h.store.accountHealth(id: "a")
+        #expect(try await h.request().0 == 504)
+        try await awaitOAuth { h.store.pacingWaiters.count == 0 && h.finalizer.outstanding == 0 }
+        #expect(try await h.store.accountHealth(id: "a") == before)
+        #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+        #expect(h.calls.count == 1)
+      } else {
+        let client = try PoolWSClient(h)
+        defer { client.close() }
+        _ = try await client.read()
+        #expect(try await client.command()["type"]?.string == "response.completed")
+        #expect(h.calls.count == 2)
+      }
+      #expect(waited.withLock { $0 })
+    } catch {
+      await h.close()
+      await oauth.close()
+      throw error
+    }
+    await h.close()
+    await oauth.close()
   }
 }

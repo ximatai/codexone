@@ -172,8 +172,18 @@ public struct ExecutionCoordinator: Sendable {
     }
     try await executeOwned(
       admitting: {
-        let prepared = try await preparing()
-        let admission = try await routing.admitSelectingAccount(prepared.command)
+        var prepared: PreparedAccountPoolAdmission
+        let admission: ExecutionAdmission
+        while true {
+          try Task.checkCancellation()
+          prepared = try await preparing()
+          do {
+            admission = try await routing.admitSelectingAccount(prepared.command)
+            break
+          } catch let pacing as AccountPacingRequired {
+            try await routing.waitForAccountPacing(seconds: pacing.seconds)
+          }
+        }
         // Never throw between committing intent and transferring it to the owned context.
         let selected = prepared.credentials.first {
           $0.key.id == admission.owner.identity && $0.key.namespace == admission.owner.namespace

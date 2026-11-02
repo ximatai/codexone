@@ -67,7 +67,11 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    do { try await executeHTTP(request, requestID: requestID, emit: emit) } catch {
+    do {
+      try await withExecutionDeadline(seconds: configuration.budget.total) {
+        try await executeHTTP(request, requestID: requestID, emit: emit)
+      }
+    } catch {
       await recordRejection(request, requestID: requestID, error: error)
       throw error
     }
@@ -271,14 +275,18 @@ func withExecutionDeadline<Value: Sendable>(
   seconds: Int,
   operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
-  try await withThrowingTaskGroup(of: Value.self) { group in
-    group.addTask { try await operation() }
-    group.addTask {
-      try await Task.sleep(for: .seconds(seconds))
-      throw GatewayProtocolError(504, "execution_deadline_exceeded")
+  let cause = ExecutionDeadlineCause(parent: ExecutionDeadlineScope.cause)
+  return try await ExecutionDeadlineScope.$cause.withValue(cause) {
+    try await withThrowingTaskGroup(of: Value.self) { group in
+      group.addTask { try await operation() }
+      group.addTask {
+        try await Task.sleep(for: .seconds(seconds))
+        cause.expire()
+        throw GatewayProtocolError(504, "execution_deadline_exceeded")
+      }
+      defer { group.cancelAll() }
+      return try await group.next()!
     }
-    defer { group.cancelAll() }
-    return try await group.next()!
   }
 }
 

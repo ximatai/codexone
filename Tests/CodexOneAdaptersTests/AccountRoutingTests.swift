@@ -5,20 +5,28 @@ import Testing
 @testable import CodexOneAdapters
 
 private struct RoutingFixture {
+  let ids: [String]
   let path: String
   let store: SQLiteExecutionStore
   let app: AccountCredentials
   let policy: AccountPoolPolicy
-  static func make(limits: ExecutionLimits = syntheticLimits, clock: WallClock = testClock)
+  static func make(
+    limits: ExecutionLimits = syntheticLimits, clock: WallClock = testClock,
+    ids: [String] = ["a", "b"],
+    pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
+      try await Task.sleep(for: .seconds($0))
+    }
+  )
     async throws -> Self
   {
     let path = try temporaryExecutionPath()
-    let store = try await SQLiteExecutionStore.open(path: path, limits: limits, clock: clock)
+    let store = try await SQLiteExecutionStore.open(
+      path: path, limits: limits, clock: clock, pacingSleep: pacingSleep)
     let app = AccountCredentials(
       store: store,
       protection: try AccountCredentialCipher(hexKey: String(repeating: "6b", count: 32)),
       clock: clock)
-    for id in ["a", "b"] {
+    for id in ids {
       let account = try await app.importVerified(
         id: id, namespace: "synthetic/\(id)",
         credential: AccountCredential(
@@ -32,20 +40,21 @@ private struct RoutingFixture {
     let policy = try AccountPoolPolicy(
       key: key, models: ["synthetic-text"], reservedMicros: 1, policyVersion: "1",
       pricingVersion: "1")
-    return Self(path: path, store: store, app: app, policy: policy)
+    return Self(ids: ids, path: path, store: store, app: app, policy: policy)
   }
   func command(
     _ id: String, references: [ObjectBinding] = [], connection: AccountRouteIdentity? = nil,
-    continuation: Bool = false
+    continuation: Bool = false, preferred: AccountRouteIdentity? = nil
   ) async throws -> AccountPoolAdmission {
     var candidates: [AccountRouteCandidate] = []
-    for id in ["a", "b"] {
+    for id in ids {
       let work = try await app.prepareDispatch(id: id, continuation: continuation)
       candidates.append(try AccountRouteCandidate(work: work))
     }
     return try AccountPoolAdmission(
       attempt: id, policy: policy, model: "synthetic-text", window: "w", requestID: "stable-seed",
-      mode: .generation, references: references, connection: connection, candidates: candidates)
+      mode: .generation, references: references, connection: connection, candidates: candidates,
+      preferred: preferred)
   }
   func close() async {
     await store.close()
@@ -335,4 +344,226 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   try await reopened.finalize(attempt: admitted.attempt, evidence: routeUsage)
   await reopened.close()
   await f.close()
+}
+
+@Test func overloadPacingPersistsEveryStepAndSuccessResetsWithoutElapsedTimeReset() async throws {
+  let time = TestWallClock()
+  let limits = ExecutionLimits(requests: 100, active: 32, unresolved: 100, budgetMicros: 1000)
+  let f = try await RoutingFixture.make(limits: limits, clock: time.clock, ids: ["a"])
+  try await f.store.configureHealthModels(["synthetic-text"])
+  for (index, step) in [1, 2, 4, 8, 15, 15].enumerated() {
+    let admitted = try await f.store.admitSelectingAccount(f.command("overload-\(index)"))
+    let outcome = try ExecutionOutcome(
+      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds)
+    try await f.store.finalize(attempt: admitted.attempt, evidence: nil, outcome: outcome)
+    // Repeated finalization neither escalates nor extends the step.
+    try await f.store.finalize(attempt: admitted.attempt, evidence: nil, outcome: outcome)
+    let health = try await f.store.accountHealth(id: "a")
+    #expect(health.cooldowns.first?.untilUnixSeconds == time.clock.unixSeconds + Int64(step))
+    #expect(try await f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]) == (step <= 3))
+    do {
+      _ = try await f.store.admitSelectingAccount(f.command("blocked-\(index)"))
+      Issue.record("Live overload admitted before its deadline")
+    } catch let wait as AccountPacingRequired {
+      #expect(step <= 3 && wait.seconds == Double(step))
+    } catch let unavailable as AccountCooldownUnavailable {
+      #expect(step > 3 && unavailable.retryAfter == Int64(step))
+      #expect(protocolFailure(unavailable).status == 503)
+      #expect(protocolFailure(unavailable).cooldownSeconds == Int64(step))
+    }
+    await #expect(throws: ExecutionError.unknownAttempt) {
+      try await f.store.snapshot(attempt: "blocked-\(index)")
+    }
+    time.advance(seconds: Int64(step))
+    #expect(try await f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]))
+  }
+  let success = try await f.store.admitSelectingAccount(f.command("reset-success"))
+  try await f.store.finalize(
+    attempt: success.attempt, evidence: routeUsage,
+    outcome: .init(failure: nil, atUnixSeconds: time.clock.unixSeconds))
+  let next = try await f.store.admitSelectingAccount(f.command("reset-overload"))
+  try await f.store.finalize(
+    attempt: next.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  #expect(
+    try await f.store.accountHealth(id: "a").cooldowns.first?.untilUnixSeconds == time.clock
+      .unixSeconds + 1)
+  let prepared = try await f.command("restart-overload")
+  await f.store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: limits, clock: time.clock)
+  await #expect(throws: AccountPacingRequired.self) {
+    try await reopened.admitSelectingAccount(prepared)
+  }
+  time.advance(seconds: 1)
+  let afterRestart = try await reopened.admitSelectingAccount(prepared)
+  try await reopened.finalize(
+    attempt: afterRestart.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  #expect(
+    try await reopened.accountHealth(id: "a").cooldowns.first?.untilUnixSeconds == time.clock
+      .unixSeconds + 1)
+  await reopened.close()
+  await f.close()
+}
+
+@Test func overloadPoolAvoidsPacingAndWaitsEarliestWhilePinnedNeverSwitches() async throws {
+  let time = TestWallClock()
+  let f = try await RoutingFixture.make(clock: time.clock)
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("paced-first"))
+  try await f.store.finalize(
+    attempt: first.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  await #expect(throws: AccountPacingRequired.self) {
+    try await f.store.admitSelectingAccount(
+      f.command("paced-pinned", connection: routeIdentity(first), continuation: true))
+  }
+  let second = try await f.store.admitSelectingAccount(
+    f.command("paced-other", preferred: routeIdentity(first)))
+  #expect(second.owner.identity != first.owner.identity)
+  try await f.store.finalize(
+    attempt: second.attempt, evidence: nil,
+    outcome: .init(
+      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 2))
+  do {
+    _ = try await f.store.admitSelectingAccount(f.command("all-paced"))
+    Issue.record("Expected earliest pacing wait")
+  } catch let wait as AccountPacingRequired { #expect(wait.seconds == 1) }
+  time.advance(seconds: 1)
+  let selected = try await f.store.admitSelectingAccount(f.command("paced-expired"))
+  #expect(selected.owner.identity == first.owner.identity)
+  try await f.store.finalize(
+    attempt: selected.attempt, evidence: nil,
+    outcome: .init(failure: .rateLimited, atUnixSeconds: time.clock.unixSeconds))
+  time.advance(seconds: 1)
+  let avoids429 = try await f.store.admitSelectingAccount(f.command("avoids-429"))
+  #expect(avoids429.owner.identity == second.owner.identity)
+  await f.close()
+}
+
+@Test func overloadPacingKeepsFullSubsecondStepAndHonorsTrustedRetryAfter() async throws {
+  let time = TestWallClock()
+  let fractional = WallClock { Double(time.clock.unixSeconds) + 0.9 }
+  let f = try await RoutingFixture.make(clock: fractional, ids: ["a"])
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("fractional"))
+  try await f.store.finalize(
+    attempt: first.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  do {
+    _ = try await f.store.admitSelectingAccount(f.command("fractional-wait"))
+    Issue.record("Expected a full one second wait")
+  } catch let wait as AccountPacingRequired { #expect(abs(wait.seconds - 1) < 0.00001) }
+  time.advance(seconds: 1)
+  let next = try await f.store.admitSelectingAccount(f.command("trusted-retry"))
+  try await f.store.finalize(
+    attempt: next.attempt, evidence: nil,
+    outcome: .init(
+      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 60))
+  do {
+    _ = try await f.store.admitSelectingAccount(f.command("trusted-blocked"))
+    Issue.record("Expected trusted Retry-After")
+  } catch let unavailable as AccountCooldownUnavailable { #expect(unavailable.retryAfter == 60) }
+  time.advance(seconds: 60)
+  let last = try await f.store.admitSelectingAccount(f.command("after-trusted"))
+  try await f.store.finalize(
+    attempt: last.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  #expect(
+    try await f.store.accountHealth(id: "a").cooldowns.first?.untilUnixSeconds == time.clock
+      .unixSeconds + 3)
+  await f.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadReleasedWaitersRecheckAccountConcurrencyAndKeyLimits() async throws {
+  let time = TestWallClock()
+  let waiting = AsyncStream<Void>.makeStream()
+  let release = AsyncStream<Void>.makeStream()
+  let limits = ExecutionLimits(requests: 100, active: 32, unresolved: 32, budgetMicros: 1000)
+  let f = try await RoutingFixture.make(limits: limits, clock: time.clock, ids: ["a"]) { _ in
+    waiting.continuation.yield(())
+    for await _ in release.stream { break }
+    try Task.checkCancellation()
+  }
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let first = try await f.store.admitSelectingAccount(f.command("release-overload"))
+  try await f.store.finalize(
+    attempt: first.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  var commands: [AccountPoolAdmission] = []
+  for index in 0..<ExecutionLimits.accountConcurrency {
+    commands.append(try await f.command("released-\(index)"))
+  }
+  let tasks = commands.map { command in
+    Task {
+      await #expect(throws: AccountPacingRequired.self) {
+        try await f.store.admitSelectingAccount(command)
+      }
+      try await f.store.waitForAccountPacing(seconds: 1)
+      return try await f.store.admitSelectingAccount(command)
+    }
+  }
+  var arrivals = waiting.stream.makeAsyncIterator()
+  for _ in tasks { _ = await arrivals.next() }
+  #expect(
+    try await f.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
+    } == 0)
+  time.advance(seconds: 1)
+  release.continuation.finish()
+  for task in tasks { _ = try await task.value }
+  #expect(
+    try await f.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
+    } == ExecutionLimits.accountConcurrency)
+  await #expect(throws: ExecutionError.accountConcurrency) {
+    try await f.store.admitSelectingAccount(f.command("released-over-capacity"))
+  }
+  for command in commands {
+    try await f.store.finalize(attempt: command.attempt, evidence: routeUsage)
+  }
+  _ = try await f.store.updateKey(
+    id: f.policy.key.id, revision: f.policy.key.revision, enabled: false,
+    policy: f.policy.key.policy)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await f.store.admitSelectingAccount(f.command("released-revoked"))
+  }
+  await f.close()
+}
+
+@Test func overloadConcurrentCompletionCannotShortenTrustedDeadlineAcrossRestart() async throws {
+  for restart in [false, true] {
+    let time = TestWallClock()
+    let fractional = WallClock { Double(time.clock.unixSeconds) + 0.1 }
+    let f = try await RoutingFixture.make(clock: fractional, ids: ["a"])
+    try await f.store.configureHealthModels(["synthetic-text"])
+    let first = try await f.store.admitSelectingAccount(f.command("overlap-trusted"))
+    let second = try await f.store.admitSelectingAccount(f.command("overlap-default"))
+    try await f.store.finalize(
+      attempt: first.attempt, evidence: nil,
+      outcome: .init(
+        failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 2))
+    let check = try await f.command("overlap-check")
+    let store: SQLiteExecutionStore
+    if restart {
+      await f.store.close()
+      store = try await SQLiteExecutionStore.open(
+        path: f.path, limits: syntheticLimits, clock: fractional)
+    } else {
+      store = f.store
+    }
+    try await store.finalize(
+      attempt: second.attempt, evidence: nil,
+      outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+    do {
+      _ = try await store.admitSelectingAccount(check)
+      Issue.record("Expected trusted deadline to survive overlapping default pacing")
+    } catch let wait as AccountPacingRequired {
+      #expect(abs(wait.seconds - 1.9) < 0.00001)
+    }
+    await store.close()
+    await f.close()
+  }
 }

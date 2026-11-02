@@ -82,19 +82,22 @@ enum PoolWebSocketSession {
         }
         tasks.addTask {
           do {
-            try await gateway.execute(
-              model: first.model, references: first.references, affinityHints: first.affinityHints,
-              requestID: requestID,
-              mode: first.mode, requirements: first.requirements,
-              reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
-            ) { context, authorization in
-              try await withExecutionDeadline(
-                seconds: executor.configuration.budget.total
-              ) {
-                start.publish(.init(context: context, authorization: authorization))
-                try await start.waitForTurn()
+            try await withExecutionDeadline(seconds: executor.configuration.budget.total) {
+              try await gateway.execute(
+                model: first.model, references: first.references,
+                affinityHints: first.affinityHints,
+                requestID: requestID,
+                mode: first.mode, requirements: first.requirements,
+                reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
+              ) { context, authorization in
+                try await withExecutionDeadline(
+                  seconds: executor.configuration.budget.total
+                ) {
+                  start.publish(.init(context: context, authorization: authorization))
+                  try await start.waitForTurn()
+                }
+                return nil
               }
-              return nil
             }
           } catch {
             start.close(error)
@@ -173,6 +176,9 @@ func sendWebSocketError(
     "type": .string("error"), "status": .number(Decimal(protocolFailure(error).status)),
     "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
   ]
+  if let pacing = error as? AccountCooldownUnavailable {
+    envelope["headers"] = .object(["retry-after": .string(String(pacing.retryAfter))])
+  }
   if !lane.isEmpty { envelope["stream_id"] = .string(lane) }
   try await downstream.send(.object(envelope))
 }

@@ -40,14 +40,14 @@ public struct AccountPoolGateway: Sendable {
           affinity == nil && connection == nil && !affinityHints.isEmpty
           ? try await store.resolveAccountHint(
             principal: policy.key.principal, hints: affinityHints) : nil
-        let works = try await prepareWorks(affinity: affinity, preferred: preferred)
+        let works = try await prepareWorks(affinity: affinity)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let day = clock.utcDay
         let command = try AccountPoolAdmission(
           attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
           requestID: requestID, mode: mode, references: references, connection: connection,
           candidates: candidates, requirements: requirements,
-          reasoningEffort: reasoningEffort, serviceTier: serviceTier)
+          reasoningEffort: reasoningEffort, serviceTier: serviceTier, preferred: preferred)
         return try PreparedAccountPoolAdmission(command: command, credentials: works)
       }, operation: operation)
   }
@@ -55,7 +55,7 @@ public struct AccountPoolGateway: Sendable {
   public func authorizeControl(preferred: AccountRouteIdentity? = nil) async throws
     -> AccountDispatchWork
   {
-    let works = try await prepareWorks(affinity: nil, preferred: nil)
+    let works = try await prepareWorks(affinity: nil)
     let selected = try await store.selectControlAccount(
       key: policy.key, candidates: try works.values.map { try AccountRouteCandidate(work: $0) },
       preferred: preferred)
@@ -63,7 +63,7 @@ public struct AccountPoolGateway: Sendable {
     return work
   }
 
-  private func prepareWorks(affinity: AccountRouteIdentity?, preferred: AccountRouteIdentity?)
+  private func prepareWorks(affinity: AccountRouteIdentity?)
     async throws
     -> [AccountRouteIdentity: AccountDispatchWork]
   {
@@ -104,7 +104,6 @@ public struct AccountPoolGateway: Sendable {
         id: work.account.id, namespace: work.account.namespace)
       works[identity] = work
     }
-    if let preferred, let work = works[preferred] { works = [preferred: work] }
     guard !works.isEmpty else {
       throw refreshable.isEmpty
         ? AccountDispatchError.unavailable : AccountDispatchError.refreshRequired

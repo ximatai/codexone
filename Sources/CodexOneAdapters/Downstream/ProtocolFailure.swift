@@ -15,6 +15,9 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
     if error == .httpProxyHandshakeTimeout { return .init(502, "upstream_proxy_timeout") }
     if error == .invalidProxyResponse { return .init(502, "upstream_proxy_failed") }
   }
+  if let error = error as? AccountCooldownUnavailable {
+    return .init(503, "account_unavailable", cooldownSeconds: error.retryAfter)
+  }
   if let error = error as? AccountDispatchError {
     return .init(
       503, error == .refreshRequired ? "account_refresh_required" : "account_unavailable")

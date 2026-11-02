@@ -14,16 +14,18 @@ extension HTTPResponseExecution {
       throw GatewayProtocolError(503, "pool_websocket_unavailable")
     }
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
-    try await gateway.execute(
-      model: request.admissionModel, references: request.references,
-      affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, connection: connection, requirements: request.requirements,
-      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
-    ) { context, _ in
-      try await exchange(
-        request, context: context, model: model, peer: peer, lane: lane,
-        downstream: downstream, emit: emit)
-      return nil
+    try await withExecutionDeadline(seconds: configuration.budget.total) {
+      try await gateway.execute(
+        model: request.admissionModel, references: request.references,
+        affinityHints: request.affinityHints, requestID: requestID,
+        mode: request.mode, connection: connection, requirements: request.requirements,
+        reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
+      ) { context, _ in
+        try await exchange(
+          request, context: context, model: model, peer: peer, lane: lane,
+          downstream: downstream, emit: emit)
+        return nil
+      }
     }
   }
 
