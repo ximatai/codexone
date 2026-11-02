@@ -1,6 +1,19 @@
 import Foundation
 import Synchronization
 
+/// Preserve timeout classification when an enclosing total deadline cancels transport work.
+/// Nested phase deadlines inherit the outer cause; client cancellation never marks it expired.
+enum ExecutionDeadlineScope {
+  @TaskLocal static var cause: ExecutionDeadlineCause?
+}
+final class ExecutionDeadlineCause: Sendable {
+  private let expired = Mutex(false)
+  private let parent: ExecutionDeadlineCause?
+  init(parent: ExecutionDeadlineCause?) { self.parent = parent }
+  func expire() { expired.withLock { $0 = true } }
+  var hasExpired: Bool { expired.withLock { $0 } || parent?.hasExpired == true }
+}
+
 struct ExecutionBudget: Sendable {
   let total: Int
   let first: Int

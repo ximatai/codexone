@@ -9,6 +9,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let connection: SQLiteConnection
   var clock: WallClock { connection.clock }
   let path: String
+  let pacingWaiters: AccountPacingWaiters
   let usageReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
   let liveFirstEvents = Mutex([String: Bool]())
@@ -33,8 +34,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   init(
     connection: SQLiteConnection, limits: ExecutionLimits, path: String,
     restoration: RestoreRecord? = nil, storage: SQLiteStorageGuard? = nil,
-    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity,
+    pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
+      try await Task.sleep(for: .seconds($0))
+    }
   ) throws {
+    self.pacingWaiters = AccountPacingWaiters(sleep: pacingSleep)
     self.storage =
       try storage ?? SQLiteStorageGuard(path: path, policy: .standard, clock: connection.clock)
     if storage == nil { try self.storage.refresh(connection, maintenance: false) }
@@ -47,18 +52,24 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
   public static func open(
     path: String, limits: ExecutionLimits,
-    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
+    pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
+      try await Task.sleep(for: .seconds($0))
+    }
   ) async throws
     -> SQLiteExecutionStore
   {
     try await open(
       path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
-      unresolvedCapacity: unresolvedCapacity, clock: clock)
+      unresolvedCapacity: unresolvedCapacity, clock: clock, pacingSleep: pacingSleep)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
     available: @escaping @Sendable (String) throws -> Int64,
-    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system
+    unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
+    pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
+      try await Task.sleep(for: .seconds($0))
+    }
   ) async throws -> SQLiteExecutionStore {
     guard unresolvedCapacity > 0, unresolvedCapacity <= 1_000_000_000_000,
       [
@@ -116,7 +127,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             returning: try SQLiteExecutionStore(
               connection: connection, limits: limits, path: path,
               restoration: try connection.restoreRecord(), storage: storage,
-              unresolvedCapacity: unresolvedCapacity))
+              unresolvedCapacity: unresolvedCapacity, pacingSleep: pacingSleep))
         } catch { continuation.resume(throwing: error) }
       }
     }
@@ -186,6 +197,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   }
 
   public func close() async {
+    gate.withLock { $0.closing = true }
+    await pacingWaiters.close()
     await withCheckedContinuation { continuation in
       gate.withLock { state in
         state.closing = true

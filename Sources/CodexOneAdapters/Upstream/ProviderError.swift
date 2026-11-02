@@ -79,7 +79,7 @@ enum ProviderError {
         429, "upstream_rate_limited", cooldownSeconds: cooldown, upstreamStatus: status,
         providerError: forwarded, explicitProviderRejection: rejected)
     }
-    if let status, (500...599).contains(status) || code == "server_is_overloaded" {
+    if code == "server_is_overloaded" {
       return .init(
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
         upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)

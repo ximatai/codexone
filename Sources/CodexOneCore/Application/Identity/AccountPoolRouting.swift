@@ -55,11 +55,13 @@ public struct AccountPoolAdmission: Sendable {
   public let reasoningEffort: String?
   public let serviceTier: String?
   public let candidates: [AccountRouteCandidate]
+  public let preferred: AccountRouteIdentity?
   public init(
     attempt: String, policy: AccountPoolPolicy, model: String, window: String, requestID: String?,
     mode: ExecutionMode, references: [ObjectBinding], connection: AccountRouteIdentity?,
     candidates: [AccountRouteCandidate], requirements: ExecutionRequirements = .init(),
-    reasoningEffort: String? = nil, serviceTier: String? = nil
+    reasoningEffort: String? = nil, serviceTier: String? = nil,
+    preferred: AccountRouteIdentity? = nil
   ) throws {
     guard !attempt.isEmpty, attempt.utf8.count <= 256, !window.isEmpty, window.utf8.count <= 256,
       policy.models.contains(model),
@@ -79,6 +81,7 @@ public struct AccountPoolAdmission: Sendable {
     self.mode = mode
     self.references = references
     self.connection = connection
+    self.preferred = preferred
     self.candidates = candidates
   }
   public func selecting(_ candidate: AccountRouteCandidate) -> ExecutionAdmission {
@@ -118,6 +121,7 @@ public struct PreparedAccountPoolAdmission: Sendable, CustomStringConvertible,
   }
 }
 public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
+  func waitForAccountPacing(seconds: Double) async throws
   func selectControlAccount(
     key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?
   ) async throws -> AccountRouteIdentity
@@ -133,6 +137,9 @@ public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
 }
 
 extension AccountRoutingStore {
+  public func waitForAccountPacing(seconds: Double) async throws {
+    throw ExecutionError.capacity
+  }
   public func selectControlAccount(
     key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?
   ) async throws -> AccountRouteIdentity {

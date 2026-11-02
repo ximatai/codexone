@@ -62,110 +62,115 @@ extension HTTPResponseExecution {
     let permit = try await imageCapacity.acquire()
     defer { permit.release() }
     try Task.checkCancellation()
-    try await gateway.execute(
-      model: request.model, references: [], requestID: requestID, mode: .generation,
-      requirements: try .init(route: .images, imageModel: request.model),
-      serviceTier: request.serviceTier
-    ) { context, authorization in
-      try await withProgressDeadline(budget: configuration.budget) { progress in
-        let base = authorization?.baseURL ?? configuration.upstreamBaseURL
-        guard var url = URLComponents(string: base) else { throw ExecutionError.invalidCommand }
-        url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")
-        var upstream = HTTPClientRequest(url: url.string!)
-        upstream.method = .POST
-        upstream.headers = forwardedClientHeaders(
-          headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
-        upstream.headers.add(name: "content-type", value: "application/json")
-        upstream.headers.add(
-          name: "accept", value: request.streaming ? "text/event-stream" : "application/json")
-        if let authorization {
-          for header in authorization.headers {
-            upstream.headers.add(name: header.name, value: header.value)
+    try await withExecutionDeadline(seconds: configuration.budget.total) {
+      try await gateway.execute(
+        model: request.model, references: [], requestID: requestID, mode: .generation,
+        requirements: try .init(route: .images, imageModel: request.model),
+        serviceTier: request.serviceTier
+      ) { context, authorization in
+        try await withProgressDeadline(budget: configuration.budget) { progress in
+          let base = authorization?.baseURL ?? configuration.upstreamBaseURL
+          guard var url = URLComponents(string: base) else { throw ExecutionError.invalidCommand }
+          url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")
+          var upstream = HTTPClientRequest(url: url.string!)
+          upstream.method = .POST
+          upstream.headers = forwardedClientHeaders(
+            headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
+          upstream.headers.add(name: "content-type", value: "application/json")
+          upstream.headers.add(
+            name: "accept", value: request.streaming ? "text/event-stream" : "application/json")
+          if let authorization {
+            for header in authorization.headers {
+              upstream.headers.add(name: header.name, value: header.value)
+            }
+          } else if let token {
+            upstream.headers.add(name: "authorization", value: "Bearer " + token)
           }
-        } else if let token {
-          upstream.headers.add(name: "authorization", value: "Bearer " + token)
-        }
-        upstream.body = .bytes(ByteBuffer(data: request.body))
-        let response = try await client.execute(
-          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-        var replyHeaders = HTTPHeaders()
-        for name in ["content-type", "x-codex-imagegen-request-id"] {
-          if let value = response.headers.first(name: name) {
-            replyHeaders.add(name: name, value: value)
-          }
-        }
-        await receiveHeaders(replyHeaders)
-        guard response.status == .ok else { throw await ProviderError.failure(response: response) }
-        if request.streaming {
-          guard
-            response.headers.first(name: "content-type")?.lowercased().split(separator: ";").first
-              == "text/event-stream"
-          else {
-            throw GatewayProtocolError(502, "invalid_upstream_content_type")
-          }
-          var decoder = SSEDecoder(
-            maximumEventBytes: ImageLimits.nativeResponseBytes,
-            maximumTotalBytes: ImageLimits.nativeResponseBytes)
-          var terminal: JSONValue?
-          // Retain only the current event; decoder enforces the event and stream limits.
-          var pending = Data()
-          try await begin(replyHeaders)
-          for try await chunk in response.body {
-            try Task.checkCancellation()
-            for byte in chunk.readableBytesView {
-              let event = try decoder.append(byte)
-              pending.append(byte)
-              if let event {
-                context.observeUpstreamEvent()
-                progress.note()
-                try observeProviderEvent(event, context: context)
-                let type = event["type"]?.string ?? ""
-                if type == "error" { throw ProviderObservation.providerFailure(event) }
-                if type == (request.editing ? "image_edit.completed" : "image_generation.completed")
-                {
-                  guard terminal == nil else {
-                    throw GatewayProtocolError(502, "invalid_upstream_image")
-                  }
-                  context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
-                  terminal = event
-                  let observation = NativeImageObservation(event, model: model, streaming: true)
-                  if let usage = observation.usage { try context.observeUsage(usage) }
-                }
-              }
-              if decoder.isAtEventBoundary {
-                try await emit(pending)
-                pending.removeAll(keepingCapacity: true)
-              }
+          upstream.body = .bytes(ByteBuffer(data: request.body))
+          let response = try await client.execute(
+            upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+          var replyHeaders = HTTPHeaders()
+          for name in ["content-type", "x-codex-imagegen-request-id"] {
+            if let value = response.headers.first(name: name) {
+              replyHeaders.add(name: name, value: value)
             }
           }
-          try decoder.finish()
-          guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
-          let observation = NativeImageObservation(terminal, model: model, streaming: true)
-          guard observation.images > 0 else {
-            throw GatewayProtocolError(502, "invalid_upstream_image")
+          await receiveHeaders(replyHeaders)
+          guard response.status == .ok else {
+            throw await ProviderError.failure(response: response)
           }
-        } else {
-          let body = try await collectProgressBody(
-            response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes)
-          context.observeUpstreamEvent()
-          let document = try? JSONValue.decode(body)
-          let observation = document.map { NativeImageObservation($0, model: model) }
-          context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
-          if let usage = observation?.usage { try context.observeUsage(usage) }
-          if observation?.images ?? 0 == 0 {
-            try context.observeOutcome(
-              .init(
-                failure: .invalidUpstreamResponse,
-                atUnixSeconds: context.clock.unixSeconds))
+          if request.streaming {
+            guard
+              response.headers.first(name: "content-type")?.lowercased().split(separator: ";").first
+                == "text/event-stream"
+            else {
+              throw GatewayProtocolError(502, "invalid_upstream_content_type")
+            }
+            var decoder = SSEDecoder(
+              maximumEventBytes: ImageLimits.nativeResponseBytes,
+              maximumTotalBytes: ImageLimits.nativeResponseBytes)
+            var terminal: JSONValue?
+            // Retain only the current event; decoder enforces the event and stream limits.
+            var pending = Data()
+            try await begin(replyHeaders)
+            for try await chunk in response.body {
+              try Task.checkCancellation()
+              for byte in chunk.readableBytesView {
+                let event = try decoder.append(byte)
+                pending.append(byte)
+                if let event {
+                  context.observeUpstreamEvent()
+                  progress.note()
+                  try observeProviderEvent(event, context: context)
+                  let type = event["type"]?.string ?? ""
+                  if type == "error" { throw ProviderObservation.providerFailure(event) }
+                  if type
+                    == (request.editing ? "image_edit.completed" : "image_generation.completed")
+                  {
+                    guard terminal == nil else {
+                      throw GatewayProtocolError(502, "invalid_upstream_image")
+                    }
+                    context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
+                    terminal = event
+                    let observation = NativeImageObservation(event, model: model, streaming: true)
+                    if let usage = observation.usage { try context.observeUsage(usage) }
+                  }
+                }
+                if decoder.isAtEventBoundary {
+                  try await emit(pending)
+                  pending.removeAll(keepingCapacity: true)
+                }
+              }
+            }
+            try decoder.finish()
+            guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
+            let observation = NativeImageObservation(terminal, model: model, streaming: true)
+            guard observation.images > 0 else {
+              throw GatewayProtocolError(502, "invalid_upstream_image")
+            }
+          } else {
+            let body = try await collectProgressBody(
+              response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes)
+            context.observeUpstreamEvent()
+            let document = try? JSONValue.decode(body)
+            let observation = document.map { NativeImageObservation($0, model: model) }
+            context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
+            if let usage = observation?.usage { try context.observeUsage(usage) }
+            if observation?.images ?? 0 == 0 {
+              try context.observeOutcome(
+                .init(
+                  failure: .invalidUpstreamResponse,
+                  atUnixSeconds: context.clock.unixSeconds))
+            }
+            try await begin(replyHeaders)
+            try await emit(body)
           }
-          try await begin(replyHeaders)
-          try await emit(body)
+          try await finish()
+          try context.observeOutcome(
+            .init(failure: nil, atUnixSeconds: context.clock.unixSeconds))
         }
-        try await finish()
-        try context.observeOutcome(
-          .init(failure: nil, atUnixSeconds: context.clock.unixSeconds))
+        return nil
       }
-      return nil
     }
   }
 }

@@ -13,6 +13,7 @@ final class SQLiteConnection: @unchecked Sendable {
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
   private var readOnly = false
+  var overloadPacing: [String: [String: OverloadPacing]] = [:]
   let clock: WallClock
   let filePath: String
   enum Value: Sendable {
@@ -249,12 +250,14 @@ final class SQLiteConnection: @unchecked Sendable {
     }
   }
   func transaction<T>(_ body: () throws -> T) throws -> T {
+    let previousPacing = overloadPacing
     try exec("BEGIN IMMEDIATE")
     do {
       let value = try body()
       try exec("COMMIT")
       return value
     } catch {
+      overloadPacing = previousPacing
       try? exec("ROLLBACK")
       throw error
     }

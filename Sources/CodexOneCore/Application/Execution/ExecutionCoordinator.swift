@@ -180,6 +180,7 @@ public struct ExecutionCoordinator: Sendable {
         }?.value
         return (admission, selected)
       },
+      waitingForPacing: { try await routing.waitForAccountPacing(seconds: $0) },
       operation: { context, work in
         guard let work else { throw ExecutionError.storageUnavailable }
         return try await operation(context, work)
@@ -188,15 +189,28 @@ public struct ExecutionCoordinator: Sendable {
 
   private func executeOwned<Payload: Sendable>(
     admitting: @Sendable () async throws -> (ExecutionAdmission, Payload),
+    waitingForPacing: (@Sendable (Double) async throws -> Void)? = nil,
     operation: @Sendable (ExecutionContext, Payload) async throws -> UsageEvidence?
   ) async throws {
-    try Task.checkCancellation()
-    let ticket = try finalizer.reserve()
+    var reserved: UUID
     let admitted: (ExecutionAdmission, Payload)
-    do { admitted = try await admitting() } catch {
-      finalizer.abandon(ticket)
-      throw error
+    while true {
+      try Task.checkCancellation()
+      reserved = try finalizer.reserve()
+      do {
+        admitted = try await admitting()
+        break
+      } catch {
+        finalizer.abandon(reserved)
+        guard let pacing = error as? AccountPacingRequired, let waitingForPacing else {
+          throw error
+        }
+        // No intent exists: release settlement capacity while waiting, then reserve
+        // again before re-preparing and atomically admitting the next candidate.
+        try await waitingForPacing(pacing.seconds)
+      }
     }
+    let ticket = reserved
     let context = ExecutionContext(admission: admitted.0, store: store, clock: clock)
     defer {
       let (evidence, outcome) = context.finishObservation()

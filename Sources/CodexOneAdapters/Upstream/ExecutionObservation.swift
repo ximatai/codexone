@@ -15,7 +15,9 @@ func upstreamRejection(status: HTTPResponseStatus, headers: HTTPHeaders, compact
     retryAfter: ProviderError.retryAfter(headers), compact: compact)
 }
 func executionFailure(_ error: any Error) -> ExecutionFailure {
-  if error is CancellationError { return .clientCancelled }
+  let cancellation: ExecutionFailure =
+    ExecutionDeadlineScope.cause?.hasExpired == true ? .deadlineExceeded : .clientCancelled
+  if error is CancellationError { return cancellation }
   // Raised only before a turn is written upstream: the pinned socket was already gone.
   if error is WebSocketUpstreamClosed { return .upstreamUnavailable }
   if let error = error as? GatewayProtocolError {
@@ -33,7 +35,7 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
     case "model_not_allowed": return .modelNotAllowed
     default:
       if error.code.hasPrefix("invalid_upstream") { return .invalidUpstreamResponse }
-      return Task.isCancelled ? .clientCancelled : .indeterminate
+      return Task.isCancelled ? cancellation : .indeterminate
     }
   }
   if let error = error as? ExecutionError {
@@ -47,8 +49,12 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
     default: return .indeterminate
     }
   }
-  if error is AccountDispatchError || error is AccountRefreshError { return .accountUnavailable }
-  return Task.isCancelled ? .clientCancelled : .indeterminate
+  if error is AccountDispatchError || error is AccountRefreshError
+    || error is AccountCooldownUnavailable
+  {
+    return .accountUnavailable
+  }
+  return Task.isCancelled ? cancellation : .indeterminate
 }
 func observeExecution(
   _ context: ExecutionContext, operation: @Sendable () async throws -> UsageEvidence?

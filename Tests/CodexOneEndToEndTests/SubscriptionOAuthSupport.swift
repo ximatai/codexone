@@ -287,7 +287,12 @@ struct OAuthHarness: Sendable {
   let app: AccountCredentials
   let owner: Task<Void, any Error>
   let root: URL
-  static func open(timeout: Int) async throws -> Self {
+  static func open(
+    timeout: Int, clock: WallClock = testClock,
+    pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
+      try await Task.sleep(for: .seconds($0))
+    }
+  ) async throws -> Self {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let server = try await OAuthServer.open(
       group: group, plan: .reply(try oauthTokens(refresh: "synthetic-refresh-initial")))
@@ -303,12 +308,13 @@ struct OAuthHarness: Sendable {
       let cipher = try await AccountCredentialCipher.load(path: key.path)
       let database = try await SQLiteExecutionStore.open(
         path: root.appendingPathComponent("core.sqlite").path,
-        limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100), clock: testClock)
+        limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100), clock: clock,
+        pacingSleep: pacingSleep)
       store = database
-      let app = AccountCredentials(store: database, protection: cipher, clock: testClock)
+      let app = AccountCredentials(store: database, protection: cipher, clock: clock)
       let provider = try SubscriptionOAuthProvider(
         group: group, authority: .syntheticLoopback(port: server.port),
-        timeoutMilliseconds: timeout, clock: testClock)
+        timeoutMilliseconds: timeout, clock: clock)
       let supervisor = try AccountRefreshSupervisor(application: app, provider: provider)
       let task = Task {
         try await GatewayRuntime(services: [provider, supervisor]).run(handleSignals: false)

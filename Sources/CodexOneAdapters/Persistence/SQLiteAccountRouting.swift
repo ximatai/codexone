@@ -46,6 +46,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
       principal: command.policy.key.principal, references: command.references)
     guard (1...64).contains(command.candidates.count) else { throw ExecutionError.invalidCommand }
     for candidate in command.candidates { try validateAdmission(command.selecting(candidate)) }
+    try Task.checkCancellation()
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
       return try db.transaction {
         let affinity = try Self.accountAffinity(
@@ -53,14 +54,23 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           connection: command.connection)
         var ranked: [(AccountRouteCandidate, Int64, UInt64)] = []
         var atCapacity = false
+        var shortestWait: Double?
+        var preferredWait: Double?
         for candidate in command.candidates {
           guard affinity == nil || affinity == candidate.identity,
             candidate.snapshot.continuation == (affinity == candidate.identity)
           else { continue }
           let admission = command.selecting(candidate)
-          do { try Self.checkAccountAdmission(db, admission) } catch ExecutionError.conflict {
+          var candidateWait: Double?
+          do { try Self.checkAccountAdmission(db, admission) } catch let pacing
+            as AccountPacingRequired
+          {
+            candidateWait = pacing.seconds
+          } catch let cooldown as AccountCooldownUnavailable {
+            candidateWait = cooldown.seconds
+          } catch ExecutionError.conflict { continue } catch ExecutionError.denied {
             continue
-          } catch ExecutionError.denied { continue } catch ExecutionError.unknownObject { continue }
+          } catch ExecutionError.unknownObject { continue }
           let values: [SQLiteConnection.Value] = [
             .text(candidate.identity.namespace), .text(candidate.identity.id),
           ]
@@ -71,18 +81,40 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             atCapacity = true
             continue
           }
-          ranked.append(
-            (
-              candidate, active,
-              Self.routeTie(command.requestID ?? command.attempt, candidate.identity)
-            ))
+          if let candidateWait {
+            shortestWait = min(shortestWait ?? candidateWait, candidateWait)
+            if candidate.identity == command.preferred,
+              candidateWait <= OverloadPacing.preferredWaitSeconds
+            {
+              preferredWait = candidateWait
+            }
+            continue
+          }
+          let entry = (
+            candidate, active,
+            Self.routeTie(command.requestID ?? command.attempt, candidate.identity)
+          )
+          ranked.append(entry)
+        }
+        if let preferredWait {
+          // Preserve soft history across short overloads only when account capacity permits.
+          try Self.checkKeyAdmission(db, command.selecting(command.candidates[0]))
+          throw AccountPacingRequired(seconds: preferredWait)
         }
         ranked.sort {
+          let leftPreferred = $0.0.identity == command.preferred
+          let rightPreferred = $1.0.identity == command.preferred
+          if leftPreferred != rightPreferred { return leftPreferred }
           if $0.1 != $1.1 { return $0.1 < $1.1 }
           if $0.2 != $1.2 { return $0.2 < $1.2 }
           return $0.0.identity.id < $1.0.identity.id
         }
         guard let selected = ranked.first?.0 else {
+          if let remaining = shortestWait {
+            // No reservation/counter changes; reject revoked/expired/limited Keys before waiting.
+            try Self.checkKeyAdmission(db, command.selecting(command.candidates[0]))
+            try OverloadPacing.requiresWait(seconds: remaining)
+          }
           if atCapacity { throw ExecutionError.accountConcurrency }
           throw AccountDispatchError.unavailable
         }

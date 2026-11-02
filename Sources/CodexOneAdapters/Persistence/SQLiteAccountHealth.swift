@@ -14,6 +14,7 @@ extension SQLiteExecutionStore: AccountHealthStore {
         }
         for model in existing where !models.contains(model) {
           try db.write("DELETE FROM health_models WHERE model=?", [.text(model)])
+          for id in Array(db.overloadPacing.keys) { db.overloadPacing[id]?[model] = nil }
         }
         for model in models {
           try db.write("INSERT OR IGNORE INTO health_models VALUES(?)", [.text(model)])
@@ -39,20 +40,35 @@ extension SQLiteExecutionStore: AccountHealthStore {
       guard account.credentialVersion == credentialVersion else { return false }
       let health = try Self.loadHealth(db, account: account)
       return !health.authenticationRejected
-        && !models.subtracting(Set(health.cooldowns.map(\.model))).isEmpty
+        && models.contains { model in
+          guard let cooldown = health.cooldowns.first(where: { $0.model == model }) else {
+            return true
+          }
+          return cooldown.failure == .upstreamUnavailable
+            && Self.pacingRemaining(db, account: account.id, cooldown: cooldown)
+              <= OverloadPacing.maximumWaitSeconds
+        }
     }
   }
-  static func checkAccountHealth(_ db: SQLiteConnection, account: ManagedAccount, model: String)
-    throws
-  {
-    let blocked = try db.scalar(
-      "SELECT COUNT(*) FROM account_health WHERE account_id=? AND auth_rejected_version=?",
-      [.text(account.id), .number(account.credentialVersion)])
-    guard blocked == 0,
-      try db.scalar(
-        "SELECT COUNT(*) FROM account_model_health WHERE account_id=? AND model=? AND until_epoch>?",
-        [.text(account.id), .text(model), .number(db.clock.unixSeconds)]) == 0
-    else { throw ExecutionError.denied }
+  static func pacingRemaining(
+    _ db: SQLiteConnection, account: String, cooldown: AccountModelCooldown
+  ) -> Double {
+    let now = Double(db.clock.unixMicroseconds) / 1_000_000
+    let until = Double(cooldown.untilUnixSeconds)
+    // After restart the origin of a persisted cooldown is unknown: honor its full duration.
+    return db.overloadPacing[account]?[cooldown.model]?.remaining(
+      now: now, persistedUntil: cooldown.untilUnixSeconds)
+      ?? max(0, until - now)
+  }
+  static func checkAccountHealth(
+    _ db: SQLiteConnection, account: ManagedAccount, model: String
+  ) throws {
+    let health = try loadHealth(db, account: account)
+    guard !health.authenticationRejected else { throw ExecutionError.denied }
+    guard let cooldown = health.cooldowns.first(where: { $0.model == model }) else { return }
+    guard cooldown.failure == .upstreamUnavailable else { throw ExecutionError.denied }
+    let remaining = pacingRemaining(db, account: account.id, cooldown: cooldown)
+    try OverloadPacing.requiresWait(seconds: remaining)
   }
   static func loadHealth(_ db: SQLiteConnection, account: ManagedAccount) throws
     -> AccountHealth
@@ -108,15 +124,18 @@ extension SQLiteExecutionStore: AccountHealthStore {
     }
     try db.write(
       "UPDATE attempts SET outcome_json=? WHERE id=?", [.text(try encode(outcome)), .text(attempt)])
-    guard let failure = outcome.failure,
-      [.authenticationRejected, .rateLimited, .upstreamUnavailable].contains(failure),
-      let captured = snapshot.admission.accountSnapshot
-    else { return }
+    guard let captured = snapshot.admission.accountSnapshot else { return }
     let id = snapshot.admission.owner.identity
     let current = try Self.loadAccount(db, id).account
     guard current.namespace == snapshot.admission.owner.namespace,
       current.credentialVersion == captured.credentialVersion
     else { return }
+    if outcome.kind == .succeeded, let model = snapshot.admission.model {
+      db.overloadPacing[current.id]?[model] = nil
+      try db.write(
+        "DELETE FROM account_model_health WHERE account_id=? AND model=? AND failure=?",
+        [.text(current.id), .text(model), .text(ExecutionFailure.upstreamUnavailable.rawValue)])
+    }
     try applyAccountFailure(db, account: current, model: snapshot.admission.model, outcome: outcome)
   }
   static func applyAccountFailure(
@@ -141,8 +160,24 @@ extension SQLiteExecutionStore: AccountHealthStore {
     guard failure != .authenticationRejected, let model,
       try db.scalar("SELECT COUNT(*) FROM health_models WHERE model=?", [.text(model)]) == 1
     else { return }
-    let until =
+    var until =
       outcome.atUnixSeconds + (outcome.cooldownSeconds ?? (failure == .rateLimited ? 30 : 15))
+    if failure == .upstreamUnavailable {
+      var pacing: OverloadPacing
+      if let previous = db.overloadPacing[id]?[model] {
+        pacing = previous
+      } else {
+        let previousUntil = try db.scalar(
+          "SELECT COALESCE(MAX(until_epoch),0) FROM account_model_health WHERE account_id=? AND model=? AND failure=?",
+          [.text(id), .text(model), .text(ExecutionFailure.upstreamUnavailable.rawValue)])
+        pacing = OverloadPacing(persistedUntil: previousUntil)
+      }
+      pacing.record(
+        now: Double(db.clock.unixMicroseconds) / 1_000_000, at: outcome.atUnixSeconds,
+        retryAfter: outcome.cooldownSeconds)
+      until = pacing.persistedUntil
+      db.overloadPacing[id, default: [:]][model] = pacing
+    }
     try db.write(
       """
       INSERT INTO account_model_health VALUES(?,?,?,?) ON CONFLICT(account_id,model) DO UPDATE SET
