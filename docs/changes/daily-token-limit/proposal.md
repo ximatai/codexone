@@ -12,7 +12,7 @@ Core policy and strict management API expose tokens/active; old request limits a
 
 ## Acceptance and rollback
 
-Verify SQLite threshold, cache, concurrency, UTC rollover, restart, missing evidence and retention; strict HTTP fields and browser unit conversion, unlimited, conflicts and narrow layout. Back up before repair. Old binaries do not enforce Token caps and need explicit rollback configuration. References: I12, U01/U03/U04, A10/A11.
+Verify SQLite threshold, cache, concurrency, UTC rollover, restart, missing evidence and retention; strict HTTP fields and browser unit conversion, unlimited, conflicts and narrow layout. Back up before repair. A schema-v11 database containing newly written tokens/active policies must not be opened by old five-field binaries: required legacy fields are missing, so Key reads and authentication fail rather than merely skipping Token enforcement. There is no in-place downgrade API or converter. Prefer a forward fix; if an old binary is required, preserve and verify the current full bundle, restore a verified pre-upgrade compatible bundle into a new empty directory, and complete missing-interval reconciliation, Key replacement, account authorization and maintenance gates. Without a compatible bundle, remain stopped. See the [rollback procedure](../../guide/key-governance.md#兼容回退前提). References: I12, U01/U03/U04, A10/A11.
 
 ## 相关文档
 
