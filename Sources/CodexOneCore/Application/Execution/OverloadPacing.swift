@@ -2,7 +2,10 @@ import Foundation
 
 /// Consecutive overloads survive elapsed steps, but never a process restart or success.
 public struct OverloadPacing: Sendable {
-  public static let maximumWaitSeconds: Double = 3
+  /// Maximum wait when no healthy alternative exists.
+  public static let maximumWaitSeconds: Double = 15
+  /// Preserve soft preference only across a short wait.
+  public static let preferredWaitSeconds: Double = 3
   public static let maximumWaiters = 64
   public private(set) var consecutiveFailures = 0
   public private(set) var until: Double = 0

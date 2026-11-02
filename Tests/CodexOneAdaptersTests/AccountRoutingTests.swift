@@ -361,14 +361,14 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
     try await f.store.finalize(attempt: admitted.attempt, evidence: nil, outcome: outcome)
     let health = try await f.store.accountHealth(id: "a")
     #expect(health.cooldowns.first?.untilUnixSeconds == time.clock.unixSeconds + Int64(step))
-    #expect(try await f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]) == (step <= 3))
+    #expect(try await f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]) == (step <= 15))
     do {
       _ = try await f.store.admitSelectingAccount(f.command("blocked-\(index)"))
       Issue.record("Live overload admitted before its deadline")
     } catch let wait as AccountPacingRequired {
-      #expect(step <= 3 && wait.seconds == Double(step))
+      #expect(step <= 15 && wait.seconds == Double(step))
     } catch let unavailable as AccountCooldownUnavailable {
-      #expect(step > 3 && unavailable.retryAfter == Int64(step))
+      #expect(step > 15 && unavailable.retryAfter == Int64(step))
       #expect(protocolFailure(unavailable).status == 503)
       #expect(protocolFailure(unavailable).cooldownSeconds == Int64(step))
     }
@@ -461,12 +461,17 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   try await f.store.finalize(
     attempt: next.attempt, evidence: nil,
     outcome: .init(
-      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 60))
+      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 20))
   do {
     _ = try await f.store.admitSelectingAccount(f.command("trusted-blocked"))
     Issue.record("Expected trusted Retry-After")
-  } catch let unavailable as AccountCooldownUnavailable { #expect(unavailable.retryAfter == 60) }
-  time.advance(seconds: 60)
+  } catch let unavailable as AccountCooldownUnavailable {
+    #expect(unavailable.retryAfter == 20)
+    #expect(protocolFailure(unavailable).status == 503)
+    #expect(protocolFailure(unavailable).cooldownSeconds == 20)
+  }
+  #expect(try await !f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]))
+  time.advance(seconds: 20)
   let last = try await f.store.admitSelectingAccount(f.command("after-trusted"))
   try await f.store.finalize(
     attempt: last.attempt, evidence: nil,
@@ -594,12 +599,13 @@ func overloadSoftPreferredWaitsThenGatewayReselectsPreferred() async throws {
   try await f.store.bind(attempt: first.attempt, object: hint)
   try await f.store.finalize(
     attempt: first.attempt, evidence: nil,
-    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+    outcome: .init(
+      failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 2))
   let preferred = try routeIdentity(first)
   do {
     _ = try await f.store.admitSelectingAccount(f.command("preferred-wait", preferred: preferred))
     Issue.record("Expected soft preference pacing wait")
-  } catch let wait as AccountPacingRequired { #expect(wait.seconds == 1) }
+  } catch let wait as AccountPacingRequired { #expect(wait.seconds == 2) }
   #expect(
     try await f.store.perform {
       try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
@@ -616,7 +622,7 @@ func overloadSoftPreferredWaitsThenGatewayReselectsPreferred() async throws {
   waits.continuation.finish()
   var observed: [Double] = []
   for await seconds in waits.stream { observed.append(seconds) }
-  #expect(observed == [1])
+  #expect(observed == [2])
   #expect(finalizer.results.withLock { $0.count } == 1)
   await f.close()
 }
@@ -668,6 +674,59 @@ func overloadSoftPreferredFallsBackWhenNotOnlyShortPacing(blocker: String) async
   await #expect(throws: ExecutionError.unauthorized) {
     try await f.store.admitSelectingAccount(
       f.command("key-revoked", preferred: routeIdentity(first)))
+  }
+  await f.close()
+}
+
+@Test(arguments: [false, true])
+func overloadSingleAccountEightSecondWaitForwardsOrEndsAtDeadline(shortDeadline: Bool) async throws
+{
+  let time = TestWallClock()
+  let waits = Mutex<[Double]>([])
+  let limits = ExecutionLimits(requests: 100, active: 32, unresolved: 100, budgetMicros: 1000)
+  let f = try await RoutingFixture.make(limits: limits, clock: time.clock, ids: ["a"]) { seconds in
+    waits.withLock { $0.append(seconds) }
+    if shortDeadline {
+      try await Task.sleep(for: .seconds(seconds))
+    } else {
+      time.advance(seconds: Int64(seconds))
+    }
+  }
+  try await f.store.configureHealthModels(["synthetic-text"])
+  for (index, step) in [1, 2, 4, 8].enumerated() {
+    let admission = try await f.store.admitSelectingAccount(f.command("step-\(index)"))
+    try await f.store.finalize(
+      attempt: admission.attempt, evidence: nil,
+      outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+    if step < 8 { time.advance(seconds: Int64(step)) }
+  }
+  #expect(try await f.app.hasLocallyRoutableAccount(models: ["synthetic-text"]))
+  let healthBefore = try await f.store.accountHealth(id: "a")
+  let finalizer = RoutingFinalizer()
+  let gateway = AccountPoolGateway(
+    policy: f.policy, store: f.store, credentials: f.app, finalizer: finalizer, clock: time.clock)
+  let forwarded = Mutex(false)
+  do {
+    try await withExecutionDeadline(seconds: shortDeadline ? 1 : 60) {
+      try await gateway.execute(model: "synthetic-text", references: []) { _, _ in
+        forwarded.withLock { $0 = true }
+        return routeUsage
+      }
+    }
+    #expect(!shortDeadline)
+  } catch {
+    #expect(shortDeadline)
+    #expect(protocolFailure(error).status == 504)
+  }
+  #expect(waits.withLock { $0 } == [8])
+  #expect(forwarded.withLock { $0 } == !shortDeadline)
+  if shortDeadline {
+    #expect(try await f.store.accountHealth(id: "a").cooldowns == healthBefore.cooldowns)
+    #expect(finalizer.results.withLock { $0.isEmpty })
+    #expect(
+      try await f.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
+      } == 0)
   }
   await f.close()
 }

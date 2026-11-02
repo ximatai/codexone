@@ -66,7 +66,9 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             as AccountPacingRequired
           {
             shortestWait = min(shortestWait ?? pacing.seconds, pacing.seconds)
-            guard candidate.identity == command.preferred else { continue }
+            guard candidate.identity == command.preferred,
+              pacing.seconds <= OverloadPacing.preferredWaitSeconds
+            else { continue }
             candidateWait = pacing.seconds
           } catch let cooldown as AccountCooldownUnavailable {
             shortestWait = min(shortestWait ?? cooldown.seconds, cooldown.seconds)

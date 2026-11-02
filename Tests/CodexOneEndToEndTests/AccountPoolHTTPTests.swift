@@ -1970,6 +1970,12 @@ func overloadHTTPWaitsBeforeIntentEscalatesAndReturnsRetryAfter() async throws {
     }
     #expect(waits.withLock { $0 } == [1, 2])
     #expect(h.calls.count == 3)
+    #expect(try await h.readiness().0 == 200)
+    let work = try await h.oauth.app.prepareDispatch(id: "a", continuation: false)
+    try await h.store.recordControlOutcome(
+      account: AccountRouteCandidate(work: work),
+      outcome: .init(
+        failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 20))
     #expect(try await h.readiness().0 == 503)
     var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
     request.httpMethod = "POST"
@@ -1982,13 +1988,13 @@ func overloadHTTPWaitsBeforeIntentEscalatesAndReturnsRetryAfter() async throws {
     let (_, response) = try await session.data(for: request)
     session.invalidateAndCancel()
     let http = try #require(response as? HTTPURLResponse)
-    #expect(http.statusCode == 503 && http.value(forHTTPHeaderField: "retry-after") == "4")
+    #expect(http.statusCode == 503 && http.value(forHTTPHeaderField: "retry-after") == "20")
     #expect(h.calls.count == 3)
-    time.advance(seconds: 1)
+    time.advance(seconds: 5)
     #expect(try await h.readiness().0 == 200)
     #expect(try await h.request().0 == 200)
     try await awaitOAuth { h.finalizer.outstanding == 0 }
-    #expect(waits.withLock { $0 } == [1, 2, 3])
+    #expect(waits.withLock { $0 } == [1, 2, 15])
     #expect(try await h.store.accountHealth(id: "a").cooldowns.isEmpty)
     _ = try await h.request("overload-error", stream: true)
     try await awaitOAuth { h.finalizer.outstanding == 0 }
@@ -2026,13 +2032,9 @@ func overloadNativeWebSocketWaitsOnPinnedAccountWithHealthyAlternative() async t
         try await client.command(["input": .string("overload-error")])["type"]?.string == "error")
       try await awaitOAuth { h.finalizer.outstanding == 0 }
     }
-    let unavailable = try await client.command()
-    #expect(unavailable["status"]?.integer == 503)
-    #expect(unavailable["error"]?["code"]?.string == "account_unavailable")
-    #expect(unavailable["headers"]?["retry-after"]?.string == "4")
-    #expect(h.calls.count == 4)
-    #expect(waits.withLock { $0 } == [1, 2])
-    #expect(h.calls.count == 4 && Set(h.calls.map(\.account)).count == 1)
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    #expect(waits.withLock { $0 } == [1, 2, 4])
+    #expect(h.calls.count == 5 && Set(h.calls.map(\.account)).count == 1)
     #expect(h.state.value.withLock { $0.upgrades } == 1)
   } catch {
     await h.close()
