@@ -143,6 +143,10 @@ macOS arm64、Node 24.15：生产构建/类型、lint、格式检查、20项用�
 
 macOS arm64、Node 24.15、Chrome：生产构建/类型、lint、格式、文档与差异空白检查通过；全量组件205项通过，最后密钥定向16项复测通过；最终Chrome全量58项通过。全量组件限制2个worker避免与浏览器并行占用造成超时。本地合成服务宽窄屏查询/详情、无效名称与隐藏日期错误复核通过。此次仅修前端及测试，未重跑后端/Linux，未更改线上环境。
 
+## CI进行中投影契约补齐
+
+2026-11-02，Linux第二轮脚本分片2/4、1/4及4/4通过，3/4在管理接口旧字段白名单处失败。更新verify_admin.py，保留有界字段集合并加入reasoningEffort/requestMetadataRecorded；真实SSE请求显式提交high，断言进行中接口返回相同强度和已记录标记。macOS回环verify_admin.py、verify_admin_round2.py及verify_admin_assets.py通过，后续cutback脚本亦已定向通过。没有修改应用运行逻辑，最终Linux结果以最新PR工作流为准。
+
 ## 相关文档
 
 [提案](proposal.md) · [任务](tasks.md) · [验证约定](../../development/verification.md)

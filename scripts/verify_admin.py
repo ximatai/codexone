@@ -226,7 +226,7 @@ def verify(binary):
         assert key['expiresAtUnixSeconds'] is None
         # Real coordinator/runtime observation, with expiry while already dispatched.
         streaming = http.client.HTTPConnection('127.0.0.1', f.ports['data'], timeout=12)
-        streaming.request('POST', '/v1/responses', json.dumps({'model': 'synthetic-text', 'input': 'dribble', 'stream': True}),
+        streaming.request('POST', '/v1/responses', json.dumps({'model': 'synthetic-text', 'input': 'dribble', 'stream': True, 'reasoning': {'effort': 'high'}}),
                           {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + secret})
         response = streaming.getresponse()
         assert response.status == 200 and response.readline().startswith((b'data: ', b'event: '))
@@ -239,9 +239,10 @@ def verify(binary):
             time.sleep(.02)
         assert len(live) == 1 and live[0]['principal'] == 'browser-synthetic' and live[0]['model'] == 'synthetic-text'
         assert live[0]['displayName'] is None
+        assert live[0]['reasoningEffort'] == 'high' and live[0]['requestMetadataRecorded'] is True
         key = document(request(port, 'PUT', name_path, dict(revision=key['revision'], displayName='进行中别名'), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert document(request(port, 'GET', '/api/usage/in-flight?limit=1', cookie=cookie))['rows'][0]['displayName'] == '进行中别名'
-        assert set(live[0]).issubset({'id', 'keyID', 'principal', 'displayName', 'model', 'mode', 'accountID', 'accountDisplayName', 'startedAtUnixSeconds', 'elapsedSeconds', 'hasFirstEvent'})
+        assert set(live[0]).issubset({'id', 'keyID', 'principal', 'displayName', 'model', 'mode', 'accountID', 'accountDisplayName', 'startedAtUnixSeconds', 'elapsedSeconds', 'hasFirstEvent', 'reasoningEffort', 'requestMetadataRecorded'})
         key = document(request(port, 'PUT', expiration_path, dict(revision=key['revision'], expiresAtUnixSeconds=int(time.time())), cookie=cookie, origin=f.origin, csrf=csrf))['key']
         assert document(request(port, 'GET', '/api/usage/in-flight', cookie=cookie))['rows']
         assert b'response.output_text.delta' in response.read()
