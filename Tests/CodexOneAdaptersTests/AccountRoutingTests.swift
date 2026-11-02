@@ -730,3 +730,76 @@ func overloadSingleAccountEightSecondWaitForwardsOrEndsAtDeadline(shortDeadline:
   }
   await f.close()
 }
+
+@Test(arguments: [false, true])
+func overloadFullCoolingAccountDoesNotBecomeAWaitCandidate(hasAlternative: Bool) async throws {
+  let time = TestWallClock()
+  let f = try await RoutingFixture.make(
+    limits: .init(requests: 100, active: 32, unresolved: 32, budgetMicros: 1000),
+    clock: time.clock, ids: hasAlternative ? ["a", "b"] : ["a"])
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let preferred = try AccountRouteIdentity(id: "a", namespace: "synthetic/a")
+  for index in 0..<ExecutionLimits.accountConcurrency {
+    _ = try await f.store.admitSelectingAccount(f.command("full-\(index)", preferred: preferred))
+  }
+  for id in f.ids {
+    let work = try await f.app.prepareDispatch(id: id, continuation: false)
+    try await f.store.recordControlOutcome(
+      account: AccountRouteCandidate(work: work),
+      outcome: .init(
+        failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds,
+        cooldownSeconds: id == "a" ? 2 : 20))
+  }
+  if hasAlternative {
+    do {
+      _ = try await f.store.admitSelectingAccount(f.command("must-not-wait-on-full"))
+      Issue.record("Expected the available-capacity account's longer Retry-After")
+    } catch let unavailable as AccountCooldownUnavailable {
+      #expect(unavailable.retryAfter == 20)
+    }
+  } else {
+    await #expect(throws: ExecutionError.accountConcurrency) {
+      try await f.store.admitSelectingAccount(f.command("must-not-wait-on-full"))
+    }
+  }
+  #expect(try await f.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 16)
+  await f.close()
+}
+
+@Test(.timeLimit(.minutes(1)))
+func overloadWaitRechecksObservedTokenLimitBeforeIntent() async throws {
+  let time = TestWallClock()
+  let waiting = AsyncStream<Void>.makeStream()
+  let release = AsyncStream<Void>.makeStream()
+  let f = try await RoutingFixture.make(
+    limits: .init(
+      requests: 100, active: 4, unresolved: 4, budgetMicros: 100,
+      unresolvedMicros: 100, tokens: 2), clock: time.clock, ids: ["a"]
+  ) { _ in
+    waiting.continuation.yield(())
+    for await _ in release.stream { break }
+    try Task.checkCancellation()
+  }
+  try await f.store.configureHealthModels(["synthetic-text"])
+  let failed = try await f.store.admitSelectingAccount(f.command("token-overload"))
+  let running = try await f.store.admitSelectingAccount(f.command("token-existing"))
+  try await f.store.finalize(
+    attempt: failed.attempt, evidence: nil,
+    outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
+  let command = try await f.command("token-waiter")
+  let task = Task {
+    await #expect(throws: AccountPacingRequired.self) {
+      try await f.store.admitSelectingAccount(command)
+    }
+    try await f.store.waitForAccountPacing(seconds: 1)
+    return try await f.store.admitSelectingAccount(command)
+  }
+  var arrivals = waiting.stream.makeAsyncIterator()
+  _ = await arrivals.next()
+  try await f.store.finalize(attempt: running.attempt, evidence: routeUsage)
+  time.advance(seconds: 1)
+  release.continuation.finish()
+  await #expect(throws: ExecutionError.denied) { try await task.value }
+  #expect(try await f.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 2)
+  await f.close()
+}

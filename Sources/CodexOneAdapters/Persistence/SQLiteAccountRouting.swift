@@ -65,14 +65,9 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           do { try Self.checkAccountAdmission(db, admission) } catch let pacing
             as AccountPacingRequired
           {
-            shortestWait = min(shortestWait ?? pacing.seconds, pacing.seconds)
-            guard candidate.identity == command.preferred,
-              pacing.seconds <= OverloadPacing.preferredWaitSeconds
-            else { continue }
             candidateWait = pacing.seconds
           } catch let cooldown as AccountCooldownUnavailable {
-            shortestWait = min(shortestWait ?? cooldown.seconds, cooldown.seconds)
-            continue
+            candidateWait = cooldown.seconds
           } catch ExecutionError.conflict { continue } catch ExecutionError.denied {
             continue
           } catch ExecutionError.unknownObject { continue }
@@ -87,7 +82,12 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             continue
           }
           if let candidateWait {
-            preferredWait = candidateWait
+            shortestWait = min(shortestWait ?? candidateWait, candidateWait)
+            if candidate.identity == command.preferred,
+              candidateWait <= OverloadPacing.preferredWaitSeconds
+            {
+              preferredWait = candidateWait
+            }
             continue
           }
           let entry = (

@@ -2069,17 +2069,22 @@ func overloadDisconnectDuringWaitLeavesNoIntentOrHealthFailure() async throws {
       let next = native ? nil : Task { try await h.request() }
       var iterator = waiting.stream.makeAsyncIterator()
       _ = await iterator.next()
+      #expect(h.finalizer.outstanding == 0)
       #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
       #expect(
         try await h.store.perform {
           try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='intent'")
         } == 0)
+      let currentB = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+      _ = try await h.store.setAccountMode(id: "b", revision: currentB.revision, mode: .enabled)
+      #expect(try await h.request().0 == 200)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
       client?.close()
       next?.cancel()
       _ = await next?.result
       try await awaitOAuth { h.store.pacingWaiters.count == 0 && h.finalizer.outstanding == 0 }
       #expect(try await h.store.accountHealth(id: "a") == before)
-      #expect(h.calls.count == 1)
+      #expect(h.calls.count == 2)
     } catch {
       await h.close()
       await oauth.close()
