@@ -18,14 +18,15 @@ extension HTTPResponseExecution {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    guard let gateway else { throw ExecutionError.unauthorized }
+    guard gateway != nil else { throw ExecutionError.unauthorized }
     let model = try executionModel(request)
     guard request.mode == .compact, !request.streamCompaction
     else { throw GatewayProtocolError(403, "model_not_allowed") }
     try await withExecutionDeadline(seconds: configuration.budget.total) {
-      try await gateway.execute(
+      try await executeRouted(
         model: request.model, references: request.references, affinityHints: request.affinityHints,
         requestID: requestID, mode: .compact,
+        turnState: try requestTurnState(headers: clientHeaders, document: request.document),
         requirements: request.requirements,
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, authorization in
@@ -50,6 +51,7 @@ extension HTTPResponseExecution {
           // The structured deadline owns classification; the client is a later transport fallback.
           let response = try await client.execute(
             upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+          await observeResponseHeaders(response.headers, account: authorization?.identity)
           guard response.status == .ok else {
             throw await ProviderError.failure(response: response, compact: true)
           }

@@ -5,7 +5,7 @@ import Testing
 
 @testable import CodexOneAdapters
 
-@Test func nativeFingerprintSignalsAreExplicitAndCaseSensitive() {
+@Test func nativeFingerprintSignalsAreExplicitAndCaseSensitive() throws {
   for prefix in [
     "codex_cli_rs", "codex-tui", "codex_exec", "codex_sdk_ts", "codex_vscode", "Codex Desktop",
     "Codex ",
@@ -26,9 +26,9 @@ import Testing
   let native: HTTPHeaders = [
     "user-agent": "Codex Desktop synthetic", "originator": "custom", "version": "original",
   ]
-  let forwarded = forwardedClientHeaders(native)
+  let forwarded = try forwardedClientHeaders(native)
   for name in ["user-agent", "originator", "version"] { #expect(forwarded[name] == native[name]) }
-  let headers = forwardedClientHeaders([
+  let headers = try forwardedClientHeaders([
     "x-codex-turn-state": "synthetic", "x-stainless-lang": "typescript",
     "x-openai-client-user-agent": "private", "cookie": "private", "proxy-authorization": "private",
   ])

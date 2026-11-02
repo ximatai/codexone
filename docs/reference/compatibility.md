@@ -24,6 +24,12 @@ Responses 支持 HTTP JSON/SSE、原生 WS 与 HTTP→WS 桥接；模型目录�
 
 仓库提供真实 loopback socket、临时 SQLite、进程重启、固定 CLI 和浏览器合成测试。CLI 结果不能替代 Desktop UI，macOS 不能替代 Linux，单账号路径不能证明多账号路由。发布说明应列具体版本、模型与传输的实际验证范围。
 
+## 会话与缓存
+
+保留原生客户端的 session/thread 身份：父子代理可以共享 session，同时使用独立 thread；不要求两者一一对应。自定义 Responses 接入由客户端管理稳定身份，不要给所有无关会话配置同一个常量。既有 `prompt_cache_key` 原样转发，网关不会用它合成或覆盖会话头；仅 body 缓存键不构成网关账号偏好。`x-codex-turn-state` 是提供者本轮状态，由客户端在适用的同一轮内回送，不能作为跨会话配置常量。
+
+session/thread 标识只提供账号软偏好；已观察的 turn-state 独立约束来源账号，不能在换号时复用；账号池对未知/过期/丢失的 token 明确返回 503，不自动清除状态重放。强对象/连接归属、授权与健康检查仍优先。账号不可用时可以回退，首请求并发及进程重启不保证粘滞。稳定账号、会话标识与提示前缀有助于复用，但不保证提供者缓存命中率或有效期；工具集、instructions、模型或前缀变化仍需客户端单独排查。HTTP/WS 元数据边界与辅助请求规则见[控制接口约定](control-endpoints.md)。
+
 ## 相关文档
 
 [协议规范](specs/protocol.md) · [客户端协议跟踪](../development/client-protocol-watch.md) · [迁移指南](../guide/migration.md)

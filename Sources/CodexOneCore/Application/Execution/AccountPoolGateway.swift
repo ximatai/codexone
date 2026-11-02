@@ -22,7 +22,9 @@ public struct AccountPoolGateway: Sendable {
   }
   public func execute(
     model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
-    connection: AccountRouteIdentity? = nil, requestID: String? = nil,
+    connection: AccountRouteIdentity? = nil,
+    preferred sessionPreferred: AccountRouteIdentity? = nil,
+    requiredAccount: AccountRouteIdentity? = nil, requestID: String? = nil,
     mode: ExecutionMode = .generation,
     requirements: ExecutionRequirements = .init(),
     reasoningEffort: String? = nil, serviceTier: String? = nil,
@@ -40,30 +42,34 @@ public struct AccountPoolGateway: Sendable {
           affinity == nil && connection == nil && !affinityHints.isEmpty
           ? try await store.resolveAccountHint(
             principal: policy.key.principal, hints: affinityHints) : nil
-        let works = try await prepareWorks(affinity: affinity)
+        let works = try await prepareWorks(affinity: affinity, requiredAccount: requiredAccount)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let day = clock.utcDay
         let command = try AccountPoolAdmission(
           attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
           requestID: requestID, mode: mode, references: references, connection: connection,
           candidates: candidates, requirements: requirements,
-          reasoningEffort: reasoningEffort, serviceTier: serviceTier, preferred: preferred)
+          reasoningEffort: reasoningEffort, serviceTier: serviceTier,
+          preferred: preferred ?? sessionPreferred)
         return try PreparedAccountPoolAdmission(command: command, credentials: works)
       }, operation: operation)
   }
   /// Auxiliary dispatch has no generation admission, reservation or finalization ticket.
-  public func authorizeControl(preferred: AccountRouteIdentity? = nil) async throws
-    -> AccountDispatchWork
-  {
-    let works = try await prepareWorks(affinity: nil)
+  public func authorizeControl(
+    preferred: AccountRouteIdentity? = nil, requiredAccount: AccountRouteIdentity? = nil,
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double] = { [:] }
+  ) async throws -> AccountDispatchWork {
+    let works = try await prepareWorks(affinity: nil, requiredAccount: requiredAccount)
     let selected = try await store.selectControlAccount(
       key: policy.key, candidates: try works.values.map { try AccountRouteCandidate(work: $0) },
-      preferred: preferred)
+      preferred: preferred, cooldowns: cooldowns)
     guard let work = works[selected] else { throw ExecutionError.conflict }
     return work
   }
 
-  private func prepareWorks(affinity: AccountRouteIdentity?)
+  private func prepareWorks(
+    affinity: AccountRouteIdentity?, requiredAccount: AccountRouteIdentity?
+  )
     async throws
     -> [AccountRouteIdentity: AccountDispatchWork]
   {
@@ -73,6 +79,7 @@ public struct AccountPoolGateway: Sendable {
       try Task.checkCancellation()
       let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
       guard affinity == nil || affinity == identity,
+        requiredAccount == nil || requiredAccount == identity,
         account.authorization == .ready || account.authorization == .refreshing,
         account.mode == .enabled || (account.mode == .draining && affinity == identity)
       else { continue }

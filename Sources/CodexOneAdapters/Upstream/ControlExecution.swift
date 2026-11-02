@@ -94,12 +94,17 @@ extension HTTPResponseExecution {
         return
       }
       status = try await withExecutionDeadline(seconds: route.seconds) {
+        let metadataHeaders = try forwardedClientHeaders(
+          head.headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
         let authorization: SubscriptionDataAccess?
         let work: AccountDispatchWork?
         let routing = access.store as? any AccountRoutingStore
         if case .pool(let gateway, let provider, let target) = try access.gateway(policy) {
+          let token = try requestTurnState(headers: metadataHeaders)
+          let required = try token.map { try turnStateOwners.owner(key: key, token: $0) }
           let selected = try await gateway.authorizeControl(
-            preferred: controlAffinity.preferred(key: key, headers: head.headers))
+            preferred: sessionAffinity.preferred(key: key, headers: metadataHeaders),
+            requiredAccount: required, cooldowns: { controlHealth.cooldowns(route: route.path) })
           selectedAccount.withLock { $0 = selected.account.id }
           work = selected
           authorization = try provider.dataAccess(work: selected, target: target)
@@ -120,9 +125,7 @@ extension HTTPResponseExecution {
           let query = head.uri.firstIndex(of: "?").map { String(head.uri[$0...]) } ?? ""
           var upstream = HTTPClientRequest(url: url.string! + query)
           upstream.method = head.method
-          upstream.headers = forwardedClientHeaders(
-            head.headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions
-          )
+          upstream.headers = metadataHeaders
           let clientConnectionHeaders = Set(
             head.headers["connection"].flatMap {
               $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -160,15 +163,15 @@ extension HTTPResponseExecution {
               status: Int(response.status.code), error: document?["error"] ?? document?["detail"],
               retryAfter: ProviderError.retryAfter(response.headers))
           }
-          if let identity = authorization?.identity {
-            controlAffinity.observe(key: key, headers: head.headers, account: identity)
-            controlAffinity.observe(key: key, headers: response.headers, account: identity)
+          var headers = forwardedResponseHeaders(response.headers)
+          if let identity = authorization?.identity,
+            let token = headers.first(name: "x-codex-turn-state")
+          {
+            turnStateOwners.observe(key: key, token: token, account: identity)
           }
-          var headers = HTTPHeaders()
           let allowed: Set<String> = [
             "content-type", "content-encoding", "vary", "cache-control", "etag", "last-modified",
             "retry-after",
-            "x-codex-turn-state",
           ]
           let connection = Set(
             response.headers["connection"].flatMap {
@@ -184,16 +187,20 @@ extension HTTPResponseExecution {
             ControlReply(status: Int(response.status.code), headers: headers, body: data))
           return Int(response.status.code)
         } catch {
-          if let work, let routing,
-            [.authenticationRejected, .rateLimited, .upstreamUnavailable].contains(
-              executionFailure(error))
-          {
-            try await routing.recordControlOutcome(
-              account: AccountRouteCandidate(work: work),
-              outcome: .init(
-                failure: executionFailure(error),
-                atUnixSeconds: access.clock.unixSeconds,
-                cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+          if let work {
+            let failure = executionFailure(error)
+            if [.authenticationRejected, .rateLimited].contains(failure), let routing {
+              try await routing.recordAccountWideOutcome(
+                account: AccountRouteCandidate(work: work),
+                outcome: .init(
+                  failure: failure, atUnixSeconds: access.clock.unixSeconds,
+                  cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+            } else if failure == .upstreamUnavailable {
+              controlHealth.record(
+                route: route.path,
+                account: try .init(id: work.account.id, namespace: work.account.namespace),
+                seconds: (error as? GatewayProtocolError)?.cooldownSeconds)
+            }
           }
           throw error
         }

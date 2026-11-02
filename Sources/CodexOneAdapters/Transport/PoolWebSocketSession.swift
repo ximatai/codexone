@@ -70,11 +70,13 @@ enum PoolWebSocketSession {
     downstream: WebSocketPeer, firstBody: WebSocketBody, first: ResponseRequest,
     executor: HTTPResponseExecution, digest: String?
   ) async throws {
-    guard let gateway = executor.gateway else { throw ExecutionError.unauthorized }
+    guard executor.gateway != nil else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
     let lane = try webSocketLane(JSONValue.decode(firstBody.data))
     do {
+      let turnState = try requestTurnState(
+        headers: executor.clientHeaders, document: first.document)
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         defer {
           start.close(CancellationError())
@@ -83,11 +85,11 @@ enum PoolWebSocketSession {
         tasks.addTask {
           do {
             try await withExecutionDeadline(seconds: executor.configuration.budget.total) {
-              try await gateway.execute(
+              try await executor.executeRouted(
                 model: first.model, references: first.references,
                 affinityHints: first.affinityHints,
                 requestID: requestID,
-                mode: first.mode, requirements: first.requirements,
+                mode: first.mode, turnState: turnState, requirements: first.requirements,
                 reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
               ) { context, authorization in
                 try await withExecutionDeadline(
@@ -117,9 +119,15 @@ enum PoolWebSocketSession {
             try await executor.webSocket.authorized(
               selection.authorization, headers: executor.clientHeaders
             ).run(
+              receiveHeaders: {
+                await executor.observeResponseHeaders(
+                  $0, account: selection.authorization?.identity)
+              },
               detachedEvent: { data, lane in
                 guard !downstream.isClosed else { return }
                 var event = try JSONValue.decode(data).object!
+                executor.recordResponseMetadata(
+                  .object(event), account: selection.authorization?.identity)
                 if !lane.isEmpty { event["stream_id"] = .string(lane) }
                 if event["type"]?.string == "error" {
                   try await sendWebSocketError(

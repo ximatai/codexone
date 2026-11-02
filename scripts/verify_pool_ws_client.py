@@ -14,7 +14,7 @@ def event(sock):
 def create(command, lane=None):
     value = {"type": "response.create", "model": "synthetic-text", "input": command.get("input", "synthetic")}
     for field in ("previous_response_id", "generate", "tools", "store", "max_output_tokens", "temperature", "top_p",
-                  "truncation", "metadata", "prompt_cache_retention", "service_tier", "include"):
+                  "truncation", "metadata", "prompt_cache_retention", "service_tier", "include", "client_metadata"):
         if field in command:
             value[field] = command[field]
     if lane:
@@ -23,7 +23,7 @@ def create(command, lane=None):
 
 
 def main():
-    sock = dial(int(sys.argv[1]), token=sys.argv[2])
+    sock = dial(int(sys.argv[1]), token=sys.argv[2], headers=json.loads(sys.argv[3]) if len(sys.argv)>3 else None)
     try:
         print('{"ready":true}', flush=True)
         for line in sys.stdin:

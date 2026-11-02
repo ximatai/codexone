@@ -52,6 +52,7 @@ struct WebSocketUpstream: Sendable {
   }
 
   func run(
+    receiveHeaders: @escaping @Sendable (HTTPHeaders) async -> Void = { _ in },
     detachedEvent: (@Sendable (Data, String) async throws -> Void)? = nil,
     unexpectedResponse: (@Sendable () async throws -> Void)? = nil,
     operation: @escaping @Sendable (WebSocketPeer) async throws -> Void
@@ -86,6 +87,14 @@ struct WebSocketUpstream: Sendable {
                     NIOSSLClientHandler(context: tlsContext, serverHostname: host))
                 }
                 var headers = clientHeaders
+                if configuration.requestContract == .codexSubscription {
+                  headers.remove(name: "x-codex-turn-state")
+                }
+                if configuration.requestContract == .codexSubscription,
+                  headers["openai-beta"].isEmpty
+                {
+                  headers.add(name: "openai-beta", value: "responses_websockets=2026-02-06")
+                }
                 headers.replaceOrAdd(
                   name: "host", value: url.port.map { host + ":" + String($0) } ?? host)
                 if let authorization {
@@ -98,12 +107,15 @@ struct WebSocketUpstream: Sendable {
                 let observed = UpstreamUpgradeStatus()
                 let upgrader = NIOTypedWebSocketClientUpgrader<ProtocolWebSocket>(
                   maxFrameSize: ImageLimits.eventBytes,
-                  upgradePipelineHandler: { channel, _ in
-                    channel.pipeline.removeHandler(observed).flatMap {
-                      channel.eventLoop.makeCompletedFuture {
-                        try configureWebSocket(channel, client: true)
+                  upgradePipelineHandler: { channel, head in
+                    channel.eventLoop.makeFutureWithTask { await receiveHeaders(head.headers) }
+                      .flatMap {
+                        channel.pipeline.removeHandler(observed)
+                      }.flatMap {
+                        channel.eventLoop.makeCompletedFuture {
+                          try configureWebSocket(channel, client: true)
+                        }
                       }
-                    }
                   })
                 var pipeline = NIOUpgradableHTTPClientPipelineConfiguration(
                   upgradeConfiguration: .init(

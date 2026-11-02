@@ -643,7 +643,7 @@ func overloadSoftPreferredFallsBackWhenNotOnlyShortPacing(blocker: String) async
     }
     if blocker == "paced-capacity" {
       let work = try await f.app.prepareDispatch(id: preferred.id, continuation: false)
-      try await f.store.recordControlOutcome(
+      try await f.store.recordAccountWideOutcome(
         account: AccountRouteCandidate(work: work),
         outcome: .init(failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds))
     }
@@ -744,7 +744,7 @@ func overloadFullCoolingAccountDoesNotBecomeAWaitCandidate(hasAlternative: Bool)
   }
   for id in f.ids {
     let work = try await f.app.prepareDispatch(id: id, continuation: false)
-    try await f.store.recordControlOutcome(
+    try await f.store.recordAccountWideOutcome(
       account: AccountRouteCandidate(work: work),
       outcome: .init(
         failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds,
@@ -801,5 +801,143 @@ func overloadWaitRechecksObservedTokenLimitBeforeIntent() async throws {
   release.continuation.finish()
   await #expect(throws: ExecutionError.denied) { try await task.value }
   #expect(try await f.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 2)
+  await f.close()
+}
+
+@Test(arguments: ["history", "object", "connection"])
+func sessionPreferenceNeverOverridesOwnedHistoryOrConnection(kind: String) async throws {
+  let f = try await RoutingFixture.make()
+  let a = try AccountRouteIdentity(id: "a", namespace: "synthetic/a")
+  let b = try AccountRouteIdentity(id: "b", namespace: "synthetic/b")
+  let seed = try await f.store.admitSelectingAccount(f.command("session-seed", preferred: a))
+  let reference = ObjectBinding(type: "response", rawID: "synthetic-owned-response")
+  try await f.store.bind(attempt: seed.attempt, object: reference)
+  try await f.store.finalize(attempt: seed.attempt, evidence: routeUsage)
+  let gateway = AccountPoolGateway(
+    policy: f.policy, store: f.store, credentials: f.app, finalizer: RoutingFinalizer(),
+    clock: testClock)
+  try await gateway.execute(
+    model: "synthetic-text", references: kind == "object" ? [reference] : [],
+    affinityHints: kind == "history" ? [reference] : [],
+    connection: kind == "connection" ? a : nil, preferred: b
+  ) { context, work in
+    #expect(context.admission.owner.identity == a.id)
+    #expect(work.account.id == a.id)
+    return routeUsage
+  }
+  await f.close()
+}
+
+private final class OwnerRefreshProbe: AccountDispatchRefreshing {
+  let app: AccountCredentials
+  let calls = Mutex<[String]>([])
+  let beforeRefresh: @Sendable () async -> Void
+  init(app: AccountCredentials, beforeRefresh: @escaping @Sendable () async -> Void = {}) {
+    self.app = app
+    self.beforeRefresh = beforeRefresh
+  }
+  var isAccepting: Bool { true }
+  func refreshForDispatch(account: ManagedAccount) async throws -> ManagedAccount {
+    calls.withLock { $0.append(account.id) }
+    await beforeRefresh()
+    let work = try await app.beginRefresh(id: account.id, revision: account.revision)
+    return try await app.finishVerifiedRefresh(
+      work, namespace: account.namespace,
+      credential: AccountCredential(
+        accessToken: "synthetic-refreshed", refreshToken: "synthetic-refresh",
+        idToken: nil, expiresAtUnixSeconds: 2_000_000_000))
+  }
+}
+
+private func expireRequiredOwner(_ f: RoutingFixture) async throws {
+  let a = try #require(try await f.store.listAccounts().first { $0.id == "a" })
+  let work = try await f.app.beginRefresh(id: a.id, revision: a.revision)
+  _ = try await f.app.finishVerifiedRefresh(
+    work, namespace: a.namespace,
+    credential: AccountCredential(
+      accessToken: "synthetic-expired", refreshToken: "synthetic-refresh",
+      idToken: nil, expiresAtUnixSeconds: testClock.unixSeconds - 1))
+}
+
+@Test func requiredOwnerRefreshIsNotSkippedForHealthyAlternative() async throws {
+  let f = try await RoutingFixture.make()
+  try await expireRequiredOwner(f)
+  let refresher = OwnerRefreshProbe(app: f.app)
+  let gateway = AccountPoolGateway(
+    policy: f.policy, store: f.store, credentials: f.app,
+    finalizer: RoutingFinalizer(), refresher: refresher,
+    clock: testClock)
+  let a = try AccountRouteIdentity(id: "a", namespace: "synthetic/a")
+  try await gateway.execute(model: "synthetic-text", references: [], requiredAccount: a) {
+    _, work in
+    #expect(work.account.id == "a")
+    return routeUsage
+  }
+  #expect(refresher.calls.withLock { $0 } == ["a"])
+  await f.close()
+}
+
+@Test(arguments: [false, true])
+func controlCooldownIsReadAfterOwnerRefresh(expired: Bool) async throws {
+  let f = try await RoutingFixture.make()
+  try await expireRequiredOwner(f)
+  let a = try AccountRouteIdentity(id: "a", namespace: "synthetic/a")
+  let now = Mutex(ContinuousClock.now)
+  let health = ControlEndpointHealth(now: { now.withLock { $0 } })
+  if expired { health.record(route: "search", account: a, seconds: 1) }
+  let refresher = OwnerRefreshProbe(
+    app: f.app,
+    beforeRefresh: {
+      if expired {
+        now.withLock { $0 = $0.advanced(by: .seconds(2)) }
+      } else {
+        health.record(route: "search", account: a, seconds: 60)
+      }
+    })
+  let gateway = AccountPoolGateway(
+    policy: f.policy, store: f.store, credentials: f.app,
+    finalizer: RoutingFinalizer(), refresher: refresher, clock: testClock)
+  do {
+    let work = try await gateway.authorizeControl(
+      requiredAccount: a, cooldowns: { health.cooldowns(route: "search") })
+    #expect(expired && work.account.id == "a")
+  } catch let cooldown as AccountCooldownUnavailable {
+    #expect(!expired && cooldown.retryAfter == 60)
+  }
+  await f.close()
+}
+
+@Test func controlRevocationWinsOverAllEndpointCooldowns() async throws {
+  let f = try await RoutingFixture.make()
+  let command = try await f.command("synthetic-control-candidates")
+  _ = try await f.store.updateKey(
+    id: f.policy.key.id, revision: f.policy.key.revision,
+    enabled: false, policy: f.policy.key.policy)
+  await #expect(throws: ExecutionError.unauthorized) {
+    try await f.store.selectControlAccount(
+      key: f.policy.key, candidates: command.candidates,
+      preferred: nil,
+      cooldowns: {
+        Dictionary(uniqueKeysWithValues: command.candidates.map { ($0.identity, 60.0) })
+      })
+  }
+  await f.close()
+}
+
+@Test func controlSelectionRechecksExpirationBeforeCooldown() async throws {
+  let time = TestWallClock()
+  let f = try await RoutingFixture.make(clock: time.clock)
+  let key = try await f.store.setKeyExpiration(
+    id: f.policy.key.id, revision: f.policy.key.revision,
+    expiresAtUnixSeconds: time.clock.unixSeconds + 1)
+  let command = try await f.command("synthetic-expiring-control")
+  time.advance(seconds: 2)
+  await #expect(throws: ExecutionError.keyExpired) {
+    try await f.store.selectControlAccount(
+      key: key, candidates: command.candidates, preferred: nil,
+      cooldowns: {
+        Dictionary(uniqueKeysWithValues: command.candidates.map { ($0.identity, 60.0) })
+      })
+  }
   await f.close()
 }

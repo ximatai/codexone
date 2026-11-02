@@ -8,7 +8,10 @@ struct HTTPResponseExecution: Sendable {
   var protocolExtensions: ClientProtocolExtensionRegistry? = nil
   let imageCapacity: ImageCapacity
   var controlCapacity = ControlCapacity()
-  var controlAffinity = ControlAffinity()
+  var sessionAffinity = SessionAffinity()
+  var turnStateOwners = TurnStateOwners()
+  var controlHealth = ControlEndpointHealth()
+  var receiveResponseHeaders: @Sendable (HTTPHeaders) async -> Void = { _ in }
   var clientHeaders = HTTPHeaders()
   var protocolClientHeaders = HTTPHeaders()
   let client: HTTPClient
@@ -36,7 +39,9 @@ struct HTTPResponseExecution: Sendable {
     return Self(
       protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
       controlCapacity: controlCapacity,
-      controlAffinity: controlAffinity, clientHeaders: clientHeaders,
+      sessionAffinity: sessionAffinity, turnStateOwners: turnStateOwners,
+      controlHealth: controlHealth,
+      receiveResponseHeaders: receiveResponseHeaders, clientHeaders: clientHeaders,
       protocolClientHeaders: protocolClientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
@@ -80,35 +85,41 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    guard let gateway else { throw ExecutionError.unauthorized }
+    guard gateway != nil else { throw ExecutionError.unauthorized }
     guard request.mode == .generation || request.mode == .priming || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
     let model = try executionModel(request)
+    let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
     let wireDocument = try request.preparedDocument(
       contract: configuration.requestContract, nativeWebSocket: false)
     let wireStreaming = wireDocument["stream"]?.bool == true
     if configuration.upstreamTransport == "websocket" {
-      try await gateway.execute(
+      try await executeRouted(
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
-        mode: request.mode, requirements: request.requirements,
+        mode: request.mode, turnState: turnState, requirements: request.requirements,
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, authorization in
         try await withExecutionDeadline(seconds: configuration.budget.total) {
-          try await webSocket.authorized(authorization, headers: clientHeaders).run { peer in
-            try peer.beginTurn(compaction: request.streamCompaction)
-            try await exchange(request, context: context, model: model, peer: peer, emit: emit)
-          }
+          try await webSocket.authorized(authorization, headers: clientHeaders).run(
+            receiveHeaders: {
+              await observeResponseHeaders($0, account: authorization?.identity)
+            }) { peer in
+              try peer.beginTurn(compaction: request.streamCompaction)
+              try await exchange(
+                request, context: context, model: model, peer: peer, turnState: turnState,
+                emit: emit)
+            }
         }
         return nil
       }
       return
     }
-    try await gateway.execute(
+    try await executeRouted(
       model: request.admissionModel, references: request.references,
       affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, requirements: request.requirements,
+      mode: request.mode, turnState: turnState, requirements: request.requirements,
       reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
     ) { context, authorization in
       try await withProgressDeadline(budget: configuration.budget) { progress in
@@ -136,10 +147,7 @@ struct HTTPResponseExecution: Sendable {
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-        if let identity = authorization?.identity, let key = currentKeyID {
-          controlAffinity.observe(key: key, headers: clientHeaders, account: identity)
-          controlAffinity.observe(key: key, headers: response.headers, account: identity)
-        }
+        await observeResponseHeaders(response.headers, account: authorization?.identity)
         guard response.status == .ok else {
           throw await ProviderError.failure(response: response)
         }
@@ -167,6 +175,7 @@ struct HTTPResponseExecution: Sendable {
               ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
           var responseID: String?
           var terminal = false
+          var observedMetadata = false
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
             for byte in chunk.readableBytesView {
@@ -192,6 +201,8 @@ struct HTTPResponseExecution: Sendable {
               {
                 throw GatewayProtocolError(502, "invalid_upstream_turn")
               }
+              await observeResponseMetadata(
+                event, account: authorization?.identity, returned: &observedMetadata)
               // Trusted usage must survive later binding/output failures.
               if ProviderObservation.terminalEvents.contains(type),
                 !context.providerRejectedBeforeOutput

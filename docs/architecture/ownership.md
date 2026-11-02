@@ -7,6 +7,7 @@
 | 准入、归属、结算、核对 | Core/Application（Domain 值类型） | 单次执行协调器；后台任务由 Runtime 监督 | 调事务端口，返回语义结果；不调用全局 Runtime 服务 |
 | 账号池选择 | Core/Application 的单次 AccountPoolGateway | 既有 finalizer ticket 先覆盖候选准备；无独立后台任务 | 调归属/原子选择端口；Adapters 在同一 DB 事务选择并准入，已准入只由 finalizer 收尾 |
 | 过载节流与等待 | Core/Application 定义步长、等待/拒绝规则及重选用例；Adapters/Persistence 原子保存健康截止与进程内连续计数 | 每次准备/准入前预留 finalizer ticket，确认未建 intent 的过载等待先归还票据；store 拥有最多 64 个可取消等待计时器 | intent 前等待，释放后完整重选；传输取消/总期限取消执行任务，store 关闭取消并 await 计时器后关 DB |
+| 会话元数据与端点健康 | Adapters/Transport 解析/摘要元数据，Core 决定软偏好与最终准入 | 数据服务持有 SessionAffinity（1024 soft 标签/一小时）、TurnStateOwners（1024 来源/一小时）及 ControlEndpointHealth（1024 账号/端点截止/最长一小时），无后台任务 | HTTP/WS/compact/Images 共享选择观察；辅助只读会话偏好；真实 token 仅约束来源不授予权限；实际选择读取新截止；401/429 提交账号级健康，5xx 仅端点冷却；关闭随服务释放 |
 | 连接与 WS lane | Adapters/Transport | 每连接 supervisor，受总容量监督 | 调 Core 执行用例；拥有 channel，取消后关闭并 await 网络任务 |
 | finalizer | Core/Application 定义结算/合并规则 | Runtime 监督有限 worker 与预分配 ticket | worker 调核心用例，核心调事务端口；禁止反向等待连接 |
 | 刷新与身份验证 | Core/Application/Identity | Runtime AccountRefreshSupervisor 的有界队列/共享任务 | 通过上游/凭证端口执行；等待者取消不取消共享刷新，关闭信号取消网络并 await/收敛 intent |

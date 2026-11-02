@@ -52,9 +52,13 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
 {
   let mapped = protocolFailure(error)
   if diagnostics { ProtocolFailureDiagnostics.record(mapped, requestID: requestID) }
+  let explanation =
+    mapped.code == "continuation_owner_unavailable"
+    ? "Continuation source cannot be verified. The request was not dispatched."
+    : "Gateway request failed."
   let message =
     UUID(uuidString: requestID) != nil
-    ? "Gateway request failed. Reference: \(requestID)." : "Gateway request failed."
+    ? "\(explanation) Reference: \(requestID)." : explanation
   var fields: [String: JSONValue] = [
     "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
     "code": .string(mapped.code), "message": .string(message),
