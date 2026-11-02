@@ -4,7 +4,8 @@ import Foundation
 
 extension SQLiteExecutionStore {
   public func selectControlAccount(
-    key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?
+    key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?,
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double]
   ) async throws -> AccountRouteIdentity {
     guard (1...64).contains(candidates.count) else { throw AccountDispatchError.unavailable }
     return try await perform { db in
@@ -13,6 +14,9 @@ extension SQLiteExecutionStore {
       guard currentKey.enabled, currentKey.revision == key.revision else {
         throw ExecutionError.unauthorized
       }
+      try Self.checkKeyExpiration(currentKey, now: db.clock.unixSeconds)
+      let waits = cooldowns().filter { $0.value.isFinite && $0.value > 0 }
+      var remaining: Double?
       var ranked: [(AccountRouteIdentity, Int64)] = []
       for candidate in candidates {
         let account = try Self.loadAccount(db, candidate.identity.id).account
@@ -23,7 +27,14 @@ extension SQLiteExecutionStore {
           candidate.snapshot.accessExpiresAtUnixSeconds > db.clock.unixSeconds
         else { continue }
         let health = try Self.loadHealth(db, account: account)
-        guard !health.authenticationRejected, health.cooldowns.isEmpty else { continue }
+        guard !health.authenticationRejected else { continue }
+        let wait = max(
+          waits[candidate.identity] ?? 0,
+          health.cooldowns.map { Double($0.untilUnixSeconds - db.clock.unixSeconds) }.max() ?? 0)
+        if wait > 0 {
+          remaining = min(remaining ?? wait, wait)
+          continue
+        }
         let active = try db.scalar(
           "SELECT COUNT(*) FROM attempts WHERE identity=? AND namespace=? AND state='intent'",
           [.text(account.id), .text(account.namespace)])
@@ -34,12 +45,15 @@ extension SQLiteExecutionStore {
         if $0.1 != $1.1 { return $0.1 < $1.1 }
         return $0.0.id < $1.0.id
       }
-      guard let selected = ranked.first else { throw AccountDispatchError.unavailable }
+      guard let selected = ranked.first else {
+        if let remaining { throw AccountCooldownUnavailable(seconds: remaining) }
+        throw AccountDispatchError.unavailable
+      }
       return selected.0
     }
   }
 
-  public func recordControlOutcome(account: AccountRouteCandidate, outcome: ExecutionOutcome)
+  public func recordAccountWideOutcome(account: AccountRouteCandidate, outcome: ExecutionOutcome)
     async throws
   {
     try outcome.validate()
@@ -49,7 +63,7 @@ extension SQLiteExecutionStore {
         guard current.namespace == account.identity.namespace,
           current.credentialVersion == account.snapshot.credentialVersion
         else { return }
-        // Auxiliary endpoints are account-wide; apply cooldown to every configured model.
+        // Explicit account-wide evidence only; endpoint failures never enter this command.
         let models = try db.rows("SELECT model FROM health_models") {
           String(cString: sqlite3_column_text($0, 0))
         }

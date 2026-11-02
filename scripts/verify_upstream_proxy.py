@@ -258,7 +258,7 @@ def main():
                                 time.sleep(.02)
                         else:
                             began=time.monotonic();status,body=connect(ports['data'],'POST','/v1/responses',request,timeout=20)
-                            assert status==502 and time.monotonic()-began<14
+                            assert status==502 and time.monotonic()-began<14, (transport,mode,status,round(time.monotonic()-began,2))
                             error=json.loads(body)['error'];assert set(error)=={'type','code','message','request_id'}
                             assert error['request_id'] in error['message'] and provider.sequence==before
                             if mode=='reject':assert error['code']=='upstream_proxy_authentication_required',error['code']

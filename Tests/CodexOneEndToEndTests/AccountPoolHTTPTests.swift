@@ -233,6 +233,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
                   headers: [
                     "content-type": stream ? "text/event-stream" : "application/json",
                     "content-length": String(bytes.count), "connection": "close",
+                    "x-codex-turn-state": "synthetic-returned-turn-state-\(account)",
                   ]))), promise: nil)
           context.write(wrapOutboundOut(.body(.byteBuffer(ByteBuffer(data: bytes)))), promise: nil)
           context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
@@ -346,7 +347,10 @@ private struct PoolHTTPHarness {
               channel.closeFuture.whenComplete { _ in scheduled.cancel() }
               return scheduled.futureResult
             }
-            return channel.eventLoop.makeSucceededFuture(HTTPHeaders())
+            return channel.eventLoop.makeSucceededFuture(
+              handshake == "metadata-only"
+                ? HTTPHeaders()
+                : HTTPHeaders([("x-codex-turn-state", "synthetic-returned-turn-state-\(account)")]))
           },
           upgradePipelineHandler: { channel, head in
             channel.pipeline.removeHandler(http).flatMap {
@@ -783,9 +787,17 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
         try emit(.object(created))
         return
       }
-      let wire =
+      var wire =
         poolRefusalEvents(poolInput(request), response: .object(document))
         ?? [JSONValue.object(created), JSONValue.object(completed)]
+      if poolInput(request) == "metadata-only" {
+        var metadata: [String: JSONValue] = [
+          "type": .string("codex.response.metadata"),
+          "headers": .object(["x-codex-turn-state": .string("synthetic-message-state-\(account)")]),
+        ]
+        if let lane = request["stream_id"] { metadata["stream_id"] = lane }
+        wire.insert(.object(metadata), at: 0)
+      }
       let bytes = try wire.map { try $0.data() }
       let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
       let send: @Sendable () -> Void = { [self] in
@@ -888,10 +900,11 @@ private final class PoolWSClient: @unchecked Sendable {
   let output = Pipe()
   private let closed = Mutex(false)
   private let exited = DispatchSemaphore(value: 0)
-  init(_ h: PoolHTTPHarness, key: String? = nil) throws {
+  init(_ h: PoolHTTPHarness, key: String? = nil, headers: [String: String] = [:]) throws {
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [
       "python3", "scripts/verify_pool_ws_client.py", String(h.port), key ?? h.alice,
+      String(data: try JSONSerialization.data(withJSONObject: headers), encoding: .utf8)!,
     ]
     process.standardInput = input
     process.standardOutput = output
@@ -1533,11 +1546,17 @@ func poolControlDispatchHasNoIntentAndSharesCredentialHealthWithResponses() asyn
       let selected = call.account.replacingOccurrences(of: "synthetic-", with: "")
       let health = try await h.store.accountHealth(id: selected)
       #expect(health.authenticationRejected == (status == 401))
-      #expect(health.cooldowns.count == ([429, 500].contains(status) ? 1 : 0))
+      #expect(health.cooldowns.count == (status == 429 ? 1 : 0))
       let other = try #require(try await h.store.listAccounts().first { $0.id != selected })
       _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
-      #expect(try await h.request().0 == ([200, 400].contains(status) ? 200 : 503))
-      #expect(h.calls.count == ([200, 400].contains(status) ? 2 : 1))
+      if [429, 500].contains(status) {
+        let (_, blocked) = try await session.data(for: request)
+        #expect((blocked as! HTTPURLResponse).statusCode == 503)
+        #expect((blocked as! HTTPURLResponse).value(forHTTPHeaderField: "retry-after") != nil)
+        #expect(h.calls.count == 1)
+      }
+      #expect(try await h.request().0 == ([401, 429].contains(status) ? 503 : 200))
+      #expect(h.calls.count == ([401, 429].contains(status) ? 1 : 2))
     }
   }
 }
@@ -1972,7 +1991,7 @@ func overloadHTTPWaitsBeforeIntentEscalatesAndReturnsRetryAfter() async throws {
     #expect(h.calls.count == 3)
     #expect(try await h.readiness().0 == 200)
     let work = try await h.oauth.app.prepareDispatch(id: "a", continuation: false)
-    try await h.store.recordControlOutcome(
+    try await h.store.recordAccountWideOutcome(
       account: AccountRouteCandidate(work: work),
       outcome: .init(
         failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds, cooldownSeconds: 20))
@@ -2043,7 +2062,7 @@ func overloadNativeWebSocketWaitsOnPinnedAccountWithHealthyAlternative() async t
     #expect(h.calls.count == 5 && Set(h.calls.map(\.account)).count == 1)
     try await awaitOAuth { h.finalizer.outstanding == 0 }
     let work = try await h.oauth.app.prepareDispatch(id: pinned.id, continuation: true)
-    try await h.store.recordControlOutcome(
+    try await h.store.recordAccountWideOutcome(
       account: AccountRouteCandidate(work: work),
       outcome: .init(
         failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds,
@@ -2155,5 +2174,295 @@ func overloadInitialWebSocketWaitAndHTTPDeadlineEndBeforeAdmission() async throw
     }
     await h.close()
     await oauth.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true], ["http", "websocket"])
+func sessionMetadataReturnsOnJSONAndSSE(stream: Bool, transport: String) async throws {
+  try await withPoolHTTP(transport: transport) { h in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"), "stream": .bool(stream),
+    ]).data()
+    let (_, response) = try await session.data(for: request)
+    let http = try #require(response as? HTTPURLResponse)
+    #expect(http.statusCode == 200)
+    #expect(
+      http.value(forHTTPHeaderField: "x-codex-turn-state")
+        == "synthetic-returned-turn-state-\(h.calls.last!.account)")
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"], [false, true])
+func sessionMetadataUnifiesSelectionAndControl(transport: String, compact: Bool) async throws {
+  try await withPoolHTTP(transport: transport) { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(
+      url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses" + (compact ? "/compact" : ""))!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.setValue("synthetic-session", forHTTPHeaderField: "session-id")
+    request.setValue("synthetic-thread", forHTTPHeaderField: "thread-id")
+    request.setValue("responses_websockets=2026-02-06", forHTTPHeaderField: "OpenAI-Beta")
+    request.setValue("review", forHTTPHeaderField: "x-openai-subagent")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"),
+      "prompt_cache_key": .string("synthetic-cache"),
+    ]).data()
+    let (_, first) = try await session.data(for: request)
+    #expect((first as! HTTPURLResponse).statusCode == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let original = try #require(h.calls.last?.account)
+    #expect(original == "synthetic-b")
+    let headers = try #require(h.calls.last?.headers)
+    #expect(headers.first(name: "session-id") == "synthetic-session")
+    #expect(headers.first(name: "thread-id") == "synthetic-thread")
+    #expect(headers.first(name: "openai-beta") == "responses_websockets=2026-02-06")
+    #expect(headers.first(name: "x-openai-subagent") == "review")
+    #expect(
+      try JSONValue.decode(try #require(h.calls.last?.body))["prompt_cache_key"]?.string
+        == "synthetic-cache")
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    // Repeated stateless generation keeps the session preference despite another idle account.
+    for _ in 0..<4 {
+      let (_, response) = try await session.data(for: request)
+      #expect((response as! HTTPURLResponse).statusCode == 200)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      #expect(h.calls.last?.account == original)
+    }
+    request.url = URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search")!
+    request.httpBody = Data("{}".utf8)
+    let (_, control) = try await session.data(for: request)
+    #expect((control as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.last?.account == original)
+    // Unavailable preferred accounts still fall back, without replaying a dispatched request.
+    let b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+    _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+    request.url = URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"),
+    ]).data()
+    let (_, fallback) = try await session.data(for: request)
+    #expect((fallback as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.last?.account == "synthetic-a")
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func sessionMetadataNativeWebSocketAndImagesFeedControlAffinity() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    let client = try PoolWSClient(h, headers: ["session-id": "synthetic-native-session"])
+    defer { client.close() }
+    _ = try await client.read()
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.last?.account == "synthetic-b")
+    #expect(
+      h.state.value.withLock { $0.upgradeHeaders.first?.first(name: "openai-beta") }
+        == "responses_websockets=2026-02-06")
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(
+      url: URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.setValue("synthetic-native-session", forHTTPHeaderField: "session-id")
+    request.httpBody = Data("{}".utf8)
+    let (_, response) = try await session.data(for: request)
+    #expect((response as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.last?.account == "synthetic-b")
+  }
+  try await withOAuth(timeout: 3000) { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, images: true)
+    do {
+      var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+      a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      var request = URLRequest(
+        url: URL(string: "http://127.0.0.1:\(h.port)/v1/images/generations")!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue("synthetic-image-session", forHTTPHeaderField: "session-id")
+      request.httpBody = Data("{\"model\":\"synthetic-image\",\"prompt\":\"synthetic\"}".utf8)
+      let (_, image) = try await session.data(for: request)
+      #expect((image as! HTTPURLResponse).statusCode == 200)
+      #expect(
+        (image as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state")
+          == "synthetic-returned-turn-state-\(h.calls.last!.account)")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      #expect(h.calls.last?.account == "synthetic-b")
+      _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+      request.url = URL(string: "http://127.0.0.1:\(h.port)/backend-api/codex/alpha/search")!
+      request.httpBody = Data("{}".utf8)
+      let (_, control) = try await session.data(for: request)
+      #expect((control as! HTTPURLResponse).statusCode == 200)
+      #expect(h.calls.last?.account == "synthetic-b")
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func sessionMetadataControlFallbackDoesNotMoveGenerationPreference() async throws {
+  try await withPoolHTTP { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    func post(_ path: String, _ input: String, stateOnly: Bool = false) async throws -> Int {
+      var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)" + path)!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue(
+        stateOnly ? "synthetic-returned-turn-state-synthetic-b" : "synthetic-main-session",
+        forHTTPHeaderField: stateOnly ? "x-codex-turn-state" : "session-id")
+      request.httpBody = try JSONValue.object([
+        "model": .string("synthetic-text"), "input": .string(input),
+      ]).data()
+      let (_, response) = try await session.data(for: request)
+      return (response as! HTTPURLResponse).statusCode
+    }
+    #expect(try await post("/v1/responses", "synthetic") == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.last?.account == "synthetic-b")
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    #expect(try await post("/backend-api/codex/alpha/search", "http500") == 502)
+    #expect(h.calls.last?.account == "synthetic-b")
+    #expect(try await post("/backend-api/codex/alpha/search", "synthetic") == 200)
+    #expect(h.calls.last?.account == "synthetic-a")
+    #expect(try await post("/v1/responses", "synthetic", stateOnly: true) == 200)
+    #expect(h.calls.last?.account == "synthetic-b")
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func turnStateNeverCrossesAccountsOrCreatesIntentWhenUnknown(transport: String) async throws {
+  try await withPoolHTTP(transport: transport) { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("synthetic"),
+    ]).data()
+    let (_, initial) = try await session.data(for: request)
+    #expect((initial as! HTTPURLResponse).statusCode == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let token = try #require(
+      (initial as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state"))
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
+    let (_, follow) = try await session.data(for: request)
+    #expect((follow as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.last?.account == "synthetic-b")
+    if transport == "websocket" {
+      let body = try JSONValue.decode(try #require(h.calls.last?.body))
+      #expect(body["client_metadata"]?["x-codex-turn-state"]?.string == token)
+      #expect(h.calls.last?.headers?.first(name: "x-codex-turn-state") == nil)
+    }
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+    _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+    for value in [token, "synthetic-unknown-state"] {
+      request.setValue(value, forHTTPHeaderField: "x-codex-turn-state")
+      let (_, denied) = try await session.data(for: request)
+      #expect((denied as! HTTPURLResponse).statusCode == 503)
+    }
+    #expect(h.calls.count == 2)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 2)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func websocketMetadataOnlyReturnsStateBeforeHTTPCommit(stream: Bool) async throws {
+  try await withOAuth(timeout: 3000) { oauth in
+    let h = try await PoolHTTPHarness.open(
+      oauth, transport: "websocket", handshake: "metadata-only")
+    do {
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.httpBody = try JSONValue.object([
+        "model": .string("synthetic-text"), "input": .string("metadata-only"),
+        "stream": .bool(stream),
+      ]).data()
+      let (_, response) = try await session.data(for: request)
+      #expect((response as! HTTPURLResponse).statusCode == 200)
+      let account = try #require(h.calls.last?.account)
+      let token = try #require(
+        (response as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state"))
+      #expect(token == "synthetic-message-state-\(account)")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
+      let (_, follow) = try await session.data(for: request)
+      #expect((follow as! HTTPURLResponse).statusCode == 200)
+      #expect(h.calls.last?.account == account)
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func nativeTurnStateIsPerMessageAndCannotChangeConnectionOwner() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    #expect(try await h.request().0 == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    var b = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+    b = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .disabled)
+    #expect(try await h.request().0 == 200)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    _ = try await h.store.setAccountMode(id: b.id, revision: b.revision, mode: .enabled)
+    let client = try PoolWSClient(
+      h, headers: ["x-codex-turn-state": "synthetic-returned-turn-state-synthetic-b"])
+    defer { client.close() }
+    _ = try await client.read()
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    #expect(h.calls.last?.account == "synthetic-b")
+    let first = try JSONValue.decode(try #require(h.calls.last?.body))
+    #expect(
+      first["client_metadata"]?["x-codex-turn-state"]?.string
+        == "synthetic-returned-turn-state-synthetic-b")
+    #expect(try await client.command()["type"]?.string == "response.completed")
+    let next = try JSONValue.decode(try #require(h.calls.last?.body))
+    #expect(next["client_metadata"]?["x-codex-turn-state"] == nil)
+    let denied = try await client.command([
+      "client_metadata": .object([
+        "x-codex-turn-state": .string("synthetic-returned-turn-state-synthetic-a")
+      ])
+    ])
+    #expect(denied["status"]?.integer == 503)
+    #expect(h.calls.count == 4)
   }
 }

@@ -22,7 +22,9 @@ public struct ResponsesDataService: Service {
   private let finalizer: any FinalizationSink
   private let imageCapacity: ImageCapacity
   private let controlCapacity = ControlCapacity()
-  private let controlAffinity = ControlAffinity()
+  private let sessionAffinity = SessionAffinity()
+  private let turnStateOwners = TurnStateOwners()
+  private let controlHealth = ControlEndpointHealth()
   private let bodyBudget = RequestBodyBudget()
   private let onBound: @Sendable (Int) -> Void
 
@@ -137,7 +139,8 @@ public struct ResponsesDataService: Service {
     let executor = HTTPResponseExecution(
       protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
       controlCapacity: controlCapacity,
-      controlAffinity: controlAffinity, client: client,
+      sessionAffinity: sessionAffinity, turnStateOwners: turnStateOwners,
+      controlHealth: controlHealth, client: client,
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
@@ -411,8 +414,10 @@ public struct ResponsesDataService: Service {
           if fresh {
             known.insert(lane)
             let firstTurn = known.count == 1 ? initial : nil
+            let acceptsHandshakeState = known.count == 1
             lanes.addTask {
               var pending = firstTurn
+              var firstMessage = acceptsHandshakeState
               let tools = WebSocketToolState()
               while !Task.isCancelled {
                 let body: WebSocketBody
@@ -424,6 +429,8 @@ public struct ResponsesDataService: Service {
                 defer { activity.end() }
                 let initialTurn = pending
                 pending = nil
+                let useHandshakeState = firstMessage
+                firstMessage = false
                 let requestID = initialTurn?.requestID ?? UUID().uuidString
                 var requested: ResponseRequest?
                 do {
@@ -441,7 +448,10 @@ public struct ResponsesDataService: Service {
                       try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
                       try await executor.exchange(
                         request, context: initialTurn.context, model: model, peer: upstream,
-                        lane: lane, downstream: downstream
+                        lane: lane,
+                        turnState: try requestTurnState(
+                          headers: executor.clientHeaders, document: request.document),
+                        downstream: downstream
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
@@ -451,7 +461,7 @@ public struct ResponsesDataService: Service {
                       let current = try await executor.authorized(digest)
                       try await current.execute(
                         request, requestID: requestID, peer: upstream, lane: lane,
-                        downstream: downstream
+                        downstream: downstream, useHandshakeState: useHandshakeState
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
@@ -633,6 +643,7 @@ public struct ResponsesDataService: Service {
     }
     var executor = try await executor.authorized(
       executor.access.digest(head.headers["authorization"]))
+    executor.receiveResponseHeaders = { await writer.responseHeaders($0) }
     executor.clientHeaders = forwardedClientHeaders(
       head.headers, fingerprint: executor.configuration.clientFingerprint,
       registry: executor.protocolExtensions)
@@ -711,6 +722,12 @@ private actor ProtocolResponseWriter {
   private let channel: any Channel
   private let keepAlive: Bool
   private var extraHeaders = HTTPHeaders()
+  func responseHeaders(_ headers: HTTPHeaders) {
+    guard !started else { return }
+    for header in forwardedResponseHeaders(headers) {
+      extraHeaders.replaceOrAdd(name: header.name, value: header.value)
+    }
+  }
   func imageHeaders(_ headers: HTTPHeaders) {
     if let value = headers.first(name: "x-codex-imagegen-request-id") {
       extraHeaders.replaceOrAdd(name: "x-codex-imagegen-request-id", value: value)
@@ -811,6 +828,7 @@ private actor ProtocolResponseWriter {
         "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no",
         "x-request-id": requestID,
       ]
+      for header in extraHeaders { headers.add(name: header.name, value: header.value) }
       if !keepAlive { headers.add(name: "connection", value: "close") }
       started = true
       try await write(.head(.init(version: .http1_1, status: .ok, headers: headers)))

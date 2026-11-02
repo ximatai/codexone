@@ -4,7 +4,8 @@ import Foundation
 extension HTTPResponseExecution {
   func execute(
     _ request: ResponseRequest, requestID: String, peer: WebSocketPeer, lane: String = "",
-    downstream: WebSocketPeer? = nil,
+    turnState: String? = nil,
+    downstream: WebSocketPeer? = nil, useHandshakeState: Bool = false,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
@@ -13,16 +14,19 @@ extension HTTPResponseExecution {
     if case .pool = gateway, connection == nil {
       throw GatewayProtocolError(503, "pool_websocket_unavailable")
     }
+    let turnState = try requestTurnState(
+      headers: useHandshakeState ? clientHeaders : .init(), document: request.document)
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     try await withExecutionDeadline(seconds: configuration.budget.total) {
-      try await gateway.execute(
+      try await executeRouted(
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
-        mode: request.mode, connection: connection, requirements: request.requirements,
+        mode: request.mode, turnState: turnState, connection: connection,
+        requirements: request.requirements,
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, _ in
         try await exchange(
-          request, context: context, model: model, peer: peer, lane: lane,
+          request, context: context, model: model, peer: peer, lane: lane, turnState: turnState,
           downstream: downstream, emit: emit)
         return nil
       }
@@ -32,7 +36,7 @@ extension HTTPResponseExecution {
   /// Performs one prepared wire turn under an already durable, owned execution context.
   func exchange(
     _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
-    peer: WebSocketPeer, lane: String = "",
+    peer: WebSocketPeer, lane: String = "", turnState: String? = nil,
     downstream: WebSocketPeer? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
@@ -63,6 +67,11 @@ extension HTTPResponseExecution {
         metadata[ResponseRequest.liteMetadataKey] = .string("true")
         create["client_metadata"] = .object(metadata)
       }
+      if configuration.requestContract == .codexSubscription, let turnState {
+        var metadata = create["client_metadata"]?.object ?? [:]
+        metadata["x-codex-turn-state"] = .string(turnState)
+        create["client_metadata"] = .object(metadata)
+      }
       if request.mode == .warmup { create["generate"] = .bool(false) }
       if !lane.isEmpty { create["stream_id"] = .string(lane) }
       try Task.checkCancellation()
@@ -70,6 +79,7 @@ extension HTTPResponseExecution {
       peer.markDispatched(lane: lane)
       try await peer.send(.object(create))
       var total = 0
+      var observedMetadata = false
       while true {
         let data = try await peer.next(lane: lane)
         context.observeUpstreamEvent()
@@ -96,6 +106,24 @@ extension HTTPResponseExecution {
         }
         observeDisconnectedOutcome(downstream, context: context)
         let type = try ProviderObservation.eventType(event)
+        if !observedMetadata, ["response.metadata", "codex.response.metadata"].contains(type),
+          let fields = event["headers"]?.object
+        {
+          let tokens = fields.filter { $0.key.lowercased() == "x-codex-turn-state" }
+          if tokens.count == 1, let token = tokens.first?.value.string,
+            validTurnState(token)
+          {
+            let account: AccountRouteIdentity?
+            if let gateway, case .pool = gateway {
+              account = try .init(
+                id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
+            } else {
+              account = nil
+            }
+            await observeResponseHeaders(["x-codex-turn-state": token], account: account)
+            observedMetadata = true
+          }
+        }
         if type == "error" { throw ProviderObservation.providerFailure(event) }
         if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
         {

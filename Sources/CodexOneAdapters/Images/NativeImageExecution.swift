@@ -4,49 +4,6 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 
-/// Client metadata only; credentials, routing and arbitrary internal headers never cross.
-func forwardedClientHeaders(
-  _ headers: HTTPHeaders, fingerprint: ClientFingerprint = .init().resolved(models: []),
-  registry: ClientProtocolExtensionRegistry? = nil
-) -> HTTPHeaders {
-  let allowed: Set<String> = [
-    "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
-    "x-codex-beta-features", "x-codex-window-id", "x-codex-parent-thread-id",
-    "x-codex-image-turn-id", "x-codex-turn-state", "x-session-id", "conversation_id",
-    "x-conversation-id",
-  ]
-  let connectionHeaders = Set(
-    headers["connection"].flatMap {
-      $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    })
-  var result = HTTPHeaders()
-  var codexCount = 0
-  for header in headers
-  where
-    (allowed.contains(header.name.lowercased()) || header.name.lowercased().hasPrefix("x-codex-"))
-    && !connectionHeaders.contains(header.name.lowercased())
-  {
-    guard header.value.utf8.count <= 8192 else { continue }
-    if header.name.lowercased().hasPrefix("x-codex-") {
-      guard codexCount < 32 else { continue }
-      codexCount += 1
-      if !allowed.contains(header.name.lowercased()) {
-        registry?.record(name: header.name.lowercased())
-        ClientProtocolDiagnostics.record(
-          name: header.name.lowercased(), outcome: "forwarded", headers: headers)
-      }
-    }
-    result.add(name: header.name, value: header.value)
-  }
-  if !ClientFingerprint.isNative(headers) {
-    for name in ["user-agent", "originator", "version"] { result.remove(name: name) }
-    result.add(name: "user-agent", value: fingerprint.userAgent)
-    result.add(name: "originator", value: "codex_cli_rs")
-    result.add(name: "version", value: fingerprint.version!)
-  }
-  return result
-}
-
 extension HTTPResponseExecution {
   func executeImage(
     _ request: ImagesRequest, requestID: String, headers: HTTPHeaders,
@@ -55,7 +12,7 @@ extension HTTPResponseExecution {
     emit: @escaping @Sendable (Data) async throws -> Void,
     finish: @escaping @Sendable () async throws -> Void
   ) async throws {
-    guard let gateway else { throw ExecutionError.unauthorized }
+    guard gateway != nil else { throw ExecutionError.unauthorized }
     guard let model = effectiveImageModels.first(where: { $0.id == request.model }) else {
       throw GatewayProtocolError(403, "model_not_allowed")
     }
@@ -63,8 +20,9 @@ extension HTTPResponseExecution {
     defer { permit.release() }
     try Task.checkCancellation()
     try await withExecutionDeadline(seconds: configuration.budget.total) {
-      try await gateway.execute(
+      try await executeRouted(
         model: request.model, references: [], requestID: requestID, mode: .generation,
+        turnState: try requestTurnState(headers: clientHeaders),
         requirements: try .init(route: .images, imageModel: request.model),
         serviceTier: request.serviceTier
       ) { context, authorization in
@@ -89,12 +47,13 @@ extension HTTPResponseExecution {
           upstream.body = .bytes(ByteBuffer(data: request.body))
           let response = try await client.execute(
             upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-          var replyHeaders = HTTPHeaders()
+          var replyHeaders = forwardedResponseHeaders(response.headers)
           for name in ["content-type", "x-codex-imagegen-request-id"] {
             if let value = response.headers.first(name: name) {
               replyHeaders.add(name: name, value: value)
             }
           }
+          await observeResponseHeaders(response.headers, account: authorization?.identity)
           await receiveHeaders(replyHeaders)
           guard response.status == .ok else {
             throw await ProviderError.failure(response: response)
