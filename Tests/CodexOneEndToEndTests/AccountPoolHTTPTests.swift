@@ -2023,7 +2023,13 @@ func overloadNativeWebSocketWaitsOnPinnedAccountWithHealthyAlternative() async t
     let client = try PoolWSClient(h)
     defer { client.close() }
     _ = try await client.read()
-    #expect(try await client.command()["type"]?.string == "response.completed")
+    let firstResponse = try await client.command()
+    #expect(firstResponse["type"]?.string == "response.completed")
+    let responseID = try #require(firstResponse["response"]?["id"]?.string)
+    let pinned = try #require(
+      try await h.store.resolveAccountAffinity(
+        principal: "alice", references: [.init(type: "response", rawID: responseID)],
+        connection: nil))
     #expect(
       try await client.command(["input": .string("overload-error")])["type"]?.string == "error")
     try await awaitOAuth { h.finalizer.outstanding == 0 }
@@ -2035,6 +2041,19 @@ func overloadNativeWebSocketWaitsOnPinnedAccountWithHealthyAlternative() async t
     #expect(try await client.command()["type"]?.string == "response.completed")
     #expect(waits.withLock { $0 } == [1, 2, 4])
     #expect(h.calls.count == 5 && Set(h.calls.map(\.account)).count == 1)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let work = try await h.oauth.app.prepareDispatch(id: pinned.id, continuation: true)
+    try await h.store.recordControlOutcome(
+      account: AccountRouteCandidate(work: work),
+      outcome: .init(
+        failure: .upstreamUnavailable, atUnixSeconds: time.clock.unixSeconds,
+        cooldownSeconds: 20))
+    let unavailable = try await client.command()
+    #expect(unavailable["type"]?.string == "error")
+    #expect(unavailable["status"]?.integer == 503)
+    #expect(unavailable["headers"]?["retry-after"]?.string == "20")
+    #expect(h.calls.count == 5)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 5)
     #expect(h.state.value.withLock { $0.upgrades } == 1)
   } catch {
     await h.close()
