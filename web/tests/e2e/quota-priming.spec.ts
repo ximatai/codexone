@@ -31,6 +31,10 @@ for (const width of [1440, 390]) {
       return route.fulfill({ json: state });
     });
     await page.goto("/#/accounts?target=synthetic-account-0");
+    await page.getByRole("tab", { name: "自动化", exact: true }).click();
+    await page
+      .getByRole("button", { name: "空闲窗口预热", exact: true })
+      .click();
     const section = page.getByRole("region", {
       name: "空闲窗口预热",
       exact: true,

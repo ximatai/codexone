@@ -39,9 +39,6 @@ export function UsageRequests({
                 <span title={timeTitle(row.atUnixSeconds)}>
                   {localTime(row.atUnixSeconds)}
                 </span>
-                <small title={row.requestID ?? row.id}>
-                  {row.requestID ?? row.id}
-                </small>
               </>
             ),
           },
@@ -50,7 +47,14 @@ export function UsageRequests({
             title: "Key / 模型",
             render: (row) => (
               <>
-                <span title={row.keyID}>{<KeyName {...row} />}</span>
+                <span title={row.keyID}>
+                  {
+                    <KeyName
+                      {...row}
+                      principal={row.displayName ? undefined : row.principal}
+                    />
+                  }
+                </span>
                 <small>{row.model ?? "模型未记录"}</small>
               </>
             ),
@@ -83,7 +87,9 @@ export function UsageRequests({
                 <small>
                   {row.failure ? (failures[row.failure] ?? "其他异常") : ""}
                 </small>
-                <small>{row.state ? states[row.state] : "无执行租约"}</small>
+                {row.state && row.state !== "settled" && (
+                  <small>{states[row.state]}</small>
+                )}
               </>
             ),
           },

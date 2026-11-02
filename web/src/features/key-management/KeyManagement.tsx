@@ -6,7 +6,8 @@ import {
   Group,
   Modal,
   Paper,
-  NativeSelect,
+  Progress,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -21,14 +22,18 @@ import { useQuery } from "@tanstack/react-query";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
 import { fetchKeyUsage } from "../usage/api";
-import { estimateNote } from "../../shared/presentation";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { ConfirmModal } from "../../shared/ui/ConfirmModal";
 import { KeyList } from "./KeyList";
 import { ExpirationEditor } from "./ExpirationEditor";
 import { ErrorState, StatusBadge, LoadingState } from "../../shared/ui/States";
 import { queryKeys } from "../../shared/query-keys";
-import { useLocation, useNavigationType, useSearchParams } from "react-router";
+import {
+  Link,
+  useLocation,
+  useNavigationType,
+  useSearchParams,
+} from "react-router";
 import { readPage } from "../../shared/view-memory";
 import { KeyName } from "../../shared/KeyName";
 import { localTime } from "../../shared/presentation";
@@ -37,8 +42,16 @@ export function KeyManagement() {
   const locationKey = useLocation().key;
   const positionedLocation = useRef<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const state = useKeys(params.get("status") === "archived");
+  const [detailID, setDetailID] = useState<string | null>(null);
+  const state = useKeys(params.get("status") === "archived", () =>
+    setDetailID(null),
+  );
   const owner = useManagementSession();
+  const detail = state.keys.find((key) => key.id === detailID);
+  useEffect(() => {
+    if (detailID && state.readAt !== null && !state.loading && !detail)
+      setDetailID(null);
+  }, [detailID, detail, state.readAt, state.loading]);
   const [refresh, setRefresh] = useState(0);
   const search = params.get("q") ?? "";
   const status = params.get("status") ?? "";
@@ -46,15 +59,30 @@ export function KeyManagement() {
   const list = useRef<HTMLDivElement>(null);
   const paging = useRef<number | null>(null);
   const menuTrigger = useRef<HTMLElement | null>(null);
+  const actionTrigger = useRef<HTMLElement | null>(null);
   function rememberMenuTrigger(key: api.ManagedKey) {
     const row = [
       ...(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? []),
     ].find((element) => element.dataset.rowId === key.id);
-    menuTrigger.current =
-      row?.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ?? null;
+    menuTrigger.current = row?.querySelector<HTMLElement>("button") ?? null;
   }
   function returnToMenuTrigger() {
-    if (document.querySelector('[data-ui-overlay="true"]')) return;
+    if (state.created) return;
+    if (
+      actionTrigger.current?.isConnected &&
+      !actionTrigger.current.hasAttribute("disabled")
+    ) {
+      actionTrigger.current.focus({ preventScroll: true });
+      return;
+    }
+    if (document.querySelector('[data-ui-overlay="true"]')) {
+      document
+        .querySelector<HTMLElement>(
+          `.${styles.detailContent} button[aria-label="关闭"]`,
+        )
+        ?.focus({ preventScroll: true });
+      return;
+    }
     if (menuTrigger.current?.isConnected)
       menuTrigger.current.focus({ preventScroll: true });
   }
@@ -209,11 +237,12 @@ export function KeyManagement() {
           value={search}
           onChange={(e) => filter("q", e.currentTarget.value)}
         />
-        <NativeSelect
+        <Select
           label="可用状态"
           disabled={state.busy}
           value={status}
-          onChange={(event) => filter("status", event.currentTarget.value)}
+          allowDeselect={false}
+          onChange={(value) => filter("status", value ?? "")}
           data={[
             { value: "", label: "全部" },
             { value: "available", label: "可用" },
@@ -227,13 +256,14 @@ export function KeyManagement() {
           {state.readAt === null ? "数量不可用" : `共 ${keys.length} 个`}
         </Text>
       </Paper>
-      <Text size="xs" c="dimmed" mb="sm">
-        可用：启用且未到期；即将到期：可用且 7
-        天内到期；已到期：不论开关；已禁用：未到期但关闭。仅按开关与有效期筛选，其他准入限制仍独立生效。
-      </Text>
-      <Text size="xs" c="dimmed" mb="md">
-        今日统计按 UTC · {estimateNote}。
-        {usage.isError ? "今日摘要读取失败，请刷新列表重试。" : ""}
+      <Text
+        size="xs"
+        c="dimmed"
+        mb="md"
+        title="筛选按启用状态与有效期；权限和其他准入限制独立生效。"
+      >
+        UTC 今日
+        {usage.isError ? " · 今日摘要读取失败，请刷新重试。" : ""}
       </Text>
       {state.error && state.readAt !== null && (
         <ErrorState retry={state.reload}>
@@ -276,26 +306,13 @@ export function KeyManagement() {
         >
           <KeyList
             keys={keys.slice((page - 1) * pageSize, page * pageSize)}
-            highlightedID={target}
+            highlightedID={detailID ?? target}
             state={state}
-            setRotating={(key) => {
-              rememberMenuTrigger(key);
-              state.setRotating(key);
-            }}
             usage={usage}
-            setArchiving={(key) => {
+            onDetails={(key) => {
               rememberMenuTrigger(key);
-              setArchiving(key);
+              setDetailID(key.id);
             }}
-            setExpiring={(key) => {
-              rememberMenuTrigger(key);
-              setExpiring(key);
-            }}
-            setDisabling={(key) => {
-              rememberMenuTrigger(key);
-              setDisabling(key);
-            }}
-            toggle={toggle}
           />
           {state.readAt !== null && (
             <Group mt="md" justify="flex-end">
@@ -320,6 +337,234 @@ export function KeyManagement() {
           )}
         </Paper>
       )}
+      <Drawer
+        opened={detailID !== null}
+        onClose={() => {
+          if (!state.busy) setDetailID(null);
+        }}
+        title={detail ? <KeyName {...detail} stacked /> : "密钥详情"}
+        attributes={{ title: { "aria-label": "密钥详情" } }}
+        classNames={{
+          content: styles.detailContent,
+          body: styles.detailBody,
+          header: styles.detailHeader,
+          title: styles.detailTitle,
+          close: styles.detailClose,
+        }}
+        position="right"
+        size="min(640px, 100vw)"
+        closeButtonProps={{ "aria-label": "关闭" }}
+        removeScrollProps={{ removeScrollBar: false }}
+        data-ui-overlay={detailID !== null || undefined}
+        closeOnEscape={
+          !state.busy &&
+          !expiring &&
+          !archiving &&
+          !disabling &&
+          !state.rotating &&
+          !state.created
+        }
+        closeOnClickOutside={!state.busy}
+      >
+        {!detail ? (
+          <Alert>密钥已不在当前列表，请刷新核对。</Alert>
+        ) : (
+          <>
+            <Stack className={styles.detailPanel} gap="md">
+              <Stack className={styles.usageCard} gap="sm">
+                <Group justify="space-between">
+                  <StatusBadge
+                    color={
+                      detail.enabled &&
+                      api.expirationState(detail.expiresAtUnixSeconds) !==
+                        "expired"
+                        ? "green"
+                        : "gray"
+                    }
+                  >
+                    {detail.archivedAtUnixSeconds != null
+                      ? "已归档"
+                      : api.expirationState(detail.expiresAtUnixSeconds) ===
+                          "expired"
+                        ? "已到期"
+                        : detail.enabled
+                          ? "启用"
+                          : "禁用"}
+                  </StatusBadge>
+                  <Text size="xs" c="dimmed">
+                    到期：
+                    {detail.expiresAtUnixSeconds == null
+                      ? "永不过期"
+                      : localTime(detail.expiresAtUnixSeconds)}
+                  </Text>
+                </Group>
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Text size="xs" c="dimmed">
+                      今日 Token / 上限
+                    </Text>
+                    <Text fw={700}>
+                      {usage.isError
+                        ? "不可用"
+                        : (() => {
+                            const value = usage.data?.find(
+                              (item) => item.keyID === detail.id,
+                            );
+                            return value?.tokens == null
+                              ? "不可用"
+                              : `${value.tokenUsageIncomplete ? "≥ " : ""}${BigInt(value.tokens).toLocaleString("zh-CN")}`;
+                          })()}{" "}
+                      / {api.formatKeyLimit(detail.limits.tokens)}
+                    </Text>
+                  </div>
+                  <Button
+                    component={Link}
+                    to={`/usage?key=${encodeURIComponent(detail.id)}`}
+                    variant="subtle"
+                    size="xs"
+                  >
+                    查看用量与诊断
+                  </Button>
+                </Group>
+                {detail.limits.tokens != null &&
+                  !usage.isError &&
+                  (() => {
+                    const observed = usage.data?.find(
+                      (item) => item.keyID === detail.id,
+                    );
+                    return observed?.tokens == null ? null : (
+                      <Progress
+                        aria-label={
+                          observed.tokenUsageIncomplete
+                            ? "已观测 Token 比例下界"
+                            : "今日 Token 使用比例"
+                        }
+                        value={Math.min(
+                          100,
+                          (Number(observed.tokens) / detail.limits.tokens!) *
+                            100,
+                        )}
+                        size="sm"
+                      />
+                    );
+                  })()}
+              </Stack>
+              <section aria-label="权限与限制">
+                {detail.archivedAtUnixSeconds != null ? (
+                  <Stack>
+                    <Text>
+                      对话模型：{detail.models?.join("、") ?? "全部模型"}
+                    </Text>
+                    <Text>
+                      视觉输入：{detail.visionInput ? "允许" : "关闭"} ·
+                      图片生成：{detail.imageGeneration ? "允许" : "关闭"}
+                    </Text>
+                    <Text>
+                      并发：{api.formatKeyLimit(detail.limits.active)}
+                    </Text>
+                    <Text>
+                      图片模型：
+                      {detail.imageModels === null
+                        ? "全部模型"
+                        : detail.imageModels?.join("、") || "未配置"}
+                    </Text>
+                    <Text>
+                      每日 Token：{api.formatKeyLimit(detail.limits.tokens)}
+                    </Text>
+                    <Text>归档密钥恢复后可编辑。</Text>
+                  </Stack>
+                ) : (
+                  <KeyEditor
+                    key={`${detail.id}-${detail.revision}`}
+                    entry={detail}
+                    hideCancel
+                    hideSubmit
+                    formId="key-detail-editor"
+                    models={state.models}
+                    imageModels={state.imageModels}
+                    disabled={state.disabled}
+                    close={() => setDetailID(null)}
+                    submit={(draft) =>
+                      state.mutate(
+                        (csrf, signal) =>
+                          state.saveEdit(detail, draft, csrf, signal),
+                        "密钥设置已更新。",
+                      )
+                    }
+                  />
+                )}
+              </section>
+
+              <div className={styles.keyMetadata} aria-label="密钥信息">
+                <Text size="xs" c="dimmed">
+                  创建于 {localTime(detail.createdAtUnixSeconds)}
+                </Text>
+              </div>
+            </Stack>
+            <section aria-label="管理操作" className={styles.manageActions}>
+              <Group gap="xs" className={styles.footerButtons}>
+                {detail.archivedAtUnixSeconds == null && (
+                  <Button
+                    type="submit"
+                    form="key-detail-editor"
+                    disabled={state.disabled}
+                    className={styles.footerSave}
+                  >
+                    保存修改
+                  </Button>
+                )}
+                {detail.archivedAtUnixSeconds == null && (
+                  <>
+                    <Button
+                      variant="default"
+                      disabled={state.disabled}
+                      onClick={(event) => {
+                        actionTrigger.current = event.currentTarget;
+                        setExpiring(detail);
+                      }}
+                    >
+                      设置到期时间
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={state.disabled}
+                      onClick={(event) => {
+                        actionTrigger.current = event.currentTarget;
+                        state.setRotating(detail);
+                      }}
+                    >
+                      轮换凭证
+                    </Button>
+                    <Button
+                      variant="light"
+                      color={detail.enabled ? "red" : undefined}
+                      disabled={state.disabled}
+                      onClick={(event) => {
+                        actionTrigger.current = event.currentTarget;
+                        if (detail.enabled) setDisabling(detail);
+                        else void toggle(detail);
+                      }}
+                    >
+                      {detail.enabled ? "禁用" : "启用"}
+                    </Button>
+                  </>
+                )}
+                <Button
+                  variant="default"
+                  disabled={state.disabled || detail.enabled}
+                  title={detail.enabled ? "请先禁用密钥，再归档" : undefined}
+                  onClick={(event) => {
+                    actionTrigger.current = event.currentTarget;
+                    setArchiving(detail);
+                  }}
+                >
+                  {detail.archivedAtUnixSeconds != null ? "恢复" : "归档"}
+                </Button>
+              </Group>
+            </section>
+          </>
+        )}
+      </Drawer>
       <Modal
         removeScrollProps={{ removeScrollBar: false }}
         data-ui-overlay={!!expiring || undefined}

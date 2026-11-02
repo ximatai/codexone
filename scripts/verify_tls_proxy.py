@@ -299,7 +299,7 @@ def request(f, plane, method, path, payload=None, headers=None):
 
 def token(f):
     status, _, body = request(f, 'admin', 'POST', '/api/keys', dict(principal='synthetic-tls-protocol', models=[MODEL],
-        limits=dict(requests=100, active=4, unresolved=16, budgetMicros=1000000, unresolvedMicros=1000000)),
+        limits=dict(tokens=1000000, active=4)),
         {'Authorization': 'Bearer ' + f['admin']})
     assert status == 201
     result = json.loads(body)['secret']; f['secrets'].append(result)

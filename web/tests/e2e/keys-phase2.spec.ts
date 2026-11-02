@@ -28,11 +28,8 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
     models: ["synthetic-text"],
     createdAtUnixSeconds: 1700000000,
     limits: {
-      requests: 500,
+      tokens: 500,
       active: 2,
-      unresolved: 10,
-      budgetMicros: null,
-      unresolvedMicros: null,
     },
   }));
   await page.route("**/api/**", (route) => {
@@ -73,12 +70,14 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/keys");
   await expect(page.getByText("desktop-team", { exact: true })).toBeVisible();
-  await page.getByLabel("可用状态", { exact: true }).selectOption("expiring");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "即将到期", exact: true }).click();
   await expect(page.getByText("ci-team", { exact: true })).toBeVisible();
   await expect(page.getByText("desktop-team", { exact: true })).toBeHidden();
   await expect(page.getByText("retired-team", { exact: true })).toBeHidden();
   await expect(page.getByText("共 1 个", { exact: true })).toBeVisible();
-  await page.getByLabel("可用状态", { exact: true }).selectOption("");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "全部", exact: true }).click();
   await expect(
     page.getByRole("row").filter({ hasText: "ci-team" }),
   ).toContainText("7 天内到期");
@@ -87,19 +86,27 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   ).toContainText("已到期");
   await expect(
     page.getByRole("row").filter({ hasText: "desktop-team" }),
-  ).toContainText("启用");
+  ).toContainText("可用");
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/ui-phase2/keys-1440.png" });
-  await page.getByRole("button", { name: "ci-team 更多操作" }).click();
+  await page
+    .getByRole("row")
+    .filter({ hasText: "ci-team" })
+    .getByRole("button", { name: "查看详情" })
+    .click();
   await expect(
-    page.getByRole("menuitem", { name: "轮换", exact: true }),
+    page.getByRole("button", { name: "轮换凭证", exact: true }),
   ).toBeVisible();
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/ui-phase2/keys-menu-1440.png" });
-  await page.getByRole("menuitem", { name: "轮换", exact: true }).click();
+  await page.getByRole("button", { name: "轮换凭证", exact: true }).click();
   const rotation = page.getByRole("dialog", { name: "轮换 API Key" });
   await expect(rotation).toContainText("旧凭证将立即失效");
   await rotation.getByRole("button", { name: "取消", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "密钥详情" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
   await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   const create = page.getByRole("dialog", { name: "创建密钥", exact: true });
   await expect(create.getByLabel("主体标识")).toBeVisible();

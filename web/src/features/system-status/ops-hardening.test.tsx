@@ -5,7 +5,7 @@ import { renderPrivate } from "../../../tests/render";
 import { AdminOverview } from "./AdminOverview";
 import * as management from "../../shared/management";
 import * as accounts from "../account-management/api";
-import * as usage from "../usage/api";
+import * as usage from "./round2-api";
 import { attentionMessage } from "./attention-api";
 vi.mock("./ActivityOverview", () => ({
   ActivityOverview: ({
@@ -27,7 +27,10 @@ vi.mock("../../shared/management", async (original) => ({
   request: vi.fn(),
 }));
 vi.mock("../account-management/api", () => ({ fetchAccounts: vi.fn() }));
-vi.mock("../usage/api", () => ({ fetchKeyUsage: vi.fn() }));
+vi.mock("./round2-api", async (original) => ({
+  ...(await original<typeof usage>()),
+  fetchKeySummary: vi.fn(),
+}));
 afterEach(() => vi.clearAllMocks());
 const item = {
   kind: "observation_quality" as const,
@@ -54,7 +57,7 @@ function setup(conflict = false) {
       accessExpiresAtUnixSeconds: Math.floor(Date.now() / 1000) + 3600,
     },
   ]);
-  vi.mocked(usage.fetchKeyUsage).mockResolvedValue([]);
+  vi.mocked(usage.fetchKeySummary).mockResolvedValue([]);
   let currentCount = 500;
   vi.mocked(management.request).mockImplementation(async (path) => {
     if (path === "/api/attention")
@@ -87,8 +90,8 @@ function setup(conflict = false) {
 it("requires confirmation, cancels safely, releases unknown count and preserves unknown-use copy", async () => {
   const show = vi.spyOn(notifications, "show");
   setup();
-  await screen.findByText("访问凭证约 1 小时后到期");
-  expect(screen.getByText(/500 条待核对/)).toBeVisible();
+  await screen.findByText(/访问凭证约 1 小时后到期/);
+  expect(screen.getByText(/待核对 500 条/)).toBeVisible();
   fireEvent.click(await screen.findByRole("button", { name: "核对并释放" }));
   expect(await screen.findByText(/真实用量无法得知/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
@@ -137,7 +140,7 @@ it("refreshes changed counts after a conflict without replaying release", async 
       .mocked(management.request)
       .mock.calls.filter(([path]) => path === "/api/attention"),
   ).toHaveLength(2);
-  expect(await screen.findByText(/501 条待核对/)).toBeVisible();
+  expect(await screen.findByText(/待核对 501 条/)).toBeVisible();
   expect(
     vi
       .mocked(management.request)

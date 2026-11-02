@@ -45,7 +45,7 @@ test("reviews unknown release, conflict and success at desktop size", async ({
         items: count
           ? [
               {
-                kind: "observation_quality",
+                kind: "unresolved_executions",
                 severity: "warning",
                 subjectType: "system",
                 subjectID: null,
@@ -106,7 +106,10 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   ).toBeVisible();
   await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
   await page.getByLabel("自动刷新（15 秒）").uncheck();
-  await page.getByRole("button", { name: "核对并释放" }).click();
+  await page
+    .getByRole("region", { name: "需要处理", exact: true })
+    .getByRole("button", { name: "核对并释放" })
+    .click();
   const dialog = page.getByRole("dialog", { name: "核对并释放待核对执行" });
   await expect(dialog).toContainText("真实用量无法得知");
   await expect(dialog).toContainText("统计中仍显示用量未知");
@@ -117,11 +120,21 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   });
   await dialog.getByRole("button", { name: "取消" }).click();
   expect(writes).toBe(0);
-  await page.getByRole("button", { name: "核对并释放" }).click();
+  await page
+    .getByRole("region", { name: "需要处理", exact: true })
+    .getByRole("button", { name: "核对并释放" })
+    .click();
   await dialog.getByRole("button", { name: "确认释放" }).click();
   await expect(page.getByText(/待核对数量已变化/)).toBeVisible();
-  await expect(page.getByText(/513 条待核对/)).toBeVisible();
-  await page.getByRole("button", { name: "核对并释放" }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "需要处理", exact: true })
+      .getByText(/513 条待核对/),
+  ).toBeVisible();
+  await page
+    .getByRole("region", { name: "需要处理", exact: true })
+    .getByRole("button", { name: "核对并释放" })
+    .click();
   await expect(dialog).toContainText("513 条");
   await dialog.getByRole("button", { name: "确认释放" }).click();
   await expect(page.getByText("暂无需要处理的事项")).toBeVisible();
@@ -130,7 +143,9 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   ).toBeVisible();
   expect(writes).toBe(2);
   await page.getByRole("link", { name: "订阅账号", exact: true }).click();
-  await expect(page.getByText("可在账号详情中设置名称")).toBeVisible();
+  await expect(
+    page.getByText("未命名账号 · 12345678", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });

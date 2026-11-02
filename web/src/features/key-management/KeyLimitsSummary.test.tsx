@@ -17,20 +17,17 @@ it("shows unlimited policy beside usage without changing exposure statistics", a
       models: ["synthetic"],
       createdAtUnixSeconds: 1,
       limits: {
-        requests: null,
+        tokens: null,
         active: 2,
-        unresolved: null,
-        budgetMicros: null,
-        unresolvedMicros: null,
       },
     },
   ]);
   const view = render(<KeyLimitsSummary keyID="k" />);
-  expect(await screen.findByText(/每日请求 不限/)).toHaveTextContent(
-    "同时执行 2",
+  expect(await screen.findByText(/每日 Token 上限 不限/)).toHaveTextContent(
+    "最大并发 2",
   );
-  expect(screen.getByText(/每日请求 不限/)).toHaveTextContent(
-    "待核对占用阈值 不限",
+  expect(screen.getByText(/每日 Token 上限 不限/)).toHaveTextContent(
+    "最大并发 2",
   );
   view.unmount();
 });
@@ -44,22 +41,19 @@ it("rereads the same Key after a successful usage refresh", async () => {
     models: ["synthetic"],
     createdAtUnixSeconds: 1,
     limits: {
-      requests: 10,
+      tokens: 10,
       active: 2,
-      unresolved: 4,
-      budgetMicros: 100,
-      unresolvedMicros: 100,
     },
   };
   vi.mocked(fetchKeys)
     .mockResolvedValueOnce([key])
     .mockResolvedValueOnce([
-      { ...key, limits: { ...key.limits, requests: null } },
+      { ...key, limits: { ...key.limits, tokens: null } },
     ]);
   const view = render(<KeyLimitsSummary keyID="k" refresh={1} />);
-  await screen.findByText(/每日请求 10/);
+  await screen.findByText(/每日 Token 上限 10/);
   view.rerender(<KeyLimitsSummary keyID="k" refresh={2} />);
-  expect(await screen.findByText(/每日请求 不限/)).toBeInTheDocument();
+  expect(await screen.findByText(/每日 Token 上限 不限/)).toBeInTheDocument();
   view.unmount();
 });
 
@@ -75,16 +69,13 @@ it("reads the current policy of an archived Key", async () => {
         archivedAtUnixSeconds: 100,
         models: null,
         limits: {
-          requests: 17,
+          tokens: 17,
           active: null,
-          unresolved: null,
-          budgetMicros: null,
-          unresolvedMicros: null,
         },
         createdAtUnixSeconds: 1,
       },
     ]);
   render(<KeyLimitsSummary keyID="archived" />);
-  expect(await screen.findByText(/每日请求 17/)).toBeInTheDocument();
+  expect(await screen.findByText(/每日 Token 上限 17/)).toBeInTheDocument();
   expect(fetchKeys).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
 });

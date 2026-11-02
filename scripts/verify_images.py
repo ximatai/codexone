@@ -190,7 +190,7 @@ def main():
                     policies = {}
                     for name, image in [('images', True), ('chat', False), ('both', True)]:
                         status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal='team',
-                            models=[] if name == 'images' else ['synthetic-host'], limits={**LIMITS, 'unresolved': 100},
+                            models=[] if name == 'images' else ['synthetic-host'], limits=LIMITS,
                             visionInput=name == 'both', imageGeneration=image,
                             imageModels=['synthetic-image'] if image else []))
                         assert status == 201, (status, created)

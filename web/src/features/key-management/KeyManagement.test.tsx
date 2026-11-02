@@ -39,11 +39,8 @@ const key: api.ManagedKey = {
   enabled: true,
   models: ["synthetic-text"],
   limits: {
-    requests: 10,
+    tokens: 10,
     active: 2,
-    unresolved: 4,
-    budgetMicros: 1000,
-    unresolvedMicros: 1000,
   },
   createdAtUnixSeconds: 1,
 };
@@ -52,6 +49,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+async function openKeyDetails() {
+  if (!screen.queryByRole("dialog", { name: "密钥详情" }))
+    fireEvent.click(await screen.findByRole("button", { name: "查看详情" }));
+}
 it("clears one-time secrets on expiry and ignores a late clipboard completion", async () => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
@@ -112,6 +113,10 @@ it("clears one-time secrets on expiry and ignores a late clipboard completion", 
         { name: "创建密钥" },
       ),
     );
+  });
+  expect(vi.mocked(api.createKey).mock.calls[0][0].limits).toMatchObject({
+    tokens: 1_000_000,
+    active: 4,
   });
   expect(screen.getByLabelText("新 API Key")).toHaveValue(
     "synthetic-one-time-secret",
@@ -201,20 +206,21 @@ it("edits retained key limits when the current model directory is empty", async 
   vi.mocked(api.updateKey).mockResolvedValue({
     ...key,
     revision: 2,
-    limits: { ...key.limits, requests: 5 },
+    limits: { ...key.limits, tokens: 5 },
   });
   const view = render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  await openKeyDetails();
   expect(screen.getByLabelText("synthetic-text")).toBeChecked();
   fireEvent.click(screen.getByText("本地治理限额"));
-  fireEvent.change(screen.getByLabelText("每日请求（UTC）"), {
+  fireEvent.change(screen.getByLabelText("每日 Token 上限"), {
     target: { value: "5" },
   });
   expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   await waitFor(() => expect(api.updateKey).toHaveBeenCalled());
   expect(vi.mocked(api.updateKey).mock.calls[0][3]).toMatchObject({
-    requests: 5,
+    tokens: 5,
+    active: key.limits.active,
   });
   await waitFor(() =>
     expect(
@@ -229,11 +235,8 @@ it("toggles unlimited for each dimension, restores a value and submits explicit 
     {
       ...key,
       limits: {
-        requests: null,
+        tokens: null,
         active: null,
-        unresolved: null,
-        budgetMicros: null,
-        unresolvedMicros: null,
       },
     },
   ]);
@@ -243,16 +246,10 @@ it("toggles unlimited for each dimension, restores a value and submits explicit 
   });
   vi.mocked(api.updateKey).mockResolvedValue(key);
   const view = render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
-  expect(screen.getByText("不限 / 日")).toBeInTheDocument();
+  await openKeyDetails();
+  expect(screen.getByText(/\/ 不限 Token/)).toBeInTheDocument();
   fireEvent.click(screen.getByText("本地治理限额"));
-  for (const label of [
-    "每日请求（UTC）",
-    "同时执行",
-    "待核对请求数量",
-    "每日估算阈值（美元）",
-    "待核对占用阈值（美元）",
-  ]) {
+  for (const label of ["每日 Token 上限", "同时执行"]) {
     const toggle = screen.getByLabelText(label + "不限");
     expect(toggle).toBeChecked();
     expect(screen.getByLabelText(label)).toBeDisabled();
@@ -268,11 +265,8 @@ it("toggles unlimited for each dimension, restores a value and submits explicit 
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
   await waitFor(() => expect(api.updateKey).toHaveBeenCalled());
   expect(vi.mocked(api.updateKey).mock.calls[0][3]).toEqual({
-    requests: null,
+    tokens: null,
     active: null,
-    unresolved: null,
-    budgetMicros: null,
-    unresolvedMicros: null,
   });
   view.unmount();
 });
@@ -285,13 +279,13 @@ it("requires explicit confirmation before disabling, and cancellation leaves the
   });
   vi.mocked(api.updateKey).mockResolvedValue({ ...key, enabled: false });
   render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "team 更多操作" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "禁用" }));
+  await openKeyDetails();
+  fireEvent.click(await screen.findByRole("button", { name: "禁用" }));
   expect(await screen.findByText(/客户端会立即失败/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
   expect(api.updateKey).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: "禁用" }));
+  await openKeyDetails();
+  fireEvent.click(await screen.findByRole("button", { name: "禁用" }));
   fireEvent.click(screen.getByRole("button", { name: "确认禁用" }));
   await waitFor(() => expect(api.updateKey).toHaveBeenCalledOnce());
   expect(vi.mocked(api.updateKey).mock.calls[0][1]).toBe(false);
@@ -308,9 +302,9 @@ it("retains the editor draft after validation rejection", async () => {
     new api.ManagementError(400, "invalid_request"),
   );
   render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  await openKeyDetails();
   fireEvent.click(screen.getByText("本地治理限额"));
-  fireEvent.change(screen.getByLabelText("每日请求（UTC）"), {
+  fireEvent.change(screen.getByLabelText("每日 Token 上限"), {
     target: { value: "7" },
   });
   fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
@@ -318,7 +312,7 @@ it("retains the editor draft after validation rejection", async () => {
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "保存修改" })).toBeEnabled(),
   );
-  expect(screen.getByLabelText("每日请求（UTC）")).toHaveValue("7");
+  expect(screen.getByLabelText("每日 Token 上限")).toHaveValue("7");
 });
 
 it.each([false, true])(
@@ -351,9 +345,8 @@ it.each([false, true])(
       target: { value: "team" },
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
-    fireEvent.change(screen.getByLabelText("到期时间"), {
-      target: { value: "7" },
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "到期时间" }));
+    fireEvent.click(screen.getByRole("option", { name: "7 天" }));
     const date = (screen.getByLabelText("到期日期（UTC）") as HTMLInputElement)
       .value;
     fireEvent.click(
@@ -407,9 +400,8 @@ it("does not revive a dismissed secret when a delayed expiration response arrive
     target: { value: "team" },
   });
   fireEvent.click(screen.getByRole("checkbox", { name: "synthetic-text" }));
-  fireEvent.change(screen.getByLabelText("到期时间"), {
-    target: { value: "30" },
-  });
+  fireEvent.click(screen.getByRole("combobox", { name: "到期时间" }));
+  fireEvent.click(screen.getByRole("option", { name: "30 天" }));
   fireEvent.click(
     within(screen.getByRole("dialog", { name: "创建密钥" })).getByRole(
       "button",
@@ -428,7 +420,13 @@ it("does not revive a dismissed secret when a delayed expiration response arrive
 it.each([false, true])(
   "edits display name with conflict=%s and searches the alias",
   async (conflict) => {
-    const named = { ...key, displayName: "合成别名" };
+    const named = {
+      ...key,
+      displayName: "合成别名",
+      limits: {
+        ...key.limits,
+      },
+    };
     vi.mocked(api.fetchSession).mockResolvedValue({ csrf: "synthetic-csrf" });
     vi.mocked(api.fetchKeys).mockResolvedValue([named]);
     vi.mocked(api.fetchOptions).mockResolvedValue({
@@ -452,8 +450,8 @@ it.each([false, true])(
     fireEvent.change(screen.getByPlaceholderText(/搜索/), {
       target: { value: "合成别名" },
     });
-    expect(screen.getByRole("button", { name: "编辑" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(screen.getByRole("button", { name: "查看详情" })).toBeVisible();
+    await openKeyDetails();
     fireEvent.change(screen.getByLabelText("显示名"), {
       target: { value: "" },
     });
@@ -494,7 +492,7 @@ it("refreshes and closes the editor when policy commits but name is rejected", a
     new api.ManagementError(400, "invalid_command"),
   );
   render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+  await openKeyDetails();
   fireEvent.change(screen.getByLabelText("显示名"), {
     target: { value: "合成别名" },
   });
@@ -537,8 +535,8 @@ it("archives with confirmation, reads the recycle bin and restores disabled", as
   });
   render(<KeyManagement />);
   await screen.findByText("全部模型");
-  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: /^归档$/ }));
+  await openKeyDetails();
+  fireEvent.click(await screen.findByRole("button", { name: /^归档$/ }));
   expect(
     screen.getByText(/归档后从默认列表隐藏，用量统计和审计保留/),
   ).toBeVisible();
@@ -546,29 +544,27 @@ it("archives with confirmation, reads the recycle bin and restores disabled", as
   fireEvent.click(screen.getByRole("button", { name: "确认归档" }));
   await waitFor(() =>
     expect(
-      screen.queryByRole("button", { name: "team 更多操作" }),
+      screen.queryByRole("button", { name: "查看详情" }),
     ).not.toBeInTheDocument(),
   );
-  fireEvent.change(screen.getByLabelText("可用状态"), {
-    target: { value: "archived" },
-  });
-  await screen.findByRole("button", { name: "team 更多操作" });
+  fireEvent.click(screen.getByRole("combobox", { name: "可用状态" }));
+  fireEvent.click(screen.getByRole("option", { name: "已归档" }));
+  await screen.findByRole("button", { name: "查看详情" });
   expect(api.fetchKeys).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
-  expect(screen.getByRole("button", { name: /^编辑$/ })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "team 更多操作" }));
-  fireEvent.click(await screen.findByRole("menuitem", { name: /^恢复$/ }));
+
+  await openKeyDetails();
+  fireEvent.click(await screen.findByRole("button", { name: /^恢复$/ }));
   expect(screen.getByText("恢复后仍为停用状态，需要单独启用。")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "确认恢复" }));
   await waitFor(() => expect(api.setArchived).toHaveBeenCalledTimes(2));
   await waitFor(() =>
     expect(
-      screen.queryByRole("button", { name: "team 更多操作" }),
+      screen.queryByRole("button", { name: "查看详情" }),
     ).not.toBeInTheDocument(),
   );
-  fireEvent.change(screen.getByLabelText("可用状态"), {
-    target: { value: "disabled" },
-  });
-  await screen.findByRole("button", { name: "team 更多操作" });
+  fireEvent.click(screen.getByRole("combobox", { name: "可用状态" }));
+  fireEvent.click(screen.getByRole("option", { name: "已禁用" }));
+  await screen.findByRole("button", { name: "查看详情" });
   expect(current.enabled).toBe(false);
 });
 
@@ -580,12 +576,12 @@ it("explains that an enabled Key must be disabled before archiving", async () =>
   });
   vi.mocked(api.fetchKeys).mockResolvedValue([key]);
   render(<KeyManagement />);
-  fireEvent.click(await screen.findByRole("button", { name: "team 更多操作" }));
-  const archive = await screen.findByRole("menuitem", {
-    name: "归档（请先停用）",
+  await openKeyDetails();
+  const archive = await screen.findByRole("button", {
+    name: "归档",
   });
   expect(archive).toBeDisabled();
-  expect(archive).toHaveAttribute("title", "请先停用密钥，再归档");
+  expect(archive).toHaveAttribute("title", "请先禁用密钥，再归档");
 });
 
 it("edits independent conversation and image scopes and preserves explicit null", async () => {
@@ -604,7 +600,7 @@ it("edits independent conversation and image scopes and preserves explicit null"
   vi.mocked(api.updateKey).mockResolvedValue({ ...all, revision: 2 });
   render(<KeyManagement />);
   await screen.findByText("全部模型");
-  fireEvent.click(screen.getByRole("button", { name: /^编辑$/ }));
+  await openKeyDetails();
   const chat = screen.getByRole("radiogroup", { name: "对话模型范围" });
   const images = screen.getByRole("radiogroup", { name: "图片模型范围" });
   expect(within(chat).getByLabelText("全部模型（跟随配置）")).toBeChecked();

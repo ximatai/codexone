@@ -1,9 +1,11 @@
+import { DateInput } from "@mantine/dates";
+import { isUTCDateInput } from "./date-input";
+import { TokenLimitInput } from "./TokenLimitInput";
 import styles from "./keys.module.css";
 import { useRef, useState } from "react";
 import {
-  Accordion,
-  NativeSelect,
   Alert,
+  Select,
   Button,
   Checkbox,
   Group,
@@ -37,11 +39,8 @@ const schema = z
     imageGeneration: z.boolean(),
     imageModels: z.array(z.string()).nullable(),
     limits: z.object({
-      requests: integer,
+      tokens: integer,
       active: integer,
-      unresolved: integer,
-      budgetMicros: integer,
-      unresolvedMicros: integer,
     }),
   })
   .superRefine((value, context) => {
@@ -62,14 +61,11 @@ const schema = z
         message: "请选择图片模型",
       });
   });
-import {
-  limitLabels,
-  dollarsToMicros,
-  microsToDollars,
-  moneyThreshold,
-  estimateNote,
-} from "../../shared/presentation";
-const fields = Object.entries(limitLabels) as [keyof KeyLimits, string][];
+import { limitLabels } from "../../shared/presentation";
+const fields: [keyof KeyLimits, string][] = [
+  ["active", limitLabels.active],
+  ["tokens", "每日 Token 上限"],
+];
 export function KeyEditor({
   entry,
   models,
@@ -77,6 +73,9 @@ export function KeyEditor({
   disabled,
   submit,
   close,
+  hideCancel = false,
+  hideSubmit = false,
+  formId,
 }: {
   entry?: ManagedKey;
   models: string[];
@@ -84,21 +83,19 @@ export function KeyEditor({
   disabled: boolean;
   submit: (draft: KeyDraft, expires?: number | null) => Promise<boolean>;
   close: () => void;
+  hideCancel?: boolean;
+  hideSubmit?: boolean;
+  formId?: string;
 }) {
   const retainedScopes = useRef({
     models: entry?.models ?? [],
     imageModels: entry?.imageModels ?? [],
   });
   const retainedLimits = useRef<Partial<Record<keyof KeyLimits, number>>>({});
-  const [amounts, setAmounts] = useState<Record<string, string | number>>({
-    budgetMicros: microsToDollars(entry?.limits.budgetMicros ?? 1_000_000),
-    unresolvedMicros: microsToDollars(
-      entry?.limits.unresolvedMicros ?? 1_000_000,
-    ),
-  });
-  const [advanced, setAdvanced] = useState<string | null>(null);
   const [expiration, setExpiration] = useState("never");
   const [expirationDate, setExpirationDate] = useState("");
+  const [expirationInvalid, setExpirationInvalid] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const form = useForm({
     initialValues: {
       displayName: entry?.displayName ?? "",
@@ -110,12 +107,9 @@ export function KeyEditor({
         entry?.imageModels === null
           ? null
           : (entry?.imageModels ?? ([] as string[] | null)),
-      limits: entry?.limits ?? {
-        requests: 1000,
-        active: 4,
-        unresolved: 8,
-        budgetMicros: 1_000_000,
-        unresolvedMicros: 1_000_000,
+      limits: {
+        tokens: entry ? entry.limits.tokens : 1_000_000,
+        active: entry ? entry.limits.active : 4,
       },
     },
   });
@@ -149,12 +143,12 @@ export function KeyEditor({
   }
   return (
     <form
+      id={formId}
+      className={entry ? styles.detailEditor : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         const result = schema.safeParse(form.values);
         if (!result.success) {
-          if (result.error.issues.some((issue) => issue.path[0] === "limits"))
-            setAdvanced("limits");
           form.setErrors(
             Object.fromEntries(
               result.error.issues.map((issue) => [
@@ -173,7 +167,7 @@ export function KeyEditor({
         if (
           !entry &&
           expires !== null &&
-          (!Number.isSafeInteger(expires) || expires <= 0)
+          (expirationInvalid || !Number.isSafeInteger(expires) || expires <= 0)
         ) {
           form.setFieldError("principal", "请选择有效到期日期");
           return;
@@ -185,21 +179,23 @@ export function KeyEditor({
         );
       }}
     >
-      <Stack gap="lg">
-        <TextInput
-          label="主体标识"
-          aria-label="主体标识"
-          withAsterisk
-          placeholder="例如 team-a"
-          required
-          disabled={disabled || !!entry}
-          maxLength={64}
-          {...form.getInputProps("principal")}
-        />
+      <Stack gap={entry ? "md" : "lg"}>
+        {!entry && (
+          <TextInput
+            label="主体标识"
+            aria-label="主体标识"
+            withAsterisk
+            placeholder="例如 team-a"
+            required
+            disabled={disabled || !!entry}
+            maxLength={64}
+            {...form.getInputProps("principal")}
+          />
+        )}
         {entry && (
           <TextInput
             label="显示名"
-            description="留空恢复主体标识"
+            title="留空恢复主体标识"
             disabled={disabled}
             {...form.getInputProps("displayName")}
           />
@@ -209,216 +205,207 @@ export function KeyEditor({
             主体隔离会话，创建后不可修改。
           </Text>
         )}
-        <fieldset className={styles.fieldset}>
-          <legend>对话模型</legend>
-          <Stack gap="xs">
-            <Radio.Group
-              label="对话模型范围"
-              value={form.values.models === null ? "all" : "selected"}
-              onChange={(value) => {
-                if (form.values.models !== null)
-                  retainedScopes.current.models = form.values.models;
-                form.setFieldValue(
-                  "models",
-                  value === "all" ? null : retainedScopes.current.models,
-                );
-              }}
-            >
-              <Stack gap="xs">
-                <Radio
-                  value="all"
-                  label="全部模型（跟随配置）"
-                  disabled={disabled}
-                />
-                <Radio value="selected" label="指定模型" disabled={disabled} />
-              </Stack>
-            </Radio.Group>
-            {form.values.models !== null &&
-              choices(
-                models,
-                entry?.models ?? [],
-                form.values.models,
-                "models",
-              )}
-          </Stack>
-          {form.errors.models && (
-            <Text c="red" size="sm" role="alert">
-              {form.errors.models}
+        <div className={entry ? styles.permissionsCard : undefined}>
+          {entry && (
+            <Text fw={600} size="sm" mb="md">
+              模型与能力权限
             </Text>
           )}
-        </fieldset>
-        <fieldset className={styles.fieldset}>
-          <legend>图片能力</legend>
-          <Stack gap="sm">
-            <Checkbox
-              label="视觉输入"
-              description="ⓘ 让对话模型理解上传的图片，不授予图片生成权限。"
-              disabled={disabled}
-              {...form.getInputProps("visionInput", { type: "checkbox" })}
-            />
-            {(imageModels.length > 0 || entry?.imageGeneration) && (
-              <>
-                <Checkbox
-                  label="图片生成与参考图编辑"
-                  description="ⓘ 调用图片模型生成或编辑图片，与视觉输入分别授权。"
-                  disabled={disabled}
-                  {...form.getInputProps("imageGeneration", {
-                    type: "checkbox",
-                  })}
-                />
-                {form.values.imageGeneration && (
-                  <>
-                    <Radio.Group
-                      label="图片模型范围"
-                      value={
-                        form.values.imageModels === null ? "all" : "selected"
-                      }
-                      onChange={(value) => {
-                        if (form.values.imageModels !== null)
-                          retainedScopes.current.imageModels =
-                            form.values.imageModels;
-                        form.setFieldValue(
-                          "imageModels",
-                          value === "all"
-                            ? null
-                            : retainedScopes.current.imageModels,
-                        );
-                      }}
-                    >
-                      <Stack gap="xs">
-                        <Radio
-                          value="all"
-                          label="全部模型（跟随配置）"
-                          disabled={disabled}
-                        />
-                        <Radio
-                          value="selected"
-                          label="指定模型"
-                          disabled={disabled}
-                        />
-                      </Stack>
-                    </Radio.Group>
-                    {form.values.imageModels !== null &&
-                      choices(
-                        imageModels,
-                        entry?.imageModels ?? [],
-                        form.values.imageModels,
-                        "imageModels",
-                      )}
-                  </>
+          <fieldset className={styles.fieldset}>
+            <legend>对话模型</legend>
+            <Stack gap="xs">
+              <Radio.Group
+                label="对话模型范围"
+                styles={{ label: { display: "none" } }}
+                value={form.values.models === null ? "all" : "selected"}
+                onChange={(value) => {
+                  if (form.values.models !== null)
+                    retainedScopes.current.models = form.values.models;
+                  form.setFieldValue(
+                    "models",
+                    value === "all" ? null : retainedScopes.current.models,
+                  );
+                }}
+              >
+                <Group gap="md">
+                  <Radio
+                    value="all"
+                    label="全部模型（跟随配置）"
+                    disabled={disabled}
+                  />
+                  <Radio
+                    value="selected"
+                    label="指定模型"
+                    disabled={disabled}
+                  />
+                </Group>
+              </Radio.Group>
+              {form.values.models !== null &&
+                choices(
+                  models,
+                  entry?.models ?? [],
+                  form.values.models,
+                  "models",
                 )}
-              </>
-            )}
-            {form.errors.imageModels && (
+            </Stack>
+            {form.errors.models && (
               <Text c="red" size="sm" role="alert">
-                {form.errors.imageModels}
+                {form.errors.models}
               </Text>
             )}
-          </Stack>
-        </fieldset>
-        <Accordion value={advanced} onChange={setAdvanced}>
-          <Accordion.Item value="limits">
-            <Accordion.Control>
-              <span>本地治理限额</span>
-              <Text size="xs" c="dimmed">
-                每日请求 {form.values.limits.requests ?? "不限"} · 并发{" "}
-                {form.values.limits.active ?? "不限"} · 待核对{" "}
-                {form.values.limits.unresolved ?? "不限"}
-                <br />
-                每日 {moneyThreshold(form.values.limits.budgetMicros)} ·
-                待核对占用 {moneyThreshold(form.values.limits.unresolvedMicros)}
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack gap="md" mt="md">
-                {fields.map(([name, label]) => (
-                  <Stack key={name} gap="xs">
-                    <Checkbox
-                      label="不限"
-                      aria-label={`${label}不限`}
-                      disabled={disabled}
-                      checked={form.values.limits[name] === null}
-                      onChange={(event) => {
-                        const value = form.values.limits[name];
-                        if (event.currentTarget.checked && value !== null)
-                          retainedLimits.current[name] = value;
-                        if (
-                          !event.currentTarget.checked &&
-                          name.endsWith("Micros")
-                        )
-                          setAmounts((previous) => ({
-                            ...previous,
-                            [name]: microsToDollars(
-                              retainedLimits.current[name] ?? 1,
-                            ),
-                          }));
-                        form.setFieldValue(
-                          `limits.${name}`,
-                          event.currentTarget.checked
-                            ? null
-                            : (retainedLimits.current[name] ?? 1),
-                        );
-                      }}
+          </fieldset>
+          <fieldset className={styles.fieldset}>
+            <legend>图片能力</legend>
+            <Stack gap="sm">
+              <Checkbox
+                label="视觉输入"
+                title="允许对话模型理解上传的图片；图片生成单独授权。"
+                disabled={disabled}
+                {...form.getInputProps("visionInput", { type: "checkbox" })}
+              />
+              {(imageModels.length > 0 || entry?.imageGeneration) && (
+                <>
+                  <Checkbox
+                    label="图片生成与参考图编辑"
+                    title="允许调用图片模型生成或编辑图片。"
+                    disabled={disabled}
+                    {...form.getInputProps("imageGeneration", {
+                      type: "checkbox",
+                    })}
+                  />
+                  {form.values.imageGeneration && (
+                    <>
+                      <Radio.Group
+                        label="图片模型范围"
+                        value={
+                          form.values.imageModels === null ? "all" : "selected"
+                        }
+                        onChange={(value) => {
+                          if (form.values.imageModels !== null)
+                            retainedScopes.current.imageModels =
+                              form.values.imageModels;
+                          form.setFieldValue(
+                            "imageModels",
+                            value === "all"
+                              ? null
+                              : retainedScopes.current.imageModels,
+                          );
+                        }}
+                      >
+                        <Group gap="md">
+                          <Radio
+                            value="all"
+                            label="全部模型（跟随配置）"
+                            disabled={disabled}
+                          />
+                          <Radio
+                            value="selected"
+                            label="指定模型"
+                            disabled={disabled}
+                          />
+                        </Group>
+                      </Radio.Group>
+                      {form.values.imageModels !== null &&
+                        choices(
+                          imageModels,
+                          entry?.imageModels ?? [],
+                          form.values.imageModels,
+                          "imageModels",
+                        )}
+                    </>
+                  )}
+                </>
+              )}
+              {form.errors.imageModels && (
+                <Text c="red" size="sm" role="alert">
+                  {form.errors.imageModels}
+                </Text>
+              )}
+            </Stack>
+          </fieldset>
+        </div>
+        <fieldset
+          className={`${styles.fieldset} ${entry ? styles.limitsCard : ""}`}
+        >
+          <legend>本地治理限额</legend>
+          <Stack gap="md">
+            <div className={styles.limitGrid}>
+              {fields.map(([name, label]) => (
+                <Stack key={name} gap={6}>
+                  <Checkbox
+                    label="不限"
+                    aria-label={`${label}不限`}
+                    disabled={disabled}
+                    checked={form.values.limits[name] === null}
+                    onChange={(event) => {
+                      const value = form.values.limits[name];
+                      if (event.currentTarget.checked && value !== null)
+                        retainedLimits.current[name] = value;
+                      form.setFieldValue(
+                        `limits.${name}`,
+                        event.currentTarget.checked
+                          ? null
+                          : (retainedLimits.current[name] ?? 1),
+                      );
+                    }}
+                  />
+                  {name === "tokens" ? (
+                    <TokenLimitInput
+                      value={form.values.limits.tokens}
+                      disabled={disabled || form.values.limits.tokens === null}
+                      onChange={(value) =>
+                        form.setFieldValue("limits.tokens", value)
+                      }
+                      error={form.errors["limits.tokens"]}
                     />
+                  ) : (
                     <NumberInput
+                      style={{ order: -1 }}
                       label={label}
                       aria-label={label}
                       withAsterisk={form.values.limits[name] !== null}
-                      min={name.endsWith("Micros") ? 0.000001 : 1}
-                      max={
-                        name.endsWith("Micros") ? 1_000_000 : 1_000_000_000_000
-                      }
-                      allowDecimal={name.endsWith("Micros")}
-                      decimalScale={name.endsWith("Micros") ? 6 : 0}
+                      min={1}
+                      max={1_000_000_000_000}
+                      allowDecimal={false}
                       {...form.getInputProps(`limits.${name}`)}
                       value={
                         form.values.limits[name] === null
                           ? ""
-                          : name.endsWith("Micros")
-                            ? amounts[name]
-                            : form.values.limits[name]!
+                          : form.values.limits[name]!
                       }
-                      onChange={(value) => {
-                        if (name.endsWith("Micros"))
-                          setAmounts((previous) => ({
-                            ...previous,
-                            [name]: value,
-                          }));
-                        try {
-                          form.setFieldValue(
-                            `limits.${name}`,
-                            name.endsWith("Micros")
-                              ? dollarsToMicros(value)
-                              : Number(value),
-                          );
-                        } catch {
-                          form.setFieldValue(`limits.${name}`, 0);
-                        }
-                      }}
+                      onChange={(value) =>
+                        form.setFieldValue(
+                          `limits.${name}`,
+                          typeof value === "number" ? value : 0,
+                        )
+                      }
                       disabled={disabled || form.values.limits[name] === null}
                       placeholder={
                         form.values.limits[name] === null ? "不限" : undefined
                       }
                     />
-                  </Stack>
-                ))}
-                <Alert color="gray">
-                  {estimateNote}
-                  。这些是本地阈值，不是订阅余额。预热和压缩计入请求，待核对请求保留占用。
-                </Alert>
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
+                  )}
+                </Stack>
+              ))}
+            </div>
+            <Text size="xs" c="dimmed">
+              UTC
+              每日重置；输入（含缓存）＋输出。达到已观测上限后拒绝新请求，进行中的请求继续；缺失用量仍为未知。
+            </Text>
+          </Stack>
+        </fieldset>
         {!entry && (
           <Stack gap="xs">
-            <NativeSelect
+            <Select
               label="到期时间"
               value={expiration}
               disabled={disabled}
-              onChange={(e) => {
-                const value = e.currentTarget.value;
+              allowDeselect={false}
+              comboboxProps={{ withinPortal: true, zIndex: 350 }}
+              onChange={(selection) => {
+                const value = selection ?? "never";
                 setExpiration(value);
+                setExpirationInvalid(false);
                 if (["7", "30", "90"].includes(value))
                   setExpirationDate(
                     new Date(Date.now() + (Number(value) + 1) * 86400000)
@@ -435,16 +422,46 @@ export function KeyEditor({
               ]}
             />
             {expiration !== "never" && (
-              <TextInput
+              <DateInput
                 label="到期日期（UTC）"
                 aria-label="到期日期（UTC）"
-                type="date"
+                locale="zh-cn"
+                valueFormat="YYYY-MM-DD"
+                fixOnBlur={false}
+                allowDeselect
+                popoverProps={{
+                  withinPortal: true,
+                  zIndex: 350,
+                  onOpen: () => setCalendarOpen(true),
+                  onClose: () => setCalendarOpen(false),
+                }}
+                data-mantine-stop-propagation={
+                  calendarOpen ? "true" : undefined
+                }
+                getDayProps={(day) => ({
+                  "aria-label": day,
+                  "data-mantine-stop-propagation": "true",
+                })}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && calendarOpen)
+                    event.stopPropagation();
+                }}
+                dateParser={(value) => (isUTCDateInput(value) ? value : null)}
+                onInputCapture={(event) =>
+                  setExpirationInvalid(
+                    !isUTCDateInput(event.currentTarget.value),
+                  )
+                }
+                error={
+                  expirationInvalid ? "请输入有效日期（YYYY-MM-DD）" : undefined
+                }
                 required
                 disabled={disabled}
-                value={expirationDate}
-                onChange={(e) => {
+                value={expirationDate || null}
+                onChange={(value) => {
                   setExpiration("custom");
-                  setExpirationDate(e.currentTarget.value);
+                  setExpirationDate(value ?? "");
+                  setExpirationInvalid(false);
                 }}
               />
             )}
@@ -460,24 +477,28 @@ export function KeyEditor({
               )}
           </Stack>
         )}
-        <Group justify="flex-end">
-          <Button
-            variant="default"
-            type="button"
-            disabled={disabled}
-            onClick={close}
-          >
-            取消
-          </Button>
-          <Button
-            type="submit"
-            disabled={
-              disabled || (!entry && !models.length && !imageModels.length)
-            }
-          >
-            {entry ? "保存修改" : "创建密钥"}
-          </Button>
-        </Group>
+        {!hideSubmit && (
+          <Group justify="flex-end">
+            {!hideCancel && (
+              <Button
+                variant="default"
+                type="button"
+                disabled={disabled}
+                onClick={close}
+              >
+                取消
+              </Button>
+            )}
+            <Button
+              type="submit"
+              disabled={
+                disabled || (!entry && !models.length && !imageModels.length)
+              }
+            >
+              {entry ? "保存修改" : "创建密钥"}
+            </Button>
+          </Group>
+        )}
       </Stack>
     </form>
   );

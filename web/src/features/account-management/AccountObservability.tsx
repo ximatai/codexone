@@ -2,7 +2,7 @@ import { accountName } from "../../shared/account-presentation";
 import { quotaStale } from "./quota";
 import { useEffect, useRef, useState } from "react";
 import { ErrorState } from "../../shared/ui/States";
-import { Button, Skeleton } from "@mantine/core";
+import { Button, Group, Text, Skeleton } from "@mantine/core";
 import styles from "./accounts.module.css";
 import { ManagementError } from "../../shared/management";
 import type { Account } from "./api";
@@ -12,7 +12,7 @@ import {
   type QuotaWindow,
   type QuotaLimit,
 } from "./observation-api";
-import { timeTitle } from "../../shared/presentation";
+import { localTime, timeTitle } from "../../shared/presentation";
 import { QuotaWindowBar } from "./QuotaWindowBar";
 export const utc = timeTitle;
 function duration(value: number | null): string {
@@ -36,11 +36,16 @@ function Window({
         </p>
       ) : (
         <>
-          <span className={styles.subtle}>
-            {duration(value.durationSeconds)}
-          </span>
-
-          <QuotaWindowBar title={title} value={value} />
+          <QuotaWindowBar
+            title={
+              value.durationSeconds === 18000
+                ? "5 小时额度"
+                : value.durationSeconds === 604800
+                  ? "每周额度"
+                  : `${title} · ${duration(value.durationSeconds)}`
+            }
+            value={value}
+          />
         </>
       )}
     </div>
@@ -127,7 +132,9 @@ export function AccountObservability({
           : health?.cooldownCount
             ? `最近读取：${health.cooldownCount} 个模型冷却`
             : value
-              ? "执行健康：无已知阻断"
+              ? inDetails
+                ? "无已知阻断"
+                : "执行健康：无已知阻断"
               : "健康尚无观测"}
       </span>
       <small>
@@ -151,23 +158,35 @@ export function AccountObservability({
       )}
       {expanded && (
         <div
-          className={styles.details}
+          className={`${styles.details} ${inDetails ? styles.detailObservation : ""}`}
           role="region"
           aria-label={`${accountName(account.id, [], account.displayName)} 额度与健康`}
         >
-          <Button
-            variant="default"
-            disabled={
-              disabled ||
-              failed ||
-              !details ||
-              !value?.observing ||
-              account.authorization !== "ready"
-            }
-            onClick={onObserve}
-          >
-            读取上游额度
-          </Button>
+          <Group justify="space-between">
+            {inDetails && (
+              <Text
+                size="sm"
+                fw={600}
+                title="上游订阅窗口，与Key本地限额独立。"
+              >
+                订阅额度
+              </Text>
+            )}
+            <Button
+              variant={inDetails ? "subtle" : "default"}
+              size={inDetails ? "xs" : "sm"}
+              disabled={
+                disabled ||
+                failed ||
+                !details ||
+                !value?.observing ||
+                account.authorization !== "ready"
+              }
+              onClick={onObserve}
+            >
+              {inDetails ? "更新额度" : "读取上游额度"}
+            </Button>
+          </Group>
           {!details && !failed ? (
             <Skeleton
               height={80}
@@ -181,23 +200,32 @@ export function AccountObservability({
           ) : (
             details && (
               <>
-                <details>
-                  <summary>窗口口径</summary>
-                  <p className={styles.subtle}>
-                    订阅账号的上游窗口；与本地 Key 限额、估算费用相互独立。
-                  </p>
-                </details>
-                <LimitStatus value={base} />
+                {!inDetails && (
+                  <details>
+                    <summary>窗口口径</summary>
+                    <p className={styles.subtle}>
+                      订阅账号的上游窗口；与本地 Key 限额、估算费用相互独立。
+                    </p>
+                  </details>
+                )}
+                {(!inDetails ||
+                  base?.allowed !== true ||
+                  base.limitReached !== false) && <LimitStatus value={base} />}
                 <div className={styles.windows}>
                   <Window title="主窗口" value={base?.primary ?? null} />
                   <Window title="次窗口" value={base?.secondary ?? null} />
                 </div>
-                <small>
-                  最近成功：{utc(details.quota.observedAtUnixSeconds)}
+                <small
+                  title={`最近成功：${utc(details.quota.observedAtUnixSeconds)}；最近尝试：${utc(details.quota.attemptedAtUnixSeconds)}`}
+                >
+                  {inDetails ? "更新于 " : "最近成功："}
+                  {localTime(details.quota.observedAtUnixSeconds)}
                 </small>
-                <small>
-                  最近尝试：{utc(details.quota.attemptedAtUnixSeconds)}
-                </small>
+                {!inDetails && (
+                  <small title={utc(details.quota.attemptedAtUnixSeconds)}>
+                    最近尝试：{localTime(details.quota.attemptedAtUnixSeconds)}
+                  </small>
+                )}
                 {details.quota.failure && (
                   <p className={styles.warning}>
                     最近一次读取失败，保留上次成功值。
@@ -246,9 +274,7 @@ export function AccountObservability({
               </>
             )
           )}
-          {!value?.observing && (
-            <small>额度观察服务未就绪，请稍后重新读取账号。</small>
-          )}
+          {!value?.observing && <small>额度服务未就绪。</small>}
         </div>
       )}
     </div>

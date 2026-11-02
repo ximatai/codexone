@@ -1,3 +1,4 @@
+import { Badge, Button, Group, Stack, Text } from "@mantine/core";
 import styles from "./system.module.css";
 import { useEffect, useState } from "react";
 import { fetchSystemStatus } from "./api";
@@ -14,7 +15,7 @@ const labels: Record<string, string> = {
   authorization: "访问授权",
 };
 
-export function SystemOverview() {
+export function SystemOverview({ compact = false }: { compact?: boolean }) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [revision, setRevision] = useState(0);
 
@@ -36,6 +37,56 @@ export function SystemOverview() {
     setRevision((value) => value + 1);
   }
 
+  if (compact)
+    return (
+      <Stack gap="xs" aria-label="服务状态">
+        {state.kind === "loading" ? (
+          <Text size="sm" role="status">
+            正在连接服务…
+          </Text>
+        ) : state.kind === "failed" ? (
+          <>
+            <Text size="sm" role="alert">
+              管理服务连接失败，无法确认生成状态。
+            </Text>
+            <Button size="xs" variant="light" onClick={reload}>
+              重新连接
+            </Button>
+          </>
+        ) : (
+          <>
+            <Group justify="space-between">
+              <Text size="sm">管理服务</Text>
+              <Badge color="green" variant="light">
+                连接正常
+              </Badge>
+            </Group>
+            <Group justify="space-between">
+              <Text size="sm">生成服务</Text>
+              <Badge
+                color={state.data.ready ? "green" : "orange"}
+                variant="light"
+              >
+                {state.data.ready ? "已就绪" : "未就绪"}
+              </Badge>
+            </Group>
+            {!state.data.ready && (
+              <Text size="xs" c="dimmed">
+                {state.data.checks.some((check) => !check.ready)
+                  ? `待就绪：${state.data.checks
+                      .filter((check) => !check.ready)
+                      .map((check) => labels[check.name] ?? check.name)
+                      .join("、")}`
+                  : "未提供就绪检查，暂无法确认生成可用。"}
+              </Text>
+            )}
+            <Button size="xs" variant="subtle" onClick={reload}>
+              刷新服务状态
+            </Button>
+          </>
+        )}
+      </Stack>
+    );
   return (
     <div className={styles.root}>
       <section>

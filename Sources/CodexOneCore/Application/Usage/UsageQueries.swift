@@ -229,18 +229,30 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public let tokens: Int64
+  public let tokenUsageIncomplete: Bool
   public let key: UsageKeyOption
   public let admitted: Int64
+  public let inFlight: Int64
+  public let succeeded: Int64
+  public let cancelled: Int64
   public let failed: Int64
   public let pending: Int64
   public let estimatedMicros: Int64?
   public let lastUsedAtUnixSeconds: Int64?
   public init(
     key: UsageKeyOption, admitted: Int64, failed: Int64, pending: Int64,
-    estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?
+    estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
+    succeeded: Int64, cancelled: Int64, inFlight: Int64, tokens: Int64 = 0,
+    tokenUsageIncomplete: Bool = true
   ) {
+    self.tokens = tokens
+    self.tokenUsageIncomplete = tokenUsageIncomplete
     self.key = key
     self.admitted = admitted
+    self.inFlight = inFlight
+    self.succeeded = succeeded
+    self.cancelled = cancelled
     self.failed = failed
     self.pending = pending
     self.estimatedMicros = estimatedMicros
@@ -296,6 +308,8 @@ public struct InFlightUsageRow: Sendable, Encodable {
   public let displayName: String?
   public let principal: String?
   public let model: String?
+  public let reasoningEffort: String?
+  public let requestMetadataRecorded: Bool?
   public let mode: ExecutionMode
   public let accountID: String
   public let accountDisplayName: String?
@@ -305,13 +319,16 @@ public struct InFlightUsageRow: Sendable, Encodable {
   public init(
     id: String, keyID: String, principal: String?, model: String?, mode: ExecutionMode,
     accountID: String, accountDisplayName: String?, startedAtUnixSeconds: Int64?,
-    elapsedSeconds: Int64?, hasFirstEvent: Bool?, displayName: String? = nil
+    elapsedSeconds: Int64?, hasFirstEvent: Bool?, displayName: String? = nil,
+    reasoningEffort: String? = nil, requestMetadataRecorded: Bool? = nil
   ) {
     self.id = id
     self.keyID = keyID
     self.displayName = displayName
     self.principal = principal
     self.model = model
+    self.reasoningEffort = reasoningEffort
+    self.requestMetadataRecorded = requestMetadataRecorded
     self.mode = mode
     self.accountID = accountID
     self.accountDisplayName = accountDisplayName

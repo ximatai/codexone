@@ -225,7 +225,7 @@ public struct KeyAdminAPI: Sendable {
     }
     if let limits = document["limits"] {
       guard let keys = limits.object?.keys,
-        Set(keys) == ["requests", "active", "unresolved", "budgetMicros", "unresolvedMicros"]
+        Set(keys) == ["tokens", "active"]
       else { throw ExecutionError.invalidCommand }
     }
     return document
@@ -244,12 +244,8 @@ public struct KeyAdminAPI: Sendable {
       "imageModels": key.policy.imageModels.map { .array($0.map { .string($0) }) } ?? .null,
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
-        "requests": key.policy.limits.requests.map { .number(Decimal($0)) } ?? .null,
+        "tokens": key.policy.limits.tokens.map { .number(Decimal($0)) } ?? .null,
         "active": key.policy.limits.active.map { .number(Decimal($0)) } ?? .null,
-        "unresolved": key.policy.limits.unresolved.map { .number(Decimal($0)) } ?? .null,
-        "budgetMicros": key.policy.limits.budgetMicros.map { .number(Decimal($0)) } ?? .null,
-        "unresolvedMicros": key.policy.limits.unresolvedMicros.map { .number(Decimal($0)) }
-          ?? .null,
       ]),
     ])
   }

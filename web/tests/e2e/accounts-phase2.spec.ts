@@ -47,11 +47,20 @@ test("account drawer refreshes a conflicting name and saves on explicit retry", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/accounts");
   await expect(page.getByText("合成订阅", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "额度与健康详情" })).toHaveText(
+    "查看详情",
+  );
+  await expect(page.getByRole("button", { name: /更多操作/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "额度与健康详情" }),
+  ).toHaveCount(1);
   await mkdir("../artifacts/ui-phase2", { recursive: true });
   await page.waitForTimeout(350);
   await page.screenshot({ path: "../artifacts/ui-phase2/accounts-1440.png" });
   await page.getByRole("button", { name: "额度与健康详情" }).click();
   const drawer = page.getByRole("dialog", { name: "账号详情" });
+  await drawer.getByRole("tab", { name: "设置", exact: true }).click();
+  await drawer.getByText("技术信息", { exact: true }).click();
   await expect(drawer).toContainText("访问凭证到期：不可用");
   await expect(
     drawer.getByRole("radio", { name: "启用", exact: true }),
@@ -70,9 +79,9 @@ test("account drawer refreshes a conflicting name and saves on explicit retry", 
   await page.screenshot({
     path: "../artifacts/ui-phase2/accounts-drawer-1440.png",
   });
-  await drawer.getByText("排空", { exact: true }).click();
+  await drawer.getByRole("radio", { name: "禁用", exact: true }).click();
   const confirmation = page.getByRole("dialog", {
-    name: "排空账号",
+    name: "禁用账号",
     exact: true,
   });
   await expect(confirmation).toBeVisible();

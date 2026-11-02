@@ -18,7 +18,7 @@ vi.mock("./round2-api", async (original) => ({
   ...(await original<typeof import("./round2-api")>()),
   fetchDaily: vi.fn(() => Promise.resolve([])),
   fetchInFlight: vi.fn(() => Promise.resolve([])),
-  fetchRecent: vi.fn(() => Promise.resolve({ rows: [], truncated: false })),
+  fetchKeySummary: vi.fn(() => Promise.resolve([])),
 }));
 afterEach(() => {
   vi.useRealTimers();

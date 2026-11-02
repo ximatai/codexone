@@ -12,7 +12,7 @@ private func keyPolicy(active: Int64 = 2, requests: Int64 = 20, unresolved: Int6
     models: ["synthetic-text"],
     limits: .init(
       requests: requests, active: active, unresolved: unresolved,
-      budgetMicros: 100, unresolvedMicros: 100))
+      budgetMicros: nil, unresolvedMicros: nil, tokens: requests * 24))
 }
 private func keyAdmission(
   _ id: String, key: ManagedKey, principal: String? = nil, window: String = "w"
@@ -94,9 +94,7 @@ private func keyAdmission(
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(
     path: path, limits: syntheticLimits, clock: testClock)
-  await #expect(throws: ExecutionError.denied) {
-    try await reopened.admit(keyAdmission("new-window", key: key, window: "new-window"))
-  }
+  try await reopened.admit(keyAdmission("new-window", key: key, window: "new-window"))
   #expect(try await reopened.snapshot(attempt: "other").state == .unknown)
   await reopened.close()
 }
@@ -277,8 +275,7 @@ private func keyAdmission(
   let second = ManagedKey(
     id: "k2", principal: "p", revision: 1, enabled: true,
     policy: try decodedKeyPolicy([
-      "requests": NSNull(), "active": 2, "unresolved": 3,
-      "budgetMicros": 100, "unresolvedMicros": 100,
+      "tokens": NSNull(), "active": 2,
     ]),
     createdAtUnixSeconds: 1)
   let a = try config.makePolicy(token: nil, key: first)
@@ -325,7 +322,7 @@ private func keyAdmission(
   await reopened.close()
 }
 
-private let limitNames = ["requests", "active", "unresolved", "budgetMicros", "unresolvedMicros"]
+private let limitNames = ["tokens", "active"]
 private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   try JSONDecoder().decode(
     KeyPolicy.self,
@@ -334,38 +331,38 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
     ]))
 }
 
-@Test func nullableKeyDimensionsSkipOnlyTheirOwnAdmissionCheck() async throws {
-  for unlimited in limitNames {
-    // First prove the numeric dimension refuses, then switch only it to null.
-    // Pair it with every other bounded dimension to prove those still refuse.
-    for bounded in [unlimited] + limitNames.filter({ $0 != unlimited }) {
-      let path = try temporaryExecutionPath()
-      let store = try await SQLiteExecutionStore.open(
-        path: path, limits: syntheticLimits, clock: testClock)
-      var limits = Dictionary(uniqueKeysWithValues: limitNames.map { ($0, 100 as Any) })
-      limits[bounded] = bounded.contains("Micros") ? 10 : 1
-      var key = try await store.createKey(
-        id: "k", principal: "p",
-        digest: keyDigest("synthetic-null-limit"), policy: decodedKeyPolicy(limits))
-      try await store.admit(keyAdmission("first", key: key))
-      await #expect(throws: ExecutionError.denied) {
-        try await store.admit(keyAdmission("bounded", key: key))
-      }
-      limits[unlimited] = NSNull()
-      key = try await store.updateKey(
-        id: key.id, revision: key.revision, enabled: true,
-        policy: decodedKeyPolicy(limits))
-      if bounded == unlimited {
-        try await store.admit(keyAdmission("unlimited", key: key))
-      } else {
-        await #expect(throws: ExecutionError.denied) {
-          try await store.admit(keyAdmission("still-bounded", key: key))
-        }
-      }
-      await store.close()
-      try FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
-    }
+@Test func dailyTokenLimitCountsCacheOnceSurvivesRestartAndResetsUTC() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
+  let time = TestWallClock()
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: time.clock)
+  let policy = try decodedKeyPolicy(["tokens": 20, "active": 2])
+  let key = try await store.createKey(
+    id: "token-key", principal: "p", digest: keyDigest("synthetic-token-budget"), policy: policy)
+  try await store.admit(keyAdmission("first", key: key))
+  try await store.finalize(
+    attempt: "first",
+    evidence: .init(
+      revision: 1, inputTokens: 12, outputTokens: 8, cachedTokens: 10, images: 0,
+      estimatedMicros: 0, completeness: .complete))
+  await #expect(throws: ExecutionError.denied) {
+    try await store.admit(keyAdmission("over", key: key))
+  }
+  let summary = try await store.makeUsageReader()
+  #expect(try await summary.keyUsage().keys.first?.tokens == 20)
+  await summary.close()
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: time.clock)
+  await #expect(throws: ExecutionError.denied) {
+    try await reopened.admit(keyAdmission("restart", key: key))
+  }
+  time.advance(seconds: 86400)
+  try await reopened.admit(keyAdmission("tomorrow", key: key))
+  await reopened.close()
 }
 
 @Test func fullyUnlimitedKeyKeepsLedgerBeyondGlobalReference() async throws {
@@ -406,7 +403,7 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   let encoded = try JSONEncoder().encode(policy)
   #expect(try JSONDecoder().decode(KeyPolicy.self, from: encoded) == policy)
   let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-  #expect((object["limits"] as? [String: Any])?.count == 5)
+  #expect((object["limits"] as? [String: Any])?.count == 2)
   for field in limitNames {
     var missing = valid
     missing.removeValue(forKey: field)
@@ -661,5 +658,36 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
     try await store.setKeyArchived(id: key.id, revision: key.revision, archived: false)
   }
   #expect(try await store.listKeys(archived: true).first == key)
+  await store.close()
+}
+
+@Test func dailyTokenLimitIncludesRetainedTotalsAndMarksPartialAsLowerBound() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let policy = try decodedKeyPolicy(["tokens": 20, "active": 2])
+  let rolled = try await store.createKey(
+    id: "rolled", principal: "p", digest: keyDigest("synthetic-rolled-token"), policy: policy)
+  let day = testUnixSeconds / 86400 * 86400
+  try rawSQL(
+    path,
+    "INSERT INTO usage_daily(day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown,requests,last_used_epoch,input_tokens,output_tokens,cached_tokens) VALUES(\(day),'rolled','synthetic-text','generation','succeeded','','complete',0,1,\(testUnixSeconds),12,8,10)"
+  )
+  await #expect(throws: ExecutionError.denied) {
+    try await store.admit(keyAdmission("rolled-denied", key: rolled))
+  }
+  let partial = try await store.createKey(
+    id: "partial", principal: "p", digest: keyDigest("synthetic-partial-token"), policy: policy)
+  try await store.admit(keyAdmission("partial-first", key: partial))
+  try await store.finalize(attempt: "partial-first", evidence: usage(amount: 3, complete: false))
+  let reader = try await store.makeUsageReader()
+  let report = try await reader.keyUsage()
+  let value = try #require(report.keys.first { $0.key.id == "partial" })
+  #expect(value.tokens == 6 && value.tokenUsageIncomplete)
+  try await store.admit(keyAdmission("partial-next", key: partial))
+  await reader.close()
   await store.close()
 }

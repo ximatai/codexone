@@ -19,7 +19,9 @@ export function QuotaPriming({
   reloadToken,
   mutation,
   onUnauthorized,
+  hideTitle = false,
 }: {
+  hideTitle?: boolean;
   account: Account;
   disabled: boolean;
   reloadToken: unknown;
@@ -71,12 +73,13 @@ export function QuotaPriming({
   return (
     <section aria-label="空闲窗口预热">
       <Stack gap="sm">
-        <Title order={3} size="h5">
-          空闲窗口预热
-        </Title>
+        {!hideTitle && (
+          <Title order={3} size="h5">
+            空闲窗口预热
+          </Title>
+        )}
         <Text size="sm">
-          默认关闭。检测到 5
-          小时或每周窗口空闲时发送一次合成请求，以便提前开始计时。这会消耗订阅额度，并可能增加提供者风控或账号受限风险。
+          预热会发送请求并消耗订阅额度，可能触发提供者风控。
         </Text>
         {loading && <Text role="status">正在读取预热设置…</Text>}
         {error && (
@@ -88,8 +91,9 @@ export function QuotaPriming({
           variant="subtle"
           disabled={disabled || loading}
           onClick={() => setVersion((v) => v + 1)}
+          aria-label="重新读取预热设置"
         >
-          重新读取预热设置
+          刷新
         </Button>
         {state?.attention && (
           <Alert color="yellow">
@@ -106,7 +110,7 @@ export function QuotaPriming({
         />
         <NativeSelect
           label="预热模型"
-          description="仅使用当前配置的对话模型。默认选择本地输入与输出费率之和最低的模型，同价按模型 ID 排序。"
+          title="默认选择配置费率最低的对话模型。"
           value={model}
           disabled={blocked || !state?.models.length}
           data={[
@@ -124,7 +128,7 @@ export function QuotaPriming({
         />
         <Textarea
           label="预热消息"
-          description="1–200 个字符，仅纯文本；推理和输出参数固定为最小档位。"
+          title="1–200个纯文本字符；推理和输出参数使用最小档位。"
           value={message}
           disabled={blocked}
           rows={3}
@@ -162,8 +166,9 @@ export function QuotaPriming({
             );
             setVersion((v) => v + 1);
           }}
+          aria-label="保存预热设置"
         >
-          保存预热设置
+          保存
         </Button>
       </Stack>
     </section>

@@ -107,3 +107,107 @@
   border-radius: var(--mantine-radius-md);
   background: var(--mantine-color-gray-0);
 }
+
+.overlayHost {
+  display: contents;
+}
+
+.detailContent {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+.detailHeader {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+}
+.detailBody {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.detailLayout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.detailIdentity {
+  flex: 0 0 auto;
+  padding-bottom: 16px;
+}
+.detailTabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.detailTabList {
+  flex: 0 0 auto;
+}
+.detailTabPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: 16px;
+  padding-bottom: 24px;
+}
+.technical {
+  border-top: 1px solid var(--mantine-color-gray-3);
+  padding-top: 12px;
+}
+.technical summary {
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+  font-size: 13px;
+}
+
+.detailObservation {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.cardHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+}
+.cardActions {
+  align-self: start;
+}
+.accountCard .cardSection {
+  margin-bottom: 0;
+}
+.accountCard .windows {
+  gap: 10px;
+}
+.accountCard .quotaWindow {
+  padding: 8px 10px;
+  margin-bottom: 0;
+}
+.accountCard .quotaWindow p[data-size="xl"] {
+  font-size: 18px;
+}
+@media (max-width: 600px) {
+  .cardActions {
+    display: contents;
+  }
+  .cardDetails {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+  }
+  .cardBadges {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .accountCard .windows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

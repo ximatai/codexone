@@ -112,7 +112,7 @@ private func attentionKey(expires: Int64? = nil, enabled: Bool = true, unlimited
       now: attentionNow
     ).isEmpty)
   #expect(
-    AttentionRules.key(try attentionKey(), requests: 90, budget: 900, now: attentionNow).count == 2)
+    AttentionRules.key(try attentionKey(), requests: 90, budget: 900, now: attentionNow).count == 0)
   #expect(
     AttentionRules.key(
       try attentionKey(unlimited: true), requests: 100000, budget: 100000, now: attentionNow
@@ -217,7 +217,7 @@ private struct AttentionStorage: StorageMonitoring {
     #expect(!first.contains { $0.kind == "error_rate_high" })
     #expect(!first.contains { $0.kind == "unresolved_executions" })
     #expect(
-      first.contains { $0.kind == "key_limit_near" && $0.detail["metric"]?.string == "requests" })
+      !first.contains { $0.kind == "key_limit_near" })
     let encoded = String(decoding: try JSONEncoder().encode(first), as: UTF8.self)
     for forbidden in [
       String(repeating: "a", count: 64), "outcome_json", "envelope", "namespace", "Bearer",

@@ -1,6 +1,7 @@
 import type { AccountName } from "../../shared/account-presentation";
 import { useRef, useState } from "react";
 import {
+  Group,
   Alert,
   Button,
   Anchor,
@@ -27,6 +28,7 @@ export function AttentionPanel({
   accounts = [],
   release,
   aggregateErrors = false,
+  inlineAccounts = false,
 }: {
   items?: AttentionItem[];
   loading: boolean;
@@ -35,6 +37,7 @@ export function AttentionPanel({
   accounts?: readonly AccountName[];
   release?: (item: AttentionItem) => void;
   aggregateErrors?: boolean;
+  inlineAccounts?: boolean;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -46,9 +49,17 @@ export function AttentionPanel({
   );
   return (
     <Paper withBorder p="md" component="section" aria-label="需要处理">
-      <Title order={2} size="h4" mb="sm">
-        需要处理
-      </Title>
+      <Group justify="space-between" mb="xs">
+        <Title order={2} size="h4">
+          需要处理
+        </Title>
+        {!loading && !error && !!items?.length && (
+          <Text size="sm">
+            共 {items.length} 项 · 紧急 {critical} 项 · 提醒{" "}
+            {items.length - critical} 项
+          </Text>
+        )}
+      </Group>
       {error && aggregateErrors ? (
         <Text size="sm" c="dimmed">
           提醒读取失败，请使用概览汇总重试。
@@ -65,25 +76,11 @@ export function AttentionPanel({
         </Text>
       ) : (
         <Stack gap="xs">
-          <Text size="sm">
-            共 {items.length} 项 · 紧急 {critical} 项 · 提醒{" "}
-            {items.length - critical} 项
-          </Text>
-          <Text size="xs" c="dimmed">
-            账号 {items.filter((item) => item.subjectType === "account").length}{" "}
-            项 · Key {items.filter((item) => item.subjectType === "key").length}{" "}
-            项 · 系统与协议{" "}
-            {
-              items.filter(
-                (item) =>
-                  item.subjectType !== "account" && item.subjectType !== "key",
-              ).length
-            }{" "}
-            项
-          </Text>
           {(expanded ? ordered : ordered.slice(0, 5)).map((item, index) => (
             <Alert
               key={`${item.kind}-${item.subjectID ?? "system"}-${index}`}
+              p={item.severity === "critical" ? "sm" : "6px 0"}
+              variant={item.severity === "critical" ? "light" : "transparent"}
               color={item.severity === "critical" ? "red" : "yellow"}
               icon={
                 item.severity === "critical" ? (
@@ -99,7 +96,13 @@ export function AttentionPanel({
               <Anchor
                 className="wrap-anywhere"
                 component={Link}
-                to={attentionTarget(item)}
+                to={
+                  inlineAccounts &&
+                  item.subjectType === "account" &&
+                  item.subjectID
+                    ? `/?account=${encodeURIComponent(item.subjectID)}`
+                    : attentionTarget(item)
+                }
                 c="inherit"
                 size="sm"
               >

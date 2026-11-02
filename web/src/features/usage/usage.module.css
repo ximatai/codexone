@@ -8,7 +8,9 @@
 }
 .filters {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns:
+    minmax(200px, 1.4fr) minmax(180px, 1fr) minmax(160px, 0.7fr)
+    auto;
   align-items: end;
   gap: 12px;
 }
@@ -33,7 +35,7 @@
 .summary,
 .metrics {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: var(--mantine-radius-md);
@@ -158,4 +160,20 @@
 }
 .requestsHeading {
   scroll-margin-top: 80px;
+}
+
+.filterActions {
+  min-height: calc(2.25rem * var(--mantine-scale));
+  flex-wrap: nowrap;
+}
+.summary > div {
+  border-bottom: 0;
+}
+.summary > div + div {
+  border-left: 1px solid var(--mantine-color-default-border);
+}
+@media (max-width: 1100px) {
+  .summary > div + div {
+    border-left: 0;
+  }
 }

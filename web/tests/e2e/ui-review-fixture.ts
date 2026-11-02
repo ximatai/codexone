@@ -14,11 +14,8 @@ export async function reviewFixture(page: Page) {
     expiresAtUnixSeconds:
       i % 4 === 1 ? now + 3 * 86400 : i % 4 === 2 ? now - 3600 : null,
     limits: {
-      requests: 1000,
+      tokens: 1000,
       active: 4,
-      unresolved: 8,
-      budgetMicros: 1000000,
-      unresolvedMicros: null,
     },
   }));
   const accounts = Array.from({ length: 5 }, (_, i) => ({
@@ -87,14 +84,19 @@ export async function reviewFixture(page: Page) {
     const report = { ...reportFixture(), nextCursor: null as string | null };
     report.rows = state.empty
       ? []
-      : Array.from({ length: 50 }, (_, i) => ({
-          ...report.rows[0],
-          id: `execution-${offset + i}`,
-          requestID: `request-${offset + i}`,
-          principal: "team-0",
-        }));
+      : Array.from(
+          { length: Number(url.searchParams.get("limit") ?? 50) },
+          (_, i) => ({
+            ...report.rows[0],
+            id: `execution-${offset + i}`,
+            requestID: `request-${offset + i}`,
+            principal: "team-0",
+          }),
+        );
     report.nextCursor =
-      offset < 450 && !state.empty ? `cursor-${offset + 50}` : null;
+      offset < 450 && !state.empty
+        ? `cursor-${offset + Number(url.searchParams.get("limit") ?? 50)}`
+        : null;
     const data: Record<string, unknown> = {
       "/api/system": { service: "codexone", ready: true, checks: [] },
       "/api/keys/options": { models: ["synthetic-text"], imageModels: [] },
@@ -112,12 +114,15 @@ export async function reviewFixture(page: Page) {
         timezone: "UTC",
         startUnixSeconds: Math.floor(now / 86400) * 86400,
         endUnixSeconds: (Math.floor(now / 86400) + 1) * 86400,
-        keys: keys.map((key) => ({
+        keys: (state.empty ? [] : keys).map((key) => ({
           keyID: key.id,
           principal: key.principal,
           admitted: 980,
+          succeeded: 979,
+          cancelled: 1,
           failed: 0,
           pending: 0,
+          inFlight: 0,
           estimatedMicros: "1234",
           lastUsedAtUnixSeconds: now,
         })),

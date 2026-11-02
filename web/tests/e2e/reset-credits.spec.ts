@@ -74,6 +74,10 @@ for (const width of [1440, 390]) {
     });
     await page.goto("/#/accounts?target=synthetic-account-0");
     const drawer = page.getByRole("dialog", { name: /账号详情/ });
+    await drawer.getByRole("tab", { name: "自动化", exact: true }).click();
+    await drawer
+      .getByRole("button", { name: "重置卡与到期前自动使用", exact: true })
+      .click();
     await expect(drawer.getByText(/上次读取可用 2 张/)).toBeVisible();
     await expect(drawer.getByText(/上游未提供到期时间/)).toBeAttached();
     await drawer.getByRole("button", { name: "使用合成限额重置卡" }).click();
@@ -125,12 +129,22 @@ for (const width of [1440, 390]) {
     ).toBeEnabled();
     expect(calls.at(-1)).toEqual({});
     await drawer.getByLabel("到期前自动使用", { exact: true }).check();
-    await drawer.getByLabel("提前小时数", { exact: true }).fill("12");
-    await drawer.getByLabel("提前分钟数", { exact: true }).fill("7");
+    await expect(drawer.getByLabel("提前量", { exact: true })).toHaveValue(
+      "24",
+    );
+    await drawer.getByLabel("提前量", { exact: true }).fill("19");
+    await drawer.getByLabel("提前量单位").selectOption("minutes");
+    await expect(drawer.getByLabel("提前量", { exact: true })).toHaveValue(
+      "1140",
+    );
+    await drawer.getByLabel("提前量单位").selectOption("hours");
+    await expect(drawer.getByLabel("提前量", { exact: true })).toHaveValue(
+      "19",
+    );
+    await drawer.getByLabel("提前量单位").selectOption("minutes");
+    await drawer.getByLabel("提前量", { exact: true }).fill("727");
     await drawer.getByLabel("失败后重试次数", { exact: true }).fill("2");
-    await expect(
-      drawer.getByText(/到期前 12 小时 7 分钟自动使用/),
-    ).toBeVisible();
+    await expect(drawer.getByText(/到期前 727 分钟自动使用/)).toBeVisible();
     await drawer.getByRole("button", { name: "保存重置卡设置" }).click();
     await expect(drawer.getByText("重置卡自动使用设置已保存。")).toBeVisible();
     expect(state.settings).toEqual({

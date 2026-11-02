@@ -6,13 +6,7 @@ test("desktop unlimited Key editing, payload and usage policy display", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
-  const limits = {
-    requests: null,
-    active: null,
-    unresolved: null,
-    budgetMicros: null,
-    unresolvedMicros: null,
-  };
+  const limits = { tokens: null, active: null };
   let key = {
     id: "synthetic-key",
     principal: "synthetic-team",
@@ -48,11 +42,12 @@ test("desktop unlimited Key editing, payload and usage policy display", async ({
     route.fulfill({ json: reportFixture() }),
   );
   await page.goto("/#/keys");
-  await expect(page.getByText("不限 / 日")).toBeVisible();
-  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.getByText(/\/ 不限 Token/)).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
+  await page.getByRole("button", { name: "查看详情" }).click();
   await page.getByText("本地治理限额", { exact: true }).click();
-  const toggle = page.getByRole("checkbox", { name: "每日请求（UTC）不限" });
-  const input = page.getByLabel("每日请求（UTC）", { exact: true });
+  const toggle = page.getByRole("checkbox", { name: "每日 Token 上限不限" });
+  const input = page.getByLabel("每日 Token 上限", { exact: true });
   await expect(toggle).toBeChecked();
   await expect(input).toBeDisabled();
   await toggle.uncheck();
@@ -66,9 +61,13 @@ test("desktop unlimited Key editing, payload and usage policy display", async ({
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("button", { name: "保存修改" })).toBeHidden();
   expect(updated).toMatchObject({ limits });
-  await page.getByRole("link", { name: "用量", exact: true }).click();
+  await page.getByRole("button", { name: "查看详情" }).click();
+  await page.getByRole("link", { name: "查看用量与诊断", exact: true }).click();
+  await page
+    .getByRole("button", { name: "更多统计与用量证据", exact: true })
+    .click();
   await expect(page.getByText(/当前 Key 限额：/)).toContainText(
-    "每日请求 不限",
+    "每日 Token 上限 不限",
   );
   await page.screenshot({
     path: testInfo.outputPath("unlimited-usage-desktop.png"),
