@@ -1,11 +1,5 @@
 import { z } from "../../shared/schema";
 import { request } from "../../shared/management";
-import {
-  defaults,
-  fetchUsage,
-  usageParameters,
-  parseUsage,
-} from "../usage/api";
 const count = z.number().int().nonnegative().safe();
 const metric = z
   .string()
@@ -45,6 +39,8 @@ const flight = z.object({
         principal: z.string().nullish(),
         model: z.string().nullish(),
         mode: z.string(),
+        reasoningEffort: z.string().nullish(),
+        requestMetadataRecorded: z.boolean().nullish(),
         accountID: z.string().nullable(),
         accountDisplayName: z.string().nullable().optional(),
         startedAtUnixSeconds: count.nullish(),
@@ -62,31 +58,42 @@ export async function fetchDaily(signal: AbortSignal) {
 export async function fetchInFlight(signal: AbortSignal) {
   return flight.parse(await request("/api/usage/in-flight", { signal })).rows;
 }
-export async function fetchRecent(signal: AbortSignal) {
-  // Page the bounded 31-day window until twenty finalized requests are found.
-  const filters = {
-    ...defaults(),
-    start: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10),
-  };
-  const rows: Awaited<ReturnType<typeof fetchUsage>>["rows"] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < 10; page++) {
-    const parameters = usageParameters(filters, cursor);
-    parameters.set("limit", "100");
-    const report = parseUsage(
-      await request("/api/usage?" + parameters, { signal }),
-    );
-    rows.push(
-      ...report.rows.filter(
-        (row) => row.kind === "admitted" && row.state !== "intent",
-      ),
-    );
-    if (rows.length >= 20 || !report.nextCursor)
-      return { rows: rows.slice(0, 20), truncated: false };
-    cursor = report.nextCursor;
-  }
-  return { rows: rows.slice(0, 20), truncated: true };
+const keySummary = z
+  .object({
+    timezone: z.literal("UTC"),
+    startUnixSeconds: count,
+    endUnixSeconds: count,
+    keys: z
+      .array(
+        z
+          .object({
+            keyID: z.string(),
+            displayName: z.string().nullish(),
+            principal: z.string().nullish(),
+            pending: count,
+            admitted: count,
+            inFlight: count,
+            succeeded: count,
+            failed: count,
+            cancelled: count,
+          })
+          .refine(
+            (row) =>
+              row.succeeded + row.failed + row.cancelled + row.inFlight <=
+              row.admitted,
+          ),
+      )
+      .max(256),
+  })
+  .refine(
+    (report) =>
+      report.startUnixSeconds % 86400 === 0 &&
+      report.endUnixSeconds - report.startUnixSeconds === 86400,
+  );
+export async function fetchKeySummary(signal: AbortSignal) {
+  return keySummary.parse(await request("/api/usage/keys", { signal })).keys;
 }
+export type KeySummary = z.infer<typeof keySummary>["keys"][number];
 export function tokenTotal(bucket: DailyBucket): number | null {
   const { inputTokens, outputTokens } = bucket.metrics;
   return inputTokens === null || outputTokens === null

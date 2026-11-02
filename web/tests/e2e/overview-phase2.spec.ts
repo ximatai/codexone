@@ -94,6 +94,9 @@ test("overview keeps accessible trends, principal names, details and responsive 
             keyID: "synthetic-key",
             principal: "合成工作站",
             admitted: 8,
+            succeeded: 7,
+            cancelled: 0,
+            inFlight: 0,
             failed: 1,
             pending: 0,
             estimatedMicros: "1250000",
@@ -129,6 +132,11 @@ test("overview keeps accessible trends, principal names, details and responsive 
           },
         ],
       },
+      "/api/usage/options": {
+        keys: ["synthetic-key"],
+        models: ["synthetic-text"],
+        failures: [],
+      },
       "/api/usage": {
         ...report,
         nextCursor: null,
@@ -154,7 +162,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page.getByRole("img", { name: /^今日请求近 7 天/ }),
   ).toBeVisible();
   await expect(
-    page.getByText("合成工作站 · synthetic-text").first(),
+    page.getByRole("row").filter({ hasText: "synthetic-text" }).first(),
   ).toBeVisible();
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(
@@ -170,7 +178,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page
       .getByRole("region", { name: "需要处理", exact: true })
       .getByRole("link", { name: /账号需要重新授权/ }),
-  ).toHaveAttribute("href", "#/accounts?target=synthetic-account");
+  ).toHaveAttribute("href", "#/?account=synthetic-account");
   await mkdir("../artifacts/admin-attention", { recursive: true });
   await page.screenshot({
     path: "../artifacts/admin-attention/overview.png",
@@ -178,17 +186,19 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.waitForTimeout(400);
   await page.screenshot({ path: screenshots + "/overview-1440.png" });
+  await page
+    .getByRole("region", { name: "今日 Key 请求汇总" })
+    .getByRole("link", { name: "查看用量与诊断" })
+    .click();
   const recent = page
     .getByRole("row")
-    .filter({ hasText: "1.2 s / 14.0 s" })
+    .filter({ hasText: "合成工作站" })
     .first();
   await recent.focus();
   await recent.press("Enter");
   await expect(page.getByRole("dialog", { name: "请求详情" })).toContainText(
     "request-first",
   );
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: screenshots + "/overview-detail-1440.png" });
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "关闭", exact: true })
@@ -199,6 +209,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .getByRole("dialog")
     .getByRole("button", { name: "关闭", exact: true })
     .click();
+  await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
   const longReminder = page.getByRole("link", { name: /x-codex-n+/ });

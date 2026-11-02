@@ -40,10 +40,7 @@ export function UsagePage() {
   }
   return (
     <section>
-      <PageHeader
-        title="用量与诊断"
-        description="查看请求用量、性能与异常，定位执行与用量证据。"
-      />
+      <PageHeader title="用量与诊断" />
       <UsageOverview
         initialFilters={filters}
         requestedPage={readPage(params.get("page"), 2201) - 1}

@@ -144,16 +144,16 @@ it("defaults automation off and saves minute lead time and retries with the obse
   const toggle = screen.getByLabelText("到期前自动使用", { exact: true });
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
-  fireEvent.change(screen.getByLabelText("提前小时数"), {
-    target: { value: "12" },
+  fireEvent.change(screen.getByLabelText("提前量单位"), {
+    target: { value: "minutes" },
   });
-  fireEvent.change(screen.getByLabelText("提前分钟数"), {
-    target: { value: "7" },
+  fireEvent.change(screen.getByLabelText("提前量", { exact: true }), {
+    target: { value: "727" },
   });
   fireEvent.change(screen.getByLabelText("失败后重试次数"), {
     target: { value: "2" },
   });
-  expect(screen.getByText(/到期前 12 小时 7 分钟自动使用/)).toBeInTheDocument();
+  expect(screen.getByText(/到期前 727 分钟自动使用/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "保存重置卡设置" }));
   await waitFor(() =>
     expect(api.saveResetCreditSettings).toHaveBeenCalledWith(
@@ -187,23 +187,26 @@ it("requires the retry budget to fit before expiry and allows a one-minute lead 
   vi.mocked(api.saveResetCreditSettings).mockResolvedValue(saved);
   setup();
   await screen.findByText(/上次读取可用/);
-  fireEvent.change(screen.getByLabelText("提前小时数"), {
-    target: { value: "0" },
+  fireEvent.change(screen.getByLabelText("提前量单位"), {
+    target: { value: "minutes" },
   });
-  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+  fireEvent.change(screen.getByLabelText("提前量", { exact: true }), {
     target: { value: "3" },
   });
   expect(screen.getByRole("button", { name: "保存重置卡设置" })).toBeDisabled();
   expect(screen.getByRole("alert")).toHaveTextContent(
     "至少为重试次数加 1 分钟",
   );
-  fireEvent.change(screen.getByLabelText("提前分钟数"), {
+  fireEvent.change(screen.getByLabelText("提前量单位"), {
+    target: { value: "minutes" },
+  });
+  fireEvent.change(screen.getByLabelText("提前量", { exact: true }), {
     target: { value: "1" },
   });
   fireEvent.change(screen.getByLabelText("失败后重试次数"), {
     target: { value: "0" },
   });
-  expect(screen.getByText(/到期前 0 小时 1 分钟自动使用/)).toBeInTheDocument();
+  expect(screen.getByText(/到期前 1 分钟自动使用/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "保存重置卡设置" }));
   await waitFor(() =>
     expect(api.saveResetCreditSettings).toHaveBeenCalledWith(
@@ -216,17 +219,42 @@ it("requires the retry budget to fit before expiry and allows a one-minute lead 
   );
 });
 
-it("rejects a combined lead beyond a day and restores the stored minute/retry values", async () => {
+it("rejects an empty lead and restores the stored minute/retry values", async () => {
   setup({
     ...saved,
     settings: { autoUseBeforeExpiry: true, leadMinutes: 1440, retryCount: 5 },
   });
   await screen.findByText(/上次读取可用/);
-  expect(screen.getByLabelText("提前小时数")).toHaveValue("24");
-  expect(screen.getByLabelText("提前分钟数")).toHaveValue("0");
+  expect(screen.getByLabelText("提前量", { exact: true })).toHaveValue("24");
   expect(screen.getByLabelText("失败后重试次数")).toHaveValue("5");
-  fireEvent.change(screen.getByLabelText("提前分钟数"), {
-    target: { value: "1" },
+  fireEvent.change(screen.getByLabelText("提前量单位"), {
+    target: { value: "minutes" },
   });
+  fireEvent.change(screen.getByLabelText("提前量", { exact: true }), {
+    target: { value: "" },
+  });
+  expect(screen.getByRole("button", { name: "保存重置卡设置" })).toBeDisabled();
+});
+
+it("preserves exact duration across unit switches and rejects fractional minutes", async () => {
+  setup({ ...saved, settings: { ...saved.settings, leadMinutes: 1140 } });
+  await screen.findByText(/上次读取可用/);
+  const input = screen.getByLabelText("提前量", { exact: true });
+  const unit = screen.getByLabelText("提前量单位");
+  expect(input).toHaveValue("19");
+  fireEvent.change(unit, { target: { value: "minutes" } });
+  expect(input).toHaveValue("1140");
+  fireEvent.change(input, { target: { value: "727" } });
+  for (let i = 0; i < 3; i++) {
+    fireEvent.change(unit, { target: { value: "hours" } });
+    expect(Number((input as HTMLInputElement).value)).toBeCloseTo(727 / 60, 7);
+    fireEvent.change(unit, { target: { value: "minutes" } });
+    expect(input).toHaveValue("727");
+  }
+  fireEvent.change(unit, { target: { value: "hours" } });
+  fireEvent.change(input, { target: { value: "1.5" } });
+  fireEvent.change(unit, { target: { value: "minutes" } });
+  expect(input).toHaveValue("90");
+  fireEvent.change(input, { target: { value: "90.5" } });
   expect(screen.getByRole("button", { name: "保存重置卡设置" })).toBeDisabled();
 });

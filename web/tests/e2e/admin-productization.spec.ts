@@ -1,3 +1,4 @@
+import { openKeyDetails } from "./key-details";
 import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
@@ -18,11 +19,8 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
     mutations = 0,
     reads = 0;
   const limits = {
-    requests: 100,
+    tokens: 1000000,
     active: 4,
-    unresolved: 8,
-    budgetMicros: 1000000,
-    unresolvedMicros: 1000000,
   };
   const keys = [
     {
@@ -121,6 +119,9 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
           keyID: key.id,
           principal: key.principal,
           admitted: 2,
+          succeeded: 1,
+          cancelled: 0,
+          inFlight: 0,
           failed: 1,
           pending: 1,
           estimatedMicros: "1250000",
@@ -176,32 +177,38 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await page.getByLabel("搜索主体名").fill("synthetic");
   await expect(page.getByText("other-team", { exact: true })).toBeHidden();
-  await page.getByLabel("可用状态", { exact: true }).selectOption("disabled");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "已禁用", exact: true }).click();
   await expect(page.getByText("没有匹配的密钥。")).toBeVisible();
-  await page.getByLabel("可用状态", { exact: true }).selectOption("available");
-  await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
-  await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "可用", exact: true }).click();
+  await openKeyDetails(page);
+  await page.getByRole("button", { name: "禁用", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "禁用 API Key" });
   await expect(confirm).toContainText("客户端会立即失败");
   await confirm.getByRole("button", { name: "取消", exact: true }).click();
   expect(mutations).toBe(0);
   await expect(
     page.getByRole("row").filter({ hasText: "synthetic-team" }),
-  ).toContainText("启用");
-  await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
-  await page.getByRole("menuitem", { name: "禁用", exact: true }).click();
+  ).toContainText("可用");
+  await openKeyDetails(page);
+  await page.getByRole("button", { name: "禁用", exact: true }).click();
   await confirm.getByRole("button", { name: "确认禁用" }).click();
   await expect(confirm).toBeHidden();
   expect(mutations).toBe(1);
-  await page.getByLabel("可用状态", { exact: true }).selectOption("disabled");
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "已禁用", exact: true }).click();
   const row = page.getByRole("row").filter({ hasText: "synthetic-team" });
   await expect(row).toContainText("禁用");
   await page.screenshot({
     path: testInfo.outputPath("admin-keys-1440.png"),
     fullPage: true,
   });
-  await row.getByRole("link", { name: "用量", exact: true }).click();
-  await expect(page.getByLabel("Key 主体")).toHaveValue("alpha");
+  await openKeyDetails(page);
+  await page.getByRole("link", { name: "查看用量与诊断", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Key 主体", exact: true }),
+  ).toHaveValue(/synthetic-team/);
   await expect(page.locator(".usage-table")).toContainText("synthetic-team");
   expect(reads).toBeGreaterThan(0);
   // Leave a desktop chart tooltip behind before opening the request drawer.

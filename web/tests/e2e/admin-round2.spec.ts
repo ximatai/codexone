@@ -1,3 +1,4 @@
+import { openKeyDetails } from "./key-details";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
@@ -29,11 +30,8 @@ test("round two overview, usage, account name and key expiration", async ({
     enabled: true,
     models: ["synthetic-text"],
     limits: {
-      requests: 100,
+      tokens: 100,
       active: 4,
-      unresolved: 8,
-      budgetMicros: 1000000,
-      unresolvedMicros: 1000000,
     },
     createdAtUnixSeconds: 1,
     expiresAtUnixSeconds: null as number | null,
@@ -123,8 +121,11 @@ test("round two overview, usage, account name and key expiration", async ({
             keyID: key.id,
             principal: key.principal,
             admitted: 2,
+            succeeded: 1,
+            cancelled: 0,
             failed: 1,
             pending: 1,
+            inFlight: 0,
             estimatedMicros: "1250000",
             lastUsedAtUnixSeconds: start,
           },
@@ -150,6 +151,8 @@ test("round two overview, usage, account name and key expiration", async ({
         rows: [
           {
             id: "flight-1",
+            reasoningEffort: "high",
+            requestMetadataRecorded: true,
             keyID: "alpha",
             principal: "synthetic-team",
             model: "synthetic-text",
@@ -213,7 +216,7 @@ test("round two overview, usage, account name and key expiration", async ({
     activity.getByRole("img", { name: /^今日请求近 7 天：/ }),
   ).toBeVisible();
   await expect(activity.getByText("输入缓存占比 80.0%")).toBeVisible();
-  await expect(activity.getByText("主要异常：上游限流（100%）")).toBeVisible();
+  await expect(activity.getByText("失败请求中：上游限流占 100%")).toBeVisible();
   await expect(
     activity.getByText("合成进行中账号", { exact: false }),
   ).toBeVisible();
@@ -221,15 +224,17 @@ test("round two overview, usage, account name and key expiration", async ({
     activity.getByText("等待首事件", { exact: false }),
   ).toBeVisible();
   await expect(activity.getByText("16", { exact: true })).toBeVisible();
+  await expect(
+    activity.getByRole("columnheader", { name: "推理强度" }),
+  ).toBeVisible();
+  await expect(activity.getByText("high", { exact: true })).toBeVisible();
   await expect(activity.getByLabel("自动刷新（15 秒）")).toBeChecked();
-  await activity.locator("tbody tr[tabindex]").first().click();
-  await expect(page.getByRole("dialog", { name: "请求详情" })).toContainText(
-    "request-first",
-  );
-  await page
-    .getByRole("dialog", { name: "请求详情" })
-    .getByRole("button", { name: "关闭", exact: true })
-    .click();
+  await expect(
+    activity.getByRole("heading", { name: "今日 Key 请求汇总" }),
+  ).toBeVisible();
+  await expect(
+    activity.getByRole("heading", { name: "最近请求", exact: true }),
+  ).toHaveCount(0);
   await page.screenshot({
     path: screenshots + "/overview-1440.png",
     fullPage: true,
@@ -244,6 +249,8 @@ test("round two overview, usage, account name and key expiration", async ({
   });
   await page.getByRole("link", { name: "订阅账号", exact: true }).click();
   await page.getByRole("button", { name: "额度与健康详情" }).click();
+  await page.getByRole("tab", { name: "设置", exact: true }).click();
+  await page.getByText("技术信息", { exact: true }).click();
   await expect(page.getByText(/访问凭证到期：.*约 3 小时后/)).toBeVisible();
   await expect(page.getByText("最近凭证更新：不可用")).toBeVisible();
   await page.getByLabel("账号显示名").fill("合成显示名");
@@ -262,11 +269,18 @@ test("round two overview, usage, account name and key expiration", async ({
     .click();
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   async function openExpiration() {
-    await page.getByRole("button", { name: "synthetic-team 更多操作" }).click();
-    await page.getByRole("menuitem", { name: "设置到期时间" }).click();
+    await openKeyDetails(page);
+    await page.getByRole("button", { name: "设置到期时间" }).click();
   }
   await openExpiration();
   const expiry = page.getByRole("dialog", { name: "设置 Key 到期时间" });
+  const dateInput = expiry.getByLabel("到期日期（UTC）");
+  await dateInput.click();
+  await expect(page.locator("[data-dates-dropdown]")).toBeVisible();
+  await dateInput.press("Escape");
+  await expect(page.locator("[data-dates-dropdown]")).toBeHidden();
+  await expect(expiry).toBeVisible();
+
   await expiry.getByRole("button", { name: "+30 天", exact: true }).click();
   await expect(expiry.getByLabel("到期日期（UTC）")).toHaveValue(
     new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10),
@@ -286,6 +300,8 @@ test("round two overview, usage, account name and key expiration", async ({
   });
   await openExpiration();
   await expiry.getByRole("button", { name: "清除到期时间" }).click();
-  await expect(page.getByText("永不过期", { exact: true })).toBeVisible();
+  await expect(expiry).toBeHidden();
+  await openKeyDetails(page);
+  await expect(page.getByText("到期：永不过期", { exact: true })).toBeVisible();
   expect(key.expiresAtUnixSeconds).toBeNull();
 });

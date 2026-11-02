@@ -7,11 +7,8 @@ export {
 } from "../../shared/management";
 export type { AdminSession } from "../../shared/management";
 export interface KeyLimits {
-  requests: number | null;
+  tokens: number | null;
   active: number | null;
-  unresolved: number | null;
-  budgetMicros: number | null;
-  unresolvedMicros: number | null;
 }
 export interface ManagedKey {
   id: string;
@@ -148,11 +145,8 @@ export function parseKey(value: unknown): ManagedKey {
     imageModels:
       data.imageModels === null ? null : models(data.imageModels ?? [], true),
     limits: {
-      requests: limit(limits.requests),
+      tokens: limit(limits.tokens),
       active: limit(limits.active),
-      unresolved: limit(limits.unresolved),
-      budgetMicros: limit(limits.budgetMicros),
-      unresolvedMicros: limit(limits.unresolvedMicros),
     },
   };
 }

@@ -18,11 +18,8 @@ const key = {
   enabled: false,
   models: ["synthetic-text"],
   limits: {
-    requests: 10,
+    tokens: 10,
     active: 2,
-    unresolved: 4,
-    budgetMicros: 1000,
-    unresolvedMicros: 1000,
   },
   createdAtUnixSeconds: 1,
 };
@@ -74,7 +71,7 @@ it("rejects malformed permissions, unsafe numbers and cycling pagination", async
     { ...key, revision: 0 },
     { ...key, models: [] },
     { ...key, models: ["x", "x"] },
-    { ...key, limits: { ...key.limits, requests: Number.MAX_SAFE_INTEGER } },
+    { ...key, limits: { ...key.limits, tokens: Number.MAX_SAFE_INTEGER } },
   ]) {
     expect(() => parseKey(value)).toThrow();
   }
@@ -147,11 +144,8 @@ it("bounds stalled session response bodies and supports a fresh attempt", async 
 
 it("round-trips explicit nulls and rejects missing or invalid limit fields", async () => {
   const limits = {
-    requests: null,
+    tokens: null,
     active: null,
-    unresolved: null,
-    budgetMicros: null,
-    unresolvedMicros: null,
   };
   expect(parseKey({ ...key, limits }).limits).toEqual(limits);
   for (const field of Object.keys(limits)) {

@@ -29,10 +29,10 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
     <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
   );
   expect(await screen.findAllByText("≥ 10,000,000,000,000,001")).toHaveLength(
-    2,
+    1,
   );
   fireEvent.click(screen.getByText("更多统计与用量证据"));
-  expect(screen.getByText(/另有 1 条/)).toBeVisible();
+  await waitFor(() => expect(screen.getByText(/另有 1 条/)).toBeVisible());
   expect(
     screen.getByText(/待核对占用（预估）（不受其他筛选影响）/),
   ).toHaveTextContent("3 待核对");
@@ -43,12 +43,11 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
     "synthetic_cursor",
     expect.any(AbortSignal),
   );
-  fireEvent.change(screen.getByLabelText("执行模式"), {
-    target: { value: "compact" },
-  });
-  fireEvent.change(screen.getByLabelText("Key 主体"), {
-    target: { value: "beta" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "更多筛选" }));
+  fireEvent.click(await screen.findByRole("combobox", { name: "执行模式" }));
+  fireEvent.click(screen.getByRole("option", { name: "压缩" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Key 主体" }));
+  fireEvent.click(screen.getByRole("option", { name: "主体未记录 · beta" }));
   vi.mocked(api.fetchUsage).mockRejectedValueOnce(
     new ManagementError(429, "usage_query_capacity"),
   );
@@ -253,7 +252,7 @@ it("shows filtered aggregate latency, request duration columns and complete draw
   await screen.findByText("12.5 ms");
   expect(screen.getByText("60 ms")).toBeVisible();
   fireEvent.click(screen.getByText("更多统计与用量证据"));
-  expect(screen.getByText("300 ms")).toBeVisible();
+  await waitFor(() => expect(screen.getByText("300 ms")).toBeVisible());
   expect(
     screen.getByRole("columnheader", { name: "首事件耗时" }),
   ).toBeVisible();
@@ -339,7 +338,7 @@ it("U03 restores only after rows commit, even when a frame precedes the slow ren
     if (y === 900)
       committed.push(
         !!screen.queryByText("第 2 页") &&
-          !!screen.queryByText("request-first"),
+          screen.queryAllByRole("button", { name: "查看详情" }).length > 0,
       );
   });
   render(
@@ -536,9 +535,8 @@ it("a late URL echo of the applied view keeps the user's next-page read running"
   await screen.findByText("第 1 页");
   act(() => echoes.shift()!());
   // The user applies a new filter; its URL echo is still pending.
-  fireEvent.change(screen.getByLabelText("Key 主体"), {
-    target: { value: "beta" },
-  });
+  fireEvent.click(screen.getByRole("combobox", { name: "Key 主体" }));
+  fireEvent.click(screen.getByRole("option", { name: "主体未记录 · beta" }));
   fireEvent.click(screen.getByRole("button", { name: "查询用量" }));
   await waitFor(() => expect(echoes).toHaveLength(1));
   let finish!: (value: api.UsageReport) => void;
@@ -587,5 +585,7 @@ it("navigating back to the shown view retires an in-flight read and clears busy"
   await waitFor(() => expect(signal!.aborted).toBe(true));
   expect(screen.getByRole("button", { name: "查询用量" })).toBeEnabled();
   expect(screen.getByText("第 1 页")).toBeVisible();
-  expect(screen.getByLabelText("Key 主体")).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "Key 主体" })).toHaveValue(
+    "全部 Key",
+  );
 });

@@ -15,6 +15,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
     key.principal = ["desktop", "laptop", "terminal", "automation"][i];
     key.expiresAtUnixSeconds = null;
     key.createdAtUnixSeconds = now - 86400;
+    key.limits.tokens = 1000000;
   });
   state.accounts.splice(1);
   state.accounts[0].displayName = "合成订阅账号";
@@ -88,8 +89,13 @@ test("render synthetic documentation screenshots", async ({ page }) => {
           keyID: key.id,
           principal: key.principal,
           admitted: [8, 6, 6, 4][i],
+          succeeded: [8, 6, 6, 4][i],
+          cancelled: 0,
+          inFlight: 0,
           failed: 0,
           pending: 0,
+          tokens: String([4800, 3600, 3600, 2400][i]),
+          tokenUsageIncomplete: false,
           estimatedMicros: "10500",
           lastUsedAtUnixSeconds: now - i * 300,
         })),
@@ -105,7 +111,9 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(
-    page.getByText("desktop · synthetic-text").first(),
+    page
+      .getByRole("region", { name: "今日 Key 请求汇总" })
+      .getByText("desktop", { exact: true }),
   ).toBeVisible();
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.screenshot({

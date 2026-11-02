@@ -352,7 +352,7 @@ export function usageParameters(
   const parameters = new URLSearchParams({
     start: String(start),
     end: String(end),
-    limit: "50",
+    limit: "10",
   });
   for (const name of [
     "key",
@@ -430,6 +430,8 @@ export async function fetchUsageOptions(
 }
 
 export interface KeyUsage {
+  tokens?: string;
+  tokenUsageIncomplete?: boolean;
   keyID: string;
   displayName?: string | null;
   principal: string | null;
@@ -457,6 +459,11 @@ export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsage[]> {
       keyID: text(item.keyID),
       displayName: nullableText(item.displayName ?? null, 256),
       principal: nullableText(item.principal, 64),
+      tokens:
+        item.tokens === undefined
+          ? undefined
+          : (metric(item.tokens) ?? undefined),
+      tokenUsageIncomplete: item.tokenUsageIncomplete !== false,
       admitted: integer(item.admitted),
       failed: integer(item.failed),
       pending: integer(item.pending),

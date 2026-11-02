@@ -14,11 +14,8 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
     models: ["synthetic-text"],
     createdAtUnixSeconds: 1,
     limits: {
-      requests: 500,
+      tokens: 500,
       active: 2,
-      unresolved: 10,
-      budgetMicros: null,
-      unresolvedMicros: null,
     },
   };
   let conflict = false;
@@ -65,9 +62,11 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/keys");
-  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
+  await page.getByRole("button", { name: "查看详情" }).click();
   await page.getByLabel("显示名", { exact: true }).fill("合成显示名");
   await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
   await expect(page.getByText("合成显示名", { exact: true })).toBeVisible();
   await expect(page.getByText("legacy-synthetic", { exact: true })).toHaveCSS(
     "color",
@@ -75,7 +74,7 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
   );
   await page.getByPlaceholder(/搜索/).fill("合成显示名");
   await expect(
-    page.getByRole("button", { name: "编辑", exact: true }),
+    page.getByRole("button", { name: "查看详情", exact: true }),
   ).toBeVisible();
   await mkdir("../artifacts/key-display-name", { recursive: true });
   await expect(page.getByRole("dialog")).toBeHidden();
@@ -83,7 +82,8 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
   await page.screenshot({
     path: "../artifacts/key-display-name/keys-1440.png",
   });
-  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
+  await page.getByRole("button", { name: "查看详情" }).click();
   await page.getByLabel("显示名", { exact: true }).fill("过期修改");
   conflict = true;
   await page.getByRole("button", { name: "保存修改" }).click();
@@ -92,11 +92,12 @@ test("edits, clears and reconciles key display names on desktop and narrow layou
   await page.getByPlaceholder(/搜索/).fill("");
   await expect(page.getByText("另一个管理员", { exact: true })).toBeVisible();
   conflict = false;
-  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
+  await page.getByRole("button", { name: "查看详情" }).click();
   await page.getByLabel("显示名", { exact: true }).fill("");
   await page.getByRole("button", { name: "保存修改" }).click();
-  await expect(page.getByText("另一个管理员", { exact: true })).toBeHidden();
   await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByText("另一个管理员", { exact: true })).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(350);
   await expect(

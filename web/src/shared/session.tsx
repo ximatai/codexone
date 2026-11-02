@@ -59,6 +59,7 @@ export function ManagementSession({
       (previous) => {
         const next = new URLSearchParams(previous);
         next.delete("target");
+        next.delete("account");
         next.delete("page");
         return next;
       },

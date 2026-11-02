@@ -1,56 +1,39 @@
-import { Paper, Title, Text, Stack, Button } from "@mantine/core";
+import {
+  Paper,
+  Title,
+  Text,
+  Stack,
+  Button,
+  Group,
+  Progress,
+  Badge,
+} from "@mantine/core";
 import type { UseQueryResult } from "@tanstack/react-query";
 import {
   accountName,
   type AccountName,
 } from "../../shared/account-presentation";
-import { request } from "../../shared/management";
-import { z } from "../../shared/schema";
-import { money } from "../../shared/presentation";
+import type { Headroom } from "../../shared/governance-api";
+export { fetchHeadroom } from "../../shared/governance-api";
+import { compactMoney, compactCount } from "./overview-format";
 
-const numeric = z.string().regex(/^(0|[1-9][0-9]*)$/);
-const schema = z.object({
-  capacities: z.array(
-    z.object({
-      name: z.string(),
-      current: numeric.nullable(),
-      limit: numeric,
-      blocking: z.boolean(),
-    }),
-  ),
-  accounts: z
-    .array(
-      z.object({
-        id: z.string(),
-        current: z.number(),
-        peak24Hours: z.number(),
-        limit: z.number(),
-        blocking: z.boolean(),
-      }),
-    )
-    .max(64),
-  unknownReconciliation: z.object({
-    count: z.number().int().nonnegative(),
-    beforeUnixSeconds: z.number().int().nonnegative(),
-    periodSeconds: z.number(),
-  }),
-});
-export async function fetchHeadroom(signal: AbortSignal) {
-  return schema.parse(await request("/api/usage/headroom", { signal }));
-}
 export function CapacityPanel({
   query,
   accounts,
   onRelease,
+  mergedAccounts = false,
+  mergedMetrics = false,
 }: {
-  query: UseQueryResult<z.infer<typeof schema>, Error>;
+  query: UseQueryResult<Headroom, Error>;
   accounts?: readonly AccountName[];
+  mergedAccounts?: boolean;
+  mergedMetrics?: boolean;
   onRelease: (before: number, count: number) => void;
 }) {
   return (
-    <Paper withBorder p="md" component="section" aria-label="容量余量">
+    <Paper withBorder p="md" component="section" aria-label="资源使用">
       <Title order={3} size="h4" mb="sm">
-        容量余量
+        资源使用
       </Title>
       {query.isError ? (
         <Text c="dimmed">
@@ -60,37 +43,113 @@ export function CapacityPanel({
         <Text>正在读取余量</Text>
       ) : (
         <Stack gap="xs">
-          {query.data.capacities.map((value) => (
-            <Text size="sm" key={value.name}>
-              {value.name === "daily_requests"
-                ? "今日请求"
-                : value.name === "daily_estimated_micros"
-                  ? "今日估算费用"
-                  : "明细行数"}
-              ：
-              {value.name === "daily_estimated_micros"
-                ? money(value.current)
-                : (value.current ?? "不可用")}{" "}
-              /{" "}
-              {value.name === "daily_estimated_micros"
-                ? money(value.limit)
-                : value.limit}
-              （参考阈值，仅提醒）
+          {query.data.capacities
+            .filter(
+              (value) =>
+                !mergedMetrics ||
+                !["daily_requests", "daily_estimated_micros"].includes(
+                  value.name,
+                ),
+            )
+            .map((value) => {
+              const cost = value.name === "daily_estimated_micros";
+              const label =
+                value.name === "daily_requests"
+                  ? "今日请求"
+                  : cost
+                    ? "今日估算费用"
+                    : "明细行数";
+              const ratio =
+                value.current === null || BigInt(value.limit) === 0n
+                  ? null
+                  : Number(
+                      (BigInt(value.current) * 10000n) / BigInt(value.limit),
+                    ) / 100;
+              const format = (v: string | null) =>
+                v === null
+                  ? "不可用"
+                  : cost
+                    ? compactMoney(v)
+                    : compactCount(v);
+              return (
+                <Stack key={value.name} gap={5}>
+                  <Group justify="space-between" gap="xs">
+                    <Text size="sm">{label}</Text>
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={value.blocking ? "orange" : "gray"}
+                    >
+                      {value.blocking ? "阻断上限" : "参考阈值"}
+                    </Badge>
+                  </Group>
+                  <Group justify="space-between" gap="xs">
+                    <Text
+                      size="sm"
+                      fw={600}
+                      title={`${value.current ?? "不可用"} / ${value.limit}${cost ? " micro USD" : ""}`}
+                    >
+                      {format(value.current)} / {format(value.limit)}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {ratio === null ? "比例不可用" : `${ratio.toFixed(1)}%`}
+                    </Text>
+                  </Group>
+                  <Progress
+                    value={ratio === null ? 0 : Math.min(100, ratio)}
+                    color={ratio !== null && ratio >= 100 ? "orange" : "brand"}
+                    size={6}
+                    aria-label={`${label}已用比例${ratio === null ? "不可用" : ` ${ratio.toFixed(1)}%`}`}
+                  />
+                </Stack>
+              );
+            })}
+          {query.data.accounts.some(
+            (value) =>
+              !mergedAccounts || !accounts?.some((a) => a.id === value.id),
+          ) && (
+            <Text size="xs" fw={600} mt="xs">
+              账号并发 · 达到上限将阻断
             </Text>
-          ))}
-          {query.data.accounts.map((value) => (
-            <Text size="sm" key={value.id}>
-              {accountName(value.id, accounts)}：当前并发 {value.current} /{" "}
-              {value.limit}，24 小时峰值 {value.peak24Hours}（并发上限会阻断）
-            </Text>
-          ))}
-          <Text size="xs" c="dimmed">
-            费用是已观测下界，未知部分未计入；存储水位见系统状态详情。
-          </Text>
-          <Text size="sm">
-            {query.data.unknownReconciliation.count} 条待核对；核对期 24
-            小时，期满关闭后用量仍为未知。
-          </Text>
+          )}
+          {query.data.accounts
+            .filter(
+              (value) =>
+                !mergedAccounts || !accounts?.some((a) => a.id === value.id),
+            )
+            .map((value) => (
+              <Stack key={value.id} gap={5}>
+                <Group justify="space-between" gap="xs" wrap="nowrap">
+                  <Text
+                    size="sm"
+                    lineClamp={1}
+                    title={accountName(value.id, accounts)}
+                  >
+                    {accountName(value.id, accounts)}
+                  </Text>
+                  <Text size="sm" fw={600} style={{ whiteSpace: "nowrap" }}>
+                    {value.current} / {value.limit}
+                  </Text>
+                </Group>
+                <Progress
+                  value={
+                    value.limit > 0
+                      ? Math.min(100, (value.current / value.limit) * 100)
+                      : 0
+                  }
+                  size={6}
+                  color={value.current >= value.limit ? "orange" : "brand"}
+                  aria-label={`${accountName(value.id, accounts)}并发占用`}
+                />
+                <Text size="xs" c="dimmed">
+                  24 小时峰值 {value.peak24Hours}
+                </Text>
+              </Stack>
+            ))}
+          <Text
+            size="sm"
+            mt="xs"
+          >{`待核对 ${compactCount(query.data.unknownReconciliation.count)} 条`}</Text>
           {query.data.unknownReconciliation.count > 0 && (
             <Button
               size="xs"

@@ -1,3 +1,6 @@
+import { isUTCDateInput } from "../../shared/date-input";
+import { DateInput } from "@mantine/dates";
+import { UsageDisclosure } from "./UsageDisclosure";
 import { fetchAccounts } from "../account-management/api";
 import { useQuery } from "@tanstack/react-query";
 import { ErrorState, LoadingState } from "../../shared/ui/States";
@@ -18,7 +21,8 @@ import {
   Button,
   Checkbox,
   Group,
-  NativeSelect,
+  Select,
+  Autocomplete,
   Paper,
   Text,
   TextInput,
@@ -105,6 +109,10 @@ export function UsageOverview({
     failures: [],
   });
   const [customRange, setCustomRange] = useState(false);
+  const [invalidDates, setInvalidDates] = useState({
+    start: false,
+    end: false,
+  });
   const [policyRead, setPolicyRead] = useState(0);
   const [readAt, setReadAt] = useState<number | null>(null);
   const failedPage = useRef<{
@@ -342,7 +350,12 @@ export function UsageOverview({
   }
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!busy && !paused) void load({ ...draft });
+    if (busy || paused) return;
+    if (invalidDates.start || invalidDates.end) {
+      setCustomRange(true);
+      return;
+    }
+    void load({ ...draft });
   }
   const currentPreset =
     applied?.range === "24h"
@@ -396,6 +409,7 @@ export function UsageOverview({
                 end: now.toISOString().slice(0, 10),
               };
               setDraft(next);
+              setInvalidDates({ start: false, end: false });
               void load(next);
             }}
           >
@@ -413,11 +427,12 @@ export function UsageOverview({
       </Group>
       <form onSubmit={submit}>
         <div className={styles.filters}>
-          <NativeSelect
+          <Select
             label="Key 主体"
             value={draft.key}
             disabled={busy}
-            onChange={(e) => update("key", e.currentTarget.value)}
+            onChange={(value) => update("key", value ?? "")}
+            allowDeselect={false}
             data={[
               { value: "", label: "全部 Key" },
               ...[
@@ -438,29 +453,24 @@ export function UsageOverview({
               })),
             ]}
           />
-          <TextInput
+          <Autocomplete
             label="模型"
-            list="usage-model-options"
+            data={options.models}
             value={draft.model}
             maxLength={128}
-            placeholder="全部模型，可输入历史模型"
+            placeholder="全部模型"
             disabled={busy}
-            onChange={(e) => update("model", e.currentTarget.value)}
+            onChange={(value) => update("model", value)}
           />
-          <datalist id="usage-model-options">
-            {options.models.map((model) => (
-              <option key={model} value={model} />
-            ))}
-          </datalist>
           <TextInput
             label="推理强度"
-            placeholder="全部强度，可输入 high / xhigh"
+            placeholder="全部强度"
             maxLength={32}
             value={draft.reasoningEffort ?? ""}
             disabled={busy}
             onChange={(e) => update("reasoningEffort", e.currentTarget.value)}
           />
-          <Group align="end">
+          <Group className={styles.filterActions}>
             <Checkbox
               label="仅异常结果"
               checked={draft.failedOnly}
@@ -475,35 +485,66 @@ export function UsageOverview({
         {customRange && (
           <div className={styles.dateFilters}>
             {" "}
-            <TextInput
+            <DateInput
               label="起始日（UTC）"
               aria-label="起始日（UTC）"
-              type="date"
-              value={draft.start}
+              value={draft.start || null}
+              dateParser={(value) => (isUTCDateInput(value) ? value : null)}
+              error={
+                invalidDates.start ? "请输入有效日期（YYYY-MM-DD）" : undefined
+              }
+              onInputCapture={(event) => {
+                const invalid = !isUTCDateInput(event.currentTarget.value);
+                setInvalidDates((previous) => ({
+                  ...previous,
+                  start: invalid,
+                }));
+              }}
+              locale="zh-cn"
+              valueFormat="YYYY-MM-DD"
+              getDayProps={(day) => ({ "aria-label": day })}
+              fixOnBlur={false}
               disabled={busy}
               required
-              onChange={(e) => update("start", e.currentTarget.value)}
+              onChange={(value) => {
+                update("start", value ?? "");
+                setInvalidDates((previous) => ({ ...previous, start: false }));
+              }}
             />
-            <TextInput
+            <DateInput
               label="结束日（UTC）"
               aria-label="结束日（UTC）"
-              type="date"
-              value={draft.end}
+              value={draft.end || null}
+              dateParser={(value) => (isUTCDateInput(value) ? value : null)}
+              error={
+                invalidDates.end ? "请输入有效日期（YYYY-MM-DD）" : undefined
+              }
+              onInputCapture={(event) => {
+                const invalid = !isUTCDateInput(event.currentTarget.value);
+                setInvalidDates((previous) => ({ ...previous, end: invalid }));
+              }}
+              locale="zh-cn"
+              valueFormat="YYYY-MM-DD"
+              getDayProps={(day) => ({ "aria-label": day })}
+              fixOnBlur={false}
               disabled={busy}
               required
-              onChange={(e) => update("end", e.currentTarget.value)}
+              onChange={(value) => {
+                update("end", value ?? "");
+                setInvalidDates((previous) => ({ ...previous, end: false }));
+              }}
             />
           </div>
         )}
-        <details className={styles.moreFilters}>
-          <summary>更多筛选</summary>
+        <UsageDisclosure className={styles.moreFilters} title="更多筛选">
           <div className={styles.advancedFilters}>
             {" "}
-            <NativeSelect
+            <Select
               label="执行模式"
               value={draft.mode}
               disabled={busy}
-              onChange={(e) => update("mode", e.currentTarget.value)}
+              onChange={(value) => update("mode", value ?? "")}
+              allowDeselect={false}
               data={[
                 { value: "", label: "全部模式" },
                 ...Object.entries(modes).map(([value, label]) => ({
@@ -512,11 +553,12 @@ export function UsageOverview({
                 })),
               ]}
             />
-            <NativeSelect
+            <Select
               label="错误分类"
               value={draft.failure}
               disabled={busy}
-              onChange={(e) => update("failure", e.currentTarget.value)}
+              onChange={(value) => update("failure", value ?? "")}
+              allowDeselect={false}
               data={[
                 { value: "", label: "全部分类" },
                 ...options.failures.map((value) => ({
@@ -525,11 +567,12 @@ export function UsageOverview({
                 })),
               ]}
             />
-            <NativeSelect
+            <Select
               label="用量状态"
               value={draft.state}
               disabled={busy}
-              onChange={(e) => update("state", e.currentTarget.value)}
+              onChange={(value) => update("state", value ?? "")}
+              allowDeselect={false}
               data={[
                 { value: "", label: "全部状态" },
                 ...Object.entries(states).map(([value, label]) => ({
@@ -539,7 +582,7 @@ export function UsageOverview({
               ]}
             />
           </div>
-        </details>
+        </UsageDisclosure>
       </form>
       {error && !failedPage.current && (
         <ErrorState retry={() => void load({ ...draft })}>
@@ -598,21 +641,22 @@ export function UsageOverview({
             {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>
-          <details className={styles.method}>
-            <summary>统计口径</summary>
+          <UsageDisclosure className={styles.method} title="统计口径">
             <p className={styles.hint}>
               按准入 UTC 时间统计，起止日均包含；最近 24 小时按已完成 UTC
               小时查询。轮换保留原 Key
               历史，迟到用量更新原时段；每次查询为新账本快照。拒绝诊断查询最近
               30
               天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
-              50 条，不包含请求或响应正文。
+              10 条，不包含请求或响应正文。
             </p>
-          </details>
+          </UsageDisclosure>
           <UsageSummary report={report} />
           <UsageTrend report={report} />
-          <details className={styles.moreFilters}>
-            <summary>更多统计与用量证据</summary>
+          <UsageDisclosure
+            className={styles.moreFilters}
+            title="更多统计与用量证据"
+          >
             <UsageEvidence report={report} expanded />
             <KeyLimitsSummary
               key={applied?.key ?? ""}
@@ -640,7 +684,7 @@ export function UsageOverview({
                 条符合其他筛选的历史执行缺少精确准入时间，未纳入本区间；它们仍可能占用待核对占用（预估）。
               </p>
             )}
-          </details>
+          </UsageDisclosure>
           <h3
             ref={requestsHeading}
             tabIndex={-1}

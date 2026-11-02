@@ -260,7 +260,7 @@ export function useAccounts() {
           ? "上游授权已失效。请重新读取账号后重新授权。"
           : undefined,
     invalidMessage: "提交内容无效，请检查显示名或授权信息后重试。",
-    invalidate: [],
+    invalidate: [["overview"]],
     refresh: async (signal) => !!(await read(epoch.current, signal)),
   });
   async function mutation<T>(

@@ -1,6 +1,6 @@
 .toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 16px;
 }
 .list {
@@ -11,6 +11,9 @@
   min-width: 160px;
 }
 .toolbar > :last-child {
+  display: flex;
+  align-items: center;
+  min-height: calc(2.25rem * var(--mantine-scale));
   white-space: nowrap;
 }
 @media (max-width: 1100px) {
@@ -40,4 +43,133 @@
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 12px;
+}
+
+.detailContent {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.detailPanel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+.limitGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 600px) {
+  .limitGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.manageActions {
+  border-top: 1px solid var(--mantine-color-default-border);
+  padding-top: 16px;
+}
+
+.detailHeader {
+  align-items: flex-start;
+  gap: 16px;
+}
+.detailTitle {
+  min-width: 0;
+  font-size: var(--mantine-font-size-lg);
+  font-weight: 700;
+  line-height: 1.5;
+}
+.detailTitle span span + span {
+  font-weight: 400;
+}
+.detailClose {
+  flex-shrink: 0;
+}
+.usageCard,
+.permissionsCard,
+.limitsCard {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  padding: 16px;
+  background: var(--mantine-color-body);
+}
+.permissionsCard > .fieldset + .fieldset {
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+.limitsCard {
+  min-width: 0;
+}
+.limitsCard legend {
+  padding: 0 4px;
+  margin-bottom: 8px;
+}
+.detailEditor .limitGrid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.detailEditor .limitGrid > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  align-items: end;
+}
+.detailEditor .limitGrid > div > :last-child {
+  order: -1;
+}
+.detailEditor .limitGrid > div > :first-child {
+  padding-bottom: 7px;
+}
+.manageActions {
+  flex-shrink: 0;
+  background: var(--mantine-color-body);
+  padding: 12px 0;
+  margin-top: 12px;
+}
+.footerButtons {
+  gap: 8px;
+}
+.footerButtons > button {
+  padding-inline: 10px;
+}
+.footerSave {
+  margin-right: auto;
+}
+@media (max-width: 600px) {
+  .usageCard,
+  .permissionsCard,
+  .limitsCard {
+    padding: 12px;
+  }
+  .footerButtons {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .footerSave {
+    grid-column: 1 / -1;
+    margin-right: 0;
+  }
+  .detailEditor .limitGrid > div {
+    column-gap: 8px;
+  }
+}
+
+.keyMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  min-width: 0;
 }
