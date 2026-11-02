@@ -190,11 +190,17 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .getByRole("region", { name: "今日 Key 请求汇总" })
     .getByRole("link", { name: "查看用量与诊断" })
     .click();
+  await expect(
+    page.getByRole("heading", { name: "用量与诊断", exact: true }),
+  ).toBeVisible();
   const recent = page
+    .locator(".usage-table")
     .getByRole("row")
     .filter({ hasText: "合成工作站" })
     .first();
+  await expect(recent).toBeVisible();
   await recent.focus();
+  await expect(recent).toBeFocused();
   await recent.press("Enter");
   await expect(page.getByRole("dialog", { name: "请求详情" })).toContainText(
     "request-first",

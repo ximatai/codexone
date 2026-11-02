@@ -147,6 +147,10 @@ macOS arm64、Node 24.15、Chrome：生产构建/类型、lint、格式、文档
 
 2026-11-02，Linux第二轮脚本分片2/4、1/4及4/4通过，3/4在管理接口旧字段白名单处失败。更新verify_admin.py，保留有界字段集合并加入reasoningEffort/requestMetadataRecorded；真实SSE请求显式提交high，断言进行中接口返回相同强度和已记录标记。macOS回环verify_admin.py、verify_admin_round2.py及verify_admin_assets.py通过，后续cutback脚本亦已定向通过。没有修改应用运行逻辑，最终Linux结果以最新PR工作流为准。
 
+## CI用量页键盘定位稳定性
+
+2026-11-02，Chromium CI偶发在首页到用量页的切换中，用全局同名行选择器命中了仍未卸载的首页汇总行。用量键盘验收改为等待独立页面标题，并将行选择器限定在usage-table中；显式核对行可见、获得焦点后再按Enter。键盘/鼠标详情断言均保留，没有增加重试、跳过或放宽超时。macOS Chromium同一场景连续10次通过（2个worker），最终Linux全量结果仍以最新PR工作流为准。
+
 ## 相关文档
 
 [提案](proposal.md) · [任务](tasks.md) · [验证约定](../../development/verification.md)
