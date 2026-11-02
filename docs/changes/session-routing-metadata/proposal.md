@@ -12,6 +12,8 @@
 
 允许有界 session-id/thread-id、OpenAI-Beta、子代理/memgen 标识；凭证、账号、Cookie、门控与逐跳头保持隔离。共享策略位于 Transport。
 
+续接头在原始载体上校验，再做转发过滤；重复、超长或声明为逐跳成员的状态明确拒绝。有效状态在既有 32 个 x-codex 头容量内优先保留，不能因扩展头顺序静默丢失。WS 握手头无效时拒绝升级；首条 create 的状态畸形或与握手冲突时，在 intent 前记录拒绝并尽力发送标准 error 帧。
+
 HTTP→WS 仅把本次请求明确携带的 turn-state 转入 response.create.client_metadata；已有消息字段与头冲突、重复或畸形 token 在 intent 前拒绝。原生 WS 后续消息只读取该消息状态，不从握手补造跨轮状态。HTTP 与 WS metadata 事件仅观察已知有界 turn-state，事件其他字段保持原透传；每个执行首次事件状态用于返回头，后续值不替换本轮返回值。JSON 聚合保留首输出前观察到的状态；SSE 已提交头后不能补头，但继续透传事件。下游 WS 已升级后不补发 HTTP 头，不提前上游连接绕过持久 intent。
 
 ## 故障与寿命

@@ -104,7 +104,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
     let responses = configuration.responses
     let executor = HTTPResponseExecution(
       imageCapacity: ImageCapacity(limit: 1),
-      clientHeaders: forwardedClientHeaders(.init(), fingerprint: responses.clientFingerprint),
+      clientHeaders: try forwardedClientHeaders(.init(), fingerprint: responses.clientFingerprint),
       client: transport,
       webSocket: .init(group: group, configuration: responses, token: nil, proxy: proxy),
       configuration: responses, token: nil, report: { .init(checks: []) },

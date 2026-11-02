@@ -188,6 +188,7 @@ public struct ResponsesDataService: Service {
                 do {
                   _ = try await executor.access.policy(
                     executor.access.digest(head.headers["authorization"]))
+                  _ = try requestTurnState(headers: head.headers)
                   guard normalChannels.register(channel, retained: true) else {
                     throw ExecutionError.capacity
                   }
@@ -208,7 +209,7 @@ public struct ResponsesDataService: Service {
                     channel, client: false, budget: bodyBudget,
                     reservations: reservations),
                   try executor.access.digest(head.headers["authorization"]), reservations,
-                  forwardedClientHeaders(
+                  try forwardedClientHeaders(
                     head.headers, fingerprint: configuration.clientFingerprint,
                     registry: protocolExtensions),
                   HTTPHeaders(
@@ -644,7 +645,7 @@ public struct ResponsesDataService: Service {
     var executor = try await executor.authorized(
       executor.access.digest(head.headers["authorization"]))
     executor.receiveResponseHeaders = { await writer.responseHeaders($0) }
-    executor.clientHeaders = forwardedClientHeaders(
+    executor.clientHeaders = try forwardedClientHeaders(
       head.headers, fingerprint: executor.configuration.clientFingerprint,
       registry: executor.protocolExtensions)
     if endpoint == "/models", head.method == .GET {

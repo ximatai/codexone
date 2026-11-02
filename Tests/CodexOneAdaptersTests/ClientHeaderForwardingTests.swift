@@ -5,8 +5,8 @@ import Testing
 
 /// Codex Desktop custom providers set `x-openai-actor-authorization` only to unlock local tools.
 /// It is a client-side gate marker, never a provider credential, so it must not cross upstream.
-@Test func clientGateAndCredentialHeadersNeverCrossUpstream() {
-  let forwarded = forwardedClientHeaders([
+@Test func clientGateAndCredentialHeadersNeverCrossUpstream() throws {
+  let forwarded = try forwardedClientHeaders([
     "user-agent": "synthetic-desktop",
     "originator": "synthetic-originator",
     "x-codex-image-turn-id": "synthetic-turn",

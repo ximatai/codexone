@@ -32,7 +32,7 @@ extension HTTPResponseExecution {
           url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")
           var upstream = HTTPClientRequest(url: url.string!)
           upstream.method = .POST
-          upstream.headers = forwardedClientHeaders(
+          upstream.headers = try forwardedClientHeaders(
             headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
           upstream.headers.add(name: "content-type", value: "application/json")
           upstream.headers.add(

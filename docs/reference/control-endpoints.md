@@ -32,6 +32,8 @@ POST `/backend-api/codex/analytics-events/events` 本地返回 202 `{}`。其他
 
 HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。HTTP→WS 把本次请求明确状态转入 client_metadata；原生 WS 仅首条 create 可兼容握手状态，后续消息只用自身字段，载体冲突/重复/畸形状态在 intent 前拒绝。上游 response.metadata / codex.response.metadata 事件的首个有效状态也被观察；普通事件内容继续透传，JSON 聚合只返回终态。SSE 已提交头后不能补头；原生 WS 已升级不能追加 HTTP 头。不提前上游连接、不注入跨轮缓存状态。thread/goal 等辅助 body 原样转发；官方 App Server JSON-RPC 字段不构成这些 HTTP 端点的路由契约，不据此推断 owner。
 
+状态头先在原始载体上验证，重复、超长或声明为逐跳成员的状态返回 400，不能由转发过滤变成无状态请求；有效状态优先占用既有 32 个 x-codex 头中的一席。WS 握手状态无效时拒绝升级；首条 create 的状态畸形或与握手冲突时，记录拒绝并尽力发送带 status 的标准 error 帧，不建立上游或创建 intent。HTTP SSE 与 WS 共用 metadata 状态提取规则；SSE 头已提交仍记录事件状态来源，供后续明确续接使用。
+
 结构化控制日志每进程最多 16 条/60 秒，只含固定路径类别、Key ID、账号 ID、状态和耗时；realtime/calls 只记录状态与耗时。超时日志的 504 是进程内结果未知证据，不产生持久执行/恢复责任或 schema 变更。诊断限额可能抑制单次日志，不能作为完整审计账本。
 
 合成验证：`python3 scripts/verify_control.py --binary .build/debug/codexone`（包含真实 60 秒期限）；账号池 OAuth、亲和、无 intent 与冷却联动由 Swift `poolControl*` 端到端测试覆盖。入口注册在 `verify.sh --backend`。真实提供者路由的可用性、错误形状与 Desktop 体验仍须部署后使用授权账号验收；本地合成证据不能替代它。

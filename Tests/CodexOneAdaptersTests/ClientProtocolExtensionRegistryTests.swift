@@ -21,9 +21,9 @@ import Testing
   #expect(ClientProtocolExtensionRegistry().snapshot().entries.isEmpty)
 }
 
-@Test func protocolHeaderCollectionRetainsOnlyNames() {
+@Test func protocolHeaderCollectionRetainsOnlyNames() throws {
   let registry = ClientProtocolExtensionRegistry()
-  _ = forwardedClientHeaders(
+  _ = try forwardedClientHeaders(
     HTTPHeaders([
       ("x-codex-new-feature", "synthetic-private-value"),
       ("authorization", "synthetic-private-secret"),

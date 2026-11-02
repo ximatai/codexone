@@ -54,13 +54,13 @@ import Testing
   #expect(turns.wasInterrupted(lane: ""))
 }
 
-@Test func clientPrefixHeadersAreBoundedAndHopByHopExcluded() {
+@Test func clientPrefixHeadersAreBoundedAndHopByHopExcluded() throws {
   var headers = HTTPHeaders()
   headers.add(name: "x-codex-large", value: String(repeating: "a", count: 8193))
   headers.add(name: "connection", value: "x-codex-hop")
   headers.add(name: "x-codex-hop", value: "synthetic")
   for index in 0..<40 { headers.add(name: "x-codex-extension-\(index)", value: "synthetic") }
-  let result = forwardedClientHeaders(headers)
+  let result = try forwardedClientHeaders(headers)
   #expect(result.filter { $0.name.hasPrefix("x-codex-") }.count == 32)
   #expect(result["x-codex-large"].isEmpty && result["x-codex-hop"].isEmpty)
   #expect(result.first(name: "x-codex-extension-31") == "synthetic")

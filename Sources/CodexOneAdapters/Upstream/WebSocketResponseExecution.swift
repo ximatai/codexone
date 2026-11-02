@@ -4,7 +4,6 @@ import Foundation
 extension HTTPResponseExecution {
   func execute(
     _ request: ResponseRequest, requestID: String, peer: WebSocketPeer, lane: String = "",
-    turnState: String? = nil,
     downstream: WebSocketPeer? = nil, useHandshakeState: Bool = false,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
@@ -106,23 +105,16 @@ extension HTTPResponseExecution {
         }
         observeDisconnectedOutcome(downstream, context: context)
         let type = try ProviderObservation.eventType(event)
-        if !observedMetadata, ["response.metadata", "codex.response.metadata"].contains(type),
-          let fields = event["headers"]?.object
-        {
-          let tokens = fields.filter { $0.key.lowercased() == "x-codex-turn-state" }
-          if tokens.count == 1, let token = tokens.first?.value.string,
-            validTurnState(token)
-          {
-            let account: AccountRouteIdentity?
-            if let gateway, case .pool = gateway {
-              account = try .init(
-                id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
-            } else {
-              account = nil
-            }
-            await observeResponseHeaders(["x-codex-turn-state": token], account: account)
-            observedMetadata = true
+        if !observedMetadata, let token = responseMetadataTurnState(event) {
+          let account: AccountRouteIdentity?
+          if let gateway, case .pool = gateway {
+            account = try .init(
+              id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
+          } else {
+            account = nil
           }
+          await observeResponseHeaders(["x-codex-turn-state": token], account: account)
+          observedMetadata = true
         }
         if type == "error" { throw ProviderObservation.providerFailure(event) }
         if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput

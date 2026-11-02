@@ -11,15 +11,24 @@ func validTurnState(_ value: String) -> Bool {
 
 /// Transport metadata is routing evidence, never object authorization.
 func requestTurnState(headers: HTTPHeaders, document: JSONValue? = nil) throws -> String? {
-  let headers = headers["x-codex-turn-state"]
-  guard headers.count <= 1 else { throw GatewayProtocolError(400, "conflicting_turn_state") }
+  let values = headers["x-codex-turn-state"]
+  guard values.count <= 1 else { throw GatewayProtocolError(400, "conflicting_turn_state") }
   func token(_ value: JSONValue?) throws -> String? {
     guard let value, value != .null else { return nil }
     guard let string = value.string, validTurnState(string)
     else { throw GatewayProtocolError(400, "invalid_turn_state") }
     return string
   }
-  let header = try token(headers.first.map(JSONValue.string))
+  let header = try token(values.first.map(JSONValue.string))
+  if header != nil,
+    headers["connection"].contains(where: {
+      $0.lowercased().split(separator: ",").contains {
+        $0.trimmingCharacters(in: .whitespaces) == "x-codex-turn-state"
+      }
+    })
+  {
+    throw GatewayProtocolError(400, "invalid_turn_state")
+  }
   if header != nil, let metadata = document?["client_metadata"], metadata != .null,
     metadata.object == nil
   {
@@ -30,6 +39,18 @@ func requestTurnState(headers: HTTPHeaders, document: JSONValue? = nil) throws -
     throw GatewayProtocolError(400, "conflicting_turn_state")
   }
   return message ?? header
+}
+
+/// Only known metadata events can supply a state; other fields stay opaque to routing.
+func responseMetadataTurnState(_ event: JSONValue) -> String? {
+  guard ["response.metadata", "codex.response.metadata"].contains(event["type"]?.string ?? ""),
+    let fields = event["headers"]?.object
+  else { return nil }
+  let tokens = fields.filter { $0.key.lowercased() == "x-codex-turn-state" }
+  guard tokens.count == 1, let token = tokens.first?.value.string, validTurnState(token) else {
+    return nil
+  }
+  return token
 }
 
 /// Key-scoped source records, independently bounded from soft session locality.

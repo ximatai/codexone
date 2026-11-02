@@ -71,11 +71,12 @@ enum PoolWebSocketSession {
     executor: HTTPResponseExecution, digest: String?
   ) async throws {
     guard executor.gateway != nil else { throw ExecutionError.unauthorized }
-    let turnState = try requestTurnState(headers: executor.clientHeaders, document: first.document)
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
     let lane = try webSocketLane(JSONValue.decode(firstBody.data))
     do {
+      let turnState = try requestTurnState(
+        headers: executor.clientHeaders, document: first.document)
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         defer {
           start.close(CancellationError())

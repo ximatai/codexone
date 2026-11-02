@@ -5,7 +5,8 @@ import NIOHTTP1
 func forwardedClientHeaders(
   _ headers: HTTPHeaders, fingerprint: ClientFingerprint = .init().resolved(models: []),
   registry: ClientProtocolExtensionRegistry? = nil
-) -> HTTPHeaders {
+) throws -> HTTPHeaders {
+  let turnState = try requestTurnState(headers: headers)
   let allowed: Set<String> = [
     "user-agent", "originator", "version", "session_id", "x-codex-turn-metadata",
     "x-codex-beta-features", "x-codex-window-id", "x-codex-parent-thread-id",
@@ -18,11 +19,14 @@ func forwardedClientHeaders(
       $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     })
   var result = HTTPHeaders()
-  var codexCount = 0
+  // Reserve a slot before optional extension headers consume the shared limit.
+  if let turnState { result.add(name: "x-codex-turn-state", value: turnState) }
+  var codexCount = turnState == nil ? 0 : 1
   for header in headers
   where
     (allowed.contains(header.name.lowercased()) || header.name.lowercased().hasPrefix("x-codex-"))
     && !connectionHeaders.contains(header.name.lowercased())
+    && header.name.lowercased() != "x-codex-turn-state"
   {
     guard header.value.utf8.count <= 8192 else { continue }
     if header.name.lowercased().hasPrefix("x-codex-") {

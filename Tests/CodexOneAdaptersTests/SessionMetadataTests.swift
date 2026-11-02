@@ -108,3 +108,50 @@ import Testing
       document: .object(["client_metadata": .object(["x-codex-turn-state": .bool(true)])]))
   }
 }
+
+@Test func clientTurnStateIsValidatedBeforeFilteringAndReservesHeaderCapacity() throws {
+  var headers = HTTPHeaders()
+  for index in 0..<40 { headers.add(name: "x-codex-extension-\(index)", value: "synthetic") }
+  headers.add(name: "x-codex-turn-state", value: "synthetic-state")
+  let forwarded = try forwardedClientHeaders(headers)
+  #expect(try requestTurnState(headers: forwarded) == "synthetic-state")
+  #expect(forwarded.filter { $0.name.hasPrefix("x-codex-") }.count == 32)
+  #expect(forwarded["x-codex-extension-31"].isEmpty)
+
+  let oversized = String(repeating: "x", count: 8193)
+  for invalid in [
+    HTTPHeaders([("x-codex-turn-state", oversized)]),
+    HTTPHeaders([("x-codex-turn-state", "synthetic"), ("x-codex-turn-state", oversized)]),
+    HTTPHeaders([("x-codex-turn-state", "synthetic"), ("connection", "X-Codex-Turn-State")]),
+  ] {
+    #expect(throws: GatewayProtocolError.self) { try forwardedClientHeaders(invalid) }
+  }
+}
+
+@Test func responseMetadataStateIgnoresUnknownMalformedAndAmbiguousEvents() {
+  for type in ["response.metadata", "codex.response.metadata"] {
+    let event = JSONValue.object([
+      "type": .string(type), "headers": .object(["X-Codex-Turn-State": .string("synthetic")]),
+    ])
+    #expect(responseMetadataTurnState(event) == "synthetic")
+  }
+  for event in [
+    JSONValue.object([
+      "type": .string("synthetic.metadata"),
+      "headers": .object(["x-codex-turn-state": .string("synthetic")]),
+    ]),
+    .object(["type": .string("response.metadata"), "headers": .bool(true)]),
+    .object([
+      "type": .string("response.metadata"),
+      "headers": .object(["x-codex-turn-state": .bool(true)]),
+    ]),
+    .object([
+      "type": .string("response.metadata"),
+      "headers": .object([
+        "x-codex-turn-state": .string("one"), "X-Codex-Turn-State": .string("two"),
+      ]),
+    ]),
+  ] {
+    #expect(responseMetadataTurnState(event) == nil)
+  }
+}

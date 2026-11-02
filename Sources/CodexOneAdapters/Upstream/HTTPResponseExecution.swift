@@ -175,6 +175,7 @@ struct HTTPResponseExecution: Sendable {
               ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
           var responseID: String?
           var terminal = false
+          var observedMetadata = false
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
             for byte in chunk.readableBytesView {
@@ -199,6 +200,11 @@ struct HTTPResponseExecution: Sendable {
                     == true
               {
                 throw GatewayProtocolError(502, "invalid_upstream_turn")
+              }
+              if !observedMetadata, let token = responseMetadataTurnState(event) {
+                await observeResponseHeaders(
+                  ["x-codex-turn-state": token], account: authorization?.identity)
+                observedMetadata = true
               }
               // Trusted usage must survive later binding/output failures.
               if ProviderObservation.terminalEvents.contains(type),

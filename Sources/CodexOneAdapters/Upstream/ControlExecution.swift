@@ -94,7 +94,7 @@ extension HTTPResponseExecution {
         return
       }
       status = try await withExecutionDeadline(seconds: route.seconds) {
-        let metadataHeaders = forwardedClientHeaders(
+        let metadataHeaders = try forwardedClientHeaders(
           head.headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
         let authorization: SubscriptionDataAccess?
         let work: AccountDispatchWork?

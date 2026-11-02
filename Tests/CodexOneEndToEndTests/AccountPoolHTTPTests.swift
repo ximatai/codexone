@@ -203,7 +203,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           ]
         }
         let stream = request["stream"]?.bool == true && !compact
-        let bytes: Data
+        var bytes: Data
         if stream {
           let event = JSONValue.object([
             "type": .string("response." + (document["status"]?.string ?? "completed")),
@@ -222,20 +222,47 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         } else {
           bytes = try JSONValue.object(document).data()
         }
+        let metadataOnly = ["metadata-only", "metadata-late"].contains(poolInput(request) ?? "")
+        if stream && metadataOnly {
+          var events: [JSONValue] = []
+          if poolInput(request) == "metadata-late" {
+            var created = document
+            created["status"] = .string("in_progress")
+            events.append(
+              .object(["type": .string("response.created"), "response": .object(created)]))
+          }
+          events.append(
+            .object([
+              "type": .string("response.metadata"),
+              "headers": .object([
+                "x-codex-turn-state": .string("synthetic-message-state-\(account)")
+              ]),
+            ]))
+          let prefix = try events.reduce(into: Data()) { data, event in
+            data.append(Data("data: \(String(decoding: try event.data(), as: UTF8.self))\n\n".utf8))
+          }
+          bytes = prefix + bytes
+        }
+        let responseBytes = bytes
         let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
         let reply: @Sendable () -> Void = { [self] in
           let context = bound.value
+          var headers: HTTPHeaders = [
+            "content-type": stream ? "text/event-stream" : "application/json",
+            "content-length": String(responseBytes.count), "connection": "close",
+          ]
+          if !metadataOnly {
+            headers.add(
+              name: "x-codex-turn-state", value: "synthetic-returned-turn-state-\(account)")
+          }
           context.write(
             wrapOutboundOut(
               .head(
                 .init(
                   version: .http1_1, status: .ok,
-                  headers: [
-                    "content-type": stream ? "text/event-stream" : "application/json",
-                    "content-length": String(bytes.count), "connection": "close",
-                    "x-codex-turn-state": "synthetic-returned-turn-state-\(account)",
-                  ]))), promise: nil)
-          context.write(wrapOutboundOut(.body(.byteBuffer(ByteBuffer(data: bytes)))), promise: nil)
+                  headers: headers))), promise: nil)
+          context.write(
+            wrapOutboundOut(.body(.byteBuffer(ByteBuffer(data: responseBytes)))), promise: nil)
           context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
             bound.value.close(promise: nil)
           }
@@ -2396,12 +2423,14 @@ func turnStateNeverCrossesAccountsOrCreatesIntentWhenUnknown(transport: String) 
   }
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: [false, true])
-func websocketMetadataOnlyReturnsStateBeforeHTTPCommit(stream: Bool) async throws {
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"], [false, true])
+func metadataOnlyReturnsStateBeforeHTTPCommit(transport: String, stream: Bool) async throws {
   try await withOAuth(timeout: 3000) { oauth in
     let h = try await PoolHTTPHarness.open(
-      oauth, transport: "websocket", handshake: "metadata-only")
+      oauth, transport: transport, handshake: "metadata-only")
     do {
+      var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+      a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
       let session = URLSession(configuration: .ephemeral)
       defer { session.invalidateAndCancel() }
       var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
@@ -2419,6 +2448,7 @@ func websocketMetadataOnlyReturnsStateBeforeHTTPCommit(stream: Bool) async throw
         (response as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state"))
       #expect(token == "synthetic-message-state-\(account)")
       try await awaitOAuth { h.finalizer.outstanding == 0 }
+      _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
       request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
       let (_, follow) = try await session.data(for: request)
       #expect((follow as! HTTPURLResponse).statusCode == 200)
@@ -2428,6 +2458,105 @@ func websocketMetadataOnlyReturnsStateBeforeHTTPCommit(stream: Bool) async throw
       throw error
     }
     await h.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func httpMetadataAfterSSECommitStillRecordsContinuationSource() async throws {
+  try await withPoolHTTP { h in
+    var a = try #require(try await h.store.listAccounts().first { $0.id == "a" })
+    a = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .disabled)
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"), "input": .string("metadata-late"), "stream": .bool(true),
+    ]).data()
+    let (body, response) = try await session.data(for: request)
+    #expect((response as! HTTPURLResponse).statusCode == 200)
+    #expect((response as! HTTPURLResponse).value(forHTTPHeaderField: "x-codex-turn-state") == nil)
+    let token = "synthetic-message-state-synthetic-b"
+    #expect(String(decoding: body, as: UTF8.self).contains(token))
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    _ = try await h.store.setAccountMode(id: a.id, revision: a.revision, mode: .enabled)
+    request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
+    let (_, follow) = try await session.data(for: request)
+    #expect((follow as! HTTPURLResponse).statusCode == 200)
+    #expect(h.calls.count == 2 && h.calls.last?.account == "synthetic-b")
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func oversizedTurnStateIsRejectedBeforeDispatchAcrossHTTPEndpoints() async throws {
+  try await withPoolHTTP { h in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    for path in [
+      "/v1/responses", "/v1/responses/compact", "/v1/images/generations",
+      "/backend-api/codex/alpha/search",
+    ] {
+      var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)" + path)!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue(
+        String(repeating: "x", count: 8193), forHTTPHeaderField: "x-codex-turn-state")
+      request.httpBody = try JSONValue.object([
+        "model": .string("synthetic-text"), "input": .string("synthetic"),
+      ]).data()
+      let (body, response) = try await session.data(for: request)
+      #expect((response as! HTTPURLResponse).statusCode == 400)
+      #expect(try JSONValue.decode(body)["error"]?["code"]?.string == "invalid_turn_state")
+    }
+    #expect(h.calls.isEmpty)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 0)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func nativeFirstTurnStateErrorsAreReportedWithoutDispatch(conflicting: Bool) async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(
+      h, headers: conflicting ? ["x-codex-turn-state": "synthetic-handshake-state"] : [:])
+    defer { client.close() }
+    #expect(try await client.read()["ready"]?.bool == true)
+    let denied = try await client.command([
+      "client_metadata": .object([
+        "x-codex-turn-state": conflicting ? .string("synthetic-message-state") : .bool(true)
+      ])
+    ])
+    #expect(denied["type"]?.string == "error" && denied["status"]?.integer == 400)
+    #expect(
+      denied["error"]?["code"]?.string
+        == (conflicting ? "conflicting_turn_state" : "invalid_turn_state"))
+    #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 0)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 0)
+    #expect(
+      try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM request_diagnostics") } == 1)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func nativeInvalidHandshakeStateRejectsUpgradeBeforeDispatch() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.timeoutInterval = 5
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("websocket", forHTTPHeaderField: "upgrade")
+    request.setValue("Upgrade", forHTTPHeaderField: "connection")
+    request.setValue("c3ludGhldGljLXdzLWtleQ==", forHTTPHeaderField: "sec-websocket-key")
+    request.setValue("13", forHTTPHeaderField: "sec-websocket-version")
+    request.setValue(String(repeating: "x", count: 8193), forHTTPHeaderField: "x-codex-turn-state")
+    let (body, response) = try await session.data(for: request)
+    #expect((response as! HTTPURLResponse).statusCode == 400)
+    #expect(try JSONValue.decode(body)["error"]?["code"]?.string == "invalid_turn_state")
+    #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 0)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 0)
   }
 }
 
