@@ -192,6 +192,18 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 同一输入在相同配置、授权身份与会话状态下，重复请求及进程重启后的上游 JSON 正文须字节一致。协议已有改写、客户端/上游提供的会话值和真实逐请求状态不在此被固定或伪造。JSON 接受/拒绝、重复键值选择、Decimal 数字、原有 64 层限制及 json_too_deep、斜杠转义选项不变。实现不得依赖 Foundation keyed 编解码容器保序；线上的对象序列化使用有序 writer，嵌套对象也不能绕回 keyed Encodable。此确定性不承诺真实提供者提示缓存命中；发布后的真实缓存验收由维护者执行。
 
+## 上游 WebSocket 消息大小与单轮 HTTP 回退
+
+上游 `response.create` 在发送前以实际有序编码后的 UTF-8 消息载荷字节数（不计 WS framing/mask）与 `UpstreamWebSocketBodyLimit.maximumMessageBytes` 比较。当前为 16 MiB（16,777,216 字节）：依据维护者观察到的接受/失败边界推断，非提供者稳定承诺或已证实的真实 1009，可随提供者变化调整。等于上限仍发 WS，超过上限绝不发 WS；普通请求的上游 WS 载荷只编码一次，并发送用于判断的同一份字节。writer 同时保护上游控制消息。既有 32 MiB 入站正文上限及 `request_too_large`、共享预算、期限和其他真实 WS close/EOF 分类不变。
+
+配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
+
+原生下游 WS 全部不做 HTTP 回退：即使未带 `previous_response_id`，input 也可能依赖连接累计上下文，且存在 lane、warmup 与并发控制语义。超限 create 在准入前拒绝，初始 turn 不建立上游 socket；后续拒绝不破坏已有 socket/上下文，可缩小输入后继续。HTTP 桥接超限且带非 null `previous_response_id` 也拒绝，不能静默删除 context；低于上限沿用原校验。仅会话标签或已验证的 turn-state 路由 token 本身不禁止独立 HTTP 回退，账号约束仍必须成立。
+
+无法等价回退的超限请求，或回退 HTTP 明确返回 413，使用 413 `conversation_too_large`，提示会话或图片过大，开始新会话或移除图片。HTTP JSON/SSE 在未提交响应前返回 JSON error envelope；已经开始的 SSE 遵循 P27 的 `response.failed`；原生 WS 使用带 `status: 413` 的 `error` 帧。网关不重放、不附 Retry-After，不触发账号健康/冷却。准入前本地拒绝只有拒绝诊断、没有 attempt；HTTP 413 的已准入 attempt 依 U13 结算明确拒绝的完整零用量、`invalid_request` 失败，不留下 unknown。HTTP 已发送后的取消/断流仍可能执行，保留既有未知责任，不能归为大小拒绝。
+
+超限诊断只记录固定路径 `http`、`reject_native`、`reject_continuation` 及大小桶 `16_to_24_mib`、`over_24_mib`，受 16 条/60 秒日志预算限制；不记录正文、图片、精确字节数或会话内容。真实上游接受边界、HTTP 对这些大小的接受情况及真实客户端组合仍待发布后维护者验收，本地 fake provider 成功不能证明真实接受。已读官方客户端对 413 的重试局限见 [源码核查](../compatibility.md#大请求错误的官方客户端源码核查)。
+
 ## 相关文档
 
 [文档导航](../../README.md)
