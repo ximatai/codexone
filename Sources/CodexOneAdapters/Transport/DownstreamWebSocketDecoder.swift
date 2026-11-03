@@ -91,7 +91,8 @@ final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelH
                   fragments <= 1024
                 else {
                   ProtocolFailureDiagnostics.recordBodyLimit(
-                    bytes: messageBytes + remaining, path: "reject_ingress")
+                    bytes: remaining > Int.max - messageBytes ? Int.max : messageBytes + remaining,
+                    path: "reject_ingress")
                   throw GatewayProtocolError(413, "request_too_large")
                 }
                 messageBytes += remaining
