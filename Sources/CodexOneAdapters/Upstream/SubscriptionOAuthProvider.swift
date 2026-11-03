@@ -242,8 +242,6 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
       return try await withThrowingTaskGroup(of: JSONValue.self) { tasks in
         defer { tasks.cancelAll() }
         tasks.addTask { [realm, timeoutMilliseconds] in
-          let encoder = JSONEncoder()
-          encoder.outputFormatting = [.withoutEscapingSlashes]
           try Task.checkCancellation()
           let body: Data
           if form {
@@ -256,7 +254,8 @@ public final class SubscriptionOAuthProvider: Service, AccountRefreshProvider, S
             }
             body = Data(pairs.joined(separator: "&").utf8)
           } else {
-            body = try encoder.encode(fields)
+            body = try JSONValue.object(fields.mapValues { .string($0) }).data(
+              escapingSlashes: false)
           }
           guard body.count <= 65_536 else { throw AccountRefreshError.invalidCommand }
           var request = HTTPClientRequest(url: realm + path)

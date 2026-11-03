@@ -204,7 +204,7 @@ struct WebSocketPeer: Sendable {
       case .interrupted: return
       case .interrupt(let id):
         guard claimInterrupt(responseID: id, lane: lane) else { return }
-        var control: [String: JSONValue] = [
+        var control: JSONObject = [
           "type": .string("response.interrupt"), "response_id": .string(id),
         ]
         if !lane.isEmpty { control["stream_id"] = .string(lane) }

@@ -24,6 +24,8 @@
 
 全时间治理暴露只受 Key 筛选，不受时间、模型或错误过滤；区间查询不会退款或释放 unknown。单个只读 WAL reader、一个在途统计、1 秒 SQL 扫描预算，50 ms busy 等待，取消中断查询；不占核心 writer 队列。已识别 Key 的合法请求在准入前失败时只记脱敏诊断，已提交 intent 不重复记拒绝。诊断保留 30 天/最多一万条，压力/存储失败可缺失，不当作全部流量或账本；不消耗核心治理审计预留。
 
+客户端用量投影的 input_tokens_details.cache_write_tokens_details 仅透传非负整数 ttl_30m_tokens 与 ttl_12h_tokens；未知字段与畸形计数丢弃，保留上游字段相对顺序。这些 TTL 明细不新增计量证据、不参与 Key 限额或费用计算，具体投影边界见[协议规范](protocol.md)。
+
 ## U11：执行模式与历史记录
 
 持久 admission 区分 generation、warmup、compact、priming；历史 JSON 缺失 mode 按 generation 解释，不改写旧记录。预热/压缩必须可独立统计，不混充普通生成次数；前三者计入本地统计与显式 Key 限额。priming 按 I22 使用内部主体，计入总体/账号统计、费用和未知暴露，不归到任意客户端 Key，也不消耗其限额。用量完整度继续按可信字段解释，预热或压缩成功返回不等于零消耗，缺失证据保留 unknown。

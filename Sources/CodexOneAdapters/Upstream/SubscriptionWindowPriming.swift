@@ -129,7 +129,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
       ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].first {
         declared.contains($0)
       } ?? "low"
-    var fields: [String: JSONValue] = [
+    var fields: JSONObject = [
       "model": .string(model.id), "input": .string(message), "store": .bool(false),
       "stream": .bool(true), "tools": .array([]),
       "instructions": .string("Reply with one word."),

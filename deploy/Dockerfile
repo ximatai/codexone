@@ -77,6 +77,8 @@ RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone 
     && python3 scripts/verify_codex_shapes.py --binary /output/codexone \
     && python3 scripts/verify_text_contract.py --binary /output/codexone \
     && python3 scripts/verify_request_parameters.py --binary /output/codexone \
+    && python3 scripts/verify_json_order.py --binary /output/codexone \
+    && python3 scripts/verify_upstream_json.py --binary /output/codexone --require-stable \
     && python3 scripts/verify_turn_diagnostics.py --binary /output/codexone \
     && python3 scripts/verify_trial_provider.py --binary /output/codexone \
     && python3 scripts/verify_images.py --binary /output/codexone \

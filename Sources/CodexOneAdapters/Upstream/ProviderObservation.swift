@@ -112,13 +112,30 @@ struct ProviderObservation: Sendable {
       ]
       // Clients decode these as integers; malformed counters are dropped rather than forwarded.
       func counter(_ value: JSONValue) -> Bool { value.integer.map { $0 >= 0 } == true }
-      var counters = usage.filter { root.contains($0.key) && counter($0.value) }
+      var counters = usage.filter {
+        root.contains($0.key)
+          && (counter($0.value)
+            || (["input_tokens_details", "output_tokens_details"].contains($0.key)
+              && $0.value.object != nil))
+      }
       for key in ["input_tokens_details", "output_tokens_details"] {
         if let details = usage[key]?.object {
           let known: Set<String> =
             key == "input_tokens_details"
-            ? ["cached_tokens", "cache_write_tokens"] : ["reasoning_tokens"]
-          counters[key] = .object(details.filter { known.contains($0.key) && counter($0.value) })
+            ? ["cached_tokens", "cache_write_tokens", "cache_write_tokens_details"]
+            : ["reasoning_tokens"]
+          var projected = details.filter {
+            known.contains($0.key)
+              && ($0.key == "cache_write_tokens_details"
+                ? $0.value.object != nil : counter($0.value))
+          }
+          if let ttl = projected["cache_write_tokens_details"]?.object {
+            projected["cache_write_tokens_details"] = .object(
+              ttl.filter {
+                ["ttl_30m_tokens", "ttl_12h_tokens"].contains($0.key) && counter($0.value)
+              })
+          }
+          counters[key] = .object(projected)
         }
       }
       object["usage"] = .object(counters)

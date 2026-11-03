@@ -59,12 +59,13 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
   let message =
     UUID(uuidString: requestID) != nil
     ? "\(explanation) Reference: \(requestID)." : explanation
-  var fields: [String: JSONValue] = [
-    "type": .string(mapped.status < 500 ? "invalid_request_error" : "server_error"),
-    "code": .string(mapped.code), "message": .string(message),
-  ]
-  // Provider members win so clients see the same actionable error as a direct connection.
-  for (key, value) in mapped.providerError?.object ?? [:] { fields[key] = value }
+  // Retain the provider's received order; gateway defaults append only missing members.
+  var fields = mapped.providerError?.object ?? [:]
+  if fields["type"] == nil {
+    fields["type"] = .string(mapped.status < 500 ? "invalid_request_error" : "server_error")
+  }
+  if fields["code"] == nil { fields["code"] = .string(mapped.code) }
+  if fields["message"] == nil { fields["message"] = .string(message) }
   fields["request_id"] = .string(requestID)
   return .object(["error": .object(fields)])
 }

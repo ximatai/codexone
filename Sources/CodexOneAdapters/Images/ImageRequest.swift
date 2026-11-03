@@ -37,7 +37,7 @@ struct ImagesRequest: Sendable {
     guard data.count <= RequestBodyLimits.maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
     }
-    var fields: [String: JSONValue]
+    var fields: JSONObject
     let multipart = contentType.lowercased().hasPrefix("multipart/form-data")
     if multipart {
       guard editing else { throw GatewayProtocolError(415, "unsupported_content_type") }

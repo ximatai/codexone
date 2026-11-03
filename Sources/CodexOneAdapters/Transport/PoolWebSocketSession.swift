@@ -180,7 +180,7 @@ enum PoolWebSocketSession {
 func sendWebSocketError(
   _ error: any Error, requestID: String, lane: String, to downstream: WebSocketPeer
 ) async throws {
-  var envelope: [String: JSONValue] = [
+  var envelope: JSONObject = [
     "type": .string("error"), "status": .number(Decimal(protocolFailure(error).status)),
     "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
   ]

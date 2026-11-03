@@ -96,7 +96,9 @@ struct ModelProfileSnapshot: Decodable {
         capturedAtUnixSeconds: snapshot.capturedAtUnixSeconds,
         clientVersions: snapshot.clientVersions, sha256: digest, overridden: model.catalog != nil)
       result.catalog = model.catalog ?? entry.catalog
-      result.upstream = model.catalog == nil ? entry.upstream : nil
+      result.upstream =
+        model.catalog == nil
+        ? json["models"]?.array?.first(where: { $0["id"]?.string == entry.id })?["upstream"] : nil
       return result
     }
   }

@@ -146,7 +146,7 @@ Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原�
 
 JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。
 
-usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细，其余 usage 成员不出网关。
+usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细；input_tokens_details.cache_write_tokens_details 仅保留非负整数 ttl_30m_tokens 与 ttl_12h_tokens，未知或畸形嵌套成员丢弃；其余 usage 成员不出网关。
 
 
 ## 请求契约选择
@@ -183,6 +183,12 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 普通连接限制 `dataConnections` 默认128、允许8—1024；总接受容量为该值加固定16条控制余量。普通连接达到上限后保持既有容量拒绝：WS 握手明确返回 HTTP 503 `capacity_exceeded` envelope 后关闭，不等待握手超时；控制舱壁仍能返回429。显式 Key 活动限制、每账号 16 并发、握手期限及共享正文预算共同生效；全局记账参考值不阻断。HTTP 与 WS 上游连接期限10秒，HTTP 仅发送前的连接建立可在原请求总期限内退避重试；请求发送后不重放、不换账号。HTTP 保持 HTTP/1、`maximumUsesPerConnection = 1`，避免陈旧连接的发送后失败。单身份和账号池原生 WS 首个有效 create 均先持久准入，再建立上游；握手拒绝能由该执行 owner 最终化。
 
 请求 reasoning.effort/service_tier 的只读账本观察及终态实际档位见 U10 补充；该观察不增加协议值白名单、不拒绝或改写提供者参数，原有 null 省略规则不变。
+
+## JSON 对象顺序
+
+客户端或上游 JSON 经解析和重新序列化时，各层对象保留收到的键顺序，包括工具 schema 的 properties、HTTP Responses / compact、SSE、WebSocket create/control 与客户端响应。已有字段替换值时保留位置，删除字段不移动其余成员，新增字段按固定组装顺序追加；本地产生的无序映射按键排序后插入。对象相等比较仍忽略成员顺序。仅顺序成为明确契约，空白、转义写法与数字词法不保证原字节回显；直接透传路径仍保留原字节。
+
+同一输入在相同配置、授权身份与会话状态下，重复请求及进程重启后的上游 JSON 正文须字节一致。协议已有改写、客户端/上游提供的会话值和真实逐请求状态不在此被固定或伪造。JSON 接受/拒绝、重复键值选择、Decimal 数字、原有 64 层限制及 json_too_deep、斜杠转义选项不变。实现不得依赖 Foundation keyed 编解码容器保序；线上的对象序列化使用有序 writer，嵌套对象也不能绕回 keyed Encodable。此确定性不承诺真实提供者提示缓存命中；发布后的真实缓存验收由维护者执行。
 
 ## 相关文档
 
