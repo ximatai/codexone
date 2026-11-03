@@ -32,6 +32,7 @@
 - `python3 scripts/verify_json_order.py --binary .build/debug/codexone` 通过两种契约 × 两种上游传输。每个组合重启一次、每条路由重复三次：共 84 次生成/compact 与 12 条原字节控制，检查多层工具 schema、上游正文一致、客户端 JSON/SSE/WS/compact 顺序与稳定会话头。
 - `python3 scripts/check_docs.py` 通过 87 篇 Markdown；Swift 严格格式检查通过。
 - `python3 scripts/benchmark_json_order.py` 用 `swiftc -O` 编译实际四个 JSON 源文件和冻结旧实现，合成正文 1,044,031 字节、400 个工具，预热一次后各 10 次解析加序列化均值：旧 25.7332 ms，新 26.2998 ms（约 +2.2%）。同一语料 debug 定向测试均值旧 43.3123 ms、新 104.6972 ms；逐字节 Swift 扫描/写出在未优化构建下较慢。计时受本机负载影响，不代表 Linux、端到端延迟或吞吐承诺。
+- 独立 TTL 修改的两项测试通过：只放行指定非负整数，删除未知/畸形成员与非对象容器，并证明计量证据不变；二进制 JSON/SSE/WS 验收同时检查两个 TTL 计数和未知嵌套字段删除后的原始字节。
 - `CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend` 一次完整通过（退出码 0）：严格 Swift 格式、架构检查、12 jobs 构建、425 项 Swift 测试和 35 个后端脚本全部通过。覆盖取消、总/进展超时、断流、提供者错误、重启和存储失败。未重复运行通过的完整 backend 验证。
 
 ## 相关文档

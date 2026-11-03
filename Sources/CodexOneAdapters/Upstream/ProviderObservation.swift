@@ -122,8 +122,20 @@ struct ProviderObservation: Sendable {
         if let details = usage[key]?.object {
           let known: Set<String> =
             key == "input_tokens_details"
-            ? ["cached_tokens", "cache_write_tokens"] : ["reasoning_tokens"]
-          counters[key] = .object(details.filter { known.contains($0.key) && counter($0.value) })
+            ? ["cached_tokens", "cache_write_tokens", "cache_write_tokens_details"]
+            : ["reasoning_tokens"]
+          var projected = details.filter {
+            known.contains($0.key)
+              && ($0.key == "cache_write_tokens_details"
+                ? $0.value.object != nil : counter($0.value))
+          }
+          if let ttl = projected["cache_write_tokens_details"]?.object {
+            projected["cache_write_tokens_details"] = .object(
+              ttl.filter {
+                ["ttl_30m_tokens", "ttl_12h_tokens"].contains($0.key) && counter($0.value)
+              })
+          }
+          counters[key] = .object(projected)
         }
       }
       object["usage"] = .object(counters)

@@ -31,7 +31,7 @@ REQUEST = {'model': 'synthetic-order', 'tools': [SCHEMA], 'input': 'synthetic',
 RESPONSE = {'synthetic_z': {'z': 1, 'a': {'y': 2, 'b': 3}}, 'id': 'resp_synthetic_order',
             'object': 'response', 'status': 'completed', 'output': [],
             'usage': {'output_tokens_details': {'reasoning_tokens': 1, 'unknown': 7},
-                      'output_tokens': 3, 'input_tokens_details': {'cache_write_tokens': 1, 'cached_tokens': 0},
+                      'output_tokens': 3, 'input_tokens_details': {'cache_write_tokens_details': {'ttl_12h_tokens': 2, 'unknown': 7, 'ttl_30m_tokens': 1}, 'cache_write_tokens': 3, 'cached_tokens': 0},
                       'input_tokens': 5, 'total_tokens': 8}}
 COMPACT = {'synthetic_z': {'z': 1, 'a': 2}, 'object': 'response.compaction',
            'id': 'cmp_synthetic_order', 'output': [], 'usage': {'input_tokens': 5, 'output_tokens': 3}}
@@ -118,6 +118,7 @@ def main():
     worker.start()
     expected_response = json.loads(wire(RESPONSE))
     del expected_response['usage']['output_tokens_details']['unknown']
+    del expected_response['usage']['input_tokens_details']['cache_write_tokens_details']['unknown']
     expected_event = {**EVENT, 'response': expected_response}
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-json-order-') as temporary:
