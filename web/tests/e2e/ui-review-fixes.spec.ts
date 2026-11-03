@@ -48,7 +48,8 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await expect(page.getByText("进行中请求读取失败。请重试。")).toBeVisible();
   await expect(page.getByText("今日 Key 汇总读取失败。请重试。")).toBeVisible();
   await expect(page.getByText("当前没有进行中的请求。")).toHaveCount(0);
-  await expect(page.getByText("暂无托管 Key。")).toHaveCount(0);
+  await expect(page.getByText("今日暂无活跃 Key。")).toHaveCount(0);
+  await expect(page.getByText("暂无未归档 Key。")).toHaveCount(0);
   for (const status of [503, 429]) {
     state.failures["/api/accounts"] = status;
     await page.goto("/#/accounts");
@@ -69,7 +70,12 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await expect(page.getByText(/接入第一个账号/)).toBeVisible();
   await page.goto("/");
   await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
-  await expect(page.getByText("暂无托管 Key。")).toBeVisible();
+  await expect(page.getByText("今日暂无活跃 Key。")).toBeVisible();
+  await page
+    .getByRole("region", { name: "今日 Key 请求汇总" })
+    .getByText("全部", { exact: true })
+    .click();
+  await expect(page.getByText("暂无未归档 Key。")).toBeVisible();
 });
 
 test("A01 A02: long account names fit all viewports and authorization warns independently", async ({
@@ -169,7 +175,7 @@ test("K01 K02 K05: availability filters, pagination top, sticky header and back 
   await expect(page.locator("tbody tr").first()).toContainText("已到期");
   await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
   await page.getByRole("option", { name: "全部", exact: true }).click();
-  await expect(page).toHaveURL(/#\/keys$/);
+  await expect(page).toHaveURL(/#\/keys\?status=all$/);
   // Both the expired and unfiltered first pages have 50 rows. The URL can
   // update before React commits the new filter, so also wait for its controls.
   await expect(

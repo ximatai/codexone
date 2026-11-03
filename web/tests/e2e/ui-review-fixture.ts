@@ -160,6 +160,9 @@ export async function reviewFixture(page: Page) {
       },
     };
     if (path === "/api/keys") {
+      // This fixture has no archived keys; honor the separate API scope.
+      if (url.searchParams.get("archived") === "true")
+        return route.fulfill({ json: { keys: [], nextCursor: null } });
       const after =
         keys.findIndex((key) => key.id === url.searchParams.get("after")) + 1;
       return route.fulfill({

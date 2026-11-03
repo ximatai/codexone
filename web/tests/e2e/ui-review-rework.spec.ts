@@ -34,7 +34,12 @@ test("P2-2 Key: POP restores page/query/position and sidebar entry starts at the
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.getByRole("link", { name: "访问密钥", exact: true }).click();
   await expect(page.getByLabel("搜索主体名", { exact: true })).toHaveValue("");
-  await expect(page.getByText("第 1 / 5 页 · 每页 50 个")).toBeAttached();
+  await expect(page).toHaveURL(/#\/keys$/);
+  await expect(page.getByRole("combobox", { name: "可用状态" })).toHaveValue(
+    "可用",
+  );
+  await expect(page.getByText("共 102 个", { exact: true })).toBeVisible();
+  await expect(page.getByText("第 1 / 3 页 · 每页 50 个")).toBeAttached();
   await expect.poll(() => page.evaluate(() => scrollY)).toBe(0);
 });
 
