@@ -15,6 +15,7 @@ import threading
 import time
 
 from verify_protocol import TOKEN, start, stop, dump_gateway_failure
+from verify_upstream_zstd import Decoder
 from verify_websocket import dial, receive, send
 from verify_json_order import SCHEMA, wire
 
@@ -71,7 +72,32 @@ class Provider(BaseHTTPRequestHandler):
     def do_POST(self):
         self.close_connection = True
         assert self.path == '/v1/responses'
-        body = self.rfile.read(int(self.headers['Content-Length']))
+        if self.headers.get('Content-Encoding') == 'zstd':
+            assert self.headers.get_all('Content-Encoding') == ['zstd']
+            assert self.headers.get('Content-Length') is None
+            assert self.headers.get('Transfer-Encoding') == 'chunked'
+            decoder = Decoder()
+            restored = bytearray()
+            try:
+                while True:
+                    length = int(self.rfile.readline().strip(), 16)
+                    if not length:
+                        assert self.rfile.readline() == b'\r\n'
+                        break
+                    while length:
+                        part = self.rfile.read(min(65536, length))
+                        assert part
+                        length -= len(part)
+                        decoder.feed(part, restored.extend)
+                        assert len(restored) <= 32 * 1024 * 1024
+                    assert self.rfile.read(2) == b'\r\n'
+                assert decoder.done
+                body = bytes(restored)
+            finally:
+                decoder.close()
+        else:
+            assert self.headers.get('Content-Encoding') is None
+            body = self.rfile.read(int(self.headers['Content-Length']))
         index = self.capture(body, 'http')
         request = json.loads(body)
         if self.server.mode in ('reject', 'close_reject', 'metadata_reject'):
@@ -294,7 +320,7 @@ def main():
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
                         for streaming in (False, True):
-                            request = sized(2048, contract, streaming=streaming)
+                            request = sized(9 * 1024 * 1024 if mode == "close" and contract == "codex-subscription" and not streaming else 2048, contract, streaming=streaming)
                             before = len(server.calls)
                             status, headers, body = call_http(ports['data'], request)
                             assert status == (413 if mode.endswith('reject') else 200), (mode, status, body)

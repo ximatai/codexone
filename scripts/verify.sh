@@ -37,6 +37,7 @@ backend_scripts() {
   run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_response_finish.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_protocol_rejections.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_upstream_zstd.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_proxy.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_events.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_codex_shapes.py --binary "$backend_bin_dir/codexone"

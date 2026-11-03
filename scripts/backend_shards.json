@@ -10,7 +10,8 @@
     "verify_turn_diagnostics.py",
     "verify_optional_reasoning.py",
     "verify_context.py",
-    "verify_compaction_stream.py"
+    "verify_compaction_stream.py",
+    "verify_upstream_zstd.py"
   ],
   [
     "verify_images.py",
