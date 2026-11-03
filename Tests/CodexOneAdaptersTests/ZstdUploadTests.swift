@@ -85,3 +85,23 @@ import libzstd
   await owner.close()
   #expect(pool.active == 0)
 }
+
+@Test func zstdReservationLastsUntilTransportPullsEOF() async throws {
+  let pool = ZstdUploadPool()
+  #expect(pool.reserve())
+  let owner = ZstdUpload(
+    data: Data(repeating: 65, count: 65_537), pool: pool,
+    progress: ExecutionProgress(try ExecutionBudget()),
+    upload: RequestUpload(bytes: 65_537, transport: "http", encoding: "zstd"))
+  var chunks = 0
+  while try await owner.next() != nil {
+    chunks += 1
+    // Even the final frame bytes must be consumed before EOF releases the workspace.
+    #expect(pool.active == 1)
+  }
+  #expect(chunks > 0)
+  #expect(pool.active == 0)
+  await owner.close()
+  #expect(pool.active == 0)
+  try await pool.shutdown()
+}

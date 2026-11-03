@@ -91,6 +91,10 @@ class Provider(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.wfile.flush()
 
+    def event_chunk(self, event):
+        self.wfile.write(f'{len(event):x}\r\n'.encode() + event + b'\r\n')
+        self.wfile.flush()
+
     def do_POST(self):
         self.close_connection = True
         decoder = None
@@ -146,6 +150,25 @@ class Provider(BaseHTTPRequestHandler):
                     else:
                         compare(part)
                     chunks += 1
+                    if case.startswith('early200') and chunks == 1:
+                        # A real duplex HTTP/1 exchange: send headers and an event while
+                        # most of the incompressible upload is still backpressured.
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/event-stream')
+                        self.send_header('Transfer-Encoding', 'chunked')
+                        self.end_headers()
+                        first = b'data: ' + wire(dict(type='response.created', response=dict(id=EVENT['response']['id']))) + b'\n\n'
+                        self.server.early_event.set()
+                        self.event_chunk(first)
+                        assert self.server.release.wait(8), 'Client did not observe early event'
+                        if case in ('early200-cancel', 'early200-disconnect'):
+                            return
+                        if case == 'early200-end':
+                            self.wfile.write(b'0\r\n\r\n')
+                            self.wfile.flush()
+                            return
+                    if case.startswith('early200'):
+                        time.sleep(.005)
                     if case == 'disconnect' and chunks == 1:
                         return
                     if case == 'slow' and offset < len(self.server.expected) - 6 * MIB:
@@ -167,7 +190,11 @@ class Provider(BaseHTTPRequestHandler):
                 if status != 415 or index == 0 or case == 'twice415':
                     self.reply(status, b'{malformed')
                     return
-            if case == 'partial':
+            if case == 'early200':
+                self.event_chunk(b'data: ' + wire(EVENT) + b'\n\n')
+                self.wfile.write(b'0\r\n\r\n')
+                self.wfile.flush()
+            elif case == 'partial':
                 self.reply(200, b'data: {"type":"response.created","response":{"id":"resp_synthetic_partial"}}\n\n', 'text/event-stream')
             elif case == 'no-terminal':
                 self.reply(200, b'', 'text/event-stream')
@@ -232,6 +259,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
     server.measure = measure
     server.guard = threading.Lock()
     server.started, server.release, server.read_done = threading.Event(), threading.Event(), threading.Event()
+    server.early_event = threading.Event()
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
     config = root / 'identity.json'
@@ -266,7 +294,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
             sampler = threading.Thread(target=sample)
             sampler.start()
         body = wire(request)
-        if case == 'capacity':
+        if case == 'capacity' or case.startswith('early200'):
             def contend():
                 conn = http.client.HTTPConnection('127.0.0.1', ports['data'], timeout=20)
                 try:
@@ -278,6 +306,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
                     contender_results.append(repr(error))
                 finally:
                     conn.close()
+        if case == 'capacity':
             for _ in range(4):
                 thread = threading.Thread(target=contend)
                 thread.start()
@@ -311,8 +340,26 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
         else:
             response = http.client.HTTPResponse(peer)
             response.begin()
-            result = response.read()
-            if case in ('ok', 'slow', '415', 'early415', 'capacity'):
+            if case.startswith('early200'):
+                assert response.status == 200
+                assert response.readline() == b'event: response.created\n'
+                assert response.readline().startswith(b'data: ')
+                assert response.readline() == b'\n'
+                assert server.early_event.is_set() and not server.read_done.is_set()
+                if case == 'early200-cancel':
+                    response.close()
+                    peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                    peer.close()
+                server.release.set()
+            if case == 'early200-cancel':
+                result = b''
+            else:
+                result = response.read()
+            if case == 'early200':
+                assert server.read_done.is_set() and b'response.completed' in result, (result[:200], server.errors)
+            elif case.startswith('early200'):
+                assert b'response.completed' not in result
+            elif case in ('ok', 'slow', '415', 'early415', 'capacity'):
                 assert response.status == 200, (response.status, result[:200], server.errors)
             elif case in ('400', 'early400', 'twice415'):
                 assert response.status == (415 if case == 'twice415' else 400), (response.status, result[:200], server.errors)
@@ -337,15 +384,15 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
                 rows, health = ledger(root)
             assert len(rows) == (5 if case == 'capacity' else 1), rows
             state, outcome, usage = rows[0]
-            if case in ('ok', 'slow', '415', 'early415', 'capacity'):
+            if case in ('ok', 'slow', '415', 'early415', 'capacity', 'early200'):
                 assert state == 'settled' and outcome['kind'] == 'succeeded', rows
             elif case in ('400', 'early400', 'twice415', '401', '429'):
                 assert state == 'settled' and outcome['kind'] == 'failed', rows
                 assert usage['inputTokens'] == 0 and usage['completeness'] == 'complete', rows
             else:
                 assert state == 'unknown' and usage is None, rows
-                if case in ('stall', 'silent', 'cancel'):
-                    assert outcome['failure'] == ('client_cancelled' if case == 'cancel' else 'deadline_exceeded'), rows
+                if case in ('stall', 'silent', 'cancel', 'early200-cancel'):
+                    assert outcome['failure'] == ('client_cancelled' if case in ('cancel', 'early200-cancel') else 'deadline_exceeded'), rows
             if case not in ('401', '429', '500'):
                 assert health == 0, health
         expected_calls = [expected_encoding]
@@ -354,6 +401,29 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
         if case == "capacity":
             expected_calls = [expected_encoding] * 4 + ["identity"]
         assert server.calls == expected_calls, server.calls
+        if case.startswith('early200'):
+            # Hold four follow-up uploads concurrently: even one leaked reservation
+            # makes a request fall back to identity. One successful probe is insufficient.
+            server.case = 'capacity'
+            # Stay within the independent 48 MiB inbound body budget with four
+            # backpressured probes; the original request remains near 30 MiB.
+            probe = dict(request, input=request['input'][:9*MIB])
+            body = wire(probe)
+            server.expected = wire(dict(expected, input=[dict(role='user', content=probe['input'])])).replace(b'/', b'\\/')
+            server.release.clear()
+            for _ in range(4):
+                thread = threading.Thread(target=contend)
+                thread.start()
+                contenders.append(thread)
+            deadline = time.monotonic() + 8
+            while len(server.calls) < 5:
+                assert time.monotonic() < deadline, server.calls
+                time.sleep(.01)
+            assert server.calls[1:] == [expected_encoding] * 4, server.calls
+            server.release.set()
+            for thread in contenders:
+                thread.join(10)
+            assert len(contender_results) == 4 and all(r[0] == 200 for r in contender_results), contender_results
         assert not server.errors, server.errors
         server.release.set()
         if process.poll() is None:
@@ -449,7 +519,7 @@ def main():
                         result = check(request, mode=mode, measure=True,
                             expected_encoding='identity' if mode == 'off' else 'zstd')
                         results.append(dict(shape=shape, repeat=repeat, mode=mode, **result))
-            request = dict(model='synthetic-order', input='synthetic-payload-' + 'x' * (9*MIB), stream=False)
+            request = dict(model='synthetic-order', input=base64.b64encode(random.Random(123456789).randbytes(6*MIB)).decode(), stream=False)
             for repeat in range(3):
                 for mode in ('off', 'zstd'):
                     result = check(request, mode=mode, measure=True, case='capacity',
@@ -464,7 +534,9 @@ def main():
         for threshold in (size-1, size, size+1):
             check(request, threshold=threshold, expected_encoding='zstd' if threshold < size else 'identity')
         check(dict(request, stream=True))
-        check(request, case='capacity')
+        rng = random.Random(123456789)
+        large = dict(model='synthetic-order', input=base64.b64encode(rng.randbytes(21*MIB)).decode(), stream=False)
+        check(dict(large, input=large['input'][:9*MIB]), case='capacity')
         check(request, mode='off', expected_encoding='identity')
         check(request, contract='responses', expected_encoding='identity')
         # Fast failure/lifecycle matrix; all requests still use the actual binary and sockets.
@@ -472,8 +544,9 @@ def main():
                      '500', 'disconnect', 'no-terminal', 'partial', 'silent'):
             check(request, case=case)
         # Incompressible data forces actual backpressure instead of a tiny compressed upload.
-        rng = random.Random(123456789)
-        large = dict(model='synthetic-order', input=base64.b64encode(rng.randbytes(21*MIB)).decode(), stream=False)
+        for case in ('early200', 'early200-cancel', 'early200-disconnect', 'early200-end'):
+            check(dict(large, stream=True), case=case)
+        check(dict(large, stream=True), case='early200', mode='off', expected_encoding='identity')
         for case in ('slow', 'stall', 'cancel', 'shutdown'):
             check(large, case=case)
         print('PASS: synthetic upstream zstd process matrix; no real provider contacted')

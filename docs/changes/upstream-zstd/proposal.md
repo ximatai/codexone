@@ -27,7 +27,9 @@
 
 `ZSTD_compressStream2` 在单线程模式同步执行，不能直接跑在 event loop（上游 `lib/zstd.h:803`）。数据服务持有专用 2 线程 NIOThreadPool；每个压缩上传持一个 permit，最多 4 个，线程池每请求至多一个在途分块 job，故最多 2 执行、2 排队，无额外 producer 任务或整包队列。每次 job 最多吃 64 KiB 输入、产一个有界输出块；若尚无输出，异步等待该 job 后检查取消再提交下一块，不在单 job 内遍历完整正文。Data 以只读 CoW 引用传入，`withUnsafeBytes` 只在同步 job 内借用，指针不跨 await；每请求 context 串行独占，不跨请求复用。
 
-上传迭代器和所属执行共同负责关闭：父取消/总期限/上游提前响应/网络错误设置停止标记；排队 job 开始前检查，运行中的 C 调用不能强制中断，等当前有界块返回再停止。取消处理必须 await 已提交 job 后才释放 context/缓冲/permit，不得先 free 再让 worker 返回；未发 EOF 不标 sent。执行退出关闭上传 owner，即使 AHC 未再次调用 next 也能完成释放。服务停机先停准入、取消并等待执行及 job，再关闭池（接入 `Sources/CodexOneAdapters/Transport/ResponsesDataService.swift:305` 的收尾）。共享 executor 或 `Task.detached` 不能替代此 CPU 容量与监督。
+上传迭代器和所属执行共同负责关闭：父取消/总期限/非 2xx 提前响应/网络错误设置停止标记；排队 job 开始前检查，运行中的 C 调用不能强制中断，等当前有界块返回再停止。取消处理必须 await 已提交 job 后才释放 context/缓冲/permit，不得先 free 再让 worker 返回；未发 EOF 不标 sent。执行退出关闭上传 owner，即使 AHC 未再次调用 next 也能完成释放。
+
+2xx 响应头不是上传完成：AHC 的 execute 在响应头到达时返回，上传仍可继续拉取。与明文 UploadBody 一样，成功响应允许上传到 EOF；压缩 owner 由现有 exchange 持有，EOF 或 exchange 结束（含取消、超时、断流、响应提前结束）主动 await close，非 2xx 则在响应头后立即 close。不新增后台任务，EOF 前始终持有 permit/5 MiB 工作区预留；EOF 只在尾块被消费后报告 sent/requestSent，再释放工作区。早到事件已启动 idle 时，requestSent 不重置期限。服务停机先停准入、取消并等待执行及 job，再关闭池（接入 `Sources/CodexOneAdapters/Transport/ResponsesDataService.swift:305` 的收尾）。共享 executor 或 `Task.detached` 不能替代此 CPU 容量与监督。
 
 **30 MiB 请求的新增峰值估算约 4 MiB，按 5 MiB/上传预留**：临时流式探针对重复文本及确定性伪随机字节各处理 31,457,280 字节，`ZSTD_sizeof_CCtx` 峰值均 3,663,377 字节（约 3.49 MiB），`ZSTD_CStreamOutSize()` 为 131,591 字节。加最多一份 64 KiB 输入转换（实现优先借用，按最坏计）、一个输出工作缓冲和一个待消费 ByteBuffer（各约 129 KiB），约 3.81 MiB，余量覆盖每请求小对象与分配器；另有进程共享的两 worker 线程栈/线程池常驻开销，尚未测量，冷启动并发 RSS 验收必须单列；5 MiB 不是进程 RSS 硬上限，也不含既有 JSON 树/原 Data/socket 缓冲。探针输出丢弃不累积；不可压缩输入输出 31,458,009 字节，不能假定总会缩小。禁止整包压缩 Data、`Array(data)` 或完整复制输入；需要产物大小时只能流式累加。
 

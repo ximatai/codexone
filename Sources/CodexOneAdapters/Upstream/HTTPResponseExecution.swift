@@ -178,7 +178,7 @@ struct HTTPResponseExecution: Sendable {
           && configuration.upstreamRequestCompression == "zstd"
           && data.count > configuration.upstreamZstdMinimumBytes
         let template = upstream
-        @Sendable func send(compressed: Bool) async throws -> HTTPClientResponse {
+        @Sendable func send(compressed: Bool) async throws -> (HTTPClientResponse, ZstdUpload?) {
           var outgoing = template
           outgoing.headers.remove(name: "content-length")
           outgoing.headers.remove(name: "transfer-encoding")
@@ -201,9 +201,14 @@ struct HTTPResponseExecution: Sendable {
           do {
             let response = try await client.execute(
               outgoing, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-            if let owner { await owner.close() }
-            upload.finish()
-            return response
+            // Headers can precede upload EOF. Successful exchanges keep pulling just as
+            // UploadBody does; rejection still stops compression immediately.
+            if let owner {
+              if !(200..<300).contains(response.status.code) { await owner.close() }
+            } else {
+              upload.finish()
+            }
+            return (response, owner)
           } catch {
             if let owner { await owner.close() }
             upload.finish()
@@ -211,7 +216,9 @@ struct HTTPResponseExecution: Sendable {
           }
         }
         let compressed = canCompress && compressionPool?.reserve() == true
-        var firstResponse: HTTPClientResponse? = try await send(compressed: compressed)
+        var firstResponse: HTTPClientResponse?
+        let owner: ZstdUpload?
+        (firstResponse, owner) = try await send(compressed: compressed)
         let response: HTTPClientResponse
         if compressed, firstResponse?.status == .unsupportedMediaType {
           // No HTTP body events have been read; a prior WS fallback also proves no lifecycle.
@@ -219,138 +226,146 @@ struct HTTPResponseExecution: Sendable {
           // Dispose the rejected response before creating a new connection; never re-encode Data.
           firstResponse = nil
           progress.negotiateUpload()
-          response = try await send(compressed: false)
+          response = try await send(compressed: false).0
         } else {
           response = firstResponse!
         }
-        await observeResponseHeaders(response.headers, account: authorization?.identity)
-        guard response.status == .ok else {
-          if isFallback, (400...499).contains(Int(response.status.code)) {
-            try observeProviderRejection(context)
-          }
-          if isFallback, response.status == .payloadTooLarge {
-            throw UpstreamWebSocketBodyLimit.rejection(upstreamStatus: 413)
-          }
-          throw await ProviderError.failure(response: response)
-        }
-        if wireStreaming {
-          let header = response.headers.first(name: "content-type")?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-          let media =
-            header?
-            .components(separatedBy: ";").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-          if header == nil || header == "" {
-            ProtocolFailureDiagnostics.recordMissingStreamMediaType(requestID: requestID)
-          } else if media != "text/event-stream" {
-            let detail: ProtocolRejectionDetail =
-              media == "application/json"
-              ? .upstreamMediaTypeJSON
-              : media == "text/html" ? .upstreamMediaTypeHTML : .upstreamMediaTypeOther
-            throw GatewayProtocolError(
-              502, "invalid_upstream_content_type", detail: detail, upstreamStatus: 200)
-          }
-          var decoder = SSEDecoder(
-            maximumEventBytes: request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes,
-            maximumTotalBytes: request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
-          var responseID: String?
-          var terminal = false
-          var observedMetadata = false
-          var firstHTTPEvent = true
-          readUpstream: for try await chunk in response.body {
-            try Task.checkCancellation()
-            for byte in chunk.readableBytesView {
-              guard let event = try decoder.append(byte) else { continue }
-              context.observeUpstreamEvent()
-              guard !terminal else { break readUpstream }
-              try observeProviderEvent(
-                event, context: context,
-                firstAfterUnprocessedRefusal: isFallback && firstHTTPEvent)
-              firstHTTPEvent = false
-              let type = try ProviderObservation.eventType(event)
-              if type == "error" { throw ProviderObservation.providerFailure(event) }
-              // A foreign response cannot supply evidence to this attempt.
-              if ProviderObservation.lifecycleEvents.contains(type),
-                let response = event["response"]
-              {
-                guard let id = ProviderObservation.identifier(response["id"]),
-                  responseID == nil || responseID == id
-                else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
-                responseID = id
-              }
-              if let id = event["response_id"],
-                id.string == nil
-                  || responseID.map({ $0 != id.string })
-                    == true
-              {
-                throw GatewayProtocolError(502, "invalid_upstream_turn")
-              }
-              await observeResponseMetadata(
-                event, account: authorization?.identity, returned: &observedMetadata)
-              // Trusted usage must survive later binding/output failures.
-              if ProviderObservation.terminalEvents.contains(type),
-                !context.providerRejectedBeforeOutput
-              {
-                try request.observeUsage(
-                  event["response"], context: context, model: model,
-                  configuration: configuration.imageGeneration)
-              }
-              let observation = try ProviderObservation(
-                event: event, model: model, allowImages: request.requirements.imageModel != nil)
-              context.observeActualServiceTier(observation.actualServiceTier)
-              progress.note(event: event)
-              for object in observation.bindings { try await context.bind(object) }
-              try observeTerminalOutcome(event, context: context)
-              terminal = observation.terminal
-              if request.streaming || terminal {
-                let output = request.streaming ? event : event["response"]!
-                try await emit(
-                  request.requirements.imageModel == nil
-                    ? ProviderObservation.textOutput(output) : output)
-              }
-              if terminal { try observeSubmittedTerminal(event, context: context) }
-              if terminal { break readUpstream }
+        do {
+          await observeResponseHeaders(response.headers, account: authorization?.identity)
+          guard response.status == .ok else {
+            if isFallback, (400...499).contains(Int(response.status.code)) {
+              try observeProviderRejection(context)
             }
+            if isFallback, response.status == .payloadTooLarge {
+              throw UpstreamWebSocketBodyLimit.rejection(upstreamStatus: 413)
+            }
+            throw await ProviderError.failure(response: response)
           }
-          if !terminal { try decoder.finish() }
-          guard terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
-        } else {
-          guard
-            response.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json")
-              == true
-          else {
-            throw GatewayProtocolError(502, "invalid_upstream_content_type")
+          if wireStreaming {
+            let header = response.headers.first(name: "content-type")?
+              .trimmingCharacters(in: .whitespacesAndNewlines)
+            let media =
+              header?
+              .components(separatedBy: ";").first?
+              .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            if header == nil || header == "" {
+              ProtocolFailureDiagnostics.recordMissingStreamMediaType(requestID: requestID)
+            } else if media != "text/event-stream" {
+              let detail: ProtocolRejectionDetail =
+                media == "application/json"
+                ? .upstreamMediaTypeJSON
+                : media == "text/html" ? .upstreamMediaTypeHTML : .upstreamMediaTypeOther
+              throw GatewayProtocolError(
+                502, "invalid_upstream_content_type", detail: detail, upstreamStatus: 200)
+            }
+            var decoder = SSEDecoder(
+              maximumEventBytes: request.requirements.imageModel == nil
+                ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes,
+              maximumTotalBytes: request.requirements.imageModel == nil
+                ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
+            var responseID: String?
+            var terminal = false
+            var observedMetadata = false
+            var firstHTTPEvent = true
+            readUpstream: for try await chunk in response.body {
+              try Task.checkCancellation()
+              for byte in chunk.readableBytesView {
+                guard let event = try decoder.append(byte) else { continue }
+                context.observeUpstreamEvent()
+                guard !terminal else { break readUpstream }
+                try observeProviderEvent(
+                  event, context: context,
+                  firstAfterUnprocessedRefusal: isFallback && firstHTTPEvent)
+                firstHTTPEvent = false
+                let type = try ProviderObservation.eventType(event)
+                if type == "error" { throw ProviderObservation.providerFailure(event) }
+                // A foreign response cannot supply evidence to this attempt.
+                if ProviderObservation.lifecycleEvents.contains(type),
+                  let response = event["response"]
+                {
+                  guard let id = ProviderObservation.identifier(response["id"]),
+                    responseID == nil || responseID == id
+                  else { throw GatewayProtocolError(502, "invalid_upstream_turn") }
+                  responseID = id
+                }
+                if let id = event["response_id"],
+                  id.string == nil
+                    || responseID.map({ $0 != id.string })
+                      == true
+                {
+                  throw GatewayProtocolError(502, "invalid_upstream_turn")
+                }
+                await observeResponseMetadata(
+                  event, account: authorization?.identity, returned: &observedMetadata)
+                // Trusted usage must survive later binding/output failures.
+                if ProviderObservation.terminalEvents.contains(type),
+                  !context.providerRejectedBeforeOutput
+                {
+                  try request.observeUsage(
+                    event["response"], context: context, model: model,
+                    configuration: configuration.imageGeneration)
+                }
+                let observation = try ProviderObservation(
+                  event: event, model: model, allowImages: request.requirements.imageModel != nil)
+                context.observeActualServiceTier(observation.actualServiceTier)
+                progress.note(event: event)
+                for object in observation.bindings { try await context.bind(object) }
+                try observeTerminalOutcome(event, context: context)
+                terminal = observation.terminal
+                if request.streaming || terminal {
+                  let output = request.streaming ? event : event["response"]!
+                  try await emit(
+                    request.requirements.imageModel == nil
+                      ? ProviderObservation.textOutput(output) : output)
+                }
+                if terminal { try observeSubmittedTerminal(event, context: context) }
+                if terminal { break readUpstream }
+              }
+            }
+            if !terminal { try decoder.finish() }
+            guard terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
+          } else {
+            guard
+              response.headers.first(name: "content-type")?.lowercased().hasPrefix(
+                "application/json")
+                == true
+            else {
+              throw GatewayProtocolError(502, "invalid_upstream_content_type")
+            }
+            let body = try await collectProgressBody(
+              response.body, progress: progress,
+              maximum: request.requirements.imageModel == nil
+                ? ProviderObservation.maximumTextResponseBytes : ImageLimits.eventBytes)
+            let document: JSONValue
+            do {
+              document = try JSONValue.decode(body)
+            } catch { throw GatewayProtocolError(502, "invalid_upstream_response") }
+            let status = document["status"]?.string
+            guard ["completed", "failed", "incomplete"].contains(status ?? "") else {
+              throw GatewayProtocolError(502, "execution_indeterminate")
+            }
+            context.observeUpstreamEvent()
+            try request.observeUsage(
+              document, context: context, model: model, configuration: configuration.imageGeneration
+            )
+            let event = JSONValue.object([
+              "type": .string("response." + status!), "response": document,
+            ])
+            let observation = try ProviderObservation(
+              event: event, model: model, allowImages: request.requirements.imageModel != nil)
+            context.observeActualServiceTier(observation.actualServiceTier)
+            for object in observation.bindings { try await context.bind(object) }
+            try observeTerminalOutcome(event, context: context)
+            try await emit(
+              request.requirements.imageModel == nil
+                ? ProviderObservation.textOutput(document) : document)
+            try observeSubmittedTerminal(event, context: context)
           }
-          let body = try await collectProgressBody(
-            response.body, progress: progress,
-            maximum: request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.eventBytes)
-          let document: JSONValue
-          do {
-            document = try JSONValue.decode(body)
-          } catch { throw GatewayProtocolError(502, "invalid_upstream_response") }
-          let status = document["status"]?.string
-          guard ["completed", "failed", "incomplete"].contains(status ?? "") else {
-            throw GatewayProtocolError(502, "execution_indeterminate")
-          }
-          context.observeUpstreamEvent()
-          try request.observeUsage(
-            document, context: context, model: model, configuration: configuration.imageGeneration)
-          let event = JSONValue.object([
-            "type": .string("response." + status!), "response": document,
-          ])
-          let observation = try ProviderObservation(
-            event: event, model: model, allowImages: request.requirements.imageModel != nil)
-          context.observeActualServiceTier(observation.actualServiceTier)
-          for object in observation.bindings { try await context.bind(object) }
-          try observeTerminalOutcome(event, context: context)
-          try await emit(
-            request.requirements.imageModel == nil
-              ? ProviderObservation.textOutput(document) : document)
-          try observeSubmittedTerminal(event, context: context)
+        } catch {
+          if let owner { await owner.close() }
+          throw error
         }
+        if let owner { await owner.close() }
       }
       return nil
     }

@@ -108,6 +108,7 @@ actor ZstdUpload {
     if ended {
       upload.sent()
       progress.requestSent()
+      await close()
       return nil
     }
     while !stopped {
@@ -136,13 +137,14 @@ actor ZstdUpload {
       if complete {
         upload.sent()
         progress.requestSent()
+        await close()
         return nil
       }
     }
     throw CancellationError()
   }
 
-  /// Also called on early headers/errors, even when AHC never pulls again.
+  /// Called at upload EOF or exchange exit (immediately for rejected headers).
   func close() async {
     stopped = true
     encoder.cancel()

@@ -25,7 +25,7 @@
 
 - [x] 可信启动配置提供 zstd/off 和 > 8 MiB 阈值，单身份/账号池装配及配置校验；非订阅合约与排除端点无条件明文。
 - [x] 在既有唯一编码 Data 之后接流式压缩，设置唯一 Content-Encoding、unknown 长度；原始 WS 16 MiB 判断、头白名单和有序字节保持。
-- [x] EOF 才调用 requestSent；初始化/排队/压缩/上传均受原总期限监督。提前拒绝/断流也主动关闭 owner，不依赖下一次拉取。
+- [x] EOF 才调用 requestSent；初始化/排队/压缩/上传均受原总期限监督。非 2xx 提前拒绝/断流也主动关闭 owner，不依赖下一次拉取；2xx 早到头允许上传至 EOF，EOF 或 exchange 结束等待 job 后归还工作区。
 - [x] 扩展原有 Upstream request upload 的大小/耗时桶；中断只报告部分 wire 字节，保留限频与隐私限制。
 
 ## 提交 4：真实进程合成接口矩阵
@@ -58,6 +58,13 @@
 ## 本次验证记录（2026-11-03）
 
 实现、规范、Mac 合成结果、24 次 RSS 样本、首次 backend 的失败与修复路径统一记录在 [verification.md](verification.md)。仅当前工作树与分支；无 Linux 构建、真实上游、部署、push、PR、发版或版本/CHANGELOG 变动。未完成项保持为发布前门禁，不把本机结果推广为真实上游兼容或 Linux 容量承诺。
+
+## 评审修复：成功响应早于上传完成
+
+- [x] 成功响应头保留上传 owner，EOF 或 exchange 退出收尾；非 2xx 立即停止，重复 close 不重复归还，停机仍等待 worker。
+- [x] requestSent 仍在 AHC 拉取 EOF 时触发，与明文一致；早到事件的 idle 期限不被 EOF 重置。
+- [x] 真实网关合成矩阵：少量正文后 200/首事件，读完并逐字节校验后完成；客户端取消、上游断流、响应提前 EOF；各场景四路后续请求均可压缩。
+- [x] 定向 Swift、zstd 脚本与文档校验，结果同步 verification。
 
 ## 相关文档
 

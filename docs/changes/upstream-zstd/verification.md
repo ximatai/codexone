@@ -21,6 +21,23 @@ SwiftPM 精确固定 zstd 1.5.7 / `f8745da6ff1ad1e7bab384bd1f9d742439278e99`，�
 
 新增脚本归属第 1 分片，沿用四分片完整覆盖检查。现有 WS 大请求脚本增加流式解压与头/framing 检查，覆盖订阅 16 MiB 上下边界及 9 MiB 早期1009→HTTP 压缩回退；第三方与原生 WS 的边界保持原断言。新脚本只依赖验证工具的 libzstd 动态库进行解压，产品静态链接固定的 SwiftPM 库；验证工具镜像显式安装 libzstd1，不增加产品运行时包。
 
+## 评审修复：200 响应早于上传 EOF
+
+2026-11-03，在同一本机 macOS arm64 环境定向验证。AHC execute 在响应头返回时不保证上传结束，旧代码的无条件 close 会取消 zstd 的后续拉取；明文 UploadBody 继续由 AHC 拉取。现将压缩 owner 交回现有 exchange 持有，2xx 头后允许继续上传，EOF 或 exchange 退出主动 await close；非 2xx 立即停止。EOF 前保留 permit/工作区，close 仍等待已有 worker job 且只归还一次，没有新增任务或改变服务停机顺序。
+
+`requestSent()` 仍与明文一样，在 AHC 消费尾块后拉取 EOF 时调用，未移到响应头或 C 编码结束处。早到首事件通过原 progress.note 启动 idle，后来的 EOF 不重置它；总期限继续覆盖上传。
+
+本次实际验证：
+
+- `swift test -j 4 --filter 'zstd|ExecutionBudgetTests|compressed415Negotiation|oversizedWebSocketHTTPFallback'` 通过：Adapters 6 项（含新增 EOF 前持有/EOF 后归还、重复 close，以及原有首响应/早到事件计时测试）；EndToEnd 2 项、6 个参数化用例。测试构建更新当前工作树 debug 网关。
+- `python3 scripts/verify_upstream_zstd.py --binary .build/debug/codexone` 完整定向矩阵通过。新增约 28 MiB 合成 base64 请求：上游只读第一小块即发 200/chunked SSE 头及 response.created；客户端确认在上游未收完前取得事件，再允许上游继续读取并逐字节比较解压数据，帧结束后发 response.completed，客户端和账本均成功；off 对照同样成功。
+- 新增该场景的客户端 RST 取消、上游中途断开、上游提前结束响应体用例：没有成功终态，账本保留 unknown，取消确认为 client_cancelled。每个早响应场景后，同时阻塞四路后续上传，全部仍使用 zstd，释放后均成功，确认四个 permit 全部归还；off 对照后续均为 identity。原有非 2xx/415、慢读、静默、总期限、取消及停机矩阵仍通过。
+- `python3 scripts/check_docs.py` 通过；提交前差异与新增内容检查通过。
+
+夹具调整：EOF 现在即可归还工作区，高压缩率正文可能完全进入本机缓冲，不能靠上游未读来持有 permit；容量用例与四路回收探测改用难压缩正文，单路约 9 MiB，以免与 48 MiB 入站预算混淆。调试中分别发现旧容量夹具假设失效、过大的并发正文触发入站预算，以及下游 SSE 含 event 行，均只修正夹具。本次没有运行可选 RSS 矩阵；下方数据是修复前的历史测量，新的难压缩并发夹具需重新测量，不能将旧值视为修复后容量验收。
+
+本次未跑完整 backend、release/RSS、Linux 构建或真实客户端/提供者；现有 Linux、真实上游兼容与内存发布门禁仍未完成。只使用当前工作树、当前分支及合成回环服务，未访问部署、订阅或 OpenAI，未 push、开 PR 或发版。
+
 ## 内存发布门禁
 
 使用 `python3 scripts/verify_upstream_zstd.py --binary .build/release/codexone --memory-output <临时结果文件>`，实际 release 网关、独立合成账本与回环上游，每个样本新建进程；三类 30 MiB 输入为重复文本、固定 seed 伪随机可打印文本及固定 seed 合成 base64，每类 off/zstd 各三次；另测四路略大于 8 MiB 正文加第五请求（总入站小于 48 MiB），off 与 zstd 各三次。假上游按有界块流式解压并与同一最终编码比较，绝不累计完整压缩产物。网关输入引用原编码 Data，工作缓冲/输出块均至多 64 KiB；没有新增完整输入或压缩副本。
