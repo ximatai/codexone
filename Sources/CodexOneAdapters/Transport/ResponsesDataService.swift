@@ -517,7 +517,9 @@ public struct ResponsesDataService: Service {
       tasks.addTask {
         try await connection.executeThenClose { inbound, outbound in
           var iterator = inbound.makeAsyncIterator()
+          var previousResponseRequestID: String?
           while !Task.isCancelled {
+            var receivedPart = false
             let requestDeadline = connection.channel.eventLoop.scheduleTask(in: .seconds(10)) {
               connection.channel.close(promise: nil)
             }
@@ -531,6 +533,7 @@ public struct ResponsesDataService: Service {
               var ended = false
               var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
+                receivedPart = true
                 switch part {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
@@ -577,7 +580,14 @@ public struct ResponsesDataService: Service {
               let writer = ProtocolResponseWriter(
                 writer: outbound, channel: connection.channel, keepAlive: false)
               if control { await writer.setControlRequest() }
-              try? await writer.fail(error, diagnostics: !control)
+              let idleReadFailure =
+                !receivedPart && previousResponseRequestID != nil
+                && (error is IOError || error is CancellationError)
+              if idleReadFailure, let requestID = previousResponseRequestID {
+                ProtocolFailureDiagnostics.recordResponseCleanup(
+                  .downstreamIdleRead, requestID: requestID)
+              }
+              try? await writer.fail(error, diagnostics: !control && !idleReadFailure)
               throw error
             }
             guard let (head, body) = received else { return }
@@ -588,6 +598,7 @@ public struct ResponsesDataService: Service {
             } catch {
               try await writer.fail(error)
             }
+            if await writer.hasEnded { previousResponseRequestID = writer.requestID }
             if !head.isKeepAlive { return }
           }
         }
@@ -739,6 +750,8 @@ private actor ProtocolResponseWriter {
   private var started = false
   private var streaming = false
   private var ended = false
+  var hasEnded: Bool { ended }
+  private var completedTerminalSubmitted = false
   private var streamFinishFailure: ResponseStreamFinishReason?
   init(
     writer: NIOAsyncChannelOutboundWriter<HTTPServerResponsePart>, channel: any Channel,
@@ -759,7 +772,9 @@ private actor ProtocolResponseWriter {
     defer { deadline.cancel() }
     try await writer.write(contentsOf: parts)
   }
-  func json(_ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil) async throws {
+  func json(
+    _ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil, diagnostics: Bool = true
+  ) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
     let data = try value.data()
     var headers: HTTPHeaders = [
@@ -778,13 +793,14 @@ private actor ProtocolResponseWriter {
         .body(.byteBuffer(ByteBuffer(data: data))), .end(nil),
       ])
     } catch {
-      if !controlRequest {
+      if !controlRequest && diagnostics {
         ProtocolFailureDiagnostics.record(
           .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
       }
       throw error
     }
     ended = true
+    if value["status"]?.string == "completed" { completedTerminalSubmitted = true }
   }
   func control(_ reply: ControlReply) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
@@ -839,6 +855,7 @@ private actor ProtocolResponseWriter {
     data.append(try value.data())
     data.append(Data("\n\n".utf8))
     try await write(.body(.byteBuffer(ByteBuffer(data: data))))
+    if type == "response.completed" { completedTerminalSubmitted = true }
   }
   func finishStream() async throws {
     guard started, !ended else { throw GatewayProtocolError(502, "execution_indeterminate") }
@@ -857,13 +874,22 @@ private actor ProtocolResponseWriter {
   }
   func fail(_ error: any Error, diagnostics: Bool = true) async throws {
     let mapped = protocolFailure(error)
-    if diagnostics, let reason = streamFinishFailure {
-      ProtocolFailureDiagnostics.recordStreamFinish(reason, requestID: requestID)
+    let terminalCleanupCancelled = completedTerminalSubmitted && error is CancellationError
+    if diagnostics {
+      if let reason = streamFinishFailure {
+        ProtocolFailureDiagnostics.recordStreamFinish(reason, requestID: requestID)
+      } else if terminalCleanupCancelled {
+        ProtocolFailureDiagnostics.recordResponseCleanup(
+          .executionCleanupCancelled, requestID: requestID)
+      }
     }
     let envelope = protocolErrorEnvelope(
-      error, requestID: requestID, diagnostics: diagnostics && streamFinishFailure == nil)
+      error, requestID: requestID,
+      diagnostics: diagnostics && streamFinishFailure == nil && !terminalCleanupCancelled)
     if !started {
-      try await json(envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds)
+      try await json(
+        envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds,
+        diagnostics: diagnostics)
     } else if streaming && !ended {
       if mapped.providerError != nil {
         // Clients interpret provider failures from the terminal response, as on a direct stream.

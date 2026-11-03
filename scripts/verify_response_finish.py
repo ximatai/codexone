@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import socket
+import sqlite3
 import struct
 import tempfile
 import threading
@@ -90,16 +91,17 @@ def reset(peer):
     peer.close()
 
 
-def http_peer(port, route):
+def http_peer(port, route, keep_alive):
     peer = socket.create_connection(('127.0.0.1', port), timeout=5)
     body = json.dumps(dict(model='synthetic-contract', input='synthetic finish', stream=route == 'sse')).encode()
+    connection = 'keep-alive' if keep_alive else 'close'
     peer.sendall((f'POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\n'
-                  f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n').encode() + body)
+                  f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: {connection}\r\n\r\n').encode() + body)
     return peer
 
 
-def client(port, route, case, server):
-    peer = dial(port) if route == 'native' else http_peer(port, route)
+def client(port, route, case, server, keep_alive):
+    peer = dial(port) if route == 'native' else http_peer(port, route, keep_alive)
     received = bytearray()
     types = []
     status = None
@@ -131,6 +133,8 @@ def client(port, route, case, server):
                 assert opcode == 1
                 event = json.loads(body)
                 types.append(event['type'])
+                if event['type'] == 'error':
+                    assert event['status'] == 502 and event['error']['code'] == 'execution_indeterminate', event
                 if event['type'] == 'response.completed':
                     assert event['response']['usage']['input_tokens'] == 5
                     assert types.count('response.completed') == 1
@@ -160,6 +164,10 @@ def client(port, route, case, server):
                 response.close()
                 reset(peer)
                 break
+        if case == 'next-request-reset':
+            peer.sendall((f'POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{{').encode())
+            time.sleep(.05)  # the next head/body must be observed, without a complete request
+            reset(peer)
         if route == 'json' and received:
             result = json.loads(received)
             if result.get('status') == 'completed':
@@ -182,6 +190,7 @@ def client(port, route, case, server):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--keep-alive', action='store_true', default=None, help='Use persistent HTTP response framing')
     parser.add_argument('--route', choices=('sse', 'json', 'native'))
     parser.add_argument('--case')
     parser.add_argument('--repeat', type=int, default=1)
@@ -192,12 +201,17 @@ def main():
     thread.start()
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-finish-') as temporary:
-            for transport, route in [('http', 'sse'), ('http', 'json'), ('websocket', 'sse'), ('websocket', 'json'), ('websocket', 'native')]:
+            paths = [(t, r, False) for t, r in [('http', 'sse'), ('http', 'json'), ('websocket', 'sse'), ('websocket', 'json'), ('websocket', 'native')]]
+            persistent = [(t, r, True) for t in ('http', 'websocket') for r in ('sse', 'json')]
+            paths = persistent if args.keep_alive else paths + persistent
+            for transport, route, keep_alive in paths:
                 if args.route and args.route != route:
                     continue
                 cases = ['normal', 'before-terminal', 'after-terminal', 'upstream-terminal-close', 'upstream-before-terminal']
                 if transport == 'websocket':
                     cases += ['upstream-terminal-eof', 'upstream-before-terminal-eof']
+                if keep_alive:
+                    cases += ['next-request-reset']
                 if route == 'sse':
                     cases += ['before-done', 'after-done']
                 for case in cases:
@@ -207,7 +221,7 @@ def main():
                         server.case = case
                         server.calls = 0
                         server.started, server.release = threading.Event(), threading.Event()
-                        root = Path(temporary) / f'{transport}-{route}-{case}-{iteration}'
+                        root = Path(temporary) / f'{transport}-{route}-{keep_alive}-{case}-{iteration}'
                         root.mkdir()
                         config = root / 'identity.json'
                         config.write_text(json.dumps(dict(principal='synthetic-finish', keyID='synthetic-key',
@@ -219,7 +233,7 @@ def main():
                         config.chmod(0o600)
                         process, ports = start(str(args.binary.resolve()), config, root)
                         try:
-                            result = client(ports['data'], route, case, server)
+                            result = client(ports['data'], route, case, server, keep_alive)
                             deadline = time.monotonic() + 6
                             while True:
                                 records = rows(root)
@@ -231,17 +245,20 @@ def main():
                             process.terminate()
                             process.wait(10)
                             logs = process.stdout.read().decode()
+                            with sqlite3.connect(root / 'state/core.sqlite') as db:
+                                request_id = db.execute('SELECT request_id FROM attempts').fetchone()[0]
                             protocol = [line.split('codexone.protocol:', 1)[-1].strip() for line in logs.splitlines() if 'codexone.protocol:' in line]
                             assert len(records) == 1 and server.calls == 1, 'Unexpected admission or replay'
+                            protocol = [line + (' [attempt]' if f'request_id={request_id}' in line else ' [no attempt]') if 'request_id=' in line else line for line in protocol]
                             state, outcome, usage = records[0]
                             completeness = usage['completeness'] if usage else 'none'
-                            print(f'{transport}/{route}/{case}: {result} | {state}/{outcome}/{completeness} | {protocol}', flush=True)
+                            print(f'{transport}/{route}/{"keep-alive" if keep_alive else "close"}/{case}: {result} | {state}/{outcome}/{completeness} | {protocol}', flush=True)
                             if case.startswith('upstream-before-terminal'):
                                 assert state == 'unknown' and outcome != 'succeeded' and usage is None, records
                                 assert 'error' in result or 'execution_indeterminate' in result, result
                                 if route == 'json':
                                     assert 'HTTP 502:' in result, result
-                                assert any('Protocol request rejected' in line and 'execution_indeterminate' in line for line in protocol), protocol
+                                assert any('Protocol request rejected' in line and 'execution_indeterminate' in line and '[attempt]' in line for line in protocol), protocol
                                 if transport == 'websocket' and not args.baseline:
                                     if case.endswith('-eof'):
                                         assert any('reason=upstream_websocket_eof' in line for line in protocol), protocol
@@ -253,16 +270,21 @@ def main():
                                     assert state == 'settled' and completeness == 'complete', records
                                 else:
                                     assert state == 'unknown' and usage is None, records
+                                    assert any('Protocol request rejected' in line and '[attempt]' in line for line in protocol), protocol
                             else:
                                 assert state == 'settled' and outcome == 'succeeded' and completeness == 'complete', records
                                 assert 'error' not in result and 'completed' in result, result
                                 if not args.baseline:
-                                    assert not any('Protocol request rejected' in line for line in protocol), protocol
+                                    if case == 'next-request-reset':
+                                        assert any('Protocol request rejected' in line and '[no attempt]' in line for line in protocol), protocol
+                                        assert not any('Protocol request rejected' in line and '[attempt]' in line for line in protocol), protocol
+                                    else:
+                                        assert not any('Protocol request rejected' in line for line in protocol), protocol
                             for line in protocol:
-                                if 'Response stream finish failed after execution' in line:
-                                    assert any(' info codexone.protocol:' in raw and 'Response stream finish failed after execution' in raw for raw in logs.splitlines()), line
+                                if 'Response stream finish failed after execution' in line or 'Response cleanup after completion' in line:
+                                    assert any(' info codexone.protocol:' in raw and ('Response stream finish failed after execution' in raw or 'Response cleanup after completion' in raw) for raw in logs.splitlines()), line
                                     assert 'status=' not in line and 'code=' not in line, line
-                                    assert any(f'reason={reason}' in line for reason in ('downstream_done_write', 'downstream_end_write')), line
+                                    assert any(f'reason={reason}' in line for reason in ('downstream_done_write', 'downstream_end_write', 'execution_cleanup_cancelled', 'downstream_idle_read')), line
                             assert 'synthetic-private-close-reason' not in logs
                             assert TOKEN not in logs and 'synthetic independent contract output' not in logs
                         finally:

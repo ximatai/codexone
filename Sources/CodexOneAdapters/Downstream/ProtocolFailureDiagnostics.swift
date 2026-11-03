@@ -7,11 +7,16 @@ enum ResponseStreamFinishReason: String, Sendable {
   case downstreamEndWrite = "downstream_end_write"
 }
 
+enum ResponseCleanupReason: String, Sendable {
+  case executionCleanupCancelled = "execution_cleanup_cancelled"
+  case downstreamIdleRead = "downstream_idle_read"
+}
+
 /// Optional, bounded diagnostics. No client document or arbitrary error description enters logs.
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
-  private static let streamFinishGate = Mutex(ProtocolFailureLogGate())
+  private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
@@ -77,10 +82,19 @@ enum ProtocolFailureDiagnostics {
 
   static func recordStreamFinish(_ reason: ResponseStreamFinishReason, requestID: String) {
     guard let id = UUID(uuidString: requestID),
-      streamFinishGate.withLock({ $0.admit(now: .now) })
+      responseCleanupGate.withLock({ $0.admit(now: .now) })
     else { return }
     logger.info(
       "Response stream finish failed after execution",
+      metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
+  }
+
+  static func recordResponseCleanup(_ reason: ResponseCleanupReason, requestID: String) {
+    guard let id = UUID(uuidString: requestID),
+      responseCleanupGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    logger.info(
+      "Response cleanup after completion",
       metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
   }
 
