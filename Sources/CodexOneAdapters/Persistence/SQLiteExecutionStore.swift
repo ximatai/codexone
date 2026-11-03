@@ -251,12 +251,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   ) throws -> ExecutionAdmission {
     try validateAdmission(command)
     let now = db.clock.unixSeconds
-    let window = try db.businessDay.window(containing: now)
-    let command = command.withWindow(window)
+    // The transaction clock determines the final window for every admission.
+    let command = command.withWindow(try db.businessDay.window(containing: now))
     if let restored = try db.restoreRecord() {
       guard restored.allowsAdmission(at: now),
-        command.keyRevision != nil || command.executionMode == .priming,
-        command.window == "utc-day-\(now / 86400)" || command.window == window
+        command.keyRevision != nil || command.executionMode == .priming
       else { throw ExecutionError.maintenanceRequired }
 
     }
