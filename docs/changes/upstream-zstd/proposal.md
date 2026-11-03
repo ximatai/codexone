@@ -59,6 +59,12 @@
 
 当前未决：v0.26.9 诊断校准阈值、原生 Linux SwiftPM/发行体积与许可证产物验收、Linux 并发 RSS/共享线程包络，以及真实订阅后端对 chunked zstd 的兼容性；真实客户端/订阅验收须另获授权。本机 release 单上传与四 permit 的合成 RSS 对照已记录，不代替这些门禁。本次实现与验收只用合成数据及回环假上游，不发布。不修改 ResponsesDataService 的正文持有逻辑或分配器设置。
 
+## 提前 2xx 的上传诊断修复
+
+明文分支原先在收到响应头后立即 finish，200 早于上传 EOF 时将完整上传误记 interrupted，并截短大小和耗时。明文与压缩统一：2xx 在上传 EOF 或 exchange 退出（含取消、超时、断流）时 finish；非 2xx 或发送抛错立即 finish。只有消费 EOF 才是 sent，中途结束仍是 interrupted，每次上传仅记录一次，415 两次上传分别记录。沿用当前 exchange 与压缩 owner，不新增任务。
+
+验收扩展合成 early200：off 模式必须 sent 且 wire 桶匹配全部编码字节；off 模式 200 后上传中途断流必须 interrupted。保留压缩提前响应、取消、断流、415 和期限矩阵。仅修复诊断，无协议、重试、schema、配置或迁移变化；回退代码恢复旧诊断行为。
+
 ## 相关文档
 
 [任务](tasks.md) · [协议规范](../../reference/specs/protocol.md) · [用量规范](../../reference/specs/usage.md)
