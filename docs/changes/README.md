@@ -6,6 +6,10 @@
 
 ## 活动提案
 
+- [upstream-ws-body-limit](upstream-ws-body-limit/proposal.md) · [任务](upstream-ws-body-limit/tasks.md)
+
+- [response-finish-diagnostics](response-finish-diagnostics/proposal.md) · [任务](response-finish-diagnostics/tasks.md)
+
 - [preserve-json-key-order](preserve-json-key-order/proposal.md) · [任务](preserve-json-key-order/tasks.md)
 
 - [session-routing-metadata](session-routing-metadata/proposal.md) · [任务](session-routing-metadata/tasks.md)

@@ -15,6 +15,8 @@ extension HTTPResponseExecution {
     }
     let turnState = try requestTurnState(
       headers: useHandshakeState ? clientHeaders : .init(), document: request.document)
+    let frame = try webSocketFrame(request, lane: lane, turnState: turnState)
+    try UpstreamWebSocketBodyLimit.requireNativeFrame(frame)
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     try await withExecutionDeadline(seconds: configuration.budget.total) {
       try await executeRouted(
@@ -25,18 +27,46 @@ extension HTTPResponseExecution {
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, _ in
         try await exchange(
-          request, context: context, model: model, peer: peer, lane: lane, turnState: turnState,
-          downstream: downstream, emit: emit)
+          request, context: context, model: model, peer: peer, lane: lane,
+          downstream: downstream, frame: frame, emit: emit)
         return nil
       }
     }
   }
 
+  func webSocketFrame(_ request: ResponseRequest, lane: String = "", turnState: String? = nil)
+    throws -> Data
+  {
+    var create = try request.preparedDocument(
+      contract: configuration.requestContract, nativeWebSocket: true
+    ).object!
+    // Codex subscription WS keeps stream=true in its native request contract.
+    // The public Responses WS dialect and image contract retain their separate wire rules.
+    if configuration.requestContract == .responses || request.requirements.imageModel != nil {
+      create.removeValue(forKey: "stream")
+    }
+    create["type"] = .string("response.create")
+    if request.usesResponsesLite {
+      var metadata = create["client_metadata"]?.object ?? [:]
+      metadata[ResponseRequest.liteMetadataKey] = .string("true")
+      create["client_metadata"] = .object(metadata)
+    }
+    if configuration.requestContract == .codexSubscription, let turnState {
+      var metadata = create["client_metadata"]?.object ?? [:]
+      metadata["x-codex-turn-state"] = .string(turnState)
+      create["client_metadata"] = .object(metadata)
+    }
+    if request.mode == .warmup { create["generate"] = .bool(false) }
+    if !lane.isEmpty { create["stream_id"] = .string(lane) }
+    return try JSONValue.object(create).data(escapingSlashes: false)
+  }
+
   /// Performs one prepared wire turn under an already durable, owned execution context.
   func exchange(
     _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
-    peer: WebSocketPeer, lane: String = "", turnState: String? = nil,
-    downstream: WebSocketPeer? = nil,
+    peer: WebSocketPeer, lane: String = "",
+    downstream: WebSocketPeer? = nil, frame: Data, allowSizeFallback: Bool = false,
+    sizeRefusalPath: String = "reject_native_1009",
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     defer { observeDisconnectedOutcome(downstream, context: context) }
@@ -51,96 +81,118 @@ extension HTTPResponseExecution {
         configuration: configuration.imageGeneration)
     }
     defer { peer.detachEvidence(lane: lane) }
-    try await withProgressDeadline(budget: configuration.budget) { progress in
-      var create = try request.preparedDocument(
-        contract: configuration.requestContract, nativeWebSocket: true
-      ).object!
-      // Codex subscription WS keeps stream=true in its native request contract.
-      // The public Responses WS dialect and image contract retain their separate wire rules.
-      if configuration.requestContract == .responses || request.requirements.imageModel != nil {
-        create.removeValue(forKey: "stream")
+    do {
+      try await withProgressDeadline(budget: configuration.budget) { progress in
+        try Task.checkCancellation()
+        guard downstream?.isClosed != true else { throw CancellationError() }
+        peer.markDispatched(lane: lane)
+        try await peer.writer.send(frame)
+        let account: AccountRouteIdentity?
+        if let gateway, case .pool = gateway {
+          account = try .init(
+            id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
+        } else {
+          account = nil
+        }
+        var total = 0
+        var observedMetadata = false
+        var bufferedMetadata: [JSONValue] = []
+        var lifecycle = false
+        do {
+          while true {
+            let data = try await peer.next(lane: lane)
+            context.observeUpstreamEvent()
+            let limit =
+              request.requirements.imageModel == nil
+              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
+            guard data.count <= limit - total else {
+              throw GatewayProtocolError(502, "upstream_response_too_large")
+            }
+            total += data.count
+            guard
+              data.count
+                <= (request.requirements.imageModel == nil
+                  ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
+            else {
+              throw GatewayProtocolError(502, "upstream_event_too_large")
+            }
+            let event: JSONValue
+            do { event = try JSONValue.decode(data) } catch {
+              throw GatewayProtocolError(502, "invalid_upstream_event")
+            }
+            guard try webSocketLane(event) == lane else {
+              throw GatewayProtocolError(502, "invalid_upstream_lane")
+            }
+            observeDisconnectedOutcome(downstream, context: context)
+            let type = try ProviderObservation.eventType(event)
+            await observeResponseMetadata(event, account: account, returned: &observedMetadata)
+            if type == "error" { throw ProviderObservation.providerFailure(event) }
+            if ProviderObservation.terminalEvents.contains(type),
+              !context.providerRejectedBeforeOutput
+            {
+              try request.observeUsage(
+                event["response"], context: context, model: model,
+                configuration: configuration.imageGeneration)
+            }
+            let observation = try ProviderObservation(
+              event: event, model: model, allowImages: request.requirements.imageModel != nil)
+            context.observeActualServiceTier(observation.actualServiceTier)
+            progress.note(event: event)
+            for object in observation.bindings { try await context.bind(object) }
+            try observeTerminalOutcome(event, context: context)
+            if type == "error" || (type.hasPrefix("response.") && type != "response.metadata") {
+              lifecycle = true
+            }
+            if !lifecycle {
+              bufferedMetadata.append(event)
+              continue
+            }
+            if request.streaming {
+              for metadata in bufferedMetadata { try await emit(metadata) }
+              bufferedMetadata.removeAll()
+              try await emit(
+                request.requirements.imageModel == nil
+                  ? ProviderObservation.textOutput(event) : event
+              )
+            } else if observation.terminal {
+              let response = event["response"]!
+              try await emit(
+                request.requirements.imageModel == nil
+                  ? ProviderObservation.textOutput(response) : response)
+            }
+            if observation.terminal { try observeSubmittedTerminal(event, context: context) }
+            if observation.terminal {
+              peer.delivered(event)
+              break
+            }
+          }
+        } catch {
+          let refusal =
+            (error as? GatewayProtocolError)?.upstreamWebSocketCloseCode == 1009
+            && peer.mayAcceptSizeRefusal(lane: lane)
+          // Only the unprocessed 1009 discards metadata. Other failures retain the
+          // established streamed-event/error behavior, including committed SSE status.
+          if !refusal, !lifecycle, request.streaming {
+            for metadata in bufferedMetadata { try await emit(metadata) }
+          }
+          throw error
+        }
       }
-      create["type"] = .string("response.create")
-      if request.usesResponsesLite {
-        var metadata = create["client_metadata"]?.object ?? [:]
-        metadata[ResponseRequest.liteMetadataKey] = .string("true")
-        create["client_metadata"] = .object(metadata)
+    } catch let error as GatewayProtocolError
+      where error.upstreamWebSocketCloseCode == 1009
+    {
+      let refused = peer.mayAcceptSizeRefusal(lane: lane)
+      ProtocolFailureDiagnostics.recordOversizedFrame(
+        bytes: frame.count, path: refused ? sizeRefusalPath : "indeterminate_1009",
+        closeCode: 1009)
+      guard refused else { throw error }
+      if !allowSizeFallback {
+        try observeProviderRejection(context)
+        try context.observeOutcome(
+          .init(failure: .invalidRequest, atUnixSeconds: context.clock.unixSeconds))
       }
-      if configuration.requestContract == .codexSubscription, let turnState {
-        var metadata = create["client_metadata"]?.object ?? [:]
-        metadata["x-codex-turn-state"] = .string(turnState)
-        create["client_metadata"] = .object(metadata)
-      }
-      if request.mode == .warmup { create["generate"] = .bool(false) }
-      if !lane.isEmpty { create["stream_id"] = .string(lane) }
-      try Task.checkCancellation()
-      guard downstream?.isClosed != true else { throw CancellationError() }
-      peer.markDispatched(lane: lane)
-      try await peer.send(.object(create))
-      let account: AccountRouteIdentity?
-      if let gateway, case .pool = gateway {
-        account = try .init(
-          id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
-      } else {
-        account = nil
-      }
-      var total = 0
-      var observedMetadata = false
-      while true {
-        let data = try await peer.next(lane: lane)
-        context.observeUpstreamEvent()
-        let limit =
-          request.requirements.imageModel == nil
-          ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
-        guard data.count <= limit - total else {
-          throw GatewayProtocolError(502, "upstream_response_too_large")
-        }
-        total += data.count
-        guard
-          data.count
-            <= (request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
-        else {
-          throw GatewayProtocolError(502, "upstream_event_too_large")
-        }
-        let event: JSONValue
-        do { event = try JSONValue.decode(data) } catch {
-          throw GatewayProtocolError(502, "invalid_upstream_event")
-        }
-        guard try webSocketLane(event) == lane else {
-          throw GatewayProtocolError(502, "invalid_upstream_lane")
-        }
-        observeDisconnectedOutcome(downstream, context: context)
-        let type = try ProviderObservation.eventType(event)
-        await observeResponseMetadata(event, account: account, returned: &observedMetadata)
-        if type == "error" { throw ProviderObservation.providerFailure(event) }
-        if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
-        {
-          try request.observeUsage(
-            event["response"], context: context, model: model,
-            configuration: configuration.imageGeneration)
-        }
-        let observation = try ProviderObservation(
-          event: event, model: model, allowImages: request.requirements.imageModel != nil)
-        context.observeActualServiceTier(observation.actualServiceTier)
-        progress.note(event: event)
-        for object in observation.bindings { try await context.bind(object) }
-        try observeTerminalOutcome(event, context: context)
-        if request.streaming {
-          try await emit(
-            request.requirements.imageModel == nil ? ProviderObservation.textOutput(event) : event)
-        } else if observation.terminal {
-          let response = event["response"]!
-          try await emit(
-            request.requirements.imageModel == nil
-              ? ProviderObservation.textOutput(response) : response)
-        }
-        if observation.terminal { try observeSubmittedTerminal(event, context: context) }
-        if observation.terminal {
-          peer.delivered(event)
-          break
-        }
-      }
+      throw GatewayProtocolError(
+        413, UpstreamWebSocketBodyLimit.errorCode, upstreamWebSocketCloseCode: 1009)
     }
   }
 }

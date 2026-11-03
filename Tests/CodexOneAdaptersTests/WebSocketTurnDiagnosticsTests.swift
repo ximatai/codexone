@@ -110,3 +110,21 @@ private func created(_ turns: WebSocketTurns, _ id: String = "synthetic-response
       ]).data()) == "")
   try turns.begin()
 }
+
+@Test func sizeRefusalGateUsesReaderLifecycleBeforeQueuedDelivery() throws {
+  let turns = WebSocketTurns()
+  try turns.begin()
+  #expect(!turns.mayAcceptSizeRefusal(lane: ""))
+  turns.markDispatched(lane: "")
+  _ = try turns.observe(
+    JSONValue.object(["type": .string("rate_limits.updated"), "rate_limits": .array([])]).data())
+  #expect(turns.mayAcceptSizeRefusal(lane: ""))
+  _ = try turns.observe(
+    JSONValue.object(["type": .string("response.metadata")]).data())
+  #expect(turns.mayAcceptSizeRefusal(lane: ""))
+  try created(turns)
+  // No consumer has dequeued response.created; the sole reader already closed the gate.
+  #expect(!turns.mayAcceptSizeRefusal(lane: ""))
+  turns.close()
+  #expect(!turns.mayAcceptSizeRefusal(lane: ""))
+}

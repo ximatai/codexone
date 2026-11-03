@@ -87,3 +87,28 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
   _ = try channel.finish()
 }
+
+@Test func bodyDiagnosticsDistinguishCapacityBoundaries() {
+  let mib = 1024 * 1024
+  for (bytes, bucket) in [
+    (16 * mib, "at_most_16_mib"), (16 * mib + 1, "16_to_24_mib"),
+    (24 * mib, "16_to_24_mib"), (24 * mib + 1, "24_to_32_mib"),
+    (32 * mib, "24_to_32_mib"), (32 * mib + 1, "over_32_mib"),
+  ] {
+    #expect(ProtocolFailureDiagnostics.sizeBucket(bytes) == bucket)
+  }
+}
+
+@Test func websocketHugeContinuationSizeDiagnosticDoesNotOverflow() throws {
+  let budget = RequestBodyBudget()
+  let channel = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: .init()))
+  try channel.writeInbound(maskedFrame(1, final: false))
+  try channel.writeInbound(ByteBuffer(repeating: 65, count: 1))
+  // Only a header is supplied: rejecting its size must not allocate or add Int.max to 1.
+  try channel.writeInbound(maskedFrame(Int.max, opcode: 0))
+  let error = try #require(try channel.readOutbound(as: WebSocketFrame.self))
+  #expect(try JSONValue.decode(Data(error.data.readableBytesView))["status"]?.integer == 413)
+  #expect(budget.occupiedBytes == 0)
+  _ = try channel.finish()
+}

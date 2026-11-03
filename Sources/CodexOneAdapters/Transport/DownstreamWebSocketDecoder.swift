@@ -89,7 +89,12 @@ final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelH
               do {
                 guard remaining <= RequestBodyLimits.maximumBytes - messageBytes,
                   fragments <= 1024
-                else { throw GatewayProtocolError(413, "request_too_large") }
+                else {
+                  ProtocolFailureDiagnostics.recordBodyLimit(
+                    bytes: remaining > Int.max - messageBytes ? Int.max : messageBytes + remaining,
+                    path: "reject_ingress")
+                  throw GatewayProtocolError(413, "request_too_large")
+                }
                 messageBytes += remaining
                 try lease?.reserve(messageBytes)
               } catch {

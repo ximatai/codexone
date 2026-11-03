@@ -140,11 +140,13 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://proxy.example.invalid:7890及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
 
-原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任，提供者明确拒绝的例外见 U13；代理拒绝不属于该例外。
+原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。上游 WS 在等待终态时收到 close 帧，保持既有 execution_indeterminate/502，附固定 reason `upstream_websocket_close`，仅记录 1000—4999 的数字 `upstream_ws_close_code`；无 close 帧的正常 EOF 为 `upstream_websocket_eof`。不记录关闭文本，不把下游关闭归为上游关闭，不改变终态队列、账本或 envelope；终态已完成的正常关闭不新增拒绝日志。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任，提供者明确拒绝的例外见 U13；代理拒绝不属于该例外。
 
 Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原有有界SSE解码、事件/模型/对象归属、终态与可信用量验证；不将无头HTML/JSON/空流当成功。非空媒体essence须精确为text/event-stream，参数/大小写允许，相似前缀与JSON/HTML拒绝。每进程最多一次缺头观察仅记固定事件/UUID/200，与16条拒绝预算独立；拒绝媒体仅记固定JSON/HTML/other，不记录原值或正文。
 
 JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。
+
+Responses SSE 在执行用例已返回并移交最终化之后，才写入网关 `[DONE]` 和 HTTP end。这两个收尾写入失败只记录独立 info `Response stream finish failed after execution`，reason 仅为 `downstream_done_write` 或 `downstream_end_write`，附服务端 request UUID；无 code/status，独立限额 16 条/60 秒，不消耗真实拒绝的 warning 预算。此分类只作用于上述两个 I/O await；未开始/重复结束等状态错误及执行内错误保持既有拒绝日志。响应写入、错误映射、结算、用量、重试与取消均不改变；成功提交 writer 不保证客户端消费，也不保证网络结束标记送达。正常 JSON 与原生 WS 没有此 SSE 收尾分类。已成功提交 response.completed（或 completed JSON）的 HTTP writer，若后续执行收尾抛 CancellationError，诊断为 info `Response cleanup after completion` / `execution_cleanup_cancelled`；提交前取消、显式协议/上游错误和期限错误仍用原日志。已结束 HTTP 响应后，等待下一请求且尚未读到任何 request part 时，IOError/CancellationError 只诊断为同名 info / `downstream_idle_read`，引用上一响应的 UUID；首请求及新请求已有 part 的错误保留拒绝日志。两种 cleanup info 与 SSE finish 共用独立 16 条/60 秒预算。上述分类不改变既有错误写入尝试、客户端响应、执行失败分类和持久责任。
 
 usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细；input_tokens_details.cache_write_tokens_details 仅保留非负整数 ttl_30m_tokens 与 ttl_12h_tokens，未知或畸形嵌套成员丢弃；其余 usage 成员不出网关。
 
@@ -189,6 +191,22 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 客户端或上游 JSON 经解析和重新序列化时，各层对象保留收到的键顺序，包括工具 schema 的 properties、HTTP Responses / compact、SSE、WebSocket create/control 与客户端响应。已有字段替换值时保留位置，删除字段不移动其余成员，新增字段按固定组装顺序追加；本地产生的无序映射按键排序后插入。对象相等比较仍忽略成员顺序。仅顺序成为明确契约，空白、转义写法与数字词法不保证原字节回显；直接透传路径仍保留原字节。
 
 同一输入在相同配置、授权身份与会话状态下，重复请求及进程重启后的上游 JSON 正文须字节一致。协议已有改写、客户端/上游提供的会话值和真实逐请求状态不在此被固定或伪造。JSON 接受/拒绝、重复键值选择、Decimal 数字、原有 64 层限制及 json_too_deep、斜杠转义选项不变。实现不得依赖 Foundation keyed 编解码容器保序；线上的对象序列化使用有序 writer，嵌套对象也不能绕回 keyed Encodable。此确定性不承诺真实提供者提示缓存命中；发布后的真实缓存验收由维护者执行。
+
+## 上游 WebSocket 消息大小与单轮 HTTP 回退
+
+上游 `response.create` 在发送前以实际有序编码后的 UTF-8 消息载荷字节数（不计 WS framing/mask）与 `UpstreamWebSocketBodyLimit.maximumMessageBytes` 比较。当前为 16 MiB（16,777,216 字节）：依据维护者观察到的接受/失败边界推断，非提供者稳定承诺或已证实的真实 1009，可随提供者变化调整。等于上限仍发 WS，超过上限绝不发 WS；普通请求的上游 WS 载荷只编码一次，并发送用于判断的同一份字节。writer 同时保护上游控制消息。既有 32 MiB 入站正文上限及 `request_too_large`、共享预算、期限和除此处定义的早期 1009 外，其他真实 WS close/EOF 分类不变。
+
+配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
+
+请求帧发送后、上游任何响应生命周期事件之前的明确 WS close code **1009**，也视为未处理的大小拒绝，不依赖 16 MiB 预检值。独立 HTTP JSON/SSE 在同一次已准入执行内、同一账号与认证/路由/会话/turn-state 下回退 HTTP 一次；预检及 1009 共享单轮边界，不会再次回退。rate-limit/connection metadata 不算生命周期；这些事件在响应开始前缓冲，1009 回退时不提交给客户端。生命周期标记由上游唯一 reader 在入队前更新；`response.created` 或后续响应事件之后的 1009、其他 close code、EOF/掉线均保留原行为，不能重放。回退 HTTP 自己失败时沿其既有失败路径收尾，不重选账号。
+
+原生下游 WS 全部不做 HTTP 回退：即使未带 `previous_response_id`，input 也可能依赖连接累计上下文，且存在 lane、warmup 与并发控制语义。超限 create 在准入前拒绝，初始 turn 不建立上游 socket；后续拒绝不破坏已有 socket/上下文，可缩小输入后继续。HTTP 桥接超限且带非 null `previous_response_id` 也拒绝，不能静默删除 context；低于上限沿用原校验。对于已发送的早期 1009，原生 WS 与已通过原校验、含 `previous_response_id` 的 HTTP 续接均为已准入的 413：依 U13 结算完整零用量，不重放客户端 turn。原生客户端 socket 保持开放，后续独立小 turn 可重新建立上游连接；不承诺恢复已关闭上游的隐式连接上下文。Codex subscription HTTP 原有 `previous_response_id` 参数校验继续生效。
+
+仅会话标签或已验证的 turn-state 路由 token 本身不禁止独立 HTTP 回退，账号约束仍必须成立。
+
+无法等价回退的超限请求，或回退 HTTP 明确返回 413，使用 413 `conversation_too_large`，提示会话或图片过大，开始新会话或移除图片。HTTP JSON/SSE 在未提交响应前返回 JSON error envelope；已经开始的 SSE 遵循 P27 的 `response.failed`；原生 WS 使用带 `status: 413` 的 `error` 帧。网关不重放、不附 Retry-After，不触发账号健康/冷却。准入前本地拒绝只有拒绝诊断、没有 attempt；HTTP 413 的已准入 attempt 依 U13 结算明确拒绝的完整零用量、`invalid_request` 失败，不留下 unknown。HTTP 已发送后的取消/断流仍可能执行，保留既有未知责任，不能归为大小拒绝。
+
+大小诊断只记录固定路径 `http`、`reject_native`、`reject_continuation`、`http_1009`、`reject_native_1009`、`reject_continuation_1009`、`indeterminate_1009`、`reject_ingress`、`reject_budget`，桶为 `at_most_16_mib`（≤16 MiB）、`16_to_24_mib`（>16 且 ≤24）、`24_to_32_mib`（>24 且 ≤32）、`over_32_mib`（>32）。1009 同时记录 `upstream_ws_close_code=1009`。大小诊断共用独立 16 条/60 秒预算，不记录正文、图片、精确字节数或会话内容。32 MiB ingress 和 48 MiB 预算不变，HTTP 声明长度/累计正文及 WS 累计帧在对应拒绝处记录大小桶；预算记录被拒绝单个正文的桶。真实上游接受边界、HTTP 对这些大小的接受情况及真实客户端组合须发布前由维护者验收，本地 fake provider 成功不能证明真实接受。已读官方客户端对 413 的重试局限见 [源码核查](../compatibility.md#大请求错误的官方客户端源码核查)。
 
 ## 相关文档
 

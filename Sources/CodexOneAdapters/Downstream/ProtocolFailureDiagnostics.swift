@@ -2,14 +2,26 @@ import Foundation
 import Logging
 import Synchronization
 
+enum ResponseStreamFinishReason: String, Sendable {
+  case downstreamDoneWrite = "downstream_done_write"
+  case downstreamEndWrite = "downstream_end_write"
+}
+
+enum ResponseCleanupReason: String, Sendable {
+  case executionCleanupCancelled = "execution_cleanup_cancelled"
+  case downstreamIdleRead = "downstream_idle_read"
+}
+
 /// Optional, bounded diagnostics. No client document or arbitrary error description enters logs.
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
+  private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
-    "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
+    "conversation_too_large", "image_input_too_large", "invalid_image", "invalid_input",
+    "invalid_mask",
     "invalid_private_context", "json_too_deep", "model_catalog_unavailable", "request_too_large",
     "too_many_references", "unsupported_background", "unsupported_compaction_trigger",
     "unsupported_stream_options",
@@ -41,6 +53,9 @@ enum ProtocolFailureDiagnostics {
     if let status = error.upstreamStatus, (100...599).contains(status) {
       value["upstream_status"] = .string(String(status))
     }
+    if let code = error.upstreamWebSocketCloseCode, (1000...4999).contains(code) {
+      value["upstream_ws_close_code"] = .string(String(code))
+    }
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     // Provider codes are short machine identifiers; free text never enters logs.
     if let code = error.providerError?["code"]?.string ?? error.providerError?["type"]?.string,
@@ -51,6 +66,27 @@ enum ProtocolFailureDiagnostics {
     }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
+  }
+
+  static func sizeBucket(_ bytes: Int) -> String {
+    if bytes <= 16 * 1024 * 1024 { return "at_most_16_mib" }
+    if bytes <= 24 * 1024 * 1024 { return "16_to_24_mib" }
+    if bytes <= 32 * 1024 * 1024 { return "24_to_32_mib" }
+    return "over_32_mib"
+  }
+
+  static func recordOversizedFrame(bytes: Int, path: String, closeCode: UInt16? = nil) {
+    recordBodyLimit(bytes: bytes, path: path, closeCode: closeCode)
+  }
+
+  private static let bodyLimitGate = Mutex(ProtocolFailureLogGate())
+  static func recordBodyLimit(bytes: Int, path: String, closeCode: UInt16? = nil) {
+    guard bodyLimitGate.withLock({ $0.admit(now: .now) }) else { return }
+    var metadata: Logger.Metadata = [
+      "size_bucket": .string(sizeBucket(bytes)), "path": .string(path),
+    ]
+    if let closeCode { metadata["upstream_ws_close_code"] = .string(String(closeCode)) }
+    logger.info("Request body size boundary", metadata: metadata)
   }
 
   static func recordMissingStreamMediaType(requestID: String) {
@@ -64,6 +100,24 @@ enum ProtocolFailureDiagnostics {
     logger.info(
       "Upstream stream omitted media type; SSE validation required",
       metadata: ["upstream_status": "200", "request_id": .string(id.uuidString)])
+  }
+
+  static func recordStreamFinish(_ reason: ResponseStreamFinishReason, requestID: String) {
+    guard let id = UUID(uuidString: requestID),
+      responseCleanupGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    logger.info(
+      "Response stream finish failed after execution",
+      metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
+  }
+
+  static func recordResponseCleanup(_ reason: ResponseCleanupReason, requestID: String) {
+    guard let id = UUID(uuidString: requestID),
+      responseCleanupGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    logger.info(
+      "Response cleanup after completion",
+      metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {

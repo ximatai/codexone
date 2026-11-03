@@ -317,51 +317,55 @@ public struct ResponsesDataService: Service {
     async throws
   {
     try await WebSocketPeer.run(socket, client: false, reservations: reservations) { downstream in
-      let firstBody = try await withExecutionDeadline(seconds: 10) {
-        var rate = WebSocketControlRate()
-        while true {
-          let body = try await downstream.nextBody()
-          if try await handleWebSocketControl(
-            body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
-            rate: &rate, registry: executor.protocolExtensions
-          ) {
-            continue
+      while !downstream.isClosed {
+        let firstBody = try await withExecutionDeadline(seconds: 10) {
+          var rate = WebSocketControlRate()
+          while true {
+            let body = try await downstream.nextBody()
+            if try await handleWebSocketControl(
+              body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
+              rate: &rate, registry: executor.protocolExtensions
+            ) {
+              continue
+            }
+            return body
           }
-          return body
         }
+        let first: ResponseRequest
+        do {
+          first = try webSocketCreate(
+            firstBody.data, imageConfiguration: executor.configuration.imageGeneration)
+        } catch {
+          try? await sendWebSocketError(
+            error, requestID: UUID().uuidString, lane: "", to: downstream)
+          throw error
+        }
+        let authorized = try await executor.authorized(digest)
+        do {
+          _ = try authorized.executionModel(first)
+          _ = try first.preparedDocument(
+            contract: authorized.configuration.requestContract, nativeWebSocket: true)
+        } catch {
+          let requestID = UUID().uuidString
+          await authorized.recordRejection(first, requestID: requestID, error: error)
+          try? await sendWebSocketError(
+            error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstBody.data)),
+            to: downstream)
+          throw error
+        }
+        let reconnect = try await PoolWebSocketSession.run(
+          downstream: downstream, firstBody: firstBody, first: first,
+          executor: authorized, digest: digest)
+        if !reconnect { break }
       }
-      let first: ResponseRequest
-      do {
-        first = try webSocketCreate(
-          firstBody.data, imageConfiguration: executor.configuration.imageGeneration)
-      } catch {
-        try? await sendWebSocketError(
-          error, requestID: UUID().uuidString, lane: "", to: downstream)
-        throw error
-      }
-      let authorized = try await executor.authorized(digest)
-      do {
-        _ = try authorized.executionModel(first)
-        _ = try first.preparedDocument(
-          contract: authorized.configuration.requestContract, nativeWebSocket: true)
-      } catch {
-        let requestID = UUID().uuidString
-        await authorized.recordRejection(first, requestID: requestID, error: error)
-        try? await sendWebSocketError(
-          error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstBody.data)),
-          to: downstream)
-        throw error
-      }
-      try await PoolWebSocketSession.run(
-        downstream: downstream, firstBody: firstBody, first: first,
-        executor: authorized, digest: digest)
       try await downstream.closeNormally()
     }
   }
 
   static func serveTurns(
     downstream: WebSocketPeer, upstream: WebSocketPeer, firstBody: WebSocketBody,
-    executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
+    executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil,
+    sizeRefused: @escaping @Sendable (GatewayProtocolError, String, String) -> Void = { _, _, _ in }
   ) async throws {
     downstream.permitSettlement()
     let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
@@ -450,9 +454,7 @@ public struct ResponsesDataService: Service {
                       try await executor.exchange(
                         request, context: initialTurn.context, model: model, peer: upstream,
                         lane: lane,
-                        turnState: try requestTurnState(
-                          headers: executor.clientHeaders, document: request.document),
-                        downstream: downstream
+                        downstream: downstream, frame: try initialTurn.start.takeFrame()
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
@@ -475,7 +477,14 @@ public struct ResponsesDataService: Service {
                     continue
                   }
                   if upstream.isClosed {
-                    if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
+                    if let refusal = error as? GatewayProtocolError,
+                      refusal.code == UpstreamWebSocketBodyLimit.errorCode,
+                      refusal.upstreamWebSocketCloseCode == 1009
+                    {
+                      // Publish only after the old session has ended its command reader.
+                      // A client may submit its next small turn immediately after the 413.
+                      sizeRefused(refusal, requestID, lane)
+                    } else if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
                       try? await sendWebSocketError(
                         error, requestID: requestID, lane: lane, to: downstream)
                     }
@@ -489,8 +498,13 @@ public struct ResponsesDataService: Service {
                   if initialTurn == nil {
                     try? await sendWebSocketError(
                       error, requestID: requestID, lane: lane, to: downstream)
-                    // A provider error event ended only this turn; the pinned socket stays usable.
-                    if (error as? GatewayProtocolError)?.providerError != nil { continue }
+                    // Provider refusals and local size rejections end only this turn.
+                    if (error as? GatewayProtocolError)?.providerError != nil
+                      || (error as? GatewayProtocolError)?.code
+                        == UpstreamWebSocketBodyLimit.errorCode
+                    {
+                      continue
+                    }
                   }
                   throw error
                 }
@@ -517,7 +531,9 @@ public struct ResponsesDataService: Service {
       tasks.addTask {
         try await connection.executeThenClose { inbound, outbound in
           var iterator = inbound.makeAsyncIterator()
+          var previousResponseRequestID: String?
           while !Task.isCancelled {
+            var receivedPart = false
             let requestDeadline = connection.channel.eventLoop.scheduleTask(in: .seconds(10)) {
               connection.channel.close(promise: nil)
             }
@@ -531,6 +547,7 @@ public struct ResponsesDataService: Service {
               var ended = false
               var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
+                receivedPart = true
                 switch part {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
@@ -551,6 +568,8 @@ public struct ResponsesDataService: Service {
                   if let length = next.headers.first(name: "content-length"),
                     Int(length).map({ $0 < 0 || $0 > maximumBytes }) ?? true
                   {
+                    ProtocolFailureDiagnostics.recordBodyLimit(
+                      bytes: Int(length) ?? maximumBytes + 1, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   if let length = next.headers.first(name: "content-length"),
@@ -562,6 +581,8 @@ public struct ResponsesDataService: Service {
                   guard head != nil,
                     bytes.readableBytes <= maximumBytes - body.count
                   else {
+                    ProtocolFailureDiagnostics.recordBodyLimit(
+                      bytes: body.count + bytes.readableBytes, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   try lease.reserve(body.count + bytes.readableBytes, countAll: control)
@@ -577,7 +598,14 @@ public struct ResponsesDataService: Service {
               let writer = ProtocolResponseWriter(
                 writer: outbound, channel: connection.channel, keepAlive: false)
               if control { await writer.setControlRequest() }
-              try? await writer.fail(error, diagnostics: !control)
+              let idleReadFailure =
+                !receivedPart && previousResponseRequestID != nil
+                && (error is IOError || error is CancellationError)
+              if idleReadFailure, let requestID = previousResponseRequestID {
+                ProtocolFailureDiagnostics.recordResponseCleanup(
+                  .downstreamIdleRead, requestID: requestID)
+              }
+              try? await writer.fail(error, diagnostics: !control && !idleReadFailure)
               throw error
             }
             guard let (head, body) = received else { return }
@@ -588,6 +616,7 @@ public struct ResponsesDataService: Service {
             } catch {
               try await writer.fail(error)
             }
+            if await writer.hasEnded { previousResponseRequestID = writer.requestID }
             if !head.isKeepAlive { return }
           }
         }
@@ -739,6 +768,9 @@ private actor ProtocolResponseWriter {
   private var started = false
   private var streaming = false
   private var ended = false
+  var hasEnded: Bool { ended }
+  private var completedTerminalSubmitted = false
+  private var streamFinishFailure: ResponseStreamFinishReason?
   init(
     writer: NIOAsyncChannelOutboundWriter<HTTPServerResponsePart>, channel: any Channel,
     keepAlive: Bool
@@ -758,7 +790,9 @@ private actor ProtocolResponseWriter {
     defer { deadline.cancel() }
     try await writer.write(contentsOf: parts)
   }
-  func json(_ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil) async throws {
+  func json(
+    _ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil, diagnostics: Bool = true
+  ) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
     let data = try value.data()
     var headers: HTTPHeaders = [
@@ -777,13 +811,14 @@ private actor ProtocolResponseWriter {
         .body(.byteBuffer(ByteBuffer(data: data))), .end(nil),
       ])
     } catch {
-      if !controlRequest {
+      if !controlRequest && diagnostics {
         ProtocolFailureDiagnostics.record(
           .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
       }
       throw error
     }
     ended = true
+    if value["status"]?.string == "completed" { completedTerminalSubmitted = true }
   }
   func control(_ reply: ControlReply) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
@@ -838,18 +873,41 @@ private actor ProtocolResponseWriter {
     data.append(try value.data())
     data.append(Data("\n\n".utf8))
     try await write(.body(.byteBuffer(ByteBuffer(data: data))))
+    if type == "response.completed" { completedTerminalSubmitted = true }
   }
   func finishStream() async throws {
     guard started, !ended else { throw GatewayProtocolError(502, "execution_indeterminate") }
-    try await write(.body(.byteBuffer(ByteBuffer(string: "data: [DONE]\n\n"))))
-    try await write(.end(nil))
-    ended = true
+    // Execution has returned and handed off finalization before this transport-only step.
+    // Preserve the existing write/error response path; classify only these late I/O failures.
+    var reason = ResponseStreamFinishReason.downstreamDoneWrite
+    do {
+      try await write(.body(.byteBuffer(ByteBuffer(string: "data: [DONE]\n\n"))))
+      reason = .downstreamEndWrite
+      try await write(.end(nil))
+      ended = true
+    } catch {
+      streamFinishFailure = reason
+      throw error
+    }
   }
   func fail(_ error: any Error, diagnostics: Bool = true) async throws {
     let mapped = protocolFailure(error)
-    let envelope = protocolErrorEnvelope(error, requestID: requestID, diagnostics: diagnostics)
+    let terminalCleanupCancelled = completedTerminalSubmitted && error is CancellationError
+    if diagnostics {
+      if let reason = streamFinishFailure {
+        ProtocolFailureDiagnostics.recordStreamFinish(reason, requestID: requestID)
+      } else if terminalCleanupCancelled {
+        ProtocolFailureDiagnostics.recordResponseCleanup(
+          .executionCleanupCancelled, requestID: requestID)
+      }
+    }
+    let envelope = protocolErrorEnvelope(
+      error, requestID: requestID,
+      diagnostics: diagnostics && streamFinishFailure == nil && !terminalCleanupCancelled)
     if !started {
-      try await json(envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds)
+      try await json(
+        envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds,
+        diagnostics: diagnostics)
     } else if streaming && !ended {
       if mapped.providerError != nil {
         // Clients interpret provider failures from the terminal response, as on a direct stream.

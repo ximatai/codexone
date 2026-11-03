@@ -169,6 +169,7 @@ actor WebSocketWriter {
   func send(_ data: Data, opcode: WebSocketOpcode = .text)
     async throws
   {
+    if client { try UpstreamWebSocketBodyLimit.requireNativeFrame(data) }
     guard
       data.count
         <= (client
@@ -193,6 +194,9 @@ struct WebSocketPeer: Sendable {
   private let turns: WebSocketTurns?
   private let closure: WebSocketTurns
   var isClosed: Bool { closure.isClosed }
+  func mayAcceptSizeRefusal(lane: String) -> Bool {
+    turns?.mayAcceptSizeRefusal(lane: lane) == true
+  }
   func markDispatched(lane: String) { turns?.markDispatched(lane: lane) }
   /// Never broadcast a cancellation: wait for the reader to identify this dispatched turn.
   func interruptForSettlement(lane: String) async throws {
@@ -298,7 +302,11 @@ struct WebSocketPeer: Sendable {
               case .connectionClose:
                 closure.close()
                 try? await writer.send(data, opcode: .connectionClose)
-                inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
+                let code = data.count >= 2 ? UInt16(data[0]) << 8 | UInt16(data[1]) : nil
+                inbox.finish(
+                  GatewayProtocolError(
+                    502, "execution_indeterminate", detail: client ? .upstreamWebSocketClose : nil,
+                    upstreamWebSocketCloseCode: client ? code : nil))
                 return !client && !closure.settlementPermitted
               default: throw GatewayProtocolError(400, "unsupported_websocket_frame")
               }
@@ -311,7 +319,9 @@ struct WebSocketPeer: Sendable {
             inbox.finish(error)
           }
           closure.close()
-          inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
+          inbox.finish(
+            GatewayProtocolError(
+              502, "execution_indeterminate", detail: client ? .upstreamWebSocketEOF : nil))
           return !client && !closure.settlementPermitted
         }
         tasks.addTask {

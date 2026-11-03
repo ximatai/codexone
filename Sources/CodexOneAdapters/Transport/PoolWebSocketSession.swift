@@ -13,11 +13,23 @@ final class PoolWebSocketStart: Sendable {
   private let selected: AsyncThrowingStream<Selection, any Error>.Continuation
   private let results: AsyncThrowingStream<Void, any Error>
   private let result: AsyncThrowingStream<Void, any Error>.Continuation
+  private let preparedFrame = Mutex<Data?>(nil)
   private let reported = Mutex(
     (finished: false, reported: false, context: ExecutionContext?.none))
   init() {
     (selections, selected) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
     (results, result) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
+  }
+  func prepareFrame(_ data: Data) throws {
+    try UpstreamWebSocketBodyLimit.requireNativeFrame(data)
+    preparedFrame.withLock { $0 = data }
+  }
+  func takeFrame() throws -> Data {
+    try preparedFrame.withLock { value in
+      guard let data = value else { throw ExecutionError.invalidCommand }
+      value = nil
+      return data
+    }
   }
   func publish(_ selection: Selection) {
     reported.withLock { $0.context = selection.context }
@@ -69,7 +81,9 @@ enum PoolWebSocketSession {
   static func run(
     downstream: WebSocketPeer, firstBody: WebSocketBody, first: ResponseRequest,
     executor: HTTPResponseExecution, digest: String?
-  ) async throws {
+  ) async throws -> Bool {
+    // Bounded by the existing 16 active turns; this session owns all deferred errors.
+    let refusals = Mutex<[(error: GatewayProtocolError, requestID: String, lane: String)]>([])
     guard executor.gateway != nil else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
@@ -77,6 +91,7 @@ enum PoolWebSocketSession {
     do {
       let turnState = try requestTurnState(
         headers: executor.clientHeaders, document: first.document)
+      try start.prepareFrame(executor.webSocketFrame(first, lane: lane, turnState: turnState))
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         defer {
           start.close(CancellationError())
@@ -155,7 +170,10 @@ enum PoolWebSocketSession {
               try await ResponsesDataService.serveTurns(
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
-                initial: .init(context: selection.context, start: start, requestID: requestID))
+                initial: .init(context: selection.context, start: start, requestID: requestID),
+                sizeRefused: { error, requestID, lane in
+                  refusals.withLock { $0.append((error, requestID, lane)) }
+                })
             }
           } catch {
             start.close(error)
@@ -164,16 +182,25 @@ enum PoolWebSocketSession {
         }
         while try await tasks.next() != nil {}
       }
-    } catch is WebSocketUpstreamClosed {
-      // Both sibling owners have ended and handed off their finalization responsibility.
-      return
     } catch {
+      // Both sibling owners and their command readers have ended before a client can
+      // observe the 413 and send a fresh turn. Never replay the refused create.
+      let pending = refusals.withLock { $0 }
+      if !pending.isEmpty {
+        for refusal in pending {
+          try await sendWebSocketError(
+            refusal.error, requestID: refusal.requestID, lane: refusal.lane, to: downstream)
+        }
+        return true
+      }
+      if error is WebSocketUpstreamClosed { return false }
       await executor.recordRejection(first, requestID: requestID, error: error)
       if start.claimError() {
         try? await sendWebSocketError(error, requestID: requestID, lane: lane, to: downstream)
       }
       throw error
     }
+    return false
   }
 }
 

@@ -15,6 +15,7 @@ final class WebSocketTurns: Sendable {
     struct Lane {
       var phase = Phase.idle
       var receivedCreated = false
+      var receivedLifecycle = false
       var interrupted = false
       // Set at the existing wire dispatch boundary, not at admission/begin.
       var dispatched = false
@@ -98,6 +99,7 @@ final class WebSocketTurns: Sendable {
       guard active < 16 else { throw GatewayProtocolError(503, "websocket_turn_capacity") }
       value.lanes[lane]!.phase = .awaitingCreated
       value.lanes[lane]!.receivedCreated = false
+      value.lanes[lane]!.receivedLifecycle = false
       value.lanes[lane]!.interrupted = false
       value.lanes[lane]!.dispatched = false
     }
@@ -119,6 +121,13 @@ final class WebSocketTurns: Sendable {
 
   func markDispatched(lane: String) {
     state.withLock { $0.lanes[lane]?.dispatched = true }
+  }
+
+  func mayAcceptSizeRefusal(lane: String) -> Bool {
+    state.withLock {
+      guard let turn = $0.lanes[lane] else { return false }
+      return turn.dispatched && !turn.receivedLifecycle
+    }
   }
 
   /// A projection of the owned turn, never an independently advanced settlement state.
@@ -292,6 +301,9 @@ final class WebSocketTurns: Sendable {
       if case .idle = current.phase, let id = previousID ?? responseID {
         if ProviderObservation.terminalEvents.contains(type) { value.pendingDelivery[lane] = id }
         value.end(id, lane: lane)
+      }
+      if type == "error" || (type.hasPrefix("response.") && type != "response.metadata") {
+        current.receivedLifecycle = true
       }
       try current.evidence?(event)
       return .init(lane: lane, detached: false)

@@ -34,6 +34,7 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
     case "upstream_response_too_large", "upstream_event_too_large": return .invalidUpstreamResponse
     case "model_not_allowed": return .modelNotAllowed
     case "continuation_owner_unavailable": return .accountUnavailable
+    case "conversation_too_large": return .invalidRequest
     case "conflicting_turn_state", "invalid_turn_state", "invalid_client_metadata":
       return .invalidRequest
     default:
@@ -118,8 +119,10 @@ func observeProviderRejection(_ context: ExecutionContext) throws {
 }
 
 /// Only the first parsed event can certify a refusal. Even a lifecycle event closes this gate.
-func observeProviderEvent(_ event: JSONValue, context: ExecutionContext) throws {
-  let first = context.observeProviderEvent()
+func observeProviderEvent(
+  _ event: JSONValue, context: ExecutionContext, firstAfterUnprocessedRefusal: Bool = false
+) throws {
+  let first = context.observeProviderEvent() || firstAfterUnprocessedRefusal
   guard first, ["error", "response.failed"].contains(event["type"]?.string ?? ""),
     event["response"]?["output"] == nil || event["response"]?["output"] == .array([]),
     event["output"] == nil || event["output"] == .array([]),

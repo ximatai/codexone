@@ -33,7 +33,10 @@ final class RequestBodyLease: Sendable {
     guard countAll || size > RequestBodyLimits.unreservedBytes else { return }
     try bytes.withLock {
       if size > $0 {
-        try budget.acquire(size - $0)
+        do { try budget.acquire(size - $0) } catch {
+          ProtocolFailureDiagnostics.recordBodyLimit(bytes: size, path: "reject_budget")
+          throw error
+        }
         $0 = size
       }
     }

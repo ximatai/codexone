@@ -30,6 +30,14 @@ Responses 支持 HTTP JSON/SSE、原生 WS 与 HTTP→WS 桥接；模型目录�
 
 session/thread 标识只提供账号软偏好；已观察的 turn-state 独立约束来源账号，不能在换号时复用；账号池对未知/过期/丢失的 token 明确返回 503，不自动清除状态重放。强对象/连接归属、授权与健康检查仍优先。账号不可用时可以回退，首请求并发及进程重启不保证粘滞。稳定账号、会话标识与提示前缀有助于复用，但不保证提供者缓存命中率或有效期；工具集、instructions、模型或前缀变化仍需客户端单独排查。HTTP/WS 元数据边界与辅助请求规则见[控制接口约定](control-endpoints.md)。
 
+## 大请求错误的官方客户端源码核查
+
+2026-11-03 只读核查 OpenAI Codex 源码 revision `f9e7b19df8aa75490fc1d90f98d3d95ad716d08e`（不运行客户端、不使用账号）。网关提供明确的 HTTP 413 / WS `status: 413`、`conversation_too_large` 和开始新会话/移除图片提示，不自动重放，也不附重试提示。
+
+该 revision 的 [WS error 映射](https://github.com/openai/codex/blob/f9e7b19df8aa75490fc1d90f98d3d95ad716d08e/codex-rs/codex-api/src/endpoint/responses_websocket.rs) 能读取带 status 的 error 帧并转成 HTTP transport error；只有特定连接期限/previous-response 代码直接要求重试，网关不使用这些代码。[HTTP transport retry](https://github.com/openai/codex/blob/f9e7b19df8aa75490fc1d90f98d3d95ad716d08e/codex-rs/codex-client/src/retry.rs) 只对启用的 429/5xx/传输失败重试，不重试 413。
+
+但是更高层的 [api_bridge](https://github.com/openai/codex/blob/f9e7b19df8aa75490fc1d90f98d3d95ad716d08e/codex-rs/codex-api/src/api_bridge.rs) 将不识别的 413 映射为 `UnexpectedStatus`，[CodexErr.retry_delay](https://github.com/openai/codex/blob/f9e7b19df8aa75490fc1d90f98d3d95ad716d08e/codex-rs/protocol/src/error.rs) 对它仍返回退避重试延迟。因此不能声称此错误可保证该版本官方客户端立即停止 turn 重试；413 的专用网关代码需要客户端识别。保留要求的 413 与诚实大小语义，不伪造模型不存在、认证失败或模型上下文溢出。该结论为固定源码的静态分析，不是 Desktop/CLI 的实际运行验收；其他版本和客户端行为待维护者验证。
+
 ## 相关文档
 
 [协议规范](specs/protocol.md) · [客户端协议跟踪](../development/client-protocol-watch.md) · [迁移指南](../guide/migration.md)

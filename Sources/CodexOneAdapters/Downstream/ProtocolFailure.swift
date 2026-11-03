@@ -53,9 +53,11 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
   let mapped = protocolFailure(error)
   if diagnostics { ProtocolFailureDiagnostics.record(mapped, requestID: requestID) }
   let explanation =
-    mapped.code == "continuation_owner_unavailable"
-    ? "Continuation source cannot be verified. The request was not dispatched."
-    : "Gateway request failed."
+    mapped.code == UpstreamWebSocketBodyLimit.errorCode
+    ? "The conversation or its images are too large. Start a new session or remove images before trying again."
+    : mapped.code == "continuation_owner_unavailable"
+      ? "Continuation source cannot be verified. The request was not dispatched."
+      : "Gateway request failed."
   let message =
     UUID(uuidString: requestID) != nil
     ? "\(explanation) Reference: \(requestID)." : explanation
