@@ -47,6 +47,9 @@ enum ProtocolFailureDiagnostics {
     if let status = error.upstreamStatus, (100...599).contains(status) {
       value["upstream_status"] = .string(String(status))
     }
+    if let code = error.upstreamWebSocketCloseCode, (1000...4999).contains(code) {
+      value["upstream_ws_close_code"] = .string(String(code))
+    }
     if let detail = error.detail { value["reason"] = .string(detail.rawValue) }
     // Provider codes are short machine identifiers; free text never enters logs.
     if let code = error.providerError?["code"]?.string ?? error.providerError?["type"]?.string,

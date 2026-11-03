@@ -7,6 +7,8 @@ enum ProtocolRejectionDetail: String, Sendable {
   case upstreamTurnLifecycle = "upstream_turn_lifecycle"
   case upstreamTurnCreated = "upstream_turn_created"
   case upstreamTurnResponseID = "upstream_turn_response_id"
+  case upstreamWebSocketClose = "upstream_websocket_close"
+  case upstreamWebSocketEOF = "upstream_websocket_eof"
   case downstreamJSONWrite = "downstream_json_write"
   case upstreamEvent = "upstream_event"
   case upstreamMediaTypeJSON = "upstream_media_type_json"
@@ -20,14 +22,17 @@ struct GatewayProtocolError: Error, Sendable {
   let cooldownSeconds: Int64?
   let detail: ProtocolRejectionDetail?
   let upstreamStatus: Int?
+  let upstreamWebSocketCloseCode: UInt16?
   /// Sanitized provider error members forwarded so clients can apply their own error handling.
   let providerError: JSONValue?
   let explicitProviderRejection: Bool
   init(
     _ status: Int, _ code: String, cooldownSeconds: Int64? = nil,
     detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil,
+    upstreamWebSocketCloseCode: UInt16? = nil,
     providerError: JSONValue? = nil, explicitProviderRejection: Bool = false
   ) {
+    self.upstreamWebSocketCloseCode = upstreamWebSocketCloseCode
     self.explicitProviderRejection = explicitProviderRejection
     self.upstreamStatus = upstreamStatus
     self.detail = detail

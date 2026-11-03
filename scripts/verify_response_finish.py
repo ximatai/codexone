@@ -35,7 +35,7 @@ class Provider(BaseHTTPRequestHandler):
             write(event)
         self.server.started.set()
         assert self.server.release.wait(5)
-        if self.server.case == 'upstream-before-terminal':
+        if self.server.case.startswith('upstream-before-terminal'):
             return
         write(events[-1])
 
@@ -70,8 +70,10 @@ class Provider(BaseHTTPRequestHandler):
             opcode, body = receive(self.connection, masked=True)
             assert opcode == 1 and json.loads(body)['model'] == 'synthetic-contract'
             self.emit(lambda event: send(self.connection, event))
+            if self.server.case in ('upstream-terminal-eof', 'upstream-before-terminal-eof'):
+                return
             if self.server.case in ('upstream-terminal-close', 'upstream-before-terminal'):
-                send(self.connection, struct.pack('!H', 1011), opcode=8)
+                send(self.connection, struct.pack('!H', 1011) + b'synthetic-private-close-reason', opcode=8)
                 return
             self.connection.settimeout(3)
             while True:
@@ -194,6 +196,8 @@ def main():
                 if args.route and args.route != route:
                     continue
                 cases = ['normal', 'before-terminal', 'after-terminal', 'upstream-terminal-close', 'upstream-before-terminal']
+                if transport == 'websocket':
+                    cases += ['upstream-terminal-eof', 'upstream-before-terminal-eof']
                 if route == 'sse':
                     cases += ['before-done', 'after-done']
                 for case in cases:
@@ -232,12 +236,17 @@ def main():
                             state, outcome, usage = records[0]
                             completeness = usage['completeness'] if usage else 'none'
                             print(f'{transport}/{route}/{case}: {result} | {state}/{outcome}/{completeness} | {protocol}', flush=True)
-                            if case == 'upstream-before-terminal':
+                            if case.startswith('upstream-before-terminal'):
                                 assert state == 'unknown' and outcome != 'succeeded' and usage is None, records
                                 assert 'error' in result or 'execution_indeterminate' in result, result
                                 if route == 'json':
                                     assert 'HTTP 502:' in result, result
                                 assert any('Protocol request rejected' in line and 'execution_indeterminate' in line for line in protocol), protocol
+                                if transport == 'websocket' and not args.baseline:
+                                    if case.endswith('-eof'):
+                                        assert any('reason=upstream_websocket_eof' in line for line in protocol), protocol
+                                    else:
+                                        assert any('reason=upstream_websocket_close' in line and 'upstream_ws_close_code=1011' in line for line in protocol), protocol
                             elif case == 'before-terminal':
                                 assert outcome == 'cancelled', records
                                 if route == 'native':
@@ -254,6 +263,7 @@ def main():
                                     assert any(' info codexone.protocol:' in raw and 'Response stream finish failed after execution' in raw for raw in logs.splitlines()), line
                                     assert 'status=' not in line and 'code=' not in line, line
                                     assert any(f'reason={reason}' in line for reason in ('downstream_done_write', 'downstream_end_write')), line
+                            assert 'synthetic-private-close-reason' not in logs
                             assert TOKEN not in logs and 'synthetic independent contract output' not in logs
                         finally:
                             stop(process)

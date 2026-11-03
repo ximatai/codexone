@@ -66,6 +66,24 @@ struct ProtocolFailureDiagnosticsTests {
       GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage), requestID: "untrusted")
     #expect(untrusted["error"]?["message"]?.string == "Gateway request failed.")
   }
+  @Test func upstreamWebSocketCloseMetadataIsBoundedAndPrivate() {
+    for code: UInt16 in [0, 999, 1000, 1011, 4999, 5000, 65535] {
+      let error = GatewayProtocolError(
+        502, "execution_indeterminate", detail: .upstreamWebSocketClose,
+        upstreamWebSocketCloseCode: code)
+      let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)
+      #expect(metadata["reason"]?.description == "upstream_websocket_close")
+      #expect(
+        metadata["upstream_ws_close_code"]?.description
+          == ((1000...4999).contains(code) ? String(code) : nil))
+      let envelope = protocolErrorEnvelope(error, requestID: UUID().uuidString, diagnostics: false)
+      #expect(envelope["error"]?.object?.count == 4)
+      #expect(envelope["error"]?["upstream_ws_close_code"] == nil)
+      #expect(protocolFailure(error).status == 502)
+      #expect(executionFailure(error) == .indeterminate)
+    }
+  }
+
   @Test func upstreamStatusRemainsPrivateAndAllErrorsHaveSafeReferences() {
     for status in [400, 401, 403, 407, 429, 503] {
       let error = GatewayProtocolError(502, "upstream_rejected", upstreamStatus: status)

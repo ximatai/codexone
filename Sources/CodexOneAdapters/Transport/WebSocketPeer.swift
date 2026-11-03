@@ -298,7 +298,11 @@ struct WebSocketPeer: Sendable {
               case .connectionClose:
                 closure.close()
                 try? await writer.send(data, opcode: .connectionClose)
-                inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
+                let code = data.count >= 2 ? UInt16(data[0]) << 8 | UInt16(data[1]) : nil
+                inbox.finish(
+                  GatewayProtocolError(
+                    502, "execution_indeterminate", detail: client ? .upstreamWebSocketClose : nil,
+                    upstreamWebSocketCloseCode: client ? code : nil))
                 return !client && !closure.settlementPermitted
               default: throw GatewayProtocolError(400, "unsupported_websocket_frame")
               }
@@ -311,7 +315,9 @@ struct WebSocketPeer: Sendable {
             inbox.finish(error)
           }
           closure.close()
-          inbox.finish(GatewayProtocolError(502, "execution_indeterminate"))
+          inbox.finish(
+            GatewayProtocolError(
+              502, "execution_indeterminate", detail: client ? .upstreamWebSocketEOF : nil))
           return !client && !closure.settlementPermitted
         }
         tasks.addTask {
