@@ -158,8 +158,8 @@ public struct ExecutionCoordinator: Sendable {
   ) async throws {
     try await executeOwned(
       admitting: {
-        try await store.admit(command)
-        return (command, ())
+        let admitted = try await store.admit(command)
+        return (admitted, ())
       }, operation: { context, _ in try await operation(context) })
   }
 

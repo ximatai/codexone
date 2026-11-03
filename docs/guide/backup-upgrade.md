@@ -37,6 +37,12 @@ python3 compose-install.py ps
 
 v11 同时包含空闲配额窗口预热设置/屏障/审计。恢复后预热默认关闭，窗口屏障保留，未知生成不自动重发；回退保留对应账本证据。
 
+## 业务日版本回退
+
+业务日没有 schema 迁移；普通 v11 账本可直接换回变更前版本，限额与统计恢复 UTC 日，历史 `business-day-*` 字符串不参与旧版按准入秒的日统计、不妨碍执行读取和结算。已用变更前二进制在合成库验证。
+
+恢复记录例外：若在非 UTC 业务日恢复并核对，保存的冻结截止早于旧版要求的恢复日 UTC 日末，旧版会拒绝记录（实测 maintenance-status 校验失败），即使已经过了该截止也不会自动修复。需继续使用新版本处理恢复记录；不要修改数据库或伪造恢复时间来绕过。为遵守业务日冻结，本实现未额外延长至 UTC 日末。这是原库回退的语义限制，与 schema 无关。
+
 ## 相关文档
 
 [主密钥](../operations/master-key-maintenance.md) · [快照维护](../operations/snapshot-maintenance.md) · [版本规则](../development/releasing.md)

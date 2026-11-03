@@ -64,11 +64,11 @@ public struct SingleIdentityGateway: Sendable {
         throw ExecutionError.unknownObject
       }
     }
-    // UTC daily admission window; the persisted policy/pricing snapshots explain its interpretation.
-    let day = clock.utcDay
+    // The store finalizes this candidate window inside the admission transaction.
+    let window = try store.businessDay.window(containing: clock.unixSeconds)
     let admission = ExecutionAdmission(
       attempt: UUID().uuidString, owner: policy.owner,
-      window: "utc-day-\(day)", policyVersion: policy.policyVersion,
+      window: window, policyVersion: policy.policyVersion,
       pricingVersion: policy.pricingVersion,
       reservedMicros: policy.reservedMicros, requestID: requestID, mode: mode,
       keyRevision: policy.keyRevision, model: model, requirements: requirements,

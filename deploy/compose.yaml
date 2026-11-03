@@ -85,6 +85,7 @@ services:
           nocopy: true
       - ./secrets:/run/codexone:ro
     environment:
+      CODEXONE_BUSINESS_DAY_OFFSET: ${CODEXONE_BUSINESS_DAY_OFFSET:-UTC}
       CODEXONE_BACKUP_DIRECTORY: /var/backups/codexone
       CODEXONE_UPSTREAM_HTTP_PROXY: ${CODEXONE_UPSTREAM_HTTP_PROXY:-}
       CODEXONE_ACCOUNT_POOL_CONFIG: /run/codexone/pool.json

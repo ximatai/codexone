@@ -1,3 +1,4 @@
+import { keyReport } from "../../../tests/usage-reports";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { notifications } from "@mantine/notifications";
@@ -57,7 +58,7 @@ function setup(conflict = false) {
       accessExpiresAtUnixSeconds: Math.floor(Date.now() / 1000) + 3600,
     },
   ]);
-  vi.mocked(usage.fetchKeySummary).mockResolvedValue([]);
+  vi.mocked(usage.fetchKeySummary).mockResolvedValue(keyReport([]));
   let currentCount = 500;
   vi.mocked(management.request).mockImplementation(async (path) => {
     if (path === "/api/attention")

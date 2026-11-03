@@ -55,7 +55,7 @@ def main():
     binary = str(args.binary.resolve())
     checked = subprocess.run([binary, "--check-config"], env=environment(), capture_output=True, text=True, timeout=10)
     assert checked.returncode == 0, checked.stderr
-    assert json.loads(checked.stdout) == {"host": "127.0.0.1", "dataPort": 0, "adminPort": 0}
+    assert json.loads(checked.stdout) == {"host": "127.0.0.1", "dataPort": 0, "adminPort": 0, "businessDay": {"offsetMinutes": 0}}
     bad = subprocess.run([binary, "--check-config"], env=environment(CODEXONE_DATA_PORT="private-invalid-value"), capture_output=True, text=True, timeout=10)
     assert bad.returncode == 78
     assert "private-invalid-value" not in bad.stderr
@@ -70,7 +70,8 @@ def main():
                          env=environment(CODEXONE_LISTEN_ADDRESS="192.168.1.10"),
                          capture_output=True, text=True, timeout=10)
     assert lan.returncode == 0 and json.loads(lan.stdout) == {
-        "host": "127.0.0.1", "dataPort": 0, "adminPort": 0, "transportMode": "lan_http"}
+        "host": "127.0.0.1", "dataPort": 0, "adminPort": 0, "transportMode": "lan_http",
+        "businessDay": {"offsetMinutes": 0}}
     assert "192.168.1.10" not in lan.stdout + lan.stderr
     print("PASS: configuration check, LAN mode and redacted invalid configuration (exit 78)")
 

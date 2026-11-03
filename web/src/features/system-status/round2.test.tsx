@@ -70,13 +70,14 @@ it("rejects malformed daily counts and preserves missing evidence", async () => 
       estimatedMicros: null,
     },
   };
-  const reply = { timezone: "UTC", days: 7, buckets: [bucket] };
+  const reply = { timezone: "UTC", days: 1, buckets: [bucket] };
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue({ ok: true, json: async () => reply }),
   );
   expect(
-    (await fetchDaily(new AbortController().signal))[0].metrics.estimatedMicros,
+    (await fetchDaily(new AbortController().signal)).buckets[0].metrics
+      .estimatedMicros,
   ).toBeNull();
   bucket.requests = -1;
   await expect(fetchDaily(new AbortController().signal)).rejects.toThrow();

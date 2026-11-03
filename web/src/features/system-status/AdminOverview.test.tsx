@@ -1,3 +1,4 @@
+import { keyReport } from "../../../tests/usage-reports";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { renderPrivate } from "../../../tests/render";
@@ -46,28 +47,30 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
       createdAtUnixSeconds: 1,
     },
   ]);
-  vi.mocked(usage.fetchKeySummary).mockResolvedValue([
-    {
-      keyID: "alpha",
-      principal: "synthetic-team",
-      admitted: 2,
-      failed: 1,
-      pending: 1,
-      inFlight: 0,
-      succeeded: 1,
-      cancelled: 0,
-    },
-    {
-      keyID: "beta",
-      principal: "other-team",
-      admitted: 1,
-      failed: 0,
-      pending: 1,
-      inFlight: 0,
-      succeeded: 0,
-      cancelled: 0,
-    },
-  ]);
+  vi.mocked(usage.fetchKeySummary).mockResolvedValue(
+    keyReport([
+      {
+        keyID: "alpha",
+        principal: "synthetic-team",
+        admitted: 2,
+        failed: 1,
+        pending: 1,
+        inFlight: 0,
+        succeeded: 1,
+        cancelled: 0,
+      },
+      {
+        keyID: "beta",
+        principal: "other-team",
+        admitted: 1,
+        failed: 0,
+        pending: 1,
+        inFlight: 0,
+        succeeded: 0,
+        cancelled: 0,
+      },
+    ]),
+  );
   const view = renderPrivate(<AdminOverview />);
   await screen.findByText(/允许准入/);
   expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
@@ -110,7 +113,7 @@ it.each(["fresh", "unavailable"] as const)(
       admissionAllowed: true,
       optionalWorkAllowed: true,
     });
-    vi.mocked(usage.fetchKeySummary).mockResolvedValue([]);
+    vi.mocked(usage.fetchKeySummary).mockResolvedValue(keyReport([]));
     vi.useFakeTimers({
       toFake: ["setInterval", "clearInterval", "performance"],
     });

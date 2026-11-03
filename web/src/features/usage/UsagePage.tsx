@@ -9,7 +9,7 @@ export function UsagePage() {
   const restoreView = useNavigationType() === "POP";
   const [params, setParams] = useSearchParams();
   const owner = useManagementSession();
-  const filters: UsageFilters = { ...defaults() };
+  const filters: UsageFilters = { ...defaults(), start: "", end: "" };
   for (const key of [
     "start",
     "end",
@@ -31,6 +31,7 @@ export function UsagePage() {
       if (field !== "" && field !== false && field !== undefined)
         next.set(name, String(field));
     next.delete("window");
+    next.delete("offsetMinutes");
     if (navigation) {
       next.set("page", String(navigation.page + 1));
       owner.views.set(usageNavigationKey(value, navigation.page), navigation);

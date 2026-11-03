@@ -77,7 +77,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ### 管理产品化的兼容增量
 
-`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项含keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回businessDay={offsetMinutes}、timezone（UTC 或 UTC±HH:00）、startUnixSeconds/endUnixSeconds及keys数组；每项含keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
 
 ## 管理台第二轮 API
 
@@ -85,7 +85,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 | 方法/路径 | 参数 | 返回新增字段 |
 |---|---|---|
-| GET /api/usage/daily | days=1..31（缺省7）、可选key/model | timezone=UTC、days、buckets（按日升序）：atUnixSeconds、requests、succeeded、failed、cancelled、failures（类别→次数）、metrics |
+| GET /api/usage/daily | days=1..31（缺省7）、可选key/model | businessDay={offsetMinutes}、timezone、days、buckets（按日升序）：atUnixSeconds、requests、succeeded、failed、cancelled、failures（类别→次数）、metrics |
 | GET /api/usage/in-flight | limit=1..200（缺省200） | rows：id、keyID、principal、displayName、model、mode、accountID、accountDisplayName、startedAtUnixSeconds、elapsedSeconds、hasFirstEvent；按开始时间/id倒序 |
 | GET /api/usage | 原有start/end与筛选、limit=1..100、after | totals新增averageFirstEventMilliseconds、p95FirstEventMilliseconds、averageTotalMilliseconds；现有admitted/failed/cancelled/metrics即筛选合计 |
 | PUT /api/accounts/:id/display-name | JSON revision、displayName（字符串或null） | account（含displayName与新revision）；账号列表/其他变更返回同字段 |
@@ -164,7 +164,7 @@ unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、pe
 
 用量 rows.state 可为 closed_unknown（持久 settled+关闭标记的投影）；totals 与 daily bucket 新增 usageUnknown、unknownReasons（固定失败枚举或 unspecified），区别于待核对 unknown。用量报告 detailRetentionDays=90，详情/小时桶只含保留明细，日序列及 Key 最近使用合并日汇总。quota_high.detail.keyRanking 为最近 5 小时最多 5 个 Key 的已观测费用下界/请求/缺失排名，不代表提供者按 Key 分配余额；原生图片全缺计数的费用仍为未知。
 
-`GET /api/usage/daily` 可选 `end` 为 UTC 零时的左闭右开结束秒（最多向前 31 日），用于读取已归档日序列；缺省仍含今日。参数无效拒绝，不把日汇总展开为小时。
+`GET /api/usage/daily` 可选 `end` 为业务日零时的左闭右开结束秒（最多向前 31 日），用于读取已归档日序列；缺省仍含今日。参数无效拒绝，不把日汇总展开为小时。
 
 ## 请求推理强度与服务档位
 
@@ -203,11 +203,15 @@ PUT 严格要求 revision、enabled、model、message，model 必须在当前配
 
 lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结果与 usage 完整度分开理解；unknown 不自动重发。`quota_priming` warning attention 的 detail.code 为 model_removed/repeated_failure，链接账号详情。UI 提供默认关闭开关、配置模型下拉、纯文本编辑和字符计数、最近时间/结果；说明合成流量消耗额度及可能增加风控/账号受限风险，无时间段/推理/输出上限编辑入口。
 
+## 业务日元数据
+
+`/api/usage/options`、`daily`、`keys` 及通用 usage 窗口返回 `businessDay: {offsetMinutes}` 与 `timezone`（UTC 或 UTC±HH:00）。daily 的 end 对齐业务日，通用 usage 仍只接受 UTC 整小时。服务端固定偏移是 UI 日期/日趋势/今日摘要的唯一依据；默认 UTC 仅新增元数据。无定义版本参数或冲突响应；非零设置应与配套 web 一起升级。Key 到期日期输入保持 UTC。
+
 ## 相关文档
 
 [文档导航](../../README.md)
 
-首页展示 UTC 当日未归档托管 Key 的结果汇总；默认“今日活跃”只显示当日准入数大于零的 Key，可切换“全部”查看所有未归档 Key（包含零请求和已停用）；已停用者标注状态；空态保留切换入口，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
+首页展示 业务日当日未归档托管 Key 的结果汇总；默认“今日活跃”只显示当日准入数大于零的 Key，可切换“全部”查看所有未归档 Key（包含零请求和已停用）；已停用者标注状态；空态保留切换入口，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
 
 大屏首页将生成就绪检查与管理连接状态合并到运行状态面板，账号并发随订阅账号展示。Key 摘要新增 inFlight（当日 intent 数）；结果未明为 admitted 减 succeeded、failed、cancelled、inFlight，不根据用量 pending 推断结果。
 
@@ -223,4 +227,4 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 列表单一查看详情入口打开连续单页抽屉，依次排列用量概况、名称与权限、使用上限、管理操作及直接展示的密钥信息；固定标题和关闭入口，正文独立滚动；本地治理限额作为固定分组直接展示，不折叠。移除页签及重复的概况卡，用量/模型能力/限制采用卡片分组；保存与管理操作统一在固定底栏，保存按钮关联现有编辑表单，关闭由头部统一完成。用量进度仅表达已观测比例，未知保留下界标识。权限编辑复用原修订、部分成功及未知结果约束；保存成功或需核对时关闭编辑并刷新，校验拒绝保留草稿。归档密钥仍可查看只读策略，恢复后保持停用。到期、轮换、禁用与归档沿用独立确认，创建及一次性凭证流程不变。
 
-Key 配置只包含 tokens（UTC每日Token上限）和active（最大并发），不接受旧请求次数/金额/未结限制字段。单位Token/万Token/百万Token切换保留实际整数数量，保存基础Token数或null，不将旧请求数换算为Token。摘要返回tokens整数字符串与tokenUsageIncomplete，不完整时显示已观测下界。具体准入计量见[用量规范](usage.md)。 持久策略写入同样仅保留tokens/active，schema v11不表示旧五字段二进制可读；不支持原库直接回退，也没有原地降级接口，恢复边界见[Key回退前提](../../guide/key-governance.md#兼容回退前提)。
+Key 配置只包含 tokens（业务日每日Token上限）和active（最大并发），不接受旧请求次数/金额/未结限制字段。单位Token/万Token/百万Token切换保留实际整数数量，保存基础Token数或null，不将旧请求数换算为Token。摘要返回tokens整数字符串与tokenUsageIncomplete，不完整时显示已观测下界。具体准入计量见[用量规范](usage.md)。 持久策略写入同样仅保留tokens/active，schema v11不表示旧五字段二进制可读；不支持原库直接回退，也没有原地降级接口，恢复边界见[Key回退前提](../../guide/key-governance.md#兼容回退前提)。

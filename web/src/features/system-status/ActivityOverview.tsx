@@ -115,7 +115,7 @@ export function ActivityOverview({
       <div className={styles.header}>
         <PageHeader
           title="今日运营概览"
-          description="UTC 当日 · 费用为估算，非账单"
+          description={`${daily.data?.timezone ?? "业务日"} 当日 · 费用为估算，非账单`}
           actions={
             <Group>
               <Switch
@@ -162,14 +162,20 @@ export function ActivityOverview({
         </Text>
       ) : (
         <OverviewStats
-          buckets={daily.data ?? []}
+          buckets={daily.data?.buckets ?? []}
           loading={daily.isPending}
           capacities={capacities}
         />
       )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
-          <KeyResults query={keySummary} />
+          <KeyResults
+            query={
+              { ...keySummary, data: keySummary.data?.keys } as Parameters<
+                typeof KeyResults
+              >[0]["query"]
+            }
+          />
           <Paper withBorder p="md">
             <Group justify="space-between" mb="xs">
               <Title order={3} size="h4">

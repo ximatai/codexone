@@ -2,6 +2,7 @@ import CodexOneCore
 import Foundation
 
 public struct RuntimeConfiguration: Sendable, Equatable {
+  public let businessDay: BusinessDayDefinition
   public let listeners: ListenerConfiguration
   public let dataPort: Int
   public let adminPort: Int
@@ -16,6 +17,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let upstreamHTTPProxy: String?
 
   public enum ConfigurationError: Error, Equatable {
+    case invalidBusinessDayOffset
     case invalidListenAddress
     case invalidAllowedNetworks
     case invalidPort(String)
@@ -31,6 +33,10 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   }
 
   public init(environment: [String: String]) throws {
+    do {
+      businessDay = try BusinessDayDefinition(
+        setting: environment["CODEXONE_BUSINESS_DAY_OFFSET"] ?? "UTC")
+    } catch { throw ConfigurationError.invalidBusinessDayOffset }
     do {
       listeners = try ListenerConfiguration(
         address: environment["CODEXONE_LISTEN_ADDRESS"],

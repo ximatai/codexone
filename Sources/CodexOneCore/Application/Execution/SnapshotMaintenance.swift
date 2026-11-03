@@ -45,13 +45,20 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
   public let inheritedUnresolvedRequests: Int64
   public let inheritedUnresolvedMicros: Int64
   public let inheritedFreezeUntilUnixSeconds: Int64
+  /// UTC instant only, absent in older/UTC restores; never stores the definition.
+  public let dayFreezeUntilUnixSeconds: Int64?
   public var minimumFreezeUntilUnixSeconds: Int64 {
-    max(inheritedFreezeUntilUnixSeconds, (restoredUnixSeconds / 86400 + 1) * 86400)
-  }
-  /// First attestation also freezes the UTC day when the operator actually reconciles.
-  public func minimumReconciliationFreeze(at now: Int64) -> Int64 {
     max(
-      minimumFreezeUntilUnixSeconds, baseline?.freezeUntilUnixSeconds ?? ((now / 86400 + 1) * 86400)
+      inheritedFreezeUntilUnixSeconds,
+      dayFreezeUntilUnixSeconds ?? (restoredUnixSeconds / 86400 + 1) * 86400)
+  }
+  /// First attestation also freezes the business day when the operator actually reconciles.
+  public func minimumReconciliationFreeze(at now: Int64, businessDay: BusinessDayDefinition = .utc)
+    -> Int64
+  {
+    max(
+      minimumFreezeUntilUnixSeconds,
+      baseline?.freezeUntilUnixSeconds ?? ((try? businessDay.end(containing: now)) ?? Int64.max)
     )
   }
   public var baselineRevision: Int64 = 0
@@ -72,6 +79,9 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
       snapshotUnixSeconds > 0, restoredUnixSeconds >= snapshotUnixSeconds,
       restoredUnixSeconds <= 1_000_000_000_000,
       (0...1_000_000).contains(baselineRevision),
+      dayFreezeUntilUnixSeconds.map({
+        $0 > restoredUnixSeconds && $0 <= restoredUnixSeconds + 86400
+      }) ?? true,
       (0...1_000_000_000_000).contains(inheritedFreezeUntilUnixSeconds),
       (0...1_000_000).contains(inheritedUnresolvedRequests),
       (0...1_000_000_000_000).contains(inheritedUnresolvedMicros)
@@ -90,7 +100,9 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
     }
   }
   /// Application transition; persistence must apply it under its transaction/instance lock.
-  public func reconciling(_ proposed: RestoreBaseline, at now: Int64) throws -> Self {
+  public func reconciling(
+    _ proposed: RestoreBaseline, at now: Int64, businessDay: BusinessDayDefinition = .utc
+  ) throws -> Self {
     try validate()
     try proposed.validate()
     guard proposed.restoreID == id else { throw ExecutionError.conflict }
@@ -100,7 +112,7 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
     }
     guard proposed.expectedRevision == baselineRevision,
       proposed.freezeUntilUnixSeconds
-        >= minimumReconciliationFreeze(at: now),
+        >= minimumReconciliationFreeze(at: now, businessDay: businessDay),
       baselineRevision > 0
         || (proposed.missingUnresolvedRequests >= inheritedUnresolvedRequests
           && proposed.missingUnresolvedMicros >= inheritedUnresolvedMicros)
@@ -114,8 +126,9 @@ public struct RestoreRecord: Codable, Sendable, Equatable {
   public init(
     id: String, backupID: String, snapshotUnixSeconds: Int64, restoredUnixSeconds: Int64,
     inheritedUnresolvedRequests: Int64, inheritedUnresolvedMicros: Int64,
-    inheritedFreezeUntilUnixSeconds: Int64 = 0
+    inheritedFreezeUntilUnixSeconds: Int64 = 0, dayFreezeUntilUnixSeconds: Int64? = nil
   ) {
+    self.dayFreezeUntilUnixSeconds = dayFreezeUntilUnixSeconds
     self.id = id
     self.backupID = backupID
     self.snapshotUnixSeconds = snapshotUnixSeconds

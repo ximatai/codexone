@@ -28,7 +28,7 @@ export function KeyLimitsSummary({
       当前 Key 限额：
       {key ? (
         <>
-          每日 Token 上限 {formatKeyLimit(key.limits.tokens)} / UTC 日 ·
+          每日 Token 上限 {formatKeyLimit(key.limits.tokens)} / 业务日 ·
           最大并发 {formatKeyLimit(key.limits.active)}
         </>
       ) : query.isPending ? (

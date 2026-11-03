@@ -30,6 +30,8 @@ v0.26.8 起网关保留 JSON 对象键顺序，相同请求发往上游的正文
 
 Responses 首响应等待现从本机上传完成边界开始，总执行期限仍覆盖上传；大正文仅记录有界大小/耗时桶。合成验收和传输缓冲边界见[任务](docs/changes/first-response-after-upload/tasks.md)。
 
+实例业务日已支持 `CODEXONE_BUSINESS_DAY_OFFSET`（UTC 或 −12:00 至 +14:00 整小时固定偏移），统一每日限额、统计与 UI，重启采用设置，schema 仍 v11。半小时时区/DST 不支持，到期日期仍用 UTC。业务日窗口及恢复回退验证见[验证记录](docs/changes/business-day/verification.md)。
+
 ## 已知限制
 
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。

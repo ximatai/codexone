@@ -18,6 +18,12 @@
 
 可选出网代理设置 `CODEXONE_UPSTREAM_HTTP_PROXY`，只支持无认证 HTTP CONNECT，失败不直连回退；完整字段和约束见[配置参考](../reference/configuration.md)。
 
+## 实例业务日
+
+设置 `CODEXONE_BUSINESS_DAY_OFFSET=+08:00` 可使每日统计与 Key Token 限额按 UTC+08:00 零时换日。缺省 `UTC`；严格接受 `UTC` 或 `±HH:00`，范围 −12:00 至 +14:00，零偏移规范化为 UTC。非法值在配置检查时失败；启动日志记录规范化值。仅支持整小时固定偏移，不支持半小时时区或 DST。
+
+Compose 安装可在安装目录 `.env` 增加 `CODEXONE_BUSINESS_DAY_OFFSET=+08:00`，再用 `python3 compose-install.py up -d` 重建网关容器；直接运行二进制则设置同名环境变量。环境是唯一来源，修改并重启立即生效，不需迁移或应用命令。当前限额从已有准入重算，不补偿额度；已准入执行窗口保持。UI 使用服务端偏移；滚动 24 小时、订阅窗口、保留时长和 Key 到期 UTC 日期不变。
+
 ## 相关文档
 
 [管理面板](admin.md) · [账号凭证](../reference/account-credentials.md) · [图片](images.md)

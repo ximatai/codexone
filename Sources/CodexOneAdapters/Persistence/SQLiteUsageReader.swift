@@ -52,7 +52,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           result.resume(
             returning: SQLiteUsageReader(
               primary: primary,
-              connection: try SQLiteConnection(readOnlyPath: path, clock: primary.clock),
+              connection: try SQLiteConnection(
+                readOnlyPath: path, clock: primary.clock, businessDay: primary.businessDay),
               queue: queue,
               readTimeout: readTimeout))
         } catch { result.resume(throwing: error) }
@@ -97,7 +98,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     startUnixSeconds: Int64, keys: [KeyUsageSummary]
   ) {
     try await read { db in
-      let start = db.clock.unixSeconds / 86400 * 86400
+      let now = db.clock.unixSeconds
+      let start = try db.businessDay.start(containing: now)
       let rows = try db.rows(
         """
         SELECT k.id,json_extract(k.metadata_json,'$.principal'),
@@ -122,7 +124,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
         ]
       ) { row in
         let id = String(cString: sqlite3_column_text(row, 0))
-        let tokenUsage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: id)
+        let tokenUsage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: id, now: now)
         return KeyUsageSummary(
           key: .init(
             id: String(cString: sqlite3_column_text(row, 0)),
@@ -186,8 +188,10 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     async throws -> [DailyUsageBucket]
   {
     guard (1...31).contains(days) else { throw ExecutionError.invalidCommand }
-    let end = endUnixSeconds ?? (primary.clock.unixSeconds / 86400 * 86400 + 86400)
-    guard end >= Int64(days) * 86400, end % 86400 == 0 else { throw ExecutionError.invalidCommand }
+    let end = try endUnixSeconds ?? primary.businessDay.end(containing: primary.clock.unixSeconds)
+    guard end >= Int64(days) * 86400, try primary.businessDay.isBoundary(end) else {
+      throw ExecutionError.invalidCommand
+    }
     let query = try UsageQuery(
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
     return try await read { db in try Self.daily(db, query) }

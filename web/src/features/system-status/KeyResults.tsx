@@ -84,7 +84,7 @@ export function KeyResults({
           <Title
             order={3}
             size="h4"
-            title="UTC当日，按准入时间统计未归档Key，不含准入前拒绝；结果未明不等于用量待核对。"
+            title="业务日当日，按准入时间统计未归档Key，不含准入前拒绝；结果未明不等于用量待核对。"
           >
             今日 Key 请求汇总
           </Title>

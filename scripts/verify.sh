@@ -51,6 +51,7 @@ backend_scripts() {
   run_check scripts/verify_images.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_migration_readiness.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_control.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_business_day.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_keys.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_model_profiles_import.py
   run_check scripts/verify_key_export.py

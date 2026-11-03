@@ -118,10 +118,10 @@ extension SQLiteExecutionStore: AccountRoutingStore {
           if atCapacity { throw ExecutionError.accountConcurrency }
           throw AccountDispatchError.unavailable
         }
-        let admission = command.selecting(selected)
+        let candidate = command.selecting(selected)
         // Explicit Key rejection propagates once; it is not an account failure.
-        try Self.admitTransaction(
-          db, admission, limits: limits, unresolvedCapacity: unresolvedCapacity)
+        let admission = try Self.admitTransaction(
+          db, candidate, limits: limits, unresolvedCapacity: unresolvedCapacity)
         for reference in command.references {
           try db.write(
             "UPDATE bindings SET expires_at_epoch=? WHERE principal=? AND namespace=? AND identity=? AND object_type=? AND raw_id=?",

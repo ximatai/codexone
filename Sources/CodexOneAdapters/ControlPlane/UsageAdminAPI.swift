@@ -3,13 +3,15 @@ import Foundation
 import Vapor
 
 public struct UsageAdminAPI: Sendable {
+  private let businessDay: BusinessDayDefinition
   private let clock: WallClock
   private let querying: any UsageQuerying
   private let defaultReasoningEfforts: [String: String]
   public init(
     querying: any UsageQuerying, models: [SingleIdentityConfiguration.Model] = [],
-    clock: WallClock = .system
+    clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc
   ) {
+    self.businessDay = businessDay
     self.clock = clock
     self.querying = querying
     defaultReasoningEfforts = Dictionary(
@@ -79,7 +81,8 @@ public struct UsageAdminAPI: Sendable {
           days: days, keyID: values["key"], model: values["model"], endUnixSeconds: end)
         return try Self.response(
           .object([
-            "timezone": .string("UTC"), "days": .number(Decimal(days)),
+            "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+            "timezone": .string(businessDay.timezone), "days": .number(Decimal(days)),
             "buckets": .array(
               buckets.map { value in
                 .object([
@@ -125,6 +128,8 @@ public struct UsageAdminAPI: Sendable {
       let options = try await querying.usageOptions()
       return try Self.response(
         .object([
+          "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+          "timezone": .string(businessDay.timezone),
           "keys": .array(options.keys.map { .string($0) }),
           "keyOptions": .array(
             options.keyOptions.map {
@@ -149,7 +154,8 @@ public struct UsageAdminAPI: Sendable {
           .object([
             "startUnixSeconds": .number(Decimal(report.startUnixSeconds)),
             "endUnixSeconds": .number(Decimal(report.startUnixSeconds + 86400)),
-            "timezone": .string("UTC"),
+            "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+            "timezone": .string(businessDay.timezone),
             "keys": .array(
               report.keys.map { value in
                 .object([
@@ -176,7 +182,9 @@ public struct UsageAdminAPI: Sendable {
     routes.get { request async throws -> Response in
       let query = try Self.parse(request.url.string)
       do {
-        return try Self.response(Self.document(try await querying.queryUsage(query), query: query))
+        return try Self.response(
+          Self.document(
+            try await querying.queryUsage(query), query: query, businessDay: businessDay))
       } catch ExecutionError.capacity {
         throw GatewayProtocolError(429, "usage_query_capacity")
       }
@@ -267,7 +275,9 @@ public struct UsageAdminAPI: Sendable {
         of: "/", with: "_"
       ).replacingOccurrences(of: "=", with: ""))
   }
-  static func document(_ report: UsageReport, query: UsageQuery) throws -> JSONValue {
+  static func document(
+    _ report: UsageReport, query: UsageQuery, businessDay: BusinessDayDefinition = .utc
+  ) throws -> JSONValue {
     func count(_ value: Int64) -> JSONValue { .number(Decimal(value)) }
     func text(_ value: String?) -> JSONValue { value.map { .string($0) } ?? .null }
     func metric(_ value: Int64?) -> JSONValue { value.map { .string(String($0)) } ?? .null }
@@ -285,7 +295,9 @@ public struct UsageAdminAPI: Sendable {
     let totals = report.totals
     return try .object([
       "startUnixSeconds": count(query.startUnixSeconds),
-      "endUnixSeconds": count(query.endUnixSeconds), "timezone": .string("UTC"),
+      "endUnixSeconds": count(query.endUnixSeconds),
+      "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+      "timezone": .string(businessDay.timezone),
       "totals": .object([
         "averageFirstEventMilliseconds": totals.averageFirstEventMilliseconds.map {
           .number(Decimal($0))

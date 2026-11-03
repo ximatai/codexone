@@ -225,6 +225,7 @@ extension SQLiteUsageReader {
   static func daily(_ db: SQLiteConnection, _ query: UsageQuery) throws -> [DailyUsageBucket] {
     var terms = ["created_at_epoch>=?", "created_at_epoch<?"]
     var values: [SQLiteConnection.Value] = [
+      .number(db.businessDay.offsetSeconds),
       .number(query.startUnixSeconds), .number(query.endUnixSeconds),
     ]
     if let key = query.keyID {
@@ -238,20 +239,21 @@ extension SQLiteUsageReader {
     let source = """
       (SELECT created_at_epoch,key_id,admission_json,outcome_json,usage_json,1 record_count,
         state='unknown' OR closed_unknown_at_epoch IS NOT NULL usage_unknown FROM attempts
-      UNION ALL SELECT day_epoch,key_id,json_object('model',NULLIF(model,''),'mode',mode),json_object('kind',NULLIF(outcome,''),'failure',NULLIF(failure,'')),
+      UNION ALL SELECT day_epoch-?1,key_id,json_object('model',NULLIF(model,''),'mode',mode),json_object('kind',NULLIF(outcome,''),'failure',NULLIF(failure,'')),
         json_object('inputTokens',input_tokens,'outputTokens',output_tokens,'cachedTokens',cached_tokens,'images',images,'estimatedMicros',estimated_micros,
           'imageInputTokens',image_input_tokens,'imageOutputTokens',image_output_tokens,'imageInputTextTokens',image_input_text_tokens,'imageInputImageTokens',image_input_image_tokens),requests,usage_unknown FROM usage_daily)
       """
+    let dayStart = businessDayStartSQL("created_at_epoch")
     let predicate = terms.joined(separator: " AND ")
     let rows = try db.rows(
       """
-      SELECT created_at_epoch/86400*86400,SUM(record_count),
+      SELECT \(dayStart),SUM(record_count),
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='succeeded' THEN record_count ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='failed' THEN record_count ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='cancelled' THEN record_count ELSE 0 END),0),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM \(source) WHERE \(predicate) GROUP BY created_at_epoch/86400
+        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM \(source) WHERE \(predicate) GROUP BY 1
       """, values
     ) { row in
       (
@@ -261,9 +263,9 @@ extension SQLiteUsageReader {
     }
     let failures = try db.rows(
       """
-      SELECT created_at_epoch/86400*86400,json_extract(outcome_json,'$.failure'),SUM(record_count) FROM \(source)
+      SELECT \(dayStart),json_extract(outcome_json,'$.failure'),SUM(record_count) FROM \(source)
       WHERE \(predicate) AND json_extract(outcome_json,'$.failure') IS NOT NULL
-      GROUP BY created_at_epoch/86400,json_extract(outcome_json,'$.failure')
+      GROUP BY 1,json_extract(outcome_json,'$.failure')
       """, values
     ) {
       (
@@ -272,7 +274,7 @@ extension SQLiteUsageReader {
       )
     }
     let unknown = try db.rows(
-      "SELECT created_at_epoch/86400*86400,COALESCE(json_extract(outcome_json,'$.failure'),'unspecified'),SUM(record_count) FROM \(source) WHERE \(predicate) AND usage_unknown GROUP BY 1,2",
+      "SELECT \(dayStart),COALESCE(json_extract(outcome_json,'$.failure'),'unspecified'),SUM(record_count) FROM \(source) WHERE \(predicate) AND usage_unknown GROUP BY 1,2",
       values
     ) {
       (
@@ -296,4 +298,10 @@ extension SQLiteUsageReader {
           uniqueKeysWithValues: unknown.filter { $0.0 == at }.map { ($0.1, $0.2) }))
     }
   }
+}
+
+/// Only daily SQL arithmetic lives here. Offset is the first bound parameter;
+/// rollup UTC dates are projected to the same local date before grouping.
+private func businessDayStartSQL(_ timestamp: String) -> String {
+  "((\(timestamp)+?1)/86400*86400-?1)"
 }

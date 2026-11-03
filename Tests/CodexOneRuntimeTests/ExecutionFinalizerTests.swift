@@ -132,7 +132,9 @@ private final class HeldFailingStore: ExecutionStore, Sendable {
     release = unblock.stream
     releaseContinuation = unblock.continuation
   }
-  func admit(_ command: ExecutionAdmission) async throws { try await base.admit(command) }
+  func admit(_ command: ExecutionAdmission) async throws -> ExecutionAdmission {
+    try await base.admit(command)
+  }
   func bind(attempt: String, object: ObjectBinding) async throws {
     try await base.bind(attempt: attempt, object: object)
   }

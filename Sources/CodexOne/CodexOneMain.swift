@@ -19,6 +19,7 @@ struct CodexOneMain {
     } catch let error as RuntimeConfiguration.ConfigurationError {
       let message: String
       switch error {
+      case .invalidBusinessDayOffset: message = "Invalid business day offset configuration."
       case .invalidListenAddress: message = "Invalid private listen address configuration."
       case .invalidAllowedNetworks: message = "Invalid allowed source networks configuration."
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
@@ -72,7 +73,7 @@ struct CodexOneMain {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners default to loopback; CODEXONE_LISTEN_ADDRESS adds a private literal address; CODEXONE_ALLOWED_NETWORKS optionally restricts source CIDRs."
+        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_BUSINESS_DAY_OFFSET (UTC or +/-HH:00, -12:00...+14:00), CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners default to loopback; CODEXONE_LISTEN_ADDRESS adds a private literal address; CODEXONE_ALLOWED_NETWORKS optionally restricts source CIDRs."
       )
       return
     }
@@ -178,10 +179,12 @@ struct CodexOneMain {
         switch arguments[0] {
         case "--restore":
           record = try await SQLiteSnapshotMaintenance.restore(
-            bundle: arguments[1], path: path, protection: protection, clock: clock)
+            bundle: arguments[1], path: path, protection: protection, clock: clock,
+            businessDay: configuration.businessDay)
         case "--reconcile-restored":
           record = try await SQLiteSnapshotMaintenance.reconcileFile(
-            path: path, baselineFile: arguments[1], clock: clock)
+            path: path, baselineFile: arguments[1], clock: clock,
+            businessDay: configuration.businessDay)
         default: record = try await SQLiteSnapshotMaintenance.status(path: path, clock: clock)
         }
         let state =
@@ -197,7 +200,7 @@ struct CodexOneMain {
         let report: [String: Any] = [
           "state": state, "restore": encoded ?? NSNull(),
           "minimumFreezeUntilUnixSeconds": record?.minimumReconciliationFreeze(
-            at: clock.unixSeconds) as Any?
+            at: clock.unixSeconds, businessDay: configuration.businessDay) as Any?
             ?? NSNull(),
           "missingUnresolvedRequests": record?.unresolvedRequests ?? 0,
           "missingUnresolvedMicros": record?.unresolvedMicros ?? 0,
@@ -249,6 +252,7 @@ struct CodexOneMain {
       var checked: [String: Any] = [
         "host": "127.0.0.1", "dataPort": configuration.dataPort,
         "adminPort": configuration.adminPort,
+        "businessDay": ["offsetMinutes": configuration.businessDay.offsetMinutes],
       ]
       if configuration.listeners.additionalAddress != nil { checked["transportMode"] = "lan_http" }
       let data = try JSONSerialization.data(withJSONObject: checked, options: [.sortedKeys])
@@ -265,7 +269,7 @@ struct CodexOneMain {
         limits: .init(
           requests: 10_000, active: ExecutionLimits.accountConcurrency, unresolved: 32,
           budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity,
-        clock: clock)
+        clock: clock, businessDay: configuration.businessDay)
     } else {
       store = nil
     }
@@ -284,6 +288,7 @@ struct CodexOneMain {
     let backup = try configuration.backupDirectory.flatMap { directory in
       try store?.makeOnlineBackup(directory: directory, protection: credentialProtection)
     }
+    print("business_day_offset=\(configuration.businessDay.timezone)")
     let protocolExtensions = ClientProtocolExtensionRegistry(clock: clock)
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
@@ -298,7 +303,7 @@ struct CodexOneMain {
         usage: usageReader.map {
           UsageAdminAPI(
             querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [],
-            clock: clock)
+            clock: clock, businessDay: configuration.businessDay)
         },
         attention: usageReader.map {
           AttentionAdminAPI(

@@ -1,3 +1,4 @@
+import { dailyReport, keyReport } from "../../../tests/usage-reports";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { renderPrivate } from "../../../tests/render";
@@ -16,9 +17,9 @@ vi.mock("../usage/api", () => ({
 }));
 vi.mock("./round2-api", async (original) => ({
   ...(await original<typeof import("./round2-api")>()),
-  fetchDaily: vi.fn(() => Promise.resolve([])),
+  fetchDaily: vi.fn(() => Promise.resolve(dailyReport([]))),
   fetchInFlight: vi.fn(() => Promise.resolve([])),
-  fetchKeySummary: vi.fn(() => Promise.resolve([])),
+  fetchKeySummary: vi.fn(() => Promise.resolve(keyReport([]))),
 }));
 afterEach(() => {
   vi.useRealTimers();

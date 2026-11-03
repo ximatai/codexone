@@ -14,7 +14,7 @@ extension SQLiteUsageReader: GovernanceReading {
   static func headroom(_ db: SQLiteConnection, now: Int64, limits: ExecutionLimits) throws
     -> GovernanceHeadroom
   {
-    let start = now / 86400 * 86400
+    let start = try db.businessDay.start(containing: now)
     let today = try db.rows(
       "SELECT COUNT(*),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END) FROM attempts WHERE created_at_epoch>=? AND created_at_epoch<?",
       [.number(start), .number(start + 86400)]
