@@ -119,14 +119,17 @@ for (const width of [1440, 390]) {
     }
     expect(calls.at(-1)).toEqual({ creditID: credit.id });
     await expect(
-      drawer.getByRole("button", { name: "由提供者选择一张" }),
+      drawer.getByRole("button", { name: "使用合成限额重置卡" }),
     ).toBeDisabled();
     code = "already_redeemed";
     await drawer.getByRole("button", { name: "核对上次操作" }).click();
     await page.getByRole("button", { name: "确认核对", exact: true }).click();
     await expect(
-      drawer.getByRole("button", { name: "由提供者选择一张" }),
+      drawer.getByRole("button", { name: "使用合成限额重置卡" }),
     ).toBeEnabled();
+    await expect(
+      drawer.getByRole("button", { name: "由提供者选择一张" }),
+    ).toHaveCount(0);
     expect(calls.at(-1)).toEqual({});
     await drawer.getByLabel("到期前自动使用", { exact: true }).check();
     await expect(drawer.getByLabel("提前量", { exact: true })).toHaveValue(

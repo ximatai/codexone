@@ -124,8 +124,8 @@ it("pending operations only reconcile the persisted selection through a fresh co
   await screen.findByText(/上次读取可用/);
   expect(screen.getByRole("button", { name: "使用合成重置卡" })).toBeDisabled();
   expect(
-    screen.getByRole("button", { name: "由提供者选择一张" }),
-  ).toBeDisabled();
+    screen.queryByRole("button", { name: "由提供者选择一张" }),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "核对上次操作" }));
   fireEvent.click(screen.getByRole("button", { name: "确认核对" }));
   await waitFor(() =>

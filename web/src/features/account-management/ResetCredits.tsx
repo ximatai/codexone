@@ -20,8 +20,7 @@ import type { useAccounts } from "./useAccounts";
 import * as api from "./reset-credits-api";
 
 type Selection =
-  | { kind: "credit"; credit: api.ResetCredit }
-  | { kind: "default" | "reconcile" };
+  { kind: "credit"; credit: api.ResetCredit } | { kind: "reconcile" };
 const expiry = (value: string | null) =>
   value ? new Date(value).toLocaleString() : "上游未提供到期时间";
 export function ResetCredits({
@@ -217,13 +216,6 @@ export function ResetCredits({
                 </Stack>
               </Paper>
             ))}
-            <Button
-              variant="default"
-              disabled={!selectable || !list.availableCount}
-              onClick={() => setSelection({ kind: "default" })}
-            >
-              由提供者选择一张
-            </Button>
           </>
         )}
         <Switch
@@ -351,11 +343,7 @@ export function ResetCredits({
                 <Text>到期：{expiry(selection.credit.expiresAt)}</Text>
               </>
             ) : (
-              <Text>
-                {selection?.kind === "reconcile"
-                  ? "沿用已保存的请求编号核对原操作，不会另选一张卡。"
-                  : "由提供者选择一张可用卡，到期时间以提供者的选择为准。"}
-              </Text>
+              <Text>沿用已保存的请求编号核对原操作，不会另选一张卡。</Text>
             )}
             <Text size="sm">
               重置成功会消耗一张卡。当前没有可重置的用量时，卡不会消耗。
