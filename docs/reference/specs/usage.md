@@ -48,6 +48,8 @@
 
 “缺失证据不得记零”的唯一提供者拒绝例外：Responses/compact/Images 收到 HTTP 4xx 响应头（含429、正文不可读），或提供者 WS 握手4xx；以及 SSE/WS 首个解析事件为 error/response.failed，且有明确4xx状态或已识别的请求/权限/认证/额度错误码，没有输出条目或delta。状态存在时以状态为准，5xx不能被错误码改成零费用。已识别码包括 invalid_request_error/invalid_request、permission_denied/access_denied、model_not_found、content_policy_violation、unsupported_parameter 及既有认证/限流码；未知机器码不足以证明拒绝。首个非拒绝生命周期/未知事件也关闭此证据入口，采取保守边界。
 
+请求 WS 帧发送后、尚无响应生命周期事件时的明确 close 1009 也是未处理拒绝证据；连接 metadata/rate-limit 事件不关闭此专用门控。原生 WS 或连接续接 HTTP 因此失败时记完整零用量、`invalid_request`，无账号健康惩罚。独立 HTTP 可在同一次准入内回退 HTTP 一次，此时不能先写零用量或失败 outcome，最终采用 HTTP 结果和用量；HTTP 明确 413 则记完整零用量。1009 在生命周期事件后、其他 close、EOF 保持既有未知责任。
+
 上述执行记 settled、outcome failed，failure 保留既有分类，可信计数及费用为0、完整度complete，usage JSON 可选 `providerRejectedBeforeOutput: true` 注明依据；最终化释放预留和未知暴露。原生Images的图片计数为0，宿主token仍不适用、查询返回null；费用为可信0。拒绝不自动重放。无 schema 变化，历史 unknown 不回填。5xx、超时、断线、取消、已有输出后的错误、代理CONNECT拒绝或无法确认依据仍沿用 unknown/partial；已有可信用量不被清零。查询中可见真实零费用，不使用缺失值替代。
 
 握手失败的可信拒绝证据及健康分类须在通知并行执行任务结束前记录到执行上下文；随后本地任务取消不得覆盖已观察的失败分类或丢弃该证据。沿用既有首次结果和上游事件门控，不等待数据库最终化，不新增重连或重放。
@@ -85,7 +87,7 @@
 
 ## 大请求拒绝与回退
 
-上游 WS 超限的本地拒绝发生在准入前，不建立 attempt/预留，仅记录 `invalid_request` 拒绝诊断。超限单轮 HTTP 回退复用一次正常准入；上游明确 HTTP 413 在无输出/事件时按 U13 结算完整零用量（`providerRejectedBeforeOutput`），结果为 `invalid_request` 失败；不是 unknown，也不更新账号健康或冷却。回退已发送后的取消、超时与不明确的传输失败仍沿用未知责任，不借大小预检推测未执行。
+上游 WS 超限的本地拒绝发生在准入前，不建立 attempt/预留，仅记录 `invalid_request` 拒绝诊断。超限单轮 HTTP 回退复用一次正常准入；上游明确 HTTP 413 在无输出/事件时按 U13 结算完整零用量（`providerRejectedBeforeOutput`），结果为 `invalid_request` 失败；不是 unknown，也不更新账号健康或冷却。早期1009的回退与预检回退使用同一账号、同一attempt。回退已发送后的取消、超时与不明确的传输失败仍沿用未知责任，不借大小预检推测未执行。
 
 ## 相关文档
 

@@ -317,51 +317,55 @@ public struct ResponsesDataService: Service {
     async throws
   {
     try await WebSocketPeer.run(socket, client: false, reservations: reservations) { downstream in
-      let firstBody = try await withExecutionDeadline(seconds: 10) {
-        var rate = WebSocketControlRate()
-        while true {
-          let body = try await downstream.nextBody()
-          if try await handleWebSocketControl(
-            body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
-            rate: &rate, registry: executor.protocolExtensions
-          ) {
-            continue
+      while !downstream.isClosed {
+        let firstBody = try await withExecutionDeadline(seconds: 10) {
+          var rate = WebSocketControlRate()
+          while true {
+            let body = try await downstream.nextBody()
+            if try await handleWebSocketControl(
+              body, upstream: nil, downstream: downstream, headers: executor.protocolClientHeaders,
+              rate: &rate, registry: executor.protocolExtensions
+            ) {
+              continue
+            }
+            return body
           }
-          return body
         }
+        let first: ResponseRequest
+        do {
+          first = try webSocketCreate(
+            firstBody.data, imageConfiguration: executor.configuration.imageGeneration)
+        } catch {
+          try? await sendWebSocketError(
+            error, requestID: UUID().uuidString, lane: "", to: downstream)
+          throw error
+        }
+        let authorized = try await executor.authorized(digest)
+        do {
+          _ = try authorized.executionModel(first)
+          _ = try first.preparedDocument(
+            contract: authorized.configuration.requestContract, nativeWebSocket: true)
+        } catch {
+          let requestID = UUID().uuidString
+          await authorized.recordRejection(first, requestID: requestID, error: error)
+          try? await sendWebSocketError(
+            error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstBody.data)),
+            to: downstream)
+          throw error
+        }
+        let reconnect = try await PoolWebSocketSession.run(
+          downstream: downstream, firstBody: firstBody, first: first,
+          executor: authorized, digest: digest)
+        if !reconnect { break }
       }
-      let first: ResponseRequest
-      do {
-        first = try webSocketCreate(
-          firstBody.data, imageConfiguration: executor.configuration.imageGeneration)
-      } catch {
-        try? await sendWebSocketError(
-          error, requestID: UUID().uuidString, lane: "", to: downstream)
-        throw error
-      }
-      let authorized = try await executor.authorized(digest)
-      do {
-        _ = try authorized.executionModel(first)
-        _ = try first.preparedDocument(
-          contract: authorized.configuration.requestContract, nativeWebSocket: true)
-      } catch {
-        let requestID = UUID().uuidString
-        await authorized.recordRejection(first, requestID: requestID, error: error)
-        try? await sendWebSocketError(
-          error, requestID: requestID, lane: webSocketLane(JSONValue.decode(firstBody.data)),
-          to: downstream)
-        throw error
-      }
-      try await PoolWebSocketSession.run(
-        downstream: downstream, firstBody: firstBody, first: first,
-        executor: authorized, digest: digest)
       try await downstream.closeNormally()
     }
   }
 
   static func serveTurns(
     downstream: WebSocketPeer, upstream: WebSocketPeer, firstBody: WebSocketBody,
-    executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil
+    executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil,
+    sizeRefused: @escaping @Sendable () -> Void = {}
   ) async throws {
     downstream.permitSettlement()
     let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
@@ -473,6 +477,12 @@ public struct ResponsesDataService: Service {
                     continue
                   }
                   if upstream.isClosed {
+                    if let refusal = error as? GatewayProtocolError,
+                      refusal.code == UpstreamWebSocketBodyLimit.errorCode,
+                      refusal.upstreamWebSocketCloseCode == 1009
+                    {
+                      sizeRefused()
+                    }
                     if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
                       try? await sendWebSocketError(
                         error, requestID: requestID, lane: lane, to: downstream)
@@ -557,6 +567,8 @@ public struct ResponsesDataService: Service {
                   if let length = next.headers.first(name: "content-length"),
                     Int(length).map({ $0 < 0 || $0 > maximumBytes }) ?? true
                   {
+                    ProtocolFailureDiagnostics.recordBodyLimit(
+                      bytes: Int(length) ?? maximumBytes + 1, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   if let length = next.headers.first(name: "content-length"),
@@ -568,6 +580,8 @@ public struct ResponsesDataService: Service {
                   guard head != nil,
                     bytes.readableBytes <= maximumBytes - body.count
                   else {
+                    ProtocolFailureDiagnostics.recordBodyLimit(
+                      bytes: body.count + bytes.readableBytes, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
                   try lease.reserve(body.count + bytes.readableBytes, countAll: control)

@@ -74,13 +74,13 @@ class Provider(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers['Content-Length']))
         index = self.capture(body, 'http')
         request = json.loads(body)
-        if self.server.mode == 'reject':
+        if self.server.mode in ('reject', 'close_reject', 'metadata_reject'):
             self.send_response(413)
             self.send_header('Content-Length', '0')
             self.send_header('Retry-After', '30')  # must not encourage retry or cool account
             self.end_headers()
             return
-        if self.server.mode == 'cancel':
+        if self.server.mode in ('cancel', 'close_cancel'):
             self.server.started.set()
             self.connection.settimeout(8)
             try:
@@ -89,6 +89,8 @@ class Provider(BaseHTTPRequestHandler):
             except OSError:
                 self.server.cancelled.set()
             return
+        if self.server.mode == 'hold':
+            assert self.server.release.wait(45), 'Measurement provider hold expired'
         event = self.event(index)
         body = b'data: ' + wire(event) + b'\n\n' if request['stream'] else wire(event['response'])
         self.send_response(200)
@@ -120,8 +122,15 @@ class Provider(BaseHTTPRequestHandler):
                     self.server.oversized_ws += 1
                     send(self.connection, struct.pack('!H', 1009), opcode=8)
                     return
-                if self.server.mode == 'close':
-                    send(self.connection, struct.pack('!H', 1009), opcode=8)
+                if self.server.mode.startswith(('close', 'metadata', 'created', 'other', 'drop')):
+                    mode = self.server.mode
+                    if mode.startswith('metadata'):
+                        send(self.connection, wire(dict(type='rate_limits.updated', rate_limits=[])))
+                    if mode == 'created':
+                        send(self.connection, wire(dict(type='response.created', response=dict(
+                            id=f'resp_synthetic_large_{index}', status='in_progress', output=[]))))
+                    if not mode.endswith('drop'):
+                        send(self.connection, struct.pack('!H', 1011 if mode.endswith('other') else 1009), opcode=8)
                     return
                 event = self.event(index)
                 lane = json.loads(body).get('stream_id')
@@ -168,9 +177,20 @@ def error(body):
     assert 'Start a new session or remove images' in value['message'], value
 
 
+def configure(config, provider_port, contract):
+    config.write_text(json.dumps(dict(principal='synthetic-large', keyID='synthetic-key',
+        namespace='synthetic-large', identity='synthetic-account',
+        keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),
+        models=[dict(id='synthetic-large', visionInput=True, inputMicrosPerMillion=0, outputMicrosPerMillion=0)],
+        reservedMicros=1, upstreamBaseURL=f'http://127.0.0.1:{provider_port}/v1',
+        upstreamTransport='websocket', upstreamContract=contract)))
+    config.chmod(0o600)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     server.daemon_threads = True
@@ -187,106 +207,188 @@ def main():
                 root = Path(temp) / contract
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
-                config.write_text(json.dumps(dict(principal='synthetic-large', keyID='synthetic-key',
-                    namespace='synthetic-large', identity='synthetic-account',
-                    keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),
-                    models=[dict(id='synthetic-large', visionInput=True, inputMicrosPerMillion=0, outputMicrosPerMillion=0)],
-                    reservedMicros=1, upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1',
-                    upstreamTransport='websocket', upstreamContract=contract)))
-                config.chmod(0o600)
+                configure(config, server.server_port, contract)
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
                 try:
-                    for route in ('json', 'sse', 'native'):
-                        for size in (LIMIT - 1, LIMIT, LIMIT + 1):
-                            request = sized(size, contract, streaming=route != 'json', native=route == 'native',
-                                            image_count=3 if route == 'sse' else 1)
-                            before = len(server.calls)
-                            if route == 'native':
-                                with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
-                                    result = native(peer, request)
-                                if size > LIMIT:
-                                    assert result['status'] == 413, result
-                                    error(wire(result))
-                                    assert len(server.calls) == before
-                                    ledger(root, count)
-                                    continue
-                                assert result['type'] == 'response.completed', result
-                            else:
-                                status, headers, body = call_http(ports['data'], request)
-                                assert status == 200, (contract, route, size, status, body[:500])
-                                if route == 'sse':
-                                    assert b'response.completed' in body and b'[DONE]' in body
+                    if not args.failures_only:
+                        for route in ('json', 'sse', 'native'):
+                            for size in (LIMIT - 1, LIMIT, LIMIT + 1):
+                                request = sized(size, contract, streaming=route != 'json', native=route == 'native',
+                                                image_count=3 if route == 'sse' else 1)
+                                before = len(server.calls)
+                                if route == 'native':
+                                    with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+                                        result = native(peer, request)
+                                    if size > LIMIT:
+                                        assert result['status'] == 413, result
+                                        error(wire(result))
+                                        assert len(server.calls) == before
+                                        ledger(root, count)
+                                        continue
+                                    assert result['type'] == 'response.completed', result
                                 else:
-                                    assert json.loads(body)['status'] == 'completed'
+                                    status, headers, body = call_http(ports['data'], request)
+                                    assert status == 200, (contract, route, size, status, body[:500])
+                                    if route == 'sse':
+                                        assert b'response.completed' in body and b'[DONE]' in body
+                                    else:
+                                        assert json.loads(body)['status'] == 'completed'
+                                count += 1
+                                assert ledger(root, count)[-1][0] == 'settled'
+                                path, raw, headers = server.calls[before]
+                                expected_headers = dict(HEADERS)
+                                if path == 'websocket' and contract == 'codex-subscription':
+                                    expected_headers['x-codex-turn-state'] = None  # projected into create metadata
+                                assert headers == expected_headers, headers
+                                if size <= LIMIT:
+                                    assert path == 'websocket' and raw == frame(request, contract, route == 'native')
+                                else:
+                                    assert path == 'http'
+                                    expected = dict(request)
+                                    if contract == 'codex-subscription':
+                                        expected['store'] = False
+                                        expected['stream'] = True
+                                    assert raw == wire(expected).replace(b'/', b'\\/'), 'HTTP fallback changed key order or bytes'
+                                assert wire(SCHEMA) in raw
+                        # The fallback does not change subsequent transport selection.
+                        status, _, _ = call_http(ports['data'], sized(1024, contract))
+                        count += 1
+                        assert status == 200 and server.calls[-1][0] == 'websocket'
+                        ledger(root, count)
+                        # Explicit HTTP refusal is deterministic, zero-cost, not unknown.
+                        server.mode = 'reject'
+                        for streaming in (False, True):
+                            status, headers, body = call_http(ports['data'], sized(LIMIT + 1, contract, streaming=streaming))
+                            assert status == 413 and headers.get('retry-after') is None, (status, body[:500])
+                            error(body)
                             count += 1
-                            assert ledger(root, count)[-1][0] == 'settled'
-                            path, raw, headers = server.calls[before]
-                            expected_headers = dict(HEADERS)
-                            if path == 'websocket' and contract == 'codex-subscription':
-                                expected_headers['x-codex-turn-state'] = None  # projected into create metadata
-                            assert headers == expected_headers, headers
-                            if size <= LIMIT:
-                                assert path == 'websocket' and raw == frame(request, contract, route == 'native')
-                            else:
-                                assert path == 'http'
-                                expected = dict(request)
-                                if contract == 'codex-subscription':
-                                    expected['store'] = False
-                                    expected['stream'] = True
-                                assert raw == wire(expected).replace(b'/', b'\\/'), 'HTTP fallback changed key order or bytes'
-                            assert wire(SCHEMA) in raw
-                    # The fallback does not change subsequent transport selection.
-                    status, _, _ = call_http(ports['data'], sized(1024, contract))
-                    count += 1
-                    assert status == 200 and server.calls[-1][0] == 'websocket'
-                    ledger(root, count)
-                    # Explicit HTTP refusal is deterministic, zero-cost, not unknown.
-                    server.mode = 'reject'
-                    for streaming in (False, True):
-                        status, headers, body = call_http(ports['data'], sized(LIMIT + 1, contract, streaming=streaming))
-                        assert status == 413 and headers.get('retry-after') is None, (status, body[:500])
+                            state, outcome, usage = ledger(root, count)[-1]
+                            assert state == 'settled' and outcome['failure'] == 'invalid_request', (state, outcome)
+                            assert usage['completeness'] == 'complete' and usage['estimatedMicros'] == 0
+                        server.mode = 'ok'
+                        # Continuations remain on their native connection; oversized turn never dispatches.
+                        with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+                            first = native(peer, sized(1024, contract, native=True))
+                            previous = first['response']['id']
+                            count += 1
+                            ledger(root, count)
+                            for extra in ({}, {'previous_response_id': previous}, {'generate': False}):
+                                before = len(server.calls)
+                                result = native(peer, sized(LIMIT + 100, contract, native=True, **extra))
+                                assert result['status'] == 413, result
+                                error(wire(result))
+                                assert len(server.calls) == before
+                                ledger(root, count)
+                            result = native(peer, sized(1024, contract, native=True, previous_response_id=previous))
+                            assert result['type'] == 'response.completed', result
+                            count += 1
+                            ledger(root, count)
+                        # HTTP previous_response_id cannot silently become independent input.
+                        status, _, body = call_http(ports['data'], sized(LIMIT + 1, contract, previous_response_id=previous))
+                        assert status == 413, (status, body[:500])
                         error(body)
+                        ledger(root, count)
+                    # Real below-threshold refusals: exactly one HTTP replay, same bytes/state.
+                    for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
+                        server.mode = mode
+                        for streaming in (False, True):
+                            request = sized(2048, contract, streaming=streaming)
+                            before = len(server.calls)
+                            status, headers, body = call_http(ports['data'], request)
+                            assert status == (413 if mode.endswith('reject') else 200), (mode, status, body)
+                            calls = server.calls[before:]
+                            assert [c[0] for c in calls] == ['websocket', 'http'], calls
+                            assert calls[0][1] == frame(request, contract)
+                            expected = dict(request)
+                            if contract == 'codex-subscription':
+                                expected.update(store=False, stream=True)
+                            assert calls[1][1] == wire(expected).replace(b'/', b'\\/')
+                            assert calls[1][2] == HEADERS
+                            count += 1
+                            state, outcome, usage = ledger(root, count)[-1]
+                            assert state == 'settled', (state, outcome)
+                            if status == 413:
+                                error(body)
+                                assert headers.get('retry-after') is None
+                                assert outcome['failure'] == 'invalid_request'
+                                assert usage['completeness'] == 'complete' and usage['inputTokens'] == usage['outputTokens'] == 0
+                            else:
+                                assert usage['inputTokens'] == 5 and usage['outputTokens'] == 3
+                                assert b'rate_limits.updated' not in body
+                    # Native 1009 ends only the turn; next small turn uses a fresh upstream socket.
+                    server.mode = 'close'
+                    before = len(server.calls)
+                    with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+                        result = native(peer, sized(2048, contract, native=True))
+                        assert result['status'] == 413, result
+                        error(wire(result))
                         count += 1
                         state, outcome, usage = ledger(root, count)[-1]
-                        assert state == 'settled' and outcome['failure'] == 'invalid_request', (state, outcome)
-                        assert usage['completeness'] == 'complete' and usage['estimatedMicros'] == 0
-                    server.mode = 'ok'
-                    # Continuations remain on their native connection; oversized turn never dispatches.
-                    with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
-                        first = native(peer, sized(1024, contract, native=True))
-                        previous = first['response']['id']
-                        count += 1
-                        ledger(root, count)
-                        for extra in ({}, {'previous_response_id': previous}, {'generate': False}):
-                            before = len(server.calls)
-                            result = native(peer, sized(LIMIT + 100, contract, native=True, **extra))
-                            assert result['status'] == 413, result
-                            error(wire(result))
-                            assert len(server.calls) == before
-                            ledger(root, count)
-                        result = native(peer, sized(1024, contract, native=True, previous_response_id=previous))
+                        assert state == 'settled' and outcome['failure'] == 'invalid_request'
+                        assert usage['completeness'] == 'complete' and usage['inputTokens'] == usage['outputTokens'] == 0
+                        assert [c[0] for c in server.calls[before:]] == ['websocket']
+                        server.mode = 'ok'
+                        result = native(peer, sized(1024, contract, native=True))
                         assert result['type'] == 'response.completed', result
                         count += 1
                         ledger(root, count)
-                    # HTTP previous_response_id cannot silently become independent input.
-                    status, _, body = call_http(ports['data'], sized(LIMIT + 1, contract, previous_response_id=previous))
-                    assert status == 413, (status, body[:500])
-                    error(body)
-                    ledger(root, count)
-                    # An actual below-limit 1009 close remains indeterminate, not our preflight error.
-                    server.mode = 'close'
-                    status, _, body = call_http(ports['data'], sized(1024, contract))
-                    assert status == 502 and json.loads(body)['error']['code'] == 'execution_indeterminate'
-                    count += 1
-                    assert ledger(root, count)[-1][0] == 'unknown'
+                        server.mode = 'metadata'
+                        before = len(server.calls)
+                        result = native(peer, sized(2048, contract, native=True))
+                        assert result['status'] == 413, result
+                        error(wire(result))
+                        count += 1
+                        state, outcome, usage = ledger(root, count)[-1]
+                        assert state == 'settled' and outcome['failure'] == 'invalid_request'
+                        assert usage['inputTokens'] == usage['outputTokens'] == 0
+                        assert [c[0] for c in server.calls[before:]] == ['websocket']
+                        server.mode = 'ok'
+                        result = native(peer, sized(1024, contract, native=True))
+                        assert result['type'] == 'response.completed', result
+                        previous = result['response']['id']
+                        count += 1
+                        ledger(root, count)
+                    # A valid HTTP continuation can reach WS, but must never replay on HTTP.
+                    if contract == 'responses':
+                        server.mode = 'close'
+                        before = len(server.calls)
+                        status, _, body = call_http(ports['data'], sized(2048, contract, previous_response_id=previous))
+                        assert status == 413, (status, body)
+                        error(body)
+                        assert [c[0] for c in server.calls[before:]] == ['websocket']
+                        count += 1
+                        state, outcome, usage = ledger(root, count)[-1]
+                        assert state == 'settled' and outcome['failure'] == 'invalid_request'
+                        assert usage['inputTokens'] == usage['outputTokens'] == 0
+                    # Lifecycle, other close codes, and EOF keep indeterminate behavior, no replay.
+                    for mode in ('created', 'other', 'drop'):
+                        server.mode = mode
+                        before = len(server.calls)
+                        status, _, body = call_http(ports['data'], sized(1024, contract))
+                        assert status == 502 and json.loads(body)['error']['code'] == 'execution_indeterminate', (mode, status, body)
+                        assert [c[0] for c in server.calls[before:]] == ['websocket']
+                        count += 1
+                        assert ledger(root, count)[-1][0] == 'unknown'
+                    # Metadata before any non-1009 close retains existing SSE byte order/status.
+                    for mode in ('metadata_other', 'metadata_drop'):
+                        server.mode = mode
+                        before = len(server.calls)
+                        status, _, body = call_http(ports['data'], sized(1024, contract, streaming=True))
+                        assert status == 200, (mode, status, body)
+                        assert body.index(b'rate_limits.updated') < body.index(b'event: error')
+                        assert b'execution_indeterminate' in body
+                        assert [c[0] for c in server.calls[before:]] == ['websocket']
+                        count += 1
+                        assert ledger(root, count)[-1][0] == 'unknown'
                     # Cancellation after HTTP dispatch retains unknown execution responsibility.
-                    server.mode = 'cancel'
+                    server.mode = 'close_cancel'
+                    before = len(server.calls)
                     server.started.clear()
                     server.cancelled.clear()
                     peer = socket.create_connection(('127.0.0.1', ports['data']), timeout=30)
-                    body = wire(sized(LIMIT + 1, contract))
+                    body = wire(sized(2048, contract))
                     session_headers = ''.join(f'{key}: {value}\r\n' for key, value in HEADERS.items())
                     peer.sendall((f'POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\n'
                                   f'Content-Type: application/json\r\nContent-Length: {len(body)}\r\n'
@@ -294,6 +396,7 @@ def main():
                     assert server.started.wait(20)
                     peer.close()
                     assert server.cancelled.wait(8), 'Fallback upstream not cancelled'
+                    assert [c[0] for c in server.calls[before:]] == ['websocket', 'http']
                     count += 1
                     state, outcome, _ = ledger(root, count)[-1]
                     assert state == 'unknown' and outcome['failure'] == 'client_cancelled', (state, outcome)
@@ -313,15 +416,17 @@ def main():
                     process.terminate()
                     process.wait(10)
                     logs = process.stdout.read()
-                    assert b'size_bucket=16_to_24_mib' in logs and b'path=http' in logs
+                    if not args.failures_only:
+                        assert b'size_bucket=16_to_24_mib' in logs and b'path=http' in logs
                     assert b'path=reject_native' in logs
+                    assert b'upstream_ws_close_code=1009' in logs and b'size_bucket=at_most_16_mib' in logs
                     assert b'synthetic-state' not in logs and TOKEN.encode() not in logs
                 except BaseException:
                     dump_gateway_failure(process)
                     raise
                 finally:
                     stop(process)
-                print(f'PASS: {contract}: exact WS boundaries, JSON/SSE/native, ordered fallback, continuation/warmup rejection, HTTP 413, cancellation and ledger', flush=True)
+                print(f'PASS: {contract}: exact WS boundaries, JSON/SSE/native, ordered fallback, continuation/warmup rejection, HTTP 413, early/metadata/lifecycle 1009, other close/EOF, native socket reuse, cancellation and ledger', flush=True)
             assert server.oversized_ws == 0
     finally:
         server.shutdown()

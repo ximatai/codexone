@@ -81,7 +81,8 @@ enum PoolWebSocketSession {
   static func run(
     downstream: WebSocketPeer, firstBody: WebSocketBody, first: ResponseRequest,
     executor: HTTPResponseExecution, digest: String?
-  ) async throws {
+  ) async throws -> Bool {
+    let reconnect = Mutex(false)
     guard executor.gateway != nil else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
@@ -168,7 +169,8 @@ enum PoolWebSocketSession {
               try await ResponsesDataService.serveTurns(
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
-                initial: .init(context: selection.context, start: start, requestID: requestID))
+                initial: .init(context: selection.context, start: start, requestID: requestID),
+                sizeRefused: { reconnect.withLock { $0 = true } })
             }
           } catch {
             start.close(error)
@@ -179,14 +181,16 @@ enum PoolWebSocketSession {
       }
     } catch is WebSocketUpstreamClosed {
       // Both sibling owners have ended and handed off their finalization responsibility.
-      return
+      return reconnect.withLock { $0 }
     } catch {
+      if reconnect.withLock({ $0 }) { return true }
       await executor.recordRejection(first, requestID: requestID, error: error)
       if start.claimError() {
         try? await sendWebSocketError(error, requestID: requestID, lane: lane, to: downstream)
       }
       throw error
     }
+    return false
   }
 }
 

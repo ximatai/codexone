@@ -87,3 +87,14 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
   _ = try channel.finish()
 }
+
+@Test func bodyDiagnosticsDistinguishCapacityBoundaries() {
+  let mib = 1024 * 1024
+  for (bytes, bucket) in [
+    (16 * mib, "at_most_16_mib"), (16 * mib + 1, "16_to_24_mib"),
+    (24 * mib, "16_to_24_mib"), (24 * mib + 1, "24_to_32_mib"),
+    (32 * mib, "24_to_32_mib"), (32 * mib + 1, "over_32_mib"),
+  ] {
+    #expect(ProtocolFailureDiagnostics.sizeBucket(bytes) == bucket)
+  }
+}

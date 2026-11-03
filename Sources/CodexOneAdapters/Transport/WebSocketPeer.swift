@@ -194,6 +194,9 @@ struct WebSocketPeer: Sendable {
   private let turns: WebSocketTurns?
   private let closure: WebSocketTurns
   var isClosed: Bool { closure.isClosed }
+  func mayAcceptSizeRefusal(lane: String) -> Bool {
+    turns?.mayAcceptSizeRefusal(lane: lane) == true
+  }
   func markDispatched(lane: String) { turns?.markDispatched(lane: lane) }
   /// Never broadcast a cancellation: wait for the reader to identify this dispatched turn.
   func interruptForSettlement(lane: String) async throws {

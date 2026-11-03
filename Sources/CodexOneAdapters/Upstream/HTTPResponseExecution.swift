@@ -111,14 +111,15 @@ struct HTTPResponseExecution: Sendable {
     if let oversizedBytes {
       ProtocolFailureDiagnostics.recordOversizedFrame(bytes: oversizedBytes, path: "http")
     }
-    if let frame {
-      try await executeRouted(
-        model: request.admissionModel, references: request.references,
-        affinityHints: request.affinityHints, requestID: requestID,
-        mode: request.mode, turnState: turnState, requirements: request.requirements,
-        reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
-      ) { context, authorization in
-        try await withExecutionDeadline(seconds: configuration.budget.total) {
+    try await executeRouted(
+      model: request.admissionModel, references: request.references,
+      affinityHints: request.affinityHints, requestID: requestID,
+      mode: request.mode, turnState: turnState, requirements: request.requirements,
+      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
+    ) { context, authorization in
+      var fallback = oversized
+      if let frame {
+        do {
           try await webSocket.authorized(authorization, headers: clientHeaders).run(
             receiveHeaders: {
               await observeResponseHeaders($0, account: authorization?.identity)
@@ -126,26 +127,31 @@ struct HTTPResponseExecution: Sendable {
               try peer.beginTurn(compaction: request.streamCompaction)
               try await exchange(
                 request, context: context, model: model, peer: peer,
-                frame: frame, emit: emit)
+                frame: frame, allowSizeFallback: true,
+                sizeRefusalPath: request.document["previous_response_id"] == nil
+                  || request.document["previous_response_id"] == .null
+                  ? "http_1009" : "reject_continuation_1009", emit: emit)
             }
+          return nil
+        } catch let error as GatewayProtocolError
+          where error.code == UpstreamWebSocketBodyLimit.errorCode
+          && error.upstreamWebSocketCloseCode == 1009
+        {
+          if let previous = request.document["previous_response_id"], previous != .null {
+            try observeProviderRejection(context)
+            throw error
+          }
+          fallback = true
         }
-        return nil
       }
-      return
-    }
-    try await executeRouted(
-      model: request.admissionModel, references: request.references,
-      affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, turnState: turnState, requirements: request.requirements,
-      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
-    ) { context, authorization in
+      let isFallback = fallback
       let wireStreaming = wireDocument["stream"]?.bool == true
       try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
         upstream.headers = clientHeaders
-        if oversized, upstream.headers.first(name: "x-codex-turn-state") == nil,
+        if isFallback, upstream.headers.first(name: "x-codex-turn-state") == nil,
           let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
         {
           upstream.headers.add(name: "x-codex-turn-state", value: turnState)
@@ -172,7 +178,10 @@ struct HTTPResponseExecution: Sendable {
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
         await observeResponseHeaders(response.headers, account: authorization?.identity)
         guard response.status == .ok else {
-          if oversized, response.status == .payloadTooLarge {
+          if isFallback, (400...499).contains(Int(response.status.code)) {
+            try observeProviderRejection(context)
+          }
+          if isFallback, response.status == .payloadTooLarge {
             throw UpstreamWebSocketBodyLimit.rejection(upstreamStatus: 413)
           }
           throw await ProviderError.failure(response: response)
@@ -202,13 +211,17 @@ struct HTTPResponseExecution: Sendable {
           var responseID: String?
           var terminal = false
           var observedMetadata = false
+          var firstHTTPEvent = true
           readUpstream: for try await chunk in response.body {
             try Task.checkCancellation()
             for byte in chunk.readableBytesView {
               guard let event = try decoder.append(byte) else { continue }
               context.observeUpstreamEvent()
               guard !terminal else { break readUpstream }
-              try observeProviderEvent(event, context: context)
+              try observeProviderEvent(
+                event, context: context,
+                firstAfterUnprocessedRefusal: isFallback && firstHTTPEvent)
+              firstHTTPEvent = false
               let type = try ProviderObservation.eventType(event)
               if type == "error" { throw ProviderObservation.providerFailure(event) }
               // A foreign response cannot supply evidence to this attempt.

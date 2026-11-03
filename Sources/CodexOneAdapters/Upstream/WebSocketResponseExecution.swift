@@ -65,7 +65,8 @@ extension HTTPResponseExecution {
   func exchange(
     _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
     peer: WebSocketPeer, lane: String = "",
-    downstream: WebSocketPeer? = nil, frame: Data,
+    downstream: WebSocketPeer? = nil, frame: Data, allowSizeFallback: Bool = false,
+    sizeRefusalPath: String = "reject_native_1009",
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     defer { observeDisconnectedOutcome(downstream, context: context) }
@@ -80,75 +81,118 @@ extension HTTPResponseExecution {
         configuration: configuration.imageGeneration)
     }
     defer { peer.detachEvidence(lane: lane) }
-    try await withProgressDeadline(budget: configuration.budget) { progress in
-      try Task.checkCancellation()
-      guard downstream?.isClosed != true else { throw CancellationError() }
-      peer.markDispatched(lane: lane)
-      try await peer.writer.send(frame)
-      let account: AccountRouteIdentity?
-      if let gateway, case .pool = gateway {
-        account = try .init(
-          id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
-      } else {
-        account = nil
+    do {
+      try await withProgressDeadline(budget: configuration.budget) { progress in
+        try Task.checkCancellation()
+        guard downstream?.isClosed != true else { throw CancellationError() }
+        peer.markDispatched(lane: lane)
+        try await peer.writer.send(frame)
+        let account: AccountRouteIdentity?
+        if let gateway, case .pool = gateway {
+          account = try .init(
+            id: context.admission.owner.identity, namespace: context.admission.owner.namespace)
+        } else {
+          account = nil
+        }
+        var total = 0
+        var observedMetadata = false
+        var bufferedMetadata: [JSONValue] = []
+        var lifecycle = false
+        do {
+          while true {
+            let data = try await peer.next(lane: lane)
+            context.observeUpstreamEvent()
+            let limit =
+              request.requirements.imageModel == nil
+              ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
+            guard data.count <= limit - total else {
+              throw GatewayProtocolError(502, "upstream_response_too_large")
+            }
+            total += data.count
+            guard
+              data.count
+                <= (request.requirements.imageModel == nil
+                  ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
+            else {
+              throw GatewayProtocolError(502, "upstream_event_too_large")
+            }
+            let event: JSONValue
+            do { event = try JSONValue.decode(data) } catch {
+              throw GatewayProtocolError(502, "invalid_upstream_event")
+            }
+            guard try webSocketLane(event) == lane else {
+              throw GatewayProtocolError(502, "invalid_upstream_lane")
+            }
+            observeDisconnectedOutcome(downstream, context: context)
+            let type = try ProviderObservation.eventType(event)
+            await observeResponseMetadata(event, account: account, returned: &observedMetadata)
+            if type == "error" { throw ProviderObservation.providerFailure(event) }
+            if ProviderObservation.terminalEvents.contains(type),
+              !context.providerRejectedBeforeOutput
+            {
+              try request.observeUsage(
+                event["response"], context: context, model: model,
+                configuration: configuration.imageGeneration)
+            }
+            let observation = try ProviderObservation(
+              event: event, model: model, allowImages: request.requirements.imageModel != nil)
+            context.observeActualServiceTier(observation.actualServiceTier)
+            progress.note(event: event)
+            for object in observation.bindings { try await context.bind(object) }
+            try observeTerminalOutcome(event, context: context)
+            if type == "error" || (type.hasPrefix("response.") && type != "response.metadata") {
+              lifecycle = true
+            }
+            if !lifecycle {
+              bufferedMetadata.append(event)
+              continue
+            }
+            if request.streaming {
+              for metadata in bufferedMetadata { try await emit(metadata) }
+              bufferedMetadata.removeAll()
+              try await emit(
+                request.requirements.imageModel == nil
+                  ? ProviderObservation.textOutput(event) : event
+              )
+            } else if observation.terminal {
+              let response = event["response"]!
+              try await emit(
+                request.requirements.imageModel == nil
+                  ? ProviderObservation.textOutput(response) : response)
+            }
+            if observation.terminal { try observeSubmittedTerminal(event, context: context) }
+            if observation.terminal {
+              peer.delivered(event)
+              break
+            }
+          }
+        } catch {
+          let refusal =
+            (error as? GatewayProtocolError)?.upstreamWebSocketCloseCode == 1009
+            && peer.mayAcceptSizeRefusal(lane: lane)
+          // Only the unprocessed 1009 discards metadata. Other failures retain the
+          // established streamed-event/error behavior, including committed SSE status.
+          if !refusal, !lifecycle, request.streaming {
+            for metadata in bufferedMetadata { try await emit(metadata) }
+          }
+          throw error
+        }
       }
-      var total = 0
-      var observedMetadata = false
-      while true {
-        let data = try await peer.next(lane: lane)
-        context.observeUpstreamEvent()
-        let limit =
-          request.requirements.imageModel == nil
-          ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
-        guard data.count <= limit - total else {
-          throw GatewayProtocolError(502, "upstream_response_too_large")
-        }
-        total += data.count
-        guard
-          data.count
-            <= (request.requirements.imageModel == nil
-              ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
-        else {
-          throw GatewayProtocolError(502, "upstream_event_too_large")
-        }
-        let event: JSONValue
-        do { event = try JSONValue.decode(data) } catch {
-          throw GatewayProtocolError(502, "invalid_upstream_event")
-        }
-        guard try webSocketLane(event) == lane else {
-          throw GatewayProtocolError(502, "invalid_upstream_lane")
-        }
-        observeDisconnectedOutcome(downstream, context: context)
-        let type = try ProviderObservation.eventType(event)
-        await observeResponseMetadata(event, account: account, returned: &observedMetadata)
-        if type == "error" { throw ProviderObservation.providerFailure(event) }
-        if ProviderObservation.terminalEvents.contains(type), !context.providerRejectedBeforeOutput
-        {
-          try request.observeUsage(
-            event["response"], context: context, model: model,
-            configuration: configuration.imageGeneration)
-        }
-        let observation = try ProviderObservation(
-          event: event, model: model, allowImages: request.requirements.imageModel != nil)
-        context.observeActualServiceTier(observation.actualServiceTier)
-        progress.note(event: event)
-        for object in observation.bindings { try await context.bind(object) }
-        try observeTerminalOutcome(event, context: context)
-        if request.streaming {
-          try await emit(
-            request.requirements.imageModel == nil ? ProviderObservation.textOutput(event) : event)
-        } else if observation.terminal {
-          let response = event["response"]!
-          try await emit(
-            request.requirements.imageModel == nil
-              ? ProviderObservation.textOutput(response) : response)
-        }
-        if observation.terminal { try observeSubmittedTerminal(event, context: context) }
-        if observation.terminal {
-          peer.delivered(event)
-          break
-        }
+    } catch let error as GatewayProtocolError
+      where error.upstreamWebSocketCloseCode == 1009
+    {
+      let refused = peer.mayAcceptSizeRefusal(lane: lane)
+      ProtocolFailureDiagnostics.recordOversizedFrame(
+        bytes: frame.count, path: refused ? sizeRefusalPath : "indeterminate_1009",
+        closeCode: 1009)
+      guard refused else { throw error }
+      if !allowSizeFallback {
+        try observeProviderRejection(context)
+        try context.observeOutcome(
+          .init(failure: .invalidRequest, atUnixSeconds: context.clock.unixSeconds))
       }
+      throw GatewayProtocolError(
+        413, UpstreamWebSocketBodyLimit.errorCode, upstreamWebSocketCloseCode: 1009)
     }
   }
 }

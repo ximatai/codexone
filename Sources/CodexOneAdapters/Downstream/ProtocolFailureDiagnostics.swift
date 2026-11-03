@@ -68,12 +68,25 @@ enum ProtocolFailureDiagnostics {
     return value
   }
 
-  static func recordOversizedFrame(bytes: Int, path: String) {
-    guard gate.withLock({ $0.admit(now: .now) }) else { return }
-    let bucket = bytes <= 24 * 1024 * 1024 ? "16_to_24_mib" : "over_24_mib"
-    logger.info(
-      "Oversized upstream WebSocket request",
-      metadata: ["size_bucket": .string(bucket), "path": .string(path)])
+  static func sizeBucket(_ bytes: Int) -> String {
+    if bytes <= 16 * 1024 * 1024 { return "at_most_16_mib" }
+    if bytes <= 24 * 1024 * 1024 { return "16_to_24_mib" }
+    if bytes <= 32 * 1024 * 1024 { return "24_to_32_mib" }
+    return "over_32_mib"
+  }
+
+  static func recordOversizedFrame(bytes: Int, path: String, closeCode: UInt16? = nil) {
+    recordBodyLimit(bytes: bytes, path: path, closeCode: closeCode)
+  }
+
+  private static let bodyLimitGate = Mutex(ProtocolFailureLogGate())
+  static func recordBodyLimit(bytes: Int, path: String, closeCode: UInt16? = nil) {
+    guard bodyLimitGate.withLock({ $0.admit(now: .now) }) else { return }
+    var metadata: Logger.Metadata = [
+      "size_bucket": .string(sizeBucket(bytes)), "path": .string(path),
+    ]
+    if let closeCode { metadata["upstream_ws_close_code"] = .string(String(closeCode)) }
+    logger.info("Request body size boundary", metadata: metadata)
   }
 
   static func recordMissingStreamMediaType(requestID: String) {

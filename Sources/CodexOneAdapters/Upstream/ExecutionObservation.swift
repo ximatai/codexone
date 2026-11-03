@@ -119,8 +119,10 @@ func observeProviderRejection(_ context: ExecutionContext) throws {
 }
 
 /// Only the first parsed event can certify a refusal. Even a lifecycle event closes this gate.
-func observeProviderEvent(_ event: JSONValue, context: ExecutionContext) throws {
-  let first = context.observeProviderEvent()
+func observeProviderEvent(
+  _ event: JSONValue, context: ExecutionContext, firstAfterUnprocessedRefusal: Bool = false
+) throws {
+  let first = context.observeProviderEvent() || firstAfterUnprocessedRefusal
   guard first, ["error", "response.failed"].contains(event["type"]?.string ?? ""),
     event["response"]?["output"] == nil || event["response"]?["output"] == .array([]),
     event["output"] == nil || event["output"] == .array([]),
