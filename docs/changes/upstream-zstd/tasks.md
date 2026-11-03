@@ -66,6 +66,14 @@
 - [x] 真实网关合成矩阵：少量正文后 200/首事件，读完并逐字节校验后完成；客户端取消、上游断流、响应提前 EOF；各场景四路后续请求均可压缩。
 - [x] 定向 Swift、zstd 脚本与文档校验，结果同步 verification。
 
+## 提前 2xx 的明文上传诊断
+
+- [x] 统一两种编码的诊断结束边界，不新增任务；每个上传幂等记录。
+- [x] early200 补充 sent 与完整明文 wire 桶断言，增加 off 模式 200 后断流反例。
+- [x] 当前工作树定向运行 zstd、上传期限与文档检查；审查后单独提交。
+
+2026-11-03，macOS arm64 / Swift 6.4.2：当前工作树 `swift build --product codexone -j 12` 成功（已有编译警告）；`python3 scripts/verify_upstream_zstd.py --binary .build/debug/codexone`、`python3 scripts/verify_upload_deadline.py --binary .build/debug/codexone` 和 `python3 scripts/check_docs.py` 均通过。early200 的 off 模式 sent/完整 wire 桶与断流 interrupted 断言通过，压缩提前响应各反例、415 双上传计数及 HTTP/WS 上传期限矩阵通过。只用合成 loopback 服务；未运行全量后端、Linux、内存门禁、真实客户端或上游验收，无版本或部署变化。
+
 ## 相关文档
 
 [提案](proposal.md) · [协议规范](../../reference/specs/protocol.md)

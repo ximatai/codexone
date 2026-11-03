@@ -401,6 +401,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
         if case == "capacity":
             expected_calls = [expected_encoding] * 4 + ["identity"]
         assert server.calls == expected_calls, server.calls
+        upload_bytes = len(server.expected)
         if case.startswith('early200'):
             # Hold four follow-up uploads concurrently: even one leaked reservation
             # makes a request fall back to identity. One successful probe is insufficient.
@@ -445,7 +446,16 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
                 assert sum(f'content_encoding={encoding}'.encode() in line for line in uploads) == server.calls.count(encoding), uploads
             for line in uploads:
                 assert b'wire_size_bucket=' in line and b'compression_duration_bucket=' in line
-            if case in ('cancel', 'stall', 'early415', 'early400', 'shutdown'):
+            if case == 'early200':
+                assert b'result=sent' in uploads[0], uploads
+                if mode == 'off':
+                    limits = ((1, 'at_most_1_mib'), (4, '1_to_4_mib'),
+                              (8, '4_to_8_mib'), (16, '8_to_16_mib'),
+                              (24, '16_to_24_mib'), (32, '24_to_32_mib'))
+                    bucket = next((name for limit, name in limits if upload_bytes <= limit*MIB), 'over_32_mib')
+                    assert f'wire_size_bucket={bucket}'.encode() in uploads[0], uploads
+            if case in ('cancel', 'stall', 'early415', 'early400', 'shutdown',
+                        'early200-cancel', 'early200-disconnect', 'early200-end'):
                 assert b'result=interrupted' in uploads[0], uploads
         assert TOKEN.encode() not in logs and b'synthetic-payload-' not in logs
         elapsed = time.monotonic() - begin
@@ -546,7 +556,8 @@ def main():
         # Incompressible data forces actual backpressure instead of a tiny compressed upload.
         for case in ('early200', 'early200-cancel', 'early200-disconnect', 'early200-end'):
             check(dict(large, stream=True), case=case)
-        check(dict(large, stream=True), case='early200', mode='off', expected_encoding='identity')
+        for case in ('early200', 'early200-disconnect'):
+            check(dict(large, stream=True), case=case, mode='off', expected_encoding='identity')
         for case in ('slow', 'stall', 'cancel', 'shutdown'):
             check(large, case=case)
         print('PASS: synthetic upstream zstd process matrix; no real provider contacted')

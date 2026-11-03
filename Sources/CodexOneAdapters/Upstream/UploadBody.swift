@@ -21,6 +21,7 @@ struct UploadBody: AsyncSequence, Sendable {
       try Task.checkCancellation()
       guard offset < body.data.endIndex else {
         body.upload.sent()
+        body.upload.finish()
         body.progress.requestSent()
         return nil
       }

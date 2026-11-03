@@ -178,7 +178,9 @@ struct HTTPResponseExecution: Sendable {
           && configuration.upstreamRequestCompression == "zstd"
           && data.count > configuration.upstreamZstdMinimumBytes
         let template = upstream
-        @Sendable func send(compressed: Bool) async throws -> (HTTPClientResponse, ZstdUpload?) {
+        @Sendable func send(compressed: Bool) async throws -> (
+          HTTPClientResponse, ZstdUpload?, RequestUpload
+        ) {
           var outgoing = template
           outgoing.headers.remove(name: "content-length")
           outgoing.headers.remove(name: "transfer-encoding")
@@ -201,14 +203,13 @@ struct HTTPResponseExecution: Sendable {
           do {
             let response = try await client.execute(
               outgoing, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-            // Headers can precede upload EOF. Successful exchanges keep pulling just as
-            // UploadBody does; rejection still stops compression immediately.
-            if let owner {
-              if !(200..<300).contains(response.status.code) { await owner.close() }
-            } else {
+            // Headers can precede upload EOF for either encoding. Rejections finish
+            // immediately; successful uploads finish at EOF or exchange exit.
+            if !(200..<300).contains(response.status.code) {
+              if let owner { await owner.close() }
               upload.finish()
             }
-            return (response, owner)
+            return (response, owner, upload)
           } catch {
             if let owner { await owner.close() }
             upload.finish()
@@ -218,7 +219,8 @@ struct HTTPResponseExecution: Sendable {
         let compressed = canCompress && compressionPool?.reserve() == true
         var firstResponse: HTTPClientResponse?
         let owner: ZstdUpload?
-        (firstResponse, owner) = try await send(compressed: compressed)
+        var upload: RequestUpload
+        (firstResponse, owner, upload) = try await send(compressed: compressed)
         let response: HTTPClientResponse
         if compressed, firstResponse?.status == .unsupportedMediaType {
           // No HTTP body events have been read; a prior WS fallback also proves no lifecycle.
@@ -226,10 +228,11 @@ struct HTTPResponseExecution: Sendable {
           // Dispose the rejected response before creating a new connection; never re-encode Data.
           firstResponse = nil
           progress.negotiateUpload()
-          response = try await send(compressed: false).0
+          (response, _, upload) = try await send(compressed: false)
         } else {
           response = firstResponse!
         }
+        defer { upload.finish() }
         do {
           await observeResponseHeaders(response.headers, account: authorization?.identity)
           guard response.status == .ok else {
