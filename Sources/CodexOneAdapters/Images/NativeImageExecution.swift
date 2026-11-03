@@ -27,6 +27,8 @@ extension HTTPResponseExecution {
         serviceTier: request.serviceTier
       ) { context, authorization in
         try await withProgressDeadline(budget: configuration.budget) { progress in
+          // This endpoint retains its existing pre-upload first-response boundary.
+          progress.requestSent()
           let base = authorization?.baseURL ?? configuration.upstreamBaseURL
           guard var url = URLComponents(string: base) else { throw ExecutionError.invalidCommand }
           url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")

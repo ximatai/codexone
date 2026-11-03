@@ -89,6 +89,27 @@ enum ProtocolFailureDiagnostics {
     logger.info("Request body size boundary", metadata: metadata)
   }
 
+  private static let uploadGate = Mutex(ProtocolFailureLogGate())
+  static func recordUpload(bytes: Int, duration: Duration, transport: String, sent: Bool) {
+    guard bytes > 8 * 1024 * 1024,
+      uploadGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    let bucket =
+      duration < .seconds(1)
+      ? "under_1_s"
+      : duration < .seconds(10)
+        ? "1_to_10_s"
+        : duration < .seconds(30)
+          ? "10_to_30_s"
+          : duration < .seconds(60) ? "30_to_60_s" : "at_least_60_s"
+    logger.info(
+      "Upstream request upload",
+      metadata: [
+        "size_bucket": .string(sizeBucket(bytes)), "upload_duration_bucket": .string(bucket),
+        "transport": .string(transport), "result": .string(sent ? "sent" : "interrupted"),
+      ])
+  }
+
   static func recordMissingStreamMediaType(requestID: String) {
     guard let id = UUID(uuidString: requestID) else { return }
     let first = missingMediaTypeLogged.withLock { logged in

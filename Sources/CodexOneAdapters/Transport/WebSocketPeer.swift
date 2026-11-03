@@ -166,7 +166,7 @@ actor WebSocketWriter {
     self.channel = channel
     self.client = client
   }
-  func send(_ data: Data, opcode: WebSocketOpcode = .text)
+  func send(_ data: Data, opcode: WebSocketOpcode = .text, requestUpload: Bool = false)
     async throws
   {
     if client { try UpstreamWebSocketBodyLimit.requireNativeFrame(data) }
@@ -177,6 +177,19 @@ actor WebSocketWriter {
           : ImageLimits.eventBytes)
     else {
       throw GatewayProtocolError(413, "websocket_message_too_large")
+    }
+    if client && requestUpload {
+      // The turn's total deadline bounds upstream upload. Await the socket write,
+      // rather than only handing the frame to the async outbound queue.
+      try await withTaskCancellationHandler {
+        try await channel.writeAndFlush(
+          WebSocketFrame(
+            fin: true, opcode: opcode, maskKey: .random(), data: ByteBuffer(data: data))
+        ).get()
+      } onCancel: {
+        self.channel.close(promise: nil)
+      }
+      return
     }
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {
       self.channel.close(promise: nil)

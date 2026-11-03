@@ -86,7 +86,11 @@ extension HTTPResponseExecution {
         try Task.checkCancellation()
         guard downstream?.isClosed != true else { throw CancellationError() }
         peer.markDispatched(lane: lane)
-        try await peer.writer.send(frame)
+        let upload = RequestUpload(bytes: frame.count, transport: "websocket")
+        defer { upload.finish() }
+        try await peer.writer.send(frame, requestUpload: true)
+        upload.sent()
+        progress.requestSent()
         let account: AccountRouteIdentity?
         if let gateway, case .pool = gateway {
           account = try .init(
