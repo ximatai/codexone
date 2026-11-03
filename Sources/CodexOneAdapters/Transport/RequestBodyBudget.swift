@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 
-/// The data service owns one budget; readers own leases until their body is dispatched or discarded.
+/// The data service owns one budget; request/turn owners retain leases through completion or discard.
 enum RequestBodyLimits {
   static let maximumBytes = 32 * 1024 * 1024
   static let unreservedBytes = 8 * 1024 * 1024
@@ -58,8 +58,10 @@ final class WebSocketBody: Sendable {
     storage = Mutex(data)
     self.lease = lease
   }
+  /// Drop raw bytes after the last parser without returning the turn's budget.
+  func discardData() { storage.withLock { $0 = Data() } }
   func release() {
-    storage.withLock { $0 = Data() }
+    discardData()
     lease?.release()
   }
 }

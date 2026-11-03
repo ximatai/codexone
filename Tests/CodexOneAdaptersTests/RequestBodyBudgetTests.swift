@@ -112,3 +112,22 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
   _ = try channel.finish()
 }
+
+@Test func parsedWebsocketBodyDiscardsSharedBytesButTurnRetainsBudget() throws {
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let lease = budget.lease()
+  try lease.reserve(size)
+  let body = WebSocketBody(Data(repeating: 65, count: size), lease: lease)
+  let handshakeOwner = body
+  body.discardData()
+  #expect(handshakeOwner.data.isEmpty)
+  #expect(budget.occupiedBytes == size)
+  let competing = budget.lease()
+  #expect(throws: GatewayProtocolError.self) { try competing.reserve(size) }
+  body.release()
+  body.release()
+  #expect(budget.occupiedBytes == 0)
+  try competing.reserve(size)
+  competing.release()
+}

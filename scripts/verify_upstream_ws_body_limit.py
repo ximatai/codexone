@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Real-binary, loopback-only 16 MiB message boundary and per-turn HTTP fallback."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import base64
 import hashlib
 import http.client
@@ -158,6 +160,8 @@ class Provider(BaseHTTPRequestHandler):
                     if not mode.endswith('drop'):
                         send(self.connection, struct.pack('!H', 1011 if mode.endswith('other') else 1009), opcode=8)
                     return
+                if self.server.mode == 'hold':
+                    assert self.server.release.wait(45), 'Synthetic WS hold expired'
                 event = self.event(index)
                 lane = json.loads(body).get('stream_id')
                 if lane:
@@ -213,6 +217,62 @@ def configure(config, provider_port, contract):
     config.chmod(0o600)
 
 
+def held_body_budgets(port, server, contract):
+    """Parsing can drop raw bytes, but real socket requests still own their leases."""
+    def wait_calls(expected):
+        with server.guard:
+            assert server.guard.wait_for(lambda: len(server.calls) == expected, timeout=30)
+
+    def refused(size):
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        try:
+            connection.putrequest('POST', '/v1/responses')
+            connection.putheader('Authorization', 'Bearer ' + TOKEN)
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Content-Length', str(size))
+            connection.endheaders()
+            response = connection.getresponse()
+            assert response.status == 503
+            assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
+        finally:
+            connection.close()
+
+    server.release = threading.Event()
+    server.mode = 'hold'
+    before = len(server.calls)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        held = worker.submit(call_http, port, sized(30 * 1024 * 1024, contract))
+        try:
+            wait_calls(before + 1)
+            refused(20 * 1024 * 1024)
+            assert len(server.calls) == before + 1
+        finally:
+            server.release.set()
+        assert held.result(timeout=30)[0] == 200
+    server.release.clear()
+    try:
+        with ExitStack() as stack:
+            peers = [stack.enter_context(dial(port, headers=HEADERS, timeout=30)) for _ in range(2)]
+            for peer in peers:
+                request = sized(9 * 1024 * 1024, contract, native=True)
+                send(peer, wire({'type': 'response.create', **request}), masked=True,
+                     maximum_bytes=10 * 1024 * 1024)
+            wait_calls(before + 3)
+            refused(32 * 1024 * 1024)
+            assert len(server.calls) == before + 3
+            server.release.set()
+            for peer in peers:
+                opcode, body = receive(peer)
+                assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+    finally:
+        server.release.set()
+        server.mode = 'ok'
+    # Completion/connection teardown returns capacity; a fresh large request dispatches.
+    assert call_http(port, sized(31 * 1024 * 1024, contract))[0] == 200
+    print('PASS: HTTP and first WS turns retain body budget after parsing; completion returns capacity', flush=True)
+    return 4
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -239,6 +299,8 @@ def main():
                 count = 0
                 try:
                     if not args.failures_only:
+                        count += held_body_budgets(ports['data'], server, contract)
+                        ledger(root, count)
                         for route in ('json', 'sse', 'native'):
                             for size in (LIMIT - 1, LIMIT, LIMIT + 1):
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
