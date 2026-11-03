@@ -136,8 +136,10 @@ public struct ResponsesDataService: Service {
     clientConfiguration.maximumUsesPerConnection = 1
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
+    let compressionPool = ZstdUploadPool()
     let executor = HTTPResponseExecution(
-      protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
+      protocolExtensions: protocolExtensions, compressionPool: compressionPool,
+      imageCapacity: imageCapacity,
       controlCapacity: controlCapacity,
       sessionAffinity: sessionAffinity, turnStateOwners: turnStateOwners,
       controlHealth: controlHealth, client: client,
@@ -303,10 +305,12 @@ public struct ResponsesDataService: Service {
     } catch {
       for server in servers { try? await server.channel.close().get() }
       await channels.shutdown()
+      try await compressionPool.shutdown()
       try await client.shutdown()
       throw error
     }
     await channels.shutdown()
+    try await compressionPool.shutdown()
     try await client.shutdown()
   }
 

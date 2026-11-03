@@ -28,6 +28,8 @@ struct ResponsesConfiguration: Sendable {
     ])
   }
   var requestContract: ResponseRequestContract = .responses
+  var upstreamRequestCompression = "zstd"
+  var upstreamZstdMinimumBytes = 8_388_608
   var imageGeneration: ImageConfiguration? = nil
   var clientFingerprint = ClientFingerprint().resolved(models: [])
   var dataConnections = 128
@@ -41,6 +43,8 @@ extension SingleIdentityConfiguration {
       progressTimeoutSeconds: progressTimeoutSeconds,
       requestContract: upstreamContract.flatMap(ResponseRequestContract.init(rawValue:))
         ?? (upstreamBaseURL.hasPrefix("https://") ? .codexSubscription : .responses),
+      upstreamRequestCompression: upstreamRequestCompression ?? "zstd",
+      upstreamZstdMinimumBytes: upstreamZstdMinimumBytes ?? 8_388_608,
       imageGeneration: imageGeneration,
       clientFingerprint: (clientFingerprint ?? .init()).resolved(models: models),
       dataConnections: dataConnections ?? 128)
@@ -83,4 +87,10 @@ func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throw
           || efforts.contains(catalog.defaultReasoningEffort!))
     })
   else { throw ExecutionError.invalidCommand }
+}
+
+func validateUpstreamCompression(_ encoding: String?, _ threshold: Int?) throws {
+  guard ["zstd", "off"].contains(encoding ?? "zstd"), (threshold ?? 8_388_608) >= 0 else {
+    throw ExecutionError.invalidCommand
+  }
 }

@@ -44,6 +44,9 @@ final class ExecutionProgress: Sendable {
     idle = budget.idle
     state = Mutex(.init())
   }
+  func negotiateUpload() {
+    state.withLock { if !$0.received { $0.deadline = nil } }
+  }
   func requestSent() {
     state.withLock { value in
       guard !value.received, value.deadline == nil else { return }

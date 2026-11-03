@@ -6,6 +6,7 @@ import NIOHTTP1
 
 struct HTTPResponseExecution: Sendable {
   var protocolExtensions: ClientProtocolExtensionRegistry? = nil
+  var compressionPool: ZstdUploadPool? = nil
   let imageCapacity: ImageCapacity
   var controlCapacity = ControlCapacity()
   var sessionAffinity = SessionAffinity()
@@ -37,7 +38,8 @@ struct HTTPResponseExecution: Sendable {
     let effectiveImages =
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
-      protocolExtensions: protocolExtensions, imageCapacity: imageCapacity,
+      protocolExtensions: protocolExtensions, compressionPool: compressionPool,
+      imageCapacity: imageCapacity,
       controlCapacity: controlCapacity,
       sessionAffinity: sessionAffinity, turnStateOwners: turnStateOwners,
       controlHealth: controlHealth,
@@ -170,15 +172,57 @@ struct HTTPResponseExecution: Sendable {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
         let data = try wireDocument.data()
-        let upload = RequestUpload(bytes: data.count, transport: "http")
-        defer { upload.finish() }
-        // EOF follows AHC's backpressured consumption, not remote receipt.
-        upstream.body = .stream(
-          UploadBody(data: data, progress: progress, upload: upload),
-          length: .known(Int64(data.count)))
-        // The structured deadline owns classification; the client is a later transport fallback.
-        let response = try await client.execute(
-          upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+        // One encoding, one selected account and one attempt, including a 415 negotiation retry.
+        let canCompress =
+          configuration.requestContract == .codexSubscription
+          && configuration.upstreamRequestCompression == "zstd"
+          && data.count > configuration.upstreamZstdMinimumBytes
+        let template = upstream
+        @Sendable func send(compressed: Bool) async throws -> HTTPClientResponse {
+          var outgoing = template
+          outgoing.headers.remove(name: "content-length")
+          outgoing.headers.remove(name: "transfer-encoding")
+          outgoing.headers.remove(name: "content-encoding")
+          let upload = RequestUpload(
+            bytes: data.count, transport: "http", encoding: compressed ? "zstd" : "identity")
+          let owner: ZstdUpload?
+          if compressed, let compressionPool {
+            let zstd = ZstdUpload(
+              data: data, pool: compressionPool, progress: progress, upload: upload)
+            owner = zstd
+            outgoing.headers.add(name: "content-encoding", value: "zstd")
+            outgoing.body = .stream(ZstdUploadBody(owner: zstd), length: .unknown)
+          } else {
+            owner = nil
+            outgoing.body = .stream(
+              UploadBody(data: data, progress: progress, upload: upload),
+              length: .known(Int64(data.count)))
+          }
+          do {
+            let response = try await client.execute(
+              outgoing, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+            if let owner { await owner.close() }
+            upload.finish()
+            return response
+          } catch {
+            if let owner { await owner.close() }
+            upload.finish()
+            throw error
+          }
+        }
+        let compressed = canCompress && compressionPool?.reserve() == true
+        var firstResponse: HTTPClientResponse? = try await send(compressed: compressed)
+        let response: HTTPClientResponse
+        if compressed, firstResponse?.status == .unsupportedMediaType {
+          // No HTTP body events have been read; a prior WS fallback also proves no lifecycle.
+          // Negotiate once without changing admission or account health.
+          // Dispose the rejected response before creating a new connection; never re-encode Data.
+          firstResponse = nil
+          progress.negotiateUpload()
+          response = try await send(compressed: false)
+        } else {
+          response = firstResponse!
+        }
         await observeResponseHeaders(response.headers, account: authorization?.identity)
         guard response.status == .ok else {
           if isFallback, (400...499).contains(Int(response.status.code)) {
