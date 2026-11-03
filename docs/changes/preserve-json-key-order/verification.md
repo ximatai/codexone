@@ -35,6 +35,14 @@
 - 独立 TTL 修改的两项测试通过：只放行指定非负整数，删除未知/畸形成员与非对象容器，并证明计量证据不变；二进制 JSON/SSE/WS 验收同时检查两个 TTL 计数和未知嵌套字段删除后的原始字节。
 - `CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend` 一次完整通过（退出码 0）：严格 Swift 格式、架构检查、12 jobs 构建、425 项 Swift 测试和 35 个后端脚本全部通过。覆盖取消、总/进展超时、断流、提供者错误、重启和存储失败。未重复运行通过的完整 backend 验证。
 
+## 跨平台与边界补充
+
+独立合成实验：同一含三属性的工具经旧实现解码再编码 100 次，macOS arm64 出现 9 种字节表示，Linux amd64 出现 87 种。不同表示数取决于运行时，不作为验收期望。
+
+`verify_upstream_json.py` 用 116 个工具和五轮追加历史，覆盖 HTTP/WS 上游、JSON/SSE 下游与同一原生 WS 连接，并检查上游 cached 为 0、非零、缺失、非法时的响应和账本。它和 `verify_json_order.py` 都进入发行镜像构建，以便在 Linux 上把关。
+
+有序扫描结果与 Foundation 语义不一致时，解析以 Foundation 结果为准，只放弃该文档的顺序。保序不能修复客户端自身的对象顺序漂移，这类情况由客户端负责。
+
 ## 相关文档
 
 [提案](proposal.md) · [任务](tasks.md) · [验证](verification.md) · [协议](../../reference/specs/protocol.md)

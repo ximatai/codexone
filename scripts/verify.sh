@@ -39,6 +39,7 @@ backend_scripts() {
   run_check scripts/verify_codex_shapes.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_text_contract.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_json_order.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_upstream_json.py --binary "$backend_bin_dir/codexone" --require-stable
   run_check scripts/verify_request_parameters.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_turn_diagnostics.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_optional_reasoning.py --binary "$backend_bin_dir/codexone"

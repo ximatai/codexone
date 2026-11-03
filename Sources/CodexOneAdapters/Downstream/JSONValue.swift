@@ -72,7 +72,9 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
     }
     let value = try JSONDecoder().decode(Self.self, from: data)
     var scanner = JSONOrderScanner(data)
-    return try scanner.restore(value)
+    let ordered = try scanner.restore(value)
+    // Foundation owns the semantics on every platform; order is never worth a changed document.
+    return ordered == value ? ordered : value
   }
   func data(escapingSlashes: Bool = true) throws -> Data {
     var writer = JSONOrderedWriter(escapingSlashes: escapingSlashes)

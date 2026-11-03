@@ -210,3 +210,8 @@ extension LegacyJSONValue {
     "JSON_ORDER_BENCH bytes=\(data.count) tools=400 iterations=10 legacy_ms=\(old) ordered_ms=\(new)"
   )
 }
+
+@Test func duplicateKeysWithDifferentShapesKeepFoundationSemantics() throws {
+  let data = Data(#"{"a":{"x":1},"b":[1],"a":{"y":2},"b":{"z":3}}"#.utf8)
+  #expect(try JSONValue.decode(data) == JSONDecoder().decode(JSONValue.self, from: data))
+}
