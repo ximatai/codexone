@@ -20,7 +20,6 @@
     "verify_model_profiles_import.py",
     "verify_pool_config.py",
     "verify_upload_deadline.py",
-    "verify_upstream_ws_body_limit.py",
     "verify_business_day.py",
     "verify_home_panel.py"
   ],
@@ -47,6 +46,7 @@
     "verify_migration_readiness.py",
     "verify_trial_provider.py",
     "verify_lite.py",
-    "verify_text_contract.py"
+    "verify_text_contract.py",
+    "verify_upstream_ws_body_limit.py"
   ]
 ]
