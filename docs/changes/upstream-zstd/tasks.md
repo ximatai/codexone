@@ -10,9 +10,9 @@
 
 ## 提交 1：锁定依赖与许可
 
-- [ ] Package.swift 精确固定 1.5.7，锁定对应 revision，只有 Adapters 引用 libzstd；更新 THIRD_PARTY_NOTICES，明确选择 BSD-3-Clause。
+- [x] Package.swift 精确固定 1.5.7，锁定对应 revision，只有 Adapters 引用 libzstd；更新 THIRD_PARTY_NOTICES，明确选择 BSD-3-Clause。
 - [ ] macOS 与原生 Linux CI 消费 SwiftPM product；测冷/热构建、release 二进制和镜像层增量，不用 CMake 成功替代 Linux SwiftPM 验收。
-- [ ] 核对镜像 zstd/LICENSE、COPYING 与 licenses.tar.gz 正文、版权；补充现有安装许可检查。此提交不启用请求压缩。
+- [ ] 核对镜像 zstd/LICENSE、COPYING 与 licenses.tar.gz 正文、版权；补充现有安装许可检查。此提交不启用请求压缩。源码正文已核对；镜像及归档仍须 Linux 验收。
 
 ## 提交 2：有界流式封装与寿命
 

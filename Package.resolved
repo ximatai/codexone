@@ -1,5 +1,5 @@
 {
-  "originHash" : "8f8169af13144b0b9283eb7d35bc8ee814acc344b04f0e5f13ed13316a792e7a",
+  "originHash" : "4d0506d22404d06386289d8f0b416c67bff91b6db83d4604f5f8619658c9c50f",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -260,6 +260,15 @@
       "state" : {
         "revision" : "90bbbdab3ede12c803cfbe91646f291c092517a3",
         "version" : "2.16.2"
+      }
+    },
+    {
+      "identity" : "zstd",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/meta/zstd.git",
+      "state" : {
+        "revision" : "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "version" : "1.5.7"
       }
     }
   ],
