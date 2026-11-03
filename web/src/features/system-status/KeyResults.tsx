@@ -1,5 +1,16 @@
-import { Anchor, Group, Paper, Text, Title } from "@mantine/core";
+import { useState } from "react";
+import {
+  ActionIcon,
+  Badge,
+  Group,
+  Paper,
+  SegmentedControl,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 import { Link } from "react-router";
+import { IconExternalLink } from "@tabler/icons-react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { KeyName } from "../../shared/KeyName";
 import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
@@ -20,7 +31,12 @@ const columns: DataColumn<KeySummary>[] = [
     id: "key",
     title: "Key",
     width: "28%",
-    render: (row) => <KeyName {...row} />,
+    render: (row) => (
+      <Stack gap={4} align="flex-start">
+        <KeyName {...row} />
+        {row.enabled === false && <Badge color="gray">已停用</Badge>}
+      </Stack>
+    ),
   },
   ...results.map(([label, field, color]) => ({
     id: field,
@@ -54,6 +70,7 @@ export function KeyResults({
 }: {
   query: UseQueryResult<KeySummary[], Error>;
 }) {
+  const [filter, setFilter] = useState("active");
   return (
     <Paper
       withBorder
@@ -62,17 +79,37 @@ export function KeyResults({
       aria-label="今日 Key 请求汇总"
       className={styles.keySummary}
     >
-      <Group justify="space-between" mb="sm">
-        <Title
-          order={3}
-          size="h4"
-          title="UTC当日，按准入时间统计全部托管Key，不含准入前拒绝；结果未明不等于用量待核对。"
-        >
-          今日 Key 请求汇总
-        </Title>
-        <Anchor component={Link} to="/usage">
-          查看用量与诊断
-        </Anchor>
+      <Group justify="space-between" gap="xs" wrap="nowrap" mb="sm">
+        <Group gap={4} wrap="nowrap">
+          <Title
+            order={3}
+            size="h4"
+            title="UTC当日，按准入时间统计未归档Key，不含准入前拒绝；结果未明不等于用量待核对。"
+          >
+            今日 Key 请求汇总
+          </Title>
+          <ActionIcon
+            component={Link}
+            to="/usage"
+            variant="subtle"
+            size="sm"
+            aria-label="查看用量与诊断"
+            title="查看用量与诊断"
+          >
+            <IconExternalLink size={16} />
+          </ActionIcon>
+        </Group>
+        <SegmentedControl
+          size="xs"
+          style={{ flexShrink: 0 }}
+          aria-label="Key 展示范围"
+          value={filter}
+          onChange={setFilter}
+          data={[
+            { label: "今日活跃", value: "active" },
+            { label: "全部", value: "all" },
+          ]}
+        />
       </Group>
       {query.isError && !query.data ? (
         <Text size="sm" c="dimmed">
@@ -80,14 +117,19 @@ export function KeyResults({
         </Text>
       ) : (
         <DataTable
-          rows={[...(query.data ?? [])].sort(
-            (a, b) => b.admitted - a.admitted || a.keyID.localeCompare(b.keyID),
-          )}
+          rows={(query.data ?? [])
+            .filter((row) => filter === "all" || row.admitted > 0)
+            .sort(
+              (a, b) =>
+                b.admitted - a.admitted || a.keyID.localeCompare(b.keyID),
+            )}
           columns={columns}
           rowKey={(row) => row.keyID}
           loading={query.isPending}
           retry={() => void query.refetch()}
-          empty="暂无托管 Key。"
+          empty={
+            filter === "active" ? "今日暂无活跃 Key。" : "暂无未归档 Key。"
+          }
         />
       )}
     </Paper>

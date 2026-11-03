@@ -93,7 +93,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       return (keys.map(\.id), models, keys)
     }
   }
-  public func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary]) {
+  public func keyUsage(includeArchived: Bool = true) async throws -> (
+    startUnixSeconds: Int64, keys: [KeyUsageSummary]
+  ) {
     try await read { db in
       let start = db.clock.unixSeconds / 86400 * 86400
       let rows = try db.rows(
@@ -109,10 +111,15 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
             ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName'),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='succeeded' ELSE 0 END),0),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='cancelled' ELSE 0 END),0),
-          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state='intent' ELSE 0 END),0)
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state='intent' ELSE 0 END),0),
+          json_extract(k.metadata_json,'$.enabled')
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
+        WHERE ? OR json_extract(k.metadata_json,'$.archivedAtUnixSeconds') IS NULL
         GROUP BY k.id ORDER BY k.id LIMIT 257
-        """, (0..<7).flatMap { _ in [.number(start), .number(start + 86400)] }
+        """,
+        (0..<7).flatMap { _ in [.number(start), .number(start + 86400)] } + [
+          .number(includeArchived ? 1 : 0)
+        ]
       ) { row in
         let id = String(cString: sqlite3_column_text(row, 0))
         let tokenUsage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: id)
@@ -129,7 +136,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           lastUsedAtUnixSeconds: sqlite3_column_type(row, 6) == SQLITE_NULL
             ? nil : sqlite3_column_int64(row, 6),
           succeeded: sqlite3_column_int64(row, 8), cancelled: sqlite3_column_int64(row, 9),
-          inFlight: sqlite3_column_int64(row, 10), tokens: tokenUsage.tokens,
+          inFlight: sqlite3_column_int64(row, 10), enabled: sqlite3_column_int(row, 11) != 0,
+          tokens: tokenUsage.tokens,
           tokenUsageIncomplete: tokenUsage.incomplete)
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }

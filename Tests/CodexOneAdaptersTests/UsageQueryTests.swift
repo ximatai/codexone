@@ -603,3 +603,37 @@ private struct UsageFixture {
       + cursor)
   #expect(query.reasoningEffort == "xhigh" && query.cursor?.id == "a:synthetic")
 }
+
+@Test func keyUsageExcludesArchivedKeysButPreservesDisabledActivityAndHistory() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    try await f.insert("archived-activity", at: testUnixSeconds, evidence: usage(amount: 3))
+    try await f.insert(
+      "disabled-activity", key: "beta", at: testUnixSeconds, evidence: usage(amount: 4))
+    // Archive through the public store API; neither summary filtering nor disabling deletes history.
+    for id in ["alpha", "beta"] {
+      let key = try #require(try await f.store.listKeys().first { $0.id == id })
+      _ = try await f.store.updateKey(
+        id: id, revision: key.revision, enabled: false, policy: key.policy)
+    }
+    _ = try await f.store.setKeyArchived(id: "alpha", revision: 2, archived: true)
+    let all = try await f.reader.keyUsage()
+    let archived = try #require(all.keys.first { $0.key.id == "alpha" })
+    #expect(all.keys.count == 2)
+    #expect(archived.admitted == 1 && archived.lastUsedAtUnixSeconds == testUnixSeconds)
+    #expect(archived.tokens > 0)
+    let report = try await f.reader.keyUsage(includeArchived: false)
+    #expect(report.keys.count == 1)
+    #expect(report.keys.first?.key.id == "beta")
+    #expect(report.keys.first?.enabled == false && report.keys.first?.admitted == 1)
+    let start = testUnixSeconds / 86400 * 86400
+    let history = try await f.reader.queryUsage(
+      UsageQuery(startUnixSeconds: start, endUnixSeconds: start + 86400))
+    #expect(history.rows.count == 2)
+    #expect(try await f.reader.usageOptions().keys.contains("alpha"))
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}

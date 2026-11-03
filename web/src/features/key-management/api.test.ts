@@ -256,3 +256,26 @@ it("keeps the archived filter on every cursor page", async () => {
     "/api/keys?archived=true&after=key-1",
   ]);
 });
+
+it("all combines both paginated scopes and rejects partial reads", async () => {
+  const archived = { ...key, id: "archived-key", archivedAtUnixSeconds: 100 };
+  const fetch = vi.fn().mockImplementation((url: string) =>
+    Promise.resolve(
+      reply({
+        keys: url.includes("archived=true") ? [archived] : [key],
+        nextCursor: null,
+      }),
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  expect(await fetchKeys(undefined, "all")).toEqual([
+    parseKey(key),
+    parseKey(archived),
+  ]);
+  fetch.mockImplementation((url: string) =>
+    url.includes("archived=true")
+      ? Promise.reject(new Error("synthetic disconnect"))
+      : Promise.resolve(reply({ keys: [key], nextCursor: null })),
+  );
+  await expect(fetchKeys(undefined, "all")).rejects.toThrow();
+});

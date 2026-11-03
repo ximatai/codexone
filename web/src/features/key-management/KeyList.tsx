@@ -138,9 +138,11 @@ export function KeyList({
       empty={
         state.keys.length
           ? "没有匹配的密钥。"
-          : state.archived
-            ? "暂无已归档密钥。"
-            : "暂无未归档密钥。"
+          : state.archived === "all"
+            ? "暂无密钥。"
+            : state.archived
+              ? "暂无已归档密钥。"
+              : "暂无未归档密钥。"
       }
     />
   );

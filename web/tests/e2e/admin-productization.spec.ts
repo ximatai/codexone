@@ -108,7 +108,7 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
     Object.assign(keys[0], route.request().postDataJSON(), { revision: 2 });
     return route.fulfill({ json: { key: keys[0] } });
   });
-  await page.route("**/api/usage/keys", (route) => {
+  await page.route("**/api/usage/keys*", (route) => {
     const start = Math.floor(Date.now() / 86400000) * 86400;
     return route.fulfill({
       json: {

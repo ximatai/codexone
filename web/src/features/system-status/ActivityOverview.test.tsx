@@ -30,7 +30,7 @@ it("reports failed query and permits retry to explicit empty state", async () =>
   );
   fireEvent.click(screen.getByRole("button", { name: "刷新请求概览" }));
   expect(await screen.findByText("当前没有进行中的请求。")).toBeVisible();
-  expect(screen.getByText("暂无托管 Key。")).toBeVisible();
+  expect(screen.getByText("今日暂无活跃 Key。")).toBeVisible();
 });
 
 it("keeps trend evidence accessible and shows principal names instead of key identifiers", async () => {

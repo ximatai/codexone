@@ -1,14 +1,14 @@
 import { test, expect } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 import { expectNoHorizontalOverflow } from "./layout";
-test("overview shows compact exact metrics, capacity and all Key outcomes without request details", async ({
+test("overview filters active and all unarchived Keys with compact exact metrics", async ({
   page,
 }, info) => {
   const state = await reviewFixture(page);
   state.accounts.splice(1);
   state.alerts = 0;
   const now = Math.floor(Date.now() / 1000);
-  await page.route("**/api/usage/keys", (route) =>
+  await page.route("**/api/usage/keys*", (route) =>
     route.fulfill({
       json: {
         timezone: "UTC",
@@ -17,6 +17,7 @@ test("overview shows compact exact metrics, capacity and all Key outcomes withou
         keys: [
           {
             keyID: "synthetic-active",
+            enabled: false,
             displayName: "工作站",
             principal: "synthetic-active",
             admitted: 10,
@@ -108,6 +109,9 @@ test("overview shows compact exact metrics, capacity and all Key outcomes withou
   );
   const summary = page.getByRole("region", { name: "今日 Key 请求汇总" });
   await expect(summary.getByText("工作站", { exact: true })).toBeVisible();
+  await expect(summary.getByText("备用设备", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText("已停用", { exact: true })).toBeVisible();
+  await summary.getByText("全部", { exact: true }).click();
   await expect(summary.getByText("备用设备", { exact: true })).toBeVisible();
   await expect(summary.getByLabel("结果未明 2", { exact: true })).toBeVisible();
   await expect(
@@ -136,8 +140,30 @@ test("overview shows compact exact metrics, capacity and all Key outcomes withou
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
   await expect(summary.getByText("备用设备", { exact: true })).toBeVisible();
+  await summary.getByText("今日活跃", { exact: true }).click();
+  await expect(summary.getByText("备用设备", { exact: true })).toHaveCount(0);
   await page.screenshot({
     path: info.outputPath("overview-narrow.png"),
     fullPage: true,
   });
+});
+
+test("overview empty active list keeps the all filter available", async ({
+  page,
+}) => {
+  const state = await reviewFixture(page);
+  state.empty = true;
+  await page.goto("/");
+  const summary = page.getByRole("region", { name: "今日 Key 请求汇总" });
+  await expect(
+    summary.getByText("今日暂无活跃 Key。", { exact: true }),
+  ).toBeVisible();
+  await summary.getByText("全部", { exact: true }).click();
+  await expect(
+    summary.getByText("暂无未归档 Key。", { exact: true }),
+  ).toBeVisible();
+  await summary.getByText("今日活跃", { exact: true }).click();
+  await expect(
+    summary.getByText("今日暂无活跃 Key。", { exact: true }),
+  ).toBeVisible();
 });

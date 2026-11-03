@@ -342,9 +342,33 @@ def verify_account_configuration(binary):
         print('PASS: account production assembly and private master validation; safe metadata, one-shot invalid callback before network; check-config has no DB or credential output')
 
 
+def verify_archived_key_summary(binary):
+    with running_admin(binary) as f:
+        cookie, csrf = login(f)
+        auth = dict(cookie=cookie, origin=f.origin, csrf=csrf)
+        port = f.ports['admin']
+        created = document(request(port, 'POST', '/api/keys', dict(principal='synthetic-archive', models=['synthetic-text'], limits=LIMITS), **auth), 201)
+        key = created['key']
+        assert request(f.ports['data'], 'POST', '/v1/responses', dict(model='synthetic-text', input='synthetic', stream=False), headers={'Authorization': 'Bearer ' + created['secret']})[0] == 200
+        latest(f.root / 'state/core.sqlite', 'settled')
+        before = document(request(port, 'GET', '/api/usage/keys', **auth))['keys'][0]
+        key = document(request(port, 'PUT', '/api/keys/' + key['id'], dict(revision=key['revision'], enabled=False, models=key['models'], limits=key['limits']), **auth))['key']
+        document(request(port, 'PUT', '/api/keys/' + key['id'] + '/archive', dict(revision=key['revision']), **auth))
+        for suffix in ['', '?includeArchived=true']:
+            rows = document(request(port, 'GET', '/api/usage/keys' + suffix, **auth))['keys']
+            assert len(rows) == 1 and rows[0]['enabled'] is False
+            assert all(rows[0][field] == before[field] for field in ['admitted', 'tokens', 'lastUsedAtUnixSeconds'])
+        assert document(request(port, 'GET', '/api/usage/keys?includeArchived=false', **auth))['keys'] == []
+        assert len(document(request(port, 'GET', '/api/keys?archived=true', **auth))['keys']) == 1
+        for suffix in ['?includeArchived=', '?includeArchived=invalid', '?includeArchived=true&includeArchived=false', '?includeArchived=false&extra=1']:
+            assert request(port, 'GET', '/api/usage/keys' + suffix, **auth)[0] == 400
+        print('PASS: archived Key management retains usage and last-use; overview excludes archives; invalid filters rejected')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     binary = str(parser.parse_args().binary.resolve())
     verify(binary)
     verify_account_configuration(binary)
+    verify_archived_key_summary(binary)

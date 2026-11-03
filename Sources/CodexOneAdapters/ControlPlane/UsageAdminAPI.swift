@@ -140,9 +140,11 @@ public struct UsageAdminAPI: Sendable {
         ]))
     }
     routes.get("keys") { request async throws -> Response in
-      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let parameters = try Self.parameters(request.url.string, allowed: ["includeArchived"])
+      let includeArchived = parameters["includeArchived"] ?? "true"
+      guard ["true", "false"].contains(includeArchived) else { throw ExecutionError.invalidCommand }
       do {
-        let report = try await querying.keyUsage()
+        let report = try await querying.keyUsage(includeArchived: includeArchived == "true")
         return try Self.response(
           .object([
             "startUnixSeconds": .number(Decimal(report.startUnixSeconds)),
@@ -154,6 +156,7 @@ public struct UsageAdminAPI: Sendable {
                   "keyID": .string(value.key.id),
                   "displayName": value.key.displayName.map { .string($0) } ?? .null,
                   "principal": value.key.principal.map { .string($0) } ?? .null,
+                  "enabled": .bool(value.enabled),
                   "admitted": .number(Decimal(value.admitted)),
                   "tokens": .string(String(value.tokens)),
                   "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),

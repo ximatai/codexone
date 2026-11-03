@@ -534,6 +534,8 @@ it("archives with confirmation, reads the recycle bin and restores disabled", as
     return current;
   });
   render(<KeyManagement />);
+  fireEvent.click(await screen.findByRole("combobox", { name: "可用状态" }));
+  fireEvent.click(screen.getByRole("option", { name: "已禁用" }));
   await screen.findByText("全部模型");
   await openKeyDetails();
   fireEvent.click(await screen.findByRole("button", { name: /^归档$/ }));

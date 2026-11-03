@@ -16,7 +16,10 @@ function message(error: unknown): string {
       : "当前页面来源或会话验证不通过，请使用正确的管理地址。";
   return "管理服务暂时不可用，请稍后重试。";
 }
-export function useKeys(archived = false, closeDetails?: () => void) {
+export function useKeys(
+  archived: boolean | "all" = false,
+  closeDetails?: () => void,
+) {
   const [creating, setCreating] = useState(false);
   const owner = useManagementSession();
   const [checking, setChecking] = useState(true);
@@ -176,17 +179,16 @@ export function useKeys(archived = false, closeDetails?: () => void) {
           }
         }
       }
-      setKeys((old) =>
-        old.some((item) => item.id === key.id)
-          ? old
-              .map((item) => (item.id === key.id ? key : item))
-              .filter(
-                (item) => (item.archivedAtUnixSeconds != null) === archived,
-              )
-          : (key.archivedAtUnixSeconds != null) === archived
-            ? [key, ...old]
-            : old,
-      );
+      setKeys((old) => {
+        const updated = old.some((item) => item.id === key.id)
+          ? old.map((item) => (item.id === key.id ? key : item))
+          : [key, ...old];
+        return updated.filter(
+          (item) =>
+            archived === "all" ||
+            (item.archivedAtUnixSeconds != null) === archived,
+        );
+      });
       setEditing(null);
       closeDetails?.();
       setRotating(null);

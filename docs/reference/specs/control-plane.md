@@ -77,7 +77,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ### 管理产品化的兼容增量
 
-`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 无查询参数，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项仅有keyID、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回timezone=UTC、startUnixSeconds/endUnixSeconds及keys数组；每项含keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
 
 ## 管理台第二轮 API
 
@@ -178,6 +178,8 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 创建/更新必须显式提供 models：null 表示跟随全部当前配置对话模型，数组最多32个，[] 保持无对话授权（仅图片 Key）的语义。imageGeneration=true 时 imageModels 可为 null 表示全部配置图片模型；关闭时 null 与 [] 等价，缺失能力字段的关闭语义不变。管理与导入原样返回数组/null，策略版本包含 null。目录、准入、Responses 图片工具及 Images 共用当前配置与权限交集；配置生效后的新增/移除立即影响 null 范围 Key。列表与详情显示“全部模型”。不新增配置热重载。旧二进制不能解码 null 模型范围，回退前须转为显式清单，见[Key治理](../../guide/key-governance.md#兼容回退前提)。
 
+密钥管理缺省筛选 available，只展示启用且未到期的未归档 Key；显式 all 展示未归档及已归档，客户端并行读取两套既有分页接口、按 ID 去重、任一失败拒绝部分成功；归档和恢复后按当前范围更新列表。
+
 ## A18：账号重置卡
 
 所有接口复用 A10/A11 管理认证、精确 Origin/CSRF、共享 16 并发、8 KiB 输入、no-store 与安全错误；数据 Key 无权限，不接受客户端 request ID、owner 或提供者 URL。
@@ -205,7 +207,7 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 [文档导航](../../README.md)
 
-首页展示 UTC 当日全部托管 Key 的结果汇总，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
+首页展示 UTC 当日未归档托管 Key 的结果汇总；默认“今日活跃”只显示当日准入数大于零的 Key，可切换“全部”查看所有未归档 Key（包含零请求和已停用）；已停用者标注状态；空态保留切换入口，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
 
 大屏首页将生成就绪检查与管理连接状态合并到运行状态面板，账号并发随订阅账号展示。Key 摘要新增 inFlight（当日 intent 数）；结果未明为 admitted 减 succeeded、failed、cancelled、inFlight，不根据用量 pending 推断结果。
 

@@ -229,6 +229,7 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public let enabled: Bool
   public let tokens: Int64
   public let tokenUsageIncomplete: Bool
   public let key: UsageKeyOption
@@ -243,9 +244,10 @@ public struct KeyUsageSummary: Sendable {
   public init(
     key: UsageKeyOption, admitted: Int64, failed: Int64, pending: Int64,
     estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
-    succeeded: Int64, cancelled: Int64, inFlight: Int64, tokens: Int64 = 0,
+    succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true
   ) {
+    self.enabled = enabled
     self.tokens = tokens
     self.tokenUsageIncomplete = tokenUsageIncomplete
     self.key = key
@@ -265,7 +267,9 @@ public protocol UsageQuerying: Sendable {
   func dailyUsage(days: Int, keyID: String?, model: String?) async throws -> [DailyUsageBucket]
   func inFlightUsage(limit: Int) async throws -> [InFlightUsageRow]
   func queryUsage(_ query: UsageQuery) async throws -> UsageReport
-  func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary])
+  func keyUsage(includeArchived: Bool) async throws -> (
+    startUnixSeconds: Int64, keys: [KeyUsageSummary]
+  )
   func usageOptions() async throws -> (
     keys: [String], models: [String], keyOptions: [UsageKeyOption]
   )
@@ -345,6 +349,10 @@ public protocol ExecutionLiveObserving: Sendable {
 }
 
 extension UsageQuerying {
+  public func keyUsage() async throws -> (startUnixSeconds: Int64, keys: [KeyUsageSummary]) {
+    try await keyUsage(includeArchived: true)
+  }
+
   public func dailyUsage(days: Int, keyID: String?, model: String?, endUnixSeconds: Int64?)
     async throws -> [DailyUsageBucket]
   {

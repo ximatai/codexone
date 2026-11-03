@@ -168,8 +168,17 @@ export async function fetchOptions(signal?: AbortSignal): Promise<KeyOptions> {
 }
 export async function fetchKeys(
   signal?: AbortSignal,
-  archived = false,
+  archived: boolean | "all" = false,
 ): Promise<ManagedKey[]> {
+  if (archived === "all") {
+    const [current, history] = await Promise.all([
+      fetchKeys(signal, false),
+      fetchKeys(signal, true),
+    ]);
+    return [
+      ...new Map([...current, ...history].map((key) => [key.id, key])).values(),
+    ];
+  }
   let after: string | null = null;
   const result = new Map<string, ManagedKey>();
   for (let page = 0; page < 5; page++) {
@@ -279,6 +288,7 @@ export function matchesAvailability(
   filter: string,
   now = Date.now() / 1000,
 ): boolean {
+  if (filter === "" || filter === "all") return true;
   if (filter === "archived") return key.archivedAtUnixSeconds != null;
   if (key.archivedAtUnixSeconds != null) return false;
   const expiry = expirationState(key.expiresAtUnixSeconds, now);

@@ -79,7 +79,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
       },
     }),
   );
-  await page.route("**/api/usage/keys", (route) =>
+  await page.route("**/api/usage/keys*", (route) =>
     route.fulfill({
       json: {
         timezone: "UTC",

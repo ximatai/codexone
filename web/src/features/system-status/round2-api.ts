@@ -68,6 +68,7 @@ const keySummary = z
         z
           .object({
             keyID: z.string(),
+            enabled: z.boolean().optional(),
             displayName: z.string().nullish(),
             principal: z.string().nullish(),
             pending: count,
@@ -91,7 +92,9 @@ const keySummary = z
       report.endUnixSeconds - report.startUnixSeconds === 86400,
   );
 export async function fetchKeySummary(signal: AbortSignal) {
-  return keySummary.parse(await request("/api/usage/keys", { signal })).keys;
+  return keySummary.parse(
+    await request("/api/usage/keys?includeArchived=false", { signal }),
+  ).keys;
 }
 export type KeySummary = z.infer<typeof keySummary>["keys"][number];
 export function tokenTotal(bucket: DailyBucket): number | null {

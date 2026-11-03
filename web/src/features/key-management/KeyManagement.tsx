@@ -43,8 +43,10 @@ export function KeyManagement() {
   const positionedLocation = useRef<string | null>(null);
   const [params, setParams] = useSearchParams();
   const [detailID, setDetailID] = useState<string | null>(null);
-  const state = useKeys(params.get("status") === "archived", () =>
-    setDetailID(null),
+  const status = params.get("status") ?? "available";
+  const state = useKeys(
+    status === "all" || status === "" ? "all" : status === "archived",
+    () => setDetailID(null),
   );
   const owner = useManagementSession();
   const detail = state.keys.find((key) => key.id === detailID);
@@ -54,7 +56,6 @@ export function KeyManagement() {
   }, [detailID, detail, state.readAt, state.loading]);
   const [refresh, setRefresh] = useState(0);
   const search = params.get("q") ?? "";
-  const status = params.get("status") ?? "";
   const target = params.get("target");
   const list = useRef<HTMLDivElement>(null);
   const paging = useRef<number | null>(null);
@@ -244,7 +245,7 @@ export function KeyManagement() {
           allowDeselect={false}
           onChange={(value) => filter("status", value ?? "")}
           data={[
-            { value: "", label: "全部" },
+            { value: "all", label: "全部" },
             { value: "available", label: "可用" },
             { value: "expiring", label: "即将到期" },
             { value: "expired", label: "已到期" },
