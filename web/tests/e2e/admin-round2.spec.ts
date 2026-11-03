@@ -289,9 +289,15 @@ test("round two overview, usage, account name and key expiration", async ({
   await expect(expiry.getByLabel("到期日期（UTC）")).toHaveValue(
     new Date(Date.now() + 91 * 86400000).toISOString().slice(0, 10),
   );
-  await expiry
-    .getByLabel("到期日期（UTC）")
-    .fill(new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
+  // Type as a person does: only after focus has opened the calendar. Filling in
+  // the same tick as focus can lose the input before the date picker has settled.
+  const soonDate = new Date(Date.now() + 3 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  await dateInput.click();
+  await expect(page.locator("[data-dates-dropdown]")).toBeVisible();
+  await dateInput.fill(soonDate);
+  await expect(dateInput).toHaveValue(soonDate);
   await expiry.getByRole("button", { name: "保存到期时间" }).click();
   await expect(page.getByText("7 天内到期", { exact: true })).toBeVisible();
   await page.screenshot({
