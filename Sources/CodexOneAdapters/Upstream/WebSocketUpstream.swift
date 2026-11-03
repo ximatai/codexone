@@ -61,7 +61,11 @@ struct WebSocketUpstream: Sendable {
     let host = url.host!
     let tls = url.scheme == "https"
     let tlsContext = try tls ? NIOSSLContext(configuration: .makeClientConfiguration()) : nil
-    let channels = ProtocolChannels(limit: 1)
+    // Happy Eyeballs initializes one channel per address, and may start the next candidate before
+    // a failed channel's closeFuture fires. Its default 250 ms pacing permits about 40 concurrent
+    // candidates within our 10 s connect timeout; 64 leaves room for closing-channel overlap while
+    // bounding ownership even for large resolver results. NIO closes losers; cancellation owns all.
+    let channels = ProtocolChannels(limit: 64)
     do {
       try await withTaskCancellationHandler {
         let negotiated = try await ClientBootstrap(group: group).connectTimeout(.seconds(10))
