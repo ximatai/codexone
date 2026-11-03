@@ -1,12 +1,12 @@
 # 上游 HTTP 请求体 zstd 压缩提案
 
-方案已评审，按修订实施。目标是减少大请求上传量，同时控制当前已知的内存压力。规范基线：[协议 P05/P06/P08/P10、P27 及 WS 大请求边界](../../reference/specs/protocol.md)、[用量 U13](../../reference/specs/usage.md)、[执行生命周期](../../reference/specs/execution-lifecycle.md)、[运行容量](../../reference/specs/operations.md)。实现同步规范；不改变 schema。
+方案已评审，按修订实施。目标是减少大请求上传量，同时控制当前已知的内存压力。规范基线：[协议 P05/P06/P08/P10、P27 及 WS 大请求边界](../../reference/specs/protocol.md)、[用量 U13](../../reference/specs/usage.md)、[执行生命周期](../../reference/specs/execution-lifecycle.md)、[运行容量](../../reference/specs/operations.md)。实现同步规范；不改变 schema。下文行号记录方案阶段基线，实施结果与未关闭门禁见[验证记录](verification.md)。
 
 ## 依赖与发行证据
 
 固定 `https://github.com/meta/zstd.git` 的 **v1.5.7**（SwiftPM `.exact("1.5.7")`，tag 对应 commit `f8745da6ff1ad1e7bab384bd1f9d742439278e99`），使用 `libzstd` product/target；只在 Adapters/Upstream 加薄封装，负责 C context、分块、错误和释放，不把 C/NIO 类型带进 Core，不引入 gzip 或插件抽象。
 
-- [上游 Package.swift:1–35](https://github.com/meta/zstd/blob/v1.5.7/Package.swift#L1-L35)：tools 5.0、macOS 10.10 起，gnu11，直接编译 common/compress/decompress/dictBuilder，无传递包依赖。2026-11-03 在独立临时包用该 tag checkout 的本地依赖，macOS 27.2 arm64、Apple Swift 6.4.2，实测 `import libzstd`、流式编码和 release 链接通过。未修改本项目 manifest/锁文件。
+- [上游 Package.swift:1–35](https://github.com/meta/zstd/blob/v1.5.7/Package.swift#L1-L35)：tools 5.0、macOS 10.10 起，gnu11，直接编译 common/compress/decompress/dictBuilder，无传递包依赖。2026-11-03 在独立临时包用该 tag checkout 的本地依赖，macOS 27.2 arm64、Apple Swift 6.4.2，实测 `import libzstd`、流式编码和 release 链接通过。方案阶段未修改本项目 manifest/锁文件，实施现已按本节固定依赖。
 - Linux **推断可构建，未实测**：[上游 dev-short-tests.yml:74–106](https://github.com/meta/zstd/blob/v1.5.7/.github/workflows/dev-short-tests.yml#L74-L106) 配置 Ubuntu C 构建/测试及 Ubuntu/macOS CMake 矩阵；该 tag 未发现 SwiftPM CI。结合无 Apple 框架的 C target、本项目 `.github/workflows/verify.yml:52` 的 Ubuntu 24.04 / Swift 6.4.1，仅证明可行性依据，不能宣称 Linux SwiftPM 或网关集成已通过。实施后须在原生 Linux CI 验收，不在 Mac 上构建 Linux。
 - 构建成本：临时消费者 `swift build --build-system native -c release -j 1` 冷构建 10.71 秒（含薄测试程序、32 个 C/汇编编译步骤），无改动重建 2.40 秒；网络获取不计入。release 探针 423,784 字节，Foundation 空程序 52,056 字节，差约 363 KiB，含探针自身代码，**不是网关/镜像增量测量**。预计静态链接增加数百 KiB 量级代码，无需额外运行时 libzstd 包；完整源码 checkout/对象只增加构建缓存，最终镜像另增加许可证。Linux 二进制、镜像压缩层、冷构建时间均待测，不能套用 Mac 数值；`deploy/Dockerfile:43` 已用缓存与单 job。
 - [上游 lib/zstd.h:1–8](https://github.com/meta/zstd/blob/v1.5.7/lib/zstd.h#L1-L8) 明确 BSD/GPLv2 二选一，分发选择 BSD-3-Clause，保留 Meta 版权、条件和免责全文（[LICENSE:5–30](https://github.com/meta/zstd/blob/v1.5.7/LICENSE#L5-L30)）。实施提交更新 `THIRD_PARTY_NOTICES.md` 的精确版本与选择；现有 `deploy/Dockerfile:52` 递归收集 LICENSE/NOTICE/COPYING，`:118` 放入 `/opt/codexone/licenses/swift/zstd/`，因此 LICENSE 与 COPYING 都会保留。`.github/workflows/release.yml:133` 从镜像导出 `licenses.tar.gz`；`scripts/verify_installation.py:307` 比对 checkout 身份与锁文件，另增断言 zstd/LICENSE 正文非空。独立分发仍附许可材料，不能只改清单就认定产物合格（`THIRD_PARTY_NOTICES.md:9`）。
@@ -55,7 +55,7 @@
 
 无数据库 schema/数据迁移；启动开关 `off` 是必要回退路径，重启后恢复明文、known length；不热切换正在上传的帧。旧二进制回退前删除新增配置字段，既有 schema v11 与历史 unknown 不改。不能因关闭开关而重放已失败请求。此开关只撤销本变更，不代表任何其他版本间原库回退均安全。
 
-当前未决：v0.26.9 诊断校准阈值、原生 Linux SwiftPM/发行体积与许可证产物验收、并发 RSS 包络，以及真实订阅后端对 chunked zstd 的兼容性；这些都未在本次验证，真实客户端/订阅验收须另获授权。本次实现与验收只用合成数据及回环假上游，不发布。不修改 ResponsesDataService 的正文持有逻辑或分配器设置。
+当前未决：v0.26.9 诊断校准阈值、原生 Linux SwiftPM/发行体积与许可证产物验收、Linux 并发 RSS/共享线程包络，以及真实订阅后端对 chunked zstd 的兼容性；真实客户端/订阅验收须另获授权。本机 release 单上传与四 permit 的合成 RSS 对照已记录，不代替这些门禁。本次实现与验收只用合成数据及回环假上游，不发布。不修改 ResponsesDataService 的正文持有逻辑或分配器设置。
 
 ## 相关文档
 
