@@ -18,6 +18,8 @@
 
 可选出网代理设置 `CODEXONE_UPSTREAM_HTTP_PROXY`，只支持无认证 HTTP CONNECT，失败不直连回退；完整字段和约束见[配置参考](../reference/configuration.md)。
 
+订阅 HTTP 大请求默认启用 zstd：可信配置 `upstreamRequestCompression` 为 `zstd`（默认）或 `off`，`upstreamZstdMinimumBytes` 为非负整数（默认 8,388,608），最终编码严格大于该值才压缩。单身份和账号池均支持；WS、第三方合约、compact、Images 与辅助接口不压缩。关闭后重启恢复明文 Content-Length；旧程序回退前删除新增字段。压缩使用 chunked，与官方客户端整包 Content-Length 存在兼容差异，真实上游尚待验收；415 在事件前仅同账号明文重发一次，其余失败不自动重放。详见[协议](../reference/specs/protocol.md#p10重试超时与外部错误)。
+
 ## 实例业务日
 
 设置 `CODEXONE_BUSINESS_DAY_OFFSET=+08:00` 可使每日统计与 Key Token 限额按 UTC+08:00 零时换日。缺省 `UTC`；严格接受 `UTC` 或 `±HH:00`，范围 −12:00 至 +14:00，零偏移规范化为 UTC。非法值在配置检查时失败；启动日志记录规范化值。仅支持整小时固定偏移，不支持半小时时区或 DST。

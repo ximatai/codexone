@@ -106,6 +106,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
   let rejection: Int?
   var head: HTTPRequestHead?
   var body = Data()
+  var zstd: PoolZstdDecoder?
   init(_ state: PoolHTTPState, rejection: Int? = nil) {
     self.state = state
     self.rejection = rejection
@@ -122,13 +123,30 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
     switch unwrapInboundIn(data) {
     case .head(let head):
       self.head = head
-    case .body(let bytes): body.append(contentsOf: bytes.readableBytesView)
+      if head.headers["content-encoding"] == ["zstd"] {
+        #expect(head.headers["content-length"].isEmpty)
+        #expect(head.headers["transfer-encoding"] == ["chunked"])
+        zstd = try? PoolZstdDecoder()
+        #expect(zstd != nil)
+      }
+    case .body(let bytes):
+      do {
+        if let zstd {
+          try zstd.append(bytes, to: &body)
+        } else {
+          body.append(contentsOf: bytes.readableBytesView)
+        }
+      } catch {
+        Issue.record("Synthetic provider received an invalid zstd frame")
+        context.close(promise: nil)
+      }
     case .end:
       if head?.method == .GET, let rejection {
         reject(context, status: rejection)
         return
       }
       do {
+        #expect(zstd == nil || zstd?.ended == true)
         let request = try JSONValue.decode(body)
         guard let head else { throw ExecutionError.invalidCommand }
         let account = head.headers.first(name: "chatgpt-account-id") ?? ""
@@ -147,6 +165,12 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
           return value.calls.count
         }
         if state.value.withLock({ $0.stall }) { return }
+        if poolInput(request) == "synthetic-zstd-negotiate",
+          head.headers["content-encoding"] == ["zstd"]
+        {
+          reject(context, status: 415)
+          return
+        }
         if let input = poolInput(request), input.hasPrefix("http"),
           let status = Int(input.dropFirst(4))
         {
@@ -2716,6 +2740,50 @@ func oversizedWebSocketHTTPFallbackPreservesAccountAndHealth(reject: Bool, state
       }
       #expect(try await h.request().0 == 200)
       #expect(h.state.value.withLock { $0.upgrades } == (earlyClose ? 3 : 2))
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func compressed415NegotiationKeepsPoolAccountAttemptBytesAndHealth(rejectPlain: Bool) async throws {
+  try await withPoolHTTP(executionTimeout: 30) { h in
+    let beforeA = try await h.store.accountHealth(id: "a")
+    let beforeB = try await h.store.accountHealth(id: "b")
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    request.httpBody = try JSONValue.object([
+      "model": .string("synthetic-text"),
+      "input": .string(rejectPlain ? "http415" : "synthetic-zstd-negotiate"),
+      "instructions": .string(String(repeating: "x", count: 9 * 1024 * 1024)),
+    ]).data()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let (_, response) = try await session.data(for: request)
+    #expect((response as! HTTPURLResponse).statusCode == (rejectPlain ? 415 : 200))
+    #expect(h.calls.count == 2)
+    #expect(h.calls.first?.account == h.calls.last?.account)
+    #expect(h.calls.first?.body == h.calls.last?.body)
+    #expect(h.calls.first?.headers?["content-encoding"] == ["zstd"])
+    #expect(h.calls.last?.headers?["content-encoding"] == [])
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(try await h.store.accountHealth(id: "a") == beforeA)
+    #expect(try await h.store.accountHealth(id: "b") == beforeB)
+    let attempts = try await h.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts")
+    }
+    let settled = try await h.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='settled'")
+    }
+    #expect(attempts == 1 && settled == 1)
+    if rejectPlain {
+      let zero = try await h.store.perform {
+        try $0.scalar(
+          "SELECT COUNT(*) FROM attempts WHERE json_extract(usage_json,'$.inputTokens')=0 AND json_extract(usage_json,'$.providerRejectedBeforeOutput')=1"
+        )
+      }
+      #expect(zero == 1)
     }
   }
 }

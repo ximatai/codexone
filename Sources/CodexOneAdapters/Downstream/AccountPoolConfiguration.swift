@@ -13,6 +13,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   public let firstResponseTimeoutSeconds: Int?
   public let progressTimeoutSeconds: Int?
   public let modelProfilesFile: String?
+  public let upstreamRequestCompression: String?
+  public let upstreamZstdMinimumBytes: Int?
   public let upstreamTransport: String?
   private struct Field: CodingKey {
     let stringValue: String
@@ -25,7 +27,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     guard
       values.allKeys.allSatisfy({
         [
-          "models", "reservedMicros", "executionTimeoutSeconds", "upstreamTransport",
+          "upstreamRequestCompression", "upstreamZstdMinimumBytes", "models", "reservedMicros",
+          "executionTimeoutSeconds", "upstreamTransport",
           "imageGeneration", "firstResponseTimeoutSeconds", "progressTimeoutSeconds",
           "modelProfilesFile", "imageConcurrency", "clientFingerprint", "dataConnections",
         ].contains(
@@ -51,6 +54,10 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       Int.self, forKey: Field(stringValue: "progressTimeoutSeconds")!)
     modelProfilesFile = try values.decodeIfPresent(
       String.self, forKey: Field(stringValue: "modelProfilesFile")!)
+    upstreamRequestCompression = try values.decodeIfPresent(
+      String.self, forKey: Field(stringValue: "upstreamRequestCompression")!)
+    upstreamZstdMinimumBytes = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "upstreamZstdMinimumBytes")!)
     upstreamTransport = try values.decodeIfPresent(
       String.self, forKey: Field(stringValue: "upstreamTransport")!)
     try validate()
@@ -71,6 +78,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     }
   }
   public func validate() throws {
+    try validateUpstreamCompression(upstreamRequestCompression, upstreamZstdMinimumBytes)
     try clientFingerprint?.validate()
     guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
     _ = try ExecutionBudget(
@@ -90,6 +98,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       upstreamTransport: upstreamTransport ?? "http",
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
       progressTimeoutSeconds: progressTimeoutSeconds, requestContract: .codexSubscription,
+      upstreamRequestCompression: upstreamRequestCompression ?? "zstd",
+      upstreamZstdMinimumBytes: upstreamZstdMinimumBytes ?? 8_388_608,
       imageGeneration: imageGeneration,
       clientFingerprint: (clientFingerprint ?? .init()).resolved(models: models),
       dataConnections: dataConnections ?? 128)

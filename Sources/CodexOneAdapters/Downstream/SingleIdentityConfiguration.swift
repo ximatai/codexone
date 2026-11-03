@@ -42,6 +42,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let firstResponseTimeoutSeconds: Int?
   public let progressTimeoutSeconds: Int?
   public let modelProfilesFile: String?
+  public let upstreamRequestCompression: String?
+  public let upstreamZstdMinimumBytes: Int?
   public let upstreamTransport: String?
   public let upstreamContract: String?
 
@@ -50,7 +52,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       imageGeneration, managedKeys, namespace,
       identity, models, upstreamBaseURL, upstreamTokenFile, reservedMicros, executionTimeoutSeconds,
       firstResponseTimeoutSeconds, progressTimeoutSeconds, modelProfilesFile, upstreamTransport,
-      upstreamContract
+      upstreamContract, upstreamRequestCompression, upstreamZstdMinimumBytes
   }
   public init(from decoder: any Decoder) throws {
     try rejectUnknownImageFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
@@ -75,6 +77,10 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
       Int.self, forKey: .firstResponseTimeoutSeconds)
     progressTimeoutSeconds = try fields.decodeIfPresent(Int.self, forKey: .progressTimeoutSeconds)
     modelProfilesFile = try fields.decodeIfPresent(String.self, forKey: .modelProfilesFile)
+    upstreamRequestCompression = try fields.decodeIfPresent(
+      String.self, forKey: .upstreamRequestCompression)
+    upstreamZstdMinimumBytes = try fields.decodeIfPresent(
+      Int.self, forKey: .upstreamZstdMinimumBytes)
     upstreamTransport = try fields.decodeIfPresent(String.self, forKey: .upstreamTransport)
     upstreamContract = try fields.decodeIfPresent(String.self, forKey: .upstreamContract)
   }
@@ -101,6 +107,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   }
 
   public func validate() throws {
+    try validateUpstreamCompression(upstreamRequestCompression, upstreamZstdMinimumBytes)
     try clientFingerprint?.validate()
     guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
     _ = try ExecutionBudget(

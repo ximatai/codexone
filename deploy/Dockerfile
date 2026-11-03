@@ -30,7 +30,7 @@ FROM ${SWIFT_BUILD_IMAGE} AS verification-tools
 ARG APT_MIRROR=
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
     && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
-    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev python3 openssl \
+    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev libzstd1 python3 openssl \
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 WORKDIR /build
 

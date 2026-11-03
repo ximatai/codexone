@@ -308,6 +308,11 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
             assert set(licenses) == {pin['identity'] for pin in pins}
             run(['docker', 'exec', name, 'test', '-s', '/opt/codexone/LICENSE'])
+            zstd_license = run(['docker', 'exec', name, 'cat', '/opt/codexone/licenses/swift/zstd/LICENSE']).stdout
+            assert all(text in zstd_license for text in (
+                b'Meta Platforms', b'Redistribution and use', b'Neither the name', b'AS IS'))
+            zstd_copying = run(['docker', 'exec', name, 'cat', '/opt/codexone/licenses/swift/zstd/COPYING']).stdout
+            assert b'GNU GENERAL PUBLIC LICENSE' in zstd_copying and b'Version 2, June 1991' in zstd_copying
             npm_files = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/npm', '-type', 'f', '-size', '+0c', '-printf', '%P\n']).stdout.decode().splitlines()
             npm_lock = json.loads((REPO / 'web/package-lock.json').read_text())['packages']
             runtime_packages = {path.removeprefix('node_modules/') for path, entry in npm_lock.items()
