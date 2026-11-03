@@ -7,6 +7,7 @@
 ## 活动提案
 
 - [first-response-after-upload](first-response-after-upload/proposal.md) · [任务](first-response-after-upload/tasks.md)
+- [business-day](business-day/proposal.md) · [任务](business-day/tasks.md)
 
 - [upstream-ws-body-limit](upstream-ws-body-limit/proposal.md) · [任务](upstream-ws-body-limit/tasks.md)
 
