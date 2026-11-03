@@ -5,6 +5,9 @@ const count = z.number().int().nonnegative().safe();
 const metric = z
   .string()
   .regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine(
+    (value) => /^[0-9]+$/.test(value) && BigInt(value) <= 9223372036854775807n,
+  )
   .nullable();
 const metrics = z.object({
   inputTokens: metric,
@@ -104,6 +107,12 @@ const keySummary = z
           .object({
             keyID: z.string(),
             enabled: z.boolean().optional(),
+            tokens: metric.optional(),
+            tokenUsageIncomplete: z.boolean().optional(),
+            inputTokens: metric.optional(),
+            cachedTokens: metric.optional(),
+            cacheUsageIncomplete: z.boolean().optional(),
+            lastUsedAtUnixSeconds: count.nullish(),
             displayName: z.string().nullish(),
             principal: z.string().nullish(),
             pending: count,
@@ -116,7 +125,10 @@ const keySummary = z
           .refine(
             (row) =>
               row.succeeded + row.failed + row.cancelled + row.inFlight <=
-              row.admitted,
+                row.admitted &&
+              (row.inputTokens == null ||
+                row.cachedTokens == null ||
+                BigInt(row.cachedTokens) <= BigInt(row.inputTokens)),
           ),
       )
       .max(256),
@@ -133,6 +145,7 @@ export async function fetchKeySummary(signal: AbortSignal) {
   );
   return report;
 }
+export type KeySummaryReport = z.infer<typeof keySummary>;
 export type KeySummary = z.infer<typeof keySummary>["keys"][number];
 export function tokenTotal(bucket: DailyBucket): number | null {
   const { inputTokens, outputTokens } = bucket.metrics;

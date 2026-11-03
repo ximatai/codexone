@@ -67,3 +67,14 @@
     grid-column: 1/-1;
   }
 }
+
+.keyButton {
+  height: auto;
+  padding: 2px 0;
+  max-width: 100%;
+}
+.keyButton :global(.mantine-Button-label) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

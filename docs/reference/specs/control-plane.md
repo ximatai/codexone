@@ -61,7 +61,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 账号列表含非秘密 observability 摘要；`GET /api/accounts/:id/observation` 返回有界窗口/健康详情，`POST /:id/observe` 只接受空 JSON 对象，复用 session/CSRF。主次窗口显示真实比例、时长、重置、观察及失败时间；附加标识不猜测模型含义。手动读取失败明确提示并保留上次成功值，不能显示已更新；五分钟陈旧随页面时间推进。认证拒绝与模型冷却分开解释，不展示 namespace/令牌/上游错误正文。
 
-`GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/reasoningEffort/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。
+`GET /api/usage/options` 与 `/api/usage?start=&end=` 只读且仅管理员可用，复用 A10/A11 的来源/认证和 no-store；不开放给普通 Key。可选 key/model/mode/failure/failedOnly/state/reasoningEffort/outcome/after/limit，拒绝未知/重复参数及非规范游标，最多 100 行；查询繁忙安全 429。DTO 累计用量/估算微单位为十进制字符串或 null，计数/UTC 秒为整数。策略/历史不含正文、图片或凭证。U10 的区间与全时间暴露分别呈现。
 
 管理台采用 hash 路由，访问密钥、订阅账号和用量共享同一管理会话 owner；用量为独立页面，点击某 Key 以 URL 筛选直接进入。仅可读筛选、对象定位 ID 与页码进入 URL，游标、一次性秘密、授权回调和 CSRF 不进入 URL 或持久缓存。用量游标、固定查询窗口和列表滚动位置仅在当前管理会话内存保留，登出或会话更换清除；仅浏览器历史返回（POP）恢复筛选、页码与位置，用量位置按筛选与页码分别记忆；侧栏或链接新进入遵循当前 URL 并从顶部开始，游标失效时明确提示并回到可读取的首页。翻页成功回到列表顶部，Key 客户端每页 50 条。表头随页面滚动吸顶并避开顶栏，不引入双重纵向滚动。创建/编辑以抽屉按需呈现，关键一次性秘密在独立短寿命弹窗中显示。失败读取保留标注的上次成功筛选/快照，旧请求返回不能覆盖新选择；卸载、登出、会话失效清除私有界面。Key 登出开始即隐藏界面并重新取得当前 CSRF 再撤销；未确认只能重试登出，不允许读列表恢复操作。大屏优先实际操作验收。
 
@@ -77,7 +77,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ### 管理产品化的兼容增量
 
-`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回businessDay={offsetMinutes}、timezone（UTC 或 UTC±HH:00）、startUnixSeconds/endUnixSeconds及keys数组；每项含keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回businessDay={offsetMinutes}、timezone（UTC 或 UTC±HH:00）、startUnixSeconds/endUnixSeconds及keys数组；每项含既有 tokens（十进制字符串）、tokenUsageIncomplete，新增可空 inputTokens/cachedTokens（十进制字符串）、cacheUsageIncomplete，并保留keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
 
 ## 管理台第二轮 API
 
@@ -211,7 +211,12 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 [文档导航](../../README.md)
 
-首页展示 业务日当日未归档托管 Key 的结果汇总；默认“今日活跃”只显示当日准入数大于零的 Key，可切换“全部”查看所有未归档 Key（包含零请求和已停用）；已停用者标注状态；空态保留切换入口，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按全时间最近准入秒倒序，同秒按 keyID 稳定升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。六列为 Key、最近活动、请求、失败、Token、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+
+失败率=failed/admitted，取消/执行中/未明不计为失败；仅 admitted≥20、failed≥5 且失败率≥20% 时橙色强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
+
+Token 与限额共用治理投影，部分证据显示已观测下界。缓存率=已观测宿主用量的 SUM(cached)/SUM(input)，无用量请求不进入分母且不使已有率变成 dash；tooltip/详情说明缺失，只有无已观测输入（含输入合计0）为 dash，真实0%保留；原生 Images 不适用宿主缓存。计数/比率用整数与 BigInt 保真，不平均逐请求百分比，拒绝缓存大于输入。单快照分组读取，禁止每 Key 追加统计请求或查询。
+
 
 大屏首页将生成就绪检查与管理连接状态合并到运行状态面板，账号并发随订阅账号展示。Key 摘要新增 inFlight（当日 intent 数）；结果未明为 admitted 减 succeeded、failed、cancelled、inFlight，不根据用量 pending 推断结果。
 

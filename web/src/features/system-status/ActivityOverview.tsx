@@ -169,13 +169,7 @@ export function ActivityOverview({
       )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
-          <KeyResults
-            query={
-              { ...keySummary, data: keySummary.data?.keys } as Parameters<
-                typeof KeyResults
-              >[0]["query"]
-            }
-          />
+          <KeyResults query={keySummary} />
           <Paper withBorder p="md">
             <Group justify="space-between" mb="xs">
               <Title order={3} size="h4">

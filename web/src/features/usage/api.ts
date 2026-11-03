@@ -11,6 +11,7 @@ export interface UsageFilters {
   key: string;
   model: string;
   reasoningEffort?: string;
+  outcome?: string;
   mode: string;
   failure: string;
   state: string;
@@ -372,6 +373,7 @@ export function usageParameters(
     "failure",
     "state",
     "reasoningEffort",
+    "outcome",
   ] as const)
     if (filters[name]?.trim()) parameters.set(name, filters[name]!.trim());
   if (filters.failedOnly) parameters.set("failedOnly", "true");

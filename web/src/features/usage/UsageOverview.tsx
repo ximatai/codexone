@@ -590,6 +590,17 @@ export function UsageOverview({
               ]}
             />
             <Select
+              label="请求结果"
+              value={draft.outcome ?? ""}
+              disabled={busy}
+              onChange={(value) => update("outcome", value ?? "")}
+              allowDeselect={false}
+              data={[
+                { value: "", label: "全部结果" },
+                { value: "failed", label: "失败" },
+              ]}
+            />
+            <Select
               label="用量状态"
               value={draft.state}
               disabled={busy}
@@ -660,6 +671,7 @@ export function UsageOverview({
               ? ` · ${failures[applied.failure] ?? "其他异常"}`
               : ""}
             {applied?.state ? ` · ${states[applied.state]}` : ""}
+            {applied?.outcome === "failed" ? " · 请求结果：失败" : ""}
             {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>

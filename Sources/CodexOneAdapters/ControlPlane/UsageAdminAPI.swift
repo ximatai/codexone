@@ -166,6 +166,9 @@ public struct UsageAdminAPI: Sendable {
                   "admitted": .number(Decimal(value.admitted)),
                   "tokens": .string(String(value.tokens)),
                   "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
+                  "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
+                  "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,
+                  "cacheUsageIncomplete": .bool(value.cacheUsageIncomplete),
                   "inFlight": .number(Decimal(value.inFlight)),
                   "succeeded": .number(Decimal(value.succeeded)),
                   "cancelled": .number(Decimal(value.cancelled)),
@@ -212,7 +215,7 @@ public struct UsageAdminAPI: Sendable {
   static func parse(_ url: String) throws -> UsageQuery {
     let allowed: Set<String> = [
       "start", "end", "key", "model", "mode", "failure", "failedOnly", "state", "after", "limit",
-      "reasoningEffort",
+      "reasoningEffort", "outcome",
     ]
     let entries = URLComponents(string: url)?.queryItems ?? []
     guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,
@@ -227,6 +230,7 @@ public struct UsageAdminAPI: Sendable {
     let state = values["state"].flatMap(ExecutionSnapshot.State.init(rawValue:))
     guard values["mode"] == nil || mode != nil, values["failure"] == nil || failure != nil,
       values["state"] == nil || state != nil,
+      values["outcome"] == nil || values["outcome"] == "failed",
       values["failedOnly"] == nil || ["true", "false"].contains(values["failedOnly"]!)
     else { throw ExecutionError.invalidCommand }
     let limit: Int
@@ -241,6 +245,7 @@ public struct UsageAdminAPI: Sendable {
       startUnixSeconds: start, endUnixSeconds: end, keyID: values["key"], model: values["model"],
       mode: mode, failure: failure, failedOnly: values["failedOnly"] == "true", state: state,
       reasoningEffort: values["reasoningEffort"],
+      outcome: values["outcome"].flatMap(ExecutionOutcome.Kind.init(rawValue:)),
       cursor: cursor, limit: limit)
   }
   private static func decodeCursor(_ raw: String) throws -> UsageCursor {

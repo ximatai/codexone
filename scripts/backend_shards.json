@@ -20,7 +20,8 @@
     "verify_pool_config.py",
     "verify_upload_deadline.py",
     "verify_upstream_ws_body_limit.py",
-    "verify_business_day.py"
+    "verify_business_day.py",
+    "verify_home_panel.py"
   ],
   [
     "verify_protocol.py",

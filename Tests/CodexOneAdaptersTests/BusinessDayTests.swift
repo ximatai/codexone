@@ -158,3 +158,62 @@ func businessDayAdmissionUsesTransactionTimeResetsLocallyAndReprojectsAfterResta
     try record.reconciling(baseline, at: end + 1, businessDay: day)
   }
 }
+
+@Test func homeKeySummaryCacheUsesObservedUsageAndExactFailureExcludesDiagnostics() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let day = try BusinessDayDefinition(offsetMinutes: 480)
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock, businessDay: day)
+  let key = try await store.createKey(
+    id: "panel", principal: "p", digest: keyDigest("synthetic-panel"),
+    policy: .init(
+      models: ["synthetic-text"],
+      limits: .init(
+        requests: nil, active: 4, unresolved: nil, budgetMicros: nil, unresolvedMicros: nil)))
+  for (id, kind, evidence) in [
+    (
+      "known", ExecutionOutcome.Kind.succeeded,
+      Optional(
+        UsageEvidence(
+          revision: 1, inputTokens: 100, outputTokens: 10, cachedTokens: 25, images: 0,
+          estimatedMicros: 0, completeness: .complete))
+    ),
+    ("failure", .failed, nil), ("cancelled", .cancelled, nil),
+  ] {
+    try await store.admit(businessAdmission(id, key: key))
+    try await store.finalize(
+      attempt: id, evidence: evidence,
+      outcome: .init(
+        failure: kind == .failed
+          ? .upstreamUnavailable : kind == .cancelled ? .clientCancelled : nil,
+        atUnixSeconds: testUnixSeconds))
+  }
+  try await store.recordRejection(
+    requestID: "diagnostic", keyID: key.id, model: "synthetic-text", mode: .generation,
+    failure: .localCapacity)
+  let reader = try await store.makeUsageReader()
+  let summary = try await reader.keyUsage()
+  let row = try #require(summary.keys.first)
+  #expect(row.admitted == 3 && row.failed == 1 && row.cancelled == 1)
+  #expect(row.tokens == 110 && row.tokenUsageIncomplete)
+  #expect(row.inputTokens == 100 && row.cachedTokens == 25 && row.cacheUsageIncomplete)
+  let failures = try await reader.queryUsage(
+    .init(
+      startUnixSeconds: summary.startUnixSeconds, endUnixSeconds: summary.startUnixSeconds + 86400,
+      keyID: key.id, outcome: .failed))
+  #expect(failures.totals.admitted == row.failed && failures.totals.rejected == 0)
+  #expect(failures.rows.map(\.id) == ["failure"])
+  let combined = try await reader.queryUsage(
+    .init(
+      startUnixSeconds: summary.startUnixSeconds, endUnixSeconds: summary.startUnixSeconds + 86400,
+      keyID: key.id, failedOnly: true, outcome: .failed))
+  #expect(combined.totals.failed == 1 && combined.totals.rejected == 0)
+  #expect(throws: ExecutionError.invalidCommand) {
+    try UsageAdminAPI.parse("/api/usage?start=1800000000&end=1800003600&outcome=cancelled")
+  }
+  await reader.close()
+  await store.close()
+}

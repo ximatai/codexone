@@ -117,6 +117,11 @@ export async function reviewFixture(page: Page) {
         keys: (state.empty ? [] : keys).map((key) => ({
           keyID: key.id,
           principal: key.principal,
+          tokens: "3000000",
+          tokenUsageIncomplete: false,
+          inputTokens: "2000000",
+          cachedTokens: "1000000",
+          cacheUsageIncomplete: false,
           admitted: 980,
           succeeded: 979,
           cancelled: 1,

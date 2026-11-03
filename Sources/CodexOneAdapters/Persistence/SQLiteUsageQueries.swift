@@ -45,6 +45,13 @@ extension SQLiteUsageReader {
         diagnostic ? "failure=?" : "json_extract(outcome_json,'$.failure')=?",
         .text(failure.rawValue))
     }
+    if let outcome = query.outcome {
+      if diagnostic {
+        result.terms.append("0")
+      } else {
+        add("json_extract(outcome_json,'$.kind')=?", .text(outcome.rawValue))
+      }
+    }
     if query.failedOnly && !diagnostic {
       result.terms.append("json_extract(outcome_json,'$.failure') IS NOT NULL")
     }

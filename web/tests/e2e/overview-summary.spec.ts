@@ -1,169 +1,212 @@
 import { test, expect } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
+import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { expectNoHorizontalOverflow } from "./layout";
-test("overview filters active and all unarchived Keys with compact exact metrics", async ({
-  page,
-}, info) => {
-  const state = await reviewFixture(page);
-  state.accounts.splice(1);
-  state.alerts = 0;
-  const now = Math.floor(Date.now() / 1000);
-  await page.route("**/api/usage/keys*", (route) =>
-    route.fulfill({
-      json: {
-        timezone: "UTC",
-        startUnixSeconds: Math.floor(now / 86400) * 86400,
-        endUnixSeconds: (Math.floor(now / 86400) + 1) * 86400,
-        keys: [
-          {
-            keyID: "synthetic-active",
-            enabled: false,
-            displayName: "工作站",
-            principal: "synthetic-active",
-            admitted: 10,
-            succeeded: 4,
-            failed: 2,
-            cancelled: 1,
-            pending: 4,
-            inFlight: 1,
-          },
-          {
-            keyID: "synthetic-idle",
-            displayName: "备用设备",
-            principal: "synthetic-idle",
-            admitted: 0,
-            succeeded: 0,
-            failed: 0,
-            cancelled: 0,
-            pending: 0,
-            inFlight: 0,
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/api/usage/daily?*", (route) =>
-    route.fulfill({
-      json: {
-        timezone: "UTC",
-        days: 7,
-        buckets: [
-          {
-            atUnixSeconds: Math.floor(now / 86400) * 86400,
-            requests: 10,
-            succeeded: 4,
-            failed: 2,
-            cancelled: 1,
-            failures: { upstream_rejected: 2 },
+import { mkdir } from "node:fs/promises";
+
+for (const width of [1920, 390]) {
+  test(`active Key panel preserves observed cache, details and failure dates at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1200 });
+    await page.clock.setFixedTime(new Date("2026-11-03T02:00:00Z"));
+    const state = await reviewFixture(page);
+    state.accounts.splice(1);
+    state.alerts = 0;
+    const start = Date.parse("2026-11-02T16:00:00Z") / 1000;
+    const metadata = {
+      timezone: "UTC+08:00",
+      businessDay: { offsetMinutes: 480 },
+    };
+    const base = {
+      enabled: true,
+      admitted: 25,
+      succeeded: 17,
+      failed: 5,
+      cancelled: 1,
+      pending: 2,
+      inFlight: 1,
+      tokens: "10000000000000001",
+      tokenUsageIncomplete: true,
+      inputTokens: "1000",
+      cachedTokens: "250",
+      cacheUsageIncomplete: true,
+    };
+    await page.route("**/api/usage/daily?*", (route) =>
+      route.fulfill({
+        json: {
+          ...metadata,
+          days: 7,
+          buckets: Array.from({ length: 7 }, (_, i) => ({
+            atUnixSeconds: start - (6 - i) * 86400,
+            requests: 35,
+            succeeded: 19,
+            failed: 10,
+            cancelled: 2,
+            failures: { upstream_unavailable: 10 },
             metrics: {
-              inputTokens: "2000000000000",
-              outputTokens: "234",
-              cachedTokens: "0",
+              inputTokens: "2000",
+              outputTokens: "300",
+              cachedTokens: "250",
               images: null,
               estimatedMicros: "20",
             },
-          },
-        ],
-      },
-    }),
-  );
-  await page.route("**/api/usage/headroom", (route) =>
-    route.fulfill({
-      json: {
-        capacities: [
-          {
-            name: "daily_requests",
-            current: "90",
-            limit: "100",
-            blocking: false,
-          },
-          {
-            name: "daily_estimated_micros",
-            current: "20",
-            limit: "100",
-            blocking: false,
-          },
-        ],
-        accounts: [
-          {
-            id: "synthetic-account-0",
-            current: 4,
-            peak24Hours: 12,
-            limit: 16,
-            blocking: true,
-          },
-        ],
-        unknownReconciliation: {
-          count: 3,
-          beforeUnixSeconds: now - 86400,
-          periodSeconds: 86400,
+          })),
         },
-      },
-    }),
-  );
-  await page.setViewportSize({ width: 1920, height: 1680 });
-  await page.goto("/");
-  await expect(page.getByText("2 万亿", { exact: true })).toHaveAttribute(
-    "title",
-    "2,000,000,000,234",
-  );
-  const summary = page.getByRole("region", { name: "今日 Key 请求汇总" });
-  await expect(summary.getByText("工作站", { exact: true })).toBeVisible();
-  await expect(summary.getByText("备用设备", { exact: true })).toHaveCount(0);
-  await expect(summary.getByText("已停用", { exact: true })).toBeVisible();
-  await summary.getByText("全部", { exact: true }).click();
-  await expect(summary.getByText("备用设备", { exact: true })).toBeVisible();
-  await expect(summary.getByLabel("结果未明 2", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "最近请求", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText("参考阈值 $0.0001 · 已用 20.0%", { exact: true }),
-  ).toBeVisible();
-  expect(state.reads.some((row) => row.path === "/api/usage")).toBe(false);
-  await expect(summary.getByLabel("执行中 1", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "运行状态", exact: true }),
-  ).toBeInViewport();
-  expect(
-    await page
-      .getByRole("heading", { name: "进行中请求", exact: true })
-      .locator("..")
-      .locator("..")
-      .evaluate((node) => node.getBoundingClientRect().height),
-  ).toBeLessThan(140);
-  await expectNoHorizontalOverflow(page);
-  await page.screenshot({
-    path: info.outputPath("overview-wide.png"),
-    fullPage: true,
+      }),
+    );
+    let failKeys = false;
+    await page.route("**/api/usage/keys*", (route) =>
+      failKeys
+        ? route.fulfill({
+            status: 503,
+            json: { error: { code: "synthetic_failure" } },
+          })
+        : route.fulfill({
+            json: {
+              ...metadata,
+              startUnixSeconds: start,
+              endUnixSeconds: start + 86400,
+              keys: [
+                {
+                  ...base,
+                  keyID: "high",
+                  principal: "legacy-p-synthetic",
+                  enabled: false,
+                  lastUsedAtUnixSeconds: start + 2,
+                },
+                {
+                  ...base,
+                  keyID: "latest",
+                  principal: "合成新设备",
+                  displayName: "最近设备",
+                  admitted: 10,
+                  succeeded: 2,
+                  failed: 5,
+                  cachedTokens: "0",
+                  lastUsedAtUnixSeconds: start + 3,
+                },
+                {
+                  ...base,
+                  keyID: "idle",
+                  principal: "不应出现",
+                  admitted: 0,
+                  succeeded: 0,
+                  failed: 0,
+                  cancelled: 0,
+                  inFlight: 0,
+                },
+              ],
+            },
+          }),
+    );
+    await page.route("**/api/usage/options", (route) =>
+      route.fulfill({
+        json: {
+          ...metadata,
+          keys: ["high"],
+          models: ["synthetic-text"],
+          failures: [],
+        },
+      }),
+    );
+    const queries: URL[] = [];
+    await page.route("**/api/usage?*", (route) => {
+      const url = new URL(route.request().url());
+      queries.push(url);
+      const report = reportFixture();
+      return route.fulfill({
+        json: {
+          ...report,
+          ...metadata,
+          startUnixSeconds: start,
+          endUnixSeconds: start + 86400,
+          totals: {
+            ...report.totals,
+            admitted: 5,
+            failed: 5,
+            cancelled: 0,
+            inFlight: 0,
+            unknown: 0,
+            complete: 5,
+            partial: 0,
+            unavailable: 0,
+            recordedRejections: 0,
+          },
+          buckets: Array.from({ length: 24 }, (_, i) => ({
+            atUnixSeconds: start + i * 3600,
+            admitted: i === 0 ? 5 : 0,
+            recordedRejections: 0,
+            unresolved: 0,
+          })),
+          rows: [],
+          nextCursor: null,
+        },
+      });
+    });
+    await page.goto("/");
+    const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
+    await expect(
+      panel.getByRole("button", { name: "未命名 Key" }),
+    ).toBeVisible();
+    await expect(panel.getByText("不应出现", { exact: true })).toHaveCount(0);
+    await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
+    await expect(panel.getByText("已停用", { exact: true })).toBeVisible();
+    await expect(panel.getByText("失败偏高", { exact: true })).toHaveCount(1);
+    await expect(panel.getByText("25%", { exact: true })).toHaveAttribute(
+      "title",
+      /部分请求/,
+    );
+    await expect(panel.getByText("0%", { exact: true })).toBeVisible();
+    await expect(panel.getByLabel("取消 1", { exact: true })).toHaveCount(2);
+    await expect(panel.getByLabel("结果未明 1", { exact: true })).toHaveCount(
+      2,
+    );
+    const first = panel.locator("tbody tr").first();
+    await expect(first).toContainText("最近设备");
+    const name = panel.getByRole("button", { name: "未命名 Key" });
+    await name.focus();
+    await name.press("Enter");
+    const detail = page.getByRole("dialog", { name: "Key 详情" });
+    await expect(detail).toContainText("legacy-p-synthetic");
+    await expect(detail).toContainText("10,000,000,000,000,001");
+    await detail.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(detail).toBeHidden();
+    await expectNoHorizontalOverflow(page);
+    await mkdir("../artifacts/business-day", { recursive: true });
+    await page.screenshot({
+      path: `../artifacts/business-day/panel-${width}.png`,
+      fullPage: true,
+    });
+    failKeys = true;
+    await page.getByRole("button", { name: "刷新请求概览" }).click();
+    await expect(panel.getByText(/读取失败，保留上次成功快照/)).toBeVisible();
+    await page.getByRole("switch", { name: "自动刷新（15 秒）" }).uncheck();
+    await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
+    await panel.getByRole("link", { name: "未命名 Key 失败 5" }).click();
+    await expect(page.getByText("请求明细", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("当前结果筛选")).toContainText(
+      "请求结果：失败",
+    );
+    expect(queries[0].searchParams.get("start")).toBe(String(start));
+    expect(queries[0].searchParams.get("end")).toBe(String(start + 86400));
+    expect(queries[0].searchParams.get("outcome")).toBe("failed");
+    expect(page.url()).toContain("start=2026-11-03");
+    expect(page.url()).toContain("end=2026-11-03");
+    await expectNoHorizontalOverflow(page);
   });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expectNoHorizontalOverflow(page);
-  await expect(summary.getByText("备用设备", { exact: true })).toBeVisible();
-  await summary.getByText("今日活跃", { exact: true }).click();
-  await expect(summary.getByText("备用设备", { exact: true })).toHaveCount(0);
-  await page.screenshot({
-    path: info.outputPath("overview-narrow.png"),
-    fullPage: true,
-  });
-});
+}
 
-test("overview empty active list keeps the all filter available", async ({
-  page,
-}) => {
+test("overview empty active list has no range toggle", async ({ page }) => {
   const state = await reviewFixture(page);
   state.empty = true;
   await page.goto("/");
-  const summary = page.getByRole("region", { name: "今日 Key 请求汇总" });
+  const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
   await expect(
-    summary.getByText("今日暂无活跃 Key。", { exact: true }),
+    panel.getByText("今日暂无活跃 Key。", { exact: true }),
   ).toBeVisible();
-  await summary.getByText("全部", { exact: true }).click();
   await expect(
-    summary.getByText("暂无未归档 Key。", { exact: true }),
-  ).toBeVisible();
-  await summary.getByText("今日活跃", { exact: true }).click();
-  await expect(
-    summary.getByText("今日暂无活跃 Key。", { exact: true }),
-  ).toBeVisible();
+    panel.getByRole("textbox", { name: "Key 展示范围" }),
+  ).toHaveCount(0);
+  await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
 });

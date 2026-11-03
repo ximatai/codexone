@@ -20,19 +20,19 @@
 
 ## 3. 首页面板（叠加独立提交）
 
-- [ ] 摘要 input/cached 与无用量提示；Token 复用治理投影。
-- [ ] 精确 outcome=failed 全链路，排除准入前诊断，保留 failedOnly 原意。
-- [ ] 今日活跃未归档、最近活动排序、六列、名称详情与非零状态、失败 20/5/20% 规则。
-- [ ] 失败链接用摘要起止日期；缓存仅无已观测输入时为 dash，真实 0% 保留。
-- [ ] 单元与合成浏览器大/窄屏关键操作、刷新/失败/空态；同步规范。
+- [x] 摘要 input/cached 与无用量提示；Token 复用治理投影。
+- [x] 精确 outcome=failed 全链路，排除准入前诊断，保留 failedOnly 原意。
+- [x] 今日活跃未归档、最近活动排序、六列、名称详情与非零状态、失败 20/5/20% 规则。
+- [x] 失败链接用摘要起止日期；缓存仅无已观测输入时为 dash，真实 0% 保留。
+- [x] 单元与合成浏览器大/窄屏关键操作、刷新/失败/空态；同步规范。
 
 ## 4. 最终验证
 
-- [ ] macOS `swift build -j 12` 与定向后端测试。
-- [ ] `python3 scripts/check_docs.py`。
-- [ ] web lint、format:check、test 及 `./scripts/verify.sh --web --chrome`。
-- [ ] 最后仅一次 `./scripts/verify.sh --backend`，运行期间不 relink。
-- [ ] 检查差异/新增文件，提交单一关注点，报告平台、结果、局限、偏离与未提交工作。
+- [x] macOS `swift build -j 12` 与定向后端测试。
+- [x] `python3 scripts/check_docs.py`。
+- [x] web lint、format:check、test 及 `./scripts/verify.sh --web --chrome`。
+- [x] 最后仅一次 `./scripts/verify.sh --backend`，运行期间不 relink；LAN 旧断言修正后同批二进制续跑，详见[验证记录](verification.md)。
+- [x] 检查差异/新增文件，提交单一关注点，报告平台、结果、局限、偏离与未提交工作。
 
 ## 相关文档
 

@@ -97,7 +97,12 @@
 
 [文档导航](../../README.md)
 
-首页展示 业务日当日未归档托管 Key 的结果汇总；默认“今日活跃”只显示当日准入数大于零的 Key，可切换“全部”查看所有未归档 Key（包含零请求和已停用）；已停用者标注状态；空态保留切换入口，不读取最近逐笔请求；成功、失败、取消按 outcome 独立计数，执行中为 intent 数，结果未明为准入数减去这四项计数。pending 为用量责任状态，可能与已有结果重叠，不用于推算成功数。大数按万/亿/万亿简写，精确值可查看；容量进度区分只提醒的参考阈值与阻断上限。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按全时间最近准入秒倒序，同秒按 keyID 稳定升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。六列为 Key、最近活动、请求、失败、Token、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+
+失败率=failed/admitted，取消/执行中/未明不计为失败；仅 admitted≥20、failed≥5 且失败率≥20% 时橙色强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
+
+Token 与限额共用治理投影，部分证据显示已观测下界。缓存率=已观测宿主用量的 SUM(cached)/SUM(input)，无用量请求不进入分母且不使已有率变成 dash；tooltip/详情说明缺失，只有无已观测输入（含输入合计0）为 dash，真实0%保留；原生 Images 不适用宿主缓存。计数/比率用整数与 BigInt 保真，不平均逐请求百分比，拒绝缓存大于输入。单快照分组读取，禁止每 Key 追加统计请求或查询。
+
 
 大屏首页将生成就绪检查与管理连接状态合并到运行状态面板，账号并发随订阅账号展示。Key 摘要新增 inFlight（当日 intent 数）；结果未明为 admitted 减 succeeded、failed、cancelled、inFlight，不根据用量 pending 推断结果。
 
