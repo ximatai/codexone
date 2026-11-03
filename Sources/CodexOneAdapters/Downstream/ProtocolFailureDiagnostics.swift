@@ -90,7 +90,10 @@ enum ProtocolFailureDiagnostics {
   }
 
   private static let uploadGate = Mutex(ProtocolFailureLogGate())
-  static func recordUpload(bytes: Int, duration: Duration, transport: String, sent: Bool) {
+  static func recordUpload(
+    bytes: Int, duration: Duration, transport: String, sent: Bool,
+    encoding: String? = nil, wireBytes: Int = 0, compression: Duration = .zero
+  ) {
     guard bytes > 8 * 1024 * 1024,
       uploadGate.withLock({ $0.admit(now: .now) })
     else { return }
@@ -102,12 +105,38 @@ enum ProtocolFailureDiagnostics {
         : duration < .seconds(30)
           ? "10_to_30_s"
           : duration < .seconds(60) ? "30_to_60_s" : "at_least_60_s"
-    logger.info(
-      "Upstream request upload",
-      metadata: [
-        "size_bucket": .string(sizeBucket(bytes)), "upload_duration_bucket": .string(bucket),
-        "transport": .string(transport), "result": .string(sent ? "sent" : "interrupted"),
-      ])
+    var metadata: Logger.Metadata = [
+      "size_bucket": .string(sizeBucket(bytes)), "upload_duration_bucket": .string(bucket),
+      "transport": .string(transport), "result": .string(sent ? "sent" : "interrupted"),
+    ]
+    if let encoding {
+      metadata["content_encoding"] = .string(encoding)
+      let wireBucket =
+        wireBytes <= 1024 * 1024
+        ? "at_most_1_mib"
+        : wireBytes <= 4 * 1024 * 1024
+          ? "1_to_4_mib"
+          : wireBytes <= 8 * 1024 * 1024
+            ? "4_to_8_mib"
+            : wireBytes <= 16 * 1024 * 1024
+              ? "8_to_16_mib"
+              : wireBytes <= 24 * 1024 * 1024
+                ? "16_to_24_mib"
+                : wireBytes <= 32 * 1024 * 1024 ? "24_to_32_mib" : "over_32_mib"
+      metadata["wire_size_bucket"] = .string(wireBucket)
+      let compressionBucket =
+        encoding == "identity"
+        ? "not_applicable"
+        : compression < .milliseconds(1)
+          ? "under_1_ms"
+          : compression < .milliseconds(10)
+            ? "1_to_10_ms"
+            : compression < .milliseconds(100)
+              ? "10_to_100_ms"
+              : compression < .seconds(1) ? "100_to_1000_ms" : "at_least_1000_ms"
+      metadata["compression_duration_bucket"] = .string(compressionBucket)
+    }
+    logger.info("Upstream request upload", metadata: metadata)
   }
 
   static func recordMissingStreamMediaType(requestID: String) {
