@@ -26,6 +26,12 @@ def exact(sock, size):
     return bytes(data)
 
 
+def apply_mask(data, key):
+    # Whole-message XOR: per-byte masking takes seconds at the gateway's body limits.
+    mask = (key * (len(data) // 4 + 1))[:len(data)]
+    return (int.from_bytes(data, 'little') ^ int.from_bytes(mask, 'little')).to_bytes(len(data), 'little')
+
+
 def send(sock, value, *, masked=False, opcode=1, fin=True, rsv1=False, maximum_bytes=524288):
     data = json.dumps(value).encode() if not isinstance(value, bytes) else value
     assert len(data) <= maximum_bytes
@@ -40,7 +46,7 @@ def send(sock, value, *, masked=False, opcode=1, fin=True, rsv1=False, maximum_b
     if masked:
         key = os.urandom(4)
         header += key
-        data = bytes(value ^ key[index % 4] for index, value in enumerate(data))
+        data = apply_mask(data, key)
     sock.sendall(header + data)
 
 
@@ -56,7 +62,7 @@ def receive(sock, *, masked=False):
     key = exact(sock, 4) if masked else None
     data = exact(sock, length)
     if key:
-        data = bytes(value ^ key[index % 4] for index, value in enumerate(data))
+        data = apply_mask(data, key)
     return first & 15, data
 
 
