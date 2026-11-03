@@ -34,13 +34,21 @@ struct ExecutionBudget: Sendable {
 final class ExecutionProgress: Sendable {
   private struct State {
     var received = false
-    var deadline: ContinuousClock.Instant
+    var deadline: ContinuousClock.Instant?
   }
   private let state: Mutex<State>
+  private let first: Int
   private let idle: Int
   init(_ budget: ExecutionBudget) {
+    first = budget.first
     idle = budget.idle
-    state = Mutex(.init(deadline: .now.advanced(by: .seconds(budget.first))))
+    state = Mutex(.init())
+  }
+  func requestSent() {
+    state.withLock { value in
+      guard !value.received, value.deadline == nil else { return }
+      value.deadline = .now.advanced(by: .seconds(first))
+    }
   }
   func note(event: JSONValue? = nil) {
     state.withLock { value in
@@ -59,7 +67,8 @@ final class ExecutionProgress: Sendable {
       // A bounded poll avoids retaining a stale longer sleep across that transition.
       try await Task.sleep(for: .milliseconds(100))
       let expired = state.withLock { value -> Bool? in
-        ContinuousClock.now >= value.deadline ? value.received : nil
+        guard let deadline = value.deadline else { return nil }
+        return ContinuousClock.now >= deadline ? value.received : nil
       }
       if let received = expired {
         throw GatewayProtocolError(

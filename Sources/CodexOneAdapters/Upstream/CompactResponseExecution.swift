@@ -31,6 +31,8 @@ extension HTTPResponseExecution {
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, authorization in
         try await withProgressDeadline(budget: configuration.budget) { progress in
+          // This endpoint retains its existing pre-upload first-response boundary.
+          progress.requestSent()
           var upstream = HTTPClientRequest(
             url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses/compact")
           upstream.method = .POST

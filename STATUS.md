@@ -28,6 +28,8 @@ v0.26.8 起网关保留 JSON 对象键顺序，相同请求发往上游的正文
 
 上游 WS 大请求现按最终编码消息的 16 MiB 观察边界预检，并识别响应生命周期开始前的 1009 未处理拒绝：独立 HTTP 请求单轮回退 `/responses`，原生 WS/连接续接无法等价时明确 413，不静默丢上下文。合成验证与真实上游待验收范围见[任务](docs/changes/upstream-ws-body-limit/tasks.md)；官方 Codex 的更高层仍可能重试未识别的 413，见[源码核查](docs/reference/compatibility.md#大请求错误的官方客户端源码核查)。
 
+Responses 首响应等待现从本机上传完成边界开始，总执行期限仍覆盖上传；大正文仅记录有界大小/耗时桶。合成验收和传输缓冲边界见[任务](docs/changes/first-response-after-upload/tasks.md)。
+
 ## 已知限制
 
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。

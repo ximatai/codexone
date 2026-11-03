@@ -37,6 +37,10 @@
 
 排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
+Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP 使用已知 Content-Length 的 Data 流，每块最多 64 KiB，AHC 消费最后一块后请求 EOF 时启动；WS 在完整 frame 的 transport write future 成功后启动。两者都是本机传输边界，不是提供者收完/消费确认；NIO、TLS 和 socket 缓冲可能仍有尾部数据。总执行期限仍从执行开始覆盖路由、连接及上传，未完成上传由总期限取消，沿用 execution_deadline_exceeded / deadline_exceeded；请求 frame 不引入独立上游五秒写期限，控制帧仍沿既有五秒期限。上传后静默由 execution_first_response_timeout 结束，首事件后的 idle 不变；早到事件不会被上传完成信号重置。取消沿既有路径关闭 I/O、最终化未知/取消，不重试或重放。正文编码、headers 和 Content-Length 保持不变，也不增加整份正文的 ByteBuffer 副本。
+
+大于 8 MiB 的上传在执行退出时记录 info `Upstream request upload`，上传耗时截至发送完成（失败/取消则截至退出），独立进程级限额 16 条/60 秒。仅含 transport（http/websocket）、result（sent/interrupted）、size_bucket（at_most_16_mib/16_to_24_mib/24_to_32_mib/over_32_mib）与 upload_duration_bucket（under_1_s/1_to_10_s/10_to_30_s/30_to_60_s/at_least_60_s），无内容、身份、精确字节或耗时。
+
 网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。提供者错误按 P27 脱敏透传其可操作成员。HTTP 提交前可回 4xx/429/502/503/504；提交后提供者失败以 response.failed 事件、网关失败以 error 事件结束。WS 握手后不可返回 HTTP 状态响应；error 帧携带 status，lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
 
 ## P11：Desktop 与现有接入兼容

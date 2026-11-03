@@ -169,8 +169,13 @@ struct HTTPResponseExecution: Sendable {
         } else if let token {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
-        // AHC chunks Data into bounded buffers; avoid an eager second whole-body ByteBuffer.
-        upstream.body = .bytes(try wireDocument.data())
+        let data = try wireDocument.data()
+        let upload = RequestUpload(bytes: data.count, transport: "http")
+        defer { upload.finish() }
+        // EOF follows AHC's backpressured consumption, not remote receipt.
+        upstream.body = .stream(
+          UploadBody(data: data, progress: progress, upload: upload),
+          length: .known(Int64(data.count)))
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
