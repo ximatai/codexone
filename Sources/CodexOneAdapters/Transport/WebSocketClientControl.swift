@@ -67,7 +67,7 @@ func handleWebSocketControl(
       }
       downstream.permitSettlement()
     } else {
-      var failed: [String: JSONValue] = [
+      var failed: JSONObject = [
         "type": .string("response.interrupt.failed"), "response_id": .string(id),
       ]
       if !lane.isEmpty { failed["stream_id"] = .string(lane) }

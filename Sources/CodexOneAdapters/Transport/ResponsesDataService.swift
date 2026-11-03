@@ -613,7 +613,7 @@ public struct ResponsesDataService: Service {
     if head.method == .GET && ["/health/live", "/health/ready"].contains(path) {
       let reply = HealthRouter(report: await executor.report()).reply(method: "GET", uri: path)
       try await writer.json(
-        try JSONDecoder().decode(JSONValue.self, from: reply.body), status: reply.status)
+        try JSONValue.decode(reply.body), status: reply.status)
       return
     }
     if let control = ControlRoute.match(method: head.method, path: path) {

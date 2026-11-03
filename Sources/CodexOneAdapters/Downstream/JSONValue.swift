@@ -2,13 +2,14 @@ import Foundation
 
 /// Wire-only JSON tree. Domain commands never carry a downstream or provider document.
 indirect enum JSONValue: Sendable, Codable, Equatable {
-  case object([String: JSONValue])
+  case object(JSONObject)
   case array([JSONValue])
   case string(String)
   case number(Decimal)
   case bool(Bool)
   case null
 
+  // Codable is for local configuration/fingerprints; wire input must use decode(_:) below.
   init(from decoder: any Decoder) throws {
     let value = try decoder.singleValueContainer()
     if value.decodeNil() {
@@ -22,13 +23,15 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
     } else if let array = try? value.decode([JSONValue].self) {
       self = .array(array)
     } else {
-      self = .object(try value.decode([String: JSONValue].self))
+      self = .object(JSONObject(try value.decode([String: JSONValue].self)))
     }
   }
+  // Keyed encoding is intentionally limited to local Codable consumers, never wire sends.
   func encode(to encoder: any Encoder) throws {
     var value = encoder.singleValueContainer()
     switch self {
-    case .object(let object): try value.encode(object)
+    case .object(let object):
+      try value.encode(Dictionary(uniqueKeysWithValues: object.map { ($0.key, $0.value) }))
     case .array(let array): try value.encode(array)
     case .string(let string): try value.encode(string)
     case .number(let number): try value.encode(number)
@@ -36,7 +39,7 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
     case .null: try value.encodeNil()
     }
   }
-  var object: [String: JSONValue]? { if case .object(let object) = self { object } else { nil } }
+  var object: JSONObject? { if case .object(let object) = self { object } else { nil } }
   var array: [JSONValue]? { if case .array(let array) = self { array } else { nil } }
   var string: String? { if case .string(let string) = self { string } else { nil } }
   var bool: Bool? { if case .bool(let bool) = self { bool } else { nil } }
@@ -67,11 +70,19 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
         depth -= 1
       }
     }
-    return try JSONDecoder().decode(Self.self, from: data)
+    let value = try JSONDecoder().decode(Self.self, from: data)
+    var scanner = JSONOrderScanner(data)
+    return try scanner.restore(value)
   }
   func data(escapingSlashes: Bool = true) throws -> Data {
-    let encoder = JSONEncoder()
-    if !escapingSlashes { encoder.outputFormatting = [.withoutEscapingSlashes] }
-    return try encoder.encode(self)
+    var writer = JSONOrderedWriter(escapingSlashes: escapingSlashes)
+    try writer.write(self)
+    return Data(writer.bytes)
+  }
+
+  // Only for locally generated, unordered maps. Wire documents always use JSONObject.
+  @_disfavoredOverload
+  static func object(_ dictionary: [String: JSONValue]) -> JSONValue {
+    .object(JSONObject(dictionary))
   }
 }

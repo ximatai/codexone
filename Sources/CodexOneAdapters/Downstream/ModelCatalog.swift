@@ -32,14 +32,14 @@ func modelCatalog(
     })
   else {
     if requireCodexProfile { throw GatewayProtocolError(503, "model_catalog_unavailable") }
-    var result: [String: JSONValue] = ["object": .string("list"), "data": .array(api)]
+    var result: JSONObject = ["object": .string("list"), "data": .array(api)]
     result["codexone_execution_budget"] = runtimeBudget
     return .object(result)
   }
   let codex = models.enumerated().map { index, model in
     let metadata = model.catalog
     let context = metadata?.contextWindow ?? 32_768
-    var entry: [String: JSONValue] = [
+    var entry: JSONObject = [
       "slug": .string(model.id), "display_name": .string(metadata?.displayName ?? model.id),
       "description": .string(metadata?.description ?? "Configured text model"),
       // An explicit authoritative profile must not silently clear the client's base guidance.
@@ -87,7 +87,7 @@ func modelCatalog(
     }
     return JSONValue.object(entry)
   }
-  var result: [String: JSONValue] = [
+  var result: JSONObject = [
     "object": .string("list"), "data": .array(api), "models": .array(codex),
   ]
   result["codexone_execution_budget"] = runtimeBudget

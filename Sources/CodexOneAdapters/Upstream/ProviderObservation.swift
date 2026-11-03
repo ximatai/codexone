@@ -112,7 +112,12 @@ struct ProviderObservation: Sendable {
       ]
       // Clients decode these as integers; malformed counters are dropped rather than forwarded.
       func counter(_ value: JSONValue) -> Bool { value.integer.map { $0 >= 0 } == true }
-      var counters = usage.filter { root.contains($0.key) && counter($0.value) }
+      var counters = usage.filter {
+        root.contains($0.key)
+          && (counter($0.value)
+            || (["input_tokens_details", "output_tokens_details"].contains($0.key)
+              && $0.value.object != nil))
+      }
       for key in ["input_tokens_details", "output_tokens_details"] {
         if let details = usage[key]?.object {
           let known: Set<String> =

@@ -29,14 +29,13 @@ enum ProviderError {
       guard let message = value?.string else { return nil }
       return .object(["message": .string(redact(message))])
     }
-    var result: [String: JSONValue] = [:]
-    for key in stringMembers {
-      if let text = object[key]?.string {
+    var result: JSONObject = [:]
+    for (key, value) in object {
+      if stringMembers.contains(key), let text = value.string {
         result[key] = .string(redact(String(text.prefix(4096))))
+      } else if numberMembers.contains(key), case .number = value {
+        result[key] = value
       }
-    }
-    for key in numberMembers {
-      if case .number = object[key] { result[key] = object[key] }
     }
     return result.isEmpty ? nil : .object(result)
   }

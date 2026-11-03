@@ -94,7 +94,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
     guard UUID(uuidString: intent.requestID) != nil,
       intent.creditID.map({ ResetCredit.validIdentifier($0) }) ?? true
     else { throw ExecutionError.invalidCommand }
-    var body: [String: JSONValue] = ["redeem_request_id": .string(intent.requestID)]
+    var body: JSONObject = ["redeem_request_id": .string(intent.requestID)]
     if let id = intent.creditID { body["credit_id"] = .string(id) }
     return try Self.parseResetCreditResult(
       await request(work, endpoint: "rate-limit-reset-credits/consume", body: .object(body)))
