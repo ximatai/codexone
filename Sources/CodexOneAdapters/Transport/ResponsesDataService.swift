@@ -739,6 +739,7 @@ private actor ProtocolResponseWriter {
   private var started = false
   private var streaming = false
   private var ended = false
+  private var streamFinishFailure: ResponseStreamFinishReason?
   init(
     writer: NIOAsyncChannelOutboundWriter<HTTPServerResponsePart>, channel: any Channel,
     keepAlive: Bool
@@ -841,13 +842,26 @@ private actor ProtocolResponseWriter {
   }
   func finishStream() async throws {
     guard started, !ended else { throw GatewayProtocolError(502, "execution_indeterminate") }
-    try await write(.body(.byteBuffer(ByteBuffer(string: "data: [DONE]\n\n"))))
-    try await write(.end(nil))
-    ended = true
+    // Execution has returned and handed off finalization before this transport-only step.
+    // Preserve the existing write/error response path; classify only these late I/O failures.
+    var reason = ResponseStreamFinishReason.downstreamDoneWrite
+    do {
+      try await write(.body(.byteBuffer(ByteBuffer(string: "data: [DONE]\n\n"))))
+      reason = .downstreamEndWrite
+      try await write(.end(nil))
+      ended = true
+    } catch {
+      streamFinishFailure = reason
+      throw error
+    }
   }
   func fail(_ error: any Error, diagnostics: Bool = true) async throws {
     let mapped = protocolFailure(error)
-    let envelope = protocolErrorEnvelope(error, requestID: requestID, diagnostics: diagnostics)
+    if diagnostics, let reason = streamFinishFailure {
+      ProtocolFailureDiagnostics.recordStreamFinish(reason, requestID: requestID)
+    }
+    let envelope = protocolErrorEnvelope(
+      error, requestID: requestID, diagnostics: diagnostics && streamFinishFailure == nil)
     if !started {
       try await json(envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds)
     } else if streaming && !ended {

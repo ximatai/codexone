@@ -146,6 +146,8 @@ Responses HTTP流的200响应允许媒体类型缺失/空值，仍须通过原�
 
 JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒写期限/背压，不能在正文与end之间独立异步让出而留下合法快速关闭的窗口。Responses完整成功终态通过校验/绑定并成功提交下游writer后，同步观察成功结果，再做期限任务组等收尾；迟到关闭不改写已观察结果。提交失败/部分输出/仅usage/item.done/隔离扩展均不观察成功，failed/incomplete既有失败观察保持优先；不忽略写错，不承诺对端已收到/消费或执行工具。可信用量及unknown责任仍独立持久。
 
+Responses SSE 在执行用例已返回并移交最终化之后，才写入网关 `[DONE]` 和 HTTP end。这两个收尾写入失败只记录独立 info `Response stream finish failed after execution`，reason 仅为 `downstream_done_write` 或 `downstream_end_write`，附服务端 request UUID；无 code/status，独立限额 16 条/60 秒，不消耗真实拒绝的 warning 预算。此分类只作用于上述两个 I/O await；未开始/重复结束等状态错误及执行内错误保持既有拒绝日志。响应写入、错误映射、结算、用量、重试与取消均不改变；成功提交 writer 不保证客户端消费，也不保证网络结束标记送达。正常 JSON 与原生 WS 没有此 SSE 收尾分类。
+
 usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细；input_tokens_details.cache_write_tokens_details 仅保留非负整数 ttl_30m_tokens 与 ttl_12h_tokens，未知或畸形嵌套成员丢弃；其余 usage 成员不出网关。
 
 

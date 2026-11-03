@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [response-finish-diagnostics](response-finish-diagnostics/proposal.md) · [任务](response-finish-diagnostics/tasks.md)
+
 - [preserve-json-key-order](preserve-json-key-order/proposal.md) · [任务](preserve-json-key-order/tasks.md)
 
 - [session-routing-metadata](session-routing-metadata/proposal.md) · [任务](session-routing-metadata/tasks.md)

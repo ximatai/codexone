@@ -2,10 +2,16 @@ import Foundation
 import Logging
 import Synchronization
 
+enum ResponseStreamFinishReason: String, Sendable {
+  case downstreamDoneWrite = "downstream_done_write"
+  case downstreamEndWrite = "downstream_end_write"
+}
+
 /// Optional, bounded diagnostics. No client document or arbitrary error description enters logs.
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
+  private static let streamFinishGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
@@ -64,6 +70,15 @@ enum ProtocolFailureDiagnostics {
     logger.info(
       "Upstream stream omitted media type; SSE validation required",
       metadata: ["upstream_status": "200", "request_id": .string(id.uuidString)])
+  }
+
+  static func recordStreamFinish(_ reason: ResponseStreamFinishReason, requestID: String) {
+    guard let id = UUID(uuidString: requestID),
+      streamFinishGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    logger.info(
+      "Response stream finish failed after execution",
+      metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
   }
 
   static func record(_ error: GatewayProtocolError, requestID: String) {

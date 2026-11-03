@@ -33,6 +33,7 @@ backend_scripts() {
   run_check scripts/verify_gateway_diagnostics.py
   run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_response_finish.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_protocol_rejections.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_proxy.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_events.py --binary "$backend_bin_dir/codexone"
