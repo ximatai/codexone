@@ -7,6 +7,7 @@ import Synchronization
 public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private let queue = DispatchQueue(label: "codexone.core-database")
   private let connection: SQLiteConnection
+  public var businessDay: BusinessDayDefinition { connection.businessDay }
   var clock: WallClock { connection.clock }
   let path: String
   let pacingWaiters: AccountPacingWaiters
@@ -53,6 +54,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public static func open(
     path: String, limits: ExecutionLimits,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -61,12 +63,14 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   {
     try await open(
       path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
-      unresolvedCapacity: unresolvedCapacity, clock: clock, pacingSleep: pacingSleep)
+      unresolvedCapacity: unresolvedCapacity, clock: clock, businessDay: businessDay,
+      pacingSleep: pacingSleep)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
     available: @escaping @Sendable (String) throws -> Int64,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -84,7 +88,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let connection = try SQLiteConnection(path: path, clock: clock)
+          let connection = try SQLiteConnection(path: path, clock: clock, businessDay: businessDay)
           guard try connection.reencryptionCheckpoint()?.complete != false else {
             throw KeyMaintenanceError.incompleteReencryption
           }
@@ -216,22 +220,25 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public func recordUnexpectedExecution(basedOn attempt: String) async throws {
     try await perform(essential: true) { db in
       try db.transaction {
+        let now = db.clock.unixSeconds
         let original = try Self.load(db, attempt).admission
         let command = ExecutionAdmission(
           attempt: UUID().uuidString, owner: original.owner,
-          window: "utc-day-\(db.clock.unixSeconds / 86400)",
+          window: try db.businessDay.window(containing: now),
           policyVersion: original.policyVersion, pricingVersion: original.pricingVersion,
           reservedMicros: original.reservedMicros, requestID: UUID().uuidString,
           mode: .generation, keyRevision: original.keyRevision,
           accountSnapshot: original.accountSnapshot)
-        try Self.insertAttempt(db, command, state: "unknown")
+        try Self.insertAttempt(db, command, state: "unknown", at: now)
       }
     }
   }
 
-  public func admit(_ command: ExecutionAdmission) async throws {
+  @discardableResult public func admit(_ command: ExecutionAdmission) async throws
+    -> ExecutionAdmission
+  {
     try validateAdmission(command)
-    try await perform(admission: true) { [limits, unresolvedCapacity] db in
+    return try await perform(admission: true) { [limits, unresolvedCapacity] db in
       try db.transaction {
         try Self.admitTransaction(
           db, command, limits: limits, unresolvedCapacity: unresolvedCapacity)
@@ -241,13 +248,14 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   static func admitTransaction(
     _ db: SQLiteConnection, _ command: ExecutionAdmission, limits: ExecutionLimits,
     unresolvedCapacity: Int64
-  ) throws {
+  ) throws -> ExecutionAdmission {
     try validateAdmission(command)
+    let now = db.clock.unixSeconds
+    // The transaction clock determines the final window for every admission.
+    let command = command.withWindow(try db.businessDay.window(containing: now))
     if let restored = try db.restoreRecord() {
-      let now = db.clock.unixSeconds
       guard restored.allowsAdmission(at: now),
-        command.keyRevision != nil || command.executionMode == .priming,
-        command.window == "utc-day-\(now / 86400)"
+        command.keyRevision != nil || command.executionMode == .priming
       else { throw ExecutionError.maintenanceRequired }
 
     }
@@ -255,7 +263,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       try db.scalar("SELECT COUNT(*) FROM attempts WHERE id=?", [.text(command.attempt)]) == 0
     else { throw ExecutionError.conflict }
     try Self.checkAccountAdmission(db, command)
-    try Self.checkKeyAdmission(db, command)
+    try Self.checkKeyAdmission(db, command, now: now)
     let active = try db.scalar(
       "SELECT COUNT(*) FROM attempts WHERE namespace=? AND identity=? AND state='intent'",
       [.text(command.owner.namespace), .text(command.owner.identity)])
@@ -278,11 +286,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         [.number(db.clock.unixSeconds + ExecutionLimits.bindingContinuationSeconds)]
           + values)
     }
-    try Self.insertAttempt(db, command, state: "intent")
+    try Self.insertAttempt(db, command, state: "intent", at: now)
+    return command
   }
 
   static func insertAttempt(
-    _ db: SQLiteConnection, _ command: ExecutionAdmission, state: String
+    _ db: SQLiteConnection, _ command: ExecutionAdmission, state: String, at: Int64? = nil
   ) throws {
     try db.write(
       """
@@ -294,7 +303,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         .text(command.owner.namespace), .text(command.owner.identity), .text(command.window),
         .text(command.policyVersion), .text(command.pricingVersion),
         .number(command.reservedMicros), .text(state), .text(try encode(command)),
-        .number(db.clock.unixSeconds), command.requestID.map { .text($0) } ?? .null,
+        .number(at ?? db.clock.unixSeconds), command.requestID.map { .text($0) } ?? .null,
         state == "unknown" ? .number(db.clock.unixSeconds) : .null,
       ])
     if state == "intent" { try Self.recordAccountConcurrency(db, owner: command.owner) }

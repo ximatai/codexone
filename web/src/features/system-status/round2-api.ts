@@ -1,9 +1,13 @@
+import { readBusinessDay } from "../../shared/business-day";
 import { z } from "../../shared/schema";
 import { request } from "../../shared/management";
 const count = z.number().int().nonnegative().safe();
 const metric = z
   .string()
   .regex(/^(0|[1-9][0-9]{0,18})$/)
+  .refine(
+    (value) => /^[0-9]+$/.test(value) && BigInt(value) <= 9223372036854775807n,
+  )
   .nullable();
 const metrics = z.object({
   inputTokens: metric,
@@ -13,7 +17,17 @@ const metrics = z.object({
   estimatedMicros: metric,
 });
 const daily = z.object({
-  timezone: z.literal("UTC"),
+  timezone: z.string(),
+  businessDay: z
+    .object({
+      offsetMinutes: z
+        .number()
+        .int()
+        .min(-720)
+        .max(840)
+        .refine((v) => v % 60 === 0),
+    })
+    .default({ offsetMinutes: 0 }),
   days: z.number().int().min(1).max(31),
   buckets: z
     .array(
@@ -52,15 +66,39 @@ const flight = z.object({
 });
 export type DailyBucket = z.infer<typeof daily>["buckets"][number];
 export async function fetchDaily(signal: AbortSignal) {
-  return daily.parse(await request("/api/usage/daily?days=7", { signal }))
-    .buckets;
+  const report = daily.parse(
+    await request("/api/usage/daily?days=7", { signal }),
+  );
+  readBusinessDay(report);
+  if (
+    report.buckets.some(
+      (bucket, i) =>
+        (bucket.atUnixSeconds + report.businessDay.offsetMinutes * 60) %
+          86400 !==
+          0 ||
+        (i > 0 &&
+          bucket.atUnixSeconds - report.buckets[i - 1].atUnixSeconds !== 86400),
+    )
+  )
+    throw new Error("Invalid daily buckets");
+  return report;
 }
 export async function fetchInFlight(signal: AbortSignal) {
   return flight.parse(await request("/api/usage/in-flight", { signal })).rows;
 }
 const keySummary = z
   .object({
-    timezone: z.literal("UTC"),
+    timezone: z.string(),
+    businessDay: z
+      .object({
+        offsetMinutes: z
+          .number()
+          .int()
+          .min(-720)
+          .max(840)
+          .refine((v) => v % 60 === 0),
+      })
+      .default({ offsetMinutes: 0 }),
     startUnixSeconds: count,
     endUnixSeconds: count,
     keys: z
@@ -69,6 +107,12 @@ const keySummary = z
           .object({
             keyID: z.string(),
             enabled: z.boolean().optional(),
+            tokens: metric.optional(),
+            tokenUsageIncomplete: z.boolean().optional(),
+            inputTokens: metric.optional(),
+            cachedTokens: metric.optional(),
+            cacheUsageIncomplete: z.boolean().optional(),
+            lastUsedAtUnixSeconds: count.nullish(),
             displayName: z.string().nullish(),
             principal: z.string().nullish(),
             pending: count,
@@ -81,21 +125,27 @@ const keySummary = z
           .refine(
             (row) =>
               row.succeeded + row.failed + row.cancelled + row.inFlight <=
-              row.admitted,
+                row.admitted &&
+              (row.inputTokens == null ||
+                row.cachedTokens == null ||
+                BigInt(row.cachedTokens) <= BigInt(row.inputTokens)),
           ),
       )
       .max(256),
   })
   .refine(
     (report) =>
-      report.startUnixSeconds % 86400 === 0 &&
-      report.endUnixSeconds - report.startUnixSeconds === 86400,
+      (report.startUnixSeconds + readBusinessDay(report).offsetMinutes * 60) %
+        86400 ===
+        0 && report.endUnixSeconds - report.startUnixSeconds === 86400,
   );
 export async function fetchKeySummary(signal: AbortSignal) {
-  return keySummary.parse(
+  const report = keySummary.parse(
     await request("/api/usage/keys?includeArchived=false", { signal }),
-  ).keys;
+  );
+  return report;
 }
+export type KeySummaryReport = z.infer<typeof keySummary>;
 export type KeySummary = z.infer<typeof keySummary>["keys"][number];
 export function tokenTotal(bucket: DailyBucket): number | null {
   const { inputTokens, outputTokens } = bucket.metrics;

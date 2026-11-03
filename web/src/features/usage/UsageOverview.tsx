@@ -1,3 +1,4 @@
+import { businessDate, timezone } from "../../shared/business-day";
 import { isUTCDateInput } from "../../shared/date-input";
 import { DateInput } from "@mantine/dates";
 import { UsageDisclosure } from "./UsageDisclosure";
@@ -49,7 +50,7 @@ export interface UsageNavigation {
   scroll: number;
 }
 export function usageNavigationKey(filters: api.UsageFilters, page: number) {
-  return `usage:${JSON.stringify(filters)}:page:${page}`;
+  return `usage:${JSON.stringify({ ...filters, offsetMinutes: undefined })}:page:${page}`;
 }
 export function UsageOverview({
   selection,
@@ -100,7 +101,13 @@ export function UsageOverview({
     null,
   );
   const [draft, setDraft] = useState<api.UsageFilters>(
-    () => initialFilters ?? { ...api.defaults(), key: selection?.keyID ?? "" },
+    () =>
+      initialFilters ?? {
+        ...api.defaults(),
+        start: "",
+        end: "",
+        key: selection?.keyID ?? "",
+      },
   );
   const [applied, setApplied] = useState<api.UsageFilters | null>(null);
   const [options, setOptions] = useState<api.UsageOptions>({
@@ -196,6 +203,18 @@ export function UsageOverview({
     setError("");
     failedPage.current = null;
     try {
+      const nextOptions = await api.fetchUsageOptions(abort.signal);
+      if (version !== epoch.current || abort.signal.aborted) return;
+      const offsetMinutes = nextOptions.businessDay?.offsetMinutes ?? 0;
+      setOptions(nextOptions);
+      optionsLoaded.current = true;
+      filters = {
+        ...filters,
+        offsetMinutes,
+        start: filters.start || api.defaults(offsetMinutes).start,
+        end: filters.end || api.defaults(offsetMinutes).end,
+      };
+      setDraft(filters);
       const parameters = api.usageParameters(
         {
           ...filters,
@@ -211,12 +230,6 @@ export function UsageOverview({
           end: Number(parameters.get("end")),
         },
       };
-      if (!optionsLoaded.current) {
-        const next = await api.fetchUsageOptions(abort.signal);
-        if (version !== epoch.current || abort.signal.aborted) return;
-        setOptions(next);
-        optionsLoaded.current = true;
-      }
       const next = await queryClient.fetchQuery({
         queryKey: ["usage", requestFilters, cursors[index]],
         queryFn: ({ signal }) =>
@@ -275,7 +288,7 @@ export function UsageOverview({
           failedPage.current = { filters, cursors, index, restore };
         setError(
           cause instanceof ManagementError && cause.status === 400
-            ? "请检查 UTC 日期与筛选条件，范围最多 31 天。"
+            ? "请检查业务日日期与筛选条件，范围最多 31 天。"
             : cause instanceof ManagementError && cause.status === 404
               ? "用量查询尚未开启。"
               : "查询失败或繁忙。可缩小区间后重试。",
@@ -302,7 +315,9 @@ export function UsageOverview({
       const echo = appliedEcho.current === identity;
       appliedEcho.current = null;
       if (
-        JSON.stringify(lastApplied.current) === JSON.stringify(next) &&
+        lastApplied.current !== null &&
+        usageNavigationKey(lastApplied.current, requestedPage) ===
+          usageNavigationKey(next, requestedPage) &&
         requestedPage === page
       ) {
         // Navigation back to the shown view supersedes an in-flight read; the
@@ -362,11 +377,16 @@ export function UsageOverview({
       ? 1
       : [7, 30].find(
           (days) =>
-            applied?.end === new Date().toISOString().slice(0, 10) &&
+            applied?.end ===
+              businessDate(
+                Date.now() / 1000,
+                options.businessDay?.offsetMinutes,
+              ) &&
             applied?.start ===
-              new Date(Date.now() - (days - 1) * 86400000)
-                .toISOString()
-                .slice(0, 10),
+              businessDate(
+                Date.now() / 1000 - (days - 1) * 86400,
+                options.businessDay?.offsetMinutes,
+              ),
         );
   if (paused)
     return (
@@ -399,7 +419,9 @@ export function UsageOverview({
             aria-pressed={currentPreset === days}
             disabled={busy}
             onClick={() => {
-              const now = new Date();
+              const now = new Date(
+                Date.now() + (options.businessDay?.offsetMinutes ?? 0) * 60000,
+              );
               const next: api.UsageFilters = {
                 ...draft,
                 range: days === 1 ? "24h" : undefined,
@@ -486,8 +508,8 @@ export function UsageOverview({
           <div className={styles.dateFilters}>
             {" "}
             <DateInput
-              label="起始日（UTC）"
-              aria-label="起始日（UTC）"
+              label={`起始日（${timezone(options.businessDay?.offsetMinutes)}）`}
+              aria-label={`起始日（${timezone(options.businessDay?.offsetMinutes)}）`}
               value={draft.start || null}
               dateParser={(value) => (isUTCDateInput(value) ? value : null)}
               error={
@@ -512,8 +534,8 @@ export function UsageOverview({
               }}
             />
             <DateInput
-              label="结束日（UTC）"
-              aria-label="结束日（UTC）"
+              label={`结束日（${timezone(options.businessDay?.offsetMinutes)}）`}
+              aria-label={`结束日（${timezone(options.businessDay?.offsetMinutes)}）`}
               value={draft.end || null}
               dateParser={(value) => (isUTCDateInput(value) ? value : null)}
               error={
@@ -565,6 +587,17 @@ export function UsageOverview({
                   value,
                   label: failures[value] ?? "其他异常",
                 })),
+              ]}
+            />
+            <Select
+              label="请求结果"
+              value={draft.outcome ?? ""}
+              disabled={busy}
+              onChange={(value) => update("outcome", value ?? "")}
+              allowDeselect={false}
+              data={[
+                { value: "", label: "全部结果" },
+                { value: "failed", label: "失败" },
               ]}
             />
             <Select
@@ -622,7 +655,7 @@ export function UsageOverview({
             当前结果：
             {applied?.range === "24h"
               ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
-              : `${applied?.start} 至 ${applied?.end}（UTC）`}{" "}
+              : `${applied?.start} 至 ${applied?.end}（${timezone(options.businessDay?.offsetMinutes)}）`}{" "}
             ·{" "}
             {options.keyOptions?.find((k) => k.id === applied?.key)
               ?.displayName ??
@@ -638,12 +671,13 @@ export function UsageOverview({
               ? ` · ${failures[applied.failure] ?? "其他异常"}`
               : ""}
             {applied?.state ? ` · ${states[applied.state]}` : ""}
+            {applied?.outcome === "failed" ? " · 请求结果：失败" : ""}
             {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>
           <UsageDisclosure className={styles.method} title="统计口径">
             <p className={styles.hint}>
-              按准入 UTC 时间统计，起止日均包含；最近 24 小时按已完成 UTC
+              按准入业务日统计，起止日均包含；最近 24 小时按已完成 UTC
               小时查询。轮换保留原 Key
               历史，迟到用量更新原时段；每次查询为新账本快照。拒绝诊断查询最近
               30

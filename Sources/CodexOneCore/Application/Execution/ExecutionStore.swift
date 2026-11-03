@@ -29,7 +29,7 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let references: [ObjectBinding]?
   public let attempt: String
   public let owner: ExecutionOwner
-  public let window: String
+  public private(set) var window: String
   public let policyVersion: String
   public let pricingVersion: String
   /// Operational estimate, not a worst-case bound or subscription balance.
@@ -47,6 +47,11 @@ public struct ExecutionAdmission: Sendable, Equatable, Codable {
   public let requestMetadataRecorded: Bool?
   public let mode: ExecutionMode?
   public var executionMode: ExecutionMode { mode ?? .generation }
+  public func withWindow(_ window: String) -> Self {
+    var copy = self
+    copy.window = window
+    return copy
+  }
   public init(
     attempt: String, owner: ExecutionOwner, window: String, policyVersion: String,
     pricingVersion: String, reservedMicros: Int64, requestID: String? = nil,
@@ -223,7 +228,8 @@ public protocol ExecutionStore: Sendable {
   var isAvailable: Bool { get }
   var isAdmissionReady: Bool { get }
   func recordUnexpectedExecution(basedOn attempt: String) async throws
-  func admit(_ command: ExecutionAdmission) async throws
+  var businessDay: BusinessDayDefinition { get }
+  @discardableResult func admit(_ command: ExecutionAdmission) async throws -> ExecutionAdmission
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
     -> ExecutionOwner
@@ -271,4 +277,8 @@ public enum RequestMetadataValue {
     else { return "other" }
     return value
   }
+}
+
+extension ExecutionStore {
+  public var businessDay: BusinessDayDefinition { .utc }
 }

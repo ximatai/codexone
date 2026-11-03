@@ -96,7 +96,8 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
       owner: .init(
         principal: QuotaPrimingIdentity.principal, key: QuotaPrimingIdentity.principal,
         namespace: work.account.namespace, identity: id),
-      window: "utc-day-\(clock.utcDay)", policyVersion: "quota-priming-v1",
+      window: try store.businessDay.window(containing: clock.unixSeconds),
+      policyVersion: "quota-priming-v1",
       pricingVersion: keyDigest(
         String(model.inputMicrosPerMillion) + ":" + String(model.outputMicrosPerMillion)),
       reservedMicros: configuration.reservedMicros, mode: .priming, model: modelID,

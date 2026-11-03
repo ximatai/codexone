@@ -1,10 +1,17 @@
 import { ManagementError, request } from "../../shared/management";
+import {
+  businessDate,
+  readBusinessDay,
+  type BusinessDay,
+} from "../../shared/business-day";
 export interface UsageFilters {
+  offsetMinutes?: number;
   start: string;
   end: string;
   key: string;
   model: string;
   reasoningEffort?: string;
+  outcome?: string;
   mode: string;
   failure: string;
   state: string;
@@ -24,6 +31,8 @@ export interface Metrics {
   estimatedMicros: string | null;
 }
 export interface UsageReport {
+  businessDay?: BusinessDay;
+  timezone?: string;
   startUnixSeconds: number;
   endUnixSeconds: number;
   totals: {
@@ -83,6 +92,7 @@ export interface UsageReport {
   nextCursor: string | null;
 }
 export interface UsageOptions {
+  businessDay?: BusinessDay;
   defaultReasoningEfforts?: Record<string, string>;
   keys: string[];
   keyOptions?: {
@@ -167,7 +177,7 @@ export function parseUsage(raw: unknown): UsageReport {
   const start = integer(value.startUnixSeconds, 1_000_000_000_000),
     end = integer(value.endUnixSeconds, 1_000_000_000_000);
   if (
-    value.timezone !== "UTC" ||
+    !readBusinessDay(value) ||
     end <= start ||
     end - start > 31 * 86400 ||
     start % 3600 ||
@@ -298,6 +308,8 @@ export function parseUsage(raw: unknown): UsageReport {
   const next = nullableText(value.nextCursor, 512);
   if (next && !/^[A-Za-z0-9_-]+$/.test(next)) throw invalid();
   return {
+    businessDay: readBusinessDay(value),
+    timezone: value.timezone as string,
     startUnixSeconds: start,
     endUnixSeconds: end,
     totals: resultTotals,
@@ -312,10 +324,10 @@ export function parseUsage(raw: unknown): UsageReport {
     nextCursor: next,
   };
 }
-export function defaults(): UsageFilters {
+export function defaults(offsetMinutes = 0): UsageFilters {
   return {
-    start: new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10),
-    end: new Date().toISOString().slice(0, 10),
+    start: businessDate(Date.now() / 1000 - 6 * 86400, offsetMinutes),
+    end: businessDate(Date.now() / 1000, offsetMinutes),
     key: "",
     model: "",
     mode: "",
@@ -338,7 +350,7 @@ export function usageParameters(
       new Date(epoch).toISOString().slice(0, 10) !== value
     )
       throw new ManagementError(400, "invalid_range");
-    return epoch / 1000;
+    return epoch / 1000 - (filters.offsetMinutes ?? 0) * 60;
   }
   const currentHour = Math.floor(Date.now() / 3600000) * 3600;
   const start =
@@ -361,6 +373,7 @@ export function usageParameters(
     "failure",
     "state",
     "reasoningEffort",
+    "outcome",
   ] as const)
     if (filters[name]?.trim()) parameters.set(name, filters[name]!.trim());
   if (filters.failedOnly) parameters.set("failedOnly", "true");
@@ -396,6 +409,10 @@ export async function fetchUsageOptions(
     ),
   );
   return {
+    businessDay: readBusinessDay({
+      ...value,
+      timezone: value.timezone ?? "UTC",
+    }),
     defaultReasoningEfforts,
     keys: list(value.keys, 256, 256),
     keyOptions:
@@ -446,8 +463,8 @@ export async function fetchKeyUsage(signal?: AbortSignal): Promise<KeyUsage[]> {
   const start = integer(value.startUnixSeconds),
     end = integer(value.endUnixSeconds);
   if (
-    value.timezone !== "UTC" ||
-    start % 86400 ||
+    !readBusinessDay(value) ||
+    (start + readBusinessDay(value).offsetMinutes * 60) % 86400 ||
     end - start !== 86400 ||
     !Array.isArray(value.keys) ||
     value.keys.length > 256

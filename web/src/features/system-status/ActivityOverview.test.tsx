@@ -1,3 +1,5 @@
+import { keyReport } from "../../../tests/usage-reports";
+import { dailyReport } from "../../../tests/usage-reports";
 import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { renderPrivate } from "../../../tests/render";
@@ -21,9 +23,9 @@ it("reports failed query and permits retry to explicit empty state", async () =>
   });
   vi.mocked(api.fetchDaily)
     .mockRejectedValueOnce(new management.ManagementError(400, "invalid_range"))
-    .mockResolvedValue([]);
+    .mockResolvedValue(dailyReport([]));
   vi.mocked(api.fetchInFlight).mockResolvedValue([]);
-  vi.mocked(api.fetchKeySummary).mockResolvedValue([]);
+  vi.mocked(api.fetchKeySummary).mockResolvedValue(keyReport([]));
   renderPrivate(<ActivityOverview />);
   expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
     "读取失败",
@@ -37,23 +39,25 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   vi.mocked(management.fetchSession).mockResolvedValue({
     csrf: "synthetic-csrf",
   });
-  vi.mocked(api.fetchDaily).mockResolvedValue([
-    {
-      atUnixSeconds: 1,
-      requests: 4,
-      succeeded: 3,
-      failed: 1,
-      cancelled: 0,
-      failures: { rate_limited: 1 },
-      metrics: {
-        inputTokens: null,
-        cachedTokens: null,
-        outputTokens: null,
-        images: null,
-        estimatedMicros: null,
+  vi.mocked(api.fetchDaily).mockResolvedValue(
+    dailyReport([
+      {
+        atUnixSeconds: 1,
+        requests: 4,
+        succeeded: 3,
+        failed: 1,
+        cancelled: 0,
+        failures: { rate_limited: 1 },
+        metrics: {
+          inputTokens: null,
+          cachedTokens: null,
+          outputTokens: null,
+          images: null,
+          estimatedMicros: null,
+        },
       },
-    },
-  ]);
+    ]),
+  );
   vi.mocked(api.fetchInFlight).mockResolvedValue([
     {
       id: "synthetic-flight",
@@ -87,19 +91,21 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       accountID: null,
     },
   ]);
-  vi.mocked(api.fetchKeySummary).mockResolvedValue([
-    {
-      keyID: "synthetic-key",
-      displayName: "汇总别名",
-      principal: "synthetic-principal",
-      admitted: 10,
-      succeeded: 4,
-      failed: 2,
-      cancelled: 1,
-      pending: 3,
-      inFlight: 0,
-    },
-  ]);
+  vi.mocked(api.fetchKeySummary).mockResolvedValue(
+    keyReport([
+      {
+        keyID: "synthetic-key",
+        displayName: "汇总别名",
+        principal: "synthetic-principal",
+        admitted: 10,
+        succeeded: 4,
+        failed: 2,
+        cancelled: 1,
+        pending: 3,
+        inFlight: 0,
+      },
+    ]),
+  );
   renderPrivate(
     <ActivityOverview
       accounts={[{ id: "synthetic-account", displayName: "活动账号" }]}
@@ -136,7 +142,7 @@ it("renders only skeletons in KPI cards before the daily response", async () => 
   });
   vi.mocked(api.fetchDaily).mockReturnValue(new Promise(() => {}));
   vi.mocked(api.fetchInFlight).mockResolvedValue([]);
-  vi.mocked(api.fetchKeySummary).mockResolvedValue([]);
+  vi.mocked(api.fetchKeySummary).mockResolvedValue(keyReport([]));
   renderPrivate(<ActivityOverview />);
   const kpis = await screen.findByLabelText("正在读取请求概览…");
   expect(kpis).toHaveAttribute("aria-busy", "true");

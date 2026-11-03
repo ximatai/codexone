@@ -71,11 +71,11 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await page.goto("/");
   await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
   await expect(page.getByText("今日暂无活跃 Key。")).toBeVisible();
-  await page
-    .getByRole("region", { name: "今日 Key 请求汇总" })
-    .getByText("全部", { exact: true })
-    .click();
-  await expect(page.getByText("暂无未归档 Key。")).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "今日 Key 请求汇总" })
+      .getByText("全部", { exact: true }),
+  ).toHaveCount(0);
 });
 
 test("A01 A02: long account names fit all viewports and authorization warns independently", async ({

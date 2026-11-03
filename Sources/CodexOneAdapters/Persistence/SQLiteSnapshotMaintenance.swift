@@ -97,17 +97,20 @@ public enum SQLiteSnapshotMaintenance {
   }
 
   public static func restore(
-    bundle: String, path: String, protection: AccountCredentialCipher?, clock: WallClock = .system
+    bundle: String, path: String, protection: AccountCredentialCipher?, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc
   )
     async throws -> RestoreRecord
   {
     try await restore(
-      bundle: bundle, path: path, protection: protection, clock: clock, syncParent: syncDirectory)
+      bundle: bundle, path: path, protection: protection, clock: clock, businessDay: businessDay,
+      syncParent: syncDirectory)
   }
 
   // Internal fault seam verifies parent-directory synchronization failures before any copied page.
   static func restore(
     bundle: String, path: String, protection: AccountCredentialCipher?, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc,
     syncParent: @escaping @Sendable (String) throws -> Void
   ) async throws -> RestoreRecord {
     try await run {
@@ -152,7 +155,10 @@ public enum SQLiteSnapshotMaintenance {
         snapshotUnixSeconds: manifest.createdUnixSeconds, restoredUnixSeconds: completedCopyAt,
         inheritedUnresolvedRequests: previous?.unresolvedRequests ?? 0,
         inheritedUnresolvedMicros: previous?.unresolvedMicros ?? 0,
-        inheritedFreezeUntilUnixSeconds: previous?.baseline?.freezeUntilUnixSeconds ?? 0)
+        inheritedFreezeUntilUnixSeconds: previous?.baseline?.freezeUntilUnixSeconds ?? previous?
+          .minimumFreezeUntilUnixSeconds ?? 0,
+        dayFreezeUntilUnixSeconds: businessDay == .utc
+          ? nil : try businessDay.end(containing: completedCopyAt))
       do {
         try target.transaction {
           try target.write(
@@ -314,15 +320,22 @@ public enum SQLiteSnapshotMaintenance {
       return try db.restoreRecord()
     }
   }
-  public static func reconcileFile(path: String, baselineFile: String, clock: WallClock = .system)
+  public static func reconcileFile(
+    path: String, baselineFile: String, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc
+  )
     async throws -> RestoreRecord
   {
     let baseline = try await run {
       try JSONDecoder().decode(RestoreBaseline.self, from: readFile(baselineFile, limit: 8192))
     }
-    return try await reconcile(path: path, baseline: baseline, clock: clock)
+    return try await reconcile(
+      path: path, baseline: baseline, clock: clock, businessDay: businessDay)
   }
-  public static func reconcile(path: String, baseline: RestoreBaseline, clock: WallClock = .system)
+  public static func reconcile(
+    path: String, baseline: RestoreBaseline, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc
+  )
     async throws
     -> RestoreRecord
   {
@@ -332,7 +345,8 @@ public enum SQLiteSnapshotMaintenance {
       defer { db.shutdown() }
       return try db.transaction {
         guard let current = try db.restoreRecord() else { throw ExecutionError.conflict }
-        let record = try current.reconciling(baseline, at: clock.unixSeconds)
+        let record = try current.reconciling(
+          baseline, at: clock.unixSeconds, businessDay: businessDay)
         if record == current { return current }
         try db.write(
           "UPDATE maintenance_state SET restore_json=? WHERE id=1", [.text(try encode(record))])

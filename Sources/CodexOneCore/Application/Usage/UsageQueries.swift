@@ -19,6 +19,7 @@ public struct UsageQuery: Sendable {
   public let model: String?
   public let mode: ExecutionMode?
   public let failure: ExecutionFailure?
+  public let outcome: ExecutionOutcome.Kind?
   public let failedOnly: Bool
   public let state: ExecutionSnapshot.State?
   public let cursor: UsageCursor?
@@ -27,6 +28,7 @@ public struct UsageQuery: Sendable {
     startUnixSeconds: Int64, endUnixSeconds: Int64, keyID: String? = nil, model: String? = nil,
     mode: ExecutionMode? = nil, failure: ExecutionFailure? = nil, failedOnly: Bool = false,
     state: ExecutionSnapshot.State? = nil, reasoningEffort: String? = nil,
+    outcome: ExecutionOutcome.Kind? = nil,
     cursor: UsageCursor? = nil, limit: Int = 50
   ) throws {
     guard (0...1_000_000_000_000).contains(startUnixSeconds), endUnixSeconds > startUnixSeconds,
@@ -35,6 +37,7 @@ public struct UsageQuery: Sendable {
       keyID.map({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0) }) ?? true,
       model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true,
       reasoningEffort.map({ $0 == RequestMetadataValue.sanitize($0) }) ?? true,
+      outcome == nil || outcome == .failed,
       (1...100).contains(limit),
       cursor.map({ $0.atUnixSeconds >= startUnixSeconds && $0.atUnixSeconds < endUnixSeconds })
         ?? true
@@ -46,6 +49,7 @@ public struct UsageQuery: Sendable {
     self.model = model
     self.mode = mode
     self.failure = failure
+    self.outcome = outcome
     self.failedOnly = failedOnly
     self.state = state
     self.cursor = cursor
@@ -229,6 +233,9 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public let inputTokens: Int64?
+  public let cachedTokens: Int64?
+  public let cacheUsageIncomplete: Bool
   public let enabled: Bool
   public let tokens: Int64
   public let tokenUsageIncomplete: Bool
@@ -245,8 +252,12 @@ public struct KeyUsageSummary: Sendable {
     key: UsageKeyOption, admitted: Int64, failed: Int64, pending: Int64,
     estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
-    tokenUsageIncomplete: Bool = true
+    tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
+    cacheUsageIncomplete: Bool = true
   ) {
+    self.inputTokens = inputTokens
+    self.cachedTokens = cachedTokens
+    self.cacheUsageIncomplete = cacheUsageIncomplete
     self.enabled = enabled
     self.tokens = tokens
     self.tokenUsageIncomplete = tokenUsageIncomplete

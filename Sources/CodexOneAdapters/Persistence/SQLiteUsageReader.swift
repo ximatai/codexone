@@ -52,7 +52,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           result.resume(
             returning: SQLiteUsageReader(
               primary: primary,
-              connection: try SQLiteConnection(readOnlyPath: path, clock: primary.clock),
+              connection: try SQLiteConnection(
+                readOnlyPath: path, clock: primary.clock, businessDay: primary.businessDay),
               queue: queue,
               readTimeout: readTimeout))
         } catch { result.resume(throwing: error) }
@@ -97,7 +98,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     startUnixSeconds: Int64, keys: [KeyUsageSummary]
   ) {
     try await read { db in
-      let start = db.clock.unixSeconds / 86400 * 86400
+      let now = db.clock.unixSeconds
+      let start = try db.businessDay.start(containing: now)
+      let tokenUsages = try SQLiteExecutionStore.keyTokenUsages(db, now: now)
       let rows = try db.rows(
         """
         SELECT k.id,json_extract(k.metadata_json,'$.principal'),
@@ -112,17 +115,20 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='succeeded' ELSE 0 END),0),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='cancelled' ELSE 0 END),0),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state='intent' ELSE 0 END),0),
-          json_extract(k.metadata_json,'$.enabled')
+          json_extract(k.metadata_json,'$.enabled'),
+          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND COALESCE(json_extract(a.usage_json,'$.nativeImages'),0)!=1 THEN json_extract(a.usage_json,'$.inputTokens') END),
+          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND COALESCE(json_extract(a.usage_json,'$.nativeImages'),0)!=1 THEN json_extract(a.usage_json,'$.cachedTokens') END),
+          COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND (a.usage_json IS NULL OR json_extract(a.usage_json,'$.nativeImages')=1 OR json_extract(a.usage_json,'$.completeness')!='complete') THEN 1 ELSE 0 END),0)
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         WHERE ? OR json_extract(k.metadata_json,'$.archivedAtUnixSeconds') IS NULL
         GROUP BY k.id ORDER BY k.id LIMIT 257
         """,
-        (0..<7).flatMap { _ in [.number(start), .number(start + 86400)] } + [
+        (0..<10).flatMap { _ in [.number(start), .number(start + 86400)] } + [
           .number(includeArchived ? 1 : 0)
         ]
       ) { row in
         let id = String(cString: sqlite3_column_text(row, 0))
-        let tokenUsage = try SQLiteExecutionStore.keyTokenUsage(db, keyID: id)
+        let tokenUsage = tokenUsages[id] ?? (tokens: 0, incomplete: false)
         return KeyUsageSummary(
           key: .init(
             id: String(cString: sqlite3_column_text(row, 0)),
@@ -138,7 +144,12 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           succeeded: sqlite3_column_int64(row, 8), cancelled: sqlite3_column_int64(row, 9),
           inFlight: sqlite3_column_int64(row, 10), enabled: sqlite3_column_int(row, 11) != 0,
           tokens: tokenUsage.tokens,
-          tokenUsageIncomplete: tokenUsage.incomplete)
+          tokenUsageIncomplete: tokenUsage.incomplete,
+          inputTokens: sqlite3_column_type(row, 12) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 12),
+          cachedTokens: sqlite3_column_type(row, 13) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 13),
+          cacheUsageIncomplete: sqlite3_column_int64(row, 14) > 0)
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }
       return (start, rows)
@@ -186,8 +197,10 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     async throws -> [DailyUsageBucket]
   {
     guard (1...31).contains(days) else { throw ExecutionError.invalidCommand }
-    let end = endUnixSeconds ?? (primary.clock.unixSeconds / 86400 * 86400 + 86400)
-    guard end >= Int64(days) * 86400, end % 86400 == 0 else { throw ExecutionError.invalidCommand }
+    let end = try endUnixSeconds ?? primary.businessDay.end(containing: primary.clock.unixSeconds)
+    guard end >= Int64(days) * 86400, try primary.businessDay.isBoundary(end) else {
+      throw ExecutionError.invalidCommand
+    }
     let query = try UsageQuery(
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
     return try await read { db in try Self.daily(db, query) }

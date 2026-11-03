@@ -14,6 +14,7 @@ final class SQLiteConnection: @unchecked Sendable {
   private var lockFD: Int32 = -1
   private var readOnly = false
   var overloadPacing: [String: [String: OverloadPacing]] = [:]
+  let businessDay: BusinessDayDefinition
   let clock: WallClock
   let filePath: String
   enum Value: Sendable {
@@ -24,10 +25,11 @@ final class SQLiteConnection: @unchecked Sendable {
 
   init(
     path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false,
-    clock: WallClock = .system
+    clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc
   )
     throws
   {
+    self.businessDay = businessDay
     self.clock = clock
     filePath = path
     guard path != ":memory:", !path.utf8.contains(0) else { throw ExecutionError.invalidCommand }
@@ -183,7 +185,10 @@ final class SQLiteConnection: @unchecked Sendable {
   }
 
   /// The already locked primary store owns this one read-only WAL connection.
-  init(readOnlyPath: String, clock: WallClock = .system) throws {
+  init(readOnlyPath: String, clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc)
+    throws
+  {
+    self.businessDay = businessDay
     self.clock = clock
     readOnly = true
     filePath = readOnlyPath

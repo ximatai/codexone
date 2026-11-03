@@ -44,9 +44,9 @@ public struct AccountPoolGateway: Sendable {
             principal: policy.key.principal, hints: affinityHints) : nil
         let works = try await prepareWorks(affinity: affinity, requiredAccount: requiredAccount)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
-        let day = clock.utcDay
+        let window = try store.businessDay.window(containing: clock.unixSeconds)
         let command = try AccountPoolAdmission(
-          attempt: UUID().uuidString, policy: policy, model: model, window: "utc-day-\(day)",
+          attempt: UUID().uuidString, policy: policy, model: model, window: window,
           requestID: requestID, mode: mode, references: references, connection: connection,
           candidates: candidates, requirements: requirements,
           reasoningEffort: reasoningEffort, serviceTier: serviceTier,
