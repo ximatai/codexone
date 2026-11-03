@@ -107,7 +107,7 @@ class Provider(BaseHTTPRequestHandler):
         for k, v in [('Upgrade', 'websocket'), ('Connection', 'Upgrade'), ('Sec-WebSocket-Accept', accept)]:
             self.send_header(k, v)
         self.end_headers()
-        self.connection.settimeout(20)
+        self.connection.settimeout(120)
         try:
             while True:
                 opcode, body = receive(self.connection, masked=True)
