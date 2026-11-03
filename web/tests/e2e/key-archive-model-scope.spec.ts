@@ -93,6 +93,9 @@ test("desktop archive, recycle bin, restore and independent all-model scopes", a
   await page.getByRole("button", { name: "确认禁用" }).click();
   await expect(page.getByRole("button", { name: "确认禁用" })).toBeHidden();
   await expect(page.getByRole("dialog", { name: "密钥详情" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "查看详情" })).toBeHidden();
+  await page.getByRole("combobox", { name: "可用状态", exact: true }).click();
+  await page.getByRole("option", { name: "已禁用", exact: true }).click();
   await page.getByRole("button", { name: "查看详情" }).click();
   await page.getByRole("button", { name: "归档", exact: true }).click();
   await expect(
