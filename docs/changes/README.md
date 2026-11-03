@@ -7,6 +7,7 @@
 ## 活动提案
 
 - [upstream-zstd](upstream-zstd/proposal.md) · [任务](upstream-zstd/tasks.md) · [验证](upstream-zstd/verification.md)
+- [memory-retention](memory-retention/proposal.md) · [任务](memory-retention/tasks.md)
 
 - [first-response-after-upload](first-response-after-upload/proposal.md) · [任务](first-response-after-upload/tasks.md)
 

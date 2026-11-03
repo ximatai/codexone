@@ -45,6 +45,8 @@ swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/respon
 
 发行反代模板分别承载数据与管理 TLS 域，保留管理公开 authority（含端口），不依赖 forwarded 头授权；生成转发禁止自动重试，客户端断开须关闭对应上游且不自动释放 unknown。SSE 关闭响应缓冲，WS 显式升级。普通反代日志不得记录请求 URI/查询、认证与正文；私有故障诊断须单独受控。模板默认大小与空闲超时需按已验证模型/profile 明确配置，不能把空闲超时等同请求总期限。
 
+Linux glibc 运行镜像默认设置 `MALLOC_ARENA_MAX=2`、`MALLOC_MMAP_THRESHOLD_=1048576`、`MALLOC_TRIM_THRESHOLD_=16777216`，限制多核 arena 保留并促进大块内存回收；Compose 与安装模板继承镜像 ENV，不另行覆盖。部署者显式覆盖须重新验收容量；macOS 不适用这些参数。解析后的 Responses 入站原始正文可在最后一次字节使用后丢弃，HTTP 请求和 WS turn 的预算租约仍按原 owner/结束路径释放，不得提前返还预算或改变发送字节、16 MiB WS 预检/HTTP 回退及入站限制。
+
 正式性能和容量指标须基于实际 Linux 硬件、负载、HTTP keepalive、WS 与图片峰值证据确定。资源回稳测 RSS/FD/task/队列，进程 kill 与系统/存储故障分别验收；不把 socket 释放包装成上游停止执行或收费。
 
 ## O12：基础进程与健康契约

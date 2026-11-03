@@ -117,6 +117,10 @@ COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
 COPY --from=backend /output/licenses/ /opt/codexone/licenses/swift/
 COPY --from=web /licenses/ /opt/codexone/licenses/npm/
+# Bound glibc arena growth and return large request allocations on multi-core hosts.
+ENV MALLOC_ARENA_MAX=2 \
+    MALLOC_MMAP_THRESHOLD_=1048576 \
+    MALLOC_TRIM_THRESHOLD_=16777216
 ENV CODEXONE_DATA_DIRECTORY=/var/lib/codexone \
     CODEXONE_WEB_DIRECTORY=/opt/codexone/web
 USER 10001:10001
