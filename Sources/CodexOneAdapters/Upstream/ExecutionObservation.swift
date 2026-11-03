@@ -34,6 +34,7 @@ func executionFailure(_ error: any Error) -> ExecutionFailure {
     case "upstream_response_too_large", "upstream_event_too_large": return .invalidUpstreamResponse
     case "model_not_allowed": return .modelNotAllowed
     case "continuation_owner_unavailable": return .accountUnavailable
+    case "conversation_too_large": return .invalidRequest
     case "conflicting_turn_state", "invalid_turn_state", "invalid_client_metadata":
       return .invalidRequest
     default:

@@ -13,11 +13,23 @@ final class PoolWebSocketStart: Sendable {
   private let selected: AsyncThrowingStream<Selection, any Error>.Continuation
   private let results: AsyncThrowingStream<Void, any Error>
   private let result: AsyncThrowingStream<Void, any Error>.Continuation
+  private let preparedFrame = Mutex<Data?>(nil)
   private let reported = Mutex(
     (finished: false, reported: false, context: ExecutionContext?.none))
   init() {
     (selections, selected) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
     (results, result) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
+  }
+  func prepareFrame(_ data: Data) throws {
+    try UpstreamWebSocketBodyLimit.requireNativeFrame(data)
+    preparedFrame.withLock { $0 = data }
+  }
+  func takeFrame() throws -> Data {
+    try preparedFrame.withLock { value in
+      guard let data = value else { throw ExecutionError.invalidCommand }
+      value = nil
+      return data
+    }
   }
   func publish(_ selection: Selection) {
     reported.withLock { $0.context = selection.context }
@@ -77,6 +89,7 @@ enum PoolWebSocketSession {
     do {
       let turnState = try requestTurnState(
         headers: executor.clientHeaders, document: first.document)
+      try start.prepareFrame(executor.webSocketFrame(first, lane: lane, turnState: turnState))
       try await withThrowingTaskGroup(of: Void.self) { tasks in
         defer {
           start.close(CancellationError())

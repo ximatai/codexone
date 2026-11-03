@@ -91,10 +91,27 @@ struct HTTPResponseExecution: Sendable {
     }
     let model = try executionModel(request)
     let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
+    // Discard an oversized WS encoding before allocating the HTTP body.
+    let (frame, oversizedBytes): (Data?, Int?) = try {
+      guard configuration.upstreamTransport == "websocket" else { return (nil, nil) }
+      let encoded = try webSocketFrame(request, turnState: turnState)
+      return encoded.count > UpstreamWebSocketBodyLimit.maximumMessageBytes
+        ? (nil, encoded.count) : (encoded, nil)
+    }()
+    let oversized = oversizedBytes != nil
+    if let oversizedBytes, let previous = request.document["previous_response_id"],
+      previous != .null
+    {
+      ProtocolFailureDiagnostics.recordOversizedFrame(
+        bytes: oversizedBytes, path: "reject_continuation")
+      throw UpstreamWebSocketBodyLimit.rejection()
+    }
     let wireDocument = try request.preparedDocument(
       contract: configuration.requestContract, nativeWebSocket: false)
-    let wireStreaming = wireDocument["stream"]?.bool == true
-    if configuration.upstreamTransport == "websocket" {
+    if let oversizedBytes {
+      ProtocolFailureDiagnostics.recordOversizedFrame(bytes: oversizedBytes, path: "http")
+    }
+    if let frame {
       try await executeRouted(
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
@@ -108,8 +125,8 @@ struct HTTPResponseExecution: Sendable {
             }) { peer in
               try peer.beginTurn(compaction: request.streamCompaction)
               try await exchange(
-                request, context: context, model: model, peer: peer, turnState: turnState,
-                emit: emit)
+                request, context: context, model: model, peer: peer,
+                frame: frame, emit: emit)
             }
         }
         return nil
@@ -122,11 +139,17 @@ struct HTTPResponseExecution: Sendable {
       mode: request.mode, turnState: turnState, requirements: request.requirements,
       reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
     ) { context, authorization in
+      let wireStreaming = wireDocument["stream"]?.bool == true
       try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
         upstream.headers = clientHeaders
+        if oversized, upstream.headers.first(name: "x-codex-turn-state") == nil,
+          let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
+        {
+          upstream.headers.add(name: "x-codex-turn-state", value: turnState)
+        }
         upstream.headers.add(name: "content-type", value: "application/json")
         upstream.headers.add(
           name: "accept", value: wireStreaming ? "text/event-stream" : "application/json")
@@ -149,6 +172,9 @@ struct HTTPResponseExecution: Sendable {
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
         await observeResponseHeaders(response.headers, account: authorization?.identity)
         guard response.status == .ok else {
+          if oversized, response.status == .payloadTooLarge {
+            throw UpstreamWebSocketBodyLimit.rejection(upstreamStatus: 413)
+          }
           throw await ProviderError.failure(response: response)
         }
         if wireStreaming {

@@ -20,7 +20,8 @@ enum ProtocolFailureDiagnostics {
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
-    "image_input_too_large", "invalid_image", "invalid_input", "invalid_mask",
+    "conversation_too_large", "image_input_too_large", "invalid_image", "invalid_input",
+    "invalid_mask",
     "invalid_private_context", "json_too_deep", "model_catalog_unavailable", "request_too_large",
     "too_many_references", "unsupported_background", "unsupported_compaction_trigger",
     "unsupported_stream_options",
@@ -65,6 +66,14 @@ enum ProtocolFailureDiagnostics {
     }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     return value
+  }
+
+  static func recordOversizedFrame(bytes: Int, path: String) {
+    guard gate.withLock({ $0.admit(now: .now) }) else { return }
+    let bucket = bytes <= 24 * 1024 * 1024 ? "16_to_24_mib" : "over_24_mib"
+    logger.info(
+      "Oversized upstream WebSocket request",
+      metadata: ["size_bucket": .string(bucket), "path": .string(path)])
   }
 
   static func recordMissingStreamMediaType(requestID: String) {

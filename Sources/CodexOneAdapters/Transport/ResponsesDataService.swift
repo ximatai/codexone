@@ -450,9 +450,7 @@ public struct ResponsesDataService: Service {
                       try await executor.exchange(
                         request, context: initialTurn.context, model: model, peer: upstream,
                         lane: lane,
-                        turnState: try requestTurnState(
-                          headers: executor.clientHeaders, document: request.document),
-                        downstream: downstream
+                        downstream: downstream, frame: try initialTurn.start.takeFrame()
                       ) { event in
                         try await downstream.send(event)
                         tools.observe(event, request: request)
@@ -489,8 +487,13 @@ public struct ResponsesDataService: Service {
                   if initialTurn == nil {
                     try? await sendWebSocketError(
                       error, requestID: requestID, lane: lane, to: downstream)
-                    // A provider error event ended only this turn; the pinned socket stays usable.
-                    if (error as? GatewayProtocolError)?.providerError != nil { continue }
+                    // Provider refusals and local size rejections end only this turn.
+                    if (error as? GatewayProtocolError)?.providerError != nil
+                      || (error as? GatewayProtocolError)?.code
+                        == UpstreamWebSocketBodyLimit.errorCode
+                    {
+                      continue
+                    }
                   }
                   throw error
                 }

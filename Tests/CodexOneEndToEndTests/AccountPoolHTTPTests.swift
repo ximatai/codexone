@@ -495,10 +495,12 @@ private struct PoolHTTPHarness {
   }
 }
 private func withPoolHTTP(
-  transport: String = "http", _ operation: (PoolHTTPHarness) async throws -> Void
+  transport: String = "http", executionTimeout: Int = 5,
+  _ operation: (PoolHTTPHarness) async throws -> Void
 ) async throws {
   try await withOAuth(timeout: 3000) { oauth in
-    let harness = try await PoolHTTPHarness.open(oauth, transport: transport)
+    let harness = try await PoolHTTPHarness.open(
+      oauth, transport: transport, executionTimeout: executionTimeout)
     do { try await operation(harness) } catch {
       await harness.close()
       throw error
@@ -2638,5 +2640,67 @@ func detachedWebSocketMetadataRecordsContinuationSource() async throws {
         "client_metadata": .object(["x-codex-turn-state": .string(state)])
       ])["type"]?.string == "response.completed")
     #expect(h.calls.last?.account == account)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+func oversizedWebSocketHTTPFallbackPreservesAccountAndHealth(reject: Bool, stateInBody: Bool)
+  async throws
+{
+  try await withPoolHTTP(transport: "websocket", executionTimeout: 30) { h in
+    // Establish an observed turn-state owner on the selected account first.
+    let first = try await h.request()
+    #expect(first.0 == 200)
+    let selected = h.calls[0].account
+    let selectedID = selected == "synthetic-a" ? "a" : "b"
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let before = try await h.store.accountHealth(id: selectedID)
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+    request.httpMethod = "POST"
+    request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+    request.setValue("application/json", forHTTPHeaderField: "content-type")
+    let token = "synthetic-returned-turn-state-\(selected)"
+    var document: JSONObject = [
+      "model": .string("synthetic-text"), "input": .string(reject ? "http413" : "text"),
+      "instructions": .string(String(repeating: "x", count: 16 * 1024 * 1024)),
+    ]
+    if stateInBody {
+      document["client_metadata"] = .object(["x-codex-turn-state": .string(token)])
+    } else {
+      request.setValue(token, forHTTPHeaderField: "x-codex-turn-state")
+    }
+    request.httpBody = try JSONValue.object(document).data()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let (body, response) = try await session.data(for: request)
+    #expect((response as! HTTPURLResponse).statusCode == (reject ? 413 : 200))
+    if reject {
+      #expect(try JSONValue.decode(body)["error"]?["code"]?.string == "conversation_too_large")
+      #expect((response as! HTTPURLResponse).value(forHTTPHeaderField: "retry-after") == nil)
+    }
+    #expect(h.calls.count == 2 && h.calls[1].account == selected)
+    #expect(
+      h.calls[1].headers?.first(name: "x-codex-turn-state")
+        == "synthetic-returned-turn-state-\(selected)"
+    )
+    // The only WS upgrade belongs to the ordinary first turn.
+    #expect(h.state.value.withLock { $0.upgrades } == 1)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let after = try await h.store.accountHealth(id: selectedID)
+    #expect(after == before)
+    let settled = try await h.store.perform {
+      try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='settled'")
+    }
+    #expect(settled == 2)
+    if reject {
+      let zero = try await h.store.perform {
+        try $0.scalar(
+          "SELECT COUNT(*) FROM attempts WHERE json_extract(usage_json,'$.providerRejectedBeforeOutput')=1 AND json_extract(outcome_json,'$.failure')='invalid_request'"
+        )
+      }
+      #expect(zero == 1)
+    }
+    #expect(try await h.request().0 == 200)
+    #expect(h.state.value.withLock { $0.upgrades } == 2)
   }
 }

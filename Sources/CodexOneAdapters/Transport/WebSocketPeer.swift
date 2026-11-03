@@ -169,6 +169,7 @@ actor WebSocketWriter {
   func send(_ data: Data, opcode: WebSocketOpcode = .text)
     async throws
   {
+    if client { try UpstreamWebSocketBodyLimit.requireNativeFrame(data) }
     guard
       data.count
         <= (client

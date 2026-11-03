@@ -25,6 +25,7 @@
     "verify_client_protocol.py",
     "verify_websocket.py",
     "verify_response_finish.py",
+    "verify_upstream_ws_body_limit.py",
     "verify_admin_assets.py",
     "verify_admin.py",
     "verify_admin_round2.py",
