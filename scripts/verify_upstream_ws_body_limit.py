@@ -317,39 +317,26 @@ def main():
                             else:
                                 assert usage['inputTokens'] == 5 and usage['outputTokens'] == 3
                                 assert b'rate_limits.updated' not in body
-                    # Native 1009 ends only the turn; next small turn uses a fresh upstream socket.
-                    server.mode = 'close'
-                    before = len(server.calls)
+                    # Immediate small turns exercise the old-reader/new-session handoff.
+                    # Do not poll the ledger between receiving 413 and sending the next create.
                     with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
-                        result = native(peer, sized(2048, contract, native=True))
-                        assert result['status'] == 413, result
-                        error(wire(result))
-                        count += 1
-                        state, outcome, usage = ledger(root, count)[-1]
-                        assert state == 'settled' and outcome['failure'] == 'invalid_request'
-                        assert usage['completeness'] == 'complete' and usage['inputTokens'] == usage['outputTokens'] == 0
-                        assert [c[0] for c in server.calls[before:]] == ['websocket']
-                        server.mode = 'ok'
-                        result = native(peer, sized(1024, contract, native=True))
-                        assert result['type'] == 'response.completed', result
-                        count += 1
-                        ledger(root, count)
-                        server.mode = 'metadata'
-                        before = len(server.calls)
-                        result = native(peer, sized(2048, contract, native=True))
-                        assert result['status'] == 413, result
-                        error(wire(result))
-                        count += 1
-                        state, outcome, usage = ledger(root, count)[-1]
-                        assert state == 'settled' and outcome['failure'] == 'invalid_request'
-                        assert usage['inputTokens'] == usage['outputTokens'] == 0
-                        assert [c[0] for c in server.calls[before:]] == ['websocket']
-                        server.mode = 'ok'
-                        result = native(peer, sized(1024, contract, native=True))
-                        assert result['type'] == 'response.completed', result
-                        previous = result['response']['id']
-                        count += 1
-                        ledger(root, count)
+                        for mode in ('close', 'metadata') * 4:
+                            server.mode = mode
+                            before = len(server.calls)
+                            result = native(peer, sized(2048, contract, native=True))
+                            assert result['status'] == 413, result
+                            error(wire(result))
+                            server.mode = 'ok'
+                            result = native(peer, sized(1024, contract, native=True))
+                            assert result['type'] == 'response.completed', result
+                            previous = result['response']['id']
+                            count += 2
+                            rows = ledger(root, count)
+                            state, outcome, usage = rows[-2]
+                            assert state == 'settled' and outcome['failure'] == 'invalid_request'
+                            assert usage['completeness'] == 'complete' and usage['inputTokens'] == usage['outputTokens'] == 0
+                            assert rows[-1][0] == 'settled'
+                            assert [c[0] for c in server.calls[before:]] == ['websocket', 'websocket']
                     # A valid HTTP continuation can reach WS, but must never replay on HTTP.
                     if contract == 'responses':
                         server.mode = 'close'

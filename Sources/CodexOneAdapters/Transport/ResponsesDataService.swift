@@ -365,7 +365,7 @@ public struct ResponsesDataService: Service {
   static func serveTurns(
     downstream: WebSocketPeer, upstream: WebSocketPeer, firstBody: WebSocketBody,
     executor: HTTPResponseExecution, digest: String?, initial: PoolWebSocketInitialTurn? = nil,
-    sizeRefused: @escaping @Sendable () -> Void = {}
+    sizeRefused: @escaping @Sendable (GatewayProtocolError, String, String) -> Void = { _, _, _ in }
   ) async throws {
     downstream.permitSettlement()
     let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
@@ -481,9 +481,10 @@ public struct ResponsesDataService: Service {
                       refusal.code == UpstreamWebSocketBodyLimit.errorCode,
                       refusal.upstreamWebSocketCloseCode == 1009
                     {
-                      sizeRefused()
-                    }
-                    if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
+                      // Publish only after the old session has ended its command reader.
+                      // A client may submit its next small turn immediately after the 413.
+                      sizeRefused(refusal, requestID, lane)
+                    } else if !(error is WebSocketUpstreamClosed), !(error is CancellationError) {
                       try? await sendWebSocketError(
                         error, requestID: requestID, lane: lane, to: downstream)
                     }

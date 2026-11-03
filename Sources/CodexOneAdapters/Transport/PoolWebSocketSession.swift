@@ -82,7 +82,8 @@ enum PoolWebSocketSession {
     downstream: WebSocketPeer, firstBody: WebSocketBody, first: ResponseRequest,
     executor: HTTPResponseExecution, digest: String?
   ) async throws -> Bool {
-    let reconnect = Mutex(false)
+    // Bounded by the existing 16 active turns; this session owns all deferred errors.
+    let refusals = Mutex<[(error: GatewayProtocolError, requestID: String, lane: String)]>([])
     guard executor.gateway != nil else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
     let requestID = UUID().uuidString
@@ -170,7 +171,9 @@ enum PoolWebSocketSession {
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
                 initial: .init(context: selection.context, start: start, requestID: requestID),
-                sizeRefused: { reconnect.withLock { $0 = true } })
+                sizeRefused: { error, requestID, lane in
+                  refusals.withLock { $0.append((error, requestID, lane)) }
+                })
             }
           } catch {
             start.close(error)
@@ -179,11 +182,18 @@ enum PoolWebSocketSession {
         }
         while try await tasks.next() != nil {}
       }
-    } catch is WebSocketUpstreamClosed {
-      // Both sibling owners have ended and handed off their finalization responsibility.
-      return reconnect.withLock { $0 }
     } catch {
-      if reconnect.withLock({ $0 }) { return true }
+      // Both sibling owners and their command readers have ended before a client can
+      // observe the 413 and send a fresh turn. Never replay the refused create.
+      let pending = refusals.withLock { $0 }
+      if !pending.isEmpty {
+        for refusal in pending {
+          try await sendWebSocketError(
+            refusal.error, requestID: refusal.requestID, lane: refusal.lane, to: downstream)
+        }
+        return true
+      }
+      if error is WebSocketUpstreamClosed { return false }
       await executor.recordRejection(first, requestID: requestID, error: error)
       if start.claimError() {
         try? await sendWebSocketError(error, requestID: requestID, lane: lane, to: downstream)
