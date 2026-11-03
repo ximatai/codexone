@@ -169,10 +169,8 @@ struct HTTPResponseExecution: Sendable {
         } else if let token {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
-        upstream.body = .bytes(
-          ByteBuffer(
-            data: try wireDocument.data())
-        )
+        // AHC chunks Data into bounded buffers; avoid an eager second whole-body ByteBuffer.
+        upstream.body = .bytes(try wireDocument.data())
         // The structured deadline owns classification; the client is a later transport fallback.
         let response = try await client.execute(
           upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
