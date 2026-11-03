@@ -1,6 +1,6 @@
 # 上游 HTTP 请求体 zstd 压缩提案
 
-仅方案，待评审后实现。目标是减少大请求上传量，同时控制当前已知的内存压力。规范基线：[协议 P05/P06/P08/P10、P27 及 WS 大请求边界](../../reference/specs/protocol.md)、[用量 U13](../../reference/specs/usage.md)、[执行生命周期](../../reference/specs/execution-lifecycle.md)、[运行容量](../../reference/specs/operations.md)。实现时同步规范；本次不改行为、依赖或 schema。
+方案已评审，按修订实施。目标是减少大请求上传量，同时控制当前已知的内存压力。规范基线：[协议 P05/P06/P08/P10、P27 及 WS 大请求边界](../../reference/specs/protocol.md)、[用量 U13](../../reference/specs/usage.md)、[执行生命周期](../../reference/specs/execution-lifecycle.md)、[运行容量](../../reference/specs/operations.md)。实现同步规范；不改变 schema。
 
 ## 依赖与发行证据
 
@@ -19,7 +19,7 @@
 
 现有 `Sources/CodexOneAdapters/Upstream/HTTPResponseExecution.swift:172` 只编码一次为 Data，`:176` 将 UploadBody 作为 known-length stream。保留同一份编码 Data；在此选择明文 UploadBody 或 zstd 上传序列。压缩使用 level 3、checksumFlag=0、contentSizeFlag=0、nbWorkers=0，不设置 pledged source size；输入先 `ZSTD_e_continue`，最后以空输入反复 `ZSTD_e_end` 到返回 0（[lib/zstd.h:789–823](https://github.com/meta/zstd/blob/v1.5.7/lib/zstd.h#L789-L823)）。单帧、无字典、不声明原始大小，符合本任务确定的官方客户端参数。
 
-压缩分支在可信上游头装配结束后设置唯一 `Content-Encoding: zstd`，删除原 Content-Length/Transfer-Encoding，AHC stream length 使用 unknown，由 HTTP/1 生成 chunked framing；Content-Type 仍为 application/json。明文分支保持现有长度。`Sources/CodexOneAdapters/Transport/ClientHeaders.swift:10` 的白名单不包含 Content-Encoding/Content-Length，不扩白名单；编码头由网关生成。P27 的有序 JSON 字节与未知字段保留规则保持，解压字节必须等于原最终编码，不重新解析或重排。第三方合约不继承此请求编码能力，也不改变入站解压或响应解压行为。
+压缩分支在可信上游头装配结束后设置唯一 `Content-Encoding: zstd`，删除原 Content-Length/Transfer-Encoding，AHC stream length 使用 unknown，由 HTTP/1 生成 chunked framing；Content-Type 仍为 application/json。明文分支保持现有长度。官方客户端发送整包 Content-Length，本方案为有界内存采用 chunked；这一 framing 差异是待真实上游验收的兼容风险，`off` 为回退路径。`Sources/CodexOneAdapters/Transport/ClientHeaders.swift:10` 的白名单不包含 Content-Encoding/Content-Length，不扩白名单；编码头由网关生成。P27 的有序 JSON 字节与未知字段保留规则保持，解压字节必须等于原最终编码，不重新解析或重排。第三方合约不继承此请求编码能力，也不改变入站解压或响应解压行为。
 
 ## 执行寿命、背压与内存
 
@@ -31,18 +31,19 @@
 
 **30 MiB 请求的新增峰值估算约 4 MiB，按 5 MiB/上传预留**：临时流式探针对重复文本及确定性伪随机字节各处理 31,457,280 字节，`ZSTD_sizeof_CCtx` 峰值均 3,663,377 字节（约 3.49 MiB），`ZSTD_CStreamOutSize()` 为 131,591 字节。加最多一份 64 KiB 输入转换（实现优先借用，按最坏计）、一个输出工作缓冲和一个待消费 ByteBuffer（各约 129 KiB），约 3.81 MiB，余量覆盖每请求小对象与分配器；另有进程共享的两 worker 线程栈/线程池常驻开销，尚未测量，冷启动并发 RSS 验收必须单列；5 MiB 不是进程 RSS 硬上限，也不含既有 JSON 树/原 Data/socket 缓冲。探针输出丢弃不累积；不可压缩输入输出 31,458,009 字节，不能假定总会缩小。禁止整包压缩 Data、`Array(data)` 或完整复制输入；需要产物大小时只能流式累加。
 
-必须计入容量，不能把 `Sources/CodexOneAdapters/Transport/RequestBodyBudget.swift:8` 的 48 MiB 原文预算解释成总内存：它只在 > 8 MiB 时按整份入站正文计费（`:32`），且租约可能先于执行结束释放。保持其 32/48 MiB 行为，另在数据服务为压缩保留独立 **20 MiB 工作区预算（4 × 5 MiB）**，从初始化前一直持有至 worker 完全退出；包含小块和 C workspace。permit/预算不足在发送前选择明文，不等待、不新增 503；已开始压缩则不能切明文。该预算是新增开销约束，不修复原有 JSON/序列化内存压力；并发/RSS 实测超估算时阻止交付并调整实现或降低容量，不能用整包复制换吞吐。
+必须计入容量，不能把 `Sources/CodexOneAdapters/Transport/RequestBodyBudget.swift:8` 的 48 MiB 原文预算解释成总内存：它只在 > 8 MiB 时按整份入站正文计费（`:32`），且租约可能先于执行结束释放。保持其 32/48 MiB 行为，另在数据服务为压缩保留独立 **20 MiB 工作区预算（4 × 5 MiB）**，从初始化前一直持有至 worker 完全退出；包含小块和 C workspace。permit/预算不足在发送前选择明文，不等待、不新增 503；已开始压缩则不能切明文。该预算是新增开销约束，不修复原有 JSON/序列化内存压力；内存为发布门禁：必须用真实网关二进制在假上游测压缩与 off 的峰值增量并写 verification.md；超过 5 MiB/上传必须说明原因，实测超包络时阻止发布并调整实现或降低容量，不能用整包复制换吞吐。
 
 ## 失败与用量
 
 | 观察 | 行为、健康与账本 |
 | --- | --- |
-| 响应生命周期事件前明确 HTTP 400/415 拒绝 | 沿 `Sources/CodexOneAdapters/Upstream/ProviderError.swift:17`、`:86` 返回现有脱敏拒绝；**明文回退 0 次**，不重选账号、不自动关闭压缩。状态本身不证明一定因 zstd，但足以按既有 U13 认定输出前拒绝，完整零用量、settled/failed，不计 unknown（`Sources/CodexOneAdapters/Upstream/ExecutionObservation.swift:73`、`:109`）。`Sources/CodexOneAdapters/Persistence/SQLiteAccountHealth.swift:145` 只惩罚认证/限流/不可用，普通拒绝不影响评分或冷却。 |
+| 响应生命周期事件前明确 HTTP 415 拒绝压缩请求 | 作为无执行证据的协商失败，可用性优先：同账号、同 attempt，以同一份最终编码 Data 明文重发且仅一次，不重新编码、不重选账号；协商拒绝不计账号惩罚、不计 unknown。第二次响应走现有分类，415 不再重发。 |
+| HTTP 400 | 不重发，沿现有脱敏拒绝与 U13 输出前拒绝的完整零用量、settled/failed，不惩罚账号。 |
 | 401/429/5xx | 沿既有认证/额度/不可用健康分类与用量证据规则；不当成压缩协商，不回退。 |
 | 无可信终态，连接在响应开始前断开，含上传中/EOF 后 | 本机 sent、压缩成功或小体积都不是未执行证据；无重放，按既有 indeterminate/unknown；超时/取消保留原分类及 unknown/partial 责任（`ExecutionObservation.swift:17`、`:61`；U13）。 |
 | 编码/worker 失败或已开始后超出资源界限 | 终止上传，释放并等待 job，不拼接明文、不重试；不惩罚账号。已准入但无明确拒绝/可信用量时保守保留 unknown，不新增猜测的零用量规则。发送前可判断的关闭、阈值、容量条件只选择明文。 |
 
-16 MiB 是 **WS 最终未压缩 response.create 编码**的路由观察边界，仍按同一份编码字节判断（`HTTPResponseExecution.swift:94`、`UpstreamWebSocketBodyLimit.swift:6`）；不能用压缩大小让超限消息继续发 WS，也不新增 HTTP 16 MiB 上限。早期 1009 的一次 HTTP 回退与 zstd 的零次明文回退是不同规则；HTTP 回退失败沿现有收尾，不再回 WS。入站 32 MiB 上限不变。
+16 MiB 是 **WS 最终未压缩 response.create 编码**的路由观察边界，仍按同一份编码字节判断（`HTTPResponseExecution.swift:94`、`UpstreamWebSocketBodyLimit.swift:6`）；不能用压缩大小让超限消息继续发 WS，也不新增 HTTP 16 MiB 上限。早期 1009 的一次 HTTP 回退与压缩请求 415 的一次明文重发是不同规则；HTTP 回退失败沿现有收尾，不再回 WS。入站 32 MiB 上限不变。
 
 ## 上传诊断
 
@@ -54,7 +55,7 @@
 
 无数据库 schema/数据迁移；启动开关 `off` 是必要回退路径，重启后恢复明文、known length；不热切换正在上传的帧。旧二进制回退前删除新增配置字段，既有 schema v11 与历史 unknown 不改。不能因关闭开关而重放已失败请求。此开关只撤销本变更，不代表任何其他版本间原库回退均安全。
 
-当前未决：v0.26.9 诊断校准阈值、原生 Linux SwiftPM/发行体积与许可证产物验收、并发 RSS 包络，以及真实订阅后端对 chunked zstd 的兼容性；这些都未在本次验证，真实客户端/订阅验收须另获授权。本次仅 macOS 依赖可行性与合成内存探针，不运行网关兼容验收，不发布。
+当前未决：v0.26.9 诊断校准阈值、原生 Linux SwiftPM/发行体积与许可证产物验收、并发 RSS 包络，以及真实订阅后端对 chunked zstd 的兼容性；这些都未在本次验证，真实客户端/订阅验收须另获授权。本次实现与验收只用合成数据及回环假上游，不发布。不修改 ResponsesDataService 的正文持有逻辑或分配器设置。
 
 ## 相关文档
 
