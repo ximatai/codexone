@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [first-response-after-upload](first-response-after-upload/proposal.md) · [任务](first-response-after-upload/tasks.md)
+
 - [upstream-ws-body-limit](upstream-ws-body-limit/proposal.md) · [任务](upstream-ws-body-limit/tasks.md)
 
 - [response-finish-diagnostics](response-finish-diagnostics/proposal.md) · [任务](response-finish-diagnostics/tasks.md)
