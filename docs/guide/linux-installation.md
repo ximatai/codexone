@@ -91,6 +91,12 @@ HTTPS 路线首次浏览器登录从私有 `secrets/admin` 文件取得秘密，
 
 gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止提权；data 与 backups 本地卷可写、secrets 文件只读、`/tmp` 为有界 tmpfs。短命 init-data 仅以 root 和 CHOWN/FOWNER/DAC_OVERRIDE 设置空卷目录归属，根只读且无网络、不挂 secrets，完成后 gateway 才启动。768 MiB / 128 PID 是安装候选的限制，不是弱服务器容量承诺。live 只检查进程存活；ready 为 503 不触发自动重启。host network 的端口冲突须先处理，不能用映射端口改变回环隔离。
 
+## 大请求内存与镜像默认值
+
+运行镜像为 Linux glibc 设置 `MALLOC_ARENA_MAX=2`、`MALLOC_MMAP_THRESHOLD_=1048576`、`MALLOC_TRIM_THRESHOLD_=16777216`，减少多核宿主连续大请求后的 allocator 保留。Compose 与安装器生成模板不覆盖这些 ENV，无需在私有 `.env` 重复添加；这三项也不是安装器的 `.env` 配置字段。自定义容器运行参数若覆盖它们，须重新测量峰值与空闲占用。
+
+升级到含此修改的 CI/发行镜像并重建容器才生效，仅重启旧容器不会更新镜像 ENV。无 schema 迁移；回退旧镜像会恢复旧默认值，须重新核对内存余量。768 MiB 限额仍不是吞吐或最低宿主承诺，Rosetta 合成结果不能替代原生 Linux、多核混合负载验收。独立复测工具及局限见[镜像内存测量](../development/verification.md#独立镜像内存测量)。
+
 ## 自动重启与维护停机
 
 gateway 使用 `restart: unless-stopped`：进程意外退出后由 Docker 自动拉起；宿主机重启后，随 Docker Engine 启动恢复原先运行的 gateway（须启用 Engine 开机启动）。init-data 保持不重启。每次启动仍校验配置、schema、密钥和实例锁并完成恢复，不自动迁移，也不重放可能已执行的请求。ready 503 或 unhealthy 本身不触发重启。

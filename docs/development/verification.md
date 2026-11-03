@@ -40,6 +40,29 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 默认客户端候选出口通过verify.sh的显式--client入口提供固定客户端路径及版本，缺少客户端或版本不符必须失败；不能以普通后端CI通过代替。脚本新建私有CODEX_HOME/空工作区、loopback合成身份及实际trial_provider序列化，分别验证默认内置目录/显式受信目录、文本三轮/工具往返/压缩续接与三种传输；断言客户端完成、实际传输无回退、上游次数与持久账本。默认路径通过--require-lite要求实际覆盖Lite工具包（可在WS预热中出现）。仅未支持web_search显式关闭，压缩场景显式降低阈值；不读取个人登录或修改个人配置。这是固定CLI合成兼容证据，不能替代Desktop UI或真实提供者。
 
+## 独立镜像内存测量
+
+`scripts/measure_image_memory.py` 只运行本机已有的 CodexOne Linux amd64 镜像，不构建、不拉取镜像，不进入后端 CI 分片。先由操作者准备待测 CI 镜像，再运行（输出只含合成结果）：
+
+```sh
+python3 scripts/measure_image_memory.py --image codexone:candidate \
+  --memory 768m --cpuset 0-1 --output artifacts/memory-two-cpus.json \
+  --env MALLOC_ARENA_MAX=2 --env MALLOC_MMAP_THRESHOLD_=1048576 \
+  --env MALLOC_TRIM_THRESHOLD_=16777216
+```
+
+输出目录须已存在。不传 `--env` 使用镜像默认值；显式 `--env MALLOC_ARENA_MAX=` 等空值会在启动进程前用 `env -u` 移除对应变量，三项都重置才能比较 glibc 原始默认。`--cpuset` 缺省使用 Docker 可用 CPU，记录 Docker VM/宿主可用核数，不把 cpuset 等同线程数。`--rounds` 默认 3，每轮 6 个 30 MiB、6 个 200 图片项的 28 MiB、3 对并行 22 MiB 请求（共 18 个/轮）；前置一次 64 KiB WS 探针，最后 20 个小请求。可设 `--rounds 6` 复测约 108 个大请求，或 `--rounds 0 --final-idle-seconds 1` 快速排查 WS。每轮默认空闲 20 秒、最终 60 秒，可参数化，不将累计空闲错标为连续 90 秒。
+
+工具使用唯一容器/网络名，固定合成身份、宿主 loopback 假上游和仅允许固定合成目标的 CONNECT 隧道，结束后移除自己的容器/网络并关闭 socket。默认让 Docker 分配独立网段，也可用 `--subnet` 指定空闲私有网段，不重用或删除既有网络。Docker Desktop 通过 `host.docker.internal` 接入宿主隧道；Linux bridge 需用 `--host-address` 与 `--tunnel-bind` 指定可达的私有宿主地址。不要指向部署实例或真实上游。
+
+旧工具在 Docker Desktop/Rosetta 下代理主机名的 WS 请求全部 502，隧道连接数及假上游调用数均为零；同一镜像仅改为容器内解析的 IPv4 即恢复 CONNECT/WS 200。本次 macOS 原生构建也能复现：相同仅监听 IPv4 的合成代理，用 `127.0.0.1` 为 200/一次 CONNECT/一次 WS，用 `localhost` 为 502/零 CONNECT/零上游调用。这是网关的代理主机名连接问题，不能归为假上游或 Rosetta 专属故障；准确的地址候选/连接 owner 失败机制尚未确认，本次不改网关解析、重试或回退语义。
+
+工具默认在镜像内解析宿主 IPv4，使用数字地址连接自己的隧道，让内存测试真正走通。可用 `--proxy-resolution hostname --rounds 0 --final-idle-seconds 1` 保留原主机名通路复现故障；失败仍非零退出并保留报告。报告只记录解析模式，不存宿主地址。这是测量通路适配，不是网关修复声明。首个探针和最后小请求均须 SSE completed/DONE、200 且假上游确认为 WS；大请求须确认为 HTTP 回退，否则失败，不再将 502 混入成功内存报告。
+
+报告记录不可变镜像 ID、限制、在线 CPU 数、allocator 覆盖与实际生效值、HTTP/WS 调用数、隧道错误及各检查点 cgroup v2 `memory.current`/`memory.peak`、anon/file 与 OOM 事件；字节单位。peak 是容器全生命周期高水位，检查点可能漏过瞬时 current 峰值；anon/file 不是 RSS，含 tmpfs 的容器开销不等同进程常驻内存。请求失败时保存已取得的检查点并返回非零。报告不得包含真实正文、凭证或私人地址。
+
+Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负载，不代表真实订阅或正式容量。macOS 源码测试不验证 glibc，镜像参数的效果须用包含本次修改的 CI 镜像在原生 Linux 与目标 CPU/限额复验。该工具不能替代 O14 的完整混合流量、FD/task/队列/存储及弱宿主验收。
+
 ## 发版 CI 验证边界
 
 Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。

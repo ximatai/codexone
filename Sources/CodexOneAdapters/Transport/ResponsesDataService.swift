@@ -448,6 +448,8 @@ public struct ResponsesDataService: Service {
                   let request = try webSocketCreate(
                     body.data, imageConfiguration: executor.configuration.imageGeneration,
                     previousTools: tools.snapshot)
+                  // All handshake/lane/control readers have finished; the turn still owns its lease.
+                  body.discardData()
                   requested = request
                   try await withWebSocketSettlement(
                     downstream: downstream, upstream: upstream, lane: lane
@@ -543,7 +545,7 @@ public struct ResponsesDataService: Service {
             }
             let lease = budget.lease()
             defer { lease.release() }
-            let received: (HTTPRequestHead, Data)?
+            var received: (HTTPRequestHead, Data)?
             var control = false
             do {
               var head: HTTPRequestHead?
@@ -612,11 +614,13 @@ public struct ResponsesDataService: Service {
               try? await writer.fail(error, diagnostics: !control && !idleReadFailure)
               throw error
             }
-            guard let (head, body) = received else { return }
+            guard let head = received?.0 else { return }
+            var body = received!.1
+            received = nil
             let writer = ProtocolResponseWriter(
               writer: outbound, channel: connection.channel, keepAlive: head.isKeepAlive)
             do {
-              try await route(head: head, body: body, executor: executor, writer: writer)
+              try await route(head: head, body: &body, executor: executor, writer: writer)
             } catch {
               try await writer.fail(error)
             }
@@ -639,7 +643,7 @@ public struct ResponsesDataService: Service {
   }
 
   private static func route(
-    head: HTTPRequestHead, body: Data, executor: HTTPResponseExecution,
+    head: HTTPRequestHead, body: inout Data, executor: HTTPResponseExecution,
     writer: ProtocolResponseWriter
   ) async throws {
     let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
@@ -727,6 +731,8 @@ public struct ResponsesDataService: Service {
     let request = try ResponseRequest(
       data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
       imageConfiguration: executor.configuration.imageGeneration)
+    // Parsing owns the document; retain only the request lease through execution.
+    body = Data()
     if endpoint == "/responses/compact" {
       try await executor.compact(request, requestID: writer.requestID) { document in
         try await writer.json(document)

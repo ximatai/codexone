@@ -36,6 +36,8 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 实例业务日已支持 `CODEXONE_BUSINESS_DAY_OFFSET`（UTC 或 −12:00 至 +14:00 整小时固定偏移），统一每日限额、统计与 UI，重启采用设置，schema 仍 v11。半小时时区/DST 不支持，到期日期仍用 UTC。业务日窗口及恢复回退验证见[验证记录](docs/changes/business-day/verification.md)。
 
+大请求后内存保留正在修复：运行镜像限制 glibc arena 并设置 mmap/trim 阈值，解析后清空 Responses 原正文但保留预算租约；本机合成验证与 CI 新镜像待验收范围见[任务](docs/changes/memory-retention/tasks.md)。
+
 ## 已知限制
 
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。
