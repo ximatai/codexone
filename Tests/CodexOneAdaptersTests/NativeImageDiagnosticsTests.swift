@@ -51,7 +51,8 @@ struct NativeImageDiagnosticsTests {
 
   @Test func fakeBodyCapturesTimesBytesAndLongestGapWithoutChangingCollection() async throws {
     let clock = Clock()
-    let diagnostics = NativeImageDiagnostics(streaming: false, now: { clock.now() })
+    let diagnostics = NativeImageDiagnostics(
+      streaming: false, editing: true, requestBytes: 1024, now: { clock.now() })
     clock.set(10)
     diagnostics.receivedHeaders(status: 200)
     let index = Mutex(0)
@@ -85,6 +86,8 @@ struct NativeImageDiagnosticsTests {
     #expect(metadata["phase"]?.description == "completed")
     #expect(metadata["error_type"]?.description == "none")
     #expect(metadata["transport_stream"]?.description == "false")
+    #expect(metadata["endpoint"]?.description == "edits")
+    #expect(metadata["request_size_bucket"]?.description == "at_most_16_mib")
     #expect(metadata["headers_ms"]?.description == "10")
     #expect(metadata["first_body_ms"]?.description == "40")
     #expect(metadata["last_body_gap_ms"]?.description == "50")
@@ -92,7 +95,7 @@ struct NativeImageDiagnosticsTests {
     #expect(metadata["body_bytes"]?.description == "5")
     #expect(metadata["upstream_status"]?.description == "200")
     #expect(metadata["request_id"]?.description == id)
-    #expect(metadata.count == 11)
+    #expect(metadata.count == 13)
   }
 
   @Test func midBodyDisconnectRetainsOriginalErrorAndPartialTiming() async throws {

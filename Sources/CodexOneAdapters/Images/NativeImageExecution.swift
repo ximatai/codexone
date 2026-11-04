@@ -58,7 +58,9 @@ extension HTTPResponseExecution {
             UploadBody(
               data: wireBody, progress: progress, upload: upload, trackUploadProgress: true),
             length: .known(Int64(wireBody.count)))
-          let diagnostics = NativeImageDiagnostics(streaming: upstreamStreaming)
+          let diagnostics = NativeImageDiagnostics(
+            streaming: upstreamStreaming, editing: request.editing,
+            requestBytes: wireBody.count)
           var attemptError: (any Error)?
           defer { diagnostics.record(error: attemptError, requestID: requestID) }
           do {

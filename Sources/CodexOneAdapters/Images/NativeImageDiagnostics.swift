@@ -22,9 +22,16 @@ final class NativeImageDiagnostics: Sendable {
   private let now: @Sendable () -> ContinuousClock.Instant
   private let dispatched: ContinuousClock.Instant
   private let streaming: Bool
+  private let editing: Bool
+  private let requestBytes: Int
 
-  init(streaming: Bool, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
+  init(
+    streaming: Bool, editing: Bool = false, requestBytes: Int = 0,
+    now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+  ) {
     self.streaming = streaming
+    self.editing = editing
+    self.requestBytes = requestBytes
     self.now = now
     dispatched = now()
   }
@@ -121,6 +128,8 @@ final class NativeImageDiagnostics: Sendable {
         "phase": .string(
           error == nil ? "completed" : value.headers == nil ? "before_headers" : "in_body"),
         "transport_stream": .string(String(streaming)),
+        "endpoint": .string(editing ? "edits" : "generations"),
+        "request_size_bucket": .string(ProtocolFailureDiagnostics.sizeBucket(requestBytes)),
         "error_type": .string(value.bodyError ?? Self.errorToken(error)),
         "elapsed_ms": milliseconds(elapsed),
         "body_bytes": .string(String(value.bytes)),
