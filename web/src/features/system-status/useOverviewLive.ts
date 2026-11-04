@@ -25,7 +25,7 @@ const section = z.object({
   lastSuccessAt: z.number().nonnegative().nullable(),
   freshness: z.enum(["fresh", "stale", "unavailable"]),
   code: z.string().nullable(),
-  data: z.unknown(),
+  data: z.unknown().optional(),
 });
 const envelope = z.object({
   protocol: z.literal(1),
@@ -100,6 +100,7 @@ export function useOverviewLive(active: boolean) {
     }
     const transport = ++transportGeneration.current;
     let pending = 0;
+    let versions: Record<string, number> = {};
     let retired = false,
       attempt = 0,
       sequence = 0,
@@ -134,6 +135,7 @@ export function useOverviewLive(active: boolean) {
       snapshot = false;
       sequence = 0;
       epoch = "";
+      versions = {};
       setMode(attempt ? "polling" : "connecting");
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/overview/live`,
@@ -166,6 +168,13 @@ export function useOverviewLive(active: boolean) {
               throw new Error("sequence_mismatch");
             if (!snapshot && names.some((name) => !(name in frame.sections)))
               throw new Error("incomplete_snapshot");
+            if (
+              !snapshot &&
+              Object.values(frame.sections).some(
+                (source) => !source || !("data" in source),
+              )
+            )
+              throw new Error("incomplete_snapshot");
             const parsed = Object.entries(frame.sections)
               .filter(
                 (entry): entry is [string, Freshness] => entry[1] !== undefined,
@@ -176,15 +185,27 @@ export function useOverviewLive(active: boolean) {
                 data:
                   source.data == null ? undefined : parse(name, source.data),
               }));
+            if (
+              parsed.some(
+                ({ name, source }) => source.version < (versions[name] ?? 0),
+              )
+            )
+              throw new Error("sequence_mismatch");
             await client.cancelQueries({ queryKey: ["overview"] });
             if (!current() || connection !== socket) return;
             for (const { name, source, data } of parsed) {
-              if (data !== undefined)
-                client.setQueryData(
-                  ["overview", name === "inFlight" ? "in-flight" : name],
-                  data,
-                  { updatedAt: (source.lastSuccessAt ?? 0) * 1000 },
-                );
+              versions[name] = source.version;
+              const key = [
+                "overview",
+                name === "inFlight" ? "in-flight" : name,
+              ];
+              const replacement =
+                data ??
+                (!("data" in source) ? client.getQueryData(key) : undefined);
+              if (replacement !== undefined)
+                client.setQueryData(key, replacement, {
+                  updatedAt: (source.lastSuccessAt ?? 0) * 1000,
+                });
               if (name === "inFlight" && source.data != null) {
                 const activity = z
                   .object({
@@ -209,7 +230,15 @@ export function useOverviewLive(active: boolean) {
                 );
               }
             }
-            setSources((previous) => ({ ...previous, ...frame.sections }));
+            setSources((previous) => {
+              const next = { ...previous };
+              for (const { name, source } of parsed)
+                next[name] =
+                  "data" in source
+                    ? source
+                    : { ...source, data: previous[name]?.data };
+              return next;
+            });
             epoch = frame.epoch;
             sequence = frame.sequence;
             if (!snapshot) {

@@ -238,7 +238,7 @@ Key 配置只包含 tokens（业务日每日Token上限）和active（最大并�
 
 首页及首页账号抽屉使用 `GET /api/overview/live`，这是 A10 单响应关闭的精确例外。HTTP 接口继续保留，写操作仍使用 HTTP 与 CSRF。仅接受无 query、无 Bearer、唯一管理 cookie、唯一精确 Origin、合法 Host 与同源 Fetch Metadata 的 upgrade；不协商压缩或子协议，不接受应用入站消息。
 
-v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snapshot/update，sequence 在每连接实际发送时从 1 连续递增。八个 section 为 system、inFlight、daily、keys、accounts、storage、attention、headroom。每源为 `{version, sampledAtUnixSeconds, lastSuccessAt, freshness, code, data}`，freshness 为 fresh/stale/unavailable。data 沿既有 HTTP DTO，inFlight 额外包含 recentlyFinished（64 条/10 秒）、overflow 与 clients（Key 显示名、连接数、最早时间）。完整 section 替换；相同内容的采样仍推进 freshness。来源不构成跨源事务，失败保留旧值，不补零。
+v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snapshot/update，sequence 在每连接实际发送时从 1 连续递增。八个 section 为 system、inFlight、daily、keys、accounts、storage、attention、headroom。每源为 `{version, sampledAtUnixSeconds, lastSuccessAt, freshness, code, data}`，freshness 为 fresh/stale/unavailable。data 沿既有 HTTP DTO，inFlight 额外包含 recentlyFinished（64 条/10 秒）、overflow 与 clients（Key 显示名、连接数、最早时间）。完整 section 替换；update 中相同内容只发送元数据并省略 data，沿原 version 保留内容、推进 freshness；snapshot 的八个源均须显式含 data（不可用为 null）。来源不构成跨源事务，失败保留旧值，不补零。
 
 准入、首事件及 finalize 成功提交后非阻塞唤醒活动；失败不得影响执行、结算或计量，零 viewer 只做廉价检查。约 100 ms 合并，5 秒 SQL 对账；finalize 标脏聚合并最多每 2 秒重算。storage 2 秒，聚合/system 5 秒，账号/提醒 15 秒顺序采样；最后 viewer 离开取消并 await 查询，零 viewer 不采样。新 viewer 使用共享缓存，重连完整 snapshot，无持久事件或生成回放。
 

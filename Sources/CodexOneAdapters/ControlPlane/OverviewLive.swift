@@ -298,6 +298,7 @@ public actor OverviewLive: OverviewLiveRunning {
       let aggregate = ["daily", "keys", "headroom"].contains(name)
       guard initial || time >= (due[name] ?? 0) || (aggregate && dirty && time - lastAggregate >= 2)
       else { continue }
+      let previous = sections[name]
       do {
         let data = try JSONValue.decode(try await read(name))
         guard turn == generation, !viewers.isEmpty, !Task.isCancelled else { return }
@@ -313,7 +314,7 @@ public actor OverviewLive: OverviewLiveRunning {
         replace(name, data: nil, at: time, error: "source_unavailable")
       }
       due[name] = time + period
-      changed[name] = sections[name]
+      changed[name] = delta(name, previous: previous)
     }
     if dirty && time - lastAggregate >= 2 {
       lastAggregate = time
@@ -323,8 +324,9 @@ public actor OverviewLive: OverviewLiveRunning {
     if sections["inFlight"] != nil {
       let data = flight(at: time)
       if activityChanged || sections["inFlight"]?["data"]?["clients"] != data["clients"] {
+        let previous = sections["inFlight"]
         replace("inFlight", data: data, at: time, error: nil)
-        changed["inFlight"] = sections["inFlight"]
+        if let update = delta("inFlight", previous: previous) { changed["inFlight"] = update }
       }
     }
     do {
@@ -345,7 +347,8 @@ public actor OverviewLive: OverviewLiveRunning {
   }
   private func replace(_ name: String, data: JSONValue?, at: Int64, error: String?) {
     let old = sections[name]
-    let version = (old?["version"]?.integer ?? 0) + (old?["data"] != data || error != nil ? 1 : 0)
+    let contents = data ?? old?["data"] ?? .null
+    let version = (old?["version"]?.integer ?? 0) + (old?["data"] != contents ? 1 : 0)
     sections[name] = .object([
       "version": .number(Decimal(version)), "sampledAtUnixSeconds": .number(Decimal(at)),
       "lastSuccessAt": error == nil ? .number(Decimal(at)) : (old?["lastSuccessAt"] ?? .null),
@@ -354,8 +357,19 @@ public actor OverviewLive: OverviewLiveRunning {
           ? "fresh"
           : (old?["lastSuccessAt"] == nil || old?["lastSuccessAt"] == .null
             ? "unavailable" : "stale")),
-      "code": error.map(JSONValue.string) ?? .null, "data": data ?? old?["data"] ?? .null,
+      "code": error.map(JSONValue.string) ?? .null, "data": contents,
     ])
+  }
+  // Same content advances freshness without copying the full DTO onto every viewer's queue.
+  // Full snapshots always use the complete cache; a missing data member means keep this version.
+  private func delta(_ name: String, previous: JSONValue?) -> JSONValue? {
+    guard let current = sections[name], current != previous else { return nil }
+    if previous?["data"] == current["data"] {
+      var metadata = current.object!
+      metadata.removeValue(forKey: "data")
+      return .object(metadata)
+    }
+    return current
   }
   private func send(
     to recipients: [OverviewMailbox], snapshot: Bool, sections changes: [String: JSONValue]

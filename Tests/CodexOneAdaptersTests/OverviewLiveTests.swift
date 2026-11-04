@@ -28,7 +28,9 @@ import Testing
   #expect(start.count == 1 && start[0].id == "visible" && start[0].outcome == nil)
   store.executionStarted(attempt: "visible")
   store.executionReceivedFirstEvent(attempt: "visible")
-  #expect(activity.drain().0.first?.first == true)
+  store.executionReceivedFirstEvent(attempt: "visible")
+  let firstEvents = activity.drain().0
+  #expect(firstEvents.count == 1 && firstEvents.first?.first == true)
   try rawSQL(
     path,
     "CREATE TRIGGER fail_finalize BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT,'synthetic'); END;"
@@ -72,7 +74,9 @@ import Testing
   let initialReads = reads.withLock { $0 }
   time.withLock { $0 += 5 }
   store.overviewActivity.signal.yield(.tick)
-  _ = await first.next()
+  let freshness = try JSONValue.decode(try #require(await first.next()).data)
+  #expect(freshness["daily"]?["data"] == nil)
+  #expect(freshness["daily"]?["lastSuccessAt"] != nil)
   let baseline = reads.withLock { $0 }
   let singleDelta = baseline.mapValues { $0 }.map {
     ($0.key, $0.value - (initialReads[$0.key] ?? 0))
@@ -146,11 +150,11 @@ import Testing
   let codes = Mutex([UInt16]())
   let id = UUID()
   try sessions.bindLive(authorized, id: id) { code in codes.withLock { $0.append(code) } }
-  for _ in 0..<6 {
+  for _ in 0..<7 {
     time.withLock { $0 = $0.advanced(by: .seconds(23 * 3600)) }
     #expect(sessions.withLive(id, touch: true))
   }
-  time.withLock { $0 = $0.advanced(by: .seconds(31 * 3600)) }
+  time.withLock { $0 = $0.advanced(by: .seconds(7 * 3600)) }
   #expect(!sessions.withLive(id, touch: true))
   sessions.bind(port: 19876)
   #expect(codes.withLock { $0 } == [1008])
