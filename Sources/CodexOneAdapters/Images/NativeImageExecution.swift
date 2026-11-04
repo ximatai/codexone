@@ -36,8 +36,15 @@ extension HTTPResponseExecution {
           upstream.headers = try forwardedClientHeaders(
             headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
           upstream.headers.add(name: "content-type", value: "application/json")
+          let upstreamStreaming = !request.editing
+          var wireBody = request.body
+          if upstreamStreaming != request.streaming {
+            var document = try JSONValue.decode(wireBody).object!
+            document["stream"] = .bool(upstreamStreaming)
+            wireBody = try JSONValue.object(document).data(escapingSlashes: false)
+          }
           upstream.headers.add(
-            name: "accept", value: request.streaming ? "text/event-stream" : "application/json")
+            name: "accept", value: upstreamStreaming ? "text/event-stream" : "application/json")
           if let authorization {
             for header in authorization.headers {
               upstream.headers.add(name: header.name, value: header.value)
@@ -45,13 +52,13 @@ extension HTTPResponseExecution {
           } else if let token {
             upstream.headers.add(name: "authorization", value: "Bearer " + token)
           }
-          let upload = RequestUpload(bytes: request.body.count, transport: "http")
+          let upload = RequestUpload(bytes: wireBody.count, transport: "http")
           defer { upload.finish() }
           upstream.body = .stream(
             UploadBody(
-              data: request.body, progress: progress, upload: upload, trackUploadProgress: true),
-            length: .known(Int64(request.body.count)))
-          let diagnostics = NativeImageDiagnostics(streaming: request.streaming)
+              data: wireBody, progress: progress, upload: upload, trackUploadProgress: true),
+            length: .known(Int64(wireBody.count)))
+          let diagnostics = NativeImageDiagnostics(streaming: upstreamStreaming)
           var attemptError: (any Error)?
           defer { diagnostics.record(error: attemptError, requestID: requestID) }
           do {
@@ -92,7 +99,12 @@ extension HTTPResponseExecution {
                 try await emit(data)
               }
               try await emit(Data("data: [DONE]\n\n".utf8))
-            } else if request.streaming {
+            } else if request.streaming
+              || (upstreamStreaming
+                && NativeImageDiagnostics.contentTypeToken(
+                  response.headers.first(name: "content-type"))
+                  == "sse")
+            {
               guard
                 response.headers.first(name: "content-type")?.lowercased().split(separator: ";")
                   .first
@@ -106,7 +118,7 @@ extension HTTPResponseExecution {
               var terminal: JSONValue?
               // Retain only the current event; decoder enforces the event and stream limits.
               var pending = Data()
-              try await begin(replyHeaders)
+              if request.streaming { try await begin(replyHeaders) }
               for try await chunk in response.body {
                 diagnostics.receivedBody(bytes: chunk.readableBytes)
                 try Task.checkCancellation()
@@ -132,7 +144,7 @@ extension HTTPResponseExecution {
                     }
                   }
                   if decoder.isAtEventBoundary {
-                    try await emit(pending)
+                    if request.streaming { try await emit(pending) }
                     pending.removeAll(keepingCapacity: true)
                   }
                 }
@@ -142,6 +154,12 @@ extension HTTPResponseExecution {
               let observation = NativeImageObservation(terminal, model: model, streaming: true)
               guard observation.images > 0 else {
                 throw GatewayProtocolError(502, "invalid_upstream_image")
+              }
+              if !request.streaming {
+                let result = try NativeImageResult.assembled(terminal)
+                replyHeaders.replaceOrAdd(name: "content-type", value: "application/json")
+                try await begin(replyHeaders)
+                try await emit(result.data())
               }
             } else {
               let body = try await collectProgressBody(

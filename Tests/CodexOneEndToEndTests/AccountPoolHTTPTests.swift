@@ -222,6 +222,7 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         }
         if nativeImage {
           document = [
+            "created": .number(1),
             "data": .array([.object(["b64_json": .string(poolImageBase64)])]),
             "usage": .object(["input_tokens": .number(2), "output_tokens": .number(3)]),
           ]
@@ -229,10 +230,18 @@ private final class PoolHTTPHandler: ChannelInboundHandler, RemovableChannelHand
         let stream = request["stream"]?.bool == true && !compact
         var bytes: Data
         if stream {
-          let event = JSONValue.object([
-            "type": .string("response." + (document["status"]?.string ?? "completed")),
-            "response": .object(document),
-          ])
+          let event: JSONValue
+          if nativeImage {
+            var completed = document
+            completed["type"] = .string(
+              head.uri.hasSuffix("/edits") ? "image_edit.completed" : "image_generation.completed")
+            event = .object(completed)
+          } else {
+            event = .object([
+              "type": .string("response." + (document["status"]?.string ?? "completed")),
+              "response": .object(document),
+            ])
+          }
           if let refusals = poolRefusalEvents(poolInput(request), response: .object(document)) {
             bytes = try refusals.reduce(into: Data()) { data, event in
               data.append(
@@ -1450,7 +1459,16 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
             session.invalidateAndCancel()
             #expect((response as! HTTPURLResponse).statusCode == 200)
             #expect(h.calls.last?.path == "/backend-api/codex/images/" + operation)
-            #expect(h.calls.last?.body == request.httpBody)
+            if operation == "generations" {
+              var expected = try JSONValue.decode(request.httpBody!).object!
+              expected["stream"] = .bool(true)
+              let received = try #require(h.calls.last?.body)
+              #expect(try JSONValue.decode(received) == .object(expected))
+              #expect(h.calls.last?.headers?.first(name: "accept") == "text/event-stream")
+            } else {
+              #expect(h.calls.last?.body == request.httpBody)
+              #expect(h.calls.last?.headers?.first(name: "accept") == "application/json")
+            }
             #expect(h.calls.last?.headers?.first(name: "x-codex-image-turn-id") == "synthetic-turn")
             #expect(h.calls.last?.headers?.first(name: "originator") == "codex_cli_rs")
             for name in ["x-openai-actor-authorization", "x-client-private"] {

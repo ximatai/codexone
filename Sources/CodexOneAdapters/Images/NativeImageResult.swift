@@ -18,6 +18,29 @@ enum NativeImageResult {
     return document
   }
 
+  /// Native completion metadata lives at the result level; image payload lives in data.
+  /// Require the provider timestamp rather than inventing a gateway timestamp.
+  static func assembled(_ terminal: JSONValue) throws -> JSONValue {
+    guard var fields = terminal.object else {
+      throw GatewayProtocolError(502, "invalid_upstream_image")
+    }
+    fields.removeValue(forKey: "type")
+    if fields["data"] == nil {
+      guard let image = fields.removeValue(forKey: "b64_json"),
+        let created = fields.removeValue(forKey: "created_at")
+      else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+      var item: JSONObject = ["b64_json": image]
+      if let revised = fields.removeValue(forKey: "revised_prompt") {
+        item["revised_prompt"] = revised
+      }
+      // Match the native non-stream envelope order without dropping future result metadata.
+      var result: JSONObject = ["created": created, "data": .array([.object(item)])]
+      for (key, value) in fields { result[key] = value }
+      return try decode(JSONValue.object(result).data())
+    }
+    return try decode(JSONValue.object(fields).data())
+  }
+
   static func completions(_ document: JSONValue, editing: Bool) -> [JSONValue] {
     let items = document["data"]!.array!
     return items.enumerated().map { index, item in

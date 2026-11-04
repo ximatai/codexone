@@ -225,3 +225,5 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 流式原生 Images 收到 `application/json` 时只接受完整对象：非负整数 created、非空 data 数组、每项含非空规范 base64 b64_json，且无 error/type 错误文档；有界收完整后再提交 SSE，每项一个 image_edit.completed 或 image_generation.completed，created 转为 created_at，聚合 usage 仅放最后一项，结束 [DONE]。账本只观察一次聚合用量。HTML、缺失或其他媒体类型不猜测为 JSON；无效、空、截断结果仍失败。图片诊断 content_type 仅取 json/sse/html/text/binary/missing/other，不记录原始头部。
 
 12 MiB 预路由阈值以 5/12 MiB 成功与 15 MiB 上传中断的观察选择，给 16 MiB 消息硬限制留 4 MiB 余量；实际比较包含最终编码开销。HTTP 大请求沿用既有压缩策略。并未发现上游 WS 上传代码的固定 30 秒期限；不能据中断时间推断原因。WS 单个完整 frame 的 write future 失败可能发生在对端已收到全部载荷之后，无事件也不证明未执行，因此不对普通写失败/取消/EOF 新增 HTTP 重试。只有既有明确早期 1009 拒绝规则允许回退，未知仍未知。
+
+原生 generations 无论下游 stream 均向上游请求 stream=true/Accept SSE；非流式客户端不接收预览，等完整流结束并验证唯一完成事件后返回 200 application/json。完成事件的 created_at 映射 created，b64_json/revised_prompt 放入 data 的图片项，其余结果元数据和 usage 保留；已有 created/data 完整结果保持字段。不得伪造缺失时间、图片或用量。编辑向上游请求非流式（客户端 stream=true 时按完整 JSON 转完成事件）。错误头状态沿原映射；非流式 SSE 内错误在提交前返回 JSON error，截断、重复完成或无终态均失败，已观察用量不因后续断流丢失、不重放。JSON 对象字段顺序/空白不承诺与另一种上游格式字节相同，字段和值按受测原生映射保留。真实提供者格式等价仍须独立验收。

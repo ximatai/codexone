@@ -34,13 +34,19 @@ def native_body(prompt):
 def native_stream(operation, prompt='synthetic'):
     prefix = 'image_edit' if operation == 'edits' else 'image_generation'
     preview = {'type':prefix+'.partial_image','b64_json':PNG, 'partial_image_index':0}
-    final = {'type':prefix+'.completed','b64_json':PNG,'usage':{'input_tokens':2,'output_tokens':3}}
+    final = {'type':prefix+'.completed','created_at':1,'b64_json':PNG,'future':'preserved',
+        'usage':{'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}}
+    if prompt == 'missing-usage': final.pop('usage')
+    if prompt == 'stream-missing-created': final.pop('created_at')
     if prompt == 'synthetic': final['service_tier'] = 'default'
     if prompt == 'stream-empty': final['b64_json'] = ''
     if prompt == 'stream-abort': return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\n'
     if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic acct-split-secret user-synthetic@example.invalid',
         'type':'invalid_request_error','param':'prompt','private':'synthetic-private-member'}}
-    return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\nevent: ' + final['type'].encode() + b'\r\ndata: ' + json.dumps(final).encode() + b'\r\n\r\ndata: [DONE]\n\n'
+    result = b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\nevent: ' + final['type'].encode() + b'\r\ndata: ' + json.dumps(final).encode() + b'\r\n\r\n'
+    if prompt == 'stream-duplicate': result += b'data: ' + json.dumps(final).encode() + b'\n\n'
+    if prompt == 'stream-tail': return result + b'data: {'
+    return result + b'data: [DONE]\n\n'
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -104,6 +110,8 @@ class Provider(BaseHTTPRequestHandler):
             status = int(prompt[4:]) if prompt.startswith('http') else 200
             body = (json.dumps({'error':{'code':'synthetic_provider_error','message':'synthetic acct-private'}}).encode()
                 if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt) if request.get('stream') else native_body(prompt))
+            if prompt == 'stream-error' and not request.get('stream'):
+                status = 400; body = json.dumps({'error':{'code':'synthetic_provider_error', 'type':'invalid_request_error', 'message':'synthetic acct-split-secret user-synthetic@example.invalid', 'param':'prompt'}}).encode()
             if prompt.startswith('json-stream'):
                 body = native_body('synthetic')
                 if prompt == 'json-stream-empty': body = native_body('empty')
@@ -242,7 +250,11 @@ def main():
                             status, body, headers = request(wire, prefix + '/images/' + operation, headers=client_headers)
                             assert status == 200 and upstream.calls == before + 1, (status, body[:200])
                             path, received, sent_headers = upstream.requests[-1]
-                            assert path == '/backend-api/codex/images/' + operation and received == wire
+                            assert path == '/backend-api/codex/images/' + operation
+                            expected_wire = json.loads(wire)
+                            if operation == 'generations': expected_wire['stream'] = True
+                            assert json.loads(received) == expected_wire
+                            assert sent_headers['accept'] == ('text/event-stream' if operation == 'generations' else 'application/json')
                             for key in ('x-codex-future-header', 'x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
                                 assert sent_headers[key] == client_headers[key]
                             assert sent_headers['user-agent'] == client_headers['User-Agent']
@@ -251,7 +263,7 @@ def main():
                             assert 'x-openai-actor-authorization' not in sent_headers
                             assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
                             assert headers['x-request-id']
-                            assert body == native_body('synthetic')
+                            assert json.loads(body) == json.loads(native_body('synthetic'))
                             state, usage, outcome = ledger()
                             assert state == 'settled' and outcome['kind'] == 'succeeded'
                             assert outcome['actualServiceTier'] == 'default'
@@ -263,9 +275,14 @@ def main():
                             assert usage['estimatedMicros'] == 13
                             status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
                             assert status == 200
-                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
+                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image', **({'stream':True} if operation == 'generations' else {})}
                             status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
-                            assert status == 200 and body == native_stream(operation)
+                            assert status == 200
+                            if operation == 'generations': assert body == native_stream(operation)
+                            else:
+                                event = next(json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {'))
+                                assert event['type'] == 'image_edit.completed' and event['b64_json'] == PNG and event['usage']['input_tokens'] == 2
+                                assert json.loads(upstream.requests[-1][1])['stream'] is False
                             assert ledger()[0] == 'settled' and ledger()[2]['actualServiceTier'] == 'default'
                     for operation in ('edits', 'generations'):
                         for fault in ('json-stream', 'json-stream-multiple', 'json-stream-empty', 'json-stream-invalid', 'json-stream-mixed', 'json-stream-html'):
@@ -306,7 +323,7 @@ def main():
                         if expected == 429: assert headers['retry-after'] == '1'
                         assert ledger()[0] == ('unknown' if expected == 502 else 'settled')
                     for fault in ('empty', 'non-json', 'oversize'):
-                        status, body, _ = request({'prompt':fault})
+                        status, body, _ = request({'prompt':fault}, '/v1/images/edits')
                         assert status == (502 if fault == 'oversize' else 200), (fault,status,body[:100])
                         state, usage, outcome = ledger()
                         assert outcome['kind'] == 'failed'
@@ -318,11 +335,11 @@ def main():
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
                             status, body, headers = request({'prompt':'stream-error','stream':True}, prefix + '/images/' + operation)
-                            assert status == 200
+                            assert status == (400 if operation == 'edits' else 200)
                             assert b'acct-split-secret' not in body and b'user-synthetic@example.invalid' not in body
                             assert b'synthetic-private-member' not in body
                             events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
-                            failure = events[-1]
+                            failure = events[-1] if operation == 'generations' else {'type':'response.failed','response':json.loads(body)}
                             assert failure['type'] == 'response.failed', failure
                             error = failure['response']['error']
                             assert error['code'] == 'synthetic_provider_error' and error['type'] == 'invalid_request_error'
@@ -332,6 +349,17 @@ def main():
                     for fault in ('stream-abort', 'stream-empty'):
                         status, body, _ = request({'prompt':fault,'stream':True})
                         assert status == 200 and ledger()[2]['kind'] == 'failed'
+                    # Non-stream generation buffers until validated EOF, including failures after usage.
+                    for fault in ('stream-abort', 'stream-empty', 'stream-duplicate', 'stream-tail', 'stream-missing-created', 'stream-error'):
+                        before = upstream.calls
+                        status, body, headers = request({'prompt':fault})
+                        assert status == 502 and headers['content-type'].startswith('application/json'), (fault,status,body[:200])
+                        assert 'error' in json.loads(body) and upstream.calls == before + 1
+                        state, usage, outcome = ledger()
+                        assert outcome['kind'] == 'failed'
+                        if fault in ('stream-tail', 'stream-duplicate', 'stream-missing-created'):
+                            assert usage['images'] == 1 and usage['imageOutputTokens'] == 3
+                        if fault != 'stream-error': assert state == 'unknown' or usage is not None
                     # A held upstream consumes the sole permit. A queued request times out before intent/dispatch.
                     if transport == 'http':
                         upstream.release.clear()
