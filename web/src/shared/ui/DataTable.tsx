@@ -48,9 +48,10 @@ export function DataTable<T>({
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
   );
-  if (loading) return <LoadingState>{loadingText}</LoadingState>;
-  if (error) return <ErrorState retry={retry}>{error}</ErrorState>;
-  if (!rows.length) return <EmptyState>{empty}</EmptyState>;
+  const viewport = (content: ReactNode) => animate ? <div className={styles.animatedViewport}>{content}</div> : content;
+  if (loading) return viewport(<LoadingState>{loadingText}</LoadingState>);
+  if (error) return viewport(<ErrorState retry={retry}>{error}</ErrorState>);
+  if (!rows.length) return viewport(<EmptyState>{empty}</EmptyState>);
   const column = columns.find((item) => item.id === sort?.id);
   const ordered = column?.sortValue
     ? [...rows].sort((a, b) => {
@@ -64,7 +65,7 @@ export function DataTable<T>({
         );
       })
     : rows;
-  return (
+  return viewport(
     <Table className={styles.table}>
       <Table.Thead>
         <Table.Tr>

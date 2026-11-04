@@ -1,3 +1,4 @@
+import type { useOverviewLive } from "./useOverviewLive";
 import { KeyName } from "../../shared/KeyName";
 import {
   accountName,
@@ -47,9 +48,11 @@ function UpdatedAgo({ updated }: { updated: number }) {
 function Elapsed({
   seconds,
   sampledAt,
+  running = true,
 }: {
   seconds: number | null | undefined;
   sampledAt: number;
+  running?: boolean;
 }) {
   const [basis, setBasis] = useState(() => ({
     sampledAt,
@@ -59,16 +62,17 @@ function Elapsed({
   if (basis.sampledAt !== sampledAt)
     setBasis({ sampledAt, at: performance.now() });
   useEffect(() => {
+    if (!running) return;
     const timer = window.setInterval(() => {
       if (!document.hidden) setNow(performance.now());
     }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [running]);
   return (
     <span style={{ fontVariantNumeric: "tabular-nums" }}>
       {seconds == null
         ? "耗时不可用"
-        : `已持续 ${Math.floor(seconds + Math.max(0, now - basis.at) / 1000)} 秒`}
+        : `已持续 ${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
     </span>
   );
 }
@@ -79,7 +83,9 @@ export function ActivityOverview({
   attention,
   accounts = [],
   capacities,
+  live,
 }: {
+  live?: ReturnType<typeof useOverviewLive>;
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
     source: string;
@@ -100,7 +106,7 @@ export function ActivityOverview({
     enabled: !!owner.session,
     refetchInterval: control.interval,
     // Returning to the tab refetches only snapshots older than one refresh period.
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: live?.mode !== "live",
     staleTime: 15000,
   };
   const daily = useQuery({
@@ -147,7 +153,7 @@ export function ActivityOverview({
           actions={
             <Group>
               <Switch
-                label="自动刷新（15 秒）"
+                label={live?.mode === "live" ? "实时观察" : "自动刷新（15 秒）"}
                 checked={control.automatic}
                 onChange={(e) => control.setAutomatic(e.currentTarget.checked)}
               />
@@ -157,7 +163,8 @@ export function ActivityOverview({
                 variant="default"
                 disabled={allQueries.some((q) => q.isFetching)}
                 onClick={() => {
-                  for (const q of allQueries) void q.refetch();
+                  if (control.manualRefresh) control.manualRefresh();
+                  else for (const q of allQueries) void q.refetch();
                 }}
               >
                 刷新请求概览
@@ -170,6 +177,36 @@ export function ActivityOverview({
         <Text size="xs" c="dimmed">
           自动观察已暂停，以下为上次快照。
         </Text>
+      )}
+      {live && (
+        <div aria-label="概览连接状态">
+          <Text size="xs">
+            {
+              {
+                live: "实时连接",
+                connecting: "连接中 · HTTP 轮询",
+                polling: "轮询模式（15 秒）· 活动观察中断",
+                paused: "观察已暂停",
+              }[live.mode]
+            }
+          </Text>
+          <details>
+            <summary>
+              各源更新时间
+              {live.stale.length ? ` · ${live.stale.length} 个来源已陈旧` : ""}
+            </summary>
+            {Object.entries(live.sources).map(([name, source]) => (
+              <Text size="xs" key={name}>
+                {name} ·{" "}
+                {source.lastSuccessAt == null
+                  ? "尚无成功数据"
+                  : localTime(source.lastSuccessAt)}{" "}
+                ·{" "}
+                {live.stale.some(([key]) => key === name) ? "已陈旧" : "已更新"}
+              </Text>
+            ))}
+          </details>
+        </div>
       )}
       {attention}
       {allQueries.some((q) => q.isError) && (
@@ -213,14 +250,20 @@ export function ActivityOverview({
               <Text size="sm" c="dimmed">
                 进行中请求读取失败。请重试。
               </Text>
-            ) : flight.data?.length === 0 ? (
-              <Text size="sm" c="dimmed">
-                当前没有进行中的请求。
-              </Text>
-            ) : (
+) : (
               <DataTable
                 animate
-                rows={flight.data ?? []}
+                rows={[
+                  ...(flight.data ?? []),
+                  ...(live?.mode === "live"
+                    ? live.recent.filter(
+                        (row) =>
+                          row.finishedAtUnixSeconds != null &&
+                          Date.now() / 1000 - row.finishedAtUnixSeconds < 5 &&
+                          !flight.data?.some((active) => active.id === row.id),
+                      )
+                    : []),
+                ]}
                 rowKey={(row) => row.id}
                 retry={() => void flight.refetch()}
                 loading={flight.isPending}
@@ -230,7 +273,24 @@ export function ActivityOverview({
                     id: "principal",
                     title: "Key",
                     width: "22%",
-                    render: (row) => <KeyName {...row} />,
+                    render: (row) => (
+                      <Stack gap={2}>
+                        <KeyName {...row} />
+                        {row.outcome && (
+                          <Text size="xs" c="dimmed">
+                            最近结束 ·{" "}
+                            {(
+                              {
+                                succeeded: "成功",
+                                failed: "失败",
+                                cancelled: "已取消",
+                                unknown: "结果未明",
+                              } as Record<string, string>
+                            )[row.outcome] ?? row.outcome}
+                          </Text>
+                        )}
+                      </Stack>
+                    ),
                   },
                   {
                     id: "model",
@@ -294,6 +354,7 @@ export function ActivityOverview({
                       <Elapsed
                         seconds={row.elapsedSeconds}
                         sampledAt={flight.dataUpdatedAt}
+                          running={!row.outcome}
                       />
                     ),
                   },
@@ -326,6 +387,43 @@ export function ActivityOverview({
               />
             )}
           </Paper>
+          {live?.mode === "live" && (
+            <Paper withBorder p="md">
+              <Title order={3} size="h4">
+                已连接客户端
+              </Title>
+              <DataTable
+                animate
+                rows={live.clients}
+                rowKey={(row) => row.keyID}
+                retry={() => {}}
+                empty="当前没有持续连接的客户端。"
+                columns={[
+                  {
+                    id: "key",
+                    title: "Key",
+                    render: (row) =>
+                      row.displayName ??
+                      keySummary.data?.keys.find(
+                        (key) => key.keyID === row.keyID,
+                      )?.displayName ??
+                      "未命名 Key",
+                  },
+                  { id: "count", title: "连接数", render: (row) => row.count },
+                  {
+                    id: "since",
+                    title: "最早连接",
+                    render: (row) => localTime(row.connectedAtUnixSeconds),
+                  },
+                ]}
+              />
+            </Paper>
+          )}
+          {!!live?.overflow && (
+            <Text size="xs">
+              另有 {live.overflow} 条活动未在缓冲中保留，请在用量页查看历史。
+            </Text>
+          )}
         </Stack>
         {sidebar && (
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">

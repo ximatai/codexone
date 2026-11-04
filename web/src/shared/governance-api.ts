@@ -2,7 +2,7 @@ import { request } from "./management";
 import { z } from "./schema";
 
 const numeric = z.string().regex(/^(0|[1-9][0-9]*)$/);
-const schema = z.object({
+export const headroomSchema = z.object({
   capacities: z.array(
     z.object({
       name: z.string(),
@@ -29,7 +29,7 @@ const schema = z.object({
   }),
 });
 export async function fetchHeadroom(signal: AbortSignal) {
-  return schema.parse(await request("/api/usage/headroom", { signal }));
+  return headroomSchema.parse(await request("/api/usage/headroom", { signal }));
 }
 
-export type Headroom = z.infer<typeof schema>;
+export type Headroom = z.infer<typeof headroomSchema>;

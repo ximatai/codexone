@@ -1,3 +1,5 @@
+import { useOverviewLive } from "./useOverviewLive";
+import { fetchSystemStatus } from "./api";
 import { OverviewMotion } from "../../shared/ui/ContinuousValue";
 import { CapacityPanel, fetchHeadroom } from "./CapacityPanel";
 import {
@@ -61,7 +63,7 @@ function backupTime(backup: z.infer<typeof backupSchema> | undefined) {
   if (!backup.lastSuccessUnixSeconds) return "尚无成功备份";
   return new Date(backup.lastSuccessUnixSeconds * 1000).toLocaleString();
 }
-async function fetchStorage(
+export async function fetchStorage(
   signal: AbortSignal,
 ): Promise<
   Record<string, unknown> & { backup?: z.infer<typeof backupSchema> }
@@ -70,6 +72,9 @@ async function fetchStorage(
     string,
     unknown
   >;
+  return parseStorage(value);
+}
+export function parseStorage(value: Record<string, unknown>) {
   if (
     typeof value.admissionAllowed !== "boolean" ||
     typeof value.optionalWorkAllowed !== "boolean" ||
@@ -83,7 +88,15 @@ async function fetchStorage(
 }
 export function AdminOverview() {
   const owner = useManagementSession();
-  const refresh = useOverviewRefresh();
+  const baseRefresh = useOverviewRefresh();
+  const live = useOverviewLive(baseRefresh.active);
+  const refresh = {
+    ...baseRefresh,
+    interval: live.mode === "live" ? (false as const) : baseRefresh.interval,
+    manualRefresh: () => {
+      void live.manualRefresh();
+    },
+  };
   const client = useQueryClient();
   const [release, setRelease] = useState<{
     before: number;
@@ -112,7 +125,7 @@ export function AdminOverview() {
   const polling = {
     refetchInterval: refresh.interval,
     staleTime: 15000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: live.mode !== "live",
   };
   const [clock, setClock] = useState(() => performance.now());
   useEffect(() => {
@@ -129,6 +142,12 @@ export function AdminOverview() {
   const overlay = !!owner.session && params.get("storage") === "details";
   const protocolOverlay =
     !!owner.session && params.get("protocol") === "details";
+  const system = useQuery({
+    queryKey: ["overview", "system"],
+    queryFn: ({ signal }) => fetchSystemStatus(signal),
+    enabled: !!owner.session,
+    ...polling,
+  });
   const accounts = useQuery({
     queryKey: ["overview", "accounts"],
     queryFn: ({ signal }) => fetchAccounts(signal),
@@ -176,7 +195,7 @@ export function AdminOverview() {
       account.observability?.health.authenticationRejected,
   ).length;
   return (
-    <OverviewMotion>
+    <OverviewMotion reset={live.reset}>
       <Stack mb="xl" aria-label="管理概览">
         {owner.locked("executions") && !mutation.busy && (
           <Alert color="yellow" role="alert">
@@ -201,9 +220,11 @@ export function AdminOverview() {
         )}
         <ActivityOverview
           refresh={refresh}
+          live={live}
           accounts={accounts.data}
           capacities={headroom.data?.capacities}
           extraQueries={[
+            { ...system, source: "生成就绪" },
             { ...accounts, source: "订阅账号" },
             { ...storage, source: "存储状态" },
             { ...attention, source: "需要处理提醒" },
@@ -326,7 +347,7 @@ export function AdminOverview() {
                 <Title order={3} size="h4" mb="md">
                   运行状态
                 </Title>
-                <SystemOverview compact />
+                <SystemOverview compact shared={system} />
                 <Stack gap="xs">
                   {[
                     {

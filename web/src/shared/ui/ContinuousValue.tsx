@@ -22,10 +22,11 @@ export function OverviewMotion({
   const reduced = useReducedMotion();
   useEffect(() => {
     setReady(false);
-    const timer = window.setTimeout(() => setReady(!document.hidden), 400);
+    let timer = window.setTimeout(() => setReady(!document.hidden), 400);
     const visibility = () => {
       setReady(false);
-      if (!document.hidden) window.setTimeout(() => setReady(true), 400);
+      clearTimeout(timer);
+      if (!document.hidden) timer = window.setTimeout(() => setReady(true), 400);
     };
     document.addEventListener("visibilitychange", visibility);
     return () => {
@@ -56,8 +57,8 @@ export const ContinuousValue = memo(function ContinuousValue({
   useEffect(() => {
     previous.current = value;
   }, [value]);
-  if (!match || !Number.isSafeInteger(Math.trunc(value)))
-    return <span>{text}</span>;
+  if (!match || !Number.isSafeInteger(Math.trunc(value)) || typeof HTMLElement.prototype.animate !== "function")
+    return <>{text}</>;
   return (
     <span className={styles.value} aria-label={text}>
       <span aria-hidden="true">

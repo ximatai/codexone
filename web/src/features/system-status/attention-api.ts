@@ -37,7 +37,7 @@ const item = z.object({
   detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
   sinceUnixSeconds: z.number().nullable(),
 });
-const report = z.object({
+export const report = z.object({
   generatedAtUnixSeconds: z.number(),
   items: z.array(item).max(50),
 });

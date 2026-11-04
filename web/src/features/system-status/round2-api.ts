@@ -16,7 +16,7 @@ const metrics = z.object({
   images: metric,
   estimatedMicros: metric,
 });
-const daily = z.object({
+export const daily = z.object({
   timezone: z.string(),
   businessDay: z
     .object({
@@ -43,10 +43,12 @@ const daily = z.object({
     )
     .max(31),
 });
-const flight = z.object({
+export const flight = z.object({
   rows: z
     .array(
       z.object({
+        outcome: z.string().optional(),
+        finishedAtUnixSeconds: count.optional(),
         id: z.string(),
         keyID: z.string(),
         displayName: z.string().nullish(),
@@ -86,7 +88,7 @@ export async function fetchDaily(signal: AbortSignal) {
 export async function fetchInFlight(signal: AbortSignal) {
   return flight.parse(await request("/api/usage/in-flight", { signal })).rows;
 }
-const keySummary = z
+export const keySummary = z
   .object({
     timezone: z.string(),
     businessDay: z
