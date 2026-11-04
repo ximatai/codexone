@@ -160,6 +160,7 @@ public actor OverviewLive: OverviewLiveRunning {
   private var stopping = false
   private var sampling = false
   private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+  private var worker: Task<Void, Never>?
   private var ticker: Task<Void, Never>?
   private var rows: [String: JSONValue] = [:]
   private var recent: [JSONValue] = []
@@ -191,6 +192,7 @@ public actor OverviewLive: OverviewLiveRunning {
     viewers.removeValue(forKey: id)?.finish()
     guard viewers.isEmpty else { return }
     generation += 1
+    worker?.cancel()
     activity.watch(false)
     ticker?.cancel()
     await ticker?.value
@@ -219,7 +221,9 @@ public actor OverviewLive: OverviewLiveRunning {
       if case .changed = signal { try? await Task.sleep(for: .milliseconds(100)) }
       let turn = generation
       sampling = true
-      await sample(generation: turn)
+      worker = Task { await self.sample(generation: turn) }
+      await worker?.value
+      worker = nil
       sampling = false
       let waiters = idleWaiters
       idleWaiters.removeAll()
@@ -230,6 +234,9 @@ public actor OverviewLive: OverviewLiveRunning {
     stopping = true
     generation += 1
     activity.watch(false)
+    worker?.cancel()
+    await worker?.value
+    worker = nil
     ticker?.cancel()
     await ticker?.value
     ticker = nil
@@ -257,8 +264,8 @@ public actor OverviewLive: OverviewLiveRunning {
         }
       } else if let row = event.row {
         if let outcome = event.outcome {
+          var value = (rows[event.id] ?? row).object!
           rows.removeValue(forKey: event.id)
-          var value = row.object!
           value["outcome"] = .string(outcome)
           value["finishedAtUnixSeconds"] = .number(Decimal(event.at))
           if recent.count == 64 {
@@ -336,7 +343,10 @@ public actor OverviewLive: OverviewLiveRunning {
       "version": .number(Decimal(version)), "sampledAtUnixSeconds": .number(Decimal(at)),
       "lastSuccessAt": error == nil ? .number(Decimal(at)) : (old?["lastSuccessAt"] ?? .null),
       "freshness": .string(
-        error == nil ? "fresh" : (old?["data"] == nil ? "unavailable" : "stale")),
+        error == nil
+          ? "fresh"
+          : (old?["lastSuccessAt"] == nil || old?["lastSuccessAt"] == .null
+            ? "unavailable" : "stale")),
       "code": error.map(JSONValue.string) ?? .null, "data": data ?? old?["data"] ?? .null,
     ])
   }
