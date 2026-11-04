@@ -72,5 +72,12 @@
   display: none;
 }
 
-.animatedViewport { block-size: 20rem; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; }
-.animatedViewport th { top: 0; }
+.animatedViewport {
+  block-size: 20rem;
+  overflow: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+}
+.animatedViewport th {
+  top: 0;
+}

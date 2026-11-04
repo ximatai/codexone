@@ -5,7 +5,7 @@ import { useManagementSession } from "../../shared/session";
 import { fetchSession, ManagementError } from "../../shared/management";
 import { parseAccount } from "../account-management/api";
 import { parseSystemStatus } from "./api";
-import { parseStorage } from "./AdminOverview";
+import { parseStorage } from "./storage-api";
 import { daily, flight, keySummary } from "./round2-api";
 import { report } from "./attention-api";
 import { headroomSchema } from "../../shared/governance-api";
@@ -75,6 +75,7 @@ function parse(name: string, value: unknown): unknown {
 export function useOverviewLive(active: boolean) {
   const owner = useManagementSession();
   const client = useQueryClient();
+  const [failure, setFailure] = useState("");
   const [mode, setMode] = useState<
     "connecting" | "live" | "polling" | "paused"
   >("connecting");
@@ -85,6 +86,8 @@ export function useOverviewLive(active: boolean) {
   const [reset, setReset] = useState(0);
   const [manualBusy, setManualBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
+  const transportGeneration = useRef(0);
+  const [transportRevision, setTransportRevision] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
@@ -95,6 +98,8 @@ export function useOverviewLive(active: boolean) {
       setRecent([]);
       return;
     }
+    const transport = ++transportGeneration.current;
+    let pending = 0;
     let retired = false,
       attempt = 0,
       sequence = 0,
@@ -108,10 +113,13 @@ export function useOverviewLive(active: boolean) {
     const controller = new AbortController();
     const generation = owner.generation;
     const current = () =>
-      !retired && generation === ownerRef.current.generation;
+      !retired &&
+      transport === transportGeneration.current &&
+      generation === ownerRef.current.generation;
     async function checkSession() {
       try {
-        await fetchSession(controller.signal);
+        const session = await fetchSession(controller.signal);
+        if (current()) ownerRef.current.adopt(session);
       } catch (error) {
         if (
           current() &&
@@ -134,11 +142,20 @@ export function useOverviewLive(active: boolean) {
       const connection = socket;
       timeout = setTimeout(() => connection.close(), 10000);
       connection.onmessage = (event) => {
+        if (
+          pending >= 2 ||
+          typeof event.data !== "string" ||
+          event.data.length > 1048576
+        ) {
+          connection.close();
+          return;
+        }
+        pending += 1;
         merge = merge
           .then(async () => {
             if (!current() || connection !== socket) return;
             if (typeof event.data !== "string" || event.data.length > 1048576)
-              throw new Error("invalid live message");
+              throw new Error("invalid_message");
             const frame = envelope.parse(JSON.parse(event.data));
             if (
               frame.sequence !== sequence + 1 ||
@@ -146,9 +163,9 @@ export function useOverviewLive(active: boolean) {
               (!snapshot && frame.kind !== "snapshot") ||
               (snapshot && frame.kind === "snapshot")
             )
-              throw new Error("live sequence");
+              throw new Error("sequence_mismatch");
             if (!snapshot && names.some((name) => !(name in frame.sections)))
-              throw new Error("incomplete snapshot");
+              throw new Error("incomplete_snapshot");
             const parsed = Object.entries(frame.sections)
               .filter(
                 (entry): entry is [string, Freshness] => entry[1] !== undefined,
@@ -205,8 +222,21 @@ export function useOverviewLive(active: boolean) {
               }, 60000);
             }
           })
-          .catch(() => {
+          .catch((error: unknown) => {
+            const code =
+              error instanceof Error &&
+              [
+                "invalid_message",
+                "sequence_mismatch",
+                "incomplete_snapshot",
+              ].includes(error.message)
+                ? error.message
+                : "invalid_section";
+            setFailure(code);
             connection.close();
+          })
+          .finally(() => {
+            pending -= 1;
           });
       };
       connection.onclose = () => {
@@ -245,13 +275,22 @@ export function useOverviewLive(active: boolean) {
       socket?.close();
       socketRef.current = null;
     };
-  }, [active, authenticated, owner.generation, client, manualBusy]);
+  }, [
+    active,
+    authenticated,
+    owner.generation,
+    client,
+    manualBusy,
+    transportRevision,
+  ]);
   async function manualRefresh() {
+    ++transportGeneration.current;
     socketRef.current?.close();
     setManualBusy(true);
     await client.cancelQueries({ queryKey: ["overview"] });
     await client.refetchQueries({ queryKey: ["overview"], type: "active" });
     setManualBusy(false);
+    setTransportRevision((value) => value + 1);
   }
   const stale = Object.entries(sources).filter(
     ([name, source]) =>
@@ -265,6 +304,7 @@ export function useOverviewLive(active: boolean) {
             : 15),
   );
   return {
+    failure,
     mode,
     sources,
     clients,

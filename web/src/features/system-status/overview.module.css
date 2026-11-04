@@ -89,3 +89,31 @@
     transition: none;
   }
 }
+
+.updatedAgo {
+  width: 13ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.metricValue {
+  width: 9ch;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+@media (min-width: 751px) {
+  .keySummary td:first-child > div {
+    min-height: 72px;
+  }
+}
+
+.attentionViewport {
+  block-size: 14rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.attentionViewport p {
+  font-variant-numeric: tabular-nums;
+}
+.updatedAgo {
+  text-align: left;
+}

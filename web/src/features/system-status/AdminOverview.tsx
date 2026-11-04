@@ -1,3 +1,4 @@
+import { fetchStorage } from "./storage-api";
 import { useOverviewLive } from "./useOverviewLive";
 import { fetchSystemStatus } from "./api";
 import { OverviewMotion } from "../../shared/ui/ContinuousValue";
@@ -32,12 +33,10 @@ import {
 import { Link, useSearchParams } from "react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useManagementSession } from "../../shared/session";
-import { ManagementError, request } from "../../shared/management";
+import { ManagementError } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
 import { SystemOverview } from "./SystemOverview";
-
-import { z } from "../../shared/schema";
 
 const InlineAccountDetails = lazy(() =>
   import("../account-management/AccountManagement").then((module) => ({
@@ -45,11 +44,6 @@ const InlineAccountDetails = lazy(() =>
   })),
 );
 
-const backupSchema = z.object({
-  enabled: z.boolean(),
-  lastSuccessUnixSeconds: z.number().nullable().optional(),
-  retainedCount: z.number().int().nonnegative(),
-});
 function quotaLabel(seconds: number | null | undefined, fallback: string) {
   if (seconds === 18000) return "5 小时额度";
   if (seconds === 604800) return "每周额度";
@@ -57,34 +51,13 @@ function quotaLabel(seconds: number | null | undefined, fallback: string) {
     ? `${seconds / 3600} 小时额度`
     : fallback;
 }
-function backupTime(backup: z.infer<typeof backupSchema> | undefined) {
+function backupTime(
+  backup: Awaited<ReturnType<typeof fetchStorage>>["backup"],
+) {
   if (!backup) return "未提供";
   if (!backup.enabled) return "未启用";
   if (!backup.lastSuccessUnixSeconds) return "尚无成功备份";
   return new Date(backup.lastSuccessUnixSeconds * 1000).toLocaleString();
-}
-export async function fetchStorage(
-  signal: AbortSignal,
-): Promise<
-  Record<string, unknown> & { backup?: z.infer<typeof backupSchema> }
-> {
-  const value = (await request("/api/runtime/storage", { signal })) as Record<
-    string,
-    unknown
-  >;
-  return parseStorage(value);
-}
-export function parseStorage(value: Record<string, unknown>) {
-  if (
-    typeof value.admissionAllowed !== "boolean" ||
-    typeof value.optionalWorkAllowed !== "boolean" ||
-    typeof value.pressure !== "string"
-  )
-    throw new Error("invalid storage response");
-  return {
-    ...value,
-    backup: value.backup == null ? undefined : backupSchema.parse(value.backup),
-  };
 }
 export function AdminOverview() {
   const owner = useManagementSession();

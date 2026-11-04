@@ -48,7 +48,12 @@ export function DataTable<T>({
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
   );
-  const viewport = (content: ReactNode) => animate ? <div className={styles.animatedViewport}>{content}</div> : content;
+  const viewport = (content: ReactNode) =>
+    animate ? (
+      <div className={styles.animatedViewport}>{content}</div>
+    ) : (
+      content
+    );
   if (loading) return viewport(<LoadingState>{loadingText}</LoadingState>);
   if (error) return viewport(<ErrorState retry={retry}>{error}</ErrorState>);
   if (!rows.length) return viewport(<EmptyState>{empty}</EmptyState>);
@@ -158,6 +163,6 @@ export function DataTable<T>({
           </Table.Tr>
         ))}
       </Table.Tbody>
-    </Table>
+    </Table>,
   );
 }

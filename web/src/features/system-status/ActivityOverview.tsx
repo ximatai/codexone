@@ -38,7 +38,7 @@ function UpdatedAgo({ updated }: { updated: number }) {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <Text size="xs">
+    <Text size="xs" className={styles.updatedAgo}>
       {updated
         ? `${Math.max(0, Math.floor((now - updated) / 1000))} 秒前更新`
         : "尚未更新"}
@@ -179,7 +179,10 @@ export function ActivityOverview({
         </Text>
       )}
       {live && (
-        <div aria-label="概览连接状态">
+        <div
+          aria-label="概览连接状态"
+          data-live-failure={live.failure || undefined}
+        >
           <Text size="xs">
             {
               {
@@ -250,7 +253,7 @@ export function ActivityOverview({
               <Text size="sm" c="dimmed">
                 进行中请求读取失败。请重试。
               </Text>
-) : (
+            ) : (
               <DataTable
                 animate
                 rows={[
@@ -354,7 +357,7 @@ export function ActivityOverview({
                       <Elapsed
                         seconds={row.elapsedSeconds}
                         sampledAt={flight.dataUpdatedAt}
-                          running={!row.outcome}
+                        running={!row.outcome}
                       />
                     ),
                   },

@@ -1,15 +1,12 @@
-import NumberFlow from "@number-flow/react";
 import {
   createContext,
   memo,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { useReducedMotion } from "@mantine/hooks";
-import styles from "./ContinuousValue.module.css";
 const MotionContext = createContext(false);
 export function OverviewMotion({
   children,
@@ -18,15 +15,19 @@ export function OverviewMotion({
   children: ReactNode;
   reset?: number;
 }) {
-  const [ready, setReady] = useState(false);
+  const [readyFor, setReadyFor] = useState<number | null>(null);
   const reduced = useReducedMotion();
   useEffect(() => {
-    setReady(false);
-    let timer = window.setTimeout(() => setReady(!document.hidden), 400);
+    setReadyFor(null);
+    let timer = window.setTimeout(
+      () => setReadyFor(document.hidden ? null : reset),
+      400,
+    );
     const visibility = () => {
-      setReady(false);
+      setReadyFor(null);
       clearTimeout(timer);
-      if (!document.hidden) timer = window.setTimeout(() => setReady(true), 400);
+      if (!document.hidden)
+        timer = window.setTimeout(() => setReadyFor(reset), 400);
     };
     document.addEventListener("visibilitychange", visibility);
     return () => {
@@ -34,49 +35,23 @@ export function OverviewMotion({
       document.removeEventListener("visibilitychange", visibility);
     };
   }, [reset]);
-  return <MotionContext value={ready && !reduced}>{children}</MotionContext>;
+  return (
+    <MotionContext value={readyFor === reset && !document.hidden && !reduced}>
+      {children}
+    </MotionContext>
+  );
 }
 export function useOverviewMotion() {
   return useContext(MotionContext);
 }
-/** Accept already formatted display text so BigInt/null/unit semantics remain with the feature. */
+/** Keep the existing exact representation until a CSP-compatible numeric renderer is approved.
+ * NumberFlow 0.6.2 injects shadow styles rejected by the production style-src policy.
+ * Do not relax CSP or render the unstyled digit stack as a fallback.
+ */
 export const ContinuousValue = memo(function ContinuousValue({
   text,
 }: {
   text: string;
 }) {
-  const motion = useOverviewMotion();
-  const match = text.match(/^([^0-9]*)([0-9][0-9,]*(?:\.[0-9]+)?)([^0-9]*)$/);
-  const value = match ? Number(match[2].replaceAll(",", "")) : NaN;
-  const previous = useRef(value);
-  const animate =
-    motion &&
-    Number.isFinite(previous.current) &&
-    Math.abs(value - previous.current) <=
-      Math.max(100, Math.abs(previous.current) * 10);
-  useEffect(() => {
-    previous.current = value;
-  }, [value]);
-  if (!match || !Number.isSafeInteger(Math.trunc(value)) || typeof HTMLElement.prototype.animate !== "function")
-    return <>{text}</>;
-  return (
-    <span className={styles.value} aria-label={text}>
-      <span aria-hidden="true">
-        <NumberFlow
-          value={value}
-          prefix={match[1]}
-          suffix={match[3]}
-          locales="zh-CN"
-          format={{
-            useGrouping: match[2].includes(","),
-            minimumFractionDigits: match[2].split(".")[1]?.length ?? 0,
-            maximumFractionDigits: match[2].split(".")[1]?.length ?? 0,
-          }}
-          animated={animate}
-          transformTiming={{ duration: 250, easing: "ease-out" }}
-          opacityTiming={{ duration: 150 }}
-        />
-      </span>
-    </span>
-  );
+  return <>{text}</>;
 });

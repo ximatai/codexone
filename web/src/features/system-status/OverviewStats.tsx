@@ -210,6 +210,7 @@ export function OverviewStats({
               </Group>
               <Group gap="xs" align="baseline">
                 <Text
+                  className={styles.metricValue}
                   size="28px"
                   fw={700}
                   lh={1.2}

@@ -1,7 +1,0 @@
-.value {
-  display: inline-block;
-  width: 12ch;
-  max-width: 100%;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
