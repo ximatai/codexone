@@ -202,7 +202,7 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 ## 上游 WebSocket 消息大小与单轮 HTTP 回退
 
-上游 `response.create` 在发送前以实际有序编码后的 UTF-8 消息载荷字节数（不计 WS framing/mask）与 `UpstreamWebSocketBodyLimit.maximumMessageBytes` 比较。当前为 16 MiB（16,777,216 字节）：依据维护者观察到的接受/失败边界推断，非提供者稳定承诺或已证实的真实 1009，可随提供者变化调整。等于上限仍发 WS，超过上限绝不发 WS；普通请求的上游 WS 载荷只编码一次，并发送用于判断的同一份字节。writer 同时保护上游控制消息。既有 32 MiB 入站正文上限及 `request_too_large`、共享预算、期限和除此处定义的早期 1009 外，其他真实 WS close/EOF 分类不变。
+上游 `response.create` 在发送前以实际有序编码后的 UTF-8 消息载荷字节数（不计 WS framing/mask）与 `UpstreamWebSocketBodyLimit.maximumMessageBytes` 比较。原生 WS 硬限制为 16 MiB（16,777,216 字节），独立 HTTP 调用的预路由阈值为 12 MiB（12,582,912 字节）：依据维护者观察到的接受/失败边界推断，非提供者稳定承诺或已证实的真实 1009，可随提供者变化调整。等于对应边界仍发 WS，超过对应边界绝不发 WS；普通请求的上游 WS 载荷只编码一次，并发送用于判断的同一份字节。writer 同时保护上游控制消息。既有 32 MiB 入站正文上限及 `request_too_large`、共享预算、期限和除此处定义的早期 1009 外，其他真实 WS close/EOF 分类不变。
 
 配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
 
@@ -223,3 +223,5 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 原生 Images 与 Responses 共用上传 EOF 首响应边界：AHC 消费完最后一块并请求 EOF 后开始首响应期限，不是远端确认。图片上传开始及每次背压拉取正文块更新 progress_idle 空闲期限，停滞以 execution_progress_timeout 取消；总执行期限仍覆盖持续慢传。EOF 原子切换到 first_response 期限，早到有效事件不会被上传进度或 EOF 覆盖。保持未知责任；首事件后进度期限不变。
 
 流式原生 Images 收到 `application/json` 时只接受完整对象：非负整数 created、非空 data 数组、每项含非空规范 base64 b64_json，且无 error/type 错误文档；有界收完整后再提交 SSE，每项一个 image_edit.completed 或 image_generation.completed，created 转为 created_at，聚合 usage 仅放最后一项，结束 [DONE]。账本只观察一次聚合用量。HTML、缺失或其他媒体类型不猜测为 JSON；无效、空、截断结果仍失败。图片诊断 content_type 仅取 json/sse/html/text/binary/missing/other，不记录原始头部。
+
+12 MiB 预路由阈值以 5/12 MiB 成功与 15 MiB 上传中断的观察选择，给 16 MiB 消息硬限制留 4 MiB 余量；实际比较包含最终编码开销。HTTP 大请求沿用既有压缩策略。并未发现上游 WS 上传代码的固定 30 秒期限；不能据中断时间推断原因。WS 单个完整 frame 的 write future 失败可能发生在对端已收到全部载荷之后，无事件也不证明未执行，因此不对普通写失败/取消/EOF 新增 HTTP 重试。只有既有明确早期 1009 拒绝规则允许回退，未知仍未知。

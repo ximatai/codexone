@@ -28,7 +28,7 @@ v0.26.7 起统一跨传输会话软亲和与双向协议元数据；真实续接
 
 v0.26.8 起网关保留 JSON 对象键顺序，相同请求发往上游的正文稳定；真实提示缓存验收见[任务](docs/changes/preserve-json-key-order/tasks.md)。
 
-上游 WS 大请求现按最终编码消息的 16 MiB 观察边界预检，并识别响应生命周期开始前的 1009 未处理拒绝：独立 HTTP 请求单轮回退 `/responses`，原生 WS/连接续接无法等价时明确 413，不静默丢上下文。合成验证与真实上游待验收范围见[任务](docs/changes/upstream-ws-body-limit/tasks.md)；官方 Codex 的更高层仍可能重试未识别的 413，见[源码核查](docs/reference/compatibility.md#大请求错误的官方客户端源码核查)。
+上游 WS 大请求现按最终编码消息预检：独立 HTTP 调用超过 12 MiB 预先走 HTTP，原生 WS 保留 16 MiB 硬限制，并识别响应生命周期开始前的 1009 未处理拒绝：独立 HTTP 请求单轮回退 `/responses`，原生 WS/连接续接无法等价时明确 413，不静默丢上下文。合成验证与真实上游待验收范围见[任务](docs/changes/upstream-ws-body-limit/tasks.md)；官方 Codex 的更高层仍可能重试未识别的 413，见[源码核查](docs/reference/compatibility.md#大请求错误的官方客户端源码核查)。
 
 Responses 首响应等待现从本机上传完成边界开始，总执行期限仍覆盖上传；大正文仅记录有界大小/耗时桶。合成验收和传输缓冲边界见[任务](docs/changes/first-response-after-upload/tasks.md)。
 

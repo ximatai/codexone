@@ -97,7 +97,7 @@ struct HTTPResponseExecution: Sendable {
     let (frame, oversizedBytes): (Data?, Int?) = try {
       guard configuration.upstreamTransport == "websocket" else { return (nil, nil) }
       let encoded = try webSocketFrame(request, turnState: turnState)
-      return encoded.count > UpstreamWebSocketBodyLimit.maximumMessageBytes
+      return encoded.count > UpstreamWebSocketBodyLimit.httpRoutingBytes
         ? (nil, encoded.count) : (encoded, nil)
     }()
     let oversized = oversizedBytes != nil

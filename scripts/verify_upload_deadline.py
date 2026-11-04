@@ -38,6 +38,9 @@ class Provider(BaseHTTPRequestHandler):
             # Leave far more than a socket buffer unread until the gateway exits.
             self.server.release.wait(15)
             return None
+        if self.server.case == 'disconnect':
+            self.rfile.read(64 * 1024)
+            return None
         body = bytearray()
         while len(body) < length:
             part = self.rfile.read(min(64 * 1024, length - len(body)))
@@ -142,8 +145,8 @@ def run(binary, root, transport, case):
             status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal='synthetic', models=[], limits=LIMITS, imageGeneration=True, imageModels=['synthetic-image']))
             assert status == 201, created
             client_token = created['secret']
-        # 28 MiB HTTP and 12 MiB WS force backpressure without crossing either body limit.
-        request = dict(model='synthetic-order', input='synthetic-upload-' + 'x' * ((28 if transport == 'http' else 12) * 1024 * 1024), stream=False)
+        # 28 MiB HTTP and 10 MiB WS force backpressure without crossing either body limit.
+        request = dict(model='synthetic-order', input='synthetic-upload-' + 'x' * ((28 if transport == 'http' else 10) * 1024 * 1024), stream=False)
         if transport == 'images':
             request = dict(model='synthetic-image', future='x' * (28 * 1024 * 1024), stream=False)
         body = wire(request)
@@ -166,6 +169,8 @@ def run(binary, root, transport, case):
             if case == 'slow':
                 assert response.status == 200 and (json.loads(result).get('data') if transport == 'images' else json.loads(result)['status'] == 'completed'), (response.status, result[:200])
                 assert server.read_at - server.started_at > FIRST, 'Upload did not cross first deadline'
+            elif case == 'disconnect':
+                assert response.status == 502 and json.loads(result)['error']['code'] == 'execution_indeterminate', (response.status, result[:200])
             else:
                 code = ('execution_first_response_timeout' if case in ('silent', 'slow-silent') else
                         'execution_progress_timeout' if case == 'stalled' and transport == 'images' else 'execution_deadline_exceeded')
@@ -192,7 +197,7 @@ def run(binary, root, transport, case):
         if case == 'slow':
             assert state == 'settled' and outcome['kind'] == 'succeeded' and usage['completeness'] == 'complete', records
         else:
-            expected = 'client_cancelled' if case == 'cancel' else 'deadline_exceeded'
+            expected = 'client_cancelled' if case == 'cancel' else 'indeterminate' if case == 'disconnect' else 'deadline_exceeded'
             assert state == 'unknown' and outcome['failure'] == expected and usage is None, records
         if case == 'cancel':
             assert time.monotonic() - cancel_at < 3, 'Cancellation did not settle promptly'
@@ -209,7 +214,7 @@ def run(binary, root, transport, case):
         assert len(uploads) == 1, uploads
         size_bucket = b'size_bucket=24_to_32_mib' if transport in ('http', 'images') else b'size_bucket=at_most_16_mib'
         assert size_bucket in uploads[0] and b'upload_duration_bucket=' in uploads[0], uploads
-        expected_result = b'result=interrupted' if case in ('stalled', 'cancel', 'trickle') else b'result=sent'
+        expected_result = b'result=interrupted' if case in ('stalled', 'cancel', 'disconnect', 'trickle') else b'result=sent'
         assert expected_result in uploads[0], uploads
         assert TOKEN.encode() not in logs and b'synthetic-upload-' not in logs
         print(f'PASS: {transport}/{case}: timing, single dispatch, body bytes, ledger, health, bounded diagnostic', flush=True)
@@ -235,7 +240,7 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='codexone-upload-') as temporary:
         for transport in ([args.transport] if args.transport else ('http', 'websocket', 'images')):
-            cases = ('slow', 'silent', 'slow-silent', 'stalled', 'cancel')
+            cases = ('slow', 'silent', 'slow-silent', 'stalled', 'cancel', 'disconnect')
             for case in cases + (('trickle',) if transport == 'images' else ()):
                 root = Path(temporary) / f'{transport}-{case}'
                 root.mkdir()

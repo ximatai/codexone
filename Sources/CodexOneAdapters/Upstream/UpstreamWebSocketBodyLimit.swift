@@ -3,6 +3,9 @@ import Foundation
 /// Provider-observed boundary inferred from acceptance tests, not a stable provider contract.
 /// Limit applies to encoded message payload bytes, excluding WebSocket framing/masking.
 enum UpstreamWebSocketBodyLimit {
+  // Proactive routing margin below the observed 15 MiB interrupted upload.
+  // Independent HTTP callers can use the established HTTP/zstd path instead.
+  static let httpRoutingBytes = 12 * 1024 * 1024
   static let maximumMessageBytes = 16 * 1024 * 1024
   static let errorCode = "conversation_too_large"
 
