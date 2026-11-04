@@ -16,6 +16,10 @@
 
 | 包 | 版本 | 声明许可 | 核验与来源 |
 |---|---|---|---|
+| `@number-flow/react` | 0.6.2 | MIT | 正文已读：`LICENSE.md`（2026-11-04） |
+| `number-flow` | 0.6.2 | MIT | 正文已读：`LICENSE.md`（2026-11-04） |
+| `@formkit/auto-animate` | 0.10.0 | MIT | 正文已读：`LICENSE`（2026-11-04） |
+| `esm-env` | 1.2.2 | MIT | 正文已读：`LICENSE`（2026-11-04） |
 | `@adobe/css-tools` | 4.5.0 | MIT | 正文已读：`LICENSE` |
 | `@asamuzakjp/css-color` | 7.1.7 | MIT | 正文已读：`LICENSE` |
 | `@asamuzakjp/dom-selector` | 10.0.4 | MIT | 正文已读：`LICENSE` |

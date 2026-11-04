@@ -20,6 +20,14 @@
 
 数据域只转发 `/v1/` 和 `/backend-api/codex/`，其他路径 404；管理域不提供生成入口。数据面需高熵 Key，管理员秘密与 Key 互不替代。按宿主安全策略限制管理域接入，域名分离不替代认证。
 
+## 可选首页实时通道
+
+本功能完整验收前默认关闭。仅在合成验收或明确接受当前限制时设置 `CODEXONE_ADMIN_LIVE=on`；`off` 立即恢复只读 HTTP 轮询路径，需要重启生效。前端与后端应配套升级，数据库仍为 v11，无新增迁移或数据库回退限制。
+
+管理片段为精确 `/api/overview/live` 添加 HTTP/1.1 Upgrade，保留 Host/Origin，读超时 60 秒；其余管理路径仍沿原边界，数据片段不变。15 秒 ping 防止健康空闲连接被代理关闭。旧片段没有 upgrade 时浏览器会保留旧数据并回到 15 秒轮询，管理员仍可登录、操作和手动刷新。HTTPS 使用同源 wss，显式 LAN 模式使用明文 ws 并保留风险提示。关闭开关、还原管理片段或回退应用会失去推送，不回放断线期间活动，也不重放生成。
+
+CSP 仍为 `style-src 'self'`；数字滚动尚待兼容选择。实际本机及尚未完成的 TLS/Nginx、Linux 容器门禁见[任务](../changes/admin-live-updates/tasks.md)。
+
 ## 仅公开数据入口
 
 [独立数据域示例](../../deploy/nginx-data-only.conf.example)复用数据片段，管理端口保持回环。使用独立域名、独立证书和 ACME webroot；首次签发前只加载示例中的 HTTP server，验证域名 DNS 与 challenge 可达后用 Certbot webroot 签发，再加载 TLS server。不要借助安装插件自动改写其他虚拟主机。

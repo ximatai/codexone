@@ -32,6 +32,7 @@ services:
         volume:
           nocopy: true
     environment:
+      CODEXONE_ADMIN_LIVE: ${CODEXONE_ADMIN_LIVE:-off}
       TARGET_UID: ${CODEXONE_UID:?Run init-install.py}
       TARGET_GID: ${CODEXONE_GID:?Run init-install.py}
     entrypoint: [/bin/sh, -ec]
