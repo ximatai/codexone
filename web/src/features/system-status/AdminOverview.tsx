@@ -204,24 +204,30 @@ export function AdminOverview() {
             { ...headroom, source: "治理余量" },
           ]}
           attention={
-            <AttentionPanel
-              aggregateErrors
-              inlineAccounts
-              items={attention.data?.items}
-              accounts={accounts.data}
-              release={(item: AttentionItem) => {
-                const count = item.detail.count;
-                if (
-                  typeof count === "number" &&
-                  Number.isSafeInteger(count) &&
-                  count >= 0
-                )
-                  setRelease({ before: Math.floor(Date.now() / 1000), count });
-              }}
-              loading={attention.isPending}
-              error={attention.isError}
-              retry={() => void attention.refetch()}
-            />
+            <div className={styles.attentionViewport}>
+              <AttentionPanel
+                continuous
+                aggregateErrors
+                inlineAccounts
+                items={attention.data?.items}
+                accounts={accounts.data}
+                release={(item: AttentionItem) => {
+                  const count = item.detail.count;
+                  if (
+                    typeof count === "number" &&
+                    Number.isSafeInteger(count) &&
+                    count >= 0
+                  )
+                    setRelease({
+                      before: Math.floor(Date.now() / 1000),
+                      count,
+                    });
+                }}
+                loading={attention.isPending}
+                error={attention.isError}
+                retry={() => void attention.refetch()}
+              />
+            </div>
           }
           sidebar={
             <>

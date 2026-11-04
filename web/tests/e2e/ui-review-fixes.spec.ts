@@ -129,6 +129,7 @@ test("K03 K04 K06: confirms target, preserves exact expiry and handles summary f
   page,
 }) => {
   const state = await reviewFixture(page);
+  await page.clock.setFixedTime(new Date("2026-11-02T00:00:00Z"));
   const expires = Date.parse("2026-11-03T12:42:56Z") / 1000;
   state.keys[0].expiresAtUnixSeconds = expires;
   await page.goto("/#/keys?q=team-0");

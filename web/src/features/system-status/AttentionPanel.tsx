@@ -1,3 +1,4 @@
+import styles from "./overview.module.css";
 import type { AccountName } from "../../shared/account-presentation";
 import { useRef, useState } from "react";
 import {
@@ -29,6 +30,7 @@ export function AttentionPanel({
   release,
   aggregateErrors = false,
   inlineAccounts = false,
+  continuous = false,
 }: {
   items?: AttentionItem[];
   loading: boolean;
@@ -38,6 +40,7 @@ export function AttentionPanel({
   release?: (item: AttentionItem) => void;
   aggregateErrors?: boolean;
   inlineAccounts?: boolean;
+  continuous?: boolean;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -76,54 +79,92 @@ export function AttentionPanel({
         </Text>
       ) : (
         <Stack gap="xs">
-          {(expanded ? ordered : ordered.slice(0, 5)).map((item, index) => (
-            <Alert
-              key={`${item.kind}-${item.subjectID ?? "system"}-${index}`}
-              p={item.severity === "critical" ? "sm" : "6px 0"}
-              variant={item.severity === "critical" ? "light" : "transparent"}
-              color={item.severity === "critical" ? "red" : "yellow"}
-              icon={
-                item.severity === "critical" ? (
-                  <IconAlertCircle size={18} />
-                ) : (
-                  <IconAlertTriangle size={18} />
-                )
-              }
-              aria-label={
-                item.severity === "critical" ? "紧急事项" : "提醒事项"
-              }
-            >
-              <Anchor
-                className="wrap-anywhere"
-                component={Link}
-                to={
-                  inlineAccounts &&
-                  item.subjectType === "account" &&
-                  item.subjectID
-                    ? `/?account=${encodeURIComponent(item.subjectID)}`
-                    : attentionTarget(item)
-                }
-                c="inherit"
-                size="sm"
-              >
-                {attentionMessage(item, accounts)} ›
-              </Anchor>
-              {item.kind === "unresolved_executions" && release && (
-                <Button
-                  size="xs"
-                  variant="light"
-                  ml="sm"
-                  disabled={
-                    typeof item.detail.count !== "number" ||
-                    item.detail.count <= 0
+          <div
+            className={
+              continuous ? styles.attentionSlots : styles.attentionList
+            }
+            style={
+              continuous
+                ? {
+                    height:
+                      (expanded
+                        ? ordered.length
+                        : Math.min(5, ordered.length)) * 80,
                   }
-                  onClick={() => release(item)}
+                : undefined
+            }
+          >
+            {(expanded ? ordered : ordered.slice(0, 5)).map((item, index) => (
+              <Alert
+                key={`${item.kind}-${item.subjectType}-${item.subjectID ?? "system"}-${String(item.detail.source ?? "")}`}
+                className={continuous ? styles.attentionSlot : undefined}
+                style={
+                  continuous
+                    ? { transform: `translateY(${index * 80}px)` }
+                    : undefined
+                }
+                p={item.severity === "critical" ? "sm" : "6px 0"}
+                variant={item.severity === "critical" ? "light" : "transparent"}
+                color={item.severity === "critical" ? "red" : "yellow"}
+                icon={
+                  item.severity === "critical" ? (
+                    <IconAlertCircle size={18} />
+                  ) : (
+                    <IconAlertTriangle size={18} />
+                  )
+                }
+                aria-label={
+                  item.severity === "critical" ? "紧急事项" : "提醒事项"
+                }
+              >
+                <Anchor
+                  className="wrap-anywhere"
+                  component={Link}
+                  to={
+                    inlineAccounts &&
+                    item.subjectType === "account" &&
+                    item.subjectID
+                      ? `/?account=${encodeURIComponent(item.subjectID)}`
+                      : attentionTarget(item)
+                  }
+                  c="inherit"
+                  size="sm"
                 >
-                  核对并释放
-                </Button>
-              )}
-            </Alert>
-          ))}
+                  {continuous
+                    ? attentionMessage(item, accounts)
+                        .split(/([0-9][0-9.,%]*)/g)
+                        .map((part, index) =>
+                          /^[0-9]/.test(part) ? (
+                            <span
+                              className={styles.attentionNumber}
+                              key={index}
+                            >
+                              {part}
+                            </span>
+                          ) : (
+                            part
+                          ),
+                        )
+                    : attentionMessage(item, accounts)}{" "}
+                  ›
+                </Anchor>
+                {item.kind === "unresolved_executions" && release && (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    ml="sm"
+                    disabled={
+                      typeof item.detail.count !== "number" ||
+                      item.detail.count <= 0
+                    }
+                    onClick={() => release(item)}
+                  >
+                    核对并释放
+                  </Button>
+                )}
+              </Alert>
+            ))}
+          </div>
           {items.length > 5 && (
             <Button
               variant="subtle"

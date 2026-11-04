@@ -117,3 +117,36 @@
 .updatedAgo {
   text-align: left;
 }
+
+.attentionList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attentionSlots {
+  position: relative;
+  font-variant-numeric: tabular-nums;
+}
+.attentionSlot {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  height: 72px;
+  overflow: auto;
+  transition: transform 250ms ease-out;
+}
+.attentionViewport section > :first-child > p {
+  min-width: 26ch;
+  text-align: left;
+}
+@media (prefers-reduced-motion: reduce) {
+  .attentionSlot {
+    transition: none;
+  }
+}
+
+.attentionNumber {
+  display: inline-block;
+  min-width: 6ch;
+  font-variant-numeric: tabular-nums;
+}
