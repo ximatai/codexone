@@ -606,7 +606,12 @@ extension SQLiteExecutionStore: ExecutionLiveObserving {
     liveFirstEvents.withLock { if $0.count < 200 { $0[attempt] = false } }
   }
   public func executionReceivedFirstEvent(attempt: String) {
-    liveFirstEvents.withLock { if $0[attempt] != nil { $0[attempt] = true } }
+    let first = liveFirstEvents.withLock { values in
+      guard values[attempt] == false else { return false }
+      values[attempt] = true
+      return true
+    }
+    guard first else { return }
     overviewActivity.publish {
       .init(id: attempt, row: nil, outcome: nil, at: clock.unixSeconds, first: true)
     }

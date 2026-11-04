@@ -57,9 +57,24 @@ private struct SyntheticOverviewStorm: Service {
   func run() async throws {
     do {
       try await cancelWhenGracefulShutdown {
+        var index = 0
         while !Task.isCancelled {
           try await Task.sleep(for: .milliseconds(100))
-          store.executionReceivedFirstEvent(attempt: String(repeating: "a", count: 250) + "0")
+          let attempt = "synthetic-storm-\(index)"
+          index += 1
+          try await store.admit(
+            .init(
+              attempt: attempt,
+              owner: .init(
+                principal: "synthetic", key: String(repeating: "k", count: 256),
+                namespace: "synthetic", identity: "synthetic-storm"),
+              window: "synthetic", policyVersion: "1", pricingVersion: "1", reservedMicros: 0,
+              model: "synthetic"))
+          try await store.finalize(
+            attempt: attempt,
+            evidence: .init(
+              revision: 1, inputTokens: 1, outputTokens: 1, cachedTokens: 0, images: 0,
+              estimatedMicros: 0, completeness: .complete))
         }
       }
     } catch is CancellationError {}
