@@ -219,3 +219,5 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 ## 相关文档
 
 [文档导航](../../README.md)
+
+原生 Images 与 Responses 共用上传 EOF 首响应边界：AHC 消费完最后一块并请求 EOF 后开始首响应期限，不是远端确认。图片上传开始及每次背压拉取正文块更新 progress_idle 空闲期限，停滞以 execution_progress_timeout 取消；总执行期限仍覆盖持续慢传。EOF 原子切换到 first_response 期限，早到有效事件不会被上传进度或 EOF 覆盖。保持未知责任；首事件后进度期限不变。

@@ -27,8 +27,7 @@ extension HTTPResponseExecution {
         serviceTier: request.serviceTier
       ) { context, authorization in
         try await withProgressDeadline(budget: configuration.budget) { progress in
-          // This endpoint retains its existing pre-upload first-response boundary.
-          progress.requestSent()
+          progress.noteUpload()
           let base = authorization?.baseURL ?? configuration.upstreamBaseURL
           guard var url = URLComponents(string: base) else { throw ExecutionError.invalidCommand }
           url.path = "/backend-api/codex/images/" + (request.editing ? "edits" : "generations")
@@ -46,7 +45,12 @@ extension HTTPResponseExecution {
           } else if let token {
             upstream.headers.add(name: "authorization", value: "Bearer " + token)
           }
-          upstream.body = .bytes(ByteBuffer(data: request.body))
+          let upload = RequestUpload(bytes: request.body.count, transport: "http")
+          defer { upload.finish() }
+          upstream.body = .stream(
+            UploadBody(
+              data: request.body, progress: progress, upload: upload, trackUploadProgress: true),
+            length: .known(Int64(request.body.count)))
           let diagnostics = NativeImageDiagnostics(streaming: request.streaming)
           var attemptError: (any Error)?
           defer { diagnostics.record(error: attemptError, requestID: requestID) }

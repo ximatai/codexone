@@ -9,6 +9,7 @@ struct UploadBody: AsyncSequence, Sendable {
   let data: Data
   let progress: ExecutionProgress
   let upload: RequestUpload
+  var trackUploadProgress = false
 
   func makeAsyncIterator() -> Iterator {
     Iterator(body: self, offset: data.startIndex)
@@ -29,6 +30,7 @@ struct UploadBody: AsyncSequence, Sendable {
       let buffer = ByteBuffer(bytes: body.data[offset..<end])
       offset = end
       body.upload.wrote(buffer.readableBytes)
+      if body.trackUploadProgress { body.progress.noteUpload() }
       return buffer
     }
   }
