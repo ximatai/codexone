@@ -45,3 +45,7 @@ RecoveryStore 只处理加密内容、顺序/完整性、代际条件写与删�
 [文档导航](../README.md)
 
 墙上时间由 Core 的 `WallClock` 值提供，生产入口显式组装 `.system`，需要时间决策的 owner 在构造时接收。公开构造器保留 `.system` 默认值以兼容无需控制时间的调用；测试可注入固定或手动推进的闭包。SQLite store 在 `open` 时接收并将同一值传给 writer、只读 reader、存储观测及在线备份；连接仅携带该依赖供事务 helper 使用。已有显式 `now:` 的操作继续以调用者时间为准。秒、微秒文件名和 UTC 日窗口保留各自取整方式；耗时和截止时间仍使用单调时钟。
+
+## 首页实时观察 owner
+
+Core 定义 overview 寿命端口，Runtime 监督单一 producer，Adapters 组装既有查询 DTO 并维护共享快照。每 viewer 的传输 owner 持有有界队列、写任务、心跳与 channel；AdminSessions 持有最多八个连接绑定并同步撤销。SQLite 提交后向有界活动缓冲发布，发布不等待 reader 或 transport；数据面认证连接注册表不保存地址、头或会话 ID。最后 viewer 退出清快照并 join 采样；进程关闭先结束 overview，再关 usage reader、store 与 event loop。具体容量和期限见 A20，不创建第二套 reader。

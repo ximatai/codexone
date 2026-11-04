@@ -2,7 +2,7 @@
 
 owner 已确认 [方案](proposal.md)方向，尚无实现验收。S≈0.5—1 人日，M≈1—2 人日；以下按依赖顺序各自可合并，未启用路径保持原 HTTP 行为。总估算 5—7 人日（含评审修订/集成余量），其他页面复用另估；不以此替代实际测量。
 
-- [ ] **1. 契约与边界确定（S）**：确认活动事件驱动加对账采样、频率/容量及首版范围；将 v1 envelope、section/freshness、关闭码、Origin/会话活动语义、资源限额同步 control-plane 与 ownership。验收：DTO 合成契约覆盖 null、大整数、业务日/跨日、partial/unavailable；明确长连接是 A10 单响应关闭的精确例外，无 schema/治理或恢复语义变化；不提前宣称交付。
+- [x] **1. 契约与边界确定（S）**：确认活动事件驱动加对账采样、频率/容量及首版范围；将 v1 envelope、section/freshness、关闭码、Origin/会话活动语义、资源限额同步 control-plane 与 ownership。验收：DTO 合成契约覆盖 null、大整数、业务日/跨日、partial/unavailable；明确长连接是 A10 单响应关闭的精确例外，无 schema/治理或恢复语义变化；不提前宣称交付。
 - [ ] **2. 独立改善轮询体验（S）**：进行中按采样基准逐秒显示耗时；服务状态后台/手动读取保留旧值、失败标陈旧，保留现有 HTTP 接口。验收：取消/迟到结果不覆盖当前代际；停止刷新时不把旧运行态冒充实时，后台读取不换 loading 整表；稳定行 ID、焦点、抽屉、滚动与 unknown 锁保持。此步可单独交付，无需等待 WS。
 - [ ] **2b. 显示连续性（S—M）**：按方案引入数字滚动、表格行过渡、进度条与趋势图过渡，HTTP 轮询下即可生效；首屏、恢复、重新可见直接落定，尊重 reduced-motion。验收：真实浏览器大屏和窄屏，合成高频变化下 CLS 为 0、无动画积压，记录包体增量。
 - [ ] **3. 共享 sampler 与快照（M）**：Runtime 管寿命、Adapters 组装 DTO，使用既有 reader/观察，尚不启用 WS；一份缓存、顺序 2/5/15 秒调度、变化与 freshness 合并、总 3 MiB 缓存/编码预算。验收：经真实 SQLite 接口证明 1 与 8 viewers 在等长窗口查询数相同（允许初始采样边界差），新 viewer 不触发聚合；最后离开取消并 await、随后无本功能查询/timer；快速重连不生成第二 producer。busy/超时/optional gate 保留旧值与安全状态，不能重试风暴或启动新 reader；最大合法 64 账号/256 Key/200 intent/50 提醒/7 日合成 DTO 检查 1 MiB 消息界限，超限走明确降级。

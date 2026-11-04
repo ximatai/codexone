@@ -233,3 +233,15 @@ Token 与限额共用治理投影，部分证据显示已观测下界。缓存�
 列表单一查看详情入口打开连续单页抽屉，依次排列用量概况、名称与权限、使用上限、管理操作及直接展示的密钥信息；固定标题和关闭入口，正文独立滚动；本地治理限额作为固定分组直接展示，不折叠。移除页签及重复的概况卡，用量/模型能力/限制采用卡片分组；保存与管理操作统一在固定底栏，保存按钮关联现有编辑表单，关闭由头部统一完成。用量进度仅表达已观测比例，未知保留下界标识。权限编辑复用原修订、部分成功及未知结果约束；保存成功或需核对时关闭编辑并刷新，校验拒绝保留草稿。归档密钥仍可查看只读策略，恢复后保持停用。到期、轮换、禁用与归档沿用独立确认，创建及一次性凭证流程不变。
 
 Key 配置只包含 tokens（业务日每日Token上限）和active（最大并发），不接受旧请求次数/金额/未结限制字段。单位Token/万Token/百万Token切换保留实际整数数量，保存基础Token数或null，不将旧请求数换算为Token。摘要返回tokens整数字符串与tokenUsageIncomplete，不完整时显示已观测下界。具体准入计量见[用量规范](usage.md)。 持久策略写入同样仅保留tokens/active，schema v11不表示旧五字段二进制可读；不支持原库直接回退，也没有原地降级接口，恢复边界见[Key回退前提](../../guide/key-governance.md#兼容回退前提)。
+
+## A20：首页实时只读概览
+
+首页及首页账号抽屉使用 `GET /api/overview/live`，这是 A10 单响应关闭的精确例外。HTTP 接口继续保留，写操作仍使用 HTTP 与 CSRF。仅接受无 query、无 Bearer、唯一管理 cookie、唯一精确 Origin、合法 Host 与同源 Fetch Metadata 的 upgrade；不协商压缩或子协议，不接受应用入站消息。
+
+v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snapshot/update，sequence 在每连接实际发送时从 1 连续递增。八个 section 为 system、inFlight、daily、keys、accounts、storage、attention、headroom。每源为 `{version, sampledAtUnixSeconds, lastSuccessAt, freshness, code, data}`，freshness 为 fresh/stale/unavailable。data 沿既有 HTTP DTO，inFlight 额外包含 recentlyFinished（64 条/10 秒）、overflow 与 clients（Key 显示名、连接数、最早时间）。完整 section 替换；相同内容的采样仍推进 freshness。来源不构成跨源事务，失败保留旧值，不补零。
+
+准入、首事件及 finalize 成功提交后非阻塞唤醒活动；失败不得影响执行、结算或计量，零 viewer 只做廉价检查。约 100 ms 合并，5 秒 SQL 对账；finalize 标脏聚合并最多每 2 秒重算。storage 2 秒，聚合/system 5 秒，账号/提醒 15 秒顺序采样；最后 viewer 离开取消并 await 查询，零 viewer 不采样。新 viewer 使用共享缓存，重连完整 snapshot，无持久事件或生成回放。
+
+总 WS 8、每 session 2，管理 ingress 总 32；单帧 1 MiB，待发最多 2 条/2 MiB，另 1 MiB 在途，共享缓存/编码 3 MiB。超载/写超时 1013、会话失效 1008、shutdown 1001。15 秒 ping，10 秒 pong/握手、5 秒写期限；关闭握手最多 2 秒，功能整体关闭最多 5 秒。活动订阅每 15 秒沿读取语义延长 idle，不延长绝对 7 天期限。logout/替换/bind 撤销连接，发送前检查有效性。
+
+首页隐藏、暂停、离开或会话代际退役即关闭；有效 snapshot 前保留 HTTP，失败后 15 秒轮询（含 system），三次失败后每 60 秒探测。旧代际结果不能覆盖新数据或解除 mutation 未知锁。2/5/15 秒源超过 6/15/45 秒标陈旧。HTTP 降级明确显示轮询，不展示最近结束。数字/行/条/趋势采用 150—400 ms 连续过渡；首屏、恢复、重新可见直接落定，reduced-motion 禁止位移和滚动。无 schema、恢复、计量变更。交付状态与实际验收见活动任务。
