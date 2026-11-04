@@ -20,6 +20,7 @@
     "verify_model_profiles_import.py",
     "verify_pool_config.py",
     "verify_upload_deadline.py",
+    "verify_slow_ingress.py",
     "verify_business_day.py",
     "verify_home_panel.py",
     "verify_ws_address_candidates.py"

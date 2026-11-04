@@ -34,6 +34,7 @@ struct ExecutionBudget: Sendable {
 final class ExecutionProgress: Sendable {
   private struct State {
     var received = false
+    var uploading = false
     var deadline: ContinuousClock.Instant?
   }
   private let state: Mutex<State>
@@ -47,9 +48,18 @@ final class ExecutionProgress: Sendable {
   func negotiateUpload() {
     state.withLock { if !$0.received { $0.deadline = nil } }
   }
+  /// Images bound upload stalls without spending the first-response allowance.
+  func noteUpload() {
+    state.withLock { value in
+      guard !value.received else { return }
+      value.uploading = true
+      value.deadline = .now.advanced(by: .seconds(idle))
+    }
+  }
   func requestSent() {
     state.withLock { value in
-      guard !value.received, value.deadline == nil else { return }
+      guard !value.received, value.uploading || value.deadline == nil else { return }
+      value.uploading = false
       value.deadline = .now.advanced(by: .seconds(first))
     }
   }
@@ -71,7 +81,7 @@ final class ExecutionProgress: Sendable {
       try await Task.sleep(for: .milliseconds(100))
       let expired = state.withLock { value -> Bool? in
         guard let deadline = value.deadline else { return nil }
-        return ContinuousClock.now >= deadline ? value.received : nil
+        return ContinuousClock.now >= deadline ? value.received || value.uploading : nil
       }
       if let received = expired {
         throw GatewayProtocolError(

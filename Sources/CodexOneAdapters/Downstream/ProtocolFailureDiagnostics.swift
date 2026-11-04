@@ -1,5 +1,7 @@
+import CodexOneCore
 import Foundation
 import Logging
+import NIOCore
 import Synchronization
 
 enum ResponseStreamFinishReason: String, Sendable {
@@ -19,7 +21,8 @@ enum ProtocolFailureDiagnostics {
   private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
-    "invalid_api_key", "invalid_json", "invalid_request", "invalid_reference",
+    "request_body_timeout", "invalid_api_key", "invalid_json", "invalid_request",
+    "invalid_reference",
     "conversation_too_large", "image_input_too_large", "invalid_image", "invalid_input",
     "invalid_mask",
     "invalid_private_context", "json_too_deep", "model_catalog_unavailable", "request_too_large",
@@ -170,9 +173,38 @@ enum ProtocolFailureDiagnostics {
       metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
   }
 
-  static func record(_ error: GatewayProtocolError, requestID: String) {
+  static func causeToken(_ error: any Error) -> String {
+    if let error = error as? ChannelError {
+      switch error {
+      case .ioOnClosedChannel: return "channel_closed"
+      case .inputClosed: return "channel_input_closed"
+      case .outputClosed: return "channel_output_closed"
+      case .connectTimeout: return "channel_connect_timeout"
+      default: return "channel_other"
+      }
+    }
+    if error is DecodingError { return "json_decode" }
+    if error is EncodingError { return "json_encode" }
+    if let error = error as? ExecutionError {
+      switch error {
+      case .closed: return "execution_closed"
+      case .conflict: return "execution_conflict"
+      case .invalidCommand: return "execution_invalid_command"
+      case .storageUnavailable: return "execution_storage_unavailable"
+      default: return "execution_other"
+      }
+    }
+    // Fixed HTTP client cases, bounded errno, cancellation, or other; never descriptions.
+    return NativeImageDiagnostics.errorToken(error)
+  }
+
+  static func record(
+    _ error: GatewayProtocolError, requestID: String, cause: (any Error)? = nil
+  ) {
     guard gate.withLock({ $0.admit(now: .now) }) else { return }
-    logger.warning("Protocol request rejected", metadata: metadata(error, requestID: requestID))
+    var value = metadata(error, requestID: requestID)
+    if let cause { value["cause"] = .string(causeToken(cause)) }
+    logger.warning("Protocol request rejected", metadata: value)
   }
 }
 

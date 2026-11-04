@@ -540,9 +540,8 @@ public struct ResponsesDataService: Service {
           var previousResponseRequestID: String?
           while !Task.isCancelled {
             var receivedPart = false
-            let requestDeadline = connection.channel.eventLoop.scheduleTask(in: .seconds(10)) {
-              connection.channel.close(promise: nil)
-            }
+            let requestDeadline = HTTPRequestReadDeadline(channel: connection.channel)
+            defer { requestDeadline.cancel() }
             let lease = budget.lease()
             defer { lease.release() }
             var received: (HTTPRequestHead, Data)?
@@ -554,6 +553,7 @@ public struct ResponsesDataService: Service {
               var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
                 receivedPart = true
+                requestDeadline.note()
                 switch part {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
@@ -597,10 +597,14 @@ public struct ResponsesDataService: Service {
                 }
                 if ended { break }
               }
+              try requestDeadline.complete()
               received = ended ? head.map { ($0, body) } : nil
-              requestDeadline.cancel()
             } catch {
               requestDeadline.cancel()
+              // No request head was decoded: idle keep-alive/header silence can close quietly.
+              if !receivedPart, (error as? GatewayProtocolError)?.code == "request_body_timeout" {
+                return
+              }
               let writer = ProtocolResponseWriter(
                 writer: outbound, channel: connection.channel, keepAlive: false)
               if control { await writer.setControlRequest() }
@@ -823,7 +827,8 @@ private actor ProtocolResponseWriter {
     } catch {
       if !controlRequest && diagnostics {
         ProtocolFailureDiagnostics.record(
-          .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID)
+          .init(502, "execution_indeterminate", detail: .downstreamJSONWrite), requestID: requestID,
+          cause: error)
       }
       throw error
     }

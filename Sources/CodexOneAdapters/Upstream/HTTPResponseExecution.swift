@@ -97,7 +97,7 @@ struct HTTPResponseExecution: Sendable {
     let (frame, oversizedBytes): (Data?, Int?) = try {
       guard configuration.upstreamTransport == "websocket" else { return (nil, nil) }
       let encoded = try webSocketFrame(request, turnState: turnState)
-      return encoded.count > UpstreamWebSocketBodyLimit.maximumMessageBytes
+      return encoded.count > UpstreamWebSocketBodyLimit.httpRoutingBytes
         ? (nil, encoded.count) : (encoded, nil)
     }()
     let oversized = oversizedBytes != nil
@@ -405,11 +405,13 @@ func withExecutionDeadline<Value: Sendable>(
   }
 }
 
-func collectProgressBody(_ body: HTTPClientResponse.Body, progress: ExecutionProgress, maximum: Int)
-  async throws -> Data
-{
+func collectProgressBody(
+  _ body: HTTPClientResponse.Body, progress: ExecutionProgress, maximum: Int,
+  onChunk: (@Sendable (Int) -> Void)? = nil
+) async throws -> Data {
   var data = Data()
   for try await chunk in body {
+    onChunk?(chunk.readableBytes)
     try Task.checkCancellation()
     guard chunk.readableBytes <= maximum - data.count else {
       throw GatewayProtocolError(502, "upstream_response_too_large")

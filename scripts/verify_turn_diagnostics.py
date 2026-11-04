@@ -15,7 +15,7 @@ PRIVATE='synthetic-private-provider-error-never-log'
 ORG='org-SyntheticPrivateOrg42'
 # Provider error events reach the client with their actionable code; account identifiers do not.
 CASES={
-    'stream': ('upstream_rejected', 502, {'param':'stream','code':'invalid_request'}),
+    'stream': ('upstream_rejected', 400, {'param':'stream','code':'invalid_request'}),
     'reasoning': ('upstream_rejected', 400, {'param':'reasoning.summary','code':'unsupported_value'}),
     'authentication': ('upstream_authentication_rejected', 502, {'code':'invalid_api_key'}),
     'rate': ('upstream_rate_limited', 429, {'code':'rate_limit_exceeded'}),

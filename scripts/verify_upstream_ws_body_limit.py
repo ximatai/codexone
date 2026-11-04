@@ -22,6 +22,7 @@ from verify_websocket import dial, receive, send
 from verify_json_order import SCHEMA, wire
 
 LIMIT = 16 * 1024 * 1024
+ROUTING = 12 * 1024 * 1024
 HEADERS = {'session-id': 'synthetic-large-session', 'x-codex-turn-state': 'synthetic-state'}
 
 
@@ -302,14 +303,14 @@ def main():
                         count += held_body_budgets(ports['data'], server, contract)
                         ledger(root, count)
                         for route in ('json', 'sse', 'native'):
-                            for size in (LIMIT - 1, LIMIT, LIMIT + 1):
+                            for size in (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1):
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
                                                 image_count=3 if route == 'sse' else 1)
                                 before = len(server.calls)
                                 if route == 'native':
                                     with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
                                         result = native(peer, request)
-                                    if size > LIMIT:
+                                    if size > ROUTING:
                                         assert result['status'] == 413, result
                                         error(wire(result))
                                         assert len(server.calls) == before
@@ -330,7 +331,7 @@ def main():
                                 if path == 'websocket' and contract == 'codex-subscription':
                                     expected_headers['x-codex-turn-state'] = None  # projected into create metadata
                                 assert headers == expected_headers, headers
-                                if size <= LIMIT:
+                                if size <= ROUTING:
                                     assert path == 'websocket' and raw == frame(request, contract, route == 'native')
                                 else:
                                     assert path == 'http'

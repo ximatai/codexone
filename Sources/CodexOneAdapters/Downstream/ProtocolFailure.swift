@@ -51,7 +51,12 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
   -> JSONValue
 {
   let mapped = protocolFailure(error)
-  if diagnostics { ProtocolFailureDiagnostics.record(mapped, requestID: requestID) }
+  if diagnostics {
+    ProtocolFailureDiagnostics.record(
+      mapped, requestID: requestID,
+      cause: mapped.code == "execution_indeterminate" && !(error is GatewayProtocolError)
+        ? error : nil)
+  }
   let explanation =
     mapped.code == UpstreamWebSocketBodyLimit.errorCode
     ? "The conversation or its images are too large. Start a new session or remove images before trying again."
