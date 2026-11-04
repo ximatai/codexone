@@ -23,6 +23,7 @@ enum ProviderError {
         || [
           "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
           "model_not_found", "content_policy_violation", "unsupported_parameter",
+          "budget_reached",
         ].contains(code)
     }
   }
