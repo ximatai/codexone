@@ -405,11 +405,13 @@ func withExecutionDeadline<Value: Sendable>(
   }
 }
 
-func collectProgressBody(_ body: HTTPClientResponse.Body, progress: ExecutionProgress, maximum: Int)
-  async throws -> Data
-{
+func collectProgressBody(
+  _ body: HTTPClientResponse.Body, progress: ExecutionProgress, maximum: Int,
+  onChunk: (@Sendable (Int) -> Void)? = nil
+) async throws -> Data {
   var data = Data()
   for try await chunk in body {
+    onChunk?(chunk.readableBytes)
     try Task.checkCancellation()
     guard chunk.readableBytes <= maximum - data.count else {
       throw GatewayProtocolError(502, "upstream_response_too_large")

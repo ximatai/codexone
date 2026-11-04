@@ -2787,3 +2787,30 @@ func compressed415NegotiationKeepsPoolAccountAttemptBytesAndHealth(rejectPlain: 
     }
   }
 }
+
+@Test(.timeLimit(.minutes(1)), arguments: ["abort", "truncated200"])
+func nativeImageDiagnosticsPreserveDisconnectResponsesAndSingleAttempt(fault: String) async throws {
+  try await withOAuth(timeout: 3000) { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, images: true)
+    do {
+      var request = URLRequest(
+        url: URL(string: "http://127.0.0.1:\(h.port)/v1/images/generations")!)
+      request.httpMethod = "POST"
+      request.httpBody = try JSONValue.object(["prompt": .string(fault)]).data()
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      let (body, response) = try await session.data(for: request)
+      #expect((response as! HTTPURLResponse).statusCode == 502)
+      #expect(try JSONValue.decode(body)["error"]?["code"]?.string == "execution_indeterminate")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      #expect(h.calls.count == 1)
+      #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
+  }
+}

@@ -47,88 +47,100 @@ extension HTTPResponseExecution {
             upstream.headers.add(name: "authorization", value: "Bearer " + token)
           }
           upstream.body = .bytes(ByteBuffer(data: request.body))
-          let response = try await client.execute(
-            upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-          var replyHeaders = forwardedResponseHeaders(response.headers)
-          for name in ["content-type", "x-codex-imagegen-request-id"] {
-            if let value = response.headers.first(name: name) {
-              replyHeaders.add(name: name, value: value)
-            }
-          }
-          await observeResponseHeaders(response.headers, account: authorization?.identity)
-          await receiveHeaders(replyHeaders)
-          guard response.status == .ok else {
-            throw await ProviderError.failure(response: response)
-          }
-          if request.streaming {
-            guard
-              response.headers.first(name: "content-type")?.lowercased().split(separator: ";").first
-                == "text/event-stream"
-            else {
-              throw GatewayProtocolError(502, "invalid_upstream_content_type")
-            }
-            var decoder = SSEDecoder(
-              maximumEventBytes: ImageLimits.nativeResponseBytes,
-              maximumTotalBytes: ImageLimits.nativeResponseBytes)
-            var terminal: JSONValue?
-            // Retain only the current event; decoder enforces the event and stream limits.
-            var pending = Data()
-            try await begin(replyHeaders)
-            for try await chunk in response.body {
-              try Task.checkCancellation()
-              for byte in chunk.readableBytesView {
-                let event = try decoder.append(byte)
-                pending.append(byte)
-                if let event {
-                  context.observeUpstreamEvent()
-                  progress.note()
-                  try observeProviderEvent(event, context: context)
-                  let type = event["type"]?.string ?? ""
-                  if type == "error" { throw ProviderObservation.providerFailure(event) }
-                  if type
-                    == (request.editing ? "image_edit.completed" : "image_generation.completed")
-                  {
-                    guard terminal == nil else {
-                      throw GatewayProtocolError(502, "invalid_upstream_image")
-                    }
-                    context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
-                    terminal = event
-                    let observation = NativeImageObservation(event, model: model, streaming: true)
-                    if let usage = observation.usage { try context.observeUsage(usage) }
-                  }
-                }
-                if decoder.isAtEventBoundary {
-                  try await emit(pending)
-                  pending.removeAll(keepingCapacity: true)
-                }
+          let diagnostics = NativeImageDiagnostics(streaming: request.streaming)
+          var attemptError: (any Error)?
+          defer { diagnostics.record(error: attemptError, requestID: requestID) }
+          do {
+            let response = try await client.execute(
+              upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
+            diagnostics.receivedHeaders(status: Int(response.status.code))
+            var replyHeaders = forwardedResponseHeaders(response.headers)
+            for name in ["content-type", "x-codex-imagegen-request-id"] {
+              if let value = response.headers.first(name: name) {
+                replyHeaders.add(name: name, value: value)
               }
             }
-            try decoder.finish()
-            guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
-            let observation = NativeImageObservation(terminal, model: model, streaming: true)
-            guard observation.images > 0 else {
-              throw GatewayProtocolError(502, "invalid_upstream_image")
+            await observeResponseHeaders(response.headers, account: authorization?.identity)
+            await receiveHeaders(replyHeaders)
+            guard response.status == .ok else {
+              throw await ProviderError.failure(response: response, diagnostics: diagnostics)
             }
-          } else {
-            let body = try await collectProgressBody(
-              response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes)
-            context.observeUpstreamEvent()
-            let document = try? JSONValue.decode(body)
-            let observation = document.map { NativeImageObservation($0, model: model) }
-            context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
-            if let usage = observation?.usage { try context.observeUsage(usage) }
-            if observation?.images ?? 0 == 0 {
-              try context.observeOutcome(
-                .init(
-                  failure: .invalidUpstreamResponse,
-                  atUnixSeconds: context.clock.unixSeconds))
+            if request.streaming {
+              guard
+                response.headers.first(name: "content-type")?.lowercased().split(separator: ";")
+                  .first
+                  == "text/event-stream"
+              else {
+                throw GatewayProtocolError(502, "invalid_upstream_content_type")
+              }
+              var decoder = SSEDecoder(
+                maximumEventBytes: ImageLimits.nativeResponseBytes,
+                maximumTotalBytes: ImageLimits.nativeResponseBytes)
+              var terminal: JSONValue?
+              // Retain only the current event; decoder enforces the event and stream limits.
+              var pending = Data()
+              try await begin(replyHeaders)
+              for try await chunk in response.body {
+                diagnostics.receivedBody(bytes: chunk.readableBytes)
+                try Task.checkCancellation()
+                for byte in chunk.readableBytesView {
+                  let event = try decoder.append(byte)
+                  pending.append(byte)
+                  if let event {
+                    context.observeUpstreamEvent()
+                    progress.note()
+                    try observeProviderEvent(event, context: context)
+                    let type = event["type"]?.string ?? ""
+                    if type == "error" { throw ProviderObservation.providerFailure(event) }
+                    if type
+                      == (request.editing ? "image_edit.completed" : "image_generation.completed")
+                    {
+                      guard terminal == nil else {
+                        throw GatewayProtocolError(502, "invalid_upstream_image")
+                      }
+                      context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
+                      terminal = event
+                      let observation = NativeImageObservation(event, model: model, streaming: true)
+                      if let usage = observation.usage { try context.observeUsage(usage) }
+                    }
+                  }
+                  if decoder.isAtEventBoundary {
+                    try await emit(pending)
+                    pending.removeAll(keepingCapacity: true)
+                  }
+                }
+              }
+              try decoder.finish()
+              guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
+              let observation = NativeImageObservation(terminal, model: model, streaming: true)
+              guard observation.images > 0 else {
+                throw GatewayProtocolError(502, "invalid_upstream_image")
+              }
+            } else {
+              let body = try await collectProgressBody(
+                response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes,
+                onChunk: { diagnostics.receivedBody(bytes: $0) })
+              context.observeUpstreamEvent()
+              let document = try? JSONValue.decode(body)
+              let observation = document.map { NativeImageObservation($0, model: model) }
+              context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
+              if let usage = observation?.usage { try context.observeUsage(usage) }
+              if observation?.images ?? 0 == 0 {
+                try context.observeOutcome(
+                  .init(
+                    failure: .invalidUpstreamResponse,
+                    atUnixSeconds: context.clock.unixSeconds))
+              }
+              try await begin(replyHeaders)
+              try await emit(body)
             }
-            try await begin(replyHeaders)
-            try await emit(body)
+            try await finish()
+            try context.observeOutcome(
+              .init(failure: nil, atUnixSeconds: context.clock.unixSeconds))
+          } catch {
+            attemptError = error
+            throw error
           }
-          try await finish()
-          try context.observeOutcome(
-            .init(failure: nil, atUnixSeconds: context.clock.unixSeconds))
         }
         return nil
       }
