@@ -61,6 +61,7 @@ backend_scripts() {
   run_check scripts/verify_key_import.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_trial_provider.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_lite.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_admin_live.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_admin.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_admin_round2.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_admin_assets.py --binary "$backend_bin_dir/codexone"
