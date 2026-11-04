@@ -44,15 +44,33 @@ function UpdatedAgo({ updated }: { updated: number }) {
     </Text>
   );
 }
-function Elapsed({ seconds, sampledAt }: { seconds: number | null | undefined; sampledAt: number }) {
-  const [basis, setBasis] = useState(() => ({ sampledAt, at: performance.now() }));
+function Elapsed({
+  seconds,
+  sampledAt,
+}: {
+  seconds: number | null | undefined;
+  sampledAt: number;
+}) {
+  const [basis, setBasis] = useState(() => ({
+    sampledAt,
+    at: performance.now(),
+  }));
   const [now, setNow] = useState(() => performance.now());
-  if (basis.sampledAt !== sampledAt) setBasis({ sampledAt, at: performance.now() });
+  if (basis.sampledAt !== sampledAt)
+    setBasis({ sampledAt, at: performance.now() });
   useEffect(() => {
-    const timer = window.setInterval(() => { if (!document.hidden) setNow(performance.now()); }, 1000);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setNow(performance.now());
+    }, 1000);
     return () => window.clearInterval(timer);
   }, []);
-  return <span style={{ fontVariantNumeric: "tabular-nums" }}>{seconds == null ? "耗时不可用" : `已持续 ${Math.floor(seconds + Math.max(0, now - basis.at) / 1000)} 秒`}</span>;
+  return (
+    <span style={{ fontVariantNumeric: "tabular-nums" }}>
+      {seconds == null
+        ? "耗时不可用"
+        : `已持续 ${Math.floor(seconds + Math.max(0, now - basis.at) / 1000)} 秒`}
+    </span>
+  );
 }
 export function ActivityOverview({
   refresh,
@@ -148,7 +166,11 @@ export function ActivityOverview({
           }
         />
       </div>
-      {!control.automatic && <Text size="xs" c="dimmed">自动观察已暂停，以下为上次快照。</Text>}
+      {!control.automatic && (
+        <Text size="xs" c="dimmed">
+          自动观察已暂停，以下为上次快照。
+        </Text>
+      )}
       {attention}
       {allQueries.some((q) => q.isError) && (
         <ErrorState
@@ -197,6 +219,7 @@ export function ActivityOverview({
               </Text>
             ) : (
               <DataTable
+                animate
                 rows={flight.data ?? []}
                 rowKey={(row) => row.id}
                 retry={() => void flight.refetch()}
@@ -267,8 +290,12 @@ export function ActivityOverview({
                     id: "elapsed",
                     title: "运行时长",
                     width: "12%",
-                    render: (row) =>
-                      <Elapsed seconds={row.elapsedSeconds} sampledAt={flight.dataUpdatedAt} />,
+                    render: (row) => (
+                      <Elapsed
+                        seconds={row.elapsedSeconds}
+                        sampledAt={flight.dataUpdatedAt}
+                      />
+                    ),
                   },
                   {
                     id: "event",

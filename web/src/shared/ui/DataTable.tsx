@@ -1,3 +1,5 @@
+import { useAutoAnimate } from "@formkit/auto-animate/react";
+import { useOverviewMotion } from "./ContinuousValue";
 import { Table, UnstyledButton } from "@mantine/core";
 import { useState, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./States";
@@ -24,7 +26,9 @@ export function DataTable<T>({
   onRowClick,
   highlightedID,
   rowLabel,
+  animate = false,
 }: {
+  animate?: boolean;
   rows: T[];
   columns: DataColumn<T>[];
   rowKey: (row: T) => string;
@@ -37,6 +41,10 @@ export function DataTable<T>({
   highlightedID?: string | null;
   rowLabel?: (row: T) => string;
 }) {
+  const motion = useOverviewMotion();
+  const [animationParent] = useAutoAnimate<HTMLTableSectionElement>({
+    duration: 250,
+  });
   const [sort, setSort] = useState<{ id: string; descending: boolean } | null>(
     null,
   );
@@ -105,7 +113,7 @@ export function DataTable<T>({
           ))}
         </Table.Tr>
       </Table.Thead>
-      <Table.Tbody>
+      <Table.Tbody ref={animate && motion ? animationParent : undefined}>
         {ordered.map((row) => (
           <Table.Tr
             key={rowKey(row)}

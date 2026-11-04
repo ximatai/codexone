@@ -1,4 +1,8 @@
 import {
+  ContinuousValue,
+  useOverviewMotion,
+} from "../../shared/ui/ContinuousValue";
+import {
   IconArrowUp,
   IconArrowDown,
   IconSend,
@@ -35,6 +39,7 @@ function Sparkline({
   values: (number | null)[];
   label: string;
 }) {
+  const motion = useOverviewMotion();
   return (
     <div
       className={styles.sparkline}
@@ -54,6 +59,7 @@ function Sparkline({
         gridAxis="none"
         connectNulls={false}
         fillOpacity={0.2}
+        areaProps={{ isAnimationActive: motion, animationDuration: 250 }}
         curveType="monotone"
       />
     </div>
@@ -211,7 +217,7 @@ export function OverviewStats({
                   title={card.exact}
                   tabIndex={card.exact ? 0 : undefined}
                 >
-                  {card.value}
+                  <ContinuousValue text={card.value} />
                 </Text>
                 {card.delta !== "较昨日不可用" && (
                   <Text

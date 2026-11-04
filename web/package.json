@@ -20,12 +20,14 @@
     "format:check": "prettier --check src tests *.ts *.json .oxlintrc.json"
   },
   "dependencies": {
+    "@formkit/auto-animate": "0.10.0",
     "@mantine/charts": "9.7.4",
     "@mantine/core": "9.7.4",
     "@mantine/dates": "9.7.4",
     "@mantine/form": "9.7.4",
     "@mantine/hooks": "9.7.4",
     "@mantine/notifications": "9.7.4",
+    "@number-flow/react": "0.6.2",
     "@tabler/icons-react": "3.35.0",
     "@tanstack/react-query": "5.105.0",
     "dayjs": "1.11.19",

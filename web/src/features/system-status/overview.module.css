@@ -78,3 +78,14 @@
   overflow-wrap: anywhere;
   text-align: left;
 }
+
+:global([aria-label="管理概览"]) :global(.mantine-Progress-section) {
+  transition:
+    width 250ms ease-out,
+    background-color 250ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  :global([aria-label="管理概览"]) :global(.mantine-Progress-section) {
+    transition: none;
+  }
+}

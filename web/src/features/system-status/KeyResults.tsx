@@ -1,3 +1,4 @@
+import { ContinuousValue } from "../../shared/ui/ContinuousValue";
 import { useEffect, useState } from "react";
 import {
   ActionIcon,
@@ -157,7 +158,7 @@ export function KeyResults({
       width: "10%",
       render: (row) => (
         <Text size="sm" title={row.admitted.toLocaleString("zh-CN")}>
-          {compactCount(row.admitted)}
+          <ContinuousValue text={compactCount(row.admitted)} />
         </Text>
       ),
     },
@@ -176,7 +177,7 @@ export function KeyResults({
               aria-label={`${name(row)} 失败 ${row.failed}`}
               title="失败率以已准入请求为分母；取消、执行中和结果未明不计为失败。"
             >
-              {compactCount(row.failed)}（
+              <ContinuousValue text={compactCount(row.failed)} />（
               {percent(BigInt(row.failed), BigInt(row.admitted))}）
             </Anchor>
           ) : (
@@ -207,9 +208,13 @@ export function KeyResults({
               : `${row.tokenUsageIncomplete ? "已观测下界 " : ""}${BigInt(row.tokens).toLocaleString("zh-CN")}`
           }
         >
-          {row.tokens == null
-            ? "—"
-            : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactCount(row.tokens)}`}
+          <ContinuousValue
+            text={
+              row.tokens == null
+                ? "—"
+                : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactCount(row.tokens)}`
+            }
+          />
         </Text>
       ),
     },
@@ -222,7 +227,7 @@ export function KeyResults({
           size="sm"
           title={`按已观测用量的累计缓存 Token / 输入 Token 计算。${row.cacheUsageIncomplete !== false ? "部分请求没有完整宿主用量，仅使用已观测输入；无用量请求不进入分母。" : ""}`}
         >
-          {cacheRate(row)}
+          <ContinuousValue text={cacheRate(row)} />
         </Text>
       ),
     },
@@ -273,6 +278,7 @@ export function KeyResults({
         </Text>
       ) : (
         <DataTable
+          animate
           rows={[...(report?.keys ?? [])]
             .filter((row) => row.admitted > 0)
             .sort(
