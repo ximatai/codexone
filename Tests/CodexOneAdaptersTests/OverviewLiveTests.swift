@@ -159,3 +159,28 @@ import Testing
   sessions.bind(port: 19876)
   #expect(codes.withLock { $0 } == [1008])
 }
+
+@Test func overviewShutdownCancelsOwnedReadBeforeClosingViewers() async throws {
+  let cancellation = Mutex(false)
+  let (started, ready) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingOldest(1))
+  let overview = OverviewLive(activity: OverviewActivity()) { _ in
+    ready.yield(())
+    return try await withTaskCancellationHandler {
+      try await Task.sleep(for: .seconds(60))
+      return Data()
+    } onCancel: {
+      cancellation.withLock { $0 = true }
+    }
+  }
+  let mailbox = OverviewMailbox { _ in }
+  let worker = Task { try await overview.run() }
+  try await overview.subscribe(id: UUID(), mailbox: mailbox)
+  var iterator = started.makeAsyncIterator()
+  _ = await iterator.next()
+  worker.cancel()
+  try await worker.value
+  await overview.shutdown()
+  #expect(cancellation.withLock { $0 })
+  #expect(await mailbox.next() == nil)
+  ready.finish()
+}

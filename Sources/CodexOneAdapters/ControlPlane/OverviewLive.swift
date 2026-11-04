@@ -227,8 +227,13 @@ public actor OverviewLive: OverviewLiveRunning {
       // Coalesce bounded publication into one activity update without querying away short requests.
       if case .changed = signal { try? await Task.sleep(for: .milliseconds(100)) }
       let turn = generation
-      worker = Task { await self.sample(generation: turn) }
-      await worker?.value
+      let pending = Task { await self.sample(generation: turn) }
+      worker = pending
+      await withTaskCancellationHandler {
+        await pending.value
+      } onCancel: {
+        pending.cancel()
+      }
       worker = nil
     }
   }
@@ -310,7 +315,7 @@ public actor OverviewLive: OverviewLiveRunning {
         }
         replace(name, data: name == "inFlight" ? flight(at: time) : data, at: time, error: nil)
       } catch {
-        guard turn == generation, !viewers.isEmpty else { return }
+        guard turn == generation, !viewers.isEmpty, !Task.isCancelled else { return }
         replace(name, data: nil, at: time, error: "source_unavailable")
       }
       due[name] = time + period
