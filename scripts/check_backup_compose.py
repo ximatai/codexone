@@ -14,6 +14,8 @@ def check():
     root = Path(__file__).resolve().parents[1]
     document = yaml.safe_load((root / 'deploy/compose.yaml').read_text())
     services = document['services']
+    assert services['gateway']['environment']['CODEXONE_ADMIN_LIVE'] == '${CODEXONE_ADMIN_LIVE:-off}'
+    assert 'CODEXONE_ADMIN_LIVE' not in services['init-data']['environment']
     for service in services.values():
         assert service['logging'] == {'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '5'}}
     for name in ('init-data', 'gateway'):

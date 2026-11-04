@@ -32,7 +32,6 @@ services:
         volume:
           nocopy: true
     environment:
-      CODEXONE_ADMIN_LIVE: ${CODEXONE_ADMIN_LIVE:-off}
       TARGET_UID: ${CODEXONE_UID:?Run init-install.py}
       TARGET_GID: ${CODEXONE_GID:?Run init-install.py}
     entrypoint: [/bin/sh, -ec]
@@ -86,6 +85,7 @@ services:
           nocopy: true
       - ./secrets:/run/codexone:ro
     environment:
+      CODEXONE_ADMIN_LIVE: ${CODEXONE_ADMIN_LIVE:-off}
       CODEXONE_BUSINESS_DAY_OFFSET: ${CODEXONE_BUSINESS_DAY_OFFSET:-UTC}
       CODEXONE_BACKUP_DIRECTORY: /var/backups/codexone
       CODEXONE_UPSTREAM_HTTP_PROXY: ${CODEXONE_UPSTREAM_HTTP_PROXY:-}
