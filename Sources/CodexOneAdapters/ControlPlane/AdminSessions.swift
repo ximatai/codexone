@@ -17,6 +17,7 @@ final class AdminSessions: Sendable {
     let absoluteDeadline: ContinuousClock.Instant
   }
   private struct State {
+    var live: [UUID: (digest: String, close: @Sendable (UInt16) -> Void)] = [:]
     var port: Int?
     var sessions: [String: Session] = [:]
   }
@@ -47,6 +48,8 @@ final class AdminSessions: Sendable {
   func bind(port: Int) {
     state.withLock { value in
       precondition((1...65535).contains(port))
+      for binding in value.live.values { binding.close(1008) }
+      value.live.removeAll()
       value.sessions.removeAll()
       value.port = port
     }
@@ -67,7 +70,11 @@ final class AdminSessions: Sendable {
         $0.value.absoluteDeadline > now
           && $0.value.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > now
       }
-      if let replacing { value.sessions.removeValue(forKey: keyDigest(replacing)) }
+      if let replacing {
+        let digest = keyDigest(replacing)
+        value.sessions.removeValue(forKey: digest)
+        for binding in value.live.values where binding.digest == digest { binding.close(1008) }
+      }
       guard value.sessions.count < 16 else { throw ExecutionError.capacity }
       value.sessions[keyDigest(token)] = Session(
         csrf: csrf, lastActivity: now,
@@ -113,7 +120,45 @@ final class AdminSessions: Sendable {
   func logout(_ headers: HTTPHeaders) throws {
     _ = try authorize(headers, mutation: true)
     let token = try cookieToken(headers)
-    state.withLock { _ = $0.sessions.removeValue(forKey: keyDigest(token)) }
+    state.withLock { value in
+      let digest = keyDigest(token)
+      value.sessions.removeValue(forKey: digest)
+      for binding in value.live.values where binding.digest == digest { binding.close(1008) }
+    }
+  }
+  func bindLive(_ headers: HTTPHeaders, id: UUID, close: @escaping @Sendable (UInt16) -> Void)
+    throws
+  {
+    try checkBrowser(headers, mutation: true)
+    guard headers["authorization"].isEmpty else { throw ExecutionError.unauthorized }
+    let digest = keyDigest(try cookieToken(headers))
+    try state.withLock { value in
+      let time = now()
+      guard let session = value.sessions[digest], session.absoluteDeadline > time,
+        session.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > time
+      else { throw ExecutionError.unauthorized }
+      guard value.live.count < 8, value.live.values.filter({ $0.digest == digest }).count < 2 else {
+        throw ExecutionError.capacity
+      }
+      value.live[id] = (digest, close)
+    }
+  }
+  func releaseLive(_ id: UUID) { state.withLock { _ = $0.live.removeValue(forKey: id) } }
+  // Sending and revocation serialize at the same session lock. No stale authorization ticket.
+  func withLive(_ id: UUID, touch: Bool = false, operation: () -> Void = {}) -> Bool {
+    state.withLock { value in
+      let time = now()
+      guard let binding = value.live[id], var session = value.sessions[binding.digest],
+        session.absoluteDeadline > time,
+        session.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > time
+      else { return false }
+      if touch {
+        session.lastActivity = time
+        value.sessions[binding.digest] = session
+      }
+      operation()
+      return true
+    }
   }
   func checkBrowser(_ headers: HTTPHeaders, mutation: Bool) throws {
     let port = state.withLock { $0.port }
