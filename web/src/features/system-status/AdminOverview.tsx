@@ -98,7 +98,7 @@ export function AdminOverview() {
   const polling = {
     refetchInterval: refresh.interval,
     staleTime: 15000,
-    refetchOnWindowFocus: live.mode !== "live",
+    refetchOnWindowFocus: baseRefresh.active && live.mode !== "live",
   };
   const [clock, setClock] = useState(() => performance.now());
   useEffect(() => {

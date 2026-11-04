@@ -106,7 +106,7 @@ export function ActivityOverview({
     enabled: !!owner.session,
     refetchInterval: control.interval,
     // Returning to the tab refetches only snapshots older than one refresh period.
-    refetchOnWindowFocus: live?.mode !== "live",
+    refetchOnWindowFocus: control.active && live?.mode !== "live",
     staleTime: 15000,
   };
   const daily = useQuery({

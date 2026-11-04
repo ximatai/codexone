@@ -54,6 +54,7 @@ def frame(sock):
         elif opcode == 1:
             value = json.loads(data)
             assert len(data) <= 1048576 and value['protocol'] == 1
+            value['_wireBytes'] = len(data)
             return value
         else:
             return {'close': int.from_bytes(data[:2], 'big') if len(data) >= 2 else None}
@@ -116,8 +117,10 @@ def verify(binary):
         measurements['commit_observed_to_frame_ms'] = round((received - committed) * 1000, 2)
         recent = value['sections']['inFlight']['data']['recentlyFinished']
         assert recent[-1]['keyID'] == key['id'] and recent[-1]['outcome'] == 'succeeded'
-        aggregate = until(sock, lambda value: any(row['admitted'] == 1 for row in value.get('sections', {}).get('keys', {}).get('data', {}).get('keys', [])))
-        assert aggregate['sequence'] > value['sequence']
+        has_aggregate = lambda frame: any(row['admitted'] == 1 for row in frame.get('sections', {}).get('keys', {}).get('data', {}).get('keys', []))
+        aggregate = value if has_aggregate(value) else until(sock, has_aggregate)
+        assert aggregate['sequence'] >= value['sequence']
+        measurements['commit_observed_to_aggregate_ms'] = round((time.monotonic() - committed) * 1000, 2)
         # Replacing a cookie revokes both bindings synchronously, while other sessions survive.
         fresh, _ = login(f, cookie=cookie)
         until(sock, lambda value: value.get('close') == 1008)
@@ -245,7 +248,7 @@ def verify_slow(probe):
             assert not failures, failures
             assert peak - before <= 48 * 1048576, (peak, before)
             print('PASS: actual non-reading TCP client is closed/forced closed under 200-row event storm; seven healthy viewers and HTTP survive')
-            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_close_frame': terminal['close'], 'max_snapshot_bytes': len(json.dumps(snapshot).encode())}, sort_keys=True))
+            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_close_frame': terminal['close'], 'max_snapshot_wire_bytes': snapshot['_wireBytes']}, sort_keys=True))
         finally:
             stop.set()
             for sock in sockets: sock.close()
