@@ -17,29 +17,30 @@ const labels: Record<string, string> = {
 
 export function SystemOverview({ compact = false }: { compact?: boolean }) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [stale, setStale] = useState(false);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchSystemStatus(controller.signal).then(
       (data) => {
-        if (!controller.signal.aborted) setState({ kind: "loaded", data });
+        if (!controller.signal.aborted) { setStale(false); setState({ kind: "loaded", data }); }
       },
       () => {
-        if (!controller.signal.aborted) setState({ kind: "failed" });
+        if (!controller.signal.aborted) { setStale(true); setState(previous => previous.kind === "loaded" ? previous : { kind: "failed" }); }
       },
     );
     return () => controller.abort();
   }, [revision]);
 
   function reload() {
-    setState({ kind: "loading" });
     setRevision((value) => value + 1);
   }
 
   if (compact)
     return (
       <Stack gap="xs" aria-label="服务状态">
+        {stale && state.kind === "loaded" && <Text size="xs" c="orange">服务状态已陈旧，保留上次成功快照。</Text>}
         {state.kind === "loading" ? (
           <Text size="sm" role="status">
             正在连接服务…

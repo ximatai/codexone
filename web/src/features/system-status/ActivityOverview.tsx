@@ -44,6 +44,16 @@ function UpdatedAgo({ updated }: { updated: number }) {
     </Text>
   );
 }
+function Elapsed({ seconds, sampledAt }: { seconds: number | null | undefined; sampledAt: number }) {
+  const [basis, setBasis] = useState(() => ({ sampledAt, at: performance.now() }));
+  const [now, setNow] = useState(() => performance.now());
+  if (basis.sampledAt !== sampledAt) setBasis({ sampledAt, at: performance.now() });
+  useEffect(() => {
+    const timer = window.setInterval(() => { if (!document.hidden) setNow(performance.now()); }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <span style={{ fontVariantNumeric: "tabular-nums" }}>{seconds == null ? "耗时不可用" : `已持续 ${Math.floor(seconds + Math.max(0, now - basis.at) / 1000)} 秒`}</span>;
+}
 export function ActivityOverview({
   refresh,
   extraQueries = [],
@@ -138,6 +148,7 @@ export function ActivityOverview({
           }
         />
       </div>
+      {!control.automatic && <Text size="xs" c="dimmed">自动观察已暂停，以下为上次快照。</Text>}
       {attention}
       {allQueries.some((q) => q.isError) && (
         <ErrorState
@@ -257,9 +268,7 @@ export function ActivityOverview({
                     title: "运行时长",
                     width: "12%",
                     render: (row) =>
-                      row.elapsedSeconds == null
-                        ? "耗时不可用"
-                        : `已持续 ${Math.floor(row.elapsedSeconds)} 秒`,
+                      <Elapsed seconds={row.elapsedSeconds} sampledAt={flight.dataUpdatedAt} />,
                   },
                   {
                     id: "event",
