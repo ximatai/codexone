@@ -193,6 +193,133 @@ public struct UsageAdminAPI: Sendable {
       }
     }
   }
+  // Shared DTO entry: uses the same query ports and encoding as HTTP, never loopback HTTP.
+  func overviewSection(_ name: String) async throws -> Data {
+    let response = try await overviewResponse(name)
+    guard let data = response.body.data else { throw ExecutionError.capacity }
+    return data
+  }
+  private func overviewResponse(_ name: String) async throws -> Response {
+    switch name {
+    case "headroom":
+      guard let reader = querying as? any GovernanceReading else {
+        throw ExecutionError.invalidCommand
+      }
+      do {
+        let now = clock.unixSeconds
+        let report = try await reader.governanceHeadroom(now: now)
+        return try Self.response(
+          .object([
+            "generatedAtUnixSeconds": .number(Decimal(now)),
+            "unknownReconciliation": .object([
+              "count": .number(Decimal(report.unknownCount)),
+              "beforeUnixSeconds": .number(Decimal(report.beforeUnixSeconds)),
+              "periodSeconds": .number(Decimal(ExecutionLimits.unknownReconciliationSeconds)),
+            ]),
+            "capacities": .array(
+              report.capacities.map { value in
+                .object([
+                  "name": .string(value.name),
+                  "current": value.current.map { .string(String($0)) } ?? .null,
+                  "limit": .string(String(value.limit)), "blocking": .bool(value.blocking),
+                ])
+              }),
+            "accounts": .array(
+              report.accounts.map {
+                .object([
+                  "id": .string($0.id), "current": .number(Decimal($0.current)),
+                  "peak24Hours": .number(Decimal($0.peak24Hours)),
+                  "limit": .number(Decimal(ExecutionLimits.accountConcurrency)),
+                  "blocking": .bool(true),
+                ])
+              }),
+            "storage": try JSONValue.decode(JSONEncoder().encode(reader.governanceStorage)),
+            "storageLimits": .object([
+              "stopAvailableBytes": .number(Decimal(reader.governanceStoragePolicy.stopBytes)),
+              "stopWALBytes": .number(Decimal(reader.governanceStoragePolicy.walStopBytes)),
+            ]),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    case "daily":
+      let days = 7
+      let values: [String: String] = [:]
+      let end: Int64? = nil
+      do {
+        let buckets = try await querying.dailyUsage(
+          days: days, keyID: values["key"], model: values["model"], endUnixSeconds: end)
+        return try Self.response(
+          .object([
+            "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+            "timezone": .string(businessDay.timezone), "days": .number(Decimal(days)),
+            "buckets": .array(
+              buckets.map { value in
+                .object([
+                  "atUnixSeconds": .number(Decimal(value.atUnixSeconds)),
+                  "requests": .number(Decimal(value.requests)),
+                  "usageUnknown": .number(Decimal(value.usageUnknown)),
+                  "unknownReasons": .object(
+                    value.unknownReasons.mapValues { .number(Decimal($0)) }),
+                  "succeeded": .number(Decimal(value.succeeded)),
+                  "failed": .number(Decimal(value.failed)),
+                  "cancelled": .number(Decimal(value.cancelled)),
+                  "failures": .object(value.failures.mapValues { .number(Decimal($0)) }),
+                  "metrics": Self.metricsDocument(value.metrics),
+                ])
+              }),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    case "inFlight":
+      let limit = 200
+      do {
+        let rows = try await querying.inFlightUsage(limit: limit)
+        return try Self.response(
+          .object([
+            "rows": .array(
+              try rows.map { row in
+                var object = try JSONValue.decode(JSONEncoder().encode(row)).object!
+                object["displayName"] = row.displayName.map { .string($0) } ?? .null
+                return .object(object)
+              })
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    case "keys":
+      let includeArchived = "false"
+      do {
+        let report = try await querying.keyUsage(includeArchived: includeArchived == "true")
+        return try Self.response(
+          .object([
+            "startUnixSeconds": .number(Decimal(report.startUnixSeconds)),
+            "endUnixSeconds": .number(Decimal(report.startUnixSeconds + 86400)),
+            "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
+            "timezone": .string(businessDay.timezone),
+            "keys": .array(
+              report.keys.map { value in
+                .object([
+                  "keyID": .string(value.key.id),
+                  "displayName": value.key.displayName.map { .string($0) } ?? .null,
+                  "principal": value.key.principal.map { .string($0) } ?? .null,
+                  "enabled": .bool(value.enabled),
+                  "admitted": .number(Decimal(value.admitted)),
+                  "tokens": .string(String(value.tokens)),
+                  "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
+                  "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
+                  "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,
+                  "cacheUsageIncomplete": .bool(value.cacheUsageIncomplete),
+                  "inFlight": .number(Decimal(value.inFlight)),
+                  "succeeded": .number(Decimal(value.succeeded)),
+                  "cancelled": .number(Decimal(value.cancelled)),
+                  "failed": .number(Decimal(value.failed)),
+                  "pending": .number(Decimal(value.pending)),
+                  "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
+                  "lastUsedAtUnixSeconds": value.lastUsedAtUnixSeconds.map { .number(Decimal($0)) }
+                    ?? .null,
+                ])
+              }),
+          ]))
+      } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
+    default: throw ExecutionError.invalidCommand
+    }
+  }
   private static func parameters(_ url: String, allowed: Set<String>) throws -> [String: String] {
     let entries = URLComponents(string: url)?.queryItems ?? []
     guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,

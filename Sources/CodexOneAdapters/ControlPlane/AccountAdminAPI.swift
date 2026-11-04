@@ -28,6 +28,16 @@ public struct AccountAdminAPI: Sendable {
     self.refreshing = refreshing
     self.observing = observing
   }
+  func overviewSection() async throws -> Data {
+    let accounts = try await store.listAccounts(after: nil)
+    var metadata: [JSONValue] = []
+    for account in accounts {
+      var value = try await self.metadata(account).object!
+      value["observability"] = try await observability(id: account.id, detail: false)
+      metadata.append(.object(value))
+    }
+    return try JSONValue.object(["accounts": .array(metadata), "nextCursor": .null]).data()
+  }
   func register(_ routes: any RoutesBuilder) {
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
