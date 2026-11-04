@@ -85,11 +85,14 @@ extension HTTPResponseExecution {
               let body = try await collectProgressBody(
                 response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes,
                 onChunk: { diagnostics.receivedBody(bytes: $0) })
-              let document = try NativeImageResult.decode(body)
+              guard let document = try? JSONValue.decode(body) else {
+                throw GatewayProtocolError(502, "invalid_upstream_image")
+              }
               context.observeUpstreamEvent()
               let observation = NativeImageObservation(document, model: model)
               context.observeActualServiceTier(requestMetadataValue(document["service_tier"]))
               if let usage = observation.usage { try context.observeUsage(usage) }
+              _ = try NativeImageResult.validated(document)
               replyHeaders.replaceOrAdd(name: "content-type", value: "text/event-stream")
               try await begin(replyHeaders)
               for event in NativeImageResult.completions(document, editing: request.editing) {
@@ -115,8 +118,11 @@ extension HTTPResponseExecution {
               var decoder = SSEDecoder(
                 maximumEventBytes: ImageLimits.nativeResponseBytes,
                 maximumTotalBytes: ImageLimits.nativeResponseBytes)
-              var terminal: JSONValue?
-              // Retain only the current event; decoder enforces the event and stream limits.
+              var terminals: [JSONValue] = []
+              var cumulativeUsage: JSONValue = .object([:])
+              var imageCount: Int64 = 0
+              // Pending wire bytes cover only the current event; total retained output is bounded
+              // by the decoder stream limit.
               var pending = Data()
               if request.streaming { try await begin(replyHeaders) }
               for try await chunk in response.body {
@@ -134,13 +140,32 @@ extension HTTPResponseExecution {
                     if type
                       == (request.editing ? "image_edit.completed" : "image_generation.completed")
                     {
-                      guard terminal == nil else {
-                        throw GatewayProtocolError(502, "invalid_upstream_image")
+                      // An explicit image index identifies delivery even if counters change.
+                      // Without an index only an identical event proves duplicate delivery.
+                      let duplicate = terminals.contains {
+                        $0 == event
+                          || (event["image_index"] != nil
+                            && $0["image_index"] == event["image_index"])
                       }
                       context.observeActualServiceTier(requestMetadataValue(event["service_tier"]))
-                      terminal = event
-                      let observation = NativeImageObservation(event, model: model, streaming: true)
+                      cumulativeUsage = NativeImageObservation.mergingUsage(
+                        cumulativeUsage, event["usage"])
+                      if !duplicate {
+                        imageCount +=
+                          NativeImageObservation(event, model: model, streaming: true).images
+                      }
+                      var snapshot = event.object!
+                      snapshot["usage"] = cumulativeUsage
+                      let observation = NativeImageObservation(
+                        .object(snapshot), model: model, streaming: true,
+                        revision: Int64(terminals.count + 1), images: imageCount)
                       if let usage = observation.usage { try context.observeUsage(usage) }
+                      // Preserve counters even when delivery, completion metadata or output is invalid.
+                      guard !duplicate else {
+                        throw GatewayProtocolError(502, "invalid_upstream_image")
+                      }
+                      terminals.append(event)
+                      _ = try NativeImageResult.assembled(event)
                     }
                   }
                   if decoder.isAtEventBoundary {
@@ -150,16 +175,19 @@ extension HTTPResponseExecution {
                 }
               }
               try decoder.finish()
-              guard let terminal else { throw GatewayProtocolError(502, "execution_indeterminate") }
-              let observation = NativeImageObservation(terminal, model: model, streaming: true)
-              guard observation.images > 0 else {
-                throw GatewayProtocolError(502, "invalid_upstream_image")
+              guard let terminal = terminals.first else {
+                throw GatewayProtocolError(502, "execution_indeterminate")
               }
               if !request.streaming {
-                let result = try NativeImageResult.assembled(terminal)
+                var result = try NativeImageResult.assembled(terminal).object!
+                result["data"] = .array(
+                  try terminals.flatMap {
+                    try NativeImageResult.assembled($0)["data"]!.array!
+                  })
+                if cumulativeUsage.object?.isEmpty == false { result["usage"] = cumulativeUsage }
                 replyHeaders.replaceOrAdd(name: "content-type", value: "application/json")
                 try await begin(replyHeaders)
-                try await emit(result.data())
+                try await emit(JSONValue.object(result).data())
               }
             } else {
               let body = try await collectProgressBody(
@@ -170,6 +198,7 @@ extension HTTPResponseExecution {
               let observation = document.map { NativeImageObservation($0, model: model) }
               context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
               if let usage = observation?.usage { try context.observeUsage(usage) }
+              if let document { try NativeImageResult.requireCompletion(document) }
               if observation?.images ?? 0 == 0 {
                 try context.observeOutcome(
                   .init(
@@ -196,15 +225,51 @@ extension HTTPResponseExecution {
 struct NativeImageObservation {
   let images: Int64
   let usage: UsageEvidence?
-  init(_ document: JSONValue, model: ImageConfiguration.Model, streaming: Bool = false) {
+
+  /// Native usage is request-level cumulative evidence, including when repeated per image.
+  static func mergingUsage(_ previous: JSONValue, _ next: JSONValue?) -> JSONValue {
+    var fields = previous.object ?? [:]
+    for (key, value) in next?.object ?? [:]
+    where !["input_tokens", "output_tokens", "input_tokens_details"].contains(key) {
+      fields[key] = value
+    }
+    for key in ["input_tokens", "output_tokens", "input_tokens_details"] {
+      if key == "input_tokens_details", next?[key] != nil {
+        fields[key] = mergingDetails(fields[key], next?[key])
+      } else if let n = next?[key]?.integer, (0...1_000_000_000).contains(n) {
+        fields[key] = .number(Decimal(max(fields[key]?.integer ?? 0, n)))
+      }
+    }
+    return .object(fields)
+  }
+
+  private static func mergingDetails(_ previous: JSONValue?, _ next: JSONValue?) -> JSONValue {
+    var fields = previous?.object ?? [:]
+    for (key, value) in next?.object ?? [:]
+    where !["text_tokens", "image_tokens"].contains(key) {
+      fields[key] = value
+    }
+    for key in ["text_tokens", "image_tokens"] {
+      if let n = next?[key]?.integer, (0...1_000_000_000).contains(n) {
+        fields[key] = .number(Decimal(max(fields[key]?.integer ?? 0, n)))
+      }
+    }
+    return .object(fields)
+  }
+  init(
+    _ document: JSONValue, model: ImageConfiguration.Model, streaming: Bool = false,
+    revision: Int64 = 1, images totalImages: Int64? = nil
+  ) {
     let items = document["data"]?.array ?? (streaming ? [document] : [])
-    images = Int64(
-      items.filter {
-        guard let encoded = $0["b64_json"]?.string, !encoded.isEmpty,
-          let bytes = Data(base64Encoded: encoded), !bytes.isEmpty
-        else { return false }
-        return bytes.base64EncodedString() == encoded
-      }.count)
+    images =
+      totalImages
+      ?? Int64(
+        items.filter {
+          guard let encoded = $0["b64_json"]?.string, !encoded.isEmpty,
+            let bytes = Data(base64Encoded: encoded), !bytes.isEmpty
+          else { return false }
+          return bytes.base64EncodedString() == encoded
+        }.count)
     func count(_ value: JSONValue?) -> Int64? {
       guard let n = value?.integer, (0...1_000_000_000).contains(n) else { return nil }
       return n
@@ -214,9 +279,12 @@ struct NativeImageObservation {
     let cost =
       (input ?? 0) * model.inputMicrosPerMillion + (output ?? 0) * model.outputMicrosPerMillion
     usage = .init(
-      revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+      revision: revision, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
       images: images, estimatedMicros: cost / 1_000_000 + (cost % 1_000_000 == 0 ? 0 : 1),
-      completeness: input != nil && output != nil ? .complete : .partial,
+      completeness: input != nil && output != nil
+        && (document["status"] == nil
+          || ["completed", "failed", "cancelled"].contains(document["status"]?.string ?? ""))
+        ? .complete : .partial,
       imageInputTokens: input, imageOutputTokens: output,
       imageInputTextTokens: count(document["usage"]?["input_tokens_details"]?["text_tokens"]),
       imageInputImageTokens: count(document["usage"]?["input_tokens_details"]?["image_tokens"]),

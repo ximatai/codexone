@@ -40,10 +40,24 @@ def native_stream(operation, prompt='synthetic'):
     if prompt == 'stream-missing-created': final.pop('created_at')
     if prompt == 'synthetic': final['service_tier'] = 'default'
     if prompt == 'stream-empty': final['b64_json'] = ''
+    if prompt == 'stream-mixed': final['data'] = [{'b64_json':PNG}, {'b64_json':'invalid'}]
+    if prompt.startswith('stream-status-'): final['status'] = prompt.removeprefix('stream-status-')
+    if prompt == 'stream-error-explicit': final = {'type':'error','status':422,'error':{'type':'invalid_request_error','code':'synthetic_provider_error'}}
     if prompt == 'stream-abort': return b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\n'
     if prompt == 'stream-error': final = {'type':'error','error':{'code':'synthetic_provider_error','message':'synthetic acct-split-secret user-synthetic@example.invalid',
         'type':'invalid_request_error','param':'prompt','private':'synthetic-private-member'}}
     result = b': synthetic comment\r\n\r\ndata: ' + json.dumps(preview).encode() + b'\n\nevent: ' + final['type'].encode() + b'\r\ndata: ' + json.dumps(final).encode() + b'\r\n\r\n'
+    if prompt in ('stream-multiple', 'stream-multiple-repeated', 'stream-multiple-late', 'stream-multiple-malformed', 'stream-multiple-duplicate-index'):
+        first = dict(final)
+        first['image_index'] = 0
+        if prompt == 'stream-multiple-late': first.pop('usage')
+        second = {**final, 'image_index':1, 'b64_json':base64.b64encode(b'synthetic-second-image').decode()}
+        if prompt == 'stream-multiple-repeated': second['b64_json'] = PNG
+        if prompt != 'stream-multiple-repeated':
+            second['usage'] = {'input_tokens':4, 'output_tokens':7, 'input_tokens_details':{'text_tokens':2, 'image_tokens':2}}
+        if prompt == 'stream-multiple-malformed': second['b64_json'] = 'invalid'
+        if prompt == 'stream-multiple-duplicate-index': second['image_index'] = 0
+        result = b''.join(b'data: ' + json.dumps(e).encode() + b'\n\n' for e in (first,second))
     if prompt == 'stream-duplicate': result += b'data: ' + json.dumps(final).encode() + b'\n\n'
     if prompt == 'stream-tail': return result + b'data: {'
     return result + b'data: [DONE]\n\n'
@@ -114,6 +128,10 @@ class Provider(BaseHTTPRequestHandler):
                 status = 400; body = json.dumps({'error':{'code':'synthetic_provider_error', 'type':'invalid_request_error', 'message':'synthetic acct-split-secret user-synthetic@example.invalid', 'param':'prompt'}}).encode()
             if prompt.startswith('json-stream'):
                 body = native_body('synthetic')
+                if prompt.startswith('json-stream-status-'):
+                    result = json.loads(body); result['status'] = prompt.removeprefix('json-stream-status-').removesuffix('-partial')
+                    if prompt.endswith('-partial'): result['usage']['output_tokens'] = -1
+                    body = json.dumps(result).encode()
                 if prompt == 'json-stream-empty': body = native_body('empty')
                 if prompt == 'json-stream-invalid': body = b'{'
                 if prompt == 'json-stream-mixed':
@@ -299,7 +317,60 @@ def main():
                                 assert state == 'settled' and usage['images'] == len(events) and usage['estimatedMicros'] == 13
                             else:
                                 assert status == 502 and json.loads(body)['error']['code'] == ('invalid_upstream_content_type' if fault.endswith('html') else 'invalid_upstream_image'), (status, body[:200])
-                                assert ledger()[0] == 'unknown'
+                                state, usage, outcome = ledger()
+                                assert outcome['kind'] == 'failed'
+                                if fault in ('json-stream-mixed', 'json-stream-empty'):
+                                    assert state == 'settled' and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                                    assert usage['images'] == (1 if fault.endswith('mixed') else 0)
+                                else: assert state == 'unknown'
+                    for operation in ('edits', 'generations'):
+                        for completion_status in ('in_progress', 'queued', 'failed', 'cancelled', 'incomplete'):
+                            for partial in (False, True):
+                                prompt = 'json-stream-status-' + completion_status + ('-partial' if partial else '')
+                                status, body, _ = request({'prompt':prompt, 'stream':True}, '/v1/images/' + operation)
+                                assert status == 502 and b'.completed' not in body, (completion_status, status, body[:200])
+                                state, usage, outcome = ledger()
+                                complete = not partial and completion_status in ('failed', 'cancelled')
+                                assert state == ('settled' if complete else 'unknown') and outcome['kind'] == 'failed'
+                                assert usage['imageInputTokens'] == 2
+                                if partial: assert 'imageOutputTokens' not in usage
+                                else: assert usage['imageOutputTokens'] == 3
+                                assert usage['completeness'] == ('complete' if complete else 'partial')
+                    # SSE completions are images in arrival order; usage is request-level cumulative.
+                    for streaming in (False, True):
+                        for fault in ('stream-multiple', 'stream-multiple-repeated', 'stream-multiple-late'):
+                            before = upstream.calls
+                            status, body, _ = request({'prompt':fault, 'stream':streaming, 'n':2})
+                            assert status == 200 and upstream.calls == before + 1, (fault,status,body[:200])
+                            if streaming:
+                                events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
+                                images = [e['b64_json'] for e in events if e['type'].endswith('.completed')]
+                            else: images = [e['b64_json'] for e in json.loads(body)['data']]
+                            assert images == [PNG, PNG if fault.endswith('repeated') else base64.b64encode(b'synthetic-second-image').decode()], images
+                            state, usage, outcome = ledger()
+                            assert state == 'settled' and outcome['kind'] == 'succeeded' and usage['images'] == 2
+                            assert usage['imageInputTokens'] == (2 if fault.endswith('repeated') else 4)
+                            assert usage['imageOutputTokens'] == (3 if fault.endswith('repeated') else 7)
+                            assert usage['estimatedMicros'] == (13 if fault.endswith('repeated') else 29)
+                    for fault in ('stream-multiple-malformed', 'stream-multiple-duplicate-index'):
+                        status, body, _ = request({'prompt':fault, 'n':2})
+                        assert status == 502, (fault,status,body[:200])
+                        state, usage, outcome = ledger()
+                        assert state == 'settled' and outcome['kind'] == 'failed' and usage['images'] == 1
+                        assert usage['imageInputTokens'] == 4 and usage['imageOutputTokens'] == 7
+                    for fault in ('stream-mixed', 'stream-status-in_progress', 'stream-status-failed'):
+                        status, body, _ = request({'prompt':fault})
+                        assert status == 502, (fault,status,body[:200])
+                        state, usage, outcome = ledger()
+                        assert outcome['kind'] == 'failed' and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                        assert state == ('unknown' if fault.endswith('in_progress') else 'settled')
+                    for prompt, expected in (('stream-error',400), ('stream-error-explicit',422)):
+                        status, body, _ = request({'prompt':prompt})
+                        assert status == expected, (prompt,status,body[:200])
+                        if prompt == 'stream-error':
+                            # The same provider rejection via JSON has the same HTTP status/error.
+                            json_status, json_body, _ = request({'prompt':prompt}, '/v1/images/edits')
+                            assert status == json_status and json.loads(body)['error']['code'] == json.loads(json_body)['error']['code']
                     before = upstream.calls; intents = count_intents()
                     for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
                         status, error, _ = request(body, name=name)
@@ -353,7 +424,7 @@ def main():
                     for fault in ('stream-abort', 'stream-empty', 'stream-duplicate', 'stream-tail', 'stream-missing-created', 'stream-error'):
                         before = upstream.calls
                         status, body, headers = request({'prompt':fault})
-                        assert status == 502 and headers['content-type'].startswith('application/json'), (fault,status,body[:200])
+                        assert status == (400 if fault == 'stream-error' else 502) and headers['content-type'].startswith('application/json'), (fault,status,body[:200])
                         assert 'error' in json.loads(body) and upstream.calls == before + 1
                         state, usage, outcome = ledger()
                         assert outcome['kind'] == 'failed'

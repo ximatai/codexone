@@ -3,7 +3,15 @@ import Foundation
 /// Complete native JSON results only: never convert error documents or partial output into success.
 enum NativeImageResult {
   static func decode(_ data: Data) throws -> JSONValue {
-    guard let document = try? JSONValue.decode(data), document.object != nil,
+    guard let document = try? JSONValue.decode(data) else {
+      throw GatewayProtocolError(502, "invalid_upstream_image")
+    }
+    return try validated(document)
+  }
+
+  static func validated(_ document: JSONValue) throws -> JSONValue {
+    try requireCompletion(document)
+    guard document.object != nil,
       document["error"] == nil, document["type"] == nil,
       let created = document["created"]?.integer, created >= 0,
       let items = document["data"]?.array, !items.isEmpty,
@@ -16,6 +24,16 @@ enum NativeImageResult {
       })
     else { throw GatewayProtocolError(502, "invalid_upstream_image") }
     return document
+  }
+
+  static func requireCompletion(_ document: JSONValue) throws {
+    guard let status = document["status"] else { return }
+    guard status.string == "completed" else {
+      if ["failed", "cancelled"].contains(status.string ?? "") {
+        throw GatewayProtocolError(502, "upstream_execution_failed")
+      }
+      throw GatewayProtocolError(502, "execution_indeterminate")
+    }
   }
 
   /// Native completion metadata lives at the result level; image payload lives in data.
@@ -36,9 +54,9 @@ enum NativeImageResult {
       // Match the native non-stream envelope order without dropping future result metadata.
       var result: JSONObject = ["created": created, "data": .array([.object(item)])]
       for (key, value) in fields { result[key] = value }
-      return try decode(JSONValue.object(result).data())
+      return try validated(.object(result))
     }
-    return try decode(JSONValue.object(fields).data())
+    return try validated(.object(fields))
   }
 
   static func completions(_ document: JSONValue, editing: Bool) -> [JSONValue] {

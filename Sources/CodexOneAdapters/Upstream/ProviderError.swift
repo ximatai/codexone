@@ -17,12 +17,14 @@ enum ProviderError {
 
   static func isExplicitRejection(status: Int?, error: JSONValue?) -> Bool {
     if let status { return (400...499).contains(status) }
-    let code = error?["code"]?.string ?? error?["type"]?.string ?? ""
-    return rateLimitCodes.contains(code) || authenticationCodes.contains(code)
-      || [
-        "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
-        "model_not_found", "content_policy_violation", "unsupported_parameter",
-      ].contains(code)
+    let codes = [error?["code"]?.string, error?["type"]?.string].compactMap { $0 }
+    return codes.contains { code in
+      rateLimitCodes.contains(code) || authenticationCodes.contains(code)
+        || [
+          "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
+          "model_not_found", "content_policy_violation", "unsupported_parameter",
+        ].contains(code)
+    }
   }
 
   static func sanitized(_ value: JSONValue?) -> JSONValue? {
@@ -84,7 +86,7 @@ enum ProviderError {
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
         upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
     }
-    let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? 502
+    let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? (rejected ? 400 : 502)
     return .init(
       downstream, compact ? "upstream_compact_rejected" : "upstream_rejected",
       upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
