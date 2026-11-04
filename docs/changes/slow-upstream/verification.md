@@ -96,3 +96,80 @@ Apple Swift 6.4.2，目标 arm64 macOS。全部构建使用 `-j 12`；只运行�
 ## 相关文档
 
 [提案](proposal.md) · [任务](tasks.md) · [协议](../../reference/specs/protocol.md)
+
+## 独立评审修正验收（本次）
+
+2026-11-04，macOS arm64、Apple Swift 6.4.2。本节仅记录本次评审修正，与上方此前分支工作的失败和补跑记录分开。五项发现均确认，无异议；未访问 SSH、部署、真实订阅或 OpenAI 端点，未执行 Linux/Docker、前端或真实客户端检查。
+
+### 改动与定向检查
+
+- 显式非完成状态不得合成完成事件；in_progress/queued/incomplete 保持 partial/unknown，failed/cancelled 记失败，可信完整/部分计数独立保留。
+- 多张完成图片按到达顺序聚合；图片索引区别图片与重复投递，无索引时相同完整事件视为重复。用量以请求级累计快照逐字段取可信最大值，不相加重复聚合计数；后到计数及畸形输出前的可信计数均保留。
+- SSE 无数字状态的永久拒绝与 JSON 400 映射一致；显式 422 保留。修正图片及 turn diagnostics 的旧 502 预期。
+- 原生 WS 最终编码超过 12 MiB 沿既有 conversation_too_large 路径拒绝，等于边界仍允许；不增加重试。原 16 MiB 常量仅用于被替换的拒绝判断，没有独立用途，已删除；其他大小限制与诊断桶不变。
+
+| 实际命令/检查 | 本次结果 |
+| --- | --- |
+| `swift build --product codexone -j 12` | 四次构建均通过；最后一次包含最终 Swift 代码。 |
+| `python3 scripts/verify_images.py --binary .build/debug/codexone` | 两次定向运行均通过 HTTP/WS 配置；最终版本覆盖完整/部分计数与五种状态、n=2 有序多图、相同图片不同索引、重复聚合计数、后到用量、第二张畸形/重复索引仍保留用量、JSON/SSE 同一拒绝及显式状态。另在下方续跑通过。 |
+| `python3 scripts/verify_upstream_ws_body_limit.py --binary .build/debug/codexone` | 定向两合约通过，首次全量中也通过；12/16 MiB 边界前/等于/后、拒绝前无派发/attempt、连接复用及既有 1009/断流/取消行为。 |
+| `python3 scripts/verify_turn_diagnostics.py --binary .build/debug/codexone` | 全量命令发现旧预期失败；仅将该 fixture 的 502 改为 400 后，定向 30 场景通过。 |
+| `python3 scripts/check_docs.py` | 多次检查均通过，最终文档更新后另运行。 |
+| `git diff --check`、`git diff --cached --check` | 通过；检查本次差异与新增内容仅含合成资料。 |
+
+### 唯一一次完整命令及续跑
+
+`CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend` 只执行一次：文档、架构、Swift 格式、构建、全部 Swift 测试及分片清单检查通过。Swift 测试为 Core 67、End-to-End 88、Runtime 7、Adapters 299，共 461 个。内含命令为 `python3 scripts/check_docs.py`、`python3 scripts/check_architecture.py`、`swift format lint --strict --recursive Sources Tests Package.swift`、`swift build --build-tests -j 12`、`swift test --skip-build --no-parallel -j 12` 与 `python3 scripts/backend_shards.py --check`。
+
+该完整命令在 24 个脚本通过后，于 verify_turn_diagnostics.py 失败：其 stream fixture 仍期待 502，修复后的实际状态是 400。修正 fixture 后定向通过，然后从 verify.sh 提取原参数顺序，仅续跑后面 19 个尚未执行脚本，全部通过。最终 44/44 脚本各有通过结果；**完整命令本身失败，未在 fixture 修正后重跑**。Swift 代码在完整验证后未改动，不把分段通过表述为完整命令全绿。本次没有其他编译或测试失败。
+
+| 脚本（均以 `python3` 和 verify.sh 原参数执行） | 本次实际结果 |
+| --- | --- |
+| `scripts/verify_storage_pressure.py` | 首次全量通过（3s） |
+| `scripts/verify_key_maintenance.py` | 首次全量通过（2s） |
+| `scripts/verify_snapshot_restore.py` | 首次全量通过（6s） |
+| `scripts/verify_process.py` | 首次全量通过（2s） |
+| `scripts/verify_execution.py` | 首次全量通过（1s） |
+| `scripts/verify_accounts.py` | 首次全量通过（0s） |
+| `scripts/verify_protocol.py` | 首次全量通过（8s） |
+| `scripts/verify_gateway_diagnostics.py` | 首次全量通过（1s） |
+| `scripts/verify_client_protocol.py` | 首次全量通过（26s） |
+| `scripts/verify_websocket.py` | 首次全量通过（6s） |
+| `scripts/verify_upstream_ws_body_limit.py` | 首次全量通过（150s） |
+| `scripts/verify_upload_deadline.py` | 首次全量通过（119s） |
+| `scripts/verify_slow_ingress.py` | 首次全量通过（37s） |
+| `scripts/verify_response_finish.py` | 首次全量通过（83s） |
+| `scripts/verify_protocol_rejections.py` | 首次全量通过（1s） |
+| `scripts/verify_upstream_zstd.py` | 首次全量通过（91s） |
+| `scripts/verify_ws_address_candidates.py` | 首次全量通过（13s） |
+| `scripts/verify_upstream_proxy.py` | 首次全量通过（90s） |
+| `scripts/verify_upstream_events.py` | 首次全量通过（22s） |
+| `scripts/verify_codex_shapes.py` | 首次全量通过（9s） |
+| `scripts/verify_text_contract.py` | 首次全量通过（106s） |
+| `scripts/verify_json_order.py` | 首次全量通过（9s） |
+| `scripts/verify_upstream_json.py` | 首次全量通过（7s） |
+| `scripts/verify_request_parameters.py` | 首次全量通过（5s） |
+| `scripts/verify_turn_diagnostics.py` | 首次失败：旧预期 502；修正为 400 后定向重跑 30 场景通过 |
+| `scripts/verify_optional_reasoning.py` | 续跑通过（2.5s） |
+| `scripts/verify_context.py` | 续跑通过（3.7s） |
+| `scripts/verify_compaction_stream.py` | 续跑通过（5.1s） |
+| `scripts/verify_images.py` | 续跑通过（78.9s） |
+| `scripts/verify_migration_readiness.py` | 续跑通过（9.0s） |
+| `scripts/verify_control.py` | 续跑通过（61.5s） |
+| `scripts/verify_home_panel.py` | 续跑通过（1.6s） |
+| `scripts/verify_business_day.py` | 续跑通过（2.9s） |
+| `scripts/verify_keys.py` | 续跑通过（15.9s） |
+| `scripts/verify_model_profiles_import.py` | 续跑通过（0.2s） |
+| `scripts/verify_key_export.py` | 续跑通过（0.1s） |
+| `scripts/verify_key_import.py` | 续跑通过（5.5s） |
+| `scripts/verify_trial_provider.py` | 续跑通过（3.9s） |
+| `scripts/verify_lite.py` | 续跑通过（2.4s） |
+| `scripts/verify_admin.py` | 续跑通过（9.8s） |
+| `scripts/verify_admin_round2.py` | 续跑通过（0.8s） |
+| `scripts/verify_admin_assets.py` | 续跑通过（1.6s） |
+| `scripts/verify_pool_config.py` | 续跑通过（2.5s） |
+| `scripts/verify_migration_cutback.py` | 续跑通过（2.2s） |
+
+### 未验证与回退
+
+真实提供者多图事件/用量格式、真实 Codex 客户端自动回落及其更高层重试、Linux/Docker 和部署环境仍未验证。本地假上游成功不能证明真实兼容。没有 schema/凭证迁移；回退会恢复这些缺陷。未推送或开 PR。

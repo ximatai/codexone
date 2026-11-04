@@ -310,7 +310,7 @@ def main():
                                 if route == 'native':
                                     with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
                                         result = native(peer, request)
-                                    if size > LIMIT:
+                                    if size > ROUTING:
                                         assert result['status'] == 413, result
                                         error(wire(result))
                                         assert len(server.calls) == before
@@ -331,7 +331,7 @@ def main():
                                 if path == 'websocket' and contract == 'codex-subscription':
                                     expected_headers['x-codex-turn-state'] = None  # projected into create metadata
                                 assert headers == expected_headers, headers
-                                if size <= (LIMIT if route == 'native' else ROUTING):
+                                if size <= ROUTING:
                                     assert path == 'websocket' and raw == frame(request, contract, route == 'native')
                                 else:
                                     assert path == 'http'
