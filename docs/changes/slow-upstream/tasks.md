@@ -3,7 +3,7 @@
 记录独立提交与本地合成验收，真实上游不在本任务范围。
 
 - [x] A：图片上传 EOF 后启动首响应期限；真实慢传、停滞与取消验收。
-- [ ] B：有界媒体类型诊断及 streaming edits 完整 JSON 兼容。
+- [x] B：有界媒体类型诊断及 streaming edits 完整 JSON 兼容。
 - [ ] C：降低独立 Responses HTTP 路由阈值；说明为何不重试中断上传。
 - [ ] D：非流式 generations 上游流聚合及输出/用量/错误/截断验收。
 - [ ] E：真实 HTTP 慢入站复现、未映射原因诊断及可写 JSON 错误。
@@ -14,3 +14,5 @@
 ## 相关文档
 
 [提案](proposal.md) · [协议](../../reference/specs/protocol.md)
+
+2026-11-04 B：`swift build --product codexone -j 12` 通过；`python3 scripts/verify_images.py --binary .build/debug/codexone` 两种配置（HTTP/WS）全部通过，含真实 HTTP 的 JSON→SSE 单图/多图、无效/混合结果与媒体类型拒绝，既有错误、许可竞争、断开、用量和预算验收。随后修正空媒体类型解析的索引风险并重新构建；该修正的运行测试随最终完整验证执行。

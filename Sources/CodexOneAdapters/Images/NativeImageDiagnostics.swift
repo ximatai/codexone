@@ -13,6 +13,7 @@ final class NativeImageDiagnostics: Sendable {
     var longestGap: Duration = .zero
     var bytes = 0
     var status: Int?
+    var contentType: String?
     var bodyError: String?
   }
   private static let logger = Logger(label: "codexone.protocol")
@@ -28,11 +29,28 @@ final class NativeImageDiagnostics: Sendable {
     dispatched = now()
   }
 
-  func receivedHeaders(status: Int) {
+  func receivedHeaders(status: Int, contentType: String? = nil) {
     let instant = now()
     state.withLock {
       $0.headers = instant
       $0.status = status
+      $0.contentType = Self.contentTypeToken(contentType)
+    }
+  }
+
+  static func contentTypeToken(_ value: String?) -> String {
+    guard let value else { return "missing" }
+    guard value.utf8.count <= 256 else { return "other" }
+    let media =
+      (value.lowercased().split(separator: ";", maxSplits: 1).first.map(String.init) ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    switch media {
+    case "application/json": return "json"
+    case "text/event-stream": return "sse"
+    case "text/html": return "html"
+    case "text/plain": return "text"
+    case "application/octet-stream": return "binary"
+    default: return "other"
     }
   }
 
@@ -108,6 +126,9 @@ final class NativeImageDiagnostics: Sendable {
         "body_bytes": .string(String(value.bytes)),
         "last_body_gap_ms": milliseconds(value.longestGap),
       ]
+      if let contentType = value.contentType {
+        metadata["content_type"] = .string(contentType)
+      }
       if let headers = value.headers {
         metadata["headers_ms"] = milliseconds(dispatched.duration(to: headers))
       }

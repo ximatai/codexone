@@ -221,3 +221,5 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 [文档导航](../../README.md)
 
 原生 Images 与 Responses 共用上传 EOF 首响应边界：AHC 消费完最后一块并请求 EOF 后开始首响应期限，不是远端确认。图片上传开始及每次背压拉取正文块更新 progress_idle 空闲期限，停滞以 execution_progress_timeout 取消；总执行期限仍覆盖持续慢传。EOF 原子切换到 first_response 期限，早到有效事件不会被上传进度或 EOF 覆盖。保持未知责任；首事件后进度期限不变。
+
+流式原生 Images 收到 `application/json` 时只接受完整对象：非负整数 created、非空 data 数组、每项含非空规范 base64 b64_json，且无 error/type 错误文档；有界收完整后再提交 SSE，每项一个 image_edit.completed 或 image_generation.completed，created 转为 created_at，聚合 usage 仅放最后一项，结束 [DONE]。账本只观察一次聚合用量。HTML、缺失或其他媒体类型不猜测为 JSON；无效、空、截断结果仍失败。图片诊断 content_type 仅取 json/sse/html/text/binary/missing/other，不记录原始头部。

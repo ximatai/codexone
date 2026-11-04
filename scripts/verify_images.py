@@ -104,9 +104,20 @@ class Provider(BaseHTTPRequestHandler):
             status = int(prompt[4:]) if prompt.startswith('http') else 200
             body = (json.dumps({'error':{'code':'synthetic_provider_error','message':'synthetic acct-private'}}).encode()
                 if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt) if request.get('stream') else native_body(prompt))
+            if prompt.startswith('json-stream'):
+                body = native_body('synthetic')
+                if prompt == 'json-stream-empty': body = native_body('empty')
+                if prompt == 'json-stream-invalid': body = b'{'
+                if prompt == 'json-stream-mixed':
+                    result = json.loads(body); result['data'].append({'b64_json':'invalid'})
+                    body = json.dumps(result).encode()
+                if prompt == 'json-stream-multiple':
+                    result = json.loads(body); result['data'].append({'b64_json':PNG, 'revised_prompt':'synthetic'})
+                    body = json.dumps(result).encode()
             if prompt == 'oversize': body = b' ' * (48 * 1024 * 1024 + 1)
             self.send_response(status)
-            self.send_header('Content-Type','text/event-stream' if request.get('stream') else 'application/json')
+            self.send_header('Content-Type', ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
+                if prompt.startswith('json-stream') else 'text/event-stream' if request.get('stream') else 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
             if status == 429: self.send_header('Retry-After','1')
@@ -256,6 +267,22 @@ def main():
                             status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
                             assert status == 200 and body == native_stream(operation)
                             assert ledger()[0] == 'settled' and ledger()[2]['actualServiceTier'] == 'default'
+                    for operation in ('edits', 'generations'):
+                        for fault in ('json-stream', 'json-stream-multiple', 'json-stream-empty', 'json-stream-invalid', 'json-stream-mixed', 'json-stream-html'):
+                            before = upstream.calls
+                            status, body, headers = request({'prompt':fault, 'stream':True}, '/v1/images/' + operation)
+                            assert upstream.calls == before + 1
+                            if fault in ('json-stream', 'json-stream-multiple'):
+                                assert status == 200 and headers['content-type'] == 'text/event-stream', (status, body[:200])
+                                events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
+                                assert len(events) == (2 if fault.endswith('multiple') else 1)
+                                assert all(e['type'] == ('image_edit' if operation == 'edits' else 'image_generation') + '.completed' and e['b64_json'] == PNG and e['created_at'] == 1 for e in events)
+                                assert sum('usage' in e for e in events) == 1 and body.endswith(b'data: [DONE]\n\n')
+                                state, usage, outcome = ledger()
+                                assert state == 'settled' and usage['images'] == len(events) and usage['estimatedMicros'] == 13
+                            else:
+                                assert status == 502 and json.loads(body)['error']['code'] == ('invalid_upstream_content_type' if fault.endswith('html') else 'invalid_upstream_image'), (status, body[:200])
+                                assert ledger()[0] == 'unknown'
                     before = upstream.calls; intents = count_intents()
                     for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
                         status, error, _ = request(body, name=name)

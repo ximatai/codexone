@@ -11,6 +11,14 @@ struct NativeImageDiagnosticsTests {
     var description: String { "synthetic-private-marker" }
   }
 
+  @Test func contentTypeTokensNeverRetainArbitraryValues() {
+    #expect(NativeImageDiagnostics.contentTypeToken("Application/JSON; charset=utf-8") == "json")
+    #expect(NativeImageDiagnostics.contentTypeToken(nil) == "missing")
+    #expect(NativeImageDiagnostics.contentTypeToken("text/event-stream") == "sse")
+    #expect(NativeImageDiagnostics.contentTypeToken("synthetic-private-marker") == "other")
+    #expect(NativeImageDiagnostics.contentTypeToken(String(repeating: "x", count: 257)) == "other")
+  }
+
   @Test func errorTokensUseTypesAndAllowlistedCasesOnly() {
     let cases: [(any Error, String)] = [
       (HTTPClientError.remoteConnectionClosed, "remoteConnectionClosed"),
@@ -84,7 +92,7 @@ struct NativeImageDiagnosticsTests {
     #expect(metadata["body_bytes"]?.description == "5")
     #expect(metadata["upstream_status"]?.description == "200")
     #expect(metadata["request_id"]?.description == id)
-    #expect(metadata.count == 10)
+    #expect(metadata.count == 11)
   }
 
   @Test func midBodyDisconnectRetainsOriginalErrorAndPartialTiming() async throws {

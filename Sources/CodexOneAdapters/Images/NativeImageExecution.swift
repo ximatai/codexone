@@ -57,7 +57,9 @@ extension HTTPResponseExecution {
           do {
             let response = try await client.execute(
               upstream, deadline: .now() + .seconds(Int64(configuration.budget.total + 5)))
-            diagnostics.receivedHeaders(status: Int(response.status.code))
+            diagnostics.receivedHeaders(
+              status: Int(response.status.code),
+              contentType: response.headers.first(name: "content-type"))
             var replyHeaders = forwardedResponseHeaders(response.headers)
             for name in ["content-type", "x-codex-imagegen-request-id"] {
               if let value = response.headers.first(name: name) {
@@ -69,7 +71,28 @@ extension HTTPResponseExecution {
             guard response.status == .ok else {
               throw await ProviderError.failure(response: response, diagnostics: diagnostics)
             }
-            if request.streaming {
+            if request.streaming,
+              NativeImageDiagnostics.contentTypeToken(response.headers.first(name: "content-type"))
+                == "json"
+            {
+              let body = try await collectProgressBody(
+                response.body, progress: progress, maximum: ImageLimits.nativeResponseBytes,
+                onChunk: { diagnostics.receivedBody(bytes: $0) })
+              let document = try NativeImageResult.decode(body)
+              context.observeUpstreamEvent()
+              let observation = NativeImageObservation(document, model: model)
+              context.observeActualServiceTier(requestMetadataValue(document["service_tier"]))
+              if let usage = observation.usage { try context.observeUsage(usage) }
+              replyHeaders.replaceOrAdd(name: "content-type", value: "text/event-stream")
+              try await begin(replyHeaders)
+              for event in NativeImageResult.completions(document, editing: request.editing) {
+                var data = Data(("event: " + event["type"]!.string! + "\ndata: ").utf8)
+                data.append(try event.data())
+                data.append(Data("\n\n".utf8))
+                try await emit(data)
+              }
+              try await emit(Data("data: [DONE]\n\n".utf8))
+            } else if request.streaming {
               guard
                 response.headers.first(name: "content-type")?.lowercased().split(separator: ";")
                   .first
