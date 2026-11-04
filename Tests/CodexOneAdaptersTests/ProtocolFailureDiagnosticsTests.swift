@@ -1,9 +1,32 @@
+import AsyncHTTPClient
+import CodexOneCore
 import Foundation
+import NIOCore
 import Testing
 
 @testable import CodexOneAdapters
 
 struct ProtocolFailureDiagnosticsTests {
+  private struct Unknown: Error, CustomStringConvertible {
+    var description: String { "synthetic-private-marker" }
+  }
+
+  @Test func unmappedCausesUseFixedTokens() {
+    let cases: [(any Error, String)] = [
+      (Unknown(), "other"),
+      (ChannelError.ioOnClosedChannel, "channel_closed"),
+      (ChannelError.inputClosed, "channel_input_closed"),
+      (HTTPClientError.remoteConnectionClosed, "remoteConnectionClosed"),
+      (ExecutionError.conflict, "execution_conflict"),
+      (ExecutionError.closed, "execution_closed"),
+      (CancellationError(), "cancelled"),
+      (IOError(errnoCode: 54, reason: "synthetic-private-marker"), "io_errno_54"),
+    ]
+    for (error, expected) in cases {
+      #expect(ProtocolFailureDiagnostics.causeToken(error) == expected)
+    }
+  }
+
   @Test func diagnosticsExcludeUntrustedCodesAndRequestIDs() {
     let metadata = ProtocolFailureDiagnostics.metadata(
       .init(400, "synthetic-secret-must-not-be-logged"),

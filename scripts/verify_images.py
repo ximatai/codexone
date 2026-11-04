@@ -435,7 +435,8 @@ def main():
                     with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
                         stalled.sendall(reservation_header + b'{"model":')
                         started = time.monotonic()
-                        assert stalled.recv(4096) == b''
+                        response = http.client.HTTPResponse(stalled); response.begin()
+                        assert response.status == 408 and json.loads(response.read())['error']['code'] == 'request_body_timeout'
                         assert time.monotonic() - started >= 9
                     assert upstream.calls == before and count_intents() == intents
                     assert request(large_native, '/backend-api/codex/images/generations')[0] == 200
