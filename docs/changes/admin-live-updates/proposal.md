@@ -1,6 +1,6 @@
 # 首页实时管理概览
 
-方向已确认，尚未实现；不表示已交付。推荐首页专用 WebSocket、共享有界采样、HTTP 降级。第一版不建业务事件总线，不扩展到其他页面。依据 [A07、A10—A13、首页摘要契约](../../reference/specs/control-plane.md)、[职责](../../architecture/ownership.md)及 [目录约定](../../development/layout.md)。以下“拟”及容量、频率均为本提案选择，非现有能力或测量结论。
+方向已确认，尚未实现；不表示已交付。推荐首页专用 WebSocket、活动事件驱动加有界对账采样、HTTP 降级。第一版不建业务事件总线，不扩展到其他页面。依据 [A07、A10—A13、首页摘要契约](../../reference/specs/control-plane.md)、[职责](../../architecture/ownership.md)及 [目录约定](../../development/layout.md)。以下“拟”及容量、频率均为本提案选择，非现有能力或测量结论。
 
 ## 现状与实际迟滞
 
@@ -31,9 +31,9 @@
 | --- | --- | --- |
 | 改善轮询 | 复用上述 HTTP/取消/401/Query 缓存，局部计时与保留旧值最便宜；2 秒查询仍可能漏掉短请求，多标签每次分别做 SQL。共享缓存可以另加，但仍须处理 freshness 和寿命。 | 约 1—2 人日；可独立先合并作为降级体验。 |
 | SSE | 单向数据足够，cookie 与自动重连适配；但 `Transport/AdminHTTPIngress.swift` 只接受完整 response.body.data，1 MiB 上限、5 秒写期限并强制 Connection: close，不支持长流；仍需新增长响应分支、背压、会话撤销。管理 Nginx 已关闭 buffering，但有 30 秒读超时。 | 约 4—6 人日总量；省 WS 帧处理，无法省共享生产/授权/寿命改造。 |
-| WebSocket | 符合 owner 请求，支持 ping/pong；数据面已有 typed upgrader/peer 可参考（`Transport/ResponsesDataService.swift`、`WebSocketPeer.swift`），管理 ingress 当前没有 upgrade，不能只注册 Vapor websocket route，也不能复用数据 Key 授权。管理 Nginx 当前清 Connection 且未转发 Upgrade。 | **推荐**；约 5—7 人日总量含验收。较 SSE 多约 1 人日估算，成本可控。 |
+| WebSocket | 符合 owner 请求，支持 ping/pong；数据面已有 typed upgrader/peer 可参考（`Transport/ResponsesDataService.swift`、`WebSocketPeer.swift`），管理 ingress 当前没有 upgrade，不能只注册 Vapor websocket route，也不能复用数据 Key 授权。管理 Nginx 当前清 Connection 且未转发 Upgrade。 | **推荐**；约 7—10 人日总量含验收（含活动事件约 2—3 人日）。较 SSE 多约 1 人日估算，成本可控。 |
 
-WS 的收益是共享后端读取和更短的显示延迟，不承诺逐执行无遗漏事件或上游额度实时性。上述工期为阅读后的工程估算，尚无实现探针。
+WS 的收益是共享后端读取和活动的即时显示；不承诺上游额度实时性，浏览器未连接期间的活动不补发。上述工期为阅读后的工程估算，尚无实现探针。
 
 ## 数据与生产方式
 
@@ -41,16 +41,16 @@ WS 的收益是共享后端读取和更短的显示延迟，不承诺逐执行�
 
 新 viewer 复用共享最新缓存；首 viewer 建立一次初始采样，其他同时连接加入同一工作，10 秒内给初始结果或逐源 unavailable。缓存各源独立时间戳，不声称跨源同一事务。重连必取完整 snapshot，无事件日志、无断点回放；epoch 改变清旧版本，单连接序列跳号视为失同步并重连。相同值的成功重采样通过合并的 freshness 消息推进采样时间，不能让“未变化”等同“已停采样”。
 
-**第一版以周期采样为准**：一个共享顺序 producer，不按 viewer 发起查询，也不让每个客户端收到 invalidation 再自行 GET。拟 inFlight/storage 每 2 秒，daily/keys/headroom/system 每 5 秒，accounts/attention 每 15 秒；先 await 当前读取再调度，过期 tick 合并、不积压、不并行抢 reader。初始与后续调用应用查询/DTO 组装，不通过 loopback HTTP 自调用；复用 `SQLiteUsageReader` 单在途 WAL 快照、默认 1 秒 SQL budget/取消/optional storage gate，繁忙下一周期再试，不开新 reader 或重试风暴。各组不是硬实时 SLA；每组连续失败保留旧值并标陈旧。5 秒聚合比原 15 秒增加单 viewer 工作量，须以查询耗时/门禁验收，不能只比较网络请求数；如负担超预算，聚合退至 15 秒，快速组保持 2 秒。
+**对账与低频数据按周期采样，活动按下节事件驱动**：一个共享顺序 producer，不按 viewer 发起查询，也不让每个客户端收到 invalidation 再自行 GET。拟 storage 每 2 秒，inFlight 对账及 daily/keys/headroom/system 每 5 秒，accounts/attention 每 15 秒；先 await 当前读取再调度，过期 tick 合并、不积压、不并行抢 reader。初始与后续调用应用查询/DTO 组装，不通过 loopback HTTP 自调用；复用 `SQLiteUsageReader` 单在途 WAL 快照、默认 1 秒 SQL budget/取消/optional storage gate，繁忙下一周期再试，不开新 reader 或重试风暴。各组不是硬实时 SLA；每组连续失败保留旧值并标陈旧。5 秒聚合比原 15 秒增加单 viewer 工作量，须以查询耗时/门禁验收，不能只比较网络请求数；如负担超预算，聚合退至 15 秒，活动事件不受影响。
 
 | 真正的变更位置 | 已有信号的边界 / 第一版决定 |
 | --- | --- |
-| `Persistence/SQLiteExecutionStore.swift` 的 admit/结算及 ExecutionLiveObserving 三个回调 | 准入、用量/结果提交是可靠数据边界；首事件已有最多 16 条内存观察。现有回调更新字典，不是可订阅广播，不能称为已有推送总线。第一版采样该投影，短执行可能仍被漏过；若以后加 hint，须提交成功后发且不可阻塞 finalizer。 |
+| `Persistence/SQLiteExecutionStore.swift` 的 admit/结算及 ExecutionLiveObserving 三个回调 | 准入、用量/结果提交是可靠数据边界；首事件已有最多 16 条内存观察。现有回调更新字典，不是可订阅广播，字典上限 16 也低于进行中上限 200。按下节新增提交后发布；发布不可阻塞 finalizer。 |
 | `Persistence/SQLiteAccountObservations.swift:recordQuotaObservation`、`SQLiteAccountHealth.swift`、账号/Key 管理提交 | 持久成功后才算变化；ObservationSupervisor 现有 priming/reset-credit hints 是这些调度器私有入口，不可拿来当通用管理事件。先按 15 秒读取既有观察，不增加提供者轮询。 |
 | `StorageMonitor.swift`、`CodexOneMain.swift` readiness、备份观察、协议 registry | 可读取既有 owner 快照，无统一管理 change stream。先采样，禁止生产器自行扫描磁盘/执行备份。 |
 | 业务日、quota stale、冷却截止、滚动峰值/临期提醒 | 没有写入也会变化；即使以后事件驱动，仍需定时重算。 |
 
-每个 viewer 只收编码后共享内容；新连接不重算 SQLite aggregates。最后一个 viewer 离开立即取消并 await 本功能采样，清缓存/计时器；新连接不得与旧 producer 关闭交叠。**零 viewer 没有本功能查询或 timer**；既有存储/额度/维护 owner 按原职责继续工作。先不引入跨业务失效总线，后续只有测得采样成本或延迟不够才考虑合并 dirty hints。
+每个 viewer 只收编码后共享内容；新连接不重算 SQLite aggregates。最后一个 viewer 离开立即取消并 await 本功能采样，清缓存/计时器；新连接不得与旧 producer 关闭交叠。**零 viewer 没有本功能查询或 timer**；既有存储/额度/维护 owner 按原职责继续工作。不引入跨业务失效总线；下节的活动发布只服务本功能。
 
 ## 安全、容量与关闭
 
@@ -80,6 +80,28 @@ WS 的收益是共享后端读取和更短的显示延迟，不承诺逐执行�
 
 无 schema、凭证或持久数据迁移；升级同步 web/后端，重启会清 session（`AdminSessions.bind`），客户端回到登录，登录后新 epoch/snapshot。WS 不恢复生成或执行事件，不改变 unknown/finalizer 责任。保留部署级关闭 live 的开关（默认启用，关闭返回安全不可用），可立即回到轮询；回退本次应用版本只失去推送，不新增数据库回退限制，原版本既有数据兼容限制仍适用。实现时同步 control-plane 的长连接例外、ownership、反代/操作指南；本次只新增提案、任务和索引。
 
+## 活动的即时性
+
+owner 明确要求：谁在访问、有没有进行中的请求不能只靠定时刷新。首页分两层显示，都由事件驱动，周期采样只用于纠错。
+
+**进行中请求**：在 `SQLiteExecutionStore` 准入提交成功、`ExecutionCoordinator` 首事件、finalize 提交成功三处发布活动。未提交不发布，客户端不会看到随后回滚的状态。
+
+- 发布是非阻塞的：有界内存结构加唤醒信号，零 viewer 时只做一次廉价检查，不序列化、不查询；任何发布失败都不影响执行和结算。
+- 准入和结束事件携带显示所需的字段（attempt、Key、账号、模型、模式、开始时间、结束结果类别），不含正文、提示词、上游错误文本。不依赖事后重读 SQL，因为开始和结束落在同一合并窗口时，重读会看不到这个请求。
+- 同一批事件在约 100 ms 内合并为一次 inFlight 消息；目标是从提交到浏览器显示约 300 ms（本机/LAN，实现时实测校准）。
+- **最近结束**：进程内环形缓冲最多 64 条、保留 10 秒。首页把刚结束的请求在进行中列表再保留约 5 秒并显示结果，然后淡出。因此几十毫秒的短请求也看得见。超过上限时显示“另有 N 条”，不静默丢失。新 viewer 的 snapshot 含该缓冲。
+- 重启后缓冲清空；浏览器未连接期间的活动不补发，历史仍查用量页。
+- 对账：inFlight 每 5 秒按 SQL 投影校正一次，修复丢失的唤醒或恢复收尾。结果以持久状态为准。
+- 首事件字典上限从 16 调整为与进行中上限一致，超出时显示“未知”而不是“未收到”。
+
+**已连接客户端**：长连接客户端在两次请求之间没有进行中记录，现有管理面也没有连接视图。新增有界内存注册表（上限沿用数据面连接容量），由数据面 WebSocket 会话在认证通过后注册、通道关闭时注销，事件唤醒同上。只显示 Key 显示名、连接数和最早连接时间，不记录或展示 IP、客户端头、会话 ID。普通 HTTP 请求没有持续连接，只出现在进行中。进程重启自然归零，不持久化。
+
+**受影响的统计数字**：finalize 事件把 daily、keys、headroom 标脏，节流为最多每 2 秒重算一次，于是今日数字在请求结束后约 2 秒内更新，无活动时不重算。周期采样继续负责业务日切换、滚动窗口等无写入也会变化的数据。
+
+账号额度来自既有被动观察，不增加提供者请求，不属于即时范围。HTTP 降级时不具备上述即时性，页面须明确标为轮询模式；降级不显示“最近结束”。
+
+失败验收：事件风暴、慢客户端、缓冲溢出、finalize 失败不发布、取消与断流、并发准入、唤醒丢失后由对账恢复、零 viewer 时执行路径无额外分配或查询、连接注册在异常关闭和 shutdown 下不泄漏。
+
 ## 显示连续性与组件选型
 
 owner 要求绑定数据变化时组件按连续效果过渡。这与传输方式无关：HTTP 降级时使用同一套表现，不因回到轮询而变成跳变。现有栈为 Mantine 9、`@mantine/charts`（Recharts 3），无动效库；首页已不会因后台读取闪骨架，缺的是值变化时的连续过渡。
@@ -87,7 +109,7 @@ owner 要求绑定数据变化时组件按连续效果过渡。这与传输方�
 | 元素 | 选型 | 行为 |
 | --- | --- | --- |
 | 运营数字、Key 用量、余量数字 | `@number-flow/react`（MIT，单一用途，支持 React 19） | 数位滚动过渡，等宽数字，宽度变化不推挤相邻布局；金额、比例、千分位沿 `overview-format.ts` 现有语义；null/不可用不滚动为 0。 |
-| 进行中、Key 行的进入/离开/重排 | `@formkit/auto-animate`（MIT，无依赖） | 只作用于明确的 tbody；行身份沿用稳定 ID。先在 `DataTable` 上做可选开关，默认关闭，不改变其他页面。 |
+| 进行中、已连接、Key 行的进入/离开/重排 | `@formkit/auto-animate`（MIT，无依赖） | 只作用于明确的 tbody；行身份沿用稳定 ID。先在 `DataTable` 上做可选开关，默认关闭，不改变其他页面。 |
 | 进度条、余量条 | Mantine `Progress` 过渡或 CSS `transition` | 只动画 transform/width；状态色 CSS 渐变。 |
 | 七日趋势 | 保留 AreaChart，配置 Recharts 动画 | 同一图表实例从旧数据过渡；禁止因数据变化改 key 或重建实例。 |
 | 运行时长 | 本地单调时钟 + 等宽数字 | 每秒直接走字，不做滚动；断连标观察中断。 |
@@ -122,7 +144,7 @@ owner 要求绑定数据变化时组件按连续效果过渡。这与传输方�
 
 owner 已确认（2026-11-04）：
 
-1. 首版采用 WS+共享采样，不做每次执行必达事件；进行中目标 2 秒、聚合 5 秒、账号/提醒 15 秒，短执行仍可能错过。
+1. 活动按“活动的即时性”事件驱动，含已连接客户端和最近结束；聚合请求结束后约 2 秒内更新；账号/提醒 15 秒采样。此项取代此前的纯采样推荐。
 2. 总计 8 连接、每 session 2 个；其他页面后置，超额显示轮询模式，不拒绝管理页面使用。
 3. 首页数据变化按上文“显示连续性与组件选型”过渡。
 
