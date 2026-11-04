@@ -30,13 +30,14 @@ struct AdminLiveTransport: Sendable {
     channel.eventLoop.execute {
       let bytes = ByteBuffer(bytes: [UInt8(code >> 8), UInt8(code & 255)])
       channel.writeAndFlush(
-        NIOAny(WebSocketFrame(fin: true, opcode: .connectionClose, data: bytes)), promise: nil)
+        WebSocketFrame(fin: true, opcode: .connectionClose, data: bytes), promise: nil)
       _ = channel.eventLoop.scheduleTask(in: .seconds(2)) { channel.close(promise: nil) }
     }
   }
   func run() async throws {
     let mailbox = OverviewMailbox { code in Self.close(socket.channel, code: code) }
     do { try await overview.subscribe(id: id, mailbox: mailbox) } catch {
+      sessions.releaseLive(id)
       Self.close(socket.channel, code: 1013)
       throw error
     }
@@ -46,7 +47,18 @@ struct AdminLiveTransport: Sendable {
           let heartbeat = Mutex((sent: ContinuousClock.Instant?.none, pong: false))
           try await withThrowingTaskGroup(of: Void.self) { tasks in
             tasks.addTask {
+              var window = ContinuousClock.now
+              var controls = 0
               for try await frame in inbound {
+                if window.duration(to: .now) >= .seconds(1) {
+                  window = .now
+                  controls = 0
+                }
+                controls += 1
+                guard controls <= 64 else {
+                  Self.close(socket.channel, code: 1008)
+                  return
+                }
                 switch frame.opcode {
                 case .pong: heartbeat.withLock { $0.pong = true }
                 case .ping:
@@ -58,7 +70,7 @@ struct AdminLiveTransport: Sendable {
             }
             tasks.addTask {
               var sequence: Int64 = 0
-              let epoch = await overview.epoch
+              let epoch = overview.epoch
               while let message = await mailbox.next() {
                 sequence += 1
                 let prefix =

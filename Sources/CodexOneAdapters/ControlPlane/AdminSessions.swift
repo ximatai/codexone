@@ -138,7 +138,7 @@ final class AdminSessions: Sendable {
         session.lastActivity.advanced(by: .seconds(Self.idleLifetime)) > time
       else { throw ExecutionError.unauthorized }
       guard value.live.count < 8, value.live.values.filter({ $0.digest == digest }).count < 2 else {
-        throw ExecutionError.capacity
+        throw GatewayProtocolError(429, "overview_capacity")
       }
       value.live[id] = (digest, close)
     }

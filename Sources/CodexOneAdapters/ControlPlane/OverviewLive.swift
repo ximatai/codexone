@@ -19,31 +19,38 @@ public final class OverviewActivity: Sendable {
     var clients: [UUID: (key: String, name: String?, at: Int64)] = [:]
   }
   private let state = Mutex(State())
+  private let watching = Atomic(false)
+  private let dropped = Atomic(0)
   let signals: AsyncStream<Signal>
   let signal: AsyncStream<Signal>.Continuation
   public init() {
     (signals, signal) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
   func watch(_ enabled: Bool) {
+    if !enabled { watching.store(false, ordering: .relaxed) }
     state.withLock {
       $0.watching = enabled
       $0.events.removeAll()
       $0.overflow = 0
     }
+    dropped.store(0, ordering: .relaxed)
+    if enabled { watching.store(true, ordering: .relaxed) }
   }
   // The closure is not evaluated with zero viewers: no projection, SQL, encoding or allocation.
   func publish(_ event: () -> Event?) {
-    let changed = state.withLock { value in
+    guard watching.load(ordering: .relaxed) else { return }
+    let changed = state.withLockIfAvailable { value in
       guard value.watching else { return false }
       guard let event = event() else { return false }
       if value.events.count < 512 { value.events.append(event) } else { value.overflow += 1 }
       return true
     }
-    if changed { signal.yield(.changed) }
+    if changed == nil { _ = dropped.wrappingAdd(1, ordering: .relaxed) }
+    if changed != false { signal.yield(.changed) }
   }
   func drain() -> ([Event], Int) {
     state.withLock { value in
-      let result = (value.events, value.overflow)
+      let result = (value.events, value.overflow + dropped.exchange(0, ordering: .relaxed))
       value.events.removeAll(keepingCapacity: true)
       value.overflow = 0
       return result
@@ -68,18 +75,17 @@ public final class OverviewActivity: Sendable {
     if watching { signal.yield(.changed) }
   }
   func clients() -> JSONValue {
-    state.withLock { value in
-      let groups = Dictionary(grouping: value.clients.values, by: \.key)
-      return .array(
-        groups.keys.sorted().map { key in
-          let items = groups[key]!
-          return .object([
-            "keyID": .string(key), "displayName": items.first?.name.map(JSONValue.string) ?? .null,
-            "count": .number(Decimal(items.count)),
-            "connectedAtUnixSeconds": .number(Decimal(items.map(\.at).min()!)),
-          ])
-        })
-    }
+    let clients = state.withLock { $0.clients }
+    let groups = Dictionary(grouping: clients.values, by: \.key)
+    return .array(
+      groups.keys.sorted().map { key in
+        let items = groups[key]!
+        return .object([
+          "keyID": .string(key), "displayName": items.first?.name.map(JSONValue.string) ?? .null,
+          "count": .number(Decimal(items.count)),
+          "connectedAtUnixSeconds": .number(Decimal(items.map(\.at).min()!)),
+        ])
+      })
   }
 }
 
@@ -158,8 +164,7 @@ public actor OverviewLive: OverviewLiveRunning {
   private var due: [String: Int64] = [:]
   private var generation = 0
   private var stopping = false
-  private var sampling = false
-  private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+  private var draining = false
   private var worker: Task<Void, Never>?
   private var ticker: Task<Void, Never>?
   private var rows: [String: JSONValue] = [:]
@@ -179,7 +184,7 @@ public actor OverviewLive: OverviewLiveRunning {
     self.now = now
   }
   func subscribe(id: UUID, mailbox: OverviewMailbox) throws {
-    guard !stopping, viewers.count < 8 else { throw ExecutionError.capacity }
+    guard !stopping, !draining, viewers.count < 8 else { throw ExecutionError.capacity }
     viewers[id] = mailbox
     if viewers.count == 1 {
       activity.watch(true)
@@ -191,8 +196,11 @@ public actor OverviewLive: OverviewLiveRunning {
   func unsubscribe(id: UUID) async {
     viewers.removeValue(forKey: id)?.finish()
     guard viewers.isEmpty else { return }
+    draining = true
+    defer { draining = false }
     generation += 1
     worker?.cancel()
+    await worker?.value
     activity.watch(false)
     ticker?.cancel()
     await ticker?.value
@@ -203,12 +211,11 @@ public actor OverviewLive: OverviewLiveRunning {
     recent.removeAll()
     overflow = 0
     dirty = false
-    if sampling { await withCheckedContinuation { idleWaiters.append($0) } }
   }
   public func run() async throws {
     for await signal in activity.signals {
       if Task.isCancelled { break }
-      guard !viewers.isEmpty, !stopping else { continue }
+      guard !viewers.isEmpty, !stopping, !draining else { continue }
       if ticker == nil {
         ticker = Task { [activity] in
           while !Task.isCancelled {
@@ -220,14 +227,9 @@ public actor OverviewLive: OverviewLiveRunning {
       // Coalesce bounded publication into one activity update without querying away short requests.
       if case .changed = signal { try? await Task.sleep(for: .milliseconds(100)) }
       let turn = generation
-      sampling = true
       worker = Task { await self.sample(generation: turn) }
       await worker?.value
       worker = nil
-      sampling = false
-      let waiters = idleWaiters
-      idleWaiters.removeAll()
-      for waiter in waiters { waiter.resume() }
     }
   }
   public func shutdown() async {
@@ -256,6 +258,7 @@ public actor OverviewLive: OverviewLiveRunning {
     let events = activity.drain()
     var activityChanged = !events.0.isEmpty || events.1 > 0
     overflow += events.1
+    dirty = dirty || events.1 > 0
     for event in events.0 {
       if event.first {
         if var row = rows[event.id]?.object {
@@ -268,6 +271,10 @@ public actor OverviewLive: OverviewLiveRunning {
           rows.removeValue(forKey: event.id)
           value["outcome"] = .string(outcome)
           value["finishedAtUnixSeconds"] = .number(Decimal(event.at))
+          if let start = value["startedAtUnixSeconds"]?.integer {
+            value["elapsedSeconds"] = .number(Decimal(max(0, event.at - start)))
+          }
+          recent.removeAll { $0["id"]?.string == event.id }
           if recent.count == 64 {
             recent.removeFirst()
             overflow += 1
