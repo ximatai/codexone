@@ -49,3 +49,5 @@ RecoveryStore 只处理加密内容、顺序/完整性、代际条件写与删�
 ## 首页实时观察 owner
 
 Core 定义 overview 寿命端口，Runtime 监督单一 producer，Adapters 组装既有查询 DTO 并维护共享快照。每 viewer 的传输 owner 持有有界队列、写任务、心跳与 channel；AdminSessions 持有最多八个连接绑定并同步撤销。SQLite 提交后向有界活动缓冲发布，发布不等待 reader 或 transport；数据面认证连接注册表不保存地址、头或会话 ID。最后 viewer 退出清快照并 join 采样；进程关闭先结束 overview，再关 usage reader、store 与 event loop。具体容量和期限见 A20，不创建第二套 reader。
+
+实现资源由 `OverviewLiveSupervisor` 调用 Core 寿命端口，Adapters `OverviewLive` 持有最多八个 viewer、一个可取消采样 task、一个仅有 viewer 时运行的 ticker；最后离开先关闭发布门和 ticker，再取消并 join 查询。`OverviewActivity` 的零 viewer 路径只读一个原子位；有 viewer 时 try-lock 发布，竞争/512 条事件缓冲溢出计数，不等待读者或网络。单槽唤醒、64 条/10 秒最近结束、200 条首事件与有界数据连接注册表随各自 owner 结束。`OverviewMailbox` 每 viewer 两个待发消息/2 MiB，传输另持一个在途消息/1 MiB；每连接一个读、写、心跳任务，控制流量最多每秒 64 帧。会话 owner 将发送检查与撤销串行，transport 拥有 2 秒强制关闭路径；共享 sampler 完成后才关闭 reader/store。

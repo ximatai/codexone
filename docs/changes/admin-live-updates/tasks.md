@@ -1,6 +1,6 @@
 # 首页实时概览任务
 
-owner 已确认 [方案](proposal.md)方向，尚无实现验收。S≈0.5—1 人日，M≈1—2 人日；以下按依赖顺序各自可合并，未启用路径保持原 HTTP 行为。总估算 5—7 人日（含评审修订/集成余量），其他页面复用另估；不以此替代实际测量。
+owner 已确认 [方案](proposal.md)方向；已有默认关闭的实现和本机部分验收，尚未完整交付。S≈0.5—1 人日，M≈1—2 人日；以下按依赖顺序各自可合并，未启用路径保持原 HTTP 行为。总估算 5—7 人日（含评审修订/集成余量），其他页面复用另估；不以此替代实际测量。
 
 - [x] **1. 契约与边界确定（S）**：确认活动事件驱动加对账采样、频率/容量及首版范围；将 v1 envelope、section/freshness、关闭码、Origin/会话活动语义、资源限额同步 control-plane 与 ownership。验收：DTO 合成契约覆盖 null、大整数、业务日/跨日、partial/unavailable；明确长连接是 A10 单响应关闭的精确例外，无 schema/治理或恢复语义变化；不提前宣称交付。
 - [x] **2. 独立改善轮询体验（S）**：进行中按采样基准逐秒显示耗时；服务状态后台/手动读取保留旧值、失败标陈旧，保留现有 HTTP 接口。验收：取消/迟到结果不覆盖当前代际；停止刷新时不把旧运行态冒充实时，后台读取不换 loading 整表；稳定行 ID、焦点、抽屉、滚动与 unknown 锁保持。此步可单独交付，无需等待 WS。
@@ -28,9 +28,64 @@ owner 已确认 [方案](proposal.md)方向，尚无实现验收。S≈0.5—1 �
 
 实现验收按 `CONTRIBUTING.md` 运行 `python3 scripts/check_docs.py`、`./scripts/verify.sh --backend`、`./scripts/verify.sh --web --chrome` 及相关 lint/format/tests；平台、命令、结果与未验证项写入本任务的实际验证，完成后归纳规范并按变更约定回收过程文档。不把真实提供者兼容作为此只读管理通道的前置验收。
 
-## 本次提案检查（2026-11-04）
+## 批准时提案检查（历史，非本轮实施验收）
 
 仅静态读代码和文档；未实现、未构建、未运行浏览器/网络/容量验收。本地文档检查 `python3 scripts/check_docs.py` 通过（103 篇 Markdown，仅本地链接/文档结构，不验证运行协议）；`git diff --check` 通过。已复核新增文件及差异仅含设计、代码路径与合成验收计划，无凭证/真实运营数据；上述实施复选框均保持未完成。
+
+## 实际实现与本机验收（2026-11-04）
+
+本轮不是完整交付。1、2 已完成；3、3b、4、5 的实现已进入分组提交，但各任务的全部验收尚未齐全，因此保留未勾选。2b 的数字滚动按 owner 的冲突处理规则暂停；6 的平台/代理矩阵未完成，开关继续默认关闭。未运行 Linux/Docker 构建、SSH、部署实例或真实提供者；未推送、未开 PR、未改版本。
+
+### 实现范围
+
+- 首页及首页账号抽屉：只读 v1 WS；单连接 owner 绑定会话代际，完整 snapshot 后停 HTTP 周期，断连保留数据并恢复轮询，system 也参与刷新；暂停/隐藏/离开关闭连接。账号抽屉共享 headroom，写操作、配置、授权和未知结果锁沿原流程。
+- Runtime 监督单一可取消 producer，复用现有 SQLite reader；2/5/15 秒顺序采样，首次及重连完整快照，同值只更新 freshness。每连接实际发送时连续编号；客户端拒绝缺 snapshot、跳号、epoch/版本退步。8 个 viewer/每 session 2 个；队列、帧和关闭有界。
+- 准入及 finalize 在 COMMIT 后发布，首事件只在第一次观测时发布；零 viewer 一次原子检查，活动发布 try-lock，不创建任务、SQL 或编码，不抛回执行路径。512 条活动缓冲/单槽唤醒、64 条最近结束、200 条首事件；数据 WS 认证注册/关闭注销，不采集地址、头或会话 ID。finalize 事件标脏聚合，最多每 2 秒更新；5 秒 SQL 对账修复丢失唤醒。没有改变原事务、schema、执行、结算或计量规则。
+- 行、进度、趋势过渡及减少动态效果；本地逐秒耗时，稳定的表格/提醒视口，数字仍为精确静态文本。精确锁定 `@formkit/auto-animate@0.10.0`、`@number-flow/react@0.6.2`，补许可；后者目前不渲染，其代码不计作已交付数字动画。
+- Nginx 仅精确 live 路径转发 upgrade；Vite 保留 Origin 并启用 WS。`CODEXONE_ADMIN_LIVE=on/off` 配置、Compose gateway 传递、运维/规范/ownership、STATUS、未发布 CHANGELOG 已同步。
+
+### 测量
+
+平台为本机 macOS arm64（Swift 6.4.2、Node 26.13.0、Chrome 156）。以下不能替代 Linux amd64/768 MiB 容器验收。
+
+| 测量 | 实测与边界 |
+| --- | --- |
+| 请求开始到浏览器 DOM 可见 | 最后一次 60 秒 WS 检查为 **223 ms**；这是提交到 DOM 的上界，含请求执行和 Playwright 可见性等待。没有给 SQLite COMMIT 与浏览器绘制同时插入精确时钟探针，不能声称这是纯 commit-to-paint 延迟。 |
+| 观察到提交到 WS 帧/聚合 | 独立本地 socket 检查 **108.68 / 108.69 ms**；HTTP 返回后核对 SQLite settled，再等 WS。请求开始到帧 **114.91 ms**。观察时刻可能晚于真正 COMMIT。 |
+| 8 viewer RSS | 200 条边界投影加持续真实 SQLite 准入/结束活动，7 个正常读者与 1 个不读 TCP peer：基线 **21,938,176 B**、峰值 **34,340,864 B**、增加 **12,402,688 B（11.83 MiB）**，小于本机 48 MiB 目标。普通 8 viewer 增加 1,572,864 B。慢 peer 最终强制关闭，阻塞期间未观测到 1013 close 帧，因此只声称 TCP 强制关闭。 |
+| 实际 snapshot 帧 | 200 intent 的原始 WS 文本 **237,064 B**，小于 1 MiB；不是 64 账号/256 Key/50 提醒/7 日全部同时取最大值的证明。 |
+| 心跳/关闭 | 不回 pong 从建立到关闭 **26.33 s**（15 秒 ping + 10 秒期限，含调度/检查粒度）；正常 1000 回帧通过。优雅关闭 **0.932 s**，观测到 1001。 |
+| 60 秒高频 UI | **277 次**合成请求，**CLS=0，long task=0**；真实本地生产 SPA/HTTP/WS/SQLite/假上游；1440×900 和 390×844 无横向溢出；reduced-motion 时活动动画数为 0。最后修改仅暂停时 focus 读取与关闭/取消边界，未再次重复整轮 60 秒检查。 |
+| 生产 gzip | 原始基线 `bf306a2` 在当前工作树内隔离目录重建，全部 assets 分别 gzip 后求和：**484,336 → 491,418 B，+7,082 B（6.92 KiB）**。不含尚未启用的 NumberFlow，不能作为完整数字滚动方案的体积承诺。 |
+
+### 实际运行的检查及失败记录
+
+只运行一次完整后端入口和一次完整前端入口；失败后只续跑未执行项、重跑失败项及受后续修正影响的定向检查，没有第二轮完整 macOS 验证。
+
+| 命令/检查 | 实际结果 |
+| --- | --- |
+| `python3 scripts/check_docs.py`、`python3 scripts/check_architecture.py`、`git diff --check` | 已通过；最终文档收尾后再检查。只证明文档/依赖/差异边界，不是协议验收。 |
+| `CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend` | 格式、构建、**293 个 Swift 测试通过**，此前 **19 个**脚本通过；`verify_text_contract.py` 启动子进程遭 `-9`，无应用输出，整条命令失败。当时有增量重建重叠，原因未确定，不能当作业务故障或成功。 |
+| `python3 scripts/verify_text_contract.py --binary …` | 定向复跑通过：HTTP 112、WS 191 个独立合成执行。没有重跑前面已通过的脚本。 |
+| 后端剩余命令（`verify.sh` 中 `verify_json_order.py` 至 `verify_migration_cutback.py`） | 原参数顺序续跑 **24/24 通过**，包含新 live 检查。这样 44 个脚本均有通过记录，但原完整命令仍为失败；后续 observation/freshness/取消修正没有重跑全部 44 项。 |
+| `swift build -j 12`、定向 `swift test -j 12 --filter 'overview\|liveSessionTouch'` | 增量构建早期 4 次失败：编辑中漏入新源文件、错误配置错误类型、漏枚举 case、probe 给非 optional 限额传 nil；都已修正并构建通过。多轮定向检查通过；最终 **5 个**覆盖 SQLite COMMIT/失败 finalize、零 viewer、1/8 等长窗口读取、最近结束/事件风暴/队列上限、丢唤醒对账、绝对会话期限及取消正在读取的 owner。没有再运行全部 Swift 测试。 |
+| `npm … test -- src/features/system-status …` | 首次 78 项中 5 失败（新标签、JSDOM 无 WAAPI、数字包元素行为）；修正后目标模块 **48/48 通过**。 |
+| `npm exec --package=node@26.13.0 -- ./scripts/verify.sh --web --chrome` | lint、format、单元 **214/214**、生产构建通过；Chrome **63 通过 / 2 失败**：60 秒 CLS 与既有 Key 固定到期日期失效。保留失败结果，没有重跑完整前端入口。 |
+| Chrome 定向 `admin-live-real`、`overview-phase2`、`account-inline` | 真实 WS/HTTP/SQLite/假上游的 60 秒测试及 4 个账号抽屉流程、HTTP fallback/大窄屏通过。实施中的失败包括错误定位、NumberFlow CSP/溢出、CLS 0.019497/0.021136/0.014290/0.014266/0.00008595；每次相关修正均定向复测，最终 CLS=0。一次诊断启动因 preview 端口占用失败。 |
+| Chrome 定向 `ui-review-fixes -g 'K03 K04 K06'` | 通过；固定合成时钟后原到期秒保持不变，未修改 Key 产品行为。 |
+| Chrome 定向 `admin-live-protocol` | 最终通过：完整 snapshot、同值 metadata 保留内容、跳号回退且保留快照、重新连接后的 1008 经 HTTP 401 清除私有 UI。两次中间失败是测试比较 innerText/textContent 与关闭已退役模拟连接，修正后复测。 |
+| `python3 scripts/verify_admin_live.py --binary … --probe …` | 最终真实接口通过：严格 Origin/Host/cookie/混合认证、8/2/第 9 限额、短请求、聚合、native 数据连接注册/断流/结束、替换/登出、控制帧、缺 pong、重启新 epoch/旧 session 401、关闭、开关回退、实际慢 peer/7 个健康 viewer。早期失败分别为 503/429 映射、测试函数名被时间变量遮盖、取消 drain 等待过短、慢端 close 帧被强关截断及测试未接受活动/聚合同帧；均有定向通过。 |
+| `npm run build`、lint、format:check、typecheck；`swift format lint --strict --recursive Sources Tests Package.swift` | 当前相关修正已定向通过；生产 build 含 typecheck。构建仍有原有大 chunk/Vite native config 提示，不记为错误。 |
+| `python3 scripts/check_backup_compose.py`、部署开关归属检查、`python3 scripts/backend_shards.py --check` | Python YAML/安装 launcher 及 44 脚本归属通过。曾用系统 Ruby 解析，因旧 Psych 不接受原有 flow scalar 失败；没有以它代替 Compose 或运行 Docker。一次手写静态计数把插值中的冒号也计入，改为键检查后通过。 |
+| 原始基线隔离重建与 gzip 求和 | 构建通过；目录在工作树忽略产物下，未 checkout/改分支或另建 worktree。 |
+
+### 冲突、未验证与下一步
+
+1. **数字滚动暂停**：真实生产 CSP 下 `@number-flow/react@0.6.2` 注入的 shadow `<style>` 被 `style-src 'self'` 拒绝，显示所有数位并溢出。保留精确静态值和严格 CSP。候选方案为仅允许锁定库的精确样式哈希，或提供外部静态样式适配；前者新增一个窄 CSP allowlist 与随升级核对责任，后者增加组件适配维护。各约 0.5—1 人日估算，均需先确定契约再实现/回归。没有改用 motion，也没有放宽 CSP。
+2. **平台/代理**：没有运行 Linux、Docker、768 MiB 容器；本机 RSS 不能代替该门禁。没有真实 Nginx 管理 TLS/wss、LAN listener/旧代理 30/60 秒矩阵或 Vite 开发代理的完整 upgrade 验收；只有模板静态变更、同源生产 SPA 的直连 ws 与 fallback。完整矩阵之前保持默认 off。
+3. **仍缺的失败边界**：真实 upgrade 初始采样中/握手前/各写阶段取消全矩阵；经实际升级连接推进 idle/绝对时钟边界（时钟测试目前在 session owner 层）；实时通道下真实文件系统不可写/恢复与 optional gate；live viewer 强杀重启（已验 graceful 新进程，已有核心 SIGKILL 不冒充 live 验收）；持续控制帧风暴的实际流量测量；隐藏/重新可见的真实浏览器积压、HTTP 高频 60 秒 CLS 与读繁忙比例/各源耗时、分配器零分配探针。
+4. **最大组合 DTO**：真实 SQLite/WS 测了 200 个合法边界 intent 和实际 frame 上限，尚未把 64 账号、256 Key、50 提醒、7 日同时推至最大。没有凭 payload 算式宣称最大合法 snapshot、共享对象/编码全部内存或 Linux 容器已验收。
+5. 后续只需继续上述有据可查的缺项及数字 CSP 选择；相关完整任务未勾选，保留 proposal/tasks，不作已交付清理。所有提交均带指定 Co-Authored-By；提交列表以本分支 `git log bf306a2..HEAD` 为准。
 
 ## 相关文档
 
