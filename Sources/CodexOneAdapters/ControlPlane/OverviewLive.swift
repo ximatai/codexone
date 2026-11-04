@@ -199,10 +199,10 @@ public actor OverviewLive: OverviewLiveRunning {
     draining = true
     defer { draining = false }
     generation += 1
-    worker?.cancel()
-    await worker?.value
     activity.watch(false)
     ticker?.cancel()
+    worker?.cancel()
+    await worker?.value
     await ticker?.value
     ticker = nil
     sections.removeAll()

@@ -125,6 +125,10 @@ def verify(binary):
         sock.close(); second.close()
         for current in sockets[2:]: current.close()
         time.sleep(.2)
+        current = dial(f, fresh)[1]; frame(current)
+        send(current, bytes([3, 232]), opcode=8, masked=True)
+        assert frame(current)['close'] == 1000
+        current.close()
         # Forbidden application frames and fragmentation never enter an application inbox.
         for opcode, fin in [(1, True), (2, True), (0, False)]:
             current = dial(f, fresh)[1]; assert current

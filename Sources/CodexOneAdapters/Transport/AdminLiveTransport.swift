@@ -63,7 +63,14 @@ struct AdminLiveTransport: Sendable {
                 case .pong: heartbeat.withLock { $0.pong = true }
                 case .ping:
                   try await send(Data(frame.unmaskedData.readableBytesView), opcode: .pong)
-                case .connectionClose: return
+                case .connectionClose:
+                  let closing = socket.channel.eventLoop.scheduleTask(in: .seconds(2)) {
+                    socket.channel.close(promise: nil)
+                  }
+                  defer { closing.cancel() }
+                  try await send(
+                    Data(frame.unmaskedData.readableBytesView), opcode: .connectionClose)
+                  return
                 default: return
                 }
               }
