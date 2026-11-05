@@ -21,6 +21,7 @@ struct ImageToolRequest: Sendable {
         $0.id == (fields["model"]?.string ?? configuration.defaultModel)
       })
     else { throw GatewayProtocolError(403, "model_not_allowed") }
+    try rejectSVGAuthorSelection(fields["svg"])
     fields["model"] = .string(model.id)
     self.model = model
     document = .object(fields)
@@ -33,6 +34,9 @@ struct ImagesRequest: Sendable {
   let body: Data
   let streaming: Bool
   let editing: Bool
+  let expectsSVGUsage: Bool
+  let requiresNonStreamingOutput: Bool
+  let upstreamStreaming: Bool
   init(data: Data, contentType: String, editing: Bool, configuration: ImageConfiguration?) throws {
     guard data.count <= RequestBodyLimits.maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
@@ -79,7 +83,14 @@ struct ImagesRequest: Sendable {
         throw GatewayProtocolError(415, "unsupported_content_type")
       }
       let document: JSONValue
-      do { document = try JSONValue.decode(data) } catch {
+      do {
+        document = try JSONValue.decode(
+          data,
+          rejectingDuplicateRootKeys: [
+            "model", "stream", "output_format", "images", "mask", "n", "partial_images",
+            "output_compression", "prompt_rewriter", "svg",
+          ])
+      } catch {
         throw GatewayProtocolError(400, "invalid_json")
       }
       guard let object = document.object else { throw GatewayProtocolError(400, "invalid_json") }
@@ -116,9 +127,31 @@ struct ImagesRequest: Sendable {
     self.model = model
     streaming = fields["stream"]?.bool == true
     self.editing = editing
+    try rejectSVGAuthorSelection(fields["svg"])
+    let format = fields["output_format"]?.string
+    expectsSVGUsage = format == "svg"
+    requiresNonStreamingOutput = format == "gif" || format == "svg"
+    // The SSE workaround is verified only for these legacy generation formats.
+    let legacyFormat = format == nil || ["png", "jpeg", "webp"].contains(format!)
+    upstreamStreaming = legacyFormat ? !editing : (!requiresNonStreamingOutput && streaming)
+    if requiresNonStreamingOutput {
+      guard !streaming, fields["partial_images"] == nil, fields["output_compression"] == nil,
+        fields["mask"] == nil,
+        format != "svg"
+          || (!editing && (fields["n"] == nil || fields["n"]?.integer == 1)
+            && fields["prompt_rewriter"] == nil)
+      else { throw GatewayProtocolError(400, "unsupported_image_format_combination") }
+    }
     let missingModel = fields["model"] == nil
     if missingModel { fields["model"] = .string(model) }
     body =
       multipart || missingModel ? try JSONValue.object(fields).data(escapingSlashes: false) : data
+  }
+}
+
+/// SVG remains an image operation; selecting another author model needs separate authorization.
+private func rejectSVGAuthorSelection(_ svg: JSONValue?) throws {
+  guard svg == nil || svg == .null else {
+    throw GatewayProtocolError(400, "unsupported_svg_model_selection")
   }
 }

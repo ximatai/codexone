@@ -15,19 +15,26 @@ extension ResponseRequest {
       mode != .compact || streamCompaction
     else { return document }
     var fields = document.object!
-    for key in [
-      "max_output_tokens", "temperature", "top_p", "truncation",
-      "prompt_cache_retention", "metadata",
+    for (key, detail): (String, ProtocolRejectionDetail) in [
+      ("max_output_tokens", .backendMaxOutputTokens), ("temperature", .backendTemperature),
+      ("top_p", .backendTopP), ("truncation", .backendTruncation),
+      ("prompt_cache_retention", .backendPromptCacheRetention), ("metadata", .backendMetadata),
     ] {
       guard fields[key] == nil || fields[key] == .null else {
-        throw GatewayProtocolError(400, "unsupported_backend_parameter")
+        throw GatewayProtocolError(400, "unsupported_backend_parameter", detail: detail)
       }
       fields.removeValue(forKey: key)
     }
-    guard fields["store"]?.bool != true,
+    guard fields["store"]?.bool != true else {
+      throw GatewayProtocolError(400, "unsupported_backend_parameter", detail: .backendStore)
+    }
+    guard
       nativeWebSocket || fields["previous_response_id"] == nil
         || fields["previous_response_id"] == .null
-    else { throw GatewayProtocolError(400, "unsupported_backend_parameter") }
+    else {
+      throw GatewayProtocolError(
+        400, "unsupported_backend_parameter", detail: .backendPreviousResponseID)
+    }
     for key in ["service_tier", "previous_response_id"] where fields[key] == .null {
       fields.removeValue(forKey: key)
     }

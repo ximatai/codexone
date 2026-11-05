@@ -380,6 +380,7 @@ export function AccountManagement({
           ))}
         {account && (
           <AccountDetailPanels
+            embedded={embedded}
             key={account.id}
             account={account}
             state={state}
@@ -492,12 +493,14 @@ export function AccountManagement({
 }
 
 function AccountDetailPanels({
+  embedded,
   account,
   state,
   blocked,
   onChangeMode,
   onBegin,
 }: {
+  embedded?: boolean;
   account: api.Account;
   state: ReturnType<typeof useAccounts>;
   blocked: boolean;
@@ -512,7 +515,9 @@ function AccountDetailPanels({
     queryKey: ["overview", "headroom"],
     queryFn: ({ signal }) => fetchHeadroom(signal),
     staleTime: 15000,
-    refetchInterval: 15000,
+    enabled: !embedded,
+    refetchInterval: embedded ? false : 15000,
+    refetchOnWindowFocus: !embedded,
   });
   const capacity = headroom.data?.accounts.find(
     (value) => value.id === account.id,

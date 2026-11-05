@@ -168,7 +168,8 @@ def expect_success(events):
     assert [item['type'] for item in output] == ['reasoning', 'web_search_call', 'message', 'function_call']
     assert output[0]['synthetic_future_member'] is True
     assert output[2]['content'][0]['annotations'][0]['type'] == 'url_citation'
-    assert done[0]['response']['usage']['input_tokens_details'] == dict(cached_tokens=900)
+    assert done[0]['response']['usage']['input_tokens_details'] == dict(cached_tokens=900, synthetic_counter='x')
+    assert done[0]['response']['usage']['synthetic_cost'] == dict(credits='1')
     return done[0]['response']
 
 

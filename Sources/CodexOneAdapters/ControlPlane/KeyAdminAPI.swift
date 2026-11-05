@@ -9,12 +9,12 @@ public struct KeyAdminAPI: Sendable {
   private let digest: String
   private let store: any KeyGovernanceStore
   var usesLANHTTP: Bool { sessions.isLANHTTP }
-  private let sessions: AdminSessions
+  let sessions: AdminSessions
   private let availableModels: [String]
   private let imageModels: [String]
-  private let usage: UsageAdminAPI?
+  let usage: UsageAdminAPI?
   private let executions: (any UnknownExecutionReleasing)?
-  private let attention: AttentionAdminAPI?
+  let attention: AttentionAdminAPI?
   private let backup: (any BackupMaintaining)?
   private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
@@ -59,6 +59,16 @@ public struct KeyAdminAPI: Sendable {
         } catch { continuation.resume(throwing: ExecutionError.invalidCommand) }
       }
     }
+  }
+  func overviewStorage() throws -> Data {
+    guard let storageMonitoring else { throw ExecutionError.storageUnavailable }
+    let observation = storageMonitoring.storageObservation
+    var object = try JSONValue.decode(JSONEncoder().encode(observation)).object!
+    object["backup"] = try JSONValue.decode(
+      JSONEncoder().encode(backup?.backupObservation ?? BackupObservation()))
+    object["admissionAllowed"] = .bool(observation.admissionAllowed)
+    object["optionalWorkAllowed"] = .bool(observation.optionalWorkAllowed)
+    return try JSONValue.object(object).data()
   }
   func bind(port: Int) { sessions.bind(port: port) }
   func register(_ app: Application, accounts: AccountAdminAPI? = nil) {

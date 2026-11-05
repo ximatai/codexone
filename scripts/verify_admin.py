@@ -59,7 +59,7 @@ def login(fixture, *, cookie=None, origin=None):
 
 
 @contextmanager
-def running_admin(binary, web_directory=None, account_master=False, business_day_offset=None):
+def running_admin(binary, web_directory=None, account_master=False, business_day_offset=None, admin_live=False):
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     provider.daemon_threads = True
     provider.calls = 0
@@ -90,7 +90,7 @@ def running_admin(binary, web_directory=None, account_master=False, business_day
                 upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1')))
             config.chmod(0o600)
             process, ports = start(binary, config, root, admin_token_file=admin, web_directory=web_directory,
-                                   account_master_key_file=master if account_master else None, business_day_offset=business_day_offset)
+                                   account_master_key_file=master if account_master else None, business_day_offset=business_day_offset, admin_live=admin_live)
             fixture = SimpleNamespace(root=root, process=process, ports=ports, provider=provider, admin=admin,
                                       config=config, web_directory=web_directory, secrets=[master.read_text()] if account_master else [],
                                       origin=f'http://127.0.0.1:{ports["admin"]}')

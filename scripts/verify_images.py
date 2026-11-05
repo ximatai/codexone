@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """M4 real synthetic HTTP/SSE/multipart/WS and SQLite checks. No external credentials."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
 import http.client
@@ -21,21 +22,33 @@ from verify_websocket import dial, send, receive
 
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=='
 URL = 'data:image/png;base64,' + PNG
+OUTPUTS = {'png': PNG,
+    'gif': 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+    'svg': base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>').decode(),
+    'synthetic-future': base64.b64encode(b'synthetic-future-output-container').decode()}
 
-def native_body(prompt):
+
+def native_body(prompt, output_format='png'):
     if prompt == 'non-json': return b'synthetic invalid JSON'
-    document = {'created':1,'data':[] if prompt == 'empty' else [{'b64_json':PNG}], 'future':'preserved'}
+    document = {'created':1,'data':[] if prompt == 'empty' else [{'b64_json':OUTPUTS.get(output_format, PNG)}], 'future':'preserved'}
     if prompt == 'synthetic': document['service_tier'] = 'default'
     if prompt != 'missing-usage':
         document['usage'] = {'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}
     return json.dumps(document).encode()
 
 
-def native_stream(operation, prompt='synthetic'):
+def native_stream(operation, prompt='synthetic', output_format='png'):
     prefix = 'image_edit' if operation == 'edits' else 'image_generation'
-    preview = {'type':prefix+'.partial_image','b64_json':PNG, 'partial_image_index':0}
-    final = {'type':prefix+'.completed','created_at':1,'b64_json':PNG,'future':'preserved',
+    preview = {'type':prefix+'.partial_image','b64_json':OUTPUTS.get(output_format, PNG), 'partial_image_index':0}
+    final = {'type':prefix+'.completed','created_at':1,'b64_json':OUTPUTS.get(output_format, PNG),'future':'preserved',
         'usage':{'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}}
+    if prompt in ('author-stream-missing', 'author-stream-decrease'):
+        final['svg_usage'] = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
+        final['image_index'] = 0
+        second = {**final, 'image_index':1}
+        if prompt == 'author-stream-missing': second.pop('svg_usage')
+        else: second['svg_usage'] = {'model':'synthetic-author', 'input_tokens':1, 'output_tokens':2}
+        return b''.join(b'data: ' + json.dumps(event).encode() + b'\n\n' for event in (final, second))
     if prompt == 'missing-usage': final.pop('usage')
     if prompt == 'stream-missing-created': final.pop('created_at')
     if prompt == 'synthetic': final['service_tier'] = 'default'
@@ -85,6 +98,8 @@ class Provider(BaseHTTPRequestHandler):
         image = any(t['type'] == 'image_generation' for t in tools) and request.get('tool_choice') != 'none' and request.get('input') != 'no-image'
         item = {'id': f'ig_{index}', 'type': 'image_generation_call', 'status': 'completed', 'result': PNG,
                 'usage': {'input_tokens': 2, 'output_tokens': 3, 'total_tokens': 5, 'input_tokens_details': {'text_tokens': 1, 'image_tokens': 1}}}
+        output_format = next((t.get('output_format', 'png') for t in tools if t['type'] == 'image_generation'), 'png')
+        item['result'] = OUTPUTS.get(output_format, PNG)
         prompt = request['input']
         if isinstance(prompt, list):
             prompt = next((part['text'] for row in prompt for part in row.get('content', []) if isinstance(part, dict) and part['type'] == 'input_text'), '')
@@ -93,6 +108,14 @@ class Provider(BaseHTTPRequestHandler):
         if prompt == 'stall': time.sleep(11)
         response = {'id': f'resp_{index}', 'status': 'completed', 'output': [item] if image else [],
                     'usage': {'input_tokens': 5, 'output_tokens': 7, 'input_tokens_details': {'cached_tokens': 0}}}
+        author = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
+        if prompt == 'mixed-invalid-usage':
+            response['output'].append({**item, 'id':f'ig_second_{index}', 'usage':{'input_tokens':4, 'output_tokens':-1}})
+        if prompt == 'invalid-host-usage':
+            response['usage']['input_tokens'] = 'synthetic-bad-counter'
+            response['usage']['synthetic_future'] = {'nullable':None, 'large':9007199254740993}
+        if prompt == 'svg-root-usage': response['svg_usage'] = author
+        if prompt == 'svg-item-usage': item['svg_usage'] = author
         lane = {'stream_id': request['stream_id']} if 'stream_id' in request else {}
         events = [{'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'output': [], 'usage': None}, **lane}]
         if image:
@@ -105,7 +128,7 @@ class Provider(BaseHTTPRequestHandler):
         if prompt == 'failed-after-item':
             response['status'] = 'failed'
         if prompt == 'invalid-output':
-            item['result'] = 'bm90LWFuLWltYWdl'
+            item['result'] = 'invalid'
         if prompt == 'abort-after-item': return events
         if prompt == 'invalid-usage':
             # Deliver trusted host usage in the same terminal that contains invalid tool usage.
@@ -123,7 +146,7 @@ class Provider(BaseHTTPRequestHandler):
             if prompt == 'hold': self.server.release.wait(55)
             status = int(prompt[4:]) if prompt.startswith('http') else 200
             body = (json.dumps({'error':{'code':'synthetic_provider_error','message':'synthetic acct-private'}}).encode()
-                if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt) if request.get('stream') else native_body(prompt))
+                if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt, request.get('output_format', 'png')) if request.get('stream') else native_body(prompt, request.get('output_format', 'png')))
             if prompt == 'stream-error' and not request.get('stream'):
                 status = 400; body = json.dumps({'error':{'code':'synthetic_provider_error', 'type':'invalid_request_error', 'message':'synthetic acct-split-secret user-synthetic@example.invalid', 'param':'prompt'}}).encode()
             if prompt.startswith('json-stream'):
@@ -141,15 +164,33 @@ class Provider(BaseHTTPRequestHandler):
                     result = json.loads(body); result['data'].append({'b64_json':PNG, 'revised_prompt':'synthetic'})
                     body = json.dumps(result).encode()
             if prompt == 'oversize': body = b' ' * (48 * 1024 * 1024 + 1)
+            if prompt == 'extended-mixed':
+                result = json.loads(native_body('synthetic'))
+                result['data'].append({'b64_json':'invalid'})
+                body = json.dumps(result).encode()
+            if prompt == 'extended-sse': body = native_stream('generations')
+            if prompt == 'extended-error': body = b'{"error":{"message":"synthetic"}}'
+            if prompt == 'svg-author-usage':
+                result = json.loads(native_body('synthetic', request.get('output_format', 'png')))
+                result['svg_usage'] = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
+                body = json.dumps(result).encode()
+            if prompt == 'unknown-native-events':
+                event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
+                body = event * 12
             self.send_response(status)
-            self.send_header('Content-Type', ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
+            self.send_header('Content-Type', 'text/event-stream' if prompt == 'extended-sse' else ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
                 if prompt.startswith('json-stream') else 'text/event-stream' if request.get('stream') else 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
             if status == 429: self.send_header('Retry-After','1')
             self.end_headers()
             try:
-                if request.get('stream'):
+                if prompt == 'unknown-native-events':
+                    # Keep sending valid unknown events past first-response expiry.
+                    event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
+                    for _ in range(12):
+                        self.wfile.write(event); self.wfile.flush(); time.sleep(.2)
+                elif request.get('stream'):
                     # Split inside the final event, after sensitive text for errors. Flush and
                     # pause to force the gateway to process the first fragment before the rest.
                     marker = b'acct-split-secret' if prompt == 'stream-error' else b'"usage"'
@@ -246,8 +287,11 @@ def main():
                         while time.monotonic() < deadline:
                             with sqlite3.connect(db) as connection:
                                 row = connection.execute('SELECT state,usage_json,outcome_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()
-                            if row and row[0] != 'intent':
-                                return row[0], json.loads(row[1]) if row[1] else None, json.loads(row[2]) if row[2] else None
+                            # Dispatch can already be unknown before the finalizer commits.
+                            # Wait for its outcome, not merely a state different from intent.
+                            outcome = json.loads(row[2]) if row and row[2] else None
+                            if row and row[0] != 'intent' and outcome is not None:
+                                return row[0], json.loads(row[1]) if row[1] else None, outcome
                             time.sleep(.02)
                         raise AssertionError('Finalization did not finish')
                     def count_intents():
@@ -257,6 +301,119 @@ def main():
                         deadline = time.monotonic() + 5
                         while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
                         assert upstream.calls == expected
+                    for output_format in ('gif', 'svg'):
+                        before = upstream.calls
+                        status, body, _ = request({'prompt':'synthetic', 'output_format':output_format})
+                        assert status == 200 and upstream.calls == before + 1
+                        assert json.loads(body)['data'][0]['b64_json'] == OUTPUTS[output_format]
+                        _, received, sent_headers = upstream.requests[-1]
+                        assert json.loads(received)['output_format'] == output_format
+                        assert json.loads(received).get('stream') is not True
+                        assert sent_headers['accept'] == 'application/json'
+                        assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
+                    status, body, _ = request({'prompt':'svg-author-usage', 'output_format':'svg'})
+                    assert status == 200 and json.loads(body)['svg_usage']['output_tokens'] == 20
+                    state, usage, outcome = ledger()
+                    assert state == 'settled' and usage['completeness'] == 'complete' and usage['imageOutputTokens'] == 3
+                    assert usage['svgInputTokens'] == 10 and usage['svgOutputTokens'] == 20 and usage['priceCompleteness'] == 'partial'
+                    assert outcome['kind'] == 'succeeded'
+                    before = upstream.calls; intents = count_intents()
+                    for invalid in ({'output_format':'svg', 'svg':{'model':'synthetic-author'}},
+                                    {'output_format':'gif', 'stream':True},
+                                    {'output_format':'svg', 'n':2}):
+                        status, body, _ = request(invalid)
+                        assert status == 400 and b'not dispatched' in body
+                    assert upstream.calls == before and count_intents() == intents
+                    for operation in ('generations', 'edits'):
+                        for raw in (b'{"model":"synthetic-image","stream":true,"output_format":"png","output_format":"gif"}',
+                                    b'{"model":"synthetic-image","output_format":"png","output_format":"svg"}',
+                                    b'{"model":"synthetic-image","output_format":"png","output_fo\\u0072mat":"gif"}'):
+                            assert request(raw, '/v1/images/' + operation)[0] == 400
+                    assert upstream.calls == before and count_intents() == intents
+                    for output_format in ('gif', 'svg', 'synthetic-future'):
+                        for fault in ('non-json', 'empty', 'extended-mixed', 'extended-sse', 'extended-error', 'json-stream-html'):
+                            before = upstream.calls
+                            status, body, _ = request({'prompt':fault, 'output_format':output_format})
+                            assert status == 502 and upstream.calls == before + 1, (output_format, fault, status)
+                            state, usage, outcome = ledger()
+                            assert outcome['kind'] == 'failed'
+                            if fault in ('empty', 'extended-mixed', 'json-stream-html'):
+                                assert usage['imageOutputTokens'] == 3
+                    before = upstream.calls; intents = count_intents()
+                    status, _, _ = request({'model':'synthetic-host','input':'synthetic',
+                        'tools':[{'type':'image_generation', 'output_format':'svg', 'svg':{'model':'synthetic-author'}}]}, '/v1/responses', name='both')
+                    assert status == 400 and upstream.calls == before and count_intents() == intents
+                    for output_format in ('gif', 'svg'):
+                        status, _, _ = request({'output_format':output_format}, name='chat')
+                        assert status == 403 and upstream.calls == before and count_intents() == intents
+                    assert request({'output_format':'gif'}, '/v1/images/edits')[0] == 200
+                    assert ledger()[0] == 'settled'
+                    # Real GIF/SVG bytes, plus an opaque future format, through both client
+                    # JSON/SSE and native WS; tool counters never rewrite the returned usage.
+                    for output_format in ('gif', 'svg', 'synthetic-future'):
+                        for streaming in (False, True):
+                            status, body, _ = request({'model':'synthetic-host','input':'synthetic', 'stream':streaming,
+                                'tools':[{'type':'image_generation', 'output_format':output_format}]}, '/v1/responses', name='both')
+                            assert status == 200, (output_format, transport, body[:200])
+                            result = (next(json.loads(line[6:])['response'] for line in body.splitlines()
+                                if line.startswith(b'data: {') and json.loads(line[6:])['type'] == 'response.completed')
+                                if streaming else json.loads(body))
+                            assert result['output'][0]['result'] == OUTPUTS[output_format]
+                            state, usage, outcome = ledger()
+                            assert state == ('unknown' if output_format == 'svg' else 'settled'), (transport, output_format, streaming, state, usage, outcome)
+                        if transport == 'websocket':
+                            with dial(port, token=policies['both']['secret'], timeout=15) as peer:
+                                send(peer, {'type':'response.create', 'model':'synthetic-host', 'input':'synthetic',
+                                    'tools':[{'type':'image_generation', 'output_format':output_format}]}, masked=True)
+                                while True:
+                                    _, data = receive(peer); event = json.loads(data)
+                                    assert event['type'] != 'error', event
+                                    if event['type'] == 'response.completed': break
+                                assert event['response']['output'][0]['result'] == OUTPUTS[output_format]
+                            assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
+                    for prompt in ('svg-root-usage', 'svg-item-usage', 'invalid-usage'):
+                        status, body, _ = request({'model':'synthetic-host','input':prompt,
+                            'tools':[{'type':'image_generation', 'output_format':'svg'}]}, '/v1/responses', name='both')
+                        assert status == 200, (prompt, body[:200])
+                        result = json.loads(body)
+                        assert result['output'][0]['result'] == OUTPUTS['svg']
+                        state, usage, outcome = ledger()
+                        assert state == ('unknown' if prompt == 'invalid-usage' else 'settled') and outcome['kind'] == 'succeeded'
+                        assert usage['inputTokens'] == 5 and usage['outputTokens'] == 7 and usage['imageInputTokens'] == 2
+                        if prompt == 'invalid-usage':
+                            assert usage.get('imageOutputTokens') is None and usage['estimatedMicros'] == 16
+                        else:
+                            assert usage['imageOutputTokens'] == 3 and usage['estimatedMicros'] == 25
+                            assert (result if prompt == 'svg-root-usage' else result['output'][0])['svg_usage']['output_tokens'] == 20
+                    status, body, _ = request({'model':'synthetic-host','input':'invalid-host-usage',
+                        'tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
+                    assert status == 200 and 'input_tokens' not in json.loads(body)['usage']
+                    assert json.loads(body)['usage']['synthetic_future'] == {'nullable':None, 'large':9007199254740993}
+                    assert ledger()[0] == 'unknown'
+                    status, body, _ = request({'model':'synthetic-host','input':'mixed-invalid-usage',
+                        'tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
+                    assert status == 200 and len(json.loads(body)['output']) == 2
+                    state, usage, outcome = ledger()
+                    assert state == 'unknown' and outcome['kind'] == 'succeeded'
+                    assert usage['imageInputTokens'] == 6 and usage['imageOutputTokens'] == 3
+                    before = upstream.calls
+                    status, _, _ = request({'model':'synthetic-host','input':'invalid-output',
+                        'tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
+                    assert status == 502 and upstream.calls == before + 1 and ledger()[2]['kind'] == 'failed'
+                    for operation in ('generations', 'edits'):
+                        status, body, _ = request({'output_format':'synthetic-future', 'stream':True}, '/v1/images/' + operation)
+                        assert status == 200
+                        completions = [json.loads(line[6:]) for line in body.splitlines()
+                            if line.startswith(b'data: {') and json.loads(line[6:])['type'].endswith('.completed')]
+                        assert completions[-1]['b64_json'] == OUTPUTS['synthetic-future']
+                        assert json.loads(upstream.requests[-1][1])['stream'] is True
+                        assert upstream.requests[-1][2]['accept'] == 'text/event-stream'
+                        assert ledger()[0] == 'settled'
+                    # Unknown native formats preserve the requested non-stream mode.
+                    status, body, _ = request({'output_format':'synthetic-future'})
+                    assert status == 200 and json.loads(body)['data'][0]['b64_json'] == OUTPUTS['synthetic-future']
+                    assert json.loads(upstream.requests[-1][1]).get('stream') is not True
+                    assert ledger()[0] == 'settled'
                     client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
                         'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
@@ -336,6 +493,13 @@ def main():
                                 if partial: assert 'imageOutputTokens' not in usage
                                 else: assert usage['imageOutputTokens'] == 3
                                 assert usage['completeness'] == ('complete' if complete else 'partial')
+                    for author_prompt in ('author-stream-missing', 'author-stream-decrease'):
+                        status, body, _ = request({'prompt':author_prompt, 'stream':True, 'n':2})
+                        assert status == 200 and body.count(b'image_generation.completed') == 2
+                        state, usage, outcome = ledger()
+                        assert state == 'settled' and outcome['kind'] == 'succeeded', (state, usage, outcome)
+                        assert usage['svgInputTokens'] == 10 and usage['svgOutputTokens'] == 20
+                        assert usage['images'] == 2 and usage['priceCompleteness'] == 'partial'
                     # SSE completions are images in arrival order; usage is request-level cumulative.
                     for streaming in (False, True):
                         for fault in ('stream-multiple', 'stream-multiple-repeated', 'stream-multiple-late'):
@@ -451,35 +615,37 @@ def main():
                         assert request({'prompt':'released'})[0] == 200
                         assert upstream.calls == before + 2
                         upstream.release.set()
-                    # Reserve 32 of 48 MiB before the native Images body is complete. HTTP
+                    # Reserve two 32 MiB bodies to fill the 64 MiB budget before upload. HTTP
                     # and WS readers share this budget, and rejection must precede intent/dispatch.
                     reservation_header = ('POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
                         + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: 33554432\r\n\r\n').encode()
                     large_native = {'model':'synthetic-image', 'prompt':'synthetic', 'future':'x' * (20 * 1024 * 1024)}
                     before = upstream.calls; intents = count_intents()
-                    held = socket.create_connection(('127.0.0.1', port), timeout=3)
+                    holders = [socket.create_connection(('127.0.0.1', port), timeout=3) for _ in range(2)]
                     try:
-                        held.sendall(reservation_header + b'{"model":')
+                        for held in holders: held.sendall(reservation_header + b'{"model":')
                         time.sleep(.2)
-                        with socket.create_connection(('127.0.0.1', port), timeout=3) as exhausted:
+                        with socket.create_connection(('127.0.0.1', port), timeout=10) as exhausted:
                             exhausted.sendall(reservation_header)
+                            started = time.monotonic()
                             response = http.client.HTTPResponse(exhausted); response.begin()
+                            assert time.monotonic() - started >= 4.8
                             assert response.status == 503 and response.getheader('Retry-After') == '1'
                             assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
                         assert upstream.calls == before and count_intents() == intents
-                        chunked = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
-                        try:
-                            chunked.request('POST', '/backend-api/codex/images/generations', iter([b' ' * (1024 * 1024)] * 17),
-                                {'Authorization':'Bearer ' + policies['images']['secret'], 'Content-Type':'application/json',
-                                 'Transfer-Encoding':'chunked'}, encode_chunked=True)
-                            response = chunked.getresponse()
+                        with socket.create_connection(('127.0.0.1', port), timeout=10) as chunked:
+                            chunked.sendall(('POST /backend-api/codex/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
+                                + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n').encode())
+                            # Stop immediately after crossing the unreserved threshold, then read
+                            # the early rejection instead of uploading more into a closed socket.
+                            chunked.sendall(b'800000\r\n' + b' ' * (8 * 1024 * 1024) + b'\r\n1\r\nx\r\n')
+                            response = http.client.HTTPResponse(chunked); response.begin()
                             assert response.status == 503 and response.getheader('Retry-After') == '1'
                             assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
-                        finally:
-                            chunked.close()
                         assert upstream.calls == before and count_intents() == intents
                         if transport == 'websocket':
-                            with dial(port, token=policies['both']['secret']) as sock:
+                            for held in holders: held.sendall(b' ')
+                            with dial(port, token=policies['both']['secret'], timeout=15) as sock:
                                 send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
                                 opcode, data = receive(sock)
                                 error = json.loads(data)
@@ -495,19 +661,37 @@ def main():
                                     if event['type'] == 'response.completed': break
                                 ledger()
                     finally:
-                        held.close()
+                        for held in holders: held.close()
                     # Partial upload disconnect releases the full Content-Length reservation.
                     time.sleep(.2)
                     before = upstream.calls; intents = count_intents()
                     assert request(large_native)[0] == 200
                     assert ledger()[0] == 'settled'
                     assert upstream.calls == before + 1 and count_intents() == intents + 1
+                    # A queued HTTP upload proceeds once the incomplete holder disconnects.
+                    holders = [socket.create_connection(('127.0.0.1', port), timeout=10) for _ in range(2)]
+                    for held in holders: held.sendall(reservation_header + b'{')
+                    time.sleep(.15)
+                    for _ in range(4):
+                        abandoned = socket.create_connection(('127.0.0.1', port), timeout=10)
+                        abandoned.sendall(reservation_header)
+                        time.sleep(.05)
+                        abandoned.close()
+                    time.sleep(.2)
+                    with ThreadPoolExecutor(max_workers=1) as queued:
+                        waiting = queued.submit(request, large_native)
+                        time.sleep(.25)
+                        assert not waiting.done()
+                        for held in holders: held.close()
+                        assert waiting.result(timeout=15)[0] == 200
+                    assert ledger()[0] == 'settled'
                     before = upstream.calls; intents = count_intents()
                     with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
                         stalled.sendall(reservation_header + b'{"model":')
                         started = time.monotonic()
                         response = http.client.HTTPResponse(stalled); response.begin()
-                        assert response.status == 408 and json.loads(response.read())['error']['code'] == 'request_body_timeout'
+                        stalled_error = json.loads(response.read())['error']['code']
+                        assert response.status == 408 and stalled_error == 'request_body_timeout', (response.status, stalled_error)
                         assert time.monotonic() - started >= 9
                     assert upstream.calls == before and count_intents() == intents
                     assert request(large_native, '/backend-api/codex/images/generations')[0] == 200
@@ -521,6 +705,19 @@ def main():
                     if args.browser and transport == 'http':
                         result = subprocess.run(['node', str(repository / 'web/scripts/live-images.mjs'), str(ports['admin']), str(port), str(repository / 'artifacts/image-management-ui')], input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=60)
                         assert result.returncode == 0, 'Image browser validation failed; private output withheld'
+                    # Reuse the same synthetic Keys after restart with a short deadline.
+                    stop(process)
+                    value = json.loads(config.read_text())
+                    value.update(executionTimeoutSeconds=5, firstResponseTimeoutSeconds=1, progressTimeoutSeconds=1)
+                    config.write_text(json.dumps(value))
+                    process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin)
+                    port = ports['data']
+                    before = upstream.calls
+                    started = time.monotonic()
+                    status, body, _ = request({'prompt':'unknown-native-events'})
+                    assert status == 504 and json.loads(body)['error']['code'] == 'execution_first_response_timeout', (status,body[:200])
+                    assert time.monotonic() - started < 2
+                    assert upstream.calls == before + 1 and ledger()[0] == 'unknown'
                     print('PASS: native Images byte/header/path parity, multipart, usage, SSE, provider failures, unknown/no replay and capacity via ' + transport)
                 finally:
                     upstream.release.set()

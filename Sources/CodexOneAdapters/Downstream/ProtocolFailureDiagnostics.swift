@@ -2,6 +2,7 @@ import CodexOneCore
 import Foundation
 import Logging
 import NIOCore
+import NIOWebSocket
 import Synchronization
 
 enum ResponseStreamFinishReason: String, Sendable {
@@ -24,7 +25,7 @@ enum ProtocolFailureDiagnostics {
     "request_body_timeout", "invalid_api_key", "invalid_json", "invalid_request",
     "invalid_reference",
     "conversation_too_large", "image_input_too_large", "invalid_image", "invalid_input",
-    "invalid_mask",
+    "invalid_mask", "unsupported_svg_model_selection", "unsupported_image_format_combination",
     "invalid_private_context", "json_too_deep", "model_catalog_unavailable", "request_too_large",
     "too_many_references", "unsupported_background", "unsupported_compaction_trigger",
     "unsupported_stream_options",
@@ -177,10 +178,22 @@ enum ProtocolFailureDiagnostics {
     if let error = error as? ChannelError {
       switch error {
       case .ioOnClosedChannel: return "channel_closed"
+      case .alreadyClosed: return "channel_already_closed"
+      case .eof: return "channel_eof"
       case .inputClosed: return "channel_input_closed"
       case .outputClosed: return "channel_output_closed"
       case .connectTimeout: return "channel_connect_timeout"
+      case .connectPending: return "channel_connect_pending"
+      case .operationUnsupported: return "channel_operation_unsupported"
+      case .inappropriateOperationForState: return "channel_invalid_state"
       default: return "channel_other"
+      }
+    }
+    if let error = error as? NIOWebSocketError {
+      switch error {
+      case .invalidFrameLength: return "websocket_invalid_frame_length"
+      case .fragmentedControlFrame: return "websocket_fragmented_control"
+      case .multiByteControlFrameLength: return "websocket_control_length"
       }
     }
     if error is DecodingError { return "json_decode" }

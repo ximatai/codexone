@@ -80,6 +80,13 @@ public struct AttentionAdminAPI: Sendable {
     self.registry = registry
     self.backup = backup
   }
+  func overviewSection() async throws -> Data {
+    let now = clock.unixSeconds
+    return try JSONValue.object([
+      "items": try JSONValue.decode(JSONEncoder().encode(try await items(now: now))),
+      "generatedAtUnixSeconds": .number(Decimal(now)),
+    ]).data()
+  }
   func register(_ routes: any RoutesBuilder) {
     routes.get("attention") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }

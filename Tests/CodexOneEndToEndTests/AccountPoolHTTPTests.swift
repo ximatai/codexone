@@ -1560,6 +1560,10 @@ func poolNativeRequestParametersRejectBeforeFirstAdmissionOrUpstreamHandshake() 
       let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
       #expect(total == 0 && h.finalizer.outstanding == 0)
     }
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics WHERE failure='invalid_request'")
+      } == 7)
     let client = try PoolWSClient(h)
     defer { client.close() }
     _ = try await client.read()
@@ -1570,6 +1574,55 @@ func poolNativeRequestParametersRejectBeforeFirstAdmissionOrUpstreamHandshake() 
     #expect(h.calls.count == 1 && h.state.value.withLock { $0.upgrades == 1 })
     let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
     #expect(total == 1 && h.finalizer.outstanding == 0)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics WHERE failure='invalid_request'")
+      } == 8)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics WHERE failure!='invalid_request'")
+      } == 0)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func poolHTTPBackendParameterDiagnosticsAreInvalidRequestsWithoutDispatch(transport: String)
+  async throws
+{
+  try await withPoolHTTP(transport: transport) { h in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let fields: [(String, JSONValue)] = [
+      ("max_output_tokens", .number(128)), ("temperature", .number(1)), ("top_p", .number(1)),
+      ("truncation", .string("disabled")), ("prompt_cache_retention", .string("24h")),
+      ("metadata", .object(["private": .string("synthetic-private-marker")])),
+      ("store", .bool(true)), ("previous_response_id", .string("synthetic-previous-response")),
+    ]
+    for (field, value) in fields {
+      var request = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/responses")!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + h.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.httpBody = try JSONValue.object([
+        "model": .string("synthetic-text"), "input": .string("synthetic"), field: value,
+      ]).data()
+      let (body, response) = try await session.data(for: request)
+      #expect((response as! HTTPURLResponse).statusCode == 400)
+      let error = try JSONValue.decode(body)["error"]
+      #expect(error?["code"]?.string == "unsupported_backend_parameter")
+      #expect(error?.object?.count == 4)
+      #expect(!String(decoding: body, as: UTF8.self).contains("synthetic-private-marker"))
+    }
+    #expect(h.calls.isEmpty && h.state.value.withLock { $0.upgrades } == 0)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 0)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics WHERE failure='invalid_request'")
+      } == 8)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM request_diagnostics WHERE failure!='invalid_request'")
+      } == 0)
   }
 }
 

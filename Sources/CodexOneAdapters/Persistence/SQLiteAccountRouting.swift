@@ -48,7 +48,7 @@ extension SQLiteExecutionStore: AccountRoutingStore {
     for candidate in command.candidates { try validateAdmission(command.selecting(candidate)) }
     try Task.checkCancellation()
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
-      return try db.transaction {
+      let committed = try db.transaction {
         let affinity = try Self.accountAffinity(
           db, principal: command.policy.key.principal, references: command.references,
           connection: command.connection)
@@ -134,6 +134,8 @@ extension SQLiteExecutionStore: AccountRoutingStore {
         }
         return admission
       }
+      self.publishOverview(committed, at: db.clock.unixSeconds)
+      return committed
     }
   }
   private static func accountAffinity(

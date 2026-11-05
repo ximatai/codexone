@@ -69,3 +69,7 @@ sha256sum --check binary-sha256.txt
 ## 相关文档
 
 [CHANGELOG](../../CHANGELOG.md) · [构建验证](verification.md) · [安装升级](../guide/backup-upgrade.md) · [安全政策](../../SECURITY.md)
+
+## 混合容量候选检查
+
+Release 的 capacity 分片复用已校验的候选镜像，分别限制合成刺激 512 MiB、网关 768 MiB，保存白名单资源/责任报告。它覆盖大输入、大结果、慢消费者、断连与三轮恢复；线程数不代表 Swift Task，队列与共享租约回落仍是再次请求成功的行为证据。详细边界及本机/原生 Linux 证据见[协议验证](../changes/protocol-alignment/verification.md)。新增检查失败时不得绕过发布汇合门禁。

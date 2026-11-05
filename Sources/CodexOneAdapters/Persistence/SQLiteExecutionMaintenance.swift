@@ -70,7 +70,8 @@ extension SQLiteExecutionStore: ExecutionMaintaining {
     let metrics = [
       "input_tokens", "output_tokens", "cached_tokens", "images", "estimated_micros",
       "image_input_tokens", "image_output_tokens", "image_input_text_tokens",
-      "image_input_image_tokens",
+      "image_input_image_tokens", "svg_input_tokens", "svg_output_tokens", "svg_reasoning_tokens",
+      "price_unknown",
     ]
     let additions = metrics.map {
       "\($0)=CASE WHEN \($0) IS NULL AND excluded.\($0) IS NULL THEN NULL ELSE COALESCE(\($0),0)+COALESCE(excluded.\($0),0) END"
@@ -85,8 +86,10 @@ extension SQLiteExecutionStore: ExecutionMaintaining {
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END,
         json_extract(usage_json,'$.images'),
-        CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END,
-        json_extract(usage_json,'$.imageInputTokens'),json_extract(usage_json,'$.imageOutputTokens'),json_extract(usage_json,'$.imageInputTextTokens'),json_extract(usage_json,'$.imageInputImageTokens')
+        CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END,
+        json_extract(usage_json,'$.imageInputTokens'),json_extract(usage_json,'$.imageOutputTokens'),json_extract(usage_json,'$.imageInputTextTokens'),json_extract(usage_json,'$.imageInputImageTokens'),
+        json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),
+        CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END
       FROM attempts WHERE id=?
       ON CONFLICT(day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown) DO UPDATE SET requests=requests+1,last_used_epoch=MAX(last_used_epoch,excluded.last_used_epoch),\(additions)
       """, [.text(attempt)])

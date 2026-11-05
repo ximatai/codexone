@@ -24,6 +24,7 @@ struct CodexOneMain {
       case .invalidAllowedNetworks: message = "Invalid allowed source networks configuration."
       case .invalidPort(let key): message = "Invalid port configuration: \(key)."
       case .invalidIdentityConfiguration: message = "Invalid single-identity configuration."
+      case .invalidAdminLive: message = "Invalid admin live configuration."
       case .invalidAdminOrigin: message = "Invalid public admin origin configuration."
       case .invalidWebDirectory: message = "Invalid admin web directory configuration."
       case .invalidAccountPoolConfiguration: message = "Invalid account pool configuration."
@@ -400,26 +401,37 @@ struct CodexOneMain {
         })
     }
     let activePoolDataService = poolDataService
+    let overviewReport: @Sendable () async -> ReadinessReport = {
+      if let activePoolDataService { return await activePoolDataService.readiness() }
+      return .init(checks: [
+        .init(name: "execution_store", ready: store?.isAdmissionReady == true),
+        .init(
+          name: "upstream_accounts",
+          ready: (identityConfiguration != nil || poolConfiguration != nil)),
+        .init(
+          name: "authorization",
+          ready: (identityConfiguration != nil || poolConfiguration != nil)
+            && finalizer?.isAccepting == true),
+      ])
+    }
+    let overview: OverviewLive?
+    if configuration.adminLiveEnabled, let keyAdmin, let store {
+      overview = AdminService.makeOverview(
+        keys: keyAdmin, accounts: accountAdmin, activity: store.overviewActivity,
+        reportProvider: overviewReport)
+    } else {
+      overview = nil
+    }
     services.append(
       AdminService(
         group: group, port: configuration.adminPort,
-        reportProvider: {
-          if let activePoolDataService { return await activePoolDataService.readiness() }
-          return .init(checks: [
-            .init(name: "execution_store", ready: store?.isAdmissionReady == true),
-            .init(
-              name: "upstream_accounts",
-              ready: (identityConfiguration != nil || poolConfiguration != nil)),
-            .init(
-              name: "authorization",
-              ready: (identityConfiguration != nil || poolConfiguration != nil)
-                && finalizer?.isAccepting == true),
-          ])
-        }, keys: keyAdmin, webBundle: webBundle, accounts: accountAdmin,
+        reportProvider: overviewReport, keys: keyAdmin, webBundle: webBundle,
+        accounts: accountAdmin, overview: overview,
         listeners: configuration.listeners
       ) {
         announce("admin", port: $0)
       })
+    if let overview { services.append(OverviewLiveSupervisor(overview: overview)) }
     if let finalizer { services.insert(finalizer, at: 0) }
     if configuration.listeners.additionalAddress != nil {
       FileHandle.standardError.write(

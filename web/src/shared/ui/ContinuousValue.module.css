@@ -1,0 +1,56 @@
+.value {
+  display: inline-block;
+  position: relative;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.visual {
+  display: inline-flex;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: pre;
+}
+
+.accessible {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.symbol::after,
+.track::after {
+  content: attr(data-current);
+}
+
+.symbol {
+  display: inline-block;
+  min-inline-size: 1ch;
+}
+
+.digit {
+  display: inline-block;
+  inline-size: 1ch;
+  block-size: 1em;
+  overflow: clip;
+}
+
+.track {
+  display: block;
+  position: relative;
+}
+
+.track::before {
+  content: attr(data-previous);
+  position: absolute;
+  inset-block-start: -100%;
+  inset-inline-start: 0;
+}
+
+.reverse::before {
+  inset-block-start: 100%;
+}

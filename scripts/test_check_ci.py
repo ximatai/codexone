@@ -13,10 +13,52 @@ import tempfile
 import textwrap
 import unittest
 
-from check_ci import check_release, workflow_jobs
+from check_ci import check_release, check_live_browser, workflow_jobs
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class LiveBrowserWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (ROOT / '.github/workflows/verify.yml').read_text()
+
+    def test_real_stack_has_a_matching_binary_and_required_gate(self):
+        check_live_browser(self.workflow)
+        mutations = [
+            ('needs: [changes, backend-build]', 'needs: changes'),
+            ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
+            ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
+            ("required.update({'backend-build', 'frontend-live'})", "required.add('backend-build')"),
+        ]
+        for before, after in mutations:
+            with self.subTest(before=before), self.assertRaises(AssertionError):
+                check_live_browser(self.workflow.replace(before, after))
+
+    def test_actual_gate_requires_live_tests_for_either_side(self):
+        gate = workflow_jobs(self.workflow)['verify']
+        script = re.search(r"python3 - <<'PY'\n(.*?)^          PY$", gate, re.M | re.S)
+        self.assertIsNotNone(script)
+        code = textwrap.dedent(script[1])
+        jobs = {'changes', 'docs', 'backend-build', 'backend-scripts', 'frontend', 'frontend-live', 'devcontainer'}
+        for backend, frontend, devcontainer in [(False, False, False), (True, False, False), (False, True, False), (True, True, True)]:
+            required = {'changes', 'docs'}
+            if backend or frontend: required.update({'backend-build', 'frontend-live'})
+            if backend: required.add('backend-scripts')
+            if frontend: required.add('frontend')
+            if devcontainer: required.add('devcontainer')
+            needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
+            needs['changes']['outputs'] = {'backend': str(backend).lower(), 'frontend': str(frontend).lower(), 'devcontainer': str(devcontainer).lower()}
+            def run(payload):
+                return subprocess.run([sys.executable, '-c', code], capture_output=True,
+                                      env={**os.environ, 'RESULTS': json.dumps(payload)}).returncode
+            self.assertEqual(run(needs), 0)
+            for job in required:
+                for failed in ('failure', 'cancelled', 'skipped'):
+                    with self.subTest(backend=backend, frontend=frontend, job=job, failed=failed):
+                        payload = {name: dict(value) for name, value in needs.items()}
+                        payload[job]['result'] = failed
+                        self.assertNotEqual(run(payload), 0)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -35,7 +77,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('needs: verify', 'needs: build'),
             ("if result != 'success':", "if result == 'failure':"),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
-            ('suite: [tls, installation]', 'suite: [installation]'),
+            ('suite: [tls, installation, capacity]', 'suite: [tls, installation]'),
+            ('scripts/verify_mixed_capacity.py --image', 'unchecked-capacity'),
+            ('mixed-capacity-evidence', 'omitted-evidence'),
+            ('--probe /binaries/ExecutionProbe --slow-only', '--skip-live-capacity'),
             ('ref: ${{ needs.build.outputs.revision }}', 'ref: main'),
             ('"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
             ('"$IMAGE_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),

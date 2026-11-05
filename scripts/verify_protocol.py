@@ -108,7 +108,7 @@ class Upstream(BaseHTTPRequestHandler):
             response["previous_response_id"] = payload["previous_response_id"]
         if prompt == "foreign-previous":
             response["previous_response_id"] = "private-synthetic-unbound-response"
-        if prompt == "private-usage":
+        if prompt == "extended-usage":
             response["usage"]["metadata"] = {"file_id": "private-synthetic-file"}
         if prompt == "provider-error":
             response["status"] = "failed"
@@ -189,9 +189,11 @@ def connect(port, method, path, payload=None, *, authorization=True, timeout=8, 
     return status, body
 
 
-def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None):
+def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None, admin_live=False):
     environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
                                "CODEXONE_DATA_DIRECTORY": str(directory / "state")}
+    if admin_live:
+        environment["CODEXONE_ADMIN_LIVE"] = "on"
     if business_day_offset is not None:
         environment["CODEXONE_BUSINESS_DAY_OFFSET"] = business_day_offset
     if upstream_proxy is not None:
@@ -398,16 +400,22 @@ def main():
                 assert status == 200 and json.loads(body)["output"][0]["type"] == "unverified_private_object"
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 print("PASS: EOF remains unknown; unknown provider objects are forwarded with settled usage")
-                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-usage"})
-                assert status == 200 and b"private-synthetic" not in body
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "extended-usage"})
+                assert status == 200
+                assert json.loads(body)["usage"]["metadata"] == {"file_id": "private-synthetic-file"}
                 assert latest(db_path, "settled")["inputTokens"] == 5
+                before = upstream.calls
+                status, refused = connect(port, "POST", "/v1/responses", {
+                    "model":"synthetic-text", "input":[{"type":"item_reference", "id":"private-synthetic-file"}]})
+                assert status == 400 and json.loads(refused)["error"]["code"] == "unknown_or_ambiguous_object"
+                assert upstream.calls == before
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "provider-error"})
                 failed = json.loads(body)
                 assert status == 200 and failed["status"] == "failed" and failed["error"]["code"] == "synthetic"
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "foreign-previous"})
                 assert status == 200 and latest(db_path, "settled")["inputTokens"] == 5
-                print("PASS: usage metadata stays private; provider failures reach the client sanitized with settled counters")
+                print("PASS: usage extensions are preserved without granting private references; provider failures reach the client sanitized with settled counters")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "refusal"})
                 assert status == 200
                 refused = json.loads(body)["output"]

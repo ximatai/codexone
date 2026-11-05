@@ -62,7 +62,11 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
     ? "The conversation or its images are too large. Start a new session or remove images before trying again."
     : mapped.code == "continuation_owner_unavailable"
       ? "Continuation source cannot be verified. The request was not dispatched."
-      : "Gateway request failed."
+      : mapped.code == "unsupported_svg_model_selection"
+        ? "Choosing an SVG author model is not supported. Omit the svg object to use the image endpoint default. The request was not dispatched."
+        : mapped.code == "unsupported_image_format_combination"
+          ? "This image format cannot use streaming, partial images, masks or output compression. SVG also requires generation with one image and no prompt rewriter. The request was not dispatched."
+          : "Gateway request failed."
   let message =
     UUID(uuidString: requestID) != nil
     ? "\(explanation) Reference: \(requestID)." : explanation

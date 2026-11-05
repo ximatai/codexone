@@ -121,7 +121,7 @@ extension SQLiteUsageReader {
         COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM attempts WHERE \(attempts.sql)
+        SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END) FROM attempts WHERE \(attempts.sql)
       """, attempts.values
     ) { row in
       UsageTotals(
@@ -163,9 +163,9 @@ extension SQLiteUsageReader {
         json_extract(outcome_json,'$.failure') failure,CASE WHEN state='settled' AND json_extract(usage_json,'$.completeness')='partial' THEN NULL ELSE json_extract(usage_json,'$.completeness') END completeness,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
-        CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0) FROM attempts WHERE \(attempts.sql)
+        CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0),json_extract(usage_json,'$.svgAuthorModel'),json_extract(usage_json,'$.usageMissingReasons') FROM attempts WHERE \(attempts.sql)
       UNION ALL
-      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0
+      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,NULL,NULL
         FROM request_diagnostics WHERE \(rejected.sql)) history
       """
     var values = attempts.values + rejected.values
@@ -198,14 +198,16 @@ extension SQLiteUsageReader {
         accountID: string(7), requestID: string(8), state: state, outcome: outcome,
         failure: failure,
         completeness: completeness, metrics: try metrics(row, offset: 13),
-        cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(28),
-        displayName: string(29),
-        firstEventMilliseconds: sqlite3_column_type(row, 22) == SQLITE_NULL
-          ? nil : sqlite3_column_int64(row, 22),
-        totalMilliseconds: sqlite3_column_type(row, 23) == SQLITE_NULL
-          ? nil : sqlite3_column_int64(row, 23),
-        reasoningEffort: string(24), serviceTier: string(25), actualServiceTier: string(26),
-        requestMetadataRecorded: sqlite3_column_int64(row, 27) == 1)
+        cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(34),
+        displayName: string(35),
+        firstEventMilliseconds: sqlite3_column_type(row, 26) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 26),
+        totalMilliseconds: sqlite3_column_type(row, 27) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 27),
+        reasoningEffort: string(28), serviceTier: string(29), actualServiceTier: string(30),
+        requestMetadataRecorded: sqlite3_column_int64(row, 31) == 1,
+        svgAuthorModel: string(32),
+        usageMissingReasons: try string(33).map { try decode([String].self, $0) } ?? [])
     }
     let more = rows.count > query.limit
     if more { rows.removeLast() }
@@ -224,7 +226,10 @@ extension SQLiteUsageReader {
       cachedTokens: number(offset + 2), images: number(offset + 3),
       estimatedMicros: number(offset + 4), imageInputTokens: number(offset + 5),
       imageOutputTokens: number(offset + 6), imageInputTextTokens: number(offset + 7),
-      imageInputImageTokens: number(offset + 8))
+      imageInputImageTokens: number(offset + 8), svgInputTokens: number(offset + 9),
+      svgOutputTokens: number(offset + 10), svgReasoningTokens: number(offset + 11),
+      priceCompleteness: try number(offset + 4) == nil
+        ? .unavailable : (number(offset + 12) ?? 0) > 0 ? .partial : .complete)
   }
 }
 
@@ -248,7 +253,7 @@ extension SQLiteUsageReader {
         state='unknown' OR closed_unknown_at_epoch IS NOT NULL usage_unknown FROM attempts
       UNION ALL SELECT day_epoch-?1,key_id,json_object('model',NULLIF(model,''),'mode',mode),json_object('kind',NULLIF(outcome,''),'failure',NULLIF(failure,'')),
         json_object('inputTokens',input_tokens,'outputTokens',output_tokens,'cachedTokens',cached_tokens,'images',images,'estimatedMicros',estimated_micros,
-          'imageInputTokens',image_input_tokens,'imageOutputTokens',image_output_tokens,'imageInputTextTokens',image_input_text_tokens,'imageInputImageTokens',image_input_image_tokens),requests,usage_unknown FROM usage_daily)
+          'imageInputTokens',image_input_tokens,'imageOutputTokens',image_output_tokens,'imageInputTextTokens',image_input_text_tokens,'imageInputImageTokens',image_input_image_tokens,'svgInputTokens',svg_input_tokens,'svgOutputTokens',svg_output_tokens,'svgReasoningTokens',svg_reasoning_tokens,'priceCompleteness',CASE WHEN price_unknown=0 THEN 'complete' ELSE 'partial' END),requests,usage_unknown FROM usage_daily)
       """
     let dayStart = businessDayStartSQL("created_at_epoch")
     let predicate = terms.joined(separator: " AND ")
@@ -260,7 +265,7 @@ extension SQLiteUsageReader {
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='cancelled' THEN record_count ELSE 0 END),0),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')) FROM \(source) WHERE \(predicate) GROUP BY 1
+        SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END) FROM \(source) WHERE \(predicate) GROUP BY 1
       """, values
     ) { row in
       (

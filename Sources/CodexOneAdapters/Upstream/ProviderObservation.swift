@@ -7,13 +7,8 @@ import Foundation
 struct ProviderObservation: Sendable {
   static let maximumTextEventBytes = 8_388_608
   static let maximumTextResponseBytes = 33_554_432
-  static let lifecycleEvents: Set<String> = [
-    "response.created", "response.queued", "response.in_progress", "response.completed",
-    "response.failed", "response.incomplete",
-  ]
-  static let terminalEvents: Set<String> = [
-    "response.completed", "response.failed", "response.incomplete",
-  ]
+  static let lifecycleEvents = ProviderEventSemantics.lifecycleEvents
+  static let terminalEvents = ProviderEventSemantics.terminalEvents
   let bindings: [ObjectBinding]
   let usage: UsageEvidence?
   let terminal: Bool
@@ -41,10 +36,11 @@ struct ProviderObservation: Sendable {
     throws
   {
     let type = try Self.eventType(event)
+    let semantics = ProviderEventSemantics(event)
     var bindings: [ObjectBinding] = []
     var usage: UsageEvidence?
-    let terminal = Self.terminalEvents.contains(type)
-    if Self.lifecycleEvents.contains(type) {
+    let terminal = semantics.terminal
+    if semantics.lifecycle {
       guard let response = event["response"], let id = Self.identifier(response["id"]) else {
         throw GatewayProtocolError(502, "invalid_upstream_response")
       }
@@ -53,7 +49,7 @@ struct ProviderObservation: Sendable {
         bindings += try Self.itemBindings(item, allowImages: allowImages)
       }
       if terminal { usage = Self.usage(response["usage"], model: model) }
-    } else if let item = event["item"] {
+    } else if semantics.carriesItem, let item = event["item"] {
       bindings += try Self.itemBindings(item, allowImages: allowImages)
     } else if allowImages, type == "response.image_generation_call.partial_image" {
       guard let index = event["partial_image_index"]?.integer, (0...2).contains(index),
@@ -62,7 +58,7 @@ struct ProviderObservation: Sendable {
         let data = Data(base64Encoded: encoded), data.base64EncodedString() == encoded
       else { throw GatewayProtocolError(502, "invalid_upstream_image") }
     }
-    if let id = Self.identifier(event["item_id"]) {
+    if semantics.carriesItemID, let id = Self.identifier(event["item_id"]) {
       bindings.append(.init(type: "item", rawID: id))
     }
     self.bindings = bindings
@@ -84,7 +80,8 @@ struct ProviderObservation: Sendable {
     var bindings: [ObjectBinding] = []
     let type = item["type"]?.string ?? ""
     if let id = identifier(item["id"]) { bindings.append(.init(type: "item", rawID: id)) }
-    if let call = identifier(item["call_id"]) {
+    if ["function_call", "custom_tool_call"].contains(type), let call = identifier(item["call_id"])
+    {
       bindings.append(.init(type: "function_call", rawID: call))
     }
     if ["reasoning", "compaction"].contains(type),
@@ -98,47 +95,44 @@ struct ProviderObservation: Sendable {
     return bindings
   }
 
-  /// Project only documented token counters and sanitize provider errors before client output.
-  static func textOutput(_ value: JSONValue) -> JSONValue {
+  /// Preserve protocol extensions; repair only known integer fields and sanitize errors.
+  /// Internal metering below consumes its own narrow projection, never this client document.
+  static func clientOutput(_ value: JSONValue) -> JSONValue {
     guard var object = value.object else { return value }
-    if let response = object["response"] { object["response"] = textOutput(response) }
+    if let response = object["response"] { object["response"] = clientOutput(response) }
     if let error = object["error"], error != .null {
       object["error"] = ProviderError.sanitized(error) ?? .object([:])
     }
-    if let usage = object["usage"]?.object {
-      let root: Set<String> = [
-        "input_tokens", "output_tokens", "total_tokens", "input_tokens_details",
-        "output_tokens_details",
-      ]
-      // Clients decode these as integers; malformed counters are dropped rather than forwarded.
-      func counter(_ value: JSONValue) -> Bool { value.integer.map { $0 >= 0 } == true }
-      var counters = usage.filter {
-        root.contains($0.key)
-          && (counter($0.value)
-            || (["input_tokens_details", "output_tokens_details"].contains($0.key)
-              && $0.value.object != nil))
-      }
-      for key in ["input_tokens_details", "output_tokens_details"] {
-        if let details = usage[key]?.object {
-          let known: Set<String> =
-            key == "input_tokens_details"
-            ? ["cached_tokens", "cache_write_tokens", "cache_write_tokens_details"]
-            : ["reasoning_tokens"]
-          var projected = details.filter {
-            known.contains($0.key)
-              && ($0.key == "cache_write_tokens_details"
-                ? $0.value.object != nil : counter($0.value))
+    if var usage = object["usage"]?.object {
+      func repair(_ fields: inout JSONObject, counters: [String]) {
+        for key in counters {
+          if let value = fields[key], value.integer.map({ $0 >= 0 }) != true {
+            fields.removeValue(forKey: key)
           }
-          if let ttl = projected["cache_write_tokens_details"]?.object {
-            projected["cache_write_tokens_details"] = .object(
-              ttl.filter {
-                ["ttl_30m_tokens", "ttl_12h_tokens"].contains($0.key) && counter($0.value)
-              })
-          }
-          counters[key] = .object(projected)
         }
       }
-      object["usage"] = .object(counters)
+      repair(&usage, counters: ["input_tokens", "output_tokens", "total_tokens"])
+      for key in ["input_tokens_details", "output_tokens_details"] {
+        guard let value = usage[key] else { continue }
+        guard var details = value.object else {
+          usage.removeValue(forKey: key)
+          continue
+        }
+        repair(
+          &details,
+          counters: key == "input_tokens_details"
+            ? ["cached_tokens", "cache_write_tokens"] : ["reasoning_tokens"])
+        if key == "input_tokens_details", let value = details["cache_write_tokens_details"] {
+          if var ttl = value.object {
+            repair(&ttl, counters: ["ttl_30m_tokens", "ttl_12h_tokens"])
+            details["cache_write_tokens_details"] = .object(ttl)
+          } else {
+            details.removeValue(forKey: "cache_write_tokens_details")
+          }
+        }
+        usage[key] = .object(details)
+      }
+      object["usage"] = .object(usage)
     }
     return .object(object)
   }

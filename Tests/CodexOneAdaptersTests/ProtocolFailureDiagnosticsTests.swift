@@ -2,6 +2,7 @@ import AsyncHTTPClient
 import CodexOneCore
 import Foundation
 import NIOCore
+import NIOWebSocket
 import Testing
 
 @testable import CodexOneAdapters
@@ -16,6 +17,12 @@ struct ProtocolFailureDiagnosticsTests {
       (Unknown(), "other"),
       (ChannelError.ioOnClosedChannel, "channel_closed"),
       (ChannelError.inputClosed, "channel_input_closed"),
+      (ChannelError.alreadyClosed, "channel_already_closed"),
+      (ChannelError.eof, "channel_eof"),
+      (ChannelError.inappropriateOperationForState, "channel_invalid_state"),
+      (NIOWebSocketError.invalidFrameLength, "websocket_invalid_frame_length"),
+      (NIOWebSocketError.fragmentedControlFrame, "websocket_fragmented_control"),
+      (NIOWebSocketError.multiByteControlFrameLength, "websocket_control_length"),
       (HTTPClientError.remoteConnectionClosed, "remoteConnectionClosed"),
       (ExecutionError.conflict, "execution_conflict"),
       (ExecutionError.closed, "execution_closed"),
@@ -69,6 +76,71 @@ struct ProtocolFailureDiagnosticsTests {
     }
     let overflow = gate.admit(now: now.advanced(by: .seconds(60)))
     #expect(!overflow)
+  }
+
+  @Test func backendParameterReasonsExcludeValuesAndStayPrivate() throws {
+    let cases: [(String, JSONValue, ProtocolRejectionDetail)] = [
+      ("max_output_tokens", .number(128), .backendMaxOutputTokens),
+      ("temperature", .number(1), .backendTemperature),
+      ("top_p", .number(1), .backendTopP),
+      ("truncation", .string("synthetic-private-marker"), .backendTruncation),
+      ("prompt_cache_retention", .string("synthetic-private-marker"), .backendPromptCacheRetention),
+      ("metadata", .object(["private": .string("synthetic-private-marker")]), .backendMetadata),
+      ("store", .bool(true), .backendStore),
+      ("previous_response_id", .string("synthetic-private-marker"), .backendPreviousResponseID),
+    ]
+    for (field, value, detail) in cases {
+      let request = try ResponseRequest(
+        data: JSONValue.object([
+          "model": .string("synthetic-text"), "input": .string("synthetic"), field: value,
+        ]).data())
+      do {
+        _ = try request.preparedDocument(contract: .codexSubscription, nativeWebSocket: false)
+        Issue.record("Expected a local parameter refusal")
+      } catch let error as GatewayProtocolError {
+        #expect(error.status == 400 && error.code == "unsupported_backend_parameter")
+        #expect(error.detail == detail)
+        let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: UUID().uuidString)
+        #expect(metadata["reason"]?.description == detail.rawValue)
+        #expect(!String(describing: metadata).contains("synthetic-private-marker"))
+        let envelope = protocolErrorEnvelope(
+          error, requestID: UUID().uuidString, diagnostics: false)
+        #expect(envelope["error"]?.object?.count == 4)
+        #expect(!String(decoding: try envelope.data(), as: UTF8.self).contains(detail.rawValue))
+        // Only the pre-admission diagnostic changes classification.
+        #expect(executionFailure(error) == .indeterminate)
+      }
+    }
+    let combined = try ResponseRequest(
+      data: JSONValue.object([
+        "model": .string("synthetic-text"), "input": .string("synthetic"),
+        "store": .bool(true), "previous_response_id": .string("synthetic-private-marker"),
+      ]).data())
+    #expect(throws: GatewayProtocolError.self) {
+      do {
+        _ = try combined.preparedDocument(contract: .codexSubscription, nativeWebSocket: false)
+      } catch let error as GatewayProtocolError {
+        #expect(error.detail == .backendStore)
+        throw error
+      }
+    }
+  }
+
+  @Test func nullBackendParametersStillNormalizeWithoutRefusal() throws {
+    let fields = [
+      "max_output_tokens", "temperature", "top_p", "truncation", "prompt_cache_retention",
+      "metadata", "previous_response_id", "service_tier",
+    ]
+    var body: [String: JSONValue] = [
+      "model": .string("synthetic-text"), "input": .string("synthetic"), "store": .bool(false),
+    ]
+    for field in fields { body[field] = .null }
+    let request = try ResponseRequest(data: JSONValue.object(body).data())
+    for native in [false, true] {
+      let wire = try request.preparedDocument(contract: .codexSubscription, nativeWebSocket: native)
+      for field in fields { #expect(wire[field] == nil) }
+      #expect(wire["store"]?.bool == false && wire["stream"]?.bool == true)
+    }
   }
 
   @Test func toolReasonsAreFixedAndNeverAddedToPublicEnvelopes() {

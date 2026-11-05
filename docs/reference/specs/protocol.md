@@ -136,7 +136,9 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 图片原生入口的配置、透传、并发与期限见[图片配置](../../guide/images.md)。所有入口将能力要求随 admission 持久保存并在原子准入复核；Images 不再选择宿主或改写为 Responses。原生非流式 200 仅在有效 data[].b64_json 非空时判成功；SSE 仅可信图片 completed 事件及有效图片授予完成证据。Responses 托管图片工具仍以可信 response.completed 判定，output_item.done 与预览不承诺整个操作成功。
 
-数据服务持有一个 48 MiB 共享正文预算。超过 8 MiB 时计入整个正文：HTTP Content-Length 在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请，均在缓冲前取得租约。预算不足不排队：HTTP 503 capacity_exhausted、Retry-After: 1；WS 带 status: 503 的 error 帧并丢弃整条消息、保持连接。超过 32 MiB 为 413。解析/派发结束、失败、断开、超时及连接关闭均归还租约，重复释放幂等。预算约束原始正文，不等于进程 RSS；JSON 树、序列化及 base64 会产生额外内存。Images multipart 校验后转换为原生 JSON（24 MiB 图片编码为 32 MiB），不再构造工具封套；原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
+数据服务持有 64 MiB 共享正文容量和额外合计 8 MiB 小请求余量，普通正文全部计量；总大小不超过 8 MiB 的普通正文优先使用余量，再使用共享。控制正文仅使用共享。HTTP 已知长度在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请。部分正文增长的转池在同一预算锁内完成，失败保留原预留至 owner 清理，不持有部分容量等待。
+
+HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者，最长 5 秒，计入原请求读取/首 create 期限。共享申请按空 lease FIFO；小请求余量按小请求等待顺序，不被大请求阻塞。等待时不占正文容量；取消/断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超限提前拒绝；事件循环延迟不能使超时请求获批。队满、超时或增量不足返回 HTTP 503 capacity_exhausted、Retry-After: 1，WS 返回带 status: 503 的 error 帧并丢弃该消息；单条超过 32 MiB 为 413。解析后可清除原 Data，lease 由请求/turn owner 持有至完成或丢弃，所有结束路径幂等释放。72 MiB 是正文预留上界，JSON 树、序列化、base64、网络队列和输出仍占额外内存。Images multipart 转原生 JSON，原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
 
 可信离线profile导入及字段边界见[模型快照](../model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
@@ -154,12 +156,14 @@ JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒�
 
 Responses SSE 在执行用例已返回并移交最终化之后，才写入网关 `[DONE]` 和 HTTP end。这两个收尾写入失败只记录独立 info `Response stream finish failed after execution`，reason 仅为 `downstream_done_write` 或 `downstream_end_write`，附服务端 request UUID；无 code/status，独立限额 16 条/60 秒，不消耗真实拒绝的 warning 预算。此分类只作用于上述两个 I/O await；未开始/重复结束等状态错误及执行内错误保持既有拒绝日志。响应写入、错误映射、结算、用量、重试与取消均不改变；成功提交 writer 不保证客户端消费，也不保证网络结束标记送达。正常 JSON 与原生 WS 没有此 SSE 收尾分类。已成功提交 response.completed（或 completed JSON）的 HTTP writer，若后续执行收尾抛 CancellationError，诊断为 info `Response cleanup after completion` / `execution_cleanup_cancelled`；提交前取消、显式协议/上游错误和期限错误仍用原日志。已结束 HTTP 响应后，等待下一请求且尚未读到任何 request part 时，IOError/CancellationError 只诊断为同名 info / `downstream_idle_read`，引用上一响应的 UUID；首请求及新请求已有 part 的错误保留拒绝日志。两种 cleanup info 与 SSE finish 共用独立 16 条/60 秒预算。上述分类不改变既有错误写入尝试、客户端响应、执行失败分类和持久责任。
 
-usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细；input_tokens_details.cache_write_tokens_details 仅保留非负整数 ttl_30m_tokens 与 ttl_12h_tokens，未知或畸形嵌套成员丢弃；其余 usage 成员不出网关。
+usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端回传时保留未知 usage 成员及嵌套扩展，仅局部省略已知 input/output/total、cached/cache_write/reasoning、ttl_30m_tokens/ttl_12h_tokens 的畸形整数或已知明细的畸形容器，保留成员顺序。内部可信计量独立读取原始事件，不将未知明细当作额外消耗或执行事实。
 
 
 ## 请求契约选择
 
 可信配置选择responses或codex-subscription请求契约，不能由下游覆盖；账号池与非loopback订阅固定后者。普通订阅HTTP使用stream=true/store=false；下游JSON仅提交已验证终态，SSE逐事件提交。显式store=true及HTTP previous_response_id准入拒绝（包括HTTP→WS新连接桥接），原生WS保留同连接续接。订阅普通路径非null max_output_tokens/temperature/top_p/truncation/prompt_cache_retention/metadata返回400 unsupported_backend_parameter，不静默删除限制；其null在组装时移除；service_tier 等其他字段透传。字符串input映射为等价user消息数组。图片和独立compact不随此扩展或改变消费语义。合成验证不替代真实客户端/模型验收。
+
+上述订阅参数拒绝的私有日志 reason 为固定 `backend_parameter_<字段名>`，字段名仅限 max_output_tokens、temperature、top_p、truncation、prompt_cache_retention、metadata、store、previous_response_id。多项不支持时按上述六项顺序、store、previous_response_id 报首项；保留既有日志容量限制，不记录参数值或正文，不向公开错误 envelope 添加 reason。仅准入前诊断将 400 unsupported_backend_parameter 记录为 invalid_request；执行内错误、未知执行及派发规则不变，历史诊断不重分类。
 
 
 普通订阅WS组包保留stream=true/store=false，与固定Codex客户端ResponseCreateWsRequest一致；通用responses WS仍按其隐式流规则移除stream。不得把公开API的WS规则推导为订阅后端规则，图片沿独立契约。
@@ -178,7 +182,7 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 
 原生 Images 两前缀均 POST 至所选身份上游 /backend-api/codex/images/generations|edits；与 Responses HTTP 共用受限客户端标识头，额外转发 x-codex-image-turn-id，账号认证由服务注入。`x-openai-actor-authorization` 是 Codex 客户端的本地门控标记：Desktop 自定义 provider 配置它（且 `requires_openai_auth = false`）才会声明内置生图与独立搜索工具。网关接受携带它的请求、不据此授权，任何上游请求（Responses、Images、控制接口共用的标识头允许列表及 WS 握手）均不得携带。回传 x-codex-imagegen-request-id 和网关 x-request-id。服务持有独立 imageConcurrency 许可池（1—8、默认2），等待最多30秒；超时429 image_capacity_exhausted / Retry-After: 1，无 intent/派发。成功、失败、取消与断开均只归还一次许可；账本未知责任不随许可归还而释放。
 
-Desktop 辅助控制接口采用[精确方法/路径允许列表](../control-endpoints.md)，仅启用的托管 Key 可访问；analytics-events/events 的 POST 本地 202 `{}`，其余单次账号授权后透传，不创建生成 intent 或扣减 Key 生成限额。请求原字节/查询串/Content-Type 保留，辅助正文最多 8 MiB 且全部计入共享 48 MiB 预算；响应提交前有界收集最多 16 MiB，超出 502。成功状态/正文与安全头回传，错误遵循 P27；账号池辅助 5xx 仅在服务内冷却同账号/端点；429 保留账号级配额保护，不推测更窄作用域；401 标记当前凭证健康。实际选择时重新读取冷却并保留适用 Retry-After。数据服务持有全局 8、每 Key 4 的无等待舱壁，超限 429 control_capacity_exhausted、Retry-After: 1，所有结束路径单次释放。派发总期限 60 秒（memories 为 300 秒），超时 504 表示结果未知，取消并等待本地上游、不重放。只记录有界路径类别/Key ID/账号 ID/状态/耗时，realtime 仅状态/耗时；头部软亲和、读取期限和安全响应头范围见[开发约定](../control-endpoints.md)。不扩展 realtime WebSocket、transcribe、files 或 usage 路由。
+Desktop 辅助控制接口采用[精确方法/路径允许列表](../control-endpoints.md)，仅启用的托管 Key 可访问；analytics-events/events 的 POST 本地 202 `{}`，其余单次账号授权后透传，不创建生成 intent 或扣减 Key 生成限额。请求原字节/查询串/Content-Type 保留，辅助正文最多 8 MiB 且全部计入共享 64 MiB 预算；响应提交前有界收集最多 16 MiB，超出 502。成功状态/正文与安全头回传，错误遵循 P27；账号池辅助 5xx 仅在服务内冷却同账号/端点；429 保留账号级配额保护，不推测更窄作用域；401 标记当前凭证健康。实际选择时重新读取冷却并保留适用 Retry-After。数据服务持有全局 8、每 Key 4 的无等待舱壁，超限 429 control_capacity_exhausted、Retry-After: 1，所有结束路径单次释放。派发总期限 60 秒（memories 为 300 秒），超时 504 表示结果未知，取消并等待本地上游、不重放。只记录有界路径类别/Key ID/账号 ID/状态/耗时，realtime 仅状态/耗时；头部软亲和、读取期限和安全响应头范围见[开发约定](../control-endpoints.md)。不扩展 realtime WebSocket、transcribe、files 或 usage 路由。
 
 ## P28：客户端标识与连接容量
 
@@ -194,6 +198,16 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 请求 reasoning.effort/service_tier 的只读账本观察及终态实际档位见 U10 补充；该观察不增加协议值白名单、不拒绝或改写提供者参数，原有 null 省略规则不变。
 
+## 协议扩展的解释边界
+
+保留传输内容、提取业务事实、判断执行风险互相独立。ProviderEventSemantics 仅映射已知 lifecycle、output_item、part/delta 及工具阶段；未知事件原样转发（须先满足 lane/response 隔离与资源边界），不能因携带 item/item_id/call_id 就授予归属、续期或终态。已知 output_item 封套仍可建立 item ID；function_call/custom_tool_call 才解释 call_id。未知事件、metadata 和空 delta 不推进 first/idle；原生 Images 只将已知 completed 与非空 partial_image 作为进展，未知图片事件不续期。total 期限继续独立生效；既有工具阶段事件的重复语义未在此承诺全面去重。
+
+未知应用事件即使暂时不能关联到响应，也否定未处理的假设：reader 在入队/丢弃前关闭该 turn 的 1009 例外，无法归属到在途 lane 时保守作用于该连接已派发的在途 lane，但不将事件作为它们的归属、用量或完成证据。明确属于旧 response 的事件继续隔离，不污染新 turn。rate_limits.updated、codex.rate_limits、response.metadata、codex.response.metadata 仅在不携带 response/response_id/item/item_id/delta/output 时可作为连接元数据例外。transport 关闭后保留当前 turn 的风险证据供 1009 分类；仅连接上唯一已派发在途 turn 可接受该未处理例外，多 lane 同时在途时连接级 1009 无法证明每轮均未处理，保持 unknown。其他关闭不据此重放。
+
+Responses 所有入口统一回传修正：保留未知 usage 根成员及嵌套明细，仅局部省略已知的畸形整数/明细容器，维持错误脱敏。该回传文档不作为内部计量来源。图片结果采用有界、非空、规范 base64 封套校验，不使用参考图输入 codec、不本地执行或抓取产物；输入图片限制不变。所有原生 generation 的 JSON 输出均在提交前检查媒体类型、完整 created/data 与规范 base64，不能因未知格式就回传无效成功文档。
+
+原生 Images 的省略格式及 PNG/JPEG/WebP 保留已有 generation SSE、edits JSON 转换；GIF/SVG 保留明确非流式限制。其他未知 output_format 保留客户端 stream 选择，不继承已知格式 workaround；协议字段、授权、资源边界继续生效，不证明提供者实际支持。扩展观察与人工跟踪见[客户端协议跟踪](../../development/client-protocol-watch.md)。
+
 ## JSON 对象顺序
 
 客户端或上游 JSON 经解析和重新序列化时，各层对象保留收到的键顺序，包括工具 schema 的 properties、HTTP Responses / compact、SSE、WebSocket create/control 与客户端响应。已有字段替换值时保留位置，删除字段不移动其余成员，新增字段按固定组装顺序追加；本地产生的无序映射按键排序后插入。对象相等比较仍忽略成员顺序。仅顺序成为明确契约，空白、转义写法与数字词法不保证原字节回显；直接透传路径仍保留原字节。
@@ -206,7 +220,7 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
 
-请求帧发送后、上游任何响应生命周期事件之前的明确 WS close code **1009**，也视为未处理的大小拒绝，不依赖 16 MiB 预检值。独立 HTTP JSON/SSE 在同一次已准入执行内、同一账号与认证/路由/会话/turn-state 下回退 HTTP 一次；预检及 1009 共享单轮边界，不会再次回退。rate-limit/connection metadata 不算生命周期；这些事件在响应开始前缓冲，1009 回退时不提交给客户端。生命周期标记由上游唯一 reader 在入队前更新；`response.created` 或后续响应事件之后的 1009、其他 close code、EOF/掉线均保留原行为，不能重放。回退 HTTP 自己失败时沿其既有失败路径收尾，不重选账号。
+请求帧发送后、上游任何可能已处理的应用事件之前的明确 WS close code **1009**，也视为未处理的大小拒绝，不依赖 16 MiB 预检值。独立 HTTP JSON/SSE 在同一次已准入执行内、同一账号与认证/路由/会话/turn-state 下回退 HTTP 一次；预检及 1009 共享单轮边界，不会再次回退。rate-limit/connection metadata 不算生命周期；这些事件在响应开始前缓冲，1009 回退时不提交给客户端。生命周期标记由上游唯一 reader 在入队前更新；`response.created` 或后续响应事件之后的 1009、其他 close code、EOF/掉线均保留原行为，不能重放。回退 HTTP 自己失败时沿其既有失败路径收尾，不重选账号。
 
 原生下游 WS 全部不做 HTTP 回退：即使未带 `previous_response_id`，input 也可能依赖连接累计上下文，且存在 lane、warmup 与并发控制语义。超限 create 在准入前拒绝，初始 turn 不建立上游 socket；后续拒绝不破坏已有 socket/上下文，可缩小输入后继续。HTTP 桥接超限且带非 null `previous_response_id` 也拒绝，不能静默删除 context；低于上限沿用原校验。对于已发送的早期 1009，原生 WS 与已通过原校验、含 `previous_response_id` 的 HTTP 续接均为已准入的 413：依 U13 结算完整零用量，不重放客户端 turn。原生客户端 socket 保持开放，后续独立小 turn 可重新建立上游连接；不承诺恢复已关闭上游的隐式连接上下文。Codex subscription HTTP 原有 `previous_response_id` 参数校验继续生效。
 
@@ -214,7 +228,9 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 无法等价回退的超限请求，或回退 HTTP 明确返回 413，使用 413 `conversation_too_large`，提示会话或图片过大，开始新会话或移除图片。HTTP JSON/SSE 在未提交响应前返回 JSON error envelope；已经开始的 SSE 遵循 P27 的 `response.failed`；原生 WS 使用带 `status: 413` 的 `error` 帧。网关不重放、不附 Retry-After，不触发账号健康/冷却。准入前本地拒绝只有拒绝诊断、没有 attempt；HTTP 413 的已准入 attempt 依 U13 结算明确拒绝的完整零用量、`invalid_request` 失败，不留下 unknown。HTTP 已发送后的取消/断流仍可能执行，保留既有未知责任，不能归为大小拒绝。
 
-大小诊断只记录固定路径 `http`、`reject_native`、`reject_continuation`、`http_1009`、`reject_native_1009`、`reject_continuation_1009`、`indeterminate_1009`、`reject_ingress`、`reject_budget`，桶为 `at_most_16_mib`（≤16 MiB）、`16_to_24_mib`（>16 且 ≤24）、`24_to_32_mib`（>24 且 ≤32）、`over_32_mib`（>32）。1009 同时记录 `upstream_ws_close_code=1009`。大小诊断共用独立 16 条/60 秒预算，不记录正文、图片、精确字节数或会话内容。32 MiB ingress 和 48 MiB 预算不变，HTTP 声明长度/累计正文及 WS 累计帧在对应拒绝处记录大小桶；预算记录被拒绝单个正文的桶。真实上游接受边界、HTTP 对这些大小的接受情况及真实客户端组合须发布前由维护者验收，本地 fake provider 成功不能证明真实接受。已读官方客户端对 413 的重试局限见 [源码核查](../compatibility.md#大请求错误的官方客户端源码核查)。
+大小诊断只记录固定路径 `http`、`reject_native`、`reject_continuation`、`http_1009`、`reject_native_1009`、`reject_continuation_1009`、`indeterminate_1009`、`reject_ingress`、`reject_budget`，桶为 `at_most_16_mib`（≤16 MiB）、`16_to_24_mib`（>16 且 ≤24）、`24_to_32_mib`（>24 且 ≤32）、`over_32_mib`（>32）。1009 同时记录 `upstream_ws_close_code=1009`。大小诊断共用独立 16 条/60 秒预算，不记录正文、图片、精确字节数或会话内容。32 MiB ingress 保持，正文预算放宽至 64 MiB，HTTP 声明长度/累计正文及 WS 累计帧在对应拒绝处记录大小桶；预算记录被拒绝单个正文的桶。真实上游接受边界、HTTP 对这些大小的接受情况及真实客户端组合须发布前由维护者验收，本地 fake provider 成功不能证明真实接受。已读官方客户端对 413 的重试局限见 [源码核查](../compatibility.md#大请求错误的官方客户端源码核查)。
+
+连接级上游关闭由连接 owner 统一收尾：停止接纳新命令，各活动 lane 提交自己的错误后再关闭下游，不由首个 lane 提前取消其余错误发送。已排队但未派发的命令只归还资源；活动计数等待使用既有 10 秒期限，超时或下游已断开仍取消回收；取消后继续等待持久最终化，不以该期限强杀或丢弃账本责任。不改变 unknown、不自动重放。
 
 ## 相关文档
 
@@ -226,6 +242,10 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 12 MiB 预路由阈值以 5/12 MiB 成功与 15 MiB 上传中断的观察选择，原生下游 WS 同样采用此阈值拒绝，以便客户端沿既有 conversation_too_large 路径回落 HTTP；实际比较包含最终编码开销。HTTP 大请求沿用既有压缩策略。并未发现上游 WS 上传代码的固定 30 秒期限；不能据中断时间推断原因。WS 单个完整 frame 的 write future 失败可能发生在对端已收到全部载荷之后，无事件也不证明未执行，因此不对普通写失败/取消/EOF 新增 HTTP 重试。只有既有明确早期 1009 拒绝规则允许回退，未知仍未知。
 
-原生 generations 无论下游 stream 均向上游请求 stream=true/Accept SSE；非流式客户端不接收预览，等完整流结束并验证全部完成事件后返回 200 application/json。不同图片的完成事件按到达顺序聚合 data；完成事件的 created_at 映射 created，b64_json/revised_prompt 放入 data 的图片项，其余结果元数据和 usage 保留；已有 created/data 完整结果保持字段。不得伪造缺失时间、图片或用量。编辑向上游请求非流式（客户端 stream=true 时按完整 JSON 转完成事件）。错误头状态沿原映射；非流式 SSE 内错误在提交前返回 JSON error，截断、重复投递同一完成事件或无终态均失败，已观察用量不因后续断流丢失、不重放。JSON 对象字段顺序/空白不承诺与另一种上游格式字节相同，字段和值按受测原生映射保留。真实提供者格式等价仍须独立验收。
+原生 generations 的 PNG/JPEG/WebP 及省略输出格式时，无论下游 stream 均向上游请求 stream=true/Accept SSE；GIF/SVG 默认可尝试，改用非流式 JSON，不强制 SSE，不需要格式开关或逐账号确认配置，仍受图片启用与有效图片模型权限约束；实际可用性由提供者判定，不更换模型、不重放。普通 SVG 使用上游默认编写模型；显式非 null svg 对象暂以 400 unsupported_svg_model_selection 拒绝，不派发；当前固定 Codex 工具未暴露该选择，客户端演进后需重新对齐。扩展格式拒绝 stream=true、partial_images、mask 与 output_compression；SVG 另限 generation、n=1（或省略）、无 prompt_rewriter，400 unsupported_image_format_combination，均不派发。其他参数仍按 P27 透传。非流式客户端不接收预览，等完整流结束并验证全部完成事件后返回 200 application/json。不同图片的完成事件按到达顺序聚合 data；完成事件的 created_at 映射 created，b64_json/revised_prompt 放入 data 的图片项，其余结果元数据和 usage 保留；已有 created/data 完整结果保持字段。不得伪造缺失时间、图片或用量。编辑向上游请求非流式（客户端 stream=true 时按完整 JSON 转完成事件）。错误头状态沿原映射；非流式 SSE 内错误在提交前返回 JSON error，截断、重复投递同一完成事件或无终态均失败，已观察用量不因后续断流丢失、不重放。JSON 对象字段顺序/空白不承诺与另一种上游格式字节相同，字段和值按受测原生映射保留。真实提供者格式等价仍须独立验收。
 
 入站 HTTP 正文超时以 408 request_body_timeout JSON envelope 结束（连接仍可写、已解析请求头且尚未提交响应时），随后关闭，不复用未读完的连接。只收到不完整请求头或空闲 keep-alive 超时直接关闭。正文读取与超时共用原子结束屏障，超时后的 buffered end 不能进入准入；活跃上传更新空闲期限但不延长 120 秒总期限。未映射执行错误与 downstream_json_write 诊断含有界 cause：固定通道/执行/JSON/HTTPClient 分类、有限 errno 或 other，不记录错误描述、正文或路径；映射状态与 unknown 语义不变。
+
+执行失败 cause 诊断对 ChannelError 的已关闭、EOF、连接中、连接超时、不支持操作和无效状态分别使用固定 token，对 NIOWebSocketError 的帧长、分片控制帧及控制帧长度分别分类；无描述或正文，不据此推断根因或重放。
+
+原生 Images 的关键根成员 model、stream、output_format、images、mask、n、partial_images、output_compression、prompt_rewriter、svg 禁止重复，按解转义后的名称识别并在派发前返回 400 invalid_json；其他入口与未知成员的既有 JSON 语义不变。扩展 generation 非流式输出提交前验证完整 JSON、JSON 媒体类型、created 与全部规范非空 base64 图片；无效结果返回 502，先保留已观察用量，不重放。

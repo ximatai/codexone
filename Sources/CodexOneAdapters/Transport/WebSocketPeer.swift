@@ -244,9 +244,12 @@ struct WebSocketPeer: Sendable {
   func beginTurn(lane: String = "", compaction: Bool = false) throws {
     try turns?.begin(lane: lane, compaction: compaction)
   }
-  func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
-  {
-    try turns?.attachEvidence(lane: lane, handler: handler)
+  func attachEvidence(
+    lane: String, unattributedProcessing: (@Sendable () -> Void)? = nil,
+    handler: @escaping @Sendable (JSONValue) throws -> Void
+  ) throws {
+    try turns?.attachEvidence(
+      lane: lane, unattributedProcessing: unattributedProcessing, handler: handler)
   }
   func delivered(_ event: JSONValue) { turns?.delivered(event) }
   func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
@@ -276,7 +279,7 @@ struct WebSocketPeer: Sendable {
     defer { lifetime.cancel() }
     try await socket.executeThenClose { inbound, outbound in
       let inbox = WebSocketInbox(
-        capacity: client ? ImageLimits.eventBytes : RequestBodyLimits.budgetBytes)
+        capacity: client ? ImageLimits.eventBytes : RequestBodyLimits.webSocketQueueBytes)
       let closure = WebSocketTurns()
       let turns = client ? closure : nil
       let writer = WebSocketWriter(writer: outbound, channel: socket.channel, client: client)

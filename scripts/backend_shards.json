@@ -49,6 +49,7 @@
     "verify_trial_provider.py",
     "verify_lite.py",
     "verify_text_contract.py",
-    "verify_upstream_ws_body_limit.py"
+    "verify_upstream_ws_body_limit.py",
+    "verify_admin_live.py"
   ]
 ]

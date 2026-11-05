@@ -67,12 +67,12 @@ final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
       guard
-        version == 0 || version == 11 || (restoringV7 && [7, 8, 9, 10].contains(version))
-          || (migrating && (1...10).contains(version))
+        version == 0 || version == 12 || (restoringV7 && [7, 8, 9, 10, 11].contains(version))
+          || (migrating && (1...11).contains(version))
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 11 && !(restoringV7 && [7, 8, 9, 10].contains(version)) {
+      if existingOnly && version != 12 && !(restoringV7 && [7, 8, 9, 10, 11].contains(version)) {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -99,7 +99,10 @@ final class SQLiteConnection: @unchecked Sendable {
             } : [])
           + (version >= 5 ? Self.observationColumns : [])
           + (version >= 7 ? Self.maintenanceColumns : [])
-          + (version >= 10 ? Self.governanceColumns : [])
+          + (version >= 10
+            ? Self.governanceColumns.map { table, columns in
+              (table, columns + (version >= 12 && table == "usage_daily" ? Self.authorColumns : []))
+            } : [])
           + (version >= 11 ? Self.resetCreditColumns : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
@@ -108,7 +111,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, !(1...11).contains(version) {
+      if migrating, !(1...12).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
@@ -135,11 +138,12 @@ final class SQLiteConnection: @unchecked Sendable {
             )
           }
           if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
-          try exec(Self.resetCreditSchema)
-          try exec("PRAGMA user_version=11")
+          if version < 11 { try exec(Self.resetCreditSchema) }
+          try exec(Self.authorSchema)
+          try exec("PRAGMA user_version=12")
         }
       }
-      if (1...10).contains(version) {
+      if (1...11).contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -166,8 +170,9 @@ final class SQLiteConnection: @unchecked Sendable {
             )
           }
           if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
-          try exec(Self.resetCreditSchema)
-          try exec("PRAGMA user_version=11")
+          if version < 11 { try exec(Self.resetCreditSchema) }
+          try exec(Self.authorSchema)
+          try exec("PRAGMA user_version=12")
         }
       }
       guard try scalar("PRAGMA auto_vacuum") == 2 else { throw ExecutionError.storageUnavailable }
@@ -210,7 +215,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard [7, 8, 9, 10, 11].contains(try scalar("PRAGMA user_version")),
+      guard [7, 8, 9, 10, 11, 12].contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema
@@ -404,6 +409,17 @@ final class SQLiteConnection: @unchecked Sendable {
     ("maintenance_events", ["id", "action", "record_json", "at_epoch"]),
   ]
 
+  private static let authorColumns = [
+    "svg_input_tokens", "svg_output_tokens", "svg_reasoning_tokens", "price_unknown",
+  ]
+  private static let authorSchema = """
+    ALTER TABLE usage_daily ADD COLUMN svg_input_tokens INTEGER;
+    ALTER TABLE usage_daily ADD COLUMN svg_output_tokens INTEGER;
+    ALTER TABLE usage_daily ADD COLUMN svg_reasoning_tokens INTEGER;
+    ALTER TABLE usage_daily ADD COLUMN price_unknown INTEGER NOT NULL DEFAULT 0;
+    UPDATE usage_daily SET price_unknown=CASE WHEN completeness='complete' THEN 0 ELSE requests END;
+    """
+
   static func governanceSchema(now: Int64) -> String {
     """
     ALTER TABLE attempts ADD COLUMN unknown_since_epoch INTEGER;
@@ -461,7 +477,7 @@ final class SQLiteConnection: @unchecked Sendable {
       (path as NSString).deletingLastPathComponent,
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
-    let destination = path + ".pre-v11-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v12-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

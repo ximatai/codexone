@@ -151,10 +151,24 @@ class Provider(BaseHTTPRequestHandler):
                     self.server.oversized_ws += 1
                     send(self.connection, struct.pack('!H', 1009), opcode=8)
                     return
-                if self.server.mode.startswith(('close', 'metadata', 'created', 'other', 'drop')):
+                if self.server.mode in ('multi_close', 'multi_close_queued'):
+                    second_opcode, second_body = receive(self.connection, masked=True)
+                    assert second_opcode == 1
+                    self.capture(second_body, 'websocket')
+                    if self.server.mode == 'multi_close_queued':
+                        self.server.started.set()
+                        assert self.server.release.wait(10), 'Queued-close provider hold expired'
+                    send(self.connection, struct.pack('!H', 1009), opcode=8)
+                    return
+                if self.server.mode.startswith(('close', 'metadata', 'created', 'extension', 'other', 'drop')):
                     mode = self.server.mode
                     if mode.startswith('metadata'):
                         send(self.connection, wire(dict(type='rate_limits.updated', rate_limits=[])))
+                    if mode.startswith('extension'):
+                        event = dict(type='synthetic.future.started')
+                        if mode == 'extension_response': event['type'] = 'response.future.started'
+                        if mode == 'extension_identity': event['response_id'] = 'synthetic-unresolved'
+                        send(self.connection, wire(event))
                     if mode == 'created':
                         send(self.connection, wire(dict(type='response.created', response=dict(
                             id=f'resp_synthetic_large_{index}', status='in_progress', output=[]))))
@@ -218,14 +232,14 @@ def configure(config, provider_port, contract):
     config.chmod(0o600)
 
 
-def held_body_budgets(port, server, contract):
+def held_body_budgets(port, server, contract, process):
     """Parsing can drop raw bytes, but real socket requests still own their leases."""
     def wait_calls(expected):
         with server.guard:
             assert server.guard.wait_for(lambda: len(server.calls) == expected, timeout=30)
 
     def refused(size):
-        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
         try:
             connection.putrequest('POST', '/v1/responses')
             connection.putheader('Authorization', 'Bearer ' + TOKEN)
@@ -238,40 +252,76 @@ def held_body_budgets(port, server, contract):
         finally:
             connection.close()
 
+    # Serialize once before any native connection starts its first-create clock.
+    native_payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
     server.release = threading.Event()
     server.mode = 'hold'
     before = len(server.calls)
-    with ThreadPoolExecutor(max_workers=1) as worker:
-        held = worker.submit(call_http, port, sized(30 * 1024 * 1024, contract))
+    with ThreadPoolExecutor(max_workers=2) as worker:
+        holders = [worker.submit(call_http, port, sized(30 * 1024 * 1024, contract)) for _ in range(2)]
         try:
-            wait_calls(before + 1)
+            wait_calls(before + 2)
             refused(20 * 1024 * 1024)
-            assert len(server.calls) == before + 1
+            assert len(server.calls) == before + 2
         finally:
             server.release.set()
-        assert held.result(timeout=30)[0] == 200
+        for holder in holders: assert holder.result(timeout=30)[0] == 200
     server.release.clear()
-    try:
-        with ExitStack() as stack:
-            peers = [stack.enter_context(dial(port, headers=HEADERS, timeout=30)) for _ in range(2)]
-            for peer in peers:
-                request = sized(9 * 1024 * 1024, contract, native=True)
-                send(peer, wire({'type': 'response.create', **request}), masked=True,
-                     maximum_bytes=10 * 1024 * 1024)
-            wait_calls(before + 3)
-            refused(32 * 1024 * 1024)
-            assert len(server.calls) == before + 3
-            server.release.set()
-            for peer in peers:
+    # A native WS can wait with only its frame header present, then continue after
+    # the competing HTTP execution releases capacity; no full payload is queued.
+    with ThreadPoolExecutor(max_workers=2) as worker:
+        holders = [worker.submit(call_http, port, sized(32 * 1024 * 1024, contract)) for _ in range(2)]
+        wait_calls(before + 4)
+        # Native Linux reports the process high-water mark, excluding fake-provider/client RSS.
+        status_file = Path(f'/proc/{process.pid}/status')
+        if status_file.exists():
+            peak = next(int(line.split()[1]) for line in status_file.read_text().splitlines() if line.startswith('VmHWM:'))
+            print('RESOURCE ' + json.dumps({'scenario':'two_maximum_bodies', 'peak_rss_kib':peak, 'budget_mib':64, 'contract':contract}), flush=True)
+        try:
+            with dial(port, headers=HEADERS, timeout=30) as peer:
+                peer.sendall(b'\x81\xff' + struct.pack('!Q', len(native_payload)) + b'\0' * 4)
+                time.sleep(.2)
+                assert len(server.calls) == before + 4
+                server.release.set()
+                for holder in holders: assert holder.result(timeout=30)[0] == 200
+                time.sleep(.5)
+                peer.sendall(native_payload)
                 opcode, body = receive(peer)
                 assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
-    finally:
-        server.release.set()
-        server.mode = 'ok'
+                wait_calls(before + 5)
+        finally:
+            server.release.set()
+    before = len(server.calls)
+    server.release.clear()
+    # Prepare large client bytes before starting the gateway's first-create timer.
+    # Hold a 32 MiB HTTP execution plus two 9 MiB native turns; another 20 MiB
+    # cannot fit. Opening each WS only when ready avoids idle clients expiring
+    # while a slower Linux runner serializes the other peers' large fixtures.
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract))
+        try:
+            wait_calls(before + 1)
+            with ExitStack() as stack:
+                peers = []
+                for _ in range(2):
+                    peer = stack.enter_context(dial(port, headers=HEADERS, timeout=30))
+                    peers.append(peer)
+                    send(peer, native_payload, masked=True, maximum_bytes=10 * 1024 * 1024)
+                    wait_calls(before + 1 + len(peers))
+                refused(20 * 1024 * 1024)
+                assert len(server.calls) == before + 3
+                server.release.set()
+                for peer in peers:
+                    opcode, body = receive(peer)
+                    assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+            assert held.result(timeout=30)[0] == 200
+        finally:
+            server.release.set()
+            server.mode = 'ok'
     # Completion/connection teardown returns capacity; a fresh large request dispatches.
     assert call_http(port, sized(31 * 1024 * 1024, contract))[0] == 200
     print('PASS: HTTP and first WS turns retain body budget after parsing; completion returns capacity', flush=True)
-    return 4
+    return 9
 
 
 def body_limit_diagnostics(binary, config, root, server, contract, failures_only):
@@ -333,9 +383,76 @@ def body_limit_diagnostics(binary, config, root, server, contract, failures_only
     print(f'PASS: {contract}: isolated real 1009/native/HTTP body-limit diagnostics', flush=True)
 
 
+def verify_small_body_budget(port, server, contract):
+    """Known-size ordinary bodies hold bounded reservations even before admission."""
+    before = len(server.calls)
+    with ExitStack() as stack:
+        # Park headers with a tiny prefix. This checks reservations without filling
+        # memory or waiting for any provider execution.
+        for _ in range(9):
+            sock = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=8))
+            header = (f'POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                      f'Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n'
+                      f'Content-Length: {8 * 1024 * 1024}\r\n\r\n').encode()
+            sock.sendall(header + b'{')
+        time.sleep(.3)
+        with ThreadPoolExecutor(max_workers=1) as worker, dial(port, headers=HEADERS, timeout=9) as peer:
+            http_result = worker.submit(call_http, port, sized(1024, contract))
+            peer.sendall(b'\x81\xfe' + struct.pack('!H', 1024) + b'\0' * 4)
+            status, _, body = http_result.result(timeout=8)
+            assert status == 503 and json.loads(body)['error']['code'] == 'capacity_exhausted', status
+            opcode, body = receive(peer)
+            assert opcode == 1, opcode
+            event = json.loads(body)
+            assert event['status'] == 503 and event['error']['code'] == 'capacity_exhausted', event
+        assert len(server.calls) == before, 'Incomplete bodies or capacity waits dispatched upstream'
+    # A fresh ordinary and a fresh large body both become serviceable after closure.
+    assert call_http(port, sized(1024, contract))[0] == 200
+    assert call_http(port, sized(32 * 1024 * 1024, contract))[0] == 200
+    assert len(server.calls) == before + 2
+    print(f'PASS: {contract}: ordinary HTTP/WS reservations are bounded before admission; closure reclaims capacity', flush=True)
+    return 2
+
+
+def verify_lane_close(port, server, root, contract, count, repetitions=12):
+    for iteration in range(repetitions):
+        queued = iteration >= repetitions - 4
+        server.mode = 'multi_close_queued' if queued else 'multi_close'
+        server.started.clear()
+        server.release.clear()
+        before = len(server.calls)
+        with dial(port, headers=HEADERS, timeout=30) as peer:
+            for lane in ('first', 'second'):
+                send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':lane}, masked=True)
+            if queued:
+                assert server.started.wait(5), 'Provider did not receive both lanes'
+                for _ in range(3):
+                    send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':'first'}, masked=True)
+                server.release.set()
+            ended = set()
+            while len(ended) < 2:
+                opcode, data = receive(peer)
+                assert opcode == 1, (contract, iteration, 'closed before all lane errors', sorted(ended),
+                                     struct.unpack('!H', data[:2])[0] if opcode == 8 and len(data) >= 2 else opcode)
+                event = json.loads(data)
+                assert event['type'] == 'error' and event['status'] == 502, event
+                assert event['stream_id'] not in ended, event
+                ended.add(event['stream_id'])
+            assert ended == {'first', 'second'}
+            opcode, data = receive(peer)
+            assert opcode == 8 and data[:2] == struct.pack('!H', 1000), (opcode, len(data))
+        assert len(server.calls) == before + 2
+        count += 2
+        assert all(row[0] == 'unknown' and row[2] is None for row in ledger(root, count)[-2:])
+    print('PASS: ' + contract + ': repeated two-lane close drains both errors before connection close; unknown retained')
+    return count
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
+    parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -344,6 +461,7 @@ def main():
     server.calls = []
     server.oversized_ws = 0
     server.started = threading.Event()
+    server.release = threading.Event()
     server.cancelled = threading.Event()
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
@@ -354,14 +472,23 @@ def main():
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, contract)
-                body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
-                                       server, contract, args.failures_only)
+                if not args.small_body_only:
+                    body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
+                                           server, contract, args.failures_only)
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
                 try:
+                    if args.small_body_only:
+                        count += verify_small_body_budget(ports['data'], server, contract)
+                        ledger(root, count)
+                        continue
+                    if args.lane_close_only:
+                        verify_lane_close(ports['data'], server, root, contract, count)
+                        continue
                     if not args.failures_only:
-                        count += held_body_budgets(ports['data'], server, contract)
+                        count += verify_small_body_budget(ports['data'], server, contract)
+                        count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
                         for route in ('json', 'sse', 'native'):
                             for size in (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1):
@@ -440,6 +567,8 @@ def main():
                         assert status == 413, (status, body[:500])
                         error(body)
                         ledger(root, count)
+                    # Both dispatched lanes retain unknown and must each deliver their error.
+                    count = verify_lane_close(ports['data'], server, root, contract, count)
                     # Real below-threshold refusals: exactly one HTTP replay, same bytes/state.
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
@@ -500,7 +629,7 @@ def main():
                         assert state == 'settled' and outcome['failure'] == 'invalid_request'
                         assert usage['inputTokens'] == usage['outputTokens'] == 0
                     # Lifecycle, other close codes, and EOF keep indeterminate behavior, no replay.
-                    for mode in ('created', 'other', 'drop'):
+                    for mode in ('created', 'extension', 'extension_response', 'extension_identity', 'other', 'drop'):
                         server.mode = mode
                         before = len(server.calls)
                         status, _, body = call_http(ports['data'], sized(1024, contract))

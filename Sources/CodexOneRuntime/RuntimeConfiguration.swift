@@ -12,6 +12,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let accountPoolConfigurationPath: String?
   public let adminTokenFile: String?
   public let accountMasterKeyFile: String?
+  public let adminLiveEnabled: Bool
   public let adminPublicOrigin: String?
   public let webDirectory: String?
   public let upstreamHTTPProxy: String?
@@ -28,6 +29,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
     case invalidAccountPoolConfiguration
     case invalidAdminTokenFile
     case invalidAccountMasterKeyFile
+    case invalidAdminLive
     case invalidAdminOrigin
     case invalidWebDirectory
   }
@@ -107,6 +109,9 @@ public struct RuntimeConfiguration: Sendable, Equatable {
     } else {
       accountPoolConfigurationPath = nil
     }
+    let live = environment["CODEXONE_ADMIN_LIVE"] ?? "off"
+    guard ["on", "off"].contains(live) else { throw ConfigurationError.invalidAdminLive }
+    adminLiveEnabled = live == "on"
     if let origin = environment["CODEXONE_ADMIN_PUBLIC_ORIGIN"] {
       guard !origin.isEmpty, origin.utf8.count <= 2048, !origin.utf8.contains(0),
         adminTokenFile != nil

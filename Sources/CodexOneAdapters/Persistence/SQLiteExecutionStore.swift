@@ -13,6 +13,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let pacingWaiters: AccountPacingWaiters
   let usageReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
+  public let overviewActivity = OverviewActivity()
   let liveFirstEvents = Mutex([String: Bool]())
   let storage: SQLiteStorageGuard
   public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
@@ -239,10 +240,12 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   {
     try validateAdmission(command)
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
-      try db.transaction {
+      let admitted = try db.transaction {
         try Self.admitTransaction(
           db, command, limits: limits, unresolvedCapacity: unresolvedCapacity)
       }
+      self.publishOverview(admitted, at: db.clock.unixSeconds)
+      return admitted
     }
   }
   static func admitTransaction(
@@ -395,8 +398,10 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
+      var observed: ExecutionAdmission?
       try db.transaction {
         let snapshot = try Self.load(db, attempt)
+        observed = snapshot.admission
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
         }
@@ -429,25 +434,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           "SELECT evidence_floor FROM attempts WHERE id=?", [.text(attempt)])
         guard evidence.revision > floor else { throw ExecutionError.staleEvidence }
         if let old = snapshot.usage, evidence.revision > old.revision {
-          guard evidence.inputTokens >= old.inputTokens, evidence.outputTokens >= old.outputTokens,
-            evidence.cachedTokens >= old.cachedTokens, evidence.images >= old.images,
-            evidence.estimatedMicros >= old.estimatedMicros,
-            (evidence.imageInputTokens ?? 0) >= (old.imageInputTokens ?? 0),
-            (evidence.imageOutputTokens ?? 0) >= (old.imageOutputTokens ?? 0),
-            (evidence.imageInputTextTokens ?? 0) >= (old.imageInputTextTokens ?? 0),
-            (evidence.imageInputImageTokens ?? 0) >= (old.imageInputImageTokens ?? 0),
-            old.completeness != .complete || evidence.completeness == .complete
+          guard evidence.isAtLeast(old)
           else { throw ExecutionError.conflict }
         }
         if let old = snapshot.usage, evidence.revision < old.revision {
-          guard evidence.inputTokens <= old.inputTokens, evidence.outputTokens <= old.outputTokens,
-            evidence.cachedTokens <= old.cachedTokens, evidence.images <= old.images,
-            evidence.estimatedMicros <= old.estimatedMicros,
-            (evidence.imageInputTokens ?? 0) <= (old.imageInputTokens ?? 0),
-            (evidence.imageOutputTokens ?? 0) <= (old.imageOutputTokens ?? 0),
-            (evidence.imageInputTextTokens ?? 0) <= (old.imageInputTextTokens ?? 0),
-            (evidence.imageInputImageTokens ?? 0) <= (old.imageInputImageTokens ?? 0),
-            evidence.completeness != .complete || old.completeness == .complete
+          guard old.isAtLeast(evidence)
           else {
             throw ExecutionError.conflict
           }
@@ -481,6 +472,10 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               .text(evidence.completeness.rawValue), .text(attempt),
             ])
         }
+      }
+      if let observed {
+        self.publishOverview(
+          observed, at: db.clock.unixSeconds, outcome: outcome?.kind.rawValue ?? "unknown")
       }
     }
   }
@@ -544,13 +539,7 @@ func validateAdmission(_ value: ExecutionAdmission) throws {
   }
 }
 private func validate(_ value: UsageEvidence) throws {
-  guard
-    [
-      value.revision, value.inputTokens, value.outputTokens, value.cachedTokens, value.images,
-      value.estimatedMicros, value.imageInputTokens ?? 0, value.imageOutputTokens ?? 0,
-      value.imageInputTextTokens ?? 0, value.imageInputImageTokens ?? 0,
-    ].allSatisfy({ (0...1_000_000_000_000).contains($0) }), value.cachedTokens <= value.inputTokens
-  else { throw ExecutionError.invalidCommand }
+  try value.validate()
 }
 func encode<T: Encodable>(_ value: T) throws -> String {
   let encoder = JSONEncoder()
@@ -594,10 +583,18 @@ extension SQLiteExecutionStore: StorageMonitoring {
 
 extension SQLiteExecutionStore: ExecutionLiveObserving {
   public func executionStarted(attempt: String) {
-    liveFirstEvents.withLock { if $0.count < 16 { $0[attempt] = false } }
+    liveFirstEvents.withLock { if $0.count < 200 { $0[attempt] = false } }
   }
   public func executionReceivedFirstEvent(attempt: String) {
-    liveFirstEvents.withLock { if $0[attempt] != nil { $0[attempt] = true } }
+    let first = liveFirstEvents.withLock { values in
+      guard values[attempt] == false else { return false }
+      values[attempt] = true
+      return true
+    }
+    guard first else { return }
+    overviewActivity.publish {
+      .init(id: attempt, row: nil, outcome: nil, at: clock.unixSeconds, first: true)
+    }
   }
   public func executionObservationEnded(attempt: String) {
     liveFirstEvents.withLock { _ = $0.removeValue(forKey: attempt) }

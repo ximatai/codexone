@@ -105,15 +105,7 @@ private final class UsageObservation: Sendable {
     }
   }
   func record(_ evidence: UsageEvidence) throws {
-    guard
-      [
-        evidence.revision, evidence.inputTokens, evidence.outputTokens, evidence.cachedTokens,
-        evidence.images, evidence.estimatedMicros, evidence.imageInputTokens ?? 0,
-        evidence.imageOutputTokens ?? 0, evidence.imageInputTextTokens ?? 0,
-        evidence.imageInputImageTokens ?? 0,
-      ].allSatisfy({ (0...1_000_000_000_000).contains($0) }),
-      evidence.cachedTokens <= evidence.inputTokens
-    else { throw ExecutionError.invalidCommand }
+    try evidence.validate()
     try latest.withLock { value in
       guard !value.sealed else { throw ExecutionError.closed }
       if let previous = value.evidence {
@@ -123,14 +115,7 @@ private final class UsageObservation: Sendable {
         }
         let earlier = evidence.revision < previous.revision ? evidence : previous
         let later = evidence.revision > previous.revision ? evidence : previous
-        guard later.inputTokens >= earlier.inputTokens, later.outputTokens >= earlier.outputTokens,
-          later.cachedTokens >= earlier.cachedTokens, later.images >= earlier.images,
-          later.estimatedMicros >= earlier.estimatedMicros,
-          (later.imageInputTokens ?? 0) >= (earlier.imageInputTokens ?? 0),
-          (later.imageOutputTokens ?? 0) >= (earlier.imageOutputTokens ?? 0),
-          (later.imageInputTextTokens ?? 0) >= (earlier.imageInputTextTokens ?? 0),
-          (later.imageInputImageTokens ?? 0) >= (earlier.imageInputImageTokens ?? 0),
-          earlier.completeness != .complete || later.completeness == .complete
+        guard later.isAtLeast(earlier)
         else { throw ExecutionError.conflict }
         if evidence.revision < previous.revision { return }
       }

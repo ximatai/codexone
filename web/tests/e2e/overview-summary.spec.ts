@@ -153,10 +153,9 @@ for (const width of [1920, 390]) {
     await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
     await expect(panel.getByText("已停用", { exact: true })).toBeVisible();
     await expect(panel.getByText("失败偏高", { exact: true })).toHaveCount(1);
-    await expect(panel.getByText("25%", { exact: true })).toHaveAttribute(
-      "title",
-      /部分请求/,
-    );
+    await expect(
+      panel.getByTitle(/部分请求/).filter({ hasText: /^25%$/ }),
+    ).toBeVisible();
     await expect(panel.getByText("0%", { exact: true })).toBeVisible();
     await expect(panel.getByLabel("取消 1", { exact: true })).toHaveCount(2);
     await expect(panel.getByLabel("结果未明 1", { exact: true })).toHaveCount(

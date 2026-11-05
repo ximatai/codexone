@@ -188,11 +188,24 @@ public struct ResponsesDataService: Service {
               guard allowed else { return channel.eventLoop.makeSucceededFuture(nil) }
               return channel.eventLoop.makeFutureWithTask {
                 do {
-                  _ = try await executor.access.policy(
+                  let livePolicy = try await executor.access.policy(
                     executor.access.digest(head.headers["authorization"]))
                   _ = try requestTurnState(headers: head.headers)
                   guard normalChannels.register(channel, retained: true) else {
                     throw ExecutionError.capacity
+                  }
+                  if let activity = (store as? SQLiteExecutionStore)?.overviewActivity {
+                    let name: String?
+                    if case .pool(let policy) = livePolicy {
+                      name = policy.key.displayName
+                    } else {
+                      name = nil
+                    }
+                    if let registration = activity.register(
+                      key: livePolicy.keyID, name: name, capacity: configuration.dataConnections)
+                    {
+                      channel.closeFuture.whenComplete { _ in activity.unregister(registration) }
+                    }
                   }
                   return HTTPHeaders()
                 } catch {
@@ -372,7 +385,7 @@ public struct ResponsesDataService: Service {
     sizeRefused: @escaping @Sendable (GatewayProtocolError, String, String) -> Void = { _, _, _ in }
   ) async throws {
     downstream.permitSettlement()
-    let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
+    let commands = WebSocketInbox(capacity: RequestBodyLimits.webSocketQueueBytes)
     let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
     do {
@@ -380,7 +393,7 @@ public struct ResponsesDataService: Service {
         defer { lanes.cancelAll() }
         lanes.addTask {
           await upstream.waitForClose()
-          try await activity.waitUntilIdle()
+          try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
           try Task.checkCancellation()
           throw WebSocketUpstreamClosed()
         }
@@ -395,7 +408,11 @@ public struct ResponsesDataService: Service {
             try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
             throw CancellationError()
           }
-          guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
+          guard !upstream.isClosed else {
+            body.release()
+            try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
+            throw WebSocketUpstreamClosed()
+          }
           if try await handleWebSocketControl(
             body, upstream: upstream, downstream: downstream,
             headers: executor.protocolClientHeaders, rate: &controlRate,
@@ -494,8 +511,10 @@ public struct ResponsesDataService: Service {
                       try? await sendWebSocketError(
                         error, requestID: requestID, lane: lane, to: downstream)
                     }
-                    initialTurn?.start.close(WebSocketUpstreamClosed())
-                    throw WebSocketUpstreamClosed()
+                    // The connection owner ends the session only after every owned lane
+                    // has submitted its error. Waking the pool owner here cancels siblings.
+                    // Continue to release any queued, undispatched commands in this lane.
+                    continue
                   }
                   if let requested {
                     await executor.recordRejection(requested, requestID: requestID, error: error)
@@ -581,7 +600,12 @@ public struct ResponsesDataService: Service {
                   if let length = next.headers.first(name: "content-length"),
                     let count = Int(length)
                   {
-                    try lease.reserve(count, countAll: control)
+                    if control {
+                      try lease.reserve(count, control: true)
+                    } else {
+                      try await lease.reserveWaiting(count)
+                      try Task.checkCancellation()
+                    }
                   }
                 case .body(let bytes):
                   guard head != nil,
@@ -591,7 +615,7 @@ public struct ResponsesDataService: Service {
                       bytes: body.count + bytes.readableBytes, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
-                  try lease.reserve(body.count + bytes.readableBytes, countAll: control)
+                  try lease.reserve(body.count + bytes.readableBytes, control: control)
                   body.append(contentsOf: bytes.readableBytesView)
                 case .end: ended = true
                 }

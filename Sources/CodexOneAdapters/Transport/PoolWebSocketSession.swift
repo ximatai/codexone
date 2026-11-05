@@ -150,7 +150,7 @@ enum PoolWebSocketSession {
                     requestID: UUID().uuidString,
                     lane: lane, to: downstream)
                 } else {
-                  try await downstream.send(ProviderObservation.textOutput(.object(event)))
+                  try await downstream.send(ProviderObservation.clientOutput(.object(event)))
                 }
               },
               unexpectedResponse: {

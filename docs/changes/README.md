@@ -6,6 +6,10 @@
 
 ## 活动提案
 
+- [protocol-alignment](protocol-alignment/proposal.md) · [任务](protocol-alignment/tasks.md) · [验证](protocol-alignment/verification.md)
+- [parameter-rejection-diagnostics](parameter-rejection-diagnostics/proposal.md) · [任务](parameter-rejection-diagnostics/tasks.md)
+- [admin-live-updates](admin-live-updates/proposal.md) · [任务](admin-live-updates/tasks.md)
+
 - [slow-upstream](slow-upstream/proposal.md) · [任务](slow-upstream/tasks.md) · [验证](slow-upstream/verification.md)
 
 - [upstream-zstd](upstream-zstd/proposal.md) · [任务](upstream-zstd/tasks.md) · [验证](upstream-zstd/verification.md)

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { ContinuousValue } from "../../shared/ui/ContinuousValue";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Anchor,
@@ -61,12 +62,16 @@ export function failureLink(row: KeySummary, report: KeySummaryReport) {
 export function KeyResults({
   query,
 }: {
-  query: UseQueryResult<KeySummaryReport, Error>;
+  query: Pick<
+    UseQueryResult<KeySummaryReport, Error>,
+    "data" | "isError" | "isPending" | "dataUpdatedAt" | "refetch"
+  >;
 }) {
   const [detail, setDetail] = useState<{
     row: KeySummary;
     snapshot: string;
   } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -75,6 +80,17 @@ export function KeyResults({
     return () => window.clearInterval(timer);
   }, []);
   const report = query.data;
+  const rows = useMemo(
+    () =>
+      [...(report?.keys ?? [])]
+        .filter((row) => row.admitted > 0)
+        .sort(
+          (a, b) =>
+            (b.lastUsedAtUnixSeconds ?? -1) - (a.lastUsedAtUnixSeconds ?? -1) ||
+            a.keyID.localeCompare(b.keyID),
+        ),
+    [report?.keys],
+  );
   const offset = report?.businessDay.offsetMinutes ?? 0;
   const oldWindow =
     report && (now < report.startUnixSeconds || now >= report.endUnixSeconds);
@@ -157,7 +173,7 @@ export function KeyResults({
       width: "10%",
       render: (row) => (
         <Text size="sm" title={row.admitted.toLocaleString("zh-CN")}>
-          {compactCount(row.admitted)}
+          <ContinuousValue text={compactCount(row.admitted)} />
         </Text>
       ),
     },
@@ -176,7 +192,7 @@ export function KeyResults({
               aria-label={`${name(row)} 失败 ${row.failed}`}
               title="失败率以已准入请求为分母；取消、执行中和结果未明不计为失败。"
             >
-              {compactCount(row.failed)}（
+              <ContinuousValue text={compactCount(row.failed)} />（
               {percent(BigInt(row.failed), BigInt(row.admitted))}）
             </Anchor>
           ) : (
@@ -207,9 +223,13 @@ export function KeyResults({
               : `${row.tokenUsageIncomplete ? "已观测下界 " : ""}${BigInt(row.tokens).toLocaleString("zh-CN")}`
           }
         >
-          {row.tokens == null
-            ? "—"
-            : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactCount(row.tokens)}`}
+          <ContinuousValue
+            text={
+              row.tokens == null
+                ? "—"
+                : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactCount(row.tokens)}`
+            }
+          />
         </Text>
       ),
     },
@@ -222,7 +242,7 @@ export function KeyResults({
           size="sm"
           title={`按已观测用量的累计缓存 Token / 输入 Token 计算。${row.cacheUsageIncomplete !== false ? "部分请求没有完整宿主用量，仅使用已观测输入；无用量请求不进入分母。" : ""}`}
         >
-          {cacheRate(row)}
+          <ContinuousValue text={cacheRate(row)} />
         </Text>
       ),
     },
@@ -273,20 +293,31 @@ export function KeyResults({
         </Text>
       ) : (
         <DataTable
-          rows={[...(report?.keys ?? [])]
-            .filter((row) => row.admitted > 0)
-            .sort(
-              (a, b) =>
-                (b.lastUsedAtUnixSeconds ?? -1) -
-                  (a.lastUsedAtUnixSeconds ?? -1) ||
-                a.keyID.localeCompare(b.keyID),
-            )}
+          animate
+          rows={expanded ? rows : rows.slice(0, 20)}
           columns={columns}
           rowKey={(row) => row.keyID}
           loading={query.isPending}
           retry={() => void query.refetch()}
           empty="今日暂无活跃 Key。"
         />
+      )}
+      {rows.length > 20 && (
+        <Group justify="space-between" mt="sm">
+          <Text size="xs" c="dimmed">
+            {expanded
+              ? `全部 ${rows.length} 个活跃 Key`
+              : `最近 20 个活跃 Key，共 ${rows.length} 个`}
+          </Text>
+          <Button
+            size="xs"
+            variant="subtle"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起 Key 列表" : `查看全部 ${rows.length} 个 Key`}
+          </Button>
+        </Group>
       )}
       <Drawer
         opened={detail !== null}

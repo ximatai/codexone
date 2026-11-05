@@ -15,11 +15,12 @@ final class WebSocketTurns: Sendable {
     struct Lane {
       var phase = Phase.idle
       var receivedCreated = false
-      var receivedLifecycle = false
+      var possiblyProcessed = false
       var interrupted = false
       // Set at the existing wire dispatch boundary, not at admission/begin.
       var dispatched = false
       var evidence: (@Sendable (JSONValue) throws -> Void)?
+      var unattributedProcessing: (@Sendable () -> Void)?
     }
     var lanes: [String: Lane] = [:]
     /// Recently started responses; stale events for them can never begin a later turn.
@@ -73,6 +74,15 @@ final class WebSocketTurns: Sendable {
   }
   func close() {
     let waiters = state.withLock { value in
+      let dispatched = value.lanes.filter {
+        guard $0.value.dispatched else { return false }
+        if case .idle = $0.value.phase { return false }
+        return true
+      }.map(\.key)
+      if dispatched.count > 1 {
+        // Freeze ambiguous connection-level refusal before consumers race cleanup.
+        for lane in dispatched { value.lanes[lane]?.possiblyProcessed = true }
+      }
       value.closed = true
       let waiters = Array(value.closeWaiters.values)
       value.closeWaiters.removeAll()
@@ -99,13 +109,15 @@ final class WebSocketTurns: Sendable {
       guard active < 16 else { throw GatewayProtocolError(503, "websocket_turn_capacity") }
       value.lanes[lane]!.phase = .awaitingCreated
       value.lanes[lane]!.receivedCreated = false
-      value.lanes[lane]!.receivedLifecycle = false
+      value.lanes[lane]!.possiblyProcessed = false
       value.lanes[lane]!.interrupted = false
       value.lanes[lane]!.dispatched = false
     }
   }
-  func attachEvidence(lane: String, handler: @escaping @Sendable (JSONValue) throws -> Void) throws
-  {
+  func attachEvidence(
+    lane: String, unattributedProcessing: (@Sendable () -> Void)? = nil,
+    handler: @escaping @Sendable (JSONValue) throws -> Void
+  ) throws {
     try state.withLock { value in
       guard !value.closed else { throw WebSocketUpstreamClosed() }
       guard var current = value.lanes[lane], case .awaitingCreated = current.phase,
@@ -114,10 +126,16 @@ final class WebSocketTurns: Sendable {
         throw GatewayProtocolError(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
       }
       current.evidence = handler
+      current.unattributedProcessing = unattributedProcessing
       value.lanes[lane] = current
     }
   }
-  func detachEvidence(lane: String) { state.withLock { $0.lanes[lane]?.evidence = nil } }
+  func detachEvidence(lane: String) {
+    state.withLock {
+      $0.lanes[lane]?.evidence = nil
+      $0.lanes[lane]?.unattributedProcessing = nil
+    }
+  }
 
   func markDispatched(lane: String) {
     state.withLock { $0.lanes[lane]?.dispatched = true }
@@ -126,7 +144,14 @@ final class WebSocketTurns: Sendable {
   func mayAcceptSizeRefusal(lane: String) -> Bool {
     state.withLock {
       guard let turn = $0.lanes[lane] else { return false }
-      return turn.dispatched && !turn.receivedLifecycle
+      let inFlight = $0.lanes.values.filter {
+        guard $0.dispatched else { return false }
+        if case .idle = $0.phase { return false }
+        return true
+      }.count
+      // A connection-level close cannot certify which of several dispatched turns
+      // was refused before processing. Keep their execution responsibility unknown.
+      return inFlight == 1 && turn.dispatched && !turn.possiblyProcessed
     }
   }
 
@@ -247,6 +272,25 @@ final class WebSocketTurns: Sendable {
           throw UnadmittedWebSocketResponse()
         }
       }
+      let semantics = ProviderEventSemantics(event)
+      let hasInFlightOwner =
+        value.lanes[lane].map {
+          guard $0.dispatched else { return false }
+          if case .idle = $0.phase { return false }
+          return true
+        } ?? false
+      // An idle default lane is not an owner for unresolved named-lane activity.
+      let correlated =
+        activeOwner != nil || event["stream_id"] != nil
+        || (id == nil && semantics.known) || (hasInFlightOwner && semantics.lifecycle)
+      if (!hasInFlightOwner || !correlated) && !semantics.connectionMetadata {
+        for name in Array(value.lanes.keys) {
+          guard value.lanes[name]?.dispatched == true else { continue }
+          if case .idle = value.lanes[name]?.phase { continue }
+          value.lanes[name]?.possiblyProcessed = true
+          value.lanes[name]?.unattributedProcessing?()
+        }
+      }
       guard var current = value.lanes[lane] else {
         if ProviderObservation.lifecycleEvents.contains(type) {
           value.closed = true
@@ -255,6 +299,9 @@ final class WebSocketTurns: Sendable {
         return nil
       }
       defer { value.lanes[lane] = current }
+      // Reader-owned risk closes the 1009 exception even when a new event cannot yet
+      // be correlated for delivery. Known stale responses returned above do not affect it.
+      if !semantics.connectionMetadata { current.possiblyProcessed = true }
       let responseID = event["response"]?["id"]?.string
       if type == "response.created" { current.receivedCreated = true }
       let previousID: String?
@@ -281,7 +328,9 @@ final class WebSocketTurns: Sendable {
         } else if type.hasPrefix("response.") && type != "response.metadata"
           || event["response_id"] != nil
         {
-          return nil  // Output of an earlier turn; the new response has not started yet.
+          // No identity to deliver safely; still preserve evidence of possible processing.
+          try current.evidence?(event)
+          return nil
         }
       case .active(let id):
         if let foreign = event["response_id"], foreign.string != id {
@@ -301,9 +350,6 @@ final class WebSocketTurns: Sendable {
       if case .idle = current.phase, let id = previousID ?? responseID {
         if ProviderObservation.terminalEvents.contains(type) { value.pendingDelivery[lane] = id }
         value.end(id, lane: lane)
-      }
-      if type == "error" || (type.hasPrefix("response.") && type != "response.metadata") {
-        current.receivedLifecycle = true
       }
       try current.evidence?(event)
       return .init(lane: lane, detached: false)

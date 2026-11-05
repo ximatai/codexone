@@ -6,6 +6,10 @@ import Foundation
 @main struct ExecutionProbe {
   static func main() async {
     do {
+      if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--admin-live-probe" {
+        try await runAdminLiveProbe(root: CommandLine.arguments[2])
+        return
+      }
       if CommandLine.arguments.count == 5, CommandLine.arguments[1] == "--lan-admin-ui",
         let port = Int(CommandLine.arguments[4])
       {

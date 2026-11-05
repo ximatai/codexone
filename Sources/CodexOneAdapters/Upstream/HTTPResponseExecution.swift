@@ -281,6 +281,7 @@ struct HTTPResponseExecution: Sendable {
                   firstAfterUnprocessedRefusal: isFallback && firstHTTPEvent)
                 firstHTTPEvent = false
                 let type = try ProviderObservation.eventType(event)
+                protocolExtensions?.recordUpstreamEvent(event)
                 if type == "error" { throw ProviderObservation.providerFailure(event) }
                 // A foreign response cannot supply evidence to this attempt.
                 if ProviderObservation.lifecycleEvents.contains(type),
@@ -306,7 +307,8 @@ struct HTTPResponseExecution: Sendable {
                 {
                   try request.observeUsage(
                     event["response"], context: context, model: model,
-                    configuration: configuration.imageGeneration)
+                    configuration: configuration.imageGeneration, authorModels: configuration.models
+                  )
                 }
                 let observation = try ProviderObservation(
                   event: event, model: model, allowImages: request.requirements.imageModel != nil)
@@ -318,8 +320,7 @@ struct HTTPResponseExecution: Sendable {
                 if request.streaming || terminal {
                   let output = request.streaming ? event : event["response"]!
                   try await emit(
-                    request.requirements.imageModel == nil
-                      ? ProviderObservation.textOutput(output) : output)
+                    ProviderObservation.clientOutput(output))
                 }
                 if terminal { try observeSubmittedTerminal(event, context: context) }
                 if terminal { break readUpstream }
@@ -360,8 +361,7 @@ struct HTTPResponseExecution: Sendable {
             for object in observation.bindings { try await context.bind(object) }
             try observeTerminalOutcome(event, context: context)
             try await emit(
-              request.requirements.imageModel == nil
-                ? ProviderObservation.textOutput(document) : document)
+              ProviderObservation.clientOutput(document))
             try observeSubmittedTerminal(event, context: context)
           }
         } catch {
@@ -378,9 +378,19 @@ struct HTTPResponseExecution: Sendable {
     let model = request.flatMap { request in
       configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
     }
+    // This known local refusal is not an unknown execution. Keep the execution-time
+    // mapping unchanged; the diagnostics store separately excludes committed intents.
+    let failure =
+      if let mapped = error as? GatewayProtocolError,
+        mapped.status == 400, mapped.code == "unsupported_backend_parameter"
+      {
+        ExecutionFailure.invalidRequest
+      } else {
+        executionFailure(error)
+      }
     try? await diagnostics.recordRejection(
       requestID: requestID, keyID: currentKeyID,
-      model: model, mode: request?.mode ?? .generation, failure: executionFailure(error))
+      model: model, mode: request?.mode ?? .generation, failure: failure)
   }
 
 }

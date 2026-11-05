@@ -201,7 +201,7 @@ private func keyAdmission(
   }
   try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v11-")
+    $0.contains(".pre-v12-")
   }
   #expect(backups.count == 1)
   let backup = directory + "/" + backups[0]
@@ -690,4 +690,37 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   try await store.admit(keyAdmission("partial-next", key: partial))
   await reader.close()
   await store.close()
+}
+
+@Test func svgAuthorDailyLimitKeepsHostBaseAndSurvivesRestart() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  let key = try await store.createKey(
+    id: "svg-key", principal: "p", digest: keyDigest("synthetic-svg-budget"),
+    policy: try decodedKeyPolicy(["tokens": 50, "active": 2]))
+  try await store.admit(keyAdmission("svg-first", key: key))
+  let evidence = UsageEvidence(
+    revision: 1, inputTokens: 12, outputTokens: 8, cachedTokens: 10, images: 1, estimatedMicros: 1,
+    completeness: .complete, imageInputTokens: 99, imageOutputTokens: 88, svgInputTokens: 10,
+    svgOutputTokens: 20, svgReasoningTokens: 5, priceCompleteness: .partial)
+  try await store.finalize(attempt: "svg-first", evidence: evidence)
+  try await store.finalize(attempt: "svg-first", evidence: evidence)
+  await #expect(throws: ExecutionError.denied) {
+    try await store.admit(keyAdmission("svg-over", key: key))
+  }
+  let reader = try await store.makeUsageReader()
+  #expect(try await reader.keyUsage().keys.first?.tokens == 50)
+  #expect(try await reader.keyUsage().keys.first?.tokenUsageIncomplete == false)
+  await reader.close()
+  await store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: testClock)
+  await #expect(throws: ExecutionError.denied) {
+    try await reopened.admit(keyAdmission("svg-restart", key: key))
+  }
+  await reopened.close()
 }

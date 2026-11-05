@@ -163,6 +163,13 @@ public struct ExecutionLimits: Sendable, Equatable, Codable {
 /// Each observation is a cumulative snapshot for one attempt, not an additive event.
 public struct UsageEvidence: Sendable, Equatable, Codable {
   public enum Completeness: String, Sendable, Codable { case partial, complete }
+  public enum PriceCompleteness: String, Sendable, Codable { case unavailable, partial, complete }
+  public let svgInputTokens: Int64?
+  public let svgOutputTokens: Int64?
+  public let svgReasoningTokens: Int64?
+  public let svgAuthorModel: String?
+  public let priceCompleteness: PriceCompleteness?
+  public let usageMissingReasons: [String]?
   public let revision: Int64
   public let inputTokens: Int64
   public let outputTokens: Int64
@@ -181,8 +188,17 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
     cachedTokens: Int64, images: Int64, estimatedMicros: Int64, completeness: Completeness,
     imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil,
     imageInputTextTokens: Int64? = nil, imageInputImageTokens: Int64? = nil,
-    nativeImages: Bool? = nil, providerRejectedBeforeOutput: Bool? = nil
+    nativeImages: Bool? = nil, providerRejectedBeforeOutput: Bool? = nil,
+    svgInputTokens: Int64? = nil, svgOutputTokens: Int64? = nil,
+    svgReasoningTokens: Int64? = nil, svgAuthorModel: String? = nil,
+    priceCompleteness: PriceCompleteness? = nil, usageMissingReasons: [String]? = nil
   ) {
+    self.svgInputTokens = svgInputTokens
+    self.svgOutputTokens = svgOutputTokens
+    self.svgReasoningTokens = svgReasoningTokens
+    self.svgAuthorModel = svgAuthorModel
+    self.priceCompleteness = priceCompleteness
+    self.usageMissingReasons = usageMissingReasons
     self.imageInputTokens = imageInputTokens
     self.imageOutputTokens = imageOutputTokens
     self.nativeImages = nativeImages
@@ -197,6 +213,52 @@ public struct UsageEvidence: Sendable, Equatable, Codable {
     self.estimatedMicros = estimatedMicros
     self.completeness = completeness
   }
+  public func validate() throws {
+    guard
+      [
+        revision, inputTokens, outputTokens, cachedTokens, images, estimatedMicros,
+        imageInputTokens ?? 0, imageOutputTokens ?? 0, imageInputTextTokens ?? 0,
+        imageInputImageTokens ?? 0,
+        svgInputTokens ?? 0, svgOutputTokens ?? 0, svgReasoningTokens ?? 0,
+      ]
+      .allSatisfy({ (0...1_000_000_000_000).contains($0) }), cachedTokens <= inputTokens,
+      svgReasoningTokens.map({ $0 <= (svgOutputTokens ?? 0) }) ?? true,
+      svgAuthorModel.map({
+        !$0.isEmpty && $0.utf8.count <= 128
+          && $0.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+              || [45, 46, 47, 58, 95].contains($0)
+          }
+      }) ?? true,
+      usageMissingReasons.map({
+        $0.count <= 8 && Set($0).count == $0.count
+          && $0.allSatisfy {
+            !$0.isEmpty && $0.utf8.count <= 64
+              && $0.utf8.allSatisfy { (97...122).contains($0) || $0 == 95 }
+          }
+      }) ?? true
+    else { throw ExecutionError.invalidCommand }
+  }
+  /// Cumulative trusted numbers cannot be erased by a later observation.
+  public func isAtLeast(_ earlier: Self) -> Bool {
+    func keeps(_ value: Int64?, _ old: Int64?) -> Bool {
+      guard let old else { return true }
+      return value.map { $0 >= old } == true
+    }
+    return inputTokens >= earlier.inputTokens && outputTokens >= earlier.outputTokens
+      && cachedTokens >= earlier.cachedTokens && images >= earlier.images
+      && estimatedMicros >= earlier.estimatedMicros
+      && (imageInputTokens ?? 0) >= (earlier.imageInputTokens ?? 0)
+      && (imageOutputTokens ?? 0) >= (earlier.imageOutputTokens ?? 0)
+      && (imageInputTextTokens ?? 0) >= (earlier.imageInputTextTokens ?? 0)
+      && (imageInputImageTokens ?? 0) >= (earlier.imageInputImageTokens ?? 0)
+      && keeps(svgInputTokens, earlier.svgInputTokens)
+      && keeps(svgOutputTokens, earlier.svgOutputTokens)
+      && keeps(svgReasoningTokens, earlier.svgReasoningTokens)
+      && (earlier.completeness != .complete || completeness == .complete)
+      && (earlier.priceCompleteness != .complete || priceCompleteness == .complete)
+  }
+
 }
 
 public struct ExecutionSnapshot: Sendable, Equatable, Codable {

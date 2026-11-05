@@ -149,13 +149,47 @@ export function UsageDetail({
                 ? "完整"
                 : "完整用量不可用，已有数值为下界"}
             </Text>
+            {detail.outcome === "succeeded" &&
+              detail.completeness !== "complete" && (
+                <Text size="sm">响应已完成，用量待核对，无需重新生成。</Text>
+              )}
+            <Text size="sm">
+              费用：
+              {detail.metrics.priceCompleteness === "unavailable"
+                ? "价格不可用"
+                : (detail.metrics.priceCompleteness ?? detail.completeness) ===
+                    "complete"
+                  ? "已配置费率的完整估算"
+                  : "部分费用为下界"}
+            </Text>
+            {detail.svgAuthorModel && (
+              <Text size="sm">SVG 作者模型：{detail.svgAuthorModel}</Text>
+            )}
+            {(detail.usageMissingReasons ?? []).length > 0 && (
+              <Text size="sm" c="dimmed">
+                {(detail.usageMissingReasons ?? [])
+                  .map(
+                    (reason) =>
+                      (
+                        ({
+                          svg_input_unavailable: "作者输入计数缺失",
+                          svg_output_unavailable: "作者输出计数缺失",
+                          svg_usage_ambiguous: "作者计量来源待核对",
+                          svg_total_inconsistent: "作者计数总量不一致",
+                          svg_price_unavailable: "作者费率未知",
+                        }) as Record<string, string>
+                      )[reason] ?? "部分计量信息不可用",
+                  )
+                  .join("；")}
+              </Text>
+            )}
             <dl className={styles.detailGrid}>
               {Object.entries(metricLabels).map(([key, label]) => (
                 <Group key={key} display="contents">
                   <dt>{label}</dt>
                   <dd>
                     {key === "estimatedMicros"
-                      ? `${detail.completeness !== "complete" && detail.metrics.estimatedMicros != null ? "≥ " : ""}${money(detail.metrics.estimatedMicros)}`
+                      ? `${(detail.metrics.priceCompleteness ?? detail.completeness) !== "complete" && detail.metrics.estimatedMicros != null ? "≥ " : ""}${money(detail.metrics.estimatedMicros)}`
                       : number(
                           detail.metrics[key as keyof Metrics],
                           detail.completeness !== "complete",

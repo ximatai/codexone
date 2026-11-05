@@ -219,11 +219,11 @@ jobs:
   image-checks:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        suite: [tls, installation]
+        suite: [tls, installation, capacity]
     defaults:
       run:
         shell: bash
@@ -266,7 +266,46 @@ jobs:
             codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
       - name: Verify actual private installation
         if: matrix.suite == 'installation'
-        run: python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)"
+        run: |
+          docker pull ghcr.io/ximatai/codexone:0.26.9
+          old_image="$(docker image inspect ghcr.io/ximatai/codexone:0.26.9 --format '{{.Id}}')"
+          python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)" \
+            --incompatible-image "$old_image" --incompatible-schema 11
+      - name: Verify mixed capacity in isolated native Linux containers
+        if: matrix.suite == 'capacity'
+        run: |
+          python3 scripts/test_verify_mixed_capacity.py
+          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:verification-tools .
+          python3 scripts/verify_mixed_capacity.py --image "$(cat artifacts/image-id.txt)" \
+            --harness-image codexone:verification-tools --output artifacts/mixed-capacity
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: matrix.suite == 'capacity'
+        with:
+          digest-mismatch: error
+          name: optimized-backend-binaries
+          path: binaries
+      - name: Verify combined live overview and slow viewers under 768 MiB
+        if: matrix.suite == 'capacity'
+        env:
+          BINARIES_ARCHIVE_SHA256: ${{ needs.build.outputs.binaries_archive_sha256 }}
+        run: |
+          printf '%s  binaries/backend-binaries.tar.gz\n' "$BINARIES_ARCHIVE_SHA256" | sha256sum --check -
+          tar -xzf binaries/backend-binaries.tar.gz -C binaries
+          docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m --memory-swap 768m --cpus 1 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+            --env MALLOC_ARENA_MAX=2 --env MALLOC_MMAP_THRESHOLD_=131072 --env MALLOC_TRIM_THRESHOLD_=131072 \
+            --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
+            --mount "type=bind,src=$PWD/binaries,dst=/binaries,readonly" \
+            codexone:verification-tools /test/scripts/verify_admin_live.py --binary /binaries/codexone \
+              --probe /binaries/ExecutionProbe --slow-only | tee artifacts/mixed-capacity/live-overview.log
+      - name: Save mixed capacity evidence
+        if: always() && matrix.suite == 'capacity'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mixed-capacity-evidence
+          path: artifacts/mixed-capacity
+          if-no-files-found: warn
   verify:
     if: always()
     needs: [build, backend-scripts, image-checks]

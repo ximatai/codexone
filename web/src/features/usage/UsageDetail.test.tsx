@@ -63,3 +63,27 @@ it("keeps complete evidence exact", async () => {
   expect(screen.getByText("估算 $1.25")).toBeVisible();
   expect(screen.queryByText("≥ 125")).toBeNull();
 });
+
+it("keeps complete SVG counters exact while marking the price as partial", async () => {
+  const detail = {
+    ...reportFixture().rows[0],
+    svgAuthorModel: "synthetic-author",
+    usageMissingReasons: ["svg_price_unavailable"],
+    metrics: {
+      ...reportFixture().rows[0].metrics,
+      inputTokens: "125",
+      svgInputTokens: "10",
+      svgOutputTokens: "20",
+      svgReasoningTokens: "5",
+      priceCompleteness: "partial",
+      estimatedMicros: "1250000",
+    },
+  } as UsageReport["rows"][number];
+  render(<UsageDetail detail={detail} onClose={() => {}} />);
+  expect(await screen.findByText("用量：完整")).toBeVisible();
+  expect(screen.getByText("125")).toBeVisible();
+  expect(screen.getByText("SVG 作者模型：synthetic-author")).toBeVisible();
+  expect(screen.getByText("作者费率未知")).toBeVisible();
+  expect(screen.getByText("≥ 估算 $1.25")).toBeVisible();
+  expect(screen.queryByText("≥ 125")).toBeNull();
+});

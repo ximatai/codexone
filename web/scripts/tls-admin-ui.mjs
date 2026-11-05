@@ -28,6 +28,7 @@ try {
   assert(/^TLS 1\.[23]$/.test(tls?.protocol) && tls.issuer === 'CodexOne synthetic TLS CA');
   await page.getByRole('link', { name: '访问密钥', exact: true }).click();
   await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
+  await page.getByLabel('用户名', { exact: true }).fill('admin');
   await page.getByLabel('管理员凭证', { exact: true }).fill(credential);
   await page.getByRole('button', { name: '登录管理台' }).click();
   await expect(page.getByRole('button', { name: '创建密钥', exact: true })).toBeEnabled();
@@ -36,11 +37,15 @@ try {
   secrets.push(cookie.value);
   assert(await page.evaluate(async () => (await fetch('/api/keys', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: '{}' })).status) === 403);
+  stage = 'real management WSS';
+  await page.getByRole('link', { name: /^服务概览/ }).click();
+  await expect(page.getByText('实时连接', { exact: true })).toBeVisible();
+  await page.getByRole('link', { name: '访问密钥', exact: true }).click();
   stage = 'create and persist';
   await page.getByRole('button', { name: '创建密钥', exact: true }).click();
   await page.getByLabel('主体标识', { exact: true }).fill('tls-browser');
   await page.getByRole('checkbox', { name: 'synthetic-text', exact: true }).check();
-  await page.getByRole('button', { name: '创建 API Key', exact: true }).click();
+  await page.getByRole('dialog', { name: '创建密钥', exact: true }).getByRole('button', { name: '创建密钥', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '保存一次性凭证' });
   await expect(dialog).toBeVisible();
   const secret = await dialog.getByLabel('新 API Key', { exact: true }).inputValue();
@@ -51,12 +56,20 @@ try {
   const row = page.getByRole('row').filter({ hasText: 'tls-browser' });
   await expect(row).toBeVisible();
   stage = 'disable and persist';
-  await row.getByRole('button', { name: 'tls-browser 更多操作', exact: true }).click();
-  await page.getByRole('menuitem', { name: '禁用', exact: true }).click();
-  await expect(row.getByText('禁用', { exact: true })).toBeVisible();
+  await row.getByRole('button', { name: '查看详情', exact: true }).click();
+  await page.getByRole('dialog', { name: '密钥详情', exact: true }).getByRole('button', { name: '禁用', exact: true }).click();
+  await page.getByRole('dialog', { name: '禁用 API Key', exact: true }).getByRole('button', { name: '确认禁用', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '禁用 API Key', exact: true })).toBeHidden();
+  const details = page.getByRole('dialog', { name: '密钥详情', exact: true });
+  if (await details.isVisible()) await details.getByRole('button', { name: '关闭', exact: true }).click();
+  stage = 'disabled scope';
+  await page.getByRole('combobox', { name: '可用状态', exact: true }).click();
+  await page.getByRole('option', { name: '已禁用', exact: true }).click();
+  await expect(row.getByText('已禁用', { exact: true })).toBeVisible();
+  stage = 'disabled reload';
   await page.reload();
-  await page.getByRole('link', { name: '访问密钥', exact: true }).click();
-  await expect(row.getByText('禁用', { exact: true })).toBeVisible();
+  await expect(row.getByText('已禁用', { exact: true })).toBeVisible();
+  stage = 'private browser state';
   assert(await page.evaluate(() => !localStorage.length && !sessionStorage.length));
   const html = await page.content();
   assert(secrets.every(secret => !html.includes(secret)) && errors.length === 0);
@@ -70,7 +83,7 @@ try {
   await page.reload();
   await page.getByRole('link', { name: '访问密钥', exact: true }).click();
   await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
-  console.log('PASS: Chrome direct HTTPS/Nginx TLS: login, secure session, CSRF refusal, create/clear/reload, disable persistence and logout; disposable leaf SPKI pin');
+  console.log('PASS: Chrome direct HTTPS/Nginx TLS: login, secure session, management WSS, CSRF refusal, create/clear/reload, disable persistence and logout; disposable leaf SPKI pin');
 } catch {
   console.error('FAIL: real HTTPS management browser check at ' + stage);
   process.exitCode = 1;
