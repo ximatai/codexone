@@ -4,7 +4,7 @@
 
 ## 版本与能力
 
-当前版本为 **[v0.26.9](https://github.com/ximatai/codexone/releases/tag/v0.26.9)**（2026-11-05），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.9](https://github.com/ximatai/codexone/releases/tag/v0.26.9)**（2026-11-05），核心数据库 schema v11。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启；v0.26.4 起提供订阅重置卡查看/确认使用/到期前自动使用，以及空闲 5 小时/每周配额窗口预热（均按账号默认关闭）。
 
@@ -16,7 +16,7 @@ v0.26.5 起重置卡自动使用支持分钟级提前量和有界分钟重试，
 
 上游订阅 HTTP 大请求新增有界 zstd 上传与 `off` 回退；响应事件前 415 仅同账号明文重发一次。版本号不变，Linux/真实上游及内存发布门禁见[验证记录](docs/changes/upstream-zstd/verification.md)。
 
-共享正文预算放宽至 64 MiB，普通正文统一计量、另保留 8 MiB 小请求余量及短时等待及默认开放 GIF/SVG（沿图片权限与模型范围）正在开发，尚未发布；首轮已拆分协议内容、Adapter 事实与执行风险，修复 Responses 输出 codec 耦合、用量扩展回传及 WS 队列容量隔离；现补齐 SVG 作者计量及独立价格覆盖（开发 schema v12，升级需显式迁移，不能用 v0.26.9 原库回退）；仍待新的 Linux、混合负载与真实客户端验收。业务边界、验证和回退见[活动提案](docs/changes/protocol-alignment/proposal.md)。
+v0.26.10 候选使用 64 MiB 共享正文预算并保留 8 MiB 小请求余量，短时等待容量。GIF/SVG 沿图片权限与模型范围转发，原生显式 GIF/SVG 按实际格式头验收。真实格式和 Responses 图片工具可用性依赖提供者。SVG 作者输入与输出计入 Key 每日 Token 上限，费用覆盖独立展示。升级至 schema v12 需要显式迁移与升级前备份。详见[协议](docs/reference/specs/protocol.md)、[兼容说明](docs/reference/compatibility.md)与[维护指南](docs/guide/backup-upgrade.md)。
 
 ## 管理界面与 Token 治理
 
@@ -42,19 +42,19 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 大请求后内存保留正在修复：运行镜像限制 glibc arena 并设置 mmap/trim 阈值，解析后清空 Responses 原正文但保留预算租约；本机合成验证与 CI 新镜像待验收范围见[任务](docs/changes/memory-retention/tasks.md)。
 
-首页实时概览已实现可显式启用的本地集成路径（默认关闭）：提交后活动、最近结束、已连接客户端、共享 sampler 及 HTTP 降级，仅覆盖首页和首页账号抽屉。数字滚动现使用本地组件和外部静态样式，已移除不兼容组件，不放宽 CSP；本地浏览器真实请求更新与高频布局验收已通过，完整交付与平台验收尚未完成，见[活动任务及实测](docs/changes/admin-live-updates/tasks.md)。无 schema 或执行/用量行为变更。
+v0.26.10 候选支持显式启用首页实时概览，默认关闭。提交后活动、最近结束和已连接客户端由共享快照推送，HTTP 可降级读取。范围为首页和首页账号抽屉。见[管理面规范](docs/reference/specs/control-plane.md)与[验收记录](docs/changes/admin-live-updates/tasks.md)。
 
-评审优化已接入有时限的单请求关注/固定观察、账号及按 Key 诊断入口、当前本地接入条件摘要和持续 WS 连接范围说明；来源不可用、模块陈旧及 HTTP 更新时间统一处理。剩余原生 Linux/容量与失败矩阵按活动任务验收，不能据此宣称默认启用或已发布。
+首页支持有时限的请求关注、固定观察、账号和按 Key 诊断，以及当前接入条件摘要。HTTP 与实时推送沿用同一套数据来源与陈旧状态。
 
 ## 已知限制
 
-订阅参数拒绝诊断正在修正：新增准入前 `unsupported_backend_parameter/400` 按 invalid_request 统计，私有日志使用固定字段类别定位原因，不记录参数值，不修改公开错误或协议限制。验证进展见[任务](docs/changes/parameter-rejection-diagnostics/tasks.md)，尚未发布。
+v0.26.10 候选将订阅上游已知准入前 `unsupported_backend_parameter/400` 归为无效请求。私有诊断只记录固定字段类别，公开错误和协议限制延续既有契约。见[任务](docs/changes/parameter-rejection-diagnostics/tasks.md)。
 
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。
 - 多账号选择机制已有实现，完整多账号路由仍需独立验收；用量和费用可为部分或未知，不用于对外结算或绝对封顶。
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。
 - 内部协议可能变化。官方客户端标识与 OAuth ID 的使用可能违反提供者条款、触发风控或账号限制，详见[兼容与风险](docs/reference/compatibility.md)。
-- v11 不能使用 v10 或更旧程序原库回退；升级、备份恢复与迁移须按[维护指南](docs/guide/backup-upgrade.md)执行。
+- v12 数据库需要支持 v12 的程序。需要回退到 v0.26.9 时，使用升级前备份独立恢复并核对升级后的执行责任。见[维护指南](docs/guide/backup-upgrade.md)。
 - 发版验证在 GitHub Actions 的合成环境中运行；真实订阅、客户端组合与具体服务器容量仍需各自部署验证。
 
 ## 路线图
