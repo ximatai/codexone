@@ -116,13 +116,15 @@ def main():
                                 assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts,'Rejected request admitted, connected or dispatched'
                             tool=dict(type='image_generation',output_format='png',synthetic_extension={'enabled':True})
                             tool_choice=dict(type='image_generation')
-                            image_request={**base,'tools':[tool],'tool_choice':tool_choice}
+                            image_request={**base,'tools':[tool],'tool_choice':tool_choice,
+                                           'metadata':{'label':'synthetic-image-request'}}
                             before=server.calls
                             status,events=call(ports['data'],route,image_request);total+=1
                             assert status==200 and 'error' not in events[-1],(contract,transport,route,status,events[-1])
                             assert server.calls==before+1
                             wire=server.received[-1]
                             assert wire['tools']==[{**tool,'model':'synthetic-image'}] and wire['tool_choice']==tool_choice
+                            assert wire['metadata']==image_request['metadata']
                             if contract=='codex-subscription':
                                 assert wire['stream'] is True and wire['store'] is False
                                 assert wire['input']==[dict(role='user',content=base['input'])]
