@@ -4,73 +4,136 @@ import Synchronization
 /// The data service owns one budget; request/turn owners retain leases through completion or discard.
 enum RequestBodyLimits {
   static let maximumBytes = 32 * 1024 * 1024
-  static let unreservedBytes = 8 * 1024 * 1024
+  static let smallRequestBytes = 8 * 1024 * 1024
   static let webSocketQueueBytes = 48 * 1024 * 1024
   static let budgetBytes = 64 * 1024 * 1024
 }
 
 final class RequestBodyBudget: Sendable {
+  fileprivate enum Pool: Sendable { case shared, headroom }
+  fileprivate struct Reservation: Sendable {
+    var bytes = 0
+    var pool = Pool.shared
+  }
+  private struct Waiter {
+    let id: UUID
+    let bytes: Int
+    var small: Bool { bytes <= RequestBodyLimits.smallRequestBytes }
+  }
   private struct State {
-    var used = 0
-    var waiters: [UUID] = []
+    var shared = 0
+    var headroom = 0
+    var waiters: [Waiter] = []
+    mutating func replace(_ old: Reservation, with next: Reservation) {
+      if old.pool == .shared { shared -= old.bytes } else { headroom -= old.bytes }
+      if next.pool == .shared { shared += next.bytes } else { headroom += next.bytes }
+    }
   }
   private let state = Mutex(State())
   static let maximumWaiters = 4
   static let waitSeconds = 5
   let capacity: Int
-  init(capacity: Int = RequestBodyLimits.budgetBytes) { self.capacity = capacity }
-  var occupiedBytes: Int { state.withLock { $0.used } }
+  let headroomCapacity: Int
+  init(
+    capacity: Int = RequestBodyLimits.budgetBytes,
+    headroomCapacity: Int = RequestBodyLimits.smallRequestBytes
+  ) {
+    precondition(capacity >= 0 && headroomCapacity >= 0)
+    self.capacity = capacity
+    self.headroomCapacity = headroomCapacity
+  }
+  var occupiedBytes: Int { state.withLock { $0.shared + $0.headroom } }
+  var sharedOccupiedBytes: Int { state.withLock { $0.shared } }
+  var headroomOccupiedBytes: Int { state.withLock { $0.headroom } }
   var waitingCount: Int { state.withLock { $0.waiters.count } }
-  fileprivate func acquire(_ bytes: Int) throws {
-    try state.withLock {
-      guard bytes <= capacity - $0.used else {
-        throw GatewayProtocolError(503, "capacity_exhausted", cooldownSeconds: 1)
+  private static func exhausted() -> GatewayProtocolError {
+    GatewayProtocolError(503, "capacity_exhausted", cooldownSeconds: 1)
+  }
+  fileprivate func resize(_ old: Reservation, to bytes: Int, control: Bool) throws -> Reservation {
+    try state.withLock { value in
+      // Existing partial uploads cannot wait. Their resize is atomic, including
+      // a pool migration: failure leaves the entire previous reservation intact.
+      let sharedAvailable = capacity - value.shared + (old.pool == .shared ? old.bytes : 0)
+      let sharedTurn = control || old.bytes > 0 || value.waiters.isEmpty
+      let next: Reservation
+      if !control && bytes <= RequestBodyLimits.smallRequestBytes,
+        old.bytes > 0 || !value.waiters.contains(where: { $0.small }),
+        bytes <= headroomCapacity - value.headroom + (old.pool == .headroom ? old.bytes : 0)
+      {
+        next = Reservation(bytes: bytes, pool: .headroom)
+      } else if sharedTurn && bytes <= sharedAvailable {
+        next = Reservation(bytes: bytes, pool: .shared)
+      } else {
+        throw Self.exhausted()
       }
-      $0.used += bytes
+      value.replace(old, with: next)
+      return next
     }
   }
-  fileprivate func release(_ bytes: Int) { state.withLock { $0.used -= bytes } }
-  fileprivate func begin(_ bytes: Int) throws -> UUID? {
-    try state.withLock {
-      guard bytes <= capacity else {
-        throw GatewayProtocolError(503, "capacity_exhausted", cooldownSeconds: 1)
+  fileprivate func release(_ reservation: Reservation) {
+    state.withLock { $0.replace(reservation, with: Reservation()) }
+  }
+  fileprivate func begin(_ bytes: Int) throws -> (UUID?, Reservation?) {
+    try state.withLock { value in
+      let small = bytes <= RequestBodyLimits.smallRequestBytes
+      guard bytes <= capacity || (small && bytes <= headroomCapacity) else {
+        throw Self.exhausted()
       }
-      if $0.waiters.isEmpty, bytes <= capacity - $0.used {
-        $0.used += bytes
+      // Prefer the small reserve for eligible bodies so arrival order does not
+      // prevent two maximum-sized requests from using the shared pool.
+      // Large waiters do not block the small reserve; its own waiters stay FIFO.
+      if small && !value.waiters.contains(where: { $0.small }),
+        bytes <= headroomCapacity - value.headroom
+      {
+        value.headroom += bytes
+        return (nil, Reservation(bytes: bytes, pool: .headroom))
+      }
+      if value.waiters.isEmpty && bytes <= capacity - value.shared {
+        value.shared += bytes
+        return (nil, Reservation(bytes: bytes, pool: .shared))
+      }
+      guard value.waiters.count < Self.maximumWaiters else { throw Self.exhausted() }
+      let ticket = UUID()
+      value.waiters.append(Waiter(id: ticket, bytes: bytes))
+      return (ticket, nil)
+    }
+  }
+  fileprivate func acquire(_ bytes: Int, ticket: UUID) -> Reservation? {
+    state.withLock { value in
+      guard let waiter = value.waiters.first(where: { $0.id == ticket }), waiter.bytes == bytes
+      else { return nil }
+      let reservation: Reservation
+      if waiter.small && value.waiters.first(where: { $0.small })?.id == ticket,
+        bytes <= headroomCapacity - value.headroom
+      {
+        reservation = Reservation(bytes: bytes, pool: .headroom)
+      } else if value.waiters.first?.id == ticket && bytes <= capacity - value.shared {
+        reservation = Reservation(bytes: bytes, pool: .shared)
+      } else {
         return nil
       }
-      guard $0.waiters.count < Self.maximumWaiters else {
-        throw GatewayProtocolError(503, "capacity_exhausted", cooldownSeconds: 1)
-      }
-      let ticket = UUID()
-      $0.waiters.append(ticket)
-      return ticket
+      value.waiters.removeAll { $0.id == ticket }
+      value.replace(Reservation(), with: reservation)
+      return reservation
     }
   }
-  fileprivate func acquire(_ bytes: Int, ticket: UUID) -> Bool {
-    state.withLock {
-      guard $0.waiters.first == ticket, bytes <= capacity - $0.used else { return false }
-      $0.waiters.removeFirst()
-      $0.used += bytes
-      return true
-    }
-  }
-  func cancelWait(_ ticket: UUID) { state.withLock { $0.waiters.removeAll { $0 == ticket } } }
+  func cancelWait(_ ticket: UUID) { state.withLock { $0.waiters.removeAll { $0.id == ticket } } }
   func lease() -> RequestBodyLease { .init(budget: self) }
 }
 
 final class RequestBodyLease: Sendable {
   private let budget: RequestBodyBudget
-  private let bytes = Mutex(0)
+  private let reservation = Mutex(RequestBodyBudget.Reservation())
   fileprivate init(budget: RequestBodyBudget) { self.budget = budget }
   /// Only an empty lease may wait: partial uploads must never hold capacity while waiting.
   func beginWaiting(_ size: Int) throws -> UUID? {
-    guard size > RequestBodyLimits.unreservedBytes else { return nil }
-    return try bytes.withLock {
-      precondition($0 == 0)
+    precondition(size >= 0)
+    guard size > 0 else { return nil }
+    return try reservation.withLock { value in
+      precondition(value.bytes == 0)
       do {
-        let ticket = try budget.begin(size)
-        if ticket == nil { $0 = size }
+        let (ticket, acquired) = try budget.begin(size)
+        if let acquired { value = acquired }
         return ticket
       } catch {
         ProtocolFailureDiagnostics.recordBodyLimit(bytes: size, path: "reject_budget")
@@ -79,10 +142,10 @@ final class RequestBodyLease: Sendable {
     }
   }
   func reserveIfReady(_ size: Int, ticket: UUID) -> Bool {
-    bytes.withLock {
-      precondition($0 == 0)
-      guard budget.acquire(size, ticket: ticket) else { return false }
-      $0 = size
+    reservation.withLock { value in
+      precondition(value.bytes == 0)
+      guard let acquired = budget.acquire(size, ticket: ticket) else { return false }
+      value = acquired
       return true
     }
   }
@@ -103,22 +166,21 @@ final class RequestBodyLease: Sendable {
       try await Task.sleep(for: .milliseconds(25))
     }
   }
-  func reserve(_ size: Int, countAll: Bool = false) throws {
-    guard countAll || size > RequestBodyLimits.unreservedBytes else { return }
-    try bytes.withLock {
-      if size > $0 {
-        do { try budget.acquire(size - $0) } catch {
-          ProtocolFailureDiagnostics.recordBodyLimit(bytes: size, path: "reject_budget")
-          throw error
-        }
-        $0 = size
+  /// Control requests share the main pool and cannot consume small-request headroom.
+  func reserve(_ size: Int, control: Bool = false) throws {
+    precondition(size >= 0)
+    try reservation.withLock { value in
+      guard size > value.bytes else { return }
+      do { value = try budget.resize(value, to: size, control: control) } catch {
+        ProtocolFailureDiagnostics.recordBodyLimit(bytes: size, path: "reject_budget")
+        throw error
       }
     }
   }
   func release() {
-    bytes.withLock {
-      budget.release($0)
-      $0 = 0
+    reservation.withLock { value in
+      budget.release(value)
+      value = RequestBodyBudget.Reservation()
     }
   }
   deinit { release() }
