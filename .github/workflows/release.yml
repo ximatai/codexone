@@ -219,11 +219,11 @@ jobs:
   image-checks:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        suite: [tls, installation]
+        suite: [tls, installation, capacity]
     defaults:
       run:
         shell: bash
@@ -271,6 +271,20 @@ jobs:
           old_image="$(docker image inspect ghcr.io/ximatai/codexone:0.26.9 --format '{{.Id}}')"
           python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)" \
             --incompatible-image "$old_image" --incompatible-schema 11
+      - name: Verify mixed capacity in isolated native Linux containers
+        if: matrix.suite == 'capacity'
+        run: |
+          python3 scripts/test_verify_mixed_capacity.py
+          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:verification-tools .
+          python3 scripts/verify_mixed_capacity.py --image "$(cat artifacts/image-id.txt)" \
+            --harness-image codexone:verification-tools --output artifacts/mixed-capacity
+      - name: Save mixed capacity evidence
+        if: always() && matrix.suite == 'capacity'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mixed-capacity-evidence
+          path: artifacts/mixed-capacity
+          if-no-files-found: warn
   verify:
     if: always()
     needs: [build, backend-scripts, image-checks]
