@@ -70,16 +70,22 @@ extension HTTPResponseExecution {
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     defer { observeDisconnectedOutcome(downstream, context: context) }
-    try peer.attachEvidence(lane: lane) { event in
-      context.observeUpstreamEvent()
-      try observeProviderEvent(event, context: context)
-      guard !context.providerRejectedBeforeOutput,
-        ProviderObservation.terminalEvents.contains(event["type"]?.string ?? "")
-      else { return }
-      try request.observeUsage(
-        event["response"], context: context, model: model,
-        configuration: configuration.imageGeneration)
-    }
+    try peer.attachEvidence(
+      lane: lane,
+      unattributedProcessing: {
+        context.observeUpstreamEvent()
+        _ = context.observeProviderEvent()
+      },
+      handler: { event in
+        context.observeUpstreamEvent()
+        try observeProviderEvent(event, context: context)
+        guard !context.providerRejectedBeforeOutput,
+          ProviderObservation.terminalEvents.contains(event["type"]?.string ?? "")
+        else { return }
+        try request.observeUsage(
+          event["response"], context: context, model: model,
+          configuration: configuration.imageGeneration)
+      })
     defer { peer.detachEvidence(lane: lane) }
     do {
       try await withProgressDeadline(budget: configuration.budget) { progress in
@@ -129,6 +135,7 @@ extension HTTPResponseExecution {
             }
             observeDisconnectedOutcome(downstream, context: context)
             let type = try ProviderObservation.eventType(event)
+            protocolExtensions?.recordUpstreamEvent(event)
             await observeResponseMetadata(event, account: account, returned: &observedMetadata)
             if type == "error" { throw ProviderObservation.providerFailure(event) }
             if ProviderObservation.terminalEvents.contains(type),
@@ -144,7 +151,7 @@ extension HTTPResponseExecution {
             progress.note(event: event)
             for object in observation.bindings { try await context.bind(object) }
             try observeTerminalOutcome(event, context: context)
-            if type == "error" || (type.hasPrefix("response.") && type != "response.metadata") {
+            if !ProviderEventSemantics(event).connectionMetadata {
               lifecycle = true
             }
             if !lifecycle {
@@ -155,14 +162,12 @@ extension HTTPResponseExecution {
               for metadata in bufferedMetadata { try await emit(metadata) }
               bufferedMetadata.removeAll()
               try await emit(
-                request.requirements.imageModel == nil
-                  ? ProviderObservation.textOutput(event) : event
+                ProviderObservation.clientOutput(event)
               )
             } else if observation.terminal {
               let response = event["response"]!
               try await emit(
-                request.requirements.imageModel == nil
-                  ? ProviderObservation.textOutput(response) : response)
+                ProviderObservation.clientOutput(response))
             }
             if observation.terminal { try observeSubmittedTerminal(event, context: context) }
             if observation.terminal {

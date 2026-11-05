@@ -116,7 +116,7 @@ extension LegacyJSONValue {
 @Test func jsonOrderFilteringPreservesProviderErrorAndUsagePositions() throws {
   let raw =
     #"{"usage":{"output_tokens_details":{"reasoning_tokens":1},"output_tokens":3,"input_tokens_details":{"cache_write_tokens":1,"cached_tokens":0},"input_tokens":5},"error":{"message":"synthetic","private":"synthetic","type":"synthetic","code":"synthetic"}}"#
-  let value = ProviderObservation.textOutput(try JSONValue.decode(Data(raw.utf8)))
+  let value = ProviderObservation.clientOutput(try JSONValue.decode(Data(raw.utf8)))
   #expect(
     try value.data()
       == Data(raw.replacingOccurrences(of: #","private":"synthetic""#, with: "").utf8))

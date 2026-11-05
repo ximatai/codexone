@@ -135,7 +135,7 @@ extension HTTPResponseExecution {
                   pending.append(byte)
                   if let event {
                     context.observeUpstreamEvent()
-                    progress.note()
+                    progress.note(progress: ProviderEventSemantics.nativeImageProgress(event))
                     try observeProviderEvent(event, context: context)
                     let type = event["type"]?.string ?? ""
                     if type == "error" { throw ProviderObservation.providerFailure(event) }
@@ -201,7 +201,7 @@ extension HTTPResponseExecution {
               context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
               if let usage = observation?.usage { try context.observeUsage(usage) }
               if let document { try NativeImageResult.requireCompletion(document) }
-              if request.requiresNonStreamingOutput {
+              if !request.editing || request.requiresNonStreamingOutput {
                 guard let document,
                   NativeImageDiagnostics.contentTypeToken(
                     response.headers.first(name: "content-type")) == "json"
@@ -294,6 +294,7 @@ struct NativeImageObservation {
         // SVG author usage is additional to rendering. Until separately mapped, rendering
         // counters and cost are a lower bound, never complete evidence for the operation.
         && (document["svg_usage"] == nil || document["svg_usage"] == .null)
+        && items.allSatisfy { $0["svg_usage"] == nil || $0["svg_usage"] == .null }
         && (document["status"] == nil
           || ["completed", "failed", "cancelled"].contains(document["status"]?.string ?? ""))
         ? .complete : .partial,

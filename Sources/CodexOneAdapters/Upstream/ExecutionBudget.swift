@@ -64,11 +64,15 @@ final class ExecutionProgress: Sendable {
     }
   }
   func note(event: JSONValue? = nil) {
+    // Untyped calls are bounded byte progress on non-event HTTP/Images paths.
+    note(progress: event.map { ProviderEventSemantics($0).progress } ?? .activity)
+  }
+  func note(progress: ProviderEventSemantics.Progress) {
     state.withLock { value in
-      let type = event?["type"]?.string
-      if type?.hasSuffix(".delta") == true && event?["delta"]?.string?.isEmpty != false { return }
-      if value.received && ["response.created", "response.in_progress"].contains(type ?? "") {
-        return
+      switch progress {
+      case .none: return
+      case .acknowledgement: if value.received { return }
+      case .activity: break
       }
       value.received = true
       value.deadline = .now.advanced(by: .seconds(idle))

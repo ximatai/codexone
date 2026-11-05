@@ -372,7 +372,7 @@ public struct ResponsesDataService: Service {
     sizeRefused: @escaping @Sendable (GatewayProtocolError, String, String) -> Void = { _, _, _ in }
   ) async throws {
     downstream.permitSettlement()
-    let commands = WebSocketInbox(capacity: RequestBodyLimits.budgetBytes)
+    let commands = WebSocketInbox(capacity: RequestBodyLimits.webSocketQueueBytes)
     let activity = WebSocketActivity()
     defer { commands.finish(CancellationError(), discard: true) }
     do {

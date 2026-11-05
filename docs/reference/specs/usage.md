@@ -24,7 +24,7 @@
 
 全时间治理暴露只受 Key 筛选，不受时间、模型或错误过滤；区间查询不会退款或释放 unknown。单个只读 WAL reader、一个在途统计、1 秒 SQL 扫描预算，50 ms busy 等待，取消中断查询；不占核心 writer 队列。已识别 Key 的合法请求在准入前失败时只记脱敏诊断，已提交 intent 不重复记拒绝。诊断保留 30 天/最多一万条，压力/存储失败可缺失，不当作全部流量或账本；不消耗核心治理审计预留。
 
-客户端用量投影的 input_tokens_details.cache_write_tokens_details 仅透传非负整数 ttl_30m_tokens 与 ttl_12h_tokens；未知字段与畸形计数丢弃，保留上游字段相对顺序。这些 TTL 明细不新增计量证据、不参与 Key 限额或费用计算，具体投影边界见[协议规范](protocol.md)。
+客户端用量回传保留未知字段和相对顺序；input_tokens_details.cache_write_tokens_details 的已知 ttl_30m_tokens 与 ttl_12h_tokens 仅保留非负整数，畸形已知计数局部省略。这些 TTL 明细不新增计量证据、不参与 Key 限额或费用计算，具体投影边界见[协议规范](protocol.md)。
 
 实例业务日由 `CODEXONE_BUSINESS_DAY_OFFSET` 定义，缺省 UTC，仅接受 `UTC` 或 −12:00 至 +14:00 的 `±HH:00` 整小时偏移；不支持半小时时区和 DST。Core 使用向下取整和溢出检查，UTC 时间戳不变。重启采用环境值，无数据库设置或迁移；当前限额与精确明细按新日界重算，不补偿、不中断已准入执行。新窗口为 `business-day-<startUnixSeconds>`，事务最终确定窗口和准入秒并返回执行上下文，旧 `utc-day-*` 继续读取。
 
@@ -96,6 +96,12 @@
 上游 WS 超限的本地拒绝发生在准入前，不建立 attempt/预留，仅记录 `invalid_request` 拒绝诊断。超限单轮 HTTP 回退复用一次正常准入；上游明确 HTTP 413 在无输出/事件时按 U13 结算完整零用量（`providerRejectedBeforeOutput`），结果为 `invalid_request` 失败；不是 unknown，也不更新账号健康或冷却。早期1009的回退与预检回退使用同一账号、同一attempt。回退已发送后的取消、超时与不明确的传输失败仍沿用未知责任，不借大小预检推测未执行。
 
 SVG 响应若携带非 null svg_usage，表示另有编写模型用量。当前仅保留已观测图片计数及估算的下界，完整度标记 partial，继续保留 unknown，不把编写用量当零或完整结清；原 svg_usage 随响应回传，单独编写 Token/费率映射仍待实际订阅证据对齐。
+
+## 协议扩展与图片部分计量
+
+客户端回传与内部可信计量分离。未知 usage 明细不参与计量，也不因新增分解明细就否定已有权威总数；已知畸形字段只使对应观测不可用，不拒绝合法产物、不抹掉其他计数。Responses 图片工具的多图片计数保留各有效值小计，任一缺失/畸形或输出组件未覆盖时保持 partial；明确完成且无图片的已知输出保留可信零值。
+
+Responses 顶层、图片条目以及原生 Images 结果/图片项出现独立非 null svg_usage 时，现有宿主和渲染计数及估算仍作为下界保留，但整次用量为 partial/unknown。原始作者用量可回传，不将其任意 JSON 存入账本、不混入宿主/渲染 Token；结构化作者指标、费率与查询表达仍待后续持久语义评估。本次不新增 schema，不回填或重算历史。
 
 ## 相关文档
 

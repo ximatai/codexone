@@ -151,10 +151,21 @@ class Provider(BaseHTTPRequestHandler):
                     self.server.oversized_ws += 1
                     send(self.connection, struct.pack('!H', 1009), opcode=8)
                     return
-                if self.server.mode.startswith(('close', 'metadata', 'created', 'other', 'drop')):
+                if self.server.mode == 'multi_close':
+                    second_opcode, second_body = receive(self.connection, masked=True)
+                    assert second_opcode == 1
+                    self.capture(second_body, 'websocket')
+                    send(self.connection, struct.pack('!H', 1009), opcode=8)
+                    return
+                if self.server.mode.startswith(('close', 'metadata', 'created', 'extension', 'other', 'drop')):
                     mode = self.server.mode
                     if mode.startswith('metadata'):
                         send(self.connection, wire(dict(type='rate_limits.updated', rate_limits=[])))
+                    if mode.startswith('extension'):
+                        event = dict(type='synthetic.future.started')
+                        if mode == 'extension_response': event['type'] = 'response.future.started'
+                        if mode == 'extension_identity': event['response_id'] = 'synthetic-unresolved'
+                        send(self.connection, wire(event))
                     if mode == 'created':
                         send(self.connection, wire(dict(type='response.created', response=dict(
                             id=f'resp_synthetic_large_{index}', status='in_progress', output=[]))))
@@ -476,6 +487,21 @@ def main():
                         assert status == 413, (status, body[:500])
                         error(body)
                         ledger(root, count)
+                    # A connection-level 1009 cannot certify zero for two dispatched lanes.
+                    server.mode = 'multi_close'
+                    before = len(server.calls)
+                    with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+                        for lane in ('first', 'second'):
+                            send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':lane}, masked=True)
+                        ended = set()
+                        while len(ended) < 2:
+                            _, data = receive(peer); event = json.loads(data)
+                            assert event['type'] == 'error' and event['status'] == 502, event
+                            assert event['error']['code'] == 'execution_indeterminate'
+                            ended.add(event['stream_id'])
+                    assert [c[0] for c in server.calls[before:]] == ['websocket', 'websocket']
+                    count += 2
+                    assert all(row[0] == 'unknown' for row in ledger(root, count)[-2:])
                     # Real below-threshold refusals: exactly one HTTP replay, same bytes/state.
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
@@ -536,7 +562,7 @@ def main():
                         assert state == 'settled' and outcome['failure'] == 'invalid_request'
                         assert usage['inputTokens'] == usage['outputTokens'] == 0
                     # Lifecycle, other close codes, and EOF keep indeterminate behavior, no replay.
-                    for mode in ('created', 'other', 'drop'):
+                    for mode in ('created', 'extension', 'extension_response', 'extension_identity', 'other', 'drop'):
                         server.mode = mode
                         before = len(server.calls)
                         status, _, body = call_http(ports['data'], sized(1024, contract))

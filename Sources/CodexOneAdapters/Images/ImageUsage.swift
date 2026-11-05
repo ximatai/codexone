@@ -7,7 +7,7 @@ extension ResponseRequest {
     model: SingleIdentityConfiguration.Model, configuration: ImageConfiguration?
   ) throws {
     if requirements.imageModel != nil,
-      let host = try ProviderObservation.usage(response?["usage"], model: model)
+      let host = ProviderObservation.usage(response?["usage"], model: model)
     {
       // Host evidence survives malformed or unavailable tool metrics; only the combined revision can settle.
       try context.observeUsage(
@@ -26,7 +26,7 @@ extension ResponseRequest {
     _ response: JSONValue?, model: SingleIdentityConfiguration.Model,
     configuration: ImageConfiguration?
   ) throws -> UsageEvidence? {
-    let host = try ProviderObservation.usage(response?["usage"], model: model)
+    let host = ProviderObservation.usage(response?["usage"], model: model)
     guard let imageModel = requirements.imageModel else { return host }
     guard let mapping = configuration?.models.first(where: { $0.id == imageModel }) else {
       throw GatewayProtocolError(502, "invalid_upstream_image")
@@ -43,18 +43,26 @@ extension ResponseRequest {
       } == true && (!items.isEmpty || response?["status"]?.string == "completed")
     var knownInput = knownOutputItems
     var knownOutput = knownOutputItems
+    // Availability of a subtotal differs from completeness of the whole operation.
+    var observedInput = knownOutputItems && items.isEmpty
+    var observedOutput = knownOutputItems && items.isEmpty
     var images: Int64 = 0
-    var complete = knownOutputItems
+    var complete =
+      knownOutputItems
+      && (response?["svg_usage"] == nil || response?["svg_usage"] == .null)
     for item in items {
-      func tokens(_ name: String) throws -> Int64? {
+      func tokens(_ name: String) -> Int64? {
         guard let value = item["usage"]?[name], value != .null else { return nil }
         guard let number = value.integer, (0...1_000_000_000).contains(number) else {
-          throw GatewayProtocolError(502, "invalid_upstream_usage")
+          return nil
         }
         return number
       }
-      let i = try tokens("input_tokens")
-      let o = try tokens("output_tokens")
+      let i = tokens("input_tokens")
+      let o = tokens("output_tokens")
+      if item["svg_usage"] != nil && item["svg_usage"] != .null { complete = false }
+      observedInput = observedInput || i != nil
+      observedOutput = observedOutput || o != nil
       input += i ?? 0
       output += o ?? 0
       knownInput = knownInput && i != nil
@@ -68,20 +76,25 @@ extension ResponseRequest {
     let toolCost =
       Decimal(input) * Decimal(mapping.inputMicrosPerMillion) + Decimal(output)
       * Decimal(mapping.outputMicrosPerMillion)
-    let rounded = NSDecimalNumber(decimal: toolCost / 1_000_000).rounding(
+    let roundedCost = NSDecimalNumber(decimal: toolCost / 1_000_000).rounding(
       accordingToBehavior: NSDecimalNumberHandler(
         roundingMode: .up, scale: 0, raiseOnExactness: false, raiseOnOverflow: false,
         raiseOnUnderflow: false, raiseOnDivideByZero: false)
-    ).int64Value
-    guard rounded >= 0, rounded <= 1_000_000_000_000 - (host?.estimatedMicros ?? 0) else {
-      throw GatewayProtocolError(502, "invalid_upstream_usage")
-    }
+    )
+    let validCost =
+      roundedCost != .notANumber && roundedCost.compare(0) != .orderedAscending
+      && roundedCost.compare(
+        NSDecimalNumber(value: 1_000_000_000_000 - (host?.estimatedMicros ?? 0)))
+        != .orderedDescending
+    let rounded = validCost ? roundedCost.int64Value : 0
+    complete = complete && validCost
     return .init(
       revision: 1, inputTokens: host?.inputTokens ?? 0, outputTokens: host?.outputTokens ?? 0,
       cachedTokens: host?.cachedTokens ?? 0, images: images,
       estimatedMicros: (host?.estimatedMicros ?? 0) + rounded,
       completeness: complete && knownInput && knownOutput && host?.completeness == .complete
         ? .complete : .partial,
-      imageInputTokens: knownInput ? input : nil, imageOutputTokens: knownOutput ? output : nil)
+      imageInputTokens: observedInput ? input : nil,
+      imageOutputTokens: observedOutput ? output : nil)
   }
 }

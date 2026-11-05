@@ -154,7 +154,7 @@ JSON响应的头/正文/end作为同一有界writer sequence提交，沿用5秒�
 
 Responses SSE 在执行用例已返回并移交最终化之后，才写入网关 `[DONE]` 和 HTTP end。这两个收尾写入失败只记录独立 info `Response stream finish failed after execution`，reason 仅为 `downstream_done_write` 或 `downstream_end_write`，附服务端 request UUID；无 code/status，独立限额 16 条/60 秒，不消耗真实拒绝的 warning 预算。此分类只作用于上述两个 I/O await；未开始/重复结束等状态错误及执行内错误保持既有拒绝日志。响应写入、错误映射、结算、用量、重试与取消均不改变；成功提交 writer 不保证客户端消费，也不保证网络结束标记送达。正常 JSON 与原生 WS 没有此 SSE 收尾分类。已成功提交 response.completed（或 completed JSON）的 HTTP writer，若后续执行收尾抛 CancellationError，诊断为 info `Response cleanup after completion` / `execution_cleanup_cancelled`；提交前取消、显式协议/上游错误和期限错误仍用原日志。已结束 HTTP 响应后，等待下一请求且尚未读到任何 request part 时，IOError/CancellationError 只诊断为同名 info / `downstream_idle_read`，引用上一响应的 UUID；首请求及新请求已有 part 的错误保留拒绝日志。两种 cleanup info 与 SSE finish 共用独立 16 条/60 秒预算。上述分类不改变既有错误写入尝试、客户端响应、执行失败分类和持久责任。
 
-usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端只输出非负整数的 input/output/total 及 cached/cache_write/reasoning 明细；input_tokens_details.cache_write_tokens_details 仅保留非负整数 ttl_30m_tokens 与 ttl_12h_tokens，未知或畸形嵌套成员丢弃；其余 usage 成员不出网关。
+usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tokens 作为计量证据，值须为 0—1000000000 整数；畸形计数不形成证据（完整度 partial 或无证据，账本保持 unknown），不使执行失败。向客户端回传时保留未知 usage 成员及嵌套扩展，仅局部省略已知 input/output/total、cached/cache_write/reasoning、ttl_30m_tokens/ttl_12h_tokens 的畸形整数或已知明细的畸形容器，保留成员顺序。内部可信计量独立读取原始事件，不将未知明细当作额外消耗或执行事实。
 
 
 ## 请求契约选择
@@ -194,6 +194,16 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 请求 reasoning.effort/service_tier 的只读账本观察及终态实际档位见 U10 补充；该观察不增加协议值白名单、不拒绝或改写提供者参数，原有 null 省略规则不变。
 
+## 协议扩展的解释边界
+
+保留传输内容、提取业务事实、判断执行风险互相独立。ProviderEventSemantics 仅映射已知 lifecycle、output_item、part/delta 及工具阶段；未知事件原样转发（须先满足 lane/response 隔离与资源边界），不能因携带 item/item_id/call_id 就授予归属、续期或终态。已知 output_item 封套仍可建立 item ID；function_call/custom_tool_call 才解释 call_id。未知事件、metadata 和空 delta 不推进 first/idle；原生 Images 只将已知 completed 与非空 partial_image 作为进展，未知图片事件不续期。total 期限继续独立生效；既有工具阶段事件的重复语义未在此承诺全面去重。
+
+未知应用事件即使暂时不能关联到响应，也否定未处理的假设：reader 在入队/丢弃前关闭该 turn 的 1009 例外，无法归属到在途 lane 时保守作用于该连接已派发的在途 lane，但不将事件作为它们的归属、用量或完成证据。明确属于旧 response 的事件继续隔离，不污染新 turn。rate_limits.updated、codex.rate_limits、response.metadata、codex.response.metadata 仅在不携带 response/response_id/item/item_id/delta/output 时可作为连接元数据例外。transport 关闭后保留当前 turn 的风险证据供 1009 分类；仅连接上唯一已派发在途 turn 可接受该未处理例外，多 lane 同时在途时连接级 1009 无法证明每轮均未处理，保持 unknown。其他关闭不据此重放。
+
+Responses 所有入口统一回传修正：保留未知 usage 根成员及嵌套明细，仅局部省略已知的畸形整数/明细容器，维持错误脱敏。该回传文档不作为内部计量来源。图片结果采用有界、非空、规范 base64 封套校验，不使用参考图输入 codec、不本地执行或抓取产物；输入图片限制不变。所有原生 generation 的 JSON 输出均在提交前检查媒体类型、完整 created/data 与规范 base64，不能因未知格式就回传无效成功文档。
+
+原生 Images 的省略格式及 PNG/JPEG/WebP 保留已有 generation SSE、edits JSON 转换；GIF/SVG 保留明确非流式限制。其他未知 output_format 保留客户端 stream 选择，不继承已知格式 workaround；协议字段、授权、资源边界继续生效，不证明提供者实际支持。扩展观察与人工跟踪见[客户端协议跟踪](../../development/client-protocol-watch.md)。
+
 ## JSON 对象顺序
 
 客户端或上游 JSON 经解析和重新序列化时，各层对象保留收到的键顺序，包括工具 schema 的 properties、HTTP Responses / compact、SSE、WebSocket create/control 与客户端响应。已有字段替换值时保留位置，删除字段不移动其余成员，新增字段按固定组装顺序追加；本地产生的无序映射按键排序后插入。对象相等比较仍忽略成员顺序。仅顺序成为明确契约，空白、转义写法与数字词法不保证原字节回显；直接透传路径仍保留原字节。
@@ -206,7 +216,7 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
 
-请求帧发送后、上游任何响应生命周期事件之前的明确 WS close code **1009**，也视为未处理的大小拒绝，不依赖 16 MiB 预检值。独立 HTTP JSON/SSE 在同一次已准入执行内、同一账号与认证/路由/会话/turn-state 下回退 HTTP 一次；预检及 1009 共享单轮边界，不会再次回退。rate-limit/connection metadata 不算生命周期；这些事件在响应开始前缓冲，1009 回退时不提交给客户端。生命周期标记由上游唯一 reader 在入队前更新；`response.created` 或后续响应事件之后的 1009、其他 close code、EOF/掉线均保留原行为，不能重放。回退 HTTP 自己失败时沿其既有失败路径收尾，不重选账号。
+请求帧发送后、上游任何可能已处理的应用事件之前的明确 WS close code **1009**，也视为未处理的大小拒绝，不依赖 16 MiB 预检值。独立 HTTP JSON/SSE 在同一次已准入执行内、同一账号与认证/路由/会话/turn-state 下回退 HTTP 一次；预检及 1009 共享单轮边界，不会再次回退。rate-limit/connection metadata 不算生命周期；这些事件在响应开始前缓冲，1009 回退时不提交给客户端。生命周期标记由上游唯一 reader 在入队前更新；`response.created` 或后续响应事件之后的 1009、其他 close code、EOF/掉线均保留原行为，不能重放。回退 HTTP 自己失败时沿其既有失败路径收尾，不重选账号。
 
 原生下游 WS 全部不做 HTTP 回退：即使未带 `previous_response_id`，input 也可能依赖连接累计上下文，且存在 lane、warmup 与并发控制语义。超限 create 在准入前拒绝，初始 turn 不建立上游 socket；后续拒绝不破坏已有 socket/上下文，可缩小输入后继续。HTTP 桥接超限且带非 null `previous_response_id` 也拒绝，不能静默删除 context；低于上限沿用原校验。对于已发送的早期 1009，原生 WS 与已通过原校验、含 `previous_response_id` 的 HTTP 续接均为已准入的 413：依 U13 结算完整零用量，不重放客户端 turn。原生客户端 socket 保持开放，后续独立小 turn 可重新建立上游连接；不承诺恢复已关闭上游的隐式连接上下文。Codex subscription HTTP 原有 `previous_response_id` 参数校验继续生效。
 

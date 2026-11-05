@@ -142,6 +142,8 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
   #expect(try request("svg", ["n": .number(1)]).requiresNonStreamingOutput)
   // Future provider formats retain the existing transparent forwarding contract.
   #expect(try !request("synthetic-future").requiresNonStreamingOutput)
+  #expect(try !request("synthetic-future").upstreamStreaming)
+  #expect(try request("synthetic-future", ["stream": .bool(true)]).upstreamStreaming)
   for svg: JSONValue in [
     .object(["model": .string("synthetic-author")]), .object(["reasoning": .object([:])]),
   ] {

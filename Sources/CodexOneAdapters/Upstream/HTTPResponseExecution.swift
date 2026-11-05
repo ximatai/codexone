@@ -281,6 +281,7 @@ struct HTTPResponseExecution: Sendable {
                   firstAfterUnprocessedRefusal: isFallback && firstHTTPEvent)
                 firstHTTPEvent = false
                 let type = try ProviderObservation.eventType(event)
+                protocolExtensions?.recordUpstreamEvent(event)
                 if type == "error" { throw ProviderObservation.providerFailure(event) }
                 // A foreign response cannot supply evidence to this attempt.
                 if ProviderObservation.lifecycleEvents.contains(type),
@@ -318,8 +319,7 @@ struct HTTPResponseExecution: Sendable {
                 if request.streaming || terminal {
                   let output = request.streaming ? event : event["response"]!
                   try await emit(
-                    request.requirements.imageModel == nil
-                      ? ProviderObservation.textOutput(output) : output)
+                    ProviderObservation.clientOutput(output))
                 }
                 if terminal { try observeSubmittedTerminal(event, context: context) }
                 if terminal { break readUpstream }
@@ -360,8 +360,7 @@ struct HTTPResponseExecution: Sendable {
             for object in observation.bindings { try await context.bind(object) }
             try observeTerminalOutcome(event, context: context)
             try await emit(
-              request.requirements.imageModel == nil
-                ? ProviderObservation.textOutput(document) : document)
+              ProviderObservation.clientOutput(document))
             try observeSubmittedTerminal(event, context: context)
           }
         } catch {

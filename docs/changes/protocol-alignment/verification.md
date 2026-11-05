@@ -24,7 +24,19 @@
 - Responses 的独立 svg_usage 尚未套用原生 Images 的 partial/unknown 保护；如果提供者返回该结构，现有图片/宿主计数可能被视为完整证据。此为代码条件推导，不代表真实提供者已返回该结构。
 - 两个每连接 WebSocketInbox 复用了共享预算常量，隐式从 48 MiB 增至 64 MiB，超出提案范围；需拆分并保持队列原上限。
 
-本轮未修改服务端实现或新增运行测试。以下既有通过结果仍有效，但不足以证明上述边界正确；PR 已退回草稿，补齐任务后再发布。
+该次只读复盘没有修改实现；发现的缺口由下方协议演进实施继续修复。既有通过结果不单独证明修复完成，PR 继续保持草稿。
+
+## 协议演进首轮实施
+
+2026-11-05，macOS arm64、Swift 6.4.2，以下为新实现的本机证据：
+
+- 全量 Swift 484 项通过（Core 7、Runtime 67、EndToEnd 88、Adapters 322）；新增未知事件不绑定/不续期、回传未知计量、旧响应隔离、closed 后 1009 证据存续、多 lane 未明拒绝、图片不使用输入 codec、多图有效小计及有界名称观察。
+- `verify_text_contract.py` 全矩阵通过：HTTP 116、websocket 197 次合成执行；未知字段/大整数/null、事件及用量明细保持，既有失败/计数修正、续接、无重放及私密内容不入日志保持。
+- `verify_images.py` HTTP/websocket 配置全矩阵通过：真实合成单帧 GIF、SVG/XML 和 opaque future-format 字节经 Responses JSON/SSE/原生 WS 原值交付；原生未知格式 stream/Accept 与 edits 受测；空/坏/混合输出、非 JSON/错误媒体类型不返回 generation 成功；宿主坏计数、多图部分计数、root/item svg_usage 保留下界与 unknown。重启复用同一组合成 Key 后，持续未知原生图片 SSE 事件不能延长 1 秒首响应期限，504、单派发且 unknown。
+- `verify_upstream_ws_body_limit.py` 新矩阵验证未知应用事件后 1009 不回退，以及同连接两个已派发 named lane 的 1009 分别保持 unknown；原有单 turn 明确拒绝、元数据例外、413、容量回收继续回归。responses 与 codex-subscription 两种契约全矩阵均通过。
+- Swift 严格格式、文档链接/任务框架、Core/Runtime/Adapter 依赖检查通过。两名 subagent 只读复盘发现的 close/归属与部分计量细节已修正；实际套接字回归不能由 helper 测试替代。
+
+本轮未新增 Core 状态或持久 schema，不重算历史。已知工具阶段事件的重复进展语义仍沿旧行为，未声称全面去重；未知事件则不推进期限。作者 Token/价格的结构化持久与查询表达、混合大输入/大输出/慢消费者的 Linux RSS/FD/task/队列/租约回落，以及真实提供者/客户端兼容仍未完成。GIF fixture 只证明字节交付，不证明动画或 Desktop 显示。
 
 ## Linux 与发布门禁
 
@@ -32,7 +44,7 @@
 
 两路最大正文持有时，/proc 的进程 RSS 高水位为 responses 398944 KiB（约 389.59 MiB）、codex-subscription 405464 KiB（约 395.96 MiB）。只统计网关进程，不包括 fake provider/Python 客户端；这是该合成场景的峰值，不代表所有负载或进程 RSS 硬上限。夹具在建立 WS 连接前准备大正文，逐连接发送并确认派发，保留 10 秒首 create 期限。
 
-最后仅补充此验证记录，代码与受测提交一致；自动复跑结果仍以 [PR #98 检查](https://github.com/ximatai/codexone/pull/98/checks)为准。
+该 Linux 结果属于协议演进实施前的基线，不能覆盖本轮新代码；新的自动复跑结果以 [PR #98 检查](https://github.com/ximatai/codexone/pull/98/checks)为准。
 
 没有执行真实付费图片探测或修改线上配置；合成 GIF/SVG 只证明传输、封套、授权及结算，不证明实际格式/账号可用。UI 行为未变。
 

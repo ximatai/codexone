@@ -17,7 +17,7 @@ from verify_websocket import dial, receive, send
 
 FIXTURE = Path(__file__).resolve().parents[1] / 'Tests/CodexOneAdaptersTests/Fixtures/provider-text-contract.json'
 PRIVATE = 'synthetic independent contract output'
-CASES = ['ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', 'incomplete', 'timestamp-string', 'timestamp-null',
+CASES = ['extension', 'ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', 'incomplete', 'timestamp-string', 'timestamp-null',
          'instructions-boolean', 'instructions-object', 'instructions-scalars', 'instructions-capacity',
          'details-boolean', 'details-reason', 'status-conflict', 'status-unknown',
          'usage-created-input', 'usage-created-output', 'usage-created-cached', 'usage-progress-input',
@@ -45,6 +45,11 @@ class Provider(BaseHTTPRequestHandler):
             assert any(item.get('role') == 'assistant' and item['content'][0]['text'] == PRIVATE
                        for item in request['input'])
         mode = self.server.mode
+        if mode == 'extension':
+            assert request['synthetic_future'] == {'large':9007199254740993, 'nullable':None, 'values':[False, '合成']}
+            events.insert(2, dict(type='synthetic.future.event', response_id=result['id'],
+                item_id='synthetic-unowned-extension', item=dict(id='synthetic-unowned-extension', call_id='synthetic-unowned-call'),
+                future=request['synthetic_future']))
         if mode == 'event-oversized':
             return [dict(type='synthetic.extension', data='x' * 8388609)]
         if mode == 'sparse-stream':
@@ -259,14 +264,20 @@ def main():
                             if route == 'json' and mode == 'sparse-stream':
                                 continue
                             request = dict(model='synthetic-contract', input=[dict(role='user', content='synthetic contract')])
+                            if mode == 'extension':
+                                request['synthetic_future'] = {'large':9007199254740993, 'nullable':None, 'values':[False, '合成']}
                             if mode == 'large-echo':
                                 request['instructions'] = 'synthetic-large-echo-' + 'x' * 300000
                             status, events = call(ports['data'], route, request)
                             count += 1
                             assert events, (transport, mode, route, status)
                             assert 'synthetic-private-counter' not in json.dumps(events)
-                            if mode in ('usage-created-metadata', 'usage-progress-metadata'):
-                                assert 'synthetic_metadata' not in json.dumps(events)
+                            if mode in ('usage-created-metadata', 'usage-progress-metadata') and route != 'json':
+                                assert 'synthetic_metadata' in json.dumps(events)
+                            if mode == 'extension' and route != 'json':
+                                extension = next(e for e in events if e['type'] == 'synthetic.future.event')
+                                assert extension['future'] == request['synthetic_future']
+                                assert extension['item_id'] == 'synthetic-unowned-extension'
                             result = events[-1]
                             if mode not in FAILED:
                                 # Provider metadata variations are forwarded; they never fail delivery.
@@ -279,9 +290,9 @@ def main():
                                     else:
                                         assert response['instructions'] == json.loads(provider.literal)[-1]['response']['instructions']
                                 if mode == 'usage-metadata':
-                                    assert set(response['usage']) == {'input_tokens', 'output_tokens', 'total_tokens', 'input_tokens_details', 'output_tokens_details'}
-                                    assert response['usage']['input_tokens_details'] == {'cached_tokens': 0, 'cache_write_tokens': 1}
-                                    assert response['usage']['output_tokens_details'] == {'reasoning_tokens': 1}
+                                    assert set(response['usage']) == {'input_tokens', 'output_tokens', 'total_tokens', 'input_tokens_details', 'output_tokens_details', *json.loads(FIXTURE.read_text())['usageMetadata']}
+                                    assert response['usage']['input_tokens_details'] == {'cached_tokens': 0, 'cache_write_tokens': 1, 'metadata': ['synthetic', False]}
+                                    assert response['usage']['output_tokens_details'] == {'reasoning_tokens': 1, 'metadata': {'label':'synthetic'}}
                                     assert response['usage']['input_tokens'] == 5 and response['usage']['output_tokens'] == 3
                                 if mode != 'incomplete':
                                     request['input'] += response['output'] + [dict(role='user', content='synthetic next turn')]
