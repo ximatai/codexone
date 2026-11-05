@@ -44,6 +44,8 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用匹配的 Swift 容器及同次 `backend-build` 产物运行真实网关/浏览器测试。后端或前端变化都会构建网关并要求该任务成功，不能把普通前端的排除项当成已完成真实栈验证。
 
+`scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
+
 ## 独立镜像内存测量
 
 `scripts/measure_image_memory.py` 只运行本机已有的 CodexOne Linux amd64 镜像，不构建、不拉取镜像，不进入后端 CI 分片。先由操作者准备待测 CI 镜像，再运行（输出只含合成结果）：
@@ -87,7 +89,7 @@ python3 scripts/check_ci.py
 
 前端使用含浏览器/系统库的官方 Playwright Noble 镜像，不在每次运行时 apt/download 浏览器；镜像 tag 必须与 package-lock 中的 Playwright 版本一致，并固定 registry digest。e2e 用严格端口的 Vite preview 服务生产 dist；完整入口只构建一次，单独跑 e2e 前须 build，见[贡献指南](../../CONTRIBUTING.md)。
 
-Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、两个 Verify 容器与缓存 key；TLS harness 的 runtime pin 同步 Dockerfile runtime，Release 缓存随 Dockerfile/workflow 的组合 hash 失效；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
+Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、三个 Verify Swift 容器与缓存 key；TLS harness 的 runtime pin 同步 Dockerfile runtime，Release 缓存随 Dockerfile/workflow 的组合 hash 失效；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
 
 ### Node 与 Actions 工具链约定
 

@@ -134,6 +134,15 @@ owner 已确认 [方案](proposal.md)方向；已有默认关闭的实现和本�
 
 技术显示连续性验收已完成，可用本地合成预览看手感；完整共享 sampler、认证/寿命失败矩阵、最大组合 DTO、真实代理及 Linux 容器门禁仍按上方未勾选任务推进，`CODEXONE_ADMIN_LIVE` 默认仍为 off。没有部署到线上，不能将本地预览写成发布完成。
 
+### 真实管理 TLS/代理补测
+
+- 本机 Nginx 1.31.8、OpenSSL 3、独立临时 CA/prefix/端口与合成网关；不启用系统服务、不更改系统信任或线上 Nginx。
+- 实际 WSS 返回 v1/sequence 1/八来源完整 snapshot；缺 cookie、错误 Origin/Host、混合 Bearer、query 及数据监听面不能升级。管理登出使原 TLS viewer 收到 1008。
+- 只删除临时管理模板的精确 upgrade 路径，等待代理 reload 真正生效：WS 不能升级，同一会话 HTTPS 仍 200；恢复后可重新取得完整快照。30/60 秒 read idle 配置下，原 socket 跨过窗口并分别收到 2/4 次心跳，随后 masked ping/pong 双向通过。期间有 freshness 帧，不将其归为仅靠 ping 保活；不是线上代理验收。
+- 浏览器补测先揭示旧脚本与现有 Key 创建按钮、详情抽屉、禁用确认、默认可用筛选和刷新行为不匹配，逐项按当前界面修正。没有改产品来适应旧断言。
+- 最终 `verify_tls_proxy.py --binary … --web web/dist --nginx … --openssl … --browser` 退出 0：上述 30/60 秒、旧模板/恢复、认证/登出检查，以及 Chrome 直连 HTTPS 登录/实时连接/创建/禁用/刷新/退出、数据 HTTP/SSE/WSS、取消/中断结算、超时无重放与故障清理全部通过。浏览器仅固定临时叶证书 SPKI，链/主机名错误另由实际 TLS socket 验证拒绝；没有降低应用 CSP 或授权要求。
+- SQLite 结算观察修正后，本机协议段与控制帧段通过；慢端补跑改用实际 `ExecutionProbe` 后通过：200 intent、7 个正常 viewer/1 个不读 peer，snapshot 237,064 B，额外 RSS 12,812,288 B，健康 viewer/HTTP 存活。未观察到慢端关闭帧，仍只声称强制关闭；不是最大组合或原生 Linux 容量验证。
+
 ## 相关文档
 
 [方案](proposal.md) · [管理规范](../../reference/specs/control-plane.md) · [验证约定](../../development/verification.md)

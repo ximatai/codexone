@@ -264,7 +264,7 @@ def fixture(args, parent, tls, context, transport):
         thread = threading.Thread(target=provider.serve_forever, daemon=True); thread.start()
         owners.callback(finish_provider, provider, thread)
         process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin,
-            web_directory=args.web.resolve(), admin_public_origin=f'https://localhost:{public_ports[1]}')
+            web_directory=args.web.resolve(), admin_public_origin=f'https://localhost:{public_ports[1]}', admin_live=True)
         known_secrets = [admin_secret]
         owners.callback(finish_gateway, process, root, known_secrets, provider.release)
         proxy = Proxy(root / 'proxy', tls, ports, public_ports, args.nginx)
@@ -347,10 +347,138 @@ def admin_checks(f, key):
         assert request(f, 'data', 'GET', path)[0] == 404
     for prefix in ('/v1', '/backend-api/codex'):
         assert request(f, 'admin', 'GET', prefix + '/models', headers={'Authorization': 'Bearer ' + key})[0] == 404
+    viewer = admin_live_checks(f, fields)
     # Host/Origin remain exact, including the non-default TLS port.
-    assert request(f, 'admin', 'DELETE', '/api/session', headers={**fields, 'X-CodexOne-CSRF': csrf})[0] == 200
+    try:
+        assert request(f, 'admin', 'DELETE', '/api/session', headers={**fields, 'X-CodexOne-CSRF': csrf})[0] == 200
+        deadline = time.monotonic() + 4
+        while True:
+            opcode, data = receive(viewer)
+            if opcode == 8:
+                assert int.from_bytes(data[:2], 'big') == 1008
+                break
+            if opcode == 9: send(viewer, data, opcode=10, masked=True)
+            assert time.monotonic() < deadline, 'Revoked TLS viewer remained open'
+    finally: viewer.close()
     assert request(f, 'admin', 'GET', '/api/session', headers=fields)[0] == 401
     print('PASS: real HTTPS session/CSRF, exact Host+Origin/port, forwarded spoof refusal and data/admin isolation')
+
+
+def admin_live_dial(f, fields, *, plane='admin', path='/api/overview/live'):
+    raw = socket.create_connection(('127.0.0.1', f['ports'][1 if plane == 'admin' else 0]), timeout=5)
+    client = f['context'].wrap_socket(raw, server_hostname='localhost')
+    try:
+        nonce = base64.b64encode(os.urandom(16)).decode()
+        headers = {'Host': f['origin'].removeprefix('https://'), 'Upgrade': 'websocket',
+            'Connection': 'Upgrade', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': nonce, **fields}
+        client.sendall((f'GET {path} HTTP/1.1\r\n' + ''.join(f'{k}: {v}\r\n' for k, v in headers.items()) + '\r\n').encode())
+        header = b''
+        while not header.endswith(b'\r\n\r\n'):
+            header += exact(client, 1)
+            assert len(header) < 16384
+        status = int(header.split(b' ')[1])
+        if status != 101:
+            client.close()
+            return status, None
+        accept = base64.b64encode(hashlib.sha1((nonce + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
+        response_headers = dict(line.split(b':', 1) for line in header.split(b'\r\n')[1:] if b':' in line)
+        assert next(value.strip() for name, value in response_headers.items() if name.lower() == b'sec-websocket-accept') == accept
+        assert b'sec-websocket-extensions:' not in header.lower()
+        return status, client
+    except BaseException:
+        client.close()
+        raise
+
+
+def admin_live_snapshot(client):
+    while True:
+        opcode, data = receive(client)
+        if opcode == 9:
+            send(client, data, opcode=10, masked=True)
+            continue
+        assert opcode == 1 and len(data) <= 1048576
+        value = json.loads(data)
+        assert value['protocol'] == 1 and value['kind'] == 'snapshot' and value['sequence'] == 1
+        assert set(value['sections']) == {'system', 'inFlight', 'daily', 'keys', 'accounts', 'storage', 'attention', 'headroom'}
+        return
+
+
+def admin_live_checks(f, fields):
+    invalid = [({}, {}), ({'Origin': f['origin']}, {}),
+        ({**fields, 'Origin': 'https://wrong.example.invalid'}, {}),
+        ({**fields, 'Host': 'wrong.example.invalid'}, {}),
+        ({**fields, 'Authorization': 'Bearer ' + f['admin']}, {}),
+        (fields, {'path': '/api/overview/live?synthetic=1'}), (fields, {'plane': 'data'})]
+    for headers, options in invalid:
+        status, client = admin_live_dial(f, headers, **options)
+        if client: client.close()
+        assert status != 101
+
+    # Exercise the prior deployed template in this disposable proxy only. The
+    # same session must retain HTTP access when generic proxying strips Upgrade.
+    path = f['proxy'].root / 'admin.conf'
+    original = path.read_text()
+    old, count = re.subn(r'location = /api/overview/live \{[^}]*\}', '', original)
+    assert count == 1
+
+    def reload_and_wait(contents, upgraded):
+        path.write_text(contents)
+        proxy = f['proxy']
+        command([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-s', 'reload'])
+        deadline = time.monotonic() + 5
+        while True:
+            status, client = admin_live_dial(f, fields)
+            if client: client.close()
+            ready = status == 101 if upgraded else status in (400, 404, 426)
+            if ready:
+                break
+            assert time.monotonic() < deadline, 'Private proxy reload did not converge'
+            time.sleep(.05)
+        assert request(f, 'admin', 'GET', '/api/session', headers=fields)[0] == 200
+
+    try: reload_and_wait(old, False)
+    finally: reload_and_wait(original, True)
+    try:
+        for idle in (30, 60):
+            candidate, count = re.subn(r'proxy_read_timeout 60s;', f'proxy_read_timeout {idle}s;', original)
+            assert count == 1
+            reload_and_wait(candidate, True)
+            status, viewer = admin_live_dial(f, fields)
+            assert status == 101
+            try:
+                admin_live_snapshot(viewer)
+                started, pings = time.monotonic(), 0
+                while time.monotonic() - started <= idle + 2:
+                    opcode, data = receive(viewer)
+                    if opcode == 9:
+                        pings += 1
+                        send(viewer, data, opcode=10, masked=True)
+                    else:
+                        assert opcode == 1 and json.loads(data)['protocol'] == 1, 'Proxy idle closed active management WSS'
+                assert pings >= idle // 15
+                # A masked ping beyond the proxy idle window proves that the
+                # original socket remains bidirectional, without reconnecting.
+                send(viewer, b'synthetic-proxy-idle', opcode=9, masked=True)
+                deadline = time.monotonic() + 4
+                while True:
+                    opcode, data = receive(viewer)
+                    if opcode == 10:
+                        assert data == b'synthetic-proxy-idle'
+                        break
+                    if opcode == 9: send(viewer, data, opcode=10, masked=True)
+                    else: assert opcode == 1
+                    assert time.monotonic() < deadline
+                print(f'PASS: management WSS survives {idle}s proxy read idle on the same TLS socket; freshness plus {pings} heartbeat pings, bidirectional control confirmed')
+            finally: viewer.close()
+    finally: reload_and_wait(original, True)
+    status, client = admin_live_dial(f, fields)
+    assert status == 101
+    try: admin_live_snapshot(client)
+    except BaseException:
+        client.close()
+        raise
+    print('PASS: trusted management WSS snapshot, credential/origin/path/plane refusal; old proxy refuses upgrade while HTTPS stays usable, restored template reconnects')
+    return client
 
 
 def limits_checks(f, key):
