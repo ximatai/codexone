@@ -370,7 +370,7 @@ def main():
                                     assert event['type'] != 'error', event
                                     if event['type'] == 'response.completed': break
                                 assert event['response']['output'][0]['result'] == OUTPUTS[output_format]
-                            assert ledger()[0] == 'settled'
+                            assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
                     for prompt in ('svg-root-usage', 'svg-item-usage', 'invalid-usage'):
                         status, body, _ = request({'model':'synthetic-host','input':prompt,
                             'tools':[{'type':'image_generation', 'output_format':'svg'}]}, '/v1/responses', name='both')
