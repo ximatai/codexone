@@ -26,7 +26,9 @@ def check_release(release, dockerfile, tls, backend_scripts):
     for name in ('publish', 'release'):
         assert "if: github.event_name == 'push'" in jobs[name], 'Dry-runs must never publish'
     assert 'shard: [1/4, 2/4, 3/4, 4/4]' in jobs['backend-scripts'], 'Release must run all four shards'
-    assert 'suite: [tls, installation]' in jobs['image-checks'], 'Release must run TLS and installation'
+    assert 'suite: [tls, installation, capacity]' in jobs['image-checks'], 'Release must run TLS, installation and mixed capacity'
+    assert 'scripts/verify_mixed_capacity.py --image' in jobs['image-checks'], 'Run capacity against the exact candidate image'
+    assert 'mixed-capacity-evidence' in jobs['image-checks'], 'Save resource gate evidence'
     for name in ('backend-scripts', 'image-checks'):
         assert 'fail-fast: false' in jobs[name], 'Collect results from all verification jobs'
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
