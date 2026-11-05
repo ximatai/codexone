@@ -383,6 +383,37 @@ def body_limit_diagnostics(binary, config, root, server, contract, failures_only
     print(f'PASS: {contract}: isolated real 1009/native/HTTP body-limit diagnostics', flush=True)
 
 
+def verify_small_body_budget(port, server, contract):
+    """Known-size ordinary bodies hold bounded reservations even before admission."""
+    before = len(server.calls)
+    with ExitStack() as stack:
+        # Park headers with a tiny prefix. This checks reservations without filling
+        # memory or waiting for any provider execution.
+        for _ in range(9):
+            sock = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=8))
+            header = (f'POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                      f'Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n'
+                      f'Content-Length: {8 * 1024 * 1024}\r\n\r\n').encode()
+            sock.sendall(header + b'{')
+        time.sleep(.3)
+        with ThreadPoolExecutor(max_workers=1) as worker, dial(port, headers=HEADERS, timeout=9) as peer:
+            http_result = worker.submit(call_http, port, sized(1024, contract))
+            peer.sendall(b'\x81\xfe' + struct.pack('!H', 1024) + b'\0' * 4)
+            status, _, body = http_result.result(timeout=8)
+            assert status == 503 and json.loads(body)['error']['code'] == 'capacity_exhausted', status
+            opcode, body = receive(peer)
+            assert opcode == 1, opcode
+            event = json.loads(body)
+            assert event['status'] == 503 and event['error']['code'] == 'capacity_exhausted', event
+        assert len(server.calls) == before, 'Incomplete bodies or capacity waits dispatched upstream'
+    # A fresh ordinary and a fresh large body both become serviceable after closure.
+    assert call_http(port, sized(1024, contract))[0] == 200
+    assert call_http(port, sized(32 * 1024 * 1024, contract))[0] == 200
+    assert len(server.calls) == before + 2
+    print(f'PASS: {contract}: ordinary HTTP/WS reservations are bounded before admission; closure reclaims capacity', flush=True)
+    return 2
+
+
 def verify_lane_close(port, server, root, contract, count, repetitions=12):
     for iteration in range(repetitions):
         queued = iteration >= repetitions - 4
@@ -420,6 +451,7 @@ def verify_lane_close(port, server, root, contract, count, repetitions=12):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
     parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
     args = parser.parse_args()
@@ -440,16 +472,22 @@ def main():
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, contract)
-                body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
-                                       server, contract, args.failures_only)
+                if not args.small_body_only:
+                    body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
+                                           server, contract, args.failures_only)
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
                 try:
+                    if args.small_body_only:
+                        count += verify_small_body_budget(ports['data'], server, contract)
+                        ledger(root, count)
+                        continue
                     if args.lane_close_only:
                         verify_lane_close(ports['data'], server, root, contract, count)
                         continue
                     if not args.failures_only:
+                        count += verify_small_body_budget(ports['data'], server, contract)
                         count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
                         for route in ('json', 'sse', 'native'):

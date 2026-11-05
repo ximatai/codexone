@@ -588,7 +588,7 @@ public struct ResponsesDataService: Service {
                     let count = Int(length)
                   {
                     if control {
-                      try lease.reserve(count, countAll: true)
+                      try lease.reserve(count, control: true)
                     } else {
                       try await lease.reserveWaiting(count)
                       try Task.checkCancellation()
@@ -602,7 +602,7 @@ public struct ResponsesDataService: Service {
                       bytes: body.count + bytes.readableBytes, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
-                  try lease.reserve(body.count + bytes.readableBytes, countAll: control)
+                  try lease.reserve(body.count + bytes.readableBytes, control: control)
                   body.append(contentsOf: bytes.readableBytesView)
                 case .end: ended = true
                 }
