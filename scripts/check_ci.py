@@ -77,6 +77,20 @@ def check_release(release, dockerfile, tls, backend_scripts):
         f'Release shards must retain every Dockerfile verification: {sorted(release_checks - shard_checks)}')
 
 
+def check_live_browser(workflow):
+    jobs = workflow_jobs(workflow)
+    live = jobs['frontend-live']
+    assert 'needs: [changes, backend-build]' in live, 'Real browser needs the matching gateway build'
+    assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
+    assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
+    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests remain required'
+    assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
+    condition = "needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'"
+    assert condition in jobs['backend-build'] and condition in live, 'Both backend and frontend changes need the real stack'
+    assert "required.update({'backend-build', 'frontend-live'})" in jobs['verify'], 'Final gate must require the real browser'
+    assert 'frontend-live' in jobs['verify'].split('runs-on:')[0], 'Final gate must await real browser completion'
+
+
 def check():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / '.github/workflows/verify.yml').read_text()
@@ -101,7 +115,7 @@ def check():
         f'Update the Playwright image tag AND registry digest with the lockfile: {versions}, image={image}'
     )
     swift = re.findall(r'container: swift:[^\s]+@sha256:([0-9a-f]{64})\b', workflow)
-    assert len(swift) == 2 and len(set(swift)) == 1, 'Build and shards must use the same Swift image'
+    assert len(swift) == 3 and len(set(swift)) == 1, 'Build, shards and real browser must use the same Swift image'
     assert re.findall(r'^ARG SWIFT_BUILD_IMAGE=swift:[^\s]+@sha256:([0-9a-f]{64})$', dockerfile, re.M) == [swift[0]], (
         'Release tools and optimized build must match the CI Swift digest')
     runtime = re.findall(r'^ARG SWIFT_RUNTIME_IMAGE=(swift:[^\s]+)$', dockerfile, re.M)
@@ -116,6 +130,7 @@ def check():
     assert node and set(node) == set(re.findall(r'^ARG NODE_VERSION=([\d.]+)$', container, re.M)), (
         'Dev container Node.js must match CI')
     check_release(release, dockerfile, tls, (root / 'scripts/verify.sh').read_text())
+    check_live_browser(workflow)
     print(f'PASS: Playwright {image[0]} matches lockfile; Swift build/shards/cache and dev container pins match')
     print('PASS: Actions pins, optimized release coverage, immutable artifacts, TLS and publication gate match policy')
 

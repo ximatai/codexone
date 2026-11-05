@@ -42,6 +42,10 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 大请求后内存保留正在修复：运行镜像限制 glibc arena 并设置 mmap/trim 阈值，解析后清空 Responses 原正文但保留预算租约；本机合成验证与 CI 新镜像待验收范围见[任务](docs/changes/memory-retention/tasks.md)。
 
+首页实时概览已实现可显式启用的本地集成路径（默认关闭）：提交后活动、最近结束、已连接客户端、共享 sampler 及 HTTP 降级，仅覆盖首页和首页账号抽屉。数字滚动现使用本地组件和外部静态样式，已移除不兼容组件，不放宽 CSP；本地浏览器真实请求更新与高频布局验收已通过，完整交付与平台验收尚未完成，见[活动任务及实测](docs/changes/admin-live-updates/tasks.md)。无 schema 或执行/用量行为变更。
+
+评审优化已接入有时限的单请求关注/固定观察、账号及按 Key 诊断入口、当前本地接入条件摘要和持续 WS 连接范围说明；来源不可用、模块陈旧及 HTTP 更新时间统一处理。剩余原生 Linux/容量与失败矩阵按活动任务验收，不能据此宣称默认启用或已发布。
+
 ## 已知限制
 
 订阅参数拒绝诊断正在修正：新增准入前 `unsupported_backend_parameter/400` 按 invalid_request 统计，私有日志使用固定字段类别定位原因，不记录参数值，不修改公开错误或协议限制。验证进展见[任务](docs/changes/parameter-rejection-diagnostics/tasks.md)，尚未发布。

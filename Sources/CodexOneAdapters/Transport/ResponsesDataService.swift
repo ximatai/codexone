@@ -188,11 +188,24 @@ public struct ResponsesDataService: Service {
               guard allowed else { return channel.eventLoop.makeSucceededFuture(nil) }
               return channel.eventLoop.makeFutureWithTask {
                 do {
-                  _ = try await executor.access.policy(
+                  let livePolicy = try await executor.access.policy(
                     executor.access.digest(head.headers["authorization"]))
                   _ = try requestTurnState(headers: head.headers)
                   guard normalChannels.register(channel, retained: true) else {
                     throw ExecutionError.capacity
+                  }
+                  if let activity = (store as? SQLiteExecutionStore)?.overviewActivity {
+                    let name: String?
+                    if case .pool(let policy) = livePolicy {
+                      name = policy.key.displayName
+                    } else {
+                      name = nil
+                    }
+                    if let registration = activity.register(
+                      key: livePolicy.keyID, name: name, capacity: configuration.dataConnections)
+                    {
+                      channel.closeFuture.whenComplete { _ in activity.unregister(registration) }
+                    }
                   }
                   return HTTPHeaders()
                 } catch {

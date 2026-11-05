@@ -155,6 +155,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     await route.fulfill({ json: data[path] });
   });
   await page.goto("/");
+  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();

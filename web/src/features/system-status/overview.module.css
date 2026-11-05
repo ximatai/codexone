@@ -1,6 +1,13 @@
 .header > :first-child {
   margin-bottom: 0;
 }
+.watchResult {
+  height: 12rem;
+  overflow: auto;
+}
+.availability {
+  min-height: 9rem;
+}
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -77,4 +84,92 @@
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: left;
+}
+
+:global([aria-label="管理概览"]) :global(.mantine-Progress-section) {
+  transition:
+    width 250ms ease-out,
+    background-color 250ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  :global([aria-label="管理概览"]) :global(.mantine-Progress-section) {
+    transition: none;
+  }
+}
+
+.updatedAgo {
+  width: 13ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.metricValue {
+  width: 9ch;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+@media (min-width: 751px) {
+  .keySummary td:first-child > div {
+    min-height: 72px;
+  }
+}
+
+.attentionViewport {
+  block-size: 14rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.attentionViewport p {
+  font-variant-numeric: tabular-nums;
+}
+.updatedAgo {
+  text-align: left;
+}
+
+.attentionList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.attentionSlots {
+  position: relative;
+  font-variant-numeric: tabular-nums;
+}
+.attentionSlot {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  height: 72px;
+  overflow: auto;
+  transition: transform 250ms ease-out;
+}
+.attentionViewport section > :first-child > p {
+  min-width: 26ch;
+  text-align: left;
+}
+@media (prefers-reduced-motion: reduce) {
+  .attentionSlot {
+    transition: none;
+  }
+}
+
+.attentionNumber {
+  display: inline-block;
+  min-width: 6ch;
+  font-variant-numeric: tabular-nums;
+}
+
+.sourceSummary {
+  list-style-position: inside;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sourceSummary:has([role="alert"]) {
+  color: var(--mantine-color-red-7);
+}
+
+.sourceDetails {
+  block-size: 12rem;
+  overflow: auto;
 }

@@ -2,10 +2,8 @@ import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test, gotoUsage } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 
-test("O01 O03: anchors reminders to objects and bounds fifty reminders", async ({
-  page,
-}) => {
-  const state = await reviewFixture(page);
+test("O01: anchors reminders to their Key and account", async ({ page }) => {
+  await reviewFixture(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByRole("link", { name: /team-201：访问密钥/ }).click();
@@ -21,8 +19,15 @@ test("O01 O03: anchors reminders to objects and bounds fifty reminders", async (
     "合成账号 1",
   );
   await page.getByRole("button", { name: "关闭", exact: true }).click();
+});
+
+test("O03: bounds fifty reminders and preserves collapse and refresh", async ({
+  page,
+}) => {
+  const state = await reviewFixture(page);
   state.alerts = 50;
-  await page.getByRole("link", { name: "服务概览", exact: false }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
   await page.getByRole("button", { name: "刷新请求概览" }).click();
   await expect(
     page.getByText("共 50 项 · 紧急 1 项 · 提醒 49 项"),
@@ -129,6 +134,7 @@ test("K03 K04 K06: confirms target, preserves exact expiry and handles summary f
   page,
 }) => {
   const state = await reviewFixture(page);
+  await page.clock.setFixedTime(new Date("2026-11-02T00:00:00Z"));
   const expires = Date.parse("2099-11-03T12:42:56Z") / 1000;
   state.keys[0].expiresAtUnixSeconds = expires;
   await page.goto("/#/keys?q=team-0");
@@ -265,9 +271,11 @@ test("K07 K08 L01 L02: past-time warning, exact thresholds and discoverable busy
   const drawer = page.getByRole("dialog", { name: "创建密钥", exact: true });
   await drawer.getByRole("combobox", { name: "到期时间", exact: true }).click();
   await page.getByRole("option", { name: "自定义日期", exact: true }).click();
-  await drawer
-    .getByLabel("到期日期（UTC）", { exact: true })
-    .fill("2020-01-01");
+  const createdExpiry = drawer.getByLabel("到期日期（UTC）", { exact: true });
+  await createdExpiry.click();
+  await expect(createdExpiry).toBeFocused();
+  await createdExpiry.fill("2020-01-01");
+  await expect(createdExpiry).toHaveValue("2020-01-01");
   await expect(
     drawer.getByText("所选时间已过去，保存后立即拒绝新请求。"),
   ).toBeVisible();
@@ -287,7 +295,13 @@ test("K07 K08 L01 L02: past-time warning, exact thresholds and discoverable busy
     .getByRole("button", { name: "查看详情" })
     .click();
   await page.getByRole("button", { name: "设置到期时间", exact: true }).click();
-  await page.getByLabel("到期日期（UTC）", { exact: true }).fill("2020-01-01");
+  const editedExpiry = page
+    .getByRole("dialog", { name: "设置 Key 到期时间" })
+    .getByLabel("到期日期（UTC）", { exact: true });
+  await editedExpiry.click();
+  await expect(editedExpiry).toBeFocused();
+  await editedExpiry.fill("2020-01-01");
+  await expect(editedExpiry).toHaveValue("2020-01-01");
   await expect(
     page.getByText("所选时间已过去，保存后立即拒绝新请求。"),
   ).toBeVisible();

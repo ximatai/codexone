@@ -4,6 +4,7 @@ import ServiceLifecycle
 import Vapor
 
 public struct AdminService: Service {
+  private let overview: OverviewLive?
   private let group: any EventLoopGroup
   private let listeners: ListenerConfiguration
   private let port: Int
@@ -27,9 +28,11 @@ public struct AdminService: Service {
     group: any EventLoopGroup, port: Int,
     reportProvider: @escaping @Sendable () async -> ReadinessReport, keys: KeyAdminAPI? = nil,
     webBundle: AdminWebBundle? = nil, accounts: AccountAdminAPI? = nil,
+    overview: OverviewLive? = nil,
     listeners: ListenerConfiguration = .loopback,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) {
+    self.overview = overview
     self.listeners = listeners
     self.accounts = accounts
     self.webBundle = webBundle
@@ -40,6 +43,31 @@ public struct AdminService: Service {
     self.onBound = onBound
   }
 
+  public static func makeOverview(
+    keys: KeyAdminAPI, accounts: AccountAdminAPI?, activity: OverviewActivity,
+    reportProvider: @escaping @Sendable () async -> ReadinessReport
+  ) -> OverviewLive {
+    OverviewLive(activity: activity) { name in
+      switch name {
+      case "system":
+        return try JSONEncoder().encode(
+          SystemStatusResponse(
+            report: await reportProvider(), transportMode: keys.usesLANHTTP ? .lanHTTP : .loopback))
+      case "storage": return try keys.overviewStorage()
+      case "accounts":
+        guard let accounts else {
+          return try JSONValue.object(["accounts": .array([]), "nextCursor": .null]).data()
+        }
+        return try await accounts.overviewSection()
+      case "attention":
+        guard let attention = keys.attention else { throw ExecutionError.storageUnavailable }
+        return try await attention.overviewSection()
+      default:
+        guard let usage = keys.usage else { throw ExecutionError.storageUnavailable }
+        return try await usage.overviewSection(name)
+      }
+    }
+  }
   public func run() async throws {
     // Start the server directly: ServiceGroup is the only signal owner.
     let app = try await Application.make(.production, .shared(group))
@@ -75,6 +103,7 @@ public struct AdminService: Service {
       try await app.asyncBoot()
       try await AdminHTTPIngress(
         group: group, listeners: listeners, port: port, app: app,
+        overview: overview, sessions: keys?.sessions,
         onBound: { boundPort in
           keys?.bind(port: boundPort)
           onBound(boundPort)

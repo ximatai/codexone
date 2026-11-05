@@ -16,6 +16,7 @@
 
 | 包 | 版本 | 声明许可 | 核验与来源 |
 |---|---|---|---|
+| `@formkit/auto-animate` | 0.10.0 | MIT | 正文已读：`LICENSE`（2026-11-04） |
 | `@adobe/css-tools` | 4.5.0 | MIT | 正文已读：`LICENSE` |
 | `@asamuzakjp/css-color` | 7.1.7 | MIT | 正文已读：`LICENSE` |
 | `@asamuzakjp/dom-selector` | 10.0.4 | MIT | 正文已读：`LICENSE` |

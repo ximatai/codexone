@@ -3,6 +3,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import NIOWebSocket
 import ServiceLifecycle
 import Vapor
 
@@ -12,11 +13,15 @@ struct AdminHTTPIngress: Sendable {
   let listeners: ListenerConfiguration
   let port: Int
   let app: Application
+  let overview: OverviewLive?
+  let sessions: AdminSessions?
   let onBound: @Sendable (Int) -> Void
 
   func run() async throws {
     let channels = ProtocolChannels(limit: 32)
-    func bind(host: String, port: Int) async throws -> NIOAsyncChannel<AdminConnection, Never> {
+    func bind(host: String, port: Int) async throws -> NIOAsyncChannel<
+      EventLoopFuture<AdminConnection>, Never
+    > {
       try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
         .childChannelOption(
@@ -26,7 +31,7 @@ struct AdminHTTPIngress: Sendable {
         .bind(
           host: host, port: port,
           serverBackPressureStrategy: .init(lowWatermark: 1, highWatermark: 8)
-        ) { channel -> EventLoopFuture<AdminConnection> in
+        ) { channel -> EventLoopFuture<EventLoopFuture<AdminConnection>> in
           guard host == "127.0.0.1" || listeners.allows(peer: channel.remoteAddress?.ipAddress)
           else {
             return channel.close().flatMapThrowing { throw ExecutionError.unauthorized }
@@ -37,21 +42,63 @@ struct AdminHTTPIngress: Sendable {
           let deadline = channel.eventLoop.scheduleTask(in: .seconds(10)) {
             channel.close(promise: nil)
           }
-          return channel.pipeline.configureHTTPServerPipeline(withPipeliningAssistance: false)
-            .flatMapThrowing {
-              AdminConnection(
-                socket: try NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>(
+          let id = UUID()
+          channel.closeFuture.whenComplete { _ in sessions?.releaseLive(id) }
+          let upgrader = NIOTypedWebSocketServerUpgrader<AdminConnection>(
+            maxFrameSize: 125,
+            shouldUpgrade: { channel, head in
+              do {
+                guard let overview, let sessions, head.method == .GET,
+                  head.uri == "/api/overview/live", head.headers["sec-websocket-protocol"].isEmpty,
+                  head.headers["content-length"].allSatisfy({ $0 == "0" }),
+                  head.headers["transfer-encoding"].isEmpty
+                else { throw ExecutionError.denied }
+                _ = overview
+                try sessions.bindLive(head.headers, id: id) { code in
+                  AdminLiveTransport.close(channel, code: code)
+                }
+                return channel.eventLoop.makeSucceededFuture(
+                  HTTPHeaders([("cache-control", "no-store")]))
+              } catch {
+                // NIO does not replay a rejected upgrade to the ordinary HTTP handler.
+                return rejectWebSocketUpgrade(channel, error: error).map { nil }
+              }
+            },
+            upgradePipelineHandler: { channel, _ in
+              channel.eventLoop.makeCompletedFuture {
+                guard let overview, let sessions else { throw ExecutionError.denied }
+                try channel.pipeline.syncOperations.addHandler(AdminLiveWireGuard())
+                let socket = try ProtocolWebSocket(
                   wrappingChannelSynchronously: channel,
                   configuration: .init(
-                    backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4))),
-                deadline: deadline)
-            }.flatMapError { error in
-              deadline.cancel()
-              return channel.close().flatMapThrowing { throw error }
-            }
+                    backPressureStrategy: .init(lowWatermark: 1, highWatermark: 2)))
+                return .live(.init(socket: socket, id: id, sessions: sessions, overview: overview))
+              }
+            })
+          var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(
+            upgradeConfiguration: .init(
+              upgraders: [upgrader],
+              notUpgradingCompletionHandler: { channel in
+                channel.eventLoop.makeCompletedFuture {
+                  .http(
+                    try NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>(
+                      wrappingChannelSynchronously: channel,
+                      configuration: .init(
+                        backPressureStrategy: .init(lowWatermark: 1, highWatermark: 4))), deadline)
+                }
+              }))
+          pipeline.enablePipelining = false
+          return channel.pipeline.configureUpgradableHTTPServerPipeline(configuration: pipeline).map
+          { future in
+            future.whenSuccess { if case .live = $0 { deadline.cancel() } }
+            return future
+          }.flatMapError { error in
+            deadline.cancel()
+            return channel.close().flatMapThrowing { throw error }
+          }
         }
     }
-    var servers: [NIOAsyncChannel<AdminConnection, Never>] = []
+    var servers: [NIOAsyncChannel<EventLoopFuture<AdminConnection>, Never>] = []
     do {
       let loopback = try await bind(host: "127.0.0.1", port: port)
       servers.append(loopback)
@@ -69,7 +116,15 @@ struct AdminHTTPIngress: Sendable {
                   try await server.executeThenClose { inbound in
                     try await withThrowingDiscardingTaskGroup { tasks in
                       for try await connection in inbound {
-                        tasks.addTask { do { try await serve(connection) } catch {} }
+                        tasks.addTask {
+                          do {
+                            switch try await connection.get() {
+                            case .http(let socket, let deadline):
+                              try await serve(socket, deadline: deadline)
+                            case .live(let live): try await live.run()
+                            }
+                          } catch {}
+                        }
                       }
                     }
                   }
@@ -88,9 +143,12 @@ struct AdminHTTPIngress: Sendable {
     }
     await channels.shutdown()
   }
-  private func serve(_ connection: AdminConnection) async throws {
-    defer { connection.deadline.cancel() }
-    try await connection.socket.executeThenClose { inbound, _ in
+  private func serve(
+    _ socket: NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>,
+    deadline: Scheduled<Void>
+  ) async throws {
+    defer { deadline.cancel() }
+    try await socket.executeThenClose { inbound, _ in
       var head: HTTPRequestHead?
       var body = ByteBuffer()
       for try await part in inbound {
@@ -103,23 +161,23 @@ struct AdminHTTPIngress: Sendable {
             try await write(
               status: .payloadTooLarge, headers: [:],
               body: Data(#"{"error":{"code":"request_too_large"}}"#.utf8),
-              channel: connection.socket.channel)
+              channel: socket.channel)
             return
           }
           body.writeBuffer(&value)
         case .end:
           guard let head else { throw ExecutionError.invalidCommand }
-          connection.deadline.cancel()
+          deadline.cancel()
           let request = Request(
             application: app, method: head.method, url: URI(path: head.uri), version: head.version,
-            headers: head.headers, collectedBody: body, on: connection.socket.channel.eventLoop)
+            headers: head.headers, collectedBody: body, on: socket.channel.eventLoop)
           let response = try await app.responder.respond(to: request).get()
           guard let data = response.body.data, data.count <= 1_048_576 else {
             throw ExecutionError.capacity
           }
           try await write(
             status: response.status, headers: response.headers, body: data,
-            channel: connection.socket.channel)
+            channel: socket.channel)
           return
         }
       }
@@ -149,7 +207,7 @@ struct AdminHTTPIngress: Sendable {
     }.get()
   }
 }
-private struct AdminConnection: Sendable {
-  let socket: NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>
-  let deadline: Scheduled<Void>
+private enum AdminConnection: Sendable {
+  case http(NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>, Scheduled<Void>)
+  case live(AdminLiveTransport)
 }

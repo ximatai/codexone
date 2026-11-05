@@ -7,6 +7,9 @@ import { observationFixture } from "../../src/features/account-management/observ
 test("round two overview, usage, account name and key expiration", async ({
   page,
 }) => {
+  // Several page transitions, screenshots and date dialogs share this workflow.
+  // Keep individual assertions bounded while allowing parallel browser contention.
+  test.setTimeout(30000);
   await page.setViewportSize({ width: 1440, height: 900 });
   const screenshots = "/tmp/codexone-admin-round2-screenshots";
   await mkdir(screenshots, { recursive: true });

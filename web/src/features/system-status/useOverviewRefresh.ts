@@ -8,6 +8,8 @@ export function useOverviewRefresh() {
     return () => document.removeEventListener("visibilitychange", visibility);
   }, []);
   return {
+    active: automatic && visible,
+    manualRefresh: undefined as (() => void) | undefined,
     automatic,
     setAutomatic,
     interval: automatic && visible ? (15000 as const) : (false as const),

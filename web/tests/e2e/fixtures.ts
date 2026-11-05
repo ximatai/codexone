@@ -5,6 +5,11 @@ export const test = base.extend<{ syntheticBoundary: void }>({
   syntheticBoundary: [
     async ({ context, baseURL }, use) => {
       const origin = new URL(baseURL!).origin;
+      // HTTP interception does not intercept WebSockets. Keep mocked tests inside their
+      // synthetic boundary; the dedicated real-stack test imports Playwright directly.
+      await context.routeWebSocket("**/api/overview/live", (socket) =>
+        socket.close({ code: 1013 }),
+      );
       await context.route("**/*", (route) => {
         const url = new URL(route.request().url());
         if (url.origin !== origin) return route.abort("blockedbyclient");

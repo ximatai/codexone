@@ -1,3 +1,4 @@
+import { ContinuousValue } from "../../shared/ui/ContinuousValue";
 import { useEffect, useState } from "react";
 import styles from "./accounts.module.css";
 import { Progress, Stack, Text } from "@mantine/core";
@@ -21,7 +22,9 @@ export function QuotaWindowBar({
     <Stack gap={3} mb="xs" className={styles.quotaWindow}>
       <Text size="xs">{title}</Text>
       <Text size="xl" fw={700}>
-        {remaining === null ? "比例未提供" : `剩余 ${remaining}%`}
+        <ContinuousValue
+          text={remaining === null ? "比例未提供" : `剩余 ${remaining}%`}
+        />
       </Text>
       {remaining !== null && (
         <Progress
