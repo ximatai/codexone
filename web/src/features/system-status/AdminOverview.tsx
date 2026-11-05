@@ -235,7 +235,14 @@ export function AdminOverview() {
                 <Title order={3} size="h4" mb="md">
                   订阅额度
                 </Title>
-                {accounts.isPending && <Skeleton h={160} />}
+                {accounts.isPending && !accounts.isFetched && (
+                  <Skeleton h={160} />
+                )}
+                {!accounts.data && accounts.isFetched && (
+                  <Text size="sm" c="dimmed">
+                    订阅额度尚无成功数据，请查看读取状态。
+                  </Text>
+                )}
                 {accounts.data?.length === 0 && (
                   <EmptyState>暂无订阅账号。</EmptyState>
                 )}

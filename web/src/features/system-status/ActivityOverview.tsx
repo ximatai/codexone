@@ -29,6 +29,16 @@ import type { CapacityMetric } from "./overview-format";
 import { KeyResults } from "./KeyResults";
 import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
+const sourceLabels: Record<string, string> = {
+  system: "服务状态",
+  inFlight: "进行中请求",
+  daily: "请求统计",
+  keys: "今日 Key 汇总",
+  accounts: "订阅账号",
+  storage: "存储与备份",
+  attention: "待处理提醒",
+  headroom: "资源余量",
+};
 function UpdatedAgo({ updated }: { updated: number }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -143,6 +153,18 @@ export function ActivityOverview({
   const updated = allQueries.every((q) => q.dataUpdatedAt > 0)
     ? Math.min(...allQueries.map((q) => q.dataUpdatedAt))
     : 0;
+  const failedSources = allQueries.filter((query) => query.isError);
+  const readFailure = failedSources.length
+    ? `概览读取失败：${failedSources
+        .map(
+          (query) =>
+            `${query.source}${query.dataUpdatedAt ? `（保留上次成功快照 ${localTime(query.dataUpdatedAt / 1000)}）` : "（尚无成功数据）"}`,
+        )
+        .join("、")}。缺失值未记为零，请重试。`
+    : "";
+  const retrySources = () => {
+    for (const query of allQueries) void query.refetch();
+  };
 
   return (
     <Stack aria-label="请求即时概览">
@@ -194,40 +216,51 @@ export function ActivityOverview({
             }
           </Text>
           <details>
-            <summary>
-              各源更新时间
-              {live.stale.length ? ` · ${live.stale.length} 个来源已陈旧` : ""}
+            <summary
+              className={styles.sourceSummary}
+              title={readFailure || undefined}
+            >
+              {readFailure ? (
+                <span role="alert">{readFailure}</span>
+              ) : (
+                <>
+                  各源更新时间
+                  {live.stale.length
+                    ? ` · ${live.stale.length} 个来源已陈旧`
+                    : ""}
+                </>
+              )}
             </summary>
-            {Object.entries(live.sources).map(([name, source]) => (
-              <Text size="xs" key={name}>
-                {name} ·{" "}
-                {source.lastSuccessAt == null
-                  ? "尚无成功数据"
-                  : localTime(source.lastSuccessAt)}{" "}
-                ·{" "}
-                {live.stale.some(([key]) => key === name) ? "已陈旧" : "已更新"}
-              </Text>
-            ))}
+            <div className={styles.sourceDetails}>
+              {readFailure && (
+                <>
+                  <Text size="sm" c="red">
+                    {readFailure}
+                  </Text>
+                  <Button variant="subtle" size="xs" onClick={retrySources}>
+                    重试
+                  </Button>
+                </>
+              )}
+              {Object.entries(live.sources).map(([name, source]) => (
+                <Text size="xs" key={name}>
+                  {sourceLabels[name] ?? "概览来源"} ·{" "}
+                  {source.lastSuccessAt == null
+                    ? "尚无成功数据"
+                    : localTime(source.lastSuccessAt)}{" "}
+                  ·{" "}
+                  {live.stale.some(([key]) => key === name)
+                    ? "已陈旧"
+                    : "已更新"}
+                </Text>
+              ))}
+            </div>
           </details>
         </div>
       )}
       {attention}
-      {allQueries.some((q) => q.isError) && (
-        <ErrorState
-          retry={() => {
-            for (const q of allQueries) void q.refetch();
-          }}
-        >
-          概览读取失败：
-          {allQueries
-            .filter((q) => q.isError)
-            .map(
-              (q) =>
-                `${q.source}${q.dataUpdatedAt ? `（保留上次成功快照 ${localTime(q.dataUpdatedAt / 1000)}）` : "（尚无成功数据）"}`,
-            )
-            .join("、")}
-          。缺失值未记为零，请重试。
-        </ErrorState>
+      {!live && failedSources.length > 0 && (
+        <ErrorState retry={retrySources}>{readFailure}</ErrorState>
       )}
       {daily.isError && !daily.data ? (
         <Text size="sm" c="dimmed">

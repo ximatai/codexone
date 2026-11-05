@@ -107,10 +107,9 @@ it("keeps six columns, active-only rows, stable recent order and identity detail
     within(rows[0]).getByRole("button", { name: "未命名 Key" }),
   ).toBeVisible();
   expect(screen.queryByText(row.principal!)).toBeNull();
-  expect(screen.getAllByText("25%")[0]).toHaveAttribute(
-    "title",
-    expect.stringContaining("部分请求"),
-  );
+  expect(
+    within(rows[0]).getByTitle(/部分请求没有完整宿主用量/),
+  ).toHaveTextContent("25%");
   expect(screen.getAllByLabelText("取消 1")[0]).toBeVisible();
   expect(screen.getAllByLabelText("结果未明 3")[0]).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "未命名 Key" }));

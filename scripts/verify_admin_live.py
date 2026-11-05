@@ -51,6 +51,8 @@ def frame(sock):
         opcode, data = receive(sock)
         if opcode == 9:
             send(sock, data, opcode=10, masked=True)
+        elif opcode == 10:
+            continue
         elif opcode == 1:
             value = json.loads(data)
             assert len(data) <= 1048576 and value['protocol'] == 1
@@ -190,6 +192,30 @@ def verify(binary):
         assert measurements['missing_pong_close_seconds'] <= 27
         assert normal.is_alive(), 'Healthy ping/pong viewer did not survive the silent peer'
         half.close(); normal_stop.set(); viewer.close(); normal.join(timeout=2)
+        # SIGKILL cannot run connection cleanup. Restart must retire the session/epoch
+        # without replaying data-plane work or inventing historical activity.
+        fresh, _ = login(f); viewer = dial(f, fresh)[1]; before_kill = frame(viewer)
+        with sqlite3.connect(f.root / 'state/core.sqlite') as db:
+            attempts_before = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
+        connections_before = f.provider.connections
+        f.process.kill(); f.process.wait(timeout=5)
+        assert f.process.returncode == -9
+        killed_output = f.process.stdout.read(131072)
+        assert len(killed_output) < 131072
+        assert all(secret.encode() not in killed_output for secret in f.secrets + [ADMIN])
+        f.process.stdout.close(); viewer.close()
+        f.process, f.ports = start(binary, f.config, f.root, admin_token_file=f.admin, web_directory=f.web_directory, admin_live=True)
+        f.origin = f"http://127.0.0.1:{f.ports['admin']}"
+        assert request(f.ports['admin'], 'GET', '/api/session', cookie=fresh)[0] == 401
+        fresh, _ = login(f); viewer = dial(f, fresh)[1]; after_kill = frame(viewer)
+        assert after_kill['epoch'] != before_kill['epoch']
+        assert after_kill['sections']['inFlight']['data']['recentlyFinished'] == []
+        assert after_kill['sections']['inFlight']['data']['clients'] == []
+        with sqlite3.connect(f.root / 'state/core.sqlite') as db:
+            assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == attempts_before
+        assert f.provider.connections == connections_before
+        measurements['sigkill_restart_without_replay'] = True
+        viewer.close()
         # A real graceful stop closes the connection and returns within the shutdown budget.
         fresh, _ = login(f); viewer = dial(f, fresh)[1]; frame(viewer)
         stopped_at = time.monotonic(); f.process.terminate()
@@ -256,6 +282,36 @@ def verify_slow(probe):
             shutdown(process, root, [])
 
 
+def verify_control_limit(binary):
+    with running_admin(binary, admin_live=True) as fixture:
+        cookie, _ = login(fixture)
+        noisy = dial(fixture, cookie)[1]; frame(noisy)
+        healthy = dial(fixture, cookie)[1]; frame(healthy)
+        sent = 0
+        try:
+            for _ in range(65):
+                send(noisy, b'synthetic-control', opcode=9, masked=True)
+                sent += 1
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        closed_with_frame = False
+        try:
+            result = until(noisy, lambda value: value.get('close') == 1008, seconds=5)
+            closed_with_frame = result.get('close') == 1008
+        except (EOFError, ConnectionResetError):
+            pass
+        finally:
+            noisy.close()
+        assert sent >= 64
+        assert request(fixture.ports['admin'], 'GET', '/api/session', cookie=cookie)[0] == 200
+        assert until(healthy, lambda value: value.get('kind') == 'update', seconds=6)['sequence'] > 1
+        replacement = dial(fixture, cookie)[1]
+        assert replacement is not None and frame(replacement)['kind'] == 'snapshot'
+        replacement.close(); healthy.close()
+        print('PASS: 65 control-frame burst closes only the noisy viewer; healthy updates, HTTP session and replacement slot survive')
+        print(json.dumps({'control_frames_sent': sent, 'control_limit_close_frame': closed_with_frame}))
+
+
 def serve(binary, web):
     with running_admin(binary, web_directory=web, admin_live=True) as f:
         _, secret = create(f.ports['admin']); f.secrets.append(secret)
@@ -276,4 +332,5 @@ if __name__ == '__main__':
         serve(str(args.binary.resolve()), args.web.resolve())
     else:
         verify(str(args.binary.resolve()))
+        verify_control_limit(str(args.binary.resolve()))
         if args.probe: verify_slow(str(args.probe.resolve()))

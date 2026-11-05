@@ -150,3 +150,19 @@
   min-width: 6ch;
   font-variant-numeric: tabular-nums;
 }
+
+.sourceSummary {
+  list-style-position: inside;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sourceSummary:has([role="alert"]) {
+  color: var(--mantine-color-red-7);
+}
+
+.sourceDetails {
+  block-size: 12rem;
+  overflow: auto;
+}

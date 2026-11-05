@@ -90,7 +90,31 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
     JSON.stringify({
       protocol: 1,
       epoch: "synthetic-epoch",
-      sequence: 4,
+      sequence: 3,
+      kind: "update",
+      sections: {
+        keys: {
+          version: 1,
+          sampledAtUnixSeconds: now + 2,
+          lastSuccessAt: now + 1,
+          freshness: "unavailable",
+          code: "source_unavailable",
+        },
+      },
+    }),
+  );
+  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByText(/各源更新时间 · 1 个来源已陈旧/)).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "今日 Key 请求汇总" }),
+  ).toHaveText(previous);
+  await page.getByText(/各源更新时间/).click();
+  await expect(page.getByText(/今日 Key 汇总 · .* · 已陈旧/)).toBeVisible();
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-epoch",
+      sequence: 5,
       kind: "update",
       sections: {},
     }),

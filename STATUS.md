@@ -40,7 +40,7 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 大请求后内存保留正在修复：运行镜像限制 glibc arena 并设置 mmap/trim 阈值，解析后清空 Responses 原正文但保留预算租约；本机合成验证与 CI 新镜像待验收范围见[任务](docs/changes/memory-retention/tasks.md)。
 
-首页实时概览已实现可显式启用的本地集成路径（默认关闭）：提交后活动、最近结束、已连接客户端、共享 sampler 及 HTTP 降级，仅覆盖首页和首页账号抽屉。数字滚动的组件与现有 CSP 冲突已暂停，不放宽 CSP；完整交付与平台验收尚未完成，见[活动任务及实测](docs/changes/admin-live-updates/tasks.md)。无 schema 或执行/用量行为变更。
+首页实时概览已实现可显式启用的本地集成路径（默认关闭）：提交后活动、最近结束、已连接客户端、共享 sampler 及 HTTP 降级，仅覆盖首页和首页账号抽屉。数字滚动现使用本地组件和外部静态样式，已移除不兼容组件，不放宽 CSP；本地浏览器真实请求更新与高频布局验收已通过，完整交付与平台验收尚未完成，见[活动任务及实测](docs/changes/admin-live-updates/tasks.md)。无 schema 或执行/用量行为变更。
 
 ## 已知限制
 

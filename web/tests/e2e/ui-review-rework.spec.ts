@@ -115,6 +115,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
     await expect(alert).toContainText(source);
   await expect(alert).not.toContainText("快照");
   state.failures = {};
+  await page.locator('[aria-label="概览连接状态"] summary').click();
   await page.getByRole("button", { name: "重试", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(2); // two actual attention items
   state.alerts = 0;

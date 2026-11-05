@@ -129,6 +129,7 @@ export function AttentionPanel({
                   }
                   c="inherit"
                   size="sm"
+                  aria-label={attentionMessage(item, accounts)}
                 >
                   {continuous
                     ? attentionMessage(item, accounts)
