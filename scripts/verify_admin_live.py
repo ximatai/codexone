@@ -110,9 +110,16 @@ def verify(binary):
         started_at = time.monotonic()
         result = request(f.ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'synthetic', 'stream': False}, headers={'Authorization': 'Bearer ' + secret})
         assert result[0] == 200
+        # HTTP completion does not await the asynchronous finalizer transaction.
+        commit_deadline = time.monotonic() + 5
+        while True:
+            with sqlite3.connect(f.root / 'state/core.sqlite') as db:
+                settled = db.execute("SELECT COUNT(*) FROM attempts WHERE state='settled'").fetchone()[0]
+            if settled == 1:
+                break
+            assert time.monotonic() < commit_deadline, ('settled_attempts', settled)
+            time.sleep(.01)
         committed = time.monotonic()
-        with sqlite3.connect(f.root / 'state/core.sqlite') as db:
-            assert db.execute("SELECT COUNT(*) FROM attempts WHERE state='settled'").fetchone()[0] == 1
         value = until(sock, lambda value: bool(value.get('sections', {}).get('inFlight', {}).get('data', {}).get('recentlyFinished')))
         received = time.monotonic()
         measurements['request_start_to_frame_ms'] = round((received - started_at) * 1000, 2)
