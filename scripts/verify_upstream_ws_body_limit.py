@@ -278,27 +278,36 @@ def held_body_budgets(port, server, contract, process):
             server.release.set()
     before = len(server.calls)
     server.release.clear()
-    try:
-        with ExitStack() as stack:
-            peers = [stack.enter_context(dial(port, headers=HEADERS, timeout=30)) for _ in range(4)]
-            for peer in peers:
-                request = sized(9 * 1024 * 1024, contract, native=True)
-                send(peer, wire({'type': 'response.create', **request}), masked=True,
-                     maximum_bytes=10 * 1024 * 1024)
-            wait_calls(before + 4)
-            refused(32 * 1024 * 1024)
-            assert len(server.calls) == before + 4
+    # Prepare large client bytes before starting the gateway's first-create timer.
+    # Hold a 32 MiB HTTP execution plus two 9 MiB native turns; another 20 MiB
+    # cannot fit. Opening each WS only when ready avoids idle clients expiring
+    # while a slower Linux runner serializes the other peers' large fixtures.
+    payload = wire({'type': 'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract))
+        try:
+            wait_calls(before + 1)
+            with ExitStack() as stack:
+                peers = []
+                for _ in range(2):
+                    peer = stack.enter_context(dial(port, headers=HEADERS, timeout=30))
+                    peers.append(peer)
+                    send(peer, payload, masked=True, maximum_bytes=10 * 1024 * 1024)
+                    wait_calls(before + 1 + len(peers))
+                refused(20 * 1024 * 1024)
+                assert len(server.calls) == before + 3
+                server.release.set()
+                for peer in peers:
+                    opcode, body = receive(peer)
+                    assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+            assert held.result(timeout=30)[0] == 200
+        finally:
             server.release.set()
-            for peer in peers:
-                opcode, body = receive(peer)
-                assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
-    finally:
-        server.release.set()
-        server.mode = 'ok'
+            server.mode = 'ok'
     # Completion/connection teardown returns capacity; a fresh large request dispatches.
     assert call_http(port, sized(31 * 1024 * 1024, contract))[0] == 200
     print('PASS: HTTP and first WS turns retain body budget after parsing; completion returns capacity', flush=True)
-    return 10
+    return 9
 
 
 def body_limit_diagnostics(binary, config, root, server, contract, failures_only):
