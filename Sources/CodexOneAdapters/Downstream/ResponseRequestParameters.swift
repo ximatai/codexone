@@ -11,7 +11,7 @@ extension ResponseRequest {
   func preparedDocument(contract: ResponseRequestContract, nativeWebSocket: Bool) throws
     -> JSONValue
   {
-    guard contract == .codexSubscription, requirements.imageModel == nil,
+    guard contract == .codexSubscription,
       mode != .compact || streamCompaction
     else { return document }
     var fields = document.object!
