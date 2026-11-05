@@ -52,8 +52,12 @@ def image_body():
 
 def worker(root, ports, idle_seconds):
     admin = (root/'admin').read_text()
-    expected_image_digest = hashlib.sha256(image_body()).digest()
-    expected_image_bytes = len(image_body())
+    # One immutable shared fixture prevents two provider workers copying 46 MiB each.
+    image_payload = image_body()
+    expected_image_digest = hashlib.sha256(image_payload).digest()
+    expected_image_bytes = len(image_payload)
+    output_release = threading.Event()
+    output_started = set()
     release = threading.Event()
     guard = threading.Condition()
     calls = []
@@ -93,7 +97,7 @@ def worker(root, ports, idle_seconds):
                 assert release.wait(40), 'Held provider was not released'
             if '/images/' in self.path:
                 assert document.get('n') == 8, 'Provider did not receive requested image count'
-                body = image_body()
+                body = image_payload
             else:
                 body = json.dumps({'id': f'resp_{index}', 'status': 'completed', 'output': [],
                     'usage': {'input_tokens': 2, 'output_tokens': 3,
@@ -104,6 +108,12 @@ def worker(root, ports, idle_seconds):
             self.end_headers()
             for offset in range(0, len(body), 65536):
                 self.wfile.write(body[offset:offset+65536])
+                if '/images/' in self.path and offset == 0:
+                    self.wfile.flush()
+                    with guard:
+                        output_started.add(nonce)
+                        guard.notify_all()
+                    assert output_release.wait(20), 'Concurrent output barrier was not released'
             self.wfile.flush()
     provider = ThreadingHTTPServer(('127.0.0.1', ports['provider']), Provider)
     provider.daemon_threads = True
@@ -209,17 +219,28 @@ def worker(root, ports, idle_seconds):
                 held_name = f'mixed-{turn}-output-hold'
                 held = pool.submit(request, exact_body(32*MIB, held_name), keys[0])
                 until(lambda: any(row[0] == held_name for row in calls))
+                output_release.clear()
+                generation_name = f'mixed-{turn}-generation'
+                edit_name = f'mixed-{turn}-edit'
                 generation = pool.submit(request, json.dumps({'model':'synthetic-image',
-                    'prompt':f'mixed-{turn}-generation', 'output_format':'gif', 'n':8}).encode(), keys[1],
+                    'prompt':generation_name, 'output_format':'gif', 'n':8}).encode(), keys[1],
                     '/v1/images/generations', True)
-                generated = generation.result(timeout=40)
-                assert generated['status'] == 200
-                results.append(generated)
-                edit = request(json.dumps({'model':'synthetic-image','prompt':f'mixed-{turn}-edit','n':8,
+                editing = pool.submit(request, json.dumps({'model':'synthetic-image','prompt':edit_name,'n':8,
                     'images':[{'image_url':'data:image/png;base64,'+base64.b64encode(capacity.png_payload()).decode()}]}).encode(),
-                    keys[3], '/v1/images/edits', cancel=True)
-                results.append(edit)
+                    keys[3], '/v1/images/edits', False, True)
+                # Both providers sent the first chunk and retain their remaining output.
+                # Check unrelated work while two image permits and the 32 MiB input are held.
+                until(lambda: generation_name in output_started and edit_name in output_started)
+                assert not generation.done() and not editing.done()
+                for path in ('/health/live', '/api/keys', '/api/runtime/storage'):
+                    management.append({'phase':progress['phase'], 'endpoint':path,
+                                       'seconds':management_call(path)})
                 assert request(exact_body(1024, f'mixed-{turn}-alive'), keys[2])['status'] == 200
+                output_release.set()
+                generated = generation.result(timeout=40)
+                edit = editing.result(timeout=40)
+                assert generated['status'] == 200 and edit['status'] == 200 and edit['cancelled']
+                results.extend([generated, edit])
                 # Disconnect after confirmed dispatch, before provider result. Its unknown
                 # responsibility must survive local memory/socket reclamation.
                 cancelled_name = f'mixed-{turn}-cancel-hold'
@@ -240,7 +261,7 @@ def worker(root, ports, idle_seconds):
             assert len(calls) == len(seen) == 30, 'Unexpected dispatch count'
         report = {'rounds':3, 'providerCalls':len(calls), 'expectedCalls':30,
                   'management':management, 'managementFailures':failures, 'operations':results,
-                  'nativeImageBytes':len(image_body()), 'idleSecondsPerRound':idle_seconds,
+                  'nativeImageBytes':expected_image_bytes, 'imageConcurrency':2, 'idleSecondsPerRound':idle_seconds,
                   'limitations':['HTTP upstream only; multiplexed lanes are separate verify_websocket.py evidence',
                     'compression off; zstd has separate acceptance',
                     'threads are OS threads, not Swift tasks',
@@ -250,6 +271,7 @@ def worker(root, ports, idle_seconds):
         phase('complete')
     finally:
         release.set()
+        output_release.set()
         stop.set()
         if monitor_thread: monitor_thread.join(8)
         provider.shutdown(); provider.server_close(); owner.join(5)
@@ -259,7 +281,7 @@ def worker(root, ports, idle_seconds):
 def configuration():
     value = capacity.config_document('http')
     value.update(executionTimeoutSeconds=60, firstResponseTimeoutSeconds=60,
-                 upstreamRequestCompression='off', imageConcurrency=1)
+                 upstreamRequestCompression='off', imageConcurrency=2)
     return value
 
 

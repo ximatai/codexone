@@ -73,3 +73,5 @@ Release 安装演练新增实际 v0.26.9 生成 v11 库、候选显式迁移及�
 Release capacity suite 使用同一 CI 候选镜像、原生 Linux amd64，刺激 512 MiB 与网关 768 MiB 独立容器/cgroup，均禁 swap、只读、无外网。每轮恢复采样 60 秒；FD 回落、绝对 RSS 包络与相对首轮暖机恢复尾段中位数的 32 MiB 增量门禁并行校验，记录双方退出/OOM 状态，失败也保存白名单证据。它不是 Swift Task/队列/lease 直接归零证明；后者仅有容量再次可取的行为证据。多 lane 和 zstd 仍由独立接口矩阵验收，不冒充同进程组合覆盖。
 
 4 项边界/责任测试及 macOS 三轮功能 smoke 通过；macOS smoke 只等待 1 秒，不声称 Linux 内存验收。原生优化镜像资源门禁尚待最终 Release dry-run。实际 Codex CLI 0.165.0 的三种传输、目录发现、文本/工具/压缩 18 个合成场景全部通过：58 次上游派发均结算，含 22 次 lite 请求；没有真实账号调用。
+
+补充实际默认配置对齐：生产支持的图片并发为 2，混合脚本也使用并发 2。以两个约 46 MiB 输出各已发送首 chunk 的有界 barrier 确认重叠，在同一 32 MiB 输入持有期间检查管理 GET 和另一 Key 小请求，再核对完整 generation 哈希与 edits 取消。假上游共享不可变 fixture，避免刺激自身重复构建多份大 JSON；本机完整三轮通过，原生 Linux 最终门禁仍待执行。
