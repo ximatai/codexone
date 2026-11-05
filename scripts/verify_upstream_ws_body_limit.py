@@ -238,6 +238,8 @@ def held_body_budgets(port, server, contract, process):
         finally:
             connection.close()
 
+    # Serialize once before any native connection starts its first-create clock.
+    native_payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
     server.release = threading.Event()
     server.mode = 'hold'
     before = len(server.calls)
@@ -263,14 +265,13 @@ def held_body_budgets(port, server, contract, process):
             print('RESOURCE ' + json.dumps({'scenario':'two_maximum_bodies', 'peak_rss_kib':peak, 'budget_mib':64, 'contract':contract}), flush=True)
         try:
             with dial(port, headers=HEADERS, timeout=30) as peer:
-                payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
-                peer.sendall(b'\x81\xff' + struct.pack('!Q', len(payload)) + b'\0' * 4)
+                peer.sendall(b'\x81\xff' + struct.pack('!Q', len(native_payload)) + b'\0' * 4)
                 time.sleep(.2)
                 assert len(server.calls) == before + 4
                 server.release.set()
                 for holder in holders: assert holder.result(timeout=30)[0] == 200
                 time.sleep(.5)
-                peer.sendall(payload)
+                peer.sendall(native_payload)
                 opcode, body = receive(peer)
                 assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
                 wait_calls(before + 5)
@@ -282,7 +283,6 @@ def held_body_budgets(port, server, contract, process):
     # Hold a 32 MiB HTTP execution plus two 9 MiB native turns; another 20 MiB
     # cannot fit. Opening each WS only when ready avoids idle clients expiring
     # while a slower Linux runner serializes the other peers' large fixtures.
-    payload = wire({'type': 'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
     with ThreadPoolExecutor(max_workers=1) as worker:
         held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract))
         try:
@@ -292,7 +292,7 @@ def held_body_budgets(port, server, contract, process):
                 for _ in range(2):
                     peer = stack.enter_context(dial(port, headers=HEADERS, timeout=30))
                     peers.append(peer)
-                    send(peer, payload, masked=True, maximum_bytes=10 * 1024 * 1024)
+                    send(peer, native_payload, masked=True, maximum_bytes=10 * 1024 * 1024)
                     wait_calls(before + 1 + len(peers))
                 refused(20 * 1024 * 1024)
                 assert len(server.calls) == before + 3
