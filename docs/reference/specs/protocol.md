@@ -161,6 +161,8 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 
 可信配置选择responses或codex-subscription请求契约，不能由下游覆盖；账号池与非loopback订阅固定后者。普通订阅HTTP使用stream=true/store=false；下游JSON仅提交已验证终态，SSE逐事件提交。显式store=true及HTTP previous_response_id准入拒绝（包括HTTP→WS新连接桥接），原生WS保留同连接续接。订阅普通路径非null max_output_tokens/temperature/top_p/truncation/prompt_cache_retention/metadata返回400 unsupported_backend_parameter，不静默删除限制；其null在组装时移除；service_tier 等其他字段透传。字符串input映射为等价user消息数组。图片和独立compact不随此扩展或改变消费语义。合成验证不替代真实客户端/模型验收。
 
+上述订阅参数拒绝的私有日志 reason 为固定 `backend_parameter_<字段名>`，字段名仅限 max_output_tokens、temperature、top_p、truncation、prompt_cache_retention、metadata、store、previous_response_id。多项不支持时按上述六项顺序、store、previous_response_id 报首项；保留既有日志容量限制，不记录参数值或正文，不向公开错误 envelope 添加 reason。仅准入前诊断将 400 unsupported_backend_parameter 记录为 invalid_request；执行内错误、未知执行及派发规则不变，历史诊断不重分类。
+
 
 普通订阅WS组包保留stream=true/store=false，与固定Codex客户端ResponseCreateWsRequest一致；通用responses WS仍按其隐式流规则移除stream。不得把公开API的WS规则推导为订阅后端规则，图片沿独立契约。
 

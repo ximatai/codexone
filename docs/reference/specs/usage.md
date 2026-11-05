@@ -26,6 +26,8 @@
 
 客户端用量投影的 input_tokens_details.cache_write_tokens_details 仅透传非负整数 ttl_30m_tokens 与 ttl_12h_tokens；未知字段与畸形计数丢弃，保留上游字段相对顺序。这些 TTL 明细不新增计量证据、不参与 Key 限额或费用计算，具体投影边界见[协议规范](protocol.md)。
 
+准入前的 `400 unsupported_backend_parameter` 属于明确本地参数拒绝，诊断 failure 为 `invalid_request`，不计入已准入请求或未知执行。该分类只作用于新增拒绝诊断；旧 indeterminate 行不重写，也不据此推断旧请求命中了哪个参数。已存在同 request_id 的 attempt 时仍不插入拒绝诊断。
+
 实例业务日由 `CODEXONE_BUSINESS_DAY_OFFSET` 定义，缺省 UTC，仅接受 `UTC` 或 −12:00 至 +14:00 的 `±HH:00` 整小时偏移；不支持半小时时区和 DST。Core 使用向下取整和溢出检查，UTC 时间戳不变。重启采用环境值，无数据库设置或迁移；当前限额与精确明细按新日界重算，不补偿、不中断已准入执行。新窗口为 `business-day-<startUnixSeconds>`，事务最终确定窗口和准入秒并返回执行上下文，旧 `utc-day-*` 继续读取。
 
 `usage_daily` 及 rollUp 保持 UTC 日期；UTC 日期 D 的汇总计入当地日期 D，范围 [S,E)、偏移 o 读取 day_epoch∈[S+o,E+o)。总量保留，超过 90 天的数据日界近似。Key Token 限额另保守纳入覆盖业务日起点的 UTC 汇总行；全时间 ID 与最近使用不重分桶。通用 usage 保持 UTC 小时网格、滚动 24 小时与保留时长不变；到期日期仍独立使用 UTC。

@@ -2,6 +2,14 @@ import CodexOneCore
 import Foundation
 
 enum ProtocolRejectionDetail: String, Sendable {
+  case backendMaxOutputTokens = "backend_parameter_max_output_tokens"
+  case backendTemperature = "backend_parameter_temperature"
+  case backendTopP = "backend_parameter_top_p"
+  case backendTruncation = "backend_parameter_truncation"
+  case backendPromptCacheRetention = "backend_parameter_prompt_cache_retention"
+  case backendMetadata = "backend_parameter_metadata"
+  case backendStore = "backend_parameter_store"
+  case backendPreviousResponseID = "backend_parameter_previous_response_id"
   case reasoningEffort = "reasoning_effort"
   case toolsImage = "tools_image"
   case upstreamTurnLifecycle = "upstream_turn_lifecycle"

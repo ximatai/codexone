@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [parameter-rejection-diagnostics](parameter-rejection-diagnostics/proposal.md) · [任务](parameter-rejection-diagnostics/tasks.md)
+
 - [slow-upstream](slow-upstream/proposal.md) · [任务](slow-upstream/tasks.md) · [验证](slow-upstream/verification.md)
 
 - [upstream-zstd](upstream-zstd/proposal.md) · [任务](upstream-zstd/tasks.md) · [验证](upstream-zstd/verification.md)
