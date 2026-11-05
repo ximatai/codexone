@@ -52,7 +52,7 @@
 
 ## 候选实测后的原生格式校验
 
-- [ ] 在真实 HTTP 接口模拟上游以 200 返回错误格式，验证 GIF generation／edit 与 SVG generation 失败，并保留完整或部分用量、无重放。
+- [x] 在真实 HTTP 接口模拟上游以 200 返回错误格式，验证 GIF generation／edit 与 SVG generation 失败，并保留完整或部分用量、无重放。
 - [ ] 同时验证真实合成 GIF／SVG 与未知格式仍按既有契约交付，再发布修订候选。
 
 ## 相关文档
