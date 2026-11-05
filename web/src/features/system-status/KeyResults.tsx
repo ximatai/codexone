@@ -1,5 +1,5 @@
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Anchor,
@@ -71,6 +71,7 @@ export function KeyResults({
     row: KeySummary;
     snapshot: string;
   } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -79,6 +80,17 @@ export function KeyResults({
     return () => window.clearInterval(timer);
   }, []);
   const report = query.data;
+  const rows = useMemo(
+    () =>
+      [...(report?.keys ?? [])]
+        .filter((row) => row.admitted > 0)
+        .sort(
+          (a, b) =>
+            (b.lastUsedAtUnixSeconds ?? -1) - (a.lastUsedAtUnixSeconds ?? -1) ||
+            a.keyID.localeCompare(b.keyID),
+        ),
+    [report?.keys],
+  );
   const offset = report?.businessDay.offsetMinutes ?? 0;
   const oldWindow =
     report && (now < report.startUnixSeconds || now >= report.endUnixSeconds);
@@ -282,20 +294,30 @@ export function KeyResults({
       ) : (
         <DataTable
           animate
-          rows={[...(report?.keys ?? [])]
-            .filter((row) => row.admitted > 0)
-            .sort(
-              (a, b) =>
-                (b.lastUsedAtUnixSeconds ?? -1) -
-                  (a.lastUsedAtUnixSeconds ?? -1) ||
-                a.keyID.localeCompare(b.keyID),
-            )}
+          rows={expanded ? rows : rows.slice(0, 20)}
           columns={columns}
           rowKey={(row) => row.keyID}
           loading={query.isPending}
           retry={() => void query.refetch()}
           empty="今日暂无活跃 Key。"
         />
+      )}
+      {rows.length > 20 && (
+        <Group justify="space-between" mt="sm">
+          <Text size="xs" c="dimmed">
+            {expanded
+              ? `全部 ${rows.length} 个活跃 Key`
+              : `最近 20 个活跃 Key，共 ${rows.length} 个`}
+          </Text>
+          <Button
+            size="xs"
+            variant="subtle"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起 Key 列表" : `查看全部 ${rows.length} 个 Key`}
+          </Button>
+        </Group>
       )}
       <Drawer
         opened={detail !== null}

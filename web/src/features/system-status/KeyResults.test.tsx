@@ -176,3 +176,48 @@ it("keeps an open detail bound to its Key and its own snapshot across refreshes"
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(row.keyID);
 });
+it("bounds default rows while retaining all identities and expansion across updates", () => {
+  const keys = Array.from({ length: 40 }, (_, index) => ({
+    ...row,
+    keyID: `synthetic-bounded-${index}`,
+    displayName: `合成 Key ${index}`,
+    lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! - index,
+  }));
+  const result = render(<KeyResults query={query({ ...report, keys })} />);
+  const panel = screen.getByRole("region", { name: "今日 Key 请求汇总" });
+  expect(within(panel).getAllByRole("row")).toHaveLength(21);
+  fireEvent.click(screen.getByRole("button", { name: "查看全部 40 个 Key" }));
+  expect(within(panel).getAllByRole("row")).toHaveLength(41);
+  fireEvent.click(within(panel).getByRole("button", { name: "合成 Key 39" }));
+  result.rerender(
+    <KeyResults
+      query={query({
+        ...report,
+        keys: keys.map((item) =>
+          item.keyID === "synthetic-bounded-39"
+            ? {
+                ...item,
+                displayName: "已更新的合成 Key",
+                lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! + 1,
+              }
+            : item,
+        ),
+      })}
+    />,
+  );
+  expect(screen.getByRole("dialog", { name: "Key 详情" })).toHaveTextContent(
+    "synthetic-bounded-39",
+  );
+  expect(screen.getByRole("dialog", { name: "Key 详情" })).toHaveTextContent(
+    "已更新的合成 Key",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(within(panel).getAllByRole("row")).toHaveLength(41);
+  fireEvent.click(screen.getByRole("button", { name: "收起 Key 列表" }));
+  expect(within(panel).getAllByRole("row")).toHaveLength(21);
+  expect(
+    within(panel).getByRole("button", {
+      name: "已更新的合成 Key",
+    }),
+  ).toBeVisible();
+});
