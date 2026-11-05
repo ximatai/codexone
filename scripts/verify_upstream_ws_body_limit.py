@@ -151,10 +151,13 @@ class Provider(BaseHTTPRequestHandler):
                     self.server.oversized_ws += 1
                     send(self.connection, struct.pack('!H', 1009), opcode=8)
                     return
-                if self.server.mode == 'multi_close':
+                if self.server.mode in ('multi_close', 'multi_close_queued'):
                     second_opcode, second_body = receive(self.connection, masked=True)
                     assert second_opcode == 1
                     self.capture(second_body, 'websocket')
+                    if self.server.mode == 'multi_close_queued':
+                        self.server.started.set()
+                        assert self.server.release.wait(10), 'Queued-close provider hold expired'
                     send(self.connection, struct.pack('!H', 1009), opcode=8)
                     return
                 if self.server.mode.startswith(('close', 'metadata', 'created', 'extension', 'other', 'drop')):
@@ -380,9 +383,44 @@ def body_limit_diagnostics(binary, config, root, server, contract, failures_only
     print(f'PASS: {contract}: isolated real 1009/native/HTTP body-limit diagnostics', flush=True)
 
 
+def verify_lane_close(port, server, root, contract, count, repetitions=12):
+    for iteration in range(repetitions):
+        queued = iteration >= repetitions - 4
+        server.mode = 'multi_close_queued' if queued else 'multi_close'
+        server.started.clear()
+        server.release.clear()
+        before = len(server.calls)
+        with dial(port, headers=HEADERS, timeout=30) as peer:
+            for lane in ('first', 'second'):
+                send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':lane}, masked=True)
+            if queued:
+                assert server.started.wait(5), 'Provider did not receive both lanes'
+                for _ in range(3):
+                    send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':'first'}, masked=True)
+                server.release.set()
+            ended = set()
+            while len(ended) < 2:
+                opcode, data = receive(peer)
+                assert opcode == 1, (contract, iteration, 'closed before all lane errors', sorted(ended),
+                                     struct.unpack('!H', data[:2])[0] if opcode == 8 and len(data) >= 2 else opcode)
+                event = json.loads(data)
+                assert event['type'] == 'error' and event['status'] == 502, event
+                assert event['stream_id'] not in ended, event
+                ended.add(event['stream_id'])
+            assert ended == {'first', 'second'}
+            opcode, data = receive(peer)
+            assert opcode == 8 and data[:2] == struct.pack('!H', 1000), (opcode, len(data))
+        assert len(server.calls) == before + 2
+        count += 2
+        assert all(row[0] == 'unknown' and row[2] is None for row in ledger(root, count)[-2:])
+    print('PASS: ' + contract + ': repeated two-lane close drains both errors before connection close; unknown retained')
+    return count
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -391,6 +429,7 @@ def main():
     server.calls = []
     server.oversized_ws = 0
     server.started = threading.Event()
+    server.release = threading.Event()
     server.cancelled = threading.Event()
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
@@ -407,6 +446,9 @@ def main():
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
                 try:
+                    if args.lane_close_only:
+                        verify_lane_close(ports['data'], server, root, contract, count)
+                        continue
                     if not args.failures_only:
                         count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
@@ -487,21 +529,8 @@ def main():
                         assert status == 413, (status, body[:500])
                         error(body)
                         ledger(root, count)
-                    # A connection-level 1009 cannot certify zero for two dispatched lanes.
-                    server.mode = 'multi_close'
-                    before = len(server.calls)
-                    with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
-                        for lane in ('first', 'second'):
-                            send(peer, {**sized(1024, contract, native=True), 'type':'response.create', 'stream_id':lane}, masked=True)
-                        ended = set()
-                        while len(ended) < 2:
-                            _, data = receive(peer); event = json.loads(data)
-                            assert event['type'] == 'error' and event['status'] == 502, event
-                            assert event['error']['code'] == 'execution_indeterminate'
-                            ended.add(event['stream_id'])
-                    assert [c[0] for c in server.calls[before:]] == ['websocket', 'websocket']
-                    count += 2
-                    assert all(row[0] == 'unknown' for row in ledger(root, count)[-2:])
+                    # Both dispatched lanes retain unknown and must each deliver their error.
+                    count = verify_lane_close(ports['data'], server, root, contract, count)
                     # Real below-threshold refusals: exactly one HTTP replay, same bytes/state.
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
