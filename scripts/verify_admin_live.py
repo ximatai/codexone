@@ -254,7 +254,11 @@ def verify_slow(probe):
         try:
             port = port_line(process, rb'ADMIN_PORT (\d+)')
             f = SimpleNamespace(ports={'admin': port}, origin=f'http://127.0.0.1:{port}', secrets=[])
-            rss = lambda: int(subprocess.check_output(['ps', '-o', 'rss=', '-p', str(process.pid)]).strip()) * 1024
+            def rss():
+                status = Path(f'/proc/{process.pid}/status')
+                if status.exists():
+                    return int(next(row.split()[1] for row in status.read_text().splitlines() if row.startswith('VmRSS:'))) * 1024
+                return int(subprocess.check_output(['ps', '-o', 'rss=', '-p', str(process.pid)]).strip()) * 1024
             before = rss(); peak = before
             cookie, _ = login(f)
             slow_started = time.monotonic()
@@ -275,6 +279,11 @@ def verify_slow(probe):
                 snapshot = frame(current)
                 assert snapshot['kind'] == 'snapshot'
                 assert len(snapshot['sections']['inFlight']['data']['rows']) == 200
+                assert len(snapshot['sections']['accounts']['data']['accounts']) == 64
+                assert len(snapshot['sections']['keys']['data']['keys']) == 256
+                assert len(snapshot['sections']['attention']['data']['items']) == 50
+                assert len(snapshot['sections']['daily']['data']['buckets']) == 7
+                assert snapshot['_wireBytes'] <= 1048576
                 thread = threading.Thread(target=read, args=(current, index), daemon=True); readers.append(thread); thread.start()
             replacement_cookie, _ = login(f)
             assert dial(f, replacement_cookie)[0] == 429
@@ -295,7 +304,7 @@ def verify_slow(probe):
             assert all(count > 0 for count in healthy_frames), ('healthy_frames', healthy_frames)
             assert peak - before <= 48 * 1048576, (peak, before)
             print('PASS: actual non-reading TCP client is closed/forced closed under 200-row event storm; seven healthy viewers and HTTP survive')
-            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_slot_released_seconds': round(time.monotonic() - slow_started, 2), 'slow_peer_never_read': True, 'max_snapshot_wire_bytes': snapshot['_wireBytes']}, sort_keys=True))
+            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_slot_released_seconds': round(time.monotonic() - slow_started, 2), 'slow_peer_never_read': True, 'max_snapshot_wire_bytes': snapshot['_wireBytes'], 'accounts':64, 'keys':256, 'intents':200, 'alerts':50, 'days':7}, sort_keys=True))
         finally:
             stop.set()
             for sock in sockets: sock.close()
@@ -372,10 +381,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=Path)
     parser.add_argument('--serve', action='store_true')
+    parser.add_argument('--slow-only', action='store_true', help='Only the combined DTO/slow-viewer resource probe')
     parser.add_argument('--probe', type=Path)
     parser.add_argument('--web', type=Path)
     args = parser.parse_args()
-    if args.serve:
+    if args.slow_only:
+        assert args.probe
+        verify_slow(str(args.probe.resolve()))
+    elif args.serve:
         serve(str(args.binary.resolve()), args.web.resolve())
     else:
         verify(str(args.binary.resolve()))
