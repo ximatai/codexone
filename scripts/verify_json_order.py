@@ -117,8 +117,6 @@ def main():
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
     expected_response = json.loads(wire(RESPONSE))
-    del expected_response['usage']['output_tokens_details']['unknown']
-    del expected_response['usage']['input_tokens_details']['cache_write_tokens_details']['unknown']
     expected_event = {**EVENT, 'response': expected_response}
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-json-order-') as temporary:

@@ -42,7 +42,7 @@
 
 `0954a5d` 的 [Linux Verify 42025684434](https://github.com/ximatai/codexone/actions/runs/42025684434) 构建及 484 项 Swift 测试通过，协议分片发现三处验收问题：两个旧夹具仍要求删除未知 usage 明细；图片完整度断言同时暴露费用校验的跨平台问题。费用比较现显式使用 NSDecimalNumber.zero，保证十进制操作数同类型，不依赖 corelibs 的 NSNumber 跨类型比较路径；新增完整图片计数/费用/完整度直接回归。夹具改为保留扩展，并反向验证 metadata ID 不授予私有对象读取权限。图片账本等待还增加 outcome 条件与诊断，避免把未结束记录当最终快照；该等待改进不替代费用修复。
 
-可参考 [Swift corelibs 的 NSDecimalNumber 实现](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/NSDecimalNumber.swift) 理解类型比较分支；实际目标平台结果仍以新 CI 为准。本机全量 485 项、第三分片 11 个脚本、Codex shapes HTTP/WS 及图片矩阵均通过；生产服务没有变更。
+可参考 [Swift corelibs 的 NSDecimalNumber 实现](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/NSDecimalNumber.swift) 理解类型比较分支；实际目标平台结果仍以新 CI 为准。本机全量 485 项、第三分片 11 个脚本、Codex shapes HTTP/WS 及图片矩阵均通过。第一分片补跑发现 JSON 顺序夹具仍删除未知 usage 明细，现改为完整对象保序断言；该用例及其后 JSON、参数、诊断、上下文与压缩回归通过。生产服务没有变更。
 
 ## Linux 与发布门禁
 
