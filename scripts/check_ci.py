@@ -29,6 +29,7 @@ def check_release(release, dockerfile, tls, backend_scripts):
     assert 'suite: [tls, installation, capacity]' in jobs['image-checks'], 'Release must run TLS, installation and mixed capacity'
     assert 'scripts/verify_mixed_capacity.py --image' in jobs['image-checks'], 'Run capacity against the exact candidate image'
     assert 'mixed-capacity-evidence' in jobs['image-checks'], 'Save resource gate evidence'
+    assert '--probe /binaries/ExecutionProbe --slow-only' in jobs['image-checks'], 'Require combined live-viewer capacity'
     for name in ('backend-scripts', 'image-checks'):
         assert 'fail-fast: false' in jobs[name], 'Collect results from all verification jobs'
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
