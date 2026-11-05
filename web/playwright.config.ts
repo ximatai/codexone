@@ -4,6 +4,11 @@ const port = Number(process.env.CODEXONE_WEB_TEST_PORT ?? 4173);
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The separate CI live job supplies a matching gateway and Swift runtime.
+  testIgnore:
+    process.env.CODEXONE_WEB_STUBS_ONLY === "1"
+      ? ["**/admin-live-real.spec.ts"]
+      : [],
   timeout: 15_000,
   use: {
     baseURL: `http://127.0.0.1:${port}`,
