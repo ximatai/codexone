@@ -326,11 +326,12 @@ public actor OverviewLive: OverviewLiveRunning {
       dirty = false
     }
     // A connection registry wake has no execution event but still updates the activity section.
-    if sections["inFlight"] != nil {
+    if let source = sections["inFlight"], source["data"] != .null {
       let data = flight(at: time)
       if activityChanged || sections["inFlight"]?["data"]?["clients"] != data["clients"] {
         let previous = sections["inFlight"]
-        replace("inFlight", data: data, at: time, error: nil)
+        // Activity observation does not prove that SQLite reconciliation recovered.
+        replace("inFlight", data: data, at: time, error: source["code"]?.string)
         if let update = delta("inFlight", previous: previous) { changed["inFlight"] = update }
       }
     }

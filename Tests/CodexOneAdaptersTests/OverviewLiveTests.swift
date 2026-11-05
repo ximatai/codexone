@@ -136,6 +136,59 @@ import Testing
   #expect(await box.next() == nil)
 }
 
+@Test func overviewSQLiteFailureStaysUnavailableAcrossActivityAndRecovers() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let reader = try await store.makeUsageReader()
+  let usageAPI = UsageAdminAPI(querying: reader)
+  let time = Mutex(Int64(1000))
+  let overview = OverviewLive(
+    activity: store.overviewActivity,
+    read: { name in
+      if name == "inFlight" { return try await usageAPI.overviewSection(name) }
+      return try JSONValue.object([:]).data()
+    }, now: { time.withLock { $0 } })
+  // An actual SQLite read failure, not an encoded synthetic error response.
+  try rawSQL(path, "ALTER TABLE attempts RENAME TO synthetic_unavailable_attempts")
+  let worker = Task { try await overview.run() }
+  let box = OverviewMailbox { _ in }
+  let viewer = UUID()
+  try await overview.subscribe(id: viewer, mailbox: box)
+  let initial = try JSONValue.decode(try #require(await box.next()).data)
+  #expect(initial["inFlight"]?["freshness"]?.string == "unavailable")
+  #expect(initial["inFlight"]?["data"] == .null)
+  #expect(initial["inFlight"]?["lastSuccessAt"] == .null)
+
+  try rawSQL(path, "ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts")
+  time.withLock { $0 += 5 }
+  store.overviewActivity.signal.yield(.tick)
+  let recovered = try JSONValue.decode(try #require(await box.next()).data)
+  #expect(recovered["inFlight"]?["freshness"]?.string == "fresh")
+  #expect(recovered["inFlight"]?["data"]?["rows"]?.array == [])
+  let lastSuccess = recovered["inFlight"]?["lastSuccessAt"]
+
+  try rawSQL(path, "ALTER TABLE attempts RENAME TO synthetic_unavailable_attempts")
+  time.withLock { $0 += 5 }
+  let client = try #require(
+    store.overviewActivity.register(key: "synthetic-key", name: nil, capacity: 1))
+  store.overviewActivity.signal.yield(.tick)
+  let failed = try JSONValue.decode(try #require(await box.next()).data)
+  #expect(failed["inFlight"]?["freshness"]?.string == "stale")
+  #expect(failed["inFlight"]?["lastSuccessAt"] == lastSuccess)
+  #expect(failed["inFlight"]?["data"]?["clients"]?.array?.count == 1)
+  store.overviewActivity.unregister(client)
+  try rawSQL(path, "ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts")
+  await overview.unsubscribe(id: viewer)
+  worker.cancel()
+  try await worker.value
+  await overview.shutdown()
+  await reader.close()
+  await store.close()
+}
+
 @Test func liveSessionTouchPreservesAbsoluteExpiryAndRevocationIsSynchronous() throws {
   let time = Mutex(ContinuousClock.now)
   let sessions = try AdminSessions(

@@ -23,8 +23,11 @@ from verify_websocket import exact, receive, send
 
 
 def dial(f, cookie, *, origin=True, path='/api/overview/live', extra=(), host=None, receive_buffer=None):
-    sock = socket.create_connection(('127.0.0.1', f.ports['admin']), timeout=12)
+    sock = socket.socket()
+    sock.settimeout(12)
+    # Set before the TCP handshake so Linux negotiates the bounded receive window.
     if receive_buffer: sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+    sock.connect(('127.0.0.1', f.ports['admin']))
     headers = [('Host', host or f"127.0.0.1:{f.ports['admin']}"), ('Upgrade', 'websocket'),
                ('Connection', 'Upgrade'), ('Sec-WebSocket-Version', '13'),
                ('Sec-WebSocket-Key', base64.b64encode(os.urandom(16)).decode())]
@@ -254,12 +257,15 @@ def verify_slow(probe):
             rss = lambda: int(subprocess.check_output(['ps', '-o', 'rss=', '-p', str(process.pid)]).strip()) * 1024
             before = rss(); peak = before
             cookie, _ = login(f)
+            slow_started = time.monotonic()
             slow = dial(f, cookie, receive_buffer=1024)[1]; slow.settimeout(20); sockets.append(slow)
-            def read(sock):
+            healthy_frames = [0] * 7
+            def read(sock, index):
                 try:
                     while not stop.is_set():
                         value = frame(sock)
                         if 'close' in value: raise AssertionError('Healthy viewer was closed')
+                        healthy_frames[index] += 1
                 except (EOFError, OSError):
                     if not stop.is_set(): failures.append('healthy viewer disconnected')
                 except BaseException as error: failures.append(type(error).__name__)
@@ -269,24 +275,58 @@ def verify_slow(probe):
                 snapshot = frame(current)
                 assert snapshot['kind'] == 'snapshot'
                 assert len(snapshot['sections']['inFlight']['data']['rows']) == 200
-                thread = threading.Thread(target=read, args=(current,), daemon=True); readers.append(thread); thread.start()
-            # The slow peer never reads for 8s, well beyond the 5s socket write deadline.
-            until_at = time.monotonic() + 8
+                thread = threading.Thread(target=read, args=(current, index), daemon=True); readers.append(thread); thread.start()
+            replacement_cookie, _ = login(f)
+            assert dial(f, replacement_cookie)[0] == 429
+            # Never resume the slow peer. Observe actual server slot release,
+            # before the earliest 25s missing-pong close can mask write pressure.
+            until_at = slow_started + 20
+            replacement = None
             while time.monotonic() < until_at:
                 peak = max(peak, rss()); time.sleep(.2)
                 assert request(port, 'GET', '/api/session', cookie=cookie)[0] == 200
-            try: terminal = until(slow, lambda value: 'close' in value, seconds=8)
-            except (EOFError, ConnectionResetError): terminal = {'close': None}
-            assert terminal['close'] in (1013, None)
+                status, replacement = dial(f, replacement_cookie)
+                if status == 101: break
+                assert status == 429, ('replacement_status', status)
+            assert replacement is not None, 'Non-reading viewer did not release its slot before heartbeat expiry'
+            sockets.append(replacement)
+            assert frame(replacement)['kind'] == 'snapshot'
             assert not failures, failures
+            assert all(count > 0 for count in healthy_frames), ('healthy_frames', healthy_frames)
             assert peak - before <= 48 * 1048576, (peak, before)
             print('PASS: actual non-reading TCP client is closed/forced closed under 200-row event storm; seven healthy viewers and HTTP survive')
-            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_close_frame': terminal['close'], 'max_snapshot_wire_bytes': snapshot['_wireBytes']}, sort_keys=True))
+            print(json.dumps({'rss_8_storm_added_bytes': peak - before, 'rss_baseline_bytes': before, 'rss_peak_bytes': peak, 'slow_slot_released_seconds': round(time.monotonic() - slow_started, 2), 'slow_peer_never_read': True, 'max_snapshot_wire_bytes': snapshot['_wireBytes']}, sort_keys=True))
         finally:
             stop.set()
             for sock in sockets: sock.close()
             for thread in readers: thread.join(timeout=2)
             shutdown(process, root, [])
+
+
+def verify_source_failure(binary):
+    with running_admin(binary, admin_live=True) as f:
+        cookie, _ = login(f)
+        database = f.root / 'state/core.sqlite'
+        broken = False
+        viewer = None
+        try:
+            with sqlite3.connect(database) as db:
+                db.execute('ALTER TABLE attempts RENAME TO synthetic_unavailable_attempts')
+            broken = True
+            viewer = dial(f, cookie)[1]
+            initial = frame(viewer)['sections']['inFlight']
+            assert initial['freshness'] == 'unavailable' and initial['data'] is None and initial['lastSuccessAt'] is None
+            with sqlite3.connect(database) as db:
+                db.execute('ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts')
+            broken = False
+            restored = until(viewer, lambda value: value.get('sections', {}).get('inFlight', {}).get('freshness') == 'fresh', seconds=8)
+            assert restored['sections']['inFlight']['data']['rows'] == []
+            print('PASS: real SQLite read failure stays unavailable in initial management WS snapshot; restoring storage recovers fresh data')
+        finally:
+            if viewer: viewer.close()
+            if broken:
+                with sqlite3.connect(database) as db:
+                    db.execute('ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts')
 
 
 def verify_control_limit(binary):
@@ -339,5 +379,6 @@ if __name__ == '__main__':
         serve(str(args.binary.resolve()), args.web.resolve())
     else:
         verify(str(args.binary.resolve()))
+        verify_source_failure(str(args.binary.resolve()))
         verify_control_limit(str(args.binary.resolve()))
         if args.probe: verify_slow(str(args.probe.resolve()))
