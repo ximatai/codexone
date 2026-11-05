@@ -41,8 +41,8 @@ extension HTTPResponseExecution {
       contract: configuration.requestContract, nativeWebSocket: true
     ).object!
     // Codex subscription WS keeps stream=true in its native request contract.
-    // The public Responses WS dialect and image contract retain their separate wire rules.
-    if configuration.requestContract == .responses || request.requirements.imageModel != nil {
+    // Public Responses WS streams implicitly.
+    if configuration.requestContract == .responses {
       create.removeValue(forKey: "stream")
     }
     create["type"] = .string("response.create")

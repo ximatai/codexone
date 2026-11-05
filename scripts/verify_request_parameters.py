@@ -50,7 +50,9 @@ def main():
                     root=Path(temporary)/(contract+'-'+transport);root.mkdir(mode=0o700)
                     config=root/'identity.json';config.write_text(json.dumps(dict(principal='synthetic-contract',keyID='synthetic-key',
                         keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),namespace='synthetic-contract',identity='synthetic-identity',
-                        models=[dict(id='synthetic-contract',inputMicrosPerMillion=0,outputMicrosPerMillion=0)],reservedMicros=1,
+                        models=[dict(id='synthetic-contract',inputMicrosPerMillion=0,outputMicrosPerMillion=0,imageGeneration=True)],
+                        imageGeneration=dict(defaultModel='synthetic-image',models=[
+                            dict(id='synthetic-image',inputMicrosPerMillion=0,outputMicrosPerMillion=0)]),reservedMicros=1,
                         upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1',upstreamTransport=transport,upstreamContract=contract)));config.chmod(0o600)
                     process,ports=start(str(args.binary.resolve()),config,root)
                     try:
@@ -112,6 +114,29 @@ def main():
                                 status,events=call(ports['data'],route,{**base,**extra});total+=1
                                 assert 'error' in events[-1] and (route=='native' or status==400),(contract,transport,route,extra,status,events)
                                 assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts,'Rejected request admitted, connected or dispatched'
+                            tool=dict(type='image_generation',output_format='png',synthetic_extension={'enabled':True})
+                            tool_choice=dict(type='image_generation')
+                            image_request={**base,'tools':[tool],'tool_choice':tool_choice,
+                                           'metadata':{'label':'synthetic-image-request'}}
+                            before=server.calls
+                            status,events=call(ports['data'],route,image_request);total+=1
+                            assert status==200 and 'error' not in events[-1],(contract,transport,route,status,events[-1])
+                            assert server.calls==before+1
+                            wire=server.received[-1]
+                            assert wire['tools']==[{**tool,'model':'synthetic-image'}] and wire['tool_choice']==tool_choice
+                            assert wire['metadata']==image_request['metadata']
+                            if contract=='codex-subscription':
+                                assert wire['stream'] is True and wire['store'] is False
+                                assert wire['input']==[dict(role='user',content=base['input'])]
+                                before=server.calls;upgrades=server.upgrades;attempts=attempt_count(root)
+                                status,events=call(ports['data'],route,{**image_request,'store':True});total+=1
+                                assert events[-1]['error']['code']=='unsupported_backend_parameter'
+                                assert route=='native' or status==400
+                                assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts
+                            else:
+                                assert wire['input']==base['input'] and 'store' not in wire
+                                if transport=='websocket': assert 'stream' not in wire
+                                else: assert wire['stream']==(route=='sse')
                         expected=attempt_count(root);deadline=time.monotonic()+5
                         while len(rows(root))!=expected or any(s=='intent' for s,_,_ in rows(root)):
                             assert time.monotonic()<deadline;time.sleep(.02)

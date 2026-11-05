@@ -11,15 +11,17 @@ extension ResponseRequest {
   func preparedDocument(contract: ResponseRequestContract, nativeWebSocket: Bool) throws
     -> JSONValue
   {
-    guard contract == .codexSubscription, requirements.imageModel == nil,
+    guard contract == .codexSubscription,
       mode != .compact || streamCompaction
     else { return document }
     var fields = document.object!
+    // Image-tool requests keep their provider parameters and verified continuation.
+    let usesImageTool = requirements.imageModel != nil
     for (key, detail): (String, ProtocolRejectionDetail) in [
       ("max_output_tokens", .backendMaxOutputTokens), ("temperature", .backendTemperature),
       ("top_p", .backendTopP), ("truncation", .backendTruncation),
       ("prompt_cache_retention", .backendPromptCacheRetention), ("metadata", .backendMetadata),
-    ] {
+    ] where !usesImageTool {
       guard fields[key] == nil || fields[key] == .null else {
         throw GatewayProtocolError(400, "unsupported_backend_parameter", detail: detail)
       }
@@ -29,7 +31,7 @@ extension ResponseRequest {
       throw GatewayProtocolError(400, "unsupported_backend_parameter", detail: .backendStore)
     }
     guard
-      nativeWebSocket || fields["previous_response_id"] == nil
+      nativeWebSocket || usesImageTool || fields["previous_response_id"] == nil
         || fields["previous_response_id"] == .null
     else {
       throw GatewayProtocolError(

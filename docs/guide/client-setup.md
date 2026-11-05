@@ -29,6 +29,10 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 provider 名称和本地门控值是兼容设置，不代表官方授权；网关以 Codex 官方客户端标识和官方 OAuth 客户端 ID 访问上游，存在[条款与账号风险](../reference/compatibility.md)。
 
+## 会话和图片工具并发
+
+Codex 可能在会话流收尾前发起原生图片请求。Key 的最大并发按实际在途请求计数，会话和图片共享这个上限。要允许一个会话和一个图片请求重叠，给该用途的 Key 至少两个并发名额。
+
 ## 局域网 HTTP
 
 显式以 `--lan` 安装后，只需把上面的 `base_url` 换成安装器打印的地址，例如 `base_url = "http://192.168.1.10:18080/backend-api/codex"`；IPv6 示例为 `http://[fd00::10]:18080/backend-api/codex`。其余 provider、Key 和工具配置保持相同。先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)，不要通过端口转发公开此地址。
