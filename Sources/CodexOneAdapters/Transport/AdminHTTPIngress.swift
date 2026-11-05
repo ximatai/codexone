@@ -43,6 +43,7 @@ struct AdminHTTPIngress: Sendable {
             channel.close(promise: nil)
           }
           let id = UUID()
+          let closing = AdminLiveClose(channel)
           channel.closeFuture.whenComplete { _ in sessions?.releaseLive(id) }
           let upgrader = NIOTypedWebSocketServerUpgrader<AdminConnection>(
             maxFrameSize: 125,
@@ -55,7 +56,7 @@ struct AdminHTTPIngress: Sendable {
                 else { throw ExecutionError.denied }
                 _ = overview
                 try sessions.bindLive(head.headers, id: id) { code in
-                  AdminLiveTransport.close(channel, code: code)
+                  closing.close(code)
                 }
                 return channel.eventLoop.makeSucceededFuture(
                   HTTPHeaders([("cache-control", "no-store")]))
@@ -72,7 +73,10 @@ struct AdminHTTPIngress: Sendable {
                   wrappingChannelSynchronously: channel,
                   configuration: .init(
                     backPressureStrategy: .init(lowWatermark: 1, highWatermark: 2)))
-                return .live(.init(socket: socket, id: id, sessions: sessions, overview: overview))
+                return .live(
+                  .init(
+                    socket: socket, id: id, sessions: sessions, overview: overview, closing: closing
+                  ))
               }
             })
           var pipeline = NIOUpgradableHTTPServerPipelineConfiguration(

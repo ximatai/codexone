@@ -1,5 +1,35 @@
 import Foundation
 
+/// Native GIF and SVG requests require an explicit artifact format. Check the bounded header
+/// without parsing, rendering or interpreting provider output.
+enum NativeImageOutputFormat: String {
+  case gif, svg
+
+  func matches(_ bytes: Data) -> Bool {
+    switch self {
+    case .gif:
+      return bytes.starts(with: "GIF87a".utf8) || bytes.starts(with: "GIF89a".utf8)
+    case .svg:
+      var header = String(decoding: bytes.prefix(4096), as: UTF8.self)[...]
+      if header.first == "\u{FEFF}" { header = header.dropFirst() }
+      while true {
+        header = header.drop(while: \.isWhitespace)
+        if header.hasPrefix("<!--"), let end = header.range(of: "-->") {
+          header = header[end.upperBound...]
+        } else if header.hasPrefix("<?"), let end = header.range(of: "?>") {
+          header = header[end.upperBound...]
+        } else {
+          break
+        }
+      }
+      guard header.hasPrefix("<svg"), let delimiter = header.dropFirst(4).first else {
+        return false
+      }
+      return delimiter.isWhitespace || delimiter == ">" || delimiter == "/"
+    }
+  }
+}
+
 /// Complete native JSON results only: never convert error documents or partial output into success.
 enum NativeImageResult {
   static func decode(_ data: Data) throws -> JSONValue {
@@ -9,20 +39,25 @@ enum NativeImageResult {
     return try validated(document)
   }
 
-  static func validated(_ document: JSONValue) throws -> JSONValue {
+  static func validated(
+    _ document: JSONValue, expectedFormat: NativeImageOutputFormat? = nil
+  ) throws -> JSONValue {
     try requireCompletion(document)
     guard document.object != nil,
       document["error"] == nil, document["type"] == nil,
       let created = document["created"]?.integer, created >= 0,
-      let items = document["data"]?.array, !items.isEmpty,
-      items.allSatisfy({ item in
-        guard item.object != nil, item["error"] == nil,
-          let encoded = item["b64_json"]?.string,
-          let bytes = Data(base64Encoded: encoded), !bytes.isEmpty
-        else { return false }
-        return bytes.base64EncodedString() == encoded
-      })
+      let items = document["data"]?.array, !items.isEmpty
     else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+    for item in items {
+      guard item.object != nil, item["error"] == nil,
+        let encoded = item["b64_json"]?.string,
+        let bytes = Data(base64Encoded: encoded), !bytes.isEmpty,
+        bytes.base64EncodedString() == encoded
+      else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+      if let expectedFormat, !expectedFormat.matches(bytes) {
+        throw GatewayProtocolError(502, "invalid_upstream_image_format")
+      }
+    }
     return document
   }
 

@@ -155,10 +155,32 @@ def verify(binary):
                 pass
             current.close()
         # Logout and zero-viewer interval; the HTTP API remains available.
-        current = dial(f, fresh)[1]; frame(current)
-        session = document(request(f.ports['admin'], 'GET', '/api/session', cookie=fresh))
-        assert request(f.ports['admin'], 'DELETE', '/api/session', cookie=fresh, origin=f.origin, csrf=session['csrf'])[0] == 200
-        until(current, lambda value: value.get('close') == 1008); current.close()
+        for _ in range(8):
+            cookie_to_revoke, _ = login(f)
+            pair = []
+            try:
+                for _ in range(2):
+                    status, current = dial(f, cookie_to_revoke)
+                    assert status == 101 and current is not None, status
+                    pair.append(current)
+                    assert frame(current)['kind'] == 'snapshot'
+                session = document(request(f.ports['admin'], 'GET', '/api/session', cookie=cookie_to_revoke))
+                for current in pair:
+                    for _ in range(12):
+                        send(current, b'synthetic', opcode=9, masked=True)
+                assert request(f.ports['admin'], 'DELETE', '/api/session', cookie=cookie_to_revoke,
+                               origin=f.origin, csrf=session['csrf'])[0] == 200
+                for current in pair:
+                    until(current, lambda value: value.get('close') == 1008)
+                    try:
+                        current.shutdown(socket.SHUT_WR)
+                        assert current.recv(1) == b''
+                    except ConnectionResetError:
+                        pass
+                assert request(f.ports['admin'], 'GET', '/api/session', cookie=cookie_to_revoke)[0] == 401
+            finally:
+                for current in pair:
+                    current.close()
         time.sleep(.3)
         measurements['rss_zero_viewers_after_bytes'] = rss()
         measurements['rss_8_minus_zero_bytes'] = measurements['rss_8_viewers_bytes'] - measurements['rss_zero_before_bytes']

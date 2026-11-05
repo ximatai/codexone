@@ -39,8 +39,15 @@ def exact_body(size, nonce):
 
 
 def image_body():
-    # Eight independently bounded opaque output containers; no input codec claim.
-    encoded = base64.b64encode(b'synthetic-output-' + b'x' * (int(5.75*MIB)*3//4-17)).decode()
+    # Pad a synthetic 1×1 GIF with comment sub-blocks. Keep the same wire size
+    # and use the same immutable result body for both concurrent providers.
+    gif = base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
+    padding = int(5.75*MIB)*3//4 - len(gif) - 3
+    blocks, remainder = divmod(padding, 256)
+    comment = (b'\xff' + b'x'*255)*blocks
+    if remainder > 1:
+        comment += bytes([remainder-1]) + b'x'*(remainder-1)
+    encoded = base64.b64encode(gif[:-1] + b'\x21\xfe' + comment + b'\x00\x3b').decode()
     document = {'created': 1, 'data': [{'b64_json': encoded} for _ in range(8)],
                 'usage': {'input_tokens': 2, 'output_tokens': 3,
                           'input_tokens_details': {'text_tokens': 1, 'image_tokens': 1}}}

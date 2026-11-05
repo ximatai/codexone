@@ -186,8 +186,8 @@ class Provider(BaseHTTPRequestHandler):
             pass
 
 
-def call_http(port, request):
-    conn = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
+def call_http(port, request, *, timeout=30):
+    conn = http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
     conn.request('POST', '/v1/responses', wire(request),
                  {'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json', **HEADERS})
     response = conn.getresponse()
@@ -256,9 +256,10 @@ def held_body_budgets(port, server, contract, process):
     native_payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
     server.release = threading.Event()
     server.mode = 'hold'
+    # A held client must outlast the provider's bounded 45-second fixture hold.
     before = len(server.calls)
     with ThreadPoolExecutor(max_workers=2) as worker:
-        holders = [worker.submit(call_http, port, sized(30 * 1024 * 1024, contract)) for _ in range(2)]
+        holders = [worker.submit(call_http, port, sized(30 * 1024 * 1024, contract), timeout=60) for _ in range(2)]
         try:
             wait_calls(before + 2)
             refused(20 * 1024 * 1024)
@@ -270,7 +271,7 @@ def held_body_budgets(port, server, contract, process):
     # A native WS can wait with only its frame header present, then continue after
     # the competing HTTP execution releases capacity; no full payload is queued.
     with ThreadPoolExecutor(max_workers=2) as worker:
-        holders = [worker.submit(call_http, port, sized(32 * 1024 * 1024, contract)) for _ in range(2)]
+        holders = [worker.submit(call_http, port, sized(32 * 1024 * 1024, contract), timeout=60) for _ in range(2)]
         wait_calls(before + 4)
         # Native Linux reports the process high-water mark, excluding fake-provider/client RSS.
         status_file = Path(f'/proc/{process.pid}/status')
@@ -298,7 +299,7 @@ def held_body_budgets(port, server, contract, process):
     # cannot fit. Opening each WS only when ready avoids idle clients expiring
     # while a slower Linux runner serializes the other peers' large fixtures.
     with ThreadPoolExecutor(max_workers=1) as worker:
-        held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract))
+        held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract), timeout=60)
         try:
             wait_calls(before + 1)
             with ExitStack() as stack:

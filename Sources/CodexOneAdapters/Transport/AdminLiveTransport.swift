@@ -21,24 +21,48 @@ final class AdminLiveWireGuard: ChannelInboundHandler {
   }
 }
 
-struct AdminLiveTransport: Sendable {
-  let socket: ProtocolWebSocket
-  let id: UUID
-  let sessions: AdminSessions
-  let overview: OverviewLive
-  static func close(_ channel: any Channel, code: UInt16) {
-    channel.eventLoop.execute {
+/// A session callback and its transport tasks may concurrently request a close.
+final class AdminLiveClose: Sendable {
+  private let channel: any Channel
+  private let started = Mutex(false)
+
+  init(_ channel: any Channel) { self.channel = channel }
+
+  func close(_ code: UInt16) {
+    guard
+      started.withLock({ value in
+        if value { return false }
+        value = true
+        return true
+      })
+    else { return }
+    channel.eventLoop.execute { [channel] in
       let bytes = ByteBuffer(bytes: [UInt8(code >> 8), UInt8(code & 255)])
       channel.writeAndFlush(
         WebSocketFrame(fin: true, opcode: .connectionClose, data: bytes), promise: nil)
       _ = channel.eventLoop.scheduleTask(in: .seconds(2)) { channel.close(promise: nil) }
     }
   }
+
+  func revoked() async {
+    close(1008)
+    // Do not let the task group hard-close before the event loop writes the policy frame.
+    try? await channel.closeFuture.get()
+  }
+}
+
+struct AdminLiveTransport: Sendable {
+  let socket: ProtocolWebSocket
+  let id: UUID
+  let sessions: AdminSessions
+  let overview: OverviewLive
+  let closing: AdminLiveClose
+
   func run() async throws {
-    let mailbox = OverviewMailbox { code in Self.close(socket.channel, code: code) }
+    let mailbox = OverviewMailbox { code in closing.close(code) }
     do { try await overview.subscribe(id: id, mailbox: mailbox) } catch {
       sessions.releaseLive(id)
-      Self.close(socket.channel, code: 1013)
+      closing.close(1013)
       throw error
     }
     do {
@@ -56,7 +80,7 @@ struct AdminLiveTransport: Sendable {
                 }
                 controls += 1
                 guard controls <= 64 else {
-                  Self.close(socket.channel, code: 1008)
+                  await closing.revoked()
                   return
                 }
                 switch frame.opcode {
@@ -93,7 +117,7 @@ struct AdminLiveTransport: Sendable {
               while !Task.isCancelled {
                 try await Task.sleep(for: .seconds(1))
                 guard sessions.withLive(id) else {
-                  Self.close(socket.channel, code: 1008)
+                  await closing.revoked()
                   return
                 }
                 let expired = heartbeat.withLock { value in
@@ -102,7 +126,7 @@ struct AdminLiveTransport: Sendable {
                 if expired { return }
                 if ContinuousClock.now >= nextPing {
                   guard sessions.withLive(id, touch: true) else {
-                    Self.close(socket.channel, code: 1008)
+                    await closing.revoked()
                     return
                   }
                   heartbeat.withLock {
@@ -122,7 +146,7 @@ struct AdminLiveTransport: Sendable {
         }
       } onCancel: {
         mailbox.finish()
-        Self.close(socket.channel, code: 1001)
+        closing.close(1001)
       }
     } catch {
       mailbox.finish()
@@ -136,7 +160,7 @@ struct AdminLiveTransport: Sendable {
     let channel = socket.channel
     let promise = channel.eventLoop.makePromise(of: Void.self)
     let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {
-      Self.close(channel, code: 1013)
+      closing.close(1013)
       channel.close(promise: nil)
     }
     defer { deadline.cancel() }
@@ -149,7 +173,8 @@ struct AdminLiveTransport: Sendable {
             promise: promise)
         })
     else {
-      Self.close(channel, code: 1008)
+      promise.fail(ExecutionError.unauthorized)
+      await closing.revoked()
       throw ExecutionError.unauthorized
     }
     try await promise.futureResult.get()

@@ -66,7 +66,9 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
         ? "Choosing an SVG author model is not supported. Omit the svg object to use the image endpoint default. The request was not dispatched."
         : mapped.code == "unsupported_image_format_combination"
           ? "This image format cannot use streaming, partial images, masks or output compression. SVG also requires generation with one image and no prompt rewriter. The request was not dispatched."
-          : "Gateway request failed."
+          : mapped.code == "invalid_upstream_image_format"
+            ? "The provider returned a different or unrecognized image format."
+            : "Gateway request failed."
   let message =
     UUID(uuidString: requestID) != nil
     ? "\(explanation) Reference: \(requestID)." : explanation

@@ -105,7 +105,8 @@ final class NativeImageDiagnostics: Sendable {
       let known: Set<String> = [
         "execution_indeterminate", "execution_deadline_exceeded",
         "execution_first_response_timeout", "execution_progress_timeout",
-        "invalid_upstream_content_type", "invalid_upstream_image", "invalid_upstream_response",
+        "invalid_upstream_content_type", "invalid_upstream_image", "invalid_upstream_image_format",
+        "invalid_upstream_response",
         "invalid_upstream_event", "incomplete_upstream_event", "upstream_event_too_large",
         "upstream_response_too_large",
         "upstream_rejected", "upstream_unavailable", "upstream_authentication_rejected",
