@@ -42,7 +42,7 @@
 
 图片工具用量与宿主响应 token 分开记录和展示，不将工具 token 加入宿主 token 总数；费用按两份显式映射费率分别估算。缺少工具输入/输出用量时保持部分证据、unknown 和对应暴露，不能用图片已返回推导完整结清。图片工具指标为可空，历史缺失不补零。
 
-原生 Images 无宿主执行，usage.input_tokens/output_tokens 映射 imageInputTokens/imageOutputTokens，input_tokens_details.text_tokens/image_tokens 如有则分别记录 imageInputTextTokens/imageInputImageTokens；有效 data[].b64_json 数量记录 images。按图片模型费率估算；缺失或畸形计数为不可用，不能以零替代，缺完整输入/输出计数保持 partial/unknown。结果有效性与结算完整度独立：200 空 data/非 JSON 结果失败，仍保存可信 usage。统计中 Images 不适用的宿主 token 及完全缺计数的费用返回 null，不把内部兼容计数当观测。沿用 usage JSON 的可选指标，不修改数据库 schema 版本或回填历史。
+原生 Images 无宿主执行，usage.input_tokens/output_tokens 映射 imageInputTokens/imageOutputTokens，input_tokens_details.text_tokens/image_tokens 如有则分别记录 imageInputTextTokens/imageInputImageTokens；有效 data[].b64_json 数量记录 images。多张 SSE 图片完成事件的用量按请求级累计快照逐字段保留可信最大值，重复的聚合计数不相加，图片数量累计；后到有效计数补足此前缺失，不因另一张图片畸形而丢弃。显式非终态结果只能提供部分证据，保持 unknown，不能推断请求已结束。按图片模型费率估算；缺失或畸形计数为不可用，不能以零替代，缺完整输入/输出计数保持 partial/unknown。结果有效性与结算完整度独立：200 空 data/非 JSON 结果失败，仍保存可信 usage。统计中 Images 不适用的宿主 token 及完全缺计数的费用返回 null，不把内部兼容计数当观测。沿用 usage JSON 的可选指标，不修改数据库 schema 版本或回填历史。
 
 管理产品化只增加观测：`GET /api/usage/keys` 返回当前托管 Key（最多256，包含 enabled 启用状态）；可选 includeArchived 默认 true，首页传 false 时在 SQL 分组和容量限制前过滤归档记录；密钥管理保持默认以保留归档摘要。返回项包含 业务日当日左闭右开窗口准入数、succeeded/failed/cancelled 终态数、unknown/在途待核对数、已观测估算费用及全时间最近准入时间。缺失费用/时间为 null；取消单独保留在用量报告，不计入 failed。摘要与 options/明细共用有界只读 reader、单在途及扫描/取消预算。轮换不清零。
 

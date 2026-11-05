@@ -1,5 +1,6 @@
 import AsyncHTTPClient
 import Foundation
+import NIOCore
 import NIOHTTP1
 
 /// Provider errors keep their client-actionable members; account identifiers never leave the gateway.
@@ -16,12 +17,15 @@ enum ProviderError {
 
   static func isExplicitRejection(status: Int?, error: JSONValue?) -> Bool {
     if let status { return (400...499).contains(status) }
-    let code = error?["code"]?.string ?? error?["type"]?.string ?? ""
-    return rateLimitCodes.contains(code) || authenticationCodes.contains(code)
-      || [
-        "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
-        "model_not_found", "content_policy_violation", "unsupported_parameter",
-      ].contains(code)
+    let codes = [error?["code"]?.string, error?["type"]?.string].compactMap { $0 }
+    return codes.contains { code in
+      rateLimitCodes.contains(code) || authenticationCodes.contains(code)
+        || [
+          "invalid_request_error", "invalid_request", "permission_denied", "access_denied",
+          "model_not_found", "content_policy_violation", "unsupported_parameter",
+          "budget_reached",
+        ].contains(code)
+    }
   }
 
   static func sanitized(_ value: JSONValue?) -> JSONValue? {
@@ -83,7 +87,7 @@ enum ProviderError {
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
         upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
     }
-    let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? 502
+    let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? (rejected ? 400 : 502)
     return .init(
       downstream, compact ? "upstream_compact_rejected" : "upstream_rejected",
       upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
@@ -91,12 +95,28 @@ enum ProviderError {
 
   /// Reads a bounded non-success body; unparsable bodies keep only the status classification.
   static func failure(
-    response: HTTPClientResponse, compact: Bool = false
+    response: HTTPClientResponse, compact: Bool = false, diagnostics: NativeImageDiagnostics? = nil
   ) async -> GatewayProtocolError {
     let status = Int(response.status.code)
-    let document = (try? await response.body.collect(upTo: 65_536)).flatMap {
-      try? JSONValue.decode(Data($0.readableBytesView))
+    let body: ByteBuffer?
+    do {
+      // Preserve AHC's Content-Length preflight before wrapping its body sequence.
+      if let diagnostics,
+        !(response.status != .notModified
+          && (response.headers.first(name: "content-length").flatMap { Int($0) } ?? 0) > 65_536)
+      {
+        body = try await response.body.map { chunk in
+          diagnostics.receivedBody(bytes: chunk.readableBytes)
+          return chunk
+        }.collect(upTo: 65_536)
+      } else {
+        body = try await response.body.collect(upTo: 65_536)
+      }
+    } catch {
+      diagnostics?.bodyFailed(error)
+      body = nil
     }
+    let document = body.flatMap { try? JSONValue.decode(Data($0.readableBytesView)) }
     let error = document?["error"].flatMap { $0 == .null ? nil : $0 } ?? document?["detail"]
     return failure(
       status: status, error: error, retryAfter: retryAfter(response.headers), compact: compact)

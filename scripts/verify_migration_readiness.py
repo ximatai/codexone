@@ -82,10 +82,13 @@ class Provider(BaseHTTPRequestHandler):
             with self.server.guard: self.server.active += 1
             self.server.release.wait(8)
         if '/images/' in self.path:
-            document = dict(data=[dict(b64_json=base64.b64encode(b'synthetic-image').decode())], usage=dict(input_tokens=2, output_tokens=1))
+            document = dict(created=1, data=[dict(b64_json=base64.b64encode(b'synthetic-image').decode())], usage=dict(input_tokens=2, output_tokens=1))
         elif self.path.endswith('/compact'):
             document = dict(object='response.compaction', id='synthetic-compact', output=[], usage=dict(input_tokens=2, output_tokens=1, input_tokens_details=dict(cached_tokens=0)))
         else: document = events(scenario)[-1].get('response', {})
+        if request.get('stream') and '/images/' in self.path:
+            event = dict(document, type='image_generation.completed')
+            return self.reply(200, ('data: ' + json.dumps(event) + '\n\n').encode(), 'text/event-stream')
         if request.get('stream'):
             body = b''.join(('data: ' + json.dumps(event) + '\n\n').encode() for event in events(scenario))
             return self.reply(200, body, 'text/event-stream')

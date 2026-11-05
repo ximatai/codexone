@@ -8,6 +8,8 @@
 
 - [admin-live-updates](admin-live-updates/proposal.md) · [任务](admin-live-updates/tasks.md)
 
+- [slow-upstream](slow-upstream/proposal.md) · [任务](slow-upstream/tasks.md) · [验证](slow-upstream/verification.md)
+
 - [upstream-zstd](upstream-zstd/proposal.md) · [任务](upstream-zstd/tasks.md) · [验证](upstream-zstd/verification.md)
 - [memory-retention](memory-retention/proposal.md) · [任务](memory-retention/tasks.md)
 

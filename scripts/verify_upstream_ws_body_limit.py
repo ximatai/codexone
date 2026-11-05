@@ -22,6 +22,7 @@ from verify_websocket import dial, receive, send
 from verify_json_order import SCHEMA, wire
 
 LIMIT = 16 * 1024 * 1024
+ROUTING = 12 * 1024 * 1024
 HEADERS = {'session-id': 'synthetic-large-session', 'x-codex-turn-state': 'synthetic-state'}
 
 
@@ -273,6 +274,65 @@ def held_body_budgets(port, server, contract):
     return 4
 
 
+def body_limit_diagnostics(binary, config, root, server, contract, failures_only):
+    """Give log assertions a fresh process: the full matrix can exhaust the 16/min gate."""
+    # Only four boundary events (two for --failures-only), even in one rate-limit window.
+    root.mkdir(mode=0o700)
+    process, ports = start(binary, config, root)
+    logs = b''
+    try:
+        # Actual provider 1009 frames, below the proactive routing threshold.
+        server.mode = 'close'
+        before = len(server.calls)
+        with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+            result = native(peer, sized(2048, contract, native=True))
+        assert result['status'] == 413, result
+        error(wire(result))
+        assert [c[0] for c in server.calls[before:]] == ['websocket']
+        ledger(root, 1)
+        before = len(server.calls)
+        status, _, body = call_http(ports['data'], sized(2048, contract))
+        assert status == 200 and json.loads(body)['status'] == 'completed'
+        assert [c[0] for c in server.calls[before:]] == ['websocket', 'http']
+        ledger(root, 2)
+        if not failures_only:
+            server.mode = 'ok'
+            before = len(server.calls)
+            with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
+                result = native(peer, sized(LIMIT + 1, contract, native=True))
+            assert result['status'] == 413, result
+            error(wire(result))
+            assert len(server.calls) == before
+            ledger(root, 2)
+            before = len(server.calls)
+            status, _, _ = call_http(ports['data'], sized(LIMIT + 1, contract))
+            assert status == 200
+            assert [c[0] for c in server.calls[before:]] == ['http']
+            ledger(root, 3)
+        process.terminate()
+        process.wait(10)
+        logs = process.stdout.read()
+        boundaries = [line for line in logs.splitlines() if b'Request body size boundary' in line]
+        # Match fields on the same event, rather than unrelated entries in the full log.
+        assert any(b'path=reject_native_1009 ' in line and b'upstream_ws_close_code=1009' in line
+                   and b'size_bucket=at_most_16_mib' in line for line in boundaries)
+        assert any(b'path=http_1009 ' in line and b'upstream_ws_close_code=1009' in line
+                   and b'size_bucket=at_most_16_mib' in line for line in boundaries)
+        if not failures_only:
+            assert any(b'path=reject_native ' in line and b'size_bucket=16_to_24_mib' in line
+                       for line in boundaries)
+            assert any(b'path=http ' in line and b'size_bucket=16_to_24_mib' in line
+                       for line in boundaries)
+        assert b'synthetic-state' not in logs and TOKEN.encode() not in logs
+    except BaseException:
+        dump_gateway_failure(process, output=logs)
+        raise
+    finally:
+        stop(process)
+        server.mode = 'ok'
+    print(f'PASS: {contract}: isolated real 1009/native/HTTP body-limit diagnostics', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -294,6 +354,8 @@ def main():
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, contract)
+                body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
+                                       server, contract, args.failures_only)
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
@@ -302,14 +364,14 @@ def main():
                         count += held_body_budgets(ports['data'], server, contract)
                         ledger(root, count)
                         for route in ('json', 'sse', 'native'):
-                            for size in (LIMIT - 1, LIMIT, LIMIT + 1):
+                            for size in (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1):
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
                                                 image_count=3 if route == 'sse' else 1)
                                 before = len(server.calls)
                                 if route == 'native':
                                     with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
                                         result = native(peer, request)
-                                    if size > LIMIT:
+                                    if size > ROUTING:
                                         assert result['status'] == 413, result
                                         error(wire(result))
                                         assert len(server.calls) == before
@@ -330,7 +392,7 @@ def main():
                                 if path == 'websocket' and contract == 'codex-subscription':
                                     expected_headers['x-codex-turn-state'] = None  # projected into create metadata
                                 assert headers == expected_headers, headers
-                                if size <= LIMIT:
+                                if size <= ROUTING:
                                     assert path == 'websocket' and raw == frame(request, contract, route == 'native')
                                 else:
                                     assert path == 'http'
@@ -491,10 +553,6 @@ def main():
                     process.terminate()
                     process.wait(10)
                     logs = process.stdout.read()
-                    if not args.failures_only:
-                        assert b'size_bucket=16_to_24_mib' in logs and b'path=http' in logs
-                    assert b'path=reject_native' in logs
-                    assert b'upstream_ws_close_code=1009' in logs and b'size_bucket=at_most_16_mib' in logs
                     assert b'synthetic-state' not in logs and TOKEN.encode() not in logs
                 except BaseException:
                     dump_gateway_failure(process)
