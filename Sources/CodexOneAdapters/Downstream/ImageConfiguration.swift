@@ -5,6 +5,7 @@ import Foundation
 public struct ImageConfiguration: Sendable, Codable {
   public struct Model: Sendable, Codable {
     public enum SizePolicy: String, Sendable, Codable { case fixed1536, flexible3840 }
+    public enum VerifiedOutputFormat: String, Sendable, Codable { case gif, svg }
     public let id: String
     public let hostModel: String
     public let sizePolicy: SizePolicy
@@ -12,9 +13,11 @@ public struct ImageConfiguration: Sendable, Codable {
     public let supportsInputFidelity: Bool
     public let inputMicrosPerMillion: Int64
     public let outputMicrosPerMillion: Int64
+    public let verifiedGenerationOutputFormatsByAccount: [String: [VerifiedOutputFormat]]
     private enum CodingKeys: String, CodingKey, CaseIterable {
       case id, hostModel, sizePolicy, supportsTransparency, supportsInputFidelity
       case inputMicrosPerMillion, outputMicrosPerMillion
+      case verifiedGenerationOutputFormatsByAccount
     }
     public init(from decoder: any Decoder) throws {
       try rejectUnknownImageFields(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
@@ -28,6 +31,10 @@ public struct ImageConfiguration: Sendable, Codable {
         try fields.decodeIfPresent(Bool.self, forKey: .supportsInputFidelity) ?? false
       inputMicrosPerMillion = try fields.decode(Int64.self, forKey: .inputMicrosPerMillion)
       outputMicrosPerMillion = try fields.decode(Int64.self, forKey: .outputMicrosPerMillion)
+      verifiedGenerationOutputFormatsByAccount =
+        try fields.decodeIfPresent(
+          [String: [VerifiedOutputFormat]].self, forKey: .verifiedGenerationOutputFormatsByAccount)
+        ?? [:]
     }
 
   }
@@ -49,6 +56,11 @@ public struct ImageConfiguration: Sendable, Codable {
           && !hostIDs.contains(model.id)
           && (0...500_000_000).contains(model.inputMicrosPerMillion)
           && (0...500_000_000).contains(model.outputMicrosPerMillion)
+          && model.verifiedGenerationOutputFormatsByAccount.count <= 64
+          && model.verifiedGenerationOutputFormatsByAccount.allSatisfy {
+            !$0.key.isEmpty && $0.key.utf8.count <= 256 && !$0.key.utf8.contains(0)
+              && (1...2).contains($0.value.count) && Set($0.value).count == $0.value.count
+          }
       })
     else { throw ExecutionError.invalidCommand }
   }

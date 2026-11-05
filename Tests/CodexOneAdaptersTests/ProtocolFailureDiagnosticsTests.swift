@@ -2,6 +2,7 @@ import AsyncHTTPClient
 import CodexOneCore
 import Foundation
 import NIOCore
+import NIOWebSocket
 import Testing
 
 @testable import CodexOneAdapters
@@ -16,6 +17,12 @@ struct ProtocolFailureDiagnosticsTests {
       (Unknown(), "other"),
       (ChannelError.ioOnClosedChannel, "channel_closed"),
       (ChannelError.inputClosed, "channel_input_closed"),
+      (ChannelError.alreadyClosed, "channel_already_closed"),
+      (ChannelError.eof, "channel_eof"),
+      (ChannelError.inappropriateOperationForState, "channel_invalid_state"),
+      (NIOWebSocketError.invalidFrameLength, "websocket_invalid_frame_length"),
+      (NIOWebSocketError.fragmentedControlFrame, "websocket_fragmented_control"),
+      (NIOWebSocketError.multiByteControlFrameLength, "websocket_control_length"),
       (HTTPClientError.remoteConnectionClosed, "remoteConnectionClosed"),
       (ExecutionError.conflict, "execution_conflict"),
       (ExecutionError.closed, "execution_closed"),

@@ -136,7 +136,7 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 图片原生入口的配置、透传、并发与期限见[图片配置](../../guide/images.md)。所有入口将能力要求随 admission 持久保存并在原子准入复核；Images 不再选择宿主或改写为 Responses。原生非流式 200 仅在有效 data[].b64_json 非空时判成功；SSE 仅可信图片 completed 事件及有效图片授予完成证据。Responses 托管图片工具仍以可信 response.completed 判定，output_item.done 与预览不承诺整个操作成功。
 
-数据服务持有一个 48 MiB 共享正文预算。超过 8 MiB 时计入整个正文：HTTP Content-Length 在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请，均在缓冲前取得租约。预算不足不排队：HTTP 503 capacity_exhausted、Retry-After: 1；WS 带 status: 503 的 error 帧并丢弃整条消息、保持连接。超过 32 MiB 为 413。解析/派发结束、失败、断开、超时及连接关闭均归还租约，重复释放幂等。预算约束原始正文，不等于进程 RSS；JSON 树、序列化及 base64 会产生额外内存。Images multipart 校验后转换为原生 JSON（24 MiB 图片编码为 32 MiB），不再构造工具封套；原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
+数据服务持有一个 48 MiB 共享正文预算。超过 8 MiB 时计入整个正文：HTTP Content-Length 在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请，均在缓冲前取得租约。HTTP 已知 Content-Length 和 WS 首帧在缓冲大正文前，可进入全局最多 4 个等待者的 FIFO 队列，最长 5 秒，仍计入原请求读取/首 create 期限，不延长执行期限。等待中不持有正文预算；取消或断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超过提前拒绝；事件循环延迟也不能使超时请求获批。FIFO 仅约束空 lease 等待者，chunked/分片增量及控制请求不排队，可立即取得可用容量；已有部分正文不得持有容量等待。队满、超时或增量容量不足时：HTTP 503 capacity_exhausted、Retry-After: 1；WS 带 status: 503 的 error 帧并丢弃整条消息、保持连接。超过 32 MiB 为 413。解析/派发结束、失败、断开、超时及连接关闭均归还租约，重复释放幂等。预算约束原始正文，不等于进程 RSS；JSON 树、序列化及 base64 会产生额外内存。Images multipart 校验后转换为原生 JSON（24 MiB 图片编码为 32 MiB），不再构造工具封套；原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
 
 可信离线profile导入及字段边界见[模型快照](../model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
@@ -226,6 +226,10 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 12 MiB 预路由阈值以 5/12 MiB 成功与 15 MiB 上传中断的观察选择，原生下游 WS 同样采用此阈值拒绝，以便客户端沿既有 conversation_too_large 路径回落 HTTP；实际比较包含最终编码开销。HTTP 大请求沿用既有压缩策略。并未发现上游 WS 上传代码的固定 30 秒期限；不能据中断时间推断原因。WS 单个完整 frame 的 write future 失败可能发生在对端已收到全部载荷之后，无事件也不证明未执行，因此不对普通写失败/取消/EOF 新增 HTTP 重试。只有既有明确早期 1009 拒绝规则允许回退，未知仍未知。
 
-原生 generations 无论下游 stream 均向上游请求 stream=true/Accept SSE；非流式客户端不接收预览，等完整流结束并验证全部完成事件后返回 200 application/json。不同图片的完成事件按到达顺序聚合 data；完成事件的 created_at 映射 created，b64_json/revised_prompt 放入 data 的图片项，其余结果元数据和 usage 保留；已有 created/data 完整结果保持字段。不得伪造缺失时间、图片或用量。编辑向上游请求非流式（客户端 stream=true 时按完整 JSON 转完成事件）。错误头状态沿原映射；非流式 SSE 内错误在提交前返回 JSON error，截断、重复投递同一完成事件或无终态均失败，已观察用量不因后续断流丢失、不重放。JSON 对象字段顺序/空白不承诺与另一种上游格式字节相同，字段和值按受测原生映射保留。真实提供者格式等价仍须独立验收。
+原生 generations 的 PNG/JPEG/WebP 及省略输出格式时，无论下游 stream 均向上游请求 stream=true/Accept SSE；已逐账号、逐模型确认的 GIF/SVG 改用非流式 JSON，不强制 SSE。GIF/SVG 的 edits 与 Responses 图片工具尚未确认，准入前明确拒绝，不继承 generation 确认；原生 generation 未确认时准入前 400 image_format_not_verified；可信配置 verifiedGenerationOutputFormatsByAccount 限定可路由账号，能力要求随 admission 持久化，原子准入复核，不能回退到未确认账号。扩展格式拒绝 stream=true、partial_images、mask 与 output_compression；SVG 另限 generation、n=1（或省略）、无 prompt_rewriter，400 unsupported_image_format_combination，均不派发。其他参数仍按 P27 透传。非流式客户端不接收预览，等完整流结束并验证全部完成事件后返回 200 application/json。不同图片的完成事件按到达顺序聚合 data；完成事件的 created_at 映射 created，b64_json/revised_prompt 放入 data 的图片项，其余结果元数据和 usage 保留；已有 created/data 完整结果保持字段。不得伪造缺失时间、图片或用量。编辑向上游请求非流式（客户端 stream=true 时按完整 JSON 转完成事件）。错误头状态沿原映射；非流式 SSE 内错误在提交前返回 JSON error，截断、重复投递同一完成事件或无终态均失败，已观察用量不因后续断流丢失、不重放。JSON 对象字段顺序/空白不承诺与另一种上游格式字节相同，字段和值按受测原生映射保留。真实提供者格式等价仍须独立验收。
 
 入站 HTTP 正文超时以 408 request_body_timeout JSON envelope 结束（连接仍可写、已解析请求头且尚未提交响应时），随后关闭，不复用未读完的连接。只收到不完整请求头或空闲 keep-alive 超时直接关闭。正文读取与超时共用原子结束屏障，超时后的 buffered end 不能进入准入；活跃上传更新空闲期限但不延长 120 秒总期限。未映射执行错误与 downstream_json_write 诊断含有界 cause：固定通道/执行/JSON/HTTPClient 分类、有限 errno 或 other，不记录错误描述、正文或路径；映射状态与 unknown 语义不变。
+
+执行失败 cause 诊断对 ChannelError 的已关闭、EOF、连接中、连接超时、不支持操作和无效状态分别使用固定 token，对 NIOWebSocketError 的帧长、分片控制帧及控制帧长度分别分类；无描述或正文，不据此推断根因或重放。
+
+原生 Images 的关键根成员 model、stream、output_format、images、mask、n、partial_images、output_compression、prompt_rewriter 禁止重复，按解转义后的名称识别并在派发前返回 400 invalid_json；其他入口与未知成员的既有 JSON 语义不变。扩展 generation 非流式输出提交前验证完整 JSON、JSON 媒体类型、created 与全部规范非空 base64 图片；无效结果返回 502，先保留已观察用量，不重放。

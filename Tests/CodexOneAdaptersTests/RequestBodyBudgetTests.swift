@@ -33,12 +33,96 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   let other = EmbeddedChannel(
     handler: DownstreamWebSocketDecoder(budget: budget, reservations: .init()))
   try other.writeInbound(maskedFrame(size))
+  #expect(try other.readOutbound(as: WebSocketFrame.self) == nil)
+  #expect(budget.waitingCount == 1)
+  other.embeddedEventLoop.advanceTime(by: .seconds(5))
   let error = try #require(try other.readOutbound(as: WebSocketFrame.self))
   #expect(try JSONValue.decode(Data(error.data.readableBytesView))["status"]?.integer == 503)
   #expect(budget.occupiedBytes == size)
   _ = try channel.finish()
   #expect(budget.occupiedBytes == 0)
   _ = try other.finish()
+}
+
+@Test func websocketWaitingGrantAndDisconnectRemoveTickets() throws {
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let held = budget.lease()
+  try held.reserve(size)
+  let channel = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: .init()))
+  try channel.writeInbound(maskedFrame(size))
+  try channel.writeInbound(ByteBuffer(repeating: 65, count: 1024))
+  #expect(budget.waitingCount == 1)
+  #expect(try channel.readOutbound(as: WebSocketFrame.self) == nil)
+  held.release()
+  channel.embeddedEventLoop.advanceTime(by: .milliseconds(25))
+  #expect(budget.waitingCount == 0)
+  #expect(budget.occupiedBytes == size)
+  _ = try channel.finish()
+  #expect(budget.occupiedBytes == 0)
+  try held.reserve(size)
+  let disconnected = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: .init()))
+  try disconnected.writeInbound(maskedFrame(size))
+  #expect(budget.waitingCount == 1)
+  _ = try disconnected.finish()
+  #expect(budget.waitingCount == 0)
+  held.release()
+}
+
+@Test func websocketWaitingStagingOverflowDrainsAndRecovers() throws {
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let held = budget.lease()
+  try held.reserve(size)
+  let reservations = WebSocketBodyReservations()
+  let channel = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: reservations))
+  try channel.writeInbound(maskedFrame(size))
+  try channel.writeInbound(ByteBuffer(repeating: 65, count: size))
+  #expect(budget.waitingCount == 0)
+  #expect(try channel.readOutbound(as: WebSocketFrame.self) != nil)
+  try channel.writeInbound(maskedFrame(2))
+  try channel.writeInbound(ByteBuffer(string: "{}"))
+  #expect(try channel.readInbound(as: WebSocketFrame.self)?.data.readableBytes == 2)
+  reservations.take()?.release()
+  held.release()
+  _ = try channel.finish()
+  #expect(budget.occupiedBytes == 0)
+}
+
+@Test func bodyCapacityQueueIsBoundedFIFOAndCancellationSafe() async throws {
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let held = budget.lease()
+  try held.reserve(size)
+  let first = budget.lease()
+  let firstTicket = try #require(try first.beginWaiting(size))
+  let second = budget.lease()
+  let secondTicket = try #require(try second.beginWaiting(size))
+  let third = try #require(try budget.lease().beginWaiting(size))
+  let fourth = try #require(try budget.lease().beginWaiting(size))
+  #expect(throws: GatewayProtocolError.self) { try budget.lease().beginWaiting(size) }
+  held.release()
+  #expect(!second.reserveIfReady(size, ticket: secondTicket))
+  #expect(first.reserveIfReady(size, ticket: firstTicket))
+  first.release()
+  budget.cancelWait(secondTicket)
+  budget.cancelWait(third)
+  budget.cancelWait(fourth)
+  try held.reserve(size)
+  let waiting = Task { try await second.reserveWaiting(size) }
+  while budget.waitingCount == 0 { await Task.yield() }
+  waiting.cancel()
+  await #expect(throws: CancellationError.self) { try await waiting.value }
+  #expect(budget.waitingCount == 0)
+  await #expect(throws: GatewayProtocolError.self) {
+    try await second.reserveWaiting(size, timeout: .milliseconds(30))
+  }
+  #expect(budget.waitingCount == 0)
+  held.release()
+  #expect(budget.occupiedBytes == 0)
 }
 
 @Test func websocketFragmentRejectionDiscardsMessageAndRecoversBudgetAndConnection() throws {
@@ -130,4 +214,20 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
   try competing.reserve(size)
   competing.release()
+}
+
+@Test func bodyCapacityWaitingAcquiresReleasedSpace() async throws {
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let held = budget.lease()
+  try held.reserve(size)
+  let next = budget.lease()
+  let task = Task { try await next.reserveWaiting(size) }
+  while budget.waitingCount == 0 { await Task.yield() }
+  held.release()
+  try await task.value
+  #expect(budget.waitingCount == 0)
+  #expect(budget.occupiedBytes == size)
+  next.release()
+  #expect(budget.occupiedBytes == 0)
 }

@@ -48,7 +48,8 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
     return Int64(NSDecimalNumber(decimal: decimal).stringValue)
   }
   subscript(_ key: String) -> JSONValue? { object?[key] }
-  static func decode(_ data: Data) throws -> JSONValue {
+  static func decode(_ data: Data, rejectingDuplicateRootKeys: Set<String> = []) throws -> JSONValue
+  {
     var depth = 0
     var quoted = false
     var escaped = false
@@ -71,8 +72,11 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
       }
     }
     let value = try JSONDecoder().decode(Self.self, from: data)
-    var scanner = JSONOrderScanner(data)
+    var scanner = JSONOrderScanner(data, trackedRootKeys: rejectingDuplicateRootKeys)
     let ordered = try scanner.restore(value)
+    guard scanner.duplicateRootKeys.isDisjoint(with: rejectingDuplicateRootKeys) else {
+      throw GatewayProtocolError(400, "invalid_json")
+    }
     // Foundation owns the semantics on every platform; order is never worth a changed document.
     return ordered == value ? ordered : value
   }

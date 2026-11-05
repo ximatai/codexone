@@ -30,6 +30,7 @@ public struct AccountPoolGateway: Sendable {
     reasoningEffort: String? = nil, serviceTier: String? = nil,
     operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
+    try requirements.validate()
     guard policy.models.contains(model),
       policy.key.policy.allows(model: model, requirements: requirements), references.count <= 32
     else { throw ExecutionError.denied }
@@ -42,7 +43,8 @@ public struct AccountPoolGateway: Sendable {
           affinity == nil && connection == nil && !affinityHints.isEmpty
           ? try await store.resolveAccountHint(
             principal: policy.key.principal, hints: affinityHints) : nil
-        let works = try await prepareWorks(affinity: affinity, requiredAccount: requiredAccount)
+        let works = try await prepareWorks(
+          affinity: affinity, requiredAccount: requiredAccount, requirements: requirements)
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let window = try store.businessDay.window(containing: clock.unixSeconds)
         let command = try AccountPoolAdmission(
@@ -68,7 +70,8 @@ public struct AccountPoolGateway: Sendable {
   }
 
   private func prepareWorks(
-    affinity: AccountRouteIdentity?, requiredAccount: AccountRouteIdentity?
+    affinity: AccountRouteIdentity?, requiredAccount: AccountRouteIdentity?,
+    requirements: ExecutionRequirements = .init()
   )
     async throws
     -> [AccountRouteIdentity: AccountDispatchWork]
@@ -79,6 +82,7 @@ public struct AccountPoolGateway: Sendable {
       try Task.checkCancellation()
       let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
       guard affinity == nil || affinity == identity,
+        requirements.allowsImageAccount(account.id),
         requiredAccount == nil || requiredAccount == identity,
         account.authorization == .ready || account.authorization == .refreshing,
         account.mode == .enabled || (account.mode == .draining && affinity == identity)

@@ -12,9 +12,11 @@ final class WebSocketBodyReservations: Sendable {
 }
 
 /// Incremental masked-frame reader. Admission precedes buffering even for a single large frame.
-final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelHandler {
+final class DownstreamWebSocketDecoder: ChannelDuplexHandler, RemovableChannelHandler {
   typealias InboundIn = ByteBuffer
   typealias InboundOut = WebSocketFrame
+  typealias OutboundIn = WebSocketFrame
+  typealias OutboundOut = WebSocketFrame
   private let budget: RequestBodyBudget
   private let reservations: WebSocketBodyReservations
   private var header = [UInt8]()
@@ -30,17 +32,117 @@ final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelH
   private var lease: RequestBodyLease?
   private var rejected = false
   private var messageBytes = 0
+  static let maximumWaitingBytes = 256 * 1024
+  private var waiting: UUID?
+  private var pending = ByteBuffer()
+  private var monitor: RepeatedTask?
+  private var timeout: Scheduled<Void>?
+  private var waitDeadline: ContinuousClock.Instant?
+  private var needsRead = false
   init(budget: RequestBodyBudget, reservations: WebSocketBodyReservations) {
     self.budget = budget
     self.reservations = reservations
   }
   func channelInactive(context: ChannelHandlerContext) {
+    cancelWaiting()
+    pending = ByteBuffer()
     lease = nil
     reservations.close()
     context.fireChannelInactive()
   }
+  func handlerRemoved(context: ChannelHandlerContext) {
+    cancelWaiting()
+    pending = ByteBuffer()
+    lease = nil
+  }
+  func read(context: ChannelHandlerContext) {
+    if waiting != nil { needsRead = true } else { context.read() }
+  }
+  func channelReadComplete(context: ChannelHandlerContext) {
+    if waiting == nil { context.fireChannelReadComplete() }
+  }
+  private func cancelWaiting() {
+    if let waiting { budget.cancelWait(waiting) }
+    waiting = nil
+    waitDeadline = nil
+    monitor?.cancel()
+    monitor = nil
+    timeout?.cancel()
+    timeout = nil
+  }
+  private func reject(_ error: any Error, context: ChannelHandlerContext) throws {
+    rejected = true
+    body = Data()
+    lease = nil
+    let failure = protocolFailure(error)
+    let envelope: JSONValue = .object([
+      "type": .string("error"), "status": .number(Decimal(failure.status)),
+      "error": protocolErrorEnvelope(error, requestID: UUID().uuidString)["error"]!,
+    ])
+    let deadline = context.eventLoop.scheduleTask(in: .seconds(5)) {
+      [channel = context.channel] in channel.close(promise: nil)
+    }
+    let written = context.channel.writeAndFlush(
+      WebSocketFrame(fin: true, opcode: .text, data: ByteBuffer(data: try envelope.data())))
+    written.whenComplete { _ in deadline.cancel() }
+  }
+  private func resumeWaiting(context: ChannelHandlerContext, expired: Bool) {
+    guard let ticket = waiting else { return }
+    let expired = expired || waitDeadline.map { ContinuousClock.now >= $0 } == true
+    if !expired, lease?.reserveIfReady(messageBytes, ticket: ticket) != true { return }
+    cancelWaiting()
+    if expired {
+      ProtocolFailureDiagnostics.recordBodyLimit(bytes: messageBytes, path: "reject_budget")
+      do {
+        try reject(
+          GatewayProtocolError(503, "capacity_exhausted", cooldownSeconds: 1), context: context)
+      } catch {
+        context.fireErrorCaught(error)
+        context.close(promise: nil)
+        return
+      }
+    }
+    let buffered = pending
+    pending = ByteBuffer()
+    process(buffered, context: context)
+    if waiting == nil {
+      context.fireChannelReadComplete()
+      if needsRead {
+        needsRead = false
+        context.read()
+      }
+    }
+  }
+  private func beginWaiting(_ ticket: UUID, context: ChannelHandlerContext) {
+    waiting = ticket
+    waitDeadline = ContinuousClock.now + .seconds(RequestBodyBudget.waitSeconds)
+    let owner = NIOLoopBound((self, context), eventLoop: context.eventLoop)
+    monitor = context.eventLoop.scheduleRepeatedTask(
+      initialDelay: .milliseconds(25), delay: .milliseconds(25)
+    ) { _ in
+      let (decoder, context) = owner.value
+      decoder.resumeWaiting(context: context, expired: false)
+    }
+    timeout = context.eventLoop.scheduleTask(in: .seconds(Int64(RequestBodyBudget.waitSeconds))) {
+      let (decoder, context) = owner.value
+      decoder.resumeWaiting(context: context, expired: true)
+    }
+  }
+  private func stage(_ input: ByteBuffer, context: ChannelHandlerContext) {
+    if input.readableBytes <= Self.maximumWaitingBytes - pending.readableBytes {
+      // Copy only readable bytes; a slice could retain an arbitrarily large transport allocation.
+      pending.writeBytes(input.readableBytesView)
+    } else {
+      resumeWaiting(context: context, expired: true)
+      process(input, context: context)
+    }
+  }
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-    var input = unwrapInboundIn(data)
+    let input = unwrapInboundIn(data)
+    if waiting != nil { stage(input, context: context) } else { process(input, context: context) }
+  }
+  private func process(_ bytes: ByteBuffer, context: ChannelHandlerContext) {
+    var input = bytes
     do {
       while input.readableBytes > 0 {
         if remaining == 0 {
@@ -96,24 +198,17 @@ final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelH
                   throw GatewayProtocolError(413, "request_too_large")
                 }
                 messageBytes += remaining
-                try lease?.reserve(messageBytes)
-              } catch {
-                rejected = true
-                body = Data()
-                lease = nil
-                let failure = protocolFailure(error)
-                let envelope: JSONValue = .object([
-                  "type": .string("error"), "status": .number(Decimal(failure.status)),
-                  "error": protocolErrorEnvelope(error, requestID: UUID().uuidString)["error"]!,
-                ])
-                let deadline = context.eventLoop.scheduleTask(in: .seconds(5)) {
-                  [channel = context.channel] in
-                  channel.close(promise: nil)
+                if fragments == 1 {
+                  if let ticket = try lease?.beginWaiting(messageBytes) {
+                    beginWaiting(ticket, context: context)
+                    stage(input, context: context)
+                    return
+                  }
+                } else {
+                  try lease?.reserve(messageBytes)
                 }
-                let written = context.channel.writeAndFlush(
-                  WebSocketFrame(
-                    fin: true, opcode: .text, data: ByteBuffer(data: try envelope.data())))
-                written.whenComplete { _ in deadline.cancel() }
+              } catch {
+                try reject(error, context: context)
               }
             }
           } else {
@@ -168,6 +263,7 @@ final class DownstreamWebSocketDecoder: ChannelInboundHandler, RemovableChannelH
         }
       }
     } catch {
+      cancelWaiting()
       lease = nil
       context.fireErrorCaught(error)
       context.close(promise: nil)

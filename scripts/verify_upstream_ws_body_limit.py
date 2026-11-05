@@ -225,7 +225,7 @@ def held_body_budgets(port, server, contract):
             assert server.guard.wait_for(lambda: len(server.calls) == expected, timeout=30)
 
     def refused(size):
-        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
         try:
             connection.putrequest('POST', '/v1/responses')
             connection.putheader('Authorization', 'Bearer ' + TOKEN)
@@ -251,6 +251,28 @@ def held_body_budgets(port, server, contract):
             server.release.set()
         assert held.result(timeout=30)[0] == 200
     server.release.clear()
+    # A native WS can wait with only its frame header present, then continue after
+    # the competing HTTP execution releases capacity; no full payload is queued.
+    with ThreadPoolExecutor(max_workers=2) as worker:
+        holders = [worker.submit(call_http, port, sized(24 * 1024 * 1024, contract)) for _ in range(2)]
+        wait_calls(before + 3)
+        try:
+            with dial(port, headers=HEADERS, timeout=30) as peer:
+                payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
+                peer.sendall(b'\x81\xff' + struct.pack('!Q', len(payload)) + b'\0' * 4)
+                time.sleep(.2)
+                assert len(server.calls) == before + 3
+                server.release.set()
+                for holder in holders: assert holder.result(timeout=30)[0] == 200
+                time.sleep(.1)
+                peer.sendall(payload)
+                opcode, body = receive(peer)
+                assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+                wait_calls(before + 4)
+        finally:
+            server.release.set()
+    before = len(server.calls)
+    server.release.clear()
     try:
         with ExitStack() as stack:
             peers = [stack.enter_context(dial(port, headers=HEADERS, timeout=30)) for _ in range(2)]
@@ -258,9 +280,9 @@ def held_body_budgets(port, server, contract):
                 request = sized(9 * 1024 * 1024, contract, native=True)
                 send(peer, wire({'type': 'response.create', **request}), masked=True,
                      maximum_bytes=10 * 1024 * 1024)
-            wait_calls(before + 3)
+            wait_calls(before + 2)
             refused(32 * 1024 * 1024)
-            assert len(server.calls) == before + 3
+            assert len(server.calls) == before + 2
             server.release.set()
             for peer in peers:
                 opcode, body = receive(peer)
@@ -271,7 +293,7 @@ def held_body_budgets(port, server, contract):
     # Completion/connection teardown returns capacity; a fresh large request dispatches.
     assert call_http(port, sized(31 * 1024 * 1024, contract))[0] == 200
     print('PASS: HTTP and first WS turns retain body budget after parsing; completion returns capacity', flush=True)
-    return 4
+    return 7
 
 
 def body_limit_diagnostics(binary, config, root, server, contract, failures_only):

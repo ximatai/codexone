@@ -581,7 +581,12 @@ public struct ResponsesDataService: Service {
                   if let length = next.headers.first(name: "content-length"),
                     let count = Int(length)
                   {
-                    try lease.reserve(count, countAll: control)
+                    if control {
+                      try lease.reserve(count, countAll: true)
+                    } else {
+                      try await lease.reserveWaiting(count)
+                      try Task.checkCancellation()
+                    }
                   }
                 case .body(let bytes):
                   guard head != nil,

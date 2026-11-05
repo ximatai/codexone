@@ -26,7 +26,9 @@ private struct PoolFixture {
   let worker: Task<Void, any Error>
   let policy: AccountPoolPolicy
   let gateway: AccountPoolGateway
-  static func make(expired: Bool = false, remaining: Int64? = nil) async throws -> Self {
+  static func make(expired: Bool = false, remaining: Int64? = nil, images: Bool = false)
+    async throws -> Self
+  {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let path = directory.appendingPathComponent("core.sqlite").path
@@ -47,9 +49,12 @@ private struct PoolFixture {
     }
     let key = try await store.createKey(
       id: "key", principal: "p", digest: String(repeating: "b", count: 64),
-      policy: KeyPolicy(models: ["synthetic-text"], limits: limits))
+      policy: KeyPolicy(
+        models: ["synthetic-text"], limits: limits,
+        imageGeneration: images, imageModels: images ? ["synthetic-image"] : []))
     let policy = try AccountPoolPolicy(
-      key: key, models: ["synthetic-text"], reservedMicros: 1, policyVersion: "1",
+      key: key, models: images ? ["synthetic-text", "synthetic-image"] : ["synthetic-text"],
+      reservedMicros: 1, policyVersion: "1",
       pricingVersion: "1")
     let finalizer = try ExecutionFinalizer(store: store, capacity: 2)
     let worker = Task { try await finalizer.run() }
@@ -304,5 +309,39 @@ func accountPoolOutsideFiveMinuteWindowDispatchesWithoutRefresh() async throws {
   }
   #expect(await probe.calls.count == 1)
   #expect(try await f.store.listAccounts().allSatisfy { $0.credentialVersion == 1 })
+  try await f.close()
+}
+
+@Test func imageAccountCapabilityFiltersPoolBeforeDispatchAndNeverFallsBack() async throws {
+  let f = try await PoolFixture.make(images: true)
+  let requirements = try ExecutionRequirements(
+    route: .images, imageModel: "synthetic-image",
+    imageAccountIDs: ["b"])
+  do {
+    try await f.gateway.execute(
+      model: "synthetic-image", references: [],
+      preferred: .init(id: "a", namespace: "synthetic/a"), requirements: requirements
+    ) { context, work in
+      #expect(work.account.id == "b")
+      #expect(context.admission.executionRequirements == requirements)
+      return .init(
+        revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+        images: 1, estimatedMicros: 1, completeness: .complete)
+    }
+    try await poolWait { f.finalizer.outstanding == 0 }
+    let account = try #require(try await f.store.listAccounts(after: nil).first { $0.id == "b" })
+    _ = try await f.store.setAccountMode(id: "b", revision: account.revision, mode: .disabled)
+    await #expect(throws: AccountDispatchError.unavailable) {
+      try await f.gateway.execute(
+        model: "synthetic-image", references: [], requirements: requirements
+      ) { _, _ in
+        Issue.record("Unverified account must never receive the request")
+        return nil
+      }
+    }
+  } catch {
+    try await f.close()
+    throw error
+  }
   try await f.close()
 }

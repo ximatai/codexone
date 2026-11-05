@@ -23,7 +23,8 @@ extension HTTPResponseExecution {
       try await executeRouted(
         model: request.model, references: [], requestID: requestID, mode: .generation,
         turnState: try requestTurnState(headers: clientHeaders),
-        requirements: try .init(route: .images, imageModel: request.model),
+        requirements: try .init(
+          route: .images, imageModel: request.model, imageAccountIDs: request.verifiedAccountIDs),
         serviceTier: request.serviceTier
       ) { context, authorization in
         try await withProgressDeadline(budget: configuration.budget) { progress in
@@ -36,7 +37,7 @@ extension HTTPResponseExecution {
           upstream.headers = try forwardedClientHeaders(
             headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
           upstream.headers.add(name: "content-type", value: "application/json")
-          let upstreamStreaming = !request.editing
+          let upstreamStreaming = request.upstreamStreaming
           var wireBody = request.body
           if upstreamStreaming != request.streaming {
             var document = try JSONValue.decode(wireBody).object!
@@ -201,6 +202,13 @@ extension HTTPResponseExecution {
               context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
               if let usage = observation?.usage { try context.observeUsage(usage) }
               if let document { try NativeImageResult.requireCompletion(document) }
+              if request.verifiedAccountIDs != nil {
+                guard let document,
+                  NativeImageDiagnostics.contentTypeToken(
+                    response.headers.first(name: "content-type")) == "json"
+                else { throw GatewayProtocolError(502, "invalid_upstream_image") }
+                _ = try NativeImageResult.validated(document)
+              }
               if observation?.images ?? 0 == 0 {
                 try context.observeOutcome(
                   .init(

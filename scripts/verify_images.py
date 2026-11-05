@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """M4 real synthetic HTTP/SSE/multipart/WS and SQLite checks. No external credentials."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
 import http.client
@@ -141,8 +142,14 @@ class Provider(BaseHTTPRequestHandler):
                     result = json.loads(body); result['data'].append({'b64_json':PNG, 'revised_prompt':'synthetic'})
                     body = json.dumps(result).encode()
             if prompt == 'oversize': body = b' ' * (48 * 1024 * 1024 + 1)
+            if prompt == 'extended-mixed':
+                result = json.loads(native_body('synthetic'))
+                result['data'].append({'b64_json':'invalid'})
+                body = json.dumps(result).encode()
+            if prompt == 'extended-sse': body = native_stream('generations')
+            if prompt == 'extended-error': body = b'{"error":{"message":"synthetic"}}'
             self.send_response(status)
-            self.send_header('Content-Type', ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
+            self.send_header('Content-Type', 'text/event-stream' if prompt == 'extended-sse' else ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
                 if prompt.startswith('json-stream') else 'text/event-stream' if request.get('stream') else 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
@@ -219,7 +226,8 @@ def main():
                     'models': [{'id': 'synthetic-host', 'imageGeneration': True, 'visionInput': True,
                         'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
                     'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': 'synthetic-image',
-                        'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000}]}}))
+                        'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000,
+                        'verifiedGenerationOutputFormatsByAccount': {'synthetic-account': ['gif', 'svg']}}]}}))
                 config.chmod(0o600)
                 process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin,
                     web_directory=(repository / 'web/dist').resolve() if args.browser else None)
@@ -257,6 +265,43 @@ def main():
                         deadline = time.monotonic() + 5
                         while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
                         assert upstream.calls == expected
+                    for output_format in ('gif', 'svg'):
+                        before = upstream.calls
+                        status, body, _ = request({'prompt':'synthetic', 'output_format':output_format})
+                        assert status == 200 and upstream.calls == before + 1
+                        _, received, sent_headers = upstream.requests[-1]
+                        assert json.loads(received)['output_format'] == output_format
+                        assert json.loads(received).get('stream') is not True
+                        assert sent_headers['accept'] == 'application/json'
+                        assert ledger()[0] == 'settled'
+                    before = upstream.calls; intents = count_intents()
+                    for invalid in ({'output_format':'unconfirmed-future'},
+                                    {'output_format':'gif', 'stream':True},
+                                    {'output_format':'svg', 'n':2}):
+                        status, body, _ = request(invalid)
+                        assert status == 400 and b'not dispatched' in body
+                    assert upstream.calls == before and count_intents() == intents
+                    for operation in ('generations', 'edits'):
+                        for raw in (b'{"model":"synthetic-image","stream":true,"output_format":"png","output_format":"gif"}',
+                                    b'{"model":"synthetic-image","output_format":"png","output_format":"svg"}',
+                                    b'{"model":"synthetic-image","output_format":"png","output_fo\\u0072mat":"gif"}'):
+                            assert request(raw, '/v1/images/' + operation)[0] == 400
+                    assert upstream.calls == before and count_intents() == intents
+                    for output_format in ('gif', 'svg'):
+                        for fault in ('non-json', 'empty', 'extended-mixed', 'extended-sse', 'extended-error', 'json-stream-html'):
+                            before = upstream.calls
+                            status, body, _ = request({'prompt':fault, 'output_format':output_format})
+                            assert status == 502 and upstream.calls == before + 1, (output_format, fault, status)
+                            state, usage, outcome = ledger()
+                            assert outcome['kind'] == 'failed'
+                            if fault in ('empty', 'extended-mixed', 'json-stream-html'):
+                                assert usage['imageOutputTokens'] == 3
+                    before = upstream.calls; intents = count_intents()
+                    status, _, _ = request({'model':'synthetic-host','input':'synthetic',
+                        'tools':[{'type':'image_generation', 'output_format':'gif'}]}, '/v1/responses', name='both')
+                    assert status == 400 and upstream.calls == before and count_intents() == intents
+                    status, _, _ = request({'output_format':'gif'}, '/v1/images/edits')
+                    assert status == 400 and upstream.calls == before and count_intents() == intents
                     client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
                         'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
@@ -461,9 +506,11 @@ def main():
                     try:
                         held.sendall(reservation_header + b'{"model":')
                         time.sleep(.2)
-                        with socket.create_connection(('127.0.0.1', port), timeout=3) as exhausted:
+                        with socket.create_connection(('127.0.0.1', port), timeout=10) as exhausted:
                             exhausted.sendall(reservation_header)
+                            started = time.monotonic()
                             response = http.client.HTTPResponse(exhausted); response.begin()
+                            assert time.monotonic() - started >= 4.8
                             assert response.status == 503 and response.getheader('Retry-After') == '1'
                             assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
                         assert upstream.calls == before and count_intents() == intents
@@ -479,7 +526,8 @@ def main():
                             chunked.close()
                         assert upstream.calls == before and count_intents() == intents
                         if transport == 'websocket':
-                            with dial(port, token=policies['both']['secret']) as sock:
+                            held.sendall(b' ')
+                            with dial(port, token=policies['both']['secret'], timeout=15) as sock:
                                 send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
                                 opcode, data = receive(sock)
                                 error = json.loads(data)
@@ -502,6 +550,23 @@ def main():
                     assert request(large_native)[0] == 200
                     assert ledger()[0] == 'settled'
                     assert upstream.calls == before + 1 and count_intents() == intents + 1
+                    # A queued HTTP upload proceeds once the incomplete holder disconnects.
+                    held = socket.create_connection(('127.0.0.1', port), timeout=10)
+                    held.sendall(reservation_header + b'{')
+                    time.sleep(.15)
+                    for _ in range(4):
+                        abandoned = socket.create_connection(('127.0.0.1', port), timeout=10)
+                        abandoned.sendall(reservation_header)
+                        time.sleep(.05)
+                        abandoned.close()
+                    time.sleep(.2)
+                    with ThreadPoolExecutor(max_workers=1) as queued:
+                        waiting = queued.submit(request, large_native)
+                        time.sleep(.25)
+                        assert not waiting.done()
+                        held.close()
+                        assert waiting.result(timeout=15)[0] == 200
+                    assert ledger()[0] == 'settled'
                     before = upstream.calls; intents = count_intents()
                     with socket.create_connection(('127.0.0.1', port), timeout=12) as stalled:
                         stalled.sendall(reservation_header + b'{"model":')

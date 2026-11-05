@@ -108,3 +108,79 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
     #expect(request.mode == .compact)
   }
 }
+
+@Test func imageExtendedFormatsRequireVerifiedAccountAndNonStreamingTransport() throws {
+  let baseline = try syntheticImageConfiguration()
+  var document = try JSONValue.decode(JSONEncoder().encode(baseline)).object!
+  var model = document["models"]!.array![0].object!
+  model["verifiedGenerationOutputFormatsByAccount"] = .object([
+    "synthetic-a": .array([.string("gif")]),
+    "synthetic-b": .array([.string("svg")]),
+  ])
+  document["models"] = .array([.object(model)])
+  let verified = try JSONDecoder().decode(
+    ImageConfiguration.self, from: JSONValue.object(document).data())
+  func request(
+    _ format: String, _ extra: JSONObject = [:], editing: Bool = false,
+    config: ImageConfiguration? = nil
+  ) throws -> ImagesRequest {
+    var fields = extra
+    fields["output_format"] = .string(format)
+    return try ImagesRequest(
+      data: JSONValue.object(fields).data(), contentType: "application/json",
+      editing: editing, configuration: config ?? verified)
+  }
+  for format in ["gif", "svg", "unconfirmed-future"] {
+    #expect(throws: GatewayProtocolError.self) { try request(format, config: baseline) }
+  }
+  #expect(try request("gif").verifiedAccountIDs == ["synthetic-a"])
+  #expect(try request("svg").verifiedAccountIDs == ["synthetic-b"])
+  #expect(try !request("gif").upstreamStreaming)
+  #expect(try !request("svg").upstreamStreaming)
+  #expect(try request("png").upstreamStreaming)
+  #expect(try request("png").verifiedAccountIDs == nil)
+  for format in ["gif", "svg"] {
+    for invalid: JSONObject in [
+      ["stream": .bool(true)], ["partial_images": .number(0)],
+      ["output_compression": .number(90)],
+    ] {
+      #expect(throws: GatewayProtocolError.self) { try request(format, invalid) }
+    }
+  }
+  #expect(throws: GatewayProtocolError.self) { try request("svg", editing: true) }
+  #expect(throws: GatewayProtocolError.self) { try request("svg", ["n": .number(2)]) }
+  #expect(throws: GatewayProtocolError.self) {
+    try request("svg", ["prompt_rewriter": .bool(true)])
+  }
+  #expect(try request("svg", ["n": .number(1)]).verifiedAccountIDs == ["synthetic-b"])
+  let explanation = protocolErrorEnvelope(
+    GatewayProtocolError(400, "image_format_not_verified"),
+    requestID: "synthetic", diagnostics: false)
+  #expect(explanation["error"]?["message"]?.string?.contains("not been verified") == true)
+}
+
+@Test func nativeImageCriticalDuplicateMembersAreRejectedWithoutChangingUnknownFields() throws {
+  let config = try syntheticImageConfiguration()
+  let duplicated = #"{"model":"synthetic-image","output_format":"png","output_fo\u0072mat":"gif"}"#
+  for encoding: String.Encoding in [.utf8, .utf16LittleEndian, .utf16BigEndian] {
+    let data = try #require(duplicated.data(using: encoding))
+    #expect(throws: GatewayProtocolError.self) {
+      try ImagesRequest(
+        data: data, contentType: "application/json", editing: false, configuration: config)
+    }
+  }
+  let unknown = Data(
+    #"{"model":"synthetic-image","future":1,"future":2,"output_format":"png"}"#.utf8)
+  #expect(
+    try ImagesRequest(
+      data: unknown, contentType: "application/json", editing: true,
+      configuration: config
+    ).body == unknown)
+  for format in ["gif", "svg"] {
+    #expect(throws: GatewayProtocolError.self) {
+      try ImageToolRequest(
+        .object(["type": .string("image_generation"), "output_format": .string(format)]),
+        configuration: config)
+    }
+  }
+}

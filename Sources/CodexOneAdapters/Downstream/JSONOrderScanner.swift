@@ -1,13 +1,16 @@
 import Foundation
 
 /// Restore order only after Foundation has accepted the document and chosen all semantic values.
-/// This scanner never makes validity, duplicate-value or number-conversion decisions.
+/// Duplicate keys are observed for optional caller policy; semantic values still come from Foundation.
 struct JSONOrderScanner {
+  private(set) var duplicateRootKeys: Set<String> = []
+  private let trackedRootKeys: Set<String>
   private let bytes: [UInt8]
   private var index = 0
   private let decoder = JSONDecoder()
 
-  init(_ data: Data) {
+  init(_ data: Data, trackedRootKeys: Set<String> = []) {
+    self.trackedRootKeys = trackedRootKeys
     // JSONDecoder accepts UTF-8/16/32, with or without a BOM. Normalize only this order scan.
     let prefix = Array(data.prefix(4))
     let encoding: String.Encoding?
@@ -52,7 +55,7 @@ struct JSONOrderScanner {
     return try decoder.decode(String.self, from: Data(bytes[start..<index]))
   }
 
-  mutating func restore(_ value: JSONValue?) throws -> JSONValue {
+  mutating func restore(_ value: JSONValue?, depth: Int = 0) throws -> JSONValue {
     whitespace()
     guard index < bytes.count else { return value ?? .null }
     if bytes[index] == 123 {
@@ -61,10 +64,13 @@ struct JSONOrderScanner {
       whitespace()
       while index < bytes.count && bytes[index] != 125 {
         let key = try string()
+        if depth == 0, trackedRootKeys.contains(key), object[key] != nil {
+          duplicateRootKeys.insert(key)
+        }
         whitespace()
         index += 1  // colon (the complete document was already validated)
         // Foundation resolves duplicates to the first member; later occurrences are scanned only.
-        let member = try restore(object[key] == nil ? value?[key] : nil)
+        let member = try restore(object[key] == nil ? value?[key] : nil, depth: depth + 1)
         if object[key] == nil { object[key] = member }
         whitespace()
         if index < bytes.count && bytes[index] == 44 {
@@ -82,7 +88,9 @@ struct JSONOrderScanner {
       while index < bytes.count && bytes[index] != 93 {
         let position = array.count
         let reference = value?.array
-        array.append(try restore(reference.flatMap { position < $0.count ? $0[position] : nil }))
+        array.append(
+          try restore(
+            reference.flatMap { position < $0.count ? $0[position] : nil }, depth: depth + 1))
         whitespace()
         if index < bytes.count && bytes[index] == 44 {
           index += 1

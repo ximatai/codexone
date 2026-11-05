@@ -191,3 +191,33 @@ private func imagePool(_ mutate: (inout [String: Any]) -> Void = { _ in }) throw
     ])
   #expect(try single(["synthetic-c"]).makePolicy(token: nil, key: key).models == ["synthetic-c"])
 }
+
+@Test func verifiedGenerationFormatsValidateScopeAndPreserveSingleIdentityNames() throws {
+  func configuration(_ accounts: [String: [String]]) throws -> ImageConfiguration {
+    let config = try JSONDecoder().decode(
+      ImageConfiguration.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "defaultModel": "synthetic-image",
+        "models": [
+          [
+            "id": "synthetic-image", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0,
+            "verifiedGenerationOutputFormatsByAccount": accounts,
+          ]
+        ],
+      ]))
+    try config.validate(hosts: [])
+    return config
+  }
+  let identity = "合成 测试身份/" + String(repeating: "x", count: 100)
+  let config = try configuration([identity: ["gif", "svg"]])
+  #expect(config.models[0].verifiedGenerationOutputFormatsByAccount[identity]?.count == 2)
+  #expect(
+    try ExecutionRequirements(
+      route: .images, imageModel: "synthetic-image", imageAccountIDs: [identity]
+    ).allowsImageAccount(identity))
+  for accounts in [
+    ["a": []], ["a": ["gif", "gif"]], ["a": ["unknown"]], ["": ["gif"]], ["a\0b": ["gif"]],
+  ] {
+    #expect(throws: (any Error).self) { try configuration(accounts) }
+  }
+}

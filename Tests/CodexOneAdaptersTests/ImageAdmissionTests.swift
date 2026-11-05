@@ -92,3 +92,44 @@ import Testing
   }
   await reopened.close()
 }
+
+@Test func imageVerifiedAccountScopeSurvivesPersistenceAndRejectsOtherOwners() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  do {
+    let key = try await store.createKey(
+      id: "image-key", principal: "team",
+      digest: String(repeating: "d", count: 64),
+      policy: .init(
+        models: [], limits: syntheticLimits, imageGeneration: true,
+        imageModels: ["synthetic-image"]))
+    let requirements = try ExecutionRequirements(
+      route: .images, imageModel: "synthetic-image",
+      imageAccountIDs: ["verified"])
+    func command(_ owner: String) -> ExecutionAdmission {
+      .init(
+        attempt: owner,
+        owner: .init(
+          principal: "team", key: key.id,
+          namespace: "synthetic", identity: owner),
+        window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 1,
+        keyRevision: key.revision, model: "synthetic-image", requirements: requirements)
+    }
+    await #expect(throws: ExecutionError.denied) { try await store.admit(command("unverified")) }
+    try await store.admit(command("verified"))
+    #expect(
+      try await store.snapshot(attempt: "verified").admission.executionRequirements == requirements)
+    #expect(try await store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+    let historical = Data(
+      #"{"route":"images","visionInput":false,"imageModel":"synthetic-image"}"#.utf8)
+    #expect(
+      try JSONDecoder().decode(ExecutionRequirements.self, from: historical).imageAccountIDs == nil)
+  } catch {
+    await store.close()
+    throw error
+  }
+  await store.close()
+}
