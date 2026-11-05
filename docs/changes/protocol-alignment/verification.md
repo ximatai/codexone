@@ -30,13 +30,19 @@
 
 2026-11-05，macOS arm64、Swift 6.4.2，以下为新实现的本机证据：
 
-- 全量 Swift 484 项通过（Core 7、Runtime 67、EndToEnd 88、Adapters 322）；新增未知事件不绑定/不续期、回传未知计量、旧响应隔离、closed 后 1009 证据存续、多 lane 未明拒绝、图片不使用输入 codec、多图有效小计及有界名称观察。
+- 全量 Swift 485 项通过（Core 7、Runtime 67、EndToEnd 88、Adapters 323）；新增未知事件不绑定/不续期、回传未知计量、旧响应隔离、closed 后 1009 证据存续、多 lane 未明拒绝、图片不使用输入 codec、多图有效小计及有界名称观察。
 - `verify_text_contract.py` 全矩阵通过：HTTP 116、websocket 197 次合成执行；未知字段/大整数/null、事件及用量明细保持，既有失败/计数修正、续接、无重放及私密内容不入日志保持。
 - `verify_images.py` HTTP/websocket 配置全矩阵通过：真实合成单帧 GIF、SVG/XML 和 opaque future-format 字节经 Responses JSON/SSE/原生 WS 原值交付；原生未知格式 stream/Accept 与 edits 受测；空/坏/混合输出、非 JSON/错误媒体类型不返回 generation 成功；宿主坏计数、多图部分计数、root/item svg_usage 保留下界与 unknown。重启复用同一组合成 Key 后，持续未知原生图片 SSE 事件不能延长 1 秒首响应期限，504、单派发且 unknown。
 - `verify_upstream_ws_body_limit.py` 新矩阵验证未知应用事件后 1009 不回退，以及同连接两个已派发 named lane 的 1009 分别保持 unknown；原有单 turn 明确拒绝、元数据例外、413、容量回收继续回归。responses 与 codex-subscription 两种契约全矩阵均通过。
 - Swift 严格格式、文档链接/任务框架、Core/Runtime/Adapter 依赖检查通过。两名 subagent 只读复盘发现的 close/归属与部分计量细节已修正；实际套接字回归不能由 helper 测试替代。
 
 本轮未新增 Core 状态或持久 schema，不重算历史。已知工具阶段事件的重复进展语义仍沿旧行为，未声称全面去重；未知事件则不推进期限。作者 Token/价格的结构化持久与查询表达、混合大输入/大输出/慢消费者的 Linux RSS/FD/task/队列/租约回落，以及真实提供者/客户端兼容仍未完成。GIF fixture 只证明字节交付，不证明动画或 Desktop 显示。
+
+### 首次 Linux 演进验收的修正
+
+`0954a5d` 的 [Linux Verify 42025684434](https://github.com/ximatai/codexone/actions/runs/42025684434) 构建及 484 项 Swift 测试通过，协议分片发现三处验收问题：两个旧夹具仍要求删除未知 usage 明细；图片完整度断言同时暴露费用校验的跨平台问题。费用比较现显式使用 NSDecimalNumber.zero，保证十进制操作数同类型，不依赖 corelibs 的 NSNumber 跨类型比较路径；新增完整图片计数/费用/完整度直接回归。夹具改为保留扩展，并反向验证 metadata ID 不授予私有对象读取权限。图片账本等待还增加 outcome 条件与诊断，避免把未结束记录当最终快照；该等待改进不替代费用修复。
+
+可参考 [Swift corelibs 的 NSDecimalNumber 实现](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/NSDecimalNumber.swift) 理解类型比较分支；实际目标平台结果仍以新 CI 为准。本机全量 485 项、第三分片 11 个脚本、Codex shapes HTTP/WS 及图片矩阵均通过；生产服务没有变更。
 
 ## Linux 与发布门禁
 

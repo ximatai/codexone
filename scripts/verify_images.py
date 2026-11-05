@@ -280,8 +280,11 @@ def main():
                         while time.monotonic() < deadline:
                             with sqlite3.connect(db) as connection:
                                 row = connection.execute('SELECT state,usage_json,outcome_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()
-                            if row and row[0] != 'intent':
-                                return row[0], json.loads(row[1]) if row[1] else None, json.loads(row[2]) if row[2] else None
+                            # Dispatch can already be unknown before the finalizer commits.
+                            # Wait for its outcome, not merely a state different from intent.
+                            outcome = json.loads(row[2]) if row and row[2] else None
+                            if row and row[0] != 'intent' and outcome is not None:
+                                return row[0], json.loads(row[1]) if row[1] else None, outcome
                             time.sleep(.02)
                         raise AssertionError('Finalization did not finish')
                     def count_intents():
@@ -348,7 +351,8 @@ def main():
                                 if line.startswith(b'data: {') and json.loads(line[6:])['type'] == 'response.completed')
                                 if streaming else json.loads(body))
                             assert result['output'][0]['result'] == OUTPUTS[output_format]
-                            assert ledger()[0] == 'settled'
+                            state, usage, outcome = ledger()
+                            assert state == 'settled', (transport, output_format, streaming, state, usage, outcome)
                         if transport == 'websocket':
                             with dial(port, token=policies['both']['secret'], timeout=15) as peer:
                                 send(peer, {'type':'response.create', 'model':'synthetic-host', 'input':'synthetic',

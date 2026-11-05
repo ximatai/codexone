@@ -108,7 +108,7 @@ class Upstream(BaseHTTPRequestHandler):
             response["previous_response_id"] = payload["previous_response_id"]
         if prompt == "foreign-previous":
             response["previous_response_id"] = "private-synthetic-unbound-response"
-        if prompt == "private-usage":
+        if prompt == "extended-usage":
             response["usage"]["metadata"] = {"file_id": "private-synthetic-file"}
         if prompt == "provider-error":
             response["status"] = "failed"
@@ -398,16 +398,22 @@ def main():
                 assert status == 200 and json.loads(body)["output"][0]["type"] == "unverified_private_object"
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 print("PASS: EOF remains unknown; unknown provider objects are forwarded with settled usage")
-                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "private-usage"})
-                assert status == 200 and b"private-synthetic" not in body
+                status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "extended-usage"})
+                assert status == 200
+                assert json.loads(body)["usage"]["metadata"] == {"file_id": "private-synthetic-file"}
                 assert latest(db_path, "settled")["inputTokens"] == 5
+                before = upstream.calls
+                status, refused = connect(port, "POST", "/v1/responses", {
+                    "model":"synthetic-text", "input":[{"type":"item_reference", "id":"private-synthetic-file"}]})
+                assert status == 400 and json.loads(refused)["error"]["code"] == "unknown_or_ambiguous_object"
+                assert upstream.calls == before
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "provider-error"})
                 failed = json.loads(body)
                 assert status == 200 and failed["status"] == "failed" and failed["error"]["code"] == "synthetic"
                 assert latest(db_path, "settled")["inputTokens"] == 5
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "foreign-previous"})
                 assert status == 200 and latest(db_path, "settled")["inputTokens"] == 5
-                print("PASS: usage metadata stays private; provider failures reach the client sanitized with settled counters")
+                print("PASS: usage extensions are preserved without granting private references; provider failures reach the client sanitized with settled counters")
                 status, body = connect(port, "POST", "/v1/responses", {"model": "synthetic-text", "input": "refusal"})
                 assert status == 200
                 refused = json.loads(body)["output"]

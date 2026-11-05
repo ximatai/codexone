@@ -82,7 +82,8 @@ extension ResponseRequest {
         raiseOnUnderflow: false, raiseOnDivideByZero: false)
     )
     let validCost =
-      roundedCost != .notANumber && roundedCost.compare(0) != .orderedAscending
+      // Keep both operands decimal: corelibs NSNumber cross-type comparison differs from Darwin.
+      roundedCost != .notANumber && roundedCost.compare(NSDecimalNumber.zero) != .orderedAscending
       && roundedCost.compare(
         NSDecimalNumber(value: 1_000_000_000_000 - (host?.estimatedMicros ?? 0)))
         != .orderedDescending

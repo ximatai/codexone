@@ -260,3 +260,30 @@ func unattributedApplicationRiskCoversDispatchedNamedLanesWithoutDelivery(idleDe
   turns.close()
   #expect(!turns.mayAcceptSizeRefusal(lane: "sent"))
 }
+
+@Test func completeImageUsageKeepsItsPriceAndCompletenessAcrossFoundationPlatforms() throws {
+  let configuration = try syntheticImageConfiguration()
+  let request = try ResponseRequest(
+    data: Data(
+      #"{"model":"synthetic","input":"synthetic","tools":[{"type":"image_generation"}]}"#.utf8),
+    imageConfiguration: configuration)
+  let response: JSONValue = .object([
+    "status": .string("completed"),
+    "output": .array([
+      .object([
+        "type": .string("image_generation_call"), "status": .string("completed"),
+        "result": .string("c3ludGhldGlj"),
+        "usage": .object(["input_tokens": .number(2), "output_tokens": .number(3)]),
+      ])
+    ]),
+    "usage": .object([
+      "input_tokens": .number(5), "output_tokens": .number(7),
+      "input_tokens_details": .object(["cached_tokens": .number(0)]),
+    ]),
+  ])
+  let model = SingleIdentityConfiguration.Model(
+    id: "synthetic", inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000)
+  let usage = try #require(try request.usage(response, model: model, configuration: configuration))
+  #expect(usage.completeness == .complete)
+  #expect(usage.estimatedMicros == 25)
+}
