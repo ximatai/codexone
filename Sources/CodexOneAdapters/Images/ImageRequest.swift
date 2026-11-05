@@ -34,8 +34,9 @@ struct ImagesRequest: Sendable {
   let body: Data
   let streaming: Bool
   let editing: Bool
-  let expectsSVGUsage: Bool
-  let requiresNonStreamingOutput: Bool
+  let requiredOutputFormat: NativeImageOutputFormat?
+  var expectsSVGUsage: Bool { requiredOutputFormat == .svg }
+  var requiresNonStreamingOutput: Bool { requiredOutputFormat != nil }
   let upstreamStreaming: Bool
   init(data: Data, contentType: String, editing: Bool, configuration: ImageConfiguration?) throws {
     guard data.count <= RequestBodyLimits.maximumBytes else {
@@ -129,12 +130,12 @@ struct ImagesRequest: Sendable {
     self.editing = editing
     try rejectSVGAuthorSelection(fields["svg"])
     let format = fields["output_format"]?.string
-    expectsSVGUsage = format == "svg"
-    requiresNonStreamingOutput = format == "gif" || format == "svg"
+    let requiredOutputFormat = format.flatMap(NativeImageOutputFormat.init(rawValue:))
+    self.requiredOutputFormat = requiredOutputFormat
     // The SSE workaround is verified only for these legacy generation formats.
     let legacyFormat = format == nil || ["png", "jpeg", "webp"].contains(format!)
-    upstreamStreaming = legacyFormat ? !editing : (!requiresNonStreamingOutput && streaming)
-    if requiresNonStreamingOutput {
+    upstreamStreaming = legacyFormat ? !editing : (requiredOutputFormat == nil && streaming)
+    if requiredOutputFormat != nil {
       guard !streaming, fields["partial_images"] == nil, fields["output_compression"] == nil,
         fields["mask"] == nil,
         format != "svg"

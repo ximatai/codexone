@@ -232,7 +232,8 @@ extension HTTPResponseExecution {
                   NativeImageDiagnostics.contentTypeToken(
                     response.headers.first(name: "content-type")) == "json"
                 else { throw GatewayProtocolError(502, "invalid_upstream_image") }
-                _ = try NativeImageResult.validated(document)
+                _ = try NativeImageResult.validated(
+                  document, expectedFormat: request.requiredOutputFormat)
               }
               if observation?.images ?? 0 == 0 {
                 try context.observeOutcome(

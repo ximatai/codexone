@@ -30,6 +30,7 @@ OUTPUTS = {'png': PNG,
 
 def native_body(prompt, output_format='png'):
     if prompt == 'non-json': return b'synthetic invalid JSON'
+    if prompt == 'wrong-native-format': output_format = 'png'
     document = {'created':1,'data':[] if prompt == 'empty' else [{'b64_json':OUTPUTS.get(output_format, PNG)}], 'future':'preserved'}
     if prompt == 'synthetic': document['service_tier'] = 'default'
     if prompt != 'missing-usage':
@@ -311,6 +312,19 @@ def main():
                         assert json.loads(received).get('stream') is not True
                         assert sent_headers['accept'] == 'application/json'
                         assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
+                    for operation, output_format in (('generations', 'gif'), ('edits', 'gif'), ('generations', 'svg')):
+                        before = upstream.calls
+                        intents = count_intents()
+                        status, body, _ = request(
+                            {'prompt':'wrong-native-format', 'output_format':output_format},
+                            '/v1/images/' + operation)
+                        assert status == 502 and json.loads(body)['error']['code'] == 'invalid_upstream_image_format'
+                        assert PNG.encode() not in body and upstream.calls == before + 1
+                        state, usage, outcome = ledger()
+                        assert count_intents() == intents + 1
+                        assert state == ('unknown' if output_format == 'svg' else 'settled')
+                        assert usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                        assert usage['images'] == 1 and outcome['failure'] == 'invalid_upstream_response'
                     status, body, _ = request({'prompt':'svg-author-usage', 'output_format':'svg'})
                     assert status == 200 and json.loads(body)['svg_usage']['output_tokens'] == 20
                     state, usage, outcome = ledger()

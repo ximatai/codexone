@@ -47,3 +47,6 @@ session/thread 标识只提供账号软偏好；已观察的 turn-state 独立�
 发布候选核查了实际 Codex CLI 0.165.0：官方 rust-v0.165.0 对应提交 `360319d8dee62d87e2d59fc0c21805d79519cfed`。其[工具参数与 schema](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/ext/image-generation/src/tool.rs#L94)仅暴露 prompt、transparent_background、referenced_image_paths、num_last_images_to_include；[handler](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/ext/image-generation/src/tool.rs#L504)选择图片模型，未暴露 SVG 作者选择。[底层请求](https://github.com/openai/codex/blob/360319d8dee62d87e2d59fc0c21805d79519cfed/codex-rs/codex-api/src/images.rs#L6)也没有 svg 字段。
 
 核查时官方 main 固定提交 `1e9e8bdb008549fc558ef886791c185c6d3c0814` 的[参数](https://github.com/openai/codex/blob/1e9e8bdb008549fc558ef886791c185c6d3c0814/codex-rs/ext/image-generation/src/tool.rs#L101)新增可条件暴露的 gif，但仍无 SVG 作者选择。因此继续允许普通 SVG 沿图片模型配置，拒绝客户端指定 svg.model；公开 Images API 的可选参数不作为官方智能体客户端已自动使用的证明。此结论限定于所核查的官方 CLI 源码，不覆盖所有闭源客户端。
+
+
+原生 GIF／SVG 请求成功转发后，提供者仍可能拒绝请求或返回其他格式。对于显式 GIF／SVG，网关检查格式头并将不符的输出作为 502 交付失败处理，同时保留已观察用量。Responses 图片工具也依赖提供者及模型支持。部署前应分别验证文本、原生图片与 Responses 工具；原生图片成功无法证明 Responses 工具可用。
