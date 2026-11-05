@@ -637,3 +637,48 @@ private struct UsageFixture {
   }
   await f.close()
 }
+
+@Test func svgCountersPriceAndDailyLimitSurviveRollupWithoutDoubleCounting() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    let evidence = UsageEvidence(
+      revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
+      images: 1, estimatedMicros: 13, completeness: .complete,
+      imageInputTokens: 2, imageOutputTokens: 3, nativeImages: true,
+      svgInputTokens: 10, svgOutputTokens: 20, svgReasoningTokens: 5,
+      svgAuthorModel: "synthetic-author", priceCompleteness: .partial,
+      usageMissingReasons: ["svg_price_unavailable"])
+    try await f.insert("svg", at: testUnixSeconds, evidence: evidence)
+    let report = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600))
+    let row = try #require(report.rows.first)
+    #expect(row.state == .settled && row.outcome == .succeeded && row.completeness == .complete)
+    #expect(row.metrics.svgInputTokens == 10 && row.metrics.svgOutputTokens == 20)
+    #expect(row.metrics.priceCompleteness == .partial && row.metrics.estimatedMicros == 13)
+    #expect(
+      row.svgAuthorModel == "synthetic-author"
+        && row.usageMissingReasons == ["svg_price_unavailable"])
+    let before = try await f.store.perform {
+      try SQLiteExecutionStore.keyTokenUsage($0, keyID: "alpha")
+    }
+    #expect(before.tokens == 35 && !before.incomplete)
+    let dailyBefore = try await f.reader.dailyUsage(
+      days: 1, keyID: "alpha", model: nil, endUnixSeconds: nil)
+    try await f.store.maintainExecutions(now: testUnixSeconds + 91 * 86400)
+    let after = try await f.store.perform {
+      try SQLiteExecutionStore.keyTokenUsage($0, keyID: "alpha")
+    }
+    #expect(after.tokens == 35 && !after.incomplete)
+    let dailyAfter = try await f.reader.dailyUsage(
+      days: 1, keyID: "alpha", model: nil, endUnixSeconds: nil)
+    #expect(dailyBefore.first?.metrics.svgOutputTokens == dailyAfter.first?.metrics.svgOutputTokens)
+    #expect(
+      dailyAfter.first?.metrics.svgInputTokens == 10
+        && dailyAfter.first?.metrics.priceCompleteness == .partial)
+    #expect(try await f.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 0)
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}

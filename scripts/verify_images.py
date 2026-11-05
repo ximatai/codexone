@@ -42,6 +42,13 @@ def native_stream(operation, prompt='synthetic', output_format='png'):
     preview = {'type':prefix+'.partial_image','b64_json':OUTPUTS.get(output_format, PNG), 'partial_image_index':0}
     final = {'type':prefix+'.completed','created_at':1,'b64_json':OUTPUTS.get(output_format, PNG),'future':'preserved',
         'usage':{'input_tokens':2,'output_tokens':3,'input_tokens_details':{'text_tokens':1,'image_tokens':1}}}
+    if prompt in ('author-stream-missing', 'author-stream-decrease'):
+        final['svg_usage'] = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
+        final['image_index'] = 0
+        second = {**final, 'image_index':1}
+        if prompt == 'author-stream-missing': second.pop('svg_usage')
+        else: second['svg_usage'] = {'model':'synthetic-author', 'input_tokens':1, 'output_tokens':2}
+        return b''.join(b'data: ' + json.dumps(event).encode() + b'\n\n' for event in (final, second))
     if prompt == 'missing-usage': final.pop('usage')
     if prompt == 'stream-missing-created': final.pop('created_at')
     if prompt == 'synthetic': final['service_tier'] = 'default'
@@ -303,11 +310,12 @@ def main():
                         assert json.loads(received)['output_format'] == output_format
                         assert json.loads(received).get('stream') is not True
                         assert sent_headers['accept'] == 'application/json'
-                        assert ledger()[0] == 'settled'
+                        assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
                     status, body, _ = request({'prompt':'svg-author-usage', 'output_format':'svg'})
                     assert status == 200 and json.loads(body)['svg_usage']['output_tokens'] == 20
                     state, usage, outcome = ledger()
-                    assert state == 'unknown' and usage['completeness'] == 'partial' and usage['imageOutputTokens'] == 3
+                    assert state == 'settled' and usage['completeness'] == 'complete' and usage['imageOutputTokens'] == 3
+                    assert usage['svgInputTokens'] == 10 and usage['svgOutputTokens'] == 20 and usage['priceCompleteness'] == 'partial'
                     assert outcome['kind'] == 'succeeded'
                     before = upstream.calls; intents = count_intents()
                     for invalid in ({'output_format':'svg', 'svg':{'model':'synthetic-author'}},
@@ -352,7 +360,7 @@ def main():
                                 if streaming else json.loads(body))
                             assert result['output'][0]['result'] == OUTPUTS[output_format]
                             state, usage, outcome = ledger()
-                            assert state == 'settled', (transport, output_format, streaming, state, usage, outcome)
+                            assert state == ('unknown' if output_format == 'svg' else 'settled'), (transport, output_format, streaming, state, usage, outcome)
                         if transport == 'websocket':
                             with dial(port, token=policies['both']['secret'], timeout=15) as peer:
                                 send(peer, {'type':'response.create', 'model':'synthetic-host', 'input':'synthetic',
@@ -370,7 +378,7 @@ def main():
                         result = json.loads(body)
                         assert result['output'][0]['result'] == OUTPUTS['svg']
                         state, usage, outcome = ledger()
-                        assert state == 'unknown' and outcome['kind'] == 'succeeded'
+                        assert state == ('unknown' if prompt == 'invalid-usage' else 'settled') and outcome['kind'] == 'succeeded'
                         assert usage['inputTokens'] == 5 and usage['outputTokens'] == 7 and usage['imageInputTokens'] == 2
                         if prompt == 'invalid-usage':
                             assert usage.get('imageOutputTokens') is None and usage['estimatedMicros'] == 16
@@ -485,6 +493,13 @@ def main():
                                 if partial: assert 'imageOutputTokens' not in usage
                                 else: assert usage['imageOutputTokens'] == 3
                                 assert usage['completeness'] == ('complete' if complete else 'partial')
+                    for author_prompt in ('author-stream-missing', 'author-stream-decrease'):
+                        status, body, _ = request({'prompt':author_prompt, 'stream':True, 'n':2})
+                        assert status == 200 and body.count(b'image_generation.completed') == 2
+                        state, usage, outcome = ledger()
+                        assert state == 'settled' and outcome['kind'] == 'succeeded', (state, usage, outcome)
+                        assert usage['svgInputTokens'] == 10 and usage['svgOutputTokens'] == 20
+                        assert usage['images'] == 2 and usage['priceCompleteness'] == 'partial'
                     # SSE completions are images in arrival order; usage is request-level cumulative.
                     for streaming in (False, True):
                         for fault in ('stream-multiple', 'stream-multiple-repeated', 'stream-multiple-late'):

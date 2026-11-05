@@ -20,6 +20,10 @@ export interface UsageFilters {
   window?: { start: number; end: number };
 }
 export interface Metrics {
+  svgInputTokens?: string | null;
+  svgOutputTokens?: string | null;
+  svgReasoningTokens?: string | null;
+  priceCompleteness?: string | null;
   imageInputTextTokens?: string | null;
   imageInputImageTokens?: string | null;
   imageInputTokens?: string | null;
@@ -71,6 +75,8 @@ export interface UsageReport {
     serviceTier?: string | null;
     actualServiceTier?: string | null;
     requestMetadataRecorded?: boolean;
+    svgAuthorModel?: string | null;
+    usageMissingReasons?: string[];
     kind: "admitted" | "rejected";
     id: string;
     atUnixSeconds: number;
@@ -151,6 +157,14 @@ function requiredMetric(value: unknown): string {
 function metrics(raw: unknown): Metrics {
   const value = object(raw);
   return {
+    svgInputTokens: metric(value.svgInputTokens ?? null),
+    svgOutputTokens: metric(value.svgOutputTokens ?? null),
+    svgReasoningTokens: metric(value.svgReasoningTokens ?? null),
+    priceCompleteness: optionalEnum(value.priceCompleteness ?? null, [
+      "complete",
+      "partial",
+      "unavailable",
+    ]),
     imageInputTextTokens: metric(value.imageInputTextTokens ?? null),
     imageInputImageTokens: metric(value.imageInputImageTokens ?? null),
     imageInputTokens: metric(value.imageInputTokens ?? null),
@@ -301,6 +315,12 @@ export function parseUsage(raw: unknown): UsageReport {
       ]),
       outcome: optionalEnum(item.outcome, ["succeeded", "failed", "cancelled"]),
       failure: nullableText(item.failure, 64),
+      svgAuthorModel: nullableText(item.svgAuthorModel ?? null, 128),
+      usageMissingReasons: (() => {
+        const reasons = item.usageMissingReasons ?? [];
+        if (!Array.isArray(reasons) || reasons.length > 8) throw invalid();
+        return reasons.map((reason) => text(reason, 64));
+      })(),
       completeness: optionalEnum(item.completeness, ["complete", "partial"]),
       metrics: metrics(item.metrics),
     };

@@ -104,7 +104,7 @@ export function UsageEvidence({
                 {totals.admitted === 0
                   ? "—"
                   : field === "estimatedMicros"
-                    ? money(totals.metrics[field])
+                    ? `${(totals.metrics.priceCompleteness ?? (incomplete ? "partial" : "complete")) !== "complete" && totals.metrics[field] != null ? "≥ " : ""}${money(totals.metrics[field])}`
                     : number(totals.metrics[field], incomplete)}
               </strong>
             </div>
@@ -117,8 +117,8 @@ export function UsageEvidence({
           : estimateNote}{" "}
         明细仅保留最近 90 天；更早执行保留 UTC 日汇总，按同名业务日期展示，超过
         90 天的数据日界近似、总量保留。待核对满 24 小时自动关闭，用量仍为未知。
-        图片工具 token 与宿主响应 token
-        分别统计，不相加；缺失工具证据显示不可用。
+        图片工具 token 与宿主响应 token 分别统计；SVG
+        作者输入与输出额外计入每日额度，作者推理不重复累计。缺失工具证据显示不可用。
       </p>
     </EvidenceContainer>
   );

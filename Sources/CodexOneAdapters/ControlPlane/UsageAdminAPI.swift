@@ -210,6 +210,10 @@ public struct UsageAdminAPI: Sendable {
       "imageOutputTokens": metric(value.imageOutputTokens),
       "imageInputTextTokens": metric(value.imageInputTextTokens),
       "imageInputImageTokens": metric(value.imageInputImageTokens),
+      "svgInputTokens": metric(value.svgInputTokens),
+      "svgOutputTokens": metric(value.svgOutputTokens),
+      "svgReasoningTokens": metric(value.svgReasoningTokens),
+      "priceCompleteness": value.priceCompleteness.map { .string($0.rawValue) } ?? .null,
     ])
   }
   static func parse(_ url: String) throws -> UsageQuery {
@@ -295,6 +299,10 @@ public struct UsageAdminAPI: Sendable {
         "imageOutputTokens": metric(value.imageOutputTokens),
         "imageInputTextTokens": metric(value.imageInputTextTokens),
         "imageInputImageTokens": metric(value.imageInputImageTokens),
+        "svgInputTokens": metric(value.svgInputTokens),
+        "svgOutputTokens": metric(value.svgOutputTokens),
+        "svgReasoningTokens": metric(value.svgReasoningTokens),
+        "priceCompleteness": value.priceCompleteness.map { .string($0.rawValue) } ?? .null,
       ])
     }
     let totals = report.totals
@@ -357,6 +365,8 @@ public struct UsageAdminAPI: Sendable {
             "state": text(value.state?.rawValue),
             "outcome": text(value.outcome?.rawValue), "failure": text(value.failure?.rawValue),
             "completeness": text(value.completeness?.rawValue), "metrics": metrics(value.metrics),
+            "svgAuthorModel": text(value.svgAuthorModel),
+            "usageMissingReasons": .array(value.usageMissingReasons.map(JSONValue.string)),
           ])
         }),
       "nextCursor": cursorValue(report.nextCursor),

@@ -91,7 +91,9 @@ extension HTTPResponseExecution {
                 throw GatewayProtocolError(502, "invalid_upstream_image")
               }
               context.observeUpstreamEvent()
-              let observation = NativeImageObservation(document, model: model)
+              let observation = NativeImageObservation(
+                document, model: model, expectsSVG: request.expectsSVGUsage,
+                authorModels: configuration.models)
               context.observeActualServiceTier(requestMetadataValue(document["service_tier"]))
               if let usage = observation.usage { try context.observeUsage(usage) }
               _ = try NativeImageResult.validated(document)
@@ -122,7 +124,21 @@ extension HTTPResponseExecution {
                 maximumTotalBytes: ImageLimits.nativeResponseBytes)
               var terminals: [JSONValue] = []
               var cumulativeUsage: JSONValue = .object([:])
+              var cumulativeAuthor: JSONValue?
+              var lastSnapshot: JSONValue?
+              var observationRevision: Int64 = 0
               var imageCount: Int64 = 0
+              // Intermediate completions cannot prove that later images add no author usage.
+              // Preserve the last cumulative evidence even on provider failure or cancellation.
+              defer {
+                if let lastSnapshot {
+                  let final = NativeImageObservation(
+                    lastSnapshot, model: model, streaming: true,
+                    revision: observationRevision + 1, images: imageCount,
+                    expectsSVG: request.expectsSVGUsage, authorModels: configuration.models)
+                  if let usage = final.usage { try? context.observeUsage(usage) }
+                }
+              }
               // Pending wire bytes cover only the current event; total retained output is bounded
               // by the decoder stream limit.
               var pending = Data()
@@ -158,9 +174,15 @@ extension HTTPResponseExecution {
                       }
                       var snapshot = event.object!
                       snapshot["usage"] = cumulativeUsage
+                      cumulativeAuthor = SVGUsage.mergingSnapshot(
+                        cumulativeAuthor, event["svg_usage"])
+                      if let cumulativeAuthor { snapshot["svg_usage"] = cumulativeAuthor }
+                      lastSnapshot = .object(snapshot)
+                      observationRevision += 1
                       let observation = NativeImageObservation(
                         .object(snapshot), model: model, streaming: true,
-                        revision: Int64(terminals.count + 1), images: imageCount)
+                        revision: observationRevision, images: imageCount, provisional: true,
+                        expectsSVG: request.expectsSVGUsage, authorModels: configuration.models)
                       if let usage = observation.usage { try context.observeUsage(usage) }
                       // Preserve counters even when delivery, completion metadata or output is invalid.
                       guard !duplicate else {
@@ -197,7 +219,11 @@ extension HTTPResponseExecution {
                 onChunk: { diagnostics.receivedBody(bytes: $0) })
               context.observeUpstreamEvent()
               let document = try? JSONValue.decode(body)
-              let observation = document.map { NativeImageObservation($0, model: model) }
+              let observation = document.map {
+                NativeImageObservation(
+                  $0, model: model, expectsSVG: request.expectsSVGUsage,
+                  authorModels: configuration.models)
+              }
               context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
               if let usage = observation?.usage { try context.observeUsage(usage) }
               if let document { try NativeImageResult.requireCompletion(document) }
@@ -267,7 +293,9 @@ struct NativeImageObservation {
   }
   init(
     _ document: JSONValue, model: ImageConfiguration.Model, streaming: Bool = false,
-    revision: Int64 = 1, images totalImages: Int64? = nil
+    revision: Int64 = 1, images totalImages: Int64? = nil, provisional: Bool = false,
+    expectsSVG: Bool = false,
+    authorModels: [SingleIdentityConfiguration.Model] = []
   ) {
     let items = document["data"]?.array ?? (streaming ? [document] : [])
     images =
@@ -285,22 +313,35 @@ struct NativeImageObservation {
     }
     let input = count(document["usage"]?["input_tokens"])
     let output = count(document["usage"]?["output_tokens"])
-    let cost =
-      (input ?? 0) * model.inputMicrosPerMillion + (output ?? 0) * model.outputMicrosPerMillion
+    let author = SVGUsage(
+      document, items: items,
+      expected: expectsSVG || document["output_format"]?.string == "svg"
+        || items.contains { $0["output_format"]?.string == "svg" }, models: authorModels)
+    let renderCost = imageCost(
+      input: input, output: output,
+      inputRate: model.inputMicrosPerMillion, outputRate: model.outputMicrosPerMillion)
+    let sum = (renderCost ?? 0) + (author.cost ?? 0)
+    let costValid = sum <= 1_000_000_000_000
+    let price: UsageEvidence.PriceCompleteness =
+      input != nil && output != nil && renderCost != nil
+        && author.complete && author.cost != nil && costValid
+        && (renderCost ?? 0) < 1_000_000_000_000 && (author.cost ?? 0) < 1_000_000_000_000
+      ? .complete
+      : (renderCost != nil || (author.present && author.cost != nil) ? .partial : .unavailable)
     usage = .init(
       revision: revision, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
-      images: images, estimatedMicros: cost / 1_000_000 + (cost % 1_000_000 == 0 ? 0 : 1),
-      completeness: input != nil && output != nil
-        // SVG author usage is additional to rendering. Until separately mapped, rendering
-        // counters and cost are a lower bound, never complete evidence for the operation.
-        && (document["svg_usage"] == nil || document["svg_usage"] == .null)
-        && items.allSatisfy { $0["svg_usage"] == nil || $0["svg_usage"] == .null }
+      images: images, estimatedMicros: min(sum, 1_000_000_000_000),
+      completeness: !provisional && input != nil && output != nil
+        && author.complete
         && (document["status"] == nil
           || ["completed", "failed", "cancelled"].contains(document["status"]?.string ?? ""))
         ? .complete : .partial,
       imageInputTokens: input, imageOutputTokens: output,
       imageInputTextTokens: count(document["usage"]?["input_tokens_details"]?["text_tokens"]),
       imageInputImageTokens: count(document["usage"]?["input_tokens_details"]?["image_tokens"]),
-      nativeImages: true)
+      nativeImages: true, svgInputTokens: author.input, svgOutputTokens: author.output,
+      svgReasoningTokens: author.reasoning, svgAuthorModel: author.model,
+      priceCompleteness: provisional && price == .complete ? .partial : price,
+      usageMissingReasons: author.reasons.isEmpty ? nil : author.reasons)
   }
 }

@@ -83,7 +83,7 @@ import Testing
   await store.close()
   try rawSQL(
     path,
-    "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; PRAGMA user_version=10"
+    "ALTER TABLE usage_daily DROP COLUMN svg_input_tokens; ALTER TABLE usage_daily DROP COLUMN svg_output_tokens; ALTER TABLE usage_daily DROP COLUMN svg_reasoning_tokens; ALTER TABLE usage_daily DROP COLUMN price_unknown; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; PRAGMA user_version=10"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
@@ -91,10 +91,10 @@ import Testing
   try await SQLiteExecutionStore.migrate(path: path, clock: testClock)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: root).contains {
-      $0.contains(".pre-v11-") && $0.hasSuffix(".sqlite")
+      $0.contains(".pre-v12-") && $0.hasSuffix(".sqlite")
     })
   store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
-  #expect(try await store.perform { try $0.scalar("PRAGMA user_version") } == 11)
+  #expect(try await store.perform { try $0.scalar("PRAGMA user_version") } == 12)
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
   let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
   var account = try await app.importVerified(
@@ -111,7 +111,7 @@ import Testing
   await store.close()
   let manifest = try await SQLiteSnapshotMaintenance.backup(
     path: path, destination: root + "/bundle", protection: cipher, clock: testClock)
-  #expect(manifest.schema == 11)
+  #expect(manifest.schema == 12)
   _ = try await SQLiteSnapshotMaintenance.restore(
     bundle: root + "/bundle", path: root + "/restored/core.sqlite", protection: cipher,
     clock: testClock)
@@ -168,7 +168,7 @@ import Testing
   await store.close()
   try rawSQL(
     path,
-    "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; CREATE TABLE reset_credit_events(id TEXT); PRAGMA user_version=10"
+    "ALTER TABLE usage_daily DROP COLUMN svg_input_tokens; ALTER TABLE usage_daily DROP COLUMN svg_output_tokens; ALTER TABLE usage_daily DROP COLUMN svg_reasoning_tokens; ALTER TABLE usage_daily DROP COLUMN price_unknown; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; CREATE TABLE reset_credit_events(id TEXT); PRAGMA user_version=10"
   )
   await #expect(throws: ExecutionError.storageUnavailable) {
     try await SQLiteExecutionStore.migrate(path: path, clock: testClock)

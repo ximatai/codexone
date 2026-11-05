@@ -429,25 +429,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           "SELECT evidence_floor FROM attempts WHERE id=?", [.text(attempt)])
         guard evidence.revision > floor else { throw ExecutionError.staleEvidence }
         if let old = snapshot.usage, evidence.revision > old.revision {
-          guard evidence.inputTokens >= old.inputTokens, evidence.outputTokens >= old.outputTokens,
-            evidence.cachedTokens >= old.cachedTokens, evidence.images >= old.images,
-            evidence.estimatedMicros >= old.estimatedMicros,
-            (evidence.imageInputTokens ?? 0) >= (old.imageInputTokens ?? 0),
-            (evidence.imageOutputTokens ?? 0) >= (old.imageOutputTokens ?? 0),
-            (evidence.imageInputTextTokens ?? 0) >= (old.imageInputTextTokens ?? 0),
-            (evidence.imageInputImageTokens ?? 0) >= (old.imageInputImageTokens ?? 0),
-            old.completeness != .complete || evidence.completeness == .complete
+          guard evidence.isAtLeast(old)
           else { throw ExecutionError.conflict }
         }
         if let old = snapshot.usage, evidence.revision < old.revision {
-          guard evidence.inputTokens <= old.inputTokens, evidence.outputTokens <= old.outputTokens,
-            evidence.cachedTokens <= old.cachedTokens, evidence.images <= old.images,
-            evidence.estimatedMicros <= old.estimatedMicros,
-            (evidence.imageInputTokens ?? 0) <= (old.imageInputTokens ?? 0),
-            (evidence.imageOutputTokens ?? 0) <= (old.imageOutputTokens ?? 0),
-            (evidence.imageInputTextTokens ?? 0) <= (old.imageInputTextTokens ?? 0),
-            (evidence.imageInputImageTokens ?? 0) <= (old.imageInputImageTokens ?? 0),
-            evidence.completeness != .complete || old.completeness == .complete
+          guard old.isAtLeast(evidence)
           else {
             throw ExecutionError.conflict
           }
@@ -544,13 +530,7 @@ func validateAdmission(_ value: ExecutionAdmission) throws {
   }
 }
 private func validate(_ value: UsageEvidence) throws {
-  guard
-    [
-      value.revision, value.inputTokens, value.outputTokens, value.cachedTokens, value.images,
-      value.estimatedMicros, value.imageInputTokens ?? 0, value.imageOutputTokens ?? 0,
-      value.imageInputTextTokens ?? 0, value.imageInputImageTokens ?? 0,
-    ].allSatisfy({ (0...1_000_000_000_000).contains($0) }), value.cachedTokens <= value.inputTokens
-  else { throw ExecutionError.invalidCommand }
+  try value.validate()
 }
 func encode<T: Encodable>(_ value: T) throws -> String {
   let encoder = JSONEncoder()

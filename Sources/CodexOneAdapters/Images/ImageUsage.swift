@@ -4,7 +4,8 @@ import Foundation
 extension ResponseRequest {
   func observeUsage(
     _ response: JSONValue?, context: ExecutionContext,
-    model: SingleIdentityConfiguration.Model, configuration: ImageConfiguration?
+    model: SingleIdentityConfiguration.Model, configuration: ImageConfiguration?,
+    authorModels: [SingleIdentityConfiguration.Model] = []
   ) throws {
     if requirements.imageModel != nil,
       let host = ProviderObservation.usage(response?["usage"], model: model)
@@ -16,7 +17,9 @@ extension ResponseRequest {
           cachedTokens: host.cachedTokens, images: 0, estimatedMicros: host.estimatedMicros,
           completeness: .partial))
     }
-    if let evidence = try usage(response, model: model, configuration: configuration) {
+    if let evidence = try usage(
+      response, model: model, configuration: configuration, authorModels: authorModels)
+    {
       try context.observeUsage(evidence)
     }
   }
@@ -24,7 +27,7 @@ extension ResponseRequest {
   /// Host response usage and tool usage stay separate; no tool tokens are added to host totals.
   func usage(
     _ response: JSONValue?, model: SingleIdentityConfiguration.Model,
-    configuration: ImageConfiguration?
+    configuration: ImageConfiguration?, authorModels: [SingleIdentityConfiguration.Model] = []
   ) throws -> UsageEvidence? {
     let host = ProviderObservation.usage(response?["usage"], model: model)
     guard let imageModel = requirements.imageModel else { return host }
@@ -47,9 +50,14 @@ extension ResponseRequest {
     var observedInput = knownOutputItems && items.isEmpty
     var observedOutput = knownOutputItems && items.isEmpty
     var images: Int64 = 0
-    var complete =
-      knownOutputItems
-      && (response?["svg_usage"] == nil || response?["svg_usage"] == .null)
+    let expectsSVG =
+      document["tools"]?.array?.contains {
+        $0["type"]?.string == "image_generation" && $0["output_format"]?.string == "svg"
+      } == true || response?["output_format"]?.string == "svg"
+      || items.contains { $0["output_format"]?.string == "svg" }
+    let author = SVGUsage(
+      response, items: items, expected: expectsSVG && !items.isEmpty, models: authorModels)
+    var complete = knownOutputItems && author.complete
     for item in items {
       func tokens(_ name: String) -> Int64? {
         guard let value = item["usage"]?[name], value != .null else { return nil }
@@ -60,7 +68,6 @@ extension ResponseRequest {
       }
       let i = tokens("input_tokens")
       let o = tokens("output_tokens")
-      if item["svg_usage"] != nil && item["svg_usage"] != .null { complete = false }
       observedInput = observedInput || i != nil
       observedOutput = observedOutput || o != nil
       input += i ?? 0
@@ -73,29 +80,30 @@ extension ResponseRequest {
         complete = false
       }
     }
-    let toolCost =
-      Decimal(input) * Decimal(mapping.inputMicrosPerMillion) + Decimal(output)
-      * Decimal(mapping.outputMicrosPerMillion)
-    let roundedCost = NSDecimalNumber(decimal: toolCost / 1_000_000).rounding(
-      accordingToBehavior: NSDecimalNumberHandler(
-        roundingMode: .up, scale: 0, raiseOnExactness: false, raiseOnOverflow: false,
-        raiseOnUnderflow: false, raiseOnDivideByZero: false)
-    )
-    let validCost =
-      // Keep both operands decimal: corelibs NSNumber cross-type comparison differs from Darwin.
-      roundedCost != .notANumber && roundedCost.compare(NSDecimalNumber.zero) != .orderedAscending
-      && roundedCost.compare(
-        NSDecimalNumber(value: 1_000_000_000_000 - (host?.estimatedMicros ?? 0)))
-        != .orderedDescending
-    let rounded = validCost ? roundedCost.int64Value : 0
-    complete = complete && validCost
+    let renderCost = imageCost(
+      input: observedInput ? input : nil, output: observedOutput ? output : nil,
+      inputRate: mapping.inputMicrosPerMillion, outputRate: mapping.outputMicrosPerMillion)
+    let sum = (host?.estimatedMicros ?? 0) + (renderCost ?? 0) + (author.cost ?? 0)
+    let costValid = sum <= 1_000_000_000_000
+    let priceComplete =
+      knownInput && knownOutput && host?.completeness == .complete
+      && renderCost != nil && author.cost != nil && author.complete && costValid
+      && (renderCost ?? 0) < 1_000_000_000_000 && (author.cost ?? 0) < 1_000_000_000_000
+    let price: UsageEvidence.PriceCompleteness =
+      priceComplete
+      ? .complete
+      : (host != nil || renderCost != nil || (author.present && author.cost != nil)
+        ? .partial : .unavailable)
     return .init(
       revision: 1, inputTokens: host?.inputTokens ?? 0, outputTokens: host?.outputTokens ?? 0,
       cachedTokens: host?.cachedTokens ?? 0, images: images,
-      estimatedMicros: (host?.estimatedMicros ?? 0) + rounded,
+      estimatedMicros: min(sum, 1_000_000_000_000),
       completeness: complete && knownInput && knownOutput && host?.completeness == .complete
         ? .complete : .partial,
       imageInputTokens: observedInput ? input : nil,
-      imageOutputTokens: observedOutput ? output : nil)
+      imageOutputTokens: observedOutput ? output : nil,
+      svgInputTokens: author.input, svgOutputTokens: author.output,
+      svgReasoningTokens: author.reasoning, svgAuthorModel: author.model,
+      priceCompleteness: price, usageMissingReasons: author.reasons.isEmpty ? nil : author.reasons)
   }
 }

@@ -58,10 +58,10 @@ extension SQLiteUsageReader: AttentionReading {
           if let index = accountItems.firstIndex(where: { $0.kind == "quota_high" }) {
             let ranking = try db.rows(
               """
-              SELECT COALESCE(json_extract(k.metadata_json,'$.displayName'),json_extract(k.metadata_json,'$.principal'),a.key_id),SUM(CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END),COUNT(*),
-                COALESCE(SUM(a.usage_json IS NULL OR json_extract(a.usage_json,'$.completeness')!='complete'),0)
+              SELECT COALESCE(json_extract(k.metadata_json,'$.displayName'),json_extract(k.metadata_json,'$.principal'),a.key_id),SUM(CASE WHEN json_extract(a.usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL AND json_extract(a.usage_json,'$.svgInputTokens') IS NULL AND json_extract(a.usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END),COUNT(*),
+                COALESCE(SUM(a.usage_json IS NULL OR COALESCE(json_extract(a.usage_json,'$.priceCompleteness'),json_extract(a.usage_json,'$.completeness'))!='complete'),0)
               FROM attempts a LEFT JOIN managed_keys k ON k.id=a.key_id WHERE a.identity=? AND a.created_at_epoch>=? AND a.created_at_epoch<=?
-              GROUP BY a.key_id ORDER BY SUM(CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END) DESC,a.key_id LIMIT 5
+              GROUP BY a.key_id ORDER BY SUM(CASE WHEN json_extract(a.usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL AND json_extract(a.usage_json,'$.svgInputTokens') IS NULL AND json_extract(a.usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END) DESC,a.key_id LIMIT 5
               """,
               [.text(id), .number(now - AttentionThresholds.rankingWindowSeconds), .number(now)]
             ) { row in

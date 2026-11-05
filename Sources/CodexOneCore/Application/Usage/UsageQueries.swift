@@ -57,6 +57,10 @@ public struct UsageQuery: Sendable {
   }
 }
 public struct UsageMetrics: Sendable, Encodable {
+  public let svgInputTokens: Int64?
+  public let svgOutputTokens: Int64?
+  public let svgReasoningTokens: Int64?
+  public let priceCompleteness: UsageEvidence.PriceCompleteness?
   public let inputTokens: Int64?
   public let outputTokens: Int64?
   public let cachedTokens: Int64?
@@ -69,8 +73,14 @@ public struct UsageMetrics: Sendable, Encodable {
   public init(
     inputTokens: Int64?, outputTokens: Int64?, cachedTokens: Int64?, images: Int64?,
     estimatedMicros: Int64?, imageInputTokens: Int64? = nil, imageOutputTokens: Int64? = nil,
-    imageInputTextTokens: Int64? = nil, imageInputImageTokens: Int64? = nil
+    imageInputTextTokens: Int64? = nil, imageInputImageTokens: Int64? = nil,
+    svgInputTokens: Int64? = nil, svgOutputTokens: Int64? = nil, svgReasoningTokens: Int64? = nil,
+    priceCompleteness: UsageEvidence.PriceCompleteness? = nil
   ) {
+    self.svgInputTokens = svgInputTokens
+    self.svgOutputTokens = svgOutputTokens
+    self.svgReasoningTokens = svgReasoningTokens
+    self.priceCompleteness = priceCompleteness
     self.imageInputTokens = imageInputTokens
     self.imageOutputTokens = imageOutputTokens
     self.imageInputTextTokens = imageInputTextTokens
@@ -148,6 +158,8 @@ public struct UsageBucket: Sendable {
 }
 public struct UsageRow: Sendable {
   public enum Kind: String, Sendable { case admitted, rejected }
+  public let svgAuthorModel: String?
+  public let usageMissingReasons: [String]
   public let kind: Kind
   public let id: String
   public let atUnixSeconds: Int64
@@ -180,8 +192,11 @@ public struct UsageRow: Sendable {
     firstEventMilliseconds: Int64? = nil,
     totalMilliseconds: Int64? = nil, reasoningEffort: String? = nil,
     serviceTier: String? = nil, actualServiceTier: String? = nil,
-    requestMetadataRecorded: Bool = false
+    requestMetadataRecorded: Bool = false, svgAuthorModel: String? = nil,
+    usageMissingReasons: [String] = []
   ) {
+    self.svgAuthorModel = svgAuthorModel
+    self.usageMissingReasons = usageMissingReasons
     self.reasoningEffort = reasoningEffort
     self.serviceTier = serviceTier
     self.actualServiceTier = actualServiceTier

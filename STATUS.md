@@ -16,7 +16,7 @@ v0.26.5 起重置卡自动使用支持分钟级提前量和有界分钟重试，
 
 上游订阅 HTTP 大请求新增有界 zstd 上传与 `off` 回退；响应事件前 415 仅同账号明文重发一次。版本号不变，Linux/真实上游及内存发布门禁见[验证记录](docs/changes/upstream-zstd/verification.md)。
 
-共享正文预算放宽至 64 MiB、短时等待及默认开放 GIF/SVG（沿图片权限与模型范围）正在开发，尚未发布；首轮已拆分协议内容、Adapter 事实与执行风险，修复 Responses 输出 codec 耦合、用量扩展回传及 WS 队列容量隔离；仍待新的 Linux、混合负载与真实客户端验收。业务边界、验证和回退见[活动提案](docs/changes/protocol-alignment/proposal.md)。
+共享正文预算放宽至 64 MiB、短时等待及默认开放 GIF/SVG（沿图片权限与模型范围）正在开发，尚未发布；首轮已拆分协议内容、Adapter 事实与执行风险，修复 Responses 输出 codec 耦合、用量扩展回传及 WS 队列容量隔离；现补齐 SVG 作者计量及独立价格覆盖（开发 schema v12，升级需显式迁移，不能用 v0.26.9 原库回退）；仍待新的 Linux、混合负载与真实客户端验收。业务边界、验证和回退见[活动提案](docs/changes/protocol-alignment/proposal.md)。
 
 ## 管理界面与 Token 治理
 

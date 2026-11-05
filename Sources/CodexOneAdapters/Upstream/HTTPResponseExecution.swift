@@ -307,7 +307,8 @@ struct HTTPResponseExecution: Sendable {
                 {
                   try request.observeUsage(
                     event["response"], context: context, model: model,
-                    configuration: configuration.imageGeneration)
+                    configuration: configuration.imageGeneration, authorModels: configuration.models
+                  )
                 }
                 let observation = try ProviderObservation(
                   event: event, model: model, allowImages: request.requirements.imageModel != nil)

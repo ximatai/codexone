@@ -189,6 +189,8 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
   let observed = NativeImageObservation(result, model: model)
   #expect(observed.images == 1)
   #expect(observed.usage?.imageInputTokens == 2 && observed.usage?.imageOutputTokens == 3)
-  #expect(observed.usage?.completeness == .partial)
+  #expect(observed.usage?.completeness == .complete)
+  #expect(observed.usage?.svgInputTokens == 10 && observed.usage?.svgOutputTokens == 20)
+  #expect(observed.usage?.priceCompleteness == .partial)
   #expect(observed.usage?.estimatedMicros == 13)
 }

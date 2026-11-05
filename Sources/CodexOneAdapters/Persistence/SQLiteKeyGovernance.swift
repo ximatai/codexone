@@ -231,12 +231,12 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       """
       SELECT key_id,COALESCE(SUM(input_count),0)+COALESCE(SUM(output_count),0),COALESCE(SUM(missing),0)
       FROM (
-        SELECT key_id,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageInputTokens') ELSE json_extract(usage_json,'$.inputTokens') END AS input_count,
-          CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageOutputTokens') ELSE json_extract(usage_json,'$.outputTokens') END AS output_count,
+        SELECT key_id,COALESCE(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageInputTokens') ELSE json_extract(usage_json,'$.inputTokens') END,0)+COALESCE(json_extract(usage_json,'$.svgInputTokens'),0) AS input_count,
+          COALESCE(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageOutputTokens') ELSE json_extract(usage_json,'$.outputTokens') END,0)+COALESCE(json_extract(usage_json,'$.svgOutputTokens'),0) AS output_count,
           CASE WHEN usage_json IS NULL OR json_extract(usage_json,'$.completeness')!='complete' OR (json_extract(usage_json,'$.nativeImages')=1 AND (json_extract(usage_json,'$.imageInputTokens') IS NULL OR json_extract(usage_json,'$.imageOutputTokens') IS NULL)) THEN 1 ELSE 0 END AS missing
         FROM attempts WHERE \(keyPredicate)created_at_epoch>=? AND created_at_epoch<?
         UNION ALL
-        SELECT key_id,COALESCE(input_tokens,image_input_tokens),COALESCE(output_tokens,image_output_tokens),CASE WHEN completeness!='complete' OR usage_unknown=1 OR COALESCE(input_tokens,image_input_tokens) IS NULL OR COALESCE(output_tokens,image_output_tokens) IS NULL THEN 1 ELSE 0 END
+        SELECT key_id,COALESCE(input_tokens,image_input_tokens,0)+COALESCE(svg_input_tokens,0),COALESCE(output_tokens,image_output_tokens,0)+COALESCE(svg_output_tokens,0),CASE WHEN completeness!='complete' OR usage_unknown=1 OR COALESCE(input_tokens,image_input_tokens) IS NULL OR COALESCE(output_tokens,image_output_tokens) IS NULL THEN 1 ELSE 0 END
         FROM usage_daily WHERE \(keyPredicate)(day_epoch=? OR day_epoch=?)
       ) GROUP BY key_id
       """,

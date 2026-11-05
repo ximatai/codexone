@@ -108,7 +108,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='failed' ELSE 0 END),0),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state!='settled' ELSE 0 END),0),
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN
-            CASE WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
+            CASE WHEN json_extract(a.usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL AND json_extract(a.usage_json,'$.svgInputTokens') IS NULL AND json_extract(a.usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
           CASE WHEN MAX(a.created_at_epoch) IS NULL THEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)
             WHEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id) IS NULL THEN MAX(a.created_at_epoch)
             ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName'),
