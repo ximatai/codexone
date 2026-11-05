@@ -20,7 +20,10 @@ class MixedCapacityTests(unittest.TestCase):
         self.assertEqual(len(rows), 8)
         for row in rows:
             self.assertLess(len(row['b64_json']), 8*MIB)
-            self.assertGreater(len(base64.b64decode(row['b64_json'], validate=True)), 4*MIB)
+            artifact = base64.b64decode(row['b64_json'], validate=True)
+            self.assertGreater(len(artifact), 4*MIB)
+            self.assertTrue(artifact.startswith(b'GIF89a'))
+            self.assertTrue(artifact.endswith(b'\x00\x3b'))
 
     def test_unknown_cannot_disappear_or_change_owner(self):
         valid = [{'principal':'synthetic-mixed-0','state':'settled','count':9,'reserved':0,'complete':9},
