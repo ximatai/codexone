@@ -44,6 +44,8 @@ Responses 托管 image_generation 工具仍单独解析和计量，图片 token 
 
 离线迁移与备份见[Key 治理](key-governance.md)。合成协议检查与 Desktop/真实订阅兼容是不同证据；真实原生端点的字段、SSE 完成形状、用量及账号头要求须经部署后网关内验收。
 
+SVG 响应若携带非 null svg_usage，表示另有编写模型用量。当前仅保留已观测图片计数及估算的下界，完整度标记 partial，继续保留 unknown，不把编写用量当零或完整结清；原 svg_usage 随响应回传，单独编写 Token/费率映射仍待实际订阅证据对齐。
+
 ## 相关文档
 
 [文档导航](../README.md)

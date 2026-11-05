@@ -95,6 +95,8 @@
 
 上游 WS 超限的本地拒绝发生在准入前，不建立 attempt/预留，仅记录 `invalid_request` 拒绝诊断。超限单轮 HTTP 回退复用一次正常准入；上游明确 HTTP 413 在无输出/事件时按 U13 结算完整零用量（`providerRejectedBeforeOutput`），结果为 `invalid_request` 失败；不是 unknown，也不更新账号健康或冷却。早期1009的回退与预检回退使用同一账号、同一attempt。回退已发送后的取消、超时与不明确的传输失败仍沿用未知责任，不借大小预检推测未执行。
 
+SVG 响应若携带非 null svg_usage，表示另有编写模型用量。当前仅保留已观测图片计数及估算的下界，完整度标记 partial，继续保留 unknown，不把编写用量当零或完整结清；原 svg_usage 随响应回传，单独编写 Token/费率映射仍待实际订阅证据对齐。
+
 ## 相关文档
 
 [文档导航](../../README.md)

@@ -148,6 +148,10 @@ class Provider(BaseHTTPRequestHandler):
                 body = json.dumps(result).encode()
             if prompt == 'extended-sse': body = native_stream('generations')
             if prompt == 'extended-error': body = b'{"error":{"message":"synthetic"}}'
+            if prompt == 'svg-author-usage':
+                result = json.loads(native_body('synthetic'))
+                result['svg_usage'] = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
+                body = json.dumps(result).encode()
             self.send_response(status)
             self.send_header('Content-Type', 'text/event-stream' if prompt == 'extended-sse' else ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
                 if prompt.startswith('json-stream') else 'text/event-stream' if request.get('stream') else 'application/json')
@@ -273,6 +277,11 @@ def main():
                         assert json.loads(received).get('stream') is not True
                         assert sent_headers['accept'] == 'application/json'
                         assert ledger()[0] == 'settled'
+                    status, body, _ = request({'prompt':'svg-author-usage', 'output_format':'svg'})
+                    assert status == 200 and json.loads(body)['svg_usage']['output_tokens'] == 20
+                    state, usage, outcome = ledger()
+                    assert state == 'unknown' and usage['completeness'] == 'partial' and usage['imageOutputTokens'] == 3
+                    assert outcome['kind'] == 'succeeded'
                     before = upstream.calls; intents = count_intents()
                     for invalid in ({'output_format':'svg', 'svg':{'model':'synthetic-author'}},
                                     {'output_format':'gif', 'stream':True},

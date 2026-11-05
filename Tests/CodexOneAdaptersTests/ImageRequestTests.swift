@@ -172,3 +172,21 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
       configuration: config
     ).body == unknown)
 }
+
+@Test func svgAuthorUsageDoesNotBecomeCompleteImageOnlyAccounting() throws {
+  let model = try #require(syntheticImageConfiguration().models.first)
+  let result: JSONValue = .object([
+    "created": .number(1),
+    "data": .array([.object(["b64_json": .string(syntheticImagePNG.base64EncodedString())])]),
+    "usage": .object(["input_tokens": .number(2), "output_tokens": .number(3)]),
+    "svg_usage": .object([
+      "model": .string("synthetic-author"), "input_tokens": .number(10),
+      "output_tokens": .number(20),
+    ]),
+  ])
+  let observed = NativeImageObservation(result, model: model)
+  #expect(observed.images == 1)
+  #expect(observed.usage?.imageInputTokens == 2 && observed.usage?.imageOutputTokens == 3)
+  #expect(observed.usage?.completeness == .partial)
+  #expect(observed.usage?.estimatedMicros == 13)
+}

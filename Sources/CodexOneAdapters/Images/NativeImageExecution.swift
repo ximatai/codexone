@@ -291,6 +291,9 @@ struct NativeImageObservation {
       revision: revision, inputTokens: 0, outputTokens: 0, cachedTokens: 0,
       images: images, estimatedMicros: cost / 1_000_000 + (cost % 1_000_000 == 0 ? 0 : 1),
       completeness: input != nil && output != nil
+        // SVG author usage is additional to rendering. Until separately mapped, rendering
+        // counters and cost are a lower bound, never complete evidence for the operation.
+        && (document["svg_usage"] == nil || document["svg_usage"] == .null)
         && (document["status"] == nil
           || ["completed", "failed", "cancelled"].contains(document["status"]?.string ?? ""))
         ? .complete : .partial,
