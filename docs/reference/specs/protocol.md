@@ -228,6 +228,8 @@ Responses 所有入口统一回传修正：保留未知 usage 根成员及嵌套
 
 大小诊断只记录固定路径 `http`、`reject_native`、`reject_continuation`、`http_1009`、`reject_native_1009`、`reject_continuation_1009`、`indeterminate_1009`、`reject_ingress`、`reject_budget`，桶为 `at_most_16_mib`（≤16 MiB）、`16_to_24_mib`（>16 且 ≤24）、`24_to_32_mib`（>24 且 ≤32）、`over_32_mib`（>32）。1009 同时记录 `upstream_ws_close_code=1009`。大小诊断共用独立 16 条/60 秒预算，不记录正文、图片、精确字节数或会话内容。32 MiB ingress 保持，正文预算放宽至 64 MiB，HTTP 声明长度/累计正文及 WS 累计帧在对应拒绝处记录大小桶；预算记录被拒绝单个正文的桶。真实上游接受边界、HTTP 对这些大小的接受情况及真实客户端组合须发布前由维护者验收，本地 fake provider 成功不能证明真实接受。已读官方客户端对 413 的重试局限见 [源码核查](../compatibility.md#大请求错误的官方客户端源码核查)。
 
+连接级上游关闭由连接 owner 统一收尾：停止接纳新命令，各活动 lane 提交自己的错误后再关闭下游，不由首个 lane 提前取消其余错误发送。已排队但未派发的命令只归还资源；活动计数等待使用既有 10 秒期限，超时或下游已断开仍取消回收；取消后继续等待持久最终化，不以该期限强杀或丢弃账本责任。不改变 unknown、不自动重放。
+
 ## 相关文档
 
 [文档导航](../../README.md)

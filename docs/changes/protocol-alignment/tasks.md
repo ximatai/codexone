@@ -36,6 +36,8 @@
 
 ## 复盘后发布前补齐
 
+- [ ] 修复并验收[多 lane 连接关闭](lane-close.md)的错误交付竞态，保留未知责任及关闭期限。
+
 - [x] 拆分共享正文预算与每连接 WS 队列容量：共享保持 64 MiB，入站与请求调度队列各保持 48 MiB。
 - [x] 分离图片输入/输出校验，使 Responses 图片工具可接收真实合成 GIF/SVG 输出；参考图输入仍限 PNG/JPEG/WebP。
 - [x] 补齐 Responses 顶层及图片条目独立 svg_usage 的 partial/unknown 保护，保留已观察用量。

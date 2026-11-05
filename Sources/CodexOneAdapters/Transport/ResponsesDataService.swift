@@ -380,7 +380,7 @@ public struct ResponsesDataService: Service {
         defer { lanes.cancelAll() }
         lanes.addTask {
           await upstream.waitForClose()
-          try await activity.waitUntilIdle()
+          try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
           try Task.checkCancellation()
           throw WebSocketUpstreamClosed()
         }
@@ -395,7 +395,11 @@ public struct ResponsesDataService: Service {
             try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
             throw CancellationError()
           }
-          guard !upstream.isClosed else { throw WebSocketUpstreamClosed() }
+          guard !upstream.isClosed else {
+            body.release()
+            try await withExecutionDeadline(seconds: 10) { try await activity.waitUntilIdle() }
+            throw WebSocketUpstreamClosed()
+          }
           if try await handleWebSocketControl(
             body, upstream: upstream, downstream: downstream,
             headers: executor.protocolClientHeaders, rate: &controlRate,
@@ -494,8 +498,10 @@ public struct ResponsesDataService: Service {
                       try? await sendWebSocketError(
                         error, requestID: requestID, lane: lane, to: downstream)
                     }
-                    initialTurn?.start.close(WebSocketUpstreamClosed())
-                    throw WebSocketUpstreamClosed()
+                    // The connection owner ends the session only after every owned lane
+                    // has submitted its error. Waking the pool owner here cancels siblings.
+                    // Continue to release any queued, undispatched commands in this lane.
+                    continue
                   }
                   if let requested {
                     await executor.recordRejection(requested, requestID: requestID, error: error)
