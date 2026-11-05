@@ -23,8 +23,7 @@ extension HTTPResponseExecution {
       try await executeRouted(
         model: request.model, references: [], requestID: requestID, mode: .generation,
         turnState: try requestTurnState(headers: clientHeaders),
-        requirements: try .init(
-          route: .images, imageModel: request.model, imageAccountIDs: request.verifiedAccountIDs),
+        requirements: try .init(route: .images, imageModel: request.model),
         serviceTier: request.serviceTier
       ) { context, authorization in
         try await withProgressDeadline(budget: configuration.budget) { progress in
@@ -202,7 +201,7 @@ extension HTTPResponseExecution {
               context.observeActualServiceTier(requestMetadataValue(document?["service_tier"]))
               if let usage = observation?.usage { try context.observeUsage(usage) }
               if let document { try NativeImageResult.requireCompletion(document) }
-              if request.verifiedAccountIDs != nil {
+              if request.requiresNonStreamingOutput {
                 guard let document,
                   NativeImageDiagnostics.contentTypeToken(
                     response.headers.first(name: "content-type")) == "json"

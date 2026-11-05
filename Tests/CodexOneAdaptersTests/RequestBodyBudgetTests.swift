@@ -231,3 +231,21 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   next.release()
   #expect(budget.occupiedBytes == 0)
 }
+
+@Test func sharedBodyBudgetHoldsTwoMaximumRequestsAndQueuesTheThird() async throws {
+  let budget = RequestBodyBudget()
+  let first = budget.lease()
+  let second = budget.lease()
+  let third = budget.lease()
+  try first.reserve(RequestBodyLimits.maximumBytes)
+  try second.reserve(RequestBodyLimits.maximumBytes)
+  #expect(budget.occupiedBytes == 64 * 1024 * 1024)
+  let waiting = Task { try await third.reserveWaiting(RequestBodyLimits.maximumBytes) }
+  while budget.waitingCount == 0 { await Task.yield() }
+  first.release()
+  try await waiting.value
+  #expect(budget.occupiedBytes == 64 * 1024 * 1024)
+  second.release()
+  third.release()
+  #expect(budget.occupiedBytes == 0)
+}

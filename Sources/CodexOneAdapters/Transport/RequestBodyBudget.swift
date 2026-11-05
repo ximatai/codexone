@@ -5,7 +5,7 @@ import Synchronization
 enum RequestBodyLimits {
   static let maximumBytes = 32 * 1024 * 1024
   static let unreservedBytes = 8 * 1024 * 1024
-  static let budgetBytes = 48 * 1024 * 1024
+  static let budgetBytes = 64 * 1024 * 1024
 }
 
 final class RequestBodyBudget: Sendable {

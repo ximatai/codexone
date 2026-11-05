@@ -517,9 +517,6 @@ private func validateStrings(_ values: [String], maximum: Int = 256) throws {
 }
 func validateAdmission(_ value: ExecutionAdmission) throws {
   try value.executionRequirements.validate()
-  guard value.executionRequirements.allowsImageAccount(value.owner.identity) else {
-    throw ExecutionError.denied
-  }
   guard (value.references?.count ?? 0) <= 32 else { throw ExecutionError.invalidCommand }
   for reference in value.references ?? [] {
     try validateStrings([reference.type, reference.rawID])

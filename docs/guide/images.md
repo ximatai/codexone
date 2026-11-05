@@ -19,12 +19,14 @@
 
 `/v1` 和 `/backend-api/codex` 均提供 `POST /images/generations`、`POST /images/edits`，使用所选身份的 HTTP 上游 `/backend-api/codex/images/generations|edits`，不再改写为 Responses，也不因对话配置为 websocket 改变图片传输。JSON 正文原字节转发；读取 model/stream、扩展输出格式能力以及内联图片的安全边界，缺 model 时插入部署默认模型并重新序列化。模型必须在部署列表及 Key 有效 imageModels 中，否则 403 model_not_allowed，且不创建 intent 或派发。图片编辑不要求视觉对话权限。
 
-仅 `/v1/images/edits` 另外接受 multipart：image/image[] 文件变为 `images[].image_url` data URL，mask 变为 `{"image_url":...}`；n/partial_images/output_compression 为整数，stream 为布尔，其余文本保持字符串，包括未知字段。JSON 未知成员完整保留；图片根对象的 model/stream/output_format/images/mask/n/partial_images/output_compression/prompt_rewriter 若重复（含转义后的同名成员）返回 400 invalid_json，确保能力判断与提供者解析一致；不改变其他入口的 JSON 语义。尺寸、质量、背景、透明度、fidelity、普通格式的 n 等由提供者判定；网关不扇出 n，不抓取 URL，不托管图片，不支持 variations。参考图/mask 只接受内联 PNG/JPEG/WebP，保留容器、字节和单图像素校验，不在本地加工图片或验证提供者 mask 参数矩阵。
+仅 `/v1/images/edits` 另外接受 multipart：image/image[] 文件变为 `images[].image_url` data URL，mask 变为 `{"image_url":...}`；n/partial_images/output_compression 为整数，stream 为布尔，其余文本保持字符串，包括未知字段。JSON 未知成员完整保留；图片根对象的 model/stream/output_format/images/mask/n/partial_images/output_compression/prompt_rewriter/svg 若重复（含转义后的同名成员）返回 400 invalid_json，确保能力判断与提供者解析一致；不改变其他入口的 JSON 语义。尺寸、质量、背景、透明度、fidelity、普通格式的 n 等由提供者判定；网关不扇出 n，不抓取 URL，不托管图片，不支持 variations。参考图/mask 只接受内联 PNG/JPEG/WebP，保留容器、字节和单图像素校验，不在本地加工图片或验证提供者 mask 参数矩阵。
 
 
-扩展输出 GIF/SVG 必须先在实际订阅账号上验证，再在对应图片模型加入可信配置，例如 `"verifiedGenerationOutputFormatsByAccount": {"synthetic-account": ["gif", "svg"]}`。扩展 generation 在提交前必须收到完整 JSON、非负 created、所有图片非空规范 base64，空结果、错误对象、截断或媒体类型失配返回 502，先保留已观察用量，不重放。每个模型最多 64 个账号，账号使用托管账号 ID（单身份使用 identity）；只接受 gif/svg，空列表、非法账号 ID 和未知字段拒绝。未配置时 400 `image_format_not_verified`，提示改用 PNG/JPEG/WebP 或联系维护者验证，不创建 intent/派发。配置确认仅限制候选账号，不授予 Key 权限，也不承诺账号当前可用；已确认账号不可用时沿原账号可用性错误，不借用未确认账号。
+GIF/SVG 不需要单独开关或逐账号确认配置，跟随现有 `imageGeneration`、Key 图片权限及有效图片模型范围。模型未启用或 Key 未获图片授权时仍拒绝；格式实际可用性由所选账号的提供者判定，网关不自动换模型或重放。GIF/SVG 原生请求使用非流式 JSON 上游，客户端必须省略 stream 或设 false，不带 partial_images、mask、output_compression；SVG 仅 generation、n=1（或省略）、无 prompt_rewriter，否则 400 `unsupported_image_format_combination`。普通格式保持既有传输，其他未知格式沿 P27 交给提供者判定。
 
-确认范围仅限原生 generation，不授予 edits 或 Responses 图片工具相同能力；这两个入口的扩展格式统一以 image_format_not_verified 拒绝。GIF/SVG 使用非流式 JSON 上游；客户端必须省略 stream 或设置 false，不能带 partial_images、mask 或 output_compression。SVG 只允许 generation、n=1（或省略）且无 prompt_rewriter；不符合时 400 `unsupported_image_format_combination`。其他字段仍透传，普通 PNG/JPEG/WebP 生成继续采用 SSE 上游并为非流式客户端聚合结果。未知扩展输出格式明确提示未验证。这里指输出格式，参考图/mask 的输入格式仍为 PNG/JPEG/WebP。公开 API 支持某格式不代表订阅内部端点或某个账号支持；本地合成验证仅证明路由、传输与结算，不应据此填写真实账号确认。移除配置并重启可撤销确认；回退旧版前须删除新增字段。
+普通 SVG 的顶层 model 仍使用图片模型；上游采用默认 SVG 编写模型，不另发一次由网关选择的模型调用。显式非 null `svg` 对象（含 `svg.model` 编写模型选择）暂返回 400 `unsupported_svg_model_selection`，不派发。依据为[官方 Images 文档](https://developers.openai.com/api/reference/resources/images/methods/generate)与[固定版本 Codex imagegen 参数](https://github.com/openai/codex/blob/e7f32cf1928a35a9232a633a51c2a03b5a7e2c72/codex-rs/ext/image-generation/src/tool.rs)：当前开源客户端工具支持 gif，但不暴露 svg 编写模型选择；这不证明所有 Desktop 版本行为相同，若实际客户端开始携带该参数须重新对齐授权。
+
+GIF/SVG 原生输出在提交前必须收到 JSON 媒体类型、完整对象、非负 created 和所有图片非空规范 base64；空结果、错误对象、截断或媒体失配返回 502，先保留已观察用量，不重放。这里是输出格式，参考图/mask 输入仍限 PNG/JPEG/WebP。公开 API 与合成测试不代表真实订阅端点的格式可用性，须另做受控客户端/账号验收。
 
 客户端标识按[P28](../reference/specs/protocol.md#p28客户端标识与连接容量)统一：原生请求保留标识，非原生使用私有clientFingerprint的Codex CLI标识；session_id、x-codex-turn-metadata、x-codex-image-turn-id等沿Responses共用允许列表转发；账号 Bearer 与 chatgpt-account-id 由网关注入，不采用下游账号头。返回 x-codex-imagegen-request-id（包括提供者错误）及网关 x-request-id；错误 envelope 另含 request_id。提供者错误按 P27 脱敏/映射，429 触发账号冷却。
 
@@ -36,7 +38,7 @@
 
 Responses 托管 image_generation 工具仍单独解析和计量，图片 token 不加到宿主 token；宿主与工具费率分别估算后相加。工具模型缺省取部署默认值，须在 Key 有效 imageModels 内，对话模型须经 Key 授权并声明 imageGeneration。含图历史/图片工具可与 compact 和流式压缩组合；历史 image_generation_call 的 ID 仍须同主体/身份归属验证。图片内容与 prompt 不写入核心库。
 
-每请求最多 32 MiB 正文；参考图最多 16 张，单图解码最多 16 MiB，参考图/mask 合计最多 24 MiB，单图最多 50,000,000 像素。multipart 转为 base64 后会增加正文大小，但仍受已验证图片总字节限制。反代 client_max_body_size 使用 33m。共享原始正文预算 48 MiB，超过 8 MiB 时 HTTP/WS 在缓冲前取得租约；HTTP 已知长度与 WS 首帧的大正文最多等待 5 秒，全局最多 4 个 FIFO 等待者；WS 暂停主动读取，在途暂存额外最多 256 KiB，超出提前拒绝。队满、超时或增量正文容量不足时 HTTP 503 capacity_exhausted、Retry-After: 1，WS error 丢弃该消息并保持连接；chunked/分片增长及辅助控制正文仍立即申请、不等待。读取结束、派发完成、失败、断开和超时归还租约；预算不代表进程 RSS 上限。
+每请求最多 32 MiB 正文；参考图最多 16 张，单图解码最多 16 MiB，参考图/mask 合计最多 24 MiB，单图最多 50,000,000 像素。multipart 转为 base64 后会增加正文大小，但仍受已验证图片总字节限制。反代 client_max_body_size 使用 33m。共享原始正文预算 64 MiB（可容纳两个最大正文），超过 8 MiB 时 HTTP/WS 在缓冲前取得租约；HTTP 已知长度与 WS 首帧的大正文最多等待 5 秒，全局最多 4 个 FIFO 等待者；WS 暂停主动读取，在途暂存额外最多 256 KiB，超出提前拒绝。队满、超时或增量正文容量不足时 HTTP 503 capacity_exhausted、Retry-After: 1，WS error 丢弃该消息并保持连接；chunked/分片增长及辅助控制正文仍立即申请、不等待。读取结束、派发完成、失败、断开和超时归还租约；预算不代表进程 RSS 上限。
 
 普通数据连接由dataConnections配置（默认128，8—1024），另有固定16条控制余量，WS 队列与任务限额仍见 P13/P14。HTTP 上传期限 10 秒，执行总期限默认 600 秒，可配置 1—1800 秒；首响应/进度空闲默认 30/60 秒，写入期限 5 秒。Responses 图片工具的上游单事件 8 MiB、总事件 32 MiB 上限保持。
 

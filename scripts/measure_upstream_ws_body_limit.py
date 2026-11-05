@@ -51,8 +51,8 @@ def main():
     worker.start()
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-body-rss-') as temp:
-            for name, size, concurrency in (('17 MiB', 17, 1), ('32 MiB', 32, 1), ('2 x 24 MiB', 24, 2)):
-                root = Path(temp) / str(size)
+            for name, size, concurrency in (('17 MiB', 17, 1), ('32 MiB', 32, 1), ('2 x 32 MiB', 32, 2)):
+                root = Path(temp) / f'{size}-{concurrency}'
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, 'responses')
@@ -86,7 +86,7 @@ def main():
                         with server.guard:
                             assert server.guard.wait_for(lambda: len(server.calls) == concurrency, timeout=40), 'Missing held HTTP fallback'
                         assert all(path == 'http' for path, _, _ in server.calls)
-                        # While both leases are owned, another 9 MiB cannot fit the 48 MiB budget.
+                        # While both leases are owned, another 9 MiB cannot fit the 64 MiB budget.
                         if concurrency == 2:
                             refused_headers(ports['data'], 9 * MIB, 503, 'capacity_exhausted')
                         time.sleep(.5)

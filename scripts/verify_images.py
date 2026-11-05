@@ -226,8 +226,7 @@ def main():
                     'models': [{'id': 'synthetic-host', 'imageGeneration': True, 'visionInput': True,
                         'inputMicrosPerMillion': 1000000, 'outputMicrosPerMillion': 1000000}],
                     'imageGeneration': {'defaultModel': 'synthetic-image', 'models': [{'id': 'synthetic-image',
-                        'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000,
-                        'verifiedGenerationOutputFormatsByAccount': {'synthetic-account': ['gif', 'svg']}}]}}))
+                        'inputMicrosPerMillion': 2000000, 'outputMicrosPerMillion': 3000000}]}}))
                 config.chmod(0o600)
                 process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin,
                     web_directory=(repository / 'web/dist').resolve() if args.browser else None)
@@ -275,7 +274,7 @@ def main():
                         assert sent_headers['accept'] == 'application/json'
                         assert ledger()[0] == 'settled'
                     before = upstream.calls; intents = count_intents()
-                    for invalid in ({'output_format':'unconfirmed-future'},
+                    for invalid in ({'output_format':'svg', 'svg':{'model':'synthetic-author'}},
                                     {'output_format':'gif', 'stream':True},
                                     {'output_format':'svg', 'n':2}):
                         status, body, _ = request(invalid)
@@ -298,10 +297,16 @@ def main():
                                 assert usage['imageOutputTokens'] == 3
                     before = upstream.calls; intents = count_intents()
                     status, _, _ = request({'model':'synthetic-host','input':'synthetic',
-                        'tools':[{'type':'image_generation', 'output_format':'gif'}]}, '/v1/responses', name='both')
+                        'tools':[{'type':'image_generation', 'output_format':'svg', 'svg':{'model':'synthetic-author'}}]}, '/v1/responses', name='both')
                     assert status == 400 and upstream.calls == before and count_intents() == intents
-                    status, _, _ = request({'output_format':'gif'}, '/v1/images/edits')
-                    assert status == 400 and upstream.calls == before and count_intents() == intents
+                    for output_format in ('gif', 'svg'):
+                        status, _, _ = request({'output_format':output_format}, name='chat')
+                        assert status == 403 and upstream.calls == before and count_intents() == intents
+                    assert request({'output_format':'gif'}, '/v1/images/edits')[0] == 200
+                    assert ledger()[0] == 'settled'
+                    assert request({'model':'synthetic-host','input':'synthetic',
+                        'tools':[{'type':'image_generation', 'output_format':'gif'}]}, '/v1/responses', name='both')[0] == 200
+                    assert ledger()[0] == 'settled'
                     client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
                         'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
                         'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
@@ -496,15 +501,15 @@ def main():
                         assert request({'prompt':'released'})[0] == 200
                         assert upstream.calls == before + 2
                         upstream.release.set()
-                    # Reserve 32 of 48 MiB before the native Images body is complete. HTTP
+                    # Reserve two 32 MiB bodies to fill the 64 MiB budget before upload. HTTP
                     # and WS readers share this budget, and rejection must precede intent/dispatch.
                     reservation_header = ('POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
                         + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nContent-Length: 33554432\r\n\r\n').encode()
                     large_native = {'model':'synthetic-image', 'prompt':'synthetic', 'future':'x' * (20 * 1024 * 1024)}
                     before = upstream.calls; intents = count_intents()
-                    held = socket.create_connection(('127.0.0.1', port), timeout=3)
+                    holders = [socket.create_connection(('127.0.0.1', port), timeout=3) for _ in range(2)]
                     try:
-                        held.sendall(reservation_header + b'{"model":')
+                        for held in holders: held.sendall(reservation_header + b'{"model":')
                         time.sleep(.2)
                         with socket.create_connection(('127.0.0.1', port), timeout=10) as exhausted:
                             exhausted.sendall(reservation_header)
@@ -514,19 +519,18 @@ def main():
                             assert response.status == 503 and response.getheader('Retry-After') == '1'
                             assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
                         assert upstream.calls == before and count_intents() == intents
-                        chunked = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
-                        try:
-                            chunked.request('POST', '/backend-api/codex/images/generations', iter([b' ' * (1024 * 1024)] * 17),
-                                {'Authorization':'Bearer ' + policies['images']['secret'], 'Content-Type':'application/json',
-                                 'Transfer-Encoding':'chunked'}, encode_chunked=True)
-                            response = chunked.getresponse()
+                        with socket.create_connection(('127.0.0.1', port), timeout=10) as chunked:
+                            chunked.sendall(('POST /backend-api/codex/images/generations HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer '
+                                + policies['images']['secret'] + '\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n').encode())
+                            # Stop immediately after crossing the unreserved threshold, then read
+                            # the early rejection instead of uploading more into a closed socket.
+                            chunked.sendall(b'800000\r\n' + b' ' * (8 * 1024 * 1024) + b'\r\n1\r\nx\r\n')
+                            response = http.client.HTTPResponse(chunked); response.begin()
                             assert response.status == 503 and response.getheader('Retry-After') == '1'
                             assert json.loads(response.read())['error']['code'] == 'capacity_exhausted'
-                        finally:
-                            chunked.close()
                         assert upstream.calls == before and count_intents() == intents
                         if transport == 'websocket':
-                            held.sendall(b' ')
+                            for held in holders: held.sendall(b' ')
                             with dial(port, token=policies['both']['secret'], timeout=15) as sock:
                                 send(sock, b' ' * (17 * 1024 * 1024), masked=True, maximum_bytes=18 * 1024 * 1024)
                                 opcode, data = receive(sock)
@@ -543,7 +547,7 @@ def main():
                                     if event['type'] == 'response.completed': break
                                 ledger()
                     finally:
-                        held.close()
+                        for held in holders: held.close()
                     # Partial upload disconnect releases the full Content-Length reservation.
                     time.sleep(.2)
                     before = upstream.calls; intents = count_intents()
@@ -551,8 +555,8 @@ def main():
                     assert ledger()[0] == 'settled'
                     assert upstream.calls == before + 1 and count_intents() == intents + 1
                     # A queued HTTP upload proceeds once the incomplete holder disconnects.
-                    held = socket.create_connection(('127.0.0.1', port), timeout=10)
-                    held.sendall(reservation_header + b'{')
+                    holders = [socket.create_connection(('127.0.0.1', port), timeout=10) for _ in range(2)]
+                    for held in holders: held.sendall(reservation_header + b'{')
                     time.sleep(.15)
                     for _ in range(4):
                         abandoned = socket.create_connection(('127.0.0.1', port), timeout=10)
@@ -564,7 +568,7 @@ def main():
                         waiting = queued.submit(request, large_native)
                         time.sleep(.25)
                         assert not waiting.done()
-                        held.close()
+                        for held in holders: held.close()
                         assert waiting.result(timeout=15)[0] == 200
                     assert ledger()[0] == 'settled'
                     before = upstream.calls; intents = count_intents()

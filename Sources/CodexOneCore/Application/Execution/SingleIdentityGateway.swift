@@ -53,9 +53,7 @@ public struct SingleIdentityGateway: Sendable {
     let allowed =
       policy.capabilities?.allows(model: model, requirements: requirements)
       ?? (requirements == .init())
-    guard allowed, policy.models.contains(model), references.count <= 32,
-      requirements.allowsImageAccount(policy.owner.identity)
-    else {
+    guard allowed, policy.models.contains(model), references.count <= 32 else {
       throw ExecutionError.denied
     }
     for reference in references {
