@@ -44,6 +44,8 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 ## 已知限制
 
+订阅参数拒绝诊断正在修正：新增准入前 `unsupported_backend_parameter/400` 按 invalid_request 统计，私有日志使用固定字段类别定位原因，不记录参数值，不修改公开错误或协议限制。验证进展见[任务](docs/changes/parameter-rejection-diagnostics/tasks.md)，尚未发布。
+
 - 单节点、单管理员；容器目标为 Linux amd64 Docker Engine。源码开发支持 Linux、macOS 与 Windows（WSL2）。
 - 多账号选择机制已有实现，完整多账号路由仍需独立验收；用量和费用可为部分或未知，不用于对外结算或绝对封顶。
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。

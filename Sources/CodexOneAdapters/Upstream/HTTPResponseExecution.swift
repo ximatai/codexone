@@ -378,9 +378,19 @@ struct HTTPResponseExecution: Sendable {
     let model = request.flatMap { request in
       configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
     }
+    // This known local refusal is not an unknown execution. Keep the execution-time
+    // mapping unchanged; the diagnostics store separately excludes committed intents.
+    let failure =
+      if let mapped = error as? GatewayProtocolError,
+        mapped.status == 400, mapped.code == "unsupported_backend_parameter"
+      {
+        ExecutionFailure.invalidRequest
+      } else {
+        executionFailure(error)
+      }
     try? await diagnostics.recordRejection(
       requestID: requestID, keyID: currentKeyID,
-      model: model, mode: request?.mode ?? .generation, failure: executionFailure(error))
+      model: model, mode: request?.mode ?? .generation, failure: failure)
   }
 
 }
