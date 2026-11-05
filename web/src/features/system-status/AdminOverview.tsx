@@ -1,3 +1,5 @@
+import { overviewQuery } from "./overview-source";
+import { AvailabilitySummary } from "./AvailabilitySummary";
 import { fetchStorage } from "./storage-api";
 import { useOverviewLive } from "./useOverviewLive";
 import { fetchSystemStatus } from "./api";
@@ -115,36 +117,51 @@ export function AdminOverview() {
   const overlay = !!owner.session && params.get("storage") === "details";
   const protocolOverlay =
     !!owner.session && params.get("protocol") === "details";
-  const system = useQuery({
-    queryKey: ["overview", "system"],
-    queryFn: ({ signal }) => fetchSystemStatus(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
-  const accounts = useQuery({
-    queryKey: ["overview", "accounts"],
-    queryFn: ({ signal }) => fetchAccounts(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
-  const storage = useQuery({
-    queryKey: ["overview", "storage"],
-    queryFn: ({ signal }) => fetchStorage(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
-  const attention = useQuery({
-    queryKey: attentionQueryKey,
-    queryFn: ({ signal }) => fetchAttention(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
-  const headroom = useQuery({
-    queryKey: ["overview", "headroom"],
-    queryFn: ({ signal }) => fetchHeadroom(signal),
-    enabled: !!owner.session,
-    ...polling,
-  });
+  const system = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "system"],
+      queryFn: ({ signal }) => fetchSystemStatus(signal),
+      enabled: !!owner.session,
+      ...polling,
+    }),
+    live?.sources.system,
+  );
+  const accounts = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "accounts"],
+      queryFn: ({ signal }) => fetchAccounts(signal),
+      enabled: !!owner.session,
+      ...polling,
+    }),
+    live?.sources.accounts,
+  );
+  const storage = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "storage"],
+      queryFn: ({ signal }) => fetchStorage(signal),
+      enabled: !!owner.session,
+      ...polling,
+    }),
+    live?.sources.storage,
+  );
+  const attention = overviewQuery(
+    useQuery({
+      queryKey: attentionQueryKey,
+      queryFn: ({ signal }) => fetchAttention(signal),
+      enabled: !!owner.session,
+      ...polling,
+    }),
+    live?.sources.attention,
+  );
+  const headroom = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "headroom"],
+      queryFn: ({ signal }) => fetchHeadroom(signal),
+      enabled: !!owner.session,
+      ...polling,
+    }),
+    live?.sources.headroom,
+  );
   const unauthorized = [
     accounts.error,
     storage.error,
@@ -155,13 +172,14 @@ export function AdminOverview() {
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const available = accounts.data?.filter(
+  const eligibleAccounts = accounts.data?.filter(
     (account) =>
       account.mode === "enabled" &&
       account.authorization === "ready" &&
       !account.observability?.health.authenticationRejected &&
       !account.observability?.health.cooldownCount,
-  ).length;
+  );
+  const available = eligibleAccounts?.length;
   const abnormal = accounts.data?.filter(
     (account) =>
       account.authorization !== "ready" ||
@@ -192,6 +210,19 @@ export function AdminOverview() {
           </Alert>
         )}
         <ActivityOverview
+          summary={
+            <AvailabilitySummary
+              ready={system.data?.ready}
+              unreadable={[system, accounts, headroom, storage].some(
+                (query) => query.isError,
+              )}
+              accountCount={accounts.data?.length}
+              eligibleIDs={eligibleAccounts?.map((account) => account.id)}
+              accountHeadroom={headroom.data?.accounts}
+              storageAllowed={storage.data?.admissionAllowed}
+              capacities={headroom.data?.capacities}
+            />
+          }
           refresh={refresh}
           live={live}
           accounts={accounts.data}
@@ -234,6 +265,12 @@ export function AdminOverview() {
               <Paper withBorder p="md">
                 <Title order={3} size="h4" mb="md">
                   订阅额度
+                  {accounts.isError && (
+                    <Text component="span" size="xs" c="orange">
+                      {" "}
+                      · 快照已陈旧
+                    </Text>
+                  )}
                 </Title>
                 {accounts.isPending && !accounts.isFetched && (
                   <Skeleton h={160} />
@@ -341,7 +378,10 @@ export function AdminOverview() {
                       value: `${available ?? "—"} 可用 · ${accounts.data?.filter((a) => a.mode === "disabled").length ?? "—"} 禁用 · ${abnormal ?? "—"} 授权异常`,
                       to: "/accounts",
                       good:
-                        available != null && available > 0 && abnormal === 0,
+                        !accounts.isError &&
+                        available != null &&
+                        available > 0 &&
+                        abnormal === 0,
                     },
                     {
                       label: "存储与准入",
@@ -351,7 +391,8 @@ export function AdminOverview() {
                           : "暂停准入"
                         : "不可用",
                       to: "/?storage=details",
-                      good: !!storage.data?.admissionAllowed,
+                      good:
+                        !storage.isError && !!storage.data?.admissionAllowed,
                     },
                     {
                       label: "可选工作",
@@ -361,7 +402,8 @@ export function AdminOverview() {
                           : "可选工作暂停"
                         : "不可用",
                       to: "/?storage=details",
-                      good: !!storage.data?.optionalWorkAllowed,
+                      good:
+                        !storage.isError && !!storage.data?.optionalWorkAllowed,
                     },
                     {
                       label: "最近备份",

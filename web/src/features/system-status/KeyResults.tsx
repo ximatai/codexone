@@ -62,7 +62,10 @@ export function failureLink(row: KeySummary, report: KeySummaryReport) {
 export function KeyResults({
   query,
 }: {
-  query: UseQueryResult<KeySummaryReport, Error>;
+  query: Pick<
+    UseQueryResult<KeySummaryReport, Error>,
+    "data" | "isError" | "isPending" | "dataUpdatedAt" | "refetch"
+  >;
 }) {
   const [detail, setDetail] = useState<{
     row: KeySummary;

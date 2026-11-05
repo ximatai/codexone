@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "../../shared/schema";
 import { useManagementSession } from "../../shared/session";
@@ -46,6 +52,10 @@ const clientsSchema = z
   .max(1024);
 export type LiveClients = z.infer<typeof clientsSchema>;
 export type Freshness = z.infer<typeof section>;
+const queryKey = (name: string) => [
+  "overview",
+  name === "inFlight" ? "in-flight" : name,
+];
 function parse(name: string, value: unknown): unknown {
   switch (name) {
     case "daily":
@@ -84,6 +94,8 @@ export function useOverviewLive(active: boolean) {
   const [recent, setRecent] = useState<z.infer<typeof flight>["rows"]>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
+  const [restart, setRestart] = useState(0);
+  const previousEpoch = useRef("");
   const [manualBusy, setManualBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const transportGeneration = useRef(0);
@@ -242,6 +254,12 @@ export function useOverviewLive(active: boolean) {
             epoch = frame.epoch;
             sequence = frame.sequence;
             if (!snapshot) {
+              if (
+                previousEpoch.current &&
+                previousEpoch.current !== frame.epoch
+              )
+                setRestart((value) => value + 1);
+              previousEpoch.current = frame.epoch;
               snapshot = true;
               clearTimeout(timeout);
               setReset((value) => value + 1);
@@ -321,25 +339,77 @@ export function useOverviewLive(active: boolean) {
     setManualBusy(false);
     setTransportRevision((value) => value + 1);
   }
-  const stale = Object.entries(sources).filter(
-    ([name, source]) =>
-      source.freshness !== "fresh" ||
-      source.lastSuccessAt == null ||
-      clock / 1000 - source.lastSuccessAt >
-        (name === "storage"
-          ? 6
-          : ["accounts", "attention"].includes(name)
-            ? 45
-            : 15),
+  const cache = client.getQueryCache();
+  const subscribe = useCallback(
+    (notify: () => void) => cache.subscribe(notify),
+    [cache],
+  );
+  const readHTTP = useCallback(
+    () =>
+      JSON.stringify(
+        names.map((name) => {
+          const state = client.getQueryState(queryKey(name));
+          return [name, state?.dataUpdatedAt ?? 0, state?.status ?? "pending"];
+        }),
+      ),
+    [client],
+  );
+  const httpState = useSyncExternalStore(subscribe, readHTTP);
+  const observed: Record<string, Freshness> =
+    mode === "live"
+      ? sources
+      : Object.fromEntries(
+          (JSON.parse(httpState) as [string, number, string][])
+            .filter(([, updated, status]) => updated > 0 || status === "error")
+            .map(([name, updated, status]) => [
+              name,
+              {
+                version: 0,
+                sampledAtUnixSeconds: updated / 1000,
+                lastSuccessAt: updated ? updated / 1000 : null,
+                freshness:
+                  status === "error"
+                    ? updated
+                      ? "stale"
+                      : "unavailable"
+                    : "fresh",
+                code: status === "error" ? "source_unavailable" : null,
+              },
+            ]),
+        );
+  const displayed = Object.fromEntries(
+    Object.entries(observed).map(([name, source]) => {
+      const limit =
+        mode !== "live"
+          ? 45
+          : name === "storage"
+            ? 6
+            : ["accounts", "attention"].includes(name)
+              ? 45
+              : 15;
+      return [
+        name,
+        source.freshness === "fresh" &&
+        source.lastSuccessAt != null &&
+        clock / 1000 - source.lastSuccessAt > limit
+          ? { ...source, freshness: "stale" as const }
+          : source,
+      ];
+    }),
+  );
+  const stale = Object.entries(displayed).filter(
+    ([, source]) =>
+      source.freshness !== "fresh" || source.lastSuccessAt == null,
   );
   return {
     failure,
     mode,
-    sources,
+    sources: displayed,
     clients,
     recent,
     overflow,
     reset,
+    restart,
     stale,
     manualRefresh,
   };

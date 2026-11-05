@@ -21,7 +21,10 @@ export function SystemOverview({
   shared,
 }: {
   compact?: boolean;
-  shared?: UseQueryResult<SystemStatus, Error>;
+  shared?: Pick<
+    UseQueryResult<SystemStatus, Error>,
+    "data" | "isError" | "refetch"
+  >;
 }) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [stale, setStale] = useState(false);

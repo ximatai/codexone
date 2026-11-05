@@ -24,7 +24,7 @@ export function CapacityPanel({
   mergedAccounts = false,
   mergedMetrics = false,
 }: {
-  query: UseQueryResult<Headroom, Error>;
+  query: Pick<UseQueryResult<Headroom, Error>, "data" | "isError">;
   accounts?: readonly AccountName[];
   mergedAccounts?: boolean;
   mergedMetrics?: boolean;

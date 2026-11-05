@@ -7,16 +7,22 @@ const backupSchema = z.object({
 });
 export async function fetchStorage(
   signal: AbortSignal,
-): Promise<
-  Record<string, unknown> & { backup?: z.infer<typeof backupSchema> }
-> {
+): Promise<ReturnType<typeof parseStorage>> {
   const value = (await request("/api/runtime/storage", { signal })) as Record<
     string,
     unknown
   >;
   return parseStorage(value);
 }
-export function parseStorage(value: Record<string, unknown>) {
+export function parseStorage(value: Record<string, unknown>): Record<
+  string,
+  unknown
+> & {
+  admissionAllowed: boolean;
+  optionalWorkAllowed: boolean;
+  pressure: string;
+  backup?: z.infer<typeof backupSchema>;
+} {
   if (
     typeof value.admissionAllowed !== "boolean" ||
     typeof value.optionalWorkAllowed !== "boolean" ||
@@ -25,6 +31,9 @@ export function parseStorage(value: Record<string, unknown>) {
     throw new Error("invalid storage response");
   return {
     ...value,
+    admissionAllowed: value.admissionAllowed,
+    optionalWorkAllowed: value.optionalWorkAllowed,
+    pressure: value.pressure,
     backup: value.backup == null ? undefined : backupSchema.parse(value.backup),
   };
 }

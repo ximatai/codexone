@@ -1,3 +1,6 @@
+import { overviewQuery } from "./overview-source";
+import { RequestWatch } from "./RequestWatch";
+import type { FlightRow } from "./round2-api";
 import type { useOverviewLive } from "./useOverviewLive";
 import { KeyName } from "../../shared/KeyName";
 import {
@@ -94,7 +97,9 @@ export function ActivityOverview({
   accounts = [],
   capacities,
   live,
+  summary,
 }: {
+  summary?: ReactNode;
   live?: ReturnType<typeof useOverviewLive>;
   refresh?: ReturnType<typeof useOverviewRefresh>;
   extraQueries?: {
@@ -112,6 +117,10 @@ export function ActivityOverview({
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const control = refresh ?? localRefresh;
+  const [selection, setSelection] = useState<{
+    row: FlightRow;
+    revision: number;
+  } | null>(null);
   const options = {
     enabled: !!owner.session,
     refetchInterval: control.interval,
@@ -119,22 +128,31 @@ export function ActivityOverview({
     refetchOnWindowFocus: control.active && live?.mode !== "live",
     staleTime: 15000,
   };
-  const daily = useQuery({
-    queryKey: ["overview", "daily"],
-    queryFn: ({ signal }) => fetchDaily(signal),
-    ...options,
-  });
-  const flight = useQuery({
-    queryKey: ["overview", "in-flight"],
-    queryFn: ({ signal }) => fetchInFlight(signal),
-    ...options,
-  });
+  const daily = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "daily"],
+      queryFn: ({ signal }) => fetchDaily(signal),
+      ...options,
+    }),
+    live?.sources.daily,
+  );
+  const flight = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "in-flight"],
+      queryFn: ({ signal }) => fetchInFlight(signal),
+      ...options,
+    }),
+    live?.sources.inFlight,
+  );
   // All overview snapshots share the same pause and refresh cadence.
-  const keySummary = useQuery({
-    queryKey: ["overview", "keys"],
-    queryFn: ({ signal }) => fetchKeySummary(signal),
-    ...options,
-  });
+  const keySummary = overviewQuery(
+    useQuery({
+      queryKey: ["overview", "keys"],
+      queryFn: ({ signal }) => fetchKeySummary(signal),
+      ...options,
+    }),
+    live?.sources.keys,
+  );
   const queries = [daily, flight, keySummary];
   const allQueries = [
     ...queries.map((query, index) => ({
@@ -258,6 +276,7 @@ export function ActivityOverview({
           </details>
         </div>
       )}
+      {summary}
       {attention}
       {!live && failedSources.length > 0 && (
         <ErrorState retry={retrySources}>{readFailure}</ErrorState>
@@ -276,6 +295,21 @@ export function ActivityOverview({
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
           <KeyResults query={keySummary} />
+          <RequestWatch
+            key={live?.restart ?? 0}
+            active={
+              live?.mode === "live" &&
+              control.active &&
+              live.sources.inFlight?.freshness === "fresh"
+            }
+            rows={[
+              ...(flight.data ?? []),
+              ...(live?.mode === "live" ? live.recent : []),
+            ]}
+            keys={keySummary.data?.keys ?? []}
+            selection={selection}
+            clearSelection={() => setSelection(null)}
+          />
           <Paper withBorder p="md">
             <Group justify="space-between" mb="xs">
               <Title order={3} size="h4">
@@ -312,6 +346,15 @@ export function ActivityOverview({
                     render: (row) => (
                       <Stack gap={2}>
                         <KeyName {...row} />
+                        <Button
+                          size="compact-xs"
+                          variant="subtle"
+                          onClick={() =>
+                            setSelection({ row, revision: Date.now() })
+                          }
+                        >
+                          固定观察此请求
+                        </Button>
                         {row.outcome && (
                           <Text size="xs" c="dimmed">
                             最近结束 ·{" "}
@@ -426,8 +469,11 @@ export function ActivityOverview({
           {live?.mode === "live" && (
             <Paper withBorder p="md">
               <Title order={3} size="h4">
-                已连接客户端
+                持续连接
               </Title>
+              <Text size="xs" c="dimmed">
+                仅统计数据 WebSocket，按 Key 汇总；HTTP 调用请查看请求列表。
+              </Text>
               <DataTable
                 animate
                 rows={live.clients}
@@ -438,12 +484,22 @@ export function ActivityOverview({
                   {
                     id: "key",
                     title: "Key",
-                    render: (row) =>
-                      row.displayName ??
-                      keySummary.data?.keys.find(
+                    render: (row) => {
+                      const key = keySummary.data?.keys.find(
                         (key) => key.keyID === row.keyID,
-                      )?.displayName ??
-                      "未命名 Key",
+                      );
+                      return (
+                        <Anchor
+                          component={Link}
+                          to={`/keys?target=${encodeURIComponent(row.keyID)}`}
+                        >
+                          <KeyName
+                            displayName={row.displayName ?? key?.displayName}
+                            principal={key?.principal ?? row.keyID.slice(-8)}
+                          />
+                        </Anchor>
+                      );
+                    },
                   },
                   { id: "count", title: "连接数", render: (row) => row.count },
                   {

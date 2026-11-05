@@ -67,6 +67,7 @@ export const flight = z.object({
     .max(200),
 });
 export type DailyBucket = z.infer<typeof daily>["buckets"][number];
+export type FlightRow = z.infer<typeof flight>["rows"][number];
 export async function fetchDaily(signal: AbortSignal) {
   const report = daily.parse(
     await request("/api/usage/daily?days=7", { signal }),
