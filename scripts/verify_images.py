@@ -146,9 +146,12 @@ class Provider(BaseHTTPRequestHandler):
             prompt = request.get('prompt','')
             if prompt == 'hold': self.server.release.wait(55)
             status = int(prompt[4:]) if prompt.startswith('http') else 200
+            # Exercise the one-response compatibility path when the provider elects SSE.
+            sse = request.get('stream') or prompt == 'unknown-native-events' or (
+                self.path.endswith('/generations') and prompt.startswith('stream-'))
             body = (json.dumps({'error':{'code':'synthetic_provider_error','message':'synthetic acct-private'}}).encode()
-                if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt, request.get('output_format', 'png')) if request.get('stream') else native_body(prompt, request.get('output_format', 'png')))
-            if prompt == 'stream-error' and not request.get('stream'):
+                if status != 200 else native_stream(self.path.rsplit('/',1)[1], prompt, request.get('output_format', 'png')) if sse else native_body(prompt, request.get('output_format', 'png')))
+            if prompt == 'stream-error' and not sse:
                 status = 400; body = json.dumps({'error':{'code':'synthetic_provider_error', 'type':'invalid_request_error', 'message':'synthetic acct-split-secret user-synthetic@example.invalid', 'param':'prompt'}}).encode()
             if prompt.startswith('json-stream'):
                 body = native_body('synthetic')
@@ -178,9 +181,10 @@ class Provider(BaseHTTPRequestHandler):
             if prompt == 'unknown-native-events':
                 event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
                 body = event * 12
+            if prompt == 'json-slow': time.sleep(.25)
             self.send_response(status)
             self.send_header('Content-Type', 'text/event-stream' if prompt == 'extended-sse' else ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
-                if prompt.startswith('json-stream') else 'text/event-stream' if request.get('stream') else 'application/json')
+                if prompt.startswith('json-stream') else 'text/event-stream' if sse else 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('x-codex-imagegen-request-id','synthetic-image-request')
             if status == 429: self.send_header('Retry-After','1')
@@ -191,7 +195,15 @@ class Provider(BaseHTTPRequestHandler):
                     event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
                     for _ in range(12):
                         self.wfile.write(event); self.wfile.flush(); time.sleep(.2)
-                elif request.get('stream'):
+                elif prompt in ('json-slow', 'json-stalled', 'json-truncated'):
+                    split = len(body) // 2
+                    self.wfile.write(body[:split]); self.wfile.flush()
+                    if prompt == 'json-truncated':
+                        self.close_connection = True
+                        return
+                    time.sleep(1.6 if prompt == 'json-stalled' else .35)
+                    self.wfile.write(body[split:])
+                elif sse:
                     # Split inside the final event, after sensitive text for errors. Flush and
                     # pause to force the gateway to process the first fragment before the rest.
                     marker = b'acct-split-secret' if prompt == 'stream-error' else b'"usage"'
@@ -440,10 +452,8 @@ def main():
                             assert status == 200 and upstream.calls == before + 1, (status, body[:200])
                             path, received, sent_headers = upstream.requests[-1]
                             assert path == '/backend-api/codex/images/' + operation
-                            expected_wire = json.loads(wire)
-                            if operation == 'generations': expected_wire['stream'] = True
-                            assert json.loads(received) == expected_wire
-                            assert sent_headers['accept'] == ('text/event-stream' if operation == 'generations' else 'application/json')
+                            assert received == wire
+                            assert sent_headers['accept'] == 'application/json'
                             for key in ('x-codex-future-header', 'x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
                                 assert sent_headers[key] == client_headers[key]
                             assert sent_headers['user-agent'] == client_headers['User-Agent']
@@ -464,7 +474,7 @@ def main():
                             assert usage['estimatedMicros'] == 13
                             status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
                             assert status == 200
-                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image', **({'stream':True} if operation == 'generations' else {})}
+                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
                             status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
                             assert status == 200
                             if operation == 'generations': assert body == native_stream(operation)
@@ -733,6 +743,25 @@ def main():
                     config.write_text(json.dumps(value))
                     process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin)
                     port = ports['data']
+                    before = upstream.calls
+                    for prompt, expected, code in (
+                        ('json-slow', 200, None), ('json-stalled', 504, 'execution_progress_timeout'),
+                        ('json-truncated', 502, 'execution_indeterminate'),
+                    ):
+                        before = upstream.calls; intents = count_intents()
+                        wire = json.dumps({'model':'synthetic-image','prompt':prompt,'stream':False}).encode()
+                        status, body, _ = request(wire)
+                        assert status == expected, (prompt,status,body[:200])
+                        assert upstream.calls == before + 1 and count_intents() == intents + 1
+                        _, received, sent_headers = upstream.requests[-1]
+                        assert received == wire and sent_headers['accept'] == 'application/json'
+                        state, usage, outcome = ledger()
+                        if code is None:
+                            assert body == native_body(prompt)
+                            assert state == 'settled' and usage['completeness'] == 'complete' and outcome['kind'] == 'succeeded'
+                        else:
+                            assert json.loads(body)['error']['code'] == code
+                            assert state == 'unknown' and usage is None and outcome['kind'] == 'failed'
                     before = upstream.calls
                     started = time.monotonic()
                     status, body, _ = request({'prompt':'unknown-native-events'})

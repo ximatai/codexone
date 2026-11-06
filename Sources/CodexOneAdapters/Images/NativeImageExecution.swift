@@ -107,7 +107,7 @@ extension HTTPResponseExecution {
               }
               try await emit(Data("data: [DONE]\n\n".utf8))
             } else if request.streaming
-              || (upstreamStreaming
+              || (request.allowsSSEAggregation
                 && NativeImageDiagnostics.contentTypeToken(
                   response.headers.first(name: "content-type"))
                   == "sse")

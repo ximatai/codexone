@@ -32,7 +32,7 @@ v0.26.8 起网关保留 JSON 对象键顺序，相同请求发往上游的正文
 
 上游 WS 大请求现按最终编码消息预检：独立 HTTP 调用超过 12 MiB 预先走 HTTP，原生 WS 超过同一 12 MiB 阈值沿既有路径拒绝，并识别响应生命周期开始前的 1009 未处理拒绝：独立 HTTP 请求单轮回退 `/responses`，原生 WS/连接续接无法等价时明确 413，不静默丢上下文。合成验证与真实上游待验收范围见[任务](docs/changes/upstream-ws-body-limit/tasks.md)；官方 Codex 的更高层仍可能重试未识别的 413，见[源码核查](docs/reference/compatibility.md#大请求错误的官方客户端源码核查)。
 
-原生图片首响应期限现同样从上传完成开始；generations 非流式客户端由上游 SSE 聚合 JSON，edits 请求上游非流式并可转为客户端完成事件。入站 HTTP 正文采用 10 秒无进度、120 秒总期限，可写连接超时返回 JSON。合成验证与真实格式边界见[慢上游任务](docs/changes/slow-upstream/tasks.md)。
+原生图片首响应期限从上传完成开始。v0.26.11 候选的非流式生成直接请求上游 JSON，仍可聚合提供者主动返回的普通图片 SSE。编辑请求继续使用既有媒体类型和完成事件映射。入站 HTTP 正文采用 10 秒无进度、120 秒总期限，可写连接超时返回 JSON。合成验证与真实格式边界见[慢上游任务](docs/changes/slow-upstream/tasks.md)。
 
 Responses 首响应等待现从本机上传完成边界开始，总执行期限仍覆盖上传；大正文仅记录有界大小/耗时桶。合成验收和传输缓冲边界见[任务](docs/changes/first-response-after-upload/tasks.md)。
 
