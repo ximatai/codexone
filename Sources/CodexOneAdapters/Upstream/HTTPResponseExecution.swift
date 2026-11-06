@@ -234,7 +234,9 @@ struct HTTPResponseExecution: Sendable {
         }
         defer { upload.finish() }
         do {
-          await observeResponseHeaders(response.headers, account: authorization?.identity)
+          await observeResponseHeaders(
+            response.headers, account: authorization?.identity, includeModel: response.status == .ok
+          )
           guard response.status == .ok else {
             if isFallback, (400...499).contains(Int(response.status.code)) {
               try observeProviderRejection(context)

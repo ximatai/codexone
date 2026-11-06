@@ -41,6 +41,9 @@ enum ProviderError {
         result[key] = value
       }
     }
+    if let value = clientRetryAfter(in: object["headers"]) {
+      result["headers"] = .object(["retry-after": .string(value)])
+    }
     return result.isEmpty ? nil : .object(result)
   }
 
@@ -59,17 +62,19 @@ enum ProviderError {
 
   /// Maps a provider failure to the gateway's health class while forwarding the actionable error.
   static func failure(
-    status: Int?, error: JSONValue?, retryAfter: Int64? = nil, compact: Bool = false
+    status: Int?, error: JSONValue?, retryAfter: Int64? = nil,
+    clientRetryAfter: String? = nil, compact: Bool = false
   ) -> GatewayProtocolError {
     let rejected = isExplicitRejection(status: status, error: error)
     let code = error?["code"]?.string ?? error?["type"]?.string ?? ""
     let forwarded = sanitized(error)
+    let clientRetryAfter = forwarded?["headers"]?["retry-after"]?.string ?? clientRetryAfter
     let cooldown =
       retryAfter ?? error?["resets_in_seconds"]?.integer.map { min(3600, max(1, $0)) }
     if let status, (500...599).contains(status) {
       return .init(
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
-        upstreamStatus: status, providerError: forwarded)
+        clientRetryAfter: clientRetryAfter, upstreamStatus: status, providerError: forwarded)
     }
     if status == 401 || authenticationCodes.contains(code) {
       // The provider credential belongs to the gateway, not the caller.
@@ -79,18 +84,21 @@ enum ProviderError {
     }
     if status == 429 || rateLimitCodes.contains(code) {
       return .init(
-        429, "upstream_rate_limited", cooldownSeconds: cooldown, upstreamStatus: status,
+        429, "upstream_rate_limited", cooldownSeconds: cooldown, clientRetryAfter: clientRetryAfter,
+        upstreamStatus: status,
         providerError: forwarded, explicitProviderRejection: rejected)
     }
     if code == "server_is_overloaded" {
       return .init(
         status == 503 ? 503 : 502, "upstream_unavailable", cooldownSeconds: cooldown,
-        upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
+        clientRetryAfter: clientRetryAfter, upstreamStatus: status, providerError: forwarded,
+        explicitProviderRejection: rejected)
     }
     let downstream = status.map { (400...499).contains($0) ? $0 : 502 } ?? (rejected ? 400 : 502)
     return .init(
       downstream, compact ? "upstream_compact_rejected" : "upstream_rejected",
-      upstreamStatus: status, providerError: forwarded, explicitProviderRejection: rejected)
+      clientRetryAfter: clientRetryAfter, upstreamStatus: status, providerError: forwarded,
+      explicitProviderRejection: rejected)
   }
 
   /// Reads a bounded non-success body; unparsable bodies keep only the status classification.
@@ -119,7 +127,45 @@ enum ProviderError {
     let document = body.flatMap { try? JSONValue.decode(Data($0.readableBytesView)) }
     let error = document?["error"].flatMap { $0 == .null ? nil : $0 } ?? document?["detail"]
     return failure(
-      status: status, error: error, retryAfter: retryAfter(response.headers), compact: compact)
+      status: status, error: error, retryAfter: retryAfter(response.headers),
+      clientRetryAfter: clientRetryAfter(in: response.headers), compact: compact)
+  }
+
+  static func clientRetryAfter(in value: JSONValue?) -> String? {
+    guard let headers = value?.object else { return nil }
+    let matches = headers.filter { $0.key.lowercased() == "retry-after" }
+    guard matches.count == 1 else { return nil }
+    return validatedRetryAfter(matches.first?.value.string)
+  }
+
+  static func clientRetryAfter(in headers: HTTPHeaders) -> String? {
+    let values = headers["retry-after"]
+    guard values.count == 1,
+      !headers[canonicalForm: "connection"].contains(where: {
+        $0.trimmingCharacters(in: .whitespaces).lowercased() == "retry-after"
+      })
+    else { return nil }
+    return validatedRetryAfter(values.first)
+  }
+
+  /// Client wire advice is independent of the bounded internal cooldown.
+  private static func validatedRetryAfter(_ raw: String?) -> String? {
+    guard let raw, raw.utf8.count <= 64,
+      raw.utf8.allSatisfy({ $0 == 9 || (32...126).contains($0) })
+    else { return nil }
+    let value = raw.trimmingCharacters(in: .whitespaces)
+    if (1...10).contains(value.utf8.count), value.utf8.allSatisfy({ (48...57).contains($0) }) {
+      return value
+    }
+    guard value.utf8.count == 29 else { return nil }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+    guard let date = formatter.date(from: value), formatter.string(from: date) == value else {
+      return nil
+    }
+    return value
   }
 
   static func retryAfter(_ headers: HTTPHeaders) -> Int64? {
