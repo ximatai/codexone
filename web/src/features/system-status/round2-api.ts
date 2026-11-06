@@ -34,6 +34,7 @@ export const daily = z.object({
       z.object({
         atUnixSeconds: count,
         requests: count,
+        recordedRejections: count.optional(),
         succeeded: count,
         failed: count,
         cancelled: count,

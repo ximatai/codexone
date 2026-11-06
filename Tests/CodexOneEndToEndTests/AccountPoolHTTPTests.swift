@@ -353,31 +353,34 @@ private struct PoolHTTPHarness {
   var calls: [PoolHTTPState.Call] { state.value.withLock { $0.calls } }
   static func open(
     _ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http",
-    executionTimeout: Int = 5, handshake: String? = nil, images: Bool = false
+    executionTimeout: Int = 5, handshake: String? = nil, images: Bool = false,
+    existingState: PoolHTTPState? = nil
   )
     async throws -> Self
   {
-    let state = PoolHTTPState()
-    for id in ["a", "b"] {
-      oauth.server.set(
-        .reply(try oauthTokens(account: "synthetic-\(id)", subject: "synthetic-user-\(id)")))
-      let login = try await oauth.login()
-      var account = try await oauth.app.importVerified(
-        id: id, namespace: login.namespace, credential: login.credential)
-      account = try await oauth.store.setAccountMode(
-        id: id, revision: account.revision, mode: .enabled)
-      state.value.withLock { $0.expected["synthetic-\(id)"] = login.credential.accessToken }
-    }
+    let state = existingState ?? PoolHTTPState()
     let alice = "synthetic-alice-data-key-0001"
     let bob = "synthetic-bob-data-key-0000002"
     let limits = ExecutionLimits(requests: 100, active: 4, unresolved: 4, budgetMicros: 100)
-    for (id, token) in [("alice", alice), ("bob", bob)] {
-      _ = try await oauth.store.createKey(
-        id: id, principal: id, digest: keyDigest(token),
-        policy: KeyPolicy(
-          models: images && id == "alice" ? [] : ["synthetic-text"], limits: limits,
-          visionInput: images, imageGeneration: images,
-          imageModels: images ? ["synthetic-image"] : []))
+    if existingState == nil {
+      for id in ["a", "b"] {
+        oauth.server.set(
+          .reply(try oauthTokens(account: "synthetic-\(id)", subject: "synthetic-user-\(id)")))
+        let login = try await oauth.login()
+        var account = try await oauth.app.importVerified(
+          id: id, namespace: login.namespace, credential: login.credential)
+        account = try await oauth.store.setAccountMode(
+          id: id, revision: account.revision, mode: .enabled)
+        state.value.withLock { $0.expected["synthetic-\(id)"] = login.credential.accessToken }
+      }
+      for (id, token) in [("alice", alice), ("bob", bob)] {
+        _ = try await oauth.store.createKey(
+          id: id, principal: id, digest: keyDigest(token),
+          policy: KeyPolicy(
+            models: images && id == "alice" ? [] : ["synthetic-text"], limits: limits,
+            visionInput: images, imageGeneration: images,
+            imageModels: images ? ["synthetic-image"] : []))
+      }
     }
     let listener = try await ServerBootstrap(group: oauth.group).childChannelInitializer {
       channel in
@@ -2535,6 +2538,58 @@ func turnStateNeverCrossesAccountsOrCreatesIntentWhenUnknown(transport: String) 
     }
     #expect(h.calls.count == 2)
     #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 2)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func turnStateFromPreviousServiceIsRejectedBeforeDispatch(transport: String) async throws {
+  try await withOAuth(timeout: 3000) { oauth in
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    @Sendable func send(_ harness: PoolHTTPHarness, turnState: String? = nil) async throws
+      -> (HTTPURLResponse, Data)
+    {
+      var request = URLRequest(
+        url: URL(string: "http://127.0.0.1:\(harness.port)/v1/responses")!)
+      request.httpMethod = "POST"
+      request.setValue("Bearer " + harness.alice, forHTTPHeaderField: "authorization")
+      request.setValue("application/json", forHTTPHeaderField: "content-type")
+      request.setValue(turnState, forHTTPHeaderField: "x-codex-turn-state")
+      request.httpBody = Data(#"{"model":"synthetic-text","input":"synthetic"}"#.utf8)
+      let (data, response) = try await session.data(for: request)
+      return (try #require(response as? HTTPURLResponse), data)
+    }
+
+    let original = try await PoolHTTPHarness.open(oauth, transport: transport)
+    let token: String
+    do {
+      let (first, _) = try await send(original)
+      #expect(first.statusCode == 200)
+      token = try #require(first.value(forHTTPHeaderField: "x-codex-turn-state"))
+      try await awaitOAuth { original.finalizer.outstanding == 0 }
+    } catch {
+      await original.close()
+      throw error
+    }
+    await original.close()
+
+    let restarted = try await PoolHTTPHarness.open(
+      oauth, transport: transport, existingState: original.state)
+    do {
+      let (refused, body) = try await send(restarted, turnState: token)
+      #expect(refused.statusCode == 503)
+      #expect(
+        try JSONValue.decode(body)["error"]?["code"]?.string == "continuation_owner_unavailable")
+      #expect(restarted.calls.count == 1)
+      #expect(
+        try await restarted.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+      let (fresh, _) = try await send(restarted)
+      #expect(fresh.statusCode == 200 && restarted.calls.count == 2)
+    } catch {
+      await restarted.close()
+      throw error
+    }
+    await restarted.close()
   }
 }
 

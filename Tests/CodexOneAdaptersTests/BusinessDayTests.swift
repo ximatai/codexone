@@ -195,6 +195,12 @@ func businessDayAdmissionUsesTransactionTimeResetsLocallyAndReprojectsAfterResta
     requestID: "diagnostic", keyID: key.id, model: "synthetic-text", mode: .generation,
     failure: .localCapacity)
   let reader = try await store.makeUsageReader()
+  let daily = try await reader.dailyUsage(days: 2, keyID: key.id, model: "synthetic-text")
+  #expect(daily.map(\.requests) == [0, 3])
+  #expect(daily.map(\.recordedRejections) == [0, 1])
+  #expect(daily.map(\.failed) == [0, 1])
+  let otherModel = try await reader.dailyUsage(days: 1, keyID: key.id, model: "synthetic-other")
+  #expect(otherModel.map(\.recordedRejections) == [0])
   let summary = try await reader.keyUsage()
   let row = try #require(summary.keys.first)
   #expect(row.admitted == 3 && row.failed == 1 && row.cancelled == 1)

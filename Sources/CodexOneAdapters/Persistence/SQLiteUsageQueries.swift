@@ -234,7 +234,9 @@ extension SQLiteUsageReader {
 }
 
 extension SQLiteUsageReader {
-  static func daily(_ db: SQLiteConnection, _ query: UsageQuery) throws -> [DailyUsageBucket] {
+  static func daily(_ db: SQLiteConnection, _ query: UsageQuery, now: Int64) throws
+    -> [DailyUsageBucket]
+  {
     var terms = ["created_at_epoch>=?", "created_at_epoch<?"]
     var values: [SQLiteConnection.Value] = [
       .number(db.businessDay.offsetSeconds),
@@ -294,6 +296,12 @@ extension SQLiteUsageReader {
         sqlite3_column_int64($0, 2)
       )
     }
+    let rejected = Self.predicate(query, diagnostic: true, now: now)
+    let rejectedDays = try db.rows(
+      "SELECT \(businessDayStartSQL("at_epoch")),COUNT(*) FROM request_diagnostics WHERE \(rejected.sql) GROUP BY 1",
+      [.number(db.businessDay.offsetSeconds)] + rejected.values
+    ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1)) }
+    let rejectionsByDay = Dictionary(uniqueKeysWithValues: rejectedDays)
     let indexed = Dictionary(uniqueKeysWithValues: rows.map { ($0.0, $0) })
     let empty = UsageMetrics(
       inputTokens: nil, outputTokens: nil, cachedTokens: nil, images: nil, estimatedMicros: nil)
@@ -307,7 +315,8 @@ extension SQLiteUsageReader {
         metrics: row?.5 ?? empty,
         usageUnknown: unknown.filter { $0.0 == at }.reduce(0) { $0 + $1.2 },
         unknownReasons: Dictionary(
-          uniqueKeysWithValues: unknown.filter { $0.0 == at }.map { ($0.1, $0.2) }))
+          uniqueKeysWithValues: unknown.filter { $0.0 == at }.map { ($0.1, $0.2) }),
+        recordedRejections: rejectionsByDay[at] ?? 0)
     }
   }
 }

@@ -44,6 +44,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       {
         atUnixSeconds: 1,
         requests: 4,
+        recordedRejections: 3,
         succeeded: 3,
         failed: 1,
         cancelled: 0,
@@ -117,6 +118,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(
     screen.getByRole("img", { name: "Token近 7 天：不可用" }),
   ).toBeVisible();
+  expect(screen.getByText("已记录准入前拒绝 3")).toBeVisible();
   expect(await screen.findByText("工作站别名")).toBeVisible();
   expect(screen.getByText(/合成工作站/)).toBeVisible();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();

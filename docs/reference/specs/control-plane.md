@@ -164,7 +164,7 @@ unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、pe
 
 用量 rows.state 可为 closed_unknown（持久 settled+关闭标记的投影）；totals 与 daily bucket 新增 usageUnknown、unknownReasons（固定失败枚举或 unspecified），区别于待核对 unknown。用量报告 detailRetentionDays=90，详情/小时桶只含保留明细，日序列及 Key 最近使用合并日汇总。quota_high.detail.keyRanking 为最近 5 小时最多 5 个 Key 的已观测费用下界/请求/缺失排名，不代表提供者按 Key 分配余额；原生图片全缺计数的费用仍为未知。
 
-`GET /api/usage/daily` 可选 `end` 为业务日零时的左闭右开结束秒（最多向前 31 日），用于读取已归档日序列；缺省仍含今日。参数无效拒绝，不把日汇总展开为小时。
+`GET /api/usage/daily` 可选 `end` 为业务日零时的左闭右开结束秒（最多向前 31 日），用于读取已归档日序列；缺省仍含今日。参数无效拒绝，不把日汇总展开为小时。日桶的 recordedRejections 汇总保留期内匹配该业务日及筛选项的准入前诊断，首页单独展示。请求数、失败率与用量沿用已准入统计口径。
 
 ## 请求推理强度与服务档位
 

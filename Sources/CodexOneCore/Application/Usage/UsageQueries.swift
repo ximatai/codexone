@@ -311,6 +311,7 @@ public struct DailyUsageBucket: Sendable {
   public let unknownReasons: [String: Int64]
   public let atUnixSeconds: Int64
   public let requests: Int64
+  public let recordedRejections: Int64
   public let succeeded: Int64
   public let failed: Int64
   public let cancelled: Int64
@@ -319,12 +320,13 @@ public struct DailyUsageBucket: Sendable {
   public init(
     atUnixSeconds: Int64, requests: Int64, succeeded: Int64, failed: Int64,
     cancelled: Int64, failures: [String: Int64], metrics: UsageMetrics, usageUnknown: Int64 = 0,
-    unknownReasons: [String: Int64] = [:]
+    unknownReasons: [String: Int64] = [:], recordedRejections: Int64 = 0
   ) {
     self.usageUnknown = usageUnknown
     self.unknownReasons = unknownReasons
     self.atUnixSeconds = atUnixSeconds
     self.requests = requests
+    self.recordedRejections = recordedRejections
     self.succeeded = succeeded
     self.failed = failed
     self.cancelled = cancelled

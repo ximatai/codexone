@@ -162,6 +162,7 @@ public struct UsageAdminAPI: Sendable {
               .object([
                 "atUnixSeconds": .number(Decimal(value.atUnixSeconds)),
                 "requests": .number(Decimal(value.requests)),
+                "recordedRejections": .number(Decimal(value.recordedRejections)),
                 "usageUnknown": .number(Decimal(value.usageUnknown)),
                 "unknownReasons": .object(
                   value.unknownReasons.mapValues { .number(Decimal($0)) }),

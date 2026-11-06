@@ -99,7 +99,9 @@ export function OverviewStats({
       exact: today?.requests.toLocaleString("zh-CN"),
       values: buckets.map((b) => b.requests),
       delta: change(today?.requests, yesterday?.requests),
-      note: "",
+      note: today
+        ? `已记录准入前拒绝 ${today.recordedRejections?.toLocaleString("zh-CN") ?? "不可用"}`
+        : "",
     },
     {
       label: "Token",

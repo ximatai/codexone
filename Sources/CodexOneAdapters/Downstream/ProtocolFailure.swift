@@ -16,11 +16,13 @@ func protocolFailure(_ error: any Error) -> GatewayProtocolError {
     if error == .invalidProxyResponse { return .init(502, "upstream_proxy_failed") }
   }
   if let error = error as? AccountCooldownUnavailable {
-    return .init(503, "account_unavailable", cooldownSeconds: error.retryAfter)
+    return .init(
+      503, "account_unavailable", cooldownSeconds: error.retryAfter, detail: .accountCooldown)
   }
   if let error = error as? AccountDispatchError {
     return .init(
-      503, error == .refreshRequired ? "account_refresh_required" : "account_unavailable")
+      503, error == .refreshRequired ? "account_refresh_required" : "account_unavailable",
+      detail: error == .refreshRequired ? nil : .accountDispatchUnavailable)
   }
   if let error = error as? AccountRefreshError {
     switch error {

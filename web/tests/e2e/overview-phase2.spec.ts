@@ -110,6 +110,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
         buckets: Array.from({ length: 7 }, (_, i) => ({
           atUnixSeconds: i * 86400,
           requests: 10 + i * 2,
+          recordedRejections: i,
           succeeded: 9 + i * 2,
           failed: 1,
           cancelled: 0,
@@ -165,6 +166,13 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(
     page.getByRole("row").filter({ hasText: "synthetic-text" }).first(),
   ).toBeVisible();
+  const rejected = page.getByText("已记录准入前拒绝 6");
+  await expect(rejected).toBeVisible();
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await rejected.scrollIntoViewIfNeeded();
+  await expect(rejected).toBeInViewport();
+  await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "需要处理", exact: true }),
