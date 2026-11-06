@@ -2,7 +2,7 @@
 
 记录公开版本中对使用者有影响的变化。
 
-## 0.26.11（未发布）
+## 0.26.11（2026-11-06）
 
 ### 升级注意
 
@@ -13,7 +13,7 @@
 - Responses 回传有效的上游模型标识和错误等待提示，保留未知推理字段的显式 null。
 - 原生 Images 流式失败沿用 Images 错误事件，非流式图片生成按客户端请求向上游请求 JSON，保留慢响应、断开与用量处理。
 
-Codex CLI 0.165.0 已使用同一订阅账号验证原生 PNG 生成和参考图编辑。GIF、SVG 和 Responses 图片工具取决于实际客户端与提供者能力。详见[兼容说明](docs/reference/compatibility.md)及[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
+Codex CLI 0.165.0 已使用同一订阅账号验证原生 PNG 生成和参考图编辑。Desktop 的工具、压缩续接和参考图编辑安排在线上发布后单独验收。GIF、SVG 和 Responses 图片工具取决于实际客户端与提供者能力。详见[兼容说明](docs/reference/compatibility.md)及[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
 
 ## 0.26.11-rc.2（2026-11-06）
 
