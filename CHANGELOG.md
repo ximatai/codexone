@@ -2,7 +2,7 @@
 
 记录公开版本中对使用者有影响的变化。
 
-## 0.26.10（未发布）
+## 0.26.10（2026-11-06）
 
 ### 升级注意
 
@@ -21,6 +21,8 @@ SVG 作者的输入和输出计入 Key 每日 Token 上限，缓存和推理不�
 - 普通请求正文纳入 64 MiB 共享预算并保留 8 MiB 小请求余量。单正文限制保持 32 MiB，每连接 WebSocket 队列保持 48 MiB。容量不足时有界等待。
 - Responses 图片输出格式与参考图编码分离。用量扩展可继续回传，可信计量独立校验。SVG 作者费用覆盖独立展示。
 - 订阅上游的已知准入前参数拒绝归为无效请求。可能已处理的多路 WebSocket 执行保留待核对状态。
+
+官方 Codex CLI 0.165.0 已实测直连及经网关完成原生 PNG 生成并保存。GIF、SVG 和 Responses 图片工具分别取决于客户端参数、模型与提供者能力。详见[协议兼容与恢复边界](docs/reference/compatibility.md)。
 
 候选记录见 [rc.1](https://github.com/ximatai/codexone/releases/tag/v0.26.10-rc.1) 、[rc.2](https://github.com/ximatai/codexone/releases/tag/v0.26.10-rc.2) 和 [rc.3](https://github.com/ximatai/codexone/releases/tag/v0.26.10-rc.3)。
 
