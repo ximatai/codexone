@@ -95,6 +95,15 @@ import Testing
   #expect(turns.claimInterrupt(responseID: "synthetic_response", lane: "synthetic_lane"))
   #expect(turns.wasInterrupted(lane: "synthetic_lane"))
   #expect(try turns.delivery(event("response.interrupt.accepted"))?.detached == true)
+  let interrupted: JSONValue = .object([
+    "type": .string("response.output_item.interrupted"),
+    "response_id": .string("synthetic_response"),
+    "item_id": .string("synthetic_item"),
+    "output_index": .number(0),
+  ])
+  let itemDelivery = try turns.delivery(interrupted.data())
+  #expect(itemDelivery?.lane == "synthetic_lane" && itemDelivery?.detached == false)
+  #expect(turns.interruptLane(responseID: "synthetic_response") == "synthetic_lane")
   _ = try turns.observe(event("response.completed", response: true))
   #expect(turns.interruptLane(responseID: "synthetic_response") == nil)
   try turns.begin(lane: "synthetic_lane")
