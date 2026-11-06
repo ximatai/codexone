@@ -160,7 +160,8 @@ class Provider(BaseHTTPRequestHandler):
                         first = b'data: ' + wire(dict(type='response.created', response=dict(id=EVENT['response']['id']))) + b'\n\n'
                         self.server.early_event.set()
                         self.event_chunk(first)
-                        assert self.server.release.wait(8), 'Client did not observe early event'
+                        release = self.server.cancel_release if case == 'early200-cancel' else self.server.release
+                        assert release.wait(8), 'Client did not finish the early response step'
                         if case in ('early200-cancel', 'early200-disconnect'):
                             return
                         if case == 'early200-end':
@@ -259,6 +260,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
     server.measure = measure
     server.guard = threading.Lock()
     server.started, server.release, server.read_done = threading.Event(), threading.Event(), threading.Event()
+    server.cancel_release = threading.Event()
     server.early_event = threading.Event()
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
@@ -350,7 +352,8 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
                     response.close()
                     peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
                     peer.close()
-                server.release.set()
+                else:
+                    server.release.set()
             if case == 'early200-cancel':
                 result = b''
             else:
@@ -393,6 +396,10 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
                 assert state == 'unknown' and usage is None, rows
                 if case in ('stall', 'silent', 'cancel', 'early200-cancel'):
                     assert outcome['failure'] == ('client_cancelled' if case in ('cancel', 'early200-cancel') else 'deadline_exceeded'), rows
+            if case == 'early200-cancel':
+                # Let the downstream RST determine the ledger outcome before
+                # allowing the fixture to also disconnect the upstream socket.
+                server.cancel_release.set()
             if case not in ('401', '429', '500'):
                 assert health == 0, health
         expected_calls = [expected_encoding]
@@ -473,6 +480,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
         if peer:
             peer.close()
         server.release.set()
+        server.cancel_release.set()
         if process:
             stop(process)
         server.shutdown()
