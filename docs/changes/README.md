@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [native-image-json](native-image-json/proposal.md) · [任务](native-image-json/tasks.md)
+
 - [transparent-client-protocol](transparent-client-protocol/proposal.md) · [任务](transparent-client-protocol/tasks.md)
 
 - [protocol-alignment](protocol-alignment/proposal.md) · [任务](protocol-alignment/tasks.md) · [验证](protocol-alignment/verification.md)

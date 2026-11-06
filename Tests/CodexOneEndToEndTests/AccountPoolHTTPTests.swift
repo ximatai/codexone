@@ -1459,16 +1459,8 @@ func poolImagesUseOneIntentAndOwnedAccountAcrossHTTPBridgeAndNativeTurns() async
             session.invalidateAndCancel()
             #expect((response as! HTTPURLResponse).statusCode == 200)
             #expect(h.calls.last?.path == "/backend-api/codex/images/" + operation)
-            if operation == "generations" {
-              var expected = try JSONValue.decode(request.httpBody!).object!
-              expected["stream"] = .bool(true)
-              let received = try #require(h.calls.last?.body)
-              #expect(try JSONValue.decode(received) == .object(expected))
-              #expect(h.calls.last?.headers?.first(name: "accept") == "text/event-stream")
-            } else {
-              #expect(h.calls.last?.body == request.httpBody)
-              #expect(h.calls.last?.headers?.first(name: "accept") == "application/json")
-            }
+            #expect(h.calls.last?.body == request.httpBody)
+            #expect(h.calls.last?.headers?.first(name: "accept") == "application/json")
             #expect(h.calls.last?.headers?.first(name: "x-codex-image-turn-id") == "synthetic-turn")
             #expect(h.calls.last?.headers?.first(name: "originator") == "codex_cli_rs")
             for name in ["x-openai-actor-authorization", "x-client-private"] {

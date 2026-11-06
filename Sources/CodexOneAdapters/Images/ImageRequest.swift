@@ -38,6 +38,7 @@ struct ImagesRequest: Sendable {
   var expectsSVGUsage: Bool { requiredOutputFormat == .svg }
   var requiresNonStreamingOutput: Bool { requiredOutputFormat != nil }
   let upstreamStreaming: Bool
+  let allowsSSEAggregation: Bool
   init(data: Data, contentType: String, editing: Bool, configuration: ImageConfiguration?) throws {
     guard data.count <= RequestBodyLimits.maximumBytes else {
       throw GatewayProtocolError(413, "request_too_large")
@@ -132,9 +133,10 @@ struct ImagesRequest: Sendable {
     let format = fields["output_format"]?.string
     let requiredOutputFormat = format.flatMap(NativeImageOutputFormat.init(rawValue:))
     self.requiredOutputFormat = requiredOutputFormat
-    // The SSE workaround is verified only for these legacy generation formats.
     let legacyFormat = format == nil || ["png", "jpeg", "webp"].contains(format!)
-    upstreamStreaming = legacyFormat ? !editing : (requiredOutputFormat == nil && streaming)
+    upstreamStreaming = streaming && requiredOutputFormat == nil && (!editing || !legacyFormat)
+    // Some providers still return SSE for ordinary generation with Accept: application/json.
+    allowsSSEAggregation = !editing && legacyFormat
     if requiredOutputFormat != nil {
       guard !streaming, fields["partial_images"] == nil, fields["output_compression"] == nil,
         fields["mask"] == nil,

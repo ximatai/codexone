@@ -134,7 +134,9 @@ func syntheticImageConfiguration() throws -> ImageConfiguration {
       #expect(throws: GatewayProtocolError.self) { try request(format, invalid) }
     }
   }
-  #expect(try request("png").upstreamStreaming)
+  #expect(try !request("png").upstreamStreaming)
+  #expect(try request("png").allowsSSEAggregation)
+  #expect(try request("png", ["stream": .bool(true)]).upstreamStreaming)
   #expect(try !request("png").requiresNonStreamingOutput)
   #expect(try !request("gif", editing: true).upstreamStreaming)
   #expect(throws: GatewayProtocolError.self) { try request("svg", editing: true) }
