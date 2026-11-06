@@ -68,8 +68,10 @@ extension HTTPResponseExecution {
     return token
   }
 
-  func observeResponseHeaders(_ headers: HTTPHeaders, account: AccountRouteIdentity?) async {
-    let safe = forwardedResponseHeaders(headers)
+  func observeResponseHeaders(
+    _ headers: HTTPHeaders, account: AccountRouteIdentity?, includeModel: Bool = false
+  ) async {
+    let safe = forwardedResponseHeaders(headers, includeModel: includeModel)
     if let account, let key = currentKeyID, let token = safe.first(name: "x-codex-turn-state") {
       turnStateOwners.observe(key: key, token: token, account: account)
     }

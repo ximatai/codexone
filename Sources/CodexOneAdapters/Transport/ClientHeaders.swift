@@ -49,8 +49,8 @@ func forwardedClientHeaders(
   return result
 }
 
-/// Return only routing metadata; provider credentials and arbitrary headers stay private.
-func forwardedResponseHeaders(_ headers: HTTPHeaders) -> HTTPHeaders {
+/// Return only validated routing and requested model metadata.
+func forwardedResponseHeaders(_ headers: HTTPHeaders, includeModel: Bool = false) -> HTTPHeaders {
   let connection = Set(
     headers["connection"].flatMap {
       $0.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -60,6 +60,16 @@ func forwardedResponseHeaders(_ headers: HTTPHeaders) -> HTTPHeaders {
     let value = headers.first(name: "x-codex-turn-state"), validTurnState(value)
   {
     result.add(name: "x-codex-turn-state", value: value)
+  }
+  let models = headers["openai-model"]
+  if includeModel, !connection.contains("openai-model"), models.count == 1,
+    let model = models.first, (1...128).contains(model.utf8.count),
+    model.utf8.allSatisfy({
+      (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0)
+        || [45, 46, 95].contains($0)
+    })
+  {
+    result.add(name: "openai-model", value: model)
   }
   return result
 }

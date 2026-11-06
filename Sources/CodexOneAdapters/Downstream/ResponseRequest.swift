@@ -28,6 +28,7 @@ struct GatewayProtocolError: Error, Sendable {
   let status: Int
   let code: String
   let cooldownSeconds: Int64?
+  let clientRetryAfter: String?
   let detail: ProtocolRejectionDetail?
   let upstreamStatus: Int?
   let upstreamWebSocketCloseCode: UInt16?
@@ -35,7 +36,7 @@ struct GatewayProtocolError: Error, Sendable {
   let providerError: JSONValue?
   let explicitProviderRejection: Bool
   init(
-    _ status: Int, _ code: String, cooldownSeconds: Int64? = nil,
+    _ status: Int, _ code: String, cooldownSeconds: Int64? = nil, clientRetryAfter: String? = nil,
     detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil,
     upstreamWebSocketCloseCode: UInt16? = nil,
     providerError: JSONValue? = nil, explicitProviderRejection: Bool = false
@@ -45,6 +46,7 @@ struct GatewayProtocolError: Error, Sendable {
     self.upstreamStatus = upstreamStatus
     self.detail = detail
     self.cooldownSeconds = cooldownSeconds
+    self.clientRetryAfter = clientRetryAfter
     self.status = status
     self.code = code
     self.providerError = providerError
@@ -128,8 +130,11 @@ struct ResponseRequest: Sendable {
       references.append(.init(type: "response", rawID: id))
     }
     // Known nullable optional members mean unspecified; strip only those nulls.
-    if let reasoning = fields["reasoning"]?.object {
-      fields["reasoning"] = .object(reasoning.filter { $0.value != .null })
+    if var reasoning = fields["reasoning"]?.object {
+      for key in ["effort", "summary", "context"] where reasoning[key] == .null {
+        reasoning.removeValue(forKey: key)
+      }
+      fields["reasoning"] = .object(reasoning)
     }
     if let text = fields["text"]?.object {
       fields["text"] = .object(

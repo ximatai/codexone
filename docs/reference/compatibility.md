@@ -6,6 +6,8 @@
 
 Responses 支持 HTTP JSON/SSE、原生 WS 与 HTTP→WS 桥接；模型目录、预热、压缩、客户端函数工具、Images generation/参考图 edits 和部分 Desktop 控制接口各有独立契约。支持 `/v1` 与显式 `/backend-api/codex` 别名，不做任意后缀转发。提供者存储对象、后台生成和通用文件服务不开放。
 
+Realtime 目前仅有创建 POST 的转发。官方客户端完成语音建连所需的 Location 和后续 sideband WebSocket 尚未接入。
+
 普通请求聚合上限 32 MiB，单上游 SSE 事件/WS 帧 8 MiB；图片与辅助控制接口具有独立边界，详见 [P13/P14/P27](specs/protocol.md)。正文大小、模型元数据、错误和未知事件的处理以当前规范为准。
 
 协议扩展默认转发，网关仍约束认证、模型/图片权限、硬引用归属、容量、执行模式及可信用量。字段可转发不代表提供者接受。合成 fixture 为自行编写的事件/状态和生成的纯色图片，不是实际抓包或用户内容。

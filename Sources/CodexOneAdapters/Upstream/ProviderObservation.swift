@@ -29,7 +29,8 @@ struct ProviderObservation: Sendable {
   static func providerFailure(_ event: JSONValue) -> GatewayProtocolError {
     let status = event["status"]?.integer ?? event["status_code"]?.integer
     return ProviderError.failure(
-      status: status.map(Int.init), error: event["error"] ?? event)
+      status: status.map(Int.init), error: event["error"] ?? event,
+      clientRetryAfter: ProviderError.clientRetryAfter(in: event["headers"]))
   }
 
   init(event: JSONValue, model: SingleIdentityConfiguration.Model, allowImages: Bool = false)

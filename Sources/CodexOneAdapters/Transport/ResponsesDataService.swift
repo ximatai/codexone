@@ -745,7 +745,7 @@ public struct ResponsesDataService: Service {
       try await executor.executeImage(
         request, requestID: writer.requestID, headers: head.headers,
         receiveHeaders: { await writer.imageHeaders($0) },
-        begin: { try await writer.beginRaw($0, streaming: request.streaming) },
+        begin: { try await writer.beginImage($0, streaming: request.streaming) },
         emit: { try await writer.raw($0) }, finish: { try await writer.finishRaw() })
       return
     }
@@ -792,7 +792,7 @@ private actor ProtocolResponseWriter {
   private var extraHeaders = HTTPHeaders()
   func responseHeaders(_ headers: HTTPHeaders) {
     guard !started else { return }
-    for header in forwardedResponseHeaders(headers) {
+    for header in forwardedResponseHeaders(headers, includeModel: true) {
       extraHeaders.replaceOrAdd(name: header.name, value: header.value)
     }
   }
@@ -805,6 +805,7 @@ private actor ProtocolResponseWriter {
   func setControlRequest() { controlRequest = true }
   private var started = false
   private var streaming = false
+  private var imageStream = false
   private var ended = false
   var hasEnded: Bool { ended }
   private var completedTerminalSubmitted = false
@@ -829,7 +830,7 @@ private actor ProtocolResponseWriter {
     try await writer.write(contentsOf: parts)
   }
   func json(
-    _ value: JSONValue, status: Int = 200, retryAfter: Int64? = nil, diagnostics: Bool = true
+    _ value: JSONValue, status: Int = 200, retryAfter: String? = nil, diagnostics: Bool = true
   ) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
     let data = try value.data()
@@ -838,7 +839,7 @@ private actor ProtocolResponseWriter {
       "content-length": String(data.count), "x-request-id": requestID,
     ]
     for header in extraHeaders { headers.add(name: header.name, value: header.value) }
-    if let retryAfter { headers.add(name: "retry-after", value: String(retryAfter)) }
+    if let retryAfter { headers.add(name: "retry-after", value: retryAfter) }
     if !keepAlive { headers.add(name: "connection", value: "close") }
     started = true
     do {
@@ -872,9 +873,10 @@ private actor ProtocolResponseWriter {
     ])
     ended = true
   }
-  func beginRaw(_ headers: HTTPHeaders, streaming: Bool) async throws {
+  func beginImage(_ headers: HTTPHeaders, streaming: Bool) async throws {
     guard !started else { throw GatewayProtocolError(502, "invalid_response_state") }
     self.streaming = streaming
+    imageStream = streaming
     var headers = headers
     headers.add(name: "x-request-id", value: requestID)
     headers.add(name: "cache-control", value: "no-store")
@@ -945,18 +947,23 @@ private actor ProtocolResponseWriter {
       diagnostics: diagnostics && streamFinishFailure == nil && !terminalCleanupCancelled)
     if !started {
       try await json(
-        envelope, status: mapped.status, retryAfter: mapped.cooldownSeconds,
+        envelope, status: mapped.status,
+        retryAfter: mapped.clientRetryAfter ?? mapped.cooldownSeconds.map(String.init),
         diagnostics: diagnostics)
     } else if streaming && !ended {
-      if mapped.providerError != nil {
+      var clientError = envelope["error"]!.object!
+      if let retryAfter = mapped.clientRetryAfter, clientError["headers"] == nil {
+        clientError["headers"] = .object(["retry-after": .string(retryAfter)])
+      }
+      if mapped.providerError != nil && !imageStream {
         // Clients interpret provider failures from the terminal response, as on a direct stream.
         try await event(
           .object([
             "type": .string("response.failed"),
-            "response": .object(["status": .string("failed"), "error": envelope["error"]!]),
+            "response": .object(["status": .string("failed"), "error": .object(clientError)]),
           ]))
       } else {
-        try await event(.object(["type": .string("error"), "error": envelope["error"]!]))
+        try await event(.object(["type": .string("error"), "error": .object(clientError)]))
       }
       try await write(.end(nil))
       ended = true

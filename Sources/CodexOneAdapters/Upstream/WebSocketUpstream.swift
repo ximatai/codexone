@@ -179,7 +179,8 @@ private final class UpstreamUpgradeStatus: ChannelInboundHandler, RemovableChann
         $0 =
           mapped.code == "upstream_rejected"
           ? .init(
-            502, "upstream_upgrade_rejected", upstreamStatus: Int(head.status.code),
+            502, "upstream_upgrade_rejected", clientRetryAfter: mapped.clientRetryAfter,
+            upstreamStatus: Int(head.status.code),
             explicitProviderRejection: (400...499).contains(Int(head.status.code))) : mapped
       }
     }

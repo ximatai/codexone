@@ -8,11 +8,13 @@ func upstreamRejection(status: HTTPResponseStatus, headers: HTTPHeaders, compact
   if (500...599).contains(Int(status.code)) {
     return .init(
       502, "upstream_unavailable", cooldownSeconds: ProviderError.retryAfter(headers),
+      clientRetryAfter: ProviderError.clientRetryAfter(in: headers),
       upstreamStatus: Int(status.code))
   }
   return ProviderError.failure(
     status: Int(status.code), error: nil,
-    retryAfter: ProviderError.retryAfter(headers), compact: compact)
+    retryAfter: ProviderError.retryAfter(headers),
+    clientRetryAfter: ProviderError.clientRetryAfter(in: headers), compact: compact)
 }
 func executionFailure(_ error: any Error) -> ExecutionFailure {
   let cancellation: ExecutionFailure =

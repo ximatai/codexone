@@ -69,13 +69,17 @@ def main():
                                         assert server.observed[-1] == expected_wire
                                         if warmup: assert events[-1]['response']['output'] == []
                         # Values the gateway does not own are the provider's to judge: forwarded, never rejected.
-                        for future in [dict(reasoning={'effort': 'xhigh', 'context': 'future'}), dict(text={'verbosity': 'max'}),
-                                       dict(stream_options={'future_delivery': 'synthetic'}), dict(reasoning={'summary': None, 'private': None})]:
+                        for future, expected_reasoning in [
+                            (dict(reasoning={'effort': 'xhigh', 'context': 'future'}), {'effort': 'xhigh', 'context': 'future'}),
+                            (dict(text={'verbosity': 'max'}), None),
+                            (dict(stream_options={'future_delivery': 'synthetic'}), None),
+                            (dict(reasoning={'summary': None, 'synthetic_future_option': None}), {'synthetic_future_option': None}),
+                        ]:
                             before = server.sequence
                             status, body = connect(ports['data'], 'POST', prefix + '/responses', dict(model='synthetic-text', input='Synthetic future control', **future))
                             assert status == 200 and server.sequence == before + 1
                             observed = server.observed[-1]
-                            if 'reasoning' in future: assert observed[0] == {k: v for k, v in future['reasoning'].items() if v is not None}
+                            if expected_reasoning is not None: assert observed[0] == expected_reasoning
                             else: assert all(observed[3][k] == v for k, v in future.items())
                 finally:
                     stop(process)

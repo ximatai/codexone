@@ -16,6 +16,8 @@
 
 未列路径返回 404，不派发上游。
 
+Realtime 仅覆盖创建 POST 转发。当前不会返回客户端提取 call ID 所需的 Location，后续 sideband WebSocket 未接入，完整语音建连不在支持范围。
+
 ## 转发与资源边界
 
 POST `/backend-api/codex/analytics-events/events` 本地返回 202 `{}`。其他允许路由只派发一次，保留原始查询串、正文和 Content-Type；wham 使用提供者同名绝对路径。单身份使用其可信配置的上游 origin，账号池使用经过验证的账号认证；均不继承客户端认证、Cookie、任意内部头或 hop-by-hop 头，不重定向，仅发送前连接建立可在原期限内重试；发送后不重放。
@@ -30,7 +32,7 @@ POST `/backend-api/codex/analytics-events/events` 本地返回 202 `{}`。其他
 
 已知 turn-state 约束候选账号，但不授予对象授权或 draining 资格；未知/过期/淘汰/重启丢失/冲突 token 在账号池返回 503 continuation_owner_unavailable，来源账号不可用或与强对象/固定连接冲突时拒绝，不换号、不删 token 重放。可信 single 部署可以原样转发未知有效 token；池内临时只剩一个账号不构成此例外。辅助端点冷却也不能使带状态请求换账号。软历史/会话偏好才可按既有健康规则回退。
 
-HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。HTTP→WS 把本次请求明确状态转入 client_metadata；原生 WS 仅首条 create 可兼容握手状态，后续消息只用自身字段，载体冲突/重复/畸形状态在 intent 前拒绝。上游 response.metadata / codex.response.metadata 事件接受字符串或非空数组首元素中的有效字符串，沿用有界校验，其他形状忽略；每个有效状态均记录来源，包括 WS 轮次外转发的事件，只有每个执行首个有效事件状态可用于返回头；普通事件内容继续透传，JSON 聚合只返回终态。SSE 已提交头后不能补头；原生 WS 已升级不能追加 HTTP 头。不提前上游连接、不注入跨轮缓存状态。thread/goal 等辅助 body 原样转发；官方 App Server JSON-RPC 字段不构成这些 HTTP 端点的路由契约，不据此推断 owner。
+HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。Responses 的成功上游 HTTP 响应还回传单个有效 openai-model，值为最多 128 字节的 ASCII 模型标识。客户端所见目录版本、账号级额度和 WS 握手元数据沿各自边界处理。HTTP→WS 把本次请求明确状态转入 client_metadata；原生 WS 仅首条 create 可兼容握手状态，后续消息只用自身字段，载体冲突/重复/畸形状态在 intent 前拒绝。上游 response.metadata / codex.response.metadata 事件接受字符串或非空数组首元素中的有效字符串，沿用有界校验，其他形状忽略；每个有效状态均记录来源，包括 WS 轮次外转发的事件，只有每个执行首个有效事件状态可用于返回头；普通事件内容继续透传，JSON 聚合只返回终态。SSE 已提交头后不能补头；原生 WS 已升级不能追加 HTTP 头。不提前上游连接、不注入跨轮缓存状态。thread/goal 等辅助 body 原样转发；官方 App Server JSON-RPC 字段不构成这些 HTTP 端点的路由契约，不据此推断 owner。
 
 状态头先在原始载体上验证，重复、超长或声明为逐跳成员的状态返回 400，不能由转发过滤变成无状态请求；有效状态优先占用既有 32 个 x-codex 头中的一席。WS 握手状态无效时拒绝升级；首条 create 的状态畸形或与握手冲突时，记录拒绝并尽力发送带 status 的标准 error 帧，不建立上游或创建 intent。HTTP SSE 与 WS 共用 metadata 状态提取规则；SSE 头已提交仍记录事件状态来源，供后续明确续接使用。
 

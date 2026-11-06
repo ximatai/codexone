@@ -41,7 +41,9 @@ Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP
 
 大于 8 MiB 的上传记录一次 info `Upstream request upload`，上传耗时截至发送完成（失败/取消则截至退出），独立进程级限额 16 条/60 秒。仅含 transport（http/websocket）、result（sent/interrupted）、size_bucket（at_most_16_mib/16_to_24_mib/24_to_32_mib/over_32_mib）与 upload_duration_bucket（under_1_s/1_to_10_s/10_to_30_s/30_to_60_s/at_least_60_s），无内容、身份、精确字节或耗时。HTTP 另含 content_encoding（identity/zstd）、wire_size_bucket（≤1、1–4、4–8、8–16、16–24、24–32、>32 MiB 的互斥固定桶）与 compression_duration_bucket（not_applicable/under_1_ms/1_to_10_ms/10_to_100_ms/100_to_1000_ms/at_least_1000_ms）；wire 仅累计交给 AHC 的块，interrupted 仅为部分值，不含 framing/TLS；压缩耗时仅累计 worker 内工作。HTTP 两种编码在 2xx 响应时均等待上传 EOF 或 exchange 退出（含取消、超时、断流）再结束诊断，非 2xx 与发送抛错立即结束；只有消费上传 EOF 才记 sent，否则记 interrupted。每次上传仅记录一条，415 明文重发的两次上传各自记录。
 
-网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。提供者错误按 P27 脱敏透传其可操作成员。HTTP 提交前可回 4xx/429/502/503/504；提交后提供者失败以 response.failed 事件、网关失败以 error 事件结束。WS 握手后不可返回 HTTP 状态响应；error 帧携带 status，lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
+网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。提供者错误按 P27 脱敏透传其可操作成员。HTTP 提交前可回 4xx/429/502/503/504；Responses SSE 提交后提供者失败以 response.failed 事件、网关失败以 error 事件结束。原生 Images SSE 提交后的失败以 Images error 事件结束。WS 握手后不可返回 HTTP 状态响应；error 帧携带 status，lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
+
+提供者错误中的单个有效 Retry-After 可回传给客户端，支持十位以内非负秒数或标准 IMF-fixdate。HTTP 失败响应回传头，Responses 已提交的失败流回传 error.headers，WS 错误使用内层 error.headers 或外层 headers。其余嵌套头不回传，大小写重复及畸形值忽略。客户端重试提示不改变内部冷却、重选或重放规则。
 
 ## P11：Desktop 与现有接入兼容
 
@@ -91,7 +93,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 WS generate:false 为 warmup，普通 HTTP 不接受 generate 控制；预热只返回无生成内容的 response.created/in_progress/终态，不能伪装普通生成或默认记零。独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 32 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
 
-reasoning、text、stream_options、include、tool_choice、metadata/client_metadata 等控制与可选字段原样转发；只有 reasoning 内 null 成员、text.verbosity/format、tool_choice、parallel_tool_calls 的 null 在转发前移除。tools 缺省与显式空数组保持区别，不合成工具声明，也不静默删除工具声明。
+reasoning、text、stream_options、include、tool_choice、metadata/client_metadata 等控制与可选字段原样转发；只有 reasoning.effort/summary/context、text.verbosity/format、tool_choice、parallel_tool_calls 的 null 在转发前移除。未知成员的显式 null 保留。tools 缺省与显式空数组保持区别，不合成工具声明，也不静默删除工具声明。
 
 Responses Lite允许在input原位置使用additional_tools包，包与其中工具原样转发，仅移除本地包 id；image_generation 不得出现在包或 namespace 内，只能作为受权限映射的唯一顶层声明。HTTP按Lite包或明确标记生成有限Lite header，WS生成每轮有限metadata标记；客户端标识头遵守P28规则。原生WS每lane仅记最近成功响应的Lite标记、模型/响应ID；省略所有声明且同模型previous_response_id精确指向该响应才继承Lite模式，不跨lane/连接/失败恢复。
 
@@ -174,7 +176,7 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 
 - 请求：Images JSON 原字节转发，仅缺 model 时补部署默认并重新序列化；multipart 仅在 /v1 edits 转换为原生 JSON。未知字段保留，尺寸/质量/背景/格式/fidelity/n 由提供者判定；网关检查模型/Key 授权、stream 类型、内联参考图与容量边界，对象须含字符串 image_url。Responses 除 P09/P13/P15 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；Images 参考图/mask 只接受有界内联 PNG/JPEG/WebP，mask 参数关系交由提供者判定。
 - 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
-- 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds，message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429 并按 resets_in_seconds/Retry-After 设置账号 cooldown。无数字状态的 SSE error 根据已识别的永久拒绝 code/type 映射 400，显式状态优先；未知拒绝仍为 502。SSE 已开始时以 response.failed 下发，原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
+- 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds 及 P10 允许的 Retry-After。message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429 并按 resets_in_seconds/Retry-After 设置账号 cooldown。无数字状态的 SSE error 根据已识别的永久拒绝 code/type 映射 400，显式状态优先；未知拒绝仍为 502。Responses SSE 已开始时以 response.failed 下发，原生 Images SSE 使用 error 事件。原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
 
 订阅合约最终 HTTP POST /responses 的唯一明文编码严格大于 8 MiB 时默认 zstd（level 3、无校验/内容大小/字典、单线程、单帧）。可信启动配置 upstreamRequestCompression 接受 zstd/off，upstreamZstdMinimumBytes 为非负整数且严格大于才启用。压缩由网关设置唯一 Content-Encoding，删除长度和传输编码后交 AHC 生成 chunked；明文保留 Content-Length。官方客户端使用整包 Content-Length，此 framing 差异仍待真实上游兼容验收；off 重启回退明文。真实 WS（含未压缩 12 MiB 请求边界）、独立 compact、Images、辅助端点和第三方 responses 合约无条件明文；合法 WS→HTTP 大请求回退可压缩。解压字节与同一份最终编码完全一致，未知字段及顺序不变；不扩展入站或响应解压。
 

@@ -207,12 +207,16 @@ enum PoolWebSocketSession {
 func sendWebSocketError(
   _ error: any Error, requestID: String, lane: String, to downstream: WebSocketPeer
 ) async throws {
+  let mapped = protocolFailure(error)
   var envelope: JSONObject = [
-    "type": .string("error"), "status": .number(Decimal(protocolFailure(error).status)),
+    "type": .string("error"), "status": .number(Decimal(mapped.status)),
     "error": protocolErrorEnvelope(error, requestID: requestID)["error"]!,
   ]
-  if let pacing = error as? AccountCooldownUnavailable {
-    envelope["headers"] = .object(["retry-after": .string(String(pacing.retryAfter))])
+  let retryAfter =
+    mapped.clientRetryAfter
+    ?? (error as? AccountCooldownUnavailable).map { String($0.retryAfter) }
+  if let retryAfter, mapped.providerError?["headers"] == nil {
+    envelope["headers"] = .object(["retry-after": .string(retryAfter)])
   }
   if !lane.isEmpty { envelope["stream_id"] = .string(lane) }
   try await downstream.send(.object(envelope))

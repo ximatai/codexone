@@ -583,14 +583,21 @@ def main():
                     assert usage['images'] == 1 and outcome['kind'] == 'succeeded'
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
+                            before = upstream.calls
                             status, body, headers = request({'prompt':'stream-error','stream':True}, prefix + '/images/' + operation)
+                            assert upstream.calls == before + 1
                             assert status == (400 if operation == 'edits' else 200)
                             assert b'acct-split-secret' not in body and b'user-synthetic@example.invalid' not in body
                             assert b'synthetic-private-member' not in body
                             events = [json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {')]
-                            failure = events[-1] if operation == 'generations' else {'type':'response.failed','response':json.loads(body)}
-                            assert failure['type'] == 'response.failed', failure
-                            error = failure['response']['error']
+                            if operation == 'generations':
+                                assert b'event: error\n' in body and b'response.failed' not in body
+                                assert b'data: [DONE]' not in body
+                                assert [event['type'] for event in events] == ['image_generation.partial_image', 'error']
+                                failure = events[-1]
+                            else:
+                                failure = json.loads(body)
+                            error = failure['error']
                             assert error['code'] == 'synthetic_provider_error' and error['type'] == 'invalid_request_error'
                             assert error['param'] == 'prompt' and '[redacted]' in error['message']
                             assert error['request_id'] == headers['x-request-id']
