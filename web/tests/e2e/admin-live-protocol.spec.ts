@@ -341,14 +341,12 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
     await page.reload();
     await expect.poll(() => !!release && socket !== original).toBe(true);
     const unavailable = {
-      ...sections,
-      keys: {
-        ...sections.keys,
-        data: null,
-        lastSuccessAt: null,
-        freshness: "unavailable",
-        code: "source_unavailable",
-      },
+      version: 1,
+      sampledAtUnixSeconds: sections.keys.sampledAtUnixSeconds,
+      data: null,
+      lastSuccessAt: null,
+      freshness: "unavailable",
+      code: "source_unavailable",
     };
     socket!.send(
       JSON.stringify({
@@ -356,7 +354,7 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
         epoch: "synthetic-null",
         sequence: 1,
         kind: "snapshot",
-        sections: unavailable,
+        sections: { ...sections, keys: unavailable, attention: unavailable },
       }),
     );
     await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
@@ -364,6 +362,8 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
       "live",
     );
     await expect(page.getByText("Key 汇总读取失败")).toBeVisible();
+    await expect(page.getByLabel("概览连接状态")).toContainText("运行提醒");
+    await expect(page.getByRole("region", { name: "运行提醒" })).toHaveCount(0);
     await expect(page.getByText("暂无活跃 Key")).toHaveCount(0);
     const failedSocket = socket;
     failedSocket!.send(

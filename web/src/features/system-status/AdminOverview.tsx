@@ -158,6 +158,20 @@ export function AdminOverview() {
             { ...system, source: "生成就绪" },
             { ...accounts, source: "订阅账号" },
             { ...headroom, source: "治理余量" },
+            {
+              ...storage,
+              source: "存储状态",
+              isError: storage.isError || storage.data?.pressure === "unknown",
+            },
+            {
+              ...attention,
+              source: "运行提醒",
+              isError:
+                attention.isError ||
+                !!attention.data?.items.some(
+                  (item) => item.kind === "attention_source_unavailable",
+                ),
+            },
           ]}
           sidebar={(outputTrend) => (
             <>
@@ -168,17 +182,6 @@ export function AdminOverview() {
                   (item) => item.kind === "backup_stale",
                 )}
                 backupUnconfirmed={attention.isError}
-                attentionError={
-                  attention.isError ||
-                  !!attention.data?.items.some(
-                    (item) =>
-                      item.kind === "attention_source_unavailable" &&
-                      item.detail.source !== "storage",
-                  )
-                }
-                retry={() =>
-                  live.mode === "live" ? live.retry() : void attention.refetch()
-                }
                 availability={availabilityBlocker({
                   ready: system.isError ? undefined : system.data?.ready,
                   accountCount: accounts.isError

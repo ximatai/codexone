@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Paper, Stack, Title } from "@mantine/core";
+import { Alert, Anchor, Paper, Stack, Title } from "@mantine/core";
 import { Link } from "react-router";
 import type { AttentionItem } from "./attention-api";
 import type { availabilityBlocker } from "./availability-blocker";
@@ -9,32 +9,26 @@ export function AdministratorReminders({
   storageError,
   backupOverdue,
   backupUnconfirmed,
-  attentionError,
-  retry,
   availability,
 }: {
   storage?: ReturnType<typeof parseStorage>;
   storageError: boolean;
   backupOverdue?: AttentionItem;
   backupUnconfirmed: boolean;
-  attentionError: boolean;
-  retry: () => void;
   availability: ReturnType<typeof availabilityBlocker>;
 }) {
   const disk =
-    storageError || storage?.pressure === "unknown"
-      ? { text: "存储保护状态未知", color: "orange" }
-      : storage?.admissionAllowed === false
+    !storage || storage.pressure === "unknown"
+      ? null
+      : storage.admissionAllowed === false
         ? { text: "存储保护已暂停接收新请求。", color: "red" }
-        : storage?.optionalWorkAllowed === false
+        : storage.optionalWorkAllowed === false
           ? { text: "存储保护已暂停备份和部分统计。", color: "orange" }
           : null;
   const free = storage?.availableBytes;
   const service =
     availability?.to === "/?storage=details" ? null : availability;
-  // Low-disk protection can intentionally skip the reminder query.
-  const unreadable = attentionError && !disk;
-  if (!disk && !service && !backupOverdue && !unreadable) return null;
+  if (!disk && !service && !backupOverdue) return null;
 
   return (
     <Paper
@@ -80,14 +74,6 @@ export function AdministratorReminders({
             <Anchor component={Link} to="/?storage=details" size="sm">
               查看备份
             </Anchor>
-          </Alert>
-        )}
-        {unreadable && (
-          <Alert color="orange">
-            运行提醒读取失败{" "}
-            <Button variant="subtle" size="compact-xs" onClick={retry}>
-              重试
-            </Button>
           </Alert>
         )}
       </Stack>
