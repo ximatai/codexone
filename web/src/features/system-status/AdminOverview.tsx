@@ -69,9 +69,6 @@ export function AdminOverview() {
   const refresh = {
     ...baseRefresh,
     interval: live.mode === "live" ? (false as const) : baseRefresh.interval,
-    manualRefresh: () => {
-      void live.manualRefresh();
-    },
   };
   const client = useQueryClient();
   const [release, setRelease] = useState<{
@@ -102,6 +99,7 @@ export function AdminOverview() {
     refetchInterval: refresh.interval,
     staleTime: 15000,
     refetchOnWindowFocus: baseRefresh.active && live.mode !== "live",
+    refetchOnReconnect: baseRefresh.active && live.mode !== "live",
   };
   const [clock, setClock] = useState(() => performance.now());
   useEffect(() => {
@@ -229,7 +227,7 @@ export function AdminOverview() {
             { ...attention, source: "需要处理提醒" },
             { ...headroom, source: "治理余量" },
           ]}
-          sidebar={
+          sidebar={(sourceDetails) => (
             <>
               <Paper withBorder p="md">
                 <Title order={3} size="h4" mb="md">
@@ -246,7 +244,7 @@ export function AdminOverview() {
                 )}
                 {!accounts.data && accounts.isFetched && (
                   <Text size="sm" c="dimmed">
-                    订阅额度尚无成功数据，请查看读取状态。
+                    额度尚未读取。
                   </Text>
                 )}
                 {accounts.data?.length === 0 && (
@@ -261,6 +259,28 @@ export function AdminOverview() {
                     const needsAuth =
                       account.authorization !== "ready" ||
                       account.observability?.health.authenticationRejected;
+                    const accountStatus =
+                      account.mode === "disabled"
+                        ? "已禁用"
+                        : needsAuth
+                          ? "需要重新授权"
+                          : account.observability?.health.cooldownCount
+                            ? "冷却中"
+                            : account.mode === "draining"
+                              ? "排空中"
+                              : null;
+                    const expires = account.accessExpiresAtUnixSeconds;
+                    const quotaStatus =
+                      !quota || quota.state === "unavailable"
+                        ? "额度不可用"
+                        : quotaStale(
+                              account.observability!,
+                              Math.max(clock, performance.now()),
+                            )
+                          ? "额度观测已陈旧"
+                          : !base?.primary && !base?.secondary
+                            ? "额度未提供"
+                            : null;
                     return (
                       <Stack
                         gap="xs"
@@ -273,75 +293,64 @@ export function AdminOverview() {
                         >
                           {accountName(account.id, [], account.displayName)}
                         </Anchor>
-                        <Text
-                          size="xs"
-                          c={
-                            account.mode !== "disabled" && needsAuth
-                              ? "orange.8"
-                              : "dimmed"
-                          }
-                        >
-                          {account.mode === "disabled"
-                            ? "已禁用"
-                            : needsAuth
-                              ? "需要重新授权"
-                              : account.observability?.health.cooldownCount
-                                ? "冷却中"
-                                : account.mode === "draining"
-                                  ? "排空中"
-                                  : "已启用"}{" "}
-                          ·{" "}
-                          {credentialExpiry(account.accessExpiresAtUnixSeconds)}
-                        </Text>
-                        <div className={styles.quotaPair}>
-                          <QuotaWindowBar
-                            showUsed
-                            title={quotaLabel(
-                              base?.primary?.durationSeconds,
-                              "主窗口",
+                        {(accountStatus || expires != null) && (
+                          <Text
+                            size="xs"
+                            c={
+                              account.mode !== "disabled" && needsAuth
+                                ? "orange.8"
+                                : "dimmed"
+                            }
+                          >
+                            {[
+                              accountStatus,
+                              expires != null
+                                ? credentialExpiry(expires)
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                        )}
+                        {(base?.primary || base?.secondary) && (
+                          <div className={styles.quotaWindows}>
+                            {base.primary && (
+                              <QuotaWindowBar
+                                showUsed
+                                title={quotaLabel(
+                                  base.primary.durationSeconds,
+                                  "主窗口",
+                                )}
+                                value={base.primary}
+                              />
                             )}
-                            value={base?.primary ?? null}
-                          />
-                          <QuotaWindowBar
-                            showUsed
-                            title={quotaLabel(
-                              base?.secondary?.durationSeconds,
-                              "次窗口",
+                            {base.secondary && (
+                              <QuotaWindowBar
+                                showUsed
+                                title={quotaLabel(
+                                  base.secondary.durationSeconds,
+                                  "次窗口",
+                                )}
+                                value={base.secondary}
+                              />
                             )}
-                            value={base?.secondary ?? null}
-                          />
-                        </div>
-                        {headroom.data?.accounts
-                          .filter((value) => value.id === account.id)
-                          .map((value) => (
-                            <Text key={value.id} size="xs" c="dimmed">
-                              并发 {value.current} / {value.limit} · 24 小时峰值{" "}
-                              {value.peak24Hours}
-                            </Text>
-                          ))}
-                        <Text
-                          size="xs"
-                          c={
-                            base?.limitReached || base?.allowed === false
-                              ? "red"
-                              : "dimmed"
-                          }
-                        >
-                          {base?.limitReached || base?.allowed === false
-                            ? "额度告警：上游报告受限"
-                            : "窗口为上游观测，不是 Key 余额"}
-                        </Text>
-                        <Text size="xs" c="orange">
-                          {!quota || quota.state === "unavailable"
-                            ? "额度不可用"
-                            : quotaStale(
-                                  account.observability!,
-                                  Math.max(clock, performance.now()),
-                                )
-                              ? "额度观测已陈旧"
-                              : ""}
-                          {quota?.failure ? " · 最近读取失败" : ""}
-                        </Text>
+                          </div>
+                        )}
+                        {(base?.limitReached || base?.allowed === false) && (
+                          <Text size="xs" c="red">
+                            上游额度受限
+                          </Text>
+                        )}
+                        {(quotaStatus || quota?.failure) && (
+                          <Text size="xs" c="orange.8">
+                            {[
+                              quotaStatus,
+                              quota?.failure ? "最近读取失败" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                        )}
                       </Stack>
                     );
                   })}
@@ -356,6 +365,7 @@ export function AdminOverview() {
               />
               <details>
                 <summary>运行诊断</summary>
+                {sourceDetails}
                 <SystemOverview compact shared={system} />
                 <Anchor component={Link} to="/?storage=details" size="sm">
                   最近备份 · {backupTime(storage.data?.backup)} ›
@@ -392,7 +402,7 @@ export function AdminOverview() {
                 onRelease={(before, count) => setRelease({ before, count })}
               />
             </>
-          }
+          )}
         />
         {accountDrawerMounted && (
           <Suspense fallback={null}>

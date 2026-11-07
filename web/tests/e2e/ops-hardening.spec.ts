@@ -105,7 +105,6 @@ test("reviews unknown release, conflict and success at desktop size", async ({
     page.getByText("未命名账号 · 12345678", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
-  await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.getByText("运行诊断", { exact: true }).click();
   await page
     .getByRole("region", { name: "需要处理", exact: true })

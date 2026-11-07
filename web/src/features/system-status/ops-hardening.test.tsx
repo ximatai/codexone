@@ -10,17 +10,10 @@ import * as usage from "./round2-api";
 import { attentionMessage } from "./attention-api";
 vi.mock("./ActivityOverview", () => ({
   ActivityOverview: ({
-    attention,
     sidebar,
   }: {
-    attention: React.ReactNode;
-    sidebar: React.ReactNode;
-  }) => (
-    <>
-      {attention}
-      {sidebar}
-    </>
-  ),
+    sidebar: (sourceDetails: React.ReactNode) => React.ReactNode;
+  }) => sidebar(null),
 }));
 vi.mock("../../shared/management", async (original) => ({
   ...(await original<typeof management>()),

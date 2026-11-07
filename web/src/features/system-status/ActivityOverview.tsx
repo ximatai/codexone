@@ -12,7 +12,6 @@ import {
   Group,
   Paper,
   Stack,
-  Switch,
   Text,
   Title,
 } from "@mantine/core";
@@ -40,22 +39,6 @@ const sourceLabels: Record<string, string> = {
   attention: "待处理提醒",
   headroom: "资源余量",
 };
-function UpdatedAgo({ updated }: { updated: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!document.hidden) setNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return (
-    <Text size="xs" className={styles.updatedAgo}>
-      {updated
-        ? `${Math.max(0, Math.floor((now - updated) / 1000))} 秒前更新`
-        : "尚未更新"}
-    </Text>
-  );
-}
 function Elapsed({
   seconds,
   sampledAt,
@@ -106,7 +89,7 @@ export function ActivityOverview({
     isFetching: boolean;
     refetch: () => Promise<unknown>;
   }[];
-  sidebar?: ReactNode;
+  sidebar?: (sourceDetails: ReactNode) => ReactNode;
   accounts?: readonly AccountName[];
   capacities?: CapacityMetric[];
 }) {
@@ -118,6 +101,7 @@ export function ActivityOverview({
     refetchInterval: control.interval,
     // Returning to the tab refetches only snapshots older than one refresh period.
     refetchOnWindowFocus: control.active && live?.mode !== "live",
+    refetchOnReconnect: control.active && live?.mode !== "live",
     staleTime: 15000,
   };
   const daily = overviewQuery(
@@ -160,9 +144,6 @@ export function ActivityOverview({
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const updated = allQueries.every((q) => q.dataUpdatedAt > 0)
-    ? Math.min(...allQueries.map((q) => q.dataUpdatedAt))
-    : 0;
   const failedSources = allQueries.filter((query) => query.isError);
   const readFailure = failedSources.length
     ? `概览读取失败：${failedSources
@@ -173,99 +154,37 @@ export function ActivityOverview({
         .join("、")}。缺失值未记为零，请重试。`
     : "";
   const retrySources = () => {
-    for (const query of allQueries) void query.refetch();
+    for (const query of failedSources) void query.refetch();
   };
 
   return (
     <Stack aria-label="请求即时概览">
       <div className={styles.header}>
-        <PageHeader
-          title="今日运营概览"
-          description={`${daily.data?.timezone ?? "业务日"} 当日 · 费用为估算，非账单`}
-          actions={
-            <Group>
-              <Switch
-                label={live?.mode === "live" ? "实时观察" : "自动刷新（15 秒）"}
-                checked={control.automatic}
-                onChange={(e) => control.setAutomatic(e.currentTarget.checked)}
-              />
-              <UpdatedAgo updated={updated} />
-              <Button
-                size="xs"
-                variant="default"
-                disabled={allQueries.some((q) => q.isFetching)}
-                onClick={() => {
-                  if (control.manualRefresh) control.manualRefresh();
-                  else for (const q of allQueries) void q.refetch();
-                }}
-              >
-                刷新请求概览
-              </Button>
-            </Group>
-          }
-        />
+        <PageHeader title="今日运营概览" />
       </div>
-      {!control.automatic && !live && (
-        <Text size="xs" c="dimmed">
-          自动观察已暂停，以下为上次快照。
-        </Text>
-      )}
       {live && (
         <div
           aria-label="概览连接状态"
+          data-live-mode={live.mode}
           data-live-failure={live.failure || undefined}
+          hidden={!readFailure && !live.stale.length}
         >
-          <Text size="xs">
-            {
-              {
-                live: "实时连接",
-                connecting: "连接中 · HTTP 轮询",
-                polling: "轮询模式（15 秒）· 活动观察中断",
-                paused: "观察已暂停",
-              }[live.mode]
-            }
-          </Text>
-          <details>
-            <summary
-              className={styles.sourceSummary}
-              title={readFailure || undefined}
-            >
-              {readFailure ? (
-                <span role="alert">{readFailure}</span>
-              ) : (
-                <>
-                  各源更新时间
-                  {live.stale.length
-                    ? ` · ${live.stale.length} 个来源已陈旧`
-                    : ""}
-                </>
-              )}
-            </summary>
-            <div className={styles.sourceDetails}>
-              {readFailure && (
-                <>
-                  <Text size="sm" c="red">
-                    {readFailure}
-                  </Text>
-                  <Button variant="subtle" size="xs" onClick={retrySources}>
-                    重试
-                  </Button>
-                </>
-              )}
-              {Object.entries(live.sources).map(([name, source]) => (
-                <Text size="xs" key={name}>
-                  {sourceLabels[name] ?? "概览来源"} ·{" "}
-                  {source.lastSuccessAt == null
-                    ? "尚无成功数据"
-                    : localTime(source.lastSuccessAt)}{" "}
-                  ·{" "}
-                  {live.stale.some(([key]) => key === name)
-                    ? "已陈旧"
-                    : "已更新"}
-                </Text>
-              ))}
-            </div>
-          </details>
+          {readFailure ? (
+            <Group gap="xs">
+              <Text size="xs" c="red" role="alert">
+                {readFailure}
+              </Text>
+              <Button variant="subtle" size="xs" onClick={retrySources}>
+                重试
+              </Button>
+            </Group>
+          ) : (
+            !!live.stale.length && (
+              <Text size="xs" c="orange.8">
+                部分数据已陈旧 · {live.stale.length} 个来源
+              </Text>
+            )
+          )}
         </div>
       )}
       {summary}
@@ -281,6 +200,7 @@ export function ActivityOverview({
           ) : (
             <OverviewStats
               buckets={daily.data?.buckets ?? []}
+              timezone={daily.data?.timezone}
               loading={daily.isPending}
               capacities={capacities}
             />
@@ -439,7 +359,37 @@ export function ActivityOverview({
         </Stack>
         {sidebar && (
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
-            {sidebar}
+            {sidebar(
+              live && (
+                <details>
+                  <summary>各源更新时间</summary>
+                  <div className={styles.sourceDetails}>
+                    <Text size="xs">
+                      {
+                        {
+                          live: "实时连接",
+                          connecting: "连接中",
+                          polling: "轮询更新",
+                          paused: "已暂停",
+                        }[live.mode]
+                      }
+                    </Text>
+                    {Object.entries(live.sources).map(([name, source]) => (
+                      <Text size="xs" key={name}>
+                        {sourceLabels[name] ?? "概览来源"} ·{" "}
+                        {source.lastSuccessAt == null
+                          ? "尚无成功数据"
+                          : localTime(source.lastSuccessAt)}{" "}
+                        ·{" "}
+                        {live.stale.some(([key]) => key === name)
+                          ? "已陈旧"
+                          : "已更新"}
+                      </Text>
+                    ))}
+                  </div>
+                </details>
+              ),
+            )}
           </aside>
         )}
       </div>

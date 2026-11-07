@@ -86,6 +86,7 @@ test("P2-3: first Key failure has one error and one in-table retry", async ({
 test("P2-4: first failure has no snapshot claim and overview merges failing sources", async ({
   page,
 }) => {
+  await page.clock.install();
   const state = await reviewFixture(page);
   state.failures["/api/usage"] = 503;
   await gotoUsage(page);
@@ -116,14 +117,13 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
     await expect(alert).toContainText(source);
   await expect(alert).not.toContainText("快照");
   state.failures = {};
-  await page.locator('[aria-label="概览连接状态"] summary').click();
   await page.getByRole("button", { name: "重试", exact: true }).click();
   await page.getByText("运行诊断", { exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(2); // two actual attention items
   state.alerts = 0;
   state.failures["/api/usage/daily"] = 503;
   state.failures["/api/usage/in-flight"] = 503;
-  await page.getByRole("button", { name: "刷新请求概览" }).click();
+  await page.clock.runFor(15000);
   await expect(page.getByRole("alert")).toHaveCount(1);
   await expect(page.getByRole("alert")).toContainText(/保留上次成功快照 \d{4}/);
 });

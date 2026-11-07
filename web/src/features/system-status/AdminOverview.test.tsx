@@ -136,7 +136,8 @@ it.each(["fresh", "unavailable"] as const)(
     await screen.findByText(
       state === "fresh" ? "未命名账号 · syntheti" : "额度不可用",
     );
-    fireEvent.click(await screen.findByLabelText("自动刷新（15 秒）"));
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
     await act(async () => {});
     const reads = vi.mocked(accounts.fetchAccounts).mock.calls.length;
     await act(async () => vi.advanceTimersByTime(300000));
@@ -146,6 +147,7 @@ it.each(["fresh", "unavailable"] as const)(
     if (state === "unavailable")
       expect(screen.queryByText("额度观测已陈旧")).toBeNull();
     expect(accounts.fetchAccounts).toHaveBeenCalledTimes(reads);
+    hidden.mockRestore();
     view.unmount();
   },
 );

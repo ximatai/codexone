@@ -1,6 +1,12 @@
 import CodexOneRuntime
 import Testing
 
+@Test func adminOverviewPushDefaultsOnAndCanBeDisabled() throws {
+  #expect(try RuntimeConfiguration(environment: [:]).adminLiveEnabled)
+  let disabled = try RuntimeConfiguration(environment: ["CODEXONE_ADMIN_LIVE": "off"])
+  #expect(!disabled.adminLiveEnabled)
+}
+
 @Test func loopbackListenerConfigurationValidatesPorts() throws {
   let defaults = try RuntimeConfiguration(environment: [:])
   #expect(defaults.dataPort == 18080)

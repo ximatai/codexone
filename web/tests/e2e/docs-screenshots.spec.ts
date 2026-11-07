@@ -116,7 +116,6 @@ test("render synthetic documentation screenshots", async ({ page }) => {
       .getByRole("region", { name: "今日 Key 请求汇总" })
       .getByText("desktop", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.screenshot({
     path: "../docs/assets/overview.png",
     fullPage: true,

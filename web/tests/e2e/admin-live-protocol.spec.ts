@@ -23,7 +23,10 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
     sections,
   };
   socket!.send(JSON.stringify(snapshot));
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
   const previous =
     (await page
       .getByRole("region", { name: "今日 Key 请求汇总" })
@@ -67,14 +70,18 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
       },
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).getByRole("status"),
   ).toContainText("保留上次成功快照");
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
-  await page.locator("summary").filter({ hasText: "概览读取失败" }).click();
+  await page.getByText("运行诊断", { exact: true }).click();
+  await page.getByText("各源更新时间", { exact: true }).click();
   await expect(page.getByText(/今日 Key 汇总 · .* · 已陈旧/)).toBeVisible();
   socket!.send(
     JSON.stringify({
@@ -85,7 +92,10 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
       sections: {},
     }),
   );
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
@@ -239,7 +249,10 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
       sections,
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
   await expect(page.getByText("synthetic-retired-model")).toHaveCount(0);
 });
 
@@ -284,7 +297,10 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
         sections: unavailable,
       }),
     );
-    await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+      "data-live-mode",
+      "live",
+    );
     await expect(
       page.getByText("今日 Key 汇总读取失败。请重试。"),
     ).toBeVisible();
@@ -309,11 +325,11 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
   }
 });
 
-test("successful HTTP fallback advances source freshness beyond 45 seconds", async ({
+test("push updates resources without HTTP polling and resumes after fallback", async ({
   page,
 }) => {
   await page.clock.install();
-  await reviewFixture(page);
+  const state = await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   let reject = false;
   await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -332,19 +348,123 @@ test("successful HTTP fallback advances source freshness beyond 45 seconds", asy
       sections,
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const overviewPaths = new Set([
+    "/api/system",
+    "/api/usage/in-flight",
+    "/api/usage/daily",
+    "/api/usage/keys",
+    "/api/accounts",
+    "/api/runtime/storage",
+    "/api/attention",
+    "/api/usage/headroom",
+  ]);
+  const overviewReads = () =>
+    state.reads.filter(({ path }) => overviewPaths.has(path)).length;
+  const initialReads = overviewReads();
+  await page.clock.fastForward(16000);
+  expect(overviewReads()).toBe(initialReads);
+  const sampleTime = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const resource = {
+    ...sections.storage,
+    version: 2,
+    sampledAtUnixSeconds: sampleTime,
+    lastSuccessAt: sampleTime,
+    data: {
+      pressure: "normal",
+      admissionAllowed: true,
+      optionalWorkAllowed: true,
+      availableBytes: 40,
+      volumeTotalBytes: 100,
+      resources: [
+        {
+          unixSeconds: sampleTime - 30,
+          hostCPUPercent: 10,
+          hostAvailableBytes: 4,
+          hostTotalBytes: 8,
+          processResidentBytes: 128 * 1024 ** 2,
+        },
+        {
+          unixSeconds: sampleTime,
+          hostCPUPercent: 25,
+          hostAvailableBytes: 6,
+          hostTotalBytes: 8,
+          processResidentBytes: 256 * 1024 ** 2,
+        },
+      ],
+    },
+  };
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-fallback",
+      sequence: 2,
+      kind: "update",
+      sections: { storage: resource },
+    }),
+  );
+  await expect(page.getByRole("group", { name: "CPU 使用率" })).toContainText(
+    "25%",
+  );
+  await expect(
+    page.getByRole("group", { name: "服务器可用内存" }),
+  ).toContainText("75%");
+  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
+    "40%",
+  );
+  await expect(
+    page.getByRole("img", { name: "网关内存占用最近一小时趋势" }),
+  ).toBeVisible();
+  expect(overviewReads()).toBe(initialReads);
   reject = true;
   socket!.close({ code: 1013 });
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await page.clock.fastForward(46000);
-  await page.getByRole("button", { name: "刷新请求概览" }).click();
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect.poll(overviewReads).toBeGreaterThan(initialReads);
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await expect(
     page.locator("summary").filter({ hasText: "各源更新时间" }),
   ).toHaveText("各源更新时间");
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.getByText("各源更新时间", { exact: true }).click();
   await expect(page.getByText(/存储与备份 · .* · 已更新/)).toBeVisible();
   await expect(page.getByText(/今日 Key 汇总 · .* · 已更新/)).toBeVisible();
+  const previousSocket = socket;
+  reject = false;
+  await page.clock.fastForward(61000);
+  await expect.poll(() => socket !== previousSocket).toBe(true);
+  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const fresh = Object.fromEntries(
+    Object.entries({ ...sections, storage: resource }).map(([name, source]) => [
+      name,
+      { ...source, lastSuccessAt: resumed, sampledAtUnixSeconds: resumed },
+    ]),
+  );
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-fallback",
+      sequence: 1,
+      kind: "snapshot",
+      sections: fresh,
+    }),
+  );
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const resumedReads = overviewReads();
+  await page.clock.fastForward(16000);
+  expect(overviewReads()).toBe(resumedReads);
 });
 
 for (const width of [1440, 390])
@@ -385,7 +505,10 @@ for (const width of [1440, 390])
       );
     send(1, null);
     const cards = page.getByLabel("在途请求卡片");
-    await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+      "data-live-mode",
+      "live",
+    );
     const row = {
       id: "synthetic-running-request",
       keyID: "synthetic-key",

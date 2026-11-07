@@ -93,16 +93,13 @@ export function useOverviewLive(active: boolean) {
   const [clients, setClients] = useState<LiveClients>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
-  const [manualBusy, setManualBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const transportGeneration = useRef(0);
-  const [transportRevision, setTransportRevision] = useState(0);
-  const socketRef = useRef<WebSocket | null>(null);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
   const authenticated = !!owner.session;
   useEffect(() => {
-    if (!active || !authenticated || manualBusy) {
+    if (!active || !authenticated) {
       setMode("paused");
       return;
     }
@@ -148,7 +145,6 @@ export function useOverviewLive(active: boolean) {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/overview/live`,
       );
-      socketRef.current = socket;
       const connection = socket;
       timeout = setTimeout(() => connection.close(), 10000);
       connection.onmessage = (event) => {
@@ -268,7 +264,6 @@ export function useOverviewLive(active: boolean) {
         clearTimeout(timeout);
         clearTimeout(stable);
         socket = null;
-        socketRef.current = null;
         setMode("polling");
         setClients([]);
         void checkSession();
@@ -296,25 +291,8 @@ export function useOverviewLive(active: boolean) {
       clearTimeout(stable);
       clearInterval(timer);
       socket?.close();
-      socketRef.current = null;
     };
-  }, [
-    active,
-    authenticated,
-    owner.generation,
-    client,
-    manualBusy,
-    transportRevision,
-  ]);
-  async function manualRefresh() {
-    ++transportGeneration.current;
-    socketRef.current?.close();
-    setManualBusy(true);
-    await client.cancelQueries({ queryKey: ["overview"] });
-    await client.refetchQueries({ queryKey: ["overview"], type: "active" });
-    setManualBusy(false);
-    setTransportRevision((value) => value + 1);
-  }
+  }, [active, authenticated, owner.generation, client]);
   const cache = client.getQueryCache();
   const subscribe = useCallback(
     (notify: () => void) => cache.subscribe(notify),
@@ -385,6 +363,5 @@ export function useOverviewLive(active: boolean) {
     overflow,
     reset,
     stale,
-    manualRefresh,
   };
 }

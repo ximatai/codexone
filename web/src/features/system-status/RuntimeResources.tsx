@@ -1,4 +1,4 @@
-import { Anchor, Paper, Progress, Stack, Text, Title } from "@mantine/core";
+import { Anchor, Group, Paper, Stack, Text, Title } from "@mantine/core";
 import { Link } from "react-router";
 import styles from "./overview.module.css";
 import type { parseStorage, ResourceSample } from "./storage-api";
@@ -6,21 +6,20 @@ import type { parseStorage, ResourceSample } from "./storage-api";
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
 
-function Series({
-  label,
+function ResourceTrend({
   samples,
+  label,
   field,
   scale,
-  format,
+  detail,
 }: {
-  label: string;
   samples: ResourceSample[];
-  field: "processResidentBytes" | "hostAvailableBytes" | "hostCPUPercent";
+  label: string;
+  field: "hostCPUPercent" | "hostAvailableBytes" | "processResidentBytes";
   scale?: number;
-  format: (value: number) => string;
+  detail?: string;
 }) {
   const latest = samples.at(-1);
-  const last = latest?.[field];
   const maximum =
     scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0));
   let previous: ResourceSample | undefined;
@@ -38,10 +37,16 @@ function Series({
     .join(" ");
   return (
     <div>
-      <Text size="xs">{label}</Text>
-      <Text fw={650} size="sm">
-        {last == null ? "未知" : format(last)}
-      </Text>
+      <Group justify="space-between" gap="xs">
+        <Text size="xs" fw={500}>
+          {label}
+        </Text>
+        {detail && (
+          <Text size="xs" c="dimmed">
+            {detail}
+          </Text>
+        )}
+      </Group>
       <svg
         viewBox="0 0 100 30"
         width="100%"
@@ -63,6 +68,46 @@ function Series({
   );
 }
 
+function ResourceGauge({
+  label,
+  percent,
+  detail,
+}: {
+  label: string;
+  percent: number | null;
+  detail?: string;
+}) {
+  return (
+    <div className={styles.resourceGauge} role="group" aria-label={label}>
+      <Text size="xs">{label}</Text>
+      <div className={styles.gaugeDial}>
+        <svg viewBox="0 0 72 72" aria-hidden="true">
+          <circle cx="36" cy="36" r="30" className={styles.gaugeTrack} />
+          {percent != null && percent > 0 && (
+            <circle
+              cx="36"
+              cy="36"
+              r="30"
+              pathLength="100"
+              strokeDasharray={`${percent} 100`}
+              transform="rotate(-90 36 36)"
+              className={styles.gaugeFill}
+            />
+          )}
+        </svg>
+        <Text className={styles.gaugeValue} fw={650} size="sm">
+          {percent == null ? "未知" : `${percent.toFixed(0)}%`}
+        </Text>
+      </div>
+      {detail && (
+        <Text size="xs" c="dimmed">
+          {detail}
+        </Text>
+      )}
+    </div>
+  );
+}
+
 export function RuntimeResources({
   storage,
   stale,
@@ -71,7 +116,14 @@ export function RuntimeResources({
   stale: boolean;
 }) {
   const samples = storage?.resources ?? [];
-  const total = samples.at(-1)?.hostTotalBytes;
+  const latest = samples.at(-1);
+  const total = latest?.hostTotalBytes;
+  const available = latest?.hostAvailableBytes;
+  const cpu = latest?.hostCPUPercent;
+  const memoryPercent =
+    available != null && total && available <= total
+      ? (available / total) * 100
+      : null;
   const disk = storage?.availableBytes;
   const volume = storage?.volumeTotalBytes;
   const diskFree =
@@ -88,58 +140,75 @@ export function RuntimeResources({
         <Title order={3} size="h4">
           运行资源
         </Title>
-        <Text size="xs" c={stale ? "orange.8" : "dimmed"}>
-          最近一小时{stale ? " · 快照已陈旧" : ""}
-        </Text>
-        <div className={styles.memoryGrid}>
-          <Series
-            label="网关内存占用"
-            field="processResidentBytes"
-            samples={samples}
-            format={(value) => `${(value / MiB).toFixed(0)} MiB`}
-          />
-          <Series
+        {stale && (
+          <Text size="xs" c="orange.8">
+            快照已陈旧
+          </Text>
+        )}
+        <div className={styles.resourceGauges}>
+          <ResourceGauge label="CPU 使用率" percent={cpu ?? null} />
+          <ResourceGauge
             label="服务器可用内存"
-            field="hostAvailableBytes"
-            samples={samples}
-            scale={total}
-            format={(value) =>
-              `${(value / GiB).toFixed(1)}${total ? ` / ${(total / GiB).toFixed(1)}` : ""} GiB`
+            percent={memoryPercent}
+            detail={
+              available == null
+                ? undefined
+                : `${(available / GiB).toFixed(1)}${total ? ` / ${(total / GiB).toFixed(1)}` : ""} GiB`
+            }
+          />
+          <ResourceGauge
+            label="数据盘可用"
+            percent={diskFree}
+            detail={
+              typeof disk === "number"
+                ? disk < GiB
+                  ? `${(disk / MiB).toFixed(1)} MiB`
+                  : `${(disk / GiB).toFixed(1)} GiB`
+                : undefined
             }
           />
         </div>
-        <Series
-          label="服务器 CPU 使用率"
-          field="hostCPUPercent"
-          samples={samples}
-          scale={100}
-          format={(value) => `${value.toFixed(0)}%`}
-        />
-        <Anchor component={Link} to="/?storage=details" size="sm">
-          数据盘
-          {typeof disk === "number"
-            ? disk < GiB
-              ? `剩余 ${(disk / MiB).toFixed(1)} MiB`
-              : `剩余 ${(disk / GiB).toFixed(1)} GiB`
-            : "余量未知"}{" "}
-          ›
-        </Anchor>
-        {diskFree != null && (
-          <Progress
-            aria-label="数据盘可用比例"
-            value={diskFree}
-            color={!storage?.optionalWorkAllowed ? "orange" : "blue"}
+        <Group justify="space-between" gap="xs">
+          <Anchor component={Link} to="/?storage=details" size="xs">
+            数据盘详情 ›
+          </Anchor>
+          <Text size="xs" c="dimmed">
+            {!storage
+              ? "保护状态未知"
+              : !storage.admissionAllowed
+                ? "已暂停准入"
+                : !storage.optionalWorkAllowed
+                  ? "可选任务已暂停"
+                  : "保护未触发"}
+          </Text>
+        </Group>
+        <div className={styles.resourceHistory}>
+          <Text size="xs" c="dimmed">
+            最近一小时
+          </Text>
+          <ResourceTrend
+            samples={samples}
+            label="服务器 CPU 使用率"
+            field="hostCPUPercent"
+            scale={100}
           />
-        )}
-        <Text size="xs" c="dimmed">
-          {!storage
-            ? "保护状态未知"
-            : !storage.admissionAllowed
-              ? "已暂停准入"
-              : !storage.optionalWorkAllowed
-                ? "可选任务已暂停"
-                : "保护未触发"}
-        </Text>
+          <ResourceTrend
+            samples={samples}
+            label="服务器可用内存"
+            field="hostAvailableBytes"
+            scale={total}
+          />
+          <ResourceTrend
+            samples={samples}
+            label="网关内存占用"
+            field="processResidentBytes"
+            detail={
+              latest?.processResidentBytes == null
+                ? "未知"
+                : `${(latest.processResidentBytes / MiB).toFixed(0)} MiB`
+            }
+          />
+        </div>
       </Stack>
     </Paper>
   );

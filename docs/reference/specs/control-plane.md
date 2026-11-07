@@ -160,7 +160,7 @@ Key 默认列表排除归档条目；“已归档”筛选通过 archived=true �
 
 `GET /api/usage/headroom` 无查询参数、管理员只读、no-store，继承 usage 的单在途/1 秒预算/取消/低盘门禁；忙返回 429。返回 generatedAtUnixSeconds、capacities（name/current/limit/blocking；current/limit 为十进制字符串，缺费用 current=null）、accounts（id/current/peak24Hours/limit=16/blocking=true）、storage（既有水位快照）及 storageLimits（stopAvailableBytes/stopWALBytes）。capacities 为 daily_requests、daily_estimated_micros、detail_rows，均 blocking=false；费用是已观测下界，未知部分未计入。账号峰值精确按最近 86400 秒内的准入、释放前及启动恢复样本与当前并发取最大；未配置的参考阈值不返回。样本保留严格递减峰值前沿，新样本覆盖更早的相等/更低值，因此不按请求无限增长。
 
-unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、periodSeconds=86400；count 仅 state=unknown 且 created_at_epoch 严格早于截止，人工释放可直接用这一对 CAS 值。该查询参与首页手动/自动刷新、401 会话失效、冲突及未知结果核对。存储门禁不开放读取时沿用 `/api/runtime/storage` 展示水位，不将失败读作零。
+unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、periodSeconds=86400；count 仅 state=unknown 且 created_at_epoch 严格早于截止，人工释放可直接用这一对 CAS 值。该查询参与首页实时更新与 HTTP 回退、401 会话失效、冲突及未知结果核对。存储门禁不开放读取时沿用 `/api/runtime/storage` 展示水位，不将失败读作零。
 
 用量 rows.state 可为 closed_unknown（持久 settled+关闭标记的投影）；totals 与 daily bucket 新增 usageUnknown、unknownReasons（固定失败枚举或 unspecified），区别于待核对 unknown。用量报告 detailRetentionDays=90，详情/小时桶只含保留明细，日序列及 Key 最近使用合并日汇总。quota_high.detail.keyRanking 为最近 5 小时最多 5 个 Key 的已观测费用下界/请求/缺失排名，不代表提供者按 Key 分配余额；原生图片全缺计数的费用仍为未知。
 
@@ -244,7 +244,7 @@ v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snaps
 
 总 WS 8、每 session 2，管理 ingress 总 32；单帧 1 MiB，待发最多 2 条/2 MiB，另 1 MiB 在途，共享缓存/编码 3 MiB。超载/写超时 1013、会话失效 1008、shutdown 1001。15 秒 ping，10 秒 pong/握手、5 秒写期限；关闭握手最多 2 秒，功能整体关闭最多 5 秒。活动订阅每 15 秒沿读取语义延长 idle，不延长绝对 7 天期限。logout/替换/bind 撤销连接，发送前检查有效性。撤销与业务帧发送同一时刻发生时，由连接关闭 owner 在既有截止时间内发送 1008，撤销后不再排队新的业务帧。
 
-首页隐藏、暂停、离开或会话代际退役即关闭；有效 snapshot 前保留 HTTP，失败后 15 秒轮询（含 system），三次失败后每 60 秒探测。旧代际结果不能覆盖新数据或解除 mutation 未知锁。2/5/15 秒源超过 6/15/45 秒标陈旧。HTTP 降级明确显示轮询。后台 HTTP 失败更新既有读取状态摘要，展开可查看来源/最后成功时间及重试；首次失败明确尚无成功数据，再次读取不重新切回初次加载骨架，已有快照不清空。数字滚动使用本地组件、外部静态 CSS 与浏览器动画 API，固定 240 ms；视觉数位对读屏隐藏，DOM 文本始终为完整真实新值。更换单位/精度/长度、异常大幅变化或上一滚动尚未结束时直接落定新值，不排队。行/条/趋势采用 150—400 ms 连续过渡；首屏、恢复、重新可见直接落定，reduced-motion 禁止位移和滚动，不放宽 CSP。无 schema、恢复、计量变更。交付状态与实际验收见活动任务。
+首页隐藏、离开或会话代际退役即关闭；有效 snapshot 前保留 HTTP，失败后 15 秒轮询（含 system），三次失败后每 60 秒探测。旧代际结果不能覆盖新数据或解除 mutation 未知锁。2/5/15 秒源超过 6/15/45 秒标陈旧。推送默认开启。页面在收到有效快照后停止定时 HTTP 轮询，连接中断自动恢复轮询并探测重连。运行诊断区显示实时连接或 HTTP 轮询及各源更新时间。后台 HTTP 失败更新既有读取状态摘要，展开可查看来源/最后成功时间及重试；首次失败明确尚无成功数据，再次读取不重新切回初次加载骨架，已有快照不清空。数字滚动使用本地组件、外部静态 CSS 与浏览器动画 API，固定 240 ms；视觉数位对读屏隐藏，DOM 文本始终为完整真实新值。更换单位/精度/长度、异常大幅变化或上一滚动尚未结束时直接落定新值，不排队。行/条/趋势采用 150—400 ms 连续过渡；首屏、恢复、重新可见直接落定，reduced-motion 禁止位移和滚动，不放宽 CSP。无 schema、恢复、计量变更。交付状态与实际验收见活动任务。
 
 inFlight 首次持久查询失败保持 unavailable/data:null，不以空活动填充；已有快照时内存活动更新不能清除持久查询的失败 code 或推进其 lastSuccessAt，直至实际读取恢复。初始 unavailable 快照结束相应模块的加载状态并明确无成功数据，不伪造空集合。来源明细和各模块共用新鲜度：实时取 section 元数据，HTTP 降级取实际 Query 成功时间/错误，45 秒无成功 HTTP 更新标陈旧；保留旧值不等于已恢复。持续连接仅含数据 WS，按 Key 汇总，不代表所有 HTTP 工具/设备在线。
 
@@ -259,4 +259,6 @@ inFlight 首次持久查询失败保持 unavailable/data:null，不以空活动�
 
 大屏主栏依次显示今日指标、在途请求和活跃 Key，右栏显示订阅额度和运行资源。正常时省略接入提示，接入受阻显示原因和处理入口，无法确认显示文字状态。请求卡按开始时间稳定排列，结束后从实时区移除。
 
-管理员存储快照（HTTP 和实时）可包含 `resources`，最多 121 个时间戳样本，最近一小时保存在进程内。Linux 每 30 秒采样进程 RSS、主机可用内存、主机总内存和 CPU 使用率（区间内非空闲比例）。缺测字段省略，重启清空。数据盘余量和保护状态沿用存储观测，容量已知时同时展示可用比例。
+订阅额度卡用进度条显示实际已用比例。窗口时长及重置时间可用时，竖线标出该窗口已经过去的时间比例，并显示实际已用与参考进度相差的百分点。窗口已经到期或数据缺失时省略参考线。
+
+管理员存储快照（HTTP 和实时）可包含 `resources`，最多 121 个时间戳样本，最近一小时保存在进程内。Linux 每 30 秒采样进程 RSS、主机可用内存、主机总内存和 CPU 使用率（区间内非空闲比例）。首页以环形水位显示主机 CPU 使用率、可用内存和数据盘可用比例，并在下方显示主机 CPU、主机可用内存和网关进程内存的一小时曲线。缺测字段省略，重启清空。数据盘余量和保护状态沿用存储观测，容量已知时同时展示可用比例。

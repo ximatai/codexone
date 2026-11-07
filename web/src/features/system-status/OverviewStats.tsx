@@ -67,10 +67,12 @@ function Sparkline({
 }
 export function OverviewStats({
   buckets,
+  timezone,
   loading = false,
   capacities,
 }: {
   buckets: DailyBucket[];
+  timezone?: string;
   loading?: boolean;
   capacities?: CapacityMetric[];
 }) {
@@ -203,7 +205,7 @@ export function OverviewStats({
                   size="sm"
                   title={
                     [
-                      "业务日当日已准入请求，不含准入前拒绝。",
+                      `业务日当日已准入请求${timezone ? `（${timezone}）` : ""}，不含准入前拒绝。`,
                       "已观测输入与输出之和，缓存包含在输入中；缺失用量未补零。",
                       "按配置费率估算，非账单；缺失用量未计入。",
                       "失败数除以已准入请求数，客户端取消单独统计。",

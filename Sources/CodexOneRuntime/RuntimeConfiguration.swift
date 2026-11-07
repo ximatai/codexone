@@ -109,7 +109,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
     } else {
       accountPoolConfigurationPath = nil
     }
-    let live = environment["CODEXONE_ADMIN_LIVE"] ?? "off"
+    let live = environment["CODEXONE_ADMIN_LIVE"] ?? "on"
     guard ["on", "off"].contains(live) else { throw ConfigurationError.invalidAdminLive }
     adminLiveEnabled = live == "on"
     if let origin = environment["CODEXONE_ADMIN_PUBLIC_ORIGIN"] {

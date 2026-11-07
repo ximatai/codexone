@@ -211,3 +211,18 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.quotaTrack {
+  position: relative;
+}
+
+.quotaPaceMarker {
+  position: absolute;
+  inset: -2px 0;
+  width: 100%;
+  height: calc(100% + 4px);
+  stroke: var(--mantine-color-text);
+  stroke-width: 1.5;
+  pointer-events: none;
+  overflow: visible;
+}

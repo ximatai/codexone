@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 export function useOverviewRefresh() {
-  const [automatic, setAutomatic] = useState(true);
   const [visible, setVisible] = useState(() => !document.hidden);
   useEffect(() => {
     const visibility = () => setVisible(!document.hidden);
@@ -8,10 +7,7 @@ export function useOverviewRefresh() {
     return () => document.removeEventListener("visibilitychange", visibility);
   }, []);
   return {
-    active: automatic && visible,
-    manualRefresh: undefined as (() => void) | undefined,
-    automatic,
-    setAutomatic,
-    interval: automatic && visible ? (15000 as const) : (false as const),
+    active: visible,
+    interval: visible ? (15000 as const) : (false as const),
   };
 }
