@@ -16,6 +16,7 @@ public struct KeyAdminAPI: Sendable {
   private let executions: (any UnknownExecutionReleasing)?
   let attention: AttentionAdminAPI?
   private let backup: (any BackupMaintaining)?
+  private let overviewResources: OverviewResources?
   private let storageMonitoring: (any StorageMonitoring)?
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
@@ -23,7 +24,8 @@ public struct KeyAdminAPI: Sendable {
     imageModels: [String] = [],
     usage: UsageAdminAPI? = nil, attention: AttentionAdminAPI? = nil,
     executions: (any UnknownExecutionReleasing)? = nil,
-    storageMonitoring: (any StorageMonitoring)? = nil, backup: (any BackupMaintaining)? = nil
+    storageMonitoring: (any StorageMonitoring)? = nil, backup: (any BackupMaintaining)? = nil,
+    overviewResources: OverviewResources? = nil
   ) async throws -> Self {
     let digest = try await loadDigest(path)
     guard digest != forbiddenDigest else { throw ExecutionError.invalidCommand }
@@ -36,7 +38,7 @@ public struct KeyAdminAPI: Sendable {
         digest: digest, publicOrigin: publicOrigin, listenAddress: listenAddress),
       availableModels: availableModels, imageModels: imageModels, usage: usage,
       executions: executions, attention: attention,
-      backup: backup, storageMonitoring: storageMonitoring)
+      backup: backup, overviewResources: overviewResources, storageMonitoring: storageMonitoring)
   }
   public static func validateCredential(
     path: String, forbiddenDigest: String? = nil, publicOrigin: String? = nil,
@@ -68,6 +70,9 @@ public struct KeyAdminAPI: Sendable {
       JSONEncoder().encode(backup?.backupObservation ?? BackupObservation()))
     object["admissionAllowed"] = .bool(observation.admissionAllowed)
     object["optionalWorkAllowed"] = .bool(observation.optionalWorkAllowed)
+    if let overviewResources {
+      object["resources"] = try JSONValue.decode(JSONEncoder().encode(overviewResources.samples))
+    }
     return try JSONValue.object(object).data()
   }
   func bind(port: Int) { sessions.bind(port: port) }
@@ -82,20 +87,11 @@ public struct KeyAdminAPI: Sendable {
     if let releasing = executions {
       UnknownExecutionAdminAPI(store: releasing).register(api.grouped(guardMiddleware))
     }
-    if let storageMonitoring {
+    if storageMonitoring != nil {
       api.grouped("runtime").grouped(guardMiddleware).get("storage") { _ async throws -> Response in
-        let observation = storageMonitoring.storageObservation
-        var object =
-          try JSONSerialization.jsonObject(with: JSONEncoder().encode(observation))
-          as! [String: Any]
-        object["backup"] = try JSONSerialization.jsonObject(
-          with: JSONEncoder().encode(backup?.backupObservation ?? BackupObservation()))
-        object["admissionAllowed"] = observation.admissionAllowed
-        object["optionalWorkAllowed"] = observation.optionalWorkAllowed
-        let data = try JSONSerialization.data(withJSONObject: object)
-        return Response(
+        Response(
           status: .ok, headers: ["content-type": "application/json", "cache-control": "no-store"],
-          body: .init(data: data))
+          body: .init(data: try overviewStorage()))
       }
     }
     api.post("session") { request async throws -> Response in

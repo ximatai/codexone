@@ -291,6 +291,7 @@ struct CodexOneMain {
     }
     print("business_day_offset=\(configuration.businessDay.timezone)")
     let protocolExtensions = ClientProtocolExtensionRegistry(clock: clock)
+    let overviewResources = OverviewResources()
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
@@ -310,7 +311,7 @@ struct CodexOneMain {
           AttentionAdminAPI(
             reader: $0, storage: store, registry: protocolExtensions, backup: backup, clock: clock)
         },
-        executions: store, storageMonitoring: store, backup: backup)
+        executions: store, storageMonitoring: store, backup: backup, overviewResources: overviewResources)
     } else {
       keyAdmin = nil
     }
@@ -431,6 +432,7 @@ struct CodexOneMain {
       ) {
         announce("admin", port: $0)
       })
+    if keyAdmin != nil { services.append(overviewResources) }
     if let overview { services.append(OverviewLiveSupervisor(overview: overview)) }
     if let finalizer { services.insert(finalizer, at: 0) }
     if configuration.listeners.additionalAddress != nil {

@@ -39,6 +39,7 @@ import { ManagementError } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
 import { SystemOverview } from "./SystemOverview";
+import { RuntimeResources } from "./RuntimeResources";
 
 const InlineAccountDetails = lazy(() =>
   import("../account-management/AccountManagement").then((module) => ({
@@ -179,12 +180,6 @@ export function AdminOverview() {
       !account.observability?.health.authenticationRejected &&
       !account.observability?.health.cooldownCount,
   );
-  const available = eligibleAccounts?.length;
-  const abnormal = accounts.data?.filter(
-    (account) =>
-      account.authorization !== "ready" ||
-      account.observability?.health.authenticationRejected,
-  ).length;
   return (
     <OverviewMotion reset={live.reset}>
       <Stack mb="xl" aria-label="管理概览">
@@ -234,31 +229,6 @@ export function AdminOverview() {
             { ...attention, source: "需要处理提醒" },
             { ...headroom, source: "治理余量" },
           ]}
-          attention={
-            <div className={styles.attentionViewport}>
-              <AttentionPanel
-                aggregateErrors
-                inlineAccounts
-                items={attention.data?.items}
-                accounts={accounts.data}
-                release={(item: AttentionItem) => {
-                  const count = item.detail.count;
-                  if (
-                    typeof count === "number" &&
-                    Number.isSafeInteger(count) &&
-                    count >= 0
-                  )
-                    setRelease({
-                      before: Math.floor(Date.now() / 1000),
-                      count,
-                    });
-                }}
-                loading={attention.isPending}
-                error={attention.isError}
-                retry={() => void attention.refetch()}
-              />
-            </div>
-          }
           sidebar={
             <>
               <Paper withBorder p="md">
@@ -288,6 +258,9 @@ export function AdminOverview() {
                     const base = quota?.limits.find(
                       (limit) => limit.id === "codex",
                     );
+                    const needsAuth =
+                      account.authorization !== "ready" ||
+                      account.observability?.health.authenticationRejected;
                     return (
                       <Stack
                         gap="xs"
@@ -300,10 +273,17 @@ export function AdminOverview() {
                         >
                           {accountName(account.id, [], account.displayName)}
                         </Anchor>
-                        <Text size="xs" c="dimmed">
+                        <Text
+                          size="xs"
+                          c={
+                            account.mode !== "disabled" && needsAuth
+                              ? "orange.8"
+                              : "dimmed"
+                          }
+                        >
                           {account.mode === "disabled"
                             ? "已禁用"
-                            : account.authorization !== "ready"
+                            : needsAuth
                               ? "需要重新授权"
                               : account.observability?.health.cooldownCount
                                 ? "冷却中"
@@ -315,6 +295,7 @@ export function AdminOverview() {
                         </Text>
                         <div className={styles.quotaPair}>
                           <QuotaWindowBar
+                            showUsed
                             title={quotaLabel(
                               base?.primary?.durationSeconds,
                               "主窗口",
@@ -322,6 +303,7 @@ export function AdminOverview() {
                             value={base?.primary ?? null}
                           />
                           <QuotaWindowBar
+                            showUsed
                             title={quotaLabel(
                               base?.secondary?.durationSeconds,
                               "次窗口",
@@ -365,82 +347,43 @@ export function AdminOverview() {
                   })}
                 </Stack>
               </Paper>
-              <Paper withBorder p="md">
-                <Title order={3} size="h4" mb="md">
-                  运行状态
-                </Title>
+              <RuntimeResources
+                storage={storage.data}
+                stale={
+                  storage.isError ||
+                  live.stale.some(([source]) => source === "storage")
+                }
+              />
+              <details>
+                <summary>运行诊断</summary>
                 <SystemOverview compact shared={system} />
-                <Stack gap="xs">
-                  {[
-                    {
-                      label: "可用账号",
-                      value: `${available ?? "—"} 可用 · ${accounts.data?.filter((a) => a.mode === "disabled").length ?? "—"} 禁用 · ${abnormal ?? "—"} 授权异常`,
-                      to: "/accounts",
-                      good:
-                        !accounts.isError &&
-                        available != null &&
-                        available > 0 &&
-                        abnormal === 0,
-                    },
-                    {
-                      label: "存储与准入",
-                      value: storage.data
-                        ? storage.data.admissionAllowed
-                          ? "允许准入"
-                          : "暂停准入"
-                        : "不可用",
-                      to: "/?storage=details",
-                      good:
-                        !storage.isError && !!storage.data?.admissionAllowed,
-                    },
-                    {
-                      label: "可选工作",
-                      value: storage.data
-                        ? storage.data.optionalWorkAllowed
-                          ? "统计可用"
-                          : "可选工作暂停"
-                        : "不可用",
-                      to: "/?storage=details",
-                      good:
-                        !storage.isError && !!storage.data?.optionalWorkAllowed,
-                    },
-                    {
-                      label: "最近备份",
-                      value: backupTime(storage.data?.backup),
-                      to: "/?storage=details",
-                      good:
-                        !!storage.data?.backup?.enabled &&
-                        !!storage.data.backup.lastSuccessUnixSeconds &&
-                        storage.data.backup.lastSuccessUnixSeconds <=
-                          Date.now() / 1000 &&
-                        Date.now() / 1000 -
-                          storage.data.backup.lastSuccessUnixSeconds <=
-                          36 * 3600,
-                    },
-                  ].map((row) => (
-                    <Anchor
-                      key={row.label}
-                      component={Link}
-                      to={row.to}
-                      className={styles.statusRow}
-                    >
-                      <Text size="sm">{row.label}</Text>
-                      <Text size="sm">
-                        <span
-                          style={{
-                            color: row.good
-                              ? "var(--mantine-color-green-7)"
-                              : "var(--mantine-color-orange-7)",
-                          }}
-                        >
-                          ●
-                        </span>{" "}
-                        {row.value} ›
-                      </Text>
-                    </Anchor>
-                  ))}
-                </Stack>
-              </Paper>
+                <Anchor component={Link} to="/?storage=details" size="sm">
+                  最近备份 · {backupTime(storage.data?.backup)} ›
+                </Anchor>
+                <div className={styles.attentionViewport}>
+                  <AttentionPanel
+                    aggregateErrors
+                    inlineAccounts
+                    items={attention.data?.items}
+                    accounts={accounts.data}
+                    release={(item: AttentionItem) => {
+                      const count = item.detail.count;
+                      if (
+                        typeof count === "number" &&
+                        Number.isSafeInteger(count) &&
+                        count >= 0
+                      )
+                        setRelease({
+                          before: Math.floor(Date.now() / 1000),
+                          count,
+                        });
+                    }}
+                    loading={attention.isPending}
+                    error={attention.isError}
+                    retry={() => void attention.refetch()}
+                  />
+                </div>
+              </details>
               <CapacityPanel
                 query={headroom}
                 accounts={accounts.data}

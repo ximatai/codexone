@@ -20,14 +20,14 @@ it("requires a known free eligible account slot and current storage before decla
     <AvailabilitySummary {...props} accountHeadroom={full} />,
   );
   expect(screen.getByText("当前存在接入阻断")).toBeVisible();
-  expect(screen.getByText(/均已达到本地并发上限/)).toBeVisible();
+  expect(screen.getByText(/并发名额已满/)).toBeVisible();
   view.rerender(
     <AvailabilitySummary
       {...props}
       accountHeadroom={[{ ...full[0], current: 1 }, full[1]]}
     />,
   );
-  expect(screen.getByText("本地准入条件正常")).toBeVisible();
+  expect(screen.queryByRole("status")).toBeNull();
   view.rerender(<AvailabilitySummary {...props} accountHeadroom={[]} />);
   expect(screen.getByText("当前可用性无法确认")).toBeVisible();
   view.rerender(

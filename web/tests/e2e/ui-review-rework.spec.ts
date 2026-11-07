@@ -7,6 +7,7 @@ test("P2-1: collapsing fifty reminders returns the toggle to view with focus", a
   const state = await reviewFixture(page);
   state.alerts = 50;
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.getByRole("button", { name: "查看全部 50 项" }).click();
   await page.getByRole("button", { name: "收起提醒" }).click();
   const toggle = page.getByRole("button", { name: "查看全部 50 项" });
@@ -117,6 +118,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   state.failures = {};
   await page.locator('[aria-label="概览连接状态"] summary').click();
   await page.getByRole("button", { name: "重试", exact: true }).click();
+  await page.getByText("运行诊断", { exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(2); // two actual attention items
   state.alerts = 0;
   state.failures["/api/usage/daily"] = 503;
@@ -166,6 +168,7 @@ test("P2-6: login, Key targets and cancel/Escape transfer focus to the intended 
   await expect(page.getByLabel("管理员凭证", { exact: true })).toBeFocused();
   state.anonymous = false;
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.getByRole("link", { name: /team-201：访问密钥/ }).click();
   const row = page.getByRole("row", { name: /访问密钥 team-201/ });
   await expect(row).toBeFocused();
@@ -227,10 +230,14 @@ test("Colors: expired switches are neutral, disclosure links use primary and abn
     primaryColor,
   );
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
-  const dot = page.getByRole("link", { name: /可用账号/ }).locator("span");
-  expect(await dot.evaluate((e) => (e as HTMLElement).style.color)).toContain(
-    "orange",
-  );
+  const accountStatus = page
+    .getByLabel("订阅额度与系统状态")
+    .getByText(/^需要重新授权/)
+    .first();
+  await expect(accountStatus).toBeVisible();
+  expect(
+    await accountStatus.evaluate((e) => (e as HTMLElement).style.color),
+  ).toContain("orange");
 });
 
 test("Quota: an account name opens that account's details", async ({

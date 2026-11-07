@@ -122,15 +122,8 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(await screen.findByText("工作站别名")).toBeVisible();
   expect(screen.getByText(/合成工作站/)).toBeVisible();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
-  expect(screen.getByText("等待首事件")).toBeVisible();
-  expect(
-    screen.getByRole("columnheader", { name: "推理强度" }),
-  ).toBeInTheDocument();
-  expect(screen.getByText("xhigh")).toBeVisible();
-  expect(screen.getByText("未指定", { exact: true })).toBeVisible();
-  expect(screen.getAllByText("未记录", { exact: true }).length).toBeGreaterThan(
-    0,
-  );
+  expect(screen.getByText("待首事件")).toBeVisible();
+  expect(screen.getByText("极高")).toBeVisible();
   expect(await screen.findByText("汇总别名")).toBeVisible();
   expect(screen.queryByText("最近请求")).toBeNull();
   expect(screen.getByLabelText("结果未明 3")).toBeVisible();

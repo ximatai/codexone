@@ -84,11 +84,17 @@ export function KeyResults({
     () =>
       [...(report?.keys ?? [])]
         .filter((row) => row.admitted > 0)
-        .sort(
-          (a, b) =>
+        .sort((a, b) => {
+          if (a.tokens == null && b.tokens != null) return 1;
+          if (a.tokens != null && b.tokens == null) return -1;
+          const left = BigInt(a.tokens ?? 0);
+          const right = BigInt(b.tokens ?? 0);
+          if (left !== right) return left > right ? -1 : 1;
+          return (
             (b.lastUsedAtUnixSeconds ?? -1) - (a.lastUsedAtUnixSeconds ?? -1) ||
-            a.keyID.localeCompare(b.keyID),
-        ),
+            a.keyID.localeCompare(b.keyID)
+          );
+        }),
     [report?.keys],
   );
   const offset = report?.businessDay.offsetMinutes ?? 0;
@@ -179,7 +185,7 @@ export function KeyResults({
     },
     {
       id: "failed",
-      title: "失败",
+      title: "失败率",
       width: "17%",
       render: (row) => (
         <Stack gap={2} align="flex-start">
@@ -192,11 +198,18 @@ export function KeyResults({
               aria-label={`${name(row)} 失败 ${row.failed}`}
               title="失败率以已准入请求为分母；取消、执行中和结果未明不计为失败。"
             >
-              <ContinuousValue text={compactCount(row.failed)} />（
-              {percent(BigInt(row.failed), BigInt(row.admitted))}）
+              <ContinuousValue
+                text={percent(BigInt(row.failed), BigInt(row.admitted))}
+              />
+              {" · "}
+              <ContinuousValue
+                text={`${compactCount(row.failed)}/${compactCount(row.admitted)}`}
+              />
             </Anchor>
           ) : (
-            <Text size="sm">0（0%）</Text>
+            <Text size="sm" title={`0/${row.admitted}`}>
+              0% · <ContinuousValue text={`0/${compactCount(row.admitted)}`} />
+            </Text>
           )}
           {highFailure(row) && (
             <Text
@@ -260,7 +273,7 @@ export function KeyResults({
           <Title
             order={3}
             size="h4"
-            title="业务日内有准入的未归档 Key，按最近准入倒序；不含准入前拒绝。"
+            title="业务日内有准入的未归档 Key，按已观测 Token 降序；不含准入前拒绝。"
           >
             今日 Key 请求汇总
           </Title>
@@ -307,7 +320,7 @@ export function KeyResults({
           <Text size="xs" c="dimmed">
             {expanded
               ? `全部 ${rows.length} 个活跃 Key`
-              : `最近 20 个活跃 Key，共 ${rows.length} 个`}
+              : `前 20 个活跃 Key，共 ${rows.length} 个`}
           </Text>
           <Button
             size="xs"

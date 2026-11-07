@@ -158,6 +158,9 @@ export function OverviewStats({
         errorRate(today) === null ? "—" : `${errorRate(today)!.toFixed(1)}%`,
       values: buckets.map(errorRate),
       delta: pointChange(errorRate(today), errorRate(yesterday)),
+      count: today
+        ? `失败 ${today.failed} / 已准入 ${today.requests}`
+        : undefined,
       note: mainFailure
         ? `失败请求中：${failures[mainFailure[0]] ?? "其他异常"}占 ${((mainFailure[1] / failureCount) * 100).toFixed(0)}%`
         : today
@@ -242,6 +245,11 @@ export function OverviewStats({
                   </Text>
                 )}
               </Group>
+              {card.count && (
+                <Text size="xs" c="dimmed">
+                  {card.count}
+                </Text>
+              )}
               {card.note && (
                 <Text size="xs" c="dimmed">
                   {card.note}

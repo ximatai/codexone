@@ -5,9 +5,6 @@
   height: 12rem;
   overflow: auto;
 }
-.availability {
-  min-height: 9rem;
-}
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -49,14 +46,6 @@
   .sparkline {
     display: none;
   }
-}
-
-.statusRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
 .quotaPair {
@@ -148,4 +137,38 @@
 .sourceDetails {
   block-size: 12rem;
   overflow: auto;
+}
+
+.requestGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  align-content: start;
+  gap: 8px;
+}
+.requestCard {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.requestElapsed {
+  flex-shrink: 0;
+}
+.requestGrid,
+.requestEmpty {
+  min-height: 7rem;
+}
+.requestEmpty {
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 479px) {
+  .quotaPair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.memoryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }

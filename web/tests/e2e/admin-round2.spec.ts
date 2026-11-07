@@ -223,14 +223,9 @@ test("round two overview, usage, account name and key expiration", async ({
   await expect(
     activity.getByText("合成进行中账号", { exact: false }),
   ).toBeVisible();
-  await expect(
-    activity.getByText("等待首事件", { exact: false }),
-  ).toBeVisible();
+  await expect(activity.getByText("待首事件", { exact: false })).toBeVisible();
   await expect(activity.getByText("16", { exact: true })).toBeVisible();
-  await expect(
-    activity.getByRole("columnheader", { name: "推理强度" }),
-  ).toBeVisible();
-  await expect(activity.getByText("high", { exact: true })).toBeVisible();
+  await expect(activity.getByText("高", { exact: true })).toBeVisible();
   await expect(activity.getByLabel("自动刷新（15 秒）")).toBeChecked();
   await expect(
     activity.getByRole("heading", { name: "今日 Key 请求汇总" }),

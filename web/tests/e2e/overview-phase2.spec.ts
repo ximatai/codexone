@@ -10,6 +10,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.setViewportSize({ width: 1440, height: 900 });
   const screenshots = "../artifacts/ui-phase2";
   await mkdir(screenshots, { recursive: true });
+  let inFlightCount = 5;
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const metrics = {
@@ -84,6 +85,16 @@ test("overview keeps accessible trends, principal names, details and responsive 
         optionalWorkAllowed: true,
         pressure: "normal",
         databaseBytes: 1024000,
+        availableBytes: 36 * 1024 ** 3,
+        volumeTotalBytes: 100 * 1024 ** 3,
+        resources: Array.from({ length: 121 }, (_, i) => ({
+          unixSeconds: 100 + i * 30,
+          hostCPUPercent: i === 120 ? 27 : 24 + Math.round(9 * Math.sin(i / 5)),
+          processResidentBytes:
+            (280 + Math.round(14 * Math.sin(i / 11))) * 1024 ** 2,
+          hostAvailableBytes: (5 + Math.sin(i / 9) * 0.5) * 1024 ** 3,
+          hostTotalBytes: 8 * 1024 ** 3,
+        })),
       },
       "/api/usage/keys": {
         timezone: "UTC",
@@ -119,19 +130,18 @@ test("overview keeps accessible trends, principal names, details and responsive 
         })),
       },
       "/api/usage/in-flight": {
-        rows: [
-          {
-            id: "synthetic-flight",
-            keyID: "hidden-key-identifier",
-            principal: "合成工作站",
-            model: "synthetic-text",
-            mode: "generation",
-            accountID: account.id,
-            accountDisplayName: account.displayName,
-            elapsedSeconds: 12,
-            hasFirstEvent: true,
-          },
-        ],
+        rows: Array.from({ length: inFlightCount }, (_, index) => ({
+          id: "synthetic-flight-" + index,
+          startedAtUnixSeconds: index + 1,
+          keyID: "hidden-key-identifier",
+          principal: "合成工作站",
+          model: "synthetic-text",
+          mode: "generation",
+          accountID: account.id,
+          accountDisplayName: account.displayName,
+          elapsedSeconds: 12,
+          hasFirstEvent: true,
+        })),
       },
       "/api/usage/options": {
         keys: ["synthetic-key"],
@@ -163,15 +173,36 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(
     page.getByRole("img", { name: /^今日已准入近 7 天/ }),
   ).toBeVisible();
+  const cards = page.getByLabel("在途请求卡片").locator(":scope > *");
+  await expect(cards).toHaveCount(5);
+  const firstRow = () =>
+    cards.evaluateAll(
+      (items) =>
+        items.filter(
+          (item) =>
+            item.getBoundingClientRect().top ===
+            items[0].getBoundingClientRect().top,
+        ).length,
+    );
+  expect(await firstRow()).toBe(4);
   await expect(
-    page.getByRole("row").filter({ hasText: "synthetic-text" }).first(),
+    page.getByRole("img", { name: "服务器 CPU 使用率最近一小时趋势" }),
   ).toBeVisible();
+  await expect(page.getByText("27%", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "合成工作站 失败 1" }),
+  ).toHaveAttribute(
+    "href",
+    /key=synthetic-key&start=[^&]+&end=[^&]+&outcome=failed/,
+  );
   const rejected = page.getByText("已记录准入前拒绝 6");
   await expect(rejected).toBeVisible();
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await firstRow()).toBe(2);
   await rejected.scrollIntoViewIfNeeded();
   await expect(rejected).toBeInViewport();
+  await page.getByText("运行诊断", { exact: true }).click();
   await page
     .getByRole("region", { name: "需要处理", exact: true })
     .evaluate((panel) => panel.scrollIntoView({ block: "start" }));
@@ -200,7 +231,10 @@ test("overview keeps accessible trends, principal names, details and responsive 
   });
   await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.waitForTimeout(400);
-  await page.screenshot({ path: screenshots + "/overview-1440.png" });
+  await page.screenshot({
+    path: screenshots + "/overview-1440.png",
+    fullPage: true,
+  });
   await page
     .getByRole("region", { name: "今日 Key 请求汇总" })
     .getByRole("link", { name: "查看用量与诊断" })
@@ -233,6 +267,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
+  await page.getByText("运行诊断", { exact: true }).click();
   const longReminder = page.getByRole("link", { name: /x-codex-n+/ });
   await expect(longReminder).toBeVisible();
   expect(
@@ -241,7 +276,15 @@ test("overview keeps accessible trends, principal names, details and responsive 
         node.parentElement!.scrollWidth <= node.parentElement!.clientWidth,
     ),
   ).toBeTruthy();
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(350);
-  await page.screenshot({ path: screenshots + "/overview-390.png" });
+  await page.screenshot({
+    path: screenshots + "/overview-390.png",
+    fullPage: true,
+  });
+  inFlightCount = 0;
+  await page.getByRole("button", { name: "刷新请求概览" }).click();
+  await expect(cards).toHaveCount(0);
+  await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
 });

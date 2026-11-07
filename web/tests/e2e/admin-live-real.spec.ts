@@ -129,16 +129,12 @@ for (const realtime of [true, false]) {
         },
       );
       expect(response.status()).toBe(200);
-      if (realtime) {
-        await expect(page.getByText("最近结束 · 成功").first()).toBeVisible();
-      } else {
-        await expect(
-          page
-            .getByRole("region", { name: "今日 Key 请求汇总" })
-            .getByText("synthetic-browser", { exact: true }),
-        ).toBeVisible({ timeout: 20000 });
-        await expect(page.getByText("最近结束 · 成功")).toHaveCount(0);
-      }
+      await expect(
+        page
+          .getByRole("region", { name: "今日 Key 请求汇总" })
+          .getByText("synthetic-browser", { exact: true }),
+      ).toBeVisible({ timeout: 20000 });
+      await expect(page.getByText("最近结束 · 成功")).toHaveCount(0);
       const latency = Date.now() - start;
       console.log(
         `MEASURE ${realtime ? "live" : "polling"} request-start-to-browser-dom-ms=${latency} (upper bound for commit-to-browser)`,

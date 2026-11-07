@@ -153,6 +153,7 @@ test("HTTP pending over an old snapshot marks the module and availability summar
     route.close({ code: 1013 }),
   );
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await expect(page.getByText("已就绪", { exact: true })).toBeVisible();
   let release: (() => void) | undefined;
   await page.route("**/api/system", async (route) => {
@@ -170,9 +171,7 @@ test("HTTP pending over an old snapshot marks the module and availability summar
       page.getByText("服务状态已陈旧，保留上次成功快照。"),
     ).toBeVisible();
     await expect(
-      page
-        .getByRole("region", { name: "当前接入条件" })
-        .getByText("部分来源读取失败或陈旧，请先核对读取状态。"),
+      page.getByText("当前可用性无法确认", { exact: true }),
     ).toBeVisible();
   } finally {
     release?.();

@@ -9,6 +9,7 @@ import {
 } from "../../shared/account-presentation";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ActionIcon,
   Anchor,
   Button,
   Group,
@@ -20,14 +21,15 @@ import {
 } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
+import { IconPin } from "@tabler/icons-react";
 import { DataTable } from "../../shared/ui/DataTable";
-import { ErrorState, StatusBadge } from "../../shared/ui/States";
+import { ErrorState } from "../../shared/ui/States";
 import styles from "./overview.module.css";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { OverviewStats } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
-import { localTime, modes } from "../../shared/presentation";
+import { localTime } from "../../shared/presentation";
 import type { CapacityMetric } from "./overview-format";
 import { KeyResults } from "./KeyResults";
 import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
@@ -84,8 +86,8 @@ function Elapsed({
   return (
     <span style={{ fontVariantNumeric: "tabular-nums" }}>
       {seconds == null
-        ? "耗时不可用"
-        : `已持续 ${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
+        ? "耗时未知"
+        : `${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
     </span>
   );
 }
@@ -93,7 +95,6 @@ export function ActivityOverview({
   refresh,
   extraQueries = [],
   sidebar,
-  attention,
   accounts = [],
   capacities,
   live,
@@ -110,7 +111,6 @@ export function ActivityOverview({
     refetch: () => Promise<unknown>;
   }[];
   sidebar?: ReactNode;
-  attention?: ReactNode;
   accounts?: readonly AccountName[];
   capacities?: CapacityMetric[];
 }) {
@@ -277,23 +277,135 @@ export function ActivityOverview({
         </div>
       )}
       {summary}
-      {attention}
       {!live && failedSources.length > 0 && (
         <ErrorState retry={retrySources}>{readFailure}</ErrorState>
       )}
-      {daily.isError && !daily.data ? (
-        <Text size="sm" c="dimmed">
-          运营指标读取失败，请重试。
-        </Text>
-      ) : (
-        <OverviewStats
-          buckets={daily.data?.buckets ?? []}
-          loading={daily.isPending}
-          capacities={capacities}
-        />
-      )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
+          {daily.isError && !daily.data ? (
+            <Text size="sm" c="dimmed">
+              运营指标读取失败，请重试。
+            </Text>
+          ) : (
+            <OverviewStats
+              buckets={daily.data?.buckets ?? []}
+              loading={daily.isPending}
+              capacities={capacities}
+            />
+          )}
+          <Paper withBorder p="md">
+            <Title order={3} size="h4" mb="xs">
+              进行中请求{flight.data ? ` · ${flight.data.length}` : ""}
+            </Title>
+            {flight.isError && !flight.data ? (
+              <Text size="sm" c="dimmed">
+                进行中请求读取失败。请重试。
+              </Text>
+            ) : flight.isPending || !flight.data?.length ? (
+              <Text size="sm" c="dimmed" className={styles.requestEmpty}>
+                {flight.isPending ? "读取中…" : "当前没有进行中的请求。"}
+              </Text>
+            ) : (
+              <div className={styles.requestGrid} aria-label="在途请求卡片">
+                {[...flight.data]
+                  .sort(
+                    (a, b) =>
+                      (a.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) -
+                        (b.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) ||
+                      a.id.localeCompare(b.id),
+                  )
+                  .map((row) => (
+                    <Paper
+                      key={row.id}
+                      withBorder
+                      p="xs"
+                      className={styles.requestCard}
+                    >
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        <KeyName {...row} />
+                        <Group wrap="nowrap" gap={2}>
+                          <Text size="xs" className={styles.requestElapsed}>
+                            <Elapsed
+                              seconds={row.elapsedSeconds}
+                              sampledAt={flight.dataUpdatedAt}
+                              running={
+                                control.active &&
+                                !flight.isError &&
+                                (!live ||
+                                  !live.stale.some(
+                                    ([source]) => source === "inFlight",
+                                  ))
+                              }
+                            />
+                          </Text>
+                          <ActionIcon
+                            variant="subtle"
+                            size="xs"
+                            aria-label="固定观察此请求"
+                            title="固定观察此请求"
+                            onClick={() =>
+                              setSelection({ row, revision: Date.now() })
+                            }
+                          >
+                            <IconPin size={14} />
+                          </ActionIcon>
+                        </Group>
+                      </Group>
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        <Text size="xs" className="wrap-anywhere">
+                          {row.model ?? "模型未知"}
+                        </Text>
+                        <Text
+                          size="xs"
+                          className={styles.requestElapsed}
+                          c={row.hasFirstEvent ? "teal.8" : "dimmed"}
+                          title="首事件是首个上游协议事件，不代表输出完成"
+                        >
+                          {row.hasFirstEvent == null
+                            ? "未观测"
+                            : row.hasFirstEvent
+                              ? "首事件已到"
+                              : "待首事件"}
+                        </Text>
+                      </Group>
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        {row.accountID ? (
+                          <Anchor
+                            component={Link}
+                            to={`/?account=${encodeURIComponent(row.accountID)}`}
+                            size="xs"
+                            className="wrap-anywhere"
+                          >
+                            {accountName(
+                              row.accountID,
+                              accounts,
+                              row.accountDisplayName,
+                            )}
+                          </Anchor>
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            账号未知
+                          </Text>
+                        )}
+                        {row.reasoningEffort && (
+                          <Text size="xs" title="请求指定的推理强度">
+                            {(
+                              {
+                                minimal: "最低",
+                                low: "低",
+                                medium: "中",
+                                high: "高",
+                                xhigh: "极高",
+                              } as Record<string, string>
+                            )[row.reasoningEffort] ?? row.reasoningEffort}
+                          </Text>
+                        )}
+                      </Group>
+                    </Paper>
+                  ))}
+              </div>
+            )}
+          </Paper>
           <KeyResults query={keySummary} />
           <RequestWatch
             key={live?.restart ?? 0}
@@ -310,162 +422,6 @@ export function ActivityOverview({
             selection={selection}
             clearSelection={() => setSelection(null)}
           />
-          <Paper withBorder p="md">
-            <Group justify="space-between" mb="xs">
-              <Title order={3} size="h4">
-                进行中请求
-              </Title>
-            </Group>
-            {flight.isError && !flight.data ? (
-              <Text size="sm" c="dimmed">
-                进行中请求读取失败。请重试。
-              </Text>
-            ) : (
-              <DataTable
-                animate
-                rows={[
-                  ...(flight.data ?? []),
-                  ...(live?.mode === "live"
-                    ? live.recent.filter(
-                        (row) =>
-                          row.finishedAtUnixSeconds != null &&
-                          Date.now() / 1000 - row.finishedAtUnixSeconds < 5 &&
-                          !flight.data?.some((active) => active.id === row.id),
-                      )
-                    : []),
-                ]}
-                rowKey={(row) => row.id}
-                retry={() => void flight.refetch()}
-                loading={flight.isPending}
-                empty="当前没有进行中的请求。"
-                columns={[
-                  {
-                    id: "principal",
-                    title: "Key",
-                    width: "22%",
-                    render: (row) => (
-                      <Stack gap={2}>
-                        <KeyName {...row} />
-                        <Button
-                          size="compact-xs"
-                          variant="subtle"
-                          onClick={() =>
-                            setSelection({ row, revision: Date.now() })
-                          }
-                        >
-                          固定观察此请求
-                        </Button>
-                        {row.outcome && (
-                          <Text size="xs" c="dimmed">
-                            最近结束 ·{" "}
-                            {(
-                              {
-                                succeeded: "成功",
-                                failed: "失败",
-                                cancelled: "已取消",
-                                unknown: "结果未明",
-                              } as Record<string, string>
-                            )[row.outcome] ?? row.outcome}
-                          </Text>
-                        )}
-                      </Stack>
-                    ),
-                  },
-                  {
-                    id: "model",
-                    title: "模型 / 模式",
-                    width: "20%",
-                    render: (row) => (
-                      <Stack gap={2}>
-                        <Text size="sm">{row.model ?? "模型未记录"}</Text>
-                        <Text size="xs" c="dimmed">
-                          {modes[row.mode] ?? "其他模式"}
-                        </Text>
-                      </Stack>
-                    ),
-                  },
-                  {
-                    id: "reasoning",
-                    title: "推理强度",
-                    width: "12%",
-                    render: (row) => (
-                      <Text
-                        size="sm"
-                        title={
-                          row.reasoningEffort
-                            ? "请求中记录的推理强度，非提供者实际执行强度证明。"
-                            : row.requestMetadataRecorded
-                              ? "请求未显式指定推理强度，不推断实际生效值。"
-                              : "该执行未记录请求参数。"
-                        }
-                      >
-                        {row.reasoningEffort ??
-                          (row.requestMetadataRecorded ? "未指定" : "未记录")}
-                      </Text>
-                    ),
-                  },
-                  {
-                    id: "account",
-                    title: "订阅账号",
-                    width: "22%",
-                    render: (row) =>
-                      row.accountID ? (
-                        <Anchor
-                          component={Link}
-                          to={`/?account=${encodeURIComponent(row.accountID)}`}
-                          size="sm"
-                        >
-                          {accountName(
-                            row.accountID,
-                            accounts,
-                            row.accountDisplayName,
-                          )}
-                        </Anchor>
-                      ) : (
-                        accountName(null, accounts)
-                      ),
-                  },
-                  {
-                    id: "elapsed",
-                    title: "运行时长",
-                    width: "12%",
-                    render: (row) => (
-                      <Elapsed
-                        seconds={row.elapsedSeconds}
-                        sampledAt={flight.dataUpdatedAt}
-                        running={!row.outcome}
-                      />
-                    ),
-                  },
-                  {
-                    id: "event",
-                    title: "首事件",
-                    width: "12%",
-                    render: (row) => (
-                      <span
-                        title={
-                          row.hasFirstEvent == null
-                            ? "该执行没有首事件观测，不能据此判断是否已收到上游事件。"
-                            : "首事件是首个上游协议事件，不代表输出完成。"
-                        }
-                        tabIndex={0}
-                      >
-                        <StatusBadge
-                          color={row.hasFirstEvent ? "green" : "gray"}
-                        >
-                          {row.hasFirstEvent == null
-                            ? "未观测"
-                            : row.hasFirstEvent
-                              ? "已收到首事件"
-                              : "等待首事件"}
-                        </StatusBadge>
-                      </span>
-                    ),
-                  },
-                ]}
-              />
-            )}
-          </Paper>
           {live?.mode === "live" && (
             <Paper withBorder p="md">
               <Title order={3} size="h4">

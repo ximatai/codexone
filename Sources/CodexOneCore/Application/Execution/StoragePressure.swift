@@ -47,6 +47,7 @@ public struct StorageObservation: Encodable, Sendable {
   public var sampledUnixSeconds: Int64 = 0
   public var pressure: StoragePressure = .unknown
   public var availableBytes: Int64?
+  public var volumeTotalBytes: Int64?
   public var databaseBytes: Int64 = 0
   public var walBytes: Int64 = 0
   public var reserveBytes: Int64 = 0
