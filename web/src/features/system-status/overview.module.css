@@ -215,5 +215,6 @@
 }
 
 .gaugeValue {
+  justify-self: stretch;
   font-variant-numeric: tabular-nums;
 }
