@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.11](https://github.com/ximatai/codexone/releases/tag/v0.26.11)**（2026-11-06），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.12](https://github.com/ximatai/codexone/releases/tag/v0.26.12)**（2026-11-07），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.12 更新首页实时概览，增加生图张数、结算输出吞吐、订阅额度时间参考线和 Linux 一分钟负载。管理推送中断时回退至 HTTP，数据库沿用 schema v12。见[管理面规范](docs/reference/specs/control-plane.md)与[发布说明](CHANGELOG.md)。
 
 v0.26.11 改善 Responses 模型标识与重试提示、未知字段转发和原生 Images 的 JSON 与流式错误兼容。已验证真实 Codex CLI 的 PNG 生成和参考图编辑，以及 Desktop 手动压缩后的会话续接和工具调用。本次 Desktop 样本的压缩路由仍未确认。见[兼容范围](docs/reference/compatibility.md)与[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
 
