@@ -165,32 +165,39 @@ export function ActivityOverview({
     <Stack aria-label="请求即时概览">
       <div className={styles.header}>
         <PageHeader title="今日运营概览" />
+        {live && (
+          <div
+            className={styles.connectionNotice}
+            aria-label="概览连接状态"
+            data-live-mode={live.mode}
+            data-live-failure={live.failure || undefined}
+            hidden={!readFailure && !live.stale.length}
+          >
+            {readFailure ? (
+              <Group gap={4} wrap="nowrap">
+                <Text
+                  size="xs"
+                  c="red"
+                  role="alert"
+                  truncate
+                  title={readFailure}
+                >
+                  {readFailure}
+                </Text>
+                <Button variant="subtle" size="xs" onClick={retrySources}>
+                  重试
+                </Button>
+              </Group>
+            ) : (
+              !!live.stale.length && (
+                <Text size="xs" c="orange.8" truncate>
+                  部分数据已陈旧 · {live.stale.length} 个来源
+                </Text>
+              )
+            )}
+          </div>
+        )}
       </div>
-      {live && (
-        <div
-          aria-label="概览连接状态"
-          data-live-mode={live.mode}
-          data-live-failure={live.failure || undefined}
-          hidden={!readFailure && !live.stale.length}
-        >
-          {readFailure ? (
-            <Group gap="xs">
-              <Text size="xs" c="red" role="alert">
-                {readFailure}
-              </Text>
-              <Button variant="subtle" size="xs" onClick={retrySources}>
-                重试
-              </Button>
-            </Group>
-          ) : (
-            !!live.stale.length && (
-              <Text size="xs" c="orange.8">
-                部分数据已陈旧 · {live.stale.length} 个来源
-              </Text>
-            )
-          )}
-        </div>
-      )}
       {summary}
       {!live && failedSources.length > 0 && (
         <ErrorState retry={retrySources}>{readFailure}</ErrorState>
