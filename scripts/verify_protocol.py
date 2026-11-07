@@ -189,11 +189,11 @@ def connect(port, method, path, payload=None, *, authorization=True, timeout=8, 
     return status, body
 
 
-def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None, admin_live=False):
+def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None, admin_live=None):
     environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
                                "CODEXONE_DATA_DIRECTORY": str(directory / "state")}
-    if admin_live:
-        environment["CODEXONE_ADMIN_LIVE"] = "on"
+    if admin_live is not None:
+        environment["CODEXONE_ADMIN_LIVE"] = "on" if admin_live else "off"
     if business_day_offset is not None:
         environment["CODEXONE_BUSINESS_DAY_OFFSET"] = business_day_offset
     if upstream_proxy is not None:

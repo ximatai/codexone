@@ -2,6 +2,7 @@
 """Synthetic real-process admin upgrade/frames/SQLite/data-plane observation checks."""
 import argparse
 import concurrent.futures
+import errno
 import subprocess
 import base64
 import json
@@ -110,7 +111,7 @@ def verify(binary):
         assert dial(f, ninth)[0] == 429
         assert request(f.ports['admin'], 'GET', '/api/session', cookie=cookie)[0] == 200
         measurements['rss_8_viewers_bytes'] = rss()
-        # Short requests remain observable even when admission/finalization share a merge window.
+        # Short requests update aggregate usage even when their cards never reach the browser.
         started_at = time.monotonic()
         result = request(f.ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'synthetic', 'stream': False}, headers={'Authorization': 'Bearer ' + secret})
         assert result[0] == 200
@@ -124,16 +125,17 @@ def verify(binary):
             assert time.monotonic() < commit_deadline, ('settled_attempts', settled)
             time.sleep(.01)
         committed = time.monotonic()
-        value = until(sock, lambda value: bool(value.get('sections', {}).get('inFlight', {}).get('data', {}).get('recentlyFinished')))
+        def has_aggregate(value):
+            keys = value.get('sections', {}).get('keys', {}).get('data') or {}
+            return any(row['keyID'] == key['id'] and row['admitted'] == 1 and row['succeeded'] == 1
+                       for row in keys.get('keys', []))
+
+        until(sock, has_aggregate)
         received = time.monotonic()
-        measurements['request_start_to_frame_ms'] = round((received - started_at) * 1000, 2)
-        measurements['commit_observed_to_frame_ms'] = round((received - committed) * 1000, 2)
-        recent = value['sections']['inFlight']['data']['recentlyFinished']
-        assert recent[-1]['keyID'] == key['id'] and recent[-1]['outcome'] == 'succeeded'
-        has_aggregate = lambda frame: any(row['admitted'] == 1 for row in frame.get('sections', {}).get('keys', {}).get('data', {}).get('keys', []))
-        aggregate = value if has_aggregate(value) else until(sock, has_aggregate)
-        assert aggregate['sequence'] >= value['sequence']
-        measurements['commit_observed_to_aggregate_ms'] = round((time.monotonic() - committed) * 1000, 2)
+        measurements['request_start_to_aggregate_ms'] = round((received - started_at) * 1000, 2)
+        measurements['commit_observed_to_aggregate_ms'] = round((received - committed) * 1000, 2)
+        activity = document(request(f.ports['admin'], 'GET', '/api/usage/in-flight', cookie=cookie))
+        assert not activity['rows']
         # Replacing a cookie revokes both bindings synchronously, while other sessions survive.
         fresh, _ = login(f, cookie=cookie)
         until(sock, lambda value: value.get('close') == 1008)
@@ -176,8 +178,9 @@ def verify(binary):
                     try:
                         current.shutdown(socket.SHUT_WR)
                         assert current.recv(1) == b''
-                    except ConnectionResetError:
-                        pass
+                    except OSError as error:
+                        if error.errno not in (errno.ECONNRESET, errno.ENOTCONN):
+                            raise
                 assert request(f.ports['admin'], 'GET', '/api/session', cookie=cookie_to_revoke)[0] == 401
             finally:
                 for current in pair:
@@ -200,11 +203,15 @@ def verify(binary):
         clients = connected['sections']['inFlight']['data']['clients']
         assert clients == [dict(keyID=key['id'], displayName=None, count=1, connectedAtUnixSeconds=clients[0]['connectedAtUnixSeconds'])]
         send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'stall'}, masked=True)
-        until(viewer, lambda value: bool(value.get('sections', {}).get('inFlight', {}).get('data', {}).get('rows')))
+        def flight_data(value):
+            return value.get('sections', {}).get('inFlight', {}).get('data') or {}
+
+        active = until(viewer, lambda value: bool(flight_data(value).get('rows')))
+        assert flight_data(active)['rows'][0]['keyID'] == key['id']
         downstream.close()
-        ended = until(viewer, lambda value: bool(value.get('sections', {}).get('inFlight', {}).get('data', {}).get('recentlyFinished')), seconds=20)
-        assert not ended['sections']['inFlight']['data']['clients']
-        assert ended['sections']['inFlight']['data']['recentlyFinished'][-1]['outcome'] in ('cancelled', 'failed', 'unknown')
+        ended = until(viewer, lambda value: flight_data(value).get('rows') == []
+                      and flight_data(value).get('clients') == [], seconds=20)
+        assert flight_data(ended)['recentlyFinished'] == []
         # Silent half-open viewer has a 15s ping + 10s pong deadline.
         half_cookie, _ = login(f)
         half = dial(f, half_cookie)[1]; frame(half); half.settimeout(28)
@@ -276,7 +283,7 @@ def verify(binary):
         viewer.close(); f.process.wait(timeout=5)
         measurements['shutdown_seconds'] = round(time.monotonic() - stopped_at, 3)
     # Deployment switch disabled: handshake declines, ordinary reads continue.
-    with running_admin(binary) as f:
+    with running_admin(binary, admin_live=False) as f:
         cookie, _ = login(f)
         assert dial(f, cookie)[0] != 101
         assert request(f.ports['admin'], 'GET', '/api/usage/in-flight', cookie=cookie)[0] == 200

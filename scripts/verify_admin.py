@@ -59,7 +59,7 @@ def login(fixture, *, cookie=None, origin=None):
 
 
 @contextmanager
-def running_admin(binary, web_directory=None, account_master=False, business_day_offset=None, admin_live=False):
+def running_admin(binary, web_directory=None, account_master=False, business_day_offset=None, admin_live=None):
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     provider.daemon_threads = True
     provider.calls = 0
