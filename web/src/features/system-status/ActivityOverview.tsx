@@ -179,6 +179,7 @@ export function ActivityOverview({
                   size="xs"
                   c="red"
                   role="alert"
+                  className={styles.connectionNoticeText}
                   truncate
                   title={readFailure}
                 >
@@ -190,7 +191,12 @@ export function ActivityOverview({
               </Group>
             ) : (
               !!live.stale.length && (
-                <Text size="xs" c="orange.8" truncate>
+                <Text
+                  size="xs"
+                  c="orange.8"
+                  className={styles.connectionNoticeText}
+                  truncate
+                >
                   部分数据已陈旧 · {live.stale.length} 个来源
                 </Text>
               )

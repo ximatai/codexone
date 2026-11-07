@@ -116,6 +116,8 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   ])
     await expect(alert).toContainText(source);
   await expect(alert).not.toContainText("快照");
+  const notice = page.getByLabel("概览连接状态");
+  const firstNotice = await notice.boundingBox();
   state.failures = {};
   await page.getByRole("button", { name: "重试", exact: true }).click();
   await page.getByText("运行诊断", { exact: true }).click();
@@ -126,6 +128,9 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   await page.clock.runFor(15000);
   await expect(page.getByRole("alert")).toHaveCount(1);
   await expect(page.getByRole("alert")).toContainText(/保留上次成功快照 \d{4}/);
+  const nextNotice = await notice.boundingBox();
+  expect(nextNotice?.x).toBe(firstNotice?.x);
+  expect(nextNotice?.width).toBe(firstNotice?.width);
 });
 
 for (const status of [503, 429]) {

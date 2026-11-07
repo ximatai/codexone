@@ -5,9 +5,12 @@
   gap: 8px;
 }
 .connectionNotice {
-  justify-self: end;
   min-width: 0;
-  max-width: 100%;
+}
+.connectionNoticeText {
+  flex: 1;
+  min-width: 0;
+  text-align: end;
 }
 .connectionNotice button {
   flex-shrink: 0;
