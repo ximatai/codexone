@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.10](https://github.com/ximatai/codexone/releases/tag/v0.26.10)**（2026-11-06），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.11](https://github.com/ximatai/codexone/releases/tag/v0.26.11)**（2026-11-06），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.11 改善 Responses 模型标识与重试提示、未知字段转发和原生 Images 的 JSON 与流式错误兼容。真实 Codex CLI 的 PNG 生成和参考图编辑已通过，Desktop 工作流待单独验收。见[兼容范围](docs/reference/compatibility.md)与[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启；v0.26.4 起提供订阅重置卡查看/确认使用/到期前自动使用，以及空闲 5 小时/每周配额窗口预热（均按账号默认关闭）。
 
@@ -60,7 +62,7 @@ v0.26.10将订阅上游已知准入前 `unsupported_backend_parameter/400` 归�
 ## 路线图
 
 - 重置卡使用与空闲窗口预热的真实订阅验收（需维护者在场确认）。
-- 多账号路由与故障切换的完整兼容验收。
+- [多账号路由治理](docs/requirements/account-routing-governance.md)与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
 - [Key 自助查询](docs/changes/key-self-service/proposal.md)：只读、隔离的设备用量入口。
 - 暗色模式与交互改进。

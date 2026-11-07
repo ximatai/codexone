@@ -6,6 +6,19 @@
 
 - 首页单独展示已记录的准入前拒绝，账号路由 503 日志保留固定诊断类别。
 
+## 0.26.11（2026-11-06）
+
+### 升级注意
+
+从 v0.26.10 或 v0.26.11 候选版升级继续使用 schema v12。升级前请保存并核验完整备份。从 v0.26.9 直接升级须显式迁移，见[维护指南](docs/guide/backup-upgrade.md)。
+
+### 修复
+
+- Responses 回传有效的上游模型标识和错误等待提示，保留未知推理字段的显式 null。
+- 原生 Images 流式失败沿用 Images 错误事件，非流式图片生成按客户端请求向上游请求 JSON，保留慢响应、断开与用量处理。
+
+Codex CLI 0.165.0 已使用同一订阅账号验证原生 PNG 生成和参考图编辑。Desktop 的工具、压缩续接和参考图编辑安排在线上发布后单独验收。GIF、SVG 和 Responses 图片工具取决于实际客户端与提供者能力。详见[兼容说明](docs/reference/compatibility.md)及[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
+
 ## 0.26.11-rc.2（2026-11-06）
 
 ### 升级注意
