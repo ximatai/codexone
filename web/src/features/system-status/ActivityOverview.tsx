@@ -193,7 +193,7 @@ export function ActivityOverview({
     <ErrorState retry={retrySources}>{readFailure}</ErrorState>
   ) : null;
 
-  const outputRate = live?.settledOutputRate;
+  const outputRate = live?.requestOutputRateMedian;
   const outputRateLabel =
     outputRate == null ? null : outputRateFormat.format(outputRate);
   return (
@@ -225,7 +225,7 @@ export function ActivityOverview({
                   size="xs"
                   c="dimmed"
                   className={styles.requestRate}
-                  title="最近 60 秒内，仅对有输出 Token 结算的秒数取平均。"
+                  title="近 60 秒完成结算的请求速率中位数，包含首输出前的等待。"
                 >
                   <span key={outputRateLabel}>
                     {" "}
@@ -371,7 +371,7 @@ export function ActivityOverview({
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
             {sidebar(
               <OutputRateTrend
-                rates={live?.settledOutputDays}
+                rates={live?.requestOutputRateMediansByDay}
                 buckets={daily.data?.buckets ?? []}
                 offsetMinutes={daily.data?.businessDay.offsetMinutes}
               />,

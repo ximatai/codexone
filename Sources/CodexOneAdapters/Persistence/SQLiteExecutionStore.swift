@@ -398,7 +398,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
-      let settledOutput = try db.transaction { () -> Int64? in
+      let outputSample = try db.transaction { () -> (tokens: Int64, duration: Int64)? in
         let snapshot = try Self.load(db, attempt)
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
@@ -471,16 +471,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             ])
           if snapshot.usage?.completeness != .complete,
             snapshot.admission.executionRequirements.route == .conversation,
-            evidence.completeness == .complete
+            evidence.completeness == .complete, evidence.outputTokens > 0
           {
-            return evidence.outputTokens
+            let duration =
+              try outcome?.totalMilliseconds
+              ?? db.scalar(
+                "SELECT COALESCE(json_extract(outcome_json,'$.totalMilliseconds'),0) FROM attempts WHERE id=?",
+                [.text(attempt)])
+            if duration > 0 { return (evidence.outputTokens, duration) }
           }
         }
         return nil
       }
-      if let settledOutput {
-        self.overviewActivity.recordSettledOutput(
-          settledOutput, at: db.clock.unixSeconds, businessDay: db.businessDay)
+      if let outputSample {
+        self.overviewActivity.recordRequestOutput(
+          outputSample.tokens, durationMilliseconds: outputSample.duration,
+          at: db.clock.unixSeconds, businessDay: db.businessDay)
       }
       self.overviewActivity.publish { .finished(id: attempt) }
     }

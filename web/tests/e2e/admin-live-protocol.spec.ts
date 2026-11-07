@@ -99,7 +99,7 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
             rows: [],
             clients: [],
             overflow: 0,
-            settledOutputRatesByDay: [],
+            requestOutputRateMediansByDay: [],
           },
         },
       },
@@ -231,7 +231,19 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
       epoch: "synthetic-before-restart",
       sequence: 1,
       kind: "snapshot",
-      sections,
+      sections: {
+        ...sections,
+        inFlight: {
+          ...sections.inFlight,
+          data: {
+            rows: [],
+            clients: [],
+            overflow: 0,
+            settledOutputTokensPerSecond: 999,
+            settledOutputRatesByDay: { [day]: 999 },
+          },
+        },
+      },
     }),
   );
   socket!.send(
@@ -259,8 +271,16 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
             recentlyFinished: [],
             clients: [],
             overflow: 0,
-            settledOutputTokensPerSecond: 42.5,
-            settledOutputRatesByDay: { [day]: 42.5 },
+            recentRequestOutputRateMedian: 42.5,
+            requestOutputRateMediansByDay: { [day]: 42.5 },
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  await expect(
+    page.getByRole("heading", { name: "进行中请求", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("暂无速率数据")).toBeVisible();
           },
         },
       },
@@ -272,7 +292,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "进行中请求 · 42.5 Token/s" }),
   ).toBeVisible();
-  const trend = page.getByRole("img", { name: /^活跃时段输出吞吐近 7 天/ });
+  const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
   const resources = page.getByRole("heading", { name: "运行资源" });
   await expect(trend).toBeVisible();
   const resourceTop = await resources.evaluate(
@@ -307,7 +327,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
       "live",
     );
     if (freshness === "stale") {
-      await expect(page.getByText("暂无吞吐数据")).toBeVisible();
+      await expect(page.getByText("暂无速率数据")).toBeVisible();
       await expect(trend).toHaveCount(0);
     } else {
       await expect(trend).toBeVisible();

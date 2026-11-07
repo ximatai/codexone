@@ -94,19 +94,19 @@ export function OutputRateTrend({
   return (
     <Paper withBorder p="md">
       <Title order={3} size="h4">
-        输出吞吐
+        请求输出速率
       </Title>
       <Text
         size="xs"
         c="dimmed"
         mt={4}
-        title="按结算日统计，仅以有输出 Token 结算的秒数计算。"
+        title="每日请求输出速率中位数，包含首输出前的等待。"
       >
         近 7 天
       </Text>
       {values.some((value) => value !== null) ? (
         <Sparkline
-          label="活跃时段输出吞吐"
+          label="请求输出速率"
           values={values}
           dates={buckets.map((bucket) =>
             chartDay.format((bucket.atUnixSeconds + offsetMinutes * 60) * 1000),
@@ -118,7 +118,7 @@ export function OutputRateTrend({
         />
       ) : (
         <Text size="sm" c="dimmed" h={outputTrendHeight} pt="sm">
-          暂无吞吐数据
+          暂无速率数据
         </Text>
       )}
     </Paper>

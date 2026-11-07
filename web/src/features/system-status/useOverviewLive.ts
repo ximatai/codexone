@@ -52,8 +52,8 @@ const clientsSchema = z
   .max(1024);
 const liveActivity = flight.extend({
   clients: clientsSchema,
-  settledOutputTokensPerSecond: z.number().finite().nonnegative().nullish(),
-  settledOutputRatesByDay: z
+  recentRequestOutputRateMedian: z.number().finite().nonnegative().nullish(),
+  requestOutputRateMediansByDay: z
     .record(z.string(), z.number().finite().nonnegative())
     .optional(),
   overflow: z.number().int().nonnegative(),
@@ -96,8 +96,10 @@ export function useOverviewLive(active: boolean) {
     "connecting" | "live" | "polling" | "paused"
   >("connecting");
   const [sources, setSources] = useState<Record<string, Freshness>>({});
-  const [settledOutputRate, setSettledOutputRate] = useState<number | null>();
-  const [settledOutputDays, setSettledOutputDays] =
+  const [requestOutputRateMedian, setRequestOutputRateMedian] = useState<
+    number | null
+  >();
+  const [requestOutputRateMediansByDay, setRequestOutputRateMediansByDay] =
     useState<Record<string, number>>();
   const [clients, setClients] = useState<LiveClients>([]);
   const [overflow, setOverflow] = useState(0);
@@ -238,13 +240,17 @@ export function useOverviewLive(active: boolean) {
                   updatedAt: (source.lastSuccessAt ?? 0) * 1000,
                 });
               if (activity) {
-                setSettledOutputRate(activity.settledOutputTokensPerSecond);
-                setSettledOutputDays(activity.settledOutputRatesByDay);
+                setRequestOutputRateMedian(
+                  activity.recentRequestOutputRateMedian,
+                );
+                setRequestOutputRateMediansByDay(
+                  activity.requestOutputRateMediansByDay,
+                );
                 setClients(activity.clients);
                 setOverflow(activity.overflow);
               } else if (name === "inFlight" && source.data === null) {
-                setSettledOutputRate(undefined);
-                setSettledOutputDays(undefined);
+                setRequestOutputRateMedian(undefined);
+                setRequestOutputRateMediansByDay(undefined);
               }
             }
             setSources((previous) => {
@@ -414,7 +420,7 @@ export function useOverviewLive(active: boolean) {
     ([, source]) =>
       source.freshness !== "fresh" || source.lastSuccessAt == null,
   );
-  const throughputFresh =
+  const requestRateFresh =
     mode === "live" &&
     displayed.inFlight?.freshness === "fresh" &&
     displayed.inFlight.lastSuccessAt != null;
@@ -425,8 +431,12 @@ export function useOverviewLive(active: boolean) {
     mode,
     sources: displayed,
     clients,
-    settledOutputRate: throughputFresh ? settledOutputRate : undefined,
-    settledOutputDays: throughputFresh ? settledOutputDays : undefined,
+    requestOutputRateMedian: requestRateFresh
+      ? requestOutputRateMedian
+      : undefined,
+    requestOutputRateMediansByDay: requestRateFresh
+      ? requestOutputRateMediansByDay
+      : undefined,
     overflow,
     reset,
     stale,

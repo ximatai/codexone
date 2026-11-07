@@ -21,13 +21,20 @@ import Testing
     return nil
   }
   #expect(evaluated.withLock { $0 } == 0)
+  func timed(_ milliseconds: Int64) throws -> ExecutionOutcome {
+    try .init(
+      failure: nil, atUnixSeconds: time.clock.unixSeconds,
+      totalMilliseconds: milliseconds)
+  }
   try await store.admit(admission("invisible"))
-  try await store.finalize(attempt: "invisible", evidence: usage())
+  try await store.finalize(attempt: "invisible", evidence: usage(), outcome: timed(2000))
   try await store.admit(admission("same-second"))
-  try await store.finalize(attempt: "same-second", evidence: usage())
+  try await store.finalize(attempt: "same-second", evidence: usage(), outcome: timed(1000))
+  try await store.admit(admission("no-duration"))
+  try await store.finalize(attempt: "no-duration", evidence: usage())
   #expect(activity.drain().0.isEmpty)
   let now = time.clock.unixSeconds
-  #expect(activity.settledOutputSnapshot(at: now).rate == Decimal(24))
+  #expect(activity.requestOutputSnapshot(at: now).rate == Decimal(9))
   try await store.admit(admission("late"))
   activity.watch(true)
   try await store.admit(admission("visible"))
@@ -51,13 +58,13 @@ import Testing
     "CREATE TRIGGER fail_finalize BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT,'synthetic'); END;"
   )
   await #expect(throws: ExecutionError.self) {
-    try await store.finalize(attempt: "visible", evidence: usage())
+    try await store.finalize(attempt: "visible", evidence: usage(), outcome: timed(500))
   }
   #expect(activity.drain().0.isEmpty)
-  #expect(activity.settledOutputSnapshot(at: now).rate == Decimal(24))
+  #expect(activity.requestOutputSnapshot(at: now).rate == Decimal(9))
   try rawSQL(path, "DROP TRIGGER fail_finalize;")
   time.advance(seconds: 10)
-  try await store.finalize(attempt: "visible", evidence: usage())
+  try await store.finalize(attempt: "visible", evidence: usage(), outcome: timed(500))
   let finished = activity.drain().0
   guard case .finished("visible") = finished.first else {
     Issue.record("Expected a completion publication")
@@ -67,19 +74,19 @@ import Testing
   try await store.finalize(attempt: "visible", evidence: usage())
   try await store.finalize(attempt: "visible", evidence: usage(revision: 2, amount: 15))
   let committedAt = time.clock.unixSeconds
-  #expect(activity.settledOutputSnapshot(at: committedAt).rate == Decimal(18))
-  let afterIdle = activity.settledOutputSnapshot(at: committedAt + 60)
+  #expect(activity.requestOutputSnapshot(at: committedAt).rate == Decimal(12))
+  let afterIdle = activity.requestOutputSnapshot(at: committedAt + 60)
   #expect(afterIdle.rate == nil)
-  #expect(afterIdle.days.values.first == .number(18))
+  #expect(afterIdle.days.values.first == .number(12))
 
   time.advance(seconds: 60)
-  try await store.finalize(attempt: "late", evidence: usage(complete: false))
+  try await store.finalize(attempt: "late", evidence: usage(complete: false), outcome: timed(2000))
   let cutoff = time.clock.unixSeconds + 1
   #expect(try await store.releaseUnknown(beforeUnixSeconds: cutoff, expectedCount: 1) == 1)
-  #expect(activity.settledOutputSnapshot(at: time.clock.unixSeconds).rate == nil)
+  #expect(activity.requestOutputSnapshot(at: time.clock.unixSeconds).rate == nil)
   try await store.finalize(attempt: "late", evidence: usage(revision: 2))
   try await store.finalize(attempt: "late", evidence: usage(revision: 3, amount: 15))
-  #expect(activity.settledOutputSnapshot(at: time.clock.unixSeconds).rate == Decimal(12))
+  #expect(activity.requestOutputSnapshot(at: time.clock.unixSeconds).rate == Decimal(6))
   await store.close()
 }
 

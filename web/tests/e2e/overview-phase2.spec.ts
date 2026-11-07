@@ -267,9 +267,9 @@ test("overview keeps accessible trends, principal names, details and responsive 
     name: "订阅额度与系统状态",
   });
   await expect(
-    sidebar.getByRole("heading", { name: "输出吞吐" }),
+    sidebar.getByRole("heading", { name: "请求输出速率" }),
   ).toBeVisible();
-  await expect(sidebar.getByText("暂无吞吐数据")).toBeVisible();
+  await expect(sidebar.getByText("暂无速率数据")).toBeVisible();
 
   await expect(
     page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
