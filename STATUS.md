@@ -6,7 +6,7 @@
 
 当前稳定版本为 **[v0.26.11](https://github.com/ximatai/codexone/releases/tag/v0.26.11)**（2026-11-06），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
 
-v0.26.11 改善 Responses 模型标识与重试提示、未知字段转发和原生 Images 的 JSON 与流式错误兼容。真实 Codex CLI 的 PNG 生成和参考图编辑已通过，Desktop 工作流待单独验收。见[兼容范围](docs/reference/compatibility.md)与[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
+v0.26.11 改善 Responses 模型标识与重试提示、未知字段转发和原生 Images 的 JSON 与流式错误兼容。已验证真实 Codex CLI 的 PNG 生成和参考图编辑，以及 Desktop 手动压缩后的会话续接和工具调用。本次 Desktop 样本的压缩路由仍未确认。见[兼容范围](docs/reference/compatibility.md)与[验收记录](docs/changes/transparent-client-protocol/tasks.md)。
 
 项目是个人自托管网关：管理自己的 ChatGPT/Codex 订阅账号，为自己的多台设备和工具分别发放 Key。已实现账号授权/刷新与额度观察、Key 权限/轮换/归档/全部模型范围、本地限额和用量诊断、Responses HTTP/SSE/WS 与桥接、预热/压缩、原生图片生成/参考图编辑、同源管理面板、快照备份和维护迁移；v0.26.2 起提供设备码授权、可选局域网 HTTP 模式与网关自动重启；v0.26.4 起提供订阅重置卡查看/确认使用/到期前自动使用，以及空闲 5 小时/每周配额窗口预热（均按账号默认关闭）。
 
