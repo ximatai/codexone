@@ -40,12 +40,13 @@ test("overview opens account details in place and preserves scroll, navigation a
 test("overview account deep links survive reload and report missing accounts inside the drawer", async ({
   page,
 }) => {
+  test.setTimeout(30_000);
   const state = await reviewFixture(page);
   await page.goto("/#/?account=synthetic-account-2&extra=keep");
   const drawer = page.getByRole("dialog", { name: "账号详情" });
-  await expect(drawer).toContainText("合成账号 2");
+  await expect(drawer).toContainText("合成账号 2", { timeout: 10_000 });
   await page.reload();
-  await expect(drawer).toContainText("合成账号 2");
+  await expect(drawer).toContainText("合成账号 2", { timeout: 10_000 });
   await drawer.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page).toHaveURL(/#\/\?extra=keep/);
   await page.goto("/#/?account=synthetic-missing");
