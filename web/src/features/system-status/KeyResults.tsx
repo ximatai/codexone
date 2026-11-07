@@ -18,14 +18,17 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { businessDate, businessTime } from "../../shared/business-day";
 import type { KeySummary, KeySummaryReport } from "./round2-api";
-import { compactCount } from "./overview-format";
+import { compactCount, compactKeyTokens } from "./overview-format";
 import styles from "./overview.module.css";
 
-export function highFailure(row: Pick<KeySummary, "admitted" | "failed">) {
+export function highFailure(
+  row: Pick<KeySummary, "admitted" | "failed" | "cancelled">,
+) {
+  const eligible = row.admitted - row.cancelled;
   return (
-    row.admitted >= 20 &&
+    eligible >= 20 &&
     row.failed >= 5 &&
-    BigInt(row.failed) * 5n >= BigInt(row.admitted)
+    BigInt(row.failed) * 5n >= BigInt(eligible)
   );
 }
 function percent(part: bigint, total: bigint) {
@@ -71,7 +74,6 @@ export function KeyResults({
     row: KeySummary;
     snapshot: string;
   } | null>(null);
-  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -187,41 +189,23 @@ export function KeyResults({
       id: "failed",
       title: "失败率",
       width: "17%",
-      render: (row) => (
-        <Stack gap={2} align="flex-start">
-          {row.failed > 0 && report ? (
-            <Anchor
-              component={Link}
-              to={failureLink(row, report)}
-              size="sm"
-              c={highFailure(row) ? "orange.8" : undefined}
-              aria-label={`${name(row)} 失败 ${row.failed}`}
-              title="失败率以已准入请求为分母；取消、执行中和结果未明不计为失败。"
-            >
-              <ContinuousValue
-                text={percent(BigInt(row.failed), BigInt(row.admitted))}
-              />
-              {" · "}
-              <ContinuousValue
-                text={`${compactCount(row.failed)}/${compactCount(row.admitted)}`}
-              />
-            </Anchor>
-          ) : (
-            <Text size="sm" title={`0/${row.admitted}`}>
-              0% · <ContinuousValue text={`0/${compactCount(row.admitted)}`} />
-            </Text>
-          )}
-          {highFailure(row) && (
-            <Text
-              size="xs"
-              c="orange.8"
-              title="已准入至少 20 次、失败至少 5 次且失败率至少 20%。"
-            >
-              失败偏高
-            </Text>
-          )}
-        </Stack>
-      ),
+      render: (row) => {
+        const eligible = row.admitted - row.cancelled;
+        if (eligible <= 0 || !report) return <Text size="sm">—</Text>;
+        const rate = percent(BigInt(row.failed), BigInt(eligible));
+        return (
+          <Anchor
+            component={Link}
+            to={failureLink(row, report)}
+            size="sm"
+            c={highFailure(row) ? "orange.8" : undefined}
+            aria-label={`${name(row)} 失败率 ${rate}`}
+            title="查看失败请求"
+          >
+            <ContinuousValue text={rate} />
+          </Anchor>
+        );
+      },
     },
     {
       id: "tokens",
@@ -240,7 +224,7 @@ export function KeyResults({
             text={
               row.tokens == null
                 ? "—"
-                : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactCount(row.tokens)}`
+                : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactKeyTokens(row.tokens)}`
             }
           />
         </Text>
@@ -296,41 +280,23 @@ export function KeyResults({
       </Group>
       {query.isError && report && (
         <Text role="status" c="orange.8" size="sm">
-          读取失败，保留上次成功快照（
-          {businessTime(query.dataUpdatedAt / 1000, offset)}）。
+          {`更新失败 · 上次更新 ${businessTime(query.dataUpdatedAt / 1000, offset)}`}
         </Text>
       )}
       {query.isError && !report ? (
         <Text size="sm" c="dimmed">
-          今日 Key 汇总读取失败。请重试。
+          Key 汇总读取失败
         </Text>
       ) : (
         <DataTable
           animate
-          rows={expanded ? rows : rows.slice(0, 20)}
+          rows={rows}
           columns={columns}
           rowKey={(row) => row.keyID}
           loading={query.isPending}
           retry={() => void query.refetch()}
-          empty="今日暂无活跃 Key。"
+          empty="暂无活跃 Key"
         />
-      )}
-      {rows.length > 20 && (
-        <Group justify="space-between" mt="sm">
-          <Text size="xs" c="dimmed">
-            {expanded
-              ? `全部 ${rows.length} 个活跃 Key`
-              : `前 20 个活跃 Key，共 ${rows.length} 个`}
-          </Text>
-          <Button
-            size="xs"
-            variant="subtle"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? "收起 Key 列表" : `查看全部 ${rows.length} 个 Key`}
-          </Button>
-        </Group>
       )}
       <Drawer
         opened={detail !== null}

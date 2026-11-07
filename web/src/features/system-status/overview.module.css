@@ -1,8 +1,5 @@
-.header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
+.overview {
+  --overview-gap: 16px;
 }
 .connectionNotice {
   min-width: 0;
@@ -10,29 +7,21 @@
 .connectionNoticeText {
   flex: 1;
   min-width: 0;
-  text-align: end;
+  overflow-wrap: anywhere;
 }
 .connectionNotice button {
   flex-shrink: 0;
 }
-@media (max-width: 479px) {
-  .header h1 {
-    font-size: var(--mantine-h2-font-size);
-  }
-}
-.header > :first-child {
-  margin-bottom: 0;
-}
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--overview-gap);
 }
 .content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 25vw, 420px);
   align-items: start;
-  gap: 20px;
+  gap: var(--overview-gap);
 }
 .main {
   min-width: 0;
@@ -41,7 +30,7 @@
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   display: grid;
-  gap: 20px;
+  gap: var(--overview-gap);
 }
 @media (max-width: 1199px) {
   .kpis {
@@ -57,13 +46,16 @@
   }
 }
 @media (max-width: 479px) {
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
   .sparkline {
     display: none;
   }
+}
+
+.quotaAccountHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .quotaWindows {
@@ -103,59 +95,61 @@
   }
 }
 
+.metricRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  margin-block-start: var(--mantine-spacing-xs);
+}
+
+.metricNote {
+  margin-inline-start: auto;
+  text-align: end;
+  white-space: nowrap;
+}
+
 .metricValue {
-  width: 9ch;
-  max-width: 100%;
   flex-shrink: 0;
 }
-@media (min-width: 751px) {
-  .keySummary td:first-child > div {
-    min-height: 72px;
+
+@media (max-width: 479px) {
+  .metricValue {
+    font-size: 20px;
   }
-}
-
-.attentionViewport {
-  max-block-size: 20rem;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-.attentionViewport p {
-  font-variant-numeric: tabular-nums;
-}
-
-.attentionList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.attentionViewport section > :first-child > p {
-  min-width: 26ch;
-  text-align: left;
-}
-
-.sourceDetails {
-  block-size: 12rem;
-  overflow: auto;
 }
 
 .requestGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.25rem), 1fr));
   align-content: start;
-  gap: 8px;
+  gap: var(--overview-gap);
+}
+@media (max-width: 479px) {
+  .requestGrid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  }
 }
 .requestCard {
   min-width: 0;
   overflow-wrap: anywhere;
+  display: grid;
+  gap: 6px;
+}
+.requestEffort {
+  flex-shrink: 0;
+  max-inline-size: 45%;
+}
+.requestFooter {
+  border-block-start: 1px solid var(--mantine-color-default-border);
+  padding-block-start: 6px;
 }
 .requestElapsed {
   flex-shrink: 0;
 }
-.requestGrid,
 .requestEmpty {
-  min-height: 7rem;
-}
-.requestEmpty {
+  min-block-size: 5rem;
   display: flex;
   align-items: center;
 }
@@ -220,4 +214,27 @@
 .gaugeValue {
   justify-self: stretch;
   font-variant-numeric: tabular-nums;
+}
+
+.resourceTrendPlot {
+  position: relative;
+}
+
+.resourceTrendTooltip {
+  position: absolute;
+  bottom: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.resourceTrendTooltip[data-side="left"] {
+  left: 0;
+}
+
+.resourceTrendTooltip[data-side="right"] {
+  right: 0;
+}
+
+.keySummary {
+  min-block-size: 12rem;
 }

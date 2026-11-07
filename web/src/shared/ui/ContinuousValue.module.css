@@ -29,7 +29,6 @@
 
 .symbol {
   display: inline-block;
-  min-inline-size: 1ch;
 }
 
 .digit {

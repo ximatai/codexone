@@ -226,3 +226,10 @@
   pointer-events: none;
   overflow: visible;
 }
+
+.quotaReset {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}

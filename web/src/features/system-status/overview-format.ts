@@ -8,15 +8,26 @@ export function compactCount(value: string | number | bigint): string {
     [10000n, "万"],
   ] as const) {
     if (count >= unit) {
-      const hundredths = (count * 100n) / unit;
-      const fraction = (hundredths % 100n)
-        .toString()
-        .padStart(2, "0")
-        .replace(/0+$/, "");
-      return `${hundredths / 100n}${fraction ? `.${fraction}` : ""} ${label}`;
+      return formatCountUnit(count, unit, label);
     }
   }
   return count.toLocaleString("zh-CN");
+}
+
+export function compactKeyTokens(value: string): string {
+  const count = BigInt(value);
+  return count >= 10_000_000n
+    ? formatCountUnit(count, 100_000_000n, "亿")
+    : compactCount(count);
+}
+
+function formatCountUnit(count: bigint, unit: bigint, label: string): string {
+  const hundredths = (count * 100n) / unit;
+  const fraction = (hundredths % 100n)
+    .toString()
+    .padStart(2, "0")
+    .replace(/0+$/, "");
+  return `${hundredths / 100n}${fraction ? `.${fraction}` : ""} ${label}`;
 }
 
 export function compactMoney(value: string): string {

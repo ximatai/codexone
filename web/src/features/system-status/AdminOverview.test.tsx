@@ -26,17 +26,34 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   vi.mocked(management.fetchSession).mockResolvedValue({
     csrf: "synthetic-csrf",
   });
-  vi.mocked(management.request).mockResolvedValue({
-    pressure: "normal",
-    admissionAllowed: true,
-    optionalWorkAllowed: true,
-    availableBytes: 1048576,
-    backup: {
-      enabled: true,
-      lastSuccessUnixSeconds: 1800000000,
-      retainedCount: 7,
-    },
-  });
+  vi.mocked(management.request).mockImplementation(async (path) =>
+    path === "/api/attention"
+      ? {
+          generatedAtUnixSeconds: 1,
+          items: [
+            {
+              kind: "backup_stale",
+              severity: "warning",
+              subjectType: "system",
+              subjectID: null,
+              subjectName: null,
+              detail: {},
+              sinceUnixSeconds: 1,
+            },
+          ],
+        }
+      : {
+          pressure: "normal",
+          admissionAllowed: true,
+          optionalWorkAllowed: true,
+          availableBytes: 1048576,
+          backup: {
+            enabled: true,
+            lastSuccessUnixSeconds: 1800000000,
+            retainedCount: 7,
+          },
+        },
+  );
   vi.mocked(accounts.fetchAccounts).mockResolvedValue([
     {
       id: "synthetic-account",
@@ -72,7 +89,7 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
     ]),
   );
   const view = renderPrivate(<AdminOverview />);
-  await screen.findByText(/保护未触发/);
+  await screen.findByText("1.0 MiB", { exact: true });
   expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
   expect(usage.fetchKeySummary).toHaveBeenCalledTimes(1);
   expect(
@@ -82,8 +99,8 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   ).toHaveLength(1);
   expect(screen.queryByText("今日请求 / 失败")).toBeNull();
   expect(screen.queryByText("费用：估算 $1.25")).toBeNull();
-  expect(screen.getByText(/保护未触发/)).toBeVisible();
-  fireEvent.click(screen.getByRole("link", { name: /数据盘/ }));
+  expect(screen.queryByText("保护未触发")).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("link", { name: "查看备份" }));
   expect(await screen.findByText("磁盘可用：1.0 MiB")).toBeVisible();
   expect(screen.getByText("保留备份：7")).toBeVisible();
   expect(screen.getByText(/最近成功备份：/)).toHaveTextContent(
@@ -92,7 +109,7 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
-  fireEvent.click(screen.getByRole("link", { name: /数据盘/ }));
+  fireEvent.click(screen.getByRole("link", { name: "查看备份" }));
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   view.unmount();
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
@@ -142,10 +159,10 @@ it.each(["fresh", "unavailable"] as const)(
     const reads = vi.mocked(accounts.fetchAccounts).mock.calls.length;
     await act(async () => vi.advanceTimersByTime(300000));
     expect(
-      screen.getByText(state === "fresh" ? "额度观测已陈旧" : "额度不可用"),
+      screen.getByText(state === "fresh" ? "额度待更新" : "额度不可用"),
     ).toBeVisible();
     if (state === "unavailable")
-      expect(screen.queryByText("额度观测已陈旧")).toBeNull();
+      expect(screen.queryByText("额度待更新")).toBeNull();
     expect(accounts.fetchAccounts).toHaveBeenCalledTimes(reads);
     hidden.mockRestore();
     view.unmount();

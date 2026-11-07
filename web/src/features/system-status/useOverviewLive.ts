@@ -50,6 +50,14 @@ const clientsSchema = z
     }),
   )
   .max(1024);
+const liveActivity = flight.extend({
+  clients: clientsSchema,
+  settledOutputTokensPerSecond: z.number().finite().nonnegative().nullish(),
+  settledOutputRatesByDay: z
+    .record(z.string(), z.number().finite().nonnegative())
+    .optional(),
+  overflow: z.number().int().nonnegative(),
+});
 export type LiveClients = z.infer<typeof clientsSchema>;
 export type Freshness = z.infer<typeof section>;
 const queryKey = (name: string) => [
@@ -62,8 +70,6 @@ function parse(name: string, value: unknown): unknown {
       return daily.parse(value);
     case "keys":
       return keySummary.parse(value);
-    case "inFlight":
-      return flight.parse(value).rows;
     case "headroom":
       return headroomSchema.parse(value);
     case "attention":
@@ -90,6 +96,9 @@ export function useOverviewLive(active: boolean) {
     "connecting" | "live" | "polling" | "paused"
   >("connecting");
   const [sources, setSources] = useState<Record<string, Freshness>>({});
+  const [settledOutputRate, setSettledOutputRate] = useState<number | null>();
+  const [settledOutputDays, setSettledOutputDays] =
+    useState<Record<string, number>>();
   const [clients, setClients] = useState<LiveClients>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
@@ -191,12 +200,21 @@ export function useOverviewLive(active: boolean) {
               .filter(
                 (entry): entry is [string, Freshness] => entry[1] !== undefined,
               )
-              .map(([name, source]) => ({
-                name,
-                source,
-                data:
-                  source.data == null ? undefined : parse(name, source.data),
-              }));
+              .map(([name, source]) => {
+                const activity =
+                  name === "inFlight" && source.data != null
+                    ? liveActivity.parse(source.data)
+                    : undefined;
+                return {
+                  name,
+                  source,
+                  activity,
+                  data:
+                    source.data == null
+                      ? undefined
+                      : (activity?.rows ?? parse(name, source.data)),
+                };
+              });
             if (
               parsed.some(
                 ({ name, source }) => source.version < (versions[name] ?? 0),
@@ -209,7 +227,7 @@ export function useOverviewLive(active: boolean) {
               ),
             );
             if (!current() || connection !== socket) return;
-            for (const { name, source, data } of parsed) {
+            for (const { name, source, data, activity } of parsed) {
               versions[name] = source.version;
               const key = queryKey(name);
               const replacement =
@@ -219,15 +237,14 @@ export function useOverviewLive(active: boolean) {
                 client.setQueryData(key, replacement, {
                   updatedAt: (source.lastSuccessAt ?? 0) * 1000,
                 });
-              if (name === "inFlight" && source.data != null) {
-                const activity = z
-                  .object({
-                    clients: clientsSchema,
-                    overflow: z.number().int().nonnegative(),
-                  })
-                  .parse(source.data);
+              if (activity) {
+                setSettledOutputRate(activity.settledOutputTokensPerSecond);
+                setSettledOutputDays(activity.settledOutputRatesByDay);
                 setClients(activity.clients);
                 setOverflow(activity.overflow);
+              } else if (name === "inFlight" && source.data === null) {
+                setSettledOutputRate(undefined);
+                setSettledOutputDays(undefined);
               }
             }
             setSources((previous) => {
@@ -397,6 +414,10 @@ export function useOverviewLive(active: boolean) {
     ([, source]) =>
       source.freshness !== "fresh" || source.lastSuccessAt == null,
   );
+  const throughputFresh =
+    mode === "live" &&
+    displayed.inFlight?.freshness === "fresh" &&
+    displayed.inFlight.lastSuccessAt != null;
   return {
     failure,
     retry: () => retryConnection.current(),
@@ -404,6 +425,8 @@ export function useOverviewLive(active: boolean) {
     mode,
     sources: displayed,
     clients,
+    settledOutputRate: throughputFresh ? settledOutputRate : undefined,
+    settledOutputDays: throughputFresh ? settledOutputDays : undefined,
     overflow,
     reset,
     stale,

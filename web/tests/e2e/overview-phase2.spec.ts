@@ -138,8 +138,8 @@ test("overview keeps accessible trends, principal names, details and responsive 
             keyID: "synthetic-key",
             principal: "合成工作站",
             admitted: 8,
-            succeeded: 7,
-            cancelled: 0,
+            succeeded: 5,
+            cancelled: 2,
             inFlight: 0,
             failed: 1,
             pending: 0,
@@ -156,11 +156,11 @@ test("overview keeps accessible trends, principal names, details and responsive 
           atUnixSeconds: today + (i - 6) * 86400,
           requests: 10 + i * 2,
           recordedRejections: i,
-          succeeded: 9 + i * 2,
+          succeeded: 7 + i * 2,
           failed: 1,
-          cancelled: 0,
+          cancelled: 2,
           failures: { rate_limited: 1 },
-          metrics,
+          metrics: { ...metrics, images: i === 0 ? null : String(i + 2) },
         })),
       },
       "/api/usage/in-flight": {
@@ -204,14 +204,31 @@ test("overview keeps accessible trends, principal names, details and responsive 
     "data-live-mode",
     "polling",
   );
-  await expect(
-    page.getByRole("heading", { name: "今日运营概览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "进行中请求" })).toBeVisible();
   await expect(
     page.getByRole("img", { name: /^今日已准入近 7 天/ }),
   ).toBeVisible();
   const cards = page.getByLabel("在途请求卡片").locator(":scope > *");
   await expect(cards).toHaveCount(5);
+  const expectUniformGaps = async () => {
+    const gaps = await page
+      .getByLabel("关键指标", { exact: true })
+      .evaluate((kpis) => {
+        const main = kpis.parentElement!;
+        const layout = main.parentElement!;
+        const sidebar = layout.querySelector("aside")!;
+        const requestGrid = layout.querySelector(
+          '[aria-label="在途请求卡片"]',
+        )!;
+        return [kpis, main, layout, sidebar, requestGrid].map((element) => {
+          const { rowGap, columnGap } = getComputedStyle(element);
+          return [rowGap, columnGap];
+        });
+      });
+    expect(gaps).toEqual(Array.from({ length: 5 }, () => ["16px", "16px"]));
+  };
+  await expect(page.getByText("今日运营概览", { exact: true })).toHaveCount(0);
+  await expectUniformGaps();
   const firstRow = () =>
     cards.evaluateAll(
       (items) =>
@@ -223,7 +240,39 @@ test("overview keeps accessible trends, principal names, details and responsive 
     );
   expect(await firstRow()).toBe(4);
   await expect(
-    page.getByRole("img", { name: "网关内存占用最近一小时趋势" }),
+    page.getByRole("img", {
+      name: "生图张数近 7 天：不可用、3、4、5、6、7、8",
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("估算费用", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("5.0%", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "合成工作站 失败率 16.7%" }),
+  ).toContainText("16.7%");
+
+  const requestTrend = page.getByRole("img", { name: /今日已准入近 7 天/ });
+  await requestTrend.hover();
+  const trendTooltip = page.getByRole("tooltip");
+  await expect(trendTooltip.getByText("16", { exact: true })).toBeVisible();
+  await expect(trendTooltip).toContainText(
+    new Intl.DateTimeFormat("zh-CN", {
+      month: "long",
+      day: "numeric",
+      timeZone: "UTC",
+    }).format((today - 3 * 86400) * 1000),
+  );
+  await page.getByRole("heading", { name: "订阅额度" }).hover();
+  await expect(trendTooltip).toHaveCount(0);
+  const sidebar = page.getByRole("complementary", {
+    name: "订阅额度与系统状态",
+  });
+  await expect(
+    sidebar.getByRole("heading", { name: "输出吞吐" }),
+  ).toBeVisible();
+  await expect(sidebar.getByText("暂无吞吐数据")).toBeVisible();
+
+  await expect(
+    page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
   ).toBeVisible();
   const cpuGauge = page.getByRole("group", { name: "CPU 使用率" });
   await expect(cpuGauge.getByText("27%", { exact: true })).toBeVisible();
@@ -235,7 +284,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(memoryGauge.getByText("5.3 / 8.0 GiB")).toBeVisible();
   await expect(page.getByText("窗口为上游观测，不是 Key 余额")).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "合成工作站 失败 1" }),
+    page.getByRole("link", { name: "合成工作站 失败率 16.7%" }),
   ).toHaveAttribute(
     "href",
     /key=synthetic-key&start=[^&]+&end=[^&]+&outcome=failed/,
@@ -258,44 +307,24 @@ test("overview keeps accessible trends, principal names, details and responsive 
   expect(longWindow!.y).toBeGreaterThan(shortWindow!.y);
   await expect(page.getByLabel("概览连接状态")).toBeHidden();
   await expect(page.getByText("各源更新时间", { exact: true })).toBeHidden();
-  await expect(
-    page.getByText(/参考 60\.0% · 低于 22\.0 个百分点/),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/参考 57\.1% · 超出 11\.9 个百分点/),
-  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "参考进度 60.0%" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "参考进度 57.1%" })).toBeVisible();
   await page.screenshot({
     path: screenshots + "/overview-resource-trends-1440.png",
     fullPage: true,
     animations: "disabled",
   });
-  const rejected = page.getByText("已记录准入前拒绝 6");
+  const rejected = page.getByText("拒绝 6");
   await expect(rejected).toBeVisible();
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
+  await expectUniformGaps();
   expect(await firstRow()).toBe(2);
   await rejected.scrollIntoViewIfNeeded();
   await expect(rejected).toBeInViewport();
-  await page.getByText("运行诊断", { exact: true }).click();
-  const protocolLink = page.getByRole("link", { name: /x-codex-n+/ });
-  await protocolLink.scrollIntoViewIfNeeded();
-  await expect(protocolLink).toBeInViewport({ ratio: 1 });
   await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
-  await expect(
-    page.getByRole("region", { name: "需要处理", exact: true }),
-  ).toContainText("合成订阅账号：账号需要重新授权");
-  await expect(
-    page.getByRole("region", { name: "需要处理", exact: true }),
-  ).toContainText("合成工作站：访问密钥已到期或将在 7 天内到期");
-  await expect(
-    page.getByRole("link", { name: "服务概览（有需要处理的事项）" }),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByRole("region", { name: "需要处理", exact: true })
-      .getByRole("link", { name: /账号需要重新授权/ }),
-  ).toHaveAttribute("href", "#/?account=synthetic-account");
+  await expect(page.getByText("运行诊断", { exact: true })).toHaveCount(0);
   await mkdir("../artifacts/admin-attention", { recursive: true });
   await page.screenshot({
     path: "../artifacts/admin-attention/overview.png",
@@ -336,17 +365,8 @@ test("overview keeps accessible trends, principal names, details and responsive 
     .click();
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await expectUniformGaps();
   await expectNoHorizontalOverflow(page);
-  await page.getByText("运行诊断", { exact: true }).click();
-  const longReminder = page.getByRole("link", { name: /x-codex-n+/ });
-  await expect(longReminder).toBeVisible();
-  expect(
-    await longReminder.evaluate(
-      (node) =>
-        node.parentElement!.scrollWidth <= node.parentElement!.clientWidth,
-    ),
-  ).toBeTruthy();
-  await page.getByText("运行诊断", { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(350);
   await page.screenshot({
@@ -356,5 +376,5 @@ test("overview keeps accessible trends, principal names, details and responsive 
   inFlightCount = 0;
   await page.clock.runFor(15000);
   await expect(cards).toHaveCount(0);
-  await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
+  await expect(page.getByText("暂无进行中请求")).toBeVisible();
 });

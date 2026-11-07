@@ -17,7 +17,11 @@ export function AttentionNavigationObserver() {
     enabled: false,
   });
   const critical =
-    attention.data?.items.some((item) => item.severity === "critical") ?? false;
+    attention.data?.items.some(
+      (item) =>
+        item.severity === "critical" &&
+        (item.kind === "storage_pressure" || item.kind === "backup_stale"),
+    ) ?? false;
   useEffect(() => {
     update?.(critical);
     return () => update?.(false);

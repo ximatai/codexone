@@ -59,7 +59,8 @@ it("highlights only the 20/5/20 percent rule including equality", () => {
     [26, 5, false],
     [20, 5, true],
   ] as const)
-    expect(highFailure({ admitted, failed })).toBe(high);
+    expect(highFailure({ admitted, failed, cancelled: 0 })).toBe(high);
+  expect(highFailure({ admitted: 30, failed: 5, cancelled: 5 })).toBe(true);
 });
 it("uses summary dates for failure links even after midnight", () => {
   const url = new URL(failureLink(row, report), "https://synthetic.invalid");
@@ -178,7 +179,7 @@ it("keeps an open detail bound to its Key and its own snapshot across refreshes"
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(row.keyID);
 });
-it("bounds default rows while retaining all identities and expansion across updates", () => {
+it("shows all active Keys and keeps detail identity across updates", () => {
   const keys = Array.from({ length: 40 }, (_, index) => ({
     ...row,
     keyID: `synthetic-bounded-${index}`,
@@ -187,8 +188,6 @@ it("bounds default rows while retaining all identities and expansion across upda
   }));
   const result = render(<KeyResults query={query({ ...report, keys })} />);
   const panel = screen.getByRole("region", { name: "今日 Key 请求汇总" });
-  expect(within(panel).getAllByRole("row")).toHaveLength(21);
-  fireEvent.click(screen.getByRole("button", { name: "查看全部 40 个 Key" }));
   expect(within(panel).getAllByRole("row")).toHaveLength(41);
   fireEvent.click(within(panel).getByRole("button", { name: "合成 Key 39" }));
   result.rerender(
@@ -215,8 +214,6 @@ it("bounds default rows while retaining all identities and expansion across upda
   );
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(within(panel).getAllByRole("row")).toHaveLength(41);
-  fireEvent.click(screen.getByRole("button", { name: "收起 Key 列表" }));
-  expect(within(panel).getAllByRole("row")).toHaveLength(21);
   expect(
     within(panel).getByRole("button", {
       name: "已更新的合成 Key",

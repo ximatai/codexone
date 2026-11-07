@@ -1,20 +1,6 @@
 import { expect, test, gotoUsage } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 
-test("P2-1: collapsing fifty reminders returns the toggle to view with focus", async ({
-  page,
-}) => {
-  const state = await reviewFixture(page);
-  state.alerts = 50;
-  await page.goto("/");
-  await page.getByText("运行诊断", { exact: true }).click();
-  await page.getByRole("button", { name: "查看全部 50 项" }).click();
-  await page.getByRole("button", { name: "收起提醒" }).click();
-  const toggle = page.getByRole("button", { name: "查看全部 50 项" });
-  await expect(toggle).toBeFocused();
-  await expect(toggle).toBeInViewport();
-});
-
 test("P2-2 Key: POP restores page/query/position and sidebar entry starts at the URL top", async ({
   page,
 }) => {
@@ -88,6 +74,9 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
 }) => {
   await page.clock.install();
   const state = await reviewFixture(page);
+  await page.routeWebSocket("**/api/overview/live", (socket) =>
+    socket.close({ code: 1013 }),
+  );
   state.failures["/api/usage"] = 503;
   await gotoUsage(page);
   await expect(page.getByRole("alert")).toContainText("查询失败或繁忙");
@@ -103,31 +92,36 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   ])
     state.failures[path] = 503;
   await page.goto("/");
-  await expect(page.getByRole("alert")).toHaveCount(1);
-  const alert = page.getByRole("alert");
+  const alert = page.getByLabel("概览连接状态").getByRole("alert");
   for (const source of [
     "运营指标",
     "进行中请求",
     "今日 Key 汇总",
     "订阅账号",
-    "存储状态",
-    "需要处理提醒",
     "治理余量",
   ])
     await expect(alert).toContainText(source);
   await expect(alert).not.toContainText("快照");
   const notice = page.getByLabel("概览连接状态");
+  const resources = page
+    .getByRole("heading", { name: "运行资源" })
+    .locator("..")
+    .locator("..");
+  await expect(notice).toBeVisible();
+  expect((await notice.boundingBox())!.y).toBeGreaterThan(
+    (await resources.boundingBox())!.y +
+      (await resources.boundingBox())!.height,
+  );
   const firstNotice = await notice.boundingBox();
   state.failures = {};
-  await page.getByRole("button", { name: "重试", exact: true }).click();
-  await page.getByText("运行诊断", { exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveCount(2); // two actual attention items
+  await notice.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(alert).toHaveCount(0);
+  await expect(page.getByText("暂无进行中请求")).toBeVisible();
   state.alerts = 0;
   state.failures["/api/usage/daily"] = 503;
   state.failures["/api/usage/in-flight"] = 503;
-  await page.clock.runFor(15000);
-  await expect(page.getByRole("alert")).toHaveCount(1);
-  await expect(page.getByRole("alert")).toContainText(/保留上次成功快照 \d{4}/);
+  await page.clock.fastForward(31000);
+  await expect(alert).toContainText(/上次更新 \d{4}/);
   const nextNotice = await notice.boundingBox();
   expect(nextNotice?.x).toBe(firstNotice?.x);
   expect(nextNotice?.width).toBe(firstNotice?.width);
@@ -172,10 +166,9 @@ test("P2-6: login, Key targets and cancel/Escape transfer focus to the intended 
   await page.getByRole("button", { name: "管理员登录", exact: true }).click();
   await expect(page.getByLabel("管理员凭证", { exact: true })).toBeFocused();
   state.anonymous = false;
-  await page.goto("/");
-  await page.getByText("运行诊断", { exact: true }).click();
-  await page.getByRole("link", { name: /team-201：访问密钥/ }).click();
-  const row = page.getByRole("row", { name: /访问密钥 team-201/ });
+  await page.goto("/#/keys?target=synthetic-key-201");
+  await page.reload();
+  const row = page.locator('[data-row-id="synthetic-key-201"]');
   await expect(row).toBeFocused();
   const create = page.getByRole("button", { name: "创建密钥", exact: true });
   await create.click();

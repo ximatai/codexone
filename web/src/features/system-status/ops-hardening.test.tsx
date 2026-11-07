@@ -3,18 +3,10 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { notifications } from "@mantine/notifications";
 import { renderPrivate } from "../../../tests/render";
-import { AdminOverview } from "./AdminOverview";
+import { EarlyCapacityRelease } from "../usage/EarlyCapacityRelease";
 import * as management from "../../shared/management";
 import * as accounts from "../account-management/api";
 import * as usage from "./round2-api";
-import { attentionMessage } from "./attention-api";
-vi.mock("./ActivityOverview", () => ({
-  ActivityOverview: ({
-    sidebar,
-  }: {
-    sidebar: (sourceDetails: React.ReactNode) => React.ReactNode;
-  }) => sidebar(null),
-}));
 vi.mock("../../shared/management", async (original) => ({
   ...(await original<typeof management>()),
   fetchSession: vi.fn(),
@@ -79,15 +71,16 @@ function setup(conflict = false) {
       optionalWorkAllowed: true,
     };
   });
-  return renderPrivate(<AdminOverview />);
+  return renderPrivate(<EarlyCapacityRelease />);
 }
 it("requires confirmation, cancels safely, releases unknown count and preserves unknown-use copy", async () => {
   const show = vi.spyOn(notifications, "show");
   setup();
-  await screen.findByText(/访问凭证约 1 小时后到期/);
-  expect(screen.getByText(/待核对 500 条/)).toBeVisible();
-  fireEvent.click(await screen.findByRole("button", { name: "核对并释放" }));
-  expect(await screen.findByText(/真实用量无法得知/)).toBeVisible();
+  fireEvent.click(await screen.findByRole("button", { name: "查看未结执行" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "提前释放容量 · 500 条" }),
+  );
+  expect(await screen.findByText(/真实用量仍为未知/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
   expect(
     vi
@@ -97,7 +90,9 @@ it("requires confirmation, cancels safely, releases unknown count and preserves 
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "确认释放" })).toBeNull(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "核对并释放" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "提前释放容量 · 500 条" }),
+  );
   fireEvent.click(await screen.findByRole("button", { name: "确认释放" }));
   await waitFor(() =>
     expect(management.request).toHaveBeenCalledWith(
@@ -120,38 +115,27 @@ it("requires confirmation, cancels safely, releases unknown count and preserves 
 it("refreshes changed counts after a conflict without replaying release", async () => {
   const show = vi.spyOn(notifications, "show");
   setup(true);
-  fireEvent.click(await screen.findByRole("button", { name: "核对并释放" }));
+  fireEvent.click(await screen.findByRole("button", { name: "查看未结执行" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "提前释放容量 · 500 条" }),
+  );
   fireEvent.click(await screen.findByRole("button", { name: "确认释放" }));
   await waitFor(() =>
     expect(show).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("待核对数量已变化"),
+        message: expect.stringContaining("数据已被修改"),
       }),
     ),
   );
   expect(
     vi
       .mocked(management.request)
-      .mock.calls.filter(([path]) => path === "/api/attention"),
+      .mock.calls.filter(([path]) => path === "/api/usage/headroom"),
   ).toHaveLength(2);
-  expect(await screen.findByText(/待核对 501 条/)).toBeVisible();
+  expect(await screen.findByText(/提前释放容量 · 501 条/)).toBeVisible();
   expect(
     vi
       .mocked(management.request)
       .mock.calls.filter(([path]) => path.includes("/release")),
   ).toHaveLength(1);
-});
-it("maps reminder account IDs and falls back when no account matches", () => {
-  const reminder = {
-    ...item,
-    kind: "account_requires_auth" as const,
-    subjectType: "account" as const,
-    subjectID: "12345678-abcd",
-  };
-  expect(
-    attentionMessage(reminder, [
-      { id: reminder.subjectID, displayName: "合成账号" },
-    ]),
-  ).toContain("合成账号：");
-  expect(attentionMessage(reminder)).toContain("未命名账号 · 12345678：");
 });

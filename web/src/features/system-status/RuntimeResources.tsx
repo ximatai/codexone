@@ -1,10 +1,15 @@
-import { Anchor, Group, Paper, Stack, Text, Title } from "@mantine/core";
-import { Link } from "react-router";
+import { Group, Paper, Stack, Text, Title } from "@mantine/core";
+import { useState } from "react";
 import styles from "./overview.module.css";
 import type { parseStorage, ResourceSample } from "./storage-api";
 
 const MiB = 1024 ** 2;
 const GiB = 1024 ** 3;
+const sampleTime = new Intl.DateTimeFormat("zh-CN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
 
 function ResourceTrend({
   samples,
@@ -19,9 +24,26 @@ function ResourceTrend({
   scale?: number;
   detail?: string;
 }) {
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
   const latest = samples.at(-1);
+  const end = latest?.unixSeconds ?? 0;
   const maximum =
     scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0));
+  const xAt = (time: number) => (time - end + 3600) / 36;
+  const yAt = (value: number) => 29 - (Math.min(value, maximum) / maximum) * 28;
+  let nearest: ResourceSample | undefined;
+  if (hoverTime != null) {
+    for (const sample of samples) {
+      const distance = Math.abs(sample.unixSeconds - hoverTime);
+      if (
+        distance <= 30 &&
+        (!nearest || distance < Math.abs(nearest.unixSeconds - hoverTime))
+      )
+        nearest = sample;
+    }
+  }
+  const activeValue = nearest?.[field];
+  const hasSamples = samples.some((sample) => sample[field] != null);
   let previous: ResourceSample | undefined;
   const path = samples
     .map((sample) => {
@@ -29,10 +51,8 @@ function ResourceTrend({
       const connected =
         previous && sample.unixSeconds - previous.unixSeconds <= 60;
       previous = value == null ? undefined : sample;
-      if (value == null || !latest) return "";
-      const x = (sample.unixSeconds - latest.unixSeconds + 3600) / 36;
-      const y = 29 - (Math.min(value, maximum) / maximum) * 28;
-      return `${connected ? "L" : "M"}${x},${y}`;
+      if (value == null) return "";
+      return `${connected ? "L" : "M"}${xAt(sample.unixSeconds)},${yAt(value)}`;
     })
     .join(" ");
   return (
@@ -47,23 +67,71 @@ function ResourceTrend({
           </Text>
         )}
       </Group>
-      <svg
-        viewBox="0 0 100 30"
-        width="100%"
-        height="28"
-        preserveAspectRatio="none"
-        role={path.includes("L") ? "img" : undefined}
-        aria-hidden={!path.includes("L")}
-        aria-label={`${label}最近一小时趋势`}
-      >
-        <path
-          d={path}
-          fill="none"
-          stroke="var(--mantine-color-blue-6)"
-          strokeWidth="1.5"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
+      <div className={styles.resourceTrendPlot}>
+        <svg
+          viewBox="0 0 100 30"
+          width="100%"
+          height="28"
+          preserveAspectRatio="none"
+          role={hasSamples ? "img" : undefined}
+          aria-hidden={!hasSamples}
+          aria-label={`${label}最近一小时趋势`}
+          onPointerMove={(event) => {
+            if (!hasSamples) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            if (bounds.width > 0)
+              setHoverTime(
+                end -
+                  3600 +
+                  ((event.clientX - bounds.left) / bounds.width) * 3600,
+              );
+          }}
+          onPointerLeave={() => setHoverTime(null)}
+          onPointerCancel={() => setHoverTime(null)}
+        >
+          <path
+            d={path}
+            fill="none"
+            stroke="var(--mantine-color-blue-6)"
+            strokeWidth="1.5"
+            vectorEffect="non-scaling-stroke"
+          />
+          {nearest && activeValue != null && (
+            <line
+              x1={xAt(nearest.unixSeconds)}
+              x2={xAt(nearest.unixSeconds)}
+              y1="0"
+              y2="30"
+              stroke="var(--mantine-color-blue-6)"
+              strokeDasharray="3 2"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+        </svg>
+        {nearest && (
+          <Paper
+            withBorder
+            p="xs"
+            shadow="sm"
+            role="tooltip"
+            className={styles.resourceTrendTooltip}
+            data-side={xAt(nearest.unixSeconds) > 50 ? "left" : "right"}
+          >
+            <Text size="xs" c="dimmed">
+              {sampleTime.format(nearest.unixSeconds * 1000)}
+            </Text>
+            <Text size="sm" fw={600}>
+              {activeValue == null
+                ? "未采样"
+                : field === "hostCPUPercent"
+                  ? `${activeValue.toFixed(1)}%`
+                  : activeValue >= GiB
+                    ? `${(activeValue / GiB).toFixed(2)} GiB`
+                    : `${(activeValue / MiB).toFixed(1)} MiB`}
+            </Text>
+          </Paper>
+        )}
+      </div>
     </div>
   );
 }
@@ -120,6 +188,7 @@ export function RuntimeResources({
   const total = latest?.hostTotalBytes;
   const available = latest?.hostAvailableBytes;
   const cpu = latest?.hostCPUPercent;
+  const load = latest?.hostLoadAverage1m;
   const memoryPercent =
     available != null && total && available <= total
       ? (available / total) * 100
@@ -146,7 +215,11 @@ export function RuntimeResources({
           </Text>
         )}
         <div className={styles.resourceGauges}>
-          <ResourceGauge label="CPU 使用率" percent={cpu ?? null} />
+          <ResourceGauge
+            label="CPU 使用率"
+            percent={cpu ?? null}
+            detail={load?.toFixed(2)}
+          />
           <ResourceGauge
             label="服务器可用内存"
             percent={memoryPercent}
@@ -168,20 +241,6 @@ export function RuntimeResources({
             }
           />
         </div>
-        <Group justify="space-between" gap="xs">
-          <Anchor component={Link} to="/?storage=details" size="xs">
-            数据盘详情 ›
-          </Anchor>
-          <Text size="xs" c="dimmed">
-            {!storage
-              ? "保护状态未知"
-              : !storage.admissionAllowed
-                ? "已暂停准入"
-                : !storage.optionalWorkAllowed
-                  ? "可选任务已暂停"
-                  : "保护未触发"}
-          </Text>
-        </Group>
         <div className={styles.resourceHistory}>
           <Text size="xs" c="dimmed">
             最近一小时
@@ -200,7 +259,7 @@ export function RuntimeResources({
           />
           <ResourceTrend
             samples={samples}
-            label="网关内存占用"
+            label="CodexOne 内存占用"
             field="processResidentBytes"
             detail={
               latest?.processResidentBytes == null
