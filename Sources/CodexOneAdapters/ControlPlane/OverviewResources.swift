@@ -10,6 +10,7 @@ public final class OverviewResources: Service, Sendable {
     let hostAvailableBytes: UInt64?
     let hostTotalBytes: UInt64?
     let hostCPUPercent: Double?
+    let hostLoadAverage1m: Double?
   }
 
   private let history = Mutex<[Sample]>([])
@@ -38,7 +39,8 @@ public final class OverviewResources: Service, Sendable {
             processResidentBytes: resident["VmRSS:"],
             hostAvailableBytes: memory["MemAvailable:"],
             hostTotalBytes: memory["MemTotal:"],
-            hostCPUPercent: cpu.flatMap { $0.percent(since: previous) })
+            hostCPUPercent: cpu.flatMap { $0.percent(since: previous) },
+            hostLoadAverage1m: Self.loadAverage())
           history.withLock {
             $0.removeAll {
               $0.unixSeconds < sample.unixSeconds - 3600 || $0.unixSeconds > sample.unixSeconds
@@ -75,6 +77,14 @@ public final class OverviewResources: Service, Sendable {
     let ticks = fields.dropFirst().prefix(8).compactMap { UInt64($0) }
     guard ticks.count == 8 else { return nil }
     return CPU(total: ticks.reduce(0, +), idle: ticks[3] + ticks[4])
+  }
+
+  private static func loadAverage() -> Double? {
+    guard let contents = try? String(contentsOfFile: "/proc/loadavg", encoding: .utf8),
+      let first = contents.split(whereSeparator: \.isWhitespace).first,
+      let value = Double(first), value.isFinite, value >= 0
+    else { return nil }
+    return value
   }
 
   private static func kibValues(_ path: String, keys: Set<String>) -> [String: UInt64] {

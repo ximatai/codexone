@@ -158,10 +158,10 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await page.getByRole("button", { name: "登录管理台" }).click();
   await expect(page.getByRole("heading", { name: "访问密钥" })).toBeVisible();
   await page.getByRole("link", { name: "服务概览", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "今日运营概览" }),
-  ).toBeVisible();
-  await expect(page.getByText("保护未触发", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "进行中请求" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "数据盘可用" })).toBeVisible();
+  await expect(page.getByText("保护未触发", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /数据盘详情/ })).toHaveCount(0);
   await expect(
     page.getByRole("row").filter({ hasText: "synthetic-team" }),
   ).toHaveCount(1);

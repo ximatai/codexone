@@ -30,11 +30,17 @@ export function QuotaWindowBar({
     secondsLeft <= duration
       ? 100 * (1 - secondsLeft / duration)
       : null;
-  const difference =
-    pace == null || value?.usedPercent == null
+  const resetTime =
+    reset == null
       ? null
-      : Number((value.usedPercent - pace).toFixed(1));
-
+      : new Intl.DateTimeFormat("zh-CN", {
+          month: "numeric",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        }).format(reset * 1000);
+  const countdown = resetIn(reset ?? null, now);
   const remaining =
     value?.usedPercent == null ? null : Math.max(0, 100 - value.usedPercent);
   return (
@@ -63,7 +69,8 @@ export function QuotaWindowBar({
               className={styles.quotaPaceMarker}
               viewBox="0 0 100 12"
               preserveAspectRatio="none"
-              aria-hidden="true"
+              role="img"
+              aria-label={`参考进度 ${pace.toFixed(1)}%`}
             >
               <line
                 x1={pace}
@@ -76,21 +83,22 @@ export function QuotaWindowBar({
           )}
         </div>
       )}
-      {pace != null && difference != null && (
-        <Text
-          size="xs"
-          c={difference > 0 ? "orange.8" : "dimmed"}
-          title="参考进度按本额度窗口已过去的时间线性计算。"
-        >
-          参考 {pace.toFixed(1)}%{" · "}
-          {difference === 0
-            ? "与参考持平"
-            : `${difference > 0 ? "超出" : "低于"} ${Math.abs(difference).toFixed(1)} 个百分点`}
+      {showUsed && resetTime ? (
+        <div className={styles.quotaReset} title={timeTitle(reset)}>
+          <Text size="xs" c="dimmed">
+            {secondsLeft != null && secondsLeft > 0
+              ? countdown.replaceAll(" ", "").replace("后重置", "后")
+              : "等待刷新"}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {resetTime} 重置
+          </Text>
+        </div>
+      ) : (
+        <Text size="xs" c="dimmed" title={timeTitle(reset)}>
+          {countdown}
         </Text>
       )}
-      <Text size="xs" c="dimmed" title={timeTitle(value?.resetsAtUnixSeconds)}>
-        {resetIn(value?.resetsAtUnixSeconds ?? null, now)}
-      </Text>
     </Stack>
   );
 }

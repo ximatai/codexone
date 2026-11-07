@@ -37,7 +37,7 @@ it("refreshes attention with the homepage and stops polling when the document is
         },
   );
   const view = renderPrivate(<AdminOverview />);
-  await screen.findByText("暂无需要处理的事项");
+  await screen.findByRole("heading", { name: "进行中请求" });
   const reads = () =>
     vi
       .mocked(management.request)

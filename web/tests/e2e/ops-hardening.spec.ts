@@ -9,6 +9,8 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await page.setViewportSize({ width: 1440, height: 900 });
   let count = 512;
   let writes = 0;
+  let settleRelease: (() => void) | undefined;
+  const observation = observationFixture();
   const account = {
     id: "12345678-synthetic",
     displayName: null,
@@ -18,7 +20,10 @@ test("reviews unknown release, conflict and success at desktop size", async ({
     authorization: "ready",
     createdAtUnixSeconds: 1,
     accessExpiresAtUnixSeconds: Math.floor(Date.now() / 1000) + 3600,
-    observability: observationFixture(),
+    observability: {
+      ...observation,
+      health: { ...observation.health, cooldownCount: 1, cooldowns: undefined },
+    },
   };
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -26,8 +31,11 @@ test("reviews unknown release, conflict and success at desktop size", async ({
       writes++;
       const body = route.request().postDataJSON();
       expect(body.expectedCount).toBe(count);
-      expect(Number.isInteger(body.beforeUnixSeconds)).toBeTruthy();
+      expect(body.beforeUnixSeconds).toBe(1);
       if (writes === 1) {
+        await new Promise<void>((resolve) => {
+          settleRelease = resolve;
+        });
         count = 513;
         return route.fulfill({
           status: 409,
@@ -104,15 +112,14 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await expect(
     page.getByText("未命名账号 · 12345678", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
-  await page.getByText("运行诊断", { exact: true }).click();
-  await page
-    .getByRole("region", { name: "需要处理", exact: true })
-    .getByRole("button", { name: "核对并释放" })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "核对并释放待核对执行" });
-  await expect(dialog).toContainText("真实用量无法得知");
-  await expect(dialog).toContainText("统计中仍显示用量未知");
+  await expect(page.getByText("模型冷却")).toBeVisible();
+  await expect(page.getByRole("region", { name: "运行提醒" })).toHaveCount(0);
+  await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
+  await page.getByRole("button", { name: "查看未结执行" }).click();
+  await page.getByRole("button", { name: /提前释放容量 ·/ }).click();
+  const dialog = page.getByRole("dialog", { name: "提前释放容量" });
+  await expect(dialog).toContainText("真实用量仍为未知");
+  await expect(dialog).toContainText("操作会保留审计记录");
   await mkdir("../artifacts/ops-hardening", { recursive: true });
   await page.waitForTimeout(350);
   await page.screenshot({
@@ -120,24 +127,27 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   });
   await dialog.getByRole("button", { name: "取消" }).click();
   expect(writes).toBe(0);
-  await page
-    .getByRole("region", { name: "需要处理", exact: true })
-    .getByRole("button", { name: "核对并释放" })
-    .click();
+  await page.getByRole("button", { name: /提前释放容量 ·/ }).click();
   await dialog.getByRole("button", { name: "确认释放" }).click();
-  await expect(page.getByText(/待核对数量已变化/)).toBeVisible();
+  try {
+    await expect.poll(() => !!settleRelease).toBe(true);
+    await expect(
+      page.getByRole("button", {
+        name: "刷新并核对释放结果",
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    settleRelease?.();
+  }
+  await expect(page.getByText(/数据已被修改/)).toBeVisible();
   await expect(
-    page
-      .getByRole("region", { name: "需要处理", exact: true })
-      .getByText(/513 条待核对/),
+    page.getByRole("button", { name: "提前释放容量 · 513 条" }),
   ).toBeVisible();
-  await page
-    .getByRole("region", { name: "需要处理", exact: true })
-    .getByRole("button", { name: "核对并释放" })
-    .click();
+  await page.getByRole("button", { name: /提前释放容量 ·/ }).click();
   await expect(dialog).toContainText("513 条");
   await dialog.getByRole("button", { name: "确认释放" }).click();
-  await expect(page.getByText("暂无需要处理的事项")).toBeVisible();
+  await expect(page.getByText("暂无占用容量的未知执行。")).toBeVisible();
   await expect(
     page.getByText("已释放容量占用，统计仍显示用量未知。"),
   ).toBeVisible();

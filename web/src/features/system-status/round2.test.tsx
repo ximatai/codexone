@@ -1,11 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  change,
-  pointChange,
-  tokenTotal,
-  type DailyBucket,
-} from "./round2-api";
+import { tokenTotal, type DailyBucket } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 afterEach(() => {
   vi.useRealTimers();
@@ -27,12 +22,6 @@ it("converts token data without counting cache twice or filling missing evidence
       metrics: { inputTokens: null, outputTokens: null },
     } as DailyBucket),
   ).toBeNull();
-  expect(change(2, 0)).toBe("较昨日新增");
-  expect(change(null, 2)).toBe("较昨日不可用");
-  expect(change(3, 2)).toBe("较昨日 +50.0%");
-  expect(pointChange(2, 1)).toBe("较昨日 +1.0 个百分点");
-  expect(pointChange(1, 1.01)).toBe("较昨日持平");
-  expect(pointChange(null, 1)).toBe("较昨日不可用");
 });
 it("pauses polling while hidden and resumes when visible", () => {
   vi.useFakeTimers();

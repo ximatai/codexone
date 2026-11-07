@@ -31,8 +31,8 @@ it("reports failed query and permits retry to explicit empty state", async () =>
     "读取失败",
   );
   fireEvent.click(screen.getByRole("button", { name: "重试" }));
-  expect(await screen.findByText("当前没有进行中的请求。")).toBeVisible();
-  expect(screen.getByText("今日暂无活跃 Key。")).toBeVisible();
+  expect(await screen.findByText("暂无进行中请求")).toBeVisible();
+  expect(screen.getByText("暂无活跃 Key")).toBeVisible();
 });
 
 it("keeps trend evidence accessible and shows principal names instead of key identifiers", async () => {
@@ -118,11 +118,11 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(
     screen.getByRole("img", { name: "Token近 7 天：不可用" }),
   ).toBeVisible();
-  expect(screen.getByText("已记录准入前拒绝 3")).toBeVisible();
+  expect(screen.getByText("拒绝 3")).toBeVisible();
   expect(await screen.findByText("工作站别名")).toBeVisible();
-  expect(screen.getByText(/合成工作站/)).toBeVisible();
+  expect(screen.queryByText("合成工作站")).toBeNull();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
-  expect(screen.getByText("待首事件")).toBeVisible();
+  expect(screen.getByText("等待响应")).toBeVisible();
   expect(screen.getByText("极高")).toBeVisible();
   expect(await screen.findByText("汇总别名")).toBeVisible();
   expect(screen.queryByText("最近请求")).toBeNull();

@@ -152,7 +152,7 @@ for (const width of [1920, 390]) {
     await expect(panel.getByText("不应出现", { exact: true })).toHaveCount(0);
     await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
     await expect(panel.getByText("已停用", { exact: true })).toBeVisible();
-    await expect(panel.getByText("失败偏高", { exact: true })).toHaveCount(1);
+    await expect(panel.getByText("失败偏高", { exact: true })).toHaveCount(0);
     await expect(
       panel.getByTitle(/部分请求/).filter({ hasText: /^25%$/ }),
     ).toBeVisible();
@@ -179,9 +179,9 @@ for (const width of [1920, 390]) {
     });
     failKeys = true;
     await page.clock.runFor(15000);
-    await expect(panel.getByText(/读取失败，保留上次成功快照/)).toBeVisible();
+    await expect(panel.getByText(/更新失败 · 上次更新/)).toBeVisible();
     await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
-    await panel.getByRole("link", { name: "未命名 Key 失败 5" }).click();
+    await panel.getByRole("link", { name: /^未命名 Key 失败率 / }).click();
     await expect(page.getByText("请求明细", { exact: true })).toBeVisible();
     await expect(page.getByLabel("当前结果筛选")).toContainText(
       "请求结果：失败",
@@ -200,9 +200,7 @@ test("overview empty active list has no range toggle", async ({ page }) => {
   state.empty = true;
   await page.goto("/");
   const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
-  await expect(
-    panel.getByText("今日暂无活跃 Key。", { exact: true }),
-  ).toBeVisible();
+  await expect(panel.getByText("暂无活跃 Key", { exact: true })).toBeVisible();
   await expect(
     panel.getByRole("textbox", { name: "Key 展示范围" }),
   ).toHaveCount(0);

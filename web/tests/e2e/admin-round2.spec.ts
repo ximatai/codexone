@@ -218,12 +218,12 @@ test("round two overview, usage, account name and key expiration", async ({
   await expect(
     activity.getByRole("img", { name: /^今日已准入近 7 天：/ }),
   ).toBeVisible();
-  await expect(activity.getByText("输入缓存占比 80.0%")).toBeVisible();
-  await expect(activity.getByText("失败请求中：上游限流占 100%")).toBeVisible();
+  await expect(activity.getByText("缓存 80.0%")).toBeVisible();
+  await expect(activity.getByText("失败 2")).toBeVisible();
   await expect(
     activity.getByText("合成进行中账号", { exact: false }),
   ).toBeVisible();
-  await expect(activity.getByText("待首事件", { exact: false })).toBeVisible();
+  await expect(activity.getByText("等待响应", { exact: false })).toBeVisible();
   await expect(activity.getByText("16", { exact: true })).toBeVisible();
   await expect(activity.getByText("高", { exact: true })).toBeVisible();
   await expect(

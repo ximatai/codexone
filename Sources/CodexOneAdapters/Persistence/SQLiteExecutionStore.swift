@@ -398,7 +398,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
-      try db.transaction {
+      let settledOutput = try db.transaction { () -> Int64? in
         let snapshot = try Self.load(db, attempt)
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
@@ -416,7 +416,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?) WHERE id=?",
               [.number(db.clock.unixSeconds), .text(attempt)])
           }
-          return
+          return nil
         }
         let existing = try db.rows(
           "SELECT payload FROM evidence WHERE attempt=? AND revision=?",
@@ -426,7 +426,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
           guard try decode(UsageEvidence.self, existing) == evidence else {
             throw ExecutionError.conflict
           }
-          return
+          return nil
         }
         let floor = try db.scalar(
           "SELECT evidence_floor FROM attempts WHERE id=?", [.text(attempt)])
@@ -469,7 +469,18 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               .number(evidence.estimatedMicros), .number(db.clock.unixSeconds),
               .text(evidence.completeness.rawValue), .text(attempt),
             ])
+          if snapshot.usage?.completeness != .complete,
+            snapshot.admission.executionRequirements.route == .conversation,
+            evidence.completeness == .complete
+          {
+            return evidence.outputTokens
+          }
         }
+        return nil
+      }
+      if let settledOutput {
+        self.overviewActivity.recordSettledOutput(
+          settledOutput, at: db.clock.unixSeconds, businessDay: db.businessDay)
       }
       self.overviewActivity.publish { .finished(id: attempt) }
     }

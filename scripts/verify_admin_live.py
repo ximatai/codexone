@@ -125,12 +125,23 @@ def verify(binary):
             assert time.monotonic() < commit_deadline, ('settled_attempts', settled)
             time.sleep(.01)
         committed = time.monotonic()
-        def has_aggregate(value):
-            keys = value.get('sections', {}).get('keys', {}).get('data') or {}
-            return any(row['keyID'] == key['id'] and row['admitted'] == 1 and row['succeeded'] == 1
-                       for row in keys.get('keys', []))
+        observed_aggregate = False
+        observed_throughput = False
 
-        until(sock, has_aggregate)
+        def has_settled_usage(value):
+            nonlocal observed_aggregate, observed_throughput
+            sections = value.get('sections', {})
+            keys = sections.get('keys', {}).get('data') or {}
+            activity = sections.get('inFlight', {}).get('data') or {}
+            observed_aggregate |= any(
+                row['keyID'] == key['id'] and row['admitted'] == 1 and row['succeeded'] == 1
+                for row in keys.get('keys', [])
+            )
+            observed_throughput |= (activity.get('settledOutputTokensPerSecond') == 3
+                                    and 3 in activity.get('settledOutputRatesByDay', {}).values())
+            return observed_aggregate and observed_throughput
+
+        until(sock, has_settled_usage)
         received = time.monotonic()
         measurements['request_start_to_aggregate_ms'] = round((received - started_at) * 1000, 2)
         measurements['commit_observed_to_aggregate_ms'] = round((received - committed) * 1000, 2)
@@ -245,6 +256,7 @@ def verify(binary):
             sample = samples[-1]
             assert 2 <= len(samples) <= 121
             assert 0 <= sample['hostCPUPercent'] <= 100
+            assert 0 <= sample['hostLoadAverage1m'] < float('inf')
             assert 0 < sample['hostAvailableBytes'] <= sample['hostTotalBytes']
             assert sample['processResidentBytes'] > 0
             response = request(f.ports['admin'], 'GET', '/api/runtime/storage', cookie=fresh)

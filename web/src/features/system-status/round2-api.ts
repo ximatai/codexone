@@ -154,21 +154,3 @@ export function tokenTotal(bucket: DailyBucket): number | null {
     ? null
     : Number(BigInt(inputTokens) + BigInt(outputTokens));
 }
-export function change(
-  current: number | null | undefined,
-  previous: number | null | undefined,
-) {
-  if (current == null || previous == null) return "较昨日不可用";
-  if (previous === 0) return current === 0 ? "较昨日持平" : "较昨日新增";
-  const percent = ((current - previous) / previous) * 100;
-  return `较昨日 ${percent >= 0 ? "+" : ""}${percent.toFixed(1)}%`;
-}
-export function pointChange(
-  current: number | null | undefined,
-  previous: number | null | undefined,
-) {
-  if (current == null || previous == null) return "较昨日不可用";
-  const points = current - previous;
-  if (Math.abs(points) < 0.05) return "较昨日持平";
-  return `较昨日 ${points > 0 ? "+" : ""}${points.toFixed(1)} 个百分点`;
-}

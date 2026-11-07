@@ -1,8 +1,5 @@
-.header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
+.overview {
+  --overview-gap: 16px;
 }
 .connectionNotice {
   min-width: 0;
@@ -10,29 +7,21 @@
 .connectionNoticeText {
   flex: 1;
   min-width: 0;
-  text-align: end;
+  overflow-wrap: anywhere;
 }
 .connectionNotice button {
   flex-shrink: 0;
 }
-@media (max-width: 479px) {
-  .header h1 {
-    font-size: var(--mantine-h2-font-size);
-  }
-}
-.header > :first-child {
-  margin-bottom: 0;
-}
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--overview-gap);
 }
 .content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 25vw, 420px);
   align-items: start;
-  gap: 20px;
+  gap: var(--overview-gap);
 }
 .main {
   min-width: 0;
@@ -41,7 +30,7 @@
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
   display: grid;
-  gap: 20px;
+  gap: var(--overview-gap);
 }
 @media (max-width: 1199px) {
   .kpis {
@@ -57,13 +46,16 @@
   }
 }
 @media (max-width: 479px) {
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
   .sparkline {
     display: none;
   }
+}
+
+.quotaAccountHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .quotaWindows {
@@ -81,14 +73,22 @@
   }
 }
 
+.keyIdentity {
+  max-inline-size: 100%;
+}
+
+.keyIdentity :global(.mantine-Badge-root) {
+  flex-shrink: 0;
+}
+
 .keyButton {
+  min-inline-size: 0;
   height: auto;
   padding: 2px 0;
   max-width: 100%;
 }
 .keyButton :global(.mantine-Button-label) {
-  white-space: normal;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
   text-align: left;
 }
 
@@ -103,59 +103,88 @@
   }
 }
 
+.metricCard {
+  container-type: inline-size;
+}
+
+.metricRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  margin-block-start: var(--mantine-spacing-xs);
+}
+
+.metricNote {
+  margin-inline-start: auto;
+  text-align: end;
+  white-space: nowrap;
+}
+
 .metricValue {
-  width: 9ch;
-  max-width: 100%;
   flex-shrink: 0;
 }
-@media (min-width: 751px) {
-  .keySummary td:first-child > div {
-    min-height: 72px;
+
+@container (width < 180px) {
+  .metricRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1.05rem;
+  }
+  .metricNote {
+    justify-self: end;
+    margin-inline-start: 0;
+    line-height: 1.05rem;
   }
 }
 
-.attentionViewport {
-  max-block-size: 20rem;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-.attentionViewport p {
-  font-variant-numeric: tabular-nums;
-}
-
-.attentionList {
+.requestTitle {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: baseline;
+  gap: 4px;
 }
-.attentionViewport section > :first-child > p {
-  min-width: 26ch;
-  text-align: left;
+.requestRate {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.sourceDetails {
-  block-size: 12rem;
-  overflow: auto;
+@media (max-width: 479px) {
+  .metricValue {
+    font-size: 20px;
+  }
 }
 
 .requestGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.25rem), 1fr));
   align-content: start;
-  gap: 8px;
+  gap: var(--overview-gap);
+}
+@media (max-width: 479px) {
+  .requestGrid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr));
+  }
 }
 .requestCard {
   min-width: 0;
   overflow-wrap: anywhere;
+  min-block-size: 6rem;
+  display: grid;
+  gap: 6px;
+}
+.requestEffort {
+  flex-shrink: 0;
+  max-inline-size: 45%;
+}
+.requestFooter {
+  border-block-start: 1px solid var(--mantine-color-default-border);
+  padding-block-start: 6px;
 }
 .requestElapsed {
   flex-shrink: 0;
 }
-.requestGrid,
 .requestEmpty {
-  min-height: 7rem;
-}
-.requestEmpty {
+  min-block-size: 6rem;
   display: flex;
   align-items: center;
 }
@@ -220,4 +249,27 @@
 .gaugeValue {
   justify-self: stretch;
   font-variant-numeric: tabular-nums;
+}
+
+.resourceTrendPlot {
+  position: relative;
+}
+
+.resourceTrendTooltip {
+  position: absolute;
+  bottom: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.resourceTrendTooltip[data-side="left"] {
+  left: 0;
+}
+
+.resourceTrendTooltip[data-side="right"] {
+  right: 0;
+}
+
+.keySummary {
+  min-block-size: 12rem;
 }

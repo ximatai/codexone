@@ -2,47 +2,17 @@ import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test, gotoUsage } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 
-test("O01: anchors reminders to their Key and account", async ({ page }) => {
+test("account and Key status stay on their own pages", async ({ page }) => {
   await reviewFixture(page);
-  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByText("运行诊断", { exact: true }).click();
-  await page.getByRole("link", { name: /team-201：访问密钥/ }).click();
-  await expect(page).toHaveURL(/target=synthetic-key-201/);
-  const row = page.locator('[data-row-id="synthetic-key-201"]');
-  await expect(row).toHaveAttribute("data-highlighted", "true");
-  await expect(row).toBeInViewport();
-  await page.getByRole("link", { name: "服务概览", exact: false }).click();
-  await page.getByText("运行诊断", { exact: true }).click();
-  await page
-    .getByRole("link", { name: /合成账号 1：账号需要重新授权/ })
-    .click();
-  await expect(page.getByRole("dialog", { name: "账号详情" })).toContainText(
-    "合成账号 1",
-  );
-  await page.getByRole("button", { name: "关闭", exact: true }).click();
-});
-
-test("O03: bounds fifty reminders and preserves collapse and refresh", async ({
-  page,
-}) => {
-  const state = await reviewFixture(page);
-  state.alerts = 50;
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/");
-  await page.getByText("运行诊断", { exact: true }).click();
+  await expect(page.getByText("运行诊断", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "运行提醒" })).toHaveCount(0);
+  await page.goto("/#/keys?target=synthetic-key-201");
   await expect(
-    page.getByText("共 50 项 · 紧急 1 项 · 提醒 49 项"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /team-201：访问密钥/ }),
-  ).toHaveCount(4);
-  await expect(page.getByLabel("关键指标")).toBeVisible();
-  await page.getByRole("button", { name: "查看全部 50 项" }).click();
-  await expect(
-    page.getByRole("link", { name: /team-201：访问密钥/ }),
-  ).toHaveCount(49);
-  await page.getByRole("button", { name: "收起提醒" }).click();
+    page.locator('[data-row-id="synthetic-key-201"]'),
+  ).toHaveAttribute("data-highlighted", "true");
+  await page.goto("/#/accounts");
+  await expect(page.getByText("需要重新授权", { exact: true })).toBeVisible();
 });
 
 test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", async ({
@@ -52,10 +22,10 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   state.failures["/api/usage/in-flight"] = 503;
   state.failures["/api/usage/keys"] = 503;
   await page.goto("/");
-  await expect(page.getByText("进行中请求读取失败。请重试。")).toBeVisible();
-  await expect(page.getByText("今日 Key 汇总读取失败。请重试。")).toBeVisible();
-  await expect(page.getByText("当前没有进行中的请求。")).toHaveCount(0);
-  await expect(page.getByText("今日暂无活跃 Key。")).toHaveCount(0);
+  await expect(page.getByText("在途请求读取失败")).toBeVisible();
+  await expect(page.getByText("Key 汇总读取失败")).toBeVisible();
+  await expect(page.getByText("暂无进行中请求")).toHaveCount(0);
+  await expect(page.getByText("暂无活跃 Key")).toHaveCount(0);
   await expect(page.getByText("暂无未归档 Key。")).toHaveCount(0);
   for (const status of [503, 429]) {
     state.failures["/api/accounts"] = status;
@@ -76,8 +46,8 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await page.goto("/#/accounts");
   await expect(page.getByText(/接入第一个账号/)).toBeVisible();
   await page.goto("/");
-  await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
-  await expect(page.getByText("今日暂无活跃 Key。")).toBeVisible();
+  await expect(page.getByText("暂无进行中请求")).toBeVisible();
+  await expect(page.getByText("暂无活跃 Key")).toBeVisible();
   await expect(
     page
       .getByRole("region", { name: "今日 Key 请求汇总" })

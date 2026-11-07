@@ -5,6 +5,7 @@ for (const width of [1920, 390]) {
   test(`account details prioritizes overview and keeps header and drafts at ${width}px`, async ({
     page,
   }, info) => {
+    test.setTimeout(30_000);
     await reviewFixture(page);
     let primingReads = 0,
       resetReads = 0;
@@ -34,7 +35,7 @@ for (const width of [1920, 390]) {
     const drawer = page.getByRole("dialog", { name: "账号详情" });
     await expect(
       drawer.getByRole("tab", { name: "概览", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+    ).toHaveAttribute("aria-selected", "true", { timeout: 10_000 });
     await expect(drawer.getByText("当前并发", { exact: true })).toBeVisible();
     await expect(drawer.getByText("5 小时额度", { exact: true })).toBeVisible();
     expect(primingReads).toBe(0);

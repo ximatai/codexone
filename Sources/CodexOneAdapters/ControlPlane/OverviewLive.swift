@@ -19,6 +19,73 @@ public final class OverviewActivity: Sendable {
   private let state = Mutex(State())
   private let watching = Atomic(false)
   private let dropped = Atomic(0)
+  private struct OutputBucket: Sendable {
+    var second: Int64 = -1
+    var tokens: Decimal = 0
+  }
+  private struct OutputDay: Sendable {
+    var tokens: Decimal = 0
+    var activeSeconds = 0
+    // One bit per business-day second, including when the wall clock steps back.
+    var seconds = Array(repeating: UInt64(0), count: 1350)
+
+    mutating func record(_ amount: Int64, second: Int) {
+      let mask = UInt64(1) << (second % 64)
+      if seconds[second / 64] & mask == 0 {
+        seconds[second / 64] |= mask
+        activeSeconds += 1
+      }
+      tokens += Decimal(amount)
+    }
+  }
+  private struct SettledOutput: Sendable {
+    var recent = Array(repeating: OutputBucket(), count: 60)
+    var days: [Int64: OutputDay] = [:]
+    var latestDay: Int64?
+  }
+  private let settledOutput = Mutex(SettledOutput())
+
+  func recordSettledOutput(_ tokens: Int64, at second: Int64, businessDay: BusinessDayDefinition) {
+    guard tokens > 0, second >= 0, let day = try? businessDay.start(containing: second) else {
+      return
+    }
+    settledOutput.withLock { output in
+      let index = Int(second % 60)
+      if output.recent[index].second < second {
+        output.recent[index] = OutputBucket(second: second)
+      }
+      if output.recent[index].second == second {
+        output.recent[index].tokens += Decimal(tokens)
+      }
+      let latestDay = max(output.latestDay ?? day, day)
+      let firstDay = latestDay - 6 * 86400
+      if output.latestDay != latestDay {
+        output.latestDay = latestDay
+        output.days = output.days.filter { $0.key >= firstDay }
+      }
+      if day >= firstDay {
+        output.days[day, default: OutputDay()].record(tokens, second: Int(second - day))
+      }
+    }
+  }
+
+  func settledOutputSnapshot(at second: Int64) -> (rate: Decimal?, days: [String: JSONValue]) {
+    settledOutput.withLock { output in
+      var tokens = Decimal.zero
+      var activeSeconds = 0
+      for bucket in output.recent
+      where bucket.second >= 0 && bucket.second <= second && second - bucket.second < 60 {
+        tokens += bucket.tokens
+        activeSeconds += 1
+      }
+      let days = [String: JSONValue](
+        uniqueKeysWithValues: output.days.compactMap { day, value in
+          guard day <= second, second - day < 7 * 86400 else { return nil }
+          return (String(day), JSONValue.number(value.tokens / Decimal(value.activeSeconds)))
+        })
+      return (activeSeconds == 0 ? nil : tokens / Decimal(activeSeconds), days)
+    }
+  }
   let signals: AsyncStream<Signal>
   let signal: AsyncStream<Signal>.Continuation
   public init() {
@@ -294,7 +361,7 @@ public actor OverviewLive: OverviewLiveRunning {
               row["id"]?.string.map { ($0, row) }
             })
         }
-        replace(name, data: name == "inFlight" ? flight() : data, at: time, error: nil)
+        replace(name, data: name == "inFlight" ? flight(at: time) : data, at: time, error: nil)
       } catch {
         guard turn == generation, !viewers.isEmpty, !Task.isCancelled else { return }
         replace(name, data: nil, at: time, error: "source_unavailable")
@@ -308,8 +375,11 @@ public actor OverviewLive: OverviewLiveRunning {
     }
     // A connection registry wake has no execution event but still updates the activity section.
     if let source = sections["inFlight"], source["data"] != .null {
-      let data = flight()
-      if activityChanged || sections["inFlight"]?["data"]?["clients"] != data["clients"] {
+      let data = flight(at: time)
+      if activityChanged || source["data"]?["clients"] != data["clients"]
+        || source["data"]?["settledOutputTokensPerSecond"] != data["settledOutputTokensPerSecond"]
+        || source["data"]?["settledOutputRatesByDay"] != data["settledOutputRatesByDay"]
+      {
         let previous = sections["inFlight"]
         // Activity observation does not prove that SQLite reconciliation recovered.
         replace("inFlight", data: data, at: time, error: source["code"]?.string)
@@ -325,11 +395,14 @@ public actor OverviewLive: OverviewLiveRunning {
       }
     }
   }
-  private func flight() -> JSONValue {
-    .object([
+  private func flight(at second: Int64) -> JSONValue {
+    let output = activity.settledOutputSnapshot(at: second)
+    return .object([
       "rows": .array(rows.keys.sorted().compactMap { rows[$0] }),
       "recentlyFinished": .array([]), "overflow": .number(Decimal(overflow)),
       "clients": activity.clients(),
+      "settledOutputTokensPerSecond": output.rate.map(JSONValue.number) ?? .null,
+      "settledOutputRatesByDay": .object(output.days),
     ])
   }
   private func replace(_ name: String, data: JSONValue?, at: Int64, error: String?) {

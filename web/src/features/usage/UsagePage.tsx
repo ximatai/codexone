@@ -1,3 +1,5 @@
+import { ProtocolObservations } from "./ProtocolObservations";
+import { EarlyCapacityRelease } from "./EarlyCapacityRelease";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { useNavigationType, useSearchParams } from "react-router";
 import { useManagementSession } from "../../shared/session";
@@ -43,6 +45,7 @@ export function UsagePage() {
   return (
     <section>
       <PageHeader title="用量与诊断" />
+      <EarlyCapacityRelease />
       <UsageOverview
         initialFilters={filters}
         requestedPage={readPage(params.get("page"), 2201) - 1}
@@ -53,6 +56,7 @@ export function UsagePage() {
         onUnauthorized={owner.invalidate}
         onApplied={applied}
       />
+      <ProtocolObservations />
     </section>
   );
 }

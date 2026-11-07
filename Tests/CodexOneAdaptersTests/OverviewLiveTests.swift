@@ -11,7 +11,9 @@ import Testing
   defer {
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
-  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let time = TestWallClock()
+  let store = try await SQLiteExecutionStore.open(
+    path: path, limits: syntheticLimits, clock: time.clock)
   let activity = store.overviewActivity
   let evaluated = Mutex(0)
   activity.publish {
@@ -21,7 +23,12 @@ import Testing
   #expect(evaluated.withLock { $0 } == 0)
   try await store.admit(admission("invisible"))
   try await store.finalize(attempt: "invisible", evidence: usage())
+  try await store.admit(admission("same-second"))
+  try await store.finalize(attempt: "same-second", evidence: usage())
   #expect(activity.drain().0.isEmpty)
+  let now = time.clock.unixSeconds
+  #expect(activity.settledOutputSnapshot(at: now).rate == Decimal(24))
+  try await store.admit(admission("late"))
   activity.watch(true)
   try await store.admit(admission("visible"))
   let start = activity.drain().0
@@ -47,7 +54,9 @@ import Testing
     try await store.finalize(attempt: "visible", evidence: usage())
   }
   #expect(activity.drain().0.isEmpty)
+  #expect(activity.settledOutputSnapshot(at: now).rate == Decimal(24))
   try rawSQL(path, "DROP TRIGGER fail_finalize;")
+  time.advance(seconds: 10)
   try await store.finalize(attempt: "visible", evidence: usage())
   let finished = activity.drain().0
   guard case .finished("visible") = finished.first else {
@@ -55,6 +64,22 @@ import Testing
     return
   }
   #expect(finished.count == 1)
+  try await store.finalize(attempt: "visible", evidence: usage())
+  try await store.finalize(attempt: "visible", evidence: usage(revision: 2, amount: 15))
+  let committedAt = time.clock.unixSeconds
+  #expect(activity.settledOutputSnapshot(at: committedAt).rate == Decimal(18))
+  let afterIdle = activity.settledOutputSnapshot(at: committedAt + 60)
+  #expect(afterIdle.rate == nil)
+  #expect(afterIdle.days.values.first == .number(18))
+
+  time.advance(seconds: 60)
+  try await store.finalize(attempt: "late", evidence: usage(complete: false))
+  let cutoff = time.clock.unixSeconds + 1
+  #expect(try await store.releaseUnknown(beforeUnixSeconds: cutoff, expectedCount: 1) == 1)
+  #expect(activity.settledOutputSnapshot(at: time.clock.unixSeconds).rate == nil)
+  try await store.finalize(attempt: "late", evidence: usage(revision: 2))
+  try await store.finalize(attempt: "late", evidence: usage(revision: 3, amount: 15))
+  #expect(activity.settledOutputSnapshot(at: time.clock.unixSeconds).rate == Decimal(12))
   await store.close()
 }
 

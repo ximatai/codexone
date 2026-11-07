@@ -1,19 +1,16 @@
 import { overviewQuery } from "./overview-source";
-import { AvailabilitySummary } from "./AvailabilitySummary";
+import { availabilityBlocker } from "./availability-blocker";
 import { fetchStorage } from "./storage-api";
 import { useOverviewLive } from "./useOverviewLive";
 import { fetchSystemStatus } from "./api";
 import { OverviewMotion } from "../../shared/ui/ContinuousValue";
-import { CapacityPanel, fetchHeadroom } from "./CapacityPanel";
+import { fetchHeadroom } from "../../shared/governance-api";
+import { AdministratorReminders } from "./AdministratorReminders";
 import {
   accountName,
   credentialExpiry,
 } from "../../shared/account-presentation";
-import { ConfirmModal } from "../../shared/ui/ConfirmModal";
-import { useManagedMutation } from "../../shared/useManagedMutation";
-import { releaseUnknown, type AttentionItem } from "./attention-api";
-import { useQueryClient } from "@tanstack/react-query";
-import { AttentionPanel } from "./AttentionPanel";
+import { localTime } from "../../shared/presentation";
 import { attentionQueryKey, fetchAttention } from "./attention-api";
 import { quotaStale } from "../account-management/quota";
 import { useOverviewRefresh } from "./useOverviewRefresh";
@@ -23,14 +20,13 @@ import { EmptyState } from "../../shared/ui/States";
 import { useQuery } from "@tanstack/react-query";
 import {
   Drawer,
-  Alert,
-  Button,
   Anchor,
   Paper,
   Stack,
   Text,
   Title,
   Skeleton,
+  Tooltip,
 } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -38,7 +34,6 @@ import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
-import { SystemOverview } from "./SystemOverview";
 import { RuntimeResources } from "./RuntimeResources";
 
 const InlineAccountDetails = lazy(() =>
@@ -70,31 +65,6 @@ export function AdminOverview() {
     ...baseRefresh,
     interval: live.mode === "live" ? (false as const) : baseRefresh.interval,
   };
-  const client = useQueryClient();
-  const [release, setRelease] = useState<{
-    before: number;
-    count: number;
-  } | null>(null);
-  const mutation = useManagedMutation({
-    scope: "executions",
-    invalidate: [["overview"], ["usage"]],
-    refresh: async (signal) => {
-      try {
-        const report = await fetchAttention(signal);
-        const capacity = await fetchHeadroom(signal);
-        client.setQueryData(attentionQueryKey, report);
-        client.setQueryData(["overview", "headroom"], capacity);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    onFailure: () => setRelease(null),
-    errorMessage: (error) =>
-      error instanceof ManagementError && error.status === 409
-        ? "待核对数量已变化；请先确认提醒已刷新，再重新核对释放。"
-        : undefined,
-  });
   const polling = {
     refetchInterval: refresh.interval,
     staleTime: 15000,
@@ -175,60 +145,62 @@ export function AdminOverview() {
     (account) =>
       account.mode === "enabled" &&
       account.authorization === "ready" &&
-      !account.observability?.health.authenticationRejected &&
-      !account.observability?.health.cooldownCount,
+      !account.observability?.health.authenticationRejected,
   );
   return (
     <OverviewMotion reset={live.reset}>
       <Stack mb="xl" aria-label="管理概览">
-        {owner.locked("executions") && !mutation.busy && (
-          <Alert color="yellow" role="alert">
-            上次释放结果尚未确认，请先刷新提醒核对后再操作。
-            <Button
-              size="xs"
-              variant="light"
-              ml="sm"
-              onClick={() => {
-                void Promise.all([
-                  attention.refetch(),
-                  headroom.refetch(),
-                ]).then((results) => {
-                  if (results.every((result) => result.isSuccess))
-                    owner.lock("executions", false);
-                });
-              }}
-            >
-              刷新并核对释放结果
-            </Button>
-          </Alert>
-        )}
         <ActivityOverview
-          summary={
-            <AvailabilitySummary
-              ready={system.data?.ready}
-              unreadable={[system, accounts, headroom, storage].some(
-                (query) => query.isError,
-              )}
-              accountCount={accounts.data?.length}
-              eligibleIDs={eligibleAccounts?.map((account) => account.id)}
-              accountHeadroom={headroom.data?.accounts}
-              storageAllowed={storage.data?.admissionAllowed}
-              capacities={headroom.data?.capacities}
-            />
-          }
           refresh={refresh}
           live={live}
           accounts={accounts.data}
-          capacities={headroom.data?.capacities}
           extraQueries={[
             { ...system, source: "生成就绪" },
             { ...accounts, source: "订阅账号" },
-            { ...storage, source: "存储状态" },
-            { ...attention, source: "需要处理提醒" },
             { ...headroom, source: "治理余量" },
+            {
+              ...storage,
+              source: "存储状态",
+              isError: storage.isError || storage.data?.pressure === "unknown",
+            },
+            {
+              ...attention,
+              source: "运行提醒",
+              isError:
+                attention.isError ||
+                !!attention.data?.items.some(
+                  (item) => item.kind === "attention_source_unavailable",
+                ),
+            },
           ]}
-          sidebar={(sourceDetails) => (
+          sidebar={(outputTrend) => (
             <>
+              <AdministratorReminders
+                storage={storage.data}
+                storageError={storage.isError}
+                backupOverdue={attention.data?.items.find(
+                  (item) => item.kind === "backup_stale",
+                )}
+                backupUnconfirmed={attention.isError}
+                availability={availabilityBlocker({
+                  ready: system.isError ? undefined : system.data?.ready,
+                  accountCount: accounts.isError
+                    ? undefined
+                    : accounts.data?.length,
+                  eligibleIDs: accounts.isError
+                    ? undefined
+                    : eligibleAccounts?.map((account) => account.id),
+                  accountHeadroom: headroom.isError
+                    ? undefined
+                    : headroom.data?.accounts,
+                  storageAllowed: storage.isError
+                    ? undefined
+                    : storage.data?.admissionAllowed,
+                  capacities: headroom.isError
+                    ? undefined
+                    : headroom.data?.capacities,
+                })}
+              />
               <Paper withBorder p="md">
                 <Title order={3} size="h4" mb="md">
                   订阅额度
@@ -244,7 +216,7 @@ export function AdminOverview() {
                 )}
                 {!accounts.data && accounts.isFetched && (
                   <Text size="sm" c="dimmed">
-                    额度尚未读取。
+                    暂无额度数据
                   </Text>
                 )}
                 {accounts.data?.length === 0 && (
@@ -265,7 +237,7 @@ export function AdminOverview() {
                         : needsAuth
                           ? "需要重新授权"
                           : account.observability?.health.cooldownCount
-                            ? "冷却中"
+                            ? "模型冷却"
                             : account.mode === "draining"
                               ? "排空中"
                               : null;
@@ -277,7 +249,7 @@ export function AdminOverview() {
                               account.observability!,
                               Math.max(clock, performance.now()),
                             )
-                          ? "额度观测已陈旧"
+                          ? "额度待更新"
                           : !base?.primary && !base?.secondary
                             ? "额度未提供"
                             : null;
@@ -287,13 +259,32 @@ export function AdminOverview() {
                         key={account.id}
                         className="wrap-anywhere"
                       >
-                        <Anchor
-                          component={Link}
-                          to={`/?account=${encodeURIComponent(account.id)}`}
-                        >
-                          {accountName(account.id, [], account.displayName)}
-                        </Anchor>
-                        {(accountStatus || expires != null) && (
+                        <div className={styles.quotaAccountHeader}>
+                          <Anchor
+                            component={Link}
+                            to={`/?account=${encodeURIComponent(account.id)}`}
+                          >
+                            {accountName(account.id, [], account.displayName)}
+                          </Anchor>
+                          {expires != null && (
+                            <Tooltip
+                              label={`访问凭证到期时间 · ${localTime(expires)}`}
+                              events={{
+                                hover: true,
+                                focus: true,
+                                touch: false,
+                              }}
+                            >
+                              <Text size="xs" c="dimmed" tabIndex={0}>
+                                {credentialExpiry(expires).replace(
+                                  /^访问凭证(?:约 )?/,
+                                  "",
+                                )}
+                              </Text>
+                            </Tooltip>
+                          )}
+                        </div>
+                        {accountStatus && (
                           <Text
                             size="xs"
                             c={
@@ -302,14 +293,7 @@ export function AdminOverview() {
                                 : "dimmed"
                             }
                           >
-                            {[
-                              accountStatus,
-                              expires != null
-                                ? credentialExpiry(expires)
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
+                            {accountStatus}
                           </Text>
                         )}
                         {(base?.primary || base?.secondary) && (
@@ -356,50 +340,13 @@ export function AdminOverview() {
                   })}
                 </Stack>
               </Paper>
+              {outputTrend}
               <RuntimeResources
                 storage={storage.data}
                 stale={
                   storage.isError ||
                   live.stale.some(([source]) => source === "storage")
                 }
-              />
-              <details>
-                <summary>运行诊断</summary>
-                {sourceDetails}
-                <SystemOverview compact shared={system} />
-                <Anchor component={Link} to="/?storage=details" size="sm">
-                  最近备份 · {backupTime(storage.data?.backup)} ›
-                </Anchor>
-                <div className={styles.attentionViewport}>
-                  <AttentionPanel
-                    aggregateErrors
-                    inlineAccounts
-                    items={attention.data?.items}
-                    accounts={accounts.data}
-                    release={(item: AttentionItem) => {
-                      const count = item.detail.count;
-                      if (
-                        typeof count === "number" &&
-                        Number.isSafeInteger(count) &&
-                        count >= 0
-                      )
-                        setRelease({
-                          before: Math.floor(Date.now() / 1000),
-                          count,
-                        });
-                    }}
-                    loading={attention.isPending}
-                    error={attention.isError}
-                    retry={() => void attention.refetch()}
-                  />
-                </div>
-              </details>
-              <CapacityPanel
-                query={headroom}
-                accounts={accounts.data}
-                mergedAccounts
-                mergedMetrics
-                onRelease={(before, count) => setRelease({ before, count })}
               />
             </>
           )}
@@ -409,35 +356,6 @@ export function AdminOverview() {
             <InlineAccountDetails embedded />
           </Suspense>
         )}
-        <ConfirmModal
-          opened={!!release}
-          title="核对并释放待核对执行"
-          busy={mutation.busy}
-          disabled={mutation.busy || owner.locked("executions")}
-          close={() => setRelease(null)}
-          label="确认释放"
-          confirm={() => {
-            if (!release) return;
-            const snapshot = release;
-            void mutation
-              .run(async (csrf, signal) => {
-                await releaseUnknown(
-                  snapshot.before,
-                  snapshot.count,
-                  csrf,
-                  signal,
-                );
-              }, "已释放容量占用，统计仍显示用量未知。")
-              .then((success) => {
-                if (success) setRelease(null);
-              });
-          }}
-        >
-          <Text>
-            将释放 {release?.count}{" "}
-            条待核对执行。这些请求的真实用量无法得知；提前关闭保留审计，统计中仍显示用量未知。
-          </Text>
-        </ConfirmModal>
         <Drawer
           removeScrollProps={{ removeScrollBar: false }}
           data-ui-overlay={protocolOverlay || undefined}
