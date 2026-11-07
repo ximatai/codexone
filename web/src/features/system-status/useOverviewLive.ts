@@ -94,6 +94,8 @@ export function useOverviewLive(active: boolean) {
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
   const [clock, setClock] = useState(Date.now());
+  const [flightAtDisconnect, setFlightAtDisconnect] = useState<number>();
+  const retryConnection = useRef<() => void>(() => {});
   const transportGeneration = useRef(0);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
@@ -146,6 +148,12 @@ export function useOverviewLive(active: boolean) {
         `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/overview/live`,
       );
       const connection = socket;
+      let manualRetry = false;
+      retryConnection.current = () => {
+        if (connection.readyState !== WebSocket.OPEN) return;
+        manualRetry = true;
+        connection.close();
+      };
       timeout = setTimeout(() => connection.close(), 10000);
       connection.onmessage = (event) => {
         if (
@@ -195,14 +203,15 @@ export function useOverviewLive(active: boolean) {
               )
             )
               throw new Error("sequence_mismatch");
-            await client.cancelQueries({ queryKey: ["overview"] });
+            await Promise.all(
+              parsed.map(({ name }) =>
+                client.cancelQueries({ queryKey: queryKey(name), exact: true }),
+              ),
+            );
             if (!current() || connection !== socket) return;
             for (const { name, source, data } of parsed) {
               versions[name] = source.version;
-              const key = [
-                "overview",
-                name === "inFlight" ? "in-flight" : name,
-              ];
+              const key = queryKey(name);
               const replacement =
                 data ??
                 (!("data" in source) ? client.getQueryData(key) : undefined);
@@ -236,6 +245,7 @@ export function useOverviewLive(active: boolean) {
               snapshot = true;
               clearTimeout(timeout);
               setReset((value) => value + 1);
+              setFlightAtDisconnect(undefined);
               setMode("live");
               stable = setTimeout(() => {
                 attempt = 0;
@@ -243,6 +253,7 @@ export function useOverviewLive(active: boolean) {
             }
           })
           .catch((error: unknown) => {
+            if (!current() || connection !== socket) return;
             const code =
               error instanceof Error &&
               [
@@ -266,13 +277,27 @@ export function useOverviewLive(active: boolean) {
         socket = null;
         setMode("polling");
         setClients([]);
+        setOverflow(0);
+        if (snapshot) {
+          const key = queryKey("inFlight");
+          setFlightAtDisconnect(
+            client.getQueryState(key)?.dataUpdateCount ?? 0,
+          );
+          void client.refetchQueries({
+            queryKey: key,
+            exact: true,
+            type: "active",
+          });
+        }
         void checkSession();
         attempt += 1;
         probe = setTimeout(
           connect,
-          attempt >= 3
-            ? 60000
-            : Math.random() * Math.min(30000, 1000 * 2 ** (attempt - 1)),
+          manualRetry
+            ? 0
+            : attempt >= 3
+              ? 60000
+              : Math.random() * Math.min(30000, 1000 * 2 ** (attempt - 1)),
         );
       };
       connection.onerror = () => {
@@ -285,6 +310,7 @@ export function useOverviewLive(active: boolean) {
     }, 1000);
     return () => {
       retired = true;
+      retryConnection.current = () => {};
       controller.abort();
       clearTimeout(timeout);
       clearTimeout(probe);
@@ -303,17 +329,33 @@ export function useOverviewLive(active: boolean) {
       JSON.stringify(
         names.map((name) => {
           const state = client.getQueryState(queryKey(name));
-          return [name, state?.dataUpdatedAt ?? 0, state?.status ?? "pending"];
+          return [
+            name,
+            state?.dataUpdatedAt ?? 0,
+            state?.status ?? "pending",
+            state?.dataUpdateCount ?? 0,
+          ];
         }),
       ),
     [client],
   );
   const httpState = useSyncExternalStore(subscribe, readHTTP);
+  const httpSources = JSON.parse(httpState) as [
+    string,
+    number,
+    string,
+    number,
+  ][];
+  const flightUnconfirmed =
+    mode !== "live" &&
+    flightAtDisconnect !== undefined &&
+    httpSources.find(([name]) => name === "inFlight")?.[3] ===
+      flightAtDisconnect;
   const observed: Record<string, Freshness> =
     mode === "live"
       ? sources
       : Object.fromEntries(
-          (JSON.parse(httpState) as [string, number, string][])
+          httpSources
             .filter(([, updated, status]) => updated > 0 || status === "error")
             .map(([name, updated, status]) => [
               name,
@@ -357,6 +399,8 @@ export function useOverviewLive(active: boolean) {
   );
   return {
     failure,
+    retry: () => retryConnection.current(),
+    flightUnconfirmed,
     mode,
     sources: displayed,
     clients,

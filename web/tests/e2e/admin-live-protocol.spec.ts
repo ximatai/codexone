@@ -224,6 +224,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
                 mode: "http",
                 accountID: null,
                 hasFirstEvent: false,
+                elapsedSeconds: 3,
               },
             ],
             recentlyFinished: [],
@@ -237,8 +238,30 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(
     page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
   ).toBeVisible();
+  let releaseFlight: (() => void) | undefined;
+  await page.route("**/api/usage/in-flight", async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseFlight = resolve;
+    });
+    await route.fulfill({ json: { rows: [] } }).catch(() => {});
+  });
   const previous = socket;
-  socket!.close({ code: 1013 });
+  try {
+    socket!.close({ code: 1013 });
+    await expect.poll(() => !!releaseFlight, { timeout: 5000 }).toBe(true);
+    await expect(
+      page.getByText("正在确认请求状态，暂保留上次快照。"),
+    ).toBeVisible();
+    const cards = page.getByLabel("在途请求卡片");
+    await expect(cards.getByText("3 秒", { exact: true })).toBeVisible();
+    releaseFlight?.();
+    await expect(cards).toHaveCount(0);
+    await expect(
+      page.getByText("正在确认请求状态，暂保留上次快照。"),
+    ).toHaveCount(0);
+  } finally {
+    releaseFlight?.();
+  }
   await expect.poll(() => socket !== previous).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -305,13 +328,25 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
       page.getByText("今日 Key 汇总读取失败。请重试。"),
     ).toBeVisible();
     await expect(page.getByText("今日暂无活跃 Key。")).toHaveCount(0);
-    socket!.send(
+    const failedSocket = socket;
+    failedSocket!.send(
       JSON.stringify({
         protocol: 1,
         epoch: "synthetic-null",
         sequence: 2,
         kind: "update",
-        sections: { keys: sections.keys },
+        sections: { storage: sections.storage },
+      }),
+    );
+    await page.getByRole("button", { name: "重试", exact: true }).click();
+    await expect.poll(() => socket !== failedSocket).toBe(true);
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-retry",
+        sequence: 1,
+        kind: "snapshot",
+        sections,
       }),
     );
     await expect(page.getByText("今日 Key 汇总读取失败。请重试。")).toHaveCount(

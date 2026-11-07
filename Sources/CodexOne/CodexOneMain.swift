@@ -311,7 +311,8 @@ struct CodexOneMain {
           AttentionAdminAPI(
             reader: $0, storage: store, registry: protocolExtensions, backup: backup, clock: clock)
         },
-        executions: store, storageMonitoring: store, backup: backup, overviewResources: overviewResources)
+        executions: store, storageMonitoring: store, backup: backup,
+        overviewResources: overviewResources)
     } else {
       keyAdmin = nil
     }

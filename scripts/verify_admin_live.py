@@ -10,6 +10,7 @@ from pathlib import Path
 import socket
 import sqlite3
 import struct
+import sys
 import threading
 import time
 import tempfile
@@ -227,6 +228,21 @@ def verify(binary):
         # SIGKILL cannot run connection cleanup. Restart must retire the session/epoch
         # without replaying data-plane work or inventing historical activity.
         fresh, _ = login(f); viewer = dial(f, fresh)[1]; before_kill = frame(viewer)
+        if sys.platform == 'linux':
+            def has_cpu_sample(value):
+                storage = value.get('sections', {}).get('storage', {}).get('data') or {}
+                return any('hostCPUPercent' in sample for sample in storage.get('resources', []))
+
+            resource_frame = before_kill if has_cpu_sample(before_kill) else until(viewer, has_cpu_sample, seconds=35)
+            samples = resource_frame['sections']['storage']['data']['resources']
+            sample = samples[-1]
+            assert 2 <= len(samples) <= 121
+            assert 0 <= sample['hostCPUPercent'] <= 100
+            assert 0 < sample['hostAvailableBytes'] <= sample['hostTotalBytes']
+            assert sample['processResidentBytes'] > 0
+            response = request(f.ports['admin'], 'GET', '/api/runtime/storage', cookie=fresh)
+            assert response[0] == 200 and sample in document(response)['resources']
+            measurements['linux_host_resources_observed'] = True
         with sqlite3.connect(f.root / 'state/core.sqlite') as db:
             attempts_before = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
         connections_before = f.provider.connections

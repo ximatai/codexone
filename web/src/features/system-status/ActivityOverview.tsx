@@ -154,6 +154,10 @@ export function ActivityOverview({
         .join("、")}。缺失值未记为零，请重试。`
     : "";
   const retrySources = () => {
+    if (live?.mode === "live") {
+      live.retry();
+      return;
+    }
     for (const query of failedSources) void query.refetch();
   };
 
@@ -209,6 +213,11 @@ export function ActivityOverview({
             <Title order={3} size="h4" mb="xs">
               进行中请求{flight.data ? ` · ${flight.data.length}` : ""}
             </Title>
+            {live?.flightUnconfirmed && (
+              <Text size="xs" c="orange.8" role="status">
+                正在确认请求状态，暂保留上次快照。
+              </Text>
+            )}
             {flight.isError && !flight.data ? (
               <Text size="sm" c="dimmed">
                 进行中请求读取失败。请重试。
@@ -242,6 +251,7 @@ export function ActivityOverview({
                             running={
                               control.active &&
                               !flight.isError &&
+                              !live?.flightUnconfirmed &&
                               (!live ||
                                 !live.stale.some(
                                   ([source]) => source === "inFlight",

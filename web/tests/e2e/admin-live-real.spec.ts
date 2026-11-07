@@ -92,11 +92,13 @@ for (const realtime of [true, false]) {
         "data-live-mode",
         mode,
       );
+      // The first HTTP reads and the live sampler can contend for the same
+      // reader. Allow the next sample or fallback poll to settle.
       await expect(
         page
           .getByRole("region", { name: "今日 Key 请求汇总" })
           .getByRole("button", { name: "p", exact: true }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 20000 });
       await page.waitForTimeout(2200);
       await page.setViewportSize({ width: 1440, height: 900 });
       await expectNoHorizontalOverflow(page);
