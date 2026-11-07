@@ -203,6 +203,28 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => !!socket).toBe(true);
   const sections = await initialSections(page);
+  const day = Math.floor(Date.now() / 86400000) * 86400;
+  sections.daily.data = {
+    timezone: "UTC",
+    days: 1,
+    buckets: [
+      {
+        atUnixSeconds: day,
+        requests: 1,
+        succeeded: 1,
+        failed: 0,
+        cancelled: 0,
+        failures: {},
+        metrics: {
+          inputTokens: "2",
+          cachedTokens: "0",
+          outputTokens: "42",
+          images: "0",
+          estimatedMicros: "0",
+        },
+      },
+    ],
+  };
   socket!.send(
     JSON.stringify({
       protocol: 1,
@@ -238,6 +260,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
             clients: [],
             overflow: 0,
             settledOutputTokensPerSecond: 42.5,
+            settledOutputRatesByDay: { [day]: 42.5 },
           },
         },
       },
@@ -249,6 +272,12 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "进行中请求 · 42.5 Token/s" }),
   ).toBeVisible();
+  const trend = page.getByRole("img", { name: /^活跃时段输出吞吐近 7 天/ });
+  const resources = page.getByRole("heading", { name: "运行资源" });
+  await expect(trend).toBeVisible();
+  const resourceTop = await resources.evaluate(
+    (heading) => heading.getBoundingClientRect().top,
+  );
   for (const [sequence, freshness, heading] of [
     [3, "stale", "进行中请求"],
     [4, "fresh", "进行中请求 · 42.5 Token/s"],
@@ -277,6 +306,17 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
       "data-live-mode",
       "live",
     );
+    if (freshness === "stale") {
+      await expect(page.getByText("暂无吞吐数据")).toBeVisible();
+      await expect(trend).toHaveCount(0);
+    } else {
+      await expect(trend).toBeVisible();
+    }
+    expect(
+      await resources.evaluate(
+        (element) => element.getBoundingClientRect().top,
+      ),
+    ).toBe(resourceTop);
   }
   let releaseFlight: (() => void) | undefined;
   await page.route("**/api/usage/in-flight", async (route) => {

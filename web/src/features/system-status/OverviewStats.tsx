@@ -14,6 +14,7 @@ import { tokenTotal, type DailyBucket } from "./round2-api";
 import { failures } from "../../shared/presentation";
 import { compactCount } from "./overview-format";
 import styles from "./overview.module.css";
+const outputTrendHeight = 104;
 const chartDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
   day: "numeric",
@@ -41,7 +42,7 @@ function Sparkline({
       aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(compact ? 1 : 5)))).join("、")}`}
     >
       <AreaChart
-        h={compact ? 64 : 104}
+        h={compact ? 64 : outputTrendHeight}
         data={values.map((value, index) => ({ day: String(index), value }))}
         dataKey="day"
         series={[{ name: "value", color: "brand.5" }]}
@@ -116,7 +117,7 @@ export function OutputRateTrend({
           compact={false}
         />
       ) : (
-        <Text size="sm" c="dimmed" mt="sm">
+        <Text size="sm" c="dimmed" h={outputTrendHeight} pt="sm">
           暂无吞吐数据
         </Text>
       )}
