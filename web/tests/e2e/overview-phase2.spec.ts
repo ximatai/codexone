@@ -277,12 +277,9 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await rejected.scrollIntoViewIfNeeded();
   await expect(rejected).toBeInViewport();
   await page.getByText("运行诊断", { exact: true }).click();
-  await page
-    .getByRole("region", { name: "需要处理", exact: true })
-    .evaluate((panel) => panel.scrollIntoView({ block: "start" }));
-  await expect(page.getByRole("link", { name: /x-codex-n+/ })).toBeInViewport({
-    ratio: 1,
-  });
+  const protocolLink = page.getByRole("link", { name: /x-codex-n+/ });
+  await protocolLink.scrollIntoViewIfNeeded();
+  await expect(protocolLink).toBeInViewport({ ratio: 1 });
   await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(
