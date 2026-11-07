@@ -1,4 +1,3 @@
-import { ProtocolObservations } from "./ProtocolObservations";
 import { EarlyCapacityRelease } from "./EarlyCapacityRelease";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { useNavigationType, useSearchParams } from "react-router";
@@ -56,7 +55,6 @@ export function UsagePage() {
         onUnauthorized={owner.invalidate}
         onApplied={applied}
       />
-      <ProtocolObservations />
     </section>
   );
 }

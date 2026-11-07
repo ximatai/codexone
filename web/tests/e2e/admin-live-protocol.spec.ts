@@ -27,6 +27,8 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
     "data-live-mode",
     "live",
   );
+  const protocol = page.getByRole("region", { name: "协议观测" });
+  await expect(protocol).toHaveCount(0);
   const previous =
     (await page
       .getByRole("region", { name: "今日 Key 请求汇总" })
@@ -39,6 +41,24 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
       sequence: 2,
       kind: "update",
       sections: {
+        attention: {
+          ...sections.attention,
+          version: 2,
+          data: {
+            generatedAtUnixSeconds: now,
+            items: [
+              {
+                kind: "client_protocol_extension",
+                severity: "warning",
+                subjectType: "protocol",
+                subjectID: null,
+                subjectName: "upstream_event.synthetic.notice",
+                sinceUnixSeconds: now,
+                detail: {},
+              },
+            ],
+          },
+        },
         keys: {
           version: 1,
           sampledAtUnixSeconds: now + 1,
@@ -52,6 +72,11 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
+  await expect(
+    protocol.getByText("upstream_event.synthetic.notice"),
+  ).toBeVisible();
+  await expect(protocol.getByRole("heading")).toHaveText("协议观测");
+  await expect(page.getByRole("region", { name: "运行提醒" })).toHaveCount(0);
   const originalSocket = socket;
   socket!.send(
     JSON.stringify({
@@ -60,6 +85,7 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
       sequence: 3,
       kind: "update",
       sections: {
+        attention: { ...sections.attention, version: 3 },
         keys: {
           version: 1,
           sampledAtUnixSeconds: now + 2,
@@ -80,6 +106,7 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
+  await expect(protocol).toHaveCount(0);
   socket!.send(
     JSON.stringify({
       protocol: 1,
@@ -246,6 +273,14 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
       },
     }),
   );
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  await expect(
+    page.getByRole("heading", { name: "进行中请求", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("暂无速率数据")).toBeVisible();
   socket!.send(
     JSON.stringify({
       protocol: 1,
@@ -273,14 +308,6 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
             overflow: 0,
             recentRequestOutputRateMedian: 42.5,
             requestOutputRateMediansByDay: { [day]: 42.5 },
-  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
-    "data-live-mode",
-    "live",
-  );
-  await expect(
-    page.getByRole("heading", { name: "进行中请求", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("暂无速率数据")).toBeVisible();
           },
         },
       },
