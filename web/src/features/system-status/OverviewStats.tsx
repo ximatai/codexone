@@ -233,7 +233,7 @@ export function OverviewStats({
       aria-label={loading ? "正在读取请求概览…" : "关键指标"}
     >
       {cards.map((card, index) => (
-        <Paper key={card.label} withBorder p="md">
+        <Paper key={card.label} withBorder p="md" className={styles.metricCard}>
           {loading ? (
             <Skeleton h={190} />
           ) : (

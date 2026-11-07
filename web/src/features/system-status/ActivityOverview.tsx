@@ -193,6 +193,9 @@ export function ActivityOverview({
     <ErrorState retry={retrySources}>{readFailure}</ErrorState>
   ) : null;
 
+  const outputRate = live?.settledOutputRate;
+  const outputRateLabel =
+    outputRate == null ? null : outputRateFormat.format(outputRate);
   return (
     <Stack
       aria-label="请求即时概览"
@@ -214,17 +217,20 @@ export function ActivityOverview({
             />
           )}
           <Paper withBorder p="md">
-            <Title order={3} size="h4" mb="xs">
-              进行中请求
-              {live?.settledOutputRate != null && (
+            <Title order={3} size="h4" mb="xs" className={styles.requestTitle}>
+              <span>进行中请求</span>
+              {outputRateLabel !== null && (
                 <Text
                   component="span"
                   size="xs"
                   c="dimmed"
+                  className={styles.requestRate}
                   title="最近 60 秒内，仅对有输出 Token 结算的秒数取平均。"
                 >
-                  {" · "}
-                  {outputRateFormat.format(live.settledOutputRate)} Token/s
+                  <span key={outputRateLabel}>
+                    {" "}
+                    · {outputRateLabel} Token/s
+                  </span>
                 </Text>
               )}
             </Title>

@@ -122,7 +122,7 @@ export function KeyResults({
       width: "27%",
       render: (row) => (
         <Stack gap={4} align="flex-start">
-          <Group gap={6}>
+          <Group gap={6} wrap="nowrap" className={styles.keyIdentity}>
             <Button
               variant="subtle"
               size="compact-sm"
@@ -272,17 +272,18 @@ export function KeyResults({
           </ActionIcon>
         </Group>
         {report && (
-          <Text size="xs" c={oldWindow ? "orange.8" : "dimmed"}>
-            {oldWindow ? "旧业务日快照 · " : ""}
-            {snapshot}
+          <Text
+            size="xs"
+            c={oldWindow || query.isError ? "orange.8" : "dimmed"}
+            role={query.isError ? "status" : undefined}
+            title={snapshot}
+          >
+            {query.isError
+              ? `更新失败 · 上次更新 ${businessTime(query.dataUpdatedAt / 1000, offset)}`
+              : `${oldWindow ? "旧业务日快照 · " : ""}${snapshot}`}
           </Text>
         )}
       </Group>
-      {query.isError && report && (
-        <Text role="status" c="orange.8" size="sm">
-          {`更新失败 · 上次更新 ${businessTime(query.dataUpdatedAt / 1000, offset)}`}
-        </Text>
-      )}
       {query.isError && !report ? (
         <Text size="sm" c="dimmed">
           Key 汇总读取失败

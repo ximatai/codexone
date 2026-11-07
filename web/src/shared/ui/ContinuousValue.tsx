@@ -54,6 +54,7 @@ export const ContinuousValue = memo(function ContinuousValue({
   text: string;
 }) {
   const motion = useOverviewMotion();
+  const shape = text.replace(/[0-9]/g, "#");
   const root = useRef<HTMLSpanElement>(null);
   const previous = useRef(text);
   const animations = useRef<Animation[]>([]);
@@ -68,8 +69,8 @@ export const ContinuousValue = memo(function ContinuousValue({
     animations.current.forEach((animation) => animation.cancel());
     animations.current = [];
     // Changing units/precision/sign/length snaps; rapid changes never build an animation queue.
-    const shape = (value: string) => value.replace(/[0-9]/g, "#");
-    if (!motion || interrupted || shape(before) !== shape(text)) return;
+    if (!motion || interrupted || before.replace(/[0-9]/g, "#") !== shape)
+      return;
     const oldDigits = BigInt(before.replace(/\D/g, "") || "0");
     const newDigits = BigInt(text.replace(/\D/g, "") || "0");
     const delta =
@@ -99,7 +100,7 @@ export const ContinuousValue = memo(function ContinuousValue({
           ),
         );
       });
-  }, [text, motion]);
+  }, [text, motion, shape]);
   useLayoutEffect(
     () => () => animations.current.forEach((animation) => animation.cancel()),
     [],
@@ -107,7 +108,7 @@ export const ContinuousValue = memo(function ContinuousValue({
   return (
     <span className={styles.value} ref={root} data-continuous-value="">
       <span className={styles.accessible}>{text}</span>
-      <span className={styles.visual} aria-hidden="true">
+      <span key={shape} className={styles.visual} aria-hidden="true">
         {Array.from(text, (character, index) =>
           /[0-9]/.test(character) ? (
             <span className={styles.digit} key={index}>
