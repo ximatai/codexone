@@ -238,25 +238,25 @@ Key 配置只包含 tokens（业务日每日Token上限）和active（最大并�
 
 首页及首页账号抽屉使用 `GET /api/overview/live`，这是 A10 单响应关闭的精确例外。HTTP 接口继续保留，写操作仍使用 HTTP 与 CSRF。仅接受无 query、无 Bearer、唯一管理 cookie、唯一精确 Origin、合法 Host 与同源 Fetch Metadata 的 upgrade；不协商压缩或子协议，不接受应用入站消息。
 
-v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snapshot/update，sequence 在每连接实际发送时从 1 连续递增。八个 section 为 system、inFlight、daily、keys、accounts、storage、attention、headroom。每源为 `{version, sampledAtUnixSeconds, lastSuccessAt, freshness, code, data}`，freshness 为 fresh/stale/unavailable。data 沿既有 HTTP DTO，inFlight 额外包含 recentlyFinished（64 条/10 秒）、overflow 与 clients（Key 显示名、连接数、最早时间）。完整 section 替换；update 中相同内容只发送元数据并省略 data，沿原 version 保留内容、推进 freshness；snapshot 的八个源均须显式含 data（不可用为 null）。来源不构成跨源事务，失败保留旧值，不补零。
+v1 envelope 为 `{protocol:1, epoch, sequence, kind, sections}`；kind 为 snapshot/update，sequence 在每连接实际发送时从 1 连续递增。八个 section 为 system、inFlight、daily、keys、accounts、storage、attention、headroom。每源为 `{version, sampledAtUnixSeconds, lastSuccessAt, freshness, code, data}`，freshness 为 fresh/stale/unavailable。data 沿既有 HTTP DTO，inFlight 额外包含 recentlyFinished（兼容旧管理页面的空数组）、overflow 与 clients（Key 显示名、连接数、最早时间）。完整 section 替换；update 中相同内容只发送元数据并省略 data，沿原 version 保留内容、推进 freshness；snapshot 的八个源均须显式含 data（不可用为 null）。来源不构成跨源事务，失败保留旧值，不补零。
 
 准入、首事件及 finalize 成功提交后非阻塞唤醒活动；失败不得影响执行、结算或计量，零 viewer 只做廉价检查。约 100 ms 合并，5 秒 SQL 对账；finalize 标脏聚合并最多每 2 秒重算。storage 2 秒，聚合/system 5 秒，账号/提醒 15 秒顺序采样；最后 viewer 离开取消并 await 查询，零 viewer 不采样。新 viewer 使用共享缓存，重连完整 snapshot，无持久事件或生成回放。
 
 总 WS 8、每 session 2，管理 ingress 总 32；单帧 1 MiB，待发最多 2 条/2 MiB，另 1 MiB 在途，共享缓存/编码 3 MiB。超载/写超时 1013、会话失效 1008、shutdown 1001。15 秒 ping，10 秒 pong/握手、5 秒写期限；关闭握手最多 2 秒，功能整体关闭最多 5 秒。活动订阅每 15 秒沿读取语义延长 idle，不延长绝对 7 天期限。logout/替换/bind 撤销连接，发送前检查有效性。撤销与业务帧发送同一时刻发生时，由连接关闭 owner 在既有截止时间内发送 1008，撤销后不再排队新的业务帧。
 
-首页隐藏、暂停、离开或会话代际退役即关闭；有效 snapshot 前保留 HTTP，失败后 15 秒轮询（含 system），三次失败后每 60 秒探测。旧代际结果不能覆盖新数据或解除 mutation 未知锁。2/5/15 秒源超过 6/15/45 秒标陈旧。HTTP 降级明确显示轮询，固定观察的终态来自实时快照。后台 HTTP 失败更新既有读取状态摘要，展开可查看来源/最后成功时间及重试；首次失败明确尚无成功数据，再次读取不重新切回初次加载骨架，已有快照不清空。数字滚动使用本地组件、外部静态 CSS 与浏览器动画 API，固定 240 ms；视觉数位对读屏隐藏，DOM 文本始终为完整真实新值。更换单位/精度/长度、异常大幅变化或上一滚动尚未结束时直接落定新值，不排队。行/条/趋势采用 150—400 ms 连续过渡；首屏、恢复、重新可见直接落定，reduced-motion 禁止位移和滚动，不放宽 CSP。无 schema、恢复、计量变更。交付状态与实际验收见活动任务。
+首页隐藏、暂停、离开或会话代际退役即关闭；有效 snapshot 前保留 HTTP，失败后 15 秒轮询（含 system），三次失败后每 60 秒探测。旧代际结果不能覆盖新数据或解除 mutation 未知锁。2/5/15 秒源超过 6/15/45 秒标陈旧。HTTP 降级明确显示轮询。后台 HTTP 失败更新既有读取状态摘要，展开可查看来源/最后成功时间及重试；首次失败明确尚无成功数据，再次读取不重新切回初次加载骨架，已有快照不清空。数字滚动使用本地组件、外部静态 CSS 与浏览器动画 API，固定 240 ms；视觉数位对读屏隐藏，DOM 文本始终为完整真实新值。更换单位/精度/长度、异常大幅变化或上一滚动尚未结束时直接落定新值，不排队。行/条/趋势采用 150—400 ms 连续过渡；首屏、恢复、重新可见直接落定，reduced-motion 禁止位移和滚动，不放宽 CSP。无 schema、恢复、计量变更。交付状态与实际验收见活动任务。
 
 inFlight 首次持久查询失败保持 unavailable/data:null，不以空活动填充；已有快照时内存活动更新不能清除持久查询的失败 code 或推进其 lastSuccessAt，直至实际读取恢复。初始 unavailable 快照结束相应模块的加载状态并明确无成功数据，不伪造空集合。来源明细和各模块共用新鲜度：实时取 section 元数据，HTTP 降级取实际 Query 成功时间/错误，45 秒无成功 HTTP 更新标陈旧；保留旧值不等于已恢复。持续连接仅含数据 WS，按 Key 汇总，不代表所有 HTTP 工具/设备在线。
 
-首页可按已知今日 Key 或任意 Key 关注下一条新出现的活动，或固定已有请求。一次仅保留一个等待/观察对象；等待最多 2 分钟，捕获后快照最多保留 10 分钟，不持久化、不派发测试请求、不采集额外正文/身份。断连、暂停或来源不可用标观察中断；请求消失不推断结果，已确认终态可保留。epoch 变化、离开首页和管理会话退役清理对象。首事件未知/等待/已观测分开，首事件不等于输出完成；unknown 不重放。支持复制请求 ID（无剪贴板 API 时提示手动选择）、账号入口和按 Key 的既有诊断筛选；当前没有精确历史请求查找契约，不将按 Key 跳转称作精确定位。离散阶段通知读屏，倒计时不逐秒播报。
+首页在途区区分首事件未知、等待和已观测。首事件不等于输出完成。结束事件移除在途行并触发用量更新，历史结果由用量与诊断展示。
 
 当前接入条件摘要只汇总本地生成就绪、存储准入、账号资格及账号并发硬限。存在符合资格且有已知并发名额的账号才可显示本地条件正常；全满显示阻断，缺观测或来源陈旧显示无法确认。参考阈值不当作硬限，不承诺具体 Key/模型或下一次上游调用必定成功。
 
-首页今日活跃 Key 表默认渲染按 Token 排序的前 20 行；超过 20 行展示完整数量及显式展开全部/收起。完整快照、统计、关注范围和详情身份不因默认展示上限截断，展开状态随同页刷新保留。大量 Key 不应阻塞账号详情的首次可用渲染。
+首页今日活跃 Key 表默认渲染按 Token 排序的前 20 行；超过 20 行展示完整数量及显式展开全部/收起。完整快照、统计和详情身份不因默认展示上限截断，展开状态随同页刷新保留。大量 Key 不应阻塞账号详情的首次可用渲染。
 
 
 ### 首页运营概览
 
-大屏主栏依次显示今日指标、在途请求和活跃 Key，右栏显示订阅额度和运行资源。正常时省略接入提示，接入受阻显示原因和处理入口，无法确认显示文字状态。请求卡按开始时间稳定排列，结束后从实时区移除。手动固定观察仍可核对已观测终态。
+大屏主栏依次显示今日指标、在途请求和活跃 Key，右栏显示订阅额度和运行资源。正常时省略接入提示，接入受阻显示原因和处理入口，无法确认显示文字状态。请求卡按开始时间稳定排列，结束后从实时区移除。
 
 管理员存储快照（HTTP 和实时）可包含 `resources`，最多 121 个时间戳样本，最近一小时保存在进程内。Linux 每 30 秒采样进程 RSS、主机可用内存、主机总内存和 CPU 使用率（区间内非空闲比例）。缺测字段省略，重启清空。数据盘余量和保护状态沿用存储观测，容量已知时同时展示可用比例。

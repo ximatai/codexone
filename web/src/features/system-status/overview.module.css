@@ -1,10 +1,6 @@
 .header > :first-child {
   margin-bottom: 0;
 }
-.watchResult {
-  height: 12rem;
-  overflow: auto;
-}
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

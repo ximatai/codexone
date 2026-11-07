@@ -1,6 +1,4 @@
 import { overviewQuery } from "./overview-source";
-import { RequestWatch } from "./RequestWatch";
-import type { FlightRow } from "./round2-api";
 import type { useOverviewLive } from "./useOverviewLive";
 import { KeyName } from "../../shared/KeyName";
 import {
@@ -9,7 +7,6 @@ import {
 } from "../../shared/account-presentation";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ActionIcon,
   Anchor,
   Button,
   Group,
@@ -21,7 +18,6 @@ import {
 } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { IconPin } from "@tabler/icons-react";
 import { DataTable } from "../../shared/ui/DataTable";
 import { ErrorState } from "../../shared/ui/States";
 import styles from "./overview.module.css";
@@ -117,10 +113,6 @@ export function ActivityOverview({
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const control = refresh ?? localRefresh;
-  const [selection, setSelection] = useState<{
-    row: FlightRow;
-    revision: number;
-  } | null>(null);
   const options = {
     enabled: !!owner.session,
     refetchInterval: control.interval,
@@ -323,33 +315,20 @@ export function ActivityOverview({
                     >
                       <Group justify="space-between" wrap="nowrap" gap={4}>
                         <KeyName {...row} />
-                        <Group wrap="nowrap" gap={2}>
-                          <Text size="xs" className={styles.requestElapsed}>
-                            <Elapsed
-                              seconds={row.elapsedSeconds}
-                              sampledAt={flight.dataUpdatedAt}
-                              running={
-                                control.active &&
-                                !flight.isError &&
-                                (!live ||
-                                  !live.stale.some(
-                                    ([source]) => source === "inFlight",
-                                  ))
-                              }
-                            />
-                          </Text>
-                          <ActionIcon
-                            variant="subtle"
-                            size="xs"
-                            aria-label="固定观察此请求"
-                            title="固定观察此请求"
-                            onClick={() =>
-                              setSelection({ row, revision: Date.now() })
+                        <Text size="xs" className={styles.requestElapsed}>
+                          <Elapsed
+                            seconds={row.elapsedSeconds}
+                            sampledAt={flight.dataUpdatedAt}
+                            running={
+                              control.active &&
+                              !flight.isError &&
+                              (!live ||
+                                !live.stale.some(
+                                  ([source]) => source === "inFlight",
+                                ))
                             }
-                          >
-                            <IconPin size={14} />
-                          </ActionIcon>
-                        </Group>
+                          />
+                        </Text>
                       </Group>
                       <Group justify="space-between" wrap="nowrap" gap={4}>
                         <Text size="xs" className="wrap-anywhere">
@@ -407,21 +386,6 @@ export function ActivityOverview({
             )}
           </Paper>
           <KeyResults query={keySummary} />
-          <RequestWatch
-            key={live?.restart ?? 0}
-            active={
-              live?.mode === "live" &&
-              control.active &&
-              live.sources.inFlight?.freshness === "fresh"
-            }
-            rows={[
-              ...(flight.data ?? []),
-              ...(live?.mode === "live" ? live.recent : []),
-            ]}
-            keys={keySummary.data?.keys ?? []}
-            selection={selection}
-            clearSelection={() => setSelection(null)}
-          />
           {live?.mode === "live" && (
             <Paper withBorder p="md">
               <Title order={3} size="h4">

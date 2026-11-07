@@ -25,12 +25,20 @@ import Testing
   activity.watch(true)
   try await store.admit(admission("visible"))
   let start = activity.drain().0
-  #expect(start.count == 1 && start[0].id == "visible" && start[0].outcome == nil)
+  guard case .admitted("visible", _) = start.first else {
+    Issue.record("Expected an admission publication")
+    return
+  }
+  #expect(start.count == 1)
   store.executionStarted(attempt: "visible")
   store.executionReceivedFirstEvent(attempt: "visible")
   store.executionReceivedFirstEvent(attempt: "visible")
   let firstEvents = activity.drain().0
-  #expect(firstEvents.count == 1 && firstEvents.first?.first == true)
+  guard case .firstEvent("visible") = firstEvents.first else {
+    Issue.record("Expected a first-event publication")
+    return
+  }
+  #expect(firstEvents.count == 1)
   try rawSQL(
     path,
     "CREATE TRIGGER fail_finalize BEFORE INSERT ON evidence BEGIN SELECT RAISE(ABORT,'synthetic'); END;"
@@ -39,6 +47,14 @@ import Testing
     try await store.finalize(attempt: "visible", evidence: usage())
   }
   #expect(activity.drain().0.isEmpty)
+  try rawSQL(path, "DROP TRIGGER fail_finalize;")
+  try await store.finalize(attempt: "visible", evidence: usage())
+  let finished = activity.drain().0
+  guard case .finished("visible") = finished.first else {
+    Issue.record("Expected a completion publication")
+    return
+  }
+  #expect(finished.count == 1)
   await store.close()
 }
 
@@ -110,6 +126,10 @@ import Testing
     reconciled["inFlight"]?["data"]?["rows"]?.array?.contains(where: {
       $0["id"]?.string == "lost-wakeup"
     }) == true)
+  try await store.finalize(attempt: "lost-wakeup", evidence: usage())
+  let completion = try JSONValue.decode(try #require(await first.next()).data)
+  #expect(completion["inFlight"]?["data"]?["rows"]?.array == [])
+  #expect(completion["inFlight"]?["data"]?["recentlyFinished"]?.array == [])
   for id in ids { await overview.unsubscribe(id: id) }
   let stopped = reads.withLock { $0 }
   try await Task.sleep(for: .milliseconds(1200))
@@ -125,7 +145,7 @@ import Testing
   let activity = OverviewActivity()
   activity.watch(true)
   for _ in 0..<10000 {
-    activity.publish { .init(id: "synthetic", row: nil, outcome: nil, at: 1, first: true) }
+    activity.publish { .firstEvent(id: "synthetic") }
   }
   let drained = activity.drain()
   #expect(drained.0.count == 512 && drained.1 == 9488)

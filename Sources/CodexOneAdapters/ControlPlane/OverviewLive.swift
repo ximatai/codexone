@@ -5,12 +5,10 @@ import Synchronization
 /// One signal slot. Execution publishers never create a task or wait for a consumer.
 public final class OverviewActivity: Sendable {
   enum Signal: Sendable { case changed, tick }
-  struct Event: Sendable {
-    let id: String
-    let row: JSONValue?
-    let outcome: String?
-    let at: Int64
-    let first: Bool
+  enum Event: Sendable {
+    case admitted(id: String, row: JSONValue)
+    case firstEvent(id: String)
+    case finished(id: String)
   }
   private struct State {
     var watching = false
@@ -168,7 +166,6 @@ public actor OverviewLive: OverviewLiveRunning {
   private var worker: Task<Void, Never>?
   private var ticker: Task<Void, Never>?
   private var rows: [String: JSONValue] = [:]
-  private var recent: [JSONValue] = []
   private var overflow = 0
   private var dirty = false
   private var lastAggregate: Int64 = 0
@@ -208,7 +205,6 @@ public actor OverviewLive: OverviewLiveRunning {
     sections.removeAll()
     due.removeAll()
     rows.removeAll()
-    recent.removeAll()
     overflow = 0
     dirty = false
   }
@@ -255,47 +251,32 @@ public actor OverviewLive: OverviewLiveRunning {
     sections.removeAll()
     due.removeAll()
     rows.removeAll()
-    recent.removeAll()
   }
   private func sample(generation turn: Int) async {
     let time = now()
     let initial = sections.count != Self.names.count
     let events = activity.drain()
-    var activityChanged = !events.0.isEmpty || events.1 > 0
+    let activityChanged = !events.0.isEmpty || events.1 > 0
     overflow += events.1
     dirty = dirty || events.1 > 0
     for event in events.0 {
-      if event.first {
-        if var row = rows[event.id]?.object {
+      switch event {
+      case .firstEvent(let id):
+        if var row = rows[id]?.object {
           row["hasFirstEvent"] = .bool(true)
-          rows[event.id] = .object(row)
+          rows[id] = .object(row)
         }
-      } else if let row = event.row {
-        if let outcome = event.outcome {
-          var value = (rows[event.id] ?? row).object!
-          rows.removeValue(forKey: event.id)
-          value["outcome"] = .string(outcome)
-          value["finishedAtUnixSeconds"] = .number(Decimal(event.at))
-          if let start = value["startedAtUnixSeconds"]?.integer {
-            value["elapsedSeconds"] = .number(Decimal(max(0, event.at - start)))
-          }
-          recent.removeAll { $0["id"]?.string == event.id }
-          if recent.count == 64 {
-            recent.removeFirst()
-            overflow += 1
-          }
-          recent.append(.object(value))
-          dirty = true
-        } else if rows.count < 200 {
-          rows[event.id] = row
+      case .admitted(let id, let row):
+        if rows.count < 200 {
+          rows[id] = row
         } else {
           overflow += 1
         }
+      case .finished(let id):
+        rows.removeValue(forKey: id)
+        dirty = true
       }
     }
-    let oldCount = recent.count
-    recent.removeAll { ($0["finishedAtUnixSeconds"]?.integer ?? 0) <= time - 10 }
-    activityChanged = activityChanged || recent.count != oldCount
     var changed: [String: JSONValue] = [:]
     for name in Self.names {
       let period: Int64 =
@@ -313,7 +294,7 @@ public actor OverviewLive: OverviewLiveRunning {
               row["id"]?.string.map { ($0, row) }
             })
         }
-        replace(name, data: name == "inFlight" ? flight(at: time) : data, at: time, error: nil)
+        replace(name, data: name == "inFlight" ? flight() : data, at: time, error: nil)
       } catch {
         guard turn == generation, !viewers.isEmpty, !Task.isCancelled else { return }
         replace(name, data: nil, at: time, error: "source_unavailable")
@@ -327,7 +308,7 @@ public actor OverviewLive: OverviewLiveRunning {
     }
     // A connection registry wake has no execution event but still updates the activity section.
     if let source = sections["inFlight"], source["data"] != .null {
-      let data = flight(at: time)
+      let data = flight()
       if activityChanged || sections["inFlight"]?["data"]?["clients"] != data["clients"] {
         let previous = sections["inFlight"]
         // Activity observation does not prove that SQLite reconciliation recovered.
@@ -344,10 +325,10 @@ public actor OverviewLive: OverviewLiveRunning {
       }
     }
   }
-  private func flight(at time: Int64) -> JSONValue {
+  private func flight() -> JSONValue {
     .object([
       "rows": .array(rows.keys.sorted().compactMap { rows[$0] }),
-      "recentlyFinished": .array(recent), "overflow": .number(Decimal(overflow)),
+      "recentlyFinished": .array([]), "overflow": .number(Decimal(overflow)),
       "clients": activity.clients(),
     ])
   }

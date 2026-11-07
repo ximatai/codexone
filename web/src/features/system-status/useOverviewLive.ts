@@ -91,11 +91,8 @@ export function useOverviewLive(active: boolean) {
   >("connecting");
   const [sources, setSources] = useState<Record<string, Freshness>>({});
   const [clients, setClients] = useState<LiveClients>([]);
-  const [recent, setRecent] = useState<z.infer<typeof flight>["rows"]>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
-  const [restart, setRestart] = useState(0);
-  const previousEpoch = useRef("");
   const [manualBusy, setManualBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const transportGeneration = useRef(0);
@@ -107,7 +104,6 @@ export function useOverviewLive(active: boolean) {
   useEffect(() => {
     if (!active || !authenticated || manualBusy) {
       setMode("paused");
-      setRecent([]);
       return;
     }
     const transport = ++transportGeneration.current;
@@ -221,25 +217,12 @@ export function useOverviewLive(active: boolean) {
               if (name === "inFlight" && source.data != null) {
                 const activity = z
                   .object({
-                    recentlyFinished: z
-                      .array(
-                        flight.shape.rows.element.extend({
-                          outcome: z.string(),
-                          finishedAtUnixSeconds: z.number(),
-                        }),
-                      )
-                      .max(64),
                     clients: clientsSchema,
                     overflow: z.number().int().nonnegative(),
                   })
                   .parse(source.data);
                 setClients(activity.clients);
-                setRecent(activity.recentlyFinished);
                 setOverflow(activity.overflow);
-                client.setQueryData(
-                  ["overview", "recent"],
-                  activity.recentlyFinished,
-                );
               }
             }
             setSources((previous) => {
@@ -254,12 +237,6 @@ export function useOverviewLive(active: boolean) {
             epoch = frame.epoch;
             sequence = frame.sequence;
             if (!snapshot) {
-              if (
-                previousEpoch.current &&
-                previousEpoch.current !== frame.epoch
-              )
-                setRestart((value) => value + 1);
-              previousEpoch.current = frame.epoch;
               snapshot = true;
               clearTimeout(timeout);
               setReset((value) => value + 1);
@@ -293,7 +270,6 @@ export function useOverviewLive(active: boolean) {
         socket = null;
         socketRef.current = null;
         setMode("polling");
-        setRecent([]);
         setClients([]);
         void checkSession();
         attempt += 1;
@@ -406,10 +382,8 @@ export function useOverviewLive(active: boolean) {
     mode,
     sources: displayed,
     clients,
-    recent,
     overflow,
     reset,
-    restart,
     stale,
     manualRefresh,
   };

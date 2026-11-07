@@ -398,10 +398,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
-      var observed: ExecutionAdmission?
       try db.transaction {
         let snapshot = try Self.load(db, attempt)
-        observed = snapshot.admission
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
         }
@@ -473,10 +471,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
             ])
         }
       }
-      if let observed {
-        self.publishOverview(
-          observed, at: db.clock.unixSeconds, outcome: outcome?.kind.rawValue ?? "unknown")
-      }
+      self.overviewActivity.publish { .finished(id: attempt) }
     }
   }
 
@@ -593,7 +588,7 @@ extension SQLiteExecutionStore: ExecutionLiveObserving {
     }
     guard first else { return }
     overviewActivity.publish {
-      .init(id: attempt, row: nil, outcome: nil, at: clock.unixSeconds, first: true)
+      .firstEvent(id: attempt)
     }
   }
   public func executionObservationEnded(attempt: String) {
