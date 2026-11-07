@@ -161,7 +161,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("img", { name: /^今日请求近 7 天/ }),
+    page.getByRole("img", { name: /^今日已准入近 7 天/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("row").filter({ hasText: "synthetic-text" }).first(),
@@ -172,6 +172,12 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.setViewportSize({ width: 390, height: 844 });
   await rejected.scrollIntoViewIfNeeded();
   await expect(rejected).toBeInViewport();
+  await page
+    .getByRole("region", { name: "需要处理", exact: true })
+    .evaluate((panel) => panel.scrollIntoView({ block: "start" }));
+  await expect(page.getByRole("link", { name: /x-codex-n+/ })).toBeInViewport({
+    ratio: 1,
+  });
   await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(

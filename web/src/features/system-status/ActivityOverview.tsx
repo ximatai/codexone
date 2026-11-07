@@ -213,7 +213,7 @@ export function ActivityOverview({
           }
         />
       </div>
-      {!control.automatic && (
+      {!control.automatic && !live && (
         <Text size="xs" c="dimmed">
           自动观察已暂停，以下为上次快照。
         </Text>

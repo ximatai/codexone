@@ -94,7 +94,7 @@ export function OverviewStats({
     : 0;
   const cards = [
     {
-      label: "今日请求",
+      label: "今日已准入",
       value: today ? compactCount(today.requests) : "—",
       exact: today?.requests.toLocaleString("zh-CN"),
       values: buckets.map((b) => b.requests),
@@ -242,6 +242,11 @@ export function OverviewStats({
                   </Text>
                 )}
               </Group>
+              {card.note && (
+                <Text size="xs" c="dimmed">
+                  {card.note}
+                </Text>
+              )}
               <Sparkline label={card.label} values={card.values} />
               {capacities
                 ?.filter(
@@ -274,11 +279,6 @@ export function OverviewStats({
                     </Text>
                   </Tooltip>
                 ))}
-              {card.note && (
-                <Text size="xs" c="dimmed">
-                  {card.note}
-                </Text>
-              )}
             </>
           )}
         </Paper>

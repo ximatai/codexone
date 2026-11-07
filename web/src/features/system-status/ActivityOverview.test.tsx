@@ -113,7 +113,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
     />,
   );
   expect(
-    await screen.findByRole("img", { name: "今日请求近 7 天：4" }),
+    await screen.findByRole("img", { name: "今日已准入近 7 天：4" }),
   ).toBeVisible();
   expect(
     screen.getByRole("img", { name: "Token近 7 天：不可用" }),

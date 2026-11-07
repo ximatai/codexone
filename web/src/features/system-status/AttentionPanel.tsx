@@ -30,7 +30,6 @@ export function AttentionPanel({
   release,
   aggregateErrors = false,
   inlineAccounts = false,
-  continuous = false,
 }: {
   items?: AttentionItem[];
   loading: boolean;
@@ -40,7 +39,6 @@ export function AttentionPanel({
   release?: (item: AttentionItem) => void;
   aggregateErrors?: boolean;
   inlineAccounts?: boolean;
-  continuous?: boolean;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -79,30 +77,10 @@ export function AttentionPanel({
         </Text>
       ) : (
         <Stack gap="xs">
-          <div
-            className={
-              continuous ? styles.attentionSlots : styles.attentionList
-            }
-            style={
-              continuous
-                ? {
-                    height:
-                      (expanded
-                        ? ordered.length
-                        : Math.min(5, ordered.length)) * 80,
-                  }
-                : undefined
-            }
-          >
-            {(expanded ? ordered : ordered.slice(0, 5)).map((item, index) => (
+          <div className={styles.attentionList}>
+            {(expanded ? ordered : ordered.slice(0, 5)).map((item) => (
               <Alert
                 key={`${item.kind}-${item.subjectType}-${item.subjectID ?? "system"}-${String(item.detail.source ?? "")}`}
-                className={continuous ? styles.attentionSlot : undefined}
-                style={
-                  continuous
-                    ? { transform: `translateY(${index * 80}px)` }
-                    : undefined
-                }
                 p={item.severity === "critical" ? "sm" : "6px 0"}
                 variant={item.severity === "critical" ? "light" : "transparent"}
                 color={item.severity === "critical" ? "red" : "yellow"}
@@ -131,23 +109,7 @@ export function AttentionPanel({
                   size="sm"
                   aria-label={attentionMessage(item, accounts)}
                 >
-                  {continuous
-                    ? attentionMessage(item, accounts)
-                        .split(/([0-9][0-9.,%]*)/g)
-                        .map((part, index) =>
-                          /^[0-9]/.test(part) ? (
-                            <span
-                              className={styles.attentionNumber}
-                              key={index}
-                            >
-                              {part}
-                            </span>
-                          ) : (
-                            part
-                          ),
-                        )
-                    : attentionMessage(item, accounts)}{" "}
-                  ›
+                  {attentionMessage(item, accounts)} ›
                 </Anchor>
                 {item.kind === "unresolved_executions" && release && (
                   <Button

@@ -237,7 +237,6 @@ export function AdminOverview() {
           attention={
             <div className={styles.attentionViewport}>
               <AttentionPanel
-                continuous
                 aggregateErrors
                 inlineAccounts
                 items={attention.data?.items}
