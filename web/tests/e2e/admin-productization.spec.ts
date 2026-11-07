@@ -161,7 +161,7 @@ test("login overview, Key search, confirmed disabling, automatic usage and reque
   await expect(
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();
-  await expect(page.getByText(/允许准入/)).toBeVisible();
+  await expect(page.getByText("保护未触发", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("row").filter({ hasText: "synthetic-team" }),
   ).toHaveCount(1);

@@ -203,7 +203,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
     }
     let query = try UsageQuery(
       startUnixSeconds: end - Int64(days) * 86400, endUnixSeconds: end, keyID: keyID, model: model)
-    return try await read { db in try Self.daily(db, query) }
+    let now = primary.clock.unixSeconds
+    return try await read { db in try Self.daily(db, query, now: now) }
   }
   func read<T: Sendable>(_ operation: @escaping @Sendable (SQLiteConnection) throws -> T)
     async throws -> T

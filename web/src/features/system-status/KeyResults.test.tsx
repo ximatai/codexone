@@ -70,12 +70,13 @@ it("uses summary dates for failure links even after midnight", () => {
     outcome: "failed",
   });
 });
-it("keeps six columns, active-only rows, stable recent order and identity details", () => {
+it("keeps six columns, active-only rows, exact Token order and identity details", () => {
   const other = {
     ...row,
     keyID: "a",
-    displayName: "较早 Key",
-    lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! - 1,
+    displayName: "较新 Key",
+    tokens: "10000000000000000",
+    lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! + 1,
   };
   const result = render(
     <KeyResults
@@ -100,7 +101,7 @@ it("keeps six columns, active-only rows, stable recent order and identity detail
   );
   expect(
     screen.getAllByRole("columnheader").map((cell) => cell.textContent),
-  ).toEqual(["Key", "最近活动", "请求", "失败", "Token", "缓存命中率"]);
+  ).toEqual(["Key", "最近活动", "请求", "失败率", "Token", "缓存命中率"]);
   expect(screen.queryByText("闲置 Key")).toBeNull();
   const rows = screen.getAllByRole("row").slice(1);
   expect(
@@ -122,16 +123,13 @@ it("keeps six columns, active-only rows, stable recent order and identity detail
     <KeyResults
       query={query({
         ...report,
-        keys: [
-          { ...other, lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! + 1 },
-          row,
-        ],
+        keys: [{ ...other, tokens: row.tokens }, row],
       })}
     />,
   );
   expect(
     within(screen.getAllByRole("row")[1]).getByRole("button", {
-      name: "较早 Key",
+      name: "较新 Key",
     }),
   ).toBeVisible();
   result.rerender(
@@ -140,14 +138,18 @@ it("keeps six columns, active-only rows, stable recent order and identity detail
         ...report,
         keys: [
           row,
-          { ...other, lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds },
+          {
+            ...other,
+            tokens: row.tokens,
+            lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds,
+          },
         ],
       })}
     />,
   );
   expect(
     within(screen.getAllByRole("row")[1]).getByRole("button", {
-      name: "较早 Key",
+      name: "较新 Key",
     }),
   ).toBeVisible();
 });

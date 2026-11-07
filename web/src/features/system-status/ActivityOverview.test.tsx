@@ -30,7 +30,7 @@ it("reports failed query and permits retry to explicit empty state", async () =>
   expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent(
     "读取失败",
   );
-  fireEvent.click(screen.getByRole("button", { name: "刷新请求概览" }));
+  fireEvent.click(screen.getByRole("button", { name: "重试" }));
   expect(await screen.findByText("当前没有进行中的请求。")).toBeVisible();
   expect(screen.getByText("今日暂无活跃 Key。")).toBeVisible();
 });
@@ -44,6 +44,7 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
       {
         atUnixSeconds: 1,
         requests: 4,
+        recordedRejections: 3,
         succeeded: 3,
         failed: 1,
         cancelled: 0,
@@ -112,23 +113,17 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
     />,
   );
   expect(
-    await screen.findByRole("img", { name: "今日请求近 7 天：4" }),
+    await screen.findByRole("img", { name: "今日已准入近 7 天：4" }),
   ).toBeVisible();
   expect(
     screen.getByRole("img", { name: "Token近 7 天：不可用" }),
   ).toBeVisible();
+  expect(screen.getByText("已记录准入前拒绝 3")).toBeVisible();
   expect(await screen.findByText("工作站别名")).toBeVisible();
   expect(screen.getByText(/合成工作站/)).toBeVisible();
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
-  expect(screen.getByText("等待首事件")).toBeVisible();
-  expect(
-    screen.getByRole("columnheader", { name: "推理强度" }),
-  ).toBeInTheDocument();
-  expect(screen.getByText("xhigh")).toBeVisible();
-  expect(screen.getByText("未指定", { exact: true })).toBeVisible();
-  expect(screen.getAllByText("未记录", { exact: true }).length).toBeGreaterThan(
-    0,
-  );
+  expect(screen.getByText("待首事件")).toBeVisible();
+  expect(screen.getByText("极高")).toBeVisible();
   expect(await screen.findByText("汇总别名")).toBeVisible();
   expect(screen.queryByText("最近请求")).toBeNull();
   expect(screen.getByLabelText("结果未明 3")).toBeVisible();

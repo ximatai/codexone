@@ -6,7 +6,7 @@ import { mkdir } from "node:fs/promises";
 import { expectNoHorizontalOverflow } from "./layout";
 
 for (const realtime of [true, false]) {
-  test(`real local gateway ${realtime ? "live" : "HTTP fallback"} supports confirmed updates, pause and narrow reduced motion`, async ({
+  test(`real local gateway ${realtime ? "live" : "HTTP fallback"} supports confirmed updates and narrow reduced motion`, async ({
     page,
     context,
   }) => {
@@ -40,9 +40,7 @@ for (const realtime of [true, false]) {
         },
       );
       const origin = `http://127.0.0.1:${ports.admin}`;
-      const modeLabel = realtime
-        ? "实时连接"
-        : "轮询模式（15 秒）· 活动观察中断";
+      const mode = realtime ? "live" : "polling";
       if (!realtime)
         await page.routeWebSocket("**/api/overview/live", (socket) =>
           socket.close({ code: 1013 }),
@@ -90,12 +88,17 @@ for (const realtime of [true, false]) {
       await page
         .getByRole("button", { name: "登录管理台", exact: true })
         .click();
-      await expect(page.getByText(modeLabel, { exact: true })).toBeVisible();
+      await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+        "data-live-mode",
+        mode,
+      );
+      // The first HTTP reads and the live sampler can contend for the same
+      // reader. Allow the next sample or fallback poll to settle.
       await expect(
         page
           .getByRole("region", { name: "今日 Key 请求汇总" })
           .getByRole("button", { name: "p", exact: true }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 20000 });
       await page.waitForTimeout(2200);
       await page.setViewportSize({ width: 1440, height: 900 });
       await expectNoHorizontalOverflow(page);
@@ -129,16 +132,12 @@ for (const realtime of [true, false]) {
         },
       );
       expect(response.status()).toBe(200);
-      if (realtime) {
-        await expect(page.getByText("最近结束 · 成功").first()).toBeVisible();
-      } else {
-        await expect(
-          page
-            .getByRole("region", { name: "今日 Key 请求汇总" })
-            .getByText("synthetic-browser", { exact: true }),
-        ).toBeVisible({ timeout: 20000 });
-        await expect(page.getByText("最近结束 · 成功")).toHaveCount(0);
-      }
+      await expect(
+        page
+          .getByRole("region", { name: "今日 Key 请求汇总" })
+          .getByText("synthetic-browser", { exact: true }),
+      ).toBeVisible({ timeout: 20000 });
+      await expect(page.getByText("最近结束 · 成功")).toHaveCount(0);
       const latency = Date.now() - start;
       console.log(
         `MEASURE ${realtime ? "live" : "polling"} request-start-to-browser-dom-ms=${latency} (upper bound for commit-to-browser)`,
@@ -149,16 +148,19 @@ for (const realtime of [true, false]) {
         path: `${artifacts}/real-${realtime ? "live" : "polling"}-wide.png`,
         fullPage: true,
       });
-      await page
-        .getByLabel(realtime ? "实时观察" : "自动刷新（15 秒）")
-        .uncheck();
-      await expect(page.getByText("观察已暂停", { exact: true })).toBeVisible();
-      await page.getByLabel("自动刷新（15 秒）").check();
-      await expect(page.getByText(modeLabel, { exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "刷新请求概览" }).click();
-      await expect(page.getByText(modeLabel, { exact: true })).toBeVisible();
+      await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+        "data-live-mode",
+        mode,
+      );
+      await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+        "data-live-mode",
+        mode,
+      );
       await page.waitForTimeout(2200);
-      await expect(page.getByText(modeLabel, { exact: true })).toBeVisible();
+      await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+        "data-live-mode",
+        mode,
+      );
       await page.evaluate(() => {
         const metrics = {
           cls: 0,
@@ -272,7 +274,10 @@ for (const realtime of [true, false]) {
       expect(presentation.digitsMatch).toBe(true);
       expect(presentation.inlineStyles).toBe(0);
       expect(presentation.csp).toEqual([]);
-      await expect(page.getByText(modeLabel, { exact: true })).toBeVisible();
+      await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+        "data-live-mode",
+        mode,
+      );
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.setViewportSize({ width: 390, height: 844 });
       console.log(

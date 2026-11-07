@@ -9,7 +9,7 @@ for (const width of [1920, 390]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 1200 });
-    await page.clock.setFixedTime(new Date("2026-11-03T02:00:00Z"));
+    await page.clock.install({ time: new Date("2026-11-03T02:00:00Z") });
     const state = await reviewFixture(page);
     state.accounts.splice(1);
     state.alerts = 0;
@@ -178,9 +178,8 @@ for (const width of [1920, 390]) {
       fullPage: true,
     });
     failKeys = true;
-    await page.getByRole("button", { name: "刷新请求概览" }).click();
+    await page.clock.runFor(15000);
     await expect(panel.getByText(/读取失败，保留上次成功快照/)).toBeVisible();
-    await page.getByRole("switch", { name: "自动刷新（15 秒）" }).uncheck();
     await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
     await panel.getByRole("link", { name: "未命名 Key 失败 5" }).click();
     await expect(page.getByText("请求明细", { exact: true })).toBeVisible();

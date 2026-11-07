@@ -91,23 +91,18 @@ export function useOverviewLive(active: boolean) {
   >("connecting");
   const [sources, setSources] = useState<Record<string, Freshness>>({});
   const [clients, setClients] = useState<LiveClients>([]);
-  const [recent, setRecent] = useState<z.infer<typeof flight>["rows"]>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
-  const [restart, setRestart] = useState(0);
-  const previousEpoch = useRef("");
-  const [manualBusy, setManualBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
+  const [flightAtDisconnect, setFlightAtDisconnect] = useState<number>();
+  const retryConnection = useRef<() => void>(() => {});
   const transportGeneration = useRef(0);
-  const [transportRevision, setTransportRevision] = useState(0);
-  const socketRef = useRef<WebSocket | null>(null);
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
   const authenticated = !!owner.session;
   useEffect(() => {
-    if (!active || !authenticated || manualBusy) {
+    if (!active || !authenticated) {
       setMode("paused");
-      setRecent([]);
       return;
     }
     const transport = ++transportGeneration.current;
@@ -152,8 +147,13 @@ export function useOverviewLive(active: boolean) {
       socket = new WebSocket(
         `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/api/overview/live`,
       );
-      socketRef.current = socket;
       const connection = socket;
+      let manualRetry = false;
+      retryConnection.current = () => {
+        if (connection.readyState !== WebSocket.OPEN) return;
+        manualRetry = true;
+        connection.close();
+      };
       timeout = setTimeout(() => connection.close(), 10000);
       connection.onmessage = (event) => {
         if (
@@ -203,14 +203,15 @@ export function useOverviewLive(active: boolean) {
               )
             )
               throw new Error("sequence_mismatch");
-            await client.cancelQueries({ queryKey: ["overview"] });
+            await Promise.all(
+              parsed.map(({ name }) =>
+                client.cancelQueries({ queryKey: queryKey(name), exact: true }),
+              ),
+            );
             if (!current() || connection !== socket) return;
             for (const { name, source, data } of parsed) {
               versions[name] = source.version;
-              const key = [
-                "overview",
-                name === "inFlight" ? "in-flight" : name,
-              ];
+              const key = queryKey(name);
               const replacement =
                 data ??
                 (!("data" in source) ? client.getQueryData(key) : undefined);
@@ -221,25 +222,12 @@ export function useOverviewLive(active: boolean) {
               if (name === "inFlight" && source.data != null) {
                 const activity = z
                   .object({
-                    recentlyFinished: z
-                      .array(
-                        flight.shape.rows.element.extend({
-                          outcome: z.string(),
-                          finishedAtUnixSeconds: z.number(),
-                        }),
-                      )
-                      .max(64),
                     clients: clientsSchema,
                     overflow: z.number().int().nonnegative(),
                   })
                   .parse(source.data);
                 setClients(activity.clients);
-                setRecent(activity.recentlyFinished);
                 setOverflow(activity.overflow);
-                client.setQueryData(
-                  ["overview", "recent"],
-                  activity.recentlyFinished,
-                );
               }
             }
             setSources((previous) => {
@@ -254,15 +242,10 @@ export function useOverviewLive(active: boolean) {
             epoch = frame.epoch;
             sequence = frame.sequence;
             if (!snapshot) {
-              if (
-                previousEpoch.current &&
-                previousEpoch.current !== frame.epoch
-              )
-                setRestart((value) => value + 1);
-              previousEpoch.current = frame.epoch;
               snapshot = true;
               clearTimeout(timeout);
               setReset((value) => value + 1);
+              setFlightAtDisconnect(undefined);
               setMode("live");
               stable = setTimeout(() => {
                 attempt = 0;
@@ -270,6 +253,7 @@ export function useOverviewLive(active: boolean) {
             }
           })
           .catch((error: unknown) => {
+            if (!current() || connection !== socket) return;
             const code =
               error instanceof Error &&
               [
@@ -291,17 +275,29 @@ export function useOverviewLive(active: boolean) {
         clearTimeout(timeout);
         clearTimeout(stable);
         socket = null;
-        socketRef.current = null;
         setMode("polling");
-        setRecent([]);
         setClients([]);
+        setOverflow(0);
+        if (snapshot) {
+          const key = queryKey("inFlight");
+          setFlightAtDisconnect(
+            client.getQueryState(key)?.dataUpdateCount ?? 0,
+          );
+          void client.refetchQueries({
+            queryKey: key,
+            exact: true,
+            type: "active",
+          });
+        }
         void checkSession();
         attempt += 1;
         probe = setTimeout(
           connect,
-          attempt >= 3
-            ? 60000
-            : Math.random() * Math.min(30000, 1000 * 2 ** (attempt - 1)),
+          manualRetry
+            ? 0
+            : attempt >= 3
+              ? 60000
+              : Math.random() * Math.min(30000, 1000 * 2 ** (attempt - 1)),
         );
       };
       connection.onerror = () => {
@@ -314,31 +310,15 @@ export function useOverviewLive(active: boolean) {
     }, 1000);
     return () => {
       retired = true;
+      retryConnection.current = () => {};
       controller.abort();
       clearTimeout(timeout);
       clearTimeout(probe);
       clearTimeout(stable);
       clearInterval(timer);
       socket?.close();
-      socketRef.current = null;
     };
-  }, [
-    active,
-    authenticated,
-    owner.generation,
-    client,
-    manualBusy,
-    transportRevision,
-  ]);
-  async function manualRefresh() {
-    ++transportGeneration.current;
-    socketRef.current?.close();
-    setManualBusy(true);
-    await client.cancelQueries({ queryKey: ["overview"] });
-    await client.refetchQueries({ queryKey: ["overview"], type: "active" });
-    setManualBusy(false);
-    setTransportRevision((value) => value + 1);
-  }
+  }, [active, authenticated, owner.generation, client]);
   const cache = client.getQueryCache();
   const subscribe = useCallback(
     (notify: () => void) => cache.subscribe(notify),
@@ -349,17 +329,33 @@ export function useOverviewLive(active: boolean) {
       JSON.stringify(
         names.map((name) => {
           const state = client.getQueryState(queryKey(name));
-          return [name, state?.dataUpdatedAt ?? 0, state?.status ?? "pending"];
+          return [
+            name,
+            state?.dataUpdatedAt ?? 0,
+            state?.status ?? "pending",
+            state?.dataUpdateCount ?? 0,
+          ];
         }),
       ),
     [client],
   );
   const httpState = useSyncExternalStore(subscribe, readHTTP);
+  const httpSources = JSON.parse(httpState) as [
+    string,
+    number,
+    string,
+    number,
+  ][];
+  const flightUnconfirmed =
+    mode !== "live" &&
+    flightAtDisconnect !== undefined &&
+    httpSources.find(([name]) => name === "inFlight")?.[3] ===
+      flightAtDisconnect;
   const observed: Record<string, Freshness> =
     mode === "live"
       ? sources
       : Object.fromEntries(
-          (JSON.parse(httpState) as [string, number, string][])
+          httpSources
             .filter(([, updated, status]) => updated > 0 || status === "error")
             .map(([name, updated, status]) => [
               name,
@@ -403,14 +399,13 @@ export function useOverviewLive(active: boolean) {
   );
   return {
     failure,
+    retry: () => retryConnection.current(),
+    flightUnconfirmed,
     mode,
     sources: displayed,
     clients,
-    recent,
     overflow,
     reset,
-    restart,
     stale,
-    manualRefresh,
   };
 }

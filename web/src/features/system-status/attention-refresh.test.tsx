@@ -25,7 +25,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
 });
-it("refreshes attention with the homepage and honors the shared pause switch", async () => {
+it("refreshes attention with the homepage and stops polling when the document is hidden", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   vi.mocked(management.request).mockImplementation(async (path) =>
     path === "/api/attention"
@@ -45,11 +45,10 @@ it("refreshes attention with the homepage and honors the shared pause switch", a
   expect(reads()).toBe(1);
   await act(async () => vi.advanceTimersByTime(15000));
   expect(reads()).toBe(2);
-  fireEvent.click(screen.getByLabelText("自动刷新（15 秒）"));
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  fireEvent(document, new Event("visibilitychange"));
   await act(async () => vi.advanceTimersByTime(30000));
   expect(reads()).toBe(2);
-  fireEvent.click(screen.getByRole("button", { name: "刷新请求概览" }));
-  await act(async () => {});
-  expect(reads()).toBe(3);
+  hidden.mockRestore();
   view.unmount();
 });

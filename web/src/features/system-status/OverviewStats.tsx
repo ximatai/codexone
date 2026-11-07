@@ -67,10 +67,12 @@ function Sparkline({
 }
 export function OverviewStats({
   buckets,
+  timezone,
   loading = false,
   capacities,
 }: {
   buckets: DailyBucket[];
+  timezone?: string;
   loading?: boolean;
   capacities?: CapacityMetric[];
 }) {
@@ -94,12 +96,14 @@ export function OverviewStats({
     : 0;
   const cards = [
     {
-      label: "今日请求",
+      label: "今日已准入",
       value: today ? compactCount(today.requests) : "—",
       exact: today?.requests.toLocaleString("zh-CN"),
       values: buckets.map((b) => b.requests),
       delta: change(today?.requests, yesterday?.requests),
-      note: "",
+      note: today
+        ? `已记录准入前拒绝 ${today.recordedRejections?.toLocaleString("zh-CN") ?? "不可用"}`
+        : "",
     },
     {
       label: "Token",
@@ -156,6 +160,9 @@ export function OverviewStats({
         errorRate(today) === null ? "—" : `${errorRate(today)!.toFixed(1)}%`,
       values: buckets.map(errorRate),
       delta: pointChange(errorRate(today), errorRate(yesterday)),
+      count: today
+        ? `失败 ${today.failed} / 已准入 ${today.requests}`
+        : undefined,
       note: mainFailure
         ? `失败请求中：${failures[mainFailure[0]] ?? "其他异常"}占 ${((mainFailure[1] / failureCount) * 100).toFixed(0)}%`
         : today
@@ -198,7 +205,7 @@ export function OverviewStats({
                   size="sm"
                   title={
                     [
-                      "业务日当日已准入请求，不含准入前拒绝。",
+                      `业务日当日已准入请求${timezone ? `（${timezone}）` : ""}，不含准入前拒绝。`,
                       "已观测输入与输出之和，缓存包含在输入中；缺失用量未补零。",
                       "按配置费率估算，非账单；缺失用量未计入。",
                       "失败数除以已准入请求数，客户端取消单独统计。",
@@ -240,6 +247,16 @@ export function OverviewStats({
                   </Text>
                 )}
               </Group>
+              {card.count && (
+                <Text size="xs" c="dimmed">
+                  {card.count}
+                </Text>
+              )}
+              {card.note && (
+                <Text size="xs" c="dimmed">
+                  {card.note}
+                </Text>
+              )}
               <Sparkline label={card.label} values={card.values} />
               {capacities
                 ?.filter(
@@ -272,11 +289,6 @@ export function OverviewStats({
                     </Text>
                   </Tooltip>
                 ))}
-              {card.note && (
-                <Text size="xs" c="dimmed">
-                  {card.note}
-                </Text>
-              )}
             </>
           )}
         </Paper>

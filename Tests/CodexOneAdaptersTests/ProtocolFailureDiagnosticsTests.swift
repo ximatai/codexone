@@ -48,6 +48,25 @@ struct ProtocolFailureDiagnosticsTests {
     #expect(known["request_id"]?.description == id)
   }
 
+  @Test func admission503RetainsTheFixedCause() {
+    let cases: [(any Error, String, String?)] = [
+      (AccountDispatchError.unavailable, "account_unavailable", "account_dispatch_unavailable"),
+      (AccountCooldownUnavailable(seconds: 3), "account_unavailable", "account_cooldown"),
+      (AccountDispatchError.refreshRequired, "account_refresh_required", nil),
+      (
+        GatewayProtocolError(503, "continuation_owner_unavailable"),
+        "continuation_owner_unavailable", nil
+      ),
+    ]
+    for (error, code, reason) in cases {
+      let failure = protocolFailure(error)
+      let metadata = ProtocolFailureDiagnostics.metadata(failure, requestID: "untrusted")
+      #expect(metadata["code"]?.description == code)
+      #expect(metadata["reason"]?.description == reason)
+      #expect(metadata["status"]?.description == "503")
+    }
+  }
+
   @Test func diagnosticReasonIsFixedAndNotPublic() throws {
     let error = GatewayProtocolError(400, "unsupported_tools", detail: .toolsImage)
     let metadata = ProtocolFailureDiagnostics.metadata(error, requestID: "untrusted")

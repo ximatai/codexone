@@ -9,6 +9,8 @@ enum ProtocolRejectionDetail: String, Sendable {
   case backendPromptCacheRetention = "backend_parameter_prompt_cache_retention"
   case backendMetadata = "backend_parameter_metadata"
   case backendStore = "backend_parameter_store"
+  case accountCooldown = "account_cooldown"
+  case accountDispatchUnavailable = "account_dispatch_unavailable"
   case backendPreviousResponseID = "backend_parameter_previous_response_id"
   case reasoningEffort = "reasoning_effort"
   case toolsImage = "tools_image"

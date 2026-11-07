@@ -64,6 +64,7 @@ test("backup attention opens storage details with last success on desktop and mo
     return route.fulfill({ json: data[path] ?? {} });
   });
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await expect(
     page.getByText("已超过备份时限，请检查最近备份与磁盘空间"),
   ).toBeVisible();

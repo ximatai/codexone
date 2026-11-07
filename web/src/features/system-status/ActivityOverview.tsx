@@ -1,6 +1,4 @@
 import { overviewQuery } from "./overview-source";
-import { RequestWatch } from "./RequestWatch";
-import type { FlightRow } from "./round2-api";
 import type { useOverviewLive } from "./useOverviewLive";
 import { KeyName } from "../../shared/KeyName";
 import {
@@ -14,20 +12,19 @@ import {
   Group,
   Paper,
   Stack,
-  Switch,
   Text,
   Title,
 } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { DataTable } from "../../shared/ui/DataTable";
-import { ErrorState, StatusBadge } from "../../shared/ui/States";
+import { ErrorState } from "../../shared/ui/States";
 import styles from "./overview.module.css";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { OverviewStats } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
-import { localTime, modes } from "../../shared/presentation";
+import { localTime } from "../../shared/presentation";
 import type { CapacityMetric } from "./overview-format";
 import { KeyResults } from "./KeyResults";
 import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
@@ -42,22 +39,6 @@ const sourceLabels: Record<string, string> = {
   attention: "待处理提醒",
   headroom: "资源余量",
 };
-function UpdatedAgo({ updated }: { updated: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!document.hidden) setNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return (
-    <Text size="xs" className={styles.updatedAgo}>
-      {updated
-        ? `${Math.max(0, Math.floor((now - updated) / 1000))} 秒前更新`
-        : "尚未更新"}
-    </Text>
-  );
-}
 function Elapsed({
   seconds,
   sampledAt,
@@ -84,8 +65,8 @@ function Elapsed({
   return (
     <span style={{ fontVariantNumeric: "tabular-nums" }}>
       {seconds == null
-        ? "耗时不可用"
-        : `已持续 ${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
+        ? "耗时未知"
+        : `${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
     </span>
   );
 }
@@ -93,7 +74,6 @@ export function ActivityOverview({
   refresh,
   extraQueries = [],
   sidebar,
-  attention,
   accounts = [],
   capacities,
   live,
@@ -109,23 +89,19 @@ export function ActivityOverview({
     isFetching: boolean;
     refetch: () => Promise<unknown>;
   }[];
-  sidebar?: ReactNode;
-  attention?: ReactNode;
+  sidebar?: (sourceDetails: ReactNode) => ReactNode;
   accounts?: readonly AccountName[];
   capacities?: CapacityMetric[];
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const control = refresh ?? localRefresh;
-  const [selection, setSelection] = useState<{
-    row: FlightRow;
-    revision: number;
-  } | null>(null);
   const options = {
     enabled: !!owner.session,
     refetchInterval: control.interval,
     // Returning to the tab refetches only snapshots older than one refresh period.
     refetchOnWindowFocus: control.active && live?.mode !== "live",
+    refetchOnReconnect: control.active && live?.mode !== "live",
     staleTime: 15000,
   };
   const daily = overviewQuery(
@@ -168,9 +144,6 @@ export function ActivityOverview({
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
-  const updated = allQueries.every((q) => q.dataUpdatedAt > 0)
-    ? Math.min(...allQueries.map((q) => q.dataUpdatedAt))
-    : 0;
   const failedSources = allQueries.filter((query) => query.isError);
   const readFailure = failedSources.length
     ? `概览读取失败：${failedSources
@@ -181,291 +154,181 @@ export function ActivityOverview({
         .join("、")}。缺失值未记为零，请重试。`
     : "";
   const retrySources = () => {
-    for (const query of allQueries) void query.refetch();
+    if (live?.mode === "live") {
+      live.retry();
+      return;
+    }
+    for (const query of failedSources) void query.refetch();
   };
 
   return (
     <Stack aria-label="请求即时概览">
       <div className={styles.header}>
-        <PageHeader
-          title="今日运营概览"
-          description={`${daily.data?.timezone ?? "业务日"} 当日 · 费用为估算，非账单`}
-          actions={
-            <Group>
-              <Switch
-                label={live?.mode === "live" ? "实时观察" : "自动刷新（15 秒）"}
-                checked={control.automatic}
-                onChange={(e) => control.setAutomatic(e.currentTarget.checked)}
-              />
-              <UpdatedAgo updated={updated} />
-              <Button
-                size="xs"
-                variant="default"
-                disabled={allQueries.some((q) => q.isFetching)}
-                onClick={() => {
-                  if (control.manualRefresh) control.manualRefresh();
-                  else for (const q of allQueries) void q.refetch();
-                }}
-              >
-                刷新请求概览
-              </Button>
-            </Group>
-          }
-        />
-      </div>
-      {!control.automatic && (
-        <Text size="xs" c="dimmed">
-          自动观察已暂停，以下为上次快照。
-        </Text>
-      )}
-      {live && (
-        <div
-          aria-label="概览连接状态"
-          data-live-failure={live.failure || undefined}
-        >
-          <Text size="xs">
-            {
-              {
-                live: "实时连接",
-                connecting: "连接中 · HTTP 轮询",
-                polling: "轮询模式（15 秒）· 活动观察中断",
-                paused: "观察已暂停",
-              }[live.mode]
-            }
-          </Text>
-          <details>
-            <summary
-              className={styles.sourceSummary}
-              title={readFailure || undefined}
-            >
-              {readFailure ? (
-                <span role="alert">{readFailure}</span>
-              ) : (
-                <>
-                  各源更新时间
-                  {live.stale.length
-                    ? ` · ${live.stale.length} 个来源已陈旧`
-                    : ""}
-                </>
-              )}
-            </summary>
-            <div className={styles.sourceDetails}>
-              {readFailure && (
-                <>
-                  <Text size="sm" c="red">
-                    {readFailure}
-                  </Text>
-                  <Button variant="subtle" size="xs" onClick={retrySources}>
-                    重试
-                  </Button>
-                </>
-              )}
-              {Object.entries(live.sources).map(([name, source]) => (
-                <Text size="xs" key={name}>
-                  {sourceLabels[name] ?? "概览来源"} ·{" "}
-                  {source.lastSuccessAt == null
-                    ? "尚无成功数据"
-                    : localTime(source.lastSuccessAt)}{" "}
-                  ·{" "}
-                  {live.stale.some(([key]) => key === name)
-                    ? "已陈旧"
-                    : "已更新"}
+        <PageHeader title="今日运营概览" />
+        {live && (
+          <div
+            className={styles.connectionNotice}
+            aria-label="概览连接状态"
+            data-live-mode={live.mode}
+            data-live-failure={live.failure || undefined}
+            hidden={!readFailure && !live.stale.length}
+          >
+            {readFailure ? (
+              <Group gap={4} wrap="nowrap">
+                <Text
+                  size="xs"
+                  c="red"
+                  role="alert"
+                  className={styles.connectionNoticeText}
+                  truncate
+                  title={readFailure}
+                >
+                  {readFailure}
                 </Text>
-              ))}
-            </div>
-          </details>
-        </div>
-      )}
+                <Button variant="subtle" size="xs" onClick={retrySources}>
+                  重试
+                </Button>
+              </Group>
+            ) : (
+              !!live.stale.length && (
+                <Text
+                  size="xs"
+                  c="orange.8"
+                  className={styles.connectionNoticeText}
+                  truncate
+                >
+                  部分数据已陈旧 · {live.stale.length} 个来源
+                </Text>
+              )
+            )}
+          </div>
+        )}
+      </div>
       {summary}
-      {attention}
       {!live && failedSources.length > 0 && (
         <ErrorState retry={retrySources}>{readFailure}</ErrorState>
       )}
-      {daily.isError && !daily.data ? (
-        <Text size="sm" c="dimmed">
-          运营指标读取失败，请重试。
-        </Text>
-      ) : (
-        <OverviewStats
-          buckets={daily.data?.buckets ?? []}
-          loading={daily.isPending}
-          capacities={capacities}
-        />
-      )}
       <div className={sidebar ? styles.content : undefined}>
         <Stack className={styles.main}>
-          <KeyResults query={keySummary} />
-          <RequestWatch
-            key={live?.restart ?? 0}
-            active={
-              live?.mode === "live" &&
-              control.active &&
-              live.sources.inFlight?.freshness === "fresh"
-            }
-            rows={[
-              ...(flight.data ?? []),
-              ...(live?.mode === "live" ? live.recent : []),
-            ]}
-            keys={keySummary.data?.keys ?? []}
-            selection={selection}
-            clearSelection={() => setSelection(null)}
-          />
+          {daily.isError && !daily.data ? (
+            <Text size="sm" c="dimmed">
+              运营指标读取失败，请重试。
+            </Text>
+          ) : (
+            <OverviewStats
+              buckets={daily.data?.buckets ?? []}
+              timezone={daily.data?.timezone}
+              loading={daily.isPending}
+              capacities={capacities}
+            />
+          )}
           <Paper withBorder p="md">
-            <Group justify="space-between" mb="xs">
-              <Title order={3} size="h4">
-                进行中请求
-              </Title>
-            </Group>
+            <Title order={3} size="h4" mb="xs">
+              进行中请求{flight.data ? ` · ${flight.data.length}` : ""}
+            </Title>
+            {live?.flightUnconfirmed && (
+              <Text size="xs" c="orange.8" role="status">
+                正在确认请求状态，暂保留上次快照。
+              </Text>
+            )}
             {flight.isError && !flight.data ? (
               <Text size="sm" c="dimmed">
                 进行中请求读取失败。请重试。
               </Text>
+            ) : flight.isPending || !flight.data?.length ? (
+              <Text size="sm" c="dimmed" className={styles.requestEmpty}>
+                {flight.isPending ? "读取中…" : "当前没有进行中的请求。"}
+              </Text>
             ) : (
-              <DataTable
-                animate
-                rows={[
-                  ...(flight.data ?? []),
-                  ...(live?.mode === "live"
-                    ? live.recent.filter(
-                        (row) =>
-                          row.finishedAtUnixSeconds != null &&
-                          Date.now() / 1000 - row.finishedAtUnixSeconds < 5 &&
-                          !flight.data?.some((active) => active.id === row.id),
-                      )
-                    : []),
-                ]}
-                rowKey={(row) => row.id}
-                retry={() => void flight.refetch()}
-                loading={flight.isPending}
-                empty="当前没有进行中的请求。"
-                columns={[
-                  {
-                    id: "principal",
-                    title: "Key",
-                    width: "22%",
-                    render: (row) => (
-                      <Stack gap={2}>
+              <div className={styles.requestGrid} aria-label="在途请求卡片">
+                {[...flight.data]
+                  .sort(
+                    (a, b) =>
+                      (a.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) -
+                        (b.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) ||
+                      a.id.localeCompare(b.id),
+                  )
+                  .map((row) => (
+                    <Paper
+                      key={row.id}
+                      withBorder
+                      p="xs"
+                      className={styles.requestCard}
+                    >
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
                         <KeyName {...row} />
-                        <Button
-                          size="compact-xs"
-                          variant="subtle"
-                          onClick={() =>
-                            setSelection({ row, revision: Date.now() })
-                          }
-                        >
-                          固定观察此请求
-                        </Button>
-                        {row.outcome && (
-                          <Text size="xs" c="dimmed">
-                            最近结束 ·{" "}
-                            {(
-                              {
-                                succeeded: "成功",
-                                failed: "失败",
-                                cancelled: "已取消",
-                                unknown: "结果未明",
-                              } as Record<string, string>
-                            )[row.outcome] ?? row.outcome}
-                          </Text>
-                        )}
-                      </Stack>
-                    ),
-                  },
-                  {
-                    id: "model",
-                    title: "模型 / 模式",
-                    width: "20%",
-                    render: (row) => (
-                      <Stack gap={2}>
-                        <Text size="sm">{row.model ?? "模型未记录"}</Text>
-                        <Text size="xs" c="dimmed">
-                          {modes[row.mode] ?? "其他模式"}
+                        <Text size="xs" className={styles.requestElapsed}>
+                          <Elapsed
+                            seconds={row.elapsedSeconds}
+                            sampledAt={flight.dataUpdatedAt}
+                            running={
+                              control.active &&
+                              !flight.isError &&
+                              !live?.flightUnconfirmed &&
+                              (!live ||
+                                !live.stale.some(
+                                  ([source]) => source === "inFlight",
+                                ))
+                            }
+                          />
                         </Text>
-                      </Stack>
-                    ),
-                  },
-                  {
-                    id: "reasoning",
-                    title: "推理强度",
-                    width: "12%",
-                    render: (row) => (
-                      <Text
-                        size="sm"
-                        title={
-                          row.reasoningEffort
-                            ? "请求中记录的推理强度，非提供者实际执行强度证明。"
-                            : row.requestMetadataRecorded
-                              ? "请求未显式指定推理强度，不推断实际生效值。"
-                              : "该执行未记录请求参数。"
-                        }
-                      >
-                        {row.reasoningEffort ??
-                          (row.requestMetadataRecorded ? "未指定" : "未记录")}
-                      </Text>
-                    ),
-                  },
-                  {
-                    id: "account",
-                    title: "订阅账号",
-                    width: "22%",
-                    render: (row) =>
-                      row.accountID ? (
-                        <Anchor
-                          component={Link}
-                          to={`/?account=${encodeURIComponent(row.accountID)}`}
-                          size="sm"
-                        >
-                          {accountName(
-                            row.accountID,
-                            accounts,
-                            row.accountDisplayName,
-                          )}
-                        </Anchor>
-                      ) : (
-                        accountName(null, accounts)
-                      ),
-                  },
-                  {
-                    id: "elapsed",
-                    title: "运行时长",
-                    width: "12%",
-                    render: (row) => (
-                      <Elapsed
-                        seconds={row.elapsedSeconds}
-                        sampledAt={flight.dataUpdatedAt}
-                        running={!row.outcome}
-                      />
-                    ),
-                  },
-                  {
-                    id: "event",
-                    title: "首事件",
-                    width: "12%",
-                    render: (row) => (
-                      <span
-                        title={
-                          row.hasFirstEvent == null
-                            ? "该执行没有首事件观测，不能据此判断是否已收到上游事件。"
-                            : "首事件是首个上游协议事件，不代表输出完成。"
-                        }
-                        tabIndex={0}
-                      >
-                        <StatusBadge
-                          color={row.hasFirstEvent ? "green" : "gray"}
+                      </Group>
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        <Text size="xs" className="wrap-anywhere">
+                          {row.model ?? "模型未知"}
+                        </Text>
+                        <Text
+                          size="xs"
+                          className={styles.requestElapsed}
+                          c={row.hasFirstEvent ? "teal.8" : "dimmed"}
+                          title="首事件是首个上游协议事件，不代表输出完成"
                         >
                           {row.hasFirstEvent == null
                             ? "未观测"
                             : row.hasFirstEvent
-                              ? "已收到首事件"
-                              : "等待首事件"}
-                        </StatusBadge>
-                      </span>
-                    ),
-                  },
-                ]}
-              />
+                              ? "首事件已到"
+                              : "待首事件"}
+                        </Text>
+                      </Group>
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        {row.accountID ? (
+                          <Anchor
+                            component={Link}
+                            to={`/?account=${encodeURIComponent(row.accountID)}`}
+                            size="xs"
+                            className="wrap-anywhere"
+                          >
+                            {accountName(
+                              row.accountID,
+                              accounts,
+                              row.accountDisplayName,
+                            )}
+                          </Anchor>
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            账号未知
+                          </Text>
+                        )}
+                        {row.reasoningEffort && (
+                          <Text size="xs" title="请求指定的推理强度">
+                            {(
+                              {
+                                minimal: "最低",
+                                low: "低",
+                                medium: "中",
+                                high: "高",
+                                xhigh: "极高",
+                              } as Record<string, string>
+                            )[row.reasoningEffort] ?? row.reasoningEffort}
+                          </Text>
+                        )}
+                      </Group>
+                    </Paper>
+                  ))}
+              </div>
             )}
           </Paper>
+          <KeyResults query={keySummary} />
           {live?.mode === "live" && (
             <Paper withBorder p="md">
               <Title order={3} size="h4">
@@ -519,7 +382,37 @@ export function ActivityOverview({
         </Stack>
         {sidebar && (
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
-            {sidebar}
+            {sidebar(
+              live && (
+                <details>
+                  <summary>各源更新时间</summary>
+                  <div className={styles.sourceDetails}>
+                    <Text size="xs">
+                      {
+                        {
+                          live: "实时连接",
+                          connecting: "连接中",
+                          polling: "轮询更新",
+                          paused: "已暂停",
+                        }[live.mode]
+                      }
+                    </Text>
+                    {Object.entries(live.sources).map(([name, source]) => (
+                      <Text size="xs" key={name}>
+                        {sourceLabels[name] ?? "概览来源"} ·{" "}
+                        {source.lastSuccessAt == null
+                          ? "尚无成功数据"
+                          : localTime(source.lastSuccessAt)}{" "}
+                        ·{" "}
+                        {live.stale.some(([key]) => key === name)
+                          ? "已陈旧"
+                          : "已更新"}
+                      </Text>
+                    ))}
+                  </div>
+                </details>
+              ),
+            )}
           </aside>
         )}
       </div>

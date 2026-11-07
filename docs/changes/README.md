@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [startup-rejection-visibility](startup-rejection-visibility/proposal.md) · [任务](startup-rejection-visibility/tasks.md)
+
 - [native-image-json](native-image-json/proposal.md) · [任务](native-image-json/tasks.md)
 
 - [transparent-client-protocol](transparent-client-protocol/proposal.md) · [任务](transparent-client-protocol/tasks.md)

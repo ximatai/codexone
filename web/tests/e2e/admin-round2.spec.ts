@@ -216,22 +216,16 @@ test("round two overview, usage, account name and key expiration", async ({
   await page.getByRole("link", { name: "服务概览", exact: true }).click();
   const activity = page.getByLabel("请求即时概览");
   await expect(
-    activity.getByRole("img", { name: /^今日请求近 7 天：/ }),
+    activity.getByRole("img", { name: /^今日已准入近 7 天：/ }),
   ).toBeVisible();
   await expect(activity.getByText("输入缓存占比 80.0%")).toBeVisible();
   await expect(activity.getByText("失败请求中：上游限流占 100%")).toBeVisible();
   await expect(
     activity.getByText("合成进行中账号", { exact: false }),
   ).toBeVisible();
-  await expect(
-    activity.getByText("等待首事件", { exact: false }),
-  ).toBeVisible();
+  await expect(activity.getByText("待首事件", { exact: false })).toBeVisible();
   await expect(activity.getByText("16", { exact: true })).toBeVisible();
-  await expect(
-    activity.getByRole("columnheader", { name: "推理强度" }),
-  ).toBeVisible();
-  await expect(activity.getByText("high", { exact: true })).toBeVisible();
-  await expect(activity.getByLabel("自动刷新（15 秒）")).toBeChecked();
+  await expect(activity.getByText("高", { exact: true })).toBeVisible();
   await expect(
     activity.getByRole("heading", { name: "今日 Key 请求汇总" }),
   ).toBeVisible();

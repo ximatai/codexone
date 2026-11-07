@@ -114,7 +114,7 @@ import Testing
   }
   let query = try UsageQuery(startUnixSeconds: oldDay, endUnixSeconds: oldDay + 86400)
   let reader = try await store.makeUsageReader()
-  let before = try await reader.read { try SQLiteUsageReader.daily($0, query) }
+  let before = try await reader.read { try SQLiteUsageReader.daily($0, query, now: now) }
   // A delete failure must roll back aggregate creation as well.
   try await store.perform {
     try $0.exec(
@@ -133,7 +133,7 @@ import Testing
   try await retryStore.perform { try $0.exec("DROP TRIGGER fail_retention") }
   try await retryStore.maintainExecutions(now: now)
   try await retryStore.maintainExecutions(now: now)
-  let after = try await retryReader.read { try SQLiteUsageReader.daily($0, query) }
+  let after = try await retryReader.read { try SQLiteUsageReader.daily($0, query, now: now) }
   #expect(
     after[0].requests == before[0].requests
       && after[0].metrics.inputTokens == before[0].metrics.inputTokens)

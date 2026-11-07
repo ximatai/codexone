@@ -5,6 +5,14 @@ const backupSchema = z.object({
   lastSuccessUnixSeconds: z.number().nullable().optional(),
   retainedCount: z.number().int().nonnegative(),
 });
+const resourceSchema = z.object({
+  unixSeconds: z.number().int().nonnegative(),
+  processResidentBytes: z.number().nonnegative().optional(),
+  hostAvailableBytes: z.number().nonnegative().optional(),
+  hostTotalBytes: z.number().positive().optional(),
+  hostCPUPercent: z.number().min(0).max(100).optional(),
+});
+export type ResourceSample = z.infer<typeof resourceSchema>;
 export async function fetchStorage(
   signal: AbortSignal,
 ): Promise<ReturnType<typeof parseStorage>> {
@@ -21,6 +29,7 @@ export function parseStorage(value: Record<string, unknown>): Record<
   admissionAllowed: boolean;
   optionalWorkAllowed: boolean;
   pressure: string;
+  resources?: ResourceSample[];
   backup?: z.infer<typeof backupSchema>;
 } {
   if (
@@ -34,6 +43,7 @@ export function parseStorage(value: Record<string, unknown>): Record<
     admissionAllowed: value.admissionAllowed,
     optionalWorkAllowed: value.optionalWorkAllowed,
     pressure: value.pressure,
+    resources: z.array(resourceSchema).max(121).safeParse(value.resources).data,
     backup: value.backup == null ? undefined : backupSchema.parse(value.backup),
   };
 }

@@ -1,7 +1,6 @@
 import { expect, test } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 import type { Page, WebSocketRoute } from "@playwright/test";
-import { keySummary } from "../../src/features/system-status/round2-api";
 
 test("live metadata preserves content, skipped sequences fall back, and revocation clears private data", async ({
   page,
@@ -24,7 +23,10 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
     sections,
   };
   socket!.send(JSON.stringify(snapshot));
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
   const previous =
     (await page
       .getByRole("region", { name: "今日 Key 请求汇总" })
@@ -68,14 +70,18 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
       },
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).getByRole("status"),
   ).toContainText("保留上次成功快照");
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
-  await page.locator("summary").filter({ hasText: "概览读取失败" }).click();
+  await page.getByText("运行诊断", { exact: true }).click();
+  await page.getByText("各源更新时间", { exact: true }).click();
   await expect(page.getByText(/今日 Key 汇总 · .* · 已陈旧/)).toBeVisible();
   socket!.send(
     JSON.stringify({
@@ -86,7 +92,10 @@ test("live metadata preserves content, skipped sequences fall back, and revocati
       sections: {},
     }),
   );
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await expect(
     page.getByRole("region", { name: "今日 Key 请求汇总" }).locator("table"),
   ).toHaveText(previous);
@@ -153,6 +162,7 @@ test("HTTP pending over an old snapshot marks the module and availability summar
     route.close({ code: 1013 }),
   );
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await expect(page.getByText("已就绪", { exact: true })).toBeVisible();
   let release: (() => void) | undefined;
   await page.route("**/api/system", async (route) => {
@@ -170,18 +180,14 @@ test("HTTP pending over an old snapshot marks the module and availability summar
       page.getByText("服务状态已陈旧，保留上次成功快照。"),
     ).toBeVisible();
     await expect(
-      page
-        .getByRole("region", { name: "当前接入条件" })
-        .getByText("部分来源读取失败或陈旧，请先核对读取状态。"),
+      page.getByText("当前可用性无法确认", { exact: true }),
     ).toBeVisible();
   } finally {
     release?.();
   }
 });
 
-test("a new server epoch retires the pinned request instead of carrying it across restart", async ({
-  page,
-}) => {
+test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -199,8 +205,6 @@ test("a new server epoch retires the pinned request instead of carrying it acros
       sections,
     }),
   );
-  const watch = page.getByRole("region", { name: "请求关注" });
-  await watch.getByRole("button", { name: "关注下一次请求" }).click();
   socket!.send(
     JSON.stringify({
       protocol: 1,
@@ -215,10 +219,12 @@ test("a new server epoch retires the pinned request instead of carrying it acros
             rows: [
               {
                 id: "synthetic-retired-request",
+                model: "synthetic-retired-model",
                 keyID: "synthetic-key",
                 mode: "http",
                 accountID: null,
                 hasFirstEvent: false,
+                elapsedSeconds: 3,
               },
             ],
             recentlyFinished: [],
@@ -229,10 +235,33 @@ test("a new server epoch retires the pinned request instead of carrying it acros
       },
     }),
   );
-  await expect(watch.getByText("synthetic-retired-request")).toBeVisible();
+  await expect(
+    page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
+  ).toBeVisible();
+  let releaseFlight: (() => void) | undefined;
+  await page.route("**/api/usage/in-flight", async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseFlight = resolve;
+    });
+    await route.fulfill({ json: { rows: [] } }).catch(() => {});
+  });
   const previous = socket;
-  socket!.close({ code: 1013 });
-  await expect(watch.getByText("观察中断，结果尚未确认")).toBeVisible();
+  try {
+    socket!.close({ code: 1013 });
+    await expect.poll(() => !!releaseFlight, { timeout: 5000 }).toBe(true);
+    await expect(
+      page.getByText("正在确认请求状态，暂保留上次快照。"),
+    ).toBeVisible();
+    const cards = page.getByLabel("在途请求卡片");
+    await expect(cards.getByText("3 秒", { exact: true })).toBeVisible();
+    releaseFlight?.();
+    await expect(cards).toHaveCount(0);
+    await expect(
+      page.getByText("正在确认请求状态，暂保留上次快照。"),
+    ).toHaveCount(0);
+  } finally {
+    releaseFlight?.();
+  }
   await expect.poll(() => socket !== previous).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -243,11 +272,11 @@ test("a new server epoch retires the pinned request instead of carrying it acros
       sections,
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
-  await expect(watch.getByText("synthetic-retired-request")).toHaveCount(0);
-  await expect(
-    watch.getByRole("button", { name: "关注下一次请求" }),
-  ).toBeEnabled();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  await expect(page.getByText("synthetic-retired-model")).toHaveCount(0);
 });
 
 test("initial unavailable snapshot ends cancelled HTTP loading; source recovers without fake zero", async ({
@@ -291,18 +320,33 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
         sections: unavailable,
       }),
     );
-    await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+      "data-live-mode",
+      "live",
+    );
     await expect(
       page.getByText("今日 Key 汇总读取失败。请重试。"),
     ).toBeVisible();
     await expect(page.getByText("今日暂无活跃 Key。")).toHaveCount(0);
-    socket!.send(
+    const failedSocket = socket;
+    failedSocket!.send(
       JSON.stringify({
         protocol: 1,
         epoch: "synthetic-null",
         sequence: 2,
         kind: "update",
-        sections: { keys: sections.keys },
+        sections: { storage: sections.storage },
+      }),
+    );
+    await page.getByRole("button", { name: "重试", exact: true }).click();
+    await expect.poll(() => socket !== failedSocket).toBe(true);
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-retry",
+        sequence: 1,
+        kind: "snapshot",
+        sections,
       }),
     );
     await expect(page.getByText("今日 Key 汇总读取失败。请重试。")).toHaveCount(
@@ -316,11 +360,11 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
   }
 });
 
-test("successful HTTP fallback advances source freshness beyond 45 seconds", async ({
+test("push updates resources without HTTP polling and resumes after fallback", async ({
   page,
 }) => {
   await page.clock.install();
-  await reviewFixture(page);
+  const state = await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   let reject = false;
   await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -339,25 +383,129 @@ test("successful HTTP fallback advances source freshness beyond 45 seconds", asy
       sections,
     }),
   );
-  await expect(page.getByText("实时连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const overviewPaths = new Set([
+    "/api/system",
+    "/api/usage/in-flight",
+    "/api/usage/daily",
+    "/api/usage/keys",
+    "/api/accounts",
+    "/api/runtime/storage",
+    "/api/attention",
+    "/api/usage/headroom",
+  ]);
+  const overviewReads = () =>
+    state.reads.filter(({ path }) => overviewPaths.has(path)).length;
+  const initialReads = overviewReads();
+  await page.clock.fastForward(16000);
+  expect(overviewReads()).toBe(initialReads);
+  const sampleTime = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const resource = {
+    ...sections.storage,
+    version: 2,
+    sampledAtUnixSeconds: sampleTime,
+    lastSuccessAt: sampleTime,
+    data: {
+      pressure: "normal",
+      admissionAllowed: true,
+      optionalWorkAllowed: true,
+      availableBytes: 40,
+      volumeTotalBytes: 100,
+      resources: [
+        {
+          unixSeconds: sampleTime - 30,
+          hostCPUPercent: 10,
+          hostAvailableBytes: 4,
+          hostTotalBytes: 8,
+          processResidentBytes: 128 * 1024 ** 2,
+        },
+        {
+          unixSeconds: sampleTime,
+          hostCPUPercent: 25,
+          hostAvailableBytes: 6,
+          hostTotalBytes: 8,
+          processResidentBytes: 256 * 1024 ** 2,
+        },
+      ],
+    },
+  };
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-fallback",
+      sequence: 2,
+      kind: "update",
+      sections: { storage: resource },
+    }),
+  );
+  await expect(page.getByRole("group", { name: "CPU 使用率" })).toContainText(
+    "25%",
+  );
+  await expect(
+    page.getByRole("group", { name: "服务器可用内存" }),
+  ).toContainText("75%");
+  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
+    "40%",
+  );
+  await expect(
+    page.getByRole("img", { name: "网关内存占用最近一小时趋势" }),
+  ).toBeVisible();
+  expect(overviewReads()).toBe(initialReads);
   reject = true;
   socket!.close({ code: 1013 });
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await page.clock.fastForward(46000);
-  await page.getByRole("button", { name: "刷新请求概览" }).click();
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect.poll(overviewReads).toBeGreaterThan(initialReads);
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await expect(
     page.locator("summary").filter({ hasText: "各源更新时间" }),
   ).toHaveText("各源更新时间");
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.getByText("各源更新时间", { exact: true }).click();
   await expect(page.getByText(/存储与备份 · .* · 已更新/)).toBeVisible();
   await expect(page.getByText(/今日 Key 汇总 · .* · 已更新/)).toBeVisible();
+  const previousSocket = socket;
+  reject = false;
+  await page.clock.fastForward(61000);
+  await expect.poll(() => socket !== previousSocket).toBe(true);
+  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const fresh = Object.fromEntries(
+    Object.entries({ ...sections, storage: resource }).map(([name, source]) => [
+      name,
+      { ...source, lastSuccessAt: resumed, sampledAtUnixSeconds: resumed },
+    ]),
+  );
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-fallback",
+      sequence: 1,
+      kind: "snapshot",
+      sections: fresh,
+    }),
+  );
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const resumedReads = overviewReads();
+  await page.clock.fastForward(16000);
+  expect(overviewReads()).toBe(resumedReads);
 });
 
 for (const width of [1440, 390])
-  test(`watch next request retains outcome and provides honest diagnostics at ${width}px`, async ({
+  test(`live cards leave the grid when requests finish at ${width}px`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     await reviewFixture(page);
     let socket: WebSocketRoute | undefined;
     await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -391,16 +539,14 @@ for (const width of [1440, 390])
         }),
       );
     send(1, null);
-    const watch = page.getByRole("region", { name: "请求关注", exact: true });
-    await expect(
-      watch.getByRole("button", { name: "关注下一次请求" }),
-    ).toBeEnabled();
-    const watchedKey = keySummary.parse(sections.keys.data).keys[0].keyID;
-    await watch.getByLabel("关注范围").selectOption(watchedKey);
-    await watch.getByRole("button", { name: "关注下一次请求" }).click();
+    const cards = page.getByLabel("在途请求卡片");
+    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+      "data-live-mode",
+      "live",
+    );
     const row = {
-      id: "synthetic-watched-request",
-      keyID: watchedKey,
+      id: "synthetic-running-request",
+      keyID: "synthetic-key",
       principal: "synthetic-tool",
       model: "synthetic-text",
       mode: "http",
@@ -422,24 +568,20 @@ for (const width of [1440, 390])
       ],
       overflow: 0,
     };
-    send(2, {
-      ...data,
-      rows: [
-        { ...row, id: "synthetic-other-request", keyID: "synthetic-other-key" },
-      ],
-    });
-    await expect(watch.getByText(/正在等待新请求/)).toBeVisible();
-    await expect(watch.getByText("synthetic-other-request")).toHaveCount(0);
-    send(3, data);
-    await expect(watch.getByText(row.id)).toBeVisible();
-    await expect(watch.getByText("等待首个上游事件")).toBeVisible();
+    send(2, data);
+    await expect(cards.getByText("synthetic-text")).toBeVisible();
+    await expect(cards.getByText("待首事件")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "固定观察此请求" }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("heading", { name: "持续连接", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "-unnamed", exact: true }),
     ).toBeVisible();
-    send(4, {
+    // Older gateways can still send a retained completion. Only rows drive the cards.
+    send(3, {
       ...data,
       rows: [],
       recentlyFinished: [
@@ -450,24 +592,12 @@ for (const width of [1440, 390])
         },
       ],
     });
-    await expect(watch.getByText("成功返回")).toBeVisible();
-    send(5, { ...data, rows: [], recentlyFinished: [] });
-    await expect(watch.getByText(row.id)).toBeVisible();
-    await expect(
-      watch.getByRole("link", { name: "按 Key 查看用量与诊断" }),
-    ).toHaveAttribute(
-      "href",
-      `#/usage?key=${encodeURIComponent(watchedKey)}&range=24h`,
-    );
+    await expect(cards).toHaveCount(0);
+    await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
+    await expect(page.getByRole("region", { name: "请求关注" })).toHaveCount(0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
     ).toBe(true);
-    await watch.scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: testInfo.outputPath(`request-watch-${width}.png`),
-    });
-    await page.getByRole("switch", { name: "实时观察" }).uncheck();
-    await expect(watch.getByText("成功返回")).toBeVisible();
   });

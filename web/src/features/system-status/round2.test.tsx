@@ -34,7 +34,7 @@ it("converts token data without counting cache twice or filling missing evidence
   expect(pointChange(1, 1.01)).toBe("较昨日持平");
   expect(pointChange(null, 1)).toBe("较昨日不可用");
 });
-it("pauses auto refresh while hidden, resumes when visible, and honors switch", () => {
+it("pauses polling while hidden and resumes when visible", () => {
   vi.useFakeTimers();
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
   const { result, unmount } = renderHook(() => useOverviewRefresh());
@@ -49,8 +49,6 @@ it("pauses auto refresh while hidden, resumes when visible, and honors switch", 
     document.dispatchEvent(new Event("visibilitychange"));
   });
   expect(result.current.interval).toBe(15000);
-  act(() => result.current.setAutomatic(false));
-  expect(result.current.interval).toBe(false);
   unmount();
 });
 it("rejects malformed daily counts and preserves missing evidence", async () => {

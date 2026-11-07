@@ -1,12 +1,27 @@
+.header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.connectionNotice {
+  min-width: 0;
+}
+.connectionNoticeText {
+  flex: 1;
+  min-width: 0;
+  text-align: end;
+}
+.connectionNotice button {
+  flex-shrink: 0;
+}
+@media (max-width: 479px) {
+  .header h1 {
+    font-size: var(--mantine-h2-font-size);
+  }
+}
 .header > :first-child {
   margin-bottom: 0;
-}
-.watchResult {
-  height: 12rem;
-  overflow: auto;
-}
-.availability {
-  min-height: 9rem;
 }
 .kpis {
   display: grid;
@@ -51,18 +66,9 @@
   }
 }
 
-.statusRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-}
-
-.quotaPair {
+.quotaWindows {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 4px;
 }
 
 @media (max-width: 750px) {
@@ -97,11 +103,6 @@
   }
 }
 
-.updatedAgo {
-  width: 13ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
 .metricValue {
   width: 9ch;
   max-width: 100%;
@@ -114,15 +115,12 @@
 }
 
 .attentionViewport {
-  block-size: 14rem;
+  max-block-size: 20rem;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 .attentionViewport p {
   font-variant-numeric: tabular-nums;
-}
-.updatedAgo {
-  text-align: left;
 }
 
 .attentionList {
@@ -130,46 +128,96 @@
   flex-direction: column;
   gap: 8px;
 }
-.attentionSlots {
-  position: relative;
-  font-variant-numeric: tabular-nums;
-}
-.attentionSlot {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-start: 0;
-  height: 72px;
-  overflow: auto;
-  transition: transform 250ms ease-out;
-}
 .attentionViewport section > :first-child > p {
   min-width: 26ch;
   text-align: left;
-}
-@media (prefers-reduced-motion: reduce) {
-  .attentionSlot {
-    transition: none;
-  }
-}
-
-.attentionNumber {
-  display: inline-block;
-  min-width: 6ch;
-  font-variant-numeric: tabular-nums;
-}
-
-.sourceSummary {
-  list-style-position: inside;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sourceSummary:has([role="alert"]) {
-  color: var(--mantine-color-red-7);
 }
 
 .sourceDetails {
   block-size: 12rem;
   overflow: auto;
+}
+
+.requestGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  align-content: start;
+  gap: 8px;
+}
+.requestCard {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.requestElapsed {
+  flex-shrink: 0;
+}
+.requestGrid,
+.requestEmpty {
+  min-height: 7rem;
+}
+.requestEmpty {
+  display: flex;
+  align-items: center;
+}
+
+.resourceGauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.resourceHistory {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  padding-top: 8px;
+}
+
+.resourceGauge {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  text-align: center;
+}
+
+.gaugeDial {
+  display: grid;
+  place-items: center;
+  inline-size: 72px;
+  max-inline-size: 100%;
+  aspect-ratio: 1;
+}
+
+.gaugeDial > * {
+  grid-area: 1 / 1;
+}
+
+.gaugeDial svg {
+  width: 100%;
+  display: block;
+}
+
+.gaugeTrack,
+.gaugeFill {
+  fill: none;
+  stroke-width: 6;
+}
+
+.gaugeTrack {
+  stroke: var(--mantine-color-default-border);
+}
+
+.gaugeFill {
+  stroke: var(--mantine-color-blue-6);
+}
+
+.resourceGauge:nth-child(2) .gaugeFill {
+  stroke: var(--mantine-color-teal-6);
+}
+
+.gaugeValue {
+  justify-self: stretch;
+  font-variant-numeric: tabular-nums;
 }

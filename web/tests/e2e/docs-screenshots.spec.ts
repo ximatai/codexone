@@ -70,6 +70,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
         buckets: Array.from({ length: 7 }, (_, i) => ({
           atUnixSeconds: Math.floor(now / 86400) * 86400 - (6 - i) * 86400,
           requests: 12 + i * 2,
+          recordedRejections: 0,
           succeeded: 12 + i * 2,
           failed: 0,
           cancelled: 0,
@@ -107,7 +108,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("合成订阅账号", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("img", { name: /^今日请求近 7 天/ }),
+    page.getByRole("img", { name: /^今日已准入近 7 天/ }),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(
@@ -115,7 +116,6 @@ test("render synthetic documentation screenshots", async ({ page }) => {
       .getByRole("region", { name: "今日 Key 请求汇总" })
       .getByText("desktop", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.screenshot({
     path: "../docs/assets/overview.png",
     fullPage: true,

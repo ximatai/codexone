@@ -7,9 +7,20 @@ import { observationFixture } from "../../src/features/account-management/observ
 test("overview keeps accessible trends, principal names, details and responsive layout", async ({
   page,
 }) => {
+  await page.clock.install();
   await page.setViewportSize({ width: 1440, height: 900 });
   const screenshots = "../artifacts/ui-phase2";
   await mkdir(screenshots, { recursive: true });
+  let inFlightCount = 5;
+  const now = Math.floor(Date.now() / 1000);
+  const today = Math.floor(now / 86400) * 86400;
+  const observation = observationFixture();
+  const quota = observation.quota;
+  quota.observedAtUnixSeconds = now - 10;
+  quota.attemptedAtUnixSeconds = now - 10;
+  quota.limits[0].primary.usedPercent = 38;
+  quota.limits[0].primary.resetsAtUnixSeconds = now + 7200;
+
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const metrics = {
@@ -27,13 +38,36 @@ test("overview keeps accessible trends, principal names, details and responsive 
       mode: "enabled",
       authorization: "ready",
       createdAtUnixSeconds: 1,
-      observability: observationFixture(),
+      observability: {
+        ...observation,
+        quota: {
+          ...quota,
+          limits: [
+            {
+              ...quota.limits[0],
+              secondary: {
+                usedPercent: 69,
+                durationSeconds: 604800,
+                resetsAtUnixSeconds: now + 259200,
+              },
+            },
+          ],
+        },
+      },
     };
     const report = reportFixture();
     const data: Record<string, unknown> = {
       "/api/usage/headroom": {
         capacities: [],
-        accounts: [],
+        accounts: [
+          {
+            id: account.id,
+            current: 2,
+            limit: 16,
+            peak24Hours: 3,
+            blocking: true,
+          },
+        ],
         unknownReconciliation: {
           count: 0,
           beforeUnixSeconds: 1,
@@ -84,11 +118,21 @@ test("overview keeps accessible trends, principal names, details and responsive 
         optionalWorkAllowed: true,
         pressure: "normal",
         databaseBytes: 1024000,
+        availableBytes: 36 * 1024 ** 3,
+        volumeTotalBytes: 100 * 1024 ** 3,
+        resources: Array.from({ length: 121 }, (_, i) => ({
+          unixSeconds: now - 3600 + i * 30,
+          hostCPUPercent: i === 120 ? 27 : 24 + Math.round(9 * Math.sin(i / 5)),
+          processResidentBytes:
+            (280 + Math.round(14 * Math.sin(i / 11))) * 1024 ** 2,
+          hostAvailableBytes: (5 + Math.sin(i / 9) * 0.5) * 1024 ** 3,
+          hostTotalBytes: 8 * 1024 ** 3,
+        })),
       },
       "/api/usage/keys": {
         timezone: "UTC",
-        startUnixSeconds: 0,
-        endUnixSeconds: 86400,
+        startUnixSeconds: today,
+        endUnixSeconds: today + 86400,
         keys: [
           {
             keyID: "synthetic-key",
@@ -100,7 +144,8 @@ test("overview keeps accessible trends, principal names, details and responsive 
             failed: 1,
             pending: 0,
             estimatedMicros: "1250000",
-            lastUsedAtUnixSeconds: 1,
+            lastUsedAtUnixSeconds: now - 60,
+            tokens: "1500",
           },
         ],
       },
@@ -108,8 +153,9 @@ test("overview keeps accessible trends, principal names, details and responsive 
         timezone: "UTC",
         days: 7,
         buckets: Array.from({ length: 7 }, (_, i) => ({
-          atUnixSeconds: i * 86400,
+          atUnixSeconds: today + (i - 6) * 86400,
           requests: 10 + i * 2,
+          recordedRejections: i,
           succeeded: 9 + i * 2,
           failed: 1,
           cancelled: 0,
@@ -118,19 +164,18 @@ test("overview keeps accessible trends, principal names, details and responsive 
         })),
       },
       "/api/usage/in-flight": {
-        rows: [
-          {
-            id: "synthetic-flight",
-            keyID: "hidden-key-identifier",
-            principal: "合成工作站",
-            model: "synthetic-text",
-            mode: "generation",
-            accountID: account.id,
-            accountDisplayName: account.displayName,
-            elapsedSeconds: 12,
-            hasFirstEvent: true,
-          },
-        ],
+        rows: Array.from({ length: inFlightCount }, (_, index) => ({
+          id: "synthetic-flight-" + index,
+          startedAtUnixSeconds: index + 1,
+          keyID: "hidden-key-identifier",
+          principal: "合成工作站",
+          model: "synthetic-text",
+          mode: "generation",
+          accountID: account.id,
+          accountDisplayName: account.displayName,
+          elapsedSeconds: 12,
+          hasFirstEvent: true,
+        })),
       },
       "/api/usage/options": {
         keys: ["synthetic-key"],
@@ -155,16 +200,87 @@ test("overview keeps accessible trends, principal names, details and responsive 
     await route.fulfill({ json: data[path] });
   });
   await page.goto("/");
-  await expect(page.getByText("轮询模式（15 秒）· 活动观察中断")).toBeVisible();
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "polling",
+  );
   await expect(
     page.getByRole("heading", { name: "今日运营概览" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("img", { name: /^今日请求近 7 天/ }),
+    page.getByRole("img", { name: /^今日已准入近 7 天/ }),
+  ).toBeVisible();
+  const cards = page.getByLabel("在途请求卡片").locator(":scope > *");
+  await expect(cards).toHaveCount(5);
+  const firstRow = () =>
+    cards.evaluateAll(
+      (items) =>
+        items.filter(
+          (item) =>
+            item.getBoundingClientRect().top ===
+            items[0].getBoundingClientRect().top,
+        ).length,
+    );
+  expect(await firstRow()).toBe(4);
+  await expect(
+    page.getByRole("img", { name: "网关内存占用最近一小时趋势" }),
+  ).toBeVisible();
+  const cpuGauge = page.getByRole("group", { name: "CPU 使用率" });
+  await expect(cpuGauge.getByText("27%", { exact: true })).toBeVisible();
+  await expect(cpuGauge.locator("circle[pathLength]")).toHaveAttribute(
+    "stroke-dasharray",
+    "27 100",
+  );
+  const memoryGauge = page.getByRole("group", { name: "服务器可用内存" });
+  await expect(memoryGauge.getByText("5.3 / 8.0 GiB")).toBeVisible();
+  await expect(page.getByText("窗口为上游观测，不是 Key 余额")).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "合成工作站 失败 1" }),
+  ).toHaveAttribute(
+    "href",
+    /key=synthetic-key&start=[^&]+&end=[^&]+&outcome=failed/,
+  );
+  await expect(
+    page.getByRole("img", { name: "服务器 CPU 使用率最近一小时趋势" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("row").filter({ hasText: "synthetic-text" }).first(),
+    page.getByRole("img", { name: "服务器可用内存最近一小时趋势" }),
   ).toBeVisible();
+  await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
+    "36%",
+  );
+  const shortWindow = await page
+    .getByRole("progressbar", { name: "5 小时额度已用比例" })
+    .boundingBox();
+  const longWindow = await page
+    .getByRole("progressbar", { name: "每周额度已用比例" })
+    .boundingBox();
+  expect(longWindow!.y).toBeGreaterThan(shortWindow!.y);
+  await expect(page.getByLabel("概览连接状态")).toBeHidden();
+  await expect(page.getByText("各源更新时间", { exact: true })).toBeHidden();
+  await expect(
+    page.getByText(/参考 60\.0% · 低于 22\.0 个百分点/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/参考 57\.1% · 超出 11\.9 个百分点/),
+  ).toBeVisible();
+  await page.screenshot({
+    path: screenshots + "/overview-resource-trends-1440.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  const rejected = page.getByText("已记录准入前拒绝 6");
+  await expect(rejected).toBeVisible();
+  const viewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await firstRow()).toBe(2);
+  await rejected.scrollIntoViewIfNeeded();
+  await expect(rejected).toBeInViewport();
+  await page.getByText("运行诊断", { exact: true }).click();
+  const protocolLink = page.getByRole("link", { name: /x-codex-n+/ });
+  await protocolLink.scrollIntoViewIfNeeded();
+  await expect(protocolLink).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "需要处理", exact: true }),
@@ -184,9 +300,11 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.screenshot({
     path: "../artifacts/admin-attention/overview.png",
   });
-  await page.getByLabel("自动刷新（15 秒）").uncheck();
   await page.waitForTimeout(400);
-  await page.screenshot({ path: screenshots + "/overview-1440.png" });
+  await page.screenshot({
+    path: screenshots + "/overview-1440.png",
+    fullPage: true,
+  });
   await page
     .getByRole("region", { name: "今日 Key 请求汇总" })
     .getByRole("link", { name: "查看用量与诊断" })
@@ -219,6 +337,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
+  await page.getByText("运行诊断", { exact: true }).click();
   const longReminder = page.getByRole("link", { name: /x-codex-n+/ });
   await expect(longReminder).toBeVisible();
   expect(
@@ -227,7 +346,15 @@ test("overview keeps accessible trends, principal names, details and responsive 
         node.parentElement!.scrollWidth <= node.parentElement!.clientWidth,
     ),
   ).toBeTruthy();
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(350);
-  await page.screenshot({ path: screenshots + "/overview-390.png" });
+  await page.screenshot({
+    path: screenshots + "/overview-390.png",
+    fullPage: true,
+  });
+  inFlightCount = 0;
+  await page.clock.runFor(15000);
+  await expect(cards).toHaveCount(0);
+  await expect(page.getByText("当前没有进行中的请求。")).toBeVisible();
 });

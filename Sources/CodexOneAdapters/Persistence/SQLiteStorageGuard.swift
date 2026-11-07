@@ -12,11 +12,22 @@ import Synchronization
 /// Actual local volume evidence. Unknown capacity must never enable admission.
 enum StorageCapacity {
   static func available(_ directory: String) throws -> Int64 {
+    let info = try volume(directory)
+    return try bytes(UInt64(info.f_bavail), blockSize: UInt64(info.f_frsize))
+  }
+  static func total(_ directory: String) throws -> Int64 {
+    let info = try volume(directory)
+    return try bytes(UInt64(info.f_blocks), blockSize: UInt64(info.f_frsize))
+  }
+  private static func volume(_ directory: String) throws -> statvfs {
     var info = statvfs()
     guard statvfs(directory, &info) == 0, info.f_frsize > 0 else {
       throw ExecutionError.storagePressure
     }
-    let product = UInt64(info.f_bavail).multipliedReportingOverflow(by: UInt64(info.f_frsize))
+    return info
+  }
+  private static func bytes(_ blocks: UInt64, blockSize: UInt64) throws -> Int64 {
+    let product = blocks.multipliedReportingOverflow(by: blockSize)
     guard !product.overflow, product.partialValue <= UInt64(Int64.max) else {
       throw ExecutionError.storagePressure
     }
@@ -188,6 +199,7 @@ final class SQLiteStorageGuard: @unchecked Sendable {
       walBytes: next.walBytes, previous: next.pressure)
     next.sampledUnixSeconds = clock.unixSeconds
     if maintenance {
+      next.volumeTotalBytes = try? StorageCapacity.total(directory)
       var usage = rusage()
       #if canImport(Darwin)
         if getrusage(RUSAGE_SELF, &usage) == 0 { next.peakResidentBytes = Int64(usage.ru_maxrss) }

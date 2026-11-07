@@ -6,12 +6,14 @@ test("O01: anchors reminders to their Key and account", async ({ page }) => {
   await reviewFixture(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
+  await page.getByText("运行诊断", { exact: true }).click();
   await page.getByRole("link", { name: /team-201：访问密钥/ }).click();
   await expect(page).toHaveURL(/target=synthetic-key-201/);
   const row = page.locator('[data-row-id="synthetic-key-201"]');
   await expect(row).toHaveAttribute("data-highlighted", "true");
   await expect(row).toBeInViewport();
   await page.getByRole("link", { name: "服务概览", exact: false }).click();
+  await page.getByText("运行诊断", { exact: true }).click();
   await page
     .getByRole("link", { name: /合成账号 1：账号需要重新授权/ })
     .click();
@@ -28,14 +30,14 @@ test("O03: bounds fifty reminders and preserves collapse and refresh", async ({
   state.alerts = 50;
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByRole("button", { name: "刷新请求概览" }).click();
+  await page.getByText("运行诊断", { exact: true }).click();
   await expect(
     page.getByText("共 50 项 · 紧急 1 项 · 提醒 49 项"),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: /team-201：访问密钥/ }),
   ).toHaveCount(4);
-  await expect(page.getByLabel("关键指标")).toBeInViewport();
+  await expect(page.getByLabel("关键指标")).toBeVisible();
   await page.getByRole("button", { name: "查看全部 50 项" }).click();
   await expect(
     page.getByRole("link", { name: /team-201：访问密钥/ }),

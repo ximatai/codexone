@@ -72,7 +72,7 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
     ]),
   );
   const view = renderPrivate(<AdminOverview />);
-  await screen.findByText(/允许准入/);
+  await screen.findByText(/保护未触发/);
   expect(accounts.fetchAccounts).toHaveBeenCalledTimes(1);
   expect(usage.fetchKeySummary).toHaveBeenCalledTimes(1);
   expect(
@@ -82,8 +82,8 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   ).toHaveLength(1);
   expect(screen.queryByText("今日请求 / 失败")).toBeNull();
   expect(screen.queryByText("费用：估算 $1.25")).toBeNull();
-  expect(screen.getByText(/允许准入/)).toBeVisible();
-  fireEvent.click(screen.getByRole("link", { name: /存储与准入/ }));
+  expect(screen.getByText(/保护未触发/)).toBeVisible();
+  fireEvent.click(screen.getByRole("link", { name: /数据盘/ }));
   expect(await screen.findByText("磁盘可用：1.0 MiB")).toBeVisible();
   expect(screen.getByText("保留备份：7")).toBeVisible();
   expect(screen.getByText(/最近成功备份：/)).toHaveTextContent(
@@ -92,7 +92,7 @@ it("shows authenticated daily totals, preserves missing costs, and opens actual 
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
-  fireEvent.click(screen.getByRole("link", { name: /存储与准入/ }));
+  fireEvent.click(screen.getByRole("link", { name: /数据盘/ }));
   expect(document.querySelector('[data-ui-overlay="true"]')).not.toBeNull();
   view.unmount();
   expect(document.querySelector('[data-ui-overlay="true"]')).toBeNull();
@@ -136,7 +136,8 @@ it.each(["fresh", "unavailable"] as const)(
     await screen.findByText(
       state === "fresh" ? "未命名账号 · syntheti" : "额度不可用",
     );
-    fireEvent.click(await screen.findByLabelText("自动刷新（15 秒）"));
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    fireEvent(document, new Event("visibilitychange"));
     await act(async () => {});
     const reads = vi.mocked(accounts.fetchAccounts).mock.calls.length;
     await act(async () => vi.advanceTimersByTime(300000));
@@ -146,6 +147,7 @@ it.each(["fresh", "unavailable"] as const)(
     if (state === "unavailable")
       expect(screen.queryByText("额度观测已陈旧")).toBeNull();
     expect(accounts.fetchAccounts).toHaveBeenCalledTimes(reads);
+    hidden.mockRestore();
     view.unmount();
   },
 );
