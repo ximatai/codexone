@@ -4,6 +4,13 @@ import {
   readBusinessDay,
   type BusinessDay,
 } from "../../shared/business-day";
+const incompleteReasons = [
+  "max_output_tokens",
+  "max_messages",
+  "content_filter",
+  "steered",
+  "unspecified",
+] as const;
 export interface UsageFilters {
   offsetMinutes?: number;
   start: string;
@@ -74,6 +81,7 @@ export interface UsageReport {
     reasoningEffort?: string | null;
     serviceTier?: string | null;
     actualServiceTier?: string | null;
+    upstreamIncompleteReason?: (typeof incompleteReasons)[number] | null;
     requestMetadataRecorded?: boolean;
     svgAuthorModel?: string | null;
     usageMissingReasons?: string[];
@@ -286,6 +294,10 @@ export function parseUsage(raw: unknown): UsageReport {
       reasoningEffort: metadataValue(item.reasoningEffort),
       serviceTier: metadataValue(item.serviceTier),
       actualServiceTier: metadataValue(item.actualServiceTier),
+      upstreamIncompleteReason:
+        incompleteReasons.find(
+          (reason) => reason === item.upstreamIncompleteReason,
+        ) ?? null,
       requestMetadataRecorded: (() => {
         if (item.requestMetadataRecorded === undefined) return false;
         if (typeof item.requestMetadataRecorded !== "boolean") throw invalid();

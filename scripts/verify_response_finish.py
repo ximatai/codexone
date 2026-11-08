@@ -246,7 +246,10 @@ def main():
                             process.wait(10)
                             logs = process.stdout.read().decode()
                             with sqlite3.connect(root / 'state/core.sqlite') as db:
-                                request_id = db.execute('SELECT request_id FROM attempts').fetchone()[0]
+                                request_id, incomplete_reason = db.execute(
+                                    "SELECT request_id,json_extract(outcome_json,'$.upstreamIncompleteReason') FROM attempts"
+                                ).fetchone()
+                                assert incomplete_reason is None
                             protocol = [line.split('codexone.protocol:', 1)[-1].strip() for line in logs.splitlines() if 'codexone.protocol:' in line]
                             assert len(records) == 1 and server.calls == 1, 'Unexpected admission or replay'
                             protocol = [line + (' [attempt]' if f'request_id={request_id}' in line else ' [no attempt]') if 'request_id=' in line else line for line in protocol]

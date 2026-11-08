@@ -91,11 +91,17 @@ func observeTerminalOutcome(_ event: JSONValue, context: ExecutionContext) throw
     context.observeActualServiceTier(requestMetadataValue(event["response"]?["service_tier"]))
   }
   guard type == "response.failed" || type == "response.incomplete" else { return }
+  let reportedReason = event["response"]?["incomplete_details"]?["reason"]?.string
+  let incompleteReason: UpstreamIncompleteReason? =
+    type == "response.incomplete"
+    ? reportedReason.flatMap(UpstreamIncompleteReason.init(rawValue:)) ?? .unspecified
+    : nil
   try context.observeOutcome(
     .init(
       failure: type == "response.failed" ? .upstreamRejected : .indeterminate,
       atUnixSeconds: context.clock.unixSeconds,
-      actualServiceTier: requestMetadataValue(event["response"]?["service_tier"])))
+      actualServiceTier: requestMetadataValue(event["response"]?["service_tier"]),
+      upstreamIncompleteReason: incompleteReason))
 }
 
 /// A validated, bound terminal has been submitted downstream; cleanup cannot rewrite it.

@@ -163,9 +163,9 @@ extension SQLiteUsageReader {
         json_extract(outcome_json,'$.failure') failure,CASE WHEN state='settled' AND json_extract(usage_json,'$.completeness')='partial' THEN NULL ELSE json_extract(usage_json,'$.completeness') END completeness,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
-        CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0),json_extract(usage_json,'$.svgAuthorModel'),json_extract(usage_json,'$.usageMissingReasons') FROM attempts WHERE \(attempts.sql)
+        CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0),json_extract(usage_json,'$.svgAuthorModel'),json_extract(usage_json,'$.usageMissingReasons'),json_extract(outcome_json,'$.upstreamIncompleteReason') FROM attempts WHERE \(attempts.sql)
       UNION ALL
-      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,NULL,NULL
+      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,NULL,NULL,NULL
         FROM request_diagnostics WHERE \(rejected.sql)) history
       """
     var values = attempts.values + rejected.values
@@ -198,8 +198,8 @@ extension SQLiteUsageReader {
         accountID: string(7), requestID: string(8), state: state, outcome: outcome,
         failure: failure,
         completeness: completeness, metrics: try metrics(row, offset: 13),
-        cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(34),
-        displayName: string(35),
+        cursor: .init(atUnixSeconds: at, id: cursorID), principal: string(35),
+        displayName: string(36),
         firstEventMilliseconds: sqlite3_column_type(row, 26) == SQLITE_NULL
           ? nil : sqlite3_column_int64(row, 26),
         totalMilliseconds: sqlite3_column_type(row, 27) == SQLITE_NULL
@@ -207,7 +207,8 @@ extension SQLiteUsageReader {
         reasoningEffort: string(28), serviceTier: string(29), actualServiceTier: string(30),
         requestMetadataRecorded: sqlite3_column_int64(row, 31) == 1,
         svgAuthorModel: string(32),
-        usageMissingReasons: try string(33).map { try decode([String].self, $0) } ?? [])
+        usageMissingReasons: try string(33).map { try decode([String].self, $0) } ?? [],
+        upstreamIncompleteReason: string(34).flatMap(UpstreamIncompleteReason.init(rawValue:)))
     }
     let more = rows.count > query.limit
     if more { rows.removeLast() }

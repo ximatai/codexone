@@ -386,6 +386,7 @@ public struct UsageAdminAPI: Sendable {
             "reasoningEffort": text(value.reasoningEffort),
             "serviceTier": text(value.serviceTier),
             "actualServiceTier": text(value.actualServiceTier),
+            "upstreamIncompleteReason": text(value.upstreamIncompleteReason?.rawValue),
             "requestMetadataRecorded": .bool(value.requestMetadataRecorded),
             "principal": text(value.principal),
             "displayName": text(value.displayName),

@@ -99,7 +99,8 @@ private final class UsageObservation: Sendable {
           failure: $0.failure, atUnixSeconds: $0.atUnixSeconds,
           cooldownSeconds: $0.cooldownSeconds, firstEventMilliseconds: firstEvent.withLock { $0 },
           totalMilliseconds: elapsed(),
-          actualServiceTier: value.actualServiceTier ?? $0.actualServiceTier)
+          actualServiceTier: value.actualServiceTier ?? $0.actualServiceTier,
+          upstreamIncompleteReason: $0.upstreamIncompleteReason)
       }
       return (value.evidence, outcome)
     }

@@ -48,6 +48,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
           ...report,
           totals: {
             ...report.totals,
+            failed: 1,
             averageFirstEventMilliseconds: 12,
             p95FirstEventMilliseconds: 20,
             averageTotalMilliseconds: 34,
@@ -60,6 +61,13 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
           },
           rows: report.rows.map((row) => ({
             ...row,
+            ...(row.requestID === "request-first"
+              ? {
+                  outcome: "failed",
+                  failure: "indeterminate",
+                  upstreamIncompleteReason: "max_output_tokens",
+                }
+              : {}),
             principal: "合成团队",
             firstEventMilliseconds: 12,
             totalMilliseconds: 34,
@@ -129,6 +137,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   const drawer = page.getByRole("dialog", { name: "请求详情" });
   await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
   await expect(drawer).toContainText("request-first");
+  await expect(drawer).toContainText("上游未完成 · 达到输出限制");
   await expect(drawer).toContainText("合成团队");
   await expect(drawer).toContainText("首事件耗时");
   await expect(drawer).toContainText("总耗时");

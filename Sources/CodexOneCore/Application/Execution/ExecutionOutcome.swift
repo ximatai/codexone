@@ -19,6 +19,13 @@ public enum ExecutionFailure: String, Sendable, Codable, CaseIterable {
   case invalidRequest = "invalid_request"
   case indeterminate
 }
+public enum UpstreamIncompleteReason: String, Sendable, Codable {
+  case maxOutputTokens = "max_output_tokens"
+  case maxMessages = "max_messages"
+  case contentFilter = "content_filter"
+  case steered
+  case unspecified
+}
 public struct ExecutionOutcome: Sendable, Equatable, Codable {
   public enum Kind: String, Sendable, Codable { case succeeded, failed, cancelled }
   public let kind: Kind
@@ -28,10 +35,11 @@ public struct ExecutionOutcome: Sendable, Equatable, Codable {
   public let totalMilliseconds: Int64?
   public let actualServiceTier: String?
   public let cooldownSeconds: Int64?
+  public let upstreamIncompleteReason: UpstreamIncompleteReason?
   public init(
     failure: ExecutionFailure?, atUnixSeconds: Int64, cooldownSeconds: Int64? = nil,
     firstEventMilliseconds: Int64? = nil, totalMilliseconds: Int64? = nil,
-    actualServiceTier: String? = nil
+    actualServiceTier: String? = nil, upstreamIncompleteReason: UpstreamIncompleteReason? = nil
   )
     throws
   {
@@ -39,20 +47,23 @@ public struct ExecutionOutcome: Sendable, Equatable, Codable {
       totalMilliseconds.map({ $0 >= 0 }) ?? true,
       (1...1_000_000_000_000).contains(atUnixSeconds),
       cooldownSeconds.map({ (1...3600).contains($0) }) ?? true,
-      cooldownSeconds == nil || failure == .rateLimited || failure == .upstreamUnavailable
+      cooldownSeconds == nil || failure == .rateLimited || failure == .upstreamUnavailable,
+      upstreamIncompleteReason == nil || failure == .indeterminate
     else { throw ExecutionError.invalidCommand }
     kind = failure == nil ? .succeeded : failure == .clientCancelled ? .cancelled : .failed
     self.actualServiceTier = actualServiceTier.map(RequestMetadataValue.sanitize)
     self.failure = failure
     self.atUnixSeconds = atUnixSeconds
     self.cooldownSeconds = cooldownSeconds
+    self.upstreamIncompleteReason = upstreamIncompleteReason
     self.firstEventMilliseconds = firstEventMilliseconds
     self.totalMilliseconds = totalMilliseconds
   }
   public func validate() throws {
     let copy = try Self(
       failure: failure, atUnixSeconds: atUnixSeconds, cooldownSeconds: cooldownSeconds,
-      firstEventMilliseconds: firstEventMilliseconds, totalMilliseconds: totalMilliseconds)
+      firstEventMilliseconds: firstEventMilliseconds, totalMilliseconds: totalMilliseconds,
+      upstreamIncompleteReason: upstreamIncompleteReason)
     guard copy.kind == kind else { throw ExecutionError.invalidCommand }
   }
 }

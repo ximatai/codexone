@@ -171,6 +171,7 @@ public struct UsageRow: Sendable {
   public let state: ExecutionSnapshot.State?
   public let outcome: ExecutionOutcome.Kind?
   public let failure: ExecutionFailure?
+  public let upstreamIncompleteReason: UpstreamIncompleteReason?
   public let completeness: UsageEvidence.Completeness?
   public let metrics: UsageMetrics
   public let displayName: String?
@@ -193,7 +194,7 @@ public struct UsageRow: Sendable {
     totalMilliseconds: Int64? = nil, reasoningEffort: String? = nil,
     serviceTier: String? = nil, actualServiceTier: String? = nil,
     requestMetadataRecorded: Bool = false, svgAuthorModel: String? = nil,
-    usageMissingReasons: [String] = []
+    usageMissingReasons: [String] = [], upstreamIncompleteReason: UpstreamIncompleteReason? = nil
   ) {
     self.svgAuthorModel = svgAuthorModel
     self.usageMissingReasons = usageMissingReasons
@@ -212,6 +213,7 @@ public struct UsageRow: Sendable {
     self.state = state
     self.outcome = outcome
     self.failure = failure
+    self.upstreamIncompleteReason = upstreamIncompleteReason
     self.completeness = completeness
     self.metrics = metrics
     self.displayName = displayName

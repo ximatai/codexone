@@ -28,6 +28,14 @@ import {
   timeTitle,
 } from "../../shared/presentation";
 import { duration, number } from "./format";
+
+const incompleteReasons = {
+  max_output_tokens: "达到输出限制",
+  max_messages: "达到消息数上限",
+  content_filter: "内容过滤",
+  steered: "上游按引导指令结束当前响应",
+  unspecified: "原因未说明",
+};
 import styles from "./usage.module.css";
 export function UsageDetail({
   detail,
@@ -113,9 +121,11 @@ export function UsageDetail({
                 ],
                 [
                   "错误",
-                  detail.failure
-                    ? (failures[detail.failure] ?? "其他异常")
-                    : "无已记录错误",
+                  detail.upstreamIncompleteReason
+                    ? `上游未完成 · ${incompleteReasons[detail.upstreamIncompleteReason]}`
+                    : detail.failure
+                      ? (failures[detail.failure] ?? "其他异常")
+                      : "无已记录错误",
                 ],
               ].map(([label, value]) => (
                 <Group key={String(label)} display="contents">
