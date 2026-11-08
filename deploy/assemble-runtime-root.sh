@@ -32,7 +32,7 @@ for directory in /usr/lib/x86_64-linux-gnu/gconv /usr/lib/x86_64-linux-gnu/ossl-
 done
 copy /var/lib/dpkg/status
 find /usr/share/doc -name copyright -exec cp -a --parents {} "$root" \;
-mkdir -p "$root/tmp" "$root/run/codexone" "$root/var/lib/codexone"
+mkdir -p "$root/opt" "$root/tmp" "$root/run/codexone" "$root/var/lib/codexone"
 chmod 1777 "$root/tmp"
 chown 10001:10001 "$root/var/lib/codexone"
 chmod 700 "$root/var/lib/codexone"
