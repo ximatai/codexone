@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.16](https://github.com/ximatai/codexone/releases/tag/v0.26.16)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.17](https://github.com/ximatai/codexone/releases/tag/v0.26.17)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.17 在启动时自动迁移符合条件的 v12 账本，先生成迁移前备份，再事务升级到 v13。升级与回退边界见[维护指南](docs/guide/backup-upgrade.md)。
 
 v0.26.16 让首页近 7 个业务日的请求输出速率跨重启恢复。升级需停服备份并显式迁移。见[发布说明](CHANGELOG.md)。
 
