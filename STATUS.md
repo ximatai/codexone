@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.12](https://github.com/ximatai/codexone/releases/tag/v0.26.12)**（2026-11-07），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.13](https://github.com/ximatai/codexone/releases/tag/v0.26.13)**（2026-11-08），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.13 将首页输出速率改为按已结算请求的端到端耗时计算，近期与日趋势展示中位数。协议观测移至首页运行资源下方，有记录时显示。见[发布说明](CHANGELOG.md)。
 
 v0.26.12 更新首页实时概览，增加生图张数、结算输出吞吐、订阅额度时间参考线和 Linux 一分钟负载。管理推送中断时回退至 HTTP，数据库沿用 schema v12。见[管理面规范](docs/reference/specs/control-plane.md)与[发布说明](CHANGELOG.md)。
 
