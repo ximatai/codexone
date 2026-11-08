@@ -14,6 +14,7 @@ import { tokenTotal, type DailyBucket } from "./round2-api";
 import { failures } from "../../shared/presentation";
 import { compactCount } from "./overview-format";
 import styles from "./overview.module.css";
+import type { HourlyOutputRate } from "./useOverviewLive";
 const outputTrendHeight = 104;
 const chartDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
@@ -27,19 +28,21 @@ function Sparkline({
   format,
   label,
   compact = true,
+  description,
 }: {
   values: (number | null)[];
   dates: string[];
   format: (value: number, index: number) => string;
   label: string;
   compact?: boolean;
+  description?: string;
 }) {
   const motion = useOverviewMotion();
   return (
     <div
       className={compact ? styles.sparkline : undefined}
       role="img"
-      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(compact ? 1 : 0)))).join("、")}`}
+      aria-label={`${label}近 7 天：${description ?? values.map((v) => (v === null ? "不可用" : Number(v.toFixed(1)))).join("、")}`}
     >
       <AreaChart
         h={compact ? 64 : outputTrendHeight}
@@ -69,28 +72,40 @@ function Sparkline({
           },
         }}
         withDots={!compact}
+        dotProps={{ r: 2 }}
         withLegend={false}
         gridAxis="none"
         connectNulls={false}
         fillOpacity={0.2}
-        areaProps={{ isAnimationActive: motion, animationDuration: 250 }}
-        curveType="monotone"
+        areaProps={{
+          isAnimationActive: compact && motion,
+          animationDuration: 250,
+        }}
+        curveType={compact ? "monotone" : "linear"}
       />
     </div>
   );
 }
-export function OutputRateTrend({
-  buckets,
-  rates,
-  offsetMinutes = 0,
-}: {
-  buckets: DailyBucket[];
-  rates?: Readonly<Record<string, number>>;
-  offsetMinutes?: number;
-}) {
-  const values = buckets.map(
-    ({ atUnixSeconds }) => rates?.[atUnixSeconds] ?? null,
-  );
+const chartHour = new Intl.DateTimeFormat("zh-CN", {
+  month: "long",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZone: "UTC",
+});
+
+export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
+  const hours = history
+    ? Array.from(
+        { length: 168 },
+        (_, index) => history.endUnixSeconds - (167 - index) * 3600,
+      )
+    : [];
+  const points = hours.map((hour) => history?.points[hour]);
+  const latest = points.findLast((point) => point !== undefined);
+  const rate = (value: number) =>
+    `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`;
   return (
     <Paper withBorder p="md">
       <Title order={3} size="h4">
@@ -100,20 +115,23 @@ export function OutputRateTrend({
         size="xs"
         c="dimmed"
         mt={4}
-        title="每日请求输出速率中位数，包含首输出前的等待。"
+        title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
       >
         近 7 天
       </Text>
-      {values.some((value) => value !== null) ? (
+      {latest ? (
         <Sparkline
           label="请求输出速率"
-          values={values}
-          dates={buckets.map((bucket) =>
-            chartDay.format((bucket.atUnixSeconds + offsetMinutes * 60) * 1000),
+          values={points.map((point) => point?.median ?? null)}
+          dates={hours.map((hour) =>
+            chartHour.format(
+              (hour + (history?.offsetMinutes ?? 0) * 60) * 1000,
+            ),
           )}
-          format={(value) =>
-            `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`
+          format={(value, index) =>
+            `${rate(value)} · ${points[index]?.count} 笔样本`
           }
+          description={`最近有样本的小时 ${rate(latest.median)}`}
           compact={false}
         />
       ) : (

@@ -307,6 +307,30 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(
     page.getByRole("img", { name: "数据盘可用最近一小时趋势" }),
   ).toBeVisible();
+  await expect(sidebar.getByText("最近一小时", { exact: true })).toHaveCount(0);
+  for (const name of [
+    "CPU 使用率",
+    "可用内存",
+    "数据盘可用",
+    "CodexOne 内存占用",
+  ]) {
+    const plot = page.getByRole("img", { name: `${name}最近一小时趋势` });
+    const captions = plot.locator("xpath=../preceding-sibling::div");
+    await expect(captions).toHaveCSS("justify-content", "flex-end");
+    await expect(captions.getByText(name, { exact: true })).toHaveCSS(
+      "text-align",
+      "end",
+    );
+    const readout = captions.locator("p").last();
+    await expect(readout).toHaveCSS("text-align", "end");
+    const [text, graph] = await Promise.all([
+      readout.boundingBox(),
+      plot.boundingBox(),
+    ]);
+    expect(
+      Math.abs(text!.x + text!.width - graph!.x - graph!.width),
+    ).toBeLessThan(1);
+  }
   const shortWindow = await page
     .getByRole("progressbar", { name: "5 小时额度已用比例" })
     .boundingBox();

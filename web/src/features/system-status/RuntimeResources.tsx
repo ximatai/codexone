@@ -68,8 +68,8 @@ function ResourceTrend({
     .join(" ");
   return (
     <div>
-      <Group justify="space-between" gap="xs">
-        <Text size="xs" fw={500}>
+      <Group justify="flex-end" gap="xs">
+        <Text size="xs" fw={500} ta="end">
           {label}
         </Text>
         <Text size="xs" c="dimmed" className={styles.resourceTrendValue}>
@@ -249,9 +249,6 @@ export function RuntimeResources({
           />
         </div>
         <div className={styles.resourceHistory}>
-          <Text size="xs" c="dimmed">
-            最近一小时
-          </Text>
           <ResourceTrend
             samples={samples}
             label="CPU 使用率"

@@ -254,7 +254,7 @@
 /* Anchor the text as well as its box when the reading changes width. */
 .resourceTrendValue {
   inline-size: 9ch;
-  text-align: start;
+  text-align: end;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
