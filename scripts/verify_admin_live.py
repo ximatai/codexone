@@ -267,6 +267,10 @@ def verify(binary):
             assert 0 <= sample['hostLoadAverage1m'] < float('inf')
             assert 0 < sample['hostAvailableBytes'] <= sample['hostTotalBytes']
             assert sample['processResidentBytes'] > 0
+            disk = os.statvfs(f.root / 'state')
+            assert 0 <= sample['diskAvailableBytes'] <= disk.f_blocks * disk.f_frsize
+            # Other activity on the runner can move available space between the two reads.
+            assert abs(sample['diskAvailableBytes'] - disk.f_bavail * disk.f_frsize) <= 64 * 1024 ** 2
             response = request(f.ports['admin'], 'GET', '/api/runtime/storage', cookie=fresh)
             assert response[0] == 200 and sample in document(response)['resources']
             measurements['linux_host_resources_observed'] = True
