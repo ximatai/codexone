@@ -85,7 +85,11 @@ export function UsageRequests({
                     ? outcomes[row.outcome]
                     : "结果未记录"}
                 <small>
-                  {row.failure ? (failures[row.failure] ?? "其他异常") : ""}
+                  {row.upstreamIncompleteReason
+                    ? "上游未完成"
+                    : row.failure
+                      ? (failures[row.failure] ?? "其他异常")
+                      : ""}
                 </small>
                 {row.state && row.state !== "settled" && (
                   <small>{states[row.state]}</small>

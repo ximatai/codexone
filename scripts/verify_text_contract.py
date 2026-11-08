@@ -12,12 +12,18 @@ import tempfile
 import threading
 import time
 
+from verify_admin import ADMIN, document, request as admin_request
 from verify_protocol import TOKEN, connect, start, stop
 from verify_websocket import dial, receive, send
 
 FIXTURE = Path(__file__).resolve().parents[1] / 'Tests/CodexOneAdaptersTests/Fixtures/provider-text-contract.json'
 PRIVATE = 'synthetic independent contract output'
-CASES = ['extension', 'ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', 'incomplete', 'timestamp-string', 'timestamp-null',
+INCOMPLETE_REASONS = {
+    'incomplete': {},
+    'incomplete-known-reason': {'reason': 'max_output_tokens'},
+    'incomplete-unknown-reason': {'reason': 'synthetic private upstream reason'},
+}
+CASES = ['extension', 'ok', 'details-empty', 'sparse-stream', 'large-echo', 'event-oversized', *INCOMPLETE_REASONS, 'timestamp-string', 'timestamp-null',
          'instructions-boolean', 'instructions-object', 'instructions-scalars', 'instructions-capacity',
          'details-boolean', 'details-reason', 'status-conflict', 'status-unknown',
          'usage-created-input', 'usage-created-output', 'usage-created-cached', 'usage-progress-input',
@@ -61,10 +67,10 @@ class Provider(BaseHTTPRequestHandler):
             result['instructions'] = 'synthetic-large-echo-' + 'x' * 300000
         elif mode == 'details-empty':
             result['incomplete_details'] = {}
-        elif mode == 'incomplete':
+        elif mode in INCOMPLETE_REASONS:
             events[-1]['type'] = 'response.incomplete'
             result['status'] = 'incomplete'
-            result['incomplete_details'] = {}
+            result['incomplete_details'] = INCOMPLETE_REASONS[mode]
         elif mode.startswith('timestamp-'):
             result['created_at'] = 'synthetic-invalid-date' if mode.endswith('string') else None
         elif mode.startswith('instructions-'):
@@ -205,7 +211,7 @@ def rows(root):
 FAILED = {mode for mode in CASES if (mode.startswith(('usage-created-', 'usage-progress-')) and not mode.endswith('metadata'))
           or mode.startswith('foreign-') or mode == 'event-oversized'}
 STRICT_ECHO = {'ok', 'details-empty', 'sparse-stream', 'large-echo', 'usage-metadata', 'usage-created-metadata',
-               'usage-progress-metadata', 'incomplete'}
+               'usage-progress-metadata', *INCOMPLETE_REASONS}
 
 
 def outcomes(root):
@@ -247,7 +253,12 @@ def main():
                         upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport=transport,
                         executionTimeoutSeconds=5, firstResponseTimeoutSeconds=2, progressTimeoutSeconds=1)))
                     config.chmod(0o600)
-                    process, ports = start(binary, config, root)
+                    admin = None
+                    if mode in INCOMPLETE_REASONS:
+                        admin = root / 'admin'
+                        admin.write_text(ADMIN)
+                        admin.chmod(0o600)
+                    process, ports = start(binary, config, root, admin_token_file=admin)
                     before = provider.calls
                     count = 0
                     try:
@@ -294,7 +305,12 @@ def main():
                                     assert response['usage']['input_tokens_details'] == {'cached_tokens': 0, 'cache_write_tokens': 1, 'metadata': ['synthetic', False]}
                                     assert response['usage']['output_tokens_details'] == {'reasoning_tokens': 1, 'metadata': {'label':'synthetic'}}
                                     assert response['usage']['input_tokens'] == 5 and response['usage']['output_tokens'] == 3
-                                if mode != 'incomplete':
+                                if mode in INCOMPLETE_REASONS:
+                                    assert response['status'] == 'incomplete'
+                                    assert response['incomplete_details'] == INCOMPLETE_REASONS[mode]
+                                    if route != 'json':
+                                        assert result['type'] == 'response.incomplete'
+                                else:
                                     request['input'] += response['output'] + [dict(role='user', content='synthetic next turn')]
                                     status, events = call(ports['data'], route, request)
                                     count += 1
@@ -305,6 +321,15 @@ def main():
                         while len(rows(root)) != count or any(s == 'intent' for s, _, _ in rows(root)):
                             assert time.monotonic() < deadline
                             time.sleep(.02)
+                        if mode in INCOMPLETE_REASONS:
+                            day = int(time.time()) // 86400 * 86400
+                            report = document(admin_request(
+                                ports['admin'], 'GET', f'/api/usage?start={day}&end={day + 86400}',
+                                headers={'Authorization': 'Bearer ' + ADMIN}))
+                            expected_reason = 'max_output_tokens' if mode == 'incomplete-known-reason' else 'unspecified'
+                            assert report['totals']['failed'] == len(report['rows']) == count
+                            assert all(row['upstreamIncompleteReason'] == expected_reason for row in report['rows'])
+                            assert all(outcome['upstreamIncompleteReason'] == expected_reason for outcome in outcomes(root))
                         process.terminate()
                         process.wait(10)
                         logs = process.stdout.read()
@@ -319,11 +344,12 @@ def main():
                         else:
                             assert all(s == 'settled' and u and u['completeness'] == 'complete'
                                        and u['inputTokens'] == 5 and u['outputTokens'] == 3 for s, _, u in records), records
-                            assert all(k == ('failed' if mode == 'incomplete' else 'succeeded')
+                            assert all(k == ('failed' if mode in INCOMPLETE_REASONS else 'succeeded')
                                        for _, k, _ in records), (transport, mode, records, outcomes(root))
                         with sqlite3.connect(root / 'state/core.sqlite') as db:
                             assert db.execute('SELECT count(*) FROM bindings WHERE raw_id IN (?,?)',
                                               ('synthetic-metadata-only-id', 'synthetic-foreign-response')).fetchone()[0] == 0
+                        assert b'synthetic private upstream reason' not in logs
                         assert PRIVATE.encode() not in logs and b'synthetic echoed guidance' not in logs
                         assert b'synthetic usage metadata' not in logs
                         assert TOKEN.encode() not in logs and b'synthetic-metadata-only-id' not in logs
