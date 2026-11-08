@@ -21,21 +21,29 @@ public final class OverviewActivity: Sendable {
   private let dropped = Atomic(0)
   private struct OutputSample: Sendable {
     let second: Int64
+    let rowID: Int64
     let rate: Decimal
+    let live: Bool
   }
   private struct OutputDay: Sendable {
-    private static let capacity = 4096
+    private static let capacity = OverviewActivity.outputDayCapacity
     var samples: [OutputSample] = []
-    private var next = 0
     private var cachedMedian: Decimal?
 
     mutating func record(_ sample: OutputSample) {
-      if samples.count < Self.capacity {
-        samples.append(sample)
-      } else {
-        samples[next] = sample
-        next = (next + 1) % Self.capacity
+      // Match the indexed recovery order even when requests settle out of admission order.
+      let key = (sample.second, sample.rowID)
+      if samples.count == Self.capacity, let first = samples.first {
+        guard key > (first.second, first.rowID) else { return }
+        samples.removeFirst()
       }
+      var index = samples.endIndex
+      while index > samples.startIndex {
+        let previous = samples[index - 1]
+        if (previous.second, previous.rowID) < key { break }
+        index -= 1
+      }
+      samples.insert(sample, at: index)
       cachedMedian = nil
     }
 
@@ -49,16 +57,16 @@ public final class OverviewActivity: Sendable {
     var days: [Int64: OutputDay] = [:]
     var latestDay: Int64?
   }
+  static let outputDayCapacity = 4096
   private let settledOutput = Mutex(SettledOutput())
 
   func recordRequestOutput(
-    _ tokens: Int64, durationMilliseconds: Int64, at second: Int64,
-    businessDay: BusinessDayDefinition
+    _ rate: Decimal, at second: Int64, rowID: Int64, businessDay: BusinessDayDefinition,
+    live: Bool = true
   ) {
-    guard tokens > 0, durationMilliseconds > 0, second >= 0,
+    guard rate > 0, second >= 0,
       let day = try? businessDay.start(containing: second)
     else { return }
-    let rate = Decimal(tokens) * 1000 / Decimal(durationMilliseconds)
     settledOutput.withLock { output in
       let latestDay = max(output.latestDay ?? day, day)
       let firstDay = latestDay - 6 * 86400
@@ -67,7 +75,8 @@ public final class OverviewActivity: Sendable {
         output.days = output.days.filter { $0.key >= firstDay }
       }
       if day >= firstDay {
-        output.days[day, default: OutputDay()].record(.init(second: second, rate: rate))
+        output.days[day, default: OutputDay()].record(
+          .init(second: second, rowID: rowID, rate: rate, live: live))
       }
     }
   }
@@ -89,7 +98,7 @@ public final class OverviewActivity: Sendable {
         if second - day < 86400 + 59, let samples = output.days[day]?.samples {
           recent.append(
             contentsOf: samples.lazy.filter {
-              $0.second <= second && second - $0.second < 60
+              $0.live && $0.second <= second && second - $0.second < 60
             }.map(\.rate))
         }
       }

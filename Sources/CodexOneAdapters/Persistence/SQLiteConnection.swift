@@ -67,12 +67,12 @@ final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
       guard
-        version == 0 || version == 12 || (restoringV7 && [7, 8, 9, 10, 11].contains(version))
-          || (migrating && (1...11).contains(version))
+        version == 0 || version == 13 || (restoringV7 && (7...12).contains(version))
+          || (migrating && (1...12).contains(version))
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 12 && !(restoringV7 && [7, 8, 9, 10, 11].contains(version)) {
+      if existingOnly && version != 13 && !(restoringV7 && (7...12).contains(version)) {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -90,6 +90,8 @@ final class SQLiteConnection: @unchecked Sendable {
                   ? ["created_at_epoch", "outcome_json", "request_id"] : [])
                 + (version >= 10 && table == "attempts"
                   ? ["unknown_since_epoch", "closed_unknown_at_epoch"] : [])
+                + (version >= 13 && table == "attempts"
+                  ? ["output_rate_settled_at", "output_rate"] : [])
                 + (version >= 10 && table == "bindings" ? ["expires_at_epoch"] : [])
             )
           } + (version >= 2 ? Self.keyColumns : [])
@@ -111,7 +113,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, !(1...12).contains(version) {
+      if migrating, !(1...13).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
@@ -139,11 +141,12 @@ final class SQLiteConnection: @unchecked Sendable {
           }
           if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
           if version < 11 { try exec(Self.resetCreditSchema) }
-          try exec(Self.authorSchema)
-          try exec("PRAGMA user_version=12")
+          if version < 12 { try exec(Self.authorSchema) }
+          try exec(Self.outputRateSchema)
+          try exec("PRAGMA user_version=13")
         }
       }
-      if (1...11).contains(version) {
+      if (1...12).contains(version) {
         guard
           try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
             "ok"
@@ -171,8 +174,9 @@ final class SQLiteConnection: @unchecked Sendable {
           }
           if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
           if version < 11 { try exec(Self.resetCreditSchema) }
-          try exec(Self.authorSchema)
-          try exec("PRAGMA user_version=12")
+          if version < 12 { try exec(Self.authorSchema) }
+          try exec(Self.outputRateSchema)
+          try exec("PRAGMA user_version=13")
         }
       }
       guard try scalar("PRAGMA auto_vacuum") == 2 else { throw ExecutionError.storageUnavailable }
@@ -215,7 +219,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard [7, 8, 9, 10, 11, 12].contains(try scalar("PRAGMA user_version")),
+      guard (7...13).contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema
@@ -472,12 +476,19 @@ final class SQLiteConnection: @unchecked Sendable {
     ),
   ]
 
+  private static let outputRateSchema = """
+    ALTER TABLE attempts ADD COLUMN output_rate_settled_at INTEGER;
+    ALTER TABLE attempts ADD COLUMN output_rate TEXT;
+    CREATE INDEX attempts_output_rate ON attempts(output_rate_settled_at)
+      WHERE output_rate_settled_at IS NOT NULL;
+    """
+
   private func backupBeforeUpgrade(_ path: String) throws {
     try StorageCapacity.require(
       (path as NSString).deletingLastPathComponent,
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
-    let destination = path + ".pre-v12-" + UUID().uuidString + ".sqlite"
+    let destination = path + ".pre-v13-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

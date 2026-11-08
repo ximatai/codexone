@@ -301,7 +301,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert run(['docker', 'exec', name, 'id', '-u']).stdout.strip() == str(uid).encode()
             manifest = json.loads(run(['docker', 'exec', name, 'cat', '/opt/release.json']).stdout)
             assert manifest['revision'] == identifier['Config']['Labels']['org.opencontainers.image.revision']
-            assert manifest['schemaVersion'] == 12
+            assert manifest['schemaVersion'] == 13
             storage_status, storage_body = request('/api/runtime/storage', token=admin)
             assert storage_status == 200 and json.loads(storage_body)['reserveTargetBytes'] == 64 * 1024 * 1024
             licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/swift', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
@@ -446,7 +446,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                     rejected = run([*compose, 'run', '--rm', 'gateway'], ok=False, timeout=20)
                     assert rejected.returncode != 0 and b'LISTENING' not in rejected.stdout + rejected.stderr
                     assert truth() == before_switch
-                    if incompatible_schema == 11:
+                    if incompatible_schema in (11, 12):
                         # Upgrade a schema produced by the actual released binary, then
                         # prove it refuses the upgraded database under identical settings.
                         select_image(image)
@@ -455,12 +455,12 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                              'gateway', '--migrate'])
                         assert maintenance('sqlite3', ['-readonly',
                             '/var/lib/codexone/schema-control/core.sqlite',
-                            'PRAGMA quick_check; PRAGMA user_version;']).stdout.splitlines() == [b'ok', b'12']
+                            'PRAGMA quick_check; PRAGMA user_version;']).stdout.splitlines() == [b'ok', b'13']
                         backups = maintenance('find', ['/var/lib/codexone/schema-control',
-                            '-maxdepth', '1', '-name', 'core.sqlite.pre-v12-*.sqlite']).stdout.splitlines()
+                            '-maxdepth', '1', '-name', 'core.sqlite.pre-v13-*.sqlite']).stdout.splitlines()
                         assert len(backups) == 1
                         assert maintenance('sqlite3', ['-readonly', backups[0].decode(),
-                            'PRAGMA user_version;']).stdout.strip() == b'11'
+                            'PRAGMA user_version;']).stdout.strip() == str(incompatible_schema).encode()
                         select_image(incompatible_image)
                         rejected = run([*compose, 'run', '--rm', '--env',
                             'CODEXONE_DATA_DIRECTORY=/var/lib/codexone/schema-control',
@@ -494,15 +494,15 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                         if request('/api/runtime/storage', token=admin)[0] == 200: break
                     except AssertionError: pass
                     time.sleep(0.2)
-                else: raise AssertionError('Upgrade did not restore current v12 observation')
+                else: raise AssertionError('Upgrade did not restore current v13 observation')
                 assert truth() == before_switch
                 run([*compose, 'stop'], timeout=40)
                 checks = []
-                if previous_image: checks.append('distinct compatible v12 rollback/re-upgrade')
-                if incompatible_image: checks.append(f'old v{incompatible_schema} positive startup control and v12 rejection')
+                if previous_image: checks.append('distinct compatible v13 rollback/re-upgrade')
+                if incompatible_image: checks.append(f'old v{incompatible_schema} positive startup control and v13 rejection')
                 print('PASS: ' + '; '.join(checks) + '; same-volume Key and unknown obligation retained')
             # v5 has the same tables; remove v6 permissions to make a legacy semantic fixture.
-            fixture_sql = "BEGIN IMMEDIATE; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; DROP INDEX attempts_active_identity; DROP INDEX attempts_retention; DROP INDEX attempts_unknown_since; ALTER TABLE attempts DROP COLUMN unknown_since_epoch; ALTER TABLE attempts DROP COLUMN closed_unknown_at_epoch; DROP INDEX bindings_expiry; ALTER TABLE bindings DROP COLUMN expires_at_epoch; DROP TABLE usage_daily; DROP TABLE account_concurrency; ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
+            fixture_sql = "BEGIN IMMEDIATE; DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; DROP INDEX attempts_active_identity; DROP INDEX attempts_retention; DROP INDEX attempts_unknown_since; ALTER TABLE attempts DROP COLUMN unknown_since_epoch; ALTER TABLE attempts DROP COLUMN closed_unknown_at_epoch; DROP INDEX bindings_expiry; ALTER TABLE bindings DROP COLUMN expires_at_epoch; DROP TABLE usage_daily; DROP TABLE account_concurrency; ALTER TABLE accounts DROP COLUMN display_name; DROP INDEX attempts_in_flight; UPDATE managed_keys SET metadata_json=json_remove(metadata_json,'$.policy.visionInput','$.policy.imageGeneration','$.policy.imageModels'); DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=5; COMMIT; PRAGMA quick_check;"
             assert maintenance('sqlite3', [database, fixture_sql]).stdout.strip() == b'ok'
             before_legacy = run(['docker', 'logs', name])
             run([*compose, 'start'])
@@ -522,11 +522,11 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert b'LISTENING' not in rejected_logs and b'Service startup or shutdown failed.' in rejected_logs
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
             run([*compose, 'run', '--rm', 'gateway', '--migrate'])
-            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v12-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
+            backups = maintenance('find', ['/var/lib/codexone', '-maxdepth', '1', '-type', 'f', '-name', 'core.sqlite.pre-v13-*.sqlite', '-printf', '%f %m %U\n']).stdout.decode().splitlines()
             assert len(backups) == 1
             backup, mode, owner = backups[0].split()
-            assert re.fullmatch('core.sqlite.pre-v12-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
-            for path, version in (('/var/lib/codexone/' + backup, 5), (database, 12)):
+            assert re.fullmatch('core.sqlite.pre-v13-[0-9A-Fa-f-]+.sqlite', backup) and mode == '600' and owner == str(uid)
+            for path, version in (('/var/lib/codexone/' + backup, 5), (database, 13)):
                 rows = maintenance('sqlite3', ['-readonly', path, 'PRAGMA quick_check; PRAGMA user_version; SELECT id FROM managed_keys;']).stdout.decode().splitlines()
                 assert rows == ['ok', str(version), key_id]
             run([*compose, 'start'])
@@ -629,7 +629,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
 
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--incompatible-schema', type=int, choices=[6, 7, 8, 9, 10, 11], default=6); parser.add_argument('--browser-output', type=Path)
+    parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--incompatible-schema', type=int, choices=[6, 7, 8, 9, 10, 11, 12], default=6); parser.add_argument('--browser-output', type=Path)
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
     if args.browser_output: assert args.browser, '--browser-output requires --browser'

@@ -75,7 +75,7 @@ import Testing
   try await SQLiteExecutionStore.migrate(path: path)
   try await SQLiteExecutionStore.migrate(path: path)
   let backups = try FileManager.default.contentsOfDirectory(atPath: directory).filter {
-    $0.contains(".pre-v12-")
+    $0.contains(".pre-v13-")
   }
   #expect(backups.count == 1)
   let reopened = try await SQLiteExecutionStore.open(path: path, limits: limits)
@@ -85,7 +85,7 @@ import Testing
       !key.policy.visionInput && !key.policy.imageGeneration
         && key.policy.imageModels?.isEmpty == true)
     let version = try await reopened.perform { try $0.scalar("PRAGMA user_version") }
-    #expect(version == 12)
+    #expect(version == 13)
   } catch {
     await reopened.close()
     throw error

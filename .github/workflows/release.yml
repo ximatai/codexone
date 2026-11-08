@@ -267,10 +267,10 @@ jobs:
       - name: Verify actual private installation
         if: matrix.suite == 'installation'
         run: |
-          docker pull ghcr.io/ximatai/codexone:0.26.9
-          old_image="$(docker image inspect ghcr.io/ximatai/codexone:0.26.9 --format '{{.Id}}')"
+          docker pull ghcr.io/ximatai/codexone:0.26.15
+          old_image="$(docker image inspect ghcr.io/ximatai/codexone:0.26.15 --format '{{.Id}}')"
           python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)" \
-            --incompatible-image "$old_image" --incompatible-schema 11
+            --incompatible-image "$old_image" --incompatible-schema 12
       - name: Verify mixed capacity in isolated native Linux containers
         if: matrix.suite == 'capacity'
         run: |
