@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.14](https://github.com/ximatai/codexone/releases/tag/v0.26.14)**（2026-11-08），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.15](https://github.com/ximatai/codexone/releases/tag/v0.26.15)**（2026-11-08），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.15 补充 Responses 首事件前失败诊断，区分鉴权拒绝、连接、握手与首事件前断开，关联准入凭证版本。见[发布说明](CHANGELOG.md)。
 
 v0.26.14 在请求明细区分上游未完成，首页增加数据盘可用空间趋势与最新读数，并精简 Linux amd64 运行镜像。沿用 schema v12 和现有部署维护命令。见[发布说明](CHANGELOG.md)。
 
