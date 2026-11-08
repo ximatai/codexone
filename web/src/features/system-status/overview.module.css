@@ -253,6 +253,7 @@
 
 .resourceTrendPlot {
   position: relative;
+  margin-block-start: 3px;
 }
 
 .resourceTrendTooltip {

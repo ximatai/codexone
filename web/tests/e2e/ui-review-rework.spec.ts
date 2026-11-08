@@ -104,7 +104,7 @@ test("P2-4: first failure has no snapshot claim and overview merges failing sour
   await expect(alert).not.toContainText("快照");
   const notice = page.getByLabel("概览连接状态");
   const resources = page
-    .getByRole("heading", { name: "运行资源" })
+    .getByRole("heading", { name: "服务器运行资源" })
     .locator("..")
     .locator("..");
   await expect(notice).toBeVisible();

@@ -11,24 +11,35 @@ const sampleTime = new Intl.DateTimeFormat("zh-CN", {
   second: "2-digit",
 });
 
+function formatResourceValue(value: number, percent: boolean) {
+  if (percent) return `${value.toFixed(1)}%`;
+  return value >= GiB
+    ? `${(value / GiB).toFixed(2)} GiB`
+    : `${(value / MiB).toFixed(1)} MiB`;
+}
+
 function ResourceTrend({
   samples,
   label,
   field,
   scale,
-  detail,
 }: {
   samples: ResourceSample[];
   label: string;
-  field: "hostCPUPercent" | "hostAvailableBytes" | "processResidentBytes";
+  field:
+    | "hostCPUPercent"
+    | "hostAvailableBytes"
+    | "diskAvailableBytes"
+    | "processResidentBytes";
   scale?: number;
-  detail?: string;
 }) {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const latest = samples.at(-1);
   const end = latest?.unixSeconds ?? 0;
+  const currentValue = latest?.[field];
+  const percent = field === "hostCPUPercent";
   const maximum =
-    scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0));
+    scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0)) * 1.25;
   const xAt = (time: number) => (time - end + 3600) / 36;
   const yAt = (value: number) => 29 - (Math.min(value, maximum) / maximum) * 28;
   let nearest: ResourceSample | undefined;
@@ -61,11 +72,11 @@ function ResourceTrend({
         <Text size="xs" fw={500}>
           {label}
         </Text>
-        {detail && (
-          <Text size="xs" c="dimmed">
-            {detail}
-          </Text>
-        )}
+        <Text size="xs" c="dimmed">
+          {currentValue == null
+            ? "未知"
+            : formatResourceValue(currentValue, percent)}
+        </Text>
       </Group>
       <div className={styles.resourceTrendPlot}>
         <svg
@@ -123,11 +134,7 @@ function ResourceTrend({
             <Text size="sm" fw={600}>
               {activeValue == null
                 ? "未采样"
-                : field === "hostCPUPercent"
-                  ? `${activeValue.toFixed(1)}%`
-                  : activeValue >= GiB
-                    ? `${(activeValue / GiB).toFixed(2)} GiB`
-                    : `${(activeValue / MiB).toFixed(1)} MiB`}
+                : formatResourceValue(activeValue, percent)}
             </Text>
           </Paper>
         )}
@@ -207,7 +214,7 @@ export function RuntimeResources({
     <Paper withBorder p="md">
       <Stack gap="xs">
         <Title order={3} size="h4">
-          运行资源
+          服务器运行资源
         </Title>
         {stale && (
           <Text size="xs" c="orange.8">
@@ -221,7 +228,7 @@ export function RuntimeResources({
             detail={load?.toFixed(2)}
           />
           <ResourceGauge
-            label="服务器可用内存"
+            label="可用内存"
             percent={memoryPercent}
             detail={
               available == null
@@ -247,25 +254,30 @@ export function RuntimeResources({
           </Text>
           <ResourceTrend
             samples={samples}
-            label="服务器 CPU 使用率"
+            label="CPU 使用率"
             field="hostCPUPercent"
             scale={100}
           />
           <ResourceTrend
             samples={samples}
-            label="服务器可用内存"
+            label="可用内存"
             field="hostAvailableBytes"
             scale={total}
           />
+          {samples.some((sample) => sample.diskAvailableBytes != null) && (
+            <ResourceTrend
+              samples={samples}
+              label="数据盘可用"
+              field="diskAvailableBytes"
+              scale={
+                typeof volume === "number" && volume > 0 ? volume : undefined
+              }
+            />
+          )}
           <ResourceTrend
             samples={samples}
             label="CodexOne 内存占用"
             field="processResidentBytes"
-            detail={
-              latest?.processResidentBytes == null
-                ? "未知"
-                : `${(latest.processResidentBytes / MiB).toFixed(0)} MiB`
-            }
           />
         </div>
       </Stack>

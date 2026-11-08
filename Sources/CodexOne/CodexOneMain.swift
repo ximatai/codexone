@@ -291,7 +291,7 @@ struct CodexOneMain {
     }
     print("business_day_offset=\(configuration.businessDay.timezone)")
     let protocolExtensions = ClientProtocolExtensionRegistry(clock: clock)
-    let overviewResources = OverviewResources()
+    let overviewResources = OverviewResources(dataDirectory: configuration.dataDirectory)
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(

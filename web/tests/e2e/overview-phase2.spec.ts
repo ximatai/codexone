@@ -132,6 +132,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
             (280 + Math.round(14 * Math.sin(i / 11))) * 1024 ** 2,
           hostAvailableBytes: (5 + Math.sin(i / 9) * 0.5) * 1024 ** 3,
           hostTotalBytes: 8 * 1024 ** 3,
+          diskAvailableBytes: (36 + (120 - i) / 60) * 1024 ** 3,
         })),
       },
       "/api/usage/keys": {
@@ -285,7 +286,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     "stroke-dasharray",
     "27 100",
   );
-  const memoryGauge = page.getByRole("group", { name: "服务器可用内存" });
+  const memoryGauge = page.getByRole("group", { name: "可用内存" });
   await expect(memoryGauge.getByText("5.3 / 8.0 GiB")).toBeVisible();
   await expect(page.getByText("窗口为上游观测，不是 Key 余额")).toHaveCount(0);
   await expect(
@@ -295,14 +296,17 @@ test("overview keeps accessible trends, principal names, details and responsive 
     /key=synthetic-key&start=[^&]+&end=[^&]+&outcome=failed/,
   );
   await expect(
-    page.getByRole("img", { name: "服务器 CPU 使用率最近一小时趋势" }),
+    page.getByRole("img", { name: "CPU 使用率最近一小时趋势" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("img", { name: "服务器可用内存最近一小时趋势" }),
+    page.getByRole("img", { name: "可用内存最近一小时趋势" }),
   ).toBeVisible();
   await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
     "36%",
   );
+  await expect(
+    page.getByRole("img", { name: "数据盘可用最近一小时趋势" }),
+  ).toBeVisible();
   const shortWindow = await page
     .getByRole("progressbar", { name: "5 小时额度已用比例" })
     .boundingBox();
@@ -320,7 +324,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     animations: "disabled",
   });
   const protocol = sidebar.getByRole("region", { name: "协议观测" });
-  const resources = sidebar.getByRole("heading", { name: "运行资源" });
+  const resources = sidebar.getByRole("heading", { name: "服务器运行资源" });
   await expect(protocol.getByRole("heading")).toHaveText("协议观测");
   expect((await protocol.boundingBox())!.y).toBeGreaterThan(
     (await resources.boundingBox())!.y,
