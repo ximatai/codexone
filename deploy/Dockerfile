@@ -90,7 +90,7 @@ RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/co
     && python3 scripts/verify_storage_pressure.py --binary /output/codexone \
     && python3 scripts/verify_migration_cutback.py --binary /output/codexone
 
-FROM ${SWIFT_RUNTIME_IMAGE} AS runtime
+FROM ${SWIFT_RUNTIME_IMAGE} AS runtime-files
 # Optional Ubuntu mirror for this install only; the original sources are restored afterwards.
 ARG APT_MIRROR=
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
@@ -100,6 +100,13 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources 
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
     && mkdir -p /var/lib/codexone /run/codexone /opt/codexone/web \
     && chown 10001:10001 /var/lib/codexone && chmod 700 /var/lib/codexone
+COPY deploy/assemble-runtime-root.sh /assemble-runtime-root.sh
+RUN --mount=type=bind,from=backend,source=/output/codexone,target=/codexone \
+    sh /assemble-runtime-root.sh /codexone
+
+FROM scratch AS runtime
+COPY --from=runtime-files /runtime-root/ /
+SHELL ["/bin/sh", "-c"]
 ARG SOURCE_REVISION
 ARG VERSION=0.0.0-dev
 LABEL org.opencontainers.image.title="CodexOne" \
