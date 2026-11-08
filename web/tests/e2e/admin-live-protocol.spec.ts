@@ -307,7 +307,15 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
             clients: [],
             overflow: 0,
             recentRequestOutputRateMedian: 42.5,
-            requestOutputRateMediansByDay: { [day]: 42.5 },
+            requestOutputRateByHour: {
+              endUnixSeconds: day,
+              offsetMinutes: 480,
+              points: {
+                [day - 3 * 3600]: { median: 20, count: 2 },
+                [day - 2 * 3600]: { median: 30, count: 3 },
+                [day]: { median: 42.5, count: 5 },
+              },
+            },
           },
         },
       },
@@ -322,7 +330,21 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
   const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
-  await expect(trend).toHaveAccessibleName(/(?:：|、)43(?:、|$)/);
+  await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
+  const dots = trend.locator("circle.recharts-dot");
+  await expect(dots).toHaveCount(3);
+  await dots.last().hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "43 Token/s · 5 笔样本",
+  );
+  await expect(page.getByRole("tooltip")).toContainText("08:00");
+  await page.getByRole("heading", { name: "请求输出速率" }).hover();
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(trend).toBeVisible();
+  const narrowTrend = await trend.boundingBox();
+  expect(narrowTrend!.x + narrowTrend!.width).toBeLessThanOrEqual(390);
+  await page.setViewportSize(originalViewport);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,
   );

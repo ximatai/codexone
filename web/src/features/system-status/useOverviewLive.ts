@@ -50,12 +50,25 @@ const clientsSchema = z
     }),
   )
   .max(1024);
+const hourlyRate = z.object({
+  endUnixSeconds: z.number().int().nonnegative(),
+  offsetMinutes: z.number().int().min(-720).max(840).multipleOf(60),
+  points: z.record(
+    z.string(),
+    z.object({
+      median: z.number().finite().nonnegative(),
+      count: z.number().int().positive(),
+    }),
+  ),
+});
+export type HourlyOutputRate = z.infer<typeof hourlyRate>;
 const liveActivity = flight.extend({
   clients: clientsSchema,
   recentRequestOutputRateMedian: z.number().finite().nonnegative().nullish(),
   requestOutputRateMediansByDay: z
     .record(z.string(), z.number().finite().nonnegative())
     .optional(),
+  requestOutputRateByHour: hourlyRate.optional(),
   overflow: z.number().int().nonnegative(),
 });
 export type LiveClients = z.infer<typeof clientsSchema>;
@@ -99,8 +112,8 @@ export function useOverviewLive(active: boolean) {
   const [requestOutputRateMedian, setRequestOutputRateMedian] = useState<
     number | null
   >();
-  const [requestOutputRateMediansByDay, setRequestOutputRateMediansByDay] =
-    useState<Record<string, number>>();
+  const [requestOutputRateByHour, setRequestOutputRateByHour] =
+    useState<HourlyOutputRate>();
   const [clients, setClients] = useState<LiveClients>([]);
   const [overflow, setOverflow] = useState(0);
   const [reset, setReset] = useState(0);
@@ -243,14 +256,12 @@ export function useOverviewLive(active: boolean) {
                 setRequestOutputRateMedian(
                   activity.recentRequestOutputRateMedian,
                 );
-                setRequestOutputRateMediansByDay(
-                  activity.requestOutputRateMediansByDay,
-                );
+                setRequestOutputRateByHour(activity.requestOutputRateByHour);
                 setClients(activity.clients);
                 setOverflow(activity.overflow);
               } else if (name === "inFlight" && source.data === null) {
                 setRequestOutputRateMedian(undefined);
-                setRequestOutputRateMediansByDay(undefined);
+                setRequestOutputRateByHour(undefined);
               }
             }
             setSources((previous) => {
@@ -434,8 +445,8 @@ export function useOverviewLive(active: boolean) {
     requestOutputRateMedian: requestRateFresh
       ? requestOutputRateMedian
       : undefined,
-    requestOutputRateMediansByDay: requestRateFresh
-      ? requestOutputRateMediansByDay
+    requestOutputRateByHour: requestRateFresh
+      ? requestOutputRateByHour
       : undefined,
     overflow,
     reset,

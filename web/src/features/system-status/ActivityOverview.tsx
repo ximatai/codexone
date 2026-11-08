@@ -370,11 +370,7 @@ export function ActivityOverview({
         {sidebar && (
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
             {sidebar(
-              <OutputRateTrend
-                rates={live?.requestOutputRateMediansByDay}
-                buckets={daily.data?.buckets ?? []}
-                offsetMinutes={daily.data?.businessDay.offsetMinutes}
-              />,
+              <OutputRateTrend history={live?.requestOutputRateByHour} />,
             )}
             {connectionNotice}
           </aside>
