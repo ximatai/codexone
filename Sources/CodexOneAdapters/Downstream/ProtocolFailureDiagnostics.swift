@@ -15,10 +15,19 @@ enum ResponseCleanupReason: String, Sendable {
   case downstreamIdleRead = "downstream_idle_read"
 }
 
+enum UpstreamFailureStage: String, Sendable {
+  case webSocketConnect = "websocket_connect"
+  case webSocketHandshake = "websocket_handshake"
+  case webSocketTurn = "websocket_turn"
+  case httpRequest = "http_request"
+  case httpResponse = "http_response"
+}
+
 /// Optional, bounded diagnostics. No client document or arbitrary error description enters logs.
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
+  private static let upstreamFirstEventGate = Mutex(ProtocolFailureLogGate())
   private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
@@ -213,6 +222,41 @@ enum ProtocolFailureDiagnostics {
     }
     // Fixed HTTP client cases, bounded errno, cancellation, or other; never descriptions.
     return NativeImageDiagnostics.errorToken(error)
+  }
+
+  static func recordUpstreamBeforeFirstEvent(
+    _ error: any Error, stage: UpstreamFailureStage, context: ExecutionContext,
+    responseStatus: Int? = nil
+  ) {
+    guard !context.hasUpstreamEvent, !Task.isCancelled, !(error is CancellationError),
+      let requestID = context.admission.requestID.flatMap(UUID.init(uuidString:)),
+      upstreamFirstEventGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    let mapped = protocolFailure(error)
+    let status = (mapped.upstreamStatus ?? responseStatus).flatMap {
+      (100...599).contains($0) ? $0 : nil
+    }
+    let classification =
+      if mapped.code == "upstream_authentication_rejected" {
+        "authentication_rejected"
+      } else if status != nil {
+        "upstream_status_observed"
+      } else if stage == .webSocketTurn {
+        "no_provider_event"
+      } else {
+        "no_upstream_status"
+      }
+    var metadata: Logger.Metadata = [
+      "request_id": .string(requestID.uuidString),
+      "stage": .string(stage.rawValue),
+      "classification": .string(classification),
+      "cause": .string(mapped.detail?.rawValue ?? causeToken(error)),
+    ]
+    if let status { metadata["upstream_status"] = .string(String(status)) }
+    if let version = context.admission.accountSnapshot?.credentialVersion {
+      metadata["credential_version"] = .string(String(version))
+    }
+    logger.warning("Upstream failed before first event", metadata: metadata)
   }
 
   static func record(

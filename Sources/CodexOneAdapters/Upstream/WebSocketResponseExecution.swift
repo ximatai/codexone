@@ -202,6 +202,10 @@ extension HTTPResponseExecution {
       }
       throw GatewayProtocolError(
         413, UpstreamWebSocketBodyLimit.errorCode, upstreamWebSocketCloseCode: 1009)
+    } catch {
+      ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+        error, stage: .webSocketTurn, context: context)
+      throw error
     }
   }
 }

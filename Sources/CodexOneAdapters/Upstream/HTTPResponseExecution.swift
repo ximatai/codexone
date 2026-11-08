@@ -123,6 +123,7 @@ struct HTTPResponseExecution: Sendable {
       if let frame {
         do {
           try await webSocket.authorized(authorization, headers: clientHeaders).run(
+            diagnosticContext: context,
             receiveHeaders: {
               await observeResponseHeaders($0, account: authorization?.identity)
             }) { peer in
@@ -211,6 +212,8 @@ struct HTTPResponseExecution: Sendable {
             }
             return (response, owner, upload)
           } catch {
+            ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+              error, stage: .httpRequest, context: context)
             if let owner { await owner.close() }
             upload.finish()
             throw error
@@ -367,6 +370,8 @@ struct HTTPResponseExecution: Sendable {
             try observeSubmittedTerminal(event, context: context)
           }
         } catch {
+          ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+            error, stage: .httpResponse, context: context, responseStatus: Int(response.status.code))
           if let owner { await owner.close() }
           throw error
         }
