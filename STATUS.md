@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.15](https://github.com/ximatai/codexone/releases/tag/v0.26.15)**（2026-11-08），核心数据库 schema v12。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.16](https://github.com/ximatai/codexone/releases/tag/v0.26.16)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.16 让首页近 7 个业务日的请求输出速率跨重启恢复。升级需停服备份并显式迁移。见[发布说明](CHANGELOG.md)。
 
 v0.26.15 补充 Responses 首事件前失败诊断，区分鉴权拒绝、连接、握手与首事件前断开，关联准入凭证版本。见[发布说明](CHANGELOG.md)。
 
@@ -62,7 +64,7 @@ v0.26.10将订阅上游已知准入前 `unsupported_backend_parameter/400` 归�
 - 多账号选择机制已有实现，完整多账号路由仍需独立验收；用量和费用可为部分或未知，不用于对外结算或绝对封顶。
 - 正文/图片恢复缓存尚未交付；不保证任意断线或重启后恢复已有输出，不自动重放可能已执行的请求。
 - 内部协议可能变化。官方客户端标识与 OAuth ID 的使用可能违反提供者条款、触发风控或账号限制，详见[兼容与风险](docs/reference/compatibility.md)。
-- v12 数据库需要支持 v12 的程序。需要回退到 v0.26.9 时，使用升级前备份独立恢复并核对升级后的执行责任。见[维护指南](docs/guide/backup-upgrade.md)。
+- v13 数据库需要支持 v13 的程序。回退到 v0.26.15 或更早版本时，使用升级前完整备份独立恢复并核对升级后的执行责任。见[维护指南](docs/guide/backup-upgrade.md)。
 - 发版验证在 GitHub Actions 的合成环境中运行；真实订阅、客户端组合与具体服务器容量仍需各自部署验证。
 
 ## 路线图
