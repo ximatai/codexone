@@ -8,7 +8,7 @@ mkdir -p "$root"
 copy() {
   cp -a --parents "$@" "$root"
 }
-for command in sh bash cat chmod chown cp curl date find getent id ls mkdir mv readlink rm rmdir sha256sum sleep sqlite3 stat test touch; do
+for command in sh bash cat chmod chown cp curl date env find getent id ls mkdir mv readlink rm rmdir sha256sum sleep sqlite3 stat test touch; do
   path=$(command -v "$command")
   case "$path" in /*) ;; *) path="/usr/bin/$command";; esac
   copy "$(readlink -f "$path")"
