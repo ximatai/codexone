@@ -126,15 +126,16 @@ struct HTTPResponseExecution: Sendable {
             diagnosticContext: context,
             receiveHeaders: {
               await observeResponseHeaders($0, account: authorization?.identity)
-            }) { peer in
-              try peer.beginTurn(compaction: request.streamCompaction)
-              try await exchange(
-                request, context: context, model: model, peer: peer,
-                frame: frame, allowSizeFallback: true,
-                sizeRefusalPath: request.document["previous_response_id"] == nil
-                  || request.document["previous_response_id"] == .null
-                  ? "http_1009" : "reject_continuation_1009", emit: emit)
             }
+          ) { peer in
+            try peer.beginTurn(compaction: request.streamCompaction)
+            try await exchange(
+              request, context: context, model: model, peer: peer,
+              frame: frame, allowSizeFallback: true,
+              sizeRefusalPath: request.document["previous_response_id"] == nil
+                || request.document["previous_response_id"] == .null
+                ? "http_1009" : "reject_continuation_1009", emit: emit)
+          }
           return nil
         } catch let error as GatewayProtocolError
           where error.code == UpstreamWebSocketBodyLimit.errorCode
@@ -371,7 +372,8 @@ struct HTTPResponseExecution: Sendable {
           }
         } catch {
           ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
-            error, stage: .httpResponse, context: context, responseStatus: Int(response.status.code))
+            error, stage: .httpResponse, context: context, responseStatus: Int(response.status.code)
+          )
           if let owner { await owner.close() }
           throw error
         }
