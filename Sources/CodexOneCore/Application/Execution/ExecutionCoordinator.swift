@@ -12,6 +12,7 @@ public struct ExecutionContext: Sendable {
   private let bound = BoundObjects()
   public func observeProviderEvent() -> Bool { observation.recordProviderEvent() }
   public var hasProviderEvents: Bool { observation.hasProviderEvents }
+  public var hasUpstreamEvent: Bool { observation.hasFirstEvent }
   public var providerRejectedBeforeOutput: Bool { observation.isProviderRejection }
   init(admission: ExecutionAdmission, store: any ExecutionStore, clock: WallClock = .system) {
     self.clock = clock
@@ -70,6 +71,7 @@ private final class UsageObservation: Sendable {
     let parts = started.duration(to: .now).components
     return max(0, parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000)
   }
+  var hasFirstEvent: Bool { firstEvent.withLock { $0 != nil } }
   func recordFirstEvent() { firstEvent.withLock { if $0 == nil { $0 = elapsed() } } }
   private let latest = Mutex(
     (

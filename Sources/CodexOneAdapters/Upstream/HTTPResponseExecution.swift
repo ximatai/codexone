@@ -123,17 +123,19 @@ struct HTTPResponseExecution: Sendable {
       if let frame {
         do {
           try await webSocket.authorized(authorization, headers: clientHeaders).run(
+            diagnosticContext: context,
             receiveHeaders: {
               await observeResponseHeaders($0, account: authorization?.identity)
-            }) { peer in
-              try peer.beginTurn(compaction: request.streamCompaction)
-              try await exchange(
-                request, context: context, model: model, peer: peer,
-                frame: frame, allowSizeFallback: true,
-                sizeRefusalPath: request.document["previous_response_id"] == nil
-                  || request.document["previous_response_id"] == .null
-                  ? "http_1009" : "reject_continuation_1009", emit: emit)
             }
+          ) { peer in
+            try peer.beginTurn(compaction: request.streamCompaction)
+            try await exchange(
+              request, context: context, model: model, peer: peer,
+              frame: frame, allowSizeFallback: true,
+              sizeRefusalPath: request.document["previous_response_id"] == nil
+                || request.document["previous_response_id"] == .null
+                ? "http_1009" : "reject_continuation_1009", emit: emit)
+          }
           return nil
         } catch let error as GatewayProtocolError
           where error.code == UpstreamWebSocketBodyLimit.errorCode
@@ -211,6 +213,8 @@ struct HTTPResponseExecution: Sendable {
             }
             return (response, owner, upload)
           } catch {
+            ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+              error, stage: .httpRequest, context: context)
             if let owner { await owner.close() }
             upload.finish()
             throw error
@@ -367,6 +371,9 @@ struct HTTPResponseExecution: Sendable {
             try observeSubmittedTerminal(event, context: context)
           }
         } catch {
+          ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+            error, stage: .httpResponse, context: context, responseStatus: Int(response.status.code)
+          )
           if let owner { await owner.close() }
           throw error
         }

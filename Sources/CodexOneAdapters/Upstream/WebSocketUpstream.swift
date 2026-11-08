@@ -52,6 +52,7 @@ struct WebSocketUpstream: Sendable {
   }
 
   func run(
+    diagnosticContext: ExecutionContext? = nil,
     receiveHeaders: @escaping @Sendable (HTTPHeaders) async -> Void = { _ in },
     detachedEvent: (@Sendable (Data, String) async throws -> Void)? = nil,
     unexpectedResponse: (@Sendable () async throws -> Void)? = nil,
@@ -66,6 +67,7 @@ struct WebSocketUpstream: Sendable {
     // candidates within our 10 s connect timeout; 64 leaves room for closing-channel overlap while
     // bounding ownership even for large resolver results. NIO closes losers; cancellation owns all.
     let channels = ProtocolChannels(limit: 64)
+    var setupStage: UpstreamFailureStage? = .webSocketConnect
     do {
       try await withTaskCancellationHandler {
         let negotiated = try await ClientBootstrap(group: group).connectTimeout(.seconds(10))
@@ -149,7 +151,9 @@ struct WebSocketUpstream: Sendable {
             upgraded.whenComplete { _ in timeout.cancel() }
             return channel.eventLoop.makeSucceededFuture(upgraded)
           }
+        setupStage = .webSocketHandshake
         let socket = try await negotiated.get()
+        setupStage = nil
         try await WebSocketPeer.run(
           socket, client: true, detachedEvent: detachedEvent,
           unexpectedResponse: unexpectedResponse, operation: operation)
@@ -157,6 +161,10 @@ struct WebSocketUpstream: Sendable {
         channels.close()
       }
     } catch {
+      if let setupStage, let diagnosticContext {
+        ProtocolFailureDiagnostics.recordUpstreamBeforeFirstEvent(
+          error, stage: setupStage, context: diagnosticContext)
+      }
       await channels.shutdown()
       throw error
     }

@@ -32,6 +32,9 @@ class Provider(BaseHTTPRequestHandler):
 
     def emit(self, write):
         events = self.events()
+        if self.server.case == 'upstream-first-event-eof':
+            self.server.started.set()
+            return
         for event in events[:-1]:
             write(event)
         self.server.started.set()
@@ -40,10 +43,23 @@ class Provider(BaseHTTPRequestHandler):
             return
         write(events[-1])
 
+    def reject_before_first_event(self):
+        if self.server.case not in ('upstream-auth-rejected', 'upstream-handshake-eof'):
+            return False
+        self.server.calls += 1
+        if self.server.case == 'upstream-auth-rejected':
+            self.send_response(401)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+        self.server.started.set()
+        return True
+
     def do_POST(self):
         self.close_connection = True
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         assert request['stream'] is True  # subscription contract, even for downstream JSON
+        if self.reject_before_first_event():
+            return
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Connection', 'close')
@@ -53,7 +69,7 @@ class Provider(BaseHTTPRequestHandler):
             self.wfile.flush()
         try:
             self.emit(write)
-            if self.server.case not in ('upstream-terminal-close', 'upstream-before-terminal'):
+            if self.server.case not in ('upstream-terminal-close', 'upstream-before-terminal', 'upstream-first-event-eof'):
                 self.wfile.write(b'data: [DONE]\n\n')
                 self.wfile.flush()
         except OSError:
@@ -61,6 +77,8 @@ class Provider(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.close_connection = True
+        if self.reject_before_first_event():
+            return
         key = self.headers['Sec-WebSocket-Key']
         accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
         self.send_response(101)
@@ -71,7 +89,7 @@ class Provider(BaseHTTPRequestHandler):
             opcode, body = receive(self.connection, masked=True)
             assert opcode == 1 and json.loads(body)['model'] == 'synthetic-contract'
             self.emit(lambda event: send(self.connection, event))
-            if self.server.case in ('upstream-terminal-eof', 'upstream-before-terminal-eof'):
+            if self.server.case in ('upstream-terminal-eof', 'upstream-before-terminal-eof', 'upstream-first-event-eof'):
                 return
             if self.server.case in ('upstream-terminal-close', 'upstream-before-terminal'):
                 send(self.connection, struct.pack('!H', 1011) + b'synthetic-private-close-reason', opcode=8)
@@ -102,6 +120,8 @@ def http_peer(port, route, keep_alive):
 
 def client(port, route, case, server, keep_alive):
     peer = dial(port) if route == 'native' else http_peer(port, route, keep_alive)
+    if case == 'upstream-connect-refused':
+        peer.settimeout(20)
     received = bytearray()
     types = []
     status = None
@@ -134,7 +154,8 @@ def client(port, route, case, server, keep_alive):
                 event = json.loads(body)
                 types.append(event['type'])
                 if event['type'] == 'error':
-                    assert event['status'] == 502 and event['error']['code'] == 'execution_indeterminate', event
+                    expected = 'upstream_authentication_rejected' if case == 'upstream-auth-rejected' else 'execution_indeterminate'
+                    assert event['status'] == 502 and event['error']['code'] == expected, event
                 if event['type'] == 'response.completed':
                     assert event['response']['usage']['input_tokens'] == 5
                     assert types.count('response.completed') == 1
@@ -168,7 +189,7 @@ def client(port, route, case, server, keep_alive):
             peer.sendall((f'POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{{').encode())
             time.sleep(.05)  # the next head/body must be observed, without a complete request
             reset(peer)
-        if route == 'json' and received:
+        if (route == 'json' or status >= 400) and received:
             result = json.loads(received)
             if result.get('status') == 'completed':
                 assert result['usage']['input_tokens'] == 5 and result['usage']['output_tokens'] == 3
@@ -200,7 +221,8 @@ def main():
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix='codexone-finish-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='codexone-finish-') as temporary, socket.socket() as refused:
+            refused.bind(('127.0.0.1', 0))  # Reserve a port with no listener.
             paths = [(t, r, False) for t, r in [('http', 'sse'), ('http', 'json'), ('websocket', 'sse'), ('websocket', 'json'), ('websocket', 'native')]]
             persistent = [(t, r, True) for t in ('http', 'websocket') for r in ('sse', 'json')]
             paths = persistent if args.keep_alive else paths + persistent
@@ -208,8 +230,11 @@ def main():
                 if args.route and args.route != route:
                     continue
                 cases = ['normal', 'before-terminal', 'after-terminal', 'upstream-terminal-close', 'upstream-before-terminal']
+                cases += ['upstream-auth-rejected', 'upstream-first-event-eof']
                 if transport == 'websocket':
-                    cases += ['upstream-terminal-eof', 'upstream-before-terminal-eof']
+                    cases += ['upstream-terminal-eof', 'upstream-before-terminal-eof', 'upstream-handshake-eof']
+                    if route == 'json' and not keep_alive:
+                        cases += ['upstream-connect-refused']
                 if keep_alive:
                     cases += ['next-request-reset']
                 if route == 'sse':
@@ -221,6 +246,10 @@ def main():
                         server.case = case
                         server.calls = 0
                         server.started, server.release = threading.Event(), threading.Event()
+                        connect_refused = case == 'upstream-connect-refused'
+                        if connect_refused:
+                            server.started.set()
+                        upstream_port = refused.getsockname()[1] if connect_refused else server.server_port
                         root = Path(temporary) / f'{transport}-{route}-{keep_alive}-{case}-{iteration}'
                         root.mkdir()
                         config = root / 'identity.json'
@@ -228,8 +257,8 @@ def main():
                             keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(), namespace='synthetic-finish',
                             identity='synthetic-identity', models=[dict(id='synthetic-contract', inputMicrosPerMillion=0,
                             outputMicrosPerMillion=0)], reservedMicros=1, upstreamContract='codex-subscription',
-                            upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1', upstreamTransport=transport,
-                            executionTimeoutSeconds=5)))
+                            upstreamBaseURL=f'http://127.0.0.1:{upstream_port}/v1', upstreamTransport=transport,
+                            executionTimeoutSeconds=15 if connect_refused else 5)))
                         config.chmod(0o600)
                         process, ports = start(str(args.binary.resolve()), config, root)
                         try:
@@ -251,12 +280,30 @@ def main():
                                 ).fetchone()
                                 assert incomplete_reason is None
                             protocol = [line.split('codexone.protocol:', 1)[-1].strip() for line in logs.splitlines() if 'codexone.protocol:' in line]
-                            assert len(records) == 1 and server.calls == 1, 'Unexpected admission or replay'
+                            assert len(records) == 1 and server.calls == int(not connect_refused), 'Unexpected admission or replay'
                             protocol = [line + (' [attempt]' if f'request_id={request_id}' in line else ' [no attempt]') if 'request_id=' in line else line for line in protocol]
                             state, outcome, usage = records[0]
                             completeness = usage['completeness'] if usage else 'none'
                             print(f'{transport}/{route}/{"keep-alive" if keep_alive else "close"}/{case}: {result} | {state}/{outcome}/{completeness} | {protocol}', flush=True)
-                            if case.startswith('upstream-before-terminal'):
+                            if connect_refused or case in ('upstream-auth-rejected', 'upstream-first-event-eof', 'upstream-handshake-eof'):
+                                assert outcome == 'failed', records
+                                assert 'error' in result or 'execution_indeterminate' in result or 'upstream_authentication_rejected' in result, result
+                                auth = case == 'upstream-auth-rejected'
+                                assert (state, completeness) == (('settled', 'complete') if auth else ('unknown', 'none')), records
+                                if not args.baseline:
+                                    stage = 'http_response' if transport == 'http' else (
+                                        'websocket_connect' if connect_refused else
+                                        'websocket_turn' if case == 'upstream-first-event-eof' else 'websocket_handshake')
+                                    classification = 'authentication_rejected' if auth else (
+                                        'upstream_status_observed' if transport == 'http' else
+                                        'no_provider_event' if stage == 'websocket_turn' else 'no_upstream_status')
+                                    diagnostics = [line for line in protocol if 'Upstream failed before first event' in line]
+                                    assert len(diagnostics) == 1 and '[attempt]' in diagnostics[0], protocol
+                                    assert f'stage={stage}' in diagnostics[0] and f'classification={classification}' in diagnostics[0], protocol
+                                    if auth:
+                                        assert 'upstream_status=401' in diagnostics[0], protocol
+                            elif case.startswith('upstream-before-terminal'):
+                                assert not any('Upstream failed before first event' in line for line in protocol), protocol
                                 assert state == 'unknown' and outcome != 'succeeded' and usage is None, records
                                 assert 'error' in result or 'execution_indeterminate' in result, result
                                 if route == 'json':

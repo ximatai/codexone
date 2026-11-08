@@ -134,6 +134,7 @@ enum PoolWebSocketSession {
             try await executor.webSocket.authorized(
               selection.authorization, headers: executor.clientHeaders
             ).run(
+              diagnosticContext: selection.context,
               receiveHeaders: {
                 await executor.observeResponseHeaders(
                   $0, account: selection.authorization?.identity)
