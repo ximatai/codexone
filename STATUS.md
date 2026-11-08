@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.18](https://github.com/ximatai/codexone/releases/tag/v0.26.18)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.19](https://github.com/ximatai/codexone/releases/tag/v0.26.19)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.19 修正首页运行资源的曲线标题对齐，沿用 schema v13。见[发布说明](CHANGELOG.md)。
 
 v0.26.18 把首页请求输出速率改为近 7 天小时趋势，并统一运行资源折线读数布局。沿用 schema v13。见[发布说明](CHANGELOG.md)。
 
