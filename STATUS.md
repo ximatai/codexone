@@ -45,7 +45,7 @@ Responses 首响应等待现从本机上传完成边界开始，总执行期限�
 
 运行镜像限制 glibc arena 并设置 mmap/trim 阈值，Responses 解析后清空原正文并保留预算租约。发布流程在原生 Linux amd64 验证 768 MiB 下的合成混合容量，范围见[验证指南](docs/development/verification.md)。
 
-首页实时概览默认开启。请求活动、结算输出吞吐及资源数据由共享快照推送，连接中断自动回退到 HTTP 轮询。范围为首页和首页账号抽屉。见[管理面规范](docs/reference/specs/control-plane.md)与[验收记录](docs/changes/admin-live-updates/tasks.md)。
+首页实时概览默认开启。请求活动、请求输出速率及资源数据由共享快照推送，连接中断自动回退到 HTTP 轮询。范围为首页和首页账号抽屉。见[管理面规范](docs/reference/specs/control-plane.md)与[验收记录](docs/changes/admin-live-updates/tasks.md)。
 
 
 ## 已知限制

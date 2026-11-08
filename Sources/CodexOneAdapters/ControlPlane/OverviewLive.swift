@@ -19,44 +19,47 @@ public final class OverviewActivity: Sendable {
   private let state = Mutex(State())
   private let watching = Atomic(false)
   private let dropped = Atomic(0)
-  private struct OutputBucket: Sendable {
-    var second: Int64 = -1
-    var tokens: Decimal = 0
+  private struct OutputSample: Sendable {
+    let second: Int64
+    let rate: Decimal
   }
   private struct OutputDay: Sendable {
-    var tokens: Decimal = 0
-    var activeSeconds = 0
-    // One bit per business-day second, including when the wall clock steps back.
-    var seconds = Array(repeating: UInt64(0), count: 1350)
+    private static let capacity = 4096
+    var samples: [OutputSample] = []
+    private var next = 0
+    private var cachedMedian: Decimal?
 
-    mutating func record(_ amount: Int64, second: Int) {
-      let mask = UInt64(1) << (second % 64)
-      if seconds[second / 64] & mask == 0 {
-        seconds[second / 64] |= mask
-        activeSeconds += 1
+    mutating func record(_ sample: OutputSample) {
+      if samples.count < Self.capacity {
+        samples.append(sample)
+      } else {
+        samples[next] = sample
+        next = (next + 1) % Self.capacity
       }
-      tokens += Decimal(amount)
+      cachedMedian = nil
+    }
+
+    mutating func median() -> Decimal? {
+      if let cachedMedian { return cachedMedian }
+      cachedMedian = OverviewActivity.median(samples.map(\.rate))
+      return cachedMedian
     }
   }
   private struct SettledOutput: Sendable {
-    var recent = Array(repeating: OutputBucket(), count: 60)
     var days: [Int64: OutputDay] = [:]
     var latestDay: Int64?
   }
   private let settledOutput = Mutex(SettledOutput())
 
-  func recordSettledOutput(_ tokens: Int64, at second: Int64, businessDay: BusinessDayDefinition) {
-    guard tokens > 0, second >= 0, let day = try? businessDay.start(containing: second) else {
-      return
-    }
+  func recordRequestOutput(
+    _ tokens: Int64, durationMilliseconds: Int64, at second: Int64,
+    businessDay: BusinessDayDefinition
+  ) {
+    guard tokens > 0, durationMilliseconds > 0, second >= 0,
+      let day = try? businessDay.start(containing: second)
+    else { return }
+    let rate = Decimal(tokens) * 1000 / Decimal(durationMilliseconds)
     settledOutput.withLock { output in
-      let index = Int(second % 60)
-      if output.recent[index].second < second {
-        output.recent[index] = OutputBucket(second: second)
-      }
-      if output.recent[index].second == second {
-        output.recent[index].tokens += Decimal(tokens)
-      }
       let latestDay = max(output.latestDay ?? day, day)
       let firstDay = latestDay - 6 * 86400
       if output.latestDay != latestDay {
@@ -64,26 +67,33 @@ public final class OverviewActivity: Sendable {
         output.days = output.days.filter { $0.key >= firstDay }
       }
       if day >= firstDay {
-        output.days[day, default: OutputDay()].record(tokens, second: Int(second - day))
+        output.days[day, default: OutputDay()].record(.init(second: second, rate: rate))
       }
     }
   }
 
-  func settledOutputSnapshot(at second: Int64) -> (rate: Decimal?, days: [String: JSONValue]) {
+  private static func median(_ rates: [Decimal]) -> Decimal? {
+    guard !rates.isEmpty else { return nil }
+    let sorted = rates.sorted()
+    let middle = sorted.count / 2
+    return sorted.count.isMultiple(of: 2)
+      ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+  }
+
+  func requestOutputSnapshot(at second: Int64) -> (rate: Decimal?, days: [String: JSONValue]) {
     settledOutput.withLock { output in
-      var tokens = Decimal.zero
-      var activeSeconds = 0
-      for bucket in output.recent
-      where bucket.second >= 0 && bucket.second <= second && second - bucket.second < 60 {
-        tokens += bucket.tokens
-        activeSeconds += 1
+      var recent: [Decimal] = []
+      var days: [String: JSONValue] = [:]
+      for day in Array(output.days.keys) where day <= second && second - day < 7 * 86400 {
+        if let value = output.days[day]?.median() { days[String(day)] = .number(value) }
+        if second - day < 86400 + 59, let samples = output.days[day]?.samples {
+          recent.append(
+            contentsOf: samples.lazy.filter {
+              $0.second <= second && second - $0.second < 60
+            }.map(\.rate))
+        }
       }
-      let days = [String: JSONValue](
-        uniqueKeysWithValues: output.days.compactMap { day, value in
-          guard day <= second, second - day < 7 * 86400 else { return nil }
-          return (String(day), JSONValue.number(value.tokens / Decimal(value.activeSeconds)))
-        })
-      return (activeSeconds == 0 ? nil : tokens / Decimal(activeSeconds), days)
+      return (Self.median(recent), days)
     }
   }
   let signals: AsyncStream<Signal>
@@ -377,8 +387,8 @@ public actor OverviewLive: OverviewLiveRunning {
     if let source = sections["inFlight"], source["data"] != .null {
       let data = flight(at: time)
       if activityChanged || source["data"]?["clients"] != data["clients"]
-        || source["data"]?["settledOutputTokensPerSecond"] != data["settledOutputTokensPerSecond"]
-        || source["data"]?["settledOutputRatesByDay"] != data["settledOutputRatesByDay"]
+        || source["data"]?["recentRequestOutputRateMedian"] != data["recentRequestOutputRateMedian"]
+        || source["data"]?["requestOutputRateMediansByDay"] != data["requestOutputRateMediansByDay"]
       {
         let previous = sections["inFlight"]
         // Activity observation does not prove that SQLite reconciliation recovered.
@@ -396,13 +406,13 @@ public actor OverviewLive: OverviewLiveRunning {
     }
   }
   private func flight(at second: Int64) -> JSONValue {
-    let output = activity.settledOutputSnapshot(at: second)
+    let output = activity.requestOutputSnapshot(at: second)
     return .object([
       "rows": .array(rows.keys.sorted().compactMap { rows[$0] }),
       "recentlyFinished": .array([]), "overflow": .number(Decimal(overflow)),
       "clients": activity.clients(),
-      "settledOutputTokensPerSecond": output.rate.map(JSONValue.number) ?? .null,
-      "settledOutputRatesByDay": .object(output.days),
+      "recentRequestOutputRateMedian": output.rate.map(JSONValue.number) ?? .null,
+      "requestOutputRateMediansByDay": .object(output.days),
     ])
   }
   private func replace(_ name: String, data: JSONValue?, at: Int64, error: String?) {

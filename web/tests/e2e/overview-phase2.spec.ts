@@ -7,6 +7,7 @@ import { observationFixture } from "../../src/features/account-management/observ
 test("overview keeps accessible trends, principal names, details and responsive layout", async ({
   page,
 }) => {
+  test.setTimeout(30_000);
   await page.clock.install();
   await page.setViewportSize({ width: 1440, height: 900 });
   const screenshots = "../artifacts/ui-phase2";
@@ -95,15 +96,19 @@ test("overview keeps accessible trends, principal names, details and responsive 
             detail: {},
             sinceUnixSeconds: 1,
           },
-          {
+          ...[
+            "response.metadata",
+            "responsesapi.websocket_timing",
+            "synthetic.earlier",
+          ].map((name, index) => ({
             kind: "client_protocol_extension",
             severity: "warning",
             subjectType: "protocol",
             subjectID: null,
-            subjectName: "x-codex-" + "n".repeat(120),
+            subjectName: `upstream_event.${name}`,
             detail: { overflow: false },
-            sinceUnixSeconds: 1,
-          },
+            sinceUnixSeconds: now - 300 - index * 60,
+          })),
         ],
       },
       "/api/session": { authenticated: true, csrf: "ac1_" + "a".repeat(43) },
@@ -267,9 +272,9 @@ test("overview keeps accessible trends, principal names, details and responsive 
     name: "订阅额度与系统状态",
   });
   await expect(
-    sidebar.getByRole("heading", { name: "输出吞吐" }),
+    sidebar.getByRole("heading", { name: "请求输出速率" }),
   ).toBeVisible();
-  await expect(sidebar.getByText("暂无吞吐数据")).toBeVisible();
+  await expect(sidebar.getByText("暂无速率数据")).toBeVisible();
 
   await expect(
     page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
@@ -314,6 +319,30 @@ test("overview keeps accessible trends, principal names, details and responsive 
     fullPage: true,
     animations: "disabled",
   });
+  const protocol = sidebar.getByRole("region", { name: "协议观测" });
+  const resources = sidebar.getByRole("heading", { name: "运行资源" });
+  await expect(protocol.getByRole("heading")).toHaveText("协议观测");
+  expect((await protocol.boundingBox())!.y).toBeGreaterThan(
+    (await resources.boundingBox())!.y,
+  );
+  await expect(
+    protocol.getByText("upstream_event.response.metadata"),
+  ).toBeVisible();
+  await expect(
+    protocol.getByText("upstream_event.responsesapi.websocket_timing"),
+  ).toBeVisible();
+  await expect(protocol.getByText(/首次观测：/)).toHaveCount(3);
+  await expect(
+    protocol.getByText("upstream_event.synthetic.earlier"),
+  ).toBeVisible();
+  await expect(protocol.getByRole("button")).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await sidebar.screenshot({
+    path: screenshots + "/protocol-observation-card.png",
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
   const rejected = page.getByText("拒绝 6");
   await expect(rejected).toBeVisible();
   const viewport = page.viewportSize()!;

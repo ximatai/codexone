@@ -6,6 +6,7 @@ import errno
 import subprocess
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import socket
@@ -119,11 +120,16 @@ def verify(binary):
         commit_deadline = time.monotonic() + 5
         while True:
             with sqlite3.connect(f.root / 'state/core.sqlite') as db:
-                settled = db.execute("SELECT COUNT(*) FROM attempts WHERE state='settled'").fetchone()[0]
-            if settled == 1:
+                settled = db.execute("""SELECT json_extract(usage_json, '$.outputTokens'),
+                    json_extract(outcome_json, '$.totalMilliseconds')
+                    FROM attempts WHERE state='settled'""").fetchall()
+            if len(settled) == 1:
                 break
             assert time.monotonic() < commit_deadline, ('settled_attempts', settled)
             time.sleep(.01)
+        tokens, duration_ms = settled[0]
+        assert tokens == 3 and duration_ms > 0
+        expected_rate = tokens * 1000 / duration_ms
         committed = time.monotonic()
         observed_aggregate = False
         observed_throughput = False
@@ -137,8 +143,10 @@ def verify(binary):
                 row['keyID'] == key['id'] and row['admitted'] == 1 and row['succeeded'] == 1
                 for row in keys.get('keys', [])
             )
-            observed_throughput |= (activity.get('settledOutputTokensPerSecond') == 3
-                                    and 3 in activity.get('settledOutputRatesByDay', {}).values())
+            rate = activity.get('recentRequestOutputRateMedian')
+            observed_throughput |= (rate is not None and math.isclose(rate, expected_rate)
+                                    and any(math.isclose(day, expected_rate) for day in
+                                            activity.get('requestOutputRateMediansByDay', {}).values()))
             return observed_aggregate and observed_throughput
 
         until(sock, has_settled_usage)

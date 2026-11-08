@@ -59,6 +59,24 @@ test("render synthetic documentation screenshots", async ({ page }) => {
     recordedRejections: 0,
     unresolved: 0,
   }));
+  await page.route("**/api/attention", (route) =>
+    route.fulfill({
+      json: {
+        generatedAtUnixSeconds: now,
+        items: [
+          {
+            kind: "client_protocol_extension",
+            severity: "warning",
+            subjectType: "protocol",
+            subjectID: null,
+            subjectName: "upstream_event.synthetic.notice",
+            detail: { overflow: false },
+            sinceUnixSeconds: now - 300,
+          },
+        ],
+      },
+    }),
+  );
   await page.route("**/api/usage?*", (route) =>
     route.fulfill({ json: { ...report, nextCursor: null } }),
   );
@@ -108,7 +126,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("合成订阅账号", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("img", { name: /^今日已准入近 7 天/ }),
+    page.getByRole("img", { name: /^今日已准入近 7 天/ }).locator("svg"),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(
@@ -116,6 +134,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
       .getByRole("region", { name: "今日 Key 请求汇总" })
       .getByText("desktop", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("region", { name: "协议观测" })).toBeVisible();
   await page.screenshot({
     path: "../docs/assets/overview.png",
     fullPage: true,

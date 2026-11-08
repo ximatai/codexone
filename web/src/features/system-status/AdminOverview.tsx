@@ -84,8 +84,6 @@ export function AdminOverview() {
     if (params.has("account")) setAccountDrawerMounted(true);
   }, [params]);
   const overlay = !!owner.session && params.get("storage") === "details";
-  const protocolOverlay =
-    !!owner.session && params.get("protocol") === "details";
   const system = overviewQuery(
     useQuery({
       queryKey: ["overview", "system"],
@@ -141,6 +139,9 @@ export function AdminOverview() {
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
+  const protocolItems = (attention.data?.items ?? [])
+    .filter((item) => item.kind === "client_protocol_extension")
+    .sort((a, b) => (b.sinceUnixSeconds ?? 0) - (a.sinceUnixSeconds ?? 0));
   const eligibleAccounts = accounts.data?.filter(
     (account) =>
       account.mode === "enabled" &&
@@ -348,6 +349,48 @@ export function AdminOverview() {
                   live.stale.some(([source]) => source === "storage")
                 }
               />
+              {protocolItems.length > 0 && (
+                <Paper
+                  withBorder
+                  p="md"
+                  component="section"
+                  aria-labelledby="overview-protocol"
+                >
+                  <Stack gap="xs" align="stretch">
+                    <Title order={3} size="h4" id="overview-protocol">
+                      协议观测
+                    </Title>
+                    <Stack gap="xs">
+                      {protocolItems.map((item) => (
+                        <div
+                          key={
+                            item.subjectName ??
+                            item.subjectID ??
+                            item.sinceUnixSeconds
+                          }
+                        >
+                          <Text size="sm" className="wrap-anywhere">
+                            {item.subjectName ?? item.subjectID ?? "未知名称"}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            首次观测：
+                            {item.sinceUnixSeconds == null
+                              ? "不可用"
+                              : localTime(item.sinceUnixSeconds)}
+                          </Text>
+                        </div>
+                      ))}
+                    </Stack>
+                    {protocolItems.some(
+                      (item) => item.detail.overflow === true,
+                    ) && (
+                      <Text size="xs" c="dimmed">
+                        名称已达记录上限。
+                      </Text>
+                    )}
+                  </Stack>
+                </Paper>
+              )}
             </>
           )}
         />
@@ -356,41 +399,6 @@ export function AdminOverview() {
             <InlineAccountDetails embedded />
           </Suspense>
         )}
-        <Drawer
-          removeScrollProps={{ removeScrollBar: false }}
-          data-ui-overlay={protocolOverlay || undefined}
-          opened={protocolOverlay}
-          onClose={() => setParams({})}
-          title="客户端协议扩展"
-          position="right"
-          closeButtonProps={{ "aria-label": "关闭" }}
-        >
-          <Stack>
-            <Text size="sm">
-              本进程启动以来观察到的未知协议名称；仅记录名称，重启后清空。请结合客户端版本核对兼容性。
-            </Text>
-            {attention.data?.items
-              .filter((item) => item.kind === "client_protocol_extension")
-              .map((item, index) => (
-                <Stack key={index} gap="xs">
-                  <Text size="sm" className="wrap-anywhere">
-                    {item.subjectName ?? item.subjectID ?? "未知名称"}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    首次出现：
-                    {item.sinceUnixSeconds == null
-                      ? "不可用"
-                      : new Date(item.sinceUnixSeconds * 1000).toLocaleString()}
-                  </Text>
-                  {item.detail.overflow === true && (
-                    <Text size="sm" c="orange">
-                      名称集合已达上限，后续新名称未记录。
-                    </Text>
-                  )}
-                </Stack>
-              ))}
-          </Stack>
-        </Drawer>
         <Drawer
           removeScrollProps={{ removeScrollBar: false }}
           data-ui-overlay={overlay || undefined}
