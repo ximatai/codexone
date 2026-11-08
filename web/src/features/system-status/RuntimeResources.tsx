@@ -72,7 +72,7 @@ function ResourceTrend({
         <Text size="xs" fw={500}>
           {label}
         </Text>
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" className={styles.resourceTrendValue}>
           {currentValue == null
             ? "未知"
             : formatResourceValue(currentValue, percent)}

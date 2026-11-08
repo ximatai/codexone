@@ -251,6 +251,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Keep the live value's box stationary when its digit count changes. */
+.resourceTrendValue {
+  inline-size: 12ch;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
 .resourceTrendPlot {
   position: relative;
   margin-block-start: 3px;
