@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [automatic-v12-migration](automatic-v12-migration/proposal.md) · [任务](automatic-v12-migration/tasks.md)
+
 - [persist-output-rate-history](persist-output-rate-history/proposal.md) · [任务](persist-output-rate-history/tasks.md)
 
 

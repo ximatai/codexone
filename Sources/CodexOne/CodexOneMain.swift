@@ -48,6 +48,18 @@ struct CodexOneMain {
       FileHandle.standardError.write(
         Data("Insufficient storage headroom; free space and retry offline.\n".utf8))
       exit(1)
+    } catch StartupMigrationError.backupFailed {
+      FileHandle.standardError.write(
+        Data(
+          "Automatic v12 migration could not save its backup. Check data-directory access and retry.\n"
+            .utf8))
+      exit(1)
+    } catch StartupMigrationError.transactionFailed {
+      FileHandle.standardError.write(
+        Data(
+          "Automatic v12 migration failed. Keep the original database and backup, then inspect offline.\n"
+            .utf8))
+      exit(1)
     } catch KeyMaintenanceError.incompleteReencryption {
       FileHandle.standardError.write(
         Data(
@@ -270,7 +282,7 @@ struct CodexOneMain {
         limits: .init(
           requests: 10_000, active: ExecutionLimits.accountConcurrency, unresolved: 32,
           budgetMicros: 1_000_000_000), unresolvedCapacity: ExecutionLimits.unresolvedCapacity,
-        clock: clock, businessDay: configuration.businessDay)
+        clock: clock, businessDay: configuration.businessDay, allowStartupMigration: true)
     } else {
       store = nil
     }

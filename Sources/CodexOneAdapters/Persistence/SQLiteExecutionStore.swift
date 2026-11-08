@@ -84,7 +84,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   public static func open(
     path: String, limits: ExecutionLimits,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
-    businessDay: BusinessDayDefinition = .utc,
+    businessDay: BusinessDayDefinition = .utc, allowStartupMigration: Bool = false,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -94,13 +94,13 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     try await open(
       path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
       unresolvedCapacity: unresolvedCapacity, clock: clock, businessDay: businessDay,
-      pacingSleep: pacingSleep)
+      allowStartupMigration: allowStartupMigration, pacingSleep: pacingSleep)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
     available: @escaping @Sendable (String) throws -> Int64,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
-    businessDay: BusinessDayDefinition = .utc,
+    businessDay: BusinessDayDefinition = .utc, allowStartupMigration: Bool = false,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -118,7 +118,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let connection = try SQLiteConnection(path: path, clock: clock, businessDay: businessDay)
+          let connection = try SQLiteConnection(
+            path: path, allowStartupMigration: allowStartupMigration, clock: clock,
+            businessDay: businessDay)
           guard try connection.reencryptionCheckpoint()?.complete != false else {
             throw KeyMaintenanceError.incompleteReencryption
           }

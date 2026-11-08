@@ -20,12 +20,13 @@ Compose 默认使用独立 backups 卷，启动 10 分钟后首次备份，随�
 python3 compose-install.py stop
 # 编辑 .env 为已核验的不可变镜像引用，保留原卷和 secrets
 python3 compose-install.py run --rm gateway --check-config
-python3 compose-install.py run --rm gateway --migrate
+# 仅当目标版本或源库要求显式迁移时执行下一行
+# python3 compose-install.py run --rm gateway --migrate
 python3 compose-install.py up -d
 python3 compose-install.py ps
 ```
 
-当前开发版本 schema 为 v13（已发布 v0.26.15 为 v12）；旧 v1—v12 必须显式停服迁移，迁移前自动生成的一致性数据库备份不能替代完整恢复 bundle。失败时保持停止并保留源库，不清卷、不覆盖主密钥。
+支持自动迁移的版本可在启动时将正常的 v0.26.15 账本从 v12 升到 v13。v0.26.16、v1—v11 来源，或需要启用增量回收的 v12，仍按发布说明执行显式迁移。迁移前自动生成的一致性数据库备份不能替代完整恢复 bundle。失败时保持停止并保留源库，不清卷、不覆盖主密钥。
 
 ## 回退
 

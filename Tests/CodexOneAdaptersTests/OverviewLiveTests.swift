@@ -96,8 +96,10 @@ import Testing
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
   let time = TestWallClock()
-  func open() async throws -> SQLiteExecutionStore {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: time.clock)
+  func open(automatic: Bool = true) async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(
+      path: path, limits: syntheticLimits, clock: time.clock,
+      allowStartupMigration: automatic)
   }
   func timed(_ milliseconds: Int64) throws -> ExecutionOutcome {
     try .init(failure: nil, atUnixSeconds: time.clock.unixSeconds, totalMilliseconds: milliseconds)
@@ -107,10 +109,32 @@ import Testing
   try await original.finalize(attempt: "legacy", evidence: usage(), outcome: timed(1000))
   await original.close()
   try rawSQL(path, removeOutputRateSchema + "PRAGMA user_version=12")
-  await #expect(throws: ExecutionError.incompatibleSchema) { try await open() }
-  try await SQLiteExecutionStore.migrate(path: path, clock: time.clock)
+  await #expect(throws: ExecutionError.incompatibleSchema) { try await open(automatic: false) }
+
+  // Force the DDL transaction to fail after ALTER TABLE has already executed.
+  try rawSQL(path, "CREATE INDEX attempts_output_rate ON attempts(id)")
+  await #expect(throws: StartupMigrationError.transactionFailed) { try await open() }
+  let failed = try SQLiteConnection(readOnlyPath: path)
+  #expect(try failed.scalar("PRAGMA user_version") == 12)
+  #expect(
+    try failed.scalar("SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='output_rate'")
+      == 0)
+  failed.shutdown()
+  try rawSQL(path, "DROP INDEX attempts_output_rate")
+  let folder = (path as NSString).deletingLastPathComponent
+  func backups() throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: folder).filter { $0.contains(".pre-v13-") }
+  }
+  #expect(try backups().count == 1)
 
   let upgraded = try await open()
+  #expect(try backups().count == 2)
+  for backup in try backups() {
+    let source = try SQLiteConnection(readOnlyPath: folder + "/" + backup)
+    #expect(try source.scalar("PRAGMA user_version") == 12)
+    #expect(try source.scalar("SELECT COUNT(*) FROM attempts WHERE id='legacy'") == 1)
+    source.shutdown()
+  }
   #expect(try await upgraded.snapshot(attempt: "legacy").state == .settled)
   #expect(upgraded.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds).days.isEmpty)
   try await upgraded.admit(admission("first-day"))
@@ -125,6 +149,7 @@ import Testing
   await upgraded.close()
 
   let reopened = try await open()
+  #expect(try backups().count == 2)
   let restored = reopened.overviewActivity.requestOutputSnapshot(at: now)
   #expect(restored.days == before.days)
   #expect(restored.rate == nil)
