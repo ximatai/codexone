@@ -38,6 +38,8 @@ function ResourceTrend({
   const end = latest?.unixSeconds ?? 0;
   const currentValue = latest?.[field];
   const percent = field === "hostCPUPercent";
+  const readout =
+    currentValue == null ? "未知" : formatResourceValue(currentValue, percent);
   const maximum =
     scale ?? Math.max(1, ...samples.map((sample) => sample[field] ?? 0)) * 1.25;
   const xAt = (time: number) => (time - end + 3600) / 36;
@@ -73,9 +75,8 @@ function ResourceTrend({
           {label}
         </Text>
         <Text size="xs" c="dimmed" className={styles.resourceTrendValue}>
-          {currentValue == null
-            ? "未知"
-            : formatResourceValue(currentValue, percent)}
+          {/* Keep the readout box fixed and replace its right-aligned text as a unit. */}
+          <span key={readout}>{readout}</span>
         </Text>
       </Group>
       <div className={styles.resourceTrendPlot}>
