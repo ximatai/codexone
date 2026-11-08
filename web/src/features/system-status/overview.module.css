@@ -251,10 +251,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Keep the live value's box stationary when its digit count changes. */
+/* Anchor the text as well as its box when the reading changes width. */
 .resourceTrendValue {
-  inline-size: 12ch;
-  text-align: end;
+  inline-size: 9ch;
+  text-align: start;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
