@@ -34,7 +34,7 @@ const reasoningLabels: Record<string, string> = {
   xhigh: "极高",
 };
 const outputRateFormat = new Intl.NumberFormat("zh-CN", {
-  maximumFractionDigits: 2,
+  maximumFractionDigits: 0,
 });
 function Elapsed({
   seconds,

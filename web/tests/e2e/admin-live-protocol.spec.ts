@@ -317,17 +317,18 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "进行中请求 · 42.5 Token/s" }),
+    page.getByRole("heading", { name: "进行中请求 · 43 Token/s" }),
   ).toBeVisible();
   const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
   const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
+  await expect(trend).toHaveAccessibleName(/(?:：|、)43(?:、|$)/);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
     [3, "stale", "进行中请求"],
-    [4, "fresh", "进行中请求 · 42.5 Token/s"],
+    [4, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
