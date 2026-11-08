@@ -64,7 +64,8 @@ private func authorDocument(_ extra: JSONObject = [:]) -> JSONValue {
   await store.close()
   try rawSQL(
     path,
-    "ALTER TABLE usage_daily DROP COLUMN svg_input_tokens; ALTER TABLE usage_daily DROP COLUMN svg_output_tokens; ALTER TABLE usage_daily DROP COLUMN svg_reasoning_tokens; ALTER TABLE usage_daily DROP COLUMN price_unknown; PRAGMA user_version=11"
+    removeOutputRateSchema
+      + "ALTER TABLE usage_daily DROP COLUMN svg_input_tokens; ALTER TABLE usage_daily DROP COLUMN svg_output_tokens; ALTER TABLE usage_daily DROP COLUMN svg_reasoning_tokens; ALTER TABLE usage_daily DROP COLUMN price_unknown; PRAGMA user_version=11"
   )
   await #expect(throws: ExecutionError.incompatibleSchema) {
     try await SQLiteExecutionStore.open(path: path, limits: limits)
@@ -72,7 +73,7 @@ private func authorDocument(_ extra: JSONObject = [:]) -> JSONValue {
   try await SQLiteExecutionStore.migrate(path: path)
   let upgraded = try await SQLiteExecutionStore.open(path: path, limits: limits)
   do {
-    #expect(try await upgraded.perform { try $0.scalar("PRAGMA user_version") } == 12)
+    #expect(try await upgraded.perform { try $0.scalar("PRAGMA user_version") } == 13)
     let restored = try await upgraded.snapshot(attempt: "legacy-author")
     #expect(restored.state == .settled && restored.usage == usage())
     #expect(restored.usage?.svgInputTokens == nil)
@@ -83,7 +84,7 @@ private func authorDocument(_ extra: JSONObject = [:]) -> JSONValue {
   await upgraded.close()
   let backups = try FileManager.default.contentsOfDirectory(
     atPath: (path as NSString).deletingLastPathComponent)
-  #expect(backups.filter { $0.contains(".pre-v12-") }.count == 1)
+  #expect(backups.filter { $0.contains(".pre-v13-") }.count == 1)
 }
 
 @Test func svgSnapshotsRetainCumulativeFactsAndMissingItemDoesNotProveCoverage() throws {

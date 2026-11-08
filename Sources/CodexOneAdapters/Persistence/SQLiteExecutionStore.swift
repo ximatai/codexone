@@ -50,6 +50,35 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     self.connection = connection
     self.limits = limits
     self.unresolvedCapacity = unresolvedCapacity
+    try loadOutputRateHistory(connection)
+  }
+
+  private func loadOutputRateHistory(_ db: SQLiteConnection) throws {
+    let now = db.clock.unixSeconds
+    let today = try db.businessDay.start(containing: now)
+    for day in stride(from: today - 6 * 86400, through: today, by: 86400) {
+      let samples = try db.rows(
+        """
+        SELECT output_rate_settled_at,rowid,output_rate FROM attempts
+        WHERE output_rate_settled_at>=? AND output_rate_settled_at<?
+        ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?
+        """,
+        [
+          .number(day), .number(min(day + 86400, now + 1)),
+          .number(Int64(OverviewActivity.outputDayCapacity)),
+        ]
+      ) { row -> (Int64, Int64, Decimal)? in
+        guard let raw = sqlite3_column_text(row, 2),
+          let rate = Decimal(
+            string: String(cString: raw), locale: Locale(identifier: "en_US_POSIX"))
+        else { return nil }
+        return (sqlite3_column_int64(row, 0), sqlite3_column_int64(row, 1), rate)
+      }
+      for (second, rowID, rate) in samples.reversed().compactMap({ $0 }) {
+        overviewActivity.recordRequestOutput(
+          rate, at: second, rowID: rowID, businessDay: db.businessDay, live: false)
+      }
+    }
   }
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
   public static func open(
@@ -398,7 +427,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
-      let outputSample = try db.transaction { () -> (tokens: Int64, duration: Int64)? in
+      let outputSample = try db.transaction { () -> (rate: Decimal, second: Int64, rowID: Int64)? in
         let snapshot = try Self.load(db, attempt)
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
@@ -478,15 +507,26 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               ?? db.scalar(
                 "SELECT COALESCE(json_extract(outcome_json,'$.totalMilliseconds'),0) FROM attempts WHERE id=?",
                 [.text(attempt)])
-            if duration > 0 { return (evidence.outputTokens, duration) }
+            if duration > 0 {
+              let second = db.clock.unixSeconds
+              let rate = Decimal(evidence.outputTokens) * 1000 / Decimal(duration)
+              try db.write(
+                "UPDATE attempts SET output_rate_settled_at=?,output_rate=? WHERE id=?",
+                [
+                  .number(second), .text(NSDecimalNumber(decimal: rate).stringValue),
+                  .text(attempt),
+                ])
+              let rowID = try db.scalar("SELECT rowid FROM attempts WHERE id=?", [.text(attempt)])
+              return (rate, second, rowID)
+            }
           }
         }
         return nil
       }
       if let outputSample {
         self.overviewActivity.recordRequestOutput(
-          outputSample.tokens, durationMilliseconds: outputSample.duration,
-          at: db.clock.unixSeconds, businessDay: db.businessDay)
+          outputSample.rate, at: outputSample.second, rowID: outputSample.rowID,
+          businessDay: db.businessDay)
       }
       self.overviewActivity.publish { .finished(id: attempt) }
     }

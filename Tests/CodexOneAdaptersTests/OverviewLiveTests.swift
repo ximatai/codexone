@@ -90,6 +90,62 @@ import Testing
   await store.close()
 }
 
+@Test func outputRateHistorySurvivesV12UpgradeAndRestart() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let time = TestWallClock()
+  func open() async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: time.clock)
+  }
+  func timed(_ milliseconds: Int64) throws -> ExecutionOutcome {
+    try .init(failure: nil, atUnixSeconds: time.clock.unixSeconds, totalMilliseconds: milliseconds)
+  }
+  let original = try await open()
+  try await original.admit(admission("legacy"))
+  try await original.finalize(attempt: "legacy", evidence: usage(), outcome: timed(1000))
+  await original.close()
+  try rawSQL(path, removeOutputRateSchema + "PRAGMA user_version=12")
+  await #expect(throws: ExecutionError.incompatibleSchema) { try await open() }
+  try await SQLiteExecutionStore.migrate(path: path, clock: time.clock)
+
+  let upgraded = try await open()
+  #expect(try await upgraded.snapshot(attempt: "legacy").state == .settled)
+  #expect(upgraded.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds).days.isEmpty)
+  try await upgraded.admit(admission("first-day"))
+  try await upgraded.finalize(attempt: "first-day", evidence: usage(), outcome: timed(2000))
+  time.advance(seconds: 86400)
+  try await upgraded.admit(admission("second-day"))
+  try await upgraded.finalize(attempt: "second-day", evidence: usage(), outcome: timed(1000))
+  let now = time.clock.unixSeconds
+  let before = upgraded.overviewActivity.requestOutputSnapshot(at: now)
+  #expect(before.rate == Decimal(12))
+  #expect(before.days.count == 2)
+  await upgraded.close()
+
+  let reopened = try await open()
+  let restored = reopened.overviewActivity.requestOutputSnapshot(at: now)
+  #expect(restored.days == before.days)
+  #expect(restored.rate == nil)
+  try await reopened.finalize(attempt: "second-day", evidence: usage(revision: 2, amount: 30))
+  #expect(reopened.overviewActivity.requestOutputSnapshot(at: now).days == before.days)
+  #expect(reopened.overviewActivity.requestOutputSnapshot(at: now).rate == nil)
+  await reopened.close()
+}
+
+@Test func outputRateDailyCapBreaksSettlementTiesInRecoveryOrder() {
+  let activity = OverviewActivity()
+  let now = testUnixSeconds
+  // The later admission settles first, but wins the final slot in both live and recovery order.
+  activity.recordRequestOutput(3, at: now, rowID: 2, businessDay: .utc)
+  activity.recordRequestOutput(1, at: now, rowID: 1, businessDay: .utc)
+  for i in 3...4097 {
+    activity.recordRequestOutput(i < 2050 ? 1 : 3, at: now + 1, rowID: Int64(i), businessDay: .utc)
+  }
+  #expect(activity.requestOutputSnapshot(at: now + 1).days.values.first == .number(3))
+}
+
 @Test func overviewSamplerSharesSQLiteReadsAndJoinsLastViewer() async throws {
   let path = try temporaryExecutionPath()
   defer {

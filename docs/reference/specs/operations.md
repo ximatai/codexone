@@ -93,7 +93,7 @@ DB 执行使用专用串行队列，普通命令最多 16 个、最终化命令�
 
 ## O16：核心快照维护闭环
 
-当前开发 schema v12 在 v11 重置卡/预热状态之上增加 SVG 作者日计数与价格未知次数；保留原有 unknown、绑定、并发和恢复屏障。普通启动仅接收 v12；v1—v11 须先停服、共用实例锁，生成私有 `.pre-v12-<id>.sqlite` 一致性备份并同步后再事务迁移。v11→v12 只增加日汇总列，旧计数不补作者零值、旧价格沿已有完整度解释；更旧版本先补对应结构。尚未启用 incremental auto_vacuum 时先 VACUUM，不能与 schema 事务合并；失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v12，不允许原地降版本；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
+当前开发 schema v13 在 v12 账本上增加请求输出速率与结算秒，不回填旧请求。普通启动仅接收 v13；v1—v12 须先停服、共用实例锁，生成私有 `.pre-v13-<id>.sqlite` 一致性备份并同步后再事务迁移。更旧版本先补对应结构。尚未启用 incremental auto_vacuum 时先 VACUUM，不能与 schema 事务合并；失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v13；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
 
 独立核心备份通过 SQLite Backup API 生成私有完成 bundle，manifest 记备份 ID/快照时间/来源 generation/schema/摘要/主密钥依赖，最后发布并同步；恢复先校验完整性和密文解密依赖，只接受全新空目标。持久 restore-pending 屏障先于页面复制，不完整目标拒绝启动；完整目标必须 `restored_unreconciled`，不能由 SQLite 完整性正确推导 ready。快照内 intent 保守转 unknown，旧对象绑定失效；恢复 Key 的旧验证材料失效、订阅账号需重新授权，防止复活已撤销权限或自动重用旧旋转凭证。
 

@@ -1,6 +1,10 @@
 /// Build a physical pre-v5 fixture, rather than stamping an incompatible new schema old.
+let removeOutputRateSchema =
+  "DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; "
+
 let removeResetCreditSchema =
-  "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; "
+  removeOutputRateSchema
+  + "DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; "
 
 let removeObservationSchema =
   removeResetCreditSchema + """

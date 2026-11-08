@@ -6,6 +6,9 @@
 
 ## 活动提案
 
+- [persist-output-rate-history](persist-output-rate-history/proposal.md) · [任务](persist-output-rate-history/tasks.md)
+
+
 - [startup-rejection-visibility](startup-rejection-visibility/proposal.md) · [任务](startup-rejection-visibility/tasks.md)
 
 - [native-image-json](native-image-json/proposal.md) · [任务](native-image-json/tasks.md)
