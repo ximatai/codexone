@@ -447,12 +447,35 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
                     assert rejected.returncode != 0 and b'LISTENING' not in rejected.stdout + rejected.stderr
                     assert truth() == before_switch
                     if incompatible_schema in (11, 12):
-                        # Upgrade a schema produced by the actual released binary, then
-                        # prove it refuses the upgraded database under identical settings.
+                        # Migrate an actual released database. Only v12 has an automatic path.
                         select_image(image)
-                        run([*compose, 'run', '--rm', '--env',
-                             'CODEXONE_DATA_DIRECTORY=/var/lib/codexone/schema-control',
-                             'gateway', '--migrate'])
+                        control_dir = 'CODEXONE_DATA_DIRECTORY=/var/lib/codexone/schema-control'
+                        if incompatible_schema == 12:
+                            maintenance('sqlite3', ['/var/lib/codexone/schema-control/core.sqlite',
+                                "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) "
+                                "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,created_at_epoch) "
+                                "SELECT 'synthetic-migration-'||i,'synthetic','synthetic','synthetic','synthetic','synthetic','1','1',1,'settled','{}',unixepoch() FROM n;"])
+                            upgraded = run([*compose, 'run', '--rm', '--no-deps', '-d',
+                                            '--env', control_dir, 'gateway']).stdout.decode().strip()
+                            assert re.fullmatch('[0-9a-f]{12,64}', upgraded)
+                            try:
+                                name = upgraded
+                                deadline = time.monotonic() + 45
+                                while time.monotonic() < deadline:
+                                    try:
+                                        if request('/health/live')[0] == 200: break
+                                    except AssertionError: pass
+                                    time.sleep(0.2)
+                                else: raise AssertionError('Automatic v12 upgrade never started the service')
+                                assert maintenance('sqlite3', ['-readonly',
+                                    '/var/lib/codexone/schema-control/core.sqlite',
+                                    "SELECT COUNT(*) FROM attempts WHERE id LIKE 'synthetic-migration-%';"]).stdout.strip() == b'20000'
+                            finally:
+                                run(['docker', 'stop', '--time', '10', upgraded], ok=False, timeout=20)
+                                run(['docker', 'rm', '--force', upgraded], ok=False)
+                                name = saved_name
+                        else:
+                            run([*compose, 'run', '--rm', '--env', control_dir, 'gateway', '--migrate'])
                         assert maintenance('sqlite3', ['-readonly',
                             '/var/lib/codexone/schema-control/core.sqlite',
                             'PRAGMA quick_check; PRAGMA user_version;']).stdout.splitlines() == [b'ok', b'13']

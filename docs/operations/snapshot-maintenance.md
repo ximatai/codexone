@@ -28,7 +28,7 @@ codexone --backup /private-backups/new-bundle
 
 bundle 为 0700，snapshot.sqlite、snapshot.sqlite.lock、manifest.json 为 0600。manifest 最后发布并同步文件/目录；缺 manifest 或只有 partial 不算完成备份。单核心快照硬上限 1 GiB；审计记录硬上限 1000，达到容量时拒绝新增维护写入，不删除旧责任。保留备份对应的主密钥，manifest 的 key ID 不能代替密钥。SHA-256 用于完整性核对，不能证明一个不可信备份的来源；不要导入未知来源的 bundle。
 
-开发版本 v13 要求旧 v1—v12 按升级流程显式迁移（迁移前生成 .pre-v13 备份），再制作当前 bundle。已有 v7—v12 完成 bundle 仍可验证并显式恢复，staging 升至 v13，源 bundle 保持不变。v13 二进制普通启动拒绝旧 schema；v12 及更旧二进制也会拒绝 v13。迁移前单文件备份是升级证据，完整恢复使用完成 bundle。
+新版本启动可将符合条件的 v12 迁至 v13（迁移前生成 .pre-v13 备份）。v1—v11 或需要启用增量回收的 v12 按升级流程显式迁移，再制作当前 bundle。已有 v7—v12 完成 bundle 仍可验证并显式恢复，staging 升至 v13，源 bundle 保持不变。v12 及更旧二进制拒绝 v13。迁移前单文件备份是升级证据，完整恢复使用完成 bundle。
 
 ## 恢复到新目标
 

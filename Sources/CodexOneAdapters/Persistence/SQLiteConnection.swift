@@ -8,6 +8,10 @@ import Foundation
   import Glibc
 #endif
 
+package enum StartupMigrationError: Error {
+  case backupFailed, transactionFailed
+}
+
 /// All access is confined to SQLiteExecutionStore's serial queue.
 final class SQLiteConnection: @unchecked Sendable {
   private(set) var handle: OpaquePointer?
@@ -25,7 +29,8 @@ final class SQLiteConnection: @unchecked Sendable {
 
   init(
     path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false,
-    clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc
+    allowStartupMigration: Bool = false, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc
   )
     throws
   {
@@ -66,9 +71,10 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
+      let startupUpgrade = allowStartupMigration && version == 12
       guard
         version == 0 || version == 13 || (restoringV7 && (7...12).contains(version))
-          || (migrating && (1...12).contains(version))
+          || (migrating && (1...12).contains(version)) || startupUpgrade
       else {
         throw ExecutionError.incompatibleSchema
       }
@@ -119,6 +125,18 @@ final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
       }
+      if startupUpgrade {
+        guard try scalar("PRAGMA auto_vacuum") == 2 else {
+          throw ExecutionError.incompatibleSchema
+        }
+        guard try reencryptionCheckpoint()?.complete != false else {
+          throw KeyMaintenanceError.incompleteReencryption
+        }
+        try StorageCapacity.require(
+          (canonical as NSString).deletingLastPathComponent,
+          additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") * 3 + 16 * 1024
+            * 1024, optional: true)
+      }
       if version == 0 { try exec("PRAGMA auto_vacuum=INCREMENTAL") }
       let journal = try rows("PRAGMA journal_mode=WAL") {
         String(cString: sqlite3_column_text($0, 0))
@@ -147,12 +165,14 @@ final class SQLiteConnection: @unchecked Sendable {
         }
       }
       if (1...12).contains(version) {
-        guard
-          try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
-            "ok"
-          ]
-        else { throw ExecutionError.storageUnavailable }
-        if !restoringV7 { try backupBeforeUpgrade(canonical) }
+        try requireIntegrity()
+        if !restoringV7 {
+          do { try backupBeforeUpgrade(canonical) } catch ExecutionError.storageUnavailable
+            where startupUpgrade
+          {
+            throw StartupMigrationError.backupFailed
+          }
+        }
         try StorageCapacity.require(
           (canonical as NSString).deletingLastPathComponent,
           additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") * 2 + 8 * 1024
@@ -161,36 +181,41 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec("PRAGMA auto_vacuum=INCREMENTAL")
           try exec("VACUUM")
         }
-        try transaction {
-          if version == 1 { try exec(Self.keySchema) }
-          if version < 3 { try exec(Self.accountSchema) }
-          if version < 5 { try exec(Self.observationSchema) }
-          if version < 7 { try exec(Self.maintenanceSchema) }
-          if version < 9 {
-            try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
-            try exec(
-              "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
-            )
+        do {
+          try transaction {
+            if version == 1 { try exec(Self.keySchema) }
+            if version < 3 { try exec(Self.accountSchema) }
+            if version < 5 { try exec(Self.observationSchema) }
+            if version < 7 { try exec(Self.maintenanceSchema) }
+            if version < 9 {
+              try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
+              try exec(
+                "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
+              )
+            }
+            if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
+            if version < 11 { try exec(Self.resetCreditSchema) }
+            if version < 12 { try exec(Self.authorSchema) }
+            try exec(Self.outputRateSchema)
+            try exec("PRAGMA user_version=13")
+            if startupUpgrade { try requireIntegrity() }
           }
-          if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
-          if version < 11 { try exec(Self.resetCreditSchema) }
-          if version < 12 { try exec(Self.authorSchema) }
-          try exec(Self.outputRateSchema)
-          try exec("PRAGMA user_version=13")
+        } catch ExecutionError.storageUnavailable where startupUpgrade {
+          throw StartupMigrationError.transactionFailed
         }
       }
       guard try scalar("PRAGMA auto_vacuum") == 2 else { throw ExecutionError.storageUnavailable }
-      guard
-        try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
-          "ok"
-        ]
-      else {
-        throw ExecutionError.storageUnavailable
-      }
+      if !startupUpgrade { try requireIntegrity() }
     } catch {
       shutdown()
       throw error
     }
+  }
+
+  private func requireIntegrity() throws {
+    guard
+      try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == ["ok"]
+    else { throw ExecutionError.storageUnavailable }
   }
 
   /// The already locked primary store owns this one read-only WAL connection.
@@ -492,7 +517,10 @@ final class SQLiteConnection: @unchecked Sendable {
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }
-    defer { close(fd) }
+    defer {
+      close(fd)
+      _ = unlink(partial)
+    }
     var target: OpaquePointer?
     guard
       sqlite3_open_v2(partial, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nil)
