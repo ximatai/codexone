@@ -8,12 +8,15 @@ mkdir -p "$root"
 copy() {
   cp -a --parents "$@" "$root"
 }
-for command in sh bash cat chmod chown cp curl date env find getent id ls mkdir mv readlink rm rmdir sha256sum sleep sqlite3 stat test touch; do
+# Keep the Compose initializer, documented maintenance tools and resource probes.
+for command in sh awk bash cat chmod chown cp curl date env find getconf getent id ls mkdir mv readlink rm rmdir sha256sum sleep sqlite3 stat test touch wc; do
   path=$(command -v "$command")
   case "$path" in /*) ;; *) path="/usr/bin/$command";; esac
-  copy "$(readlink -f "$path")"
+  resolved=$(readlink -f "$path")
+  copy "$resolved"
   case "$path" in /bin/*) path="/usr$path";; esac
-  [ ! -L "$path" ] || copy "$path"
+  # Point aliases directly at the copied executable, without /etc/alternatives.
+  [ "$path" = "$resolved" ] || ln -s "$resolved" "$root$path"
 done
 copy /bin /sbin /lib /lib64 /etc/passwd /etc/group /etc/nsswitch.conf /etc/ssl /usr/share/zoneinfo /usr/share/ca-certificates /etc/os-release /usr/lib/os-release
 for path in "$root"/usr/bin/* "$binary"; do
