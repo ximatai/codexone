@@ -70,8 +70,8 @@ function ResourceTrend({
     .join(" ");
   return (
     <div>
-      <Group justify="flex-end" gap="xs">
-        <Text size="xs" fw={500} ta="end">
+      <Group justify="space-between" gap="xs">
+        <Text size="xs" fw={500} ta="start">
           {label}
         </Text>
         <Text size="xs" c="dimmed" className={styles.resourceTrendValue}>

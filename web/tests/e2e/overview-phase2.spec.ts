@@ -316,10 +316,10 @@ test("overview keeps accessible trends, principal names, details and responsive 
   ]) {
     const plot = page.getByRole("img", { name: `${name}最近一小时趋势` });
     const captions = plot.locator("xpath=../preceding-sibling::div");
-    await expect(captions).toHaveCSS("justify-content", "flex-end");
+    await expect(captions).toHaveCSS("justify-content", "space-between");
     await expect(captions.getByText(name, { exact: true })).toHaveCSS(
       "text-align",
-      "end",
+      "start",
     );
     const readout = captions.locator("p").last();
     await expect(readout).toHaveCSS("text-align", "end");
