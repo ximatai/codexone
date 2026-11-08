@@ -11,12 +11,16 @@ public final class OverviewResources: Service, Sendable {
     let hostTotalBytes: UInt64?
     let hostCPUPercent: Double?
     let hostLoadAverage1m: Double?
+    let diskAvailableBytes: Int64?
   }
 
+  private let dataDirectory: String?
   private let history = Mutex<[Sample]>([])
   var samples: [Sample] { history.withLock { $0 } }
 
-  public init() {}
+  public init(dataDirectory: String? = nil) {
+    self.dataDirectory = dataDirectory
+  }
 
   public func run() async throws {
     #if os(Linux)
@@ -40,7 +44,8 @@ public final class OverviewResources: Service, Sendable {
             hostAvailableBytes: memory["MemAvailable:"],
             hostTotalBytes: memory["MemTotal:"],
             hostCPUPercent: cpu.flatMap { $0.percent(since: previous) },
-            hostLoadAverage1m: Self.loadAverage())
+            hostLoadAverage1m: Self.loadAverage(),
+            diskAvailableBytes: dataDirectory.flatMap { try? StorageCapacity.available($0) })
           history.withLock {
             $0.removeAll {
               $0.unixSeconds < sample.unixSeconds - 3600 || $0.unixSeconds > sample.unixSeconds

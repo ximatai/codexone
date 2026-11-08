@@ -11,6 +11,7 @@ const resourceSchema = z.object({
   hostAvailableBytes: z.number().nonnegative().optional(),
   hostTotalBytes: z.number().positive().optional(),
   hostCPUPercent: z.number().min(0).max(100).optional(),
+  diskAvailableBytes: z.number().nonnegative().optional(),
   hostLoadAverage1m: z.number().nonnegative().optional(),
 });
 export type ResourceSample = z.infer<typeof resourceSchema>;

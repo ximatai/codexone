@@ -317,17 +317,18 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "进行中请求 · 42.5 Token/s" }),
+    page.getByRole("heading", { name: "进行中请求 · 43 Token/s" }),
   ).toBeVisible();
   const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
-  const resources = page.getByRole("heading", { name: "运行资源" });
+  const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
+  await expect(trend).toHaveAccessibleName(/(?:：|、)43(?:、|$)/);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
     [3, "stale", "进行中请求"],
-    [4, "fresh", "进行中请求 · 42.5 Token/s"],
+    [4, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
@@ -527,6 +528,8 @@ test("push updates resources without HTTP polling and resumes after fallback", a
     .getByRole("group", { name: "CPU 使用率" })
     .getByText("0.00", { exact: true });
   await expect(loadValue).toHaveCount(0);
+  const diskTrend = page.getByRole("img", { name: "数据盘可用最近一小时趋势" });
+  await expect(diskTrend).toHaveCount(0);
   await page.clock.fastForward(16000);
   expect(overviewReads()).toBe(initialReads);
   const sampleTime = await page.evaluate(() => Math.floor(Date.now() / 1000));
@@ -539,12 +542,13 @@ test("push updates resources without HTTP polling and resumes after fallback", a
       pressure: "normal",
       admissionAllowed: true,
       optionalWorkAllowed: true,
-      availableBytes: 40,
-      volumeTotalBytes: 100,
+      availableBytes: 40 * 1024 ** 3,
+      volumeTotalBytes: 100 * 1024 ** 3,
       resources: [
         {
           unixSeconds: sampleTime - 30,
           hostCPUPercent: 10,
+          diskAvailableBytes: 41 * 1024 ** 3,
           hostAvailableBytes: 4,
           hostTotalBytes: 8,
           processResidentBytes: 128 * 1024 ** 2,
@@ -552,6 +556,7 @@ test("push updates resources without HTTP polling and resumes after fallback", a
         {
           unixSeconds: sampleTime,
           hostCPUPercent: 25,
+          diskAvailableBytes: 40 * 1024 ** 3,
           hostLoadAverage1m: 0,
           hostAvailableBytes: 6,
           hostTotalBytes: 8,
@@ -573,9 +578,9 @@ test("push updates resources without HTTP polling and resumes after fallback", a
     "25%",
   );
   await expect(loadValue).toBeVisible();
-  await expect(
-    page.getByRole("group", { name: "服务器可用内存" }),
-  ).toContainText("75%");
+  await expect(page.getByRole("group", { name: "可用内存" })).toContainText(
+    "75%",
+  );
   await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(
     "40%",
   );
@@ -583,16 +588,20 @@ test("push updates resources without HTTP polling and resumes after fallback", a
     page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
   ).toBeVisible();
   for (const [label, value] of [
-    ["服务器 CPU 使用率", "25.0%"],
-    ["服务器可用内存", "0.0 MiB"],
+    ["CPU 使用率", "25.0%"],
+    ["可用内存", "0.0 MiB"],
+    ["数据盘可用", "40.00 GiB"],
     ["CodexOne 内存占用", "256.0 MiB"],
   ]) {
     const chart = page.getByRole("img", { name: `${label}最近一小时趋势` });
+    await expect(
+      chart.locator("../..").getByText(value, { exact: true }),
+    ).toBeVisible();
     const bounds = (await chart.boundingBox())!;
     await chart.hover({ position: { x: bounds.width - 1, y: 14 } });
     await expect(page.getByRole("tooltip")).toContainText(value);
   }
-  await page.getByRole("heading", { name: "运行资源" }).hover();
+  await page.getByRole("heading", { name: "服务器运行资源" }).hover();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   expect(overviewReads()).toBe(initialReads);
   reject = true;

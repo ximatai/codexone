@@ -39,7 +39,7 @@ function Sparkline({
     <div
       className={compact ? styles.sparkline : undefined}
       role="img"
-      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(compact ? 1 : 5)))).join("、")}`}
+      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(compact ? 1 : 0)))).join("、")}`}
     >
       <AreaChart
         h={compact ? 64 : outputTrendHeight}
@@ -112,7 +112,7 @@ export function OutputRateTrend({
             chartDay.format((bucket.atUnixSeconds + offsetMinutes * 60) * 1000),
           )}
           format={(value) =>
-            `${value.toLocaleString("zh-CN", { maximumFractionDigits: 5 })} Token/s`
+            `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`
           }
           compact={false}
         />
