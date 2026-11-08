@@ -36,3 +36,6 @@ mkdir -p "$root/opt" "$root/tmp" "$root/run/codexone" "$root/var/lib/codexone"
 chmod 1777 "$root/tmp"
 chown 10001:10001 "$root/var/lib/codexone"
 chmod 700 "$root/var/lib/codexone"
+
+# Normalize copied file metadata so identical runtime inputs can share a layer across releases.
+find "$root" -exec touch -h -d @0 {} +
