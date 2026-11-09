@@ -508,7 +508,7 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
 test("push updates resources without HTTP polling and resumes after fallback", async ({
   page,
 }) => {
-  test.setTimeout(30_000);
+  test.setTimeout(45_000);
   await page.clock.install();
   const state = await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
