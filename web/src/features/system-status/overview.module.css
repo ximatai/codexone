@@ -51,6 +51,10 @@
   }
 }
 
+.outputRateValue > [data-continuous-value] {
+  display: block;
+}
+
 .quotaAccountHeader {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
