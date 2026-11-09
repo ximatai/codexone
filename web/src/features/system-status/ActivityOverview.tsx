@@ -289,7 +289,7 @@ export function ActivityOverview({
               </Text>
             )}
             {flight.isError && !flight.data ? (
-              <Text size="sm" c="dimmed">
+              <Text size="sm" c="dimmed" className={styles.requestEmpty}>
                 在途请求读取失败
               </Text>
             ) : flight.isPending || !flight.data?.length ? (
