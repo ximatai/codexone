@@ -513,9 +513,13 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   const state = await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   let reject = false;
+  let reconnectSnapshot: string | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
     if (reject) route.close({ code: 1013 });
-    else socket = route;
+    else {
+      socket = route;
+      if (reconnectSnapshot) route.send(reconnectSnapshot);
+    }
   });
   await page.goto("/");
   await expect.poll(() => !!socket).toBe(true);
@@ -640,25 +644,23 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   );
   await expect(page.getByText("各源更新时间", { exact: true })).toHaveCount(0);
   const previousSocket = socket;
-  reject = false;
-  await page.clock.fastForward(61000);
-  await expect.poll(() => socket !== previousSocket).toBe(true);
-  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000) + 61);
   const fresh = Object.fromEntries(
     Object.entries({ ...sections, storage: resource }).map(([name, source]) => [
       name,
       { ...source, lastSuccessAt: resumed, sampledAtUnixSeconds: resumed },
     ]),
   );
-  socket!.send(
-    JSON.stringify({
-      protocol: 1,
-      epoch: "synthetic-fallback",
-      sequence: 1,
-      kind: "snapshot",
-      sections: fresh,
-    }),
-  );
+  reconnectSnapshot = JSON.stringify({
+    protocol: 1,
+    epoch: "synthetic-fallback",
+    sequence: 1,
+    kind: "snapshot",
+    sections: fresh,
+  });
+  reject = false;
+  await page.clock.fastForward(61000);
+  await expect.poll(() => socket !== previousSocket).toBe(true);
   await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
     "data-live-mode",
     "live",
