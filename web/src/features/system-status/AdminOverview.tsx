@@ -33,7 +33,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
 import { fetchAccounts } from "../account-management/api";
-import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
+import { OverviewQuotaWindow } from "./OverviewQuotaWindow";
 import { RuntimeResources } from "./RuntimeResources";
 
 const InlineAccountDetails = lazy(() =>
@@ -300,8 +300,18 @@ export function AdminOverview() {
                         {(base?.primary || base?.secondary) && (
                           <div className={styles.quotaWindows}>
                             {base.primary && (
-                              <QuotaWindowBar
-                                showUsed
+                              <OverviewQuotaWindow
+                                accountID={account.id}
+                                kind="primary"
+                                observedAt={
+                                  quota?.observedAtUnixSeconds ?? null
+                                }
+                                unavailable={Boolean(
+                                  quotaStatus ||
+                                  quota?.failure ||
+                                  needsAuth ||
+                                  account.mode === "disabled",
+                                )}
                                 title={quotaLabel(
                                   base.primary.durationSeconds,
                                   "主窗口",
@@ -310,8 +320,18 @@ export function AdminOverview() {
                               />
                             )}
                             {base.secondary && (
-                              <QuotaWindowBar
-                                showUsed
+                              <OverviewQuotaWindow
+                                accountID={account.id}
+                                kind="secondary"
+                                observedAt={
+                                  quota?.observedAtUnixSeconds ?? null
+                                }
+                                unavailable={Boolean(
+                                  quotaStatus ||
+                                  quota?.failure ||
+                                  needsAuth ||
+                                  account.mode === "disabled",
+                                )}
                                 title={quotaLabel(
                                   base.secondary.durationSeconds,
                                   "次窗口",

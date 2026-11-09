@@ -98,6 +98,7 @@ public struct AccountQuotaObservation: Sendable, Equatable, Codable {
   public let observedAtUnixSeconds: Int64?
   public let quota: SubscriptionQuota?
   public let failure: QuotaObservationFailure?
+  public var trend: AccountQuotaTrend?
   public init(
     attemptedAtUnixSeconds: Int64?, observedAtUnixSeconds: Int64?,
     quota: SubscriptionQuota?, failure: QuotaObservationFailure?

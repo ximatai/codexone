@@ -43,6 +43,8 @@ private struct PrimingAdminProbe: QuotaPrimingExecuting {
       let client = AccountAdminClient(port: port.value.withLock { $0 }, session: session)
       let base = "/api/accounts/account/quota-priming"
       #expect(try await client.call("GET", base).0 == 401)
+      let trend = "/api/accounts/account/quota-trend"
+      #expect(try await client.call("GET", trend).0 == 401)
       let origin = "http://127.0.0.1:\(client.port)"
       let sessionLogin = try await client.call(
         "POST", "/api/session",
@@ -51,6 +53,25 @@ private struct PrimingAdminProbe: QuotaPrimingExecuting {
       let cookie = try #require(sessionLogin.2?.split(separator: ";").first.map(String.init))
       let csrf = try #require(sessionLogin.1["csrf"]?.string)
       let browser = ["origin": origin, "cookie": cookie, "x-codexone-csrf": csrf]
+      let emptyTrend = try await client.call("GET", trend, headers: browser)
+      #expect(emptyTrend.0 == 200 && emptyTrend.1 == .object([:]) && emptyTrend.3 == "no-store")
+      let account = try await h.store.accountCredential(id: "account").account
+      let at: Int64 = 1_800_000_000
+      let quota = try SubscriptionQuota(limits: [
+        .init(
+          id: "codex", allowed: true, limitReached: false,
+          primary: .init(usedPercent: 80, durationSeconds: 18_000, resetsAtUnixSeconds: at + 3600),
+          secondary: nil)
+      ])
+      _ = try await h.store.recordQuotaObservation(
+        account: account, atUnixSeconds: at, result: .success(quota))
+      let recorded = try await client.call("GET", trend, headers: browser)
+      #expect(
+        recorded.0 == 200
+          && recorded.1["primary"]?["samples"]
+            == .array([.array([.number(Decimal(at)), .number(20)])])
+      )
+      #expect(try await client.call("GET", trend + "?unused=1", headers: browser).0 == 400)
       let saved = try await client.call("GET", base, headers: browser)
       #expect(saved.0 == 200 && saved.3 == "no-store")
       #expect(

@@ -233,3 +233,75 @@
   flex-wrap: wrap;
   gap: 2px 8px;
 }
+
+.overviewQuotaWindow {
+  --mantine-color-dimmed: color-mix(
+    in srgb,
+    var(--mantine-color-text) 68%,
+    var(--mantine-color-body)
+  );
+  background: var(--mantine-color-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.quotaSummary {
+  position: relative;
+  display: grid;
+  gap: 7px;
+}
+
+.quotaSummary > :first-child {
+  padding-inline-end: 80px;
+}
+
+.quotaMetrics {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.quotaTrendTrigger {
+  position: absolute;
+  inset: -4px -5px;
+  border: 0;
+  border-radius: var(--mantine-radius-sm);
+  padding: 0;
+  background: transparent;
+  color: var(--mantine-primary-color-light-color);
+  font: inherit;
+  font-size: var(--mantine-font-size-xs);
+  cursor: pointer;
+}
+
+.quotaTrendTrigger span {
+  position: absolute;
+  inset-block-start: 1px;
+  inset-inline-end: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px;
+  border-radius: var(--mantine-radius-sm);
+}
+
+.quotaTrendTrigger:hover span,
+.quotaTrendTrigger[aria-expanded="true"] span {
+  background: var(--mantine-primary-color-light);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .quotaTrendTrigger svg {
+    transition: transform 220ms ease-in-out;
+  }
+}
+
+.quotaTrendTrigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.quotaTrendTrigger:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
