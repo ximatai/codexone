@@ -1,6 +1,7 @@
 import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
 import { mkdir } from "node:fs/promises";
+import { reviewFixture } from "./ui-review-fixture";
 
 test("key status filters, menu actions, create drawer and narrow navigation", async ({
   page,
@@ -132,4 +133,50 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await nav.getByRole("link", { name: "订阅账号", exact: true }).click();
   await expect(nav).toBeHidden();
   await expect(page).toHaveURL(/#\/accounts/);
+});
+
+test("desktop sidebar collapses across pages and reloads without hiding mobile drawer labels", async ({
+  page,
+}) => {
+  await reviewFixture(page);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#/keys");
+  const sidebar = page.locator("#workspace-sidebar");
+  const keys = sidebar.getByRole("link", { name: "访问密钥", exact: true });
+  const collapse = page.getByRole("button", { name: "收起侧栏" });
+  const expand = page.getByRole("button", { name: "展开侧栏" });
+  await expect(collapse).toHaveAttribute("aria-expanded", "true");
+  await expect(sidebar).toHaveCSS("width", "224px");
+  await expect(sidebar).toHaveCSS("transition-duration", "0.18s, 0.18s");
+  await collapse.focus();
+  await collapse.press("Enter");
+  await expect(expand).toHaveAttribute("aria-expanded", "false");
+  await expect(sidebar).toHaveCSS("width", "64px");
+  await expect(keys).toBeVisible();
+  await expect(keys.getByText("访问密钥", { exact: true })).toBeHidden();
+  await expect(keys).toHaveAttribute("aria-current", "page");
+  await sidebar.getByRole("link", { name: "订阅账号", exact: true }).click();
+  await expect(page).toHaveURL(/#\/accounts/);
+  await expect(expand).toBeVisible();
+  await page.reload();
+  await expect(sidebar).toHaveCSS("width", "64px");
+  await expectNoHorizontalOverflow(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(expand).toBeHidden();
+  await page.getByRole("button", { name: "打开导航" }).click();
+  const drawer = page.getByRole("dialog", { name: "CodexOne" });
+  await expect(drawer.getByText("访问密钥", { exact: true })).toBeVisible();
+  await drawer.getByRole("link", { name: "访问密钥", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expectNoHorizontalOverflow(page);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expand.click();
+  await expect(sidebar).toHaveCSS("width", "224px");
+  await expect(keys.getByText("访问密钥", { exact: true })).toBeVisible();
+  await expect(collapse).toHaveAttribute("aria-expanded", "true");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(sidebar).toHaveCSS("transition-duration", "0s");
 });

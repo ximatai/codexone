@@ -208,6 +208,7 @@ public struct UsageAdminAPI: Sendable {
                 "enabled": .bool(value.enabled),
                 "admitted": .number(Decimal(value.admitted)),
                 "tokens": .string(String(value.tokens)),
+                "images": value.images.map { .string(String($0)) } ?? .null,
                 "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
                 "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
                 "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,

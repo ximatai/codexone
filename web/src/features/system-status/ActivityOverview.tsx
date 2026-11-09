@@ -5,6 +5,7 @@ import {
   type AccountName,
 } from "../../shared/account-presentation";
 import { useQuery } from "@tanstack/react-query";
+import autoAnimate, { type AutoAnimationPlugin } from "@formkit/auto-animate";
 import {
   Anchor,
   Badge,
@@ -15,7 +16,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ErrorState } from "../../shared/ui/States";
 import styles from "./overview.module.css";
@@ -26,6 +27,32 @@ import { localTime } from "../../shared/presentation";
 import { KeyResults } from "./KeyResults";
 import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
+import { useOverviewMotion } from "../../shared/ui/ContinuousValue";
+const animateRequestCard: AutoAnimationPlugin = (element, action) => {
+  if (action === "add") {
+    return new KeyframeEffect(
+      element,
+      [
+        { transform: "translateY(8px)", opacity: 0 },
+        { transform: "translateY(0)", opacity: 1 },
+      ],
+      { duration: 180, easing: "ease-out" },
+    );
+  }
+  if (action === "remove") {
+    element.setAttribute("inert", "");
+    element.setAttribute("aria-hidden", "true");
+    return new KeyframeEffect(
+      element,
+      [
+        { transform: "translateY(0)", opacity: 1 },
+        { transform: "translateY(-8px)", opacity: 0 },
+      ],
+      { duration: 150, easing: "ease-in" },
+    );
+  }
+  return new KeyframeEffect(element, [], 0);
+};
 const reasoningLabels: Record<string, string> = {
   minimal: "最低",
   low: "低",
@@ -94,6 +121,18 @@ export function ActivityOverview({
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
+  const motion = useOverviewMotion();
+  const attachRequestGrid = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const animation = autoAnimate(node, animateRequestCard);
+    return () => {
+      animation.destroy?.();
+      // Destroy cancels exits without removing the detached cards it reinserted.
+      node
+        .querySelectorAll(":scope > [inert]")
+        .forEach((card) => card.remove());
+    };
+  }, []);
   const control = refresh ?? localRefresh;
   const options = {
     enabled: !!owner.session,
@@ -202,6 +241,10 @@ export function ActivityOverview({
   const outputRate = live?.requestOutputRateMedian;
   const outputRateLabel =
     outputRate == null ? null : outputRateFormat.format(outputRate);
+  const animateCards =
+    motion &&
+    typeof KeyframeEffect === "function" &&
+    typeof Animation === "function";
   return (
     <Stack
       aria-label="请求即时概览"
@@ -246,130 +289,129 @@ export function ActivityOverview({
               </Text>
             )}
             {flight.isError && !flight.data ? (
-              <Text size="sm" c="dimmed">
+              <Text size="sm" c="dimmed" className={styles.requestEmpty}>
                 在途请求读取失败
               </Text>
             ) : flight.isPending || !flight.data?.length ? (
               <Text size="sm" c="dimmed" className={styles.requestEmpty}>
                 {flight.isPending ? "读取中…" : "暂无进行中请求"}
               </Text>
-            ) : (
-              <div className={styles.requestGrid} aria-label="在途请求卡片">
-                {[...flight.data]
-                  .sort(
-                    (a, b) =>
-                      (a.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) -
-                        (b.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) ||
-                      a.id.localeCompare(b.id),
-                  )
-                  .map((row) => {
-                    const name =
-                      row.displayName ??
-                      (row.principal?.startsWith("legacy-p-")
-                        ? null
-                        : row.principal) ??
-                      "未命名 Key";
-                    const account = row.accountID
-                      ? accountName(
-                          row.accountID,
-                          accounts,
-                          row.accountDisplayName,
-                        )
-                      : null;
-                    return (
-                      <Paper
-                        key={row.id}
-                        withBorder
-                        p="xs"
-                        className={styles.requestCard}
-                      >
-                        <Group justify="space-between" wrap="nowrap" gap={4}>
-                          <Text size="sm" fw={600} truncate title={name}>
-                            {name}
-                          </Text>
-                          <Text size="xs" className={styles.requestDuration}>
-                            <Elapsed
-                              seconds={row.elapsedSeconds}
-                              sampledAt={flight.dataUpdatedAt}
-                              running={
-                                control.active &&
-                                !flight.isError &&
-                                !live?.flightUnconfirmed &&
-                                (!live ||
-                                  !live.stale.some(
-                                    ([source]) => source === "inFlight",
-                                  ))
-                              }
-                            />
-                          </Text>
-                        </Group>
-                        <Group wrap="nowrap" gap={5}>
-                          <Text
-                            size="xs"
-                            truncate
-                            title={row.model ?? undefined}
-                          >
-                            {row.model ?? "模型未知"}
-                          </Text>
-                          {row.reasoningEffort && (
-                            <Badge
-                              size="xs"
-                              color="gray"
-                              variant="light"
-                              className={styles.requestEffort}
-                              title={`推理强度：${reasoningLabels[row.reasoningEffort] ?? row.reasoningEffort}`}
-                            >
-                              {reasoningLabels[row.reasoningEffort] ??
-                                row.reasoningEffort}
-                            </Badge>
-                          )}
-                        </Group>
-                        <Group
-                          justify="space-between"
-                          wrap="nowrap"
-                          gap={4}
-                          className={styles.requestFooter}
-                        >
-                          {row.accountID ? (
-                            <Anchor
-                              component={Link}
-                              to={`/?account=${encodeURIComponent(row.accountID)}`}
-                              size="xs"
-                              truncate
-                              title={account ?? undefined}
-                            >
-                              {account}
-                            </Anchor>
-                          ) : (
-                            <Text size="xs" c="dimmed">
-                              账号未知
-                            </Text>
-                          )}
+            ) : null}
+            <div
+              ref={animateCards ? attachRequestGrid : undefined}
+              className={styles.requestGrid}
+              aria-label={flight.data?.length ? "在途请求卡片" : undefined}
+            >
+              {[...(flight.data ?? [])]
+                .sort(
+                  (a, b) =>
+                    (a.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) -
+                      (b.startedAtUnixSeconds ?? Number.MAX_SAFE_INTEGER) ||
+                    a.id.localeCompare(b.id),
+                )
+                .map((row) => {
+                  const name =
+                    row.displayName ??
+                    (row.principal?.startsWith("legacy-p-")
+                      ? null
+                      : row.principal) ??
+                    "未命名 Key";
+                  const account = row.accountID
+                    ? accountName(
+                        row.accountID,
+                        accounts,
+                        row.accountDisplayName,
+                      )
+                    : null;
+                  return (
+                    <Paper
+                      key={row.id}
+                      withBorder
+                      p="xs"
+                      className={styles.requestCard}
+                    >
+                      <Group justify="space-between" wrap="nowrap" gap={4}>
+                        <Text size="sm" fw={600} truncate title={name}>
+                          {name}
+                        </Text>
+                        <Text size="xs" className={styles.requestDuration}>
+                          <Elapsed
+                            seconds={row.elapsedSeconds}
+                            sampledAt={flight.dataUpdatedAt}
+                            running={
+                              control.active &&
+                              !flight.isError &&
+                              !live?.flightUnconfirmed &&
+                              (!live ||
+                                !live.stale.some(
+                                  ([source]) => source === "inFlight",
+                                ))
+                            }
+                          />
+                        </Text>
+                      </Group>
+                      <Group wrap="nowrap" gap={5}>
+                        <Text size="xs" truncate title={row.model ?? undefined}>
+                          {row.model ?? "模型未知"}
+                        </Text>
+                        {row.reasoningEffort && (
                           <Badge
                             size="xs"
+                            color="gray"
                             variant="light"
-                            className={styles.requestElapsed}
-                            color={
-                              row.hasFirstEvent == null
-                                ? "gray"
-                                : row.hasFirstEvent
-                                  ? "teal"
-                                  : "orange"
-                            }
-                            title="首事件是首个上游协议事件，不代表输出完成"
+                            className={styles.requestEffort}
+                            title={`推理强度：${reasoningLabels[row.reasoningEffort] ?? row.reasoningEffort}`}
                           >
-                            {row.hasFirstEvent == null
-                              ? "未观测"
-                              : row.hasFirstEvent
-                                ? "响应中"
-                                : "等待响应"}
+                            {reasoningLabels[row.reasoningEffort] ??
+                              row.reasoningEffort}
                           </Badge>
-                        </Group>
-                      </Paper>
-                    );
-                  })}
-              </div>
-            )}
+                        )}
+                      </Group>
+                      <Group
+                        justify="space-between"
+                        wrap="nowrap"
+                        gap={4}
+                        className={styles.requestFooter}
+                      >
+                        {row.accountID ? (
+                          <Anchor
+                            component={Link}
+                            to={`/?account=${encodeURIComponent(row.accountID)}`}
+                            size="xs"
+                            truncate
+                            title={account ?? undefined}
+                          >
+                            {account}
+                          </Anchor>
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            账号未知
+                          </Text>
+                        )}
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          className={styles.requestElapsed}
+                          color={
+                            row.hasFirstEvent == null
+                              ? "gray"
+                              : row.hasFirstEvent
+                                ? "teal"
+                                : "orange"
+                          }
+                          title="首事件是首个上游协议事件，不代表输出完成"
+                        >
+                          {row.hasFirstEvent == null
+                            ? "未观测"
+                            : row.hasFirstEvent
+                              ? "响应中"
+                              : "等待响应"}
+                        </Badge>
+                      </Group>
+                    </Paper>
+                  );
+                })}
+            </div>
           </Paper>
           <KeyResults query={keySummary} />
         </Stack>

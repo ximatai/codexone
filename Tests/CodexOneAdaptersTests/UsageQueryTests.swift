@@ -607,6 +607,32 @@ private struct UsageFixture {
   #expect(query.reasoningEffort == "xhigh" && query.cursor?.id == "a:synthetic")
 }
 
+@Test func keyUsageCountsObservedImagesPerKeyInsideTheBusinessDay() async throws {
+  let f = try await UsageFixture.make()
+  do {
+    let start = testUnixSeconds / 86400 * 86400
+    func evidence(_ images: Int64, native: Bool = false) -> UsageEvidence {
+      .init(
+        revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: images,
+        estimatedMicros: 0, completeness: .complete, nativeImages: native)
+    }
+    try await f.insert("images-yesterday", at: start - 1, evidence: evidence(8))
+    try await f.insert("images-tool", at: start, evidence: evidence(2))
+    try await f.insert("images-native", at: start + 1, evidence: evidence(3, native: true))
+    try await f.insert("images-other-missing", key: "beta", at: start + 2, evidence: nil)
+    var report = try await f.reader.keyUsage()
+    #expect(report.keys.first { $0.key.id == "alpha" }?.images == 5)
+    #expect(report.keys.first { $0.key.id == "beta" }?.images == nil)
+    try await f.insert("images-other-zero", key: "beta", at: start + 3, evidence: evidence(0))
+    report = try await f.reader.keyUsage()
+    #expect(report.keys.first { $0.key.id == "beta" }?.images == 0)
+  } catch {
+    await f.close()
+    throw error
+  }
+  await f.close()
+}
+
 @Test func keyUsageExcludesArchivedKeysButPreservesDisabledActivityAndHistory() async throws {
   let f = try await UsageFixture.make()
   do {

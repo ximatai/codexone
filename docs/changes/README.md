@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [首页 Key 管理](overview-key-management/proposal.md) · [任务](overview-key-management/tasks.md)
+
 - [hourly-output-rate](hourly-output-rate/proposal.md) · [任务](hourly-output-rate/tasks.md)
 
 

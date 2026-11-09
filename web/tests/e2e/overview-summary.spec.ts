@@ -12,6 +12,11 @@ for (const width of [1920, 390]) {
     await page.clock.install({ time: new Date("2026-11-03T02:00:00Z") });
     const state = await reviewFixture(page);
     state.accounts.splice(1);
+    Object.assign(state.keys[0], {
+      id: "high",
+      principal: "legacy-p-synthetic",
+      enabled: false,
+    });
     state.alerts = 0;
     const start = Date.parse("2026-11-02T16:00:00Z") / 1000;
     const metadata = {
@@ -27,6 +32,7 @@ for (const width of [1920, 390]) {
       pending: 2,
       inFlight: 1,
       tokens: "10000000000000001",
+      images: "3",
       tokenUsageIncomplete: true,
       inputTokens: "1000",
       cachedTokens: "250",
@@ -147,7 +153,7 @@ for (const width of [1920, 390]) {
     await page.goto("/");
     const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
     await expect(
-      panel.getByRole("button", { name: "未命名 Key" }),
+      panel.getByRole("link", { name: "未命名 Key", exact: true }),
     ).toBeVisible();
     await expect(panel.getByText("不应出现", { exact: true })).toHaveCount(0);
     await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
@@ -163,14 +169,28 @@ for (const width of [1920, 390]) {
     );
     const first = panel.locator("tbody tr").first();
     await expect(first).toContainText("最近设备");
-    const name = panel.getByRole("button", { name: "未命名 Key" });
+    const name = panel.getByRole("link", { name: "未命名 Key", exact: true });
     await name.focus();
     await name.press("Enter");
-    const detail = page.getByRole("dialog", { name: "Key 详情" });
+    const detail = page.getByRole("dialog", { name: "密钥详情" });
     await expect(detail).toContainText("legacy-p-synthetic");
-    await expect(detail).toContainText("10,000,000,000,000,001");
+    await expect(
+      detail.getByRole("button", { name: "保存修改" }),
+    ).toBeVisible();
     await detail.getByRole("button", { name: "关闭", exact: true }).click();
     await expect(detail).toBeHidden();
+    await page.goBack();
+    if (width > 750) {
+      await expect(
+        panel.getByRole("columnheader", { name: "生图张数" }),
+      ).toBeVisible();
+    }
+    await expect(
+      panel
+        .getByRole("row")
+        .filter({ hasText: "未命名 Key" })
+        .getByTitle("3", { exact: true }),
+    ).toHaveText("3");
     await expectNoHorizontalOverflow(page);
     await mkdir("../artifacts/business-day", { recursive: true });
     await page.screenshot({
