@@ -5,8 +5,7 @@ import {
   type AccountName,
 } from "../../shared/account-presentation";
 import { useQuery } from "@tanstack/react-query";
-import type { AutoAnimationPlugin } from "@formkit/auto-animate";
-import { useAutoAnimate } from "@formkit/auto-animate/react";
+import autoAnimate, { type AutoAnimationPlugin } from "@formkit/auto-animate";
 import {
   Anchor,
   Badge,
@@ -17,7 +16,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ErrorState } from "../../shared/ui/States";
 import styles from "./overview.module.css";
@@ -123,7 +122,17 @@ export function ActivityOverview({
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const motion = useOverviewMotion();
-  const [requestGrid] = useAutoAnimate<HTMLDivElement>(animateRequestCard);
+  const attachRequestGrid = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const animation = autoAnimate(node, animateRequestCard);
+    return () => {
+      animation.destroy?.();
+      // Destroy cancels exits without removing the detached cards it reinserted.
+      node
+        .querySelectorAll(":scope > [inert]")
+        .forEach((card) => card.remove());
+    };
+  }, []);
   const control = refresh ?? localRefresh;
   const options = {
     enabled: !!owner.session,
@@ -289,7 +298,7 @@ export function ActivityOverview({
               </Text>
             ) : null}
             <div
-              ref={animateCards ? requestGrid : undefined}
+              ref={animateCards ? attachRequestGrid : undefined}
               className={styles.requestGrid}
               aria-label={flight.data?.length ? "在途请求卡片" : undefined}
             >

@@ -807,6 +807,29 @@ for (const [width, reducedMotion] of [
       await expect(
         page.getByText("synthetic-text", { exact: true }),
       ).toHaveCount(0);
+      if (width === 1440) {
+        send(4, data);
+        await expect(cards.getByText("synthetic-text")).toBeVisible();
+        await page.evaluate(() => {
+          const play = Animation.prototype.play;
+          Animation.prototype.play = function () {
+            play.call(this);
+            if (
+              this.effect instanceof KeyframeEffect &&
+              this.effect.target?.hasAttribute("inert")
+            ) {
+              this.pause();
+            }
+          };
+        });
+        send(5, { ...data, rows: [] });
+        const exiting = page
+          .locator("[inert]")
+          .filter({ hasText: "synthetic-text" });
+        await expect(exiting).toHaveCount(1);
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await expect(exiting).toHaveCount(0);
+      }
     }
     await expect(page.getByRole("region", { name: "请求关注" })).toHaveCount(0);
     expect(
