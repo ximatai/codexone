@@ -668,10 +668,46 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   expect(overviewReads()).toBe(resumedReads);
 });
 
-for (const width of [1440, 390])
-  test(`live cards leave the grid when requests finish at ${width}px`, async ({
+for (const [width, reducedMotion] of [
+  [1440, false],
+  [390, false],
+  [390, true],
+] as const)
+  test(`live cards leave the grid when requests finish at ${width}px (${reducedMotion ? "reduced" : "normal"} motion)`, async ({
     page,
   }) => {
+    await page.emulateMedia({
+      reducedMotion: reducedMotion ? "reduce" : "no-preference",
+    });
+    const cardMotion: { transforms: string[]; inert: boolean }[] = [];
+    await page.exposeFunction(
+      "recordRequestCardMotion",
+      (transforms: string[], inert: boolean) => {
+        cardMotion.push({ transforms, inert });
+      },
+    );
+    await page.addInitScript(() => {
+      const record = (
+        window as unknown as {
+          recordRequestCardMotion: (
+            transforms: string[],
+            inert: boolean,
+          ) => void;
+        }
+      ).recordRequestCardMotion;
+      window.KeyframeEffect = new Proxy(window.KeyframeEffect, {
+        construct(Effect, args) {
+          const effect = Reflect.construct(Effect, args) as KeyframeEffect;
+          const transforms = effect
+            .getKeyframes()
+            .map(({ transform }) => String(transform));
+          if (transforms.some((value) => /^translateY\(-?8px\)$/.test(value))) {
+            record(transforms, effect.target?.hasAttribute("inert") === true);
+          }
+          return effect;
+        },
+      });
+    });
     await reviewFixture(page);
     let socket: WebSocketRoute | undefined;
     await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -710,6 +746,8 @@ for (const width of [1440, 390])
       "data-live-mode",
       "live",
     );
+    // Overview motion starts only after the connection settles.
+    await page.waitForTimeout(500);
     const row = {
       id: "synthetic-running-request",
       keyID: "synthetic-key",
@@ -757,6 +795,19 @@ for (const width of [1440, 390])
     });
     await expect(cards).toHaveCount(0);
     await expect(page.getByText("暂无进行中请求")).toBeVisible();
+    if (reducedMotion) {
+      expect(cardMotion).toEqual([]);
+    } else {
+      await expect
+        .poll(() => cardMotion)
+        .toEqual([
+          { transforms: ["translateY(8px)", "translateY(0px)"], inert: false },
+          { transforms: ["translateY(0px)", "translateY(-8px)"], inert: true },
+        ]);
+      await expect(
+        page.getByText("synthetic-text", { exact: true }),
+      ).toHaveCount(0);
+    }
     await expect(page.getByRole("region", { name: "请求关注" })).toHaveCount(0);
     expect(
       await page.evaluate(
