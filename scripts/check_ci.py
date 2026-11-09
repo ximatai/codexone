@@ -36,6 +36,8 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
     assert "scripts/verify.sh --backend-scripts '${{ matrix.shard }}'" in shards, 'Use the complete shard entry point'
+    assert 'CODEXONE_CI_WS_BODY_MODE' not in shards and '--diagnostics-only' not in shards, (
+        'Release must run the full WebSocket body matrix')
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')
     assert '"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -' in shards, 'Check the binary archive against build output'

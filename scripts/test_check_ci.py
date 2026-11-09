@@ -48,15 +48,19 @@ class VerifyPathSelectionTests(unittest.TestCase):
             renamed = commit('docs/note.md')
             unknown = commit('unknown.input')
             policy = commit('scripts/ci_changes.sh')
-            for forced, before, after, expected in [
-                ('false', base, web, (False, True, False)),
-                ('false', base, mixed, (True, True, False)),
-                ('false', mixed, renamed, (False, True, False)),
-                ('false', renamed, unknown, (True, True, True)),
-                ('false', unknown, policy, (True, True, True)),
-                ('false', '0' * 40, web, (True, True, True)),
-                ('false', web, base, (True, True, True)),
-                ('true', base, web, (True, True, True)),
+            admin = commit('Sources/CodexOneAdapters/ControlPlane/app.swift')
+            transport = commit('Sources/CodexOneAdapters/Transport/app.swift')
+            for forced, before, after, expected, ws_mode in [
+                ('false', base, web, (False, True, False), 'smoke'),
+                ('false', base, mixed, (True, True, False), 'full'),
+                ('false', mixed, renamed, (False, True, False), 'smoke'),
+                ('false', renamed, unknown, (True, True, True), 'full'),
+                ('false', unknown, policy, (True, True, True), 'full'),
+                ('false', policy, admin, (True, False, False), 'smoke'),
+                ('false', admin, transport, (True, False, False), 'full'),
+                ('false', '0' * 40, web, (True, True, True), 'full'),
+                ('false', web, base, (True, True, True), 'full'),
+                ('true', base, web, (True, True, True), 'full'),
             ]:
                 with self.subTest(forced=forced, before=before, after=after):
                     output = subprocess.check_output(
@@ -67,7 +71,7 @@ class VerifyPathSelectionTests(unittest.TestCase):
                         output.splitlines(),
                         [f'{name}={str(value).lower()}' for name, value in zip(
                             ('backend', 'frontend', 'devcontainer'), expected
-                        )],
+                        )] + [f'ws_body_mode={ws_mode}'],
                     )
 
 

@@ -17,6 +17,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       devcontainer: ${{ steps.filter.outputs.devcontainer }}
+      ws_body_mode: ${{ steps.filter.outputs.ws_body_mode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -148,6 +149,8 @@ jobs:
           mkdir -p .build/debug
           tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug
       - name: Verify protocol and lifecycle shard
+        env:
+          CODEXONE_CI_WS_BODY_MODE: ${{ needs.changes.outputs.ws_body_mode }}
         run: ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
   frontend:
     needs: changes

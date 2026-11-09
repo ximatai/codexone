@@ -95,6 +95,8 @@ python3 scripts/backend_shards.py --check
 python3 scripts/check_ci.py
 ```
 
+仅涉及管理面代码的常规 Verify 仍运行真实 WS/HTTP 超限、拒绝及上游 1009 回退检查。其他后端变更、未知路径、手动全量、本地默认和 Release 均执行完整大请求矩阵。
+
 分片清单在 `scripts/backend_shards.json`，按实测耗时分配；`verify.sh` 保留完整调用顺序，自检要求其中每个脚本恰好归属一个分片。新增后端检查时两处一起更新。
 
 前端使用含浏览器/系统库的官方 Playwright Noble 镜像，不在每次运行时 apt/download 浏览器；镜像 tag 必须与 package-lock 中的 Playwright 版本一致，并固定 registry digest。e2e 用严格端口的 Vite preview 服务生产 dist；完整入口只构建一次，单独跑 e2e 前须 build，见[贡献指南](../../CONTRIBUTING.md)。

@@ -452,6 +452,7 @@ def verify_lane_close(port, server, root, contract, count, repetitions=12):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--diagnostics-only', action='store_true', help='Verify real 1009 and oversized native/HTTP routing')
     parser.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
     parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
@@ -476,6 +477,8 @@ def main():
                 if not args.small_body_only:
                     body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
                                            server, contract, args.failures_only)
+                if args.diagnostics_only:
+                    continue
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0

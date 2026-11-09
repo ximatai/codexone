@@ -33,7 +33,11 @@ backend_scripts() {
   run_check scripts/verify_gateway_diagnostics.py
   run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone"
+  local ws_body_args=()
+  if [[ "${CODEXONE_CI_WS_BODY_MODE:-full}" == smoke ]]; then
+    ws_body_args+=(--diagnostics-only)
+  fi
+  run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone" "${ws_body_args[@]}"
   run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_slow_ingress.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_response_finish.py --binary "$backend_bin_dir/codexone"
