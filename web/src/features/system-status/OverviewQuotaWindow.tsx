@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Collapse, Text, UnstyledButton } from "@mantine/core";
+import { Text, UnstyledButton } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useReducedMotion } from "@mantine/hooks";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
 import type { QuotaWindow } from "../account-management/observation-api";
@@ -15,6 +15,8 @@ import {
   type ReferenceHours,
 } from "./quota-trend";
 import styles from "./overview.module.css";
+
+const transitionMs = 220;
 
 type Forecast = Extract<ReturnType<typeof predictQuota>, { rate: number }>;
 
@@ -293,6 +295,16 @@ export function OverviewQuotaWindow(props: {
   const id = useId();
   const reducedMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
+  const [retainContent, setRetainContent] = useState(false);
+  useEffect(() => {
+    if (expanded || !retainContent) return;
+    const timer = window.setTimeout(
+      () => setRetainContent(false),
+      reducedMotion ? 0 : transitionMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [expanded, reducedMotion, retainContent]);
+
   const canExpand = props.value.usedPercent !== null;
   return (
     <QuotaWindowBar
@@ -305,19 +317,31 @@ export function OverviewQuotaWindow(props: {
               expanded,
               controls: id,
               stale: props.unavailable,
-              toggle: () => setExpanded((open) => !open),
+              toggle: () => {
+                setRetainContent(true);
+                setExpanded((open) => !open);
+              },
               details: (
                 <div id={id}>
-                  <Collapse
-                    expanded={expanded}
-                    transitionDuration={reducedMotion ? 0 : 220}
-                    transitionTimingFunction="ease-in-out"
-                    keepMounted={false}
+                  <div
+                    className={styles.quotaTrendMotion}
+                    data-expanded={expanded}
+                    aria-hidden={!expanded}
+                    inert={!expanded}
+                    style={{
+                      transitionDuration: reducedMotion
+                        ? "0ms"
+                        : `${transitionMs}ms`,
+                    }}
                   >
-                    <div className={styles.quotaTrendInset}>
-                      <QuotaTrendDetails {...props} />
+                    <div className={styles.quotaTrendClip}>
+                      {(expanded || (retainContent && !reducedMotion)) && (
+                        <div className={styles.quotaTrendInset}>
+                          <QuotaTrendDetails {...props} />
+                        </div>
+                      )}
                     </div>
-                  </Collapse>
+                  </div>
                 </div>
               ),
             }

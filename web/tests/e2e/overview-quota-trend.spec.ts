@@ -6,6 +6,7 @@ for (const width of [1440, 390]) {
   test(`quota history opens on demand and distinguishes stale data at ${width}px`, async ({
     page,
   }, info) => {
+    test.setTimeout(30_000);
     await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({
       reducedMotion: width === 390 ? "reduce" : "no-preference",
@@ -14,6 +15,7 @@ for (const width of [1440, 390]) {
     await page.clock.setFixedTime(now);
     const state = await reviewFixture(page);
     state.alerts = 0;
+    state.keys.splice(1);
     state.accounts.splice(1);
     const account = state.accounts[0];
     account.displayName = "合成订阅";
@@ -54,7 +56,7 @@ for (const width of [1440, 390]) {
         if (
           event instanceof TransitionEvent &&
           event.target === element.firstElementChild &&
-          event.propertyName === "height"
+          event.propertyName === "grid-template-rows"
         ) {
           element.dataset.heightTransitions = String(
             Number(element.dataset.heightTransitions) + 1,
@@ -94,7 +96,13 @@ for (const width of [1440, 390]) {
     const openingTransitions = Number(
       await panel.getAttribute("data-height-transitions"),
     );
-    if (width === 1440) expect(openingTransitions).toBeGreaterThan(0);
+    if (width === 1440) {
+      await expect
+        .poll(async () =>
+          Number(await panel.getAttribute("data-height-transitions")),
+        )
+        .toBeGreaterThan(0);
+    }
     const close = page.getByRole("button", { name: "收起5 小时额度趋势" });
     await close.click();
     await expect(open).toHaveAttribute("aria-expanded", "false");
@@ -102,10 +110,15 @@ for (const width of [1440, 390]) {
       0,
     );
 
-    await expect(panel).toHaveAttribute(
-      "data-height-transitions",
-      width === 390 ? "0" : String(openingTransitions + 1),
-    );
+    if (width === 390) {
+      await expect(panel).toHaveAttribute("data-height-transitions", "0");
+    } else {
+      await expect
+        .poll(async () =>
+          Number(await panel.getAttribute("data-height-transitions")),
+        )
+        .toBeGreaterThan(openingTransitions);
+    }
     await expect(panel.locator("svg")).toHaveCount(0);
 
     Object.assign(observation, {

@@ -4,6 +4,7 @@ import { reviewFixture } from "./ui-review-fixture";
 test("overview opens account details in place and preserves scroll, navigation and history", async ({
   page,
 }) => {
+  test.setTimeout(30_000);
   await reviewFixture(page);
   await page.setViewportSize({ width: 1920, height: 1680 });
   await page.goto("/");

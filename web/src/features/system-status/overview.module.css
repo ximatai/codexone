@@ -293,6 +293,24 @@
   min-block-size: 12rem;
 }
 
+.quotaTrendMotion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition-property: grid-template-rows, opacity;
+  transition-timing-function: ease-in-out;
+}
+
+.quotaTrendMotion[data-expanded="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.quotaTrendClip {
+  min-block-size: 0;
+  overflow: hidden;
+}
+
 .quotaTrendInset {
   padding-block-start: 8px;
 }
