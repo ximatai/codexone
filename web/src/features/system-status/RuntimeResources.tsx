@@ -153,6 +153,7 @@ function ResourceGauge({
   percent: number | null;
   detail?: string;
 }) {
+  const reading = percent == null ? "未知" : `${percent.toFixed(0)}%`;
   return (
     <div className={styles.resourceGauge} role="group" aria-label={label}>
       <Text size="xs">{label}</Text>
@@ -172,7 +173,9 @@ function ResourceGauge({
           )}
         </svg>
         <Text className={styles.gaugeValue} fw={650} size="sm">
-          {percent == null ? "未知" : `${percent.toFixed(0)}%`}
+          <span key={percent == null ? "unknown" : reading.length}>
+            {reading}
+          </span>
         </Text>
       </div>
       {detail && (
