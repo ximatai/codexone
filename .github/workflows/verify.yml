@@ -194,6 +194,7 @@ jobs:
     timeout-minutes: 15
     env:
       CODEXONE_WEB_STUBS_ONLY: '0'
+      ADMIN_LIVE_STORM_PROFILE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'short' }}
     defaults:
       run:
         working-directory: web

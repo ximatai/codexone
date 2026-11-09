@@ -50,6 +50,8 @@ class VerifyPathSelectionTests(unittest.TestCase):
             policy = commit('scripts/ci_changes.sh')
             admin = commit('Sources/CodexOneAdapters/ControlPlane/app.swift')
             transport = commit('Sources/CodexOneAdapters/Transport/app.swift')
+            runtime = commit('Sources/CodexOneRuntime/app.swift')
+            test_only = commit('Tests/Synthetic.swift')
             for forced, before, after, expected, ws_mode in [
                 ('false', base, web, (False, True, False), 'smoke'),
                 ('false', base, mixed, (True, True, False), 'full'),
@@ -58,6 +60,9 @@ class VerifyPathSelectionTests(unittest.TestCase):
                 ('false', unknown, policy, (True, True, True), 'full'),
                 ('false', policy, admin, (True, False, False), 'smoke'),
                 ('false', admin, transport, (True, False, False), 'full'),
+                ('false', transport, runtime, (True, False, False), 'representative'),
+                ('false', runtime, test_only, (True, False, False), 'representative'),
+                ('false', admin, test_only, (True, False, False), 'full'),
                 ('false', '0' * 40, web, (True, True, True), 'full'),
                 ('false', web, base, (True, True, True), 'full'),
                 ('true', base, web, (True, True, True), 'full'),

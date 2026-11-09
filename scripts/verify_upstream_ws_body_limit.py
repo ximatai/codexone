@@ -453,6 +453,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--diagnostics-only', action='store_true', help='Verify real 1009 and oversized native/HTTP routing')
+    parser.add_argument('--representative', action='store_true', help='Verify representative boundary sizes and retain lifecycle cases')
     parser.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
     parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
@@ -492,10 +493,13 @@ def main():
                         continue
                     if not args.failures_only:
                         count += verify_small_body_budget(ports['data'], server, contract)
-                        count += held_body_budgets(ports['data'], server, contract, process)
+                        if not args.representative:
+                            count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
+                        sizes = ((ROUTING, ROUTING + 1) if args.representative else
+                                 (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1))
                         for route in ('json', 'sse', 'native'):
-                            for size in (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1):
+                            for size in sizes:
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
                                                 image_count=3 if route == 'sse' else 1)
                                 before = len(server.calls)

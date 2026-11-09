@@ -36,7 +36,7 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
     assert "scripts/verify.sh --backend-scripts '${{ matrix.shard }}'" in shards, 'Use the complete shard entry point'
-    assert 'CODEXONE_CI_WS_BODY_MODE' not in shards and '--diagnostics-only' not in shards, (
+    assert all(value not in shards for value in ('CODEXONE_CI_WS_BODY_MODE', '--diagnostics-only', '--representative')), (
         'Release must run the full WebSocket body matrix')
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')
@@ -89,6 +89,8 @@ def check_live_browser(workflow):
         'Real browser must restore the same build’s gateway runtime')
     assert 'apt-get' not in live and 'playwright install' not in live, 'Use the pinned browser image without reinstalling browsers'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
+    assert "ADMIN_LIVE_STORM_PROFILE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'short' }}" in live, (
+        'Manual Verify must keep the full browser storm')
     assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests remain required'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
     condition = "needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'"

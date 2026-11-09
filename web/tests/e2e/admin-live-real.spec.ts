@@ -206,11 +206,27 @@ for (const realtime of [true, false]) {
           }
         }).observe({ type: "longtask", buffered: false });
       });
+      const shortStorm =
+        globalThis.process.env.ADMIN_LIVE_STORM_PROFILE === "short";
+      const pollingCheck = shortStorm && !realtime;
+      const stormStart = Date.now();
       const stormUntil =
-        Date.now() +
-        Number(globalThis.process.env.ADMIN_LIVE_STORM_MS ?? 60000);
+        stormStart +
+        (shortStorm
+          ? realtime
+            ? 20000
+            : 45000
+          : Number(globalThis.process.env.ADMIN_LIVE_STORM_MS ?? 60000));
+      const admittedCell = page
+        .getByRole("region", { name: "今日 Key 请求汇总" })
+        .getByRole("row")
+        .filter({ hasText: "synthetic-browser" })
+        .getByRole("cell")
+        .nth(2);
+      let lastAdmitted = pollingCheck ? await admittedCell.textContent() : null;
+      let pollUpdates = 0;
       let count = 0;
-      while (Date.now() < stormUntil) {
+      while (Date.now() < stormUntil && (!pollingCheck || pollUpdates < 2)) {
         const response = await context.request.post(
           `http://127.0.0.1:${ports.data}/v1/responses`,
           {
@@ -225,7 +241,15 @@ for (const realtime of [true, false]) {
         expect(response.status()).toBe(200);
         count += 1;
         await page.waitForTimeout(200);
+        if (pollingCheck) {
+          const admitted = await admittedCell.textContent();
+          if (admitted !== lastAdmitted) {
+            pollUpdates += 1;
+            lastAdmitted = admitted;
+          }
+        }
       }
+      if (pollingCheck) expect(pollUpdates).toBe(2);
       await page.waitForTimeout(400);
       const metrics = await page.evaluate(
         () =>
@@ -244,7 +268,7 @@ for (const realtime of [true, false]) {
       );
       console.log("SHIFTS", JSON.stringify(metrics));
       console.log(
-        `MEASURE 60s changes=${count} cls=${metrics.cls} longTasks=${metrics.longTasks} maxTaskMs=${metrics.maxTask}`,
+        `MEASURE stormMs=${Date.now() - stormStart} changes=${count} pollUpdates=${pollUpdates} cls=${metrics.cls} longTasks=${metrics.longTasks} maxTaskMs=${metrics.maxTask}`,
       );
       expect(metrics.cls).toBe(0);
       const presentation = await page.evaluate(() => {

@@ -34,9 +34,10 @@ backend_scripts() {
   run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   local ws_body_args=()
-  if [[ "${CODEXONE_CI_WS_BODY_MODE:-full}" == smoke ]]; then
-    ws_body_args+=(--diagnostics-only)
-  fi
+  case "${CODEXONE_CI_WS_BODY_MODE:-full}" in
+    smoke) ws_body_args+=(--diagnostics-only) ;;
+    representative) ws_body_args+=(--representative) ;;
+  esac
   run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone" "${ws_body_args[@]}"
   run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_slow_ingress.py --binary "$backend_bin_dir/codexone"

@@ -29,6 +29,8 @@ else
   while IFS= read -r -d '' path; do
     case "$path" in
       Sources/CodexOneAdapters/ControlPlane/*|web/*|docs/*|*.md|LICENSE*) ;;
+      Sources/CodexOneAdapters/Persistence/*|Sources/CodexOneRuntime/*|Tests/*)
+        if [[ "$ws_body_mode" == smoke ]]; then ws_body_mode=representative; fi ;;
       *) ws_body_mode=full ;;
     esac
     case "$path" in
