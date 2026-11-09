@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { render } from "../../../tests/render";
 import { KeyResults, cacheRate, failureLink, highFailure } from "./KeyResults";
@@ -14,6 +14,7 @@ const row: KeySummary = {
   inFlight: 1,
   pending: 0,
   tokens: "10000000000000001",
+  images: "3",
   tokenUsageIncomplete: true,
   inputTokens: "1000",
   cachedTokens: "250",
@@ -71,12 +72,13 @@ it("uses summary dates for failure links even after midnight", () => {
     outcome: "failed",
   });
 });
-it("keeps six columns, active-only rows, exact Token order and identity details", () => {
+it("shows image counts and links each active Key to its management drawer", () => {
   const other = {
     ...row,
     keyID: "a",
     displayName: "较新 Key",
     tokens: "10000000000000000",
+    images: "0",
     lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! + 1,
   };
   const result = render(
@@ -102,11 +104,19 @@ it("keeps six columns, active-only rows, exact Token order and identity details"
   );
   expect(
     screen.getAllByRole("columnheader").map((cell) => cell.textContent),
-  ).toEqual(["Key", "最近活动", "请求", "失败率", "Token", "缓存命中率"]);
+  ).toEqual([
+    "Key",
+    "最近活动",
+    "请求",
+    "失败率",
+    "Token",
+    "生图张数",
+    "缓存命中率",
+  ]);
   expect(screen.queryByText("闲置 Key")).toBeNull();
   const rows = screen.getAllByRole("row").slice(1);
   expect(
-    within(rows[0]).getByRole("button", { name: "未命名 Key" }),
+    within(rows[0]).getByRole("link", { name: "未命名 Key" }),
   ).toBeVisible();
   expect(screen.queryByText(row.principal!)).toBeNull();
   expect(
@@ -114,12 +124,14 @@ it("keeps six columns, active-only rows, exact Token order and identity details"
   ).toHaveTextContent("25%");
   expect(screen.getAllByLabelText("取消 1")[0]).toBeVisible();
   expect(screen.getAllByLabelText("结果未明 3")[0]).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "未命名 Key" }));
-  expect(screen.getByRole("dialog")).toHaveTextContent(row.principal!);
-  expect(screen.getByRole("dialog")).toHaveTextContent(row.keyID);
-  fireEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "关闭" }),
-  );
+  expect(within(rows[0]).getByTitle("3")).toHaveTextContent("3");
+  expect(within(rows[1]).getByTitle("0")).toHaveTextContent("0");
+  const href = within(rows[0])
+    .getByRole("link", { name: "未命名 Key" })
+    .getAttribute("href")!;
+  expect(
+    new URL(href, "https://synthetic.invalid").searchParams.get("detail"),
+  ).toBe(row.keyID);
   result.rerender(
     <KeyResults
       query={query({
@@ -129,7 +141,7 @@ it("keeps six columns, active-only rows, exact Token order and identity details"
     />,
   );
   expect(
-    within(screen.getAllByRole("row")[1]).getByRole("button", {
+    within(screen.getAllByRole("row")[1]).getByRole("link", {
       name: "较新 Key",
     }),
   ).toBeVisible();
@@ -149,74 +161,24 @@ it("keeps six columns, active-only rows, exact Token order and identity details"
     />,
   );
   expect(
-    within(screen.getAllByRole("row")[1]).getByRole("button", {
+    within(screen.getAllByRole("row")[1]).getByRole("link", {
       name: "较新 Key",
     }),
   ).toBeVisible();
 });
 
-it("keeps an open detail bound to its Key and its own snapshot across refreshes", () => {
-  const result = render(<KeyResults query={query()} />);
-  fireEvent.click(screen.getByRole("button", { name: "未命名 Key" }));
-  result.rerender(
-    <KeyResults
-      query={query({ ...report, keys: [{ ...row, tokens: "123" }] })}
-    />,
-  );
-  expect(screen.getByRole("dialog")).toHaveTextContent("Token：≥ 123");
-  result.rerender(
-    <KeyResults
-      query={query({
-        ...report,
-        startUnixSeconds: report.startUnixSeconds + 86400,
-        endUnixSeconds: report.endUnixSeconds + 86400,
-        keys: [],
-      })}
-    />,
-  );
-  expect(screen.getByRole("dialog")).toHaveTextContent(
-    "2026-11-03 · UTC+08:00",
-  );
-  expect(screen.getByRole("dialog")).toHaveTextContent(row.keyID);
-});
-it("shows all active Keys and keeps detail identity across updates", () => {
+it("shows all active Keys and leaves missing image counts unavailable", () => {
   const keys = Array.from({ length: 40 }, (_, index) => ({
     ...row,
+    images: undefined,
     keyID: `synthetic-bounded-${index}`,
     displayName: `合成 Key ${index}`,
-    lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! - index,
   }));
-  const result = render(<KeyResults query={query({ ...report, keys })} />);
+  render(<KeyResults query={query({ ...report, keys })} />);
   const panel = screen.getByRole("region", { name: "今日 Key 请求汇总" });
   expect(within(panel).getAllByRole("row")).toHaveLength(41);
-  fireEvent.click(within(panel).getByRole("button", { name: "合成 Key 39" }));
-  result.rerender(
-    <KeyResults
-      query={query({
-        ...report,
-        keys: keys.map((item) =>
-          item.keyID === "synthetic-bounded-39"
-            ? {
-                ...item,
-                displayName: "已更新的合成 Key",
-                lastUsedAtUnixSeconds: row.lastUsedAtUnixSeconds! + 1,
-              }
-            : item,
-        ),
-      })}
-    />,
-  );
-  expect(screen.getByRole("dialog", { name: "Key 详情" })).toHaveTextContent(
-    "synthetic-bounded-39",
-  );
-  expect(screen.getByRole("dialog", { name: "Key 详情" })).toHaveTextContent(
-    "已更新的合成 Key",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-  expect(within(panel).getAllByRole("row")).toHaveLength(41);
+  expect(within(panel).getAllByTitle("无图片产出观测")).toHaveLength(40);
   expect(
-    within(panel).getByRole("button", {
-      name: "已更新的合成 Key",
-    }),
+    within(panel).getByRole("link", { name: "合成 Key 39" }),
   ).toBeVisible();
 });

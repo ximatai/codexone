@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -42,18 +42,35 @@ export function KeyManagement() {
   const locationKey = useLocation().key;
   const positionedLocation = useRef<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const [detailID, setDetailID] = useState<string | null>(null);
+  const [selectedDetailID, setDetailID] = useState<string | null>(null);
+  const linkedDetailID = params.get("detail");
+  const detailID = selectedDetailID ?? linkedDetailID;
+  const closeDetails = useCallback(() => {
+    setDetailID(null);
+    if (linkedDetailID) {
+      setParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.delete("detail");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [linkedDetailID, setParams]);
   const status = params.get("status") ?? "available";
   const state = useKeys(
     status === "all" || status === "" ? "all" : status === "archived",
-    () => setDetailID(null),
+    closeDetails,
   );
   const owner = useManagementSession();
   const detail = state.keys.find((key) => key.id === detailID);
+  const detailOpened =
+    detailID !== null && (!linkedDetailID || detail !== undefined);
   useEffect(() => {
     if (detailID && state.readAt !== null && !state.loading && !detail)
-      setDetailID(null);
-  }, [detailID, detail, state.readAt, state.loading]);
+      closeDetails();
+  }, [detailID, detail, state.readAt, state.loading, closeDetails]);
   const [refresh, setRefresh] = useState(0);
   const search = params.get("q") ?? "";
   const target = params.get("target");
@@ -339,9 +356,9 @@ export function KeyManagement() {
         </Paper>
       )}
       <Drawer
-        opened={detailID !== null}
+        opened={detailOpened}
         onClose={() => {
-          if (!state.busy) setDetailID(null);
+          if (!state.busy) closeDetails();
         }}
         title={detail ? <KeyName {...detail} stacked /> : "密钥详情"}
         attributes={{ title: { "aria-label": "密钥详情" } }}
@@ -356,7 +373,7 @@ export function KeyManagement() {
         size="min(640px, 100vw)"
         closeButtonProps={{ "aria-label": "关闭" }}
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay={detailID !== null || undefined}
+        data-ui-overlay={detailOpened || undefined}
         closeOnEscape={
           !state.busy &&
           !expiring &&
@@ -484,7 +501,7 @@ export function KeyManagement() {
                     models={state.models}
                     imageModels={state.imageModels}
                     disabled={state.disabled}
-                    close={() => setDetailID(null)}
+                    close={closeDetails}
                     submit={(draft) =>
                       state.mutate(
                         (csrf, signal) =>

@@ -250,6 +250,7 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public let images: Int64?
   public let inputTokens: Int64?
   public let cachedTokens: Int64?
   public let cacheUsageIncomplete: Bool
@@ -270,8 +271,9 @@ public struct KeyUsageSummary: Sendable {
     estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
-    cacheUsageIncomplete: Bool = true
+    cacheUsageIncomplete: Bool = true, images: Int64? = nil
   ) {
+    self.images = images
     self.inputTokens = inputTokens
     self.cachedTokens = cachedTokens
     self.cacheUsageIncomplete = cacheUsageIncomplete

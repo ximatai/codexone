@@ -109,6 +109,7 @@ export const keySummary = z
             keyID: z.string(),
             enabled: z.boolean().optional(),
             tokens: metric.optional(),
+            images: metric.optional(),
             tokenUsageIncomplete: z.boolean().optional(),
             inputTokens: metric.optional(),
             cachedTokens: metric.optional(),

@@ -97,7 +97,7 @@ for (const realtime of [true, false]) {
       await expect(
         page
           .getByRole("region", { name: "今日 Key 请求汇总" })
-          .getByRole("button", { name: "p", exact: true }),
+          .getByRole("link", { name: "p", exact: true }),
       ).toBeVisible({ timeout: 20000 });
       await page.waitForTimeout(2200);
       await page.setViewportSize({ width: 1440, height: 900 });
