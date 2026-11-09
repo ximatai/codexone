@@ -9,13 +9,14 @@ import {
   IconAlertTriangle,
 } from "@tabler/icons-react";
 import { AreaChart } from "@mantine/charts";
+import { Dot } from "recharts";
 import { Group, Paper, Text, ThemeIcon, Skeleton, Title } from "@mantine/core";
 import { tokenTotal, type DailyBucket } from "./round2-api";
 import { failures } from "../../shared/presentation";
 import { compactCount } from "./overview-format";
 import styles from "./overview.module.css";
 import type { HourlyOutputRate } from "./useOverviewLive";
-const outputTrendHeight = 104;
+const outputTrendHeight = 84;
 const chartDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
   day: "numeric",
@@ -71,8 +72,7 @@ function Sparkline({
             );
           },
         }}
-        withDots={!compact}
-        dotProps={{ r: 2 }}
+        withDots={false}
         withLegend={false}
         gridAxis="none"
         connectNulls={false}
@@ -80,8 +80,17 @@ function Sparkline({
         areaProps={{
           isAnimationActive: compact && motion,
           animationDuration: 250,
+          activeDot: compact ? false : { r: 3 },
+          dot: compact
+            ? false
+            : ({ index, cx, cy, stroke }) =>
+                values[index] != null &&
+                values[index - 1] == null &&
+                values[index + 1] == null ? (
+                  <Dot cx={cx} cy={cy} r={2} fill={stroke} />
+                ) : null,
         }}
-        curveType={compact ? "monotone" : "linear"}
+        curveType="monotone"
       />
     </div>
   );
@@ -111,14 +120,23 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
       <Title order={3} size="h4">
         请求输出速率
       </Title>
-      <Text
-        size="xs"
-        c="dimmed"
-        mt={4}
-        title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
-      >
-        近 7 天
-      </Text>
+      <Group justify="space-between" gap={4} mt={4} mih={24}>
+        <Text
+          size="xs"
+          c="dimmed"
+          title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
+        >
+          近 7 天
+        </Text>
+        {latest && (
+          <Text size="sm" fw={600} title="最近有样本的小时">
+            <Text component="span" size="xs" fw={400} c="dimmed" mr={4}>
+              最近
+            </Text>
+            {rate(latest.median)}
+          </Text>
+        )}
+      </Group>
       {latest ? (
         <Sparkline
           label="请求输出速率"

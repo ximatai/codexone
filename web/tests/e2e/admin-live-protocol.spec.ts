@@ -332,8 +332,8 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(trend).toBeVisible();
   await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
   const dots = trend.locator("circle.recharts-dot");
-  await expect(dots).toHaveCount(3);
-  await dots.last().hover();
+  await expect(dots).toHaveCount(1);
+  await dots.hover();
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );
