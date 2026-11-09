@@ -64,7 +64,7 @@
 
 .quotaWindows {
   display: grid;
-  gap: 4px;
+  gap: 8px;
 }
 
 @media (max-width: 750px) {
@@ -291,4 +291,148 @@
 
 .keySummary {
   min-block-size: 12rem;
+}
+
+.quotaTrendInset {
+  padding-block-start: 8px;
+}
+
+.quotaTrendPanel {
+  display: grid;
+  gap: 10px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--mantine-color-default-border);
+}
+
+.quotaReferences {
+  justify-self: start;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+}
+
+.quotaReference {
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.quotaReference:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -1px;
+}
+
+.quotaReference[aria-pressed="true"],
+.quotaReference:hover {
+  background: var(--mantine-primary-color-light);
+  color: var(--mantine-primary-color-light-color);
+}
+
+.quotaAssessment {
+  display: flex;
+  align-items: center;
+  min-block-size: 52px;
+  gap: 7px;
+  padding: 8px;
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-primary-color-light);
+  color: var(--mantine-primary-color-light-color);
+}
+
+.quotaAssessment[data-warning] {
+  background: var(--mantine-color-orange-light);
+  color: color-mix(
+    in srgb,
+    var(--mantine-color-orange-light-color) 68%,
+    var(--mantine-color-text)
+  );
+}
+
+.quotaAssessment svg {
+  flex-shrink: 0;
+}
+
+.quotaLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.quotaLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.quotaLegend span[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.quotaLegend i {
+  inline-size: 12px;
+}
+
+.quotaLegendHistory {
+  border-block-start: 2px solid var(--mantine-primary-color-filled);
+}
+
+.quotaLegendProjection {
+  border-block-start: 2px dashed var(--mantine-color-orange-6);
+}
+
+.quotaLegendScenario {
+  block-size: 7px;
+  background: var(--mantine-color-orange-light);
+}
+
+.quotaChart {
+  display: block;
+  width: 100%;
+  max-height: 170px;
+  fill: var(--mantine-color-dimmed);
+  font-size: 9px;
+}
+
+.quotaStartLabel {
+  padding-inline-start: 9%;
+}
+
+.quotaGrid,
+.quotaMarker {
+  stroke: var(--mantine-color-default-border);
+}
+
+.quotaMarker {
+  stroke-dasharray: 3 2;
+}
+
+.quotaHistory,
+.quotaProjection {
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.quotaHistory {
+  stroke: var(--mantine-primary-color-filled);
+}
+.quotaPoint {
+  fill: var(--mantine-primary-color-filled);
+}
+
+.quotaProjection {
+  stroke: var(--mantine-color-orange-6);
+  stroke-dasharray: 4 3;
+}
+
+.quotaScenario {
+  fill: var(--mantine-color-orange-6);
+  fill-opacity: 0.16;
 }

@@ -25,21 +25,30 @@ extension SQLiteExecutionStore: AccountObservationStore {
           current.credentialVersion == account.credentialVersion
         else { throw ExecutionError.conflict }
         let old = try Self.loadQuota(db, account.id)
-        let updated: AccountQuotaObservation
+        var updated: AccountQuotaObservation
+        var trend = old.trend ?? AccountQuotaTrend()
         switch result {
         case .success(let quota):
           guard current.authorization == .ready else { throw ExecutionError.conflict }
           updated = try .init(
             attemptedAtUnixSeconds: atUnixSeconds, observedAtUnixSeconds: atUnixSeconds,
             quota: quota, failure: nil)
+          trend.record(quota, at: atUnixSeconds)
         case .failure(let error):
           updated = try .init(
             attemptedAtUnixSeconds: atUnixSeconds, observedAtUnixSeconds: old.observedAtUnixSeconds,
             quota: old.quota, failure: error)
         }
+        updated.trend = trend
+        var record = try encode(updated)
+        while record.utf8.count > 16_384 {
+          updated.trend = trend.discardOldestHalf() ? trend : nil
+          record = try encode(updated)
+          if updated.trend == nil { break }
+        }
         try db.write(
           "INSERT INTO account_quota VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET record_json=excluded.record_json",
-          [.text(account.id), .text(try encode(updated))])
+          [.text(account.id), .text(record)])
         var priming = try Self.loadQuotaPriming(db, account.id)
         if !priming.windows.isEmpty {
           let enabled = priming.settings.enabled
@@ -67,9 +76,11 @@ extension SQLiteExecutionStore: AccountObservationStore {
     }
     let stored = try decode(AccountQuotaObservation.self, record)
     try stored.quota?.validate()
-    return try .init(
+    var validated = try AccountQuotaObservation(
       attemptedAtUnixSeconds: stored.attemptedAtUnixSeconds,
       observedAtUnixSeconds: stored.observedAtUnixSeconds, quota: stored.quota,
       failure: stored.failure)
+    validated.trend = stored.trend
+    return validated
   }
 }

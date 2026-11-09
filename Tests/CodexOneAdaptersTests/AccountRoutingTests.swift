@@ -941,3 +941,84 @@ func controlCooldownIsReadAfterOwnerRefresh(expired: Bool) async throws {
   }
   await f.close()
 }
+
+@Test func quotaTrendPersistsSeparatesWindowsAndStartsOverAfterRecovery() async throws {
+  let f = try await RoutingFixture.make()
+  let account = try await f.store.accountCredential(id: "a").account
+  let start: Int64 = 1_800_000_000
+  let reset = start + 7200
+  func quota(_ used: Double, resetAt: Int64) throws -> SubscriptionQuota {
+    try .init(limits: [
+      .init(
+        id: "codex", allowed: true, limitReached: false,
+        primary: .init(usedPercent: used, durationSeconds: 18_000, resetsAtUnixSeconds: resetAt),
+        secondary: .init(
+          usedPercent: used / 2, durationSeconds: 604_800, resetsAtUnixSeconds: reset + 3600))
+    ])
+  }
+  for (offset, used) in [(Int64(0), 25.0), (60, 26), (300, 40)] {
+    _ = try await f.store.recordQuotaObservation(
+      account: account, atUnixSeconds: start + offset,
+      result: .success(quota(used, resetAt: reset + offset / 10)))
+  }
+  _ = try await f.store.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 600, result: .failure(.unavailable))
+  await f.store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock)
+  let stored = try await reopened.quotaObservation(id: "a")
+  #expect(stored.failure == .unavailable)
+  #expect(stored.trend?.primary?.samples.map(\.at) == [start + 60, start + 300])
+  #expect(stored.trend?.primary?.samples.map(\.remaining) == [74, 60])
+  #expect(stored.trend?.secondary?.samples.map(\.remaining) == [87, 80])
+  #expect(stored.trend?.primary?.reset == reset)
+
+  let recovered = try await reopened.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 900, result: .success(quota(3, resetAt: reset)))
+  #expect(recovered.trend?.primary?.samples.map(\.remaining) == [97])
+  let rolled = try await reopened.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 1200,
+    result: .success(quota(5, resetAt: reset + 1200)))
+  #expect(rolled.trend?.primary?.samples.map(\.remaining) == [95])
+  #expect(rolled.trend?.secondary?.samples.count == 2)
+  await reopened.close()
+  await f.close()
+}
+
+@Test func quotaTrendBudgetPreservesQuotaAndSparseWindow() async throws {
+  let f = try await RoutingFixture.make()
+  let account = try await f.store.accountCredential(id: "a").account
+  let start: Int64 = 1_800_000_000
+  let duration: Int64 = 604_800
+  let reset = start + 172_800
+  let extra = try (0..<16).map { index in
+    try SubscriptionQuotaLimit(
+      id: String(format: "%02d", index) + String(repeating: "x", count: 126),
+      allowed: true, limitReached: false,
+      primary: .init(
+        usedPercent: 42.123456789012345, durationSeconds: duration, resetsAtUnixSeconds: reset),
+      secondary: .init(
+        usedPercent: 42.123456789012345, durationSeconds: duration, resetsAtUnixSeconds: reset))
+  }
+  for index in 0...288 {
+    let at = start + Int64(index) * 300
+    let main = try SubscriptionQuotaLimit(
+      id: "codex", allowed: true, limitReached: false,
+      primary: .init(
+        usedPercent: Double(index) / 7.123456789, durationSeconds: duration,
+        resetsAtUnixSeconds: reset),
+      secondary: .init(
+        usedPercent: Double(index) / 6.123456789, durationSeconds: duration,
+        resetsAtUnixSeconds: index < 280 ? reset : reset + 3600))
+    let quota = try SubscriptionQuota(limits: [main] + extra)
+    _ = try await f.store.recordQuotaObservation(
+      account: account, atUnixSeconds: at, result: .success(quota))
+  }
+  let observed = try await f.store.quotaObservation(id: "a")
+  #expect(observed.quota?.limits.count == 17)
+  let primary = try #require(observed.trend?.primary)
+  #expect(primary.samples.count < 289)
+  #expect(primary.samples.last?.at == start + 86_400)
+  #expect(observed.trend?.secondary?.samples.count == 9)
+  await f.close()
+}

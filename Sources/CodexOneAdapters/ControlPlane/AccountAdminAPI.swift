@@ -57,6 +57,16 @@ public struct AccountAdminAPI: Sendable {
           "nextCursor": accounts.count == 64 ? .string(accounts.last!.id) : .null,
         ]))
     }
+    routes.get(":id", "quota-trend") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      guard let observations = store as? any AccountObservationStore else {
+        throw ExecutionError.storageUnavailable
+      }
+      let observation = try await observations.quotaObservation(
+        id: request.parameters.get("id") ?? "")
+      return try Self.response(
+        JSONValue.decode(JSONEncoder().encode(observation.trend ?? AccountQuotaTrend())))
+    }
     routes.get(":id", "quota-priming") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
       return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))
