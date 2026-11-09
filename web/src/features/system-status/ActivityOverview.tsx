@@ -281,7 +281,7 @@ export function ActivityOverview({
                           <Text size="sm" fw={600} truncate title={name}>
                             {name}
                           </Text>
-                          <Text size="xs" className={styles.requestElapsed}>
+                          <Text size="xs" className={styles.requestDuration}>
                             <Elapsed
                               seconds={row.elapsedSeconds}
                               sampledAt={flight.dataUpdatedAt}
