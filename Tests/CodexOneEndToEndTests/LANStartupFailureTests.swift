@@ -14,12 +14,20 @@ func occupiedSecondListenerRollsBackLoopbackBinding(admin: Bool) async throws {
     let secondAddress = "::1"
   #endif
   let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-  let occupied = try await ServerBootstrap(group: group)
-    .bind(host: secondAddress, port: 0).get()
-  let port = occupied.localAddress!.port!
-  let listeners = try ListenerConfiguration(
-    testLoopbackAddress: secondAddress, allowedNetworks: "127.0.0.0/8,::1/128")
+  let bootstrap = ServerBootstrap(group: group)
+    .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+  var reservations: [any Channel] = []
   do {
+    // Allocate on the primary address first. An ephemeral port on the other
+    // address may already be in use on 127.0.0.1.
+    let primary = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
+    reservations.append(primary)
+    let port = try #require(primary.localAddress?.port)
+    let occupied = try await bootstrap.bind(host: secondAddress, port: port).get()
+    reservations.append(occupied)
+    let listeners = try ListenerConfiguration(
+      testLoopbackAddress: secondAddress, allowedNetworks: "127.0.0.0/8,::1/128")
+    try await primary.close().get()
     if admin {
       await #expect(throws: (any Error).self) {
         try await AdminService(
@@ -35,15 +43,15 @@ func occupiedSecondListenerRollsBackLoopbackBinding(admin: Bool) async throws {
         .run()
       }
     }
-    let rebound = try await ServerBootstrap(group: group)
-      .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-      .bind(host: "127.0.0.1", port: port).get()
+    let rebound = try await bootstrap.bind(host: "127.0.0.1", port: port).get()
     try await rebound.close().get()
-  } catch {
     try await occupied.close().get()
-    try await group.shutdownGracefully()
+  } catch {
+    for channel in reservations {
+      try? await channel.close().get()
+    }
+    try? await group.shutdownGracefully()
     throw error
   }
-  try await occupied.close().get()
   try await group.shutdownGracefully()
 }
