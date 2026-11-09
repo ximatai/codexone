@@ -345,32 +345,37 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     .locator("[data-continuous-value]");
   await expect(readout).toHaveText("最近 43 Token/s");
   const readoutBox = await readout.boundingBox();
-  socket!.send(
-    JSON.stringify({
-      protocol: 1,
-      epoch: "synthetic-before-restart",
-      sequence: 3,
-      kind: "update",
-      sections: {
-        inFlight: {
-          ...sections.inFlight,
-          version: 3,
-          data: {
-            ...flight,
-            requestOutputRateByHour: {
-              ...flight.requestOutputRateByHour,
-              points: {
-                ...flight.requestOutputRateByHour.points,
-                [day]: { median: 1234, count: 6 },
+  for (const [sequence, median, label] of [
+    [3, 1234, "最近 1,234 Token/s"],
+    [4, 0, "最近 0 Token/s"],
+  ] as const) {
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-before-restart",
+        sequence,
+        kind: "update",
+        sections: {
+          inFlight: {
+            ...sections.inFlight,
+            version: sequence,
+            data: {
+              ...flight,
+              requestOutputRateByHour: {
+                ...flight.requestOutputRateByHour,
+                points: {
+                  ...flight.requestOutputRateByHour.points,
+                  [day]: { median, count: 6 },
+                },
               },
             },
           },
         },
-      },
-    }),
-  );
-  await expect(readout).toHaveText("最近 1,234 Token/s");
-  expect(await readout.boundingBox()).toEqual(readoutBox);
+      }),
+    );
+    await expect(readout).toHaveText(label);
+    expect(await readout.boundingBox()).toEqual(readoutBox);
+  }
   const originalViewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(trend).toBeVisible();
@@ -381,8 +386,8 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
-    [4, "stale", "进行中请求"],
-    [5, "fresh", "进行中请求 · 43 Token/s"],
+    [5, "stale", "进行中请求"],
+    [6, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
@@ -392,7 +397,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
         kind: "update",
         sections: {
           inFlight: {
-            version: 3,
+            version: 4,
             sampledAtUnixSeconds: sections.inFlight.sampledAtUnixSeconds,
             lastSuccessAt: sections.inFlight.lastSuccessAt,
             freshness,
