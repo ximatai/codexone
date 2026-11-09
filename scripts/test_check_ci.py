@@ -19,6 +19,58 @@ from check_ci import check_release, check_live_browser, workflow_jobs
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class VerifyPathSelectionTests(unittest.TestCase):
+    def test_push_ranges_and_conservative_fallbacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.check_output(
+                    ['git', '-C', directory, *args], text=True, stderr=subprocess.PIPE,
+                ).strip()
+
+            def commit(path):
+                file = root / path
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(path)
+                git('add', '--all')
+                git('commit', '-qm', path)
+                return git('rev-parse', 'HEAD')
+
+            git('init', '-q')
+            git('config', 'user.email', 'synthetic@example.com')
+            git('config', 'user.name', 'Synthetic CI')
+            git('config', 'commit.gpgsign', 'false')
+            base = commit('README.md')
+            web = commit('web/view.ts')
+            mixed = commit('Sources/app.swift')
+            (root / 'web/view.ts').rename(root / 'docs-view.md')
+            renamed = commit('docs/note.md')
+            unknown = commit('unknown.input')
+            policy = commit('scripts/ci_changes.sh')
+            for forced, before, after, expected in [
+                ('false', base, web, (False, True, False)),
+                ('false', base, mixed, (True, True, False)),
+                ('false', mixed, renamed, (False, True, False)),
+                ('false', renamed, unknown, (True, True, True)),
+                ('false', unknown, policy, (True, True, True)),
+                ('false', '0' * 40, web, (True, True, True)),
+                ('false', web, base, (True, True, True)),
+                ('true', base, web, (True, True, True)),
+            ]:
+                with self.subTest(forced=forced, before=before, after=after):
+                    output = subprocess.check_output(
+                        ['bash', str(ROOT / 'scripts/ci_changes.sh'), '--push', forced, before, after],
+                        cwd=directory, text=True, stderr=subprocess.PIPE,
+                    )
+                    self.assertEqual(
+                        output.splitlines(),
+                        [f'{name}={str(value).lower()}' for name, value in zip(
+                            ('backend', 'frontend', 'devcontainer'), expected
+                        )],
+                    )
+
+
 class LiveBrowserWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / '.github/workflows/verify.yml').read_text()

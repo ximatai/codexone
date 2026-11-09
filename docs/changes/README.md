@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [CI 验证效率](ci-verification-efficiency/proposal.md) · [任务](ci-verification-efficiency/tasks.md)
+
 - [hourly-output-rate](hourly-output-rate/proposal.md) · [任务](hourly-output-rate/tasks.md)
 
 

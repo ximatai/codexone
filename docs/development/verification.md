@@ -71,7 +71,17 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 ## 发版 CI 验证边界
 
-Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
+### 小改动的反馈与发版耗时
+
+v0.26.20 候选的首次前端 PR Verify 约 11 分钟，其中 Swift 构建约 6 分钟，随后浏览器联测约 4 分钟。合并后的全量 Verify 首轮约 18 分钟，发布演练约 17 分钟且大部分与 Verify 并行。上一版正式标签发布约 18 分钟。按这次执行顺序估算，无失败时从创建 PR 到正式发布约 45–50 分钟，包含三段串行门禁。
+
+本次布局回归由长时间联测捕捉。前端合成浏览器用例现直接推送两个不同位数的速率，校验数字框位置和尺寸；长时间联测继续检查零布局位移。Verify 的三处 Ubuntu 依赖安装允许最多 3 次下载重试，仍受 job 总时限约束。
+
+后续可分别评估两个独立改动。其一，纯前端 PR 按后端源文件、测试、依赖锁和工具链匹配，复用受信主分支生成的 Linux 网关制品，缺失时回退到现场构建。其二，在已合并提交上验收可晋升的发行制品，绑定提交、版本、镜像归档和验证结果，正式发布校验并晋升该镜像。两项均须验证缓存缺失、制品过期、来源不符和摘要不符的失败路径。当前 Verify 和 Release 的门禁范围继续按下述规则执行。
+
+### Verify
+
+Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 按推送前后两个提交的树差异选择，强制推送、基线缺失或不是祖先时选全部。main 推送各自独立验证，手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
 
 后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
 
@@ -134,7 +144,7 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 | verify | `always()` gate 拒绝任一失败、取消或跳过；再次核对 build 输出的镜像归档 hash，才上传原名称的 `verified-*` 制品 |
 | publish / release | publish 仅消费 gate 的 verified 制品，校验 gate 输出的同一归档 hash，加载而不重建；推送后按 digest 回拉核对 image ID，对推送 digest attestation，最后创建 Release |
 
-四分片每次执行现有全部 34 项后端脚本，包含旧 Dockerfile verification target 的全部 18 项；`check_ci.py` 检查这层覆盖和所有分片入口，`backend_shards.py --check` 保证每项恰好归属一个分片。优化 codexone 来自候选镜像，ExecutionProbe 为同次 release 配置构建的测试程序，不进入产品镜像。传统 `docker build --target verification` 仍保留原检查供源码验收使用。Release 原本没有 Swift 单元测试/格式检查或前端完整测试，本次仍由常规 Verify 承担，不声称 Release 已增加这些证据。
+四分片每次执行清单中的全部后端脚本，包含旧 Dockerfile verification target 的全部 18 项；`check_ci.py` 检查这层覆盖和所有分片入口，`backend_shards.py --check` 保证每项恰好归属一个分片。优化 codexone 来自候选镜像，ExecutionProbe 为同次 release 配置构建的测试程序，不进入产品镜像。传统 `docker build --target verification` 仍保留原检查供源码验收使用。Release 原本没有 Swift 单元测试/格式检查或前端完整测试，本次仍由常规 Verify 承担，不声称 Release 已增加这些证据。
 
 安装检查保留非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。只用合成数据和 loopback 上游。
 
