@@ -42,7 +42,7 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 ## 真实网关与浏览器 CI
 
-前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用匹配的 Swift 容器及同次 `backend-build` 产物运行真实网关/浏览器测试。后端或前端变化都会构建网关并要求该任务成功，不能把普通前端的排除项当成已完成真实栈验证。
+前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；两套浏览器测试使用同一固定 digest 的 Playwright 镜像。独立 `frontend-live` 读取同次 `backend-build` 产出的网关和对应 Swift/SQLite 动态库，核验下载摘要后启动真实网关。后端或前端变化都会构建网关并要求该任务成功，不能把普通前端的排除项当成已完成真实栈验证。
 
 `scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
 
@@ -75,7 +75,7 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 v0.26.20 候选的首次前端 PR Verify 约 11 分钟，其中 Swift 构建约 6 分钟，随后浏览器联测约 4 分钟。合并后的全量 Verify 首轮约 18 分钟，发布演练约 17 分钟且大部分与 Verify 并行。上一版正式标签发布约 18 分钟。按这次执行顺序估算，无失败时从创建 PR 到正式发布约 45–50 分钟，包含三段串行门禁。
 
-本次布局回归由长时间联测捕捉。前端合成浏览器用例现直接推送两个不同位数的速率，校验数字框位置和尺寸；长时间联测继续检查零布局位移。Verify 和开发容器通过 HTTPS 访问同一 Ubuntu 软件源，APT 下载允许最多 3 次重试，仍受 job 总时限约束。
+本次布局回归由长时间联测捕捉。前端合成浏览器用例现直接推送两个不同位数的速率，校验数字框位置和尺寸；长时间联测继续检查零布局位移。Verify 的 Swift job 和开发容器通过 HTTPS 访问同一 Ubuntu 软件源，APT 下载允许最多 3 次重试，仍受 job 总时限约束。
 
 后续可分别评估两个独立改动。其一，纯前端 PR 按后端源文件、测试、依赖锁和工具链匹配，复用受信主分支生成的 Linux 网关制品，缺失时回退到现场构建。其二，在已合并提交上验收可晋升的发行制品，绑定提交、版本、镜像归档和验证结果，正式发布校验并晋升该镜像。两项均须验证缓存缺失、制品过期、来源不符和摘要不符的失败路径。当前 Verify 和 Release 的门禁范围继续按下述规则执行。
 
