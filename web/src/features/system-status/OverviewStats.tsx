@@ -130,10 +130,7 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
         </Text>
         {latest && (
           <Text size="sm" fw={600} flex={1} ta="right" title="最近有样本的小时">
-            <Text component="span" size="xs" fw={400} c="dimmed" mr={4}>
-              最近
-            </Text>
-            {rate(latest.median)}
+            <ContinuousValue text={`最近 ${rate(latest.median)}`} />
           </Text>
         )}
       </Group>
