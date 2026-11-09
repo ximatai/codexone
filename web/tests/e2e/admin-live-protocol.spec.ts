@@ -281,6 +281,32 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     page.getByRole("heading", { name: "进行中请求", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("暂无速率数据")).toBeVisible();
+  const flight = {
+    rows: [
+      {
+        id: "synthetic-retired-request",
+        model: "synthetic-retired-model",
+        keyID: "synthetic-key",
+        mode: "http",
+        accountID: null,
+        hasFirstEvent: false,
+        elapsedSeconds: 3,
+      },
+    ],
+    recentlyFinished: [],
+    clients: [],
+    overflow: 0,
+    recentRequestOutputRateMedian: 42.5,
+    requestOutputRateByHour: {
+      endUnixSeconds: day,
+      offsetMinutes: 480,
+      points: {
+        [day - 3 * 3600]: { median: 20, count: 2 },
+        [day - 2 * 3600]: { median: 30, count: 3 },
+        [day]: { median: 42.5, count: 5 },
+      },
+    },
+  };
   socket!.send(
     JSON.stringify({
       protocol: 1,
@@ -291,32 +317,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
         inFlight: {
           ...sections.inFlight,
           version: 2,
-          data: {
-            rows: [
-              {
-                id: "synthetic-retired-request",
-                model: "synthetic-retired-model",
-                keyID: "synthetic-key",
-                mode: "http",
-                accountID: null,
-                hasFirstEvent: false,
-                elapsedSeconds: 3,
-              },
-            ],
-            recentlyFinished: [],
-            clients: [],
-            overflow: 0,
-            recentRequestOutputRateMedian: 42.5,
-            requestOutputRateByHour: {
-              endUnixSeconds: day,
-              offsetMinutes: 480,
-              points: {
-                [day - 3 * 3600]: { median: 20, count: 2 },
-                [day - 2 * 3600]: { median: 30, count: 3 },
-                [day]: { median: 42.5, count: 5 },
-              },
-            },
-          },
+          data: flight,
         },
       },
     }),
@@ -339,6 +340,37 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   );
   await expect(page.getByRole("tooltip")).toContainText("08:00");
   await page.getByRole("heading", { name: "请求输出速率" }).hover();
+  const readout = page
+    .getByTitle("最近有样本的小时", { exact: true })
+    .locator("[data-continuous-value]");
+  await expect(readout).toHaveText("最近 43 Token/s");
+  const readoutBox = await readout.boundingBox();
+  socket!.send(
+    JSON.stringify({
+      protocol: 1,
+      epoch: "synthetic-before-restart",
+      sequence: 3,
+      kind: "update",
+      sections: {
+        inFlight: {
+          ...sections.inFlight,
+          version: 3,
+          data: {
+            ...flight,
+            requestOutputRateByHour: {
+              ...flight.requestOutputRateByHour,
+              points: {
+                ...flight.requestOutputRateByHour.points,
+                [day]: { median: 1234, count: 6 },
+              },
+            },
+          },
+        },
+      },
+    }),
+  );
+  await expect(readout).toHaveText("最近 1,234 Token/s");
+  expect(await readout.boundingBox()).toEqual(readoutBox);
   const originalViewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(trend).toBeVisible();
@@ -349,8 +381,8 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
-    [3, "stale", "进行中请求"],
-    [4, "fresh", "进行中请求 · 43 Token/s"],
+    [4, "stale", "进行中请求"],
+    [5, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
@@ -360,7 +392,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
         kind: "update",
         sections: {
           inFlight: {
-            version: 2,
+            version: 3,
             sampledAtUnixSeconds: sections.inFlight.sampledAtUnixSeconds,
             lastSuccessAt: sections.inFlight.lastSuccessAt,
             freshness,
