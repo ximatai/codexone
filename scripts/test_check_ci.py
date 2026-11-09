@@ -80,6 +80,8 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
         mutations = [
             ('needs: [changes, backend-build]', 'needs: changes'),
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
+            ('run: ./scripts/verify.sh --backend-build', 'run: swift build --product codexone -j 4'),
+            ('run: swift build --product codexone -j 4', 'run: true'),
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
             ("required.update({'backend-build', 'frontend-live'})", "required.add('backend-build')"),
         ]

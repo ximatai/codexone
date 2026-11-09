@@ -88,6 +88,11 @@ def check_live_browser(workflow):
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
     condition = "needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'"
     assert condition in jobs['backend-build'] and condition in live, 'Both backend and frontend changes need the real stack'
+    build = jobs['backend-build']
+    assert "if: needs.changes.outputs.backend == 'true'\n        run: ./scripts/verify.sh --backend-build" in build, (
+        'Backend changes must retain the complete Swift checks')
+    assert "if: needs.changes.outputs.backend == 'false'\n        run: swift build --product codexone -j 4" in build, (
+        'Frontend-only changes must build the gateway for real browser checks')
     assert "required.update({'backend-build', 'frontend-live'})" in jobs['verify'], 'Final gate must require the real browser'
     assert 'frontend-live' in jobs['verify'].split('runs-on:')[0], 'Final gate must await real browser completion'
 

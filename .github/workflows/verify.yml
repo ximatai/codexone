@@ -75,15 +75,27 @@ jobs:
             ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-${{ hashFiles('Package.resolved') }}-
             ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-
       - name: Verify Swift modules and executable lifecycle
+        if: needs.changes.outputs.backend == 'true'
         run: ./scripts/verify.sh --backend-build
+      - name: Build the gateway for frontend integration
+        if: needs.changes.outputs.backend == 'false'
+        run: swift build --product codexone -j 4
       - name: Save Swift build cache from main
-        if: github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.backend == 'true' && github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build
           key: ${{ steps.swift-cache.outputs.cache-primary-key }}
       - name: Package debug executables with their executable modes
-        run: tar -czf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug codexone ExecutionProbe
+        env:
+          BACKEND_SELECTED: ${{ needs.changes.outputs.backend }}
+        shell: bash
+        run: |
+          binaries=(codexone)
+          if [[ "$BACKEND_SELECTED" == true ]]; then
+            binaries+=(ExecutionProbe)
+          fi
+          tar -czf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug "${binaries[@]}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           archive: true

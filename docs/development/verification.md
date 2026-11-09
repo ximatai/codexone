@@ -83,7 +83,7 @@ v0.26.20 候选的首次前端 PR Verify 约 11 分钟，其中 Swift 构建约 
 
 Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 按推送前后两个提交的树差异选择，强制推送、基线缺失或不是祖先时选全部。main 推送各自独立验证，手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
 
-后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。后端变更和全量验证的 build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`。纯前端变更只构建并打包 codexone，同次真实网关联测仍为必需。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有执行完整 Swift 检查的 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
 
 本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
 
