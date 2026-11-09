@@ -59,11 +59,17 @@ function Elapsed({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [running]);
+  const duration =
+    seconds == null
+      ? null
+      : String(
+          Math.floor(
+            seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0),
+          ),
+        );
   return (
-    <span style={{ fontVariantNumeric: "tabular-nums" }}>
-      {seconds == null
-        ? "耗时未知"
-        : `${Math.floor(seconds + (running ? Math.max(0, now - basis.at) / 1000 : 0))} 秒`}
+    <span key={duration?.length} style={{ fontVariantNumeric: "tabular-nums" }}>
+      {duration === null ? "耗时未知" : `${duration} 秒`}
     </span>
   );
 }
@@ -281,7 +287,7 @@ export function ActivityOverview({
                           <Text size="sm" fw={600} truncate title={name}>
                             {name}
                           </Text>
-                          <Text size="xs" className={styles.requestElapsed}>
+                          <Text size="xs" className={styles.requestDuration}>
                             <Elapsed
                               seconds={row.elapsedSeconds}
                               sampledAt={flight.dataUpdatedAt}

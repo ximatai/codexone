@@ -51,6 +51,10 @@
   }
 }
 
+.outputRateValue > [data-continuous-value] {
+  display: block;
+}
+
 .quotaAccountHeader {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -180,8 +184,13 @@
   border-block-start: 1px solid var(--mantine-color-default-border);
   padding-block-start: 6px;
 }
+.requestDuration,
 .requestElapsed {
   flex-shrink: 0;
+}
+.requestDuration {
+  inline-size: 5em;
+  text-align: end;
 }
 .requestEmpty {
   min-block-size: 6rem;
