@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.23](https://github.com/ximatai/codexone/releases/tag/v0.26.23)**（2026-11-10），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.24](https://github.com/ximatai/codexone/releases/tag/v0.26.24)**（2026-11-10），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.24 调整首页额度趋势图例顺序，缩短 PR 验证等待，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
 v0.26.23 新增管理台截图隐私模式和账号额外积分只读余额，优化额度趋势、侧栏与选路诊断，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
