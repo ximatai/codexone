@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Text, UnstyledButton } from "@mantine/core";
+import { Tooltip, UnstyledButton } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useEffect, useId, useState } from "react";
 import { useReducedMotion } from "@mantine/hooks";
@@ -17,6 +17,7 @@ import {
 import styles from "./overview.module.css";
 
 const transitionMs = 220;
+const scenarioDescription = "阴影表示较快和较慢消耗情景之间的范围";
 
 type Forecast = Extract<ReturnType<typeof predictQuota>, { rate: number }>;
 
@@ -40,7 +41,7 @@ function QuotaChart({
   const start = Math.min(history.samples[0][0], reset - 60);
   const end = Math.max(start + 60, reset, now);
   const x = (at: number) => 30 + (290 * (at - start)) / (end - start);
-  const y = (remaining: number) => 18 + ((100 - remaining) * 86) / 100;
+  const y = (remaining: number) => 18 + ((100 - remaining) * 118) / 100;
   const path = (points: QuotaSample[]) =>
     points.map(([at, remaining]) => `${x(at)},${y(remaining)}`).join(" ");
   const scenario = (rate: number) => {
@@ -52,99 +53,117 @@ function QuotaChart({
     points.push([reset, Math.max(0, remaining - rate * (reset - at))]);
     return points;
   };
-  const startLabel = new Date(start * 1000).toLocaleString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const ticks = [start, (start + end) / 2, end];
+  const dateOptions = { month: "numeric", day: "numeric" } as const;
+  const timeOptions = { hour: "2-digit", minute: "2-digit" } as const;
+  const dateFormat = new Intl.DateTimeFormat("zh-CN", dateOptions);
+  const distinctDates = new Set(ticks.map((at) => dateFormat.format(at * 1000)))
+    .size;
+  const tickFormat =
+    end - start >= 86400 && distinctDates === ticks.length
+      ? dateFormat
+      : new Intl.DateTimeFormat(
+          "zh-CN",
+          distinctDates > 1 ? { ...dateOptions, ...timeOptions } : timeOptions,
+        );
+  const hasScenario = forecast !== undefined && forecast.slow < forecast.fast;
+  const chartLabel = [
+    "剩余额度走势，实线为历史",
+    forecast && "虚线为预测",
+    hasScenario && scenarioDescription,
+    "竖线为现在和重置",
+  ]
+    .filter(Boolean)
+    .join("，");
   return (
-    <>
-      <svg
-        viewBox="0 0 328 110"
-        className={styles.quotaChart}
-        role="img"
-        aria-label="剩余额度走势，实线为历史，虚线为预测，竖线为现在和重置"
-      >
-        {[0, 50, 100].map((value) => (
-          <g key={value}>
-            <text
-              x="25"
-              y={y(value)}
-              textAnchor="end"
-              dominantBaseline="middle"
-            >
-              {value}%
+    <svg
+      viewBox="0 0 328 154"
+      className={styles.quotaChart}
+      role="img"
+      aria-label={chartLabel}
+    >
+      {[0, 50, 100].map((value) => (
+        <g key={value}>
+          <text x="25" y={y(value)} textAnchor="end" dominantBaseline="middle">
+            {value}%
+          </text>
+          <line
+            className={styles.quotaGrid}
+            x1="30"
+            x2="320"
+            y1={y(value)}
+            y2={y(value)}
+          />
+        </g>
+      ))}
+      {[
+        { at: now, label: "现在" },
+        { at: reset, label: "重置" },
+      ].map(({ at, label }) => (
+        <g key={label}>
+          <line
+            className={styles.quotaMarker}
+            x1={x(at)}
+            x2={x(at)}
+            y1="16"
+            y2={y(0)}
+          />
+          {(label === "重置" || Math.abs(x(now) - x(reset)) >= 28) && (
+            <text x={x(at)} y="10" textAnchor={x(at) > 300 ? "end" : "middle"}>
+              {label}
             </text>
-            <line
-              className={styles.quotaGrid}
-              x1="30"
-              x2="320"
-              y1={y(value)}
-              y2={y(value)}
-            />
-          </g>
-        ))}
-        {[
-          { at: now, label: "现在" },
-          { at: reset, label: "重置" },
-        ].map(({ at, label }) => (
-          <g key={label}>
-            <line
-              className={styles.quotaMarker}
-              x1={x(at)}
-              x2={x(at)}
-              y1="16"
-              y2="104"
-            />
-            {(label === "重置" || Math.abs(x(now) - x(reset)) >= 28) && (
-              <text
-                x={x(at)}
-                y="10"
-                textAnchor={x(at) > 300 ? "end" : "middle"}
-              >
-                {label}
-              </text>
-            )}
-          </g>
-        ))}
-        {forecast && forecast.slow < forecast.fast && (
-          <polygon
-            className={styles.quotaScenario}
-            points={path([
-              ...scenario(forecast.slow),
-              ...scenario(forecast.fast).reverse(),
-            ])}
+          )}
+        </g>
+      ))}
+      {hasScenario && (
+        <polygon
+          className={styles.quotaScenario}
+          points={path([
+            ...scenario(forecast.slow),
+            ...scenario(forecast.fast).reverse(),
+          ])}
+        />
+      )}
+      {quotaSegments(history.samples).map((segment) =>
+        segment.length === 1 ? (
+          <circle
+            key={segment[0][0]}
+            cx={x(segment[0][0])}
+            cy={y(segment[0][1])}
+            r="2"
+            className={styles.quotaPoint}
           />
-        )}
-        {quotaSegments(history.samples).map((segment) =>
-          segment.length === 1 ? (
-            <circle
-              key={segment[0][0]}
-              cx={x(segment[0][0])}
-              cy={y(segment[0][1])}
-              r="2"
-              className={styles.quotaPoint}
-            />
-          ) : (
-            <polyline
-              key={segment[0][0]}
-              className={styles.quotaHistory}
-              points={path(segment)}
-            />
-          ),
-        )}
-        {forecast && (
+        ) : (
           <polyline
-            className={styles.quotaProjection}
-            points={path(scenario(forecast.rate))}
+            key={segment[0][0]}
+            className={styles.quotaHistory}
+            points={path(segment)}
           />
-        )}
-      </svg>
-      <Text size="xs" c="dimmed" className={styles.quotaStartLabel}>
-        {startLabel}
-      </Text>
-    </>
+        ),
+      )}
+      {forecast && (
+        <polyline
+          className={styles.quotaProjection}
+          points={path(scenario(forecast.rate))}
+        />
+      )}
+      {ticks.map((at, index) => (
+        <text
+          key={at}
+          x={x(at)}
+          y="151"
+          textAnchor={
+            index === 0
+              ? "start"
+              : index === ticks.length - 1
+                ? "end"
+                : "middle"
+          }
+        >
+          {tickFormat.format(at * 1000)}
+        </text>
+      ))}
+    </svg>
   );
 }
 
@@ -223,53 +242,50 @@ function QuotaTrendDetails({
           : "近期额度变化太少，暂不预测";
     }
   }
+  const hasScenario = forecast !== undefined && forecast.slow < forecast.fast;
   return (
     <div className={styles.quotaTrendPanel}>
-      <div
-        className={styles.quotaReferences}
-        role="group"
-        aria-label="预测参考时段"
-      >
-        {referenceHours.map((window) => (
-          <UnstyledButton
-            key={window}
-            className={styles.quotaReference}
-            aria-pressed={hours === window}
-            onClick={() => setHours(window)}
+      <div className={styles.quotaTrendRow}>
+        <strong>剩余额度趋势</strong>
+        <div className={styles.quotaLegend}>
+          <span aria-hidden={!usableHistory}>
+            <i className={styles.quotaLegendHistory} />
+            历史
+          </span>
+          <Tooltip
+            label={scenarioDescription}
+            disabled={!hasScenario}
+            events={{ hover: true, focus: true, touch: true }}
+            multiline
+            maw={220}
           >
-            {window} 小时
-          </UnstyledButton>
-        ))}
+            <span
+              aria-hidden={!forecast}
+              tabIndex={hasScenario ? 0 : undefined}
+            >
+              <i className={styles.quotaLegendProjection} />
+              预测
+            </span>
+          </Tooltip>
+        </div>
       </div>
-      <div className={styles.quotaLegend}>
-        <span aria-hidden={!usableHistory}>
-          <i className={styles.quotaLegendHistory} />
-          历史
-        </span>
-        <span aria-hidden={!forecast}>
-          <i className={styles.quotaLegendProjection} />
-          预测
-        </span>
-        <span aria-hidden={!forecast || forecast.slow >= forecast.fast}>
-          <i className={styles.quotaLegendScenario} />
-          消耗情景
-        </span>
-      </div>
-      <div
-        className={styles.quotaAssessment}
-        data-warning={warning || undefined}
-        aria-live="polite"
-      >
-        {warning && <IconAlertCircle size={16} aria-hidden="true" />}
-        <div>
-          <Text size="xs" fw={600}>
-            {summary}
-          </Text>
-          {comparison && (
-            <Text size="xs" c="dimmed">
-              {comparison}
-            </Text>
-          )}
+      <div className={styles.quotaTrendRow}>
+        <span className={styles.quotaTrendLabel}>参考时段</span>
+        <div
+          className={styles.quotaReferences}
+          role="group"
+          aria-label="预测参考时段"
+        >
+          {referenceHours.map((window) => (
+            <UnstyledButton
+              key={window}
+              className={styles.quotaReference}
+              aria-pressed={hours === window}
+              onClick={() => setHours(window)}
+            >
+              {window} 小时
+            </UnstyledButton>
+          ))}
         </div>
       </div>
       {usableHistory && reset !== null && (
@@ -280,6 +296,21 @@ function QuotaTrendDetails({
           forecast={forecast}
         />
       )}
+      <div
+        className={styles.quotaAssessment}
+        data-warning={warning || undefined}
+        aria-live="polite"
+      >
+        {warning && <IconAlertCircle size={14} aria-hidden="true" />}
+        <div className={styles.quotaAssessmentText}>
+          <span className={styles.quotaAssessmentSummary}>{summary}</span>
+          {comparison && (
+            <span className={styles.quotaAssessmentComparison}>
+              {comparison}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

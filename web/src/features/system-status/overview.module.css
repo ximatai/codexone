@@ -317,26 +317,37 @@
 
 .quotaTrendPanel {
   display: grid;
-  gap: 10px;
-  padding-block-start: 10px;
-  border-block-start: 1px solid var(--mantine-color-default-border);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+}
+
+.quotaTrendRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: var(--mantine-font-size-xs);
+}
+
+.quotaTrendLabel {
+  color: var(--mantine-color-dimmed);
 }
 
 .quotaReferences {
-  justify-self: start;
   display: inline-flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--mantine-color-default-border);
-  border-radius: var(--mantine-radius-md);
+  gap: 4px;
 }
 
 .quotaReference {
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: 4px;
+  border-block-end: 1px solid transparent;
   color: var(--mantine-color-dimmed);
   font-size: var(--mantine-font-size-xs);
+  white-space: nowrap;
 }
 
 .quotaReference:focus-visible {
@@ -346,28 +357,44 @@
 
 .quotaReference[aria-pressed="true"],
 .quotaReference:hover {
-  background: var(--mantine-primary-color-light);
+  border-block-end-color: var(--mantine-primary-color-filled);
   color: var(--mantine-primary-color-light-color);
 }
 
 .quotaAssessment {
   display: flex;
   align-items: center;
-  min-block-size: 52px;
-  gap: 7px;
-  padding: 8px;
-  border-radius: var(--mantine-radius-md);
-  background: var(--mantine-primary-color-light);
-  color: var(--mantine-primary-color-light-color);
+  min-block-size: calc(2lh + 6px);
+  gap: 5px;
+  padding-block: 3px;
+  color: var(--mantine-color-dimmed);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .quotaAssessment[data-warning] {
-  background: var(--mantine-color-orange-light);
   color: color-mix(
     in srgb,
     var(--mantine-color-orange-light-color) 68%,
     var(--mantine-color-text)
   );
+}
+
+.quotaAssessmentText {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-inline-size: 0;
+}
+
+.quotaAssessmentComparison {
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+}
+
+.quotaAssessmentSummary {
+  font-weight: 600;
 }
 
 .quotaAssessment svg {
@@ -388,6 +415,12 @@
   gap: 5px;
 }
 
+.quotaLegend span[tabindex] {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 .quotaLegend span[aria-hidden="true"] {
   visibility: hidden;
 }
@@ -404,21 +437,12 @@
   border-block-start: 2px dashed var(--mantine-color-orange-6);
 }
 
-.quotaLegendScenario {
-  block-size: 7px;
-  background: var(--mantine-color-orange-light);
-}
-
 .quotaChart {
   display: block;
   width: 100%;
   max-height: 170px;
   fill: var(--mantine-color-dimmed);
   font-size: 9px;
-}
-
-.quotaStartLabel {
-  padding-inline-start: 9%;
 }
 
 .quotaGrid,
