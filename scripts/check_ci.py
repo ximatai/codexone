@@ -117,11 +117,11 @@ def check():
         r'image: mcr\.microsoft\.com/playwright:v([\d.]+)-noble@sha256:[0-9a-f]{64}\b',
         workflow,
     )
-    assert len(image) == 1 and versions == {image[0]}, (
+    assert len(image) == 2 and len(set(image)) == 1 and versions == {image[0]}, (
         f'Update the Playwright image tag AND registry digest with the lockfile: {versions}, image={image}'
     )
     swift = re.findall(r'container: swift:[^\s]+@sha256:([0-9a-f]{64})\b', workflow)
-    assert len(swift) == 3 and len(set(swift)) == 1, 'Build, shards and real browser must use the same Swift image'
+    assert len(swift) == 1, 'Only the build job should need the Swift toolchain image'
     assert re.findall(r'^ARG SWIFT_BUILD_IMAGE=swift:[^\s]+@sha256:([0-9a-f]{64})$', dockerfile, re.M) == [swift[0]], (
         'Release tools and optimized build must match the CI Swift digest')
     runtime = re.findall(r'^ARG SWIFT_RUNTIME_IMAGE=(swift:[^\s]+)$', dockerfile, re.M)
