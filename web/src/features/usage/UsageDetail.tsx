@@ -41,7 +41,7 @@ const routingEvidence: Readonly<Record<string, string>> = {
   account_dispatch_unavailable:
     "当时没有可派发的账号。该记录没有保存各候选账号的排除原因。",
   continuation_owner_unavailable:
-    "该请求需要由原账号续接，当时无法使用该账号。",
+    "当时无法确认该续接状态所属的账号，未派发请求。",
   account_state_changed: "账号状态在准备派发期间发生变化。",
 };
 import styles from "./usage.module.css";

@@ -103,7 +103,7 @@ it("explains a recorded routing rejection without naming an unrecorded account",
   const view = render(<UsageDetail detail={detail} onClose={close} />);
   expect(screen.getByText("未派发")).toBeVisible();
   expect(
-    screen.getByText("该请求需要由原账号续接，当时无法使用该账号。"),
+    screen.getByText("当时无法确认该续接状态所属的账号，未派发请求。"),
   ).toBeVisible();
   view.rerender(
     <UsageDetail

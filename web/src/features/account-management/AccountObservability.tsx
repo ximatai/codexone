@@ -72,18 +72,19 @@ function state(value: Snapshot, now: number) {
   if (quotaStale(value, now)) return "额度观测已陈旧";
   return "";
 }
-function routingStatus(
-  account: Account,
-  health: Snapshot["health"] | undefined,
-) {
+function routingStatus(account: Account) {
   if (account.mode === "disabled") return "账号已停用";
   if (account.authorization === "requires_auth") return "需要重新授权";
   if (account.authorization === "auth_uncertain") return "凭证刷新结果未确认";
   if (account.authorization === "refreshing") return "正在刷新凭证";
-  if (health?.authenticationRejected) return "当前凭证曾被上游拒绝";
   if (account.mode === "draining") return "仅允许符合条件的已有会话";
-  if (health?.cooldownCount) return `${health.cooldownCount} 个模型处于冷却`;
-  return health ? "无已知账号阻断" : "尚无执行健康观测";
+}
+
+function executionHealth(health: Snapshot["health"] | undefined) {
+  if (health?.authenticationRejected) return "最近观测到上游拒绝凭证";
+  if (health?.cooldownCount)
+    return `最近观测到 ${health.cooldownCount} 个模型处于冷却`;
+  return health ? "最近观测无已知异常" : "尚无观测";
 }
 
 export function AccountObservability({
@@ -104,47 +105,54 @@ export function AccountObservability({
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   const [expanded, setExpanded] = useState(inDetails);
-  const [details, setDetails] = useState<Snapshot | null>(null);
+  const { id, revision, credentialVersion } = account;
+  const observationKey = `${id}:${revision}:${credentialVersion}`;
+  const [detailRead, setDetailRead] = useState<{
+    key: string;
+    value: Snapshot;
+  } | null>(null);
+  const details = detailRead?.key === observationKey ? detailRead.value : null;
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!expanded) {
-      setDetails(null);
+      setDetailRead(null);
       return;
     }
     const abort = new AbortController();
-    setDetails(null);
+    setDetailRead(null);
     setFailed(false);
-    void fetchObservation(account.id, abort.signal)
+    void fetchObservation(id, abort.signal)
       .then((value) => {
-        if (!abort.signal.aborted) setDetails(value);
+        if (!abort.signal.aborted)
+          setDetailRead({ key: observationKey, value });
       })
       .catch((cause) => {
         if (abort.signal.aborted) return;
         if (cause instanceof ManagementError && cause.status === 401) {
-          setDetails(null);
+          setDetailRead(null);
           unauthorized.current();
         } else setFailed(true);
       });
     return () => abort.abort();
-  }, [expanded, account.id, account.revision, account.observability, retry]);
+  }, [expanded, id, observationKey, account.observability, retry]);
   const value = details ?? account.observability;
   const base = value?.quota.limits.find((limit) => limit.id === "codex");
   const health = value?.health;
+  const route = routingStatus(account);
   const current = Math.max(now, performance.now());
   return (
     <div className={styles.observation}>
       <span
         className={
-          account.mode !== "enabled" ||
-          account.authorization !== "ready" ||
-          health?.authenticationRejected ||
-          health?.cooldownCount
+          route || health?.authenticationRejected || health?.cooldownCount
             ? styles.attention
             : styles.subtle
         }
       >
-        当前派发状态：{routingStatus(account, health)}
+        {route
+          ? `当前派发状态：${route}`
+          : `执行健康：${executionHealth(health)}`}
       </span>
       <small>
         {value ? state(value, current) : "额度尚无观测"}
@@ -268,7 +276,7 @@ export function AccountObservability({
                 )}
                 {details.health.authenticationRejected && (
                   <p className={styles.warning}>
-                    当前凭证的实际派发曾被拒绝。新执行已暂停，请刷新授权或重新授权；已有未知执行仍保留。
+                    读取详情时，上游曾拒绝该凭证，新执行已暂停。请刷新授权或重新授权；已有未知执行仍保留。
                   </p>
                 )}
                 {(details.health.cooldowns ?? []).map((item) => (

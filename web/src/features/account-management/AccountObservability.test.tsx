@@ -148,7 +148,7 @@ it("keeps stale quota separate from the current account dispatch status", () => 
       account={{ ...account, mode: "enabled", observability: observation }}
     />,
   );
-  expect(screen.getByText("当前派发状态：无已知账号阻断")).toBeVisible();
+  expect(screen.getByText("执行健康：最近观测无已知异常")).toBeVisible();
   expect(screen.getByText("额度观测已陈旧")).toBeVisible();
   view.rerender(
     <AccountObservability
@@ -163,4 +163,35 @@ it("keeps stale quota separate from the current account dispatch status", () => 
   );
   expect(screen.getByText("当前派发状态：凭证刷新结果未确认")).toBeVisible();
   expect(screen.getByText("额度观测已陈旧")).toBeVisible();
+});
+
+it("drops health details read for an earlier credential version", async () => {
+  const fixture = observationFixture();
+  vi.mocked(api.fetchObservation)
+    .mockResolvedValueOnce(
+      api.parseObservability({
+        ...fixture,
+        health: { ...fixture.health, authenticationRejected: true },
+      }),
+    )
+    .mockResolvedValueOnce(api.parseObservability(fixture));
+  const enabled = { ...account, mode: "enabled" as const };
+  const props = {
+    inDetails: true,
+    now: performance.now(),
+    disabled: false,
+    onObserve: vi.fn(),
+    onUnauthorized: vi.fn(),
+  };
+  const view = render(<AccountObservability {...props} account={enabled} />);
+  await screen.findByText("执行健康：最近观测到上游拒绝凭证");
+  view.rerender(
+    <AccountObservability
+      {...props}
+      account={{ ...enabled, credentialVersion: enabled.credentialVersion + 1 }}
+    />,
+  );
+  expect(screen.queryByText("执行健康：最近观测到上游拒绝凭证")).toBeNull();
+  await screen.findByText("执行健康：最近观测无已知异常");
+  expect(api.fetchObservation).toHaveBeenCalledTimes(2);
 });
