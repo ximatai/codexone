@@ -3,9 +3,11 @@ import { reviewFixture } from "./ui-review-fixture";
 import { expectNoHorizontalOverflow } from "./layout";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
 for (const width of [1920, 390]) {
-  test(`account details prioritizes overview and keeps header and drafts at ${width}px`, async ({
-    page,
-  }) => {
+  const scenario =
+    width === 390
+      ? "keeps key controls reachable"
+      : "keeps the header and drafts";
+  test(`account details ${scenario} at ${width}px`, async ({ page }) => {
     test.setTimeout(30_000);
     await reviewFixture(page);
     const observation = observationFixture();
