@@ -177,3 +177,20 @@
     border-left: 0;
   }
 }
+
+.rejectionGroup {
+  color: var(--mantine-primary-color-filled);
+  font-size: var(--mantine-font-size-sm);
+  padding-block: 3px;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.rejectionGroup:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.rejectionGroup:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

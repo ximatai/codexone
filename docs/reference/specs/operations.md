@@ -93,7 +93,7 @@ DB 执行使用专用串行队列，普通命令最多 16 个、最终化命令�
 
 ## O16：核心快照维护闭环
 
-当前开发 schema v13 在 v12 账本上增加请求输出速率与结算秒，不回填旧请求。普通启动接收 v13，并允许已有增量回收模式且无未完成凭证重加密的 v12 自动迁移。自动迁移先检查空间，再在同一实例锁下生成并同步私有 `.pre-v13-<id>.sqlite` 一致性备份，事务内执行 DDL 并校验。v1—v11 或需启用增量回收的 v12 使用离线迁移。更旧版本先补对应结构。尚未启用 incremental auto_vacuum 时先 VACUUM，不能与 schema 事务合并；失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v13；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
+当前开发 schema v14 增加可空的准入拒绝子原因。v13 在 v12 账本上增加请求输出速率与结算秒。两项均不回填旧请求。普通启动接收 v14，并允许已有增量回收模式且无未完成凭证重加密的 v12、v13 自动迁移。自动迁移先检查空间，再在同一实例锁下生成并同步私有一致性备份（v13 来源为 `.pre-v14-<id>.sqlite`，更旧来源沿用 `.pre-v13-<id>.sqlite`），事务内执行 DDL 并校验。v1—v11 或需启用增量回收的 v12 使用离线迁移。更旧版本先补对应结构。尚未启用 incremental auto_vacuum 时先 VACUUM，不能与 schema 事务合并；失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v14；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
 
 独立核心备份通过 SQLite Backup API 生成私有完成 bundle，manifest 记备份 ID/快照时间/来源 generation/schema/摘要/主密钥依赖，最后发布并同步；恢复先校验完整性和密文解密依赖，只接受全新空目标。持久 restore-pending 屏障先于页面复制，不完整目标拒绝启动；完整目标必须 `restored_unreconciled`，不能由 SQLite 完整性正确推导 ready。快照内 intent 保守转 unknown，旧对象绑定失效；恢复 Key 的旧验证材料失效、订阅账号需重新授权，防止复活已撤销权限或自动重用旧旋转凭证。
 

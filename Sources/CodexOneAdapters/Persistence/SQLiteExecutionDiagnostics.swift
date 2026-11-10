@@ -3,7 +3,9 @@ import Foundation
 
 extension SQLiteExecutionStore: ExecutionDiagnosticsStore {
   public func recordRejection(
-    requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
+    requestID: String, keyID: String, model: String?, mode: ExecutionMode,
+    failure: ExecutionFailure,
+    reason: RejectionReason?
   ) async throws {
     guard
       [requestID, keyID].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0) }
@@ -26,10 +28,11 @@ extension SQLiteExecutionStore: ExecutionDiagnosticsStore {
           )
         }
         try db.write(
-          "INSERT OR IGNORE INTO request_diagnostics VALUES(?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO request_diagnostics VALUES(?,?,?,?,?,?,?)",
           [
             .text(requestID), .number(now), .text(keyID), model.map { .text($0) } ?? .null,
             .text(mode.rawValue), .text(failure.rawValue),
+            reason.map { .text($0.rawValue) } ?? .null,
           ])
       }
     }

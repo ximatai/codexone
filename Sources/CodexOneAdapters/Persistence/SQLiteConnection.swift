@@ -71,14 +71,14 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
-      let startupUpgrade = allowStartupMigration && version == 12
+      let startupUpgrade = allowStartupMigration && (12...13).contains(version)
       guard
-        version == 0 || version == 13 || (restoringV7 && (7...12).contains(version))
-          || (migrating && (1...12).contains(version)) || startupUpgrade
+        version == 0 || version == 14 || (restoringV7 && (7...13).contains(version))
+          || (migrating && (1...13).contains(version)) || startupUpgrade
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 13 && !(restoringV7 && (7...12).contains(version)) {
+      if existingOnly && version != 14 && !(restoringV7 && (7...13).contains(version)) {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -105,7 +105,10 @@ final class SQLiteConnection: @unchecked Sendable {
             ? Self.accountColumns.map { table, columns in
               (table, columns + (version >= 9 && table == "accounts" ? ["display_name"] : []))
             } : [])
-          + (version >= 5 ? Self.observationColumns : [])
+          + (version >= 5
+            ? Self.observationColumns.map { table, columns in
+              (table, columns + (version >= 14 && table == "request_diagnostics" ? ["reason"] : []))
+            } : [])
           + (version >= 7 ? Self.maintenanceColumns : [])
           + (version >= 10
             ? Self.governanceColumns.map { table, columns in
@@ -119,7 +122,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, !(1...13).contains(version) {
+      if migrating, !(1...14).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
@@ -161,13 +164,15 @@ final class SQLiteConnection: @unchecked Sendable {
           if version < 11 { try exec(Self.resetCreditSchema) }
           if version < 12 { try exec(Self.authorSchema) }
           try exec(Self.outputRateSchema)
-          try exec("PRAGMA user_version=13")
+          try exec(Self.rejectionDetailSchema)
+          try exec("PRAGMA user_version=14")
         }
       }
-      if (1...12).contains(version) {
+      if (1...13).contains(version) {
         try requireIntegrity()
         if !restoringV7 {
-          do { try backupBeforeUpgrade(canonical) } catch ExecutionError.storageUnavailable
+          do { try backupBeforeUpgrade(canonical, from: version) } catch ExecutionError
+            .storageUnavailable
             where startupUpgrade
           {
             throw StartupMigrationError.backupFailed
@@ -196,8 +201,9 @@ final class SQLiteConnection: @unchecked Sendable {
             if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
             if version < 11 { try exec(Self.resetCreditSchema) }
             if version < 12 { try exec(Self.authorSchema) }
-            try exec(Self.outputRateSchema)
-            try exec("PRAGMA user_version=13")
+            if version < 13 { try exec(Self.outputRateSchema) }
+            try exec(Self.rejectionDetailSchema)
+            try exec("PRAGMA user_version=14")
             if startupUpgrade { try requireIntegrity() }
           }
         } catch ExecutionError.storageUnavailable where startupUpgrade {
@@ -244,7 +250,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard (7...13).contains(try scalar("PRAGMA user_version")),
+      guard (7...14).contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema
@@ -508,12 +514,17 @@ final class SQLiteConnection: @unchecked Sendable {
       WHERE output_rate_settled_at IS NOT NULL;
     """
 
-  private func backupBeforeUpgrade(_ path: String) throws {
+  private static let rejectionDetailSchema = """
+    ALTER TABLE request_diagnostics ADD COLUMN reason TEXT;
+    """
+
+  private func backupBeforeUpgrade(_ path: String, from version: Int64) throws {
     try StorageCapacity.require(
       (path as NSString).deletingLastPathComponent,
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
-    let destination = path + ".pre-v13-" + UUID().uuidString + ".sqlite"
+    let destination =
+      path + (version < 13 ? ".pre-v13-" : ".pre-v14-") + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

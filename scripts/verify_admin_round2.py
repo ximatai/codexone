@@ -146,7 +146,7 @@ def verify_previous(binary, previous):
         finally:
             release(process)
         with sqlite3.connect(database) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 13
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 14
             assert 'display_name' in [row[1] for row in db.execute('PRAGMA table_info(accounts)')]
         before = hashlib.sha256(database.read_bytes()).digest()
         refused = subprocess.run([previous], env=env, capture_output=True, timeout=10)

@@ -23,6 +23,8 @@ export interface UsageFilters {
   failure: string;
   state: string;
   failedOnly: boolean;
+  rejectedOnly?: boolean;
+  rejectionGroup?: string;
   range?: "24h";
   window?: { start: number; end: number };
 }
@@ -77,6 +79,7 @@ export interface UsageReport {
     recordedRejections: number;
     unresolved: number;
   }[];
+  rejectionCounts?: { failure: string; reason: string | null; count: number }[];
   rows: {
     reasoningEffort?: string | null;
     serviceTier?: string | null;
@@ -100,6 +103,8 @@ export interface UsageReport {
     state: string | null;
     outcome: string | null;
     failure: string | null;
+    rejectionReason?: string | null;
+    rejectionStage?: string | null;
     completeness: string | null;
     metrics: Metrics;
   }[];
@@ -327,6 +332,11 @@ export function parseUsage(raw: unknown): UsageReport {
       ]),
       outcome: optionalEnum(item.outcome, ["succeeded", "failed", "cancelled"]),
       failure: nullableText(item.failure, 64),
+      rejectionReason: nullableText(item.rejectionReason ?? null, 64),
+      rejectionStage: optionalEnum(item.rejectionStage ?? null, [
+        "validation",
+        "routing",
+      ]),
       svgAuthorModel: nullableText(item.svgAuthorModel ?? null, 128),
       usageMissingReasons: (() => {
         const reasons = item.usageMissingReasons ?? [];
@@ -335,6 +345,17 @@ export function parseUsage(raw: unknown): UsageReport {
       })(),
       completeness: optionalEnum(item.completeness, ["complete", "partial"]),
       metrics: metrics(item.metrics),
+    };
+  });
+  const rawRejections = value.rejectionCounts ?? [];
+  if (!Array.isArray(rawRejections) || rawRejections.length > 256)
+    throw invalid();
+  const rejectionCounts = rawRejections.map((raw) => {
+    const item = object(raw);
+    return {
+      failure: text(item.failure, 64),
+      reason: nullableText(item.reason, 64),
+      count: integer(item.count, 10_000),
     };
   });
   const next = nullableText(value.nextCursor, 512);
@@ -352,6 +373,7 @@ export function parseUsage(raw: unknown): UsageReport {
       exposureMicros: requiredMetric(lifetime.exposureMicros),
     },
     buckets,
+    rejectionCounts,
     rows,
     nextCursor: next,
   };
@@ -409,6 +431,11 @@ export function usageParameters(
   ] as const)
     if (filters[name]?.trim()) parameters.set(name, filters[name]!.trim());
   if (filters.failedOnly) parameters.set("failedOnly", "true");
+  if (filters.rejectedOnly) {
+    parameters.set("rejectedOnly", "true");
+    if (filters.rejectionGroup)
+      parameters.set("rejectionGroup", filters.rejectionGroup);
+  }
   if (cursor) parameters.set("after", cursor);
   return parameters;
 }

@@ -73,6 +73,7 @@ private final class PoolHTTPState: Sendable {
     var expected: [String: String] = [:]
     var calls: [Call] = []
     var stall = false
+    var heldWebSocketCompletion: (@Sendable () -> Void)?
     var invalid = 0
     var upgrades = 0
     var upgradeAccounts: [String] = []
@@ -898,7 +899,10 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
             promise: nil)
         }
       }
-      if poolInput(request) == "hold" {
+      if poolInput(request) == "hold-queued" {
+        let eventLoop = context.eventLoop
+        state.value.withLock { $0.heldWebSocketCompletion = { eventLoop.execute(send) } }
+      } else if poolInput(request) == "hold" {
         _ = context.eventLoop.scheduleTask(in: .milliseconds(400), send)
       } else {
         send()
@@ -1108,6 +1112,43 @@ func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() a
       #expect(h.calls.count == (mutation == "draining" ? 3 : 1))
       #expect(h.state.value.withLock { $0.upgrades } == 1)
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketFinishesSentTurnButRejectsQueuedTurnAfterAccountDisabled() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    _ = try await client.command(["op": .string("send"), "input": .string("hold-queued")])
+    try await awaitOAuth { h.state.value.withLock { $0.heldWebSocketCompletion != nil } }
+    _ = try await client.command(["op": .string("send"), "input": .string("queued")])
+    let selected = try #require(h.calls.first?.account).replacingOccurrences(
+      of: "synthetic-", with: "")
+    let account = try await h.store.accountCredential(id: selected).account
+    _ = try await h.store.setAccountMode(id: selected, revision: account.revision, mode: .disabled)
+    let finish = h.state.value.withLock { state in
+      let finish = state.heldWebSocketCompletion
+      state.heldWebSocketCompletion = nil
+      return finish
+    }
+    let release = try #require(finish)
+    release()
+    #expect(
+      try await client.command(["op": .string("receive")])["type"]?.string == "response.created")
+    #expect(
+      try await client.command(["op": .string("receive")])["type"]?.string == "response.completed")
+    let rejected = try await client.command(["op": .string("receive")])
+    #expect(rejected["error"]?["code"]?.string == "account_unavailable")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.count == 1)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar(
+          "SELECT COUNT(*) FROM request_diagnostics WHERE reason='account_dispatch_unavailable'")
+      } == 1)
   }
 }
 

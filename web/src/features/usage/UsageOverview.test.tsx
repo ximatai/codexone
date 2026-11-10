@@ -2,7 +2,7 @@ import { render } from "../../../tests/render";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
-import { UsageOverview } from "./UsageOverview";
+import { UsageOverview, usageNavigationKey } from "./UsageOverview";
 import * as api from "./api";
 import { reportFixture } from "./usage.test-data";
 import { ManagementError } from "../../shared/management";
@@ -310,7 +310,7 @@ it("U03 restores only after rows commit, even when a frame precedes the slow ren
   const params = api.usageParameters(filters);
   const memory = new Map<string, unknown>([
     [
-      `usage:${JSON.stringify(filters)}:page:1`,
+      usageNavigationKey(filters, 1),
       {
         page: 1,
         history: [null, "synthetic_cursor"],
@@ -365,7 +365,7 @@ it("U03 falls back explicitly when a restored cursor is rejected", async () => {
   const params = api.usageParameters(filters);
   const memory = new Map<string, unknown>([
     [
-      `usage:${JSON.stringify(filters)}:page:1`,
+      usageNavigationKey(filters, 1),
       {
         page: 1,
         history: [null, "expired-cursor"],
@@ -410,7 +410,7 @@ it.each([true, false])(
     const filters = api.defaults();
     const memory = new Map<string, unknown>([
       [
-        `usage:${JSON.stringify(filters)}:page:0`,
+        usageNavigationKey(filters, 0),
         {
           page: 0,
           history: [null],
@@ -419,7 +419,7 @@ it.each([true, false])(
         },
       ],
       [
-        `usage:${JSON.stringify(filters)}:page:1`,
+        usageNavigationKey(filters, 1),
         {
           page: 1,
           history: [null, "page-two"],
@@ -460,7 +460,7 @@ it("P2-2 P2-5 preserves POP scroll through a slow failed restore and retry", asy
   const filters = api.defaults();
   const memory = new Map<string, unknown>([
     [
-      `usage:${JSON.stringify(filters)}:page:1`,
+      usageNavigationKey(filters, 1),
       {
         page: 1,
         history: [null, "synthetic_cursor"],
