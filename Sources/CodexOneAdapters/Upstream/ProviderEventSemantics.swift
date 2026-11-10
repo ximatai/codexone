@@ -3,6 +3,8 @@
 struct ProviderEventSemantics {
   enum Progress { case none, acknowledgement, activity }
   let known: Bool
+  /// Name recognition is diagnostic only; it grants no execution or correlation facts.
+  let recognizedType: Bool
   let lifecycle: Bool
   let terminal: Bool
   let carriesItem: Bool
@@ -64,6 +66,10 @@ struct ProviderEventSemantics {
         event[$0] == nil
       }
     known = lifecycle || carriesItem || carriesItemID || connectionMetadata || type == "error"
+    recognizedType =
+      known
+      || ["response.metadata", "codex.response.metadata", "responsesapi.websocket_timing"]
+        .contains(type)
     if terminal || carriesItem || Self.partEvents.contains(type) {
       progress = .activity
     } else if Self.deltaEvents.contains(type), event["delta"]?.string?.isEmpty == false {
