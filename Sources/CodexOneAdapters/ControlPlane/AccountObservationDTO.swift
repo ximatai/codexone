@@ -20,7 +20,7 @@ func accountObservationDTO(
   }
   let state = !hasData ? "unavailable" : quota.isFresh(at: now) ? "fresh" : "stale"
   let age = quota.observedAtUnixSeconds.flatMap { now >= $0 ? now - $0 : nil }
-  let snapshot: JSONValue = .object([
+  var snapshot: [String: JSONValue] = [
     "state": .string(state), "observedAtUnixSeconds": time(quota.observedAtUnixSeconds),
     "attemptedAtUnixSeconds": time(quota.attemptedAtUnixSeconds),
     "ageSeconds": time(age), "freshForSeconds": .number(Decimal(age.map { max(0, 300 - $0) } ?? 0)),
@@ -34,7 +34,17 @@ func accountObservationDTO(
           "primary": window(value.primary), "secondary": window(value.secondary),
         ])
       }),
-  ])
+  ]
+  if detail {
+    switch quota.quota?.usageCredits {
+    case .balance(let value):
+      snapshot["usageCredits"] = .object(["balance": .string(value), "unlimited": .bool(false)])
+    case .unlimited:
+      snapshot["usageCredits"] = .object(["balance": .null, "unlimited": .bool(true)])
+    case nil:
+      break
+    }
+  }
   var healthDTO: [String: JSONValue] = [
     "authenticationRejected": .bool(health.authenticationRejected),
     "lastFailure": health.lastFailure.map { .string($0.rawValue) } ?? .null,
@@ -51,5 +61,7 @@ func accountObservationDTO(
         ])
       })
   }
-  return .object(["quota": snapshot, "health": .object(healthDTO), "observing": .bool(observing)])
+  return .object([
+    "quota": .object(snapshot), "health": .object(healthDTO), "observing": .bool(observing),
+  ])
 }

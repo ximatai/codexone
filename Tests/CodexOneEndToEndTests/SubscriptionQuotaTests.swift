@@ -42,7 +42,7 @@ func quotaUsesOnlyPassiveTrustedGETAndPreservesWindowRolesWithoutPrivateFields()
     do {
       try await awaitOAuth { provider.isAccepting }
       let quota = try await provider.observe(work)
-      #expect(quota.limits.count == 2)
+      #expect(quota.limits.count == 2 && quota.usageCredits == nil)
       #expect(
         quota.limits[0].primary?.usedPercent == 12.5
           && quota.limits[0].secondary?.durationSeconds == 604800)
@@ -113,4 +113,26 @@ func quotaRedirectMalformedOversizedAndTotalDeadlineReleaseSocketsWithoutRetry()
     _ = await owner.result
     await destination.close()
   }
+}
+
+@Test(
+  arguments: [
+    ("{}", nil),
+    (#"{"credits":{"balance":null}}"#, nil),
+    (#"{"credits":{"balance":"-1"}}"#, nil),
+    (#"{"credits":{"balance":12}}"#, nil),
+    (#"{"credits":{"balance":"0"}}"#, SubscriptionUsageCredits.balance("0")),
+    (#"{"credits":{"balance":"12345.67"}}"#, .balance("12345.67")),
+    (#"{"credits":{"unlimited":true}}"#, .unlimited),
+  ] as [(String, SubscriptionUsageCredits?)])
+func quotaUsageCreditsAreOptionalAndKeepExactDecimal(
+  input: String, expected: SubscriptionUsageCredits?
+)
+  throws
+{
+  let data = try JSONValue.decode(Data(input.utf8))
+  let quota = try SubscriptionQuotaProvider.parse(data)
+  #expect(quota.usageCredits == expected)
+  #expect(
+    try JSONDecoder().decode(SubscriptionQuota.self, from: JSONEncoder().encode(quota)) == quota)
 }

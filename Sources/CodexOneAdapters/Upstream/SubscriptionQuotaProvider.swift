@@ -256,6 +256,10 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
     } else {
       resetCount = nil
     }
-    return try .init(limits: limits, availableResetCredits: resetCount)
+    let credits = value["credits"]
+    let usageCredits: SubscriptionUsageCredits? =
+      credits?["unlimited"] == .bool(true)
+      ? .unlimited : credits?["balance"]?.string.flatMap(SubscriptionUsageCredits.parseBalance)
+    return try .init(limits: limits, availableResetCredits: resetCount, usageCredits: usageCredits)
   }
 }

@@ -87,6 +87,14 @@ function executionHealth(health: Snapshot["health"] | undefined) {
   return health ? "最近观测无已知异常" : "尚无观测";
 }
 
+function creditBalance(value: string | undefined) {
+  if (value === undefined) return "上游未提供";
+  if (value === "unlimited") return "不限额";
+  const [whole, fraction] = value.split(".");
+  const number = BigInt(whole).toLocaleString("zh-CN");
+  return fraction ? `${number}.${fraction}` : number;
+}
+
 export function AccountObservability({
   account,
   now,
@@ -232,6 +240,18 @@ export function AccountObservability({
                   <Window title="主窗口" value={base?.primary ?? null} />
                   <Window title="次窗口" value={base?.secondary ?? null} />
                 </div>
+                {inDetails && (
+                  <Group justify="space-between" gap="xs">
+                    <Text size="sm">额外使用积分</Text>
+                    <Text size="sm" fw={600}>
+                      {creditBalance(details.quota.usageCredits)}
+                      {details.quota.usageCredits !== undefined &&
+                      (quotaStale(details, current) || details.quota.failure)
+                        ? "（上次读数）"
+                        : ""}
+                    </Text>
+                  </Group>
+                )}
                 <small
                   title={`最近成功：${utc(details.quota.observedAtUnixSeconds)}；最近尝试：${utc(details.quota.attemptedAtUnixSeconds)}`}
                 >

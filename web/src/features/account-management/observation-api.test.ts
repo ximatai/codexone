@@ -77,3 +77,26 @@ it("accepts all 48 configured conversation and image cooldowns without hiding he
     }),
   ).toThrow();
 });
+
+it.each([
+  [undefined, undefined],
+  [{ balance: null, unlimited: false }, undefined],
+  [{ balance: "synthetic-invalid", unlimited: false }, undefined],
+  [{ balance: "0", unlimited: false }, "0"],
+  [
+    { balance: "123456789012345678.12345678", unlimited: false },
+    "123456789012345678.12345678",
+  ],
+  [{ balance: null, unlimited: true }, "unlimited"],
+])(
+  "parses optional usage credits independently of windows",
+  (usageCredits, expected) => {
+    const raw = observationFixture();
+    const value = parseObservability({
+      ...raw,
+      quota: { ...raw.quota, usageCredits },
+    });
+    expect(value.quota.usageCredits).toBe(expected);
+    expect(value.quota.limits[0].primary?.usedPercent).toBe(0);
+  },
+);

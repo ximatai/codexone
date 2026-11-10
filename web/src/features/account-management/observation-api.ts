@@ -23,6 +23,7 @@ export interface AccountObservability {
     failure: string | null;
     additionalCount: number;
     limits: QuotaLimit[];
+    usageCredits?: string;
   };
   health: {
     authenticationRejected: boolean;
@@ -93,6 +94,19 @@ function window(raw: unknown): QuotaWindow | null {
     resetsAtUnixSeconds: time(value.resetsAtUnixSeconds),
   };
 }
+function usageCreditBalance(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const { balance, unlimited } = raw as Record<string, unknown>;
+  if (unlimited === true) return "unlimited";
+  if (
+    unlimited === false &&
+    typeof balance === "string" &&
+    balance === balance.trim() &&
+    /^[0-9]{1,18}(?:[.][0-9]{1,8})?$/.test(balance)
+  )
+    return balance;
+}
+
 export function parseObservability(raw: unknown): AccountObservability {
   const value = object(raw),
     quota = object(value.quota),
@@ -157,6 +171,7 @@ export function parseObservability(raw: unknown): AccountObservability {
       freshForSeconds: remaining,
       failure: code,
       additionalCount: integer(quota.additionalCount, 16),
+      usageCredits: usageCreditBalance(quota.usageCredits),
       limits,
     },
     health: {

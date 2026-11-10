@@ -266,12 +266,14 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
 @Test func quotaFailurePreservesSuccessAndOldCredentialCannotOverwriteObservation() async throws {
   let f = try await RoutingFixture.make()
   let account = try await f.store.accountCredential(id: "a").account
-  let quota = try SubscriptionQuota(limits: [
-    .init(
-      id: "codex", allowed: true, limitReached: false,
-      primary: .init(usedPercent: 12.5, durationSeconds: 18000, resetsAtUnixSeconds: 2_000_000_000),
-      secondary: nil)
-  ])
+  let quota = try SubscriptionQuota(
+    limits: [
+      .init(
+        id: "codex", allowed: true, limitReached: false,
+        primary: .init(
+          usedPercent: 12.5, durationSeconds: 18000, resetsAtUnixSeconds: 2_000_000_000),
+        secondary: nil)
+    ], usageCredits: .balance("12345.67"))
   let first = try await f.store.recordQuotaObservation(
     account: account, atUnixSeconds: 1000, result: .success(quota))
   #expect(first.isFresh(at: 1299) && !first.isFresh(at: 1300) && !first.isFresh(at: 999))
@@ -280,6 +282,15 @@ private func routeIdentity(_ command: ExecutionAdmission) throws -> AccountRoute
   #expect(
     failed.quota == quota && failed.observedAtUnixSeconds == 1000
       && failed.attemptedAtUnixSeconds == 1301)
+  let health = try await f.store.accountHealth(id: account.id)
+  let summary = accountObservationDTO(
+    failed, health: health, observing: true, detail: false, now: 1301)
+  let detail = accountObservationDTO(
+    failed, health: health, observing: true, detail: true, now: 1301)
+  #expect(summary["quota"]?["usageCredits"] == nil)
+  #expect(detail["quota"]?["usageCredits"]?["balance"] == .string("12345.67"))
+  let other = try await f.store.quotaObservation(id: "b")
+  #expect(other.quota?.usageCredits == nil)
   let work = try await f.app.prepareDispatch(id: "a", continuation: false)
   _ = try await f.app.reauthorizeVerified(
     id: "a", revision: work.account.revision,
