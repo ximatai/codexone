@@ -109,6 +109,8 @@ it.each([
     { balance: "123456789012345678.12345678", unlimited: false },
     "123456789012345678.12345678",
   ],
+  [{ balance: "12345.1234567890", unlimited: false }, "12345.1234567890"],
+  [{ balance: "1.1234567890123456789", unlimited: false }, undefined],
   [{ balance: null, unlimited: true }, "unlimited"],
 ])(
   "parses optional usage credits independently of windows",

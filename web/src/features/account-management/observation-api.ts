@@ -102,7 +102,7 @@ function usageCreditBalance(raw: unknown): string | undefined {
     unlimited === false &&
     typeof balance === "string" &&
     balance === balance.trim() &&
-    /^[0-9]{1,18}(?:[.][0-9]{1,8})?$/.test(balance)
+    /^[0-9]{1,18}(?:[.][0-9]{1,18})?$/.test(balance)
   )
     return balance;
 }

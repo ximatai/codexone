@@ -127,6 +127,10 @@ func quotaRedirectMalformedOversizedAndTotalDeadlineReleaseSocketsWithoutRetry()
     (#"{"credits":{"unlimited":null,"balance":"12.34"}}"#, nil),
     (#"{"credits":{"unlimited":{},"balance":"12.34"}}"#, nil),
     (#"{"credits":{"balance":"12345.67"}}"#, .balance("12345.67")),
+    (
+      #"{"credits":{"unlimited":false,"balance":"12345.1234567890"}}"#, .balance("12345.1234567890")
+    ),
+    (#"{"credits":{"balance":"1.1234567890123456789"}}"#, nil),
     (#"{"credits":{"unlimited":true}}"#, .unlimited),
   ] as [(String, SubscriptionUsageCredits?)])
 func quotaUsageCreditsAreOptionalAndKeepExactDecimal(

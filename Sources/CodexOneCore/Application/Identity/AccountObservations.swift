@@ -47,8 +47,8 @@ public enum SubscriptionUsageCredits: Sendable, Equatable, Codable {
   case unlimited
 
   public static func parseBalance(_ value: String) -> Self? {
-    guard value.utf8.count <= 27,
-      value.wholeMatch(of: /[0-9]{1,18}(?:[.][0-9]{1,8})?/) != nil
+    guard value.utf8.count <= 37,
+      value.wholeMatch(of: /[0-9]{1,18}(?:[.][0-9]{1,18})?/) != nil
     else { return nil }
     return .balance(value)
   }
