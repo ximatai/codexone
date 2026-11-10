@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { KeyName } from "../../shared/KeyName";
 import { Button, Text } from "@mantine/core";
 import { DataTable } from "../../shared/ui/DataTable";
@@ -22,6 +23,7 @@ export function UsageRequests({
   retry: () => void;
   defaultReasoningEfforts?: Record<string, string>;
 }) {
+  const masked = usePrivacyMask();
   return (
     <div className={`usage-table ${styles.table}`}>
       <DataTable
@@ -47,7 +49,7 @@ export function UsageRequests({
             title: "Key / 模型",
             render: (row) => (
               <>
-                <span title={row.keyID}>
+                <span title={masked ? undefined : row.keyID}>
                   {
                     <KeyName
                       {...row}

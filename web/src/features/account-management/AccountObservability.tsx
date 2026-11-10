@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { accountName } from "../../shared/account-presentation";
 import { quotaStale } from "./quota";
 import { useEffect, useRef, useState } from "react";
@@ -110,6 +111,7 @@ export function AccountObservability({
   onObserve: () => void;
   onUnauthorized: () => void;
 }) {
+  const masked = usePrivacyMask();
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   const [expanded, setExpanded] = useState(inDetails);
@@ -185,7 +187,11 @@ export function AccountObservability({
         <div
           className={`${styles.details} ${inDetails ? styles.detailObservation : ""}`}
           role="region"
-          aria-label={`${accountName(account.id, [], account.displayName)} 额度与健康`}
+          aria-label={
+            masked
+              ? "账号额度与健康"
+              : `${accountName(account.id, [], account.displayName)} 额度与健康`
+          }
         >
           <Group justify="space-between">
             {inDetails && (

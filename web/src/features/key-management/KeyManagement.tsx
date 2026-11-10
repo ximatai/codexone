@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -38,6 +39,7 @@ import { readPage } from "../../shared/view-memory";
 import { KeyName } from "../../shared/KeyName";
 import { localTime } from "../../shared/presentation";
 export function KeyManagement() {
+  const masked = usePrivacyMask();
   const navigationType = useNavigationType();
   const locationKey = useLocation().key;
   const positionedLocation = useRef<string | null>(null);
@@ -250,6 +252,7 @@ export function KeyManagement() {
       <Paper withBorder p="md" mb="md" className={styles.toolbar}>
         <TextInput
           aria-label="搜索主体名"
+          type={masked ? "password" : "text"}
           placeholder="搜索显示名、主体名或标识…"
           leftSection={<IconSearch size={18} />}
           value={search}
@@ -635,7 +638,9 @@ export function KeyManagement() {
           禁用后，持有该 Key
           的客户端会立即失败，后续请求将被拒绝。请先通知使用者。
         </Text>
-        <Text>{disabling?.principal}</Text>
+        <Text>
+          <PrivateName>{disabling?.principal}</PrivateName>
+        </Text>
       </ConfirmModal>
       <ConfirmModal
         opened={!!archiving}
@@ -667,7 +672,11 @@ export function KeyManagement() {
             ? "恢复后仍为停用状态，需要单独启用。"
             : "归档后从默认列表隐藏，用量统计和审计保留，可在已归档视图恢复。"}
         </Text>
-        <Text>{archiving?.displayName ?? archiving?.principal}</Text>
+        <Text>
+          <PrivateName>
+            {archiving?.displayName ?? archiving?.principal}
+          </PrivateName>
+        </Text>
       </ConfirmModal>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}
@@ -741,6 +750,7 @@ export function KeyManagement() {
             </Text>
             <TextInput
               label="密钥完整 ID"
+              type={masked ? "password" : "text"}
               readOnly
               value={state.rotating.id}
               onFocus={(event) => event.currentTarget.select()}
@@ -767,7 +777,7 @@ export function KeyManagement() {
               </Alert>
             )}
             <Text component="div">
-              {state.created.key.principal} ·{" "}
+              <PrivateName>{state.created.key.principal}</PrivateName> ·{" "}
               <StatusBadge color="gray">
                 {state.created.key.enabled ? "已启用" : "当前禁用"}
               </StatusBadge>
@@ -775,6 +785,7 @@ export function KeyManagement() {
             <TextInput
               classNames={{ input: "secret-value" }}
               label="新 API Key"
+              type={masked ? "password" : "text"}
               readOnly
               value={state.created.secret}
               autoComplete="off"

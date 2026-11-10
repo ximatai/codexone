@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { overviewQuery } from "./overview-source";
 import type { useOverviewLive } from "./useOverviewLive";
 import {
@@ -133,6 +134,7 @@ export function ActivityOverview({
         .forEach((card) => card.remove());
     };
   }, []);
+  const masked = usePrivacyMask();
   const control = refresh ?? localRefresh;
   const options = {
     enabled: !!owner.session,
@@ -298,7 +300,7 @@ export function ActivityOverview({
               </Text>
             ) : null}
             <div
-              ref={animateCards ? attachRequestGrid : undefined}
+              ref={animateCards && !masked ? attachRequestGrid : undefined}
               className={styles.requestGrid}
               aria-label={flight.data?.length ? "在途请求卡片" : undefined}
             >
@@ -331,8 +333,13 @@ export function ActivityOverview({
                       className={styles.requestCard}
                     >
                       <Group justify="space-between" wrap="nowrap" gap={4}>
-                        <Text size="sm" fw={600} truncate title={name}>
-                          {name}
+                        <Text
+                          size="sm"
+                          fw={600}
+                          truncate
+                          title={masked ? undefined : name}
+                        >
+                          <PrivateName>{name}</PrivateName>
                         </Text>
                         <Text size="xs" className={styles.requestDuration}>
                           <Elapsed
@@ -379,9 +386,9 @@ export function ActivityOverview({
                             to={`/?account=${encodeURIComponent(row.accountID)}`}
                             size="xs"
                             truncate
-                            title={account ?? undefined}
+                            title={masked ? undefined : (account ?? undefined)}
                           >
-                            {account}
+                            <PrivateName>{account}</PrivateName>
                           </Anchor>
                         ) : (
                           <Text size="xs" c="dimmed">

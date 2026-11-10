@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [截图隐私模式](screenshot-privacy/proposal.md) · [任务](screenshot-privacy/tasks.md)
+
 - [额外使用积分只读观测](usage-credit-observation/proposal.md) · [任务](usage-credit-observation/tasks.md)
 
 - [准入拒绝下钻](rejection-diagnostics/proposal.md) · [任务](rejection-diagnostics/tasks.md)

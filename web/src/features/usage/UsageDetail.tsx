@@ -1,3 +1,4 @@
+import { PrivateName } from "../../shared/privacy-mask";
 import { KeyName } from "../../shared/KeyName";
 import {
   accountName,
@@ -106,14 +107,19 @@ export function UsageDetail({
                 [
                   "Key",
                   <span>
-                    <KeyName {...detail} /> · {detail.keyID}
+                    <KeyName {...detail} /> ·{" "}
+                    <PrivateName>{detail.keyID}</PrivateName>
                   </span>,
                 ],
                 [
                   "账号",
-                  detail.accountID
-                    ? accountName(detail.accountID, accounts)
-                    : "未派发",
+                  detail.accountID ? (
+                    <PrivateName>
+                      {accountName(detail.accountID, accounts)}
+                    </PrivateName>
+                  ) : (
+                    "未派发"
+                  ),
                 ],
                 ["模型", detail.model ?? "未记录"],
                 ["模式", modes[detail.mode]],

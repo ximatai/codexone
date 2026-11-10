@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { businessDate, timezone } from "../../shared/business-day";
 import { isUTCDateInput } from "../../shared/date-input";
 import { DateInput } from "@mantine/dates";
@@ -87,6 +88,7 @@ export function UsageOverview({
   navigationStore?: Map<string, unknown>;
   restoreView?: boolean;
 }) {
+  const masked = usePrivacyMask();
   const queryClient = useQueryClient();
   const accounts = useQuery({
     queryKey: ["accounts", "names"],
@@ -525,17 +527,18 @@ export function UsageOverview({
                   ...options.keys,
                   ...(draft.key ? [draft.key] : []),
                 ]),
-              ].map((id) => ({
-                value: id,
-                label:
-                  (options.keyOptions?.find((k) => k.id === id)?.displayName
-                    ? `${options.keyOptions.find((k) => k.id === id)!.displayName} · ${options.keyOptions.find((k) => k.id === id)!.principal ?? id}`
-                    : (options.keyOptions?.find((k) => k.id === id)
-                        ?.principal ?? `主体未记录 · ${id}`)) +
-                  (options.keyOptions?.find((k) => k.id === id)?.archived
-                    ? " · 已归档"
-                    : ""),
-              })),
+              ].map((id, index) => {
+                const key = options.keyOptions?.find((item) => item.id === id);
+                const label = masked
+                  ? `已隐藏 Key ${index + 1}`
+                  : key?.displayName
+                    ? `${key.displayName} · ${key.principal ?? id}`
+                    : (key?.principal ?? `主体未记录 · ${id}`);
+                return {
+                  value: id,
+                  label: label + (key?.archived ? " · 已归档" : ""),
+                };
+              }),
             ]}
           />
           <Autocomplete
@@ -729,11 +732,17 @@ export function UsageOverview({
               ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
               : `${applied?.start} 至 ${applied?.end}（${timezone(options.businessDay?.offsetMinutes)}）`}{" "}
             ·{" "}
-            {options.keyOptions?.find((k) => k.id === applied?.key)
-              ?.displayName ??
-              options.keyOptions?.find((k) => k.id === applied?.key)
-                ?.principal ??
-              (applied?.key || "全部 Key")}
+            {applied?.key ? (
+              <PrivateName>
+                {options.keyOptions?.find((k) => k.id === applied.key)
+                  ?.displayName ??
+                  options.keyOptions?.find((k) => k.id === applied.key)
+                    ?.principal ??
+                  applied.key}
+              </PrivateName>
+            ) : (
+              "全部 Key"
+            )}
             {applied?.model ? ` · 模型 ${applied.model}` : ""}
             {applied?.reasoningEffort
               ? ` · 推理 ${applied.reasoningEffort}`

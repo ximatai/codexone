@@ -1,3 +1,4 @@
+import { PrivateName } from "../../shared/privacy-mask";
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -336,7 +337,11 @@ export function ResetCredits({
           label={selection?.kind === "reconcile" ? "确认核对" : "确认使用"}
         >
           <Stack>
-            <Text>{accountName(account.id, [], account.displayName)}</Text>
+            <Text>
+              <PrivateName>
+                {accountName(account.id, [], account.displayName)}
+              </PrivateName>
+            </Text>
             {selection?.kind === "credit" ? (
               <>
                 <Text>{selection.credit.title || "未命名重置卡"}</Text>
