@@ -122,6 +122,10 @@ func quotaRedirectMalformedOversizedAndTotalDeadlineReleaseSocketsWithoutRetry()
     (#"{"credits":{"balance":"-1"}}"#, nil),
     (#"{"credits":{"balance":12}}"#, nil),
     (#"{"credits":{"balance":"0"}}"#, SubscriptionUsageCredits.balance("0")),
+    (#"{"credits":{"unlimited":false,"balance":"0"}}"#, .balance("0")),
+    (#"{"credits":{"unlimited":"true","balance":"12.34"}}"#, nil),
+    (#"{"credits":{"unlimited":null,"balance":"12.34"}}"#, nil),
+    (#"{"credits":{"unlimited":{},"balance":"12.34"}}"#, nil),
     (#"{"credits":{"balance":"12345.67"}}"#, .balance("12345.67")),
     (#"{"credits":{"unlimited":true}}"#, .unlimited),
   ] as [(String, SubscriptionUsageCredits?)])
@@ -130,8 +134,10 @@ func quotaUsageCreditsAreOptionalAndKeepExactDecimal(
 )
   throws
 {
-  let data = try JSONValue.decode(Data(input.utf8))
-  let quota = try SubscriptionQuotaProvider.parse(data)
+  var document = try #require(JSONValue.decode(Data(input.utf8)).object)
+  document["rate_limit"] = .object(["primary_window": .object(["used_percent": .number(23)])])
+  let quota = try SubscriptionQuotaProvider.parse(.object(document))
+  #expect(quota.limits.first?.primary?.usedPercent == 23)
   #expect(quota.usageCredits == expected)
   #expect(
     try JSONDecoder().decode(SubscriptionQuota.self, from: JSONEncoder().encode(quota)) == quota)
