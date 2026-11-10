@@ -194,7 +194,8 @@ class Provider(BaseHTTPRequestHandler):
                             response_id=response['id'], sequence_number=sequence,
                             item_id='msg_synthetic', output_index=0, content_index=0,
                             delta='x' * 4096))
-                    self.server.burst_written.set()
+                        if sequence == 7:
+                            self.server.burst_started.set()
                 time.sleep(0.02)
                 send(self.connection, {'type': 'response.completed', 'response': response, **lane})
                 if create['input'] == 'multi-fast' and pending:
@@ -242,7 +243,7 @@ def main():
     provider.close_release = threading.Event()
     provider.stalled = threading.Event()
     provider.cancelled = threading.Event()
-    provider.burst_written = threading.Event()
+    provider.burst_started = threading.Event()
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     try:
@@ -363,7 +364,9 @@ def main():
                 with dial(ports['data']) as downstream:
                     send(downstream, dict(type='response.create', model='synthetic-text',
                                          input='consumer-burst'), masked=True)
-                    assert provider.burst_written.wait(4), 'Fixture did not complete its burst during the read pause'
+                    assert provider.burst_started.wait(4), 'Fixture did not start the burst'
+                    # Resume draining even if normal backpressure stalls the provider.
+                    time.sleep(0.05)
                     assert json.loads(receive(downstream)[1])['type'] == 'response.created'
                     for sequence in range(BURST_COUNT):
                         opcode, data = receive(downstream)
