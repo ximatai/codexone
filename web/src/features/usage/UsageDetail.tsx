@@ -28,6 +28,7 @@ import {
   timeTitle,
 } from "../../shared/presentation";
 import { rejectionReason, duration, number } from "./format";
+import styles from "./usage.module.css";
 
 const incompleteReasons = {
   max_output_tokens: "达到输出限制",
@@ -44,7 +45,6 @@ const routingEvidence: Readonly<Record<string, string>> = {
     "当时无法确认该续接状态所属的账号，未派发请求。",
   account_state_changed: "账号状态在准备派发期间发生变化。",
 };
-import styles from "./usage.module.css";
 export function UsageDetail({
   detail,
   onClose,
@@ -54,6 +54,14 @@ export function UsageDetail({
   onClose: () => void;
   accounts?: readonly AccountName[];
 }) {
+  const reason = detail?.rejectionReason;
+  const evidence =
+    detail?.kind === "rejected" &&
+    detail.rejectionStage === "routing" &&
+    reason &&
+    Object.hasOwn(routingEvidence, reason)
+      ? routingEvidence[reason]
+      : undefined;
   return (
     <Drawer
       removeScrollProps={{ removeScrollBar: false }}
@@ -138,16 +146,7 @@ export function UsageDetail({
                 ...(detail.kind === "rejected"
                   ? [
                       ["拒绝子原因", rejectionReason(detail.rejectionReason)],
-                      ...(detail.rejectionStage === "routing" &&
-                      detail.rejectionReason &&
-                      Object.hasOwn(routingEvidence, detail.rejectionReason)
-                        ? [
-                            [
-                              "当时的选路证据",
-                              routingEvidence[detail.rejectionReason],
-                            ],
-                          ]
-                        : []),
+                      ...(evidence ? [["当时的选路证据", evidence]] : []),
                       [
                         "拒绝阶段",
                         detail.rejectionStage === "routing"

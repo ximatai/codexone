@@ -215,12 +215,20 @@ export async function observeAccount(
   parsed.receivedAt = started;
   return parsed;
 }
-export function observationNotice(value: AccountObservability): string {
-  if (value.quota.failure === "refresh_required")
-    return "访问凭证已过期，请先刷新授权；最近成功的额度观测已保留。";
-  if (value.quota.failure)
-    return "本次额度读取失败，最近成功值已保留。请查看观测时间与失败状态。";
-  return value.quota.state === "unavailable"
-    ? "上游未提供可用额度窗口。"
-    : "额度观测已更新。";
+export function observationNotice({ quota }: AccountObservability) {
+  if (quota.failure === "refresh_required")
+    return {
+      text: "访问凭证已过期，请先刷新授权；最近成功的额度观测已保留。",
+      warning: true,
+    };
+  if (quota.failure)
+    return {
+      text: "本次额度读取失败，最近成功值已保留。请查看观测时间与失败状态。",
+      warning: true,
+    };
+  if (quota.state !== "unavailable")
+    return { text: "额度观测已更新。", warning: false };
+  return quota.usageCredits === undefined
+    ? { text: "上游未提供可用额度窗口。", warning: true }
+    : { text: "积分余额已更新，套餐窗口未提供。", warning: false };
 }

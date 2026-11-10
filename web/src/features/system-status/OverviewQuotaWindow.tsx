@@ -32,11 +32,13 @@ function QuotaChart({
   reset,
   now,
   forecast,
+  hasScenario,
 }: {
   history: QuotaHistory;
   reset: number;
   now: number;
   forecast: Forecast | undefined;
+  hasScenario: boolean;
 }) {
   const start = Math.min(history.samples[0][0], reset - 60);
   const end = Math.max(start + 60, reset, now);
@@ -66,7 +68,6 @@ function QuotaChart({
           "zh-CN",
           distinctDates > 1 ? { ...dateOptions, ...timeOptions } : timeOptions,
         );
-  const hasScenario = forecast !== undefined && forecast.slow < forecast.fast;
   const chartLabel = [
     "剩余额度走势，实线为历史",
     forecast && "虚线为预测",
@@ -115,7 +116,7 @@ function QuotaChart({
           )}
         </g>
       ))}
-      {hasScenario && (
+      {forecast && hasScenario && (
         <polygon
           className={styles.quotaScenario}
           points={path([
@@ -294,6 +295,7 @@ function QuotaTrendDetails({
           reset={reset}
           now={now}
           forecast={forecast}
+          hasScenario={hasScenario}
         />
       )}
       <div

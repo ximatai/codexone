@@ -611,12 +611,7 @@ function AccountDetailPanels({
               onObserve={() =>
                 void state.mutation(
                   (csrf, signal) => observeAccount(account.id, csrf, signal),
-                  (result) => ({
-                    text: observationNotice(result),
-                    warning:
-                      result.quota.failure !== null ||
-                      result.quota.state === "unavailable",
-                  }),
+                  observationNotice,
                 )
               }
             />
