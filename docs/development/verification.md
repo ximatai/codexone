@@ -42,6 +42,8 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 另可显式选择 `--transport fallback --scenario tools`，在客户端开启 WS、合成网关仅提供 HTTP 的条件下核对同一工具轮的两次生成均走 HTTP，并核对真实写入次数及结算。另有 `--transport session-fallback --catalog default --scenario text`。本地测试入口对 WS 握手返回 426，固定客户端通过同一个 App Server 线程发三轮，断言首次 HTTP 成功后没有额外 WS 握手，并逐轮核对发往上游的有序用户和助手历史、客户端收到的助手回复、上游调用次数和每笔结算的用量。两项均不验证跨进程恢复后的传输策略。
 
+现有 `verify_websocket.py` 分片包含三项额外的合成协议回归：暂停读取期间的上游突发事件按序交付并结算一次；完成一轮后上游空闲断开，客户端重连并重送完整历史；同名顶层工具与命名空间工具在原生 WS、HTTP JSON 和 SSE 桥接的终态响应中保留各自的标识。暂停读取的场景不单独证明内核缓冲已耗尽。重连场景不假定旧响应 ID 一定只能在原物理连接使用，也不代替真实 CLI 或提供者验收。
+
 ## 真实网关与浏览器 CI
 
 前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用匹配的 Swift 容器及同次 `backend-build` 产物运行真实网关/浏览器测试。后端或前端变化都会构建网关并要求该任务成功，不能把普通前端的排除项当成已完成真实栈验证。

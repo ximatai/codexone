@@ -3,6 +3,28 @@ import { observationNotice, parseObservability } from "./observation-api";
 import { observationFixture } from "./observation.test-data";
 
 describe("upstream observations", () => {
+  it("treats a credit-only refresh as a successful observation", () => {
+    const raw = observationFixture();
+    const quota = { ...raw.quota, state: "unavailable", limits: [] };
+    const usageCredits = { balance: "0", unlimited: false };
+    const refreshed = parseObservability({
+      ...raw,
+      quota: { ...quota, usageCredits },
+    });
+    expect(observationNotice(refreshed)).toEqual({
+      text: "积分余额已更新，套餐窗口未提供。",
+      warning: false,
+    });
+    expect(
+      observationNotice(parseObservability({ ...raw, quota })).warning,
+    ).toBe(true);
+    expect(
+      observationNotice({
+        ...refreshed,
+        quota: { ...refreshed.quota, failure: "unavailable" },
+      }).warning,
+    ).toBe(true);
+  });
   it("distinguishes observed zero from unavailable fields and keeps failure evidence", () => {
     const raw = observationFixture();
     const value = parseObservability(raw);
@@ -17,8 +39,8 @@ describe("upstream observations", () => {
       },
     });
     expect(failed.quota.observedAtUnixSeconds).toBe(1000);
-    expect(observationNotice(failed)).toContain("失败");
-    expect(observationNotice(failed)).not.toContain("已更新");
+    expect(observationNotice(failed).text).toContain("失败");
+    expect(observationNotice(failed).warning).toBe(true);
   });
   it("rejects forged freshness and duplicate scope identities", () => {
     const raw = observationFixture();
@@ -77,3 +99,28 @@ it("accepts all 48 configured conversation and image cooldowns without hiding he
     }),
   ).toThrow();
 });
+
+it.each([
+  [undefined, undefined],
+  [{ balance: null, unlimited: false }, undefined],
+  [{ balance: "synthetic-invalid", unlimited: false }, undefined],
+  [{ balance: "0", unlimited: false }, "0"],
+  [
+    { balance: "123456789012345678.12345678", unlimited: false },
+    "123456789012345678.12345678",
+  ],
+  [{ balance: "12345.1234567890", unlimited: false }, "12345.1234567890"],
+  [{ balance: "1.1234567890123456789", unlimited: false }, undefined],
+  [{ balance: null, unlimited: true }, "unlimited"],
+])(
+  "parses optional usage credits independently of windows",
+  (usageCredits, expected) => {
+    const raw = observationFixture();
+    const value = parseObservability({
+      ...raw,
+      quota: { ...raw.quota, usageCredits },
+    });
+    expect(value.quota.usageCredits).toBe(expected);
+    expect(value.quota.limits[0].primary?.usedPercent).toBe(0);
+  },
+);

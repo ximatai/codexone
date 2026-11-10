@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -94,6 +95,7 @@ export function KeyResults({
         }),
     [report?.keys],
   );
+  const masked = usePrivacyMask();
   const offset = report?.businessDay.offsetMinutes ?? 0;
   const oldWindow =
     report && (now < report.startUnixSeconds || now >= report.endUnixSeconds);
@@ -118,7 +120,11 @@ export function KeyResults({
               variant="subtle"
               size="compact-sm"
               className={styles.keyButton}
-              title={`${row.principal ?? "主体未记录"} · ${row.keyID}`}
+              title={
+                masked
+                  ? undefined
+                  : `${row.principal ?? "主体未记录"} · ${row.keyID}`
+              }
               component={Link}
               to={`/keys?${new URLSearchParams({
                 status: "all",
@@ -126,7 +132,7 @@ export function KeyResults({
                 detail: row.keyID,
               })}`}
             >
-              {name(row)}
+              <PrivateName>{name(row)}</PrivateName>
             </Button>
             {row.inFlight > 0 && (
               <Badge color="blue" aria-label={`执行中 ${row.inFlight}`}>
@@ -195,7 +201,7 @@ export function KeyResults({
             to={failureLink(row, report)}
             size="sm"
             c={highFailure(row) ? "orange.8" : undefined}
-            aria-label={`${name(row)} 失败率 ${rate}`}
+            aria-label={`${masked ? "已隐藏 Key" : name(row)} 失败率 ${rate}`}
             title="查看失败请求"
           >
             <ContinuousValue text={rate} />

@@ -16,6 +16,14 @@ import argparse
 from verify_protocol import TOKEN, connect, start, stop, latest, dump_gateway_failure
 
 
+BURST_COUNT = 96
+TOOL = dict(type='function', name='synthetic_lookup', parameters={'type': 'object'})
+TOOLS = [TOOL, dict(type='namespace', name='synthetic_namespace', description='Synthetic namespace', tools=[TOOL])]
+TOOL_OUTPUT = [
+    dict(type='function_call', id='fc_top', call_id='call_top', name=TOOL['name'], arguments='{}'),
+    dict(type='function_call', id='fc_namespaced', call_id='call_namespaced', name=TOOL['name'],
+         namespace='synthetic_namespace', arguments='{}'),
+]
 def exact(sock, size):
     data = bytearray()
     while len(data) < size:
@@ -127,6 +135,7 @@ class Provider(BaseHTTPRequestHandler):
                 with self.server.guard:
                     self.server.calls += 1
                     index = self.server.calls
+                    self.server.last_create = (connection, create)
                 if create['input'] == 'stall':
                     self.server.stalled.set()
                     self.connection.settimeout(15)
@@ -145,6 +154,13 @@ class Provider(BaseHTTPRequestHandler):
                     assert previous.startswith(f'resp_{connection}_'), 'Connection context was switched'
                 response = {'id': f'resp_{connection}_{index}', 'status': 'completed', 'output': [],
                             'usage': {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}}
+                if create['input'] in ('idle-close', 'terminal-eof'):
+                    response['output'] = [dict(
+                        type='message', id=f'msg_{index}', role='assistant', status='completed',
+                        content=[dict(type='output_text', text=f'Synthetic reply {index}', annotations=[])])]
+                if create['input'] == 'tool-namespaces':
+                    assert create['tools'] == TOOLS
+                    response['output'] = TOOL_OUTPUT
                 if create.get('generate') is False:
                     response['usage'] = None
                 lane = {'stream_id': create['stream_id']} if 'stream_id' in create else {}
@@ -168,6 +184,14 @@ class Provider(BaseHTTPRequestHandler):
                         send(self.connection, {'type': 'response.output_item.added', 'item': item, **pending[0]})
                     send(self.connection, {'type': 'response.completed', 'response': pending[1], **pending[0]})
                     return
+                if create['input'] == 'consumer-burst':
+                    for sequence in range(BURST_COUNT):
+                        send(self.connection, dict(type='response.output_text.delta',
+                            response_id=response['id'], sequence_number=sequence,
+                            item_id='msg_synthetic', output_index=0, content_index=0,
+                            delta='x' * 4096))
+                        if sequence == 7:
+                            self.server.burst_started.set()
                 time.sleep(0.02)
                 send(self.connection, {'type': 'response.completed', 'response': response, **lane})
                 if create['input'] == 'multi-fast' and pending:
@@ -211,10 +235,12 @@ def main():
     provider.daemon_threads = True
     provider.guard = threading.Lock()
     provider.calls = provider.connections = 0
+    provider.last_create = None
     provider.close_ready = threading.Event()
     provider.close_release = threading.Event()
     provider.stalled = threading.Event()
     provider.cancelled = threading.Event()
+    provider.burst_started = threading.Event()
     thread = threading.Thread(target=provider.serve_forever, daemon=True)
     thread.start()
     try:
@@ -329,15 +355,55 @@ def main():
                     assert status == 200 and b'completed' in body
                     assert latest(db, 'settled')['estimatedMicros'] == 8
                 print('PASS: native handshake is local; masking/fragmentation/ping; same-socket continuation; HTTP JSON/SSE to WS bridges')
+                before = provider.calls
+                with sqlite3.connect(db) as connection:
+                    mark = connection.execute('SELECT max(rowid) FROM attempts').fetchone()[0]
+                with dial(ports['data']) as downstream:
+                    send(downstream, dict(type='response.create', model='synthetic-text',
+                                         input='consumer-burst'), masked=True)
+                    assert provider.burst_started.wait(4), 'Fixture did not start the burst'
+                    # Resume draining even if normal backpressure stalls the provider.
+                    time.sleep(0.05)
+                    assert json.loads(receive(downstream)[1])['type'] == 'response.created'
+                    for sequence in range(BURST_COUNT):
+                        opcode, data = receive(downstream)
+                        event = json.loads(data)
+                        assert opcode == 1 and event['type'] == 'response.output_text.delta'
+                        assert event['sequence_number'] == sequence and event['delta'] == 'x' * 4096
+                    assert json.loads(receive(downstream)[1])['type'] == 'response.completed'
+                    assert latest(db, 'settled')['inputTokens'] == 5
+                assert provider.calls == before + 1
+                with sqlite3.connect(db) as connection:
+                    rows = connection.execute('SELECT state,usage_json FROM attempts WHERE rowid>?', (mark,)).fetchall()
+                assert len(rows) == 1 and rows[0][0] == 'settled'
+                assert json.loads(rows[0][1])['outputTokens'] == 3
+                tool_request = dict(model='synthetic-text', input='tool-namespaces', tools=TOOLS)
+                with dial(ports['data']) as downstream:
+                    assert turn(downstream, tool_request)[-1]['response']['output'] == TOOL_OUTPUT
+                for streaming in (False, True):
+                    status, body = connect(ports['data'], 'POST', '/v1/responses',
+                                           {**tool_request, 'stream': streaming})
+                    assert status == 200
+                    if streaming:
+                        completed = [event['response'] for line in body.splitlines()
+                                     if line.startswith(b'data: {')
+                                     if (event := json.loads(line[6:]))['type'] == 'response.completed']
+                        assert len(completed) == 1
+                        result = completed[0]
+                    else:
+                        result = json.loads(body)
+                    assert result['output'] == TOOL_OUTPUT
+                print('PASS: paused consumer receives ordered provider burst and terminal; tool namespaces survive WS and HTTP bridges')
                 for prompt in ('idle-close', 'terminal-eof'):
                     with sqlite3.connect(db) as connection:
                         before = connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                    count = provider.calls
-                    with sqlite3.connect(db) as connection:
+                        mark = connection.execute('SELECT max(rowid) FROM attempts').fetchone()[0]
                         rejected_before = connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0]
                         unknown_before = connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0]
+                    count = provider.calls
                     with dial(ports['data']) as downstream:
-                        assert turn(downstream, {'model': 'synthetic-text', 'input': prompt})[-1]['type'] == 'response.completed'
+                        terminal = turn(downstream, {'model': 'synthetic-text', 'input': prompt})[-1]
+                        assert terminal['type'] == 'response.completed'
                         # A create sent after EOF but before consuming the close cannot dispatch.
                         time.sleep(.15)
                         send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'late'}, masked=True)
@@ -347,8 +413,30 @@ def main():
                         assert connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0] == unknown_before
                         assert connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0] == rejected_before
                     assert provider.calls == count + 1
+                    first_connection, first_create = provider.last_create
+                    assert first_create['input'] == prompt
+                    [reply] = terminal['response']['output']
+                    assert reply['role'] == 'assistant'
+                    [content] = reply['content']
+                    assert content['type'] == 'output_text' and content['text']
+                    history = [
+                        {'role': 'user', 'content': prompt},
+                        {'role': 'assistant', 'content': content['text']},
+                        {'role': 'user', 'content': 'synthetic continuation'},
+                    ]
                     with dial(ports['data']) as downstream:
-                        assert turn(downstream, {'model': 'synthetic-text', 'input': 'fresh'})[-1]['type'] == 'response.completed'
+                        assert turn(downstream, {'model': 'synthetic-text', 'input': history})[-1]['type'] == 'response.completed'
+                        assert provider.calls == count + 2
+                        reconnect_connection, reconnect_create = provider.last_create
+                        assert reconnect_connection != first_connection
+                        assert reconnect_create['input'] == history and 'previous_response_id' not in reconnect_create
+                        latest(db, 'settled')
+                    with sqlite3.connect(db) as connection:
+                        rows = connection.execute(
+                            'SELECT state,usage_json FROM attempts WHERE rowid>? ORDER BY rowid', (mark,)
+                        ).fetchall()
+                    assert [(state, json.loads(usage)['inputTokens'], json.loads(usage)['outputTokens'])
+                            for state, usage in rows] == [('settled', 5, 3), ('settled', 5, 3)]
                 for multi in (False, True):
                     provider.close_ready.clear(); provider.close_release.clear()
                     with sqlite3.connect(db) as connection:

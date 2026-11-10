@@ -121,9 +121,14 @@ export function QuotaWindowBar({
             <Text size="xs" fw={600}>
               {title}
             </Text>
-            <Text size="lg" fw={700}>
-              {usage}
-            </Text>
+            <div className={styles.quotaMetrics}>
+              <Text size="xl" fw={700}>
+                {usage}
+              </Text>
+              <Text size="xs" c="dimmed">
+                剩余 {Number(remaining.toFixed(2))}%
+              </Text>
+            </div>
             {track}
             <button
               type="button"

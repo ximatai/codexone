@@ -1,0 +1,13 @@
+.mask {
+  display: inline-block;
+  inline-size: 4.8em;
+  max-inline-size: 100%;
+  block-size: 0.72em;
+  border-radius: 2px;
+  vertical-align: 0.02em;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--mantine-color-dimmed) 0 0.32em,
+    var(--mantine-color-default-border) 0.32em 0.52em
+  );
+}

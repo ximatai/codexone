@@ -70,8 +70,14 @@ for (const width of [1440, 390]) {
     await card.screenshot({ path: info.outputPath("quota-collapsed.png") });
     await open.focus();
     await open.press("Space");
-    await expect(page.getByText("预计约 30 分钟后耗尽")).toBeVisible();
-    await expect(page.getByText("比重置早 30 分钟")).toBeVisible();
+    const summary = page.getByText("预计约 30 分钟后耗尽");
+    const comparison = page.getByText("比重置早 30 分钟");
+    await expect(summary).toBeVisible();
+    await expect(comparison).toBeVisible();
+    const summaryBox = (await summary.boundingBox())!;
+    const comparisonBox = (await comparison.boundingBox())!;
+    expect(comparisonBox.x).toBeGreaterThan(summaryBox.x + summaryBox.width);
+    expect(comparisonBox.y).toBeLessThan(summaryBox.y + summaryBox.height);
     await expect(page.getByRole("img", { name: /剩余额度走势/ })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.getByRole("button", { name: "收起5 小时额度趋势" }).blur();
@@ -92,6 +98,9 @@ for (const width of [1440, 390]) {
     const predictedPositions = await positions();
     await page.getByRole("button", { name: "8 小时" }).click();
     await expect(page.getByText("额度周期短于所选参考时段")).toBeVisible();
+    const status = panel.locator('[aria-live="polite"]');
+    await expect(status).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    expect((await status.boundingBox())!.height).toBeLessThan(40);
     expect(await positions()).toEqual(predictedPositions);
     const openingTransitions = Number(
       await panel.getAttribute("data-height-transitions"),
@@ -132,3 +141,53 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("img", { name: /剩余额度走势/ })).toBeVisible();
   });
 }
+
+test("quota trend distinguishes same-day ticks and explains scenario shading", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const now = new Date("2026-11-10T01:00:00Z");
+  await page.clock.setFixedTime(now);
+  const state = await reviewFixture(page);
+  state.alerts = 0;
+  state.accounts.splice(1);
+  const observation = state.accounts[0].observability.quota;
+  const at = now.getTime() / 1000;
+  const reset = at + 23 * 3600;
+  const duration = 7 * 86400;
+  observation.observedAtUnixSeconds = at;
+  observation.attemptedAtUnixSeconds = at;
+  Object.assign(observation.limits[0].primary, {
+    usedPercent: 88,
+    resetsAtUnixSeconds: reset,
+    durationSeconds: duration,
+  });
+  await page.route("**/api/accounts/*/quota-trend", (route) =>
+    route.fulfill({
+      json: {
+        primary: {
+          reset,
+          duration,
+          samples: Array.from({ length: 13 }, (_, i) => [
+            at - 3600 + i * 300,
+            i <= 6 ? 36 - i : 30 - (i - 6) * 3,
+          ]),
+        },
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: /查看.*额度趋势/ }).click();
+  const explanation = "阴影表示较快和较慢消耗情景之间的范围";
+  const chart = page.getByRole("img", { name: new RegExp(explanation) });
+  await expect(chart).toBeVisible();
+  const ticks = await chart.locator('text[y="151"]').allTextContents();
+  expect(ticks).toHaveLength(3);
+  expect(new Set(ticks).size).toBe(3);
+  expect(ticks.every((label) => label.includes(":"))).toBe(true);
+
+  await page.keyboard.press("Tab");
+  await expect(page.getByText("预测", { exact: true })).toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveText(explanation);
+  await expectNoHorizontalOverflow(page);
+});

@@ -1,3 +1,4 @@
+import { PrivateName } from "../../shared/privacy-mask";
 import { overviewQuery } from "./overview-source";
 import { availabilityBlocker } from "./availability-blocker";
 import { fetchStorage } from "./storage-api";
@@ -265,7 +266,9 @@ export function AdminOverview() {
                             component={Link}
                             to={`/?account=${encodeURIComponent(account.id)}`}
                           >
-                            {accountName(account.id, [], account.displayName)}
+                            <PrivateName>
+                              {accountName(account.id, [], account.displayName)}
+                            </PrivateName>
                           </Anchor>
                           {expires != null && (
                             <Tooltip

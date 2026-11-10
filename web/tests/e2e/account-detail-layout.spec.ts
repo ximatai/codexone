@@ -1,12 +1,25 @@
 import { test, expect } from "./fixtures";
 import { reviewFixture } from "./ui-review-fixture";
 import { expectNoHorizontalOverflow } from "./layout";
+import { observationFixture } from "../../src/features/account-management/observation.test-data";
 for (const width of [1920, 390]) {
   test(`account details prioritizes overview and keeps header and drafts at ${width}px`, async ({
     page,
   }, info) => {
     test.setTimeout(30_000);
     await reviewFixture(page);
+    const observation = observationFixture();
+    await page.route("**/api/accounts/*/observation", (route) =>
+      route.fulfill({
+        json: {
+          ...observation,
+          quota: {
+            ...observation.quota,
+            usageCredits: { balance: "12345.1234567890", unlimited: false },
+          },
+        },
+      }),
+    );
     let primingReads = 0,
       resetReads = 0;
     page.on("request", (request) => {
@@ -38,6 +51,12 @@ for (const width of [1920, 390]) {
     ).toHaveAttribute("aria-selected", "true", { timeout: 10_000 });
     await expect(drawer.getByText("当前并发", { exact: true })).toBeVisible();
     await expect(drawer.getByText("5 小时额度", { exact: true })).toBeVisible();
+    await expect(
+      drawer.getByText("额外使用积分", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      drawer.getByText("12,345.1234567890", { exact: true }),
+    ).toBeVisible();
     expect(primingReads).toBe(0);
     expect(resetReads).toBe(0);
     await drawer.getByRole("tab", { name: "设置", exact: true }).click();
