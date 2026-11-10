@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.21](https://github.com/ximatai/codexone/releases/tag/v0.26.21)**（2026-11-09），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.22](https://github.com/ximatai/codexone/releases/tag/v0.26.22)**（2026-11-10），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.22 在首页提供今日准入拒绝明细，支持按固定原因分组筛选。从正常 v13 启动时自动迁移到 v14。见[发布说明](CHANGELOG.md)。
 
 v0.26.21 在首页订阅额度卡展示额度历史与耗尽预测，沿用 schema v13。见[发布说明](CHANGELOG.md)。
 
