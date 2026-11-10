@@ -86,6 +86,9 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
               CodexOne
             </Text>
           </Group>
+        </header>
+        <aside id="workspace-sidebar" className={styles.sidebar}>
+          <nav aria-label="控制台导航">{navigation}</nav>
           <ActionIcon
             className={styles.sidebarToggle}
             variant="subtle"
@@ -103,9 +106,6 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
               <IconLayoutSidebarLeftCollapse size={21} aria-hidden="true" />
             )}
           </ActionIcon>
-        </header>
-        <aside id="workspace-sidebar" className={styles.sidebar}>
-          <nav aria-label="控制台导航">{navigation}</nav>
         </aside>
         <Drawer
           opened={opened}

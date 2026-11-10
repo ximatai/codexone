@@ -144,15 +144,21 @@ test("desktop sidebar collapses across pages and reloads without hiding mobile d
   await page.goto("/#/keys");
   const sidebar = page.locator("#workspace-sidebar");
   const keys = sidebar.getByRole("link", { name: "访问密钥", exact: true });
-  const collapse = page.getByRole("button", { name: "收起侧栏" });
-  const expand = page.getByRole("button", { name: "展开侧栏" });
+  const collapse = sidebar.getByRole("button", { name: "收起侧栏" });
+  const expand = sidebar.getByRole("button", { name: "展开侧栏" });
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
   await expect(sidebar).toHaveCSS("width", "224px");
   await expect(sidebar).toHaveCSS("transition-duration", "0.18s, 0.18s");
+  const bottomGap = (button: typeof collapse) =>
+    button.evaluate((element) =>
+      Math.round(window.innerHeight - element.getBoundingClientRect().bottom),
+    );
+  expect(await bottomGap(collapse)).toBe(16);
   await collapse.focus();
   await collapse.press("Enter");
   await expect(expand).toHaveAttribute("aria-expanded", "false");
   await expect(sidebar).toHaveCSS("width", "64px");
+  expect(await bottomGap(expand)).toBe(16);
   await expect(keys).toBeVisible();
   await expect(keys.getByText("访问密钥", { exact: true })).toBeHidden();
   await expect(keys).toHaveAttribute("aria-current", "page");
