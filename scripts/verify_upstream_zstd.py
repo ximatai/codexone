@@ -493,7 +493,9 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--memory-output', type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--memory-output', type=Path)
+    mode.add_argument('--smoke', action='store_true', help='Run representative framing, fallback and interruption checks')
     args = parser.parse_args()
     binary = str(args.binary.resolve())
     # Prove the verifier fails on truncated and trailing frames using a known empty frame.
@@ -549,11 +551,18 @@ def main():
         request.pop('parallel_tool_calls', None)
         expected = dict(request, input=[dict(role='user', content=request['input'])], store=False, stream=True)
         size = len(wire(expected))
-        for threshold in (size-1, size, size+1):
+        for threshold in ((size-1, size) if args.smoke else (size-1, size, size+1)):
             check(request, threshold=threshold, expected_encoding='zstd' if threshold < size else 'identity')
-        check(dict(request, stream=True))
         rng = random.Random(123456789)
         large = dict(model='synthetic-order', input=base64.b64encode(rng.randbytes(21*MIB)).decode(), stream=False)
+        if args.smoke:
+            for case in ('early415', 'twice415', 'partial'):
+                check(request, case=case)
+            check(dict(large, stream=True), case='early200-cancel')
+            check(large, case='stall')
+            print('PASS: synthetic upstream zstd smoke; no real provider contacted')
+            return
+        check(dict(request, stream=True))
         check(dict(large, input=large['input'][:9*MIB]), case='capacity')
         check(request, mode='off', expected_encoding='identity')
         check(request, contract='responses', expected_encoding='identity')

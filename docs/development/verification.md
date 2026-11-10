@@ -46,7 +46,7 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 ## 真实网关与浏览器 CI
 
-前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用匹配的 Swift 容器及同次 `backend-build` 产物运行真实网关/浏览器测试。后端或前端变化都会构建网关并要求该任务成功，不能把普通前端的排除项当成已完成真实栈验证。
+前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用固定 Playwright 镜像及同次 `backend-build` 产物运行真实网关/浏览器测试。PR 只有选中后端检查才构建网关并要求该任务成功。纯前端 PR 只跑合成浏览器，接受网关与 SPA 的联调回归在合并到 main 后才发现。需要合并前验收真实栈时，可手动运行 Verify；main 推送也总是运行。
 
 `scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
 
@@ -77,14 +77,18 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
 
-后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限），其余脚本/合成 fixture 来自 checkout。分片不调用 SwiftPM。Swift build/shards 与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+后端在 `changes → backend-build` 后并行运行 `backend-swift-tests`、四个 `backend-scripts` 分片和 `frontend-live`，普通前端在 changes 后独立运行。build 做格式检查及一次 `swift build --build-tests`；Swift 测试任务下载同次编译的 Linux 测试运行器、资源和 Swift 动态库，串行执行 XCTest 和 Swift Testing，最终门禁要求所有选中任务成功。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整编译，Swift 测试仍是合并门禁。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+
+常规浏览器用例验证交互、可达性和窄屏溢出。侧栏与额度趋势不固定像素、颜色或动画时间。账号详情桌面覆盖草稿保留与滚动，窄屏检查关键控件可达。文档截图单独通过 `npm --prefix web run test:docs-screenshots` 生成，常规套件仍留存失败截图和 trace。
+
+后端分片保留全部 45 个脚本。PR 对其中六个脚本使用快速模式。WS 大正文保留真实 HTTP/WS 入口的路由临界点、超限拒绝、续接保护、取消和不重放验收，将多尺寸与多传输的组合、并发正文预算矩阵、详细诊断以及重复竞争验证留给完整模式。文本契约在两个上游传输上跑代表性成功、扩展、终态冲突、用量错误和响应身份场景，其余变体留给完整模式。上传截止保留 HTTP 慢上传后的首响应超时、WS 停滞与取消、图片上传停滞与持续滴流超时，完整模式覆盖逐传输组合。zstd 保留压缩阈值、415 单次回退、响应发出后不重放、取消和停滞；完整模式覆盖容量竞争、额外故障和关闭组合。响应收尾保留终态前后断开、未知结算与不重放、SSE DONE、连接复用及代表性上游连接错误。图片保留生成和编辑的 JSON/SSE、multipart、授权拒绝、用量缺失及断流结算；扩展格式、容量和完整传输组合留给完整模式。快速模式释放的分片容量用于平衡 PR，main 推送、手动 Verify 和 Release 使用原有完整分片。
 
 本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
 
 ```sh
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-build
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-scripts 1/4
-CODEXONE_BACKEND_BIN_DIR=.build/debug ./scripts/verify.sh --backend-scripts 4/4
+CODEXONE_BACKEND_BIN_DIR=.build/debug ./scripts/verify.sh --backend-scripts 4/4 --pr
 python3 scripts/backend_shards.py --check
 python3 scripts/check_ci.py
 ```
@@ -93,7 +97,7 @@ python3 scripts/check_ci.py
 
 前端使用含浏览器/系统库的官方 Playwright Noble 镜像，不在每次运行时 apt/download 浏览器；镜像 tag 必须与 package-lock 中的 Playwright 版本一致，并固定 registry digest。e2e 用严格端口的 Vite preview 服务生产 dist；完整入口只构建一次，单独跑 e2e 前须 build，见[贡献指南](../../CONTRIBUTING.md)。
 
-Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、三个 Verify Swift 容器与缓存 key；TLS harness 的 runtime pin 同步 Dockerfile runtime，Release 缓存随 Dockerfile/workflow 的组合 hash 失效；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
+Dependabot 每周检查 Actions、npm、Docker 与 Swift 更新。Playwright npm 更新 PR 需维护者从 MCR 核验对应 tag 的 digest，同时更新 Verify 的镜像 tag/digest；`check_ci.py` 拦截版本偏离。Swift 更新需同时核对 Dockerfile、Verify Swift 编译容器与缓存 key；TLS harness 的 runtime pin 同步 Dockerfile runtime，Release 缓存随 Dockerfile/workflow 的组合 hash 失效；Actions 更新不能替代容器 pin 的维护。所有更新仍须通过相关验证。
 
 ### Node 与 Actions 工具链约定
 
@@ -115,6 +119,7 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 
 | 产物名 | 上传内容 | 下载位置及消费者 |
 | --- | --- | --- |
+| `backend-swift-tests` | `backend-swift-tests.tar.gz` | 同次构建的 Swift 测试运行器、资源与动态库，解包到 `.build/debug` |
 | `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
 | `optimized-backend-binaries` | 候选镜像的 codexone 与同次构建的 ExecutionProbe tar | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
 | `candidate-release-files` | `artifacts/` 下的发行说明、校验和等 | image-checks 和 verify gate 的 `artifacts/`，保留 1 天 |

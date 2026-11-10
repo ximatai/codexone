@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test --project=chromium",
     "test:e2e:chrome": "playwright test --project=chrome",
+    "test:docs-screenshots": "CODEXONE_DOC_SCREENSHOTS=1 playwright test --project=chrome docs-screenshots.spec.ts",
     "lint": "oxlint src tests",
     "format": "prettier --write src tests *.ts *.json .oxlintrc.json",
     "format:check": "prettier --check src tests *.ts *.json .oxlintrc.json"

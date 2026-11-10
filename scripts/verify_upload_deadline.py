@@ -237,11 +237,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--transport', choices=['http', 'websocket', 'images'])
+    parser.add_argument('--smoke', action='store_true', help='Run representative upload deadlines and cancellation')
     args = parser.parse_args()
+    smoke_cases = {
+        'http': ('slow-silent',),
+        'websocket': ('stalled', 'cancel'),
+        'images': ('stalled', 'trickle'),
+    }
     with tempfile.TemporaryDirectory(prefix='codexone-upload-') as temporary:
         for transport in ([args.transport] if args.transport else ('http', 'websocket', 'images')):
-            cases = ('slow', 'silent', 'slow-silent', 'stalled', 'cancel', 'disconnect')
-            for case in cases + (('trickle',) if transport == 'images' else ()):
+            if args.smoke:
+                cases = smoke_cases[transport]
+            else:
+                cases = ('slow', 'silent', 'slow-silent', 'stalled', 'cancel', 'disconnect')
+                if transport == 'images':
+                    cases += ('trickle',)
+            for case in cases:
                 root = Path(temporary) / f'{transport}-{case}'
                 root.mkdir()
                 run(str(args.binary.resolve()), root, transport, case)

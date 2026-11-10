@@ -35,7 +35,8 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
-    assert "scripts/verify.sh --backend-scripts '${{ matrix.shard }}'" in shards, 'Use the complete shard entry point'
+    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'"
+    assert shard_command in {line.strip() for line in shards.splitlines()}, 'Use the complete shard entry point'
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')
     assert '"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -' in shards, 'Check the binary archive against build output'
@@ -81,15 +82,29 @@ def check_release(release, dockerfile, tls, backend_scripts):
 def check_live_browser(workflow):
     jobs = workflow_jobs(workflow)
     live = jobs['frontend-live']
-    assert 'needs: [changes, backend-build]' in live, 'Real browser needs the matching gateway build'
+    compiled_tests = jobs['backend-swift-tests']
+    downstream = ('backend-swift-tests', 'backend-scripts', 'frontend-live')
+    for name in downstream:
+        assert '    needs: [changes, backend-build]\n' in jobs[name], (
+            f'{name} must start after the matching build, independently of the other tests')
+    assert './scripts/verify.sh --backend-compile' in jobs['backend-build'], 'Build job must stop after compiling'
+    assert 'name: backend-swift-tests' in compiled_tests and 'digest-mismatch: error' in compiled_tests, (
+        'Swift tests must restore the matching compiled artifact')
+    assert '--testing-library xctest' in compiled_tests and '--testing-library swift-testing --no-parallel' in compiled_tests, (
+        'Retain both Swift test libraries and their serial execution')
+    gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
+    assert gate_needs and set(downstream) <= set(gate_needs[1].split(', ')), 'Verify must await all three test jobs'
     assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
-    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests remain required'
+    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests must keep their full entry point'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
-    condition = "needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'"
-    assert condition in jobs['backend-build'] and condition in live, 'Both backend and frontend changes need the real stack'
-    assert "required.update({'backend-build', 'frontend-live'})" in jobs['verify'], 'Final gate must require the real browser'
-    assert 'frontend-live' in jobs['verify'].split('runs-on:')[0], 'Final gate must await real browser completion'
+    condition = "    if: needs.changes.outputs.backend == 'true'\n"
+    assert condition in jobs['backend-build'], 'Backend build must follow backend selection'
+    assert condition in live, 'Real browser must follow backend selection'
+    assert "required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
+        'Final gate must require all real backend checks together')
+    assert 'if [[ "$VERIFY_EVENT" == pull_request ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
+        'Only PRs may use the quick protocol matrix')
 
 
 def check():
@@ -112,11 +127,11 @@ def check():
         r'image: mcr\.microsoft\.com/playwright:v([\d.]+)-noble@sha256:[0-9a-f]{64}\b',
         workflow,
     )
-    assert len(image) == 1 and versions == {image[0]}, (
+    assert len(image) == 2 and len(set(image)) == 1 and versions == {image[0]}, (
         f'Update the Playwright image tag AND registry digest with the lockfile: {versions}, image={image}'
     )
     swift = re.findall(r'container: swift:[^\s]+@sha256:([0-9a-f]{64})\b', workflow)
-    assert len(swift) == 3 and len(set(swift)) == 1, 'Build, shards and real browser must use the same Swift image'
+    assert len(swift) == 1, 'Only the build job should need the Swift toolchain image'
     assert re.findall(r'^ARG SWIFT_BUILD_IMAGE=swift:[^\s]+@sha256:([0-9a-f]{64})$', dockerfile, re.M) == [swift[0]], (
         'Release tools and optimized build must match the CI Swift digest')
     runtime = re.findall(r'^ARG SWIFT_RUNTIME_IMAGE=(swift:[^\s]+)$', dockerfile, re.M)

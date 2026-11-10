@@ -249,10 +249,6 @@ function QuotaTrendDetails({
       <div className={styles.quotaTrendRow}>
         <strong>剩余额度趋势</strong>
         <div className={styles.quotaLegend}>
-          <span aria-hidden={!usableHistory}>
-            <i className={styles.quotaLegendHistory} />
-            历史
-          </span>
           <Tooltip
             label={scenarioDescription}
             disabled={!hasScenario}
@@ -268,6 +264,10 @@ function QuotaTrendDetails({
               预测
             </span>
           </Tooltip>
+          <span aria-hidden={!usableHistory}>
+            <i className={styles.quotaLegendHistory} />
+            历史
+          </span>
         </div>
       </div>
       <div className={styles.quotaTrendRow}>

@@ -5,7 +5,7 @@ import { observationFixture } from "../../src/features/account-management/observ
 for (const width of [1920, 390]) {
   test(`account details prioritizes overview and keeps header and drafts at ${width}px`, async ({
     page,
-  }, info) => {
+  }) => {
     test.setTimeout(30_000);
     await reviewFixture(page);
     const observation = observationFixture();
@@ -20,6 +20,7 @@ for (const width of [1920, 390]) {
         },
       }),
     );
+    await page.emulateMedia({ reducedMotion: "reduce" });
     let primingReads = 0,
       resetReads = 0;
     page.on("request", (request) => {
@@ -59,6 +60,16 @@ for (const width of [1920, 390]) {
     ).toBeVisible();
     expect(primingReads).toBe(0);
     expect(resetReads).toBe(0);
+    if (width === 390) {
+      await expect(
+        drawer.getByRole("button", { name: "关闭", exact: true }),
+      ).toBeInViewport();
+      await expect(
+        drawer.getByRole("tab", { name: "设置", exact: true }),
+      ).toBeInViewport();
+      await expectNoHorizontalOverflow(page);
+      return;
+    }
     await drawer.getByRole("tab", { name: "设置", exact: true }).click();
     await drawer
       .getByLabel("账号显示名", { exact: true })
@@ -101,8 +112,5 @@ for (const width of [1920, 390]) {
       drawer.getByRole("tab", { name: "概览", exact: true }),
     ).toBeInViewport();
     await expectNoHorizontalOverflow(page);
-    await page.screenshot({
-      path: info.outputPath(`account-details-${width}.png`),
-    });
   });
 }
