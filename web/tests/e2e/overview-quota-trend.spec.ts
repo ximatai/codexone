@@ -120,6 +120,7 @@ test("quota trend distinguishes same-day ticks and explains scenario shading", a
   expect(new Set(ticks).size).toBe(3);
   expect(ticks.every((label) => label.includes(":"))).toBe(true);
 
+  await expect(page.getByText(/^(预测|历史)$/)).toHaveText(["预测", "历史"]);
   await page.keyboard.press("Tab");
   await expect(page.getByText("预测", { exact: true })).toBeFocused();
   await expect(page.getByRole("tooltip")).toHaveText(explanation);
