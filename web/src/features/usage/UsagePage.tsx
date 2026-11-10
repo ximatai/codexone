@@ -25,6 +25,10 @@ export function UsagePage() {
     if (params.has(key)) filters[key] = params.get(key)!;
   }
   if (params.get("range") === "24h") filters.range = "24h";
+  if (params.get("rejectedOnly") === "true") {
+    filters.rejectedOnly = true;
+    filters.rejectionGroup = params.get("rejectionGroup") || undefined;
+  }
   filters.failedOnly = params.get("failedOnly") === "true";
   // The URL contains filters/page only; cursor history belongs to this session owner.
   function applied(value: UsageFilters, navigation?: UsageNavigation) {

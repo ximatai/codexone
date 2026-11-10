@@ -20,6 +20,7 @@ CASES={
     'authentication': ('upstream_authentication_rejected', 502, {'code':'invalid_api_key'}),
     'rate': ('upstream_rate_limited', 429, {'code':'rate_limit_exceeded'}),
     'usage': ('upstream_rate_limited', 429, {'type':'usage_limit_reached','resets_in_seconds':30}),
+    'budget': ('upstream_rejected', 400, {'code':'budget_reached'}),
     'response': ('invalid_upstream_turn', 502, None),
 }
 

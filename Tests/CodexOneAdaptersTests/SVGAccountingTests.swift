@@ -73,7 +73,7 @@ private func authorDocument(_ extra: JSONObject = [:]) -> JSONValue {
   try await SQLiteExecutionStore.migrate(path: path)
   let upgraded = try await SQLiteExecutionStore.open(path: path, limits: limits)
   do {
-    #expect(try await upgraded.perform { try $0.scalar("PRAGMA user_version") } == 13)
+    #expect(try await upgraded.perform { try $0.scalar("PRAGMA user_version") } == 14)
     let restored = try await upgraded.snapshot(attempt: "legacy-author")
     #expect(restored.state == .settled && restored.usage == usage())
     #expect(restored.usage?.svgInputTokens == nil)

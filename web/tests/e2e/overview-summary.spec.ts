@@ -226,3 +226,202 @@ test("overview empty active list has no range toggle", async ({ page }) => {
   ).toHaveCount(0);
   await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
 });
+
+for (const width of [1440, 390]) {
+  test(`opens today's pre-admission rejections using the server business day at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 950 });
+    const state = await reviewFixture(page);
+    state.alerts = 0;
+    state.keys.splice(1);
+    const start = Date.parse("2026-11-09T16:00:00Z") / 1000;
+    const meta = { timezone: "UTC+08:00", businessDay: { offsetMinutes: 480 } };
+    const empty = {
+      inputTokens: null,
+      outputTokens: null,
+      cachedTokens: null,
+      images: null,
+      estimatedMicros: null,
+    };
+    await page.route("**/api/usage/daily?*", (route) =>
+      route.fulfill({
+        json: {
+          ...meta,
+          days: 7,
+          buckets: [
+            {
+              atUnixSeconds: start,
+              requests: 0,
+              recordedRejections: 2,
+              succeeded: 0,
+              failed: 0,
+              cancelled: 0,
+              inFlight: 0,
+              failures: {},
+              metrics: empty,
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/api/usage/options", (route) =>
+      route.fulfill({
+        json: {
+          ...meta,
+          keys: ["alpha"],
+          models: [],
+          failures: ["invalid_request"],
+        },
+      }),
+    );
+    let requireFilters = false;
+    let failReturn = false;
+    await page.route("**/api/usage?*", (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      expect(params.get("start")).toBe(String(start));
+      expect(params.get("end")).toBe(String(start + 86400));
+      expect(params.get("rejectedOnly")).toBe("true");
+      const group = params.get("rejectionGroup");
+      const secondPage = params.has("after");
+      if (requireFilters) {
+        expect(params.get("key")).toBe("alpha");
+        expect(params.get("model")).toBe("synthetic-text");
+      }
+      if (failReturn && !group && secondPage) {
+        failReturn = false;
+        return route.fulfill({
+          status: 503,
+          json: { error: { code: "synthetic_failure" } },
+        });
+      }
+      const counts = [
+        {
+          failure: "invalid_request",
+          reason: "backend_parameter_temperature",
+          count: 1,
+        },
+        { failure: "invalid_request", reason: null, count: 1 },
+      ].filter(
+        ({ failure, reason }) =>
+          !group || group === `${failure}:${reason ?? "unrecorded"}`,
+      );
+      const report = reportFixture();
+      const row = {
+        ...report.rows[0],
+        kind: "rejected",
+        state: null,
+        outcome: "failed",
+        failure: "invalid_request",
+        atUnixSeconds: start,
+        metrics: empty,
+        completeness: null,
+      };
+      return route.fulfill({
+        json: {
+          ...report,
+          ...meta,
+          startUnixSeconds: start,
+          endUnixSeconds: start + 86400,
+          totals: {
+            ...report.totals,
+            admitted: 0,
+            recordedRejections: counts.length,
+            inFlight: 0,
+            unknown: 0,
+            complete: 0,
+            unavailable: 0,
+            cancelled: 0,
+            historicalWithoutTime: 0,
+            unresolvedExposureMicros: "0",
+            metrics: empty,
+          },
+          rejectionCounts: counts,
+          buckets: Array.from({ length: 24 }, (_, i) => ({
+            atUnixSeconds: start + i * 3600,
+            admitted: 0,
+            recordedRejections: i === 0 ? counts.length : 0,
+            unresolved: 0,
+          })),
+          rows: group
+            ? counts.map(({ reason }) => ({
+                ...row,
+                id: reason ? "specific" : "old",
+                rejectionReason: reason,
+              }))
+            : secondPage
+              ? [{ ...row, id: "old", requestID: "old" }]
+              : [
+                  {
+                    ...row,
+                    rejectionReason: "backend_parameter_temperature",
+                    rejectionStage: "validation",
+                  },
+                ],
+          nextCursor: !group && !secondPage ? "synthetic_cursor" : null,
+        },
+      });
+    });
+    await page.goto("/");
+    await page.getByRole("link", { name: "查看今日拒绝 2条记录" }).click();
+    await expect(page).toHaveURL(
+      /start=2026-11-10&end=2026-11-10&rejectedOnly=true/,
+    );
+    const summary = page.getByRole("region", { name: "拒绝原因汇总" });
+    await expect(summary).toContainText("上游不支持参数 temperature");
+    await expect(summary).toContainText("子原因未记录");
+    requireFilters = true;
+    await page.evaluate(() => {
+      const [path, query] = location.hash.split("?");
+      const params = new URLSearchParams(query);
+      params.set("key", "alpha");
+      params.set("model", "synthetic-text");
+      location.hash = `${path}?${params}`;
+    });
+    await expect(page.getByLabel("当前结果筛选")).toContainText(
+      "模型 synthetic-text",
+    );
+    await page.getByRole("button", { name: "下一页" }).click();
+    await expect(page).toHaveURL(/page=2/);
+    const unknownReason = summary.getByRole("button", { name: /子原因未记录/ });
+    await unknownReason.scrollIntoViewIfNeeded();
+    const previousScroll = await page.evaluate(() => window.scrollY);
+    await unknownReason.click();
+    await expect(page).toHaveURL(
+      /rejectionGroup=invalid_request%3Aunrecorded.*page=1/,
+    );
+    await expect(summary).not.toContainText("temperature");
+    failReturn = true;
+    const back = page.getByRole("button", { name: "返回全部拒绝" });
+    await back.click();
+    await expect(page.getByText(/第 2 页读取失败/)).toBeVisible();
+    await back.click();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(summary).toContainText("temperature");
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeCloseTo(previousScroll, 0);
+    await summary.getByRole("button", { name: /temperature/ }).click();
+    await expect(page).toHaveURL(
+      /rejectionGroup=invalid_request%3Abackend_parameter_temperature/,
+    );
+    await expect(summary).not.toContainText("子原因未记录");
+    await page.evaluate(() => {
+      location.hash = "#/";
+    });
+    await expect(
+      page.getByRole("link", { name: "查看今日拒绝 2条记录" }),
+    ).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(
+      /rejectionGroup=invalid_request%3Abackend_parameter_temperature/,
+    );
+    await back.click();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(summary).toContainText("子原因未记录");
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeCloseTo(previousScroll, 0);
+    await expectNoHorizontalOverflow(page);
+  });
+}

@@ -27,7 +27,7 @@ import {
   localTime,
   timeTitle,
 } from "../../shared/presentation";
-import { duration, number } from "./format";
+import { rejectionReason, duration, number } from "./format";
 
 const incompleteReasons = {
   max_output_tokens: "达到输出限制",
@@ -127,6 +127,19 @@ export function UsageDetail({
                       ? (failures[detail.failure] ?? "其他异常")
                       : "无已记录错误",
                 ],
+                ...(detail.kind === "rejected"
+                  ? [
+                      ["拒绝子原因", rejectionReason(detail.rejectionReason)],
+                      [
+                        "拒绝阶段",
+                        detail.rejectionStage === "routing"
+                          ? "账号路由"
+                          : detail.rejectionStage === "validation"
+                            ? "请求校验"
+                            : "未记录",
+                      ],
+                    ]
+                  : []),
               ].map(([label, value]) => (
                 <Group key={String(label)} display="contents">
                   <dt>{label}</dt>

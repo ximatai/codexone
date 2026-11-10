@@ -85,7 +85,7 @@ import Testing
       !key.policy.visionInput && !key.policy.imageGeneration
         && key.policy.imageModels?.isEmpty == true)
     let version = try await reopened.perform { try $0.scalar("PRAGMA user_version") }
-    #expect(version == 13)
+    #expect(version == 14)
   } catch {
     await reopened.close()
     throw error

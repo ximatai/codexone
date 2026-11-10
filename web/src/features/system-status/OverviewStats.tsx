@@ -10,8 +10,18 @@ import {
 } from "@tabler/icons-react";
 import { AreaChart } from "@mantine/charts";
 import { Dot } from "recharts";
-import { Group, Paper, Text, ThemeIcon, Skeleton, Title } from "@mantine/core";
+import {
+  Anchor,
+  Group,
+  Paper,
+  Text,
+  ThemeIcon,
+  Skeleton,
+  Title,
+} from "@mantine/core";
 import { tokenTotal, type DailyBucket } from "./round2-api";
+import { Link } from "react-router";
+import { businessDate } from "../../shared/business-day";
 import { failures } from "../../shared/presentation";
 import { compactCount } from "./overview-format";
 import styles from "./overview.module.css";
@@ -177,6 +187,9 @@ export function OverviewStats({
   loading?: boolean;
 }) {
   const today = buckets.at(-1);
+  const rejectionDay = today
+    ? businessDate(today.atUnixSeconds, offsetMinutes)
+    : undefined;
   const todayImages = today?.metrics.images;
   const errorRate = (bucket: typeof today) => {
     if (!bucket) return null;
@@ -321,18 +334,32 @@ export function OverviewStats({
                 >
                   <ContinuousValue text={card.value} />
                 </Text>
-                <Text
-                  className={styles.metricNote}
-                  size="xs"
-                  c="dimmed"
-                  title={
-                    index === 0 && card.note
-                      ? `准入前${card.note}`
-                      : card.note || undefined
-                  }
-                >
-                  {card.count ?? card.note}
-                </Text>
+                {index === 0 &&
+                rejectionDay &&
+                (today?.recordedRejections ?? 0) > 0 ? (
+                  <Anchor
+                    className={styles.metricNote}
+                    size="xs"
+                    component={Link}
+                    to={`/usage?start=${rejectionDay}&end=${rejectionDay}&rejectedOnly=true`}
+                    aria-label={`查看今日${card.note}条记录`}
+                  >
+                    {card.note}
+                  </Anchor>
+                ) : (
+                  <Text
+                    className={styles.metricNote}
+                    size="xs"
+                    c="dimmed"
+                    title={
+                      index === 0 && card.note
+                        ? `准入前${card.note}`
+                        : card.note || undefined
+                    }
+                  >
+                    {card.count ?? card.note}
+                  </Text>
+                )}
               </div>
               <Sparkline
                 label={card.label}

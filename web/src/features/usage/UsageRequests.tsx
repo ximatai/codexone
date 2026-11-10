@@ -9,7 +9,7 @@ import {
   timeTitle,
 } from "../../shared/presentation";
 import type { UsageReport } from "./api";
-import { duration } from "./format";
+import { duration, rejectionReason } from "./format";
 import styles from "./usage.module.css";
 export function UsageRequests({
   rows,
@@ -91,6 +91,9 @@ export function UsageRequests({
                       ? (failures[row.failure] ?? "其他异常")
                       : ""}
                 </small>
+                {row.kind === "rejected" && (
+                  <small>{rejectionReason(row.rejectionReason)}</small>
+                )}
                 {row.state && row.state !== "settled" && (
                   <small>{states[row.state]}</small>
                 )}

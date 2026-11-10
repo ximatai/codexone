@@ -161,7 +161,7 @@ def verify_migration(binary):
         with sqlite3.connect(backups[0]) as db:
             assert db.execute('PRAGMA user_version').fetchone()[0] == 1
         with sqlite3.connect(path) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 13
+            assert db.execute('PRAGMA user_version').fetchone()[0] == 14
         # check-config validates the independent administrator credential without creating a DB.
         admin = root / 'admin'
         admin.write_text(TOKEN)
@@ -371,7 +371,7 @@ def main():
                     assert update(ports['admin'], revoked['key'], enabled=False)[0] == 503
                     assert call(ports['data'], 'GET', '/health/ready', token=None)[0] == 200
                     with sqlite3.connect(db_path) as db:
-                        assert db.execute('PRAGMA user_version').fetchone()[0] == 13
+                        assert db.execute('PRAGMA user_version').fetchone()[0] == 14
                         assert db.execute('SELECT COUNT(*) FROM key_events').fetchone()[0] >= 4
                         assert db.execute("SELECT COUNT(*) FROM attempts WHERE state='settled'").fetchone()[0] >= 3
                 finally:

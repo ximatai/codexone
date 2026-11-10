@@ -10,11 +10,13 @@ private struct UsageFixture {
   let store: SQLiteExecutionStore
   let reader: SQLiteUsageReader
   let hour: Int64
+  static let limits = ExecutionLimits(
+    requests: 100000, active: 64, unresolved: 64, budgetMicros: 1_000_000_000_000)
   static func make(readTimeout: Duration = .seconds(1)) async throws -> Self {
     let path = try temporaryExecutionPath()
     let store = try await SQLiteExecutionStore.open(
       path: path,
-      limits: .init(requests: 100000, active: 64, unresolved: 64, budgetMicros: 1_000_000_000_000),
+      limits: Self.limits,
       clock: testClock)
     for (id, digest) in [("alpha", "a"), ("beta", "b")] {
       _ = try await store.createKey(
@@ -338,7 +340,7 @@ private struct UsageFixture {
         "UPDATE attempts SET outcome_json=json_set(outcome_json,'$.firstEventMilliseconds',12,'$.totalMilliseconds',34) WHERE id='boundary'"
       )
       try db.write(
-        "INSERT INTO request_diagnostics VALUES ('ghost-request',?,'ghost','synthetic-text','generation','invalid_request')",
+        "INSERT INTO request_diagnostics(request_id,at_epoch,key_id,model,mode,failure) VALUES ('ghost-request',?,'ghost','synthetic-text','generation','invalid_request')",
         [.number(start)])
       try db.write("DELETE FROM key_events WHERE key_id='alpha'")
       try db.write("DELETE FROM managed_keys WHERE id='alpha'")
@@ -709,5 +711,59 @@ private struct UsageFixture {
     await f.close()
     throw error
   }
+  await f.close()
+}
+
+@Test func rejectionDrilldownKeepsV13RowsAndAggregatesBeforePagination() async throws {
+  let f = try await UsageFixture.make()
+  try await f.insert("admitted", at: f.hour, evidence: usage(amount: 1))
+  try await f.store.recordRejection(
+    requestID: "legacy-refusal", keyID: "alpha", model: nil, mode: .generation,
+    failure: .invalidRequest)
+  await f.reader.close()
+  await f.store.close()
+  try rawSQL(f.path, "ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13")
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: UsageFixture.limits, clock: testClock, allowStartupMigration: true)
+  let reader = try await reopened.makeUsageReader()
+  try await reopened.recordRejection(
+    requestID: "new-refusal", keyID: "alpha", model: "synthetic-text", mode: .generation,
+    failure: .invalidRequest, reason: .backendTemperature)
+  let end = f.hour + 3600
+  let query = try UsageAdminAPI.parse(
+    "/api/usage?start=\(f.hour)&end=\(end)&rejectedOnly=true&limit=1")
+  let report = try await reader.queryUsage(query)
+  #expect(report.totals.admitted == 0 && report.totals.rejected == 2)
+  #expect(report.rows.count == 1 && report.rows.first?.rejectionReason == .backendTemperature)
+  #expect(report.rejectionCounts.count == 2 && report.rejectionCounts.map(\.count) == [1, 1])
+  let dto = try UsageAdminAPI.document(report, query: query)
+  #expect(dto["rows"]?.array?.first?["rejectionStage"]?.string == "validation")
+  let cursor = try #require(report.nextCursor)
+  let older = try await reader.queryUsage(
+    .init(
+      startUnixSeconds: f.hour, endUnixSeconds: end, cursor: cursor, rejectedOnly: true))
+  #expect(older.rows.map(\.id) == ["legacy-refusal"] && older.rows.first?.rejectionReason == nil)
+  let base = "/api/usage?start=\(f.hour)&end=\(end)"
+  for (reason, id) in [
+    ("backend_parameter_temperature", "new-refusal"), ("unrecorded", "legacy-refusal"),
+  ] {
+    let selected = try await reader.queryUsage(
+      UsageAdminAPI.parse(base + "&rejectedOnly=true&rejectionGroup=invalid_request:" + reason))
+    #expect(selected.rows.map(\.id) == [id])
+    #expect(selected.totals.rejected == 1 && selected.rejectionCounts.first?.count == 1)
+  }
+  #expect(throws: ExecutionError.invalidCommand) {
+    try UsageAdminAPI.parse(base + "&rejectionGroup=invalid_request:unrecorded")
+  }
+  #expect(throws: ExecutionError.invalidCommand) {
+    try UsageAdminAPI.parse(base + "&rejectedOnly=true&rejectionGroup=invalid_request:unknown")
+  }
+  let directory = (f.path as NSString).deletingLastPathComponent
+  let names = try FileManager.default.contentsOfDirectory(atPath: directory)
+  let backup = try #require(names.first { $0.contains(".pre-v14-") })
+  let old = try SQLiteConnection(readOnlyPath: directory + "/" + backup)
+  #expect(try old.scalar("PRAGMA user_version") == 13)
+  await reader.close()
+  await reopened.close()
   await f.close()
 }

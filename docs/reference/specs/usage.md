@@ -30,6 +30,8 @@
 
 准入前的 `400 unsupported_backend_parameter` 属于明确本地参数拒绝，诊断 failure 为 `invalid_request`，不计入已准入请求或未知执行。该分类只作用于新增拒绝诊断；旧 indeterminate 行不重写，也不据此推断旧请求命中了哪个参数。已存在同 request_id 的 attempt 时仍不插入拒绝诊断。
 
+管理员用量查询支持 `rejectedOnly=true`。日期、Key、模型、模式和失败分类沿用现有过滤规则；明细只包含准入前拒绝，原因汇总覆盖完整过滤结果，独立于当前分页。新诊断保存可空的固定子原因，由分类派生请求校验或账号路由阶段。只保留枚举，不持久化任意文本、正文、参数值或标识。历史无子原因时保持未知。点击原因组可用 `rejectionGroup=<错误分类>:<子原因>` 缩小明细查询，历史缺项使用 `unrecorded`；参数仅可与 `rejectedOnly=true` 一起使用。返回汇总时恢复原筛选、页码和滚动位置。
+
 实例业务日由 `CODEXONE_BUSINESS_DAY_OFFSET` 定义，缺省 UTC，仅接受 `UTC` 或 −12:00 至 +14:00 的 `±HH:00` 整小时偏移；不支持半小时时区和 DST。Core 使用向下取整和溢出检查，UTC 时间戳不变。重启采用环境值，无数据库设置或迁移；当前限额与精确明细按新日界重算，不补偿、不中断已准入执行。新窗口为 `business-day-<startUnixSeconds>`，事务最终确定窗口和准入秒并返回执行上下文，旧 `utc-day-*` 继续读取。
 
 `usage_daily` 及 rollUp 保持 UTC 日期；UTC 日期 D 的汇总计入当地日期 D，范围 [S,E)、偏移 o 读取 day_epoch∈[S+o,E+o)。总量保留，超过 90 天的数据日界近似。Key Token 限额另保守纳入覆盖业务日起点的 UTC 汇总行；全时间 ID 与最近使用不重分桶。通用 usage 保持 UTC 小时网格、滚动 24 小时与保留时长不变；到期日期仍独立使用 UTC。

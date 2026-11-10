@@ -28,6 +28,7 @@ import {
   Text,
   TextInput,
   Title,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   failures,
@@ -40,7 +41,7 @@ import {
 import { UsageTrend } from "./UsageTrend";
 import { UsageRequests } from "./UsageRequests";
 import { UsageEvidence, UsageSummary } from "./UsageSummary";
-import { utc } from "./format";
+import { rejectionReason, utc } from "./format";
 export { duration } from "./format";
 export { failures } from "../../shared/presentation";
 export interface UsageNavigation {
@@ -48,9 +49,24 @@ export interface UsageNavigation {
   page: number;
   window: api.UsageFilters["window"];
   scroll: number;
+  rejectionOrigin?: RejectionOrigin;
 }
+type RejectionOrigin = {
+  filters: api.UsageFilters;
+  navigation: UsageNavigation;
+};
+type ReadPosition = {
+  window: api.UsageFilters["window"];
+  scroll?: number;
+  rejectionOrigin?: RejectionOrigin;
+};
 export function usageNavigationKey(filters: api.UsageFilters, page: number) {
-  return `usage:${JSON.stringify({ ...filters, offsetMinutes: undefined })}:page:${page}`;
+  const ordered = Object.fromEntries(
+    Object.entries({ ...filters, offsetMinutes: undefined }).sort(([a], [b]) =>
+      a.localeCompare(b),
+    ),
+  );
+  return `usage:${JSON.stringify(ordered)}:page:${page}`;
 }
 export function UsageOverview({
   selection,
@@ -127,6 +143,7 @@ export function UsageOverview({
     cursors: (string | null)[];
     index: number;
     restore: boolean;
+    position?: ReadPosition;
   } | null>(null);
   const [report, setReport] = useState<api.UsageReport | null>(null);
   const [busy, setBusy] = useState(false),
@@ -190,6 +207,7 @@ export function UsageOverview({
     index = 0,
     restore = false,
     pagination = false,
+    position?: ReadPosition,
   ) {
     controller.current?.abort();
     const abort = new AbortController();
@@ -197,7 +215,8 @@ export function UsageOverview({
     const version = ++epoch.current;
     // Capture before the read: route/layout scroll events during a slow restore
     // must not replace the saved position with the temporary loading position.
-    const restoreScroll = activeNavigation.current?.scroll ?? 0;
+    const restoreScroll =
+      position?.scroll ?? activeNavigation.current?.scroll ?? 0;
     restoringNavigation.current = restore;
     setBusy(true);
     setError("");
@@ -219,7 +238,8 @@ export function UsageOverview({
         {
           ...filters,
           window:
-            cursors.length > 1 || restore ? queryWindow.current : undefined,
+            position?.window ??
+            (cursors.length > 1 || restore ? queryWindow.current : undefined),
         },
         cursors[index],
       );
@@ -244,7 +264,7 @@ export function UsageOverview({
       if (version !== epoch.current || abort.signal.aborted) return;
       queryWindow.current = requestFilters.window;
       pendingPosition.current =
-        restore || index !== page
+        restore || index !== page || position !== undefined
           ? { version, report: next, scroll: restore ? restoreScroll : null }
           : null;
       setReport(next);
@@ -256,6 +276,10 @@ export function UsageOverview({
         page: index,
         window: requestFilters.window,
         scroll: restore ? restoreScroll : 0,
+        rejectionOrigin: filters.rejectionGroup
+          ? (position?.rejectionOrigin ??
+            activeNavigation.current?.rejectionOrigin)
+          : undefined,
       };
       activeNavigation.current = navigation;
       appliedEcho.current = usageNavigationKey(filters, index);
@@ -280,12 +304,12 @@ export function UsageOverview({
           setNavigationNotice(
             "原分页已失效，已返回请求明细第一页，请重新核对记录。",
           );
-          void load(filters);
+          void load(filters, [null], 0, false, false, position);
           return;
         }
         setStale(true);
-        if (pagination || restore)
-          failedPage.current = { filters, cursors, index, restore };
+        if (pagination || restore || position)
+          failedPage.current = { filters, cursors, index, restore, position };
         setError(
           cause instanceof ManagementError && cause.status === 400
             ? "请检查业务日日期与筛选条件，范围最多 31 天。"
@@ -356,10 +380,49 @@ export function UsageOverview({
     // The parent owns authentication; this effect owns the read-only view's requests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, paused, filterIdentity, requestedPage, restoreView]);
-  function update(name: keyof api.UsageFilters, value: string | boolean) {
+  function drillIntoRejections(group: string) {
+    if (!applied || !activeNavigation.current) return;
+    const navigation = { ...activeNavigation.current, scroll: window.scrollY };
+
+    void load({ ...applied, rejectionGroup: group }, [null], 0, false, false, {
+      window: navigation.window,
+      rejectionOrigin: { filters: applied, navigation },
+    });
+  }
+
+  function clearRejectionGroup() {
+    if (!applied) return;
+    const { rejectionGroup: _, ...filters } = applied;
+    const saved = activeNavigation.current?.rejectionOrigin;
+    if (
+      saved &&
+      usageNavigationKey(saved.filters, 0) === usageNavigationKey(filters, 0)
+    ) {
+      void load(
+        saved.filters,
+        saved.navigation.history,
+        saved.navigation.page,
+        true,
+        false,
+        { window: saved.navigation.window, scroll: saved.navigation.scroll },
+      );
+    } else {
+      void load(filters, [null], 0, false, false, {
+        window: queryWindow.current,
+      });
+    }
+  }
+
+  function update(
+    name: keyof api.UsageFilters,
+    value: string | boolean | undefined,
+  ) {
     setDraft((previous) => ({
       ...previous,
       [name]: value,
+      ...(name === "rejectedOnly" && !value
+        ? { rejectionGroup: undefined }
+        : {}),
       ...(["start", "end"].includes(name) ? { range: undefined } : {}),
     }));
   }
@@ -498,6 +561,14 @@ export function UsageOverview({
               checked={draft.failedOnly}
               disabled={busy}
               onChange={(e) => update("failedOnly", e.currentTarget.checked)}
+            />
+            <Checkbox
+              label="仅准入前拒绝"
+              checked={draft.rejectedOnly ?? false}
+              disabled={busy}
+              onChange={(e) =>
+                update("rejectedOnly", e.currentTarget.checked || undefined)
+              }
             />
             <Button type="submit" disabled={busy}>
               {busy ? "正在查询…" : "查询用量"}
@@ -642,6 +713,7 @@ export function UsageOverview({
                 failed.index,
                 failed.restore,
                 true,
+                failed.position,
               );
           }}
         >
@@ -672,6 +744,7 @@ export function UsageOverview({
               : ""}
             {applied?.state ? ` · ${states[applied.state]}` : ""}
             {applied?.outcome === "failed" ? " · 请求结果：失败" : ""}
+            {applied?.rejectedOnly ? " · 仅准入前拒绝" : ""}
             {applied?.failedOnly ? " · 仅异常结果" : ""}
             {stale ? " · 上次成功快照" : ""}
           </p>
@@ -685,8 +758,49 @@ export function UsageOverview({
               10 条，不包含请求或响应正文。
             </p>
           </UsageDisclosure>
-          <UsageSummary report={report} />
-          <UsageTrend report={report} />
+          {applied?.rejectionGroup && (
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              disabled={busy}
+              onClick={clearRejectionGroup}
+            >
+              返回全部拒绝
+            </Button>
+          )}
+          {!!report.rejectionCounts?.length && (
+            <section aria-label="拒绝原因汇总">
+              <h3>拒绝原因</h3>
+              <ul>
+                {report.rejectionCounts.map((item) => {
+                  const group = `${item.failure}:${item.reason ?? "unrecorded"}`;
+                  const label = `${failures[item.failure] ?? "其他异常"} · ${rejectionReason(item.reason)} · ${item.count.toLocaleString("zh-CN")} 条`;
+                  return (
+                    <li key={group}>
+                      {applied?.rejectionGroup ? (
+                        label
+                      ) : (
+                        <UnstyledButton
+                          className={styles.rejectionGroup}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => drillIntoRejections(group)}
+                        >
+                          {label}
+                        </UnstyledButton>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+          {!applied?.rejectedOnly && (
+            <>
+              <UsageSummary report={report} />
+              <UsageTrend report={report} />
+            </>
+          )}
           <UsageDisclosure
             className={styles.moreFilters}
             title="更多统计与用量证据"
@@ -746,6 +860,7 @@ export function UsageOverview({
                     failed.index,
                     failed.restore,
                     true,
+                    failed.position,
                   );
               }}
             >

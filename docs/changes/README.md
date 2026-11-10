@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [准入拒绝下钻](rejection-diagnostics/proposal.md) · [任务](rejection-diagnostics/tasks.md)
+
 - [首页订阅额度趋势](overview-quota-trend/proposal.md) · [任务](overview-quota-trend/tasks.md)
 
 - [首页 Key 管理](overview-key-management/proposal.md) · [任务](overview-key-management/tasks.md)

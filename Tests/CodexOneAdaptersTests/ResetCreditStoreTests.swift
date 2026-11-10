@@ -95,7 +95,7 @@ import Testing
       $0.contains(".pre-v13-") && $0.hasSuffix(".sqlite")
     })
   store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: testClock)
-  #expect(try await store.perform { try $0.scalar("PRAGMA user_version") } == 13)
+  #expect(try await store.perform { try $0.scalar("PRAGMA user_version") } == 14)
   let cipher = try AccountCredentialCipher(hexKey: String(repeating: "5a", count: 32))
   let app = AccountCredentials(store: store, protection: cipher, clock: testClock)
   var account = try await app.importVerified(
@@ -112,7 +112,7 @@ import Testing
   await store.close()
   let manifest = try await SQLiteSnapshotMaintenance.backup(
     path: path, destination: root + "/bundle", protection: cipher, clock: testClock)
-  #expect(manifest.schema == 13)
+  #expect(manifest.schema == 14)
   _ = try await SQLiteSnapshotMaintenance.restore(
     bundle: root + "/bundle", path: root + "/restored/core.sqlite", protection: cipher,
     clock: testClock)
