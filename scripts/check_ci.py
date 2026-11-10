@@ -82,7 +82,18 @@ def check_release(release, dockerfile, tls, backend_scripts):
 def check_live_browser(workflow):
     jobs = workflow_jobs(workflow)
     live = jobs['frontend-live']
-    assert 'needs: [changes, backend-build]' in live, 'Real browser needs the matching gateway build'
+    compiled_tests = jobs['backend-swift-tests']
+    downstream = ('backend-swift-tests', 'backend-scripts', 'frontend-live')
+    for name in downstream:
+        assert '    needs: [changes, backend-build]\n' in jobs[name], (
+            f'{name} must start after the matching build, independently of the other tests')
+    assert './scripts/verify.sh --backend-compile' in jobs['backend-build'], 'Build job must stop after compiling'
+    assert 'name: backend-swift-tests' in compiled_tests and 'digest-mismatch: error' in compiled_tests, (
+        'Swift tests must restore the matching compiled artifact')
+    assert '--testing-library xctest' in compiled_tests and '--testing-library swift-testing --no-parallel' in compiled_tests, (
+        'Retain both Swift test libraries and their serial execution')
+    gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
+    assert gate_needs and set(downstream) <= set(gate_needs[1].split(', ')), 'Verify must await all three test jobs'
     assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
     assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests must keep their full entry point'
@@ -90,11 +101,10 @@ def check_live_browser(workflow):
     condition = "    if: needs.changes.outputs.backend == 'true'\n"
     assert condition in jobs['backend-build'], 'Backend build must follow backend selection'
     assert condition in live, 'Real browser must follow backend selection'
-    assert "required.update({'backend-build', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
+    assert "required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
         'Final gate must require all real backend checks together')
     assert 'if [[ "$VERIFY_EVENT" == pull_request ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
         'Only PRs may use the quick protocol matrix')
-    assert 'frontend-live' in jobs['verify'].split('runs-on:')[0], 'Final gate must await real browser completion'
 
 
 def check():

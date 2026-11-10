@@ -77,7 +77,7 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径；main push 和手动运行总是选全部。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
 
-后端图为 `changes → backend-build → backend-scripts (1/4…4/4)`，前端在 changes 后独立运行。build 做格式检查、一次 `swift build --build-tests` 和串行 `swift test --skip-build`；四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整构建测试。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+后端在 `changes → backend-build` 后并行运行 `backend-swift-tests`、四个 `backend-scripts` 分片和 `frontend-live`，普通前端在 changes 后独立运行。build 做格式检查及一次 `swift build --build-tests`；Swift 测试任务下载同次编译的 Linux 测试运行器、资源和 Swift 动态库，串行执行 XCTest 和 Swift Testing，最终门禁要求所有选中任务成功。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整编译，Swift 测试仍是合并门禁。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
 
 常规浏览器用例验证交互、可达性和窄屏溢出。侧栏与额度趋势不固定像素、颜色或动画时间。账号详情桌面覆盖草稿保留与滚动，窄屏检查关键控件可达。文档截图单独通过 `npm --prefix web run test:docs-screenshots` 生成，常规套件仍留存失败截图和 trace。
 
@@ -119,6 +119,7 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 
 | 产物名 | 上传内容 | 下载位置及消费者 |
 | --- | --- | --- |
+| `backend-swift-tests` | `backend-swift-tests.tar.gz` | 同次构建的 Swift 测试运行器、资源与动态库，解包到 `.build/debug` |
 | `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
 | `optimized-backend-binaries` | 候选镜像的 codexone 与同次构建的 ExecutionProbe tar | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
 | `candidate-release-files` | `artifacts/` 下的发行说明、校验和等 | image-checks 和 verify gate 的 `artifacts/`，保留 1 天 |

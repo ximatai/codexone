@@ -9,7 +9,9 @@ backend_build() {
   fi
   swift format lint --strict --recursive Sources Tests Package.swift
   swift build "${swiftpm_flags[@]}" --build-tests -j "${CODEXONE_BUILD_JOBS:-4}"
-  swift test "${swiftpm_flags[@]}" --skip-build --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
+  if [[ "${1:-}" != --compile-only ]]; then
+    swift test "${swiftpm_flags[@]}" --skip-build --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
+  fi
 }
 
 backend_scripts() {
@@ -114,8 +116,9 @@ case "${1:-all}" in
   --client) shift; python3 scripts/verify_default_client.py "$@" ;;
   --backend) backend ;;
   --backend-build) backend_build ;;
+  --backend-compile) backend_build --compile-only ;;
   --backend-scripts) backend_scripts "${2:?Expected shard i/4}" "${3:-}" ;;
   --web) frontend "${2:-}" ;;
   all) backend; frontend ;;
-  *) echo "Usage: $0 [--backend | --backend-build | --backend-scripts i/4 [--pr] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
+  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
 esac
