@@ -68,8 +68,8 @@ function LimitStatus({ value }: { value: QuotaLimit | undefined }) {
   );
 }
 function state(value: Snapshot, now: number) {
-  if (value.quota.state === "unavailable") return "额度不可用";
-  if (quotaStale(value, now)) return "额度观测已陈旧";
+  if (value.quota.state === "unavailable") return "套餐额度不可用";
+  if (quotaStale(value, now)) return "套餐额度观测已陈旧";
   return "";
 }
 function routingStatus(account: Account) {
@@ -163,7 +163,7 @@ export function AccountObservability({
           : `执行健康：${executionHealth(health)}`}
       </span>
       <small>
-        {value ? state(value, current) : "额度尚无观测"}
+        {value ? state(value, current) : "套餐额度尚无观测"}
         {value?.quota.failure ? " · 最近读取失败" : ""}
       </small>
 

@@ -149,7 +149,7 @@ it("keeps stale quota separate from the current account dispatch status", () => 
     />,
   );
   expect(screen.getByText("执行健康：最近观测无已知异常")).toBeVisible();
-  expect(screen.getByText("额度观测已陈旧")).toBeVisible();
+  expect(screen.getByText("套餐额度观测已陈旧")).toBeVisible();
   view.rerender(
     <AccountObservability
       {...props}
@@ -162,7 +162,7 @@ it("keeps stale quota separate from the current account dispatch status", () => 
     />,
   );
   expect(screen.getByText("当前派发状态：凭证刷新结果未确认")).toBeVisible();
-  expect(screen.getByText("额度观测已陈旧")).toBeVisible();
+  expect(screen.getByText("套餐额度观测已陈旧")).toBeVisible();
 });
 
 it("drops health details read for an earlier credential version", async () => {
@@ -194,4 +194,32 @@ it("drops health details read for an earlier credential version", async () => {
   expect(screen.queryByText("执行健康：最近观测到上游拒绝凭证")).toBeNull();
   await screen.findByText("执行健康：最近观测无已知异常");
   expect(api.fetchObservation).toHaveBeenCalledTimes(2);
+});
+
+it("labels missing plan windows separately from a readable credit balance", async () => {
+  const raw = observationFixture();
+  vi.mocked(api.fetchObservation).mockResolvedValueOnce(
+    api.parseObservability({
+      ...raw,
+      quota: {
+        ...raw.quota,
+        state: "unavailable",
+        limits: [],
+        usageCredits: { balance: "0", unlimited: false },
+      },
+    }),
+  );
+  render(
+    <AccountObservability
+      account={account}
+      inDetails
+      now={performance.now()}
+      disabled={false}
+      onObserve={vi.fn()}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+  await screen.findByText("套餐额度不可用");
+  expect(screen.getByText("额外使用积分")).toBeVisible();
+  expect(screen.getByText("0", { exact: true })).toBeVisible();
 });
