@@ -129,3 +129,38 @@ it("explains allowed/reached flags even when all percentages are absent", async 
   ).toBeVisible();
   expect(screen.getAllByText("上游未提供")).toHaveLength(4);
 });
+
+it("keeps stale quota separate from the current account dispatch status", () => {
+  const fixture = observationFixture();
+  const observation = api.parseObservability({
+    ...fixture,
+    quota: { ...fixture.quota, state: "stale", freshForSeconds: 0 },
+  });
+  const props = {
+    now: performance.now(),
+    disabled: false,
+    onObserve: vi.fn(),
+    onUnauthorized: vi.fn(),
+  };
+  const view = render(
+    <AccountObservability
+      {...props}
+      account={{ ...account, mode: "enabled", observability: observation }}
+    />,
+  );
+  expect(screen.getByText("当前派发状态：无已知账号阻断")).toBeVisible();
+  expect(screen.getByText("额度观测已陈旧")).toBeVisible();
+  view.rerender(
+    <AccountObservability
+      {...props}
+      account={{
+        ...account,
+        mode: "enabled",
+        authorization: "auth_uncertain",
+        observability: observation,
+      }}
+    />,
+  );
+  expect(screen.getByText("当前派发状态：凭证刷新结果未确认")).toBeVisible();
+  expect(screen.getByText("额度观测已陈旧")).toBeVisible();
+});

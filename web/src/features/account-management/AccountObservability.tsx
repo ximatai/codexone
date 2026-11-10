@@ -72,6 +72,20 @@ function state(value: Snapshot, now: number) {
   if (quotaStale(value, now)) return "额度观测已陈旧";
   return "";
 }
+function routingStatus(
+  account: Account,
+  health: Snapshot["health"] | undefined,
+) {
+  if (account.mode === "disabled") return "账号已停用";
+  if (account.authorization === "requires_auth") return "需要重新授权";
+  if (account.authorization === "auth_uncertain") return "凭证刷新结果未确认";
+  if (account.authorization === "refreshing") return "正在刷新凭证";
+  if (health?.authenticationRejected) return "当前凭证曾被上游拒绝";
+  if (account.mode === "draining") return "仅允许符合条件的已有会话";
+  if (health?.cooldownCount) return `${health.cooldownCount} 个模型处于冷却`;
+  return health ? "无已知账号阻断" : "尚无执行健康观测";
+}
+
 export function AccountObservability({
   account,
   now,
@@ -122,20 +136,15 @@ export function AccountObservability({
     <div className={styles.observation}>
       <span
         className={
-          health?.authenticationRejected || health?.cooldownCount
+          account.mode !== "enabled" ||
+          account.authorization !== "ready" ||
+          health?.authenticationRejected ||
+          health?.cooldownCount
             ? styles.attention
             : styles.subtle
         }
       >
-        {health?.authenticationRejected
-          ? "派发认证被拒绝，请刷新授权"
-          : health?.cooldownCount
-            ? `最近读取：${health.cooldownCount} 个模型冷却`
-            : value
-              ? inDetails
-                ? "无已知阻断"
-                : "执行健康：无已知阻断"
-              : "健康尚无观测"}
+        当前派发状态：{routingStatus(account, health)}
       </span>
       <small>
         {value ? state(value, current) : "额度尚无观测"}

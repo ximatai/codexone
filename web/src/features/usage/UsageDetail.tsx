@@ -36,6 +36,14 @@ const incompleteReasons = {
   steered: "上游按引导指令结束当前响应",
   unspecified: "原因未说明",
 };
+const routingEvidence: Readonly<Record<string, string>> = {
+  account_cooldown: "当时选路受冷却限制。该记录没有保存每个候选账号的状态。",
+  account_dispatch_unavailable:
+    "当时没有可派发的账号。该记录没有保存各候选账号的排除原因。",
+  continuation_owner_unavailable:
+    "该请求需要由原账号续接，当时无法使用该账号。",
+  account_state_changed: "账号状态在准备派发期间发生变化。",
+};
 import styles from "./usage.module.css";
 export function UsageDetail({
   detail,
@@ -130,6 +138,16 @@ export function UsageDetail({
                 ...(detail.kind === "rejected"
                   ? [
                       ["拒绝子原因", rejectionReason(detail.rejectionReason)],
+                      ...(detail.rejectionStage === "routing" &&
+                      detail.rejectionReason &&
+                      Object.hasOwn(routingEvidence, detail.rejectionReason)
+                        ? [
+                            [
+                              "当时的选路证据",
+                              routingEvidence[detail.rejectionReason],
+                            ],
+                          ]
+                        : []),
                       [
                         "拒绝阶段",
                         detail.rejectionStage === "routing"

@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import { render } from "../../../tests/render";
 import { UsageDetail } from "./UsageDetail";
 import { reportFixture } from "./usage.test-data";
-import type { UsageReport } from "./api";
+import { parseUsage, type UsageReport } from "./api";
 it.each([true, false])(
   "maps usage detail account names (known=%s)",
   async (known) => {
@@ -86,4 +86,31 @@ it("keeps complete SVG counters exact while marking the price as partial", async
   expect(screen.getByText("作者费率未知")).toBeVisible();
   expect(screen.getByText("≥ 估算 $1.25")).toBeVisible();
   expect(screen.queryByText("≥ 125")).toBeNull();
+});
+
+it("explains a recorded routing rejection without naming an unrecorded account", () => {
+  const close = () => {};
+  const report = reportFixture();
+  const [base] = parseUsage(report).rows;
+  const detail = {
+    ...base,
+    kind: "rejected" as const,
+    state: null,
+    outcome: null,
+    rejectionStage: "routing" as const,
+    rejectionReason: "continuation_owner_unavailable",
+  };
+  const view = render(<UsageDetail detail={detail} onClose={close} />);
+  expect(screen.getByText("未派发")).toBeVisible();
+  expect(
+    screen.getByText("该请求需要由原账号续接，当时无法使用该账号。"),
+  ).toBeVisible();
+  view.rerender(
+    <UsageDetail
+      detail={{ ...detail, rejectionStage: null, rejectionReason: null }}
+      onClose={close}
+    />,
+  );
+  expect(screen.queryByText("当时的选路证据")).toBeNull();
+  expect(screen.getByText("子原因未记录")).toBeVisible();
 });
