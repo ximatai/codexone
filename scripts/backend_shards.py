@@ -30,11 +30,24 @@ def checked_groups():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--pr', action='store_true', help='Use the quick protocol shard distribution')
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--check', action='store_true')
     action.add_argument('--list', metavar='i/4')
     args = parser.parse_args()
     groups = checked_groups()
+    if args.pr or args.check:
+        # Balance the PR smoke runtimes separately from the complete suites.
+        for name, source, target in (
+            ('verify_upstream_zstd.py', 0, 2),
+            ('verify_control.py', 1, 3),
+            ('verify_admin_live.py', 3, 1),
+            ('verify_slow_ingress.py', 0, 3),
+            ('verify_admin_assets.py', 0, 1),
+            ('verify_turn_diagnostics.py', 1, 0),
+        ):
+            groups[source].remove(name)
+            groups[target].append(name)
     if args.check:
         print(f'PASS: {sum(map(len, groups))} backend scripts belong to exactly one of {len(groups)} shards')
     elif args.list == 'all':

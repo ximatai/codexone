@@ -29,13 +29,14 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
             ('needs: [changes, backend-build]', 'needs: changes'),
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
-            ("required.update({'backend-build', 'frontend-live'})", "required.add('backend-build')"),
+            ("required.update({'backend-build', 'backend-scripts', 'frontend-live'})", "required.add('backend-build')"),
+            ('if [[ "$VERIFY_EVENT" == pull_request ]]; then', 'if true; then'),
         ]
         for before, after in mutations:
             with self.subTest(before=before), self.assertRaises(AssertionError):
                 check_live_browser(self.workflow.replace(before, after))
 
-    def test_actual_gate_requires_live_tests_for_either_side(self):
+    def test_actual_gate_requires_live_tests_for_backend_selection(self):
         gate = workflow_jobs(self.workflow)['verify']
         script = re.search(r"python3 - <<'PY'\n(.*?)^          PY$", gate, re.M | re.S)
         self.assertIsNotNone(script)
@@ -43,8 +44,7 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
         jobs = {'changes', 'docs', 'backend-build', 'backend-scripts', 'frontend', 'frontend-live', 'devcontainer'}
         for backend, frontend, devcontainer in [(False, False, False), (True, False, False), (False, True, False), (True, True, True)]:
             required = {'changes', 'docs'}
-            if backend or frontend: required.update({'backend-build', 'frontend-live'})
-            if backend: required.add('backend-scripts')
+            if backend: required.update({'backend-build', 'backend-scripts', 'frontend-live'})
             if frontend: required.add('frontend')
             if devcontainer: required.add('devcontainer')
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
@@ -77,6 +77,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('needs: verify', 'needs: build'),
             ("if result != 'success':", "if result == 'failure':"),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
+            ("--backend-scripts '${{ matrix.shard }}'", "--backend-scripts '${{ matrix.shard }}' --pr"),
             ('suite: [tls, installation, capacity]', 'suite: [tls, installation]'),
             ('scripts/verify_mixed_capacity.py --image', 'unchecked-capacity'),
             ('mixed-capacity-evidence', 'omitted-evidence'),

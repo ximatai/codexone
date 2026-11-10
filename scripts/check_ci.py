@@ -35,7 +35,8 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
-    assert "scripts/verify.sh --backend-scripts '${{ matrix.shard }}'" in shards, 'Use the complete shard entry point'
+    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'"
+    assert shard_command in {line.strip() for line in shards.splitlines()}, 'Use the complete shard entry point'
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')
     assert '"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -' in shards, 'Check the binary archive against build output'
@@ -84,11 +85,15 @@ def check_live_browser(workflow):
     assert 'needs: [changes, backend-build]' in live, 'Real browser needs the matching gateway build'
     assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
-    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests remain required'
+    assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests must keep their full entry point'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
-    condition = "needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'"
-    assert condition in jobs['backend-build'] and condition in live, 'Both backend and frontend changes need the real stack'
-    assert "required.update({'backend-build', 'frontend-live'})" in jobs['verify'], 'Final gate must require the real browser'
+    condition = "    if: needs.changes.outputs.backend == 'true'\n"
+    assert condition in jobs['backend-build'], 'Backend build must follow backend selection'
+    assert condition in live, 'Real browser must follow backend selection'
+    assert "required.update({'backend-build', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
+        'Final gate must require all real backend checks together')
+    assert 'if [[ "$VERIFY_EVENT" == pull_request ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
+        'Only PRs may use the quick protocol matrix')
     assert 'frontend-live' in jobs['verify'].split('runs-on:')[0], 'Final gate must await real browser completion'
 
 

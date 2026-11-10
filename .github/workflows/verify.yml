@@ -48,7 +48,7 @@ jobs:
       - run: python3 scripts/test_check_ci.py
   backend-build:
     needs: changes
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
     timeout-minutes: 15
@@ -110,7 +110,15 @@ jobs:
           mkdir -p .build/debug
           tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug
       - name: Verify protocol and lifecycle shard
-        run: ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
+        shell: bash
+        env:
+          VERIFY_EVENT: ${{ github.event_name }}
+        run: |
+          args=()
+          if [[ "$VERIFY_EVENT" == pull_request ]]; then
+            args+=(--pr)
+          fi
+          ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}"
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
@@ -145,7 +153,7 @@ jobs:
           retention-days: 7
   frontend-live:
     needs: [changes, backend-build]
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
     timeout-minutes: 15
@@ -221,10 +229,8 @@ jobs:
           needs = json.loads(os.environ['RESULTS'])
           selected = needs['changes']['outputs']
           required = {'changes', 'docs'}
-          if selected.get('backend') == 'true' or selected.get('frontend') == 'true':
-              required.update({'backend-build', 'frontend-live'})
           if selected.get('backend') == 'true':
-              required.update({'backend-build', 'backend-scripts'})
+              required.update({'backend-build', 'backend-scripts', 'frontend-live'})
           if selected.get('frontend') == 'true':
               required.add('frontend')
           if selected.get('devcontainer') == 'true':

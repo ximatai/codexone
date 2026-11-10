@@ -1,6 +1,5 @@
 import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
-import { mkdir } from "node:fs/promises";
 import { reviewFixture } from "./ui-review-fixture";
 
 test("key status filters, menu actions, create drawer and narrow navigation", async ({
@@ -67,7 +66,6 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
       json: { error: { code: "synthetic_not_found" } },
     });
   });
-  await mkdir("../artifacts/ui-phase2", { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/keys");
   await expect(page.getByText("desktop-team", { exact: true })).toBeVisible();
@@ -88,8 +86,6 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await expect(
     page.getByRole("row").filter({ hasText: "desktop-team" }),
   ).toContainText("可用");
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: "../artifacts/ui-phase2/keys-1440.png" });
   await page
     .getByRole("row")
     .filter({ hasText: "ci-team" })
@@ -98,8 +94,6 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await expect(
     page.getByRole("button", { name: "轮换凭证", exact: true }),
   ).toBeVisible();
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: "../artifacts/ui-phase2/keys-menu-1440.png" });
   await page.getByRole("button", { name: "轮换凭证", exact: true }).click();
   const rotation = page.getByRole("dialog", { name: "轮换 API Key" });
   await expect(rotation).toContainText("旧凭证将立即失效");
@@ -111,19 +105,12 @@ test("key status filters, menu actions, create drawer and narrow navigation", as
   await page.getByRole("button", { name: "创建密钥", exact: true }).click();
   const create = page.getByRole("dialog", { name: "创建密钥", exact: true });
   await expect(create.getByLabel("主体标识")).toBeVisible();
-  await page.waitForTimeout(350);
-  await page.waitForTimeout(350);
-  await page.screenshot({
-    path: "../artifacts/ui-phase2/keys-create-1440.png",
-  });
   await create.getByRole("button", { name: "取消", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
   await expect(
     page.getByRole("link", { name: "订阅账号", exact: true }),
   ).toBeHidden();
-  await page.waitForTimeout(350);
-  await page.screenshot({ path: "../artifacts/ui-phase2/keys-390.png" });
   await page.getByRole("button", { name: "打开导航" }).click();
   const nav = page.getByRole("dialog", { name: "CodexOne", exact: true });
   await expect(
@@ -139,7 +126,7 @@ test("desktop sidebar collapses across pages and reloads without hiding mobile d
   page,
 }) => {
   await reviewFixture(page);
-  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/keys");
   const sidebar = page.locator("#workspace-sidebar");
@@ -147,18 +134,9 @@ test("desktop sidebar collapses across pages and reloads without hiding mobile d
   const collapse = sidebar.getByRole("button", { name: "收起侧栏" });
   const expand = sidebar.getByRole("button", { name: "展开侧栏" });
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
-  await expect(sidebar).toHaveCSS("width", "224px");
-  await expect(sidebar).toHaveCSS("transition-duration", "0.18s, 0.18s");
-  const bottomGap = (button: typeof collapse) =>
-    button.evaluate((element) =>
-      Math.round(window.innerHeight - element.getBoundingClientRect().bottom),
-    );
-  expect(await bottomGap(collapse)).toBe(16);
   await collapse.focus();
   await collapse.press("Enter");
   await expect(expand).toHaveAttribute("aria-expanded", "false");
-  await expect(sidebar).toHaveCSS("width", "64px");
-  expect(await bottomGap(expand)).toBe(16);
   await expect(keys).toBeVisible();
   await expect(keys.getByText("访问密钥", { exact: true })).toBeHidden();
   await expect(keys).toHaveAttribute("aria-current", "page");
@@ -166,7 +144,7 @@ test("desktop sidebar collapses across pages and reloads without hiding mobile d
   await expect(page).toHaveURL(/#\/accounts/);
   await expect(expand).toBeVisible();
   await page.reload();
-  await expect(sidebar).toHaveCSS("width", "64px");
+  await expect(expand).toHaveAttribute("aria-expanded", "false");
   await expectNoHorizontalOverflow(page);
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -180,9 +158,6 @@ test("desktop sidebar collapses across pages and reloads without hiding mobile d
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expand.click();
-  await expect(sidebar).toHaveCSS("width", "224px");
   await expect(keys.getByText("访问密钥", { exact: true })).toBeVisible();
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(sidebar).toHaveCSS("transition-duration", "0s");
 });

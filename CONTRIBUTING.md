@@ -6,7 +6,7 @@
 
 先读 [README](README.md)、[STATUS](STATUS.md)、[文档导航](docs/README.md)，检查 `git status --short --branch`，保留未知工作。按任务阅读[产品目标](docs/requirements/product.md)、[规范](docs/reference/specs/README.md)、[架构](docs/architecture/ARCHITECTURE.md)和[目录约定](docs/development/layout.md)，不依赖旧聊天或私有部署记录。
 
-Linux、macOS 都可以开发，Windows 请使用 WSL2 中的 Ubuntu。CI 在 Ubuntu 24.04 上运行全部后端与前端验证，与下表的 Linux 环境一致。
+Linux、macOS 都可以开发，Windows 请使用 WSL2 中的 Ubuntu。CI 使用 Ubuntu 24.04。PR 按变更选择快速验证，main 推送和手动 Verify 运行完整后端与前端验证。
 
 | 平台 | 需要安装 |
 | --- | --- |
