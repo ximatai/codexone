@@ -57,6 +57,10 @@ class Provider(BaseHTTPRequestHandler):
         mode = self.server.mode
         if mode == 'extension':
             assert request['synthetic_future'] == {'large':9007199254740993, 'nullable':None, 'values':[False, '合成']}
+            events[2:2] = [
+                dict(type='response.metadata', response_id=result['id'], metadata={'synthetic': True}),
+                dict(type='responsesapi.websocket_timing', duration_ms=1.25),
+            ]
             events.insert(2, dict(type='synthetic.future.event', response_id=result['id'],
                 item_id='synthetic-unowned-extension', item=dict(id='synthetic-unowned-extension', call_id='synthetic-unowned-call'),
                 future=request['synthetic_future']))
@@ -296,6 +300,11 @@ def main():
                                 extension = next(e for e in events if e['type'] == 'synthetic.future.event')
                                 assert extension['future'] == request['synthetic_future']
                                 assert extension['item_id'] == 'synthetic-unowned-extension'
+                                metadata = next(e for e in events if e['type'] == 'response.metadata')
+                                assert metadata['metadata'] == {'synthetic': True}
+                                assert metadata['response_id'] == events[-1]['response']['id']
+                                timing = next(e for e in events if e['type'] == 'responsesapi.websocket_timing')
+                                assert timing['duration_ms'] == 1.25
                             result = events[-1]
                             if mode not in FAILED:
                                 # Provider metadata variations are forwarded; they never fail delivery.
