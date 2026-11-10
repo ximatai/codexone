@@ -24,13 +24,6 @@ TOOL_OUTPUT = [
     dict(type='function_call', id='fc_namespaced', call_id='call_namespaced', name=TOOL['name'],
          namespace='synthetic_namespace', arguments='{}'),
 ]
-RECONNECT_HISTORY = [
-    {'role': 'user', 'content': 'synthetic previous input'},
-    {'role': 'assistant', 'content': 'synthetic previous reply'},
-    {'role': 'user', 'content': 'synthetic continuation'},
-]
-
-
 def exact(sock, size):
     data = bytearray()
     while len(data) < size:
@@ -142,6 +135,7 @@ class Provider(BaseHTTPRequestHandler):
                 with self.server.guard:
                     self.server.calls += 1
                     index = self.server.calls
+                    self.server.last_create = (connection, create)
                 if create['input'] == 'stall':
                     self.server.stalled.set()
                     self.connection.settimeout(15)
@@ -160,8 +154,10 @@ class Provider(BaseHTTPRequestHandler):
                     assert previous.startswith(f'resp_{connection}_'), 'Connection context was switched'
                 response = {'id': f'resp_{connection}_{index}', 'status': 'completed', 'output': [],
                             'usage': {'input_tokens': 5, 'output_tokens': 3, 'input_tokens_details': {'cached_tokens': 0}}}
-                if isinstance(create['input'], list):
-                    assert create['input'] == RECONNECT_HISTORY and previous is None
+                if create['input'] in ('idle-close', 'terminal-eof'):
+                    response['output'] = [dict(
+                        type='message', id=f'msg_{index}', role='assistant', status='completed',
+                        content=[dict(type='output_text', text=f'Synthetic reply {index}', annotations=[])])]
                 if create['input'] == 'tool-namespaces':
                     assert create['tools'] == TOOLS
                     response['output'] = TOOL_OUTPUT
@@ -239,6 +235,7 @@ def main():
     provider.daemon_threads = True
     provider.guard = threading.Lock()
     provider.calls = provider.connections = 0
+    provider.last_create = None
     provider.close_ready = threading.Event()
     provider.close_release = threading.Event()
     provider.stalled = threading.Event()
@@ -400,10 +397,10 @@ def main():
                 for prompt in ('idle-close', 'terminal-eof'):
                     with sqlite3.connect(db) as connection:
                         before = connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-                    count = provider.calls
-                    with sqlite3.connect(db) as connection:
+                        mark = connection.execute('SELECT max(rowid) FROM attempts').fetchone()[0]
                         rejected_before = connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0]
                         unknown_before = connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0]
+                    count = provider.calls
                     with dial(ports['data']) as downstream:
                         terminal = turn(downstream, {'model': 'synthetic-text', 'input': prompt})[-1]
                         assert terminal['type'] == 'response.completed'
@@ -416,9 +413,30 @@ def main():
                         assert connection.execute('SELECT COUNT(*) FROM attempts WHERE state="unknown"').fetchone()[0] == unknown_before
                         assert connection.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0] == rejected_before
                     assert provider.calls == count + 1
+                    first_connection, first_create = provider.last_create
+                    assert first_create['input'] == prompt
+                    [reply] = terminal['response']['output']
+                    assert reply['role'] == 'assistant'
+                    [content] = reply['content']
+                    assert content['type'] == 'output_text' and content['text']
+                    history = [
+                        {'role': 'user', 'content': prompt},
+                        {'role': 'assistant', 'content': content['text']},
+                        {'role': 'user', 'content': 'synthetic continuation'},
+                    ]
                     with dial(ports['data']) as downstream:
-                        assert turn(downstream, {'model': 'synthetic-text', 'input': RECONNECT_HISTORY})[-1]['type'] == 'response.completed'
+                        assert turn(downstream, {'model': 'synthetic-text', 'input': history})[-1]['type'] == 'response.completed'
                         assert provider.calls == count + 2
+                        reconnect_connection, reconnect_create = provider.last_create
+                        assert reconnect_connection != first_connection
+                        assert reconnect_create['input'] == history and 'previous_response_id' not in reconnect_create
+                        latest(db, 'settled')
+                    with sqlite3.connect(db) as connection:
+                        rows = connection.execute(
+                            'SELECT state,usage_json FROM attempts WHERE rowid>? ORDER BY rowid', (mark,)
+                        ).fetchall()
+                    assert [(state, json.loads(usage)['inputTokens'], json.loads(usage)['outputTokens'])
+                            for state, usage in rows] == [('settled', 5, 3), ('settled', 5, 3)]
                 for multi in (False, True):
                     provider.close_ready.clear(); provider.close_release.clear()
                     with sqlite3.connect(db) as connection:
