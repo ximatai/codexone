@@ -6,7 +6,6 @@
 
 ## 活动提案
 
-- [额外使用积分余额走势](credit-balance-history/proposal.md) · [任务](credit-balance-history/tasks.md)
 
 - [截图隐私模式](screenshot-privacy/proposal.md) · [任务](screenshot-privacy/tasks.md)
 

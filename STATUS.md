@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.28](https://github.com/ximatai/codexone/releases/tag/v0.26.28)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.29](https://github.com/ximatai/codexone/releases/tag/v0.26.29)**（2026-11-11），核心数据库 schema v15。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.29 在订阅账号详情展示近 24 小时和近 7 天的额外积分余额历史，升级至 schema v15。见[发布说明](CHANGELOG.md)。
 
 v0.26.28 缩短主分支日常验证，收敛重复浏览器用例，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
