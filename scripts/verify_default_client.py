@@ -184,7 +184,8 @@ def fallback_edge(port, prefix, enabled):
             worker.join(5)
 
 
-def run_same_thread(codex, work, env):
+@contextmanager
+def app_server(codex, work, env):
     with subprocess.Popen([codex, 'app-server', '--listen', 'stdio://'], cwd=work, env=env,
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, text=True) as client:
@@ -240,14 +241,7 @@ def run_same_thread(codex, work, env):
             send('initialized', {})
             thread = request('thread/start', dict(ephemeral=True, sandbox='read-only',
                              approvalPolicy='never'), 2)['thread']['id']
-            for index in range(3):
-                turn = request('turn/start', dict(threadId=thread, input=[dict(
-                    type='text', text=fallback_prompt(index))]), index+3)['turn']['id']
-                event = until(lambda item: item.get('method') == 'turn/completed'
-                              and item['params']['turn']['id'] == turn)
-                assert event['params']['threadId'] == thread
-                assert event['params']['turn']['status'] == 'completed', 'Synthetic turn failed'
-                assert replies.pop((thread, turn), []) == [fallback_reply(index)], 'Unexpected assistant reply'
+            yield thread, request, until, replies
         finally:
             client.terminate()
             try:
@@ -256,6 +250,26 @@ def run_same_thread(codex, work, env):
                 client.kill()
                 client.wait(timeout=5)
             reader.join(5)
+
+
+def start_turn(request, thread, prompt, request_id):
+    return request('turn/start', dict(threadId=thread, input=[dict(
+        type='text', text=prompt)]), request_id)['turn']['id']
+
+
+def finished_turn(until, thread, turn):
+    event = until(lambda item: item.get('method') == 'turn/completed'
+                  and item['params']['turn']['id'] == turn)
+    assert event['params']['threadId'] == thread
+    return event['params']['turn']['status']
+
+
+def run_same_thread(codex, work, env):
+    with app_server(codex, work, env) as (thread, request, until, replies):
+        for index in range(3):
+            turn = start_turn(request, thread, fallback_prompt(index), index+3)
+            assert finished_turn(until, thread, turn) == 'completed', 'Synthetic turn failed'
+            assert replies.pop((thread, turn), []) == [fallback_reply(index)], 'Unexpected assistant reply'
 
 
 def run(args,codex,transport,catalog,scenario,prefix):
