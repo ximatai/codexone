@@ -29,9 +29,11 @@ private actor QuotaProviderProbe: AccountQuotaProvider {
     defer { active -= 1 }
     do {
       while !released { try await Task.sleep(for: .milliseconds(5)) }
-      return try .init(limits: [
-        .init(id: "codex", allowed: true, limitReached: false, primary: nil, secondary: nil)
-      ])
+      return try .init(
+        limits: [
+          .init(id: "codex", allowed: true, limitReached: false, primary: nil, secondary: nil)
+        ],
+        usageCredits: .balance("123.456"))
     } catch {
       if error is CancellationError { cancellations += 1 }
       throw error
@@ -60,7 +62,12 @@ func observationAllWaitersCanCancelWithoutCancellingTheOwnedRead() async throws 
     #expect(await provider.cancellations == 0)
     await provider.release()
     try await awaitRefreshCondition { observer.outstandingAccounts == 0 }
-    #expect(try await f.store.quotaObservation(id: f.accounts[0].id).quota?.limits.count == 1)
+    let quota = try await f.store.quotaObservation(id: f.accounts[0].id)
+    #expect(quota.quota?.limits.count == 1)
+    let at = try #require(quota.observedAtUnixSeconds)
+    #expect(
+      try await f.store.creditHistory(id: f.accounts[0].id, from: at - 300, through: at)
+        == [[AccountCreditSample(at: at, balance: "123.456")]])
   } catch {
     owner.cancel()
     _ = await owner.result
@@ -238,6 +245,10 @@ private actor ObservationScanStore: AccountObservationStore {
   func accountCredential(id: String) async throws -> StoredAccountCredential {
     try await base.accountCredential(id: id)
   }
+  func creditHistory(id: String, from: Int64, through: Int64) async throws
+    -> [[AccountCreditSample]]
+  { [] }
+
   func quotaObservation(id: String) async throws -> AccountQuotaObservation {
     try await base.quotaObservation(id: id)
   }

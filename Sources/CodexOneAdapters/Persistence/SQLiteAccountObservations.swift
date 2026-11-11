@@ -10,6 +10,51 @@ extension SQLiteExecutionStore: AccountObservationStore {
       return try Self.loadQuota(db, id)
     }
   }
+  public func creditHistory(id: String, from: Int64, through: Int64) async throws
+    -> [[AccountCreditSample]]
+  {
+    guard ManagedAccount.validID(id), from > 0, through >= from,
+      through - from <= 604_800
+    else { throw ExecutionError.invalidCommand }
+    return try await perform { db in
+      _ = try Self.loadAccount(db, id)
+      let samples = try db.rows(
+        """
+        SELECT at_epoch, balance FROM account_credit_samples
+        WHERE account_id=? AND bucket_epoch BETWEEN ? AND ? AND at_epoch BETWEEN ? AND ?
+        ORDER BY bucket_epoch
+        """,
+        [.text(id), .number(from / 300), .number(through / 300), .number(from), .number(through)]
+      ) { row in
+        AccountCreditSample(
+          at: sqlite3_column_int64(row, 0),
+          balance: String(cString: sqlite3_column_text(row, 1)))
+      }
+      var segments: [[AccountCreditSample]] = []
+      var previousBucket: Int64?
+      let fineSince = through - 86_400
+      for sample in samples {
+        guard SubscriptionUsageCredits.parseBalance(sample.balance) != nil else {
+          throw ExecutionError.storageUnavailable
+        }
+        let bucket = sample.at / 300
+        if let previousBucket, bucket == previousBucket + 1 {
+          let index = segments.count - 1
+          // Keep the endpoints of a continuous run, including a flat run within an hour.
+          if sample.at < fineSince, segments[index].count > 1,
+            let latest = segments[index].last, latest.at / 3600 == sample.at / 3600
+          {
+            segments[index].removeLast()
+          }
+          segments[index].append(sample)
+        } else {
+          segments.append([sample])
+        }
+        previousBucket = bucket
+      }
+      return segments
+    }
+  }
   public func recordQuotaObservation(
     account: ManagedAccount, atUnixSeconds: Int64,
     result: Result<SubscriptionQuota, QuotaObservationFailure>
@@ -34,6 +79,28 @@ extension SQLiteExecutionStore: AccountObservationStore {
             attemptedAtUnixSeconds: atUnixSeconds, observedAtUnixSeconds: atUnixSeconds,
             quota: quota, failure: nil)
           trend.record(quota, at: atUnixSeconds)
+          if atUnixSeconds >= (old.attemptedAtUnixSeconds ?? 0) {
+            if case .balance(let balance) = quota.usageCredits {
+              try db.write(
+                """
+                INSERT INTO account_credit_samples
+                SELECT ?,?,?,?
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM account_credit_samples WHERE account_id=? AND bucket_epoch>?
+                )
+                ON CONFLICT(account_id,bucket_epoch) DO UPDATE
+                SET at_epoch=excluded.at_epoch,balance=excluded.balance
+                WHERE excluded.at_epoch >= account_credit_samples.at_epoch
+                """,
+                [
+                  .text(account.id), .number(atUnixSeconds / 300), .number(atUnixSeconds),
+                  .text(balance), .text(account.id), .number(atUnixSeconds / 300),
+                ])
+            }
+            try db.write(
+              "DELETE FROM account_credit_samples WHERE at_epoch<?",
+              [.number(atUnixSeconds - 604_800)])
+          }
         case .failure(let error):
           updated = try .init(
             attemptedAtUnixSeconds: atUnixSeconds, observedAtUnixSeconds: old.observedAtUnixSeconds,

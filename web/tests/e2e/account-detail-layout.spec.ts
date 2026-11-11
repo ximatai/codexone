@@ -20,6 +20,31 @@ for (const width of [1920, 390]) {
         },
       }),
     );
+    const historyReads: string[] = [];
+    const through = 1_800_000_000;
+    await page.route("**/api/accounts/*/usage-credit-history?*", (route) => {
+      const range = new URL(route.request().url()).searchParams.get("range")!;
+      historyReads.push(range);
+      return route.fulfill({
+        json: {
+          from: through - (range === "24h" ? 86400 : 604800),
+          through,
+          segments: [
+            ...(range === "7d"
+              ? [[{ at: through - 172800, balance: "13500" }]]
+              : []),
+            [
+              { at: through - 1200, balance: "12345.9876" },
+              { at: through - 900, balance: "12345.9876" },
+            ],
+            [
+              { at: through - 300, balance: "12500" },
+              { at: through, balance: "12400" },
+            ],
+          ],
+        },
+      });
+    });
     await page.emulateMedia({ reducedMotion: "reduce" });
     let primingReads = 0,
       resetReads = 0;
@@ -56,6 +81,31 @@ for (const width of [1920, 390]) {
       drawer.getByText("额外使用积分", { exact: true }),
     ).toBeVisible();
     await expect(drawer.getByText("12,345", { exact: true })).toBeVisible();
+    expect(historyReads).toEqual([]);
+    const toggle = drawer.getByRole("button", { name: "走势", exact: true });
+    await toggle.click();
+    const history = drawer.getByRole("region", { name: "积分余额走势" });
+    const chart = history.getByRole("img", { name: "额外使用积分余额阶梯图" });
+    await expect(chart).toBeVisible();
+    await expect(chart.locator("path:not([aria-hidden])")).toHaveCount(2);
+    expect(
+      await chart
+        .locator("path:not([aria-hidden])")
+        .first()
+        .evaluate((path) => (path as SVGPathElement).getBBox().height),
+    ).toBe(0);
+    await chart.focus();
+    await chart.press("ArrowRight");
+    await expect(history.getByText(/ · 12,345$/)).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await history.getByText("近 7 天", { exact: true }).click();
+    await expect(chart.locator("circle")).toHaveCount(1);
+    await chart.focus();
+    await chart.press("ArrowRight");
+    await expect(history.getByText(/ · 13,500$/)).toBeVisible();
+    expect(historyReads).toEqual(["24h", "7d"]);
+    await toggle.click();
+    await expect(history).toHaveCount(0);
     expect(primingReads).toBe(0);
     expect(resetReads).toBe(0);
     if (width === 390) {

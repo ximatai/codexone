@@ -305,3 +305,50 @@
   outline: 2px solid var(--mantine-primary-color-filled);
   outline-offset: 1px;
 }
+
+.creditTrend {
+  display: grid;
+  gap: var(--mantine-spacing-xs);
+  min-width: 0;
+  padding: var(--mantine-spacing-sm);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.creditChart {
+  display: block;
+  width: 100%;
+  height: auto;
+  font: 12px var(--mantine-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.creditChart text {
+  fill: var(--mantine-color-dimmed);
+}
+
+.creditChart line {
+  stroke: var(--mantine-color-default-border);
+}
+
+.creditChart circle {
+  fill: var(--mantine-primary-color-filled);
+}
+
+.creditChartFill {
+  fill: var(--mantine-primary-color-filled);
+  opacity: 0.08;
+}
+
+.creditChartLine {
+  fill: none;
+  stroke: var(--mantine-primary-color-filled);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.creditChartReading {
+  min-height: 1lh;
+  text-align: end;
+}

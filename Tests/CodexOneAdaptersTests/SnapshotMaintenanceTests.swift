@@ -90,9 +90,13 @@ private func privateSnapshotRoot() throws -> String {
   let credential = try AccountCredential(
     accessToken: "synthetic-access", refreshToken: "synthetic-refresh", idToken: nil,
     expiresAtUnixSeconds: 2_000_000_000)
-  _ = try await store.createVerifiedAccount(
+  let account = try await store.createVerifiedAccount(
     id: context.identity, namespace: context.namespace,
     envelope: cipher.seal(credential, context: context))
+  let at = testClock.unixSeconds
+  _ = try await store.recordQuotaObservation(
+    account: account, atUnixSeconds: at,
+    result: .success(try SubscriptionQuota(limits: [], usageCredits: .balance("123.450"))))
   await store.close()
   await #expect(throws: ExecutionError.unauthorized) {
     try await SQLiteSnapshotMaintenance.backup(
@@ -115,6 +119,9 @@ private func privateSnapshotRoot() throws -> String {
     path: destination, limits: syntheticLimits, clock: testClock)
   #expect(
     try await restored.accountCredential(id: "account").account.authorization == .requiresAuth)
+  #expect(
+    try await restored.creditHistory(id: "account", from: at - 300, through: at)
+      == [[AccountCreditSample(at: at, balance: "123.450")]])
   await restored.close()
   await #expect(throws: ExecutionError.conflict) {
     try await SQLiteSnapshotMaintenance.restore(

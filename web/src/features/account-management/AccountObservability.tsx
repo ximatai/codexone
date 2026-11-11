@@ -15,6 +15,7 @@ import {
 } from "./observation-api";
 import { localTime, timeTitle } from "../../shared/presentation";
 import { QuotaWindowBar } from "./QuotaWindowBar";
+import { CreditBalance } from "./CreditBalance";
 export const utc = timeTitle;
 function duration(value: number | null): string {
   if (value === null) return "时长未提供";
@@ -88,13 +89,6 @@ function executionHealth(health: Snapshot["health"] | undefined) {
   return health ? "最近观测无已知异常" : "尚无观测";
 }
 
-function creditBalance(value: string | undefined) {
-  if (value === undefined) return "上游未提供";
-  if (value === "unlimited") return "不限额";
-  const [whole] = value.split(".");
-  return BigInt(whole).toLocaleString("zh-CN");
-}
-
 export function AccountObservability({
   account,
   now,
@@ -129,7 +123,6 @@ export function AccountObservability({
       return;
     }
     const abort = new AbortController();
-    setDetailRead(null);
     setFailed(false);
     void fetchObservation(id, abort.signal)
       .then((value) => {
@@ -246,16 +239,16 @@ export function AccountObservability({
                   <Window title="次窗口" value={base?.secondary ?? null} />
                 </div>
                 {inDetails && (
-                  <Group justify="space-between" gap="xs">
-                    <Text size="sm">额外使用积分</Text>
-                    <Text size="sm" fw={600}>
-                      {creditBalance(details.quota.usageCredits)}
-                      {details.quota.usageCredits !== undefined &&
-                      (quotaStale(details, current) || details.quota.failure)
-                        ? "（上次读数）"
-                        : ""}
-                    </Text>
-                  </Group>
+                  <CreditBalance
+                    key={id}
+                    accountID={id}
+                    balance={details.quota.usageCredits}
+                    observedAt={details.quota.observedAtUnixSeconds}
+                    stale={
+                      quotaStale(details, current) ||
+                      Boolean(details.quota.failure)
+                    }
+                  />
                 )}
                 <small
                   title={`最近成功：${utc(details.quota.observedAtUnixSeconds)}；最近尝试：${utc(details.quota.attemptedAtUnixSeconds)}`}
