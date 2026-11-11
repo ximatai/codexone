@@ -14,7 +14,7 @@ package enum StartupMigrationError: Error {
 
 /// All access is confined to SQLiteExecutionStore's serial queue.
 package final class SQLiteConnection: @unchecked Sendable {
-  package static let schemaVersion: Int64 = 14
+  package static let schemaVersion: Int64 = 15
 
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
@@ -74,7 +74,7 @@ package final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
       let upgrading = (1..<Self.schemaVersion).contains(version)
-      let startupUpgrade = allowStartupMigration && (12...13).contains(version)
+      let startupUpgrade = allowStartupMigration && (12...14).contains(version)
       guard
         version == 0 || version == Self.schemaVersion || (restoringV7 && version >= 7 && upgrading)
           || (migrating && upgrading) || startupUpgrade
@@ -120,6 +120,9 @@ package final class SQLiteConnection: @unchecked Sendable {
               (table, columns + (version >= 12 && table == "usage_daily" ? Self.authorColumns : []))
             } : [])
           + (version >= 11 ? Self.resetCreditColumns : [])
+          + (version >= 15
+            ? [("account_credit_samples", ["account_id", "bucket_epoch", "at_epoch", "balance"])]
+            : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -170,6 +173,7 @@ package final class SQLiteConnection: @unchecked Sendable {
           if version < 12 { try exec(Self.authorSchema) }
           try exec(Self.outputRateSchema)
           try exec(Self.rejectionDetailSchema)
+          try exec(Self.creditHistorySchema)
           try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
@@ -208,6 +212,7 @@ package final class SQLiteConnection: @unchecked Sendable {
             if version < 12 { try exec(Self.authorSchema) }
             if version < 13 { try exec(Self.outputRateSchema) }
             if version < 14 { try exec(Self.rejectionDetailSchema) }
+            if version < 15 { try exec(Self.creditHistorySchema) }
             try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }
@@ -439,6 +444,17 @@ package final class SQLiteConnection: @unchecked Sendable {
     ("request_diagnostics", ["request_id", "at_epoch", "key_id", "model", "mode", "failure"]),
   ]
 
+  private static let creditHistorySchema = """
+    CREATE TABLE account_credit_samples (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      bucket_epoch INTEGER NOT NULL,
+      at_epoch INTEGER NOT NULL CHECK(at_epoch BETWEEN 1 AND 1000000000000 AND at_epoch / 300 = bucket_epoch),
+      balance TEXT NOT NULL CHECK(length(balance) BETWEEN 1 AND 37),
+      PRIMARY KEY(account_id, bucket_epoch)
+    );
+    CREATE INDEX account_credit_samples_retention ON account_credit_samples(at_epoch);
+    """
+
   static let maintenanceSchema = """
     CREATE TABLE maintenance_state (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL, restore_json TEXT);
     INSERT INTO maintenance_state VALUES(1, lower(hex(randomblob(16))), NULL);
@@ -529,7 +545,7 @@ package final class SQLiteConnection: @unchecked Sendable {
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
     let destination =
-      path + (version < 13 ? ".pre-v13-" : ".pre-v14-") + UUID().uuidString + ".sqlite"
+      path + ".pre-v\(max(13, version + 1))-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }

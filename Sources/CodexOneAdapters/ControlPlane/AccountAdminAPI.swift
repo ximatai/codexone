@@ -67,6 +67,24 @@ public struct AccountAdminAPI: Sendable {
       return try Self.response(
         JSONValue.decode(JSONEncoder().encode(observation.trend ?? AccountQuotaTrend())))
     }
+    routes.get(":id", "usage-credit-history") { request async throws -> Response in
+      let query = URLComponents(string: request.url.string)?.queryItems ?? []
+      guard query.count == 1, query[0].name == "range",
+        let range = query[0].value, ["24h", "7d"].contains(range)
+      else { throw ExecutionError.invalidCommand }
+      guard let observations = store as? any AccountObservationStore else {
+        throw ExecutionError.storageUnavailable
+      }
+      let now = clock.unixSeconds
+      let from = max(1, now - (range == "24h" ? 86_400 : 604_800))
+      let segments = try await observations.creditHistory(
+        id: request.parameters.get("id") ?? "", from: from, through: now)
+      return try Self.response(
+        .object([
+          "from": .number(Decimal(from)), "through": .number(Decimal(now)),
+          "segments": try JSONValue.decode(JSONEncoder().encode(segments)),
+        ]))
+    }
     routes.get(":id", "quota-priming") { request async throws -> Response in
       guard request.url.query == nil else { throw ExecutionError.invalidCommand }
       return try await Self.response(primingDTO(id: request.parameters.get("id") ?? ""))

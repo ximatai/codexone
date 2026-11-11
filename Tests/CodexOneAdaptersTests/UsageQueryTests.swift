@@ -722,7 +722,10 @@ private struct UsageFixture {
     failure: .invalidRequest)
   await f.reader.close()
   await f.store.close()
-  try rawSQL(f.path, "ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13")
+  try rawSQL(
+    f.path,
+    "DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13"
+  )
   let reopened = try await SQLiteExecutionStore.open(
     path: f.path, limits: UsageFixture.limits, clock: testClock, allowStartupMigration: true)
   let reader = try await reopened.makeUsageReader()

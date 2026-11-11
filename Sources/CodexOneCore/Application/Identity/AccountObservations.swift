@@ -149,9 +149,21 @@ public protocol AccountQuotaObserving: Sendable {
   var isAccepting: Bool { get }
   func observeAccount(id: String) async throws -> AccountQuotaObservation
 }
+public struct AccountCreditSample: Sendable, Equatable, Codable {
+  public let at: Int64
+  public let balance: String
+
+  public init(at: Int64, balance: String) {
+    self.at = at
+    self.balance = balance
+  }
+}
+
 public protocol AccountObservationStore: AccountGovernanceStore {
   var allowsOptionalStorageWork: Bool { get }
   func quotaObservation(id: String) async throws -> AccountQuotaObservation
+  func creditHistory(id: String, from: Int64, through: Int64) async throws
+    -> [[AccountCreditSample]]
   func recordQuotaObservation(
     account: ManagedAccount, atUnixSeconds: Int64,
     result: Result<SubscriptionQuota, QuotaObservationFailure>
