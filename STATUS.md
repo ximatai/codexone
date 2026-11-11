@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.25](https://github.com/ximatai/codexone/releases/tag/v0.26.25)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.26](https://github.com/ximatai/codexone/releases/tag/v0.26.26)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.26 调整首页 Token 卡的量级单位和账号详情的积分余额显示，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
 v0.26.25 将已知响应元数据及 WebSocket 耗时遥测从未知协议观测中排除，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
