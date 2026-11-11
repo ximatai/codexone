@@ -53,7 +53,7 @@ test("overview account deep links survive reload and report missing accounts ins
   await page.goto("/#/?account=synthetic-missing");
   await expect(drawer).toContainText("目标账号已不存在或不在当前账号列表中。");
   state.failures["/api/accounts"] = 503;
-  await page.reload();
+  await drawer.getByRole("button", { name: "重新读取账号" }).click();
   await expect(drawer.getByRole("alert")).toBeVisible();
   await expect(page).toHaveURL(/#\/\?account=synthetic-missing/);
   state.failures = {};
