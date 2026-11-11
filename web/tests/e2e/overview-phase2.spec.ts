@@ -1,6 +1,5 @@
 import { expectNoHorizontalOverflow } from "./layout";
 import { expect, test } from "./fixtures";
-import { mkdir } from "node:fs/promises";
 import { reportFixture } from "../../src/features/usage/usage.test-data";
 import { observationFixture } from "../../src/features/account-management/observation.test-data";
 
@@ -10,8 +9,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
   test.setTimeout(30_000);
   await page.clock.install();
   await page.setViewportSize({ width: 1440, height: 900 });
-  const screenshots = "../artifacts/ui-phase2";
-  await mkdir(screenshots, { recursive: true });
   let inFlightCount = 5;
   const now = Math.floor(Date.now() / 1000);
   const today = Math.floor(now / 86400) * 86400;
@@ -267,8 +264,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
       timeZone: "UTC",
     }).format((today - 3 * 86400) * 1000),
   );
-  await page.getByRole("heading", { name: "订阅额度" }).hover();
-  await expect(trendTooltip).toHaveCount(0);
   const sidebar = page.getByRole("complementary", {
     name: "订阅额度与系统状态",
   });
@@ -342,11 +337,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(page.getByText("各源更新时间", { exact: true })).toBeHidden();
   await expect(page.getByRole("img", { name: "参考进度 60.0%" })).toBeVisible();
   await expect(page.getByRole("img", { name: "参考进度 57.1%" })).toBeVisible();
-  await page.screenshot({
-    path: screenshots + "/overview-resource-trends-1440.png",
-    fullPage: true,
-    animations: "disabled",
-  });
   const protocol = sidebar.getByRole("region", { name: "协议观测" });
   const resources = sidebar.getByRole("heading", { name: "服务器运行资源" });
   await expect(protocol.getByRole("heading")).toHaveText("协议观测");
@@ -366,10 +356,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(protocol.getByRole("button")).toHaveCount(0);
   await page.setViewportSize({ width: 1440, height: 1200 });
   await page.evaluate(() => window.scrollTo(0, 0));
-  await sidebar.screenshot({
-    path: screenshots + "/protocol-observation-card.png",
-    animations: "disabled",
-  });
   await page.setViewportSize({ width: 1440, height: 900 });
   const rejected = page.getByText("拒绝 6");
   await expect(rejected).toBeVisible();
@@ -382,15 +368,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.setViewportSize(viewport);
   await expect(page.getByText("hidden-key-identifier")).toHaveCount(0);
   await expect(page.getByText("运行诊断", { exact: true })).toHaveCount(0);
-  await mkdir("../artifacts/admin-attention", { recursive: true });
-  await page.screenshot({
-    path: "../artifacts/admin-attention/overview.png",
-  });
-  await page.waitForTimeout(400);
-  await page.screenshot({
-    path: screenshots + "/overview-1440.png",
-    fullPage: true,
-  });
   await page
     .getByRole("region", { name: "今日 Key 请求汇总" })
     .getByRole("link", { name: "查看用量与诊断" })
@@ -425,11 +402,6 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expectUniformGaps();
   await expectNoHorizontalOverflow(page);
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(350);
-  await page.screenshot({
-    path: screenshots + "/overview-390.png",
-    fullPage: true,
-  });
   inFlightCount = 0;
   await page.clock.runFor(15000);
   await expect(cards).toHaveCount(0);

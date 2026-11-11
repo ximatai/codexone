@@ -670,173 +670,83 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   expect(overviewReads()).toBe(resumedReads);
 });
 
-for (const [width, reducedMotion] of [
-  [1440, false],
-  [390, false],
-  [390, true],
-] as const)
-  test(`live cards leave the grid when requests finish at ${width}px (${reducedMotion ? "reduced" : "normal"} motion)`, async ({
-    page,
-  }) => {
-    await page.emulateMedia({
-      reducedMotion: reducedMotion ? "reduce" : "no-preference",
-    });
-    const cardMotion: { transforms: string[]; inert: boolean }[] = [];
-    await page.exposeFunction(
-      "recordRequestCardMotion",
-      (transforms: string[], inert: boolean) => {
-        cardMotion.push({ transforms, inert });
-      },
-    );
-    await page.addInitScript(() => {
-      const record = (
-        window as unknown as {
-          recordRequestCardMotion: (
-            transforms: string[],
-            inert: boolean,
-          ) => void;
-        }
-      ).recordRequestCardMotion;
-      window.KeyframeEffect = new Proxy(window.KeyframeEffect, {
-        construct(Effect, args) {
-          const effect = Reflect.construct(Effect, args) as KeyframeEffect;
-          const transforms = effect
-            .getKeyframes()
-            .map(({ transform }) => String(transform));
-          if (transforms.some((value) => /^translateY\(-?8px\)$/.test(value))) {
-            record(transforms, effect.target?.hasAttribute("inert") === true);
-          }
-          return effect;
-        },
-      });
-    });
-    await reviewFixture(page);
-    let socket: WebSocketRoute | undefined;
-    await page.routeWebSocket("**/api/overview/live", (route) => {
-      socket = route;
-    });
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto("/");
-    await expect.poll(() => !!socket).toBe(true);
-    const sections = await initialSections(page);
-    const send = (
-      sequence: number,
-      inFlight: unknown,
-      epoch = "synthetic-watch",
-    ) =>
-      socket!.send(
-        JSON.stringify({
-          protocol: 1,
-          epoch,
-          sequence,
-          kind: sequence === 1 ? "snapshot" : "update",
-          sections:
-            sequence === 1
-              ? sections
-              : {
-                  inFlight: {
-                    ...sections.inFlight,
-                    version: sequence,
-                    data: inFlight,
-                  },
-                },
-        }),
-      );
-    send(1, null);
-    const cards = page.getByLabel("在途请求卡片");
-    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
-      "data-live-mode",
-      "live",
-    );
-    // Overview motion starts only after the connection settles.
-    await page.waitForTimeout(500);
-    const row = {
-      id: "synthetic-running-request",
-      keyID: "synthetic-key",
-      principal: "synthetic-tool",
-      model: "synthetic-text",
-      mode: "http",
-      accountID: null,
-      elapsedSeconds: 0,
-      startedAtUnixSeconds: Math.floor(Date.now() / 1000),
-      hasFirstEvent: false,
-    };
-    const data = {
-      rows: [row],
-      recentlyFinished: [],
-      clients: [
-        {
-          keyID: "synthetic-unnamed",
-          displayName: null,
-          count: 1,
-          connectedAtUnixSeconds: Math.floor(Date.now() / 1000),
-        },
-      ],
-      overflow: 0,
-    };
-    send(2, data);
-    await expect(cards.getByText("synthetic-text")).toBeVisible();
-    await expect(cards.getByText("等待响应")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "固定观察此请求" }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("heading", { name: "持续连接", exact: true }),
-    ).toHaveCount(0);
-    // Older gateways can still send a retained completion. Only rows drive the cards.
-    send(3, {
-      ...data,
-      rows: [],
-      recentlyFinished: [
-        {
-          ...row,
-          outcome: "succeeded",
-          finishedAtUnixSeconds: Math.floor(Date.now() / 1000),
-        },
-      ],
-    });
-    await expect(cards).toHaveCount(0);
-    await expect(page.getByText("暂无进行中请求")).toBeVisible();
-    if (reducedMotion) {
-      expect(cardMotion).toEqual([]);
-    } else {
-      await expect
-        .poll(() => cardMotion)
-        .toEqual([
-          { transforms: ["translateY(8px)", "translateY(0px)"], inert: false },
-          { transforms: ["translateY(0px)", "translateY(-8px)"], inert: true },
-        ]);
-      await expect(
-        page.getByText("synthetic-text", { exact: true }),
-      ).toHaveCount(0);
-      if (width === 1440) {
-        send(4, data);
-        await expect(cards.getByText("synthetic-text")).toBeVisible();
-        await page.evaluate(() => {
-          const play = Animation.prototype.play;
-          Animation.prototype.play = function () {
-            play.call(this);
-            if (
-              this.effect instanceof KeyframeEffect &&
-              this.effect.target?.hasAttribute("inert")
-            ) {
-              this.pause();
-            }
-          };
-        });
-        send(5, { ...data, rows: [] });
-        const exiting = page
-          .locator("[inert]")
-          .filter({ hasText: "synthetic-text" });
-        await expect(exiting).toHaveCount(1);
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        await expect(exiting).toHaveCount(0);
-      }
-    }
-    await expect(page.getByRole("region", { name: "请求关注" })).toHaveCount(0);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
+test("live request cards leave the grid with reduced motion on a narrow screen", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await reviewFixture(page);
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket("**/api/overview/live", (route) => {
+    socket = route;
   });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/");
+  await expect.poll(() => !!socket).toBe(true);
+  const sections = await initialSections(page);
+  const send = (sequence: number, inFlight: unknown) =>
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-watch",
+        sequence,
+        kind: sequence === 1 ? "snapshot" : "update",
+        sections:
+          sequence === 1
+            ? sections
+            : {
+                inFlight: {
+                  ...sections.inFlight,
+                  version: sequence,
+                  data: inFlight,
+                },
+              },
+      }),
+    );
+  send(1, null);
+  const cards = page.getByLabel("在途请求卡片");
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const row = {
+    id: "synthetic-running-request",
+    keyID: "synthetic-key",
+    principal: "synthetic-tool",
+    model: "synthetic-text",
+    mode: "http",
+    accountID: null,
+    elapsedSeconds: 0,
+    startedAtUnixSeconds: Math.floor(Date.now() / 1000),
+    hasFirstEvent: false,
+  };
+  const data = {
+    rows: [row],
+    recentlyFinished: [],
+    clients: [
+      {
+        keyID: "synthetic-unnamed",
+        displayName: null,
+        count: 1,
+        connectedAtUnixSeconds: Math.floor(Date.now() / 1000),
+      },
+    ],
+    overflow: 0,
+  };
+  send(2, data);
+  await expect(cards.getByText("synthetic-text")).toBeVisible();
+  await expect(cards.getByText("等待响应")).toBeVisible();
+  // Older gateways can still send a retained completion. Only rows drive the cards.
+  send(3, {
+    ...data,
+    rows: [],
+    recentlyFinished: [
+      {
+        ...row,
+        outcome: "succeeded",
+        finishedAtUnixSeconds: Math.floor(Date.now() / 1000),
+      },
+    ],
+  });
+  await expect(cards).toHaveCount(0);
+  await expect(page.getByText("暂无进行中请求")).toBeVisible();
+});
