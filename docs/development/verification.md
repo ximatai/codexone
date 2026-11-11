@@ -58,6 +58,12 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 `scripts/verify_request_parameters.py` 检查订阅路径中的命名空间工具结果缺少 `call_id` 时的转发，覆盖 HTTP JSON、SSE 和原生 WS，逐项对比上游收到的开发者消息、工具结果及顺序，只移除客户端本地 `id`。`scripts/verify_lite.py` 检查顶层托管工具与 `additional_tools` 共存时，独立 compact 端点和流内压缩均保留工具声明的位置，续接请求完整转发返回的压缩上下文及工具声明。两项使用合成上游，实际 Desktop 插件运行及提供者执行托管工具仍需分别验收。
 
+`scripts/verify_upstream_ws_body_limit.py` 在 HTTP JSON、SSE 桥接和原生 WS 中逐字节比较 1 MiB 前后各一字节及恰好 1 MiB 的上游请求帧，核对只派发一次并完成结算。原生 WS 另发 1 MiB 的入站首帧，验证中途断开不准入、完整续帧重组后才派发。略高于 1 MiB 的上游请求还覆盖生命周期开始前与 `response.created` 后返回 1009，分别核对安全回退或拒绝、保留未知执行。
+
+`scripts/verify_json_order.py` 对比缓存 TTL 请求与 TTL 写入计数的完整报文字节。真实提供者的 TTL 验收可用独立合成前缀分别发起 `30m`、`12h` 请求，检查对应写入桶是否有非零计数。单次成功响应或普通缓存命中无法确认 TTL 写入，计数也无法测出实际保留时长。详见 [OpenAI 提示缓存文档](https://developers.openai.com/api/docs/guides/prompt-caching)。
+
+`scripts/verify_images.py` 使用含两帧不同颜色和不同延时的合成 GIF，检查原生 Images JSON 和 Responses 工具返回的完整字节。原生生成与编辑用例也核对 `frame_count` 和 `frame_duration_ms` 的转发。真实动画生成仍取决于图片模型和账号能力，界面播放须在目标客户端验证。
+
 现有 `verify_websocket.py` 分片包含三项额外的合成协议回归：暂停读取期间的上游突发事件按序交付并结算一次；完成一轮后上游空闲断开，客户端重连并重送完整历史；同名顶层工具与命名空间工具在原生 WS、HTTP JSON 和 SSE 桥接的终态响应中保留各自的标识。暂停读取的场景不单独证明内核缓冲已耗尽。重连场景不假定旧响应 ID 一定只能在原物理连接使用，也不代替真实 CLI 或提供者验收。
 
 ## 真实网关与浏览器 CI

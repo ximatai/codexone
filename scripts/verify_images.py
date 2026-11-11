@@ -23,9 +23,12 @@ from verify_websocket import dial, send, receive
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=='
 URL = 'data:image/png;base64,' + PNG
 OUTPUTS = {'png': PNG,
-    'gif': 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+    # Synthetic 2×1 animation, red for 100 ms and blue for 200 ms.
+    'gif': ('R0lGODlhAgABAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgABAAAIBQABAAgI'
+            'ACH5BAEUAAEALAAAAAACAAEAgQAA/wAAAAAAAAAAAAgFAAEACAgAOw=='),
     'svg': base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>').decode(),
     'synthetic-future': base64.b64encode(b'synthetic-future-output-container').decode()}
+GIF_ANIMATION = {'frame_count': 2, 'frame_duration_ms': 200}
 
 
 def native_body(prompt, output_format='png'):
@@ -388,6 +391,23 @@ def main():
                         assert status == 200 and ledger()[2]['kind'] == 'failed'
                         assert upstream.calls == before + 1 and count_intents() == intents + 1
 
+                    for operation, output_format in (('generations', 'gif'), ('edits', 'gif'), ('generations', 'svg')):
+                        before = upstream.calls
+                        payload = {'prompt': 'synthetic', 'output_format': output_format}
+                        if output_format == 'gif':
+                            payload.update(GIF_ANIMATION)
+                        if operation == 'edits':
+                            payload['images'] = [{'image_url': URL}]
+                        status, body, _ = request(payload, '/v1/images/' + operation)
+                        assert status == 200 and upstream.calls == before + 1
+                        assert json.loads(body)['data'][0]['b64_json'] == OUTPUTS[output_format]
+                        path, received, sent_headers = upstream.requests[-1]
+                        assert path == '/backend-api/codex/images/' + operation
+                        provider_input = json.loads(received)
+                        assert all(provider_input.get(field) == value for field, value in payload.items())
+                        assert provider_input.get('stream') is not True
+                        assert sent_headers['accept'] == 'application/json'
+                        assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
                     if args.smoke:
                         verify_native('/v1', 'generations')
                         verify_native('/backend-api/codex', 'edits')
@@ -398,16 +418,6 @@ def main():
                             verify_multipart()
                         print('PASS: native Images smoke via ' + transport, flush=True)
                         continue
-                    for output_format in ('gif', 'svg'):
-                        before = upstream.calls
-                        status, body, _ = request({'prompt':'synthetic', 'output_format':output_format})
-                        assert status == 200 and upstream.calls == before + 1
-                        assert json.loads(body)['data'][0]['b64_json'] == OUTPUTS[output_format]
-                        _, received, sent_headers = upstream.requests[-1]
-                        assert json.loads(received)['output_format'] == output_format
-                        assert json.loads(received).get('stream') is not True
-                        assert sent_headers['accept'] == 'application/json'
-                        assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
                     for operation, output_format in (('generations', 'gif'), ('edits', 'gif'), ('generations', 'svg')):
                         before = upstream.calls
                         intents = count_intents()
@@ -456,8 +466,6 @@ def main():
                     for output_format in ('gif', 'svg'):
                         status, _, _ = request({'output_format':output_format}, name='chat')
                         assert status == 403 and upstream.calls == before and count_intents() == intents
-                    assert request({'output_format':'gif'}, '/v1/images/edits')[0] == 200
-                    assert ledger()[0] == 'settled'
                     # Real GIF/SVG bytes, plus an opaque future format, through both client
                     # JSON/SSE and native WS; tool counters never rewrite the returned usage.
                     for output_format in ('gif', 'svg', 'synthetic-future'):
