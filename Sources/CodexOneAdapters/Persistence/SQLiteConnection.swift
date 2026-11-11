@@ -13,7 +13,9 @@ package enum StartupMigrationError: Error {
 }
 
 /// All access is confined to SQLiteExecutionStore's serial queue.
-final class SQLiteConnection: @unchecked Sendable {
+package final class SQLiteConnection: @unchecked Sendable {
+  package static let schemaVersion: Int64 = 14
+
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
   private var readOnly = false
@@ -71,14 +73,17 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
+      let upgrading = (1..<Self.schemaVersion).contains(version)
       let startupUpgrade = allowStartupMigration && (12...13).contains(version)
       guard
-        version == 0 || version == 14 || (restoringV7 && (7...13).contains(version))
-          || (migrating && (1...13).contains(version)) || startupUpgrade
+        version == 0 || version == Self.schemaVersion || (restoringV7 && version >= 7 && upgrading)
+          || (migrating && upgrading) || startupUpgrade
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 14 && !(restoringV7 && (7...13).contains(version)) {
+      if existingOnly && version != Self.schemaVersion
+        && !(restoringV7 && version >= 7 && upgrading)
+      {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -122,7 +127,7 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, !(1...14).contains(version) {
+      if migrating, !(1...Self.schemaVersion).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
@@ -165,10 +170,10 @@ final class SQLiteConnection: @unchecked Sendable {
           if version < 12 { try exec(Self.authorSchema) }
           try exec(Self.outputRateSchema)
           try exec(Self.rejectionDetailSchema)
-          try exec("PRAGMA user_version=14")
+          try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
-      if (1...13).contains(version) {
+      if upgrading {
         try requireIntegrity()
         if !restoringV7 {
           do { try backupBeforeUpgrade(canonical, from: version) } catch ExecutionError
@@ -202,8 +207,8 @@ final class SQLiteConnection: @unchecked Sendable {
             if version < 11 { try exec(Self.resetCreditSchema) }
             if version < 12 { try exec(Self.authorSchema) }
             if version < 13 { try exec(Self.outputRateSchema) }
-            try exec(Self.rejectionDetailSchema)
-            try exec("PRAGMA user_version=14")
+            if version < 14 { try exec(Self.rejectionDetailSchema) }
+            try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }
         } catch ExecutionError.storageUnavailable where startupUpgrade {
@@ -250,7 +255,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard (7...14).contains(try scalar("PRAGMA user_version")),
+      guard (7...Self.schemaVersion).contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema

@@ -31,6 +31,8 @@ npm --prefix web run build
 
 ## 验证
 
+变更负责人按[验证约定](docs/development/verification.md)选择与风险相称的检查。下面是常用入口，按需执行。
+
 ```sh
 python3 scripts/check_docs.py
 ./scripts/verify.sh --backend
@@ -41,13 +43,13 @@ python3 scripts/check_docs.py
 
 e2e 通过严格端口的 `vite preview` 测试生产 `web/dist`，不启动开发服务器。`verify.sh --web` 会构建一次（含 typecheck）；单独运行 `npm --prefix web run test:e2e:chrome -- ui-review-rework` 前，先执行 `npm --prefix web run build`，修改源码后也需重新构建。CI 分片及路径筛选见[验证约定](docs/development/verification.md)。
 
-定向修改运行相关测试；合并前完成所影响能力的验收。覆盖网络断开、取消、超时、存储失败、并发和部分成功，不用 helper 成功替代协议/恢复测试。UI 通过合成 API 在浏览器操作关键路径，优先检查大屏并兼顾窄屏。完整定义见[验证约定](docs/development/verification.md)。原 candidate 工作流已由 Release 的手动 dry-run 取代；输入 ref 执行 Linux 镜像、TLS 与真实安装验证并上传产物，不做远端发布，见[发版规则](docs/development/releasing.md)。
+正式发版由 tag 工作流执行发布门禁。需要提前验证发布链路或制品时，见[可选的发布演练](docs/development/releasing.md)。
 
 ## 提出与提交变更
 
 Bug 使用合成最小复现，说明平台、版本、预期、实际行为及脱敏配置。行为、协议、安全、用量、schema 或恢复语义变化先开 Issue 讨论，再建立 [proposal/tasks](docs/changes/README.md)，说明目标、不做项、规范与数据/回退影响；实现后同步规范。纯文案和小重构可直接 PR。
 
-分支使用 `codex/<topic>` 或简短主题名，提交聚焦单一关注点，英文祈使句。PR 说明用户可见变化、理由、实际命令/平台/结果及未验证范围；UI 附合成截图。维护者按正确性、安全、失败处理和维护成本评审，有争议的行为先更新契约，不能静默改变隐私或恢复承诺。不要把本机通过写成 CI 或发布通过。
+分支使用 `codex/<topic>` 或简短主题名，提交聚焦单一关注点，英文祈使句。PR 说明用户可见变化、实际验证和重要的未覆盖范围。需要核对视觉效果时附合成截图。维护者按正确性、安全、失败处理和维护成本评审，有争议的行为先更新契约，不能静默改变隐私或恢复承诺。不要把本机通过写成 CI 或发布通过。
 
 ## 安全与隐私
 

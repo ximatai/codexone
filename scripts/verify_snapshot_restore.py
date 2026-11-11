@@ -14,7 +14,7 @@ import time
 
 from verify_admin import running_admin
 from verify_keys import create
-from verify_protocol import start, stop, latest
+from verify_protocol import current_schema_version, start, stop, latest
 
 
 def command(binary, directory, *arguments, ok=True):
@@ -86,7 +86,7 @@ def main():
         stopped(f.process);f.process = None
         bundle = f.root / 'bundle'
         manifest = command(binary, f.root / 'state', '--backup', bundle)
-        assert manifest['schema'] == 14 and len(manifest['databaseSHA256']) == 64
+        assert manifest['schema'] == current_schema_version(binary) and len(manifest['databaseSHA256']) == 64
         assert hashlib.sha256((bundle / 'snapshot.sqlite').read_bytes()).hexdigest() == manifest['databaseSHA256']
         assert bundle.stat().st_mode & 511 == 448
         for path in bundle.iterdir():assert path.stat().st_mode & 511 == 384

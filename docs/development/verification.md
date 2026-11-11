@@ -10,23 +10,27 @@ python3 scripts/check_docs.py
 
 检查稳定文档入口、本地文件链接及变更任务结构，不锁定业务目录或某个活动提案名。排除依赖/构建产物，不遍历 node_modules/.build。不检查 Markdown anchor、远端 URL、协议语义或代码。通过只代表基础文档结构有效。
 
-## 各层验收要求
+## 按业务风险选择验证
 
-| 范围 | 需要的证据 |
-|---|---|
-| Swift 基础 | 锁定工具链/依赖，严格并发编译、格式及有意义的单元测试 |
-| 持久化 | 准入竞争、幂等结算、DB 不可写、kill 重启 pending/exposure、迁移/锁 |
-| 协议 | HTTP/SSE/WS/桥接、Images generation/edits 的真实 socket 入口、标准/现有前缀、ID 屏障、lane/取消/错误 envelope |
-| 缓存 | TTL/多级容量、加密、恢复契约、删除竞态、restore generation、备份排除 |
-| 前端 | 类型/lint、权限表单、订阅额度/重置、按 Key 统计/趋势与错误筛选、浏览器截图与关键交互 |
-| 发行 | Linux amd64 无凭证 CI、镜像非 root、弱服务器混合长压及低磁盘、升级/备份/恢复/回退与旧服务替代演练 |
-| 真实兼容 | 显式授权账号与明确 Desktop 版本为主、CLI 补充；模型目录/文本/工具/预热/压缩/续接/出图/编辑逐项验证，不拿 fixture 当 live 证据 |
+变更负责人选择验证链路，并对选择和结果负责。判断时考虑失败影响、是否容易发现、能否恢复，以及已有 CI 的覆盖。先选能直接证明关键行为的检查，优先复用现有用例、自动 CI 和手工验收。评审有疑问时，指出具体的风险和缺少的证据。
 
-此文件维护检查定义及前提，实际运行结果、平台和局限随 PR 或活动变更报告，STATUS 仅维护公开状态。不要运行不存在的命令或把模板写成已通过；文档检查不需安装 Swift/npm 依赖。
+- 文案、样式或可逆的界面改动，可用静态检查或浏览器定向验收。布局、滚动或操作可达性受影响时，再检查窄屏。
+- 涉及权限、计费、协议、数据或恢复时，优先验证受影响的入口及最可能造成损失的故障路径。例如用旧库样本验证迁移和恢复，或经真实 socket 验证受影响的断流和重试行为。
+- 涉及镜像、安装或真实客户端兼容时，按影响选择对应环境验收。发布演练适用范围见[发版规则](releasing.md)。
 
-实际报告必须包含命令、平台、结果、覆盖与未覆盖场景。kill -9 不等于掉电测试，Mac 不等于 Linux，缓存重播不等于上游恢复，CLI 成功不等于账号池隔离或财务正确。
+自动 Verify 按工作流选择基础检查，正式发版由 tag 工作流执行发布门禁。PR 或变更记录简要说明实际执行的检查、平台、结果和重要的未覆盖范围。合成检查可证明受控场景的行为，真实客户端或上游兼容结论需要对应环境的证据。
 
 真实Desktop验收须记录实际应用/版本、设备及模型/提供者选择、受控操作的界面结果，并与服务端请求UUID/固定拒绝原因或执行账本关联。不能把同Key/相近时间的成功预热或生成当成失败界面对应请求，不能将CLI、渲染网页或另一设备配置替代真实Desktop。电脑工具不允许操作目标应用时明确记录限制，不通过其他UI接口规避；需用户协作的一次操作应在诊断准备后进行，不要求无证据连续重试。
+
+## 本地定向验证顺序
+
+开始时按改动范围集中查阅实现、现有用例和部署约束。可以独立运行的检查合并发起。涉及 SQLite schema 时，同一轮定位迁移入口、快照兼容、部署清单和历史夹具。
+
+实现具备运行条件后，先启动最可能暴露返工的定向检查，同时继续独立的开发工作。与同一构建产物有依赖的检查等构建完成后启动。集中收集结果，代码发生相关改动、检查失败或还有具体覆盖缺口时，再运行对应检查。合并前完成受影响能力的验收。
+
+复盘迭代耗时时，从现有日志取开工、首轮定向检查启动、命令完成和工具结果可读时间。分别比较命令实际运行时间与结果返回的间隔，并行区间按墙钟时间去重。把记录留在本次变更的工作记录里，使用相近范围的迭代比较。
+
+当前 SQLite schema 版本由 `codexone --schema-version` 输出。该命令无需配置，不访问数据库。镜像清单使用构建出的二进制输出，安装验证独立读取实际库的 `PRAGMA user_version` 核对清单。历史迁移夹具保留其原始版本号。
 
 ## 测试框架与入口职责
 
@@ -34,7 +38,7 @@ python3 scripts/check_docs.py
 
 两脚本失败时在清理前打印 `process.poll()`、保留的启动输出及当前可读的 stdout/stderr（合并流，尾部最多 64 KiB），不等待运行中进程的 EOF；临时目录、二进制路径和已知合成秘密会替换。该诊断只用于脚本自己创建的合成进程，不采集部署日志或真实账号数据。`verify_gateway_diagnostics.py` 覆盖启动失败、非零退出、无 EOF 的活进程、输出上限与脱敏。
 
-Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。SQLite/真实上游必须由各自实现追加测试，不能由健康入口推导。
+Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。需要验证 SQLite 或真实上游行为时，使用对应实现的入口和数据。
 
 前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。设置 `PW_TEST_CONNECT_WS_ENDPOINT` 时 Playwright 与 `web/scripts` 的实际界面脚本改为连接外部浏览器（`web/scripts/browser-server.mjs` 启动），供无法启动 Chrome 的 macOS 沙箱贡献者使用。依赖安装、浏览器准备和运行命令见贡献指南，CI 使用锁文件，测试默认不读账号/外部上游。
 
@@ -145,7 +149,7 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 
 四分片每次执行现有全部 34 项后端脚本，包含旧 Dockerfile verification target 的全部 18 项；`check_ci.py` 检查这层覆盖和所有分片入口，`backend_shards.py --check` 保证每项恰好归属一个分片。优化 codexone 来自候选镜像，ExecutionProbe 为同次 release 配置构建的测试程序，不进入产品镜像。传统 `docker build --target verification` 仍保留原检查供源码验收使用。Release 原本没有 Swift 单元测试/格式检查或前端完整测试，本次仍由常规 Verify 承担，不声称 Release 已增加这些证据。
 
-安装检查保留非 root/只读限制、SPA/auth/Key、锁、备份迁移与重启；旧 peer 参数可选，不默认构建固定 v8 历史镜像。需要旧二进制兼容或同库回退证据时，另外提供真实 peer 并运行定向演练。只用合成数据和 loopback 上游。
+安装检查覆盖非 root/只读运行、SPA/auth/Key、锁、备份迁移与重启，使用合成数据和 loopback 上游。实际旧镜像检查按需运行，见[发版规则](releasing.md#dry-run)。
 
 成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Dockerfile 的弱机器默认仍为 1，优化选项与每批 1 文件不变），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
 

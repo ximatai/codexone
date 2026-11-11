@@ -82,11 +82,15 @@ struct CodexOneMain {
   }
 
   private static func run() async throws {
-    let clock = WallClock.system
     let arguments = Array(CommandLine.arguments.dropFirst())
+    if arguments == ["--schema-version"] {
+      print(SQLiteConnection.schemaVersion)
+      return
+    }
+    let clock = WallClock.system
     if arguments == ["--help"] {
       print(
-        "Usage: codexone [--check-config | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_BUSINESS_DAY_OFFSET (UTC or +/-HH:00, -12:00...+14:00), CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners default to loopback; CODEXONE_LISTEN_ADDRESS adds a private literal address; CODEXONE_ALLOWED_NETWORKS optionally restricts source CIDRs."
+        "Usage: codexone [--check-config | --schema-version | --migrate | --import-keys ABSOLUTE_MANIFEST | --backup ABSOLUTE_NEW_BUNDLE | --restore ABSOLUTE_BUNDLE | --maintenance-status | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption | --verify-backup ABSOLUTE_BUNDLE | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]\nEnvironment: CODEXONE_BUSINESS_DAY_OFFSET (UTC or +/-HH:00, -12:00...+14:00), CODEXONE_DATA_PORT, CODEXONE_ADMIN_PORT (0 = ephemeral), CODEXONE_DATA_DIRECTORY CODEXONE_BACKUP_DIRECTORY CODEXONE_IDENTITY_CONFIG and CODEXONE_ADMIN_TOKEN_FILE and CODEXONE_WEB_DIRECTORY and CODEXONE_ACCOUNT_MASTER_KEY_FILE and CODEXONE_ACCOUNT_POOL_CONFIG (optional absolute paths), CODEXONE_ADMIN_PUBLIC_ORIGIN (optional trusted browser origin), CODEXONE_UPSTREAM_HTTP_PROXY (optional explicit HTTP proxy). Listeners default to loopback; CODEXONE_LISTEN_ADDRESS adds a private literal address; CODEXONE_ALLOWED_NETWORKS optionally restricts source CIDRs."
       )
       return
     }
