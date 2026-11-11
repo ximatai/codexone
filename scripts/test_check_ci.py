@@ -30,7 +30,7 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
             ("required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})", "required.add('backend-build')"),
-            ('if [[ "$VERIFY_EVENT" == pull_request ]]; then', 'if true; then'),
+            ('if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then', 'if true; then'),
             ('backend-build, backend-swift-tests, backend-scripts, frontend,', 'backend-build, backend-scripts, frontend,'),
             ('--testing-library swift-testing --no-parallel', '--testing-library swift-testing'),
             ('./scripts/verify.sh --backend-compile', './scripts/verify.sh --backend-build'),
