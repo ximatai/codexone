@@ -23,7 +23,7 @@ import { tokenTotal, type DailyBucket } from "./round2-api";
 import { Link } from "react-router";
 import { businessDate } from "../../shared/business-day";
 import { failures } from "../../shared/presentation";
-import { compactCount } from "./overview-format";
+import { compactCount, compactOverviewTokens } from "./overview-format";
 import styles from "./overview.module.css";
 import type { HourlyOutputRate } from "./useOverviewLive";
 const outputTrendHeight = 84;
@@ -224,7 +224,7 @@ export function OverviewStats({
       label: "Token",
       value:
         today && tokenTotal(today) !== null
-          ? compactCount(
+          ? compactOverviewTokens(
               BigInt(today.metrics.inputTokens!) +
                 BigInt(today.metrics.outputTokens!),
             )

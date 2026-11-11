@@ -91,9 +91,8 @@ function executionHealth(health: Snapshot["health"] | undefined) {
 function creditBalance(value: string | undefined) {
   if (value === undefined) return "上游未提供";
   if (value === "unlimited") return "不限额";
-  const [whole, fraction] = value.split(".");
-  const number = BigInt(whole).toLocaleString("zh-CN");
-  return fraction ? `${number}.${fraction}` : number;
+  const [whole] = value.split(".");
+  return BigInt(whole).toLocaleString("zh-CN");
 }
 
 export function AccountObservability({

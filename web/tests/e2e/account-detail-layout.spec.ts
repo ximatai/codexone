@@ -15,7 +15,7 @@ for (const width of [1920, 390]) {
           ...observation,
           quota: {
             ...observation.quota,
-            usageCredits: { balance: "12345.1234567890", unlimited: false },
+            usageCredits: { balance: "12345.9876543210", unlimited: false },
           },
         },
       }),
@@ -55,9 +55,7 @@ for (const width of [1920, 390]) {
     await expect(
       drawer.getByText("额外使用积分", { exact: true }),
     ).toBeVisible();
-    await expect(
-      drawer.getByText("12,345.1234567890", { exact: true }),
-    ).toBeVisible();
+    await expect(drawer.getByText("12,345", { exact: true })).toBeVisible();
     expect(primingReads).toBe(0);
     expect(resetReads).toBe(0);
     if (width === 390) {
