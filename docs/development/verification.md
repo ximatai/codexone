@@ -50,9 +50,13 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 另可显式选择 `--transport fallback --scenario tools`，在客户端开启 WS、合成网关仅提供 HTTP 的条件下核对同一工具轮的两次生成均走 HTTP，并核对真实写入次数及结算。另有 `--transport session-fallback --catalog default --scenario text`。本地测试入口对 WS 握手返回 426，固定客户端通过同一个 App Server 线程发三轮，断言首次 HTTP 成功后没有额外 WS 握手，并逐轮核对发往上游的有序用户和助手历史、客户端收到的助手回复、上游调用次数和每笔结算的用量。两项均不验证跨进程恢复后的传输策略。
 
+固定版本 CLI 的原生 WS 断线和中断验收使用 `scripts/verify_client_continuity.py`，分别传入 `--scenario prewarm-drop` 和 `--scenario late-interrupt`，两项都需要 `--binary`、`--codex` 和 `--expected-version`。第一项在预热后丢弃首个增量请求的上游连接，检查客户端在新连接重送开发者上下文、工具和用户输入，原执行保留未知。第二项通过 App Server 的 `turn/steer` 触发中断，测试中间层延迟实际客户端中断帧至原响应终态已到达，核对迟到回复、同一连接的后续响应和每笔用量。两项只使用回环合成上游。双账号后续轮 429 由 `poolNativeWebSocketRateLimitedContinuationDoesNotMoveToAnEligibleAccount` 覆盖。
+
 现有 `verify_websocket.py` 分片包含三项额外的合成协议回归：暂停读取期间的上游突发事件按序交付并结算一次；完成一轮后上游空闲断开，客户端重连并重送完整历史；同名顶层工具与命名空间工具在原生 WS、HTTP JSON 和 SSE 桥接的终态响应中保留各自的标识。暂停读取的场景不单独证明内核缓冲已耗尽。重连场景不假定旧响应 ID 一定只能在原物理连接使用，也不代替真实 CLI 或提供者验收。
 
 ## 真实网关与浏览器 CI
+
+GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Kernel.org 的 Ubuntu HTTPS 镜像，APT 继续验证 Ubuntu 签名。相关容器构建仅在安装依赖时使用该镜像，默认的本地构建沿用基础镜像软件源。
 
 前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用固定 Playwright 镜像及同次 `backend-build` 产物运行真实网关/浏览器测试。PR 只有选中后端检查才构建网关并要求该任务成功。纯前端 PR 只跑合成浏览器，接受网关与 SPA 的联调回归在合并到 main 后才发现。需要合并前验收真实栈时，可手动运行 Verify；main 推送也总是运行。
 

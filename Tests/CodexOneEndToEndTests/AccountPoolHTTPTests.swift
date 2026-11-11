@@ -36,6 +36,17 @@ private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
   ])
 }
 private func poolRefusalEvents(_ input: String?, response: JSONValue) -> [JSONValue]? {
+  if input == "rate-limit-continuation" {
+    return [
+      .object([
+        "type": .string("error"), "status": .number(429),
+        "error": .object([
+          "code": .string("usage_limit_reached"), "message": .string("Synthetic quota limit"),
+          "headers": .object(["retry-after": .string("120")]),
+        ]),
+      ])
+    ]
+  }
   guard let input,
     ["refuse-error", "refuse-failed", "output-error", "overload-error"].contains(input)
   else {
@@ -1068,6 +1079,55 @@ func poolNativeWebSocketPinsAllLanesAndFinalizesEachTurnWhileConnectionLives() a
     #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
     let total = try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") }
     #expect(total == 4)
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketRateLimitedContinuationDoesNotMoveToAnEligibleAccount() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let original = try PoolWSClient(h)
+    defer { original.close() }
+    _ = try await original.read()
+    let first = try await original.command()
+    let previous = try #require(first["response"]?["id"]?.string)
+    let owner = try #require(h.calls.first?.account)
+
+    let rejected = try await original.command([
+      "input": .string("rate-limit-continuation"), "previous_response_id": .string(previous),
+    ])
+    #expect(rejected["type"]?.string == "error" && rejected["status"]?.integer == 429)
+    #expect(rejected["error"]?["code"]?.string == "usage_limit_reached")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.map(\.account) == [owner, owner])
+    #expect(h.calls.last?.previous == previous)
+    let ownerID = owner.replacingOccurrences(of: "synthetic-", with: "")
+    let cooldowns = try await h.store.accountHealth(id: ownerID).cooldowns
+    #expect(cooldowns.count == 1)
+    #expect(cooldowns.first?.model == "synthetic-text" && cooldowns.first?.failure == .rateLimited)
+    let other = try #require(try await h.store.listAccounts().first { $0.id != ownerID })
+    #expect(try await h.store.accountHealth(id: other.id).cooldowns.isEmpty)
+
+    let fresh = try PoolWSClient(h)
+    defer { fresh.close() }
+    _ = try await fresh.read()
+    #expect(try await fresh.command()["type"]?.string == "response.completed")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.map(\.account) == [owner, owner, "synthetic-\(other.id)"])
+    #expect(h.calls.last?.previous == nil)
+    let rows = try await h.store.perform {
+      try $0.rows("SELECT state,usage_json FROM attempts ORDER BY rowid") { statement in
+        (
+          String(cString: sqlite3_column_text(statement, 0)),
+          sqlite3_column_text(statement, 1).map { String(cString: $0) }
+        )
+      }
+    }
+    #expect(rows.map(\.0) == ["settled", "settled", "settled"])
+    let usage = try rows.map { row in
+      let json = try #require(row.1)
+      return try JSONValue.decode(Data(json.utf8))
+    }
+    #expect(usage.map { $0["inputTokens"]?.integer } == [2, 0, 2])
   }
 }
 

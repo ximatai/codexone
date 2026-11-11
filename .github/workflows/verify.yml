@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  CODEXONE_CI_APT_MIRROR: https://mirrors.edge.kernel.org/ubuntu
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
@@ -69,8 +71,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install verification prerequisite
         run: |
-          apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=2 update
-          apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=2 install -y --no-install-recommends python3 libsqlite3-dev zstd
+          sed -i -E "s@http://(archive|security)\.ubuntu\.com/ubuntu@$CODEXONE_CI_APT_MIRROR@g" /etc/apt/sources.list.d/ubuntu.sources
+          apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=20 -o Acquire::Retries=2 update
+          apt-get -o Acquire::https::Timeout=20 -o Acquire::Retries=2 install -y --no-install-recommends python3 libsqlite3-dev zstd
           tar --version && zstd --version && gzip --version
       # Every run restores; only main pushes save, so PR pushes cannot fill the cache quota.
       - name: Restore incremental Swift build cache
@@ -266,7 +269,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the development container
-        run: docker build -t codexone-dev .devcontainer
+        run: docker build --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" -t codexone-dev .devcontainer
       - name: Build backend and check frontend inside it
         run: >-
           docker run --rm -v "$PWD":/workspace -w /workspace codexone-dev bash -c
