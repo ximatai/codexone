@@ -103,8 +103,8 @@ def check_live_browser(workflow):
     assert condition in live, 'Real browser must follow backend selection'
     assert "required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
         'Final gate must require all real backend checks together')
-    assert 'if [[ "$VERIFY_EVENT" == pull_request ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
-        'Only PRs may use the quick protocol matrix')
+    assert 'if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
+        'PRs and main pushes use quick checks; manual Verify uses the full matrix')
 
 
 def check():

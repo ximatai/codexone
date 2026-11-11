@@ -11,6 +11,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   changes:
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
@@ -28,11 +31,21 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           if [[ "$EVENT" == pull_request ]]; then
             git diff --name-only -z --no-renames "$BASE...$HEAD" > "$RUNNER_TEMP/changed-paths"
             bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths" >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT" == push ]] &&
+            git diff --name-only -z --no-renames "$PUSH_BEFORE" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths" &&
+            selection="$(bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths")" &&
+            [[ "$selection" == $'backend=false\nfrontend=false\ndevcontainer=false' ]] &&
+            [[ "$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --branch main \
+              --event push --commit "$PUSH_BEFORE" --status success --limit 1 \
+              --json databaseId --jq 'length > 0')" == true ]]; then
+            printf '%s\n' "$selection" >> "$GITHUB_OUTPUT"
           else
             bash scripts/ci_changes.sh --all >> "$GITHUB_OUTPUT"
           fi
@@ -164,7 +177,7 @@ jobs:
           VERIFY_EVENT: ${{ github.event_name }}
         run: |
           args=()
-          if [[ "$VERIFY_EVENT" == pull_request ]]; then
+          if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then
             args+=(--pr)
           fi
           ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}"
