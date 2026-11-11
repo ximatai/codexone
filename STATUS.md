@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.27](https://github.com/ximatai/codexone/releases/tag/v0.26.27)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.28](https://github.com/ximatai/codexone/releases/tag/v0.26.28)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.28 缩短主分支日常验证，收敛重复浏览器用例，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
 v0.26.27 统一镜像清单的 schema 版本来源，按风险选择开发验证和旧镜像验收，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
