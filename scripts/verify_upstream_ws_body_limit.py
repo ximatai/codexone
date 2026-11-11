@@ -23,6 +23,7 @@ from verify_json_order import SCHEMA, wire
 
 LIMIT = 16 * 1024 * 1024
 ROUTING = 12 * 1024 * 1024
+ONE_MIB = 1024 * 1024
 HEADERS = {'session-id': 'synthetic-large-session', 'x-codex-turn-state': 'synthetic-state'}
 
 
@@ -415,6 +416,32 @@ def verify_small_body_budget(port, server, contract):
     return 2
 
 
+def verify_native_fragments(port, server, root, contract, count):
+    request = sized(ONE_MIB + 1024, contract, native=True)
+    message = wire({'type': 'response.create', **request})
+    first, remainder = message[:ONE_MIB], message[ONE_MIB:]
+    assert len(first) == ONE_MIB and remainder
+    before = len(server.calls)
+    for complete in (False, True):
+        with dial(port, headers=HEADERS, timeout=15) as peer:
+            send(peer, first, masked=True, fin=False, maximum_bytes=ONE_MIB)
+            # The pong proves the ingress processed the first fragment before these checks.
+            send(peer, b'synthetic-fragment-barrier', masked=True, opcode=9)
+            assert receive(peer) == (10, b'synthetic-fragment-barrier')
+            assert len(server.calls) == before
+            ledger(root, count)
+            if complete:
+                send(peer, remainder, masked=True, opcode=0)
+                opcode, data = receive(peer)
+                assert opcode == 1 and json.loads(data)['type'] == 'response.completed'
+    state, outcome, usage = ledger(root, count + 1)[-1]
+    assert state == 'settled' and outcome['kind'] == 'succeeded'
+    assert (usage['inputTokens'], usage['outputTokens']) == (5, 3)
+    assert [(path, body) for path, body, _ in server.calls[before:]] == [
+        ('websocket', frame(request, contract, native=True))]
+    return 1
+
+
 def verify_lane_close(port, server, root, contract, count, repetitions=12):
     for iteration in range(repetitions):
         queued = iteration >= repetitions - 4
@@ -494,13 +521,14 @@ def main():
                         if not args.smoke:
                             count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
+                        count += verify_native_fragments(ports['data'], server, root, contract, count)
                         for route in ('json', 'sse', 'native'):
                             sizes = {
                                 'json': (ROUTING, ROUTING + 1),
                                 'sse': (ROUTING + 1,),
                                 'native': (ROUTING,),
                             }[route] if args.smoke else (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1)
-                            for size in sizes:
+                            for size in (ONE_MIB - 1, ONE_MIB, ONE_MIB + 1, *sizes):
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
                                                 image_count=3 if route == 'sse' else 1)
                                 before = len(server.calls)
@@ -522,7 +550,10 @@ def main():
                                     else:
                                         assert json.loads(body)['status'] == 'completed'
                                 count += 1
-                                assert ledger(root, count)[-1][0] == 'settled'
+                                state, outcome, usage = ledger(root, count)[-1]
+                                assert state == 'settled' and outcome['kind'] == 'succeeded'
+                                assert (usage['inputTokens'], usage['outputTokens']) == (5, 3)
+                                assert len(server.calls) == before + 1
                                 path, raw, headers = server.calls[before]
                                 expected_headers = dict(HEADERS)
                                 if path == 'websocket' and contract == 'codex-subscription':
@@ -583,7 +614,10 @@ def main():
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
                         for streaming in (False, True):
-                            request = sized(9 * 1024 * 1024 if not args.smoke and mode == "close" and contract == "codex-subscription" and not streaming else 2048, contract, streaming=streaming)
+                            size = ONE_MIB + 1 if mode == 'close' else 2048
+                            if not args.smoke and mode == 'close' and contract == 'codex-subscription' and not streaming:
+                                size = 9 * ONE_MIB
+                            request = sized(size, contract, streaming=streaming)
                             before = len(server.calls)
                             status, headers, body = call_http(ports['data'], request)
                             assert status == (413 if mode.endswith('reject') else 200), (mode, status, body)
@@ -612,7 +646,8 @@ def main():
                         for mode in ('close', 'metadata') * (1 if args.smoke else 4):
                             server.mode = mode
                             before = len(server.calls)
-                            result = native(peer, sized(2048, contract, native=True))
+                            result = native(peer, sized(ONE_MIB + 1 if mode == 'close' else 2048,
+                                                        contract, native=True))
                             assert result['status'] == 413, result
                             error(wire(result))
                             server.mode = 'ok'
@@ -642,7 +677,8 @@ def main():
                     for mode in ('created', 'extension', 'extension_response', 'extension_identity', 'other', 'drop'):
                         server.mode = mode
                         before = len(server.calls)
-                        status, _, body = call_http(ports['data'], sized(1024, contract))
+                        size = ONE_MIB + 1 if mode == 'created' else 1024
+                        status, _, body = call_http(ports['data'], sized(size, contract))
                         assert status == 502 and json.loads(body)['error']['code'] == 'execution_indeterminate', (mode, status, body)
                         assert [c[0] for c in server.calls[before:]] == ['websocket']
                         count += 1
