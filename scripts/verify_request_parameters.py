@@ -12,6 +12,22 @@ import time
 from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, FIXTURE, call, rows
 
+
+def verify_namespaced_tool_output(port, route, base, server):
+    developer = dict(role='developer', content='synthetic plugin context')
+    result = dict(type='function_call_output', name='synthetic_snapshot',
+                  namespace='synthetic_browser', output='{"page_id":null}')
+    before = server.calls
+    status, events = call(port, route, {**base, 'input': [
+        developer, {**result, 'id': 'synthetic-client-local-output'},
+    ]})
+    assert status == 200 and 'error' not in events[-1], (route, status, events[-1])
+    assert server.calls == before + 1, 'Unexpected plugin result replay'
+    wire = server.received[-1]
+    assert wire['input'] == [developer, result], (route, wire['input'])
+    assert wire['instructions'] == base['instructions']
+
+
 class Provider(WireProvider):
     def do_GET(self):
         with self.server.guard: self.server.upgrades += 1
@@ -140,6 +156,8 @@ def main():
                                 assert events[-1]['error']['code']=='unsupported_backend_parameter'
                                 assert route=='native' or status==400
                                 assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts
+                                verify_namespaced_tool_output(ports['data'], route, base, server)
+                                total += 1
                             else:
                                 assert wire['input']==base['input'] and 'store' not in wire
                                 if transport=='websocket': assert 'stream' not in wire

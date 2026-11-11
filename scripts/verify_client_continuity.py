@@ -24,6 +24,12 @@ DEVELOPER = 'Synthetic continuity developer marker'
 FIRST = 'Synthetic first request. Reply with text only.'
 NEXT = 'Synthetic steering follow-up. Reply with text only.'
 NEXT_REPLY = 'Synthetic follow-up response received.'
+INCOMPLETE_REASON = 'invalid_recipient'
+INCOMPLETE_TOKENS = (7, 3)
+PARTIAL_CALL = dict(type='function_call', id='fc_synthetic_incomplete',
+                    call_id='call_synthetic_incomplete', name='synthetic_unavailable',
+                    arguments='{}', status='incomplete')
+INCOMPLETE_SCENARIOS = ('incomplete-with-usage', 'incomplete-without-usage')
 
 
 class ContinuityTrial(ObservedTrial):
@@ -43,6 +49,18 @@ class ContinuityTrial(ObservedTrial):
             yield from events
         elif self.server.scenario == 'prewarm-drop':
             self.connection.shutdown(socket.SHUT_RDWR)
+        elif self.server.scenario in INCOMPLETE_SCENARIOS:
+            response = events[-1]['response']
+            response.update(status='incomplete', output=[PARTIAL_CALL],
+                            incomplete_details={'reason': INCOMPLETE_REASON})
+            if self.server.scenario == 'incomplete-without-usage':
+                response.pop('usage')
+            else:
+                input_tokens, output_tokens = INCOMPLETE_TOKENS
+                response['usage'].update(input_tokens=input_tokens, output_tokens=output_tokens,
+                                         total_tokens=input_tokens + output_tokens)
+            yield events[0]
+            yield dict(type='response.incomplete', response=response)
         else:
             yield from events[:-1]
             assert self.server.release_terminal.wait(10), 'Client did not send an interrupt'
@@ -50,8 +68,8 @@ class ContinuityTrial(ObservedTrial):
 
 
 @contextmanager
-def interrupt_edge(gateway_port, provider):
-    """Delay the real client's interrupt until the gateway has forwarded the terminal."""
+def observe_edge(gateway_port, provider):
+    """Observe incomplete frames or delay the real client's interrupt past the terminal."""
     trace = []
 
     class Edge(BaseHTTPRequestHandler):
@@ -92,6 +110,8 @@ def interrupt_edge(gateway_port, provider):
                     except (EOFError, ConnectionResetError):
                         return
                     event = json.loads(payload) if opcode == 1 else {}
+                    if not from_client and event.get('type') == 'response.incomplete':
+                        trace.append(event['response'])
                     if from_client and event.get('type') == 'response.interrupt':
                         assert pending is None and terminal is None, 'Unexpected duplicate interrupt'
                         pending = (payload, event['response_id'])
@@ -166,6 +186,36 @@ def late_interrupt(codex, work, environment, provider, trace):
     return ['settled'] * 3
 
 
+def incomplete_recovery(codex, work, environment, provider, trace):
+    with app_server(codex, work, environment) as (thread, request, until, replies):
+        turn = start_turn(request, thread, FIRST, 3)
+        event = until(lambda item: item.get('method') == 'turn/completed'
+                      and item['params']['turn']['id'] == turn)
+        assert event['params']['threadId'] == thread
+        failed = event['params']['turn']
+        assert failed['status'] == 'failed' and INCOMPLETE_REASON in failed['error']['message']
+        followup = start_turn(request, thread, NEXT, 4)
+        assert finished_turn(until, thread, followup) == 'completed'
+        assert replies[(thread, followup)] == [TEXT]
+    with provider.guard:
+        creates = list(provider.creates)
+    assert len(creates) == 3, 'Expected exactly one prewarm and two generated requests'
+    (_, warm, _), (_, first, response_id), (_, next_request, _) = creates
+    assert warm.get('generate') is False
+    assert all(request.get('generate') is not False for request in (first, next_request))
+    assert FIRST in json.dumps(first['input']) and NEXT in json.dumps(next_request['input'])
+    assert all(item.get('call_id') != PARTIAL_CALL['call_id'] for item in next_request['input'])
+    assert len(trace) == 1 and trace[0]['id'] == response_id
+    terminal = trace[0]
+    assert terminal['status'] == 'incomplete' and terminal['output'] == [PARTIAL_CALL]
+    assert terminal['incomplete_details'] == {'reason': INCOMPLETE_REASON}
+    if provider.scenario == 'incomplete-without-usage':
+        assert terminal.get('usage') is None
+        return ['settled', 'unknown', 'settled']
+    assert (terminal['usage']['input_tokens'], terminal['usage']['output_tokens']) == INCOMPLETE_TOKENS
+    return ['settled'] * 3
+
+
 def run(args):
     provider = Server(('127.0.0.1', 0), [MODEL])
     provider.RequestHandlerClass = ContinuityTrial
@@ -191,10 +241,10 @@ def run(args):
             config.chmod(0o600)
             gateway, ports = start(str(args.binary.resolve()), config, root)
             try:
-                if args.scenario == 'late-interrupt':
-                    edge = interrupt_edge(ports['data'], provider)
-                else:
+                if args.scenario == 'prewarm-drop':
                     edge = nullcontext((ports['data'], None))
+                else:
+                    edge = observe_edge(ports['data'], provider)
                 with edge as (port, trace):
                     (home/'config.toml').write_text(f'''model_provider = "synthetic"
 model = "{MODEL}"
@@ -207,7 +257,7 @@ wire_api = "responses"
 env_key = "SYNTHETIC_CLIENT_KEY"
 requires_openai_auth = false
 supports_websockets = true
-stream_max_retries = {1 if trace is None else 0}
+stream_max_retries = {0 if args.scenario == 'late-interrupt' else 1}
 request_max_retries = 0
 [analytics]
 enabled = false
@@ -216,23 +266,30 @@ enabled = false
 ''')
                     environment = dict(PATH=os.defpath, CODEX_HOME=str(home),
                                        SYNTHETIC_CLIENT_KEY=TOKEN, OTEL_SDK_DISABLED='true')
-                    if trace is None:
+                    if args.scenario == 'prewarm-drop':
                         expected = prewarm_recovery(args.codex, work, environment, provider)
-                    else:
+                    elif args.scenario == 'late-interrupt':
                         expected = late_interrupt(args.codex, work, environment, provider, trace)
+                    else:
+                        expected = incomplete_recovery(args.codex, work, environment, provider, trace)
             finally:
                 stop(gateway)
             with sqlite3.connect(root/'state/core.sqlite') as db:
-                rows = db.execute('SELECT state, usage_json FROM attempts ORDER BY rowid').fetchall()
+                rows = db.execute('SELECT state, usage_json, outcome_json FROM attempts ORDER BY rowid').fetchall()
             assert len(rows) == len(provider.creates)
-            assert [state for state, _ in rows] == expected, [state for state, _ in rows]
-            for (_, request, _), (state, usage_json) in zip(provider.creates, rows):
+            assert [state for state, _, _ in rows] == expected, [state for state, _, _ in rows]
+            if args.scenario in INCOMPLETE_SCENARIOS:
+                outcome = json.loads(rows[1][2])
+                assert outcome['kind'] == 'failed' and outcome['upstreamIncompleteReason'] == 'unspecified'
+            for index, ((_, request, _), (state, usage_json, _)) in enumerate(zip(provider.creates, rows)):
                 if state == 'unknown':
                     assert usage_json is None
                 else:
                     usage = json.loads(usage_json)
-                    tokens = 0 if request.get('generate') is False else 1
-                    assert (usage['inputTokens'], usage['outputTokens']) == (tokens, tokens)
+                    expected_tokens = (0, 0) if request.get('generate') is False else (1, 1)
+                    if index == 1 and args.scenario == 'incomplete-with-usage':
+                        expected_tokens = INCOMPLETE_TOKENS
+                    assert (usage['inputTokens'], usage['outputTokens']) == expected_tokens
             print(f'PASS: {args.scenario}; {len(rows)} provider creates match durable attempts')
     finally:
         provider.release_terminal.set()
@@ -246,7 +303,7 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--codex', required=True)
     parser.add_argument('--expected-version', required=True)
-    parser.add_argument('--scenario', choices=['prewarm-drop', 'late-interrupt'], required=True)
+    parser.add_argument('--scenario', choices=['prewarm-drop', 'late-interrupt', *INCOMPLETE_SCENARIOS], required=True)
     args = parser.parse_args()
     version = subprocess.check_output([args.codex, '--version'], text=True, timeout=10).strip().split()[-1]
     assert version == args.expected_version, 'Client version differs from the acceptance version'

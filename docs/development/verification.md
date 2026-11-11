@@ -26,6 +26,8 @@ python3 scripts/check_docs.py
 
 真实Desktop验收须记录实际应用/版本、设备及模型/提供者选择、受控操作的界面结果，并与服务端请求UUID/固定拒绝原因或执行账本关联。不能把同Key/相近时间的成功预热或生成当成失败界面对应请求，不能将CLI、渲染网页或另一设备配置替代真实Desktop。电脑工具不允许操作目标应用时明确记录限制，不通过其他UI接口规避；需用户协作的一次操作应在诊断准备后进行，不要求无证据连续重试。
 
+线上验收复用同一枚长期专用测试 Key，并按测试范围限制可用模型、每日 Token 上限和并发。平时保持停用，测试开始前启用，测试结束后立即停用并确认状态。测试失败或中断也须执行停用。自动化在清理路径中完成停用，验收记录只保留请求 UUID 和必要的结果，不记录 Key 原值或认证头。
+
 ## 本地定向验证顺序
 
 开始时按改动范围集中查阅实现、现有用例和部署约束。可以独立运行的检查合并发起。涉及 SQLite schema 时，同一轮定位迁移入口、快照兼容、部署清单和历史夹具。
@@ -51,6 +53,10 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 另可显式选择 `--transport fallback --scenario tools`，在客户端开启 WS、合成网关仅提供 HTTP 的条件下核对同一工具轮的两次生成均走 HTTP，并核对真实写入次数及结算。另有 `--transport session-fallback --catalog default --scenario text`。本地测试入口对 WS 握手返回 426，固定客户端通过同一个 App Server 线程发三轮，断言首次 HTTP 成功后没有额外 WS 握手，并逐轮核对发往上游的有序用户和助手历史、客户端收到的助手回复、上游调用次数和每笔结算的用量。两项均不验证跨进程恢复后的传输策略。
 
 固定版本 CLI 的原生 WS 断线和中断验收使用 `scripts/verify_client_continuity.py`，分别传入 `--scenario prewarm-drop` 和 `--scenario late-interrupt`，两项都需要 `--binary`、`--codex` 和 `--expected-version`。第一项在预热后丢弃首个增量请求的上游连接，检查客户端在新连接重送开发者上下文、工具和用户输入，原执行保留未知。第二项通过 App Server 的 `turn/steer` 触发中断，测试中间层延迟实际客户端中断帧至原响应终态已到达，核对迟到回复、同一连接的后续响应和每笔用量。两项只使用回环合成上游。双账号后续轮 429 由 `poolNativeWebSocketRateLimitedContinuationDoesNotMoveToAnEligibleAccount` 覆盖。
+
+同一脚本的 `incomplete-with-usage` 和 `incomplete-without-usage` 使用合成的 `response.incomplete`，核对客户端收到 `invalid_recipient`、下游帧保留未完成的工具调用、同一会话下一轮成功且失败轮未重放。有完整用量时失败轮结算，缺少用量时账本保留未知。
+
+`scripts/verify_request_parameters.py` 检查订阅路径中的命名空间工具结果缺少 `call_id` 时的转发，覆盖 HTTP JSON、SSE 和原生 WS，逐项对比上游收到的开发者消息、工具结果及顺序，只移除客户端本地 `id`。`scripts/verify_lite.py` 检查顶层托管工具与 `additional_tools` 共存时，独立 compact 端点和流内压缩均保留工具声明的位置，续接请求完整转发返回的压缩上下文及工具声明。两项使用合成上游，实际 Desktop 插件运行及提供者执行托管工具仍需分别验收。
 
 现有 `verify_websocket.py` 分片包含三项额外的合成协议回归：暂停读取期间的上游突发事件按序交付并结算一次；完成一轮后上游空闲断开，客户端重连并重送完整历史；同名顶层工具与命名空间工具在原生 WS、HTTP JSON 和 SSE 桥接的终态响应中保留各自的标识。暂停读取的场景不单独证明内核缓冲已耗尽。重连场景不假定旧响应 ID 一定只能在原物理连接使用，也不代替真实 CLI 或提供者验收。
 
