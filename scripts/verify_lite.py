@@ -17,10 +17,20 @@ LITE_KEY='ws_request_header_x_openai_internal_codex_responses_lite'
 TOOL=dict(type='function',name='synthetic_echo',description='é'*32769,parameters=dict(type='object'))
 PACKAGE=dict(type='additional_tools',role='developer',id='at_synthetic_local',tools=[TOOL])
 INPUT=[dict(role='developer',content='synthetic-before'),PACKAGE,dict(role='user',content='synthetic-after')]
+MIXED_PACKAGE = {**PACKAGE, 'tools': [{**TOOL, 'description': 'Synthetic incremental tool'}]}
+HOSTED_TOOLS = [dict(type='web_search')]
 
 
 class Observed(Handler):
     def events(self,document):
+        if self.server.mixed_requests is not None:
+            if self.command == 'POST':
+                assert self.headers.get('x-openai-internal-codex-responses-lite') == 'true'
+            else:
+                assert document['client_metadata'][LITE_KEY] == 'true'
+            with self.server.guard:
+                self.server.mixed_requests.append((self.command, self.path, document))
+            return super().events(document)
         if getattr(self.server,'expected_large',None) is not None:
             expected=self.server.expected_large
             assert document['input']==expected['input'] and document['tools']==expected['tools']
@@ -47,6 +57,68 @@ class Observed(Handler):
         return events
 
 
+def verify_mixed_compaction(port, prefix, route, transport, server):
+    developer = dict(role='developer', content='synthetic mixed tool context')
+    user = dict(role='user', content='synthetic compact this turn')
+    next_user = dict(role='user', content='synthetic continue with the tools')
+    trigger = dict(type='compaction_trigger')
+    declarations = dict(model=MODEL, tools=HOSTED_TOOLS)
+
+    def post(path, payload, streaming=False):
+        status, body = connect(port, 'POST', prefix+path, {**payload, 'stream': streaming})
+        assert status == 200, (route, status, body)
+        if not streaming:
+            return json.loads(body)
+        events = [json.loads(line[6:]) for line in body.splitlines()
+                  if line.startswith(b'data: ') and line[6:] != b'[DONE]']
+        assert events[-1]['type'] == 'response.completed', (route, events[-1])
+        return events[-1]['response']
+
+    def compact_and_continue(compact, resume, input_items):
+        compacted = compact({**declarations, 'input': input_items})
+        window = compacted['output']
+        assert len(window) == 1 and window[0]['type'] == 'compaction'
+        expected_window = 'synthetic-trial-compact-' if route == 'explicit' else 'synthetic-trial-context-'
+        assert window[0]['encrypted_content'].startswith(expected_window)
+        resumed = resume({**declarations, 'input': [developer, *window, MIXED_PACKAGE, next_user]})
+        assert resumed['status'] == 'completed' and resumed['output'][0]['type'] == 'message'
+        with server.guard:
+            requests = list(server.mixed_requests)
+        assert len(requests) == 2, (route, len(requests))
+        (compact_method, compact_path, first), (resume_method, resume_path, second) = requests
+        ordinary_method = 'GET' if transport == 'websocket' else 'POST'
+        expected_compact = ('POST', '/v1/responses/compact') if route == 'explicit' else (
+            ordinary_method, '/v1/responses')
+        assert (compact_method, compact_path) == expected_compact
+        assert (resume_method, resume_path) == (ordinary_method, '/v1/responses')
+        package = {key: value for key, value in MIXED_PACKAGE.items() if key != 'id'}
+        assert first['input'] == [developer, package, *input_items[2:]], (route, first['input'])
+        assert second['input'] == [developer, *window, package, next_user], (route, second['input'])
+        assert first['tools'] == second['tools'] == HOSTED_TOOLS
+
+    server.mixed_requests = []
+    try:
+        initial = [developer, MIXED_PACKAGE, user]
+        if route == 'native':
+            with dial(port, path=prefix+'/responses') as sock:
+                def native(payload):
+                    event = turn(sock, payload)[-1]
+                    assert event['type'] == 'response.completed', event
+                    return event['response']
+
+                compact_and_continue(native, native, [*initial, trigger])
+        elif route == 'explicit':
+            compact_and_continue(lambda payload: post('/responses/compact', payload),
+                                 lambda payload: post('/responses', payload), initial)
+        else:
+            def inline(payload):
+                return post('/responses', payload, streaming=route == 'sse')
+
+            compact_and_continue(inline, inline, [*initial, trigger])
+    finally:
+        server.mixed_requests = None
+
+
 def counts(root):
     with sqlite3.connect(root/'state/core.sqlite') as db:
         return (db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0],
@@ -57,6 +129,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True)
     binary=str(parser.parse_args().binary.resolve())
     server=Server(('127.0.0.1',0),[MODEL]);server.RequestHandlerClass=Observed
+    server.mixed_requests = None
     thread=threading.Thread(target=server.serve_forever);thread.start()
     try:
         for transport in ('http','websocket'):
@@ -78,6 +151,10 @@ def main():
                             with dial(ports['data'],path=prefix+'/responses') as sock:
                                 events=turn(sock,dict(model=MODEL,input=INPUT))
                                 assert events[-1]['type']=='response.completed'
+                        for route in ('explicit', 'json', 'sse'):
+                            verify_mixed_compaction(ports['data'], prefix, route, transport, server)
+                        if transport == 'websocket':
+                            verify_mixed_compaction(ports['data'], prefix, 'native', transport, server)
                     # Long function/custom/namespace descriptions must arrive intact, not truncated.
                     server.expected_large=dict(input='synthetic-large-top',tools=[dict(type='namespace',name='synthetic_ns',
                         description='n'*65537,tools=[TOOL,dict(type='custom',name='synthetic_custom',description='c'*65537)])])
@@ -121,7 +198,7 @@ def main():
                                 opcode,data=receive(sock);event=json.loads(data)
                                 assert opcode==1 and event['type']=='error'
                     assert counts(root)==before and server.sequence==calls, 'Rejected declaration/reference dispatched or changed ownership'
-                    print(f'PASS: Lite {transport}, both prefixes, long descriptions forwarded intact, ordered forwarding, {len(invalid)*(2 if transport=="websocket" else 1)+1} rejection cases without dispatch',flush=True)
+                    print(f'PASS: Lite {transport}, both prefixes, ordered tools across compaction and continuation, long descriptions forwarded intact, {len(invalid)*(2 if transport=="websocket" else 1)+1} rejection cases without dispatch',flush=True)
                 finally:stop(process)
     finally:server.interrupt();server.server_close();thread.join(5)
     assert not thread.is_alive() and not server.sockets
