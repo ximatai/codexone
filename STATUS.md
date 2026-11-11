@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.26](https://github.com/ximatai/codexone/releases/tag/v0.26.26)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.27](https://github.com/ximatai/codexone/releases/tag/v0.26.27)**（2026-11-11），核心数据库 schema v14。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.27 统一镜像清单的 schema 版本来源，按风险选择开发验证和旧镜像验收，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
 v0.26.26 调整首页 Token 卡的量级单位和账号详情的积分余额显示，沿用 schema v14。见[发布说明](CHANGELOG.md)。
 
