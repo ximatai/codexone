@@ -38,7 +38,7 @@ docker image inspect codexone:candidate --format '{{.Id}}'
 
 GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖取成 `OWNER/REPO.git` 布局的本地裸仓库目录，构建时追加 `--build-context swiftpm-mirrors=<该目录>`；仅这两次 Swift 构建把 GitHub 地址改写到只读挂载的镜像，不写入镜像层，锁定版本不变。默认上下文为空，行为与直接联网相同。npm 官方源受限时同理可加 `--build-arg NPM_REGISTRY=<镜像源>`，lockfile 完整性哈希仍逐包校验。Ubuntu 源受限时可加 `--build-arg APT_MIRROR=<镜像源 /ubuntu 地址>`，仅在安装期间替换，结束后恢复原源配置。
 
-镜像标签和 `/opt/release.json` 保存源码 revision/version，release manifest 另声明 schemaVersion=11；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；Swift release 保留 `-O` 和单并发、默认每批1文件（SWIFT_BATCH_LIMIT），仅大型 Adapters target 关闭 whole-module optimization 以减少单次编译峰值（不代表运行容量）；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images、快照/主密钥/存储观测及合成迁移切回失败路径，之后组装运行层。运行候选在优化构建后剥离DWARF调试段，保留可执行代码和普通符号表，验证/归档以剥离后的同一程序为准。运行层没有编译器、Node、Python 或源码测试。
+镜像标签和 `/opt/release.json` 保存源码 revision/version，镜像清单从构建出的二进制读取并记录 schema 版本；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；Swift release 保留 `-O` 和单并发、默认每批1文件（SWIFT_BATCH_LIMIT），仅大型 Adapters target 关闭 whole-module optimization 以减少单次编译峰值（不代表运行容量）；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images、快照/主密钥/存储观测及合成迁移切回失败路径，之后组装运行层。运行候选在优化构建后剥离DWARF调试段，保留可执行代码和普通符号表，验证/归档以剥离后的同一程序为准。运行层没有编译器、Node、Python 或源码测试。
 
 项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
 

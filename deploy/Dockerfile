@@ -115,11 +115,13 @@ LABEL org.opencontainers.image.title="CodexOne" \
       org.opencontainers.image.version=${VERSION} \
       org.opencontainers.image.revision=${SOURCE_REVISION} \
       org.opencontainers.image.licenses="MIT"
+COPY --from=backend /output/codexone /usr/local/bin/codexone
 RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
     && test "${#SOURCE_REVISION}" = 40 \
     && case "${VERSION}" in *[!A-Za-z0-9._-]*|'') exit 1;; esac \
-    && printf '{"revision":"%s","version":"%s","schemaVersion":14}\n' "$SOURCE_REVISION" "$VERSION" > /opt/release.json
-COPY --from=backend /output/codexone /usr/local/bin/codexone
+    && schema_version="$(/usr/local/bin/codexone --schema-version)" \
+    && printf '{"revision":"%s","version":"%s","schemaVersion":%s}\n' \
+      "$SOURCE_REVISION" "$VERSION" "$schema_version" > /opt/release.json
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
 COPY --from=backend /output/licenses/ /opt/codexone/licenses/swift/

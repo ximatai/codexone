@@ -16,18 +16,7 @@
 
 ## 验证与评审
 
-测试覆盖真实外部接口的失败和部分失败：取消、超时、断流、并发竞争、存储不可写与重启。helper 成功不等于协议/恢复验收；合成结果不等于实际客户端/提供者兼容。按影响范围运行定向检查，合并前完成相关验收，如实报告平台和局限。UI 在浏览器操作关键流程并检查大屏和窄屏，只用合成截图。
-
-```sh
-python3 scripts/check_docs.py
-./scripts/verify.sh --backend
-./scripts/verify.sh --web --chrome
-npm --prefix web run lint
-npm --prefix web run format:check
-npm --prefix web test
-```
-
-环境准备、构建与测试细节见[贡献指南](CONTRIBUTING.md)。
+变更负责人按业务风险选择验证链路，并对验收结果负责。优先复用已有测试和自动 CI，补足本次改动影响的关键行为与故障场景。交付时说明实际验证和重要的未覆盖范围。验证方法见[验证约定](docs/development/verification.md)，命令见[贡献指南](CONTRIBUTING.md)。UI 截图使用合成数据。
 
 ## 安全与交付
 
