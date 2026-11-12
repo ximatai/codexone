@@ -223,7 +223,10 @@ func unattributedApplicationRiskCoversDispatchedNamedLanesWithoutDelivery(idleDe
 }
 
 @Test func recognizedAuxiliaryEventsGrantNoResponseFactsOrReplayException() throws {
-  for type in ["response.metadata", "codex.response.metadata", "responsesapi.websocket_timing"] {
+  for type in [
+    "response.metadata", "codex.response.metadata", "responsesapi.websocket_timing",
+    "response.output_item.interrupted",
+  ] {
     let registry = ClientProtocolExtensionRegistry()
     let event = JSONValue.object([
       "type": .string(type), "response_id": .string("synthetic-response"),
