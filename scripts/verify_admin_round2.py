@@ -90,10 +90,13 @@ def verify_accounts(probe):
                 account = document(request(port, 'PUT', '/api/accounts/' + account['id'], {'revision': named['revision'], 'mode': 'enabled'}, **auth))['account']
                 assert account['displayName'] == named['displayName']
                 candidates_path = '/api/accounts/' + account['id'] + '/model-candidates'
+                with server.guard:
+                    server.control['model_discovery_delay'] = 6
                 discovered = document(request(port, 'POST', candidates_path, **auth))
                 assert [(item['id'], item['state']) for item in discovered['candidates']] == [
                     ('synthetic-nova', 'candidate'), ('synthetic-incomplete', 'incomplete')]
                 with server.guard:
+                    server.control.pop('model_discovery_delay')
                     server.control['model_discovery_failure'] = True
                 assert request(port, 'POST', candidates_path, **auth)[0] == 503
                 assert document(request(port, 'GET', '/api/models', **auth))['candidates'] == discovered['candidates']

@@ -104,6 +104,7 @@ export function ModelDirectory() {
           {
             method: "POST",
             csrf: owner.session.csrf,
+            timeout: 35000,
           },
         ),
       );

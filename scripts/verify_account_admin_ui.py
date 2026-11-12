@@ -45,9 +45,12 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 assert self.headers.get('ChatGPT-Account-Id') == 'synthetic-account'
                 fail = self.server.control.get('model_discovery_failure')
                 changed = self.server.control.get('model_changed')
+                delay = self.server.control.get('model_discovery_delay', 0)
             assert parse_qs(urlsplit(self.path).query).get('client_version')
             if fail:
                 return self.reply({'error': 'synthetic-catalog-unavailable'}, status=503)
+            if delay:
+                time.sleep(delay)
             return self.reply({'models': [
                 {'slug': 'synthetic-nova', 'visibility': 'list', 'base_instructions': 'Synthetic model guidance.',
                  'input_modalities': ['text', 'image'] if changed else ['text'],

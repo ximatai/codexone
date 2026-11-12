@@ -180,7 +180,7 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 创建/更新必须显式提供 models：null 表示跟随全部当前配置对话模型，数组最多32个，[] 保持无对话授权（仅图片 Key）的语义。imageGeneration=true 时 imageModels 可为 null 表示全部配置图片模型；关闭时 null 与 [] 等价，缺失能力字段的关闭语义不变。管理与导入原样返回数组/null，策略版本包含 null。目录、准入、Responses 图片工具及 Images 共用当前配置与权限交集；配置生效后的新增/移除立即影响 null 范围 Key。列表与详情显示“全部模型”。不新增配置热重载。旧二进制不能解码 null 模型范围，回退前须转为显式清单，见[Key治理](../../guide/key-governance.md#兼容回退前提)。
 
-订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。发现失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
+订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
 
 密钥管理缺省筛选 available，只展示启用且未到期的未归档 Key；显式 all 展示未归档及已归档，客户端并行读取两套既有分页接口、按 ID 去重、任一失败拒绝部分成功；归档和恢复后按当前范围更新列表。
 
