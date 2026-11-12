@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.35](https://github.com/ximatai/codexone/releases/tag/v0.26.35)**（2026-11-12），核心数据库 schema v17。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.36](https://github.com/ximatai/codexone/releases/tag/v0.26.36)**（2026-11-12），核心数据库 schema v17。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.36 优化首页小时输出速率图，延长模型候选刷新期限，并识别输出项中断事件。见[发布说明](CHANGELOG.md)。
 
 v0.26.35 展示完整额度周期的实际历史和预测，未采集的区间留白，并加强发布检查。见[发布说明](CHANGELOG.md)。
 
