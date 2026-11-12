@@ -43,12 +43,16 @@ for (const width of [1320, 390]) {
           ]
         : [],
       account: refreshed ? "synthetic-account-0" : null,
+      candidateRevision: refreshed
+        ? "00000000-0000-4000-8000-000000000000"
+        : null,
       fetchedAt: refreshed ? 1_785_000_000 : null,
     });
     await page.route("**/api/models", async (route) => {
       if (route.request().method() === "PUT") {
         expect(route.request().postDataJSON()).toEqual({
           revision: 0,
+          candidateRevision: "00000000-0000-4000-8000-000000000000",
           model: "demo-nova",
           enabled: true,
           inputMicrosPerMillion: 0,

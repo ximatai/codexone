@@ -99,7 +99,7 @@ public struct KeyAdminAPI: Sendable {
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         let document = try Self.body(
           request, allowed: ["model", "revision", "enabled"],
-          optional: ["inputMicrosPerMillion", "outputMicrosPerMillion"])
+          optional: ["inputMicrosPerMillion", "outputMicrosPerMillion", "candidateRevision"])
         return try await Self.response(modelDirectory.change(document))
       }
     }

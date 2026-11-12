@@ -39,6 +39,7 @@ const directory = z.object({
   candidates: z.array(model).max(128),
   imageModels: z.array(z.string().max(128)).max(16),
   account: z.string().nullable(),
+  candidateRevision: z.string().uuid().nullable().optional(),
   fetchedAt: z.number().nullable(),
 });
 type Model = z.infer<typeof model>;
@@ -61,6 +62,9 @@ export function ModelDirectory() {
   const masked = usePrivacyMask();
   const [account, setAccount] = useState<string | null>(null);
   const [selected, setSelected] = useState<Model | null>(null);
+  const [approvedCandidateRevision, setApprovedCandidateRevision] = useState<
+    string | null
+  >(null);
   const [input, setInput] = useState<number | string>("");
   const [output, setOutput] = useState<number | string>("");
   const [working, setWorking] = useState<"refresh" | "save" | null>(null);
@@ -129,6 +133,9 @@ export function ModelDirectory() {
             revision: data.revision,
             model: selected.id,
             enabled: selected.state !== "enabled",
+            ...(selected.state !== "enabled" && approvedCandidateRevision
+              ? { candidateRevision: approvedCandidateRevision }
+              : {}),
             ...(newModel
               ? { inputMicrosPerMillion: input, outputMicrosPerMillion: output }
               : {}),
@@ -193,6 +200,7 @@ export function ModelDirectory() {
             disabled={working !== null}
             onClick={() => {
               setSelected(item);
+              setApprovedCandidateRevision(data?.candidateRevision ?? null);
               setInput("");
               setOutput("");
             }}

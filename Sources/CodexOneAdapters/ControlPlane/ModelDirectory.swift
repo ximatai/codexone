@@ -12,6 +12,7 @@ struct ModelDirectorySnapshot: Codable, Sendable {
 public actor ModelDirectory {
   private struct Discovery: Sendable {
     let account: String
+    let candidateRevision: String
     let accountRevision: Int64
     let fetchedAt: Int64
     let entries: [JSONValue]
@@ -50,7 +51,8 @@ public actor ModelDirectory {
       Set(entries.compactMap { $0["slug"]?.string }).count == entries.count
     else { throw QuotaObservationFailure.invalidResponse }
     discovery = Discovery(
-      account: account, accountRevision: work.account.revision, fetchedAt: clock.unixSeconds,
+      account: account, candidateRevision: UUID().uuidString,
+      accountRevision: work.account.revision, fetchedAt: clock.unixSeconds,
       entries: entries.filter { $0["visibility"] == nil || $0["visibility"] == .string("list") })
     return document()
   }
@@ -84,6 +86,7 @@ public actor ModelDirectory {
       "candidates": .array(candidates),
       "imageModels": .array((configuration.imageGeneration?.models ?? []).map { .string($0.id) }),
       "account": discovered.map { .string($0.account) } ?? .null,
+      "candidateRevision": discovered.map { .string($0.candidateRevision) } ?? .null,
       "fetchedAt": discovered.map { .number(Decimal($0.fetchedAt)) } ?? .null,
     ])
   }
@@ -95,16 +98,24 @@ public actor ModelDirectory {
       let enabled = body["enabled"]?.bool
     else { throw ExecutionError.invalidCommand }
     let baseFields: Set<String> = ["revision", "model", "enabled"]
+    let candidateRevision = body["candidateRevision"]?.string
+    let suppliedFields = baseFields.union(candidateRevision == nil ? [] : ["candidateRevision"])
     let previous = snapshot()
     guard previous.revision == revision else { throw ExecutionError.conflict }
     var expectedAccount: (id: String, revision: Int64)?
     var next = ModelDirectorySnapshot(
       revision: revision + 1, active: previous.active, retired: previous.retired,
       accountForModel: previous.accountForModel)
+    if enabled, next.accountForModel[id] != nil || !next.retired.contains(where: { $0.id == id }) {
+      guard let discovery, discovery.candidateRevision == candidateRevision else {
+        throw ExecutionError.conflict
+      }
+    }
     if enabled, let index = next.retired.firstIndex(where: { $0.id == id }) {
-      guard Set(fields.keys) == baseFields else { throw ExecutionError.invalidCommand }
+      guard Set(fields.keys) == suppliedFields else { throw ExecutionError.invalidCommand }
       if let owner = next.accountForModel[id] {
         guard let discovery, discovery.account == owner,
+          discovery.candidateRevision == candidateRevision,
           clock.unixSeconds - discovery.fetchedAt < 900,
           let entry = discovery.entries.first(where: { $0["slug"]?.string == id })
         else { throw ExecutionError.conflict }
@@ -123,10 +134,12 @@ public actor ModelDirectory {
       next.active.append(next.retired.remove(at: index))
     } else if enabled {
       guard !next.active.contains(where: { $0.id == id }),
-        Set(fields.keys) == baseFields.union(["inputMicrosPerMillion", "outputMicrosPerMillion"]),
+        Set(fields.keys)
+          == suppliedFields.union(["inputMicrosPerMillion", "outputMicrosPerMillion"]),
         let input = body["inputMicrosPerMillion"]?.integer,
         let output = body["outputMicrosPerMillion"]?.integer,
-        let discovery, clock.unixSeconds - discovery.fetchedAt < 900,
+        let discovery, discovery.candidateRevision == candidateRevision,
+        clock.unixSeconds - discovery.fetchedAt < 900,
         let entry = discovery.entries.first(where: { $0["slug"]?.string == id })
       else { throw ExecutionError.invalidCommand }
       let account = try await store.accountCredential(id: discovery.account).account

@@ -98,8 +98,15 @@ def verify_accounts(probe):
                 assert request(port, 'POST', candidates_path, **auth)[0] == 503
                 assert document(request(port, 'GET', '/api/models', **auth))['candidates'] == discovered['candidates']
                 body = dict(revision=discovered['revision'], model='synthetic-nova', enabled=True,
+                            candidateRevision=discovered['candidateRevision'],
                             inputMicrosPerMillion=0, outputMicrosPerMillion=0)
                 assert request(port, 'PUT', '/api/models', dict(body, model='synthetic-incomplete'), **auth)[0] == 400
+                with server.guard:
+                    server.control['model_discovery_failure'] = False
+                newer = document(request(port, 'POST', candidates_path, **auth))
+                assert newer['candidateRevision'] != body['candidateRevision']
+                assert request(port, 'PUT', '/api/models', body, **auth)[0] == 409
+                body['candidateRevision'] = newer['candidateRevision']
                 assert request(port, 'PUT', '/api/models', body, **auth)[0] == 200
                 assert request(port, 'PUT', '/api/models', body, **auth)[0] == 409
                 key_options = document(request(port, 'GET', '/api/keys/options', **auth))
@@ -126,6 +133,7 @@ def verify_accounts(probe):
                 refreshed = document(request(port, 'POST', '/api/accounts/' + account['id'] + '/model-candidates', **auth))
                 assert refreshed['retired'][0]['visionInput'] is True
                 assert refreshed['retired'][0]['previousVisionInput'] is False
+                enable['candidateRevision'] = refreshed['candidateRevision']
                 restored = document(request(port, 'PUT', '/api/models', enable, **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
                 assert restored['active'][1]['reasoningEfforts'] == ['low', 'high']
