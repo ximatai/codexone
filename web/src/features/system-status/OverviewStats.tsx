@@ -142,17 +142,24 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
           { x: start.index, y: start.value },
           { x: end.index, y: end.value },
         ] as const,
-        className: styles.outputRateBridge,
+        color: "brand.5",
         strokeDasharray: "2 2",
+        strokeOpacity: 0.55,
       },
     ];
   });
   const rate = (value: number) =>
     value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return (
-    <Paper withBorder p="md">
-      <Group justify="space-between" align="baseline" gap="xs" wrap="nowrap">
+    <Paper withBorder p="md" className={styles.outputRateCard}>
+      <Group
+        className={styles.outputRateHeader}
+        justify="space-between"
+        align="baseline"
+        wrap="nowrap"
+      >
         <Title
+          className={styles.outputRateTitle}
           order={3}
           size="h4"
           title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"

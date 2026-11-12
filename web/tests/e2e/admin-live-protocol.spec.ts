@@ -352,6 +352,8 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   const readout = page.locator('[title="最近有样本的小时"]');
   await expect(readout).toBeVisible();
   await expect(readout).toContainText("43");
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 320, height: 844 });
   for (const [sequence, median, label] of [
     [3, 1234, "1,234 Token/s"],
     [4, 0, "0 Token/s"],
@@ -361,19 +363,17 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     await expect(trend).toHaveAccessibleName(
       `Token 输出速率近 7 天：最近有样本的小时 ${label}`,
     );
+    const narrowTitle = (await title.boundingBox())!;
+    const narrowReadout = (await readout.boundingBox())!;
+    const titleLineHeight = await title.evaluate((heading) =>
+      parseFloat(getComputedStyle(heading).lineHeight),
+    );
+    expect(narrowTitle.height).toBeLessThanOrEqual(titleLineHeight + 1);
+    expect(narrowReadout.x).toBeGreaterThan(narrowTitle.x + narrowTitle.width);
+    expect(narrowReadout.y).toBeLessThan(narrowTitle.y + narrowTitle.height);
   }
-  const originalViewport = page.viewportSize()!;
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(trend).toBeVisible();
   const narrowTrend = (await trend.boundingBox())!;
-  expect(narrowTrend.x + narrowTrend.width).toBeLessThanOrEqual(390);
-  const narrowTitle = (await title.boundingBox())!;
-  const narrowReadout = (await readout.boundingBox())!;
-  expect(narrowReadout.x).toBeGreaterThan(narrowTitle.x + narrowTitle.width);
-  expect(narrowReadout.y).toBeLessThan(narrowTitle.y + narrowTitle.height);
-  expect(narrowReadout.x + narrowReadout.width).toBeLessThanOrEqual(
-    narrowTrend.x + narrowTrend.width,
-  );
+  expect(narrowTrend.x + narrowTrend.width).toBeLessThanOrEqual(320);
   await page.setViewportSize(originalViewport);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,

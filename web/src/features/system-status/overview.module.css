@@ -51,6 +51,14 @@
   }
 }
 
+.outputRateCard {
+  container-type: inline-size;
+}
+
+.outputRateHeader {
+  gap: var(--mantine-spacing-xs);
+}
+
 .outputRateValue {
   display: flex;
   align-items: baseline;
@@ -62,9 +70,18 @@
   white-space: nowrap;
 }
 
-.outputRateBridge :global(.recharts-reference-line-line) {
-  stroke: var(--mantine-color-brand-5);
-  stroke-opacity: 0.55;
+@container (width < 260px) {
+  .outputRateHeader {
+    gap: 4px;
+    min-block-size: calc(
+      var(--mantine-h4-font-size) * var(--mantine-h4-line-height)
+    );
+  }
+
+  .outputRateTitle,
+  .outputRateValue {
+    font-size: var(--mantine-font-size-sm);
+  }
 }
 
 .quotaAccountHeader {
