@@ -101,6 +101,7 @@ v0.26.10将订阅上游已知准入前 `unsupported_backend_parameter/400` 归�
 
 ## 路线图
 
+- [管理模型目录与 Key 推理强度](docs/changes/model-catalog-key-reasoning/proposal.md)。
 - 重置卡使用与空闲窗口预热的真实订阅验收（需维护者在场确认）。
 - [多账号路由治理](docs/requirements/account-routing-governance.md)与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。

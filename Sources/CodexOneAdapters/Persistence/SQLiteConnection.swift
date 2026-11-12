@@ -14,7 +14,12 @@ package enum StartupMigrationError: Error {
 
 /// All access is confined to SQLiteExecutionStore's serial queue.
 package final class SQLiteConnection: @unchecked Sendable {
-  package static let schemaVersion: Int64 = 15
+  private static let modelDirectorySchema = """
+    CREATE TABLE model_directory(
+      singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision INTEGER NOT NULL, document TEXT NOT NULL);
+    CREATE TABLE model_directory_routes(model TEXT PRIMARY KEY, account TEXT);
+    """
+  package static let schemaVersion: Int64 = 16
 
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
@@ -74,7 +79,7 @@ package final class SQLiteConnection: @unchecked Sendable {
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
       let upgrading = (1..<Self.schemaVersion).contains(version)
-      let startupUpgrade = allowStartupMigration && (12...14).contains(version)
+      let startupUpgrade = allowStartupMigration && (12..<Self.schemaVersion).contains(version)
       guard
         version == 0 || version == Self.schemaVersion || (restoringV7 && version >= 7 && upgrading)
           || (migrating && upgrading) || startupUpgrade
@@ -122,6 +127,12 @@ package final class SQLiteConnection: @unchecked Sendable {
           + (version >= 11 ? Self.resetCreditColumns : [])
           + (version >= 15
             ? [("account_credit_samples", ["account_id", "bucket_epoch", "at_epoch", "balance"])]
+            : [])
+          + (version >= 16
+            ? [
+              ("model_directory", ["singleton", "revision", "document"]),
+              ("model_directory_routes", ["model", "account"]),
+            ]
             : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
@@ -174,6 +185,7 @@ package final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.outputRateSchema)
           try exec(Self.rejectionDetailSchema)
           try exec(Self.creditHistorySchema)
+          try exec(Self.modelDirectorySchema)
           try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
@@ -213,6 +225,7 @@ package final class SQLiteConnection: @unchecked Sendable {
             if version < 13 { try exec(Self.outputRateSchema) }
             if version < 14 { try exec(Self.rejectionDetailSchema) }
             if version < 15 { try exec(Self.creditHistorySchema) }
+            if version < 16 { try exec(Self.modelDirectorySchema) }
             try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }

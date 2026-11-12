@@ -109,11 +109,16 @@ private enum ModelConfigurationKey: String, CodingKey {
   case visionInput, imageGeneration, upstream
 }
 
+extension CodingUserInfoKey {
+  static let persistedModelDirectory = Self(rawValue: "codexone.persistedModelDirectory")!
+}
+
 extension SingleIdentityConfiguration.Model {
   public init(from decoder: any Decoder) throws {
     let fields = try decoder.container(keyedBy: ModelConfigurationKey.self)
     // Provenance is an output of the validated importer, never a configuration assertion.
-    guard !fields.contains(.profileProvenance), !fields.contains(.upstream) else {
+    let persisted = decoder.userInfo[.persistedModelDirectory] as? Bool == true
+    guard persisted || (!fields.contains(.profileProvenance) && !fields.contains(.upstream)) else {
       throw ExecutionError.invalidCommand
     }
     self.init(
@@ -122,6 +127,9 @@ extension SingleIdentityConfiguration.Model {
       outputMicrosPerMillion: try fields.decode(Int64.self, forKey: .outputMicrosPerMillion),
       catalog: try fields.decodeIfPresent(
         SingleIdentityConfiguration.Catalog.self, forKey: .catalog),
+      upstream: persisted ? try fields.decodeIfPresent(JSONValue.self, forKey: .upstream) : nil,
+      profileProvenance: persisted
+        ? try fields.decodeIfPresent(ModelProfileProvenance.self, forKey: .profileProvenance) : nil,
       visionInput: try fields.decodeIfPresent(Bool.self, forKey: .visionInput),
       imageGeneration: try fields.decodeIfPresent(Bool.self, forKey: .imageGeneration))
   }

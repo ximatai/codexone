@@ -94,3 +94,16 @@ func validateUpstreamCompression(_ encoding: String?, _ threshold: Int?) throws 
     throw ExecutionError.invalidCommand
   }
 }
+
+extension SingleIdentityConfiguration.Model {
+  var supportedReasoningEfforts: [String] {
+    let efforts =
+      catalog?.reasoningEfforts
+      ?? upstream?["supported_reasoning_levels"]?.array?.compactMap { $0["effort"]?.string }
+      ?? []
+    var seen = Set<String>()
+    return efforts.filter {
+      KeyPolicy.knownReasoningEfforts.contains($0) && seen.insert($0).inserted
+    }
+  }
+}

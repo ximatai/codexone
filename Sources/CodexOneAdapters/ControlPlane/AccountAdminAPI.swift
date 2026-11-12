@@ -4,6 +4,8 @@ import Vapor
 
 /// Registers only beneath the shared, authenticated management route group.
 public struct AccountAdminAPI: Sendable {
+  private let modelDirectory: ModelDirectory?
+  private let modelProvider: SubscriptionQuotaProvider?
   private let priming: (any QuotaPrimingExecuting)?
   private let resetCredits: (any AccountResetCreditManaging)?
   private let clock: WallClock
@@ -17,9 +19,12 @@ public struct AccountAdminAPI: Sendable {
     refreshing: any AccountRefreshing, observing: (any AccountQuotaObserving)? = nil,
     credentials: AccountCredentials? = nil, clock: WallClock = .system,
     resetCredits: (any AccountResetCreditManaging)? = nil,
-    priming: (any QuotaPrimingExecuting)? = nil
+    priming: (any QuotaPrimingExecuting)? = nil, modelDirectory: ModelDirectory? = nil,
+    modelProvider: SubscriptionQuotaProvider? = nil
   ) {
     self.priming = priming
+    self.modelDirectory = modelDirectory
+    self.modelProvider = modelProvider
     self.resetCredits = resetCredits
     self.clock = clock
     self.credentials = credentials
@@ -39,6 +44,15 @@ public struct AccountAdminAPI: Sendable {
     return try JSONValue.object(["accounts": .array(metadata), "nextCursor": .null]).data()
   }
   func register(_ routes: any RoutesBuilder) {
+    if let modelDirectory, let modelProvider, let credentials {
+      routes.post(":id", "model-candidates") { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let id = request.parameters.get("id") ?? ""
+        guard ManagedAccount.validID(id) else { throw ExecutionError.invalidCommand }
+        return try await Self.response(
+          modelDirectory.refresh(account: id, credentials: credentials, provider: modelProvider))
+      }
+    }
     routes.get { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
       guard query.count <= 1, query.allSatisfy({ $0.name == "after" && $0.value != nil }) else {

@@ -21,7 +21,10 @@ import Testing
   _ = try await original.recordQuotaObservation(
     account: account, atUnixSeconds: now - 9 * 86_400, result: .success(balance))
   await original.close()
-  try rawSQL(path, "DROP TABLE account_credit_samples; PRAGMA user_version=14")
+  try rawSQL(
+    path,
+    "DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; PRAGMA user_version=14"
+  )
 
   let upgraded = try await SQLiteExecutionStore.open(
     path: path, limits: syntheticLimits, allowStartupMigration: true)
@@ -29,7 +32,9 @@ import Testing
   #expect(try await upgraded.creditHistory(id: account.id, from: start, through: now).isEmpty)
   #expect(
     try await upgraded.quotaObservation(id: account.id).quota?.usageCredits == balance.usageCredits)
-  #expect(try await upgraded.perform { try $0.scalar("PRAGMA user_version") } == 15)
+  #expect(
+    try await upgraded.perform { try $0.scalar("PRAGMA user_version") }
+      == SQLiteConnection.schemaVersion)
   #expect(
     try FileManager.default.contentsOfDirectory(atPath: directory).contains {
       $0.contains(".pre-v15-")

@@ -64,6 +64,23 @@ extension SubscriptionOAuthProvider {
         headers: try verifiedHeaders(account: work.account, credential: work.credential))
     } catch { throw QuotaObservationFailure.unavailable }
   }
+  func modelDirectoryAccess(work: AccountObservationWork, target: SubscriptionDataTarget)
+    throws -> SubscriptionDataAccess
+  {
+    let base: String
+    switch target {
+    case .openAI:
+      guard realm == Self.issuer else { throw QuotaObservationFailure.unavailable }
+      base = Self.dataOrigin
+    case .syntheticLoopback(let port):
+      guard realm.hasPrefix("http://127.0.0.1:"), (1...65535).contains(port)
+      else { throw QuotaObservationFailure.unavailable }
+      base = "http://127.0.0.1:\(port)/backend-api/codex"
+    }
+    return .init(
+      baseURL: base,
+      headers: try verifiedHeaders(account: work.account, credential: work.credential))
+  }
   private func verifiedHeaders(account: ManagedAccount, credential: AccountCredential) throws
     -> HTTPHeaders
   {

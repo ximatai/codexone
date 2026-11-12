@@ -103,6 +103,27 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
     async throws -> JSONValue
   {
     let access = try verifier.quotaAccess(work: work, target: target)
+    return try await request(
+      access, url: String(access.baseURL.dropLast("usage".count)) + endpoint,
+      body: body)
+  }
+  func modelCandidates(_ work: AccountObservationWork, fingerprint: ClientFingerprint) async throws
+    -> JSONValue
+  {
+    let access = try verifier.modelDirectoryAccess(work: work, target: target)
+    guard var url = URLComponents(string: access.baseURL + "/models"),
+      let version = fingerprint.version
+    else { throw ExecutionError.invalidCommand }
+    url.queryItems = [.init(name: "client_version", value: version)]
+    guard let address = url.string else { throw ExecutionError.invalidCommand }
+    return try await request(
+      access, url: address, body: nil, maximumBytes: 4 * 1024 * 1024,
+      userAgent: fingerprint.userAgent)
+  }
+  private func request(
+    _ access: SubscriptionDataAccess, url: String, body: JSONValue?,
+    maximumBytes: Int = 65_536, userAgent: String = "codex-cli"
+  ) async throws -> JSONValue {
     let client = try state.withLock { value in
       guard let client = value.client else { throw QuotaObservationFailure.closed }
       guard value.active < 4 else { throw QuotaObservationFailure.capacity }
@@ -114,8 +135,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
       return try await withThrowingTaskGroup(of: JSONValue.self) { tasks in
         defer { tasks.cancelAll() }
         tasks.addTask { [timeoutMilliseconds] in
-          var request = HTTPClientRequest(
-            url: String(access.baseURL.dropLast("usage".count)) + endpoint)
+          var request = HTTPClientRequest(url: url)
           request.method = body == nil ? .GET : .POST
           if let body {
             request.body = .bytes(try body.data())
@@ -123,7 +143,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
           request.headers = access.headers
           if body != nil { request.headers.add(name: "content-type", value: "application/json") }
           request.headers.add(name: "accept", value: "application/json")
-          request.headers.add(name: "user-agent", value: "codex-cli")
+          request.headers.add(name: "user-agent", value: userAgent)
           let response = try await client.execute(
             request, deadline: .now() + .milliseconds(Int64(timeoutMilliseconds)))
           guard response.status == .ok else {
@@ -140,7 +160,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
             )
             .first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json"
           else { throw QuotaObservationFailure.invalidResponse }
-          let bytes = try await response.body.collect(upTo: 65_536)
+          let bytes = try await response.body.collect(upTo: maximumBytes)
           let document: JSONValue
           do { document = try JSONValue.decode(Data(bytes.readableBytesView)) } catch {
             throw QuotaObservationFailure.invalidResponse

@@ -428,3 +428,91 @@ import Testing
   #expect(await mailbox.next() == nil)
   ready.finish()
 }
+
+@Test func imageGenerationDoesNotDistortOutputRatesAcrossRestartAndRevision() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let time = TestWallClock()
+  func open() async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: time.clock)
+  }
+  func toolAdmission(_ id: String) throws -> ExecutionAdmission {
+    .init(
+      attempt: id, owner: .init(principal: "p", key: "key", namespace: "synthetic", identity: "i"),
+      window: "w", policyVersion: "policy-v1", pricingVersion: "price-v1", reservedMicros: 10,
+      requirements: try .init(route: .conversation, imageModel: "synthetic-image"))
+  }
+  func evidence(_ images: Int64, revision: Int64 = 1) -> UsageEvidence {
+    .init(
+      revision: revision, inputTokens: 12, outputTokens: 12, cachedTokens: 0,
+      images: images, estimatedMicros: 12, completeness: .complete)
+  }
+  let store = try await open()
+  let outcome = try ExecutionOutcome(
+    failure: nil, atUnixSeconds: time.clock.unixSeconds, totalMilliseconds: 1000)
+  try await store.admit(toolAdmission("text"))
+  try await store.finalize(attempt: "text", evidence: evidence(0), outcome: outcome)
+  try await store.admit(toolAdmission("image"))
+  try await store.finalize(attempt: "image", evidence: evidence(1), outcome: outcome)
+  #expect(store.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds).rate == 12)
+  try await store.admit(toolAdmission("revised"))
+  try await store.finalize(attempt: "revised", evidence: evidence(0), outcome: outcome)
+  try await store.finalize(attempt: "revised", evidence: evidence(1, revision: 2))
+  let before = store.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds)
+  #expect(before.rate == 12)
+  #expect(before.hours["points"]?.object?.values.first?["count"]?.integer == 1)
+  await store.close()
+  // Simulate historical rows written before this filtering rule was introduced.
+  try rawSQL(
+    path,
+    "UPDATE attempts SET output_rate_settled_at=\(time.clock.unixSeconds), output_rate='1' WHERE id='image'"
+  )
+  let reopened = try await open()
+  let restored = reopened.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds)
+  #expect(restored.days == before.days)
+  #expect(restored.hours == before.hours)
+  await reopened.close()
+}
+
+@Test func imageRevisionRefillsFullOutputRateBuckets() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let time = TestWallClock()
+  func open() async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: time.clock)
+  }
+  let seed = try await open()
+  try await seed.admit(admission("revised-full"))
+  let outcome = try ExecutionOutcome(
+    failure: nil, atUnixSeconds: time.clock.unixSeconds, totalMilliseconds: 1000)
+  try await seed.finalize(attempt: "revised-full", evidence: usage(), outcome: outcome)
+  await seed.close()
+  let timestamp = time.clock.unixSeconds
+  try rawSQL(
+    path,
+    """
+    WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4096)
+    INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,output_rate_settled_at,output_rate)
+    SELECT 'refill-'||i,'synthetic','synthetic','synthetic','synthetic','synthetic','1','1',1,'settled','{}',\(timestamp - 1),'1' FROM n
+    """)
+  let store = try await open()
+  let before = store.overviewActivity.requestOutputSnapshot(at: timestamp)
+  #expect(before.hours["points"]?.object?.values.first?["count"]?.integer == 256)
+  let image = UsageEvidence(
+    revision: 2, inputTokens: 12, outputTokens: 12, cachedTokens: 0,
+    images: 1, estimatedMicros: 12, completeness: .complete)
+  try await store.finalize(attempt: "revised-full", evidence: image)
+  let corrected = store.overviewActivity.requestOutputSnapshot(at: timestamp)
+  #expect(corrected.hours["points"]?.object?.values.first?["count"]?.integer == 256)
+  #expect(corrected.hours["points"]?.object?.values.first?["median"]?.integer == 1)
+  await store.close()
+  let restarted = try await open()
+  let restored = restarted.overviewActivity.requestOutputSnapshot(at: timestamp)
+  #expect(restored.hours == corrected.hours)
+  #expect(restored.days == corrected.days)
+  await restarted.close()
+}

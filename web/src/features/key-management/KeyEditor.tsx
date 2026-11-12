@@ -36,6 +36,9 @@ const schema = z
       .string()
       .regex(/^[A-Za-z0-9._-]{1,64}$/, "使用1–64位字母、数字或 . _ -"),
     models: z.array(z.string()).nullable(),
+    reasoningEfforts: z
+      .record(z.string(), z.array(z.string()).min(1))
+      .optional(),
     visionInput: z.boolean(),
     imageGeneration: z.boolean(),
     imageModels: z.array(z.string()).nullable(),
@@ -71,6 +74,7 @@ export function KeyEditor({
   entry,
   models,
   imageModels,
+  reasoningEfforts = {},
   disabled,
   submit,
   close,
@@ -81,6 +85,7 @@ export function KeyEditor({
   entry?: ManagedKey;
   models: string[];
   imageModels: string[];
+  reasoningEfforts?: Record<string, string[]>;
   disabled: boolean;
   submit: (draft: KeyDraft, expires?: number | null) => Promise<boolean>;
   close: () => void;
@@ -89,6 +94,7 @@ export function KeyEditor({
   formId?: string;
 }) {
   const masked = usePrivacyMask();
+  const [effortModel, setEffortModel] = useState<string | null>(null);
   const retainedScopes = useRef({
     models: entry?.models ?? [],
     imageModels: entry?.imageModels ?? [],
@@ -103,6 +109,7 @@ export function KeyEditor({
       displayName: entry?.displayName ?? "",
       principal: entry?.principal ?? "",
       models: entry ? entry.models : ([] as string[] | null),
+      reasoningEfforts: entry?.reasoningEfforts ?? {},
       visionInput: entry?.visionInput ?? false,
       imageGeneration: entry?.imageGeneration ?? false,
       imageModels:
@@ -143,13 +150,162 @@ export function KeyEditor({
       />
     ));
   }
+  function setEfforts(model: string, values: string[] | null) {
+    const next = { ...form.values.reasoningEfforts };
+    if (values === null) delete next[model];
+    form.setFieldValue(
+      "reasoningEfforts",
+      values === null ? next : { ...next, [model]: values },
+    );
+  }
+  function conversationChoices() {
+    const selected = form.values.models;
+    return [...new Set([...models, ...(entry?.models ?? [])])].map((model) => {
+      const available = models.includes(model);
+      if (selected === null && !available) return null;
+      const checked = selected === null || selected.includes(model);
+      const options = Object.hasOwn(reasoningEfforts, model)
+        ? reasoningEfforts[model]
+        : [];
+      const chosen = Object.hasOwn(form.values.reasoningEfforts, model)
+        ? form.values.reasoningEfforts[model]
+        : undefined;
+      const expanded = effortModel === model;
+      return (
+        <div
+          className={styles.modelPermission}
+          data-selected={checked}
+          key={model}
+        >
+          <Group justify="space-between" gap="xs">
+            {selected === null ? (
+              <Text size="sm" fw={600}>
+                {model}
+              </Text>
+            ) : (
+              <Checkbox
+                label={model}
+                checked={checked}
+                disabled={disabled || (!available && !checked)}
+                onChange={(event) => {
+                  form.setFieldValue(
+                    "models",
+                    event.currentTarget.checked
+                      ? [...selected, model]
+                      : selected.filter((value) => value !== model),
+                  );
+                  if (event.currentTarget.checked) setEffortModel(model);
+                }}
+              />
+            )}
+            {!available && (
+              <Text size="xs" c="dimmed">
+                已停用
+              </Text>
+            )}
+            {checked && available && (options.length > 0 || chosen) && (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                aria-expanded={expanded}
+                onClick={() => setEffortModel(expanded ? null : model)}
+              >
+                推理档位 · {chosen?.join(" / ") || "跟随模型"}{" "}
+                {expanded ? "⌃" : "⌄"}
+              </Button>
+            )}
+          </Group>
+          {checked &&
+            available &&
+            expanded &&
+            (options.length > 0 || chosen) && (
+              <Stack gap="xs" className={styles.modelEfforts}>
+                <Radio.Group
+                  label={model + " 推理档位"}
+                  value={chosen ? "selected" : "all"}
+                  onChange={(value) =>
+                    setEfforts(model, value === "all" ? null : options)
+                  }
+                >
+                  <Group gap="md">
+                    <Radio value="all" label="跟随模型" disabled={disabled} />
+                    <Radio
+                      value="selected"
+                      label="指定档位"
+                      disabled={disabled || options.length === 0}
+                    />
+                  </Group>
+                </Radio.Group>
+                {chosen && (
+                  <>
+                    <Group gap="xs">
+                      {options.map((effort) => (
+                        <Checkbox
+                          key={effort}
+                          label={effort}
+                          checked={chosen.includes(effort)}
+                          disabled={disabled}
+                          onChange={(event) =>
+                            setEfforts(
+                              model,
+                              event.currentTarget.checked
+                                ? options.filter(
+                                    (value) =>
+                                      value === effort ||
+                                      chosen.includes(value),
+                                  )
+                                : chosen.filter((value) => value !== effort),
+                            )
+                          }
+                        />
+                      ))}
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      客户端请求需显式指定获准档位。
+                    </Text>
+                    {chosen.some((effort) => !options.includes(effort)) && (
+                      <Text size="xs" c="dimmed">
+                        部分已选档位当前不可用。
+                      </Text>
+                    )}
+                  </>
+                )}
+              </Stack>
+            )}
+        </div>
+      );
+    });
+  }
   return (
     <form
       id={formId}
       className={entry ? styles.detailEditor : undefined}
       onSubmit={(event) => {
         event.preventDefault();
-        const result = schema.safeParse(form.values);
+        const scope = form.values.models;
+        const chosen = Object.fromEntries(
+          Object.entries(form.values.reasoningEfforts).filter(
+            ([model]) => scope === null || scope.includes(model),
+          ),
+        );
+        const empty = Object.entries(chosen).find(
+          ([, efforts]) => efforts.length === 0,
+        );
+        if (empty) {
+          setEffortModel(empty[0]);
+          form.setFieldError(
+            "models",
+            "请为 " + empty[0] + " 选择至少一个推理档位。",
+          );
+          return;
+        }
+        const result = schema.safeParse({
+          ...form.values,
+          reasoningEfforts:
+            Object.keys(chosen).length || entry?.reasoningEfforts
+              ? chosen
+              : undefined,
+        });
         if (!result.success) {
           form.setErrors(
             Object.fromEntries(
@@ -234,7 +390,7 @@ export function KeyEditor({
                 <Group gap="md">
                   <Radio
                     value="all"
-                    label="全部模型（跟随配置）"
+                    label="全部模型（跟随目录）"
                     disabled={disabled}
                   />
                   <Radio
@@ -244,13 +400,7 @@ export function KeyEditor({
                   />
                 </Group>
               </Radio.Group>
-              {form.values.models !== null &&
-                choices(
-                  models,
-                  entry?.models ?? [],
-                  form.values.models,
-                  "models",
-                )}
+              {conversationChoices()}
             </Stack>
             {form.errors.models && (
               <Text c="red" size="sm" role="alert">

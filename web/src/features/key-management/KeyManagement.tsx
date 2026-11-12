@@ -503,6 +503,7 @@ export function KeyManagement() {
                     formId="key-detail-editor"
                     models={state.models}
                     imageModels={state.imageModels}
+                    reasoningEfforts={state.reasoningEfforts}
                     disabled={state.disabled}
                     close={closeDetails}
                     submit={(draft) =>
@@ -706,6 +707,7 @@ export function KeyManagement() {
             entry={state.editing ?? undefined}
             models={state.models}
             imageModels={state.imageModels}
+            reasoningEfforts={state.reasoningEfforts}
             disabled={state.disabled}
             close={() => {
               state.setCreating(false);
@@ -719,7 +721,12 @@ export function KeyManagement() {
                     "密钥设置已更新。",
                   )
                 : state.mutate(
-                    (csrf, signal) => api.createKey(draft, csrf, signal),
+                    (csrf, signal) =>
+                      api.createKey(
+                        { ...draft, catalogRevision: state.catalogRevision },
+                        csrf,
+                        signal,
+                      ),
                     "密钥已创建，请保存一次性凭证。",
                     expires,
                   )

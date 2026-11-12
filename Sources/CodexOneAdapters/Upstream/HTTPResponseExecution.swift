@@ -24,6 +24,7 @@ struct HTTPResponseExecution: Sendable {
   let gateway: ResponsesGateway?
   var connection: AccountRouteIdentity? = nil
   var currentKeyID: String? = nil
+  var keyCapabilities: KeyPolicy? = nil
   var effectiveImageModels: [ImageConfiguration.Model] = []
   let effectiveModels: [SingleIdentityConfiguration.Model]
 
@@ -34,7 +35,20 @@ struct HTTPResponseExecution: Sendable {
   }
 
   func authorized(_ digest: String?) async throws -> Self {
-    let policy = try await access.policy(digest)
+    let live = access.withLiveModels()
+    let configuration = live.source.configuration
+    let policy = try await live.policy(digest)
+    var permittedAccounts: Set<String> = []
+    var accountForModel: [String: String] = [:]
+    if case .pool(let pool, _, _, _, _) = live.source, !pool.accountForModel.isEmpty,
+      let accounts = live.store as? any AccountGovernanceStore
+    {
+      accountForModel = pool.accountForModel
+      permittedAccounts = Set(
+        try await accounts.listAccounts(after: nil).filter {
+          $0.mode == .enabled && ($0.authorization == .ready || $0.authorization == .refreshing)
+        }.map(\.id))
+    }
     let effectiveImages =
       policy.capabilities.map { configuration.imageGeneration?.effective(for: $0) ?? [] } ?? []
     return Self(
@@ -47,9 +61,12 @@ struct HTTPResponseExecution: Sendable {
       protocolClientHeaders: protocolClientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
-      gateway: try access.gateway(policy), connection: connection, currentKeyID: policy.keyID,
-      effectiveImageModels: effectiveImages,
-      effectiveModels: configuration.models.filter { policy.models.contains($0.id) }.map { model in
+      gateway: try live.gateway(policy), connection: connection, currentKeyID: policy.keyID,
+      keyCapabilities: policy.capabilities, effectiveImageModels: effectiveImages,
+      effectiveModels: configuration.models.filter {
+        policy.models.contains($0.id)
+          && (accountForModel[$0.id].map(permittedAccounts.contains) ?? true)
+      }.map { model in
         var model = model
         model.visionInput = model.visionInput == true && policy.capabilities?.visionInput == true
         model.imageGeneration =
@@ -67,6 +84,12 @@ struct HTTPResponseExecution: Sendable {
             $0.id == request.requirements.imageModel
           })
     else { throw GatewayProtocolError(403, "model_not_allowed") }
+    if request.mode != .warmup, let allowed = keyCapabilities?.reasoningEfforts?[model.id] {
+      guard request.document["reasoning_effort"] == nil,
+        let effort = request.document["reasoning"]?["effort"]?.string,
+        allowed.contains(effort), model.supportedReasoningEfforts.contains(effort)
+      else { throw GatewayProtocolError(403, "reasoning_effort_not_allowed") }
+    }
     return model
   }
 

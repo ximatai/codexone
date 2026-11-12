@@ -79,7 +79,9 @@ public struct AccountCredentials: Sendable {
     return AccountObservationWork(account: stored.account, credential: credential)
   }
   /// Bounded, local readiness evidence only. Expired access may still use the refresh owner.
-  public func hasLocallyRoutableAccount(models: Set<String>? = nil) async throws -> Bool {
+  public func hasLocallyRoutableAccount(
+    models: Set<String>? = nil, accountForModel: [String: String] = [:]
+  ) async throws -> Bool {
     let accounts = try await store.listAccounts(after: nil)
     guard accounts.count <= 64 else { throw ExecutionError.capacity }
     for account in accounts {
@@ -100,7 +102,7 @@ public struct AccountCredentials: Sendable {
           guard
             try await health.hasHealthyModel(
               id: stored.account.id, credentialVersion: stored.account.credentialVersion,
-              models: models)
+              models: models.filter { accountForModel[$0].map { $0 == account.id } ?? true })
           else { continue }
         }
         return true

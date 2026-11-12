@@ -151,7 +151,7 @@ def verify_migration(binary):
             stop(process)
         path = root / 'state/core.sqlite'
         with sqlite3.connect(path) as db:
-            db.executescript('DROP TABLE account_credit_samples; DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; DROP INDEX attempts_active_identity; DROP INDEX attempts_retention; DROP INDEX attempts_unknown_since; ALTER TABLE attempts DROP COLUMN closed_unknown_at_epoch; ALTER TABLE attempts DROP COLUMN unknown_since_epoch; DROP INDEX bindings_expiry; ALTER TABLE bindings DROP COLUMN expires_at_epoch; DROP TABLE usage_daily; DROP TABLE account_concurrency; DROP INDEX attempts_in_flight; DROP TABLE request_diagnostics; DROP TABLE account_model_health; DROP TABLE health_models; DROP TABLE account_health; DROP TABLE account_quota; DROP INDEX attempts_created; DROP INDEX attempts_request; ALTER TABLE attempts DROP COLUMN request_id; ALTER TABLE attempts DROP COLUMN outcome_json; ALTER TABLE attempts DROP COLUMN created_at_epoch; DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=1;')
+            db.executescript('DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; DROP TABLE quota_priming_events; DROP TABLE account_quota_priming; DROP TABLE reset_credit_events; DROP TABLE account_reset_credits; DROP INDEX attempts_active_identity; DROP INDEX attempts_retention; DROP INDEX attempts_unknown_since; ALTER TABLE attempts DROP COLUMN closed_unknown_at_epoch; ALTER TABLE attempts DROP COLUMN unknown_since_epoch; DROP INDEX bindings_expiry; ALTER TABLE bindings DROP COLUMN expires_at_epoch; DROP TABLE usage_daily; DROP TABLE account_concurrency; DROP INDEX attempts_in_flight; DROP TABLE request_diagnostics; DROP TABLE account_model_health; DROP TABLE health_models; DROP TABLE account_health; DROP TABLE account_quota; DROP INDEX attempts_created; DROP INDEX attempts_request; ALTER TABLE attempts DROP COLUMN request_id; ALTER TABLE attempts DROP COLUMN outcome_json; ALTER TABLE attempts DROP COLUMN created_at_epoch; DROP TABLE account_events; DROP TABLE accounts; DROP TABLE key_events; DROP TABLE managed_keys; DROP INDEX attempts_key; DROP TABLE maintenance_events; DROP TABLE maintenance_state; PRAGMA user_version=1;')
         refused = subprocess.run([binary], env=environment, capture_output=True, timeout=10)
         assert refused.returncode != 0 and str(root).encode() not in refused.stderr
         migrated = subprocess.run([binary, '--migrate'], env=environment, capture_output=True, timeout=10)
@@ -238,7 +238,8 @@ def main():
                 config = root / 'config.json'
                 config.write_text(json.dumps(dict(managedKeys=True, namespace='synthetic', identity='i',
                     models=[dict(id=model, inputMicrosPerMillion=0, outputMicrosPerMillion=0,
-                                 catalog=dict(baseInstructions='Explicit synthetic fixture guidance'))
+                                 catalog=dict(baseInstructions='Explicit synthetic fixture guidance',
+                                              reasoningEfforts=['low', 'high'], defaultReasoningEffort='low'))
                             for model in ['synthetic-text', 'synthetic-other']],
                     reservedMicros=1, upstreamBaseURL=f'http://127.0.0.1:{provider.server_port}/v1', upstreamTransport=transport)))
                 config.chmod(0o600)
@@ -356,6 +357,36 @@ def main():
                     assert status==200 and dynamic_update['key']['models']==['synthetic-text']
                     status,dynamic_update=update(ports['admin'],dynamic_update['key'],models=None)
                     assert status==200 and dynamic_update['key']['models'] is None
+                    reasoning = {'synthetic-text': ['high']}
+                    status, restricted = call(ports['admin'], 'POST', '/api/keys', dict(
+                        principal='reasoning-test', models=['synthetic-text'], limits=LIMITS,
+                        reasoningEfforts=reasoning, catalogRevision=0))
+                    assert status == 201 and restricted['key']['reasoningEfforts'] == reasoning
+                    restricted_secret = restricted['secret']
+                    secrets.append(restricted_secret)
+                    status, preserved = update(ports['admin'], restricted['key'], catalogRevision=0)
+                    assert status == 200 and preserved['key']['reasoningEfforts'] == reasoning
+                    assert update(ports['admin'], preserved['key'], catalogRevision=1)[0] == 409
+                    status, catalog = call(ports['data'], 'GET', '/v1/models?client_version=0.163.0', token=restricted_secret)
+                    assert status == 200 and catalog['models'][0]['default_reasoning_level'] == 'high'
+                    assert [level['effort'] for level in catalog['models'][0]['supported_reasoning_levels']] == ['high']
+                    count = provider.calls
+                    for patch in ({}, {'reasoning': None}, {'reasoning': {'effort': 'low'}}, {'reasoning': {'effort': ['high']}}):
+                        status, rejection = call(ports['data'], 'POST', '/v1/responses', {**request, **patch}, token=restricted_secret)
+                        assert status == 403 and rejection['error']['code'] == 'reasoning_effort_not_allowed'
+                    assert provider.calls == count
+                    allowed_request = {**request, 'reasoning': {'effort': 'high'}}
+                    if transport == 'websocket':
+                        with dial(ports['data'], token=restricted_secret) as downstream:
+                            assert turn(downstream, allowed_request)[-1]['type'] == 'response.completed'
+                            latest(db_path, 'settled')
+                            count = provider.calls
+                            rejection = turn(downstream, {**request, 'reasoning': {'effort': 'low'}})[-1]
+                            assert rejection['error']['code'] == 'reasoning_effort_not_allowed'
+                            assert provider.calls == count
+                    else:
+                        assert call(ports['data'], 'POST', '/v1/responses', allowed_request, token=restricted_secret)[0] == 200
+                        latest(db_path, 'settled')
                     verify_archive(ports, db_path)
                     status, listing = call(ports['admin'], 'GET', '/api/keys')
                     assert status == 200 and 'secret' not in json.dumps(listing) and 'digest' not in json.dumps(listing)

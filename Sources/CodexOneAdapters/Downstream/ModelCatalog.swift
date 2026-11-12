@@ -5,10 +5,14 @@ import Foundation
 func modelCatalog(
   _ models: [SingleIdentityConfiguration.Model], requireCodexProfile: Bool = false,
   images: [ImageConfiguration.Model] = [], runtimeBudget: JSONValue? = nil,
-  upstreamTransport: String? = nil, now: Int64
+  upstreamTransport: String? = nil, reasoningEfforts: [String: [String]]? = nil, now: Int64
 )
   throws -> JSONValue
 {
+  let models = models.filter { model in
+    guard let allowed = reasoningEfforts?[model.id] else { return true }
+    return model.supportedReasoningEfforts.contains(where: allowed.contains)
+  }
   let api =
     models.map { model in
       JSONValue.object([
@@ -84,6 +88,17 @@ func modelCatalog(
     }
     if let effort = metadata?.defaultReasoningEffort {
       entry["default_reasoning_level"] = .string(effort)
+    }
+    if let allowed = reasoningEfforts?[model.id] {
+      let effective = model.supportedReasoningEfforts.filter(allowed.contains)
+      let levels = entry["supported_reasoning_levels"]?.array ?? []
+      entry["supported_reasoning_levels"] = .array(
+        levels.filter {
+          $0["effort"]?.string.map(effective.contains) ?? false
+        })
+      if entry["default_reasoning_level"]?.string.map(effective.contains) != true {
+        entry["default_reasoning_level"] = effective.first.map(JSONValue.string)
+      }
     }
     return JSONValue.object(entry)
   }

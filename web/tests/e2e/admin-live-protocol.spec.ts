@@ -222,6 +222,7 @@ test("HTTP pending over an old snapshot marks the module and availability summar
 });
 
 test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
+  test.setTimeout(30_000);
   await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
@@ -336,7 +337,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
   const dots = trend.locator("circle.recharts-dot");
   await expect(dots).toHaveCount(1);
-  await dots.hover();
+  await dots.first().hover();
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );

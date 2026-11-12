@@ -110,6 +110,7 @@ class Provider(BaseHTTPRequestHandler):
         if prompt == 'invalid-usage': item['usage']['output_tokens'] = -1
         if prompt == 'missing-usage': item.pop('usage')
         if prompt == 'stall': time.sleep(11)
+        if prompt in ('no-image', 'synthetic-rate-image'): time.sleep(.05)
         response = {'id': f'resp_{index}', 'status': 'completed', 'output': [item] if image else [],
                     'usage': {'input_tokens': 5, 'output_tokens': 7, 'input_tokens_details': {'cached_tokens': 0}}}
         author = {'model':'synthetic-author', 'input_tokens':10, 'output_tokens':20}
@@ -408,6 +409,16 @@ def main():
                         assert provider_input.get('stream') is not True
                         assert sent_headers['accept'] == 'application/json'
                         assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
+                    # A declared but unused tool remains a text sample; actual generation does not.
+                    for prompt, should_record in (('no-image', True), ('synthetic-rate-image', False)):
+                        status, _, _ = request({'model':'synthetic-host','input':prompt,
+                            'tools':[{'type':'image_generation'}]}, '/v1/responses', name='both')
+                        assert status == 200
+                        state, usage, _ = ledger()
+                        assert state == 'settled' and usage['images'] == (0 if should_record else 1)
+                        with sqlite3.connect(db) as connection:
+                            rate = connection.execute('SELECT output_rate FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0]
+                        assert (rate is not None) == should_record
                     if args.smoke:
                         verify_native('/v1', 'generations')
                         verify_native('/backend-api/codex', 'edits')

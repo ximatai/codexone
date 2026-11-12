@@ -12,6 +12,8 @@ public struct KeyAdminAPI: Sendable {
   let sessions: AdminSessions
   private let availableModels: [String]
   private let imageModels: [String]
+  private let modelDirectory: ModelDirectory?
+  private let configuredReasoningEfforts: [String: [String]]
   let usage: UsageAdminAPI?
   private let executions: (any UnknownExecutionReleasing)?
   let attention: AttentionAdminAPI?
@@ -21,7 +23,8 @@ public struct KeyAdminAPI: Sendable {
   public static func load(
     path: String, store: any KeyGovernanceStore, forbiddenDigest: String? = nil,
     publicOrigin: String? = nil, listenAddress: String? = nil, availableModels: [String] = [],
-    imageModels: [String] = [],
+    imageModels: [String] = [], modelDirectory: ModelDirectory? = nil,
+    conversationModels: [SingleIdentityConfiguration.Model] = [],
     usage: UsageAdminAPI? = nil, attention: AttentionAdminAPI? = nil,
     executions: (any UnknownExecutionReleasing)? = nil,
     storageMonitoring: (any StorageMonitoring)? = nil, backup: (any BackupMaintaining)? = nil,
@@ -36,7 +39,11 @@ public struct KeyAdminAPI: Sendable {
       digest: digest, store: store,
       sessions: try AdminSessions(
         digest: digest, publicOrigin: publicOrigin, listenAddress: listenAddress),
-      availableModels: availableModels, imageModels: imageModels, usage: usage,
+      availableModels: availableModels, imageModels: imageModels, modelDirectory: modelDirectory,
+      configuredReasoningEfforts: Dictionary(
+        uniqueKeysWithValues: conversationModels.map {
+          ($0.id, $0.supportedReasoningEfforts)
+        }), usage: usage,
       executions: executions, attention: attention,
       backup: backup, overviewResources: overviewResources, storageMonitoring: storageMonitoring)
   }
@@ -82,6 +89,20 @@ public struct KeyAdminAPI: Sendable {
     let guardMiddleware = KeyAdminGuard(digest: digest, sessions: sessions)
     let routes = api.grouped("keys").grouped(guardMiddleware)
     accounts?.register(api.grouped("accounts").grouped(guardMiddleware))
+    if let modelDirectory {
+      let models = api.grouped("models").grouped(guardMiddleware)
+      models.get { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        return try Self.response(await modelDirectory.document())
+      }
+      models.put { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(
+          request, allowed: ["model", "revision", "enabled"],
+          optional: ["inputMicrosPerMillion", "outputMicrosPerMillion", "candidateRevision"])
+        return try await Self.response(modelDirectory.change(document))
+      }
+    }
     usage?.register(api.grouped("usage").grouped(guardMiddleware))
     attention?.register(api.grouped(guardMiddleware))
     if let releasing = executions {
@@ -118,10 +139,18 @@ public struct KeyAdminAPI: Sendable {
       return response
     }
     routes.get("options") { _ async throws -> Response in
-      try Self.response(
+      let snapshot = modelDirectory?.snapshot()
+      let models = snapshot?.active
+      let efforts =
+        models.map { values in
+          Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.supportedReasoningEfforts) })
+        } ?? configuredReasoningEfforts
+      return try Self.response(
         .object([
-          "models": .array(availableModels.map { .string($0) }),
+          "models": .array((models?.map(\.id) ?? availableModels).map { .string($0) }),
           "imageModels": .array(imageModels.map { .string($0) }),
+          "reasoningEfforts": Self.reasoningMetadata(efforts),
+          "catalogRevision": snapshot.map { .number(Decimal($0.revision)) } ?? .null,
         ]))
     }
     routes.get { request async throws -> Response in
@@ -150,7 +179,8 @@ public struct KeyAdminAPI: Sendable {
       let key = try await store.createKey(
         id: UUID().uuidString, principal: dto.principal,
         digest: keyDigest(secret),
-        policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
+        policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()),
+        catalogRevision: Self.catalogRevision(document))
       return try Self.response(
         .object(["key": Self.metadata(key), "secret": .string(secret)]), status: .created)
     }
@@ -160,7 +190,8 @@ public struct KeyAdminAPI: Sendable {
       let dto = try JSONDecoder().decode(UpdateKeyDTO.self, from: document.data())
       let key = try await store.updateKey(
         id: request.parameters.get("id") ?? "", revision: dto.revision,
-        enabled: dto.enabled, policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()))
+        enabled: dto.enabled, policy: JSONDecoder().decode(KeyPolicy.self, from: document.data()),
+        catalogRevision: Self.catalogRevision(document))
       return try Self.response(.object(["key": Self.metadata(key)]))
     }
     routes.put(":id", "display-name") { request async throws -> Response in
@@ -222,7 +253,9 @@ public struct KeyAdminAPI: Sendable {
     guard let buffer = request.body.data else { throw ExecutionError.invalidCommand }
     let document = try JSONValue.decode(Data(buffer.readableBytesView))
     let optionalFields: Set<String> =
-      allowed.contains("limits") ? ["visionInput", "imageGeneration", "imageModels"] : optional
+      allowed.contains("limits")
+      ? ["visionInput", "imageGeneration", "imageModels", "reasoningEfforts", "catalogRevision"]
+      : optional
     guard let object = document.object,
       Set(object.keys).subtracting(optionalFields) == allowed
         && Set(object.keys).isSubset(of: allowed.union(optionalFields))
@@ -236,6 +269,11 @@ public struct KeyAdminAPI: Sendable {
     }
     return document
   }
+  private static func catalogRevision(_ document: JSONValue) throws -> Int64? {
+    guard let field = document["catalogRevision"] else { return nil }
+    guard let value = field.integer, value >= 0 else { throw ExecutionError.invalidCommand }
+    return value
+  }
   private static func metadata(_ key: ManagedKey) -> JSONValue {
     .object([
       "archivedAtUnixSeconds": key.archivedAtUnixSeconds.map { .number(Decimal($0)) } ?? .null,
@@ -248,12 +286,16 @@ public struct KeyAdminAPI: Sendable {
       "visionInput": .bool(key.policy.visionInput),
       "imageGeneration": .bool(key.policy.imageGeneration),
       "imageModels": key.policy.imageModels.map { .array($0.map { .string($0) }) } ?? .null,
+      "reasoningEfforts": reasoningMetadata(key.policy.reasoningEfforts ?? [:]),
       "createdAtUnixSeconds": .number(Decimal(key.createdAtUnixSeconds)),
       "limits": .object([
         "tokens": key.policy.limits.tokens.map { .number(Decimal($0)) } ?? .null,
         "active": key.policy.limits.active.map { .number(Decimal($0)) } ?? .null,
       ]),
     ])
+  }
+  private static func reasoningMetadata(_ efforts: [String: [String]]) -> JSONValue {
+    .object(JSONObject(efforts.mapValues { .array($0.map(JSONValue.string)) }))
   }
   private static func response(_ document: JSONValue, status: HTTPStatus = .ok) throws -> Response {
     Response(

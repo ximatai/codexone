@@ -17,6 +17,7 @@ export interface ManagedKey {
   revision: number;
   enabled: boolean;
   models: string[] | null;
+  reasoningEfforts?: Record<string, string[]>;
   visionInput?: boolean;
   imageGeneration?: boolean;
   imageModels?: string[] | null;
@@ -26,19 +27,23 @@ export interface ManagedKey {
   archivedAtUnixSeconds?: number | null;
 }
 export interface ImagePermissions {
+  reasoningEfforts?: Record<string, string[]>;
   visionInput?: boolean;
   imageGeneration?: boolean;
   imageModels?: string[] | null;
 }
 export interface KeyDraft extends ImagePermissions {
+  catalogRevision?: number;
   displayName?: string | null;
   principal: string;
   models: string[] | null;
   limits: KeyLimits;
 }
 export interface KeyOptions {
+  catalogRevision?: number;
   models: string[];
   imageModels: string[];
+  reasoningEfforts?: Record<string, string[]>;
 }
 export interface KeyCreated {
   key: ManagedKey;
@@ -65,6 +70,13 @@ function models(value: unknown, allowEmpty = false): string[] {
   )
     throw new ManagementError(0, "invalid_response");
   return value as string[];
+}
+function effortRanges(value: unknown): Record<string, string[]> {
+  const entries = Object.entries(record(value));
+  if (entries.length > 32) throw new ManagementError(0, "invalid_response");
+  return Object.fromEntries(
+    entries.map(([model, efforts]) => [model, models(efforts, true)]),
+  );
 }
 function boundedNumber(
   value: unknown,
@@ -136,6 +148,11 @@ export function parseKey(value: unknown): ManagedKey {
       data.models === null
         ? null
         : models(data.models, data.imageGeneration === true),
+    ...(data.reasoningEfforts === undefined
+      ? {}
+      : {
+          reasoningEfforts: effortRanges(data.reasoningEfforts),
+        }),
     visionInput:
       data.visionInput === undefined ? false : boolean(data.visionInput),
     imageGeneration:
@@ -164,6 +181,16 @@ export async function fetchOptions(signal?: AbortSignal): Promise<KeyOptions> {
   return {
     models: models(value.models, true),
     imageModels: models(value.imageModels ?? [], true),
+    reasoningEfforts: effortRanges(value.reasoningEfforts ?? {}),
+    ...(value.catalogRevision == null
+      ? {}
+      : {
+          catalogRevision: boundedNumber(
+            value.catalogRevision,
+            0,
+            Number.MAX_SAFE_INTEGER,
+          ),
+        }),
   };
 }
 export async function fetchKeys(
@@ -227,7 +254,7 @@ export async function updateKey(
   limits: KeyLimits,
   csrf: string,
   signal?: AbortSignal,
-  capabilities: ImagePermissions = key,
+  capabilities: ImagePermissions & { catalogRevision?: number } = key,
 ): Promise<ManagedKey> {
   return parseKey(
     record(
@@ -238,6 +265,8 @@ export async function updateKey(
           enabled,
           models: allowedModels,
           limits,
+          reasoningEfforts: capabilities.reasoningEfforts,
+          catalogRevision: capabilities.catalogRevision,
           visionInput: capabilities.visionInput ?? false,
           imageGeneration: capabilities.imageGeneration ?? false,
           imageModels:

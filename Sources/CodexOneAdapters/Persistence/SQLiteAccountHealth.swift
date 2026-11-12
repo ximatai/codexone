@@ -9,17 +9,20 @@ extension SQLiteExecutionStore: AccountHealthStore {
     }
     try await perform(essential: true) { db in
       try db.transaction {
-        let existing = try db.rows("SELECT model FROM health_models") {
-          String(cString: sqlite3_column_text($0, 0))
-        }
-        for model in existing where !models.contains(model) {
-          try db.write("DELETE FROM health_models WHERE model=?", [.text(model)])
-          for id in Array(db.overloadPacing.keys) { db.overloadPacing[id]?[model] = nil }
-        }
-        for model in models {
-          try db.write("INSERT OR IGNORE INTO health_models VALUES(?)", [.text(model)])
-        }
+        try Self.replaceHealthModels(db, models)
       }
+    }
+  }
+  static func replaceHealthModels(_ db: SQLiteConnection, _ models: Set<String>) throws {
+    let existing = try db.rows("SELECT model FROM health_models") {
+      String(cString: sqlite3_column_text($0, 0))
+    }
+    for model in existing where !models.contains(model) {
+      try db.write("DELETE FROM health_models WHERE model=?", [.text(model)])
+      for id in Array(db.overloadPacing.keys) { db.overloadPacing[id]?[model] = nil }
+    }
+    for model in models {
+      try db.write("INSERT OR IGNORE INTO health_models VALUES(?)", [.text(model)])
     }
   }
   public func accountHealth(id: String) async throws -> AccountHealth {

@@ -5,6 +5,7 @@ import {
   IconLayoutDashboard,
   IconUsers,
   IconKey,
+  IconStack2,
   IconChartBar,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
@@ -14,6 +15,7 @@ import { useEffect, useState, type ReactNode } from "react";
 const links = [
   { path: "/", title: "服务概览", icon: IconLayoutDashboard },
   { path: "/accounts", title: "订阅账号", icon: IconUsers },
+  { path: "/models", title: "模型目录", icon: IconStack2 },
   { path: "/keys", title: "访问密钥", icon: IconKey },
   { path: "/usage", title: "用量与诊断", icon: IconChartBar },
 ];

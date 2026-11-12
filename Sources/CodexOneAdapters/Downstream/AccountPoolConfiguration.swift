@@ -8,6 +8,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   public let imageConcurrency: Int?
   public let imageGeneration: ImageConfiguration?
   public var models: [SingleIdentityConfiguration.Model]
+  var accountForModel: [String: String] = [:]
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
   public let firstResponseTimeoutSeconds: Int?
@@ -146,6 +147,6 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     return try .init(
       key: key, models: Set(effective.map(\.id) + imageModels.map(\.id)),
       reservedMicros: reservedMicros,
-      policyVersion: policy, pricingVersion: pricing)
+      policyVersion: policy, pricingVersion: pricing, accountForModel: accountForModel)
   }
 }
