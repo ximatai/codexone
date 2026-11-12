@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -216,7 +217,7 @@ class AptFallbackTests(unittest.TestCase):
         self.assertEqual(len(blocks), 4)
         for script in blocks:
             for fail_all in (False, True):
-                with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory() as temporary:
+                with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory(prefix='synthetic space ') as temporary:
                     root = Path(temporary)
                     source = root / 'sources'
                     original = 'http://archive.ubuntu.com/ubuntu\nhttp://security.ubuntu.com/ubuntu\n'
@@ -227,11 +228,11 @@ class AptFallbackTests(unittest.TestCase):
                     apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_LOG"\ncase "$*" in *update*) if [ "$FAIL_ALL" = 1 ] || grep -q invalid.invalid "$TEST_SOURCES"; then exit 1; fi;; esac\nexit 0\n')
                     apt.chmod(0o755)
                     sed = root / 'bin/sed'
-                    sed.write_text('#!/usr/bin/env python3\nimport pathlib,sys\np=pathlib.Path(sys.argv[-1]); p.write_text(p.read_text().replace("http://archive.ubuntu.com/ubuntu", "http://invalid.invalid/ubuntu").replace("http://security.ubuntu.com/ubuntu", "http://invalid.invalid/ubuntu"))\n')
+                    sed.write_text('#!/bin/sh\nif [ "$(uname -s)" = Darwin ] && [ "$1" = "-i" ]; then shift; exec /usr/bin/sed -i "" "$@"; fi\nexec /usr/bin/sed "$@"\n')
                     sed.chmod(0o755)
-                    command = (script.replace('/etc/apt/sources.list.d/ubuntu.sources', str(source))
-                               .replace('/tmp/ubuntu.sources', str(root / 'backup'))
-                               .replace('/var/lib/apt/lists/*', str(root / 'lists') + '/*'))
+                    command = (script.replace('/etc/apt/sources.list.d/ubuntu.sources', shlex.quote(str(source)))
+                               .replace('/tmp/ubuntu.sources', shlex.quote(str(root / 'backup')))
+                               .replace('/var/lib/apt/lists/*', shlex.quote(str(root / 'lists')) + '/*'))
                     env = {**os.environ, 'PATH': str(root / 'bin') + os.pathsep + os.defpath,
                            'APT_MIRROR': 'http://invalid.invalid/ubuntu', 'TEST_SOURCES': str(source),
                            'TEST_LOG': str(root / 'calls'), 'FAIL_ALL': str(int(fail_all))}
