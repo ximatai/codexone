@@ -281,46 +281,49 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     page.getByRole("heading", { name: "进行中请求", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("暂无速率数据")).toBeVisible();
-  socket!.send(
-    JSON.stringify({
-      protocol: 1,
-      epoch: "synthetic-before-restart",
-      sequence: 2,
-      kind: "update",
-      sections: {
-        inFlight: {
-          ...sections.inFlight,
-          version: 2,
-          data: {
-            rows: [
-              {
-                id: "synthetic-retired-request",
-                model: "synthetic-retired-model",
-                keyID: "synthetic-key",
-                mode: "http",
-                accountID: null,
-                hasFirstEvent: false,
-                elapsedSeconds: 3,
-              },
-            ],
-            recentlyFinished: [],
-            clients: [],
-            overflow: 0,
-            recentRequestOutputRateMedian: 42.5,
-            requestOutputRateByHour: {
-              endUnixSeconds: day,
-              offsetMinutes: 480,
-              points: {
-                [day - 3 * 3600]: { median: 20, count: 2 },
-                [day - 2 * 3600]: { median: 30, count: 3 },
-                [day]: { median: 42.5, count: 5 },
+  const sendHourlyRate = (sequence: number, median: number, count: number) => {
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-before-restart",
+        sequence,
+        kind: "update",
+        sections: {
+          inFlight: {
+            ...sections.inFlight,
+            version: sequence,
+            data: {
+              rows: [
+                {
+                  id: "synthetic-retired-request",
+                  model: "synthetic-retired-model",
+                  keyID: "synthetic-key",
+                  mode: "http",
+                  accountID: null,
+                  hasFirstEvent: false,
+                  elapsedSeconds: 3,
+                },
+              ],
+              recentlyFinished: [],
+              clients: [],
+              overflow: 0,
+              recentRequestOutputRateMedian: 42.5,
+              requestOutputRateByHour: {
+                endUnixSeconds: day,
+                offsetMinutes: 480,
+                points: {
+                  [day - 3 * 3600]: { median: 20, count: 2 },
+                  [day - 2 * 3600]: { median: 30, count: 3 },
+                  [day]: { median, count },
+                },
               },
             },
           },
         },
-      },
-    }),
-  );
+      }),
+    );
+  };
+  sendHourlyRate(2, 42.5, 5);
   await expect(
     page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
   ).toBeVisible();
@@ -339,6 +342,23 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   );
   await expect(page.getByRole("tooltip")).toContainText("08:00");
   await page.getByRole("heading", { name: "请求输出速率" }).hover();
+  const readout = page
+    .locator('[title="最近有样本的小时"]')
+    .locator("[data-continuous-value]");
+  await expect(readout).toBeVisible();
+  await expect(readout).toHaveText("最近 43 Token/s");
+  const readoutBox = await readout.boundingBox();
+  for (const [sequence, median, label] of [
+    [3, 1234, "1,234 Token/s"],
+    [4, 0, "0 Token/s"],
+  ] as const) {
+    sendHourlyRate(sequence, median, 6);
+    await expect(readout).toHaveText(`最近 ${label}`);
+    await expect(trend).toHaveAccessibleName(
+      `请求输出速率近 7 天：最近有样本的小时 ${label}`,
+    );
+    expect(await readout.boundingBox()).toEqual(readoutBox);
+  }
   const originalViewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(trend).toBeVisible();
@@ -349,8 +369,8 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
-    [3, "stale", "进行中请求"],
-    [4, "fresh", "进行中请求 · 43 Token/s"],
+    [5, "stale", "进行中请求"],
+    [6, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
@@ -360,7 +380,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
         kind: "update",
         sections: {
           inFlight: {
-            version: 2,
+            version: 4,
             sampledAtUnixSeconds: sections.inFlight.sampledAtUnixSeconds,
             lastSuccessAt: sections.inFlight.lastSuccessAt,
             freshness,
