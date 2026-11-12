@@ -217,7 +217,7 @@ class AptFallbackTests(unittest.TestCase):
         self.assertEqual(len(blocks), 4)
         for script in blocks:
             for fail_all in (False, True):
-                with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory(prefix='synthetic space ') as temporary:
+                with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory(prefix="synthetic ' $() ") as temporary:
                     root = Path(temporary)
                     source = root / 'sources'
                     original = 'http://archive.ubuntu.com/ubuntu\nhttp://security.ubuntu.com/ubuntu\n'
