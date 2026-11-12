@@ -17,7 +17,8 @@ extension ExecutionProbe {
       atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let store = try await SQLiteExecutionStore.open(
       path: directory + "/core.sqlite",
-      limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100))
+      limits: .init(requests: 100, active: 4, unresolved: 4, budgetMicros: 100),
+      allowStartupMigration: true)
     if usageFixture { try await seedUsageUI(store) }
     let usageReader = try await store.makeUsageReader()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)

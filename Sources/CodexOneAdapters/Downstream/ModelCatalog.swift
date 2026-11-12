@@ -11,7 +11,7 @@ func modelCatalog(
 {
   let models = models.filter { model in
     guard let allowed = reasoningEfforts?[model.id] else { return true }
-    return model.supportedReasoningEfforts.contains(where: allowed.contains)
+    return model.effectiveReasoningEfforts.contains(where: allowed.contains)
   }
   let api =
     models.map { model in
@@ -86,11 +86,12 @@ func modelCatalog(
           profile.capturedAtUnixSeconds < now - 2_592_000),
       ])
     }
-    if let effort = metadata?.defaultReasoningEffort {
+    if let effort = model.reasoningSettings?.preferred ?? metadata?.defaultReasoningEffort {
       entry["default_reasoning_level"] = .string(effort)
     }
-    if let allowed = reasoningEfforts?[model.id] {
-      let effective = model.supportedReasoningEfforts.filter(allowed.contains)
+    let keyRange = reasoningEfforts?[model.id]
+    if keyRange != nil || model.reasoningSettings?.allowed != nil {
+      let effective = model.effectiveReasoningEfforts.filter { keyRange?.contains($0) ?? true }
       let levels = entry["supported_reasoning_levels"]?.array ?? []
       entry["supported_reasoning_levels"] = .array(
         levels.filter {

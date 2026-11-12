@@ -45,11 +45,16 @@ extension SQLiteExecutionStore {
         try Self.replaceHealthModels(db, Set(snapshot.active.map(\.id) + imageModels))
         try db.write("DELETE FROM model_directory_routes")
         for model in snapshot.active {
+          let efforts = try model.reasoningSettings?.allowed.map {
+            SQLiteConnection.Value.text(
+              String(decoding: try JSONEncoder().encode($0), as: UTF8.self))
+          }
           try db.write(
-            "INSERT INTO model_directory_routes(model,account) VALUES(?,?)",
+            "INSERT INTO model_directory_routes(model,account,reasoning_efforts) VALUES(?,?,?)",
             [
               .text(model.id),
               snapshot.accountForModel[model.id].map(SQLiteConnection.Value.text) ?? .null,
+              efforts ?? .null,
             ])
         }
       }

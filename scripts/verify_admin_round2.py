@@ -36,7 +36,8 @@ def port_line(process, pattern):
     raise AssertionError('Synthetic assembly did not listen within budget')
 
 
-def verify_accounts(probe):
+def verify_accounts(probe, binary):
+    schema = current_schema_version(binary)
     server = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticOAuth)
     server.daemon_threads = True
     server.guard = threading.Lock()
@@ -115,8 +116,23 @@ def verify_accounts(probe):
                 key_options = document(request(port, 'GET', '/api/keys/options', **auth))
                 assert key_options['models'] == ['synthetic-text', 'synthetic-nova']
                 assert key_options['reasoningEfforts']['synthetic-nova'] == ['high']
+                settings_path = '/api/models/reasoning'
+                settings = dict(revision=key_options['catalogRevision'], model='synthetic-nova',
+                                allowedReasoningEfforts=None, defaultReasoningEffort='high')
+                assert request(port, 'PUT', settings_path, settings)[0] == 403
+                assert request(port, 'PUT', settings_path, dict(settings, defaultReasoningEffort='low'), **auth)[0] == 400
+                saved = document(request(port, 'PUT', settings_path, settings, **auth))
+                assert saved['active'][1]['configuredDefaultReasoningEffort'] == 'high'
+                assert request(port, 'PUT', settings_path, settings, **auth)[0] == 409
             finally:
                 release(process)
+            database = root / 'state/core.sqlite'
+            with sqlite3.connect(database) as db:
+                db.executescript("""
+                    ALTER TABLE model_directory_routes DROP COLUMN reasoning_efforts;
+                    UPDATE model_directory SET document=json_remove(document,'$.active[1].reasoningSettings');
+                    PRAGMA user_version=17;
+                """)
             process, port = start()
             try:
                 account = document(request(port, 'GET', '/api/accounts', **auth))['accounts'][0]
@@ -124,6 +140,15 @@ def verify_accounts(probe):
                 persisted = document(request(port, 'GET', '/api/models', **auth))
                 assert [item['id'] for item in persisted['active']] == ['synthetic-text', 'synthetic-nova']
                 assert persisted['candidates'] == []
+                assert persisted['active'][1]['configuredDefaultReasoningEffort'] is None
+                with sqlite3.connect(database) as db:
+                    assert db.execute('PRAGMA user_version').fetchone()[0] == schema
+                    assert db.execute("SELECT reasoning_efforts FROM model_directory_routes WHERE model='synthetic-nova'").fetchone() == (None,)
+                backup, = database.parent.glob('core.sqlite.pre-v18-*.sqlite')
+                with sqlite3.connect(backup) as db:
+                    assert db.execute('PRAGMA user_version').fetchone()[0] == 17
+                settings['revision'] = persisted['revision']
+                persisted = document(request(port, 'PUT', settings_path, settings, **auth))
                 retired = document(request(port, 'PUT', '/api/models',
                                            dict(revision=persisted['revision'], model='synthetic-nova', enabled=False), **auth))
                 assert [item['id'] for item in retired['retired']] == ['synthetic-nova']
@@ -140,6 +165,7 @@ def verify_accounts(probe):
                 restored = document(request(port, 'PUT', '/api/models', enable, **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
                 assert restored['active'][1]['reasoningEfforts'] == ['low', 'high']
+                assert restored['active'][1]['configuredDefaultReasoningEffort'] == 'high'
                 assert restored['active'][1]['visionInput'] is True
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
                 assert account['accessExpiresAtUnixSeconds'] == expires
@@ -209,6 +235,6 @@ if __name__ == '__main__':
     parser.add_argument('--probe', type=Path, required=True)
     parser.add_argument('--previous-binary', type=Path)
     args = parser.parse_args()
-    verify_accounts(str(args.probe.resolve()))
+    verify_accounts(str(args.probe.resolve()), str(args.binary.resolve()))
     if args.previous_binary:
         verify_previous(str(args.binary.resolve()), str(args.previous_binary.resolve()))

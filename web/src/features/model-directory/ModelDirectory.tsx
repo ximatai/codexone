@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   Modal,
   NumberInput,
@@ -31,6 +32,10 @@ const model = z.object({
   visionInput: z.boolean().optional(),
   previousVisionInput: z.boolean().nullable().optional(),
   defaultReasoningEffort: z.string().max(32).nullable(),
+  supportedReasoningEfforts: z.array(z.string().max(32)).max(8).optional(),
+  profileDefaultReasoningEffort: z.string().max(32).nullable().optional(),
+  configuredDefaultReasoningEffort: z.string().max(32).nullable().optional(),
+  resetReasoningRequired: z.boolean().optional(),
 });
 const directory = z.object({
   revision: z.number().int().nonnegative(),
@@ -59,9 +64,18 @@ const states = {
 
 export function ModelDirectory() {
   const owner = useManagementSession();
+  const queryClient = useQueryClient();
   const masked = usePrivacyMask();
   const [account, setAccount] = useState<string | null>(null);
   const [selected, setSelected] = useState<Model | null>(null);
+  const [reasoning, setReasoning] = useState<{
+    model: Model;
+    revision: number;
+    allowed: string[];
+    preferred: string | null;
+  } | null>(null);
+  const [reasoningError, setReasoningError] = useState("");
+  const [resetReasoning, setResetReasoning] = useState(false);
   const [approvedCandidateRevision, setApprovedCandidateRevision] = useState<
     string | null
   >(null);
@@ -122,6 +136,7 @@ export function ModelDirectory() {
     const newModel = selected.state === "candidate";
     if (newModel && (typeof input !== "number" || typeof output !== "number"))
       return;
+    if (selected.resetReasoningRequired && !resetReasoning) return;
     setWorking("save");
     setFailure("");
     setNotice("");
@@ -134,6 +149,9 @@ export function ModelDirectory() {
             revision: data.revision,
             model: selected.id,
             enabled: selected.state !== "enabled",
+            ...(selected.resetReasoningRequired && resetReasoning
+              ? { resetReasoningSettings: true }
+              : {}),
             ...(selected.state !== "enabled" && approvedCandidateRevision
               ? { candidateRevision: approvedCandidateRevision }
               : {}),
@@ -162,6 +180,65 @@ export function ModelDirectory() {
       setWorking(null);
     }
   }
+
+  async function saveReasoning() {
+    if (!reasoning || !owner.session || working || !reasoning.allowed.length)
+      return;
+    const supported =
+      reasoning.model.supportedReasoningEfforts ??
+      reasoning.model.reasoningEfforts;
+    setWorking("save");
+    setReasoningError("");
+    setNotice("");
+    setFailure("");
+    try {
+      await queryClient.cancelQueries({
+        queryKey: ["model-directory"],
+        exact: true,
+      });
+      const next = parse(
+        await request("/api/models/reasoning", {
+          method: "PUT",
+          csrf: owner.session.csrf,
+          body: {
+            revision: reasoning.revision,
+            model: reasoning.model.id,
+            allowedReasoningEfforts:
+              reasoning.allowed.length === supported.length
+                ? null
+                : reasoning.allowed,
+            defaultReasoningEffort: reasoning.preferred,
+          },
+        }),
+      );
+      queryClient.setQueryData(["model-directory"], next);
+      setReasoning(null);
+      setNotice("推理设置已保存。");
+    } catch (error) {
+      setReasoningError(
+        error instanceof ManagementError && error.status === 409
+          ? "目录已变化，请关闭设置后重新打开。"
+          : "无法确认保存结果。请关闭设置后核对最新目录。",
+      );
+      await query.refetch();
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  const supportedEfforts =
+    reasoning?.model.supportedReasoningEfforts ??
+    reasoning?.model.reasoningEfforts ??
+    [];
+  const narrowed =
+    reasoning != null && reasoning.allowed.length < supportedEfforts.length;
+  const profileDefault = reasoning?.model.profileDefaultReasoningEffort;
+  const autoEffort =
+    profileDefault && reasoning?.allowed.includes(profileDefault)
+      ? profileDefault
+      : narrowed
+        ? supportedEfforts.find((effort) => reasoning.allowed.includes(effort))
+        : undefined;
 
   function row(item: Model) {
     const state = states[item.state];
@@ -195,12 +272,34 @@ export function ModelDirectory() {
           <Badge color={state.color} variant="light">
             {state.label}
           </Badge>
+          {item.state === "enabled" &&
+            (item.supportedReasoningEfforts ?? item.reasoningEfforts).length >
+              0 && (
+              <Button
+                variant="subtle"
+                size="compact-sm"
+                disabled={working !== null}
+                onClick={() => {
+                  if (!data) return;
+                  setReasoningError("");
+                  setReasoning({
+                    model: item,
+                    revision: data.revision,
+                    allowed: item.reasoningEfforts,
+                    preferred: item.configuredDefaultReasoningEffort ?? null,
+                  });
+                }}
+              >
+                推理设置
+              </Button>
+            )}
           <Button
             variant="subtle"
             size="compact-sm"
             disabled={working !== null}
             onClick={() => {
               setSelected(item);
+              setResetReasoning(false);
               setApprovedCandidateRevision(data?.candidateRevision ?? null);
               setInput("");
               setOutput("");
@@ -332,6 +431,86 @@ export function ModelDirectory() {
         </Stack>
       )}
       <Modal
+        opened={reasoning !== null}
+        onClose={() => !working && setReasoning(null)}
+        title="推理设置"
+      >
+        {reasoning && (
+          <Stack>
+            <Text fw={650}>{reasoning.model.id}</Text>
+            <Checkbox.Group
+              label="可选档位"
+              value={reasoning.allowed}
+              onChange={(allowed) =>
+                setReasoning({
+                  ...reasoning,
+                  allowed,
+                  preferred:
+                    reasoning.preferred && allowed.includes(reasoning.preferred)
+                      ? reasoning.preferred
+                      : null,
+                })
+              }
+            >
+              <Group gap="sm" mt={6}>
+                {supportedEfforts.map((effort) => (
+                  <Checkbox
+                    key={effort}
+                    value={effort}
+                    label={effort}
+                    disabled={working !== null}
+                  />
+                ))}
+              </Group>
+            </Checkbox.Group>
+            <Select
+              label="默认档位"
+              value={reasoning.preferred ?? ""}
+              data={[
+                {
+                  value: "",
+                  label: autoEffort ? `自动 · ${autoEffort}` : "跟随模型",
+                },
+                ...supportedEfforts.filter((effort) =>
+                  reasoning.allowed.includes(effort),
+                ),
+              ]}
+              allowDeselect={false}
+              disabled={working !== null || !reasoning.allowed.length}
+              onChange={(value) =>
+                setReasoning({ ...reasoning, preferred: value || null })
+              }
+            />
+            <Text size="sm" c="dimmed">
+              此设置适用于使用此模型的所有 Key。Key 自身的限制仍会生效。
+            </Text>
+            {narrowed && reasoning.allowed.length > 0 && (
+              <Alert color="yellow">
+                收窄范围后，请求必须显式指定获准档位。若某个 Key
+                没有任何获准档位，客户端目录将不再显示此模型。
+              </Alert>
+            )}
+            {reasoningError && <Alert color="red">{reasoningError}</Alert>}
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                disabled={working !== null}
+                onClick={() => setReasoning(null)}
+              >
+                取消
+              </Button>
+              <Button
+                loading={working === "save"}
+                disabled={!reasoning.allowed.length || !!reasoningError}
+                onClick={() => void saveReasoning()}
+              >
+                保存
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+      <Modal
         opened={selected !== null}
         onClose={() => !working && setSelected(null)}
         title={
@@ -361,6 +540,16 @@ export function ModelDirectory() {
               <Text size="sm" c="dimmed">
                 已获视觉输入权限且跟随全部模型的 Key 可使用此模型处理图片。
               </Text>
+            )}
+            {selected.resetReasoningRequired && (
+              <Checkbox
+                label="新模型资料与原推理设置不兼容，确认按新资料重置档位后启用"
+                checked={resetReasoning}
+                disabled={working !== null}
+                onChange={(event) =>
+                  setResetReasoning(event.currentTarget.checked)
+                }
+              />
             )}
             <Group gap={5}>
               {selected.reasoningEfforts.map((effort) => (
@@ -412,8 +601,9 @@ export function ModelDirectory() {
                   loading={working === "save"}
                   onClick={() => void apply()}
                   disabled={
-                    selected.state === "candidate" &&
-                    (typeof input !== "number" || typeof output !== "number")
+                    (selected.resetReasoningRequired && !resetReasoning) ||
+                    (selected.state === "candidate" &&
+                      (typeof input !== "number" || typeof output !== "number"))
                   }
                 >
                   {selected.state === "enabled" ? "确认停用" : "确认启用"}

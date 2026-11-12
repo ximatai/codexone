@@ -31,7 +31,8 @@ package final class SQLiteConnection: @unchecked Sendable {
       PRIMARY KEY(account_id, kind, bucket_epoch)
     );
     """
-  package static let schemaVersion: Int64 = 17
+  // v18 requires model-level reasoning policy enforcement when opening a directory.
+  package static let schemaVersion: Int64 = 18
 
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
@@ -143,7 +144,10 @@ package final class SQLiteConnection: @unchecked Sendable {
           + (version >= 16
             ? [
               ("model_directory", ["singleton", "revision", "document"]),
-              ("model_directory_routes", ["model", "account"]),
+              (
+                "model_directory_routes",
+                ["model", "account"] + (version >= 18 ? ["reasoning_efforts"] : [])
+              ),
             ]
             : [])
           + (version >= 17
@@ -210,6 +214,7 @@ package final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.creditHistorySchema)
           try exec(Self.modelDirectorySchema)
           try exec(Self.quotaCycleSchema)
+          try exec("ALTER TABLE model_directory_routes ADD COLUMN reasoning_efforts TEXT")
           try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
@@ -251,6 +256,9 @@ package final class SQLiteConnection: @unchecked Sendable {
             if version < 15 { try exec(Self.creditHistorySchema) }
             if version < 16 { try exec(Self.modelDirectorySchema) }
             if version < 17 { try exec(Self.quotaCycleSchema) }
+            if version < 18 {
+              try exec("ALTER TABLE model_directory_routes ADD COLUMN reasoning_efforts TEXT")
+            }
             try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }

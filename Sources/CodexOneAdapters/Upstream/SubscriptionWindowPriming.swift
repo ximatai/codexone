@@ -131,10 +131,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
     -> ResponseRequest
   {
     _ = try QuotaPrimingSettings(message: message)
-    let declared =
-      model.catalog?.reasoningEfforts
-      ?? model.upstream?["supported_reasoning_levels"]?.array?.compactMap { $0["effort"]?.string }
-      ?? []
+    let declared = model.effectiveReasoningEfforts
     let effort =
       ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].first {
         declared.contains($0)

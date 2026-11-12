@@ -208,15 +208,24 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     let now = now ?? db.clock.unixSeconds
     if command.keyRevision != nil || command.executionMode == .priming,
       command.executionRequirements.route == .conversation,
-      let model = command.model,
-      try db.scalar(
+      let model = command.model
+    {
+      let refused = try db.scalar(
         """
         SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
-          AND NOT EXISTS(SELECT 1 FROM model_directory_routes
-            WHERE model=? AND (account IS NULL OR account=?))
-        """, [.text(model), .text(command.owner.identity)]) != 0
-    {
-      throw ExecutionError.unauthorized
+          AND NOT EXISTS(
+            SELECT 1 FROM model_directory_routes AS route
+            WHERE model=? AND (account IS NULL OR account=?)
+              AND (? OR reasoning_efforts IS NULL OR EXISTS(
+                SELECT 1 FROM json_each(route.reasoning_efforts) WHERE value=?))
+          )
+        """,
+        [
+          .text(model), .text(command.owner.identity),
+          .number(command.executionMode == .warmup ? 1 : 0),
+          command.reasoningEffort.map(SQLiteConnection.Value.text) ?? .null,
+        ])
+      guard refused == 0 else { throw ExecutionError.unauthorized }
     }
     guard let revision = command.keyRevision else { return }
     let key = try loadKey(db, command.owner.key)
