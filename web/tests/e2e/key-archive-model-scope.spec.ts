@@ -74,7 +74,14 @@ test("desktop archive, recycle bin, restore and independent all-model scopes", a
   await page.getByRole("button", { name: "查看详情" }).click();
   for (const name of ["对话模型范围", "图片模型范围"]) {
     const scope = page.getByRole("radiogroup", { name });
-    await scope.getByRole("radio", { name: "全部模型（跟随配置）" }).check();
+    await scope
+      .getByRole("radio", {
+        name:
+          name === "对话模型范围"
+            ? "全部模型（跟随目录）"
+            : "全部模型（跟随配置）",
+      })
+      .check();
     await expect(
       scope.getByRole("radio", { name: "指定模型" }),
     ).not.toBeChecked();

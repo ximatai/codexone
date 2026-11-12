@@ -40,7 +40,7 @@ codexone --migrate
 | `PUT /api/keys/<id>/archive` / `unarchive` | 输入 `revision`；归档/恢复返回新 revision 的 `key`，200 |
 | `POST /api/keys/<id>/rotate` | 输入 `revision`；返回同 ID/主体、递增 revision 的 `key` 和一次性 `secret`，201 |
 
-`principal` 为稳定非秘密标识，1—64 字节 ASCII 字母/数字/点/横线/下划线；不能在已有 Key 上改主体。`models` 必须显式出现，可为 `null`（全部对话模型，跟随当前加载配置）或最多 32 个不重复模型 ID（每项 ≤128 UTF-8 字节）；`[]` 仅在启用图片生成时有效，表示无对话模型。有效目录/执行取与当前上游配置交集，无交集返回空目录。配置新增/移除模型在配置生效后立即影响全部模型 Key，无需改写 Key；配置文件加载与重启沿用现有入口，不新增热重载。策略版本包含模型数组/null。
+`principal` 为稳定非秘密标识，1—64 字节 ASCII 字母/数字/点/横线/下划线；不能在已有 Key 上改主体。`models` 必须显式出现，可为 `null`（全部对话模型，跟随当前生效目录）或最多 32 个不重复模型 ID（每项 ≤128 UTF-8 字节）；`[]` 仅在启用图片生成时有效，表示无对话模型。有效目录/执行取与当前上游配置交集，无交集返回空目录。生效目录增减模型立即影响全部模型 Key，无需改写 Key。策略版本包含模型数组/null。
 
 `limits` 仅包含tokens和active两项，分别为UTC每日Token上限与最大并发，均为1–10^12整数或null（不限）。不再接受请求次数或美元配置。界面单位切换不改变数量。输入（含缓存）加输出，达到已观测上限后拒绝新请求，已开始请求继续，故可能超额。缺失用量显示未知下界。旧Key请求次数不转换成Token，升级前备份，升级后明确设置Token上限。账本与重启责任不变，不重放未知请求。
 
@@ -62,6 +62,8 @@ python3 scripts/verify_keys.py --binary .build/debug/codexone
 ## 图片与视觉权限
 
 Key 创建/更新可显式设置 `visionInput`、`imageGeneration`、`imageModels`；旧策略缺失字段按关闭处理。`models` 只控制对话模型，`imageModels` 只控制部署映射的公开图片模型；显式 null 跟随全部图片模型，数组保持原义，关闭生成时 null 与 [] 等价。缺失能力字段仍按关闭处理，缺失 imageModels 为 []。可以发放 `models: []` 的仅图片 Key，但必须启用生成，并指定至少一个图片模型或使用 `imageModels: null` 跟随全部已配置图片模型。Images generation/edits 共用生成授权；参考图是编辑操作的输入，不要求对话视觉权限。Responses 图片工具同时要求对话模型与图片模型授权。关闭生成不会关闭独立授予的视觉输入。禁用、轮换及 revision CAS 语义保持一致。
+
+管理 Key 可提交可选的 `reasoningEfforts`，对象以对话模型 ID 为键，值为至少一个允许的档位。省略时，创建 Key 沿用无额外限制，更新已有 Key 保留原策略；显式 `{}` 清除该 Key 的档位限制。对已限制的模型须显式发送允许的 `reasoning.effort`，越权或缺少档位在转发前返回 `reasoning_effort_not_allowed`。表单提交可附 `catalogRevision`，避免在目录已变动时保存过期选择。
 
 管理 options 分别返回 `models` 和 `imageModels`；模型目录只展示 Key 的有效授权交集。旧显式清单 Key 不自动继承新增模型，null 范围 Key 跟随当前配置；能力开关仍单独控制。普通更新请求若省略能力字段按关闭处理；更新方应先读取并原样保留不打算修改的权限。
 

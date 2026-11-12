@@ -17,9 +17,10 @@ public struct AccountPoolPolicy: Sendable {
   public let reservedMicros: Int64
   public let policyVersion: String
   public let pricingVersion: String
+  public let accountForModel: [String: String]
   public init(
     key: ManagedKey, models: Set<String>, reservedMicros: Int64, policyVersion: String,
-    pricingVersion: String
+    pricingVersion: String, accountForModel: [String: String] = [:]
   ) throws {
     guard key.enabled, key.archivedAtUnixSeconds == nil, models.count <= 48,
       models.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 }),
@@ -31,6 +32,7 @@ public struct AccountPoolPolicy: Sendable {
     self.reservedMicros = reservedMicros
     self.policyVersion = policyVersion
     self.pricingVersion = pricingVersion
+    self.accountForModel = accountForModel
   }
 }
 public struct AccountRouteCandidate: Sendable {

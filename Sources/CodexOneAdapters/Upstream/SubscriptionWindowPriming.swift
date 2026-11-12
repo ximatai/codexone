@@ -10,6 +10,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
   private let client = Mutex<HTTPClient?>(nil)
   private let group: any EventLoopGroup
   private let configuration: AccountPoolConfiguration
+  private let modelDirectory: ModelDirectory?
   private let store: any QuotaPrimingStore
   private let finalizer: any FinalizationSink
   private let credentials: AccountCredentials
@@ -19,9 +20,14 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
   private let proxy: UpstreamHTTPProxy?
   private let clock: WallClock
   var isAccepting: Bool { client.withLock { $0 != nil } }
-  public var models: [String] { configuration.models.map(\.id) }
+  private var primingModels: [SingleIdentityConfiguration.Model] {
+    guard let modelDirectory else { return configuration.models }
+    let snapshot = modelDirectory.snapshot()
+    return snapshot.active.filter { snapshot.accountForModel[$0.id] == nil }
+  }
+  public var models: [String] { primingModels.map(\.id) }
   public var defaultModel: String? {
-    configuration.models.sorted {
+    primingModels.sorted {
       let a = $0.inputMicrosPerMillion + $0.outputMicrosPerMillion
       let b = $1.inputMicrosPerMillion + $1.outputMicrosPerMillion
       return a == b ? $0.id < $1.id : a < b
@@ -31,10 +37,12 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
     group: any EventLoopGroup, configuration: AccountPoolConfiguration,
     store: any QuotaPrimingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
-    provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil, clock: WallClock = .system
+    provider: SubscriptionOAuthProvider, modelDirectory: ModelDirectory? = nil,
+    proxy: UpstreamHTTPProxy? = nil, clock: WallClock = .system
   ) {
     self.group = group
     self.configuration = configuration
+    self.modelDirectory = modelDirectory
     self.store = store
     self.finalizer = finalizer
     self.credentials = credentials
@@ -52,6 +60,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
   ) {
     self.group = group
     self.configuration = configuration
+    self.modelDirectory = nil
     self.store = store
     self.finalizer = finalizer
     self.credentials = credentials
@@ -83,7 +92,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
   }
   public func executePriming(id: String, settings: QuotaPrimingSettings) async throws {
     guard let modelID = settings.model ?? defaultModel,
-      let model = configuration.models.first(where: { $0.id == modelID }),
+      let model = primingModels.first(where: { $0.id == modelID }),
       let transport = client.withLock({ $0 })
     else { throw ExecutionError.denied }
     let saved = try await store.quotaPrimingState(id: id)

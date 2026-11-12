@@ -42,7 +42,9 @@ public struct AccountPoolGateway: Sendable {
           affinity == nil && connection == nil && !affinityHints.isEmpty
           ? try await store.resolveAccountHint(
             principal: policy.key.principal, hints: affinityHints) : nil
-        let works = try await prepareWorks(affinity: affinity, requiredAccount: requiredAccount)
+        let works = try await prepareWorks(
+          affinity: affinity, requiredAccount: requiredAccount,
+          modelAccount: policy.accountForModel[model])
         let candidates = try works.values.map { try AccountRouteCandidate(work: $0) }
         let window = try store.businessDay.window(containing: clock.unixSeconds)
         let command = try AccountPoolAdmission(
@@ -68,7 +70,8 @@ public struct AccountPoolGateway: Sendable {
   }
 
   private func prepareWorks(
-    affinity: AccountRouteIdentity?, requiredAccount: AccountRouteIdentity?
+    affinity: AccountRouteIdentity?, requiredAccount: AccountRouteIdentity?,
+    modelAccount: String? = nil
   )
     async throws
     -> [AccountRouteIdentity: AccountDispatchWork]
@@ -80,6 +83,7 @@ public struct AccountPoolGateway: Sendable {
       let identity = try AccountRouteIdentity(id: account.id, namespace: account.namespace)
       guard affinity == nil || affinity == identity,
         requiredAccount == nil || requiredAccount == identity,
+        modelAccount == nil || modelAccount == account.id,
         account.authorization == .ready || account.authorization == .refreshing,
         account.mode == .enabled || (account.mode == .draining && affinity == identity)
       else { continue }

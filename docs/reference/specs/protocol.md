@@ -109,6 +109,8 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 配置顺序决定 priority，目录内容（包括 upstream 及快照哈希）、指导与顺序进入策略版本；计价版本只包含模型 ID/费率，指导不进入核心持久库。实际版本须显式发现并采用目录和已配置指导，不得以 fallback 元数据下的生成成功充当目录验收。
 
+受管 Key 配置模型档位限制后，Codex 条目仅提供 Key 获准且 profile 支持的档位。原默认档位不可用时，目录默认显示第一个允许值。该显示值供客户端选择，请求仍须显式发送档位。有效档位为空的模型从两种目录移除。越权、缺失或无效档位在执行前返回 403 `reasoning_effort_not_allowed`。
+
 ## P17：Responses 流式压缩 v2
 
 普通 /responses 的输入可含单个末尾 `{"type":"compaction_trigger"}`；该控制无 ID/状态/附加 payload，不与 generate:false 或独立 /responses/compact 混用。它使用 compact 执行模式与相同授权/准入/用量/归属屏障，传输仍走普通 HTTP JSON/SSE、桥接或原生 WS，不改路由为独立压缩端点。

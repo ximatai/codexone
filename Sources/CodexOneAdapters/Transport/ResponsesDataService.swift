@@ -17,6 +17,7 @@ public struct ResponsesDataService: Service {
   private let port: Int
   private let proxy: UpstreamHTTPProxy?
   private let source: ResponsesSource
+  private let modelDirectory: ModelDirectory?
   private var configuration: ResponsesConfiguration { source.configuration }
   private let store: any ExecutionStore
   private let finalizer: any FinalizationSink
@@ -45,6 +46,7 @@ public struct ResponsesDataService: Service {
     self.proxy = proxy
     imageCapacity = ImageCapacity(limit: configuration.imageConcurrency ?? 2)
     source = .single(configuration)
+    modelDirectory = nil
     self.store = store
     self.finalizer = finalizer
     self.onBound = onBound
@@ -54,7 +56,8 @@ public struct ResponsesDataService: Service {
     group: any EventLoopGroup, port: Int, configuration: AccountPoolConfiguration,
     store: any AccountRoutingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
-    provider: SubscriptionOAuthProvider, proxy: UpstreamHTTPProxy? = nil,
+    provider: SubscriptionOAuthProvider, modelDirectory: ModelDirectory? = nil,
+    proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
     listeners: ListenerConfiguration = .loopback,
@@ -63,7 +66,8 @@ public struct ResponsesDataService: Service {
     try self.init(
       group: group, port: port, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
-      target: .openAI, proxy: proxy, protocolExtensions: protocolExtensions, clock: clock,
+      target: .openAI, modelDirectory: modelDirectory, proxy: proxy,
+      protocolExtensions: protocolExtensions, clock: clock,
       listeners: listeners,
       onBound: onBound)
   }
@@ -72,6 +76,7 @@ public struct ResponsesDataService: Service {
     store: any AccountRoutingStore, finalizer: any FinalizationSink,
     credentials: AccountCredentials, refresher: any AccountDispatchRefreshing,
     provider: SubscriptionOAuthProvider, target: SubscriptionDataTarget,
+    modelDirectory: ModelDirectory? = nil,
     proxy: UpstreamHTTPProxy? = nil,
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
@@ -86,10 +91,17 @@ public struct ResponsesDataService: Service {
     self.port = port
     self.proxy = proxy
     imageCapacity = ImageCapacity(limit: configuration.imageConcurrency ?? 2)
+    self.modelDirectory = modelDirectory
     source = .pool(configuration, credentials, refresher, provider, target)
     self.store = store
     self.finalizer = finalizer
     self.onBound = onBound
+  }
+
+  private var healthModelIDs: Set<String> {
+    Set(
+      (modelDirectory?.snapshot().active ?? configuration.models).map(\.id)
+        + (configuration.imageGeneration?.models.map(\.id) ?? []))
   }
 
   public func readiness() async -> ReadinessReport {
@@ -100,9 +112,8 @@ public struct ResponsesDataService: Service {
       if provider.isAccepting && refresher.isAccepting {
         accounts =
           (try? await credentials.hasLocallyRoutableAccount(
-            models: Set(
-              configuration.models.map(\.id)
-                + (configuration.imageGeneration?.models.map(\.id) ?? [])))) == true
+            models: healthModelIDs,
+            accountForModel: modelDirectory?.snapshot().accountForModel ?? [:])) == true
       } else {
         accounts = false
       }
@@ -116,9 +127,7 @@ public struct ResponsesDataService: Service {
 
   public func run() async throws {
     if let health = store as? any AccountHealthStore {
-      try await health.configureHealthModels(
-        Set(
-          configuration.models.map(\.id) + (configuration.imageGeneration?.models.map(\.id) ?? [])))
+      try await health.configureHealthModels(healthModelIDs)
     }
     let token = try source.tokenFile.map { try readRuntimeSecret($0) }
     var pool = HTTPClient.Configuration.ConnectionPool(
@@ -146,7 +155,9 @@ public struct ResponsesDataService: Service {
       webSocket: .init(group: group, configuration: configuration, token: token, proxy: proxy),
       configuration: configuration, token: token,
       report: { await readiness() },
-      access: .init(source: source, token: token, store: store, finalizer: finalizer, clock: clock),
+      access: .init(
+        source: source, modelDirectory: modelDirectory, token: token, store: store,
+        finalizer: finalizer, clock: clock),
       gateway: nil, effectiveModels: [])
     // Dedicated control headroom lets saturation return HTTP 429.
     let channels = ProtocolChannels(limit: configuration.dataConnections + 16)
@@ -724,6 +735,7 @@ public struct ResponsesDataService: Service {
           images: executor.effectiveImageModels,
           runtimeBudget: executor.configuration.budgetSummary,
           upstreamTransport: executor.configuration.upstreamTransport,
+          reasoningEfforts: executor.keyCapabilities?.reasoningEfforts,
           now: executor.access.clock.unixSeconds
         ))
       return

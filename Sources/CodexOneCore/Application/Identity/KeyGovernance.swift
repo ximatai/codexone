@@ -6,9 +6,14 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
   public let visionInput: Bool
   public let imageGeneration: Bool
   public let imageModels: [String]?
+  public let reasoningEfforts: [String: [String]]?
+  public static let knownReasoningEfforts: Set<String> = [
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+  ]
   public init(
     models: [String]?, limits: ExecutionLimits, visionInput: Bool = false,
-    imageGeneration: Bool = false, imageModels: [String]? = []
+    imageGeneration: Bool = false, imageModels: [String]? = [],
+    reasoningEfforts: [String: [String]]? = nil
   ) throws {
     guard models == nil || !models!.isEmpty || imageGeneration,
       models.map({ $0.count <= 32 && Set($0).count == $0.count }) ?? true,
@@ -17,6 +22,12 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
       (imageModels ?? []).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }
       ),
       (models ?? []).allSatisfy({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }),
+      (reasoningEfforts?.count ?? 0) <= 32,
+      (reasoningEfforts ?? [:]).allSatisfy({ model, efforts in
+        !model.isEmpty && model.utf8.count <= 128 && !model.utf8.contains(0)
+          && !efforts.isEmpty && Set(efforts).count == efforts.count
+          && Set(efforts).isSubset(of: Self.knownReasoningEfforts)
+      }),
       [
         limits.tokens, limits.active,
       ]
@@ -29,15 +40,17 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
     self.visionInput = visionInput
     self.imageGeneration = imageGeneration
     self.imageModels = imageModels
+    self.reasoningEfforts = reasoningEfforts
   }
   public func validate() throws {
     _ = try Self(
       models: models, limits: limits, visionInput: visionInput,
-      imageGeneration: imageGeneration, imageModels: imageModels)
+      imageGeneration: imageGeneration, imageModels: imageModels, reasoningEfforts: reasoningEfforts
+    )
   }
   private enum TokenLimitKeys: String, CodingKey { case tokens, active }
   private enum CodingKeys: String, CodingKey {
-    case models, limits, visionInput, imageGeneration, imageModels
+    case models, limits, visionInput, imageGeneration, imageModels, reasoningEfforts
   }
   public init(from decoder: any Decoder) throws {
     let fields = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,7 +60,8 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
       visionInput: fields.decodeIfPresent(Bool.self, forKey: .visionInput) ?? false,
       imageGeneration: fields.decodeIfPresent(Bool.self, forKey: .imageGeneration) ?? false,
       imageModels: fields.contains(.imageModels)
-        ? fields.decode([String]?.self, forKey: .imageModels) : [])
+        ? fields.decode([String]?.self, forKey: .imageModels) : [],
+      reasoningEfforts: fields.decodeIfPresent([String: [String]].self, forKey: .reasoningEfforts))
   }
   public func encode(to encoder: any Encoder) throws {
     var fields = encoder.container(keyedBy: CodingKeys.self)
@@ -58,6 +72,17 @@ public struct KeyPolicy: Sendable, Equatable, Codable {
     try fields.encode(visionInput, forKey: .visionInput)
     try fields.encode(imageGeneration, forKey: .imageGeneration)
     try fields.encode(imageModels, forKey: .imageModels)
+    try fields.encodeIfPresent(reasoningEfforts, forKey: .reasoningEfforts)
+  }
+  public func retainingReasoningEfforts(from previous: Self) throws -> Self {
+    guard reasoningEfforts == nil, let retained = previous.reasoningEfforts else { return self }
+    return try Self(
+      models: models, limits: limits, visionInput: visionInput, imageGeneration: imageGeneration,
+      imageModels: imageModels, reasoningEfforts: retained)
+  }
+  public func allowsReasoning(_ effort: String?, model: String, mode: ExecutionMode) -> Bool {
+    guard mode != .warmup, let allowed = reasoningEfforts?[model] else { return true }
+    return effort.map(allowed.contains) ?? false
   }
   public func allowsConversationModel(_ model: String) -> Bool {
     models?.contains(model) ?? true
@@ -116,10 +141,14 @@ public struct ManagedKey: Sendable, Equatable, Codable {
 /// All mutations are local atomic commands. Raw secrets never cross this port.
 public protocol KeyGovernanceStore: Sendable {
   func authenticateKey(digest: String) async throws -> ManagedKey
-  func createKey(id: String, principal: String, digest: String, policy: KeyPolicy) async throws
-    -> ManagedKey
-  func updateKey(id: String, revision: Int64, enabled: Bool, policy: KeyPolicy) async throws
-    -> ManagedKey
+  func createKey(
+    id: String, principal: String, digest: String, policy: KeyPolicy,
+    catalogRevision: Int64?
+  ) async throws -> ManagedKey
+  func updateKey(
+    id: String, revision: Int64, enabled: Bool, policy: KeyPolicy,
+    catalogRevision: Int64?
+  ) async throws -> ManagedKey
   func setKeyDisplayName(id: String, revision: Int64, displayName: String?) async throws
     -> ManagedKey
   func setKeyExpiration(id: String, revision: Int64, expiresAtUnixSeconds: Int64?) async throws

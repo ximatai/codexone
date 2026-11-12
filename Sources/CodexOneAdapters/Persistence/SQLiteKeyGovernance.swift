@@ -18,7 +18,10 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       return key
     }
   }
-  public func createKey(id: String, principal: String, digest: String, policy: KeyPolicy)
+  public func createKey(
+    id: String, principal: String, digest: String, policy: KeyPolicy,
+    catalogRevision: Int64? = nil
+  )
     async throws -> ManagedKey
   {
     try Self.validateKeyID(id)
@@ -27,6 +30,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     try policy.validate()
     return try await perform(optional: true) { db in
       try db.transaction {
+        try Self.checkCatalogRevision(db, catalogRevision)
         try Self.checkKeyCapacity(db, creating: true)
         guard
           try db.scalar(
@@ -44,7 +48,10 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       }
     }
   }
-  public func updateKey(id: String, revision: Int64, enabled: Bool, policy: KeyPolicy) async throws
+  public func updateKey(
+    id: String, revision: Int64, enabled: Bool, policy: KeyPolicy,
+    catalogRevision: Int64? = nil
+  ) async throws
     -> ManagedKey
   {
     try Self.validateKeyID(id)
@@ -52,6 +59,7 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     return try await perform(optional: enabled, essential: !enabled) { [storage] db in
       try db.transaction {
         let old = try Self.loadKey(db, id)
+        try Self.checkCatalogRevision(db, catalogRevision)
         guard old.revision == revision, revision < 1_000_000 else { throw ExecutionError.conflict }
         guard old.archivedAtUnixSeconds == nil else { throw KeyGovernanceError.keyArchived }
         let revoking = old.enabled && !enabled
@@ -61,7 +69,8 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
         try Self.checkKeyCapacity(db, revocation: revoking)
         let key = ManagedKey(
           id: old.id, principal: old.principal, revision: revision + 1, enabled: enabled,
-          policy: policy, createdAtUnixSeconds: old.createdAtUnixSeconds,
+          policy: try policy.retainingReasoningEfforts(from: old.policy),
+          createdAtUnixSeconds: old.createdAtUnixSeconds,
           expiresAtUnixSeconds: old.expiresAtUnixSeconds, displayName: old.displayName)
         try db.write(
           "UPDATE managed_keys SET metadata_json=? WHERE id=?",
@@ -189,10 +198,26 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       }
     }
   }
+  private static func checkCatalogRevision(_ db: SQLiteConnection, _ expected: Int64?) throws {
+    if let expected, try modelDirectoryRevision(db) != expected { throw ExecutionError.conflict }
+  }
+
   static func checkKeyAdmission(
     _ db: SQLiteConnection, _ command: ExecutionAdmission, now: Int64? = nil
   ) throws {
     let now = now ?? db.clock.unixSeconds
+    if command.keyRevision != nil || command.executionMode == .priming,
+      command.executionRequirements.route == .conversation,
+      let model = command.model,
+      try db.scalar(
+        """
+        SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
+          AND NOT EXISTS(SELECT 1 FROM model_directory_routes
+            WHERE model=? AND (account IS NULL OR account=?))
+        """, [.text(model), .text(command.owner.identity)]) != 0
+    {
+      throw ExecutionError.unauthorized
+    }
     guard let revision = command.keyRevision else { return }
     let key = try loadKey(db, command.owner.key)
     guard key.enabled, key.archivedAtUnixSeconds == nil else { throw ExecutionError.unauthorized }
@@ -201,7 +226,10 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
       throw ExecutionError.unauthorized
     }
     guard let model = command.model,
-      key.policy.allows(model: model, requirements: command.executionRequirements)
+      key.policy.allows(model: model, requirements: command.executionRequirements),
+      command.executionRequirements.route != .conversation
+        || key.policy.allowsReasoning(
+          command.reasoningEffort, model: model, mode: command.executionMode)
     else {
       throw ExecutionError.unauthorized
     }

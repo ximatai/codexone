@@ -308,6 +308,13 @@ struct CodexOneMain {
     print("business_day_offset=\(configuration.businessDay.timezone)")
     let protocolExtensions = ClientProtocolExtensionRegistry(clock: clock)
     let overviewResources = OverviewResources(dataDirectory: configuration.dataDirectory)
+    let modelDirectory: ModelDirectory?
+    if let store, let poolConfiguration {
+      modelDirectory = try await ModelDirectory(
+        configuration: poolConfiguration, store: store, clock: clock)
+    } else {
+      modelDirectory = nil
+    }
     let keyAdmin: KeyAdminAPI?
     if let path = configuration.adminTokenFile, let store {
       keyAdmin = try await KeyAdminAPI.load(
@@ -318,6 +325,8 @@ struct CodexOneMain {
           \.id) ?? [],
         imageModels: poolConfiguration?.imageGeneration?.models.map(\.id) ?? identityConfiguration?
           .imageGeneration?.models.map(\.id) ?? [],
+        modelDirectory: modelDirectory,
+        conversationModels: poolConfiguration?.models ?? identityConfiguration?.models ?? [],
         usage: usageReader.map {
           UsageAdminAPI(
             querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [],
@@ -366,7 +375,7 @@ struct CodexOneMain {
           SubscriptionWindowPriming(
             group: group, configuration: config, store: store,
             finalizer: finalizer, credentials: application, refresher: refreshing,
-            provider: provider, proxy: upstreamProxy, clock: clock)
+            provider: provider, modelDirectory: modelDirectory, proxy: upstreamProxy, clock: clock)
         }
       }
       let primingOwner = primingExecutor.map {
@@ -388,13 +397,17 @@ struct CodexOneMain {
         poolDataService = try ResponsesDataService(
           group: group, port: configuration.dataPort,
           configuration: poolConfiguration, store: store, finalizer: finalizer,
-          credentials: application, refresher: refreshing, provider: provider, proxy: upstreamProxy,
+          credentials: application, refresher: refreshing, provider: provider,
+          modelDirectory: modelDirectory,
+          proxy: upstreamProxy,
           protocolExtensions: protocolExtensions, clock: clock, listeners: configuration.listeners
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
         store: store, authorization: authorization, refreshing: refreshing, observing: observing,
-        credentials: application, clock: clock, resetCredits: resetCredits, priming: primingExecutor
+        credentials: application, clock: clock, resetCredits: resetCredits,
+        priming: primingExecutor,
+        modelDirectory: modelDirectory, modelProvider: quota
       )
     } else {
       accountAdmin = nil

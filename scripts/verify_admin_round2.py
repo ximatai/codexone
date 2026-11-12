@@ -26,7 +26,7 @@ def port_line(process, pattern):
     with selectors.DefaultSelector() as selector:
         selector.register(process.stdout, selectors.EVENT_READ)
         while time.monotonic() < deadline:
-            assert process.poll() is None, 'Synthetic assembly exited before listening'
+            assert process.poll() is None, 'Synthetic assembly exited before listening '
             if selector.select(.1):
                 output += os.read(process.stdout.fileno(), 4096)
                 assert len(output) <= 65536
@@ -71,12 +71,13 @@ def verify_accounts(probe):
                     server.control.update(challenge=query['code_challenge'][0], nonce=query['nonce'][0])
                 callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
                 account = document(request(port, 'POST', '/api/accounts/authorization/' + flow['flowID'], {'callbackURL': callback}, **auth))['account']
-                assert account['accessExpiresAtUnixSeconds'] is None
+                assert account['accessExpiresAtUnixSeconds'] > int(time.time())
                 assert isinstance(account['credentialUpdatedAtUnixSeconds'], int)
                 for secret in server.issued:
                     assert secret not in json.dumps(account)
                 assert not any(field in account for field in ('accessToken', 'refreshToken', 'idToken', 'envelope', 'namespace', 'refreshIntent'))
                 updated = account['credentialUpdatedAtUnixSeconds']
+                expires = account['accessExpiresAtUnixSeconds']
                 path = '/api/accounts/' + account['id'] + '/display-name'
                 body = {'revision': account['revision'], 'displayName': '合成账号'}
                 assert request(port, 'PUT', path, body)[0] == 403
@@ -88,14 +89,44 @@ def verify_accounts(probe):
                 assert request(port, 'PUT', path, body, **auth)[0] == 409
                 account = document(request(port, 'PUT', '/api/accounts/' + account['id'], {'revision': named['revision'], 'mode': 'enabled'}, **auth))['account']
                 assert account['displayName'] == named['displayName']
+                candidates_path = '/api/accounts/' + account['id'] + '/model-candidates'
+                discovered = document(request(port, 'POST', candidates_path, **auth))
+                assert [(item['id'], item['state']) for item in discovered['candidates']] == [
+                    ('synthetic-nova', 'candidate'), ('synthetic-incomplete', 'incomplete')]
+                with server.guard:
+                    server.control['model_discovery_failure'] = True
+                assert request(port, 'POST', candidates_path, **auth)[0] == 503
+                assert document(request(port, 'GET', '/api/models', **auth))['candidates'] == discovered['candidates']
+                body = dict(revision=discovered['revision'], model='synthetic-nova', enabled=True,
+                            inputMicrosPerMillion=0, outputMicrosPerMillion=0)
+                assert request(port, 'PUT', '/api/models', dict(body, model='synthetic-incomplete'), **auth)[0] == 400
+                assert request(port, 'PUT', '/api/models', body, **auth)[0] == 200
+                assert request(port, 'PUT', '/api/models', body, **auth)[0] == 409
+                key_options = document(request(port, 'GET', '/api/keys/options', **auth))
+                assert key_options['models'] == ['synthetic-text', 'synthetic-nova']
+                assert key_options['reasoningEfforts']['synthetic-nova'] == ['high']
             finally:
                 release(process)
             process, port = start()
             try:
                 account = document(request(port, 'GET', '/api/accounts', **auth))['accounts'][0]
                 assert account['displayName'] == '合成账号'
+                persisted = document(request(port, 'GET', '/api/models', **auth))
+                assert [item['id'] for item in persisted['active']] == ['synthetic-text', 'synthetic-nova']
+                assert persisted['candidates'] == []
+                retired = document(request(port, 'PUT', '/api/models',
+                                           dict(revision=persisted['revision'], model='synthetic-nova', enabled=False), **auth))
+                assert [item['id'] for item in retired['retired']] == ['synthetic-nova']
+                assert document(request(port, 'GET', '/api/keys/options', **auth))['models'] == ['synthetic-text']
+                enable = dict(revision=retired['revision'], model='synthetic-nova', enabled=True)
+                assert request(port, 'PUT', '/api/models', enable, **auth)[0] == 409
+                with server.guard:
+                    server.control['model_discovery_failure'] = False
+                assert request(port, 'POST', '/api/accounts/' + account['id'] + '/model-candidates', **auth)[0] == 200
+                restored = document(request(port, 'PUT', '/api/models', enable, **auth))
+                assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
-                assert account['accessExpiresAtUnixSeconds'] is None
+                assert account['accessExpiresAtUnixSeconds'] == expires
                 account = document(request(port, 'PUT', path, {'revision': account['revision'], 'displayName': None}, **auth))['account']
                 assert account['displayName'] is None
             finally:
@@ -108,11 +139,11 @@ def verify_accounts(probe):
             try:
                 account = document(request(port, 'GET', '/api/accounts', **auth))['accounts'][0]
                 assert account['credentialUpdatedAtUnixSeconds'] is None
-                assert account['accessExpiresAtUnixSeconds'] is None
+                assert account['accessExpiresAtUnixSeconds'] == expires
             finally:
                 release(process)
             assert server.calls == 1
-            print('PASS: display-name HTTP authorization, validation, CAS, mode preservation, restart and clear')
+            print('PASS: account and model-directory HTTP, CAS, failed discovery retention, persisted activation and retirement')
     finally:
         server.shutdown()
         server.server_close()

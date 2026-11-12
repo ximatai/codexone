@@ -25,8 +25,18 @@ extension ExecutionProbe {
       let cipher = try await AccountCredentialCipher.load(
         path: root + "/master", adminCredentialPath: root + "/admin")
       let app = AccountCredentials(store: store, protection: cipher)
+      let configuration = try JSONDecoder().decode(
+        AccountPoolConfiguration.self,
+        from: Data(
+          """
+          {"models":[{"id":"synthetic-text","inputMicrosPerMillion":0,"outputMicrosPerMillion":0}],
+            "reservedMicros":0}
+          """.utf8))
+      let modelDirectory = try await ModelDirectory(
+        configuration: configuration, store: store, clock: .system)
       let keys = try await KeyAdminAPI.load(
         path: root + "/admin", store: store, availableModels: ["synthetic-text"],
+        modelDirectory: modelDirectory,
         usage: UsageAdminAPI(querying: usageReader))
       let bundle = try await AdminWebBundle.load(path: web)
       let proxy = try ProcessInfo.processInfo.environment["CODEXONE_UPSTREAM_HTTP_PROXY"].map {
@@ -41,7 +51,8 @@ extension ExecutionProbe {
       let observing = try AccountObservationSupervisor(
         store: store, application: app, refresher: refreshing, provider: quota)
       let accounts = AccountAdminAPI(
-        store: store, authorization: authorization, refreshing: refreshing, observing: observing)
+        store: store, authorization: authorization, refreshing: refreshing, observing: observing,
+        credentials: app, modelDirectory: modelDirectory, modelProvider: quota)
       let admin = AdminService(
         group: group, port: 0, reportProvider: { .init(checks: []) }, keys: keys,
         webBundle: bundle, accounts: accounts,

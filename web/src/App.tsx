@@ -10,6 +10,11 @@ const AccountManagement = lazy(() =>
     default: module.AccountManagement,
   })),
 );
+const ModelDirectory = lazy(() =>
+  import("./features/model-directory/ModelDirectory").then((module) => ({
+    default: module.ModelDirectory,
+  })),
+);
 const KeyManagement = lazy(() =>
   import("./features/key-management/KeyManagement").then((module) => ({
     default: module.KeyManagement,
@@ -83,6 +88,7 @@ function Workspace() {
                     </>
                   }
                 />
+                <Route path="/models" element={<ModelDirectory />} />
                 <Route path="/keys" element={<KeyManagement />} />
                 <Route path="/accounts" element={<AccountManagement />} />
                 <Route path="/usage" element={<UsagePage />} />

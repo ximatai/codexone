@@ -30,6 +30,10 @@ export function useKeys(
   const setUncertain = (value: boolean) => owner.lock("keys", value);
   const [keys, setKeys] = useState<ManagedKey[]>([]);
   const [readAt, setReadAt] = useState<number | null>(null);
+  const [reasoningEfforts, setReasoningEfforts] = useState<
+    Record<string, string[]>
+  >({});
+  const [catalogRevision, setCatalogRevision] = useState<number | undefined>();
   const [models, setModels] = useState<string[]>([]);
   const [imageModels, setImageModels] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -51,6 +55,8 @@ export function useKeys(
   function clearPrivateState() {
     setKeys([]);
     setModels([]);
+    setCatalogRevision(undefined);
+    setReasoningEfforts({});
     setImageModels([]);
     setCreated(null);
     setEditing(null);
@@ -83,6 +89,8 @@ export function useKeys(
       setKeys(entries);
       setReadAt(Date.now() / 1000);
       setModels(options.models);
+      setCatalogRevision(options.catalogRevision);
+      setReasoningEfforts(options.reasoningEfforts ?? {});
       setImageModels(options.imageModels);
       setUnavailable(false);
       setUncertain(false);
@@ -209,6 +217,7 @@ export function useKeys(
         key.visionInput ?? false,
         key.imageGeneration ?? false,
         key.imageModels === undefined ? [] : key.imageModels,
+        key.reasoningEfforts ?? {},
       ]) !==
         JSON.stringify([
           draft.models,
@@ -216,6 +225,7 @@ export function useKeys(
           draft.visionInput ?? false,
           draft.imageGeneration ?? false,
           draft.imageModels === undefined ? [] : draft.imageModels,
+          draft.reasoningEfforts ?? {},
         ]);
     let updated = key;
     if (policyChanged)
@@ -226,7 +236,7 @@ export function useKeys(
         draft.limits,
         csrf,
         signal,
-        draft,
+        { ...draft, catalogRevision },
       );
     if ((draft.displayName ?? null) === (updated.displayName ?? null))
       return updated;
@@ -268,6 +278,8 @@ export function useKeys(
     readAt,
     models,
     imageModels,
+    reasoningEfforts,
+    catalogRevision,
     checking,
     unavailable,
     loading,

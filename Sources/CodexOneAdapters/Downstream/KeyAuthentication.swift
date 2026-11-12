@@ -23,12 +23,26 @@ func generateKeySecret() -> String {
     .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
 }
 struct DataPlaneAuthorization: Sendable {
-  let source: ResponsesSource
+  var source: ResponsesSource
+  var modelDirectory: ModelDirectory? = nil
   let token: String?
   let store: any ExecutionStore
   let finalizer: any FinalizationSink
   var clock: WallClock = .system
   var diagnostics: (any ExecutionDiagnosticsStore)? { store as? any ExecutionDiagnosticsStore }
+
+  func withLiveModels() -> Self {
+    guard let modelDirectory,
+      case .pool(var config, let credentials, let refresher, let provider, let target) = source
+    else { return self }
+    var current = self
+    current.modelDirectory = nil
+    let snapshot = modelDirectory.snapshot()
+    config.models = snapshot.active
+    config.accountForModel = snapshot.accountForModel
+    current.source = .pool(config, credentials, refresher, provider, target)
+    return current
+  }
 
   func digest(_ headers: [String]) throws -> String? {
     if case .single(let configuration) = source, configuration.managedKeys != true {

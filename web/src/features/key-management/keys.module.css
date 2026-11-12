@@ -173,3 +173,18 @@
   gap: 4px 20px;
   min-width: 0;
 }
+
+.modelPermission {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  padding: 10px 12px;
+}
+.modelPermission[data-selected="true"] {
+  border-color: var(--mantine-color-brand-2);
+  background: var(--mantine-color-brand-0);
+}
+.modelEfforts {
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
