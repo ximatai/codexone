@@ -71,9 +71,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install verification prerequisite
         run: |
+          cp /etc/apt/sources.list.d/ubuntu.sources /tmp/codexone-ubuntu.sources
           sed -i -E "s@http://(archive|security)\.ubuntu\.com/ubuntu@$CODEXONE_CI_APT_MIRROR@g" /etc/apt/sources.list.d/ubuntu.sources
-          apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=20 -o Acquire::Retries=2 update
-          apt-get -o Acquire::https::Timeout=20 -o Acquire::Retries=2 install -y --no-install-recommends python3 libsqlite3-dev zstd
+          if ! (apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=20 -o Acquire::Retries=2 update && apt-get -o Acquire::https::Timeout=20 -o Acquire::Retries=2 install -y --no-install-recommends python3 libsqlite3-dev zstd); then
+            cp /tmp/codexone-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
+            rm -rf /var/lib/apt/lists/*
+            apt-get -o APT::Update::Error-Mode=any update
+            apt-get install -y --no-install-recommends python3 libsqlite3-dev zstd
+          fi
           tar --version && zstd --version && gzip --version
       # Every run restores; only main pushes save, so PR pushes cannot fill the cache quota.
       - name: Restore incremental Swift build cache

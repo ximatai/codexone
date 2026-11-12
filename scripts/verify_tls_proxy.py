@@ -364,7 +364,7 @@ def admin_checks(f, key):
     print('PASS: real HTTPS session/CSRF, exact Host+Origin/port, forwarded spoof refusal and data/admin isolation')
 
 
-def admin_live_dial(f, fields, *, plane='admin', path='/api/overview/live'):
+def admin_live_dial(f, fields, *, plane='admin', path='/api/overview/live', expected_marker=None):
     raw = socket.create_connection(('127.0.0.1', f['ports'][1 if plane == 'admin' else 0]), timeout=5)
     client = f['context'].wrap_socket(raw, server_hostname='localhost')
     try:
@@ -384,6 +384,12 @@ def admin_live_dial(f, fields, *, plane='admin', path='/api/overview/live'):
         response_headers = dict(line.split(b':', 1) for line in header.split(b'\r\n')[1:] if b':' in line)
         assert next(value.strip() for name, value in response_headers.items() if name.lower() == b'sec-websocket-accept') == accept
         assert b'sec-websocket-extensions:' not in header.lower()
+        if expected_marker is not None and not any(
+            name.lower() == b'x-codexone-test-generation' and value.strip() == expected_marker.encode()
+            for name, value in response_headers.items()
+        ):
+            client.close()
+            return 409, None
         return status, client
     except BaseException:
         client.close()
@@ -421,30 +427,40 @@ def admin_live_checks(f, fields):
     old, count = re.subn(r'location = /api/overview/live \{[^}]*\}', '', original)
     assert count == 1
 
-    def reload_and_wait(contents, upgraded):
+    def reload_and_wait(contents, upgraded, keep_viewer=False, marker=None):
         path.write_text(contents)
         proxy = f['proxy']
         command([proxy.nginx, '-e', str(proxy.root / 'error.log'), '-p', str(proxy.root), '-c', str(proxy.config), '-s', 'reload'])
         deadline = time.monotonic() + 5
         while True:
-            status, client = admin_live_dial(f, fields)
-            if client: client.close()
+            status, client = admin_live_dial(f, fields, expected_marker=marker)
             ready = status == 101 if upgraded else status in (400, 404, 426)
             if ready:
                 break
+            if client: client.close()
             assert time.monotonic() < deadline, 'Private proxy reload did not converge'
             time.sleep(.05)
-        assert request(f, 'admin', 'GET', '/api/session', headers=fields)[0] == 200
+        try:
+            assert request(f, 'admin', 'GET', '/api/session', headers=fields)[0] == 200
+        except BaseException:
+            if client: client.close()
+            raise
+        if keep_viewer:
+            assert client is not None
+            return client
+        if client: client.close()
 
     try: reload_and_wait(old, False)
     finally: reload_and_wait(original, True)
     try:
         for idle in (30, 60):
-            candidate, count = re.subn(r'proxy_read_timeout 60s;', f'proxy_read_timeout {idle}s;', original)
+            marker = f'synthetic-idle-{idle}'
+            candidate, count = re.subn(
+                r'proxy_read_timeout 60s;',
+                f'proxy_read_timeout {idle}s; add_header X-CodexOne-Test-Generation {marker} always;',
+                original)
             assert count == 1
-            reload_and_wait(candidate, True)
-            status, viewer = admin_live_dial(f, fields)
-            assert status == 101
+            viewer = reload_and_wait(candidate, True, keep_viewer=True, marker=marker)
             try:
                 admin_live_snapshot(viewer)
                 started, pings = time.monotonic(), 0
@@ -470,9 +486,10 @@ def admin_live_checks(f, fields):
                     assert time.monotonic() < deadline
                 print(f'PASS: management WSS survives {idle}s proxy read idle on the same TLS socket; freshness plus {pings} heartbeat pings, bidirectional control confirmed')
             finally: viewer.close()
-    finally: reload_and_wait(original, True)
-    status, client = admin_live_dial(f, fields)
-    assert status == 101
+    except BaseException:
+        reload_and_wait(original, True)
+        raise
+    client = reload_and_wait(original, True, keep_viewer=True)
     try: admin_live_snapshot(client)
     except BaseException:
         client.close()

@@ -205,5 +205,43 @@ if os.environ['FAIL_BUILD'] == 'true' and sys.argv[1:3] == ['buildx', 'build']:
                     self.assertEqual(result.returncode == 0, not tampered)
 
 
+class AptFallbackTests(unittest.TestCase):
+    def test_docker_package_steps_restore_sources_and_fail_closed(self):
+        blocks = []
+        for name in ('deploy/Dockerfile', 'deploy/tls-verification.Dockerfile', '.devcontainer/Dockerfile'):
+            text = (ROOT / name).read_text()
+            for block in re.findall(r'RUN src=/etc/apt/sources.list.d/ubuntu.sources.*?(?=\n(?:WORKDIR|COPY|USER|FROM|RUN|ARG|$))', text, re.S):
+                script = block.replace('\\\n', ' ').removeprefix('RUN ')
+                blocks.append(script.split('    && groupadd --gid')[0])
+        self.assertEqual(len(blocks), 4)
+        for script in blocks:
+            for fail_all in (False, True):
+                with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    source = root / 'sources'
+                    original = 'http://archive.ubuntu.com/ubuntu\nhttp://security.ubuntu.com/ubuntu\n'
+                    source.write_text(original)
+                    (root / 'bin').mkdir()
+                    (root / 'lists').mkdir()
+                    apt = root / 'bin/apt-get'
+                    apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_LOG"\ncase "$*" in *update*) if [ "$FAIL_ALL" = 1 ] || grep -q invalid.invalid "$TEST_SOURCES"; then exit 1; fi;; esac\nexit 0\n')
+                    apt.chmod(0o755)
+                    sed = root / 'bin/sed'
+                    sed.write_text('#!/usr/bin/env python3\nimport pathlib,sys\np=pathlib.Path(sys.argv[-1]); p.write_text(p.read_text().replace("http://archive.ubuntu.com/ubuntu", "http://invalid.invalid/ubuntu").replace("http://security.ubuntu.com/ubuntu", "http://invalid.invalid/ubuntu"))\n')
+                    sed.chmod(0o755)
+                    command = (script.replace('/etc/apt/sources.list.d/ubuntu.sources', str(source))
+                               .replace('/tmp/ubuntu.sources', str(root / 'backup'))
+                               .replace('/var/lib/apt/lists/*', str(root / 'lists') + '/*'))
+                    env = {**os.environ, 'PATH': str(root / 'bin') + os.pathsep + os.defpath,
+                           'APT_MIRROR': 'http://invalid.invalid/ubuntu', 'TEST_SOURCES': str(source),
+                           'TEST_LOG': str(root / 'calls'), 'FAIL_ALL': str(int(fail_all))}
+                    result = subprocess.run(['sh', '-c', command], env=env, capture_output=True)
+                    self.assertEqual(result.returncode == 0, not fail_all)
+                    self.assertEqual(source.read_text(), original)
+                    calls = (root / 'calls').read_text().splitlines()
+                    self.assertEqual(sum('update' in call for call in calls), 2)
+                    self.assertEqual(any('install' in call for call in calls), not fail_all)
+
+
 if __name__ == '__main__':
     unittest.main()

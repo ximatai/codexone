@@ -30,7 +30,8 @@ FROM ${SWIFT_BUILD_IMAGE} AS verification-tools
 ARG APT_MIRROR=
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
     && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
-    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev libzstd1 python3 openssl \
+    && (apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=15 update && apt-get install -y --no-install-recommends libsqlite3-dev libzstd1 python3 openssl \
+        || { cp /tmp/ubuntu.sources "$src"; rm -rf /var/lib/apt/lists/*; apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends libsqlite3-dev libzstd1 python3 openssl; }) \
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 WORKDIR /build
 
@@ -95,7 +96,8 @@ FROM ${SWIFT_RUNTIME_IMAGE} AS runtime-files
 ARG APT_MIRROR=
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
     && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
-    && apt-get update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
+    && (apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=15 update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
+        || { cp /tmp/ubuntu.sources "$src"; rm -rf /var/lib/apt/lists/*; apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates; }) \
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src" \
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
     && mkdir -p /var/lib/codexone /run/codexone /opt/codexone/web \
