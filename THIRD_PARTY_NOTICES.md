@@ -39,12 +39,13 @@
 | `@jridgewell/resolve-uri` | 3.1.2 | MIT | 正文已读：`LICENSE` |
 | `@jridgewell/sourcemap-codec` | 1.6.0 | MIT | 正文已读：`LICENSE` |
 | `@jridgewell/trace-mapping` | 0.3.31 | MIT | 正文已读：`LICENSE` |
-| `@mantine/charts` | 9.7.3 | MIT | 正文已读：`LICENSE` |
-| `@mantine/core` | 9.7.3 | MIT | 正文已读：`LICENSE` |
-| `@mantine/form` | 9.7.3 | MIT | 正文已读：`LICENSE` |
-| `@mantine/hooks` | 9.7.3 | MIT | 正文已读：`LICENSE` |
-| `@mantine/notifications` | 9.7.3 | MIT | 正文已读：`LICENSE` |
-| `@mantine/store` | 9.7.3 | MIT | 正文已读：`LICENSE` |
+| `@mantine/charts` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/core` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/dates` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/form` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/hooks` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/notifications` | 9.7.5 | MIT | 正文已读：`LICENSE` |
+| `@mantine/store` | 9.7.5 | MIT | 正文已读：`LICENSE` |
 | `@oxc-project/types` | 0.155.0 | MIT | 正文已读：`LICENSE` |
 | `@oxlint/binding-android-arm-eabi` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm-eabi/1.89.0)；正文未在本地安装 |
 | `@oxlint/binding-android-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm64/1.89.0)；正文未在本地安装 |
