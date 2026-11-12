@@ -1,6 +1,6 @@
 /// Build a physical pre-v5 fixture, rather than stamping an incompatible new schema old.
 let removeOutputRateSchema =
-  "DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; "
+  "DROP TABLE account_quota_cycle_samples; DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; DROP INDEX attempts_output_rate; ALTER TABLE attempts DROP COLUMN output_rate; ALTER TABLE attempts DROP COLUMN output_rate_settled_at; "
 
 let removeResetCreditSchema =
   removeOutputRateSchema

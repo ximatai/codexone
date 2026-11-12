@@ -27,6 +27,12 @@ for (const width of [1440, 390]) {
     let reads = 0;
     await page.route("**/api/accounts/*/quota-trend", (route) => {
       reads++;
+      if (width === 390 && reads === 1) {
+        return route.fulfill({
+          status: 429,
+          json: { error: { code: "quota_trend_capacity" } },
+        });
+      }
       return route.fulfill({
         json: {
           primary: {
@@ -51,6 +57,7 @@ for (const width of [1440, 390]) {
     await open.press("Space");
     const chart = panel.getByRole("img", { name: /剩余额度走势/ });
     await expect(chart).toBeVisible();
+    if (width === 390) expect(reads).toBe(2);
     await expectNoHorizontalOverflow(page);
 
     if (width === 1440) {
@@ -76,7 +83,7 @@ for (const width of [1440, 390]) {
   });
 }
 
-test("quota trend distinguishes same-day ticks and explains scenario shading", async ({
+test("quota trend spans the full cycle without inventing early history", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -102,6 +109,17 @@ test("quota trend distinguishes same-day ticks and explains scenario shading", a
         primary: {
           reset,
           duration,
+          historySegments: [
+            [
+              [reset - duration + 86400, 80],
+              [reset - duration + 90000, 70],
+            ],
+            [
+              [at - 3600, 36],
+              [at, 12],
+            ],
+          ],
+          historySampled: true,
           samples: Array.from({ length: 13 }, (_, i) => [
             at - 3600 + i * 300,
             i <= 6 ? 36 - i : 30 - (i - 6) * 3,
@@ -118,11 +136,54 @@ test("quota trend distinguishes same-day ticks and explains scenario shading", a
   const ticks = await chart.locator('text[y="151"]').allTextContents();
   expect(ticks).toHaveLength(3);
   expect(new Set(ticks).size).toBe(3);
-  expect(ticks.every((label) => label.includes(":"))).toBe(true);
+  expect(ticks.every((label) => label.includes("/"))).toBe(true);
+  const firstPoint = await chart
+    .locator("polyline")
+    .first()
+    .getAttribute("points");
+  expect(Number(firstPoint!.split(",")[0])).toBeGreaterThan(30);
+  await expect(
+    page.getByText("历史曲线已抽样展示，预测使用原始近期数据"),
+  ).toBeVisible();
+  expect(await chart.locator("polyline").count()).toBe(3);
 
   await expect(page.getByText(/^(预测|历史)$/)).toHaveText(["预测", "历史"]);
   await page.keyboard.press("Tab");
   await expect(page.getByText("预测", { exact: true })).toBeFocused();
   await expect(page.getByRole("tooltip")).toHaveText(explanation);
   await expectNoHorizontalOverflow(page);
+});
+
+test("expired cycle ends at reset and does not draw a future now marker", async ({
+  page,
+}) => {
+  const now = new Date("2026-11-10T01:00:00Z");
+  await page.clock.setFixedTime(now);
+  const state = await reviewFixture(page);
+  state.alerts = 0;
+  state.accounts.splice(1);
+  const observation = state.accounts[0].observability.quota;
+  const at = now.getTime() / 1000;
+  const reset = at - 30 * 86400;
+  observation.observedAtUnixSeconds = reset - 300;
+  observation.attemptedAtUnixSeconds = reset - 300;
+  Object.assign(observation.limits[0].primary, {
+    usedPercent: 88,
+    resetsAtUnixSeconds: reset,
+    durationSeconds: 7 * 86400,
+  });
+  await page.route("**/api/accounts/*/quota-trend", (route) =>
+    route.fulfill({
+      json: {
+        primary: { reset, duration: 7 * 86400, samples: [[reset - 300, 12]] },
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: /查看.*额度趋势/ }).click();
+  const chart = page.getByRole("img", { name: /剩余额度走势/ });
+  await expect(chart).toBeVisible();
+  await expect(chart.getByText("重置")).toBeVisible();
+  await expect(chart.getByText("现在")).toHaveCount(0);
+  await expect(page.getByText("额度待更新，预测已暂停")).toBeVisible();
 });

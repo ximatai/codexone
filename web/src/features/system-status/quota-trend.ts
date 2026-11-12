@@ -6,9 +6,12 @@ const sample = z.tuple([timestamp, z.number().min(0).max(100)]);
 const windowTrend = z.object({
   reset: timestamp,
   duration: z.number().int().positive().max(31_536_000),
+  historySegments: z.array(z.array(sample).max(1030)).max(1024).optional(),
+  historySampled: z.boolean().optional(),
+  historyOmitted: z.boolean().optional(),
   samples: z
     .array(sample)
-    .max(289)
+    .max(290)
     .refine((items) =>
       items.every(
         ([at, remaining], i) =>

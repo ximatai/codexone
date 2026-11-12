@@ -1,3 +1,4 @@
+import CSQLite
 import CodexOneCore
 import CodexOneRuntime
 import Foundation
@@ -76,6 +77,9 @@ private struct PrimingAdminProbe: QuotaPrimingExecuting {
           && recorded.1["primary"]?["samples"]
             == .array([.array([.number(Decimal(at)), .number(20)])])
       )
+      #expect(
+        recorded.1["primary"]?["historySegments"]
+          == .array([.array([.array([.number(Decimal(at)), .number(20)])])]))
       #expect(try await client.call("GET", trend + "?unused=1", headers: browser).0 == 400)
       let history = try await client.call("GET", credits + "?range=24h", headers: browser)
       #expect(history.0 == 200 && history.3 == "no-store")
@@ -126,6 +130,45 @@ private struct PrimingAdminProbe: QuotaPrimingExecuting {
       #expect(try await client.call("PUT", base, body: .object(valid), headers: browser).0 == 200)
       #expect(try await client.call("PUT", base, body: .object(valid), headers: browser).0 == 409)
       #expect(try await h.store.quotaPrimingState(id: "account").settings.enabled)
+
+      // A busy reader is exposed as a retryable capacity response at the real HTTP boundary.
+      h.store.quotaCycleReaderGate.withLock { $0 = true }
+      let busy = try await client.call("GET", trend, headers: browser)
+      h.store.quotaCycleReaderGate.withLock { $0 = false }
+      #expect(busy.0 == 429 && busy.1["error"]?["code"] == .string("quota_trend_capacity"))
+      #expect(try await client.call("GET", trend, headers: browser).0 == 200)
+
+      // The largest supported cycle remains bounded at the actual management HTTP boundary.
+      var db: OpaquePointer?
+      #expect(sqlite3_open(h.root.appendingPathComponent("core.sqlite").path, &db) == SQLITE_OK)
+      let syntheticStart: Int64 = 1_800_000_000
+      let sql = """
+        WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<105119),
+        kinds(kind) AS (VALUES(0),(1))
+        INSERT OR REPLACE INTO account_quota_cycle_samples
+        SELECT 'account',kind,(\(syntheticStart)+i*300)/300,\(syntheticStart)+i*300,
+          '50',\(syntheticStart + 31_536_000),31536000 FROM n CROSS JOIN kinds;
+        """
+      let inserted = sqlite3_exec(db, sql, nil, nil, nil)
+      sqlite3_close(db)
+      #expect(inserted == SQLITE_OK)
+      async let longHistory = client.call("GET", trend, headers: browser)
+      async let anotherHistory = client.call("GET", trend, headers: browser)
+      async let competingRead = h.store.quotaObservation(id: "account")
+      let responses = try await [longHistory, anotherHistory]
+      _ = try await competingRead
+      #expect(responses.contains { $0.0 == 200 })
+      for response in responses {
+        if response.0 == 429 {
+          #expect(response.1["error"]?["code"] == .string("quota_trend_capacity"))
+          #expect(try await client.call("GET", trend, headers: browser).0 == 200)
+        } else {
+          #expect(response.0 == 200)
+          #expect(try response.1.data().count < 250_000)
+          #expect(response.1["primary"]?["samples"]?.array?.count == 289)
+          #expect(response.1["secondary"]?["historySegments"]?.array?.count == 1)
+        }
+      }
     } catch {
       owner.cancel()
       _ = await owner.result

@@ -4,7 +4,7 @@ public struct QuotaTrendSample: Sendable, Equatable, Codable {
   public let at: Int64
   public let remaining: Double
 
-  init(at: Int64, remaining: Double) {
+  public init(at: Int64, remaining: Double) {
     self.at = at
     self.remaining = remaining
   }
@@ -28,6 +28,22 @@ public struct QuotaWindowTrend: Sendable, Equatable, Codable {
   public let reset: Int64
   public let duration: Int64
   public private(set) var samples: [QuotaTrendSample]
+  public let historySegments: [[QuotaTrendSample]]?
+  public let historySampled: Bool?
+  public let historyOmitted: Bool?
+
+  public init(
+    reset: Int64, duration: Int64, samples: [QuotaTrendSample],
+    historySegments: [[QuotaTrendSample]]? = nil, historySampled: Bool? = nil,
+    historyOmitted: Bool? = nil
+  ) {
+    self.reset = reset
+    self.duration = duration
+    self.samples = samples
+    self.historySegments = historySegments
+    self.historySampled = historySampled
+    self.historyOmitted = historyOmitted
+  }
 
   static func recording(
     _ window: SubscriptionQuotaWindow?, at: Int64, after previous: Self?
@@ -60,6 +76,11 @@ public struct AccountQuotaTrend: Sendable, Equatable, Codable {
   public private(set) var secondary: QuotaWindowTrend?
 
   public init() {}
+
+  public init(primary: QuotaWindowTrend?, secondary: QuotaWindowTrend?) {
+    self.primary = primary
+    self.secondary = secondary
+  }
 
   public mutating func record(_ quota: SubscriptionQuota, at: Int64) {
     let limit = quota.limits.first { $0.id == "codex" }

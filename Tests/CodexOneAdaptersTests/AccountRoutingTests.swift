@@ -1033,3 +1033,136 @@ func controlCooldownIsReadAfterOwnerRefresh(expired: Bool) async throws {
   #expect(observed.trend?.secondary?.samples.count == 9)
   await f.close()
 }
+
+@Test func quotaCycleRetainsAWeekAndRestoresAcrossRestart() async throws {
+  let f = try await RoutingFixture.make()
+  let account = try await f.store.accountCredential(id: "a").account
+  let start: Int64 = 1_800_000_000
+  let duration: Int64 = 604_800
+  let reset = start + duration
+  for index in 0..<2016 {
+    let used = Double(index) / 30
+    let quota = try SubscriptionQuota(limits: [
+      .init(
+        id: "codex", allowed: true, limitReached: false,
+        primary: .init(usedPercent: used, durationSeconds: duration, resetsAtUnixSeconds: reset),
+        secondary: nil)
+    ])
+    _ = try await f.store.recordQuotaObservation(
+      account: account, atUnixSeconds: start + Int64(index) * 300, result: .success(quota))
+  }
+  let current = try #require(try await f.store.quotaCycleTrend(id: "a").primary)
+  #expect(current.samples.count == 289)
+  #expect(current.historySegments?.first?.first?.at == start)
+  #expect(current.historySegments?.last?.last?.at == reset - 300)
+  #expect(current.samples.last?.at == reset - 300)
+  await f.store.close()
+  let reopened = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock)
+  #expect(try await reopened.quotaCycleTrend(id: "a").primary == current)
+  let next = try SubscriptionQuota(limits: [
+    .init(
+      id: "codex", allowed: true, limitReached: false,
+      primary: .init(
+        usedPercent: 1, durationSeconds: duration, resetsAtUnixSeconds: reset + duration),
+      secondary: nil)
+  ])
+  _ = try await reopened.recordQuotaObservation(
+    account: account, atUnixSeconds: reset, result: .success(next))
+  #expect(try await reopened.quotaCycleTrend(id: "a").primary?.samples.count == 1)
+  _ = try await reopened.recordQuotaObservation(
+    account: account, atUnixSeconds: reset + 600, result: .success(next))
+  _ = try await reopened.recordQuotaObservation(
+    account: account, atUnixSeconds: reset + 300, result: .success(next))
+  #expect(try await reopened.quotaCycleTrend(id: "a").primary?.samples.first?.at == reset + 300)
+  await reopened.close()
+  await f.close()
+}
+
+@Test func quotaCycleMigratesLegacyHistoryAndSurvivesMetadataTrimming() async throws {
+  let f = try await RoutingFixture.make()
+  let account = try await f.store.accountCredential(id: "a").account
+  let start: Int64 = 1_800_000_000
+  let reset = start + 604_800
+  func quota(_ used: Double) throws -> SubscriptionQuota {
+    try .init(limits: [
+      .init(
+        id: "codex", allowed: true, limitReached: false,
+        primary: .init(usedPercent: used, durationSeconds: 604_800, resetsAtUnixSeconds: reset),
+        secondary: nil)
+    ])
+  }
+  _ = try await f.store.recordQuotaObservation(
+    account: account, atUnixSeconds: start, result: .success(quota(10)))
+  _ = try await f.store.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 300, result: .success(quota(11)))
+  await f.store.close()
+  try rawSQL(f.path, "DROP TABLE account_quota_cycle_samples; PRAGMA user_version=16")
+  let upgraded = try await SQLiteExecutionStore.open(
+    path: f.path, limits: syntheticLimits, clock: testClock, allowStartupMigration: true)
+  #expect(try await upgraded.quotaCycleTrend(id: "a").primary?.samples.count == 2)
+  _ = try await upgraded.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 600, result: .success(quota(12)))
+  #expect(try await upgraded.quotaCycleTrend(id: "a").primary?.samples.count == 3)
+  try rawSQL(
+    f.path,
+    "UPDATE account_quota SET record_json=json_remove(record_json,'$.trend') WHERE account_id='a'")
+  _ = try await upgraded.recordQuotaObservation(
+    account: account, atUnixSeconds: start + 900, result: .success(quota(13)))
+  #expect(try await upgraded.quotaCycleTrend(id: "a").primary?.samples.count == 4)
+  let beforeFailure = try await upgraded.quotaCycleTrend(id: "a")
+  try rawSQL(
+    f.path,
+    "CREATE TRIGGER fail_quota_cycle BEFORE INSERT ON account_quota_cycle_samples BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+  )
+  await #expect(throws: ExecutionError.self) {
+    try await upgraded.recordQuotaObservation(
+      account: account, atUnixSeconds: start + 1200, result: .success(quota(14)))
+  }
+  #expect(try await upgraded.quotaCycleTrend(id: "a") == beforeFailure)
+  try rawSQL(f.path, "DROP TRIGGER fail_quota_cycle")
+  await upgraded.close()
+  await f.close()
+}
+
+@Test func quotaCycleReadsTheMaximumSupportedYear() async throws {
+  let f = try await RoutingFixture.make()
+  let start: Int64 = 1_800_000_000
+  let reset = start + 31_536_000
+  try rawSQL(
+    f.path,
+    """
+    WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<105119)
+    INSERT INTO account_quota_cycle_samples(account_id,kind,bucket_epoch,at_epoch,remaining,reset_epoch,duration_seconds)
+    SELECT 'a',0,(\(start)+i*300)/300,\(start)+i*300,'50',\(reset),31536000 FROM n
+    """)
+  let trend = try #require(try await f.store.quotaCycleTrend(id: "a").primary)
+  #expect(trend.samples.count == 289)
+  #expect(trend.historySegments?.first?.first?.at == start)
+  #expect(trend.historySegments?.last?.last?.at == reset - 300)
+  #expect(trend.historySegments?.flatMap { $0 }.count ?? 0 <= 1026)
+  #expect(trend.historySampled == true)
+  #expect(trend.samples.last?.at == reset - 300)
+  await f.close()
+}
+
+@Test func quotaCycleBoundsManyGapsWithoutJoiningThem() async throws {
+  let f = try await RoutingFixture.make()
+  let start: Int64 = 1_800_000_000
+  let reset = start + 31_536_000
+  try rawSQL(
+    f.path,
+    """
+    WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<1199)
+    INSERT INTO account_quota_cycle_samples(account_id,kind,bucket_epoch,at_epoch,remaining,reset_epoch,duration_seconds)
+    SELECT 'a',0,(\(start)+i*1200)/300,\(start)+i*1200,'50',\(reset),31536000 FROM n
+    """)
+  let trend = try #require(try await f.store.quotaCycleTrend(id: "a").primary)
+  let segments = try #require(trend.historySegments)
+  #expect(segments.count == 1024)
+  #expect(segments.allSatisfy { $0.count == 1 })
+  #expect(segments.first?.first?.at == start)
+  #expect(segments.last?.last?.at == start + 1199 * 1200)
+  #expect(trend.historyOmitted == true)
+  await f.close()
+}

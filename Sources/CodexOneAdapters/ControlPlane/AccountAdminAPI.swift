@@ -76,10 +76,12 @@ public struct AccountAdminAPI: Sendable {
       guard let observations = store as? any AccountObservationStore else {
         throw ExecutionError.storageUnavailable
       }
-      let observation = try await observations.quotaObservation(
-        id: request.parameters.get("id") ?? "")
-      return try Self.response(
-        JSONValue.decode(JSONEncoder().encode(observation.trend ?? AccountQuotaTrend())))
+      do {
+        let trend = try await observations.quotaCycleTrend(id: request.parameters.get("id") ?? "")
+        return try Self.response(JSONValue.decode(JSONEncoder().encode(trend)))
+      } catch ExecutionError.capacity {
+        throw GatewayProtocolError(429, "quota_trend_capacity")
+      }
     }
     routes.get(":id", "usage-credit-history") { request async throws -> Response in
       let query = URLComponents(string: request.url.string)?.queryItems ?? []
