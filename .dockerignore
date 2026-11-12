@@ -22,6 +22,8 @@
 !web/licenses/**
 !deploy/
 !deploy/Dockerfile
+!deploy/licenses/
+!deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt
 !scripts/
 !scripts/verify_protocol.py
 !scripts/verify_websocket.py

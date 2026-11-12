@@ -125,6 +125,7 @@ RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
 COPY --from=backend /output/licenses/ /opt/codexone/licenses/swift/
+COPY deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt /opt/codexone/licenses/swift/BoringSSL-LICENSE.txt
 COPY --from=web /licenses/ /opt/codexone/licenses/npm/
 # Bound glibc arena growth and return large request allocations on multi-core hosts.
 ENV MALLOC_ARENA_MAX=2 \

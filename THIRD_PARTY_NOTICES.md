@@ -302,14 +302,14 @@
 | `swift-service-context` | 1.5.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/NOTICE.txt) |
 | `swift-service-lifecycle` | 2.13.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/NOTICE.txt) |
 | `swift-system` | 1.8.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-system/869129b7bf4ecc57b97d0193ad29690ca2134750/LICENSE.txt) |
-| `vapor` | 4.122.3 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/vapor/48852309b11230e62a89b41a9c578c93f4d2d916/LICENSE) |
+| `vapor` | 4.122.3 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/vapor/48852309b11230e62a89b41a9c578c93f4d2d916/LICENSE)、[NOTICES.txt](https://raw.githubusercontent.com/vapor/vapor/48852309b11230e62a89b41a9c578c93f4d2d916/NOTICES.txt) |
 | `websocket-kit` | 2.16.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/websocket-kit/90bbbdab3ede12c803cfbe91646f291c092517a3/LICENSE) |
 
 ### 嵌入组件的剩余核验边界
 
-`swift-nio-ssl` 的锁定 NOTICE 已明确声明 BoringSSL 为 ISC 与 OpenSSL 组合许可；须保留其多来源通知，不能仅分发包根 Apache-2.0。`swift-crypto` 的锁定 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0；测试材料不因出现在源码归档就免除许可保留。
+`swift-nio-ssl` 的根 NOTICE 仍将 BoringSSL 列为 ISC 与 OpenSSL 组合许可。2.37.6 中 `Sources/CNIOBoringSSL/hash.txt` 记录的上游提交 `8eb25be6fa18d475291122887a7bccd3762ff236` 提供 Apache-2.0 正文，并单列测试支持代码的许可。`swift-crypto` 4.5.2 的 `Sources/CCryptoBoringSSL/hash.txt` 记录上游提交 `0226f30467f540a3f62ef48d453f93927da199b6`，其 LICENSE 与前者逐字节相同。镜像保留两份包根 NOTICE，并在 `licenses/swift/BoringSSL-LICENSE.txt` 提供两者共用的固定上游正文。[NIOSSL 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/8eb25be6fa18d475291122887a7bccd3762ff236/LICENSE) · [Swift Crypto 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/0226f30467f540a3f62ef48d453f93927da199b6/LICENSE) · [分发副本](deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt)
 
-**待核验：两个包内嵌加密代码的完整许可正文与适用文件集合。** 在这两个锁定 revision 查询 `Sources/CCryptoBoringSSL` / `Sources/CNIOBoringSSL` 下的 LICENSE、LICENSE.txt、NOTICE、COPYING 均返回 HTTP 404；递归源码树元数据也未列出独立的组件许可文件。根 NOTICE 提及的 `license/LICENSE.<component>.txt` 未在树中取得，不能用浮动上游许可替代锁定产物的证据。正式分发前须检查实际 SwiftPM checkout 与镜像许可归档；若组件通知仍缺失，维护者应补全后再发布。
+`swift-crypto` 的根 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0。发布时检查 SwiftPM checkout 和镜像许可归档，确保分发产物保留实际包含组件的许可与通知。
 
 ## 相关文档
 
