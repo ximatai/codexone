@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.30](https://github.com/ximatai/codexone/releases/tag/v0.26.30)**（2026-11-11），核心数据库 schema v15。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.32](https://github.com/ximatai/codexone/releases/tag/v0.26.32)**（2026-11-12），核心数据库 schema v15。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.32 统一管理台截图隐私遮罩的样式，补充 Codex 协议、动画 GIF 和实时输出速率零值的回归，并更新部分前端及测试依赖。见[发布说明](CHANGELOG.md)。
 
 v0.26.30 补充原生 WebSocket 的预热后重连、同连接迟到中断和双账号 429 归属回归，沿用 schema v15。见[发布说明](CHANGELOG.md)。
 
