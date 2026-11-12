@@ -50,6 +50,7 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 return self.reply({'error': 'synthetic-catalog-unavailable'}, status=503)
             return self.reply({'models': [
                 {'slug': 'synthetic-nova', 'visibility': 'list', 'base_instructions': 'Synthetic model guidance.',
+                 'input_modalities': ['text', 'image'] if changed else ['text'],
                  'supported_reasoning_levels': ([{'effort': 'low', 'description': 'Low'}] if changed else []) + [{'effort': 'high', 'description': 'High'}],
                  'default_reasoning_level': 'high'},
                 {'slug': 'synthetic-incomplete', 'visibility': 'list'},

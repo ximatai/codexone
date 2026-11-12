@@ -29,7 +29,13 @@ for (const width of [1320, 390]) {
       revision,
       active,
       imageModels: ["demo-image"],
-      retired: [model("demo-legacy", "retired")],
+      retired: [
+        {
+          ...model("demo-legacy", "retired"),
+          visionInput: true,
+          previousVisionInput: false,
+        },
+      ],
       candidates: refreshed
         ? [
             ...(revision === 0 ? [model("demo-nova", "candidate")] : []),
@@ -130,6 +136,12 @@ for (const width of [1320, 390]) {
         animations: "disabled",
       });
     }
+    await page.getByRole("button", { name: "重新启用" }).click();
+    await expect(page.getByText(/此模型新增视觉输入能力/)).toBeVisible();
+    await page
+      .getByRole("dialog", { name: "启用模型" })
+      .getByRole("button", { name: "取消" })
+      .click();
     await page.getByRole("button", { name: "审核并启用" }).click();
     const confirmation = page.getByRole("dialog", { name: "启用模型" });
     await expect(

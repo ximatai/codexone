@@ -28,6 +28,8 @@ const model = z.object({
   id: z.string().min(1).max(128),
   state: z.enum(["enabled", "retired", "candidate", "incomplete"]),
   reasoningEfforts: z.array(z.string().max(32)).max(8),
+  visionInput: z.boolean().optional(),
+  previousVisionInput: z.boolean().nullable().optional(),
   defaultReasoningEffort: z.string().max(32).nullable(),
 });
 const directory = z.object({
@@ -334,6 +336,23 @@ export function ModelDirectory() {
         {selected && (
           <Stack>
             <Text fw={650}>{selected.id}</Text>
+            <Text size="sm">
+              视觉输入：{selected.visionInput ? "支持" : "未启用"}
+            </Text>
+            {selected.state === "retired" &&
+              selected.previousVisionInput != null &&
+              selected.previousVisionInput !== selected.visionInput && (
+                <Alert color="yellow">
+                  {selected.visionInput
+                    ? "此模型新增视觉输入能力。已选择此模型且获视觉输入权限的 Key 将可以处理图片。"
+                    : "此模型不再提供视觉输入，相关 Key 将不能通过此模型处理图片。"}
+                </Alert>
+              )}
+            {selected.state === "candidate" && selected.visionInput && (
+              <Text size="sm" c="dimmed">
+                已获视觉输入权限且跟随全部模型的 Key 可使用此模型处理图片。
+              </Text>
+            )}
             <Group gap={5}>
               {selected.reasoningEfforts.map((effort) => (
                 <Badge key={effort} color="gray">

@@ -123,10 +123,13 @@ def verify_accounts(probe):
                 with server.guard:
                     server.control['model_discovery_failure'] = False
                     server.control['model_changed'] = True
-                assert request(port, 'POST', '/api/accounts/' + account['id'] + '/model-candidates', **auth)[0] == 200
+                refreshed = document(request(port, 'POST', '/api/accounts/' + account['id'] + '/model-candidates', **auth))
+                assert refreshed['retired'][0]['visionInput'] is True
+                assert refreshed['retired'][0]['previousVisionInput'] is False
                 restored = document(request(port, 'PUT', '/api/models', enable, **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
                 assert restored['active'][1]['reasoningEfforts'] == ['low', 'high']
+                assert restored['active'][1]['visionInput'] is True
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
                 assert account['accessExpiresAtUnixSeconds'] == expires
                 account = document(request(port, 'PUT', path, {'revision': account['revision'], 'displayName': None}, **auth))['account']

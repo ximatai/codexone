@@ -78,7 +78,8 @@ public actor ModelDirectory {
           let refreshed = Self.discoveredModel(
             id: model.id, entry: entry, input: model.inputMicrosPerMillion,
             output: model.outputMicrosPerMillion)
-          return Self.metadata(refreshed, state: "retired")
+          return Self.metadata(
+            refreshed, state: "retired", previousVisionInput: model.visionInput == true)
         }),
       "candidates": .array(candidates),
       "imageModels": .array((configuration.imageGeneration?.models ?? []).map { .string($0.id) }),
@@ -169,9 +170,9 @@ public actor ModelDirectory {
       visionInput: entry["input_modalities"]?.array?.contains(.string("image")) == true)
   }
 
-  private static func metadata(_ model: SingleIdentityConfiguration.Model, state: String)
-    -> JSONValue
-  {
+  private static func metadata(
+    _ model: SingleIdentityConfiguration.Model, state: String, previousVisionInput: Bool? = nil
+  ) -> JSONValue {
     let efforts = model.supportedReasoningEfforts
     let preferred =
       model.catalog?.defaultReasoningEffort
@@ -179,6 +180,8 @@ public actor ModelDirectory {
     return .object([
       "id": .string(model.id),
       "state": .string(state),
+      "visionInput": .bool(model.visionInput == true),
+      "previousVisionInput": previousVisionInput.map(JSONValue.bool) ?? .null,
       "reasoningEfforts": .array(efforts.map(JSONValue.string)),
       "defaultReasoningEffort": preferred.flatMap { efforts.contains($0) ? .string($0) : nil }
         ?? .null,
