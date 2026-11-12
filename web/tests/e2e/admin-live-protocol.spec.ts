@@ -345,6 +345,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   const readout = page
     .locator('[title="最近有样本的小时"]')
     .locator("[data-continuous-value]");
+  await expect(readout).toBeVisible();
   await expect(readout).toHaveText("最近 43 Token/s");
   const readoutBox = await readout.boundingBox();
   for (const [sequence, median, label] of [
