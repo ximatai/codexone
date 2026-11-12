@@ -48,7 +48,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     self.path = path
     self.restoration = restoration
     self.connection = connection
-    self.overviewActivity = OverviewActivity(businessDay: connection.businessDay)
+    let historicalRateHorizon = try connection.scalar(
+      "SELECT COALESCE(MAX(output_rate_settled_at),-1) FROM attempts")
+    self.overviewActivity = OverviewActivity(
+      businessDay: connection.businessDay,
+      startedAt: max(connection.clock.unixSeconds, historicalRateHorizon))
     self.limits = limits
     self.unresolvedCapacity = unresolvedCapacity
     try loadOutputRateHistory(connection)
@@ -60,23 +64,8 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     func restore(
       from start: Int64, width: Int64, limit: Int, source: OverviewActivity.OutputSampleSource
     ) throws {
-      let samples = try db.rows(
-        """
-        SELECT output_rate_settled_at,rowid,output_rate FROM attempts
-        WHERE output_rate_settled_at>=? AND output_rate_settled_at<?
-        ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?
-        """,
-        [
-          .number(start), .number(min(start + width, now + 1)), .number(Int64(limit)),
-        ]
-      ) { row -> (Int64, Int64, Decimal)? in
-        guard let raw = sqlite3_column_text(row, 2),
-          let rate = Decimal(
-            string: String(cString: raw), locale: Locale(identifier: "en_US_POSIX"))
-        else { return nil }
-        return (sqlite3_column_int64(row, 0), sqlite3_column_int64(row, 1), rate)
-      }
-      for (second, rowID, rate) in samples.reversed().compactMap({ $0 }) {
+      let samples = try Self.outputSamples(db, from: start, width: width, limit: limit)
+      for (second, rowID, rate) in samples.reversed() {
         overviewActivity.recordRequestOutput(
           rate, at: second, rowID: rowID, source: source)
       }
@@ -92,6 +81,29 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         from: start, width: 3600, limit: OverviewActivity.outputHourCapacity, source: .hourlyHistory
       )
     }
+  }
+  private static func outputSamples(
+    _ db: SQLiteConnection, from start: Int64, width: Int64, limit: Int
+  ) throws -> [(Int64, Int64, Decimal)] {
+    let now = db.clock.unixSeconds
+    let samples = try db.rows(
+      """
+      SELECT output_rate_settled_at,rowid,output_rate FROM attempts
+      WHERE output_rate_settled_at>=? AND output_rate_settled_at<?
+        AND CASE WHEN json_valid(usage_json) THEN COALESCE(json_extract(usage_json, '$.images'), 0) ELSE 0 END = 0
+      ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?
+      """,
+      [
+        .number(start), .number(min(start + width, now + 1)), .number(Int64(limit)),
+      ]
+    ) { row -> (Int64, Int64, Decimal)? in
+      guard let raw = sqlite3_column_text(row, 2),
+        let rate = Decimal(
+          string: String(cString: raw), locale: Locale(identifier: "en_US_POSIX"))
+      else { return nil }
+      return (sqlite3_column_int64(row, 0), sqlite3_column_int64(row, 1), rate)
+    }
+    return samples.compactMap { $0 }
   }
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
   public static func open(
@@ -442,7 +454,11 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     if let evidence { try validate(evidence) }
     try outcome?.validate()
     try await perform(critical: true) { db in
-      let outputSample = try db.transaction { () -> (rate: Decimal, second: Int64, rowID: Int64)? in
+      let outputSample = try db.transaction {
+        () -> (
+          rate: Decimal?, second: Int64, rowID: Int64, days: [(Int64, Int64, Decimal)]?,
+          hours: [(Int64, Int64, Decimal)]?
+        )? in
         let snapshot = try Self.load(db, attempt)
         if snapshot.state == .intent {
           try Self.recordAccountConcurrency(db, owner: snapshot.admission.owner)
@@ -513,7 +529,24 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
               .number(evidence.estimatedMicros), .number(db.clock.unixSeconds),
               .text(evidence.completeness.rawValue), .text(attempt),
             ])
-          if snapshot.usage?.completeness != .complete,
+          if evidence.images > 0, snapshot.usage?.completeness == .complete {
+            let recordedAt = try db.scalar(
+              "SELECT COALESCE(output_rate_settled_at,-1) FROM attempts WHERE id=?",
+              [.text(attempt)])
+            try db.write(
+              "UPDATE attempts SET output_rate_settled_at=NULL,output_rate=NULL WHERE id=?",
+              [.text(attempt)])
+            let rowID = try db.scalar("SELECT rowid FROM attempts WHERE id=?", [.text(attempt)])
+            if recordedAt < 0 { return nil }
+            let day = try db.businessDay.start(containing: recordedAt)
+            let hour = recordedAt / 3600 * 3600
+            let days = try Self.outputSamples(
+              db, from: day, width: 86400, limit: OverviewActivity.outputDayCapacity)
+            let hours = try Self.outputSamples(
+              db, from: hour, width: 3600, limit: OverviewActivity.outputHourCapacity)
+            return (nil, recordedAt, rowID, days, hours)
+          }
+          if snapshot.usage?.completeness != .complete, evidence.images == 0,
             snapshot.admission.executionRequirements.route == .conversation,
             evidence.completeness == .complete, evidence.outputTokens > 0
           {
@@ -532,15 +565,22 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
                   .text(attempt),
                 ])
               let rowID = try db.scalar("SELECT rowid FROM attempts WHERE id=?", [.text(attempt)])
-              return (rate, second, rowID)
+              return (rate, second, rowID, nil, nil)
             }
           }
         }
         return nil
       }
       if let outputSample {
-        self.overviewActivity.recordRequestOutput(
-          outputSample.rate, at: outputSample.second, rowID: outputSample.rowID)
+        if let rate = outputSample.rate {
+          self.overviewActivity.recordRequestOutput(
+            rate, at: outputSample.second, rowID: outputSample.rowID)
+        } else if outputSample.second >= 0 {
+          let day = try db.businessDay.start(containing: outputSample.second)
+          let hour = outputSample.second / 3600 * 3600
+          self.overviewActivity.replaceRequestOutput(
+            day: day, days: outputSample.days ?? [], hour: hour, hours: outputSample.hours ?? [])
+        }
       }
       self.overviewActivity.publish { .finished(id: attempt) }
     }

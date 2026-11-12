@@ -66,6 +66,7 @@ public final class OverviewActivity: Sendable {
   static let outputHourCapacity = 256
   static let outputHistoryHours = 168
   private let businessDay: BusinessDayDefinition
+  private let startedAt: Int64?
   private let settledOutput = Mutex(SettledOutput())
 
   func recordRequestOutput(
@@ -99,6 +100,31 @@ public final class OverviewActivity: Sendable {
           output.hours[hour, default: OutputBucket()].record(
             sample, capacity: Self.outputHourCapacity)
         }
+      }
+    }
+  }
+
+  func replaceRequestOutput(
+    day: Int64, days: [(Int64, Int64, Decimal)], hour: Int64, hours: [(Int64, Int64, Decimal)]
+  ) {
+    settledOutput.withLock { output in
+      let knownLive = Set((output.days[day]?.samples ?? []).filter(\.live).map(\.rowID))
+        .union((output.hours[hour]?.samples ?? []).filter(\.live).map(\.rowID))
+      func bucket(_ rows: [(Int64, Int64, Decimal)], capacity: Int) -> OutputBucket {
+        var bucket = OutputBucket()
+        for (second, rowID, rate) in rows.reversed() {
+          // Samples at or before the startup horizon have ambiguous provenance unless retained.
+          let live = knownLive.contains(rowID) || startedAt.map { second > $0 } == true
+          bucket.record(
+            OutputSample(second: second, rowID: rowID, rate: rate, live: live), capacity: capacity)
+        }
+        return bucket
+      }
+      if output.days[day] != nil {
+        output.days[day] = bucket(days, capacity: Self.outputDayCapacity)
+      }
+      if output.hours[hour] != nil {
+        output.hours[hour] = bucket(hours, capacity: Self.outputHourCapacity)
       }
     }
   }
@@ -151,8 +177,9 @@ public final class OverviewActivity: Sendable {
   }
   let signals: AsyncStream<Signal>
   let signal: AsyncStream<Signal>.Continuation
-  public init(businessDay: BusinessDayDefinition = .utc) {
+  public init(businessDay: BusinessDayDefinition = .utc, startedAt: Int64? = nil) {
     self.businessDay = businessDay
+    self.startedAt = startedAt
     (signals, signal) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
   func watch(_ enabled: Bool) {
