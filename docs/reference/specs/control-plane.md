@@ -182,6 +182,10 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
 
+已启用的对话模型可通过 `PUT /api/models/reasoning` 保存推理设置，请求包含 `model`、`revision`、`allowedReasoningEfforts` 和 `defaultReasoningEffort`。范围用非空、无重复的受支持档位数组，`null` 跟随模型支持的全部档位。默认值可选范围内的档位，`null` 优先沿用模型资料的默认值。若默认值不在收窄后的范围内，取模型资料顺序中的首个允许档位。模型重新启用时保留设置，如新资料不兼容，须明确确认重置。
+
+客户端目录与请求校验采用模型范围和 Key 档位限制的交集。交集为空时，此模型从该 Key 的客户端目录移除。收窄模型范围后，除不生成的 WebSocket 预热外，客户端须显式发送获准的 `reasoning.effort`，网关在转发前拒绝缺失或越界的档位。默认值由客户端目录公布，网关保持请求参数透传。既有 Key 的保存值不变。模型设置随生效目录保存在核心库，schema v18 阻止旧程序打开升级后的数据库。
+
 密钥管理缺省筛选 available，只展示启用且未到期的未归档 Key；显式 all 展示未归档及已归档，客户端并行读取两套既有分页接口、按 ID 去重、任一失败拒绝部分成功；归档和恢复后按当前范围更新列表。
 
 ## A18：账号重置卡

@@ -95,11 +95,21 @@ public struct KeyAdminAPI: Sendable {
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         return try Self.response(await modelDirectory.document())
       }
+      models.put("reasoning") { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(
+          request,
+          allowed: ["model", "revision", "allowedReasoningEfforts", "defaultReasoningEffort"])
+        return try await Self.response(modelDirectory.changeReasoning(document))
+      }
       models.put { request async throws -> Response in
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         let document = try Self.body(
           request, allowed: ["model", "revision", "enabled"],
-          optional: ["inputMicrosPerMillion", "outputMicrosPerMillion", "candidateRevision"])
+          optional: [
+            "inputMicrosPerMillion", "outputMicrosPerMillion", "candidateRevision",
+            "resetReasoningSettings",
+          ])
         return try await Self.response(modelDirectory.change(document))
       }
     }
@@ -143,7 +153,7 @@ public struct KeyAdminAPI: Sendable {
       let models = snapshot?.active
       let efforts =
         models.map { values in
-          Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.supportedReasoningEfforts) })
+          Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.effectiveReasoningEfforts) })
         } ?? configuredReasoningEfforts
       return try Self.response(
         .object([

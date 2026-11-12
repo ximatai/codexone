@@ -106,7 +106,7 @@ struct ModelProfileSnapshot: Decodable {
 
 private enum ModelConfigurationKey: String, CodingKey {
   case id, inputMicrosPerMillion, outputMicrosPerMillion, catalog, profileProvenance
-  case visionInput, imageGeneration, upstream
+  case visionInput, imageGeneration, upstream, reasoningSettings
 }
 
 extension CodingUserInfoKey {
@@ -118,7 +118,11 @@ extension SingleIdentityConfiguration.Model {
     let fields = try decoder.container(keyedBy: ModelConfigurationKey.self)
     // Provenance is an output of the validated importer, never a configuration assertion.
     let persisted = decoder.userInfo[.persistedModelDirectory] as? Bool == true
-    guard persisted || (!fields.contains(.profileProvenance) && !fields.contains(.upstream)) else {
+    guard
+      persisted
+        || (!fields.contains(.profileProvenance) && !fields.contains(.upstream)
+          && !fields.contains(.reasoningSettings))
+    else {
       throw ExecutionError.invalidCommand
     }
     self.init(
@@ -131,6 +135,8 @@ extension SingleIdentityConfiguration.Model {
       profileProvenance: persisted
         ? try fields.decodeIfPresent(ModelProfileProvenance.self, forKey: .profileProvenance) : nil,
       visionInput: try fields.decodeIfPresent(Bool.self, forKey: .visionInput),
-      imageGeneration: try fields.decodeIfPresent(Bool.self, forKey: .imageGeneration))
+      imageGeneration: try fields.decodeIfPresent(Bool.self, forKey: .imageGeneration),
+      reasoningSettings: persisted
+        ? try fields.decodeIfPresent(ModelReasoningSettings.self, forKey: .reasoningSettings) : nil)
   }
 }

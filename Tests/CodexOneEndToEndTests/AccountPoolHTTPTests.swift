@@ -358,6 +358,7 @@ private struct PoolHTTPHarness {
   let listener: any Channel
   let state: PoolHTTPState
   let finalizer: ExecutionFinalizer
+  let modelDirectory: ModelDirectory?
   let owner: Task<Void, any Error>
   let port: Int
   let alice: String
@@ -366,7 +367,7 @@ private struct PoolHTTPHarness {
   static func open(
     _ oauth: OAuthHarness, wrongMaster: Bool = false, transport: String = "http",
     executionTimeout: Int = 5, handshake: String? = nil, images: Bool = false,
-    existingState: PoolHTTPState? = nil
+    existingState: PoolHTTPState? = nil, reasoningDirectory: Bool = false
   )
     async throws -> Self
   {
@@ -448,16 +449,20 @@ private struct PoolHTTPHarness {
         channel.pipeline.addHandler(http)
       }
     }.bind(host: "127.0.0.1", port: 0).get()
+    var model: [String: Any] = [
+      "id": "synthetic-text", "visionInput": images, "imageGeneration": images,
+      "inputMicrosPerMillion": 1_000_000, "outputMicrosPerMillion": 1_000_000,
+    ]
+    if reasoningDirectory {
+      model["catalog"] = [
+        "reasoningEfforts": ["low", "medium", "high"], "defaultReasoningEffort": "low",
+        "baseInstructions": "Synthetic profile.",
+      ]
+    }
     let configuration = try JSONDecoder().decode(
       AccountPoolConfiguration.self,
       from: JSONSerialization.data(withJSONObject: [
-        "models": [
-          [
-            "id": "synthetic-text", "visionInput": images, "imageGeneration": images,
-            "inputMicrosPerMillion": 1_000_000,
-            "outputMicrosPerMillion": 1_000_000,
-          ]
-        ],
+        "models": [model],
         "reservedMicros": 1, "executionTimeoutSeconds": executionTimeout,
         "upstreamTransport": transport,
         "imageGeneration": images
@@ -490,11 +495,15 @@ private struct PoolHTTPHarness {
         protection: try AccountCredentialCipher(hexKey: String(repeating: "7b", count: 32)),
         clock: testClock)
       : oauth.app
+    let modelDirectory =
+      reasoningDirectory
+      ? try await ModelDirectory(configuration: configuration, store: store, clock: testClock)
+      : nil
     let service = try ResponsesDataService(
       group: oauth.group, port: 0, configuration: configuration, store: store,
       finalizer: finalizer, credentials: credentials, refresher: oauth.supervisor,
       provider: oauth.provider, target: .syntheticLoopback(port: listener.localAddress!.port!),
-      clock: store.clock
+      modelDirectory: modelDirectory, clock: store.clock
     ) { port in bound.withLock { $0 = port } }
     let owner = Task {
       try await GatewayRuntime(services: [finalizer, service]).run(handleSignals: false)
@@ -502,15 +511,16 @@ private struct PoolHTTPHarness {
     try await awaitOAuth { bound.withLock { $0 > 0 } && finalizer.isAccepting }
     return Self(
       oauth: oauth, store: store, listener: listener, state: state, finalizer: finalizer,
-      owner: owner,
+      modelDirectory: modelDirectory, owner: owner,
       port: bound.withLock { $0 }, alice: alice, bob: bob)
   }
   func request(
     _ input: String = "text", stream: Bool = false, previous: String? = nil, key: String? = nil,
-    compact: Bool = false
+    compact: Bool = false, effort: String? = nil
   ) async throws -> (Int, Data) {
     var body: [String: JSONValue] = ["model": .string("synthetic-text"), "input": .string(input)]
     if !compact { body["stream"] = .bool(stream) }
+    if let effort { body["reasoning"] = .object(["effort": .string(effort)]) }
     if let previous { body["previous_response_id"] = .string(previous) }
     var request = URLRequest(
       url: URL(string: "http://127.0.0.1:\(port)/v1/responses" + (compact ? "/compact" : ""))!)
@@ -554,6 +564,59 @@ private func withPoolHTTP(
       throw error
     }
     await harness.close()
+  }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func poolModelDirectoryReasoningSettingsApplyToAllKeys(_ transport: String) async throws {
+  try await withOAuth { oauth in
+    let h = try await PoolHTTPHarness.open(oauth, transport: transport, reasoningDirectory: true)
+    do {
+      let directory = try #require(h.modelDirectory)
+      let key = try await h.store.authenticateKey(digest: keyDigest(h.bob))
+      _ = try await h.store.updateKey(
+        id: key.id, revision: key.revision, enabled: true,
+        policy: .init(
+          models: nil, limits: key.policy.limits,
+          reasoningEfforts: ["synthetic-text": ["low", "high"]]))
+      let command: JSONValue = .object([
+        "model": .string("synthetic-text"), "revision": .number(0),
+        "allowedReasoningEfforts": .array([.string("medium"), .string("high")]),
+        "defaultReasoningEffort": .string("medium"),
+      ])
+      let document = try await directory.changeReasoning(command)
+      #expect(document["active"]?.array?.first?["defaultReasoningEffort"] == .string("medium"))
+      await #expect(throws: ExecutionError.conflict) {
+        try await directory.changeReasoning(command)
+      }
+      let persisted = try #require(try await h.store.modelDirectorySnapshot()?.active.first)
+      #expect(persisted.effectiveReasoningEfforts == ["medium", "high"])
+
+      let session = URLSession(configuration: .ephemeral)
+      defer { session.invalidateAndCancel() }
+      var models = URLRequest(url: URL(string: "http://127.0.0.1:\(h.port)/v1/models")!)
+      models.setValue("Bearer " + h.bob, forHTTPHeaderField: "authorization")
+      let (catalog, response) = try await session.data(for: models)
+      #expect((response as? HTTPURLResponse)?.statusCode == 200)
+      let entry = try #require(JSONValue.decode(catalog)["models"]?.array?.first)
+      #expect(
+        entry["supported_reasoning_levels"]?.array?.compactMap { $0["effort"]?.string } == ["high"])
+      #expect(entry["default_reasoning_level"] == .string("high"))
+
+      let denied = try await h.request(effort: "low")
+      #expect(denied.0 == 403)
+      #expect(
+        try JSONValue.decode(denied.1)["error"]?["code"] == .string("reasoning_effort_not_allowed"))
+      #expect(try await h.request().0 == 403)
+      #expect(try await h.request(key: h.bob, effort: "medium").0 == 403)
+      #expect(h.calls.isEmpty)
+      #expect(try await h.request(effort: "medium").0 == 200)
+      #expect(try await h.request(key: h.bob, effort: "high").0 == 200)
+    } catch {
+      await h.close()
+      throw error
+    }
+    await h.close()
   }
 }
 

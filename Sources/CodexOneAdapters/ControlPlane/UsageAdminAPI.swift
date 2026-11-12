@@ -6,21 +6,27 @@ public struct UsageAdminAPI: Sendable {
   private let businessDay: BusinessDayDefinition
   private let clock: WallClock
   private let querying: any UsageQuerying
-  private let defaultReasoningEfforts: [String: String]
+  private let models: [SingleIdentityConfiguration.Model]
+  private let modelDirectory: ModelDirectory?
   public init(
     querying: any UsageQuerying, models: [SingleIdentityConfiguration.Model] = [],
+    modelDirectory: ModelDirectory? = nil,
     clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc
   ) {
     self.businessDay = businessDay
     self.clock = clock
     self.querying = querying
-    defaultReasoningEfforts = Dictionary(
-      uniqueKeysWithValues: models.compactMap { model in
-        guard
-          let value = model.catalog?.defaultReasoningEffort
-            ?? model.upstream?["default_reasoning_level"]?.string
-        else { return nil }
-        return (model.id, RequestMetadataValue.sanitize(value))
+    self.models = models
+    self.modelDirectory = modelDirectory
+  }
+  private var defaultReasoningEfforts: [String: String] {
+    Dictionary(
+      uniqueKeysWithValues: (modelDirectory?.snapshot().active ?? models).compactMap { model in
+        let effort =
+          model.reasoningSettings == nil
+          ? model.profileDefaultReasoningEffort : model.effectiveDefaultReasoningEffort
+        guard let effort else { return nil }
+        return (model.id, RequestMetadataValue.sanitize(effort))
       })
   }
   func register(_ routes: any RoutesBuilder) {

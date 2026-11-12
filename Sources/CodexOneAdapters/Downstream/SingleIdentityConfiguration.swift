@@ -14,6 +14,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     public internal(set) var profileProvenance: ModelProfileProvenance? = nil
     public var visionInput: Bool? = nil
     public var imageGeneration: Bool? = nil
+    var reasoningSettings: ModelReasoningSettings? = nil
   }
   public struct Catalog: Sendable, Codable {
     public let displayName: String?

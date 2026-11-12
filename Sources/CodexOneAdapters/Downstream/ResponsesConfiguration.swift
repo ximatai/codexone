@@ -58,6 +58,7 @@ func validateResponseModels(_ models: [SingleIdentityConfiguration.Model]) throw
         && (0...500_000_000).contains($0.outputMicrosPerMillion)
     }),
     models.allSatisfy({ model in
+      guard model.reasoningSettings?.isValid(for: model) ?? true else { return false }
       if let upstream = model.upstream {
         guard model.catalog == nil, upstream.object != nil,
           let instructions = upstream["base_instructions"]?.string,
@@ -95,7 +96,36 @@ func validateUpstreamCompression(_ encoding: String?, _ threshold: Int?) throws 
   }
 }
 
+struct ModelReasoningSettings: Codable, Sendable {
+  let allowed: [String]?
+  let preferred: String?
+
+  func isValid(for model: SingleIdentityConfiguration.Model) -> Bool {
+    let supported = model.supportedReasoningEfforts
+    let range = allowed ?? supported
+    return !range.isEmpty && Set(range).count == range.count
+      && range.allSatisfy(supported.contains)
+      && (preferred.map(range.contains) ?? true)
+  }
+}
+
 extension SingleIdentityConfiguration.Model {
+  var effectiveReasoningEfforts: [String] {
+    guard let allowed = reasoningSettings?.allowed else { return supportedReasoningEfforts }
+    return supportedReasoningEfforts.filter(allowed.contains)
+  }
+
+  var profileDefaultReasoningEffort: String? {
+    catalog?.defaultReasoningEffort ?? upstream?["default_reasoning_level"]?.string
+  }
+
+  var effectiveDefaultReasoningEffort: String? {
+    let range = effectiveReasoningEfforts
+    let preferred = reasoningSettings?.preferred ?? profileDefaultReasoningEffort
+    if let preferred, range.contains(preferred) { return preferred }
+    return reasoningSettings?.allowed == nil ? nil : range.first
+  }
+
   var supportedReasoningEfforts: [String] {
     let efforts =
       catalog?.reasoningEfforts

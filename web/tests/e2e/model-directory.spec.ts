@@ -3,7 +3,7 @@ import { expectNoHorizontalOverflow } from "./layout";
 import { reviewFixture } from "./ui-review-fixture";
 
 for (const width of [1320, 390]) {
-  test(`activates a discovered model and saves per-Key reasoning at ${width}px`, async ({
+  test(`updates model and Key reasoning settings at ${width}px`, async ({
     page,
   }, info) => {
     await reviewFixture(page);
@@ -17,6 +17,9 @@ for (const width of [1320, 390]) {
       state,
       reasoningEfforts,
       defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: reasoningEfforts,
+      profileDefaultReasoningEffort: "medium",
+      configuredDefaultReasoningEffort: null as string | null,
     });
     const active = [
       model("demo-sol", "enabled"),
@@ -38,7 +41,9 @@ for (const width of [1320, 390]) {
       ],
       candidates: refreshed
         ? [
-            ...(revision === 0 ? [model("demo-nova", "candidate")] : []),
+            ...(active.some((item) => item.id === "demo-nova")
+              ? []
+              : [model("demo-nova", "candidate")]),
             model("demo-edge", "incomplete"),
           ]
         : [],
@@ -51,7 +56,7 @@ for (const width of [1320, 390]) {
     await page.route("**/api/models", async (route) => {
       if (route.request().method() === "PUT") {
         expect(route.request().postDataJSON()).toEqual({
-          revision: 0,
+          revision: 1,
           candidateRevision: "00000000-0000-4000-8000-000000000000",
           model: "demo-nova",
           enabled: true,
@@ -61,6 +66,22 @@ for (const width of [1320, 390]) {
         revision++;
         active.push(model("demo-nova", "enabled"));
       }
+      await route.fulfill({ json: document() });
+    });
+    await page.route("**/api/models/reasoning", async (route) => {
+      expect(route.request().postDataJSON()).toEqual({
+        revision: 0,
+        model: "demo-sol",
+        allowedReasoningEfforts: ["low", "medium", "high"],
+        defaultReasoningEffort: "high",
+      });
+      revision++;
+      active[0] = {
+        ...active[0],
+        reasoningEfforts: ["low", "medium", "high"],
+        defaultReasoningEffort: "high",
+        configuredDefaultReasoningEffort: "high",
+      };
       await route.fulfill({ json: document() });
     });
     await page.route("**/api/accounts/*/model-candidates", async (route) => {
@@ -130,6 +151,15 @@ for (const width of [1320, 390]) {
       return route.fulfill({ json: { keys: [key], nextCursor: null } });
     });
     await page.goto("/#/models");
+    await page.getByRole("button", { name: "推理设置" }).first().click();
+    const settings = page.getByRole("dialog", { name: "推理设置" });
+    await settings.getByRole("checkbox", { name: "xhigh" }).uncheck();
+    await settings.getByRole("combobox", { name: "默认档位" }).click();
+    await page.getByRole("option", { name: "high", exact: true }).click();
+    await expectNoHorizontalOverflow(page);
+    await settings.getByRole("button", { name: "保存" }).click();
+    await expect(page.getByText("推理设置已保存。")).toBeVisible();
+    await expect(page.getByText("默认 high", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "刷新候选" }).click();
     await expect(page.getByText("demo-edge", { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);

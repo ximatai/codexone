@@ -51,13 +51,13 @@ struct CodexOneMain {
     } catch StartupMigrationError.backupFailed {
       FileHandle.standardError.write(
         Data(
-          "Automatic v12 migration could not save its backup. Check data-directory access and retry.\n"
+          "Automatic database migration could not save its backup. Check data-directory access and retry.\n"
             .utf8))
       exit(1)
     } catch StartupMigrationError.transactionFailed {
       FileHandle.standardError.write(
         Data(
-          "Automatic v12 migration failed. Keep the original database and backup, then inspect offline.\n"
+          "Automatic database migration failed. Keep the original database and backup, then inspect offline.\n"
             .utf8))
       exit(1)
     } catch KeyMaintenanceError.incompleteReencryption {
@@ -330,7 +330,7 @@ struct CodexOneMain {
         usage: usageReader.map {
           UsageAdminAPI(
             querying: $0, models: poolConfiguration?.models ?? identityConfiguration?.models ?? [],
-            clock: clock, businessDay: configuration.businessDay)
+            modelDirectory: modelDirectory, clock: clock, businessDay: configuration.businessDay)
         },
         attention: usageReader.map {
           AttentionAdminAPI(

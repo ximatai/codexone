@@ -77,11 +77,15 @@ public actor ModelDirectory {
             let discovery, discovery.account == owner,
             let entry = discovery.entries.first(where: { $0["slug"]?.string == model.id })
           else { return Self.metadata(model, state: "retired") }
-          let refreshed = Self.discoveredModel(
+          var refreshed = Self.discoveredModel(
             id: model.id, entry: entry, input: model.inputMicrosPerMillion,
             output: model.outputMicrosPerMillion)
+          refreshed.reasoningSettings = model.reasoningSettings
+          let resetRequired = !(refreshed.reasoningSettings?.isValid(for: refreshed) ?? true)
+          if resetRequired { refreshed.reasoningSettings = nil }
           return Self.metadata(
-            refreshed, state: "retired", previousVisionInput: model.visionInput == true)
+            refreshed, state: "retired", previousVisionInput: model.visionInput == true,
+            resetReasoningRequired: resetRequired)
         }),
       "candidates": .array(candidates),
       "imageModels": .array((configuration.imageGeneration?.models ?? []).map { .string($0.id) }),
@@ -112,7 +116,10 @@ public actor ModelDirectory {
       }
     }
     if enabled, let index = next.retired.firstIndex(where: { $0.id == id }) {
-      guard Set(fields.keys) == suppliedFields else { throw ExecutionError.invalidCommand }
+      let reset = body["resetReasoningSettings"]?.bool == true
+      guard Set(fields.keys) == suppliedFields.union(reset ? ["resetReasoningSettings"] : []),
+        !reset || next.accountForModel[id] != nil
+      else { throw ExecutionError.invalidCommand }
       if let owner = next.accountForModel[id] {
         guard let discovery, discovery.account == owner,
           discovery.candidateRevision == candidateRevision,
@@ -125,9 +132,13 @@ public actor ModelDirectory {
         else { throw ExecutionError.conflict }
         expectedAccount = (account.id, account.revision)
         let previous = next.retired[index]
-        let refreshed = Self.discoveredModel(
+        var refreshed = Self.discoveredModel(
           id: id, entry: entry, input: previous.inputMicrosPerMillion,
           output: previous.outputMicrosPerMillion)
+        refreshed.reasoningSettings = previous.reasoningSettings
+        let resetRequired = !(refreshed.reasoningSettings?.isValid(for: refreshed) ?? true)
+        guard reset == resetRequired else { throw ExecutionError.conflict }
+        if reset { refreshed.reasoningSettings = nil }
         try validateResponseModels([refreshed])
         next.retired[index] = refreshed
       }
@@ -158,8 +169,53 @@ public actor ModelDirectory {
     try validateResponseModels(next.active)
     try configuration.imageGeneration?.validate(hosts: next.active)
     guard next.active.count + next.retired.count <= 32 else { throw ExecutionError.capacity }
+    return try await save(next, expected: revision, expectedAccount: expectedAccount)
+  }
+
+  func changeReasoning(_ body: JSONValue) async throws -> JSONValue {
+    guard let revision = body["revision"]?.integer, revision >= 0, revision < Int64.max,
+      let id = body["model"]?.string, (1...128).contains(id.utf8.count),
+      let range = body["allowedReasoningEfforts"],
+      let defaultEffort = body["defaultReasoningEffort"],
+      defaultEffort == .null || defaultEffort.string != nil
+    else { throw ExecutionError.invalidCommand }
+    let allowed: [String]?
+    if range == .null {
+      allowed = nil
+    } else {
+      guard let values = range.array, (1...8).contains(values.count) else {
+        throw ExecutionError.invalidCommand
+      }
+      let efforts = values.compactMap(\.string)
+      guard efforts.count == values.count else { throw ExecutionError.invalidCommand }
+      allowed = efforts
+    }
+    let previous = snapshot()
+    guard previous.revision == revision else { throw ExecutionError.conflict }
+    guard let index = previous.active.firstIndex(where: { $0.id == id }) else {
+      throw ExecutionError.invalidCommand
+    }
+    var next = ModelDirectorySnapshot(
+      revision: revision + 1, active: previous.active, retired: previous.retired,
+      accountForModel: previous.accountForModel)
+    let model = next.active[index]
+    let settings = ModelReasoningSettings(allowed: allowed, preferred: defaultEffort.string)
+    if allowed != nil || settings.preferred != nil {
+      guard settings.isValid(for: model) else { throw ExecutionError.invalidCommand }
+    }
+    let narrowed = allowed?.count == model.supportedReasoningEfforts.count ? nil : allowed
+    next.active[index].reasoningSettings =
+      narrowed == nil && settings.preferred == nil
+      ? nil : .init(allowed: narrowed, preferred: settings.preferred)
+    return try await save(next, expected: revision)
+  }
+
+  private func save(
+    _ next: ModelDirectorySnapshot, expected: Int64,
+    expectedAccount: (id: String, revision: Int64)? = nil
+  ) async throws -> JSONValue {
     try await store.replaceModelDirectory(
-      next, expected: revision, imageModels: configuration.imageGeneration?.models.map(\.id) ?? [],
+      next, expected: expected, imageModels: configuration.imageGeneration?.models.map(\.id) ?? [],
       expectedAccount: expectedAccount)
     current.withLock { if $0.revision < next.revision { $0 = next } }
     return document()
@@ -184,20 +240,26 @@ public actor ModelDirectory {
   }
 
   private static func metadata(
-    _ model: SingleIdentityConfiguration.Model, state: String, previousVisionInput: Bool? = nil
+    _ model: SingleIdentityConfiguration.Model, state: String, previousVisionInput: Bool? = nil,
+    resetReasoningRequired: Bool = false
   ) -> JSONValue {
-    let efforts = model.supportedReasoningEfforts
-    let preferred =
-      model.catalog?.defaultReasoningEffort
-      ?? model.upstream?["default_reasoning_level"]?.string
+    let supported = model.supportedReasoningEfforts
+    let profileDefault = model.profileDefaultReasoningEffort.flatMap {
+      supported.contains($0) ? JSONValue.string($0) : nil
+    }
     return .object([
       "id": .string(model.id),
       "state": .string(state),
       "visionInput": .bool(model.visionInput == true),
       "previousVisionInput": previousVisionInput.map(JSONValue.bool) ?? .null,
-      "reasoningEfforts": .array(efforts.map(JSONValue.string)),
-      "defaultReasoningEffort": preferred.flatMap { efforts.contains($0) ? .string($0) : nil }
+      "reasoningEfforts": .array(model.effectiveReasoningEfforts.map(JSONValue.string)),
+      "supportedReasoningEfforts": .array(supported.map(JSONValue.string)),
+      "profileDefaultReasoningEffort": profileDefault ?? .null,
+      "defaultReasoningEffort": model.effectiveDefaultReasoningEffort.map(JSONValue.string)
         ?? .null,
+      "configuredDefaultReasoningEffort": model.reasoningSettings?.preferred.map(JSONValue.string)
+        ?? .null,
+      "resetReasoningRequired": .bool(resetReasoningRequired),
     ])
   }
 }
