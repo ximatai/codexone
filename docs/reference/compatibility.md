@@ -34,6 +34,8 @@ Realtime 目前仅有创建 POST 的转发。官方客户端完成语音建连�
 
 session/thread 标识只提供账号软偏好；已观察的 turn-state 独立约束来源账号，不能在换号时复用；账号池对未知/过期/丢失的 token 明确返回 503，不自动清除状态重放。强对象/连接归属、授权与健康检查仍优先。账号不可用时可以回退，首请求并发及进程重启不保证粘滞。稳定账号、会话标识与提示前缀有助于复用，但不保证提供者缓存命中率或有效期；工具集、instructions、模型或前缀变化仍需客户端单独排查。HTTP/WS 元数据边界与辅助请求规则见[控制接口约定](control-endpoints.md)。
 
+`prompt_cache_options.ttl` 原样转发。公开 Responses API 在支持的模型上提供 `30m` 和 `12h`，并可返回按 TTL 分组的写入计数。订阅入口须单独核对模型和账号能力，显式配置可能收到提供者的 `invalid_parameter`。用量投影见[协议规范](specs/protocol.md)，公开接口用法见 [OpenAI 提示缓存文档](https://developers.openai.com/api/docs/guides/prompt-caching)。
+
 ## 大请求错误的官方客户端源码核查
 
 2026-11-03 只读核查 OpenAI Codex 源码 revision `f9e7b19df8aa75490fc1d90f98d3d95ad716d08e`（不运行客户端、不使用账号）。网关提供明确的 HTTP 413 / WS `status: 413`、`conversation_too_large` 和开始新会话/移除图片提示，不自动重放，也不附重试提示。

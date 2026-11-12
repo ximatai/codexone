@@ -17,7 +17,7 @@
 
 启动扫描所有旧 boot 的 held/dispatch_intent/unfinalized：确定未 dispatch 的可释放，其余默认 pending，重建其 exposure 占用；同时处理未完成 refresh_intent 为 auth_uncertain，完成后才发布路由快照。不能因 pending 标记未写成功而丢掉。正常进程崩溃恢复与主机掉电/存储故障分开验收；kill -9 仅证明前者。FULL 不允许作为未测掉电恢复的证据。
 
-实例锁由服务、migration、restore 和密钥维护命令共同使用；离线迁移无法取得锁立即非零退出，不能旁路在线服务。命令先校验二进制与 schema 兼容范围，备份成功后迁移；失败回滚事务或保留 maintenance 状态、输出明确修复指引，数据面不得 ready。服务只做兼容检查，不自动执行破坏性迁移。
+实例锁由服务、migration、restore 和密钥维护命令共同使用；离线迁移无法取得锁立即非零退出，不能旁路在线服务。命令先校验二进制与 schema 兼容范围，备份成功后迁移；失败回滚事务或保留 maintenance 状态、输出明确修复指引，数据面不得 ready。服务可在启动时执行明确放行的兼容迁移；其余迁移须离线执行。
 
 恢复旧快照总进入 `maintenance -> restored_unreconciled -> ready`：恢复工具记录快照时间、来源和恢复时刻，展示缺失区间；扫描快照内活动项，且明确快照之后的已执行项可能完全缺失。管理员选择并审计恢复后的额度基线（默认冻结受影响窗口/重发新窗口额度，不自动复活旧余额）后才启用准入。在线数据库完整性正确不代表快照缺口已核对。
 
@@ -93,7 +93,7 @@ DB 执行使用专用串行队列，普通命令最多 16 个、最终化命令�
 
 ## O16：核心快照维护闭环
 
-当前开发 schema v13 在 v12 账本上增加请求输出速率与结算秒，不回填旧请求。普通启动仅接收 v13；v1—v12 须先停服、共用实例锁，生成私有 `.pre-v13-<id>.sqlite` 一致性备份并同步后再事务迁移。更旧版本先补对应结构。尚未启用 incremental auto_vacuum 时先 VACUUM，不能与 schema 事务合并；失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v13；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
+当前开发 schema v15 增加独立的额外使用积分历史表。v14 增加可空的准入拒绝子原因，v13 增加请求输出速率与结算秒。历史从升级后开始采样。普通启动接收 v15，并允许已有增量回收模式且无未完成凭证重加密的 v12—v14 自动迁移。自动迁移先检查空间，再在同一实例锁下生成并同步私有一致性备份（v14 来源为 `.pre-v15-<id>.sqlite`，v13 来源为 `.pre-v14-<id>.sqlite`，更旧来源沿用 `.pre-v13-<id>.sqlite`），事务内执行 DDL 并校验。v1—v11 或需启用增量回收的 v12 使用离线迁移。尚未启用 incremental auto_vacuum 时先 VACUUM。失败保留原 schema、备份及可能已完成的增量回收设置。旧二进制拒绝 v15；回退须独立恢复升级前 bundle 并核对升级后的执行责任。详见[快照维护](../../operations/snapshot-maintenance.md)。
 
 独立核心备份通过 SQLite Backup API 生成私有完成 bundle，manifest 记备份 ID/快照时间/来源 generation/schema/摘要/主密钥依赖，最后发布并同步；恢复先校验完整性和密文解密依赖，只接受全新空目标。持久 restore-pending 屏障先于页面复制，不完整目标拒绝启动；完整目标必须 `restored_unreconciled`，不能由 SQLite 完整性正确推导 ready。快照内 intent 保守转 unknown，旧对象绑定失效；恢复 Key 的旧验证材料失效、订阅账号需重新授权，防止复活已撤销权限或自动重用旧旋转凭证。
 

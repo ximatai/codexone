@@ -23,6 +23,7 @@ from verify_json_order import SCHEMA, wire
 
 LIMIT = 16 * 1024 * 1024
 ROUTING = 12 * 1024 * 1024
+ONE_MIB = 1024 * 1024
 HEADERS = {'session-id': 'synthetic-large-session', 'x-codex-turn-state': 'synthetic-state'}
 
 
@@ -415,6 +416,32 @@ def verify_small_body_budget(port, server, contract):
     return 2
 
 
+def verify_native_fragments(port, server, root, contract, count):
+    request = sized(ONE_MIB + 1024, contract, native=True)
+    message = wire({'type': 'response.create', **request})
+    first, remainder = message[:ONE_MIB], message[ONE_MIB:]
+    assert len(first) == ONE_MIB and remainder
+    before = len(server.calls)
+    for complete in (False, True):
+        with dial(port, headers=HEADERS, timeout=15) as peer:
+            send(peer, first, masked=True, fin=False, maximum_bytes=ONE_MIB)
+            # The pong proves the ingress processed the first fragment before these checks.
+            send(peer, b'synthetic-fragment-barrier', masked=True, opcode=9)
+            assert receive(peer) == (10, b'synthetic-fragment-barrier')
+            assert len(server.calls) == before
+            ledger(root, count)
+            if complete:
+                send(peer, remainder, masked=True, opcode=0)
+                opcode, data = receive(peer)
+                assert opcode == 1 and json.loads(data)['type'] == 'response.completed'
+    state, outcome, usage = ledger(root, count + 1)[-1]
+    assert state == 'settled' and outcome['kind'] == 'succeeded'
+    assert (usage['inputTokens'], usage['outputTokens']) == (5, 3)
+    assert [(path, body) for path, body, _ in server.calls[before:]] == [
+        ('websocket', frame(request, contract, native=True))]
+    return 1
+
+
 def verify_lane_close(port, server, root, contract, count, repetitions=12):
     for iteration in range(repetitions):
         queued = iteration >= repetitions - 4
@@ -445,16 +472,18 @@ def verify_lane_close(port, server, root, contract, count, repetitions=12):
         assert len(server.calls) == before + 2
         count += 2
         assert all(row[0] == 'unknown' and row[2] is None for row in ledger(root, count)[-2:])
-    print('PASS: ' + contract + ': repeated two-lane close drains both errors before connection close; unknown retained')
+    print('PASS: ' + contract + ': two-lane close drains both errors before connection close; unknown retained')
     return count
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
-    parser.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
-    parser.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--smoke', action='store_true', help='Keep representative wire boundaries and replay/cancellation checks')
+    modes.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
+    modes.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
+    modes.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     server.daemon_threads = True
@@ -473,7 +502,7 @@ def main():
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, contract)
-                if not args.small_body_only:
+                if not (args.small_body_only or args.smoke):
                     body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
                                            server, contract, args.failures_only)
                 server.mode = 'ok'
@@ -489,10 +518,17 @@ def main():
                         continue
                     if not args.failures_only:
                         count += verify_small_body_budget(ports['data'], server, contract)
-                        count += held_body_budgets(ports['data'], server, contract, process)
+                        if not args.smoke:
+                            count += held_body_budgets(ports['data'], server, contract, process)
                         ledger(root, count)
+                        count += verify_native_fragments(ports['data'], server, root, contract, count)
                         for route in ('json', 'sse', 'native'):
-                            for size in (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1):
+                            sizes = {
+                                'json': (ROUTING, ROUTING + 1),
+                                'sse': (ROUTING + 1,),
+                                'native': (ROUTING,),
+                            }[route] if args.smoke else (ROUTING - 1, ROUTING, ROUTING + 1, LIMIT - 1, LIMIT, LIMIT + 1)
+                            for size in (ONE_MIB - 1, ONE_MIB, ONE_MIB + 1, *sizes):
                                 request = sized(size, contract, streaming=route != 'json', native=route == 'native',
                                                 image_count=3 if route == 'sse' else 1)
                                 before = len(server.calls)
@@ -514,7 +550,10 @@ def main():
                                     else:
                                         assert json.loads(body)['status'] == 'completed'
                                 count += 1
-                                assert ledger(root, count)[-1][0] == 'settled'
+                                state, outcome, usage = ledger(root, count)[-1]
+                                assert state == 'settled' and outcome['kind'] == 'succeeded'
+                                assert (usage['inputTokens'], usage['outputTokens']) == (5, 3)
+                                assert len(server.calls) == before + 1
                                 path, raw, headers = server.calls[before]
                                 expected_headers = dict(HEADERS)
                                 if path == 'websocket' and contract == 'codex-subscription':
@@ -537,8 +576,8 @@ def main():
                         ledger(root, count)
                         # Explicit HTTP refusal is deterministic, zero-cost, not unknown.
                         server.mode = 'reject'
-                        for streaming in (False, True):
-                            status, headers, body = call_http(ports['data'], sized(LIMIT + 1, contract, streaming=streaming))
+                        for streaming in ((False,) if args.smoke else (False, True)):
+                            status, headers, body = call_http(ports['data'], sized(ROUTING + 1 if args.smoke else LIMIT + 1, contract, streaming=streaming))
                             assert status == 413 and headers.get('retry-after') is None, (status, body[:500])
                             error(body)
                             count += 1
@@ -552,7 +591,8 @@ def main():
                             previous = first['response']['id']
                             count += 1
                             ledger(root, count)
-                            for extra in ({}, {'previous_response_id': previous}, {'generate': False}):
+                            continuation = {'previous_response_id': previous}
+                            for extra in ((continuation,) if args.smoke else ({}, continuation, {'generate': False})):
                                 before = len(server.calls)
                                 result = native(peer, sized(LIMIT + 100, contract, native=True, **extra))
                                 assert result['status'] == 413, result
@@ -569,12 +609,15 @@ def main():
                         error(body)
                         ledger(root, count)
                     # Both dispatched lanes retain unknown and must each deliver their error.
-                    count = verify_lane_close(ports['data'], server, root, contract, count)
+                    count = verify_lane_close(ports['data'], server, root, contract, count, repetitions=1 if args.smoke else 12)
                     # Real below-threshold refusals: exactly one HTTP replay, same bytes/state.
                     for mode in ('close', 'metadata', 'close_reject', 'metadata_reject'):
                         server.mode = mode
                         for streaming in (False, True):
-                            request = sized(9 * 1024 * 1024 if mode == "close" and contract == "codex-subscription" and not streaming else 2048, contract, streaming=streaming)
+                            size = ONE_MIB + 1 if mode == 'close' else 2048
+                            if not args.smoke and mode == 'close' and contract == 'codex-subscription' and not streaming:
+                                size = 9 * ONE_MIB
+                            request = sized(size, contract, streaming=streaming)
                             before = len(server.calls)
                             status, headers, body = call_http(ports['data'], request)
                             assert status == (413 if mode.endswith('reject') else 200), (mode, status, body)
@@ -600,10 +643,11 @@ def main():
                     # Immediate small turns exercise the old-reader/new-session handoff.
                     # Do not poll the ledger between receiving 413 and sending the next create.
                     with dial(ports['data'], headers=HEADERS, timeout=30) as peer:
-                        for mode in ('close', 'metadata') * 4:
+                        for mode in ('close', 'metadata') * (1 if args.smoke else 4):
                             server.mode = mode
                             before = len(server.calls)
-                            result = native(peer, sized(2048, contract, native=True))
+                            result = native(peer, sized(ONE_MIB + 1 if mode == 'close' else 2048,
+                                                        contract, native=True))
                             assert result['status'] == 413, result
                             error(wire(result))
                             server.mode = 'ok'
@@ -633,7 +677,8 @@ def main():
                     for mode in ('created', 'extension', 'extension_response', 'extension_identity', 'other', 'drop'):
                         server.mode = mode
                         before = len(server.calls)
-                        status, _, body = call_http(ports['data'], sized(1024, contract))
+                        size = ONE_MIB + 1 if mode == 'created' else 1024
+                        status, _, body = call_http(ports['data'], sized(size, contract))
                         assert status == 502 and json.loads(body)['error']['code'] == 'execution_indeterminate', (mode, status, body)
                         assert [c[0] for c in server.calls[before:]] == ['websocket']
                         count += 1
@@ -689,7 +734,7 @@ def main():
                     raise
                 finally:
                     stop(process)
-                print(f'PASS: {contract}: exact WS boundaries, JSON/SSE/native, ordered fallback, continuation/warmup rejection, HTTP 413, early/metadata/lifecycle 1009, other close/EOF, native socket reuse, cancellation and ledger', flush=True)
+                print(f'PASS: {contract}: {"smoke" if args.smoke else "full"} WS boundaries, JSON/SSE/native, ordered fallback, continuation rejection, HTTP 413, early/metadata/lifecycle 1009, other close/EOF, native socket reuse, cancellation and ledger', flush=True)
             assert server.oversized_ws == 0
     finally:
         server.shutdown()

@@ -9,13 +9,21 @@ backend_build() {
   fi
   swift format lint --strict --recursive Sources Tests Package.swift
   swift build "${swiftpm_flags[@]}" --build-tests -j "${CODEXONE_BUILD_JOBS:-4}"
-  swift test "${swiftpm_flags[@]}" --skip-build --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
+  if [[ "${1:-}" != --compile-only ]]; then
+    swift test "${swiftpm_flags[@]}" --skip-build --no-parallel -j "${CODEXONE_BUILD_JOBS:-4}"
+  fi
 }
 
 backend_scripts() {
   python3 scripts/backend_shards.py --check
   local backend_selected backend_bin_dir
-  backend_selected="$(python3 scripts/backend_shards.py --list "${1:-all}")"
+  local shard_args=() smoke_args=()
+  case "${2:-}" in
+    --pr) shard_args+=(--pr); smoke_args+=(--smoke) ;;
+    "") ;;
+    *) echo "Unknown backend scripts mode: $2" >&2; return 64 ;;
+  esac
+  backend_selected="$(python3 scripts/backend_shards.py --list "${1:-all}" "${shard_args[@]}")"
   backend_bin_dir="${CODEXONE_BACKEND_BIN_DIR:-.build/debug}"
   for binary in codexone ExecutionProbe; do
     if [[ ! -x "$backend_bin_dir/$binary" ]]; then
@@ -33,17 +41,17 @@ backend_scripts() {
   run_check scripts/verify_gateway_diagnostics.py
   run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
+  run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
   run_check scripts/verify_slow_ingress.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_response_finish.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_response_finish.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
   run_check scripts/verify_protocol_rejections.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_upstream_zstd.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_upstream_zstd.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
   run_check scripts/verify_ws_address_candidates.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_proxy.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_events.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_codex_shapes.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_text_contract.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_text_contract.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
   run_check scripts/verify_json_order.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_json.py --binary "$backend_bin_dir/codexone" --require-stable
   run_check scripts/verify_request_parameters.py --binary "$backend_bin_dir/codexone"
@@ -51,7 +59,7 @@ backend_scripts() {
   run_check scripts/verify_optional_reasoning.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_context.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_compaction_stream.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_images.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_images.py --binary "$backend_bin_dir/codexone" "${smoke_args[@]}"
   run_check scripts/verify_migration_readiness.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_control.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_home_panel.py --binary "$backend_bin_dir/codexone"
@@ -108,8 +116,9 @@ case "${1:-all}" in
   --client) shift; python3 scripts/verify_default_client.py "$@" ;;
   --backend) backend ;;
   --backend-build) backend_build ;;
-  --backend-scripts) backend_scripts "${2:?Expected shard i/4}" ;;
+  --backend-compile) backend_build --compile-only ;;
+  --backend-scripts) backend_scripts "${2:?Expected shard i/4}" "${3:-}" ;;
   --web) frontend "${2:-}" ;;
   all) backend; frontend ;;
-  *) echo "Usage: $0 [--backend | --backend-build | --backend-scripts i/4 | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
+  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
 esac

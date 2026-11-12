@@ -25,15 +25,14 @@ public final class OverviewActivity: Sendable {
     let rate: Decimal
     let live: Bool
   }
-  private struct OutputDay: Sendable {
-    private static let capacity = OverviewActivity.outputDayCapacity
+  private struct OutputBucket: Sendable {
     var samples: [OutputSample] = []
     private var cachedMedian: Decimal?
 
-    mutating func record(_ sample: OutputSample) {
+    mutating func record(_ sample: OutputSample, capacity: Int) {
       // Match the indexed recovery order even when requests settle out of admission order.
       let key = (sample.second, sample.rowID)
-      if samples.count == Self.capacity, let first = samples.first {
+      if samples.count == capacity, let first = samples.first {
         guard key > (first.second, first.rowID) else { return }
         samples.removeFirst()
       }
@@ -52,31 +51,54 @@ public final class OverviewActivity: Sendable {
       cachedMedian = OverviewActivity.median(samples.map(\.rate))
       return cachedMedian
     }
+
   }
   private struct SettledOutput: Sendable {
-    var days: [Int64: OutputDay] = [:]
+    var days: [Int64: OutputBucket] = [:]
+    var hours: [Int64: OutputBucket] = [:]
     var latestDay: Int64?
+    var latestHour: Int64?
+  }
+  enum OutputSampleSource {
+    case live, dailyHistory, hourlyHistory
   }
   static let outputDayCapacity = 4096
+  static let outputHourCapacity = 256
+  static let outputHistoryHours = 168
+  private let businessDay: BusinessDayDefinition
   private let settledOutput = Mutex(SettledOutput())
 
   func recordRequestOutput(
-    _ rate: Decimal, at second: Int64, rowID: Int64, businessDay: BusinessDayDefinition,
-    live: Bool = true
+    _ rate: Decimal, at second: Int64, rowID: Int64, source: OutputSampleSource = .live
   ) {
     guard rate > 0, second >= 0,
       let day = try? businessDay.start(containing: second)
     else { return }
+    let hour = second / 3600 * 3600
+    let sample = OutputSample(second: second, rowID: rowID, rate: rate, live: source == .live)
     settledOutput.withLock { output in
-      let latestDay = max(output.latestDay ?? day, day)
-      let firstDay = latestDay - 6 * 86400
-      if output.latestDay != latestDay {
-        output.latestDay = latestDay
-        output.days = output.days.filter { $0.key >= firstDay }
+      if source != .hourlyHistory {
+        let latestDay = max(output.latestDay ?? day, day)
+        let firstDay = latestDay - 6 * 86400
+        if output.latestDay != latestDay {
+          output.latestDay = latestDay
+          output.days = output.days.filter { $0.key >= firstDay }
+        }
+        if day >= firstDay {
+          output.days[day, default: OutputBucket()].record(sample, capacity: Self.outputDayCapacity)
+        }
       }
-      if day >= firstDay {
-        output.days[day, default: OutputDay()].record(
-          .init(second: second, rowID: rowID, rate: rate, live: live))
+      if source != .dailyHistory {
+        let latestHour = max(output.latestHour ?? hour, hour)
+        let firstHour = latestHour - Int64(Self.outputHistoryHours - 1) * 3600
+        if output.latestHour != latestHour {
+          output.latestHour = latestHour
+          output.hours = output.hours.filter { $0.key >= firstHour }
+        }
+        if hour >= firstHour {
+          output.hours[hour, default: OutputBucket()].record(
+            sample, capacity: Self.outputHourCapacity)
+        }
       }
     }
   }
@@ -89,25 +111,48 @@ public final class OverviewActivity: Sendable {
       ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
   }
 
-  func requestOutputSnapshot(at second: Int64) -> (rate: Decimal?, days: [String: JSONValue]) {
-    settledOutput.withLock { output in
-      var recent: [Decimal] = []
-      var days: [String: JSONValue] = [:]
-      for day in Array(output.days.keys) where day <= second && second - day < 7 * 86400 {
-        if let value = output.days[day]?.median() { days[String(day)] = .number(value) }
-        if second - day < 86400 + 59, let samples = output.days[day]?.samples {
-          recent.append(
-            contentsOf: samples.lazy.filter {
-              $0.live && $0.second <= second && second - $0.second < 60
-            }.map(\.rate))
+  func requestOutputSnapshot(at second: Int64) -> (
+    rate: Decimal?, days: [String: JSONValue], hours: JSONValue
+  ) {
+    let hour = second / 3600 * 3600
+    let firstHour = hour - Int64(Self.outputHistoryHours - 1) * 3600
+    return
+      settledOutput.withLock { output in
+        var recent: [Decimal] = []
+        var days: [String: JSONValue] = [:]
+        var hours: [String: JSONValue] = [:]
+        for start in Array(output.hours.keys) where (firstHour...hour).contains(start) {
+          if let median = output.hours[start]?.median(),
+            let count = output.hours[start]?.samples.count
+          {
+            hours[String(start)] = .object([
+              "median": .number(median), "count": .number(Decimal(count)),
+            ])
+          }
         }
+        for day in Array(output.days.keys) where day <= second && second - day < 7 * 86400 {
+          if let value = output.days[day]?.median() { days[String(day)] = .number(value) }
+          if second - day < 86400 + 59, let samples = output.days[day]?.samples {
+            recent.append(
+              contentsOf: samples.lazy.filter {
+                $0.live && $0.second <= second && second - $0.second < 60
+              }.map(\.rate))
+          }
+        }
+        return (
+          Self.median(recent), days,
+          .object([
+            "endUnixSeconds": .number(Decimal(hour)),
+            "offsetMinutes": .number(Decimal(businessDay.offsetMinutes)),
+            "points": .object(hours),
+          ])
+        )
       }
-      return (Self.median(recent), days)
-    }
   }
   let signals: AsyncStream<Signal>
   let signal: AsyncStream<Signal>.Continuation
-  public init() {
+  public init(businessDay: BusinessDayDefinition = .utc) {
+    self.businessDay = businessDay
     (signals, signal) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
   }
   func watch(_ enabled: Bool) {
@@ -398,6 +443,7 @@ public actor OverviewLive: OverviewLiveRunning {
       if activityChanged || source["data"]?["clients"] != data["clients"]
         || source["data"]?["recentRequestOutputRateMedian"] != data["recentRequestOutputRateMedian"]
         || source["data"]?["requestOutputRateMediansByDay"] != data["requestOutputRateMediansByDay"]
+        || source["data"]?["requestOutputRateByHour"] != data["requestOutputRateByHour"]
       {
         let previous = sections["inFlight"]
         // Activity observation does not prove that SQLite reconciliation recovered.
@@ -422,6 +468,7 @@ public actor OverviewLive: OverviewLiveRunning {
       "clients": activity.clients(),
       "recentRequestOutputRateMedian": output.rate.map(JSONValue.number) ?? .null,
       "requestOutputRateMediansByDay": .object(output.days),
+      "requestOutputRateByHour": output.hours,
     ])
   }
   private func replace(_ name: String, data: JSONValue?, at: Int64, error: String?) {

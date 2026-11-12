@@ -27,6 +27,7 @@ SCHEMA = {'type': 'function', 'name': 'synthetic_tool', 'parameters': {
     'type': 'object'}}
 REQUEST = {'model': 'synthetic-order', 'tools': [SCHEMA], 'input': 'synthetic',
            'prompt_cache_key': 'synthetic-cache', 'client_metadata': {'z': 'synthetic', 'a': 'synthetic'},
+           'prompt_cache_options': {'ttl': '12h', 'mode': 'implicit'},
            'reasoning': {'summary': None, 'synthetic_future_option': None, 'effort': 'low'},
            'parallel_tool_calls': None}
 RESPONSE = {'synthetic_z': {'z': 1, 'a': {'y': 2, 'b': 3}}, 'id': 'resp_synthetic_order',

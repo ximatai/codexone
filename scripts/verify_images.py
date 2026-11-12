@@ -23,9 +23,12 @@ from verify_websocket import dial, send, receive
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQUDBgAAABBQBh3ab18QAAAABJRU5ErkJggg=='
 URL = 'data:image/png;base64,' + PNG
 OUTPUTS = {'png': PNG,
-    'gif': 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+    # Synthetic 2×1 animation, red for 100 ms and blue for 200 ms.
+    'gif': ('R0lGODlhAgABAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgABAAAIBQABAAgI'
+            'ACH5BAEUAAEALAAAAAACAAEAgQAA/wAAAAAAAAAAAAgFAAEACAgAOw=='),
     'svg': base64.b64encode(b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>').decode(),
     'synthetic-future': base64.b64encode(b'synthetic-future-output-container').decode()}
+GIF_ANIMATION = {'frame_count': 2, 'frame_duration_ms': 200}
 
 
 def native_body(prompt, output_format='png'):
@@ -248,7 +251,9 @@ class Provider(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--browser', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--browser', action='store_true')
+    mode.add_argument('--smoke', action='store_true', help='Run representative native Images wire and settlement checks')
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
     upstream = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -314,16 +319,105 @@ def main():
                         deadline = time.monotonic() + 5
                         while upstream.calls < expected and time.monotonic() < deadline: time.sleep(.02)
                         assert upstream.calls == expected
-                    for output_format in ('gif', 'svg'):
+                    def verify_native(prefix, operation):
+                        client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
+                            'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
+                            'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
+                        wire = ('{ "model" : "synthetic-image", "prompt":"synthetic", "service_tier":"priority", "n":2, "future":{"x":true}'
+                            + (', "images":[{"image_url":"' + URL + '","detail":"preserve"}], "mask":{"image_url":"' + URL + '"}' if operation == 'edits' else '') + ' }').encode()
                         before = upstream.calls
-                        status, body, _ = request({'prompt':'synthetic', 'output_format':output_format})
+                        status, body, headers = request(wire, prefix + '/images/' + operation, headers=client_headers)
+                        assert status == 200 and upstream.calls == before + 1, (status, body[:200])
+                        path, received, sent_headers = upstream.requests[-1]
+                        assert path == '/backend-api/codex/images/' + operation
+                        assert received == wire
+                        assert sent_headers['accept'] == 'application/json'
+                        for key in ('x-codex-future-header', 'x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
+                            assert sent_headers[key] == client_headers[key]
+                        assert sent_headers['user-agent'] == client_headers['User-Agent']
+                        assert sent_headers['authorization'] == 'Bearer synthetic-upstream-token-for-images'
+                        assert 'chatgpt-account-id' not in sent_headers and 'x-client-private' not in sent_headers
+                        assert 'x-openai-actor-authorization' not in sent_headers
+                        assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
+                        assert headers['x-request-id']
+                        assert json.loads(body) == json.loads(native_body('synthetic'))
+                        state, usage, outcome = ledger()
+                        assert state == 'settled' and outcome['kind'] == 'succeeded'
+                        assert outcome['actualServiceTier'] == 'default'
+                        with sqlite3.connect(root/'state/core.sqlite') as connection:
+                            admission = json.loads(connection.execute('SELECT admission_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])
+                        assert admission['serviceTier'] == 'priority' and admission.get('reasoningEffort') is None
+                        assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
+                        assert usage['imageInputTextTokens'] == 1 and usage['imageInputImageTokens'] == 1
+                        assert usage['estimatedMicros'] == 13
+                        status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
+                        assert status == 200
+                        assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
+                        status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
+                        assert status == 200
+                        if operation == 'generations': assert body == native_stream(operation)
+                        else:
+                            event = next(json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {'))
+                            assert event['type'] == 'image_edit.completed' and event['b64_json'] == PNG and event['usage']['input_tokens'] == 2
+                            assert json.loads(upstream.requests[-1][1])['stream'] is False
+                        assert ledger()[0] == 'settled' and ledger()[2]['actualServiceTier'] == 'default'
+
+                    def verify_denied():
+                        before = upstream.calls; intents = count_intents()
+                        for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
+                            status, error, _ = request(body, name=name)
+                            assert status == 403 and json.loads(error)['error']['code'] == 'model_not_allowed'
+                        assert upstream.calls == before and count_intents() == intents
+
+                    def verify_multipart():
+                        multipart = b'--synthetic\r\n'
+                        for field, value in [('prompt', b'synthetic edit'), ('n', b'3'), ('stream', b'false'), ('future', b'preserved')]:
+                            multipart += f'Content-Disposition: form-data; name="{field}"\r\n\r\n'.encode() + value + b'\r\n--synthetic\r\n'
+                        for field in ('image[]', 'mask'):
+                            multipart += f'Content-Disposition: form-data; name="{field}"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n'.encode() + base64.b64decode(PNG) + b'\r\n--synthetic' + (b'\r\n' if field == 'image[]' else b'--\r\n')
+                        assert request(multipart, '/v1/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 200
+                        assert json.loads(upstream.requests[-1][1]) == {'model':'synthetic-image','prompt':'synthetic edit','n':3,'stream':False,'future':'preserved', 'images':[{'image_url':URL}], 'mask':{'image_url':URL}}
+                        assert request(multipart, '/backend-api/codex/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 415
+
+                    def verify_missing_usage():
+                        assert request({'prompt':'missing-usage'})[0] == 200
+                        state, usage, outcome = ledger()
+                        assert state == 'unknown' and usage['completeness'] == 'partial' and 'imageInputTokens' not in usage and 'imageOutputTokens' not in usage
+                        assert usage['images'] == 1 and outcome['kind'] == 'succeeded'
+
+                    def verify_incomplete_stream(fault):
+                        before, intents = upstream.calls, count_intents()
+                        status, _, _ = request({'prompt':fault,'stream':True})
+                        assert status == 200 and ledger()[2]['kind'] == 'failed'
+                        assert upstream.calls == before + 1 and count_intents() == intents + 1
+
+                    for operation, output_format in (('generations', 'gif'), ('edits', 'gif'), ('generations', 'svg')):
+                        before = upstream.calls
+                        payload = {'prompt': 'synthetic', 'output_format': output_format}
+                        if output_format == 'gif':
+                            payload.update(GIF_ANIMATION)
+                        if operation == 'edits':
+                            payload['images'] = [{'image_url': URL}]
+                        status, body, _ = request(payload, '/v1/images/' + operation)
                         assert status == 200 and upstream.calls == before + 1
                         assert json.loads(body)['data'][0]['b64_json'] == OUTPUTS[output_format]
-                        _, received, sent_headers = upstream.requests[-1]
-                        assert json.loads(received)['output_format'] == output_format
-                        assert json.loads(received).get('stream') is not True
+                        path, received, sent_headers = upstream.requests[-1]
+                        assert path == '/backend-api/codex/images/' + operation
+                        provider_input = json.loads(received)
+                        assert all(provider_input.get(field) == value for field, value in payload.items())
+                        assert provider_input.get('stream') is not True
                         assert sent_headers['accept'] == 'application/json'
                         assert ledger()[0] == ('unknown' if output_format == 'svg' else 'settled')
+                    if args.smoke:
+                        verify_native('/v1', 'generations')
+                        verify_native('/backend-api/codex', 'edits')
+                        verify_denied()
+                        verify_missing_usage()
+                        verify_incomplete_stream('stream-abort')
+                        if transport == 'http':
+                            verify_multipart()
+                        print('PASS: native Images smoke via ' + transport, flush=True)
+                        continue
                     for operation, output_format in (('generations', 'gif'), ('edits', 'gif'), ('generations', 'svg')):
                         before = upstream.calls
                         intents = count_intents()
@@ -372,8 +466,6 @@ def main():
                     for output_format in ('gif', 'svg'):
                         status, _, _ = request({'output_format':output_format}, name='chat')
                         assert status == 403 and upstream.calls == before and count_intents() == intents
-                    assert request({'output_format':'gif'}, '/v1/images/edits')[0] == 200
-                    assert ledger()[0] == 'settled'
                     # Real GIF/SVG bytes, plus an opaque future format, through both client
                     # JSON/SSE and native WS; tool counters never rewrite the returned usage.
                     for output_format in ('gif', 'svg', 'synthetic-future'):
@@ -440,49 +532,9 @@ def main():
                     assert status == 200 and json.loads(body)['data'][0]['b64_json'] == OUTPUTS['synthetic-future']
                     assert json.loads(upstream.requests[-1][1]).get('stream') is not True
                     assert ledger()[0] == 'settled'
-                    client_headers = {'x-openai-actor-authorization': 'synthetic-gate', 'x-codex-future-header': 'synthetic-value', 'x-codex-image-turn-id': 'synthetic-turn', 'x-codex-turn-metadata': '{"synthetic":true}',
-                        'User-Agent': 'Codex Desktop synthetic-client', 'originator': 'synthetic-desktop', 'version': '1.0',
-                        'chatgpt-account-id': 'forged-account', 'x-client-private': 'do-not-forward'}
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
-                            wire = ('{ "model" : "synthetic-image", "prompt":"synthetic", "service_tier":"priority", "n":2, "future":{"x":true}'
-                                + (', "images":[{"image_url":"' + URL + '","detail":"preserve"}], "mask":{"image_url":"' + URL + '"}' if operation == 'edits' else '') + ' }').encode()
-                            before = upstream.calls
-                            status, body, headers = request(wire, prefix + '/images/' + operation, headers=client_headers)
-                            assert status == 200 and upstream.calls == before + 1, (status, body[:200])
-                            path, received, sent_headers = upstream.requests[-1]
-                            assert path == '/backend-api/codex/images/' + operation
-                            assert received == wire
-                            assert sent_headers['accept'] == 'application/json'
-                            for key in ('x-codex-future-header', 'x-codex-image-turn-id', 'x-codex-turn-metadata', 'originator', 'version'):
-                                assert sent_headers[key] == client_headers[key]
-                            assert sent_headers['user-agent'] == client_headers['User-Agent']
-                            assert sent_headers['authorization'] == 'Bearer synthetic-upstream-token-for-images'
-                            assert 'chatgpt-account-id' not in sent_headers and 'x-client-private' not in sent_headers
-                            assert 'x-openai-actor-authorization' not in sent_headers
-                            assert headers['x-codex-imagegen-request-id'] == 'synthetic-image-request'
-                            assert headers['x-request-id']
-                            assert json.loads(body) == json.loads(native_body('synthetic'))
-                            state, usage, outcome = ledger()
-                            assert state == 'settled' and outcome['kind'] == 'succeeded'
-                            assert outcome['actualServiceTier'] == 'default'
-                            with sqlite3.connect(root/'state/core.sqlite') as connection:
-                                admission = json.loads(connection.execute('SELECT admission_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])
-                            assert admission['serviceTier'] == 'priority' and admission.get('reasoningEffort') is None
-                            assert usage['images'] == 1 and usage['imageInputTokens'] == 2 and usage['imageOutputTokens'] == 3
-                            assert usage['imageInputTextTokens'] == 1 and usage['imageInputImageTokens'] == 1
-                            assert usage['estimatedMicros'] == 13
-                            status, _, _ = request({'prompt':'default', 'future':42}, prefix + '/images/' + operation)
-                            assert status == 200
-                            assert json.loads(upstream.requests[-1][1]) == {'prompt':'default','future':42,'model':'synthetic-image'}
-                            status, body, _ = request({'prompt':'synthetic','stream':True,'service_tier':'priority'}, prefix + '/images/' + operation)
-                            assert status == 200
-                            if operation == 'generations': assert body == native_stream(operation)
-                            else:
-                                event = next(json.loads(line[6:]) for line in body.splitlines() if line.startswith(b'data: {'))
-                                assert event['type'] == 'image_edit.completed' and event['b64_json'] == PNG and event['usage']['input_tokens'] == 2
-                                assert json.loads(upstream.requests[-1][1])['stream'] is False
-                            assert ledger()[0] == 'settled' and ledger()[2]['actualServiceTier'] == 'default'
+                            verify_native(prefix, operation)
                     for operation in ('edits', 'generations'):
                         for fault in ('json-stream', 'json-stream-multiple', 'json-stream-empty', 'json-stream-invalid', 'json-stream-mixed', 'json-stream-html'):
                             before = upstream.calls
@@ -559,19 +611,8 @@ def main():
                             # The same provider rejection via JSON has the same HTTP status/error.
                             json_status, json_body, _ = request({'prompt':prompt}, '/v1/images/edits')
                             assert status == json_status and json.loads(body)['error']['code'] == json.loads(json_body)['error']['code']
-                    before = upstream.calls; intents = count_intents()
-                    for body, name in [({'model':'synthetic-denied'}, 'images'), ({'prompt':'synthetic'}, 'chat')]:
-                        status, error, _ = request(body, name=name)
-                        assert status == 403 and json.loads(error)['error']['code'] == 'model_not_allowed'
-                    assert upstream.calls == before and count_intents() == intents
-                    multipart = b'--synthetic\r\n'
-                    for field, value in [('prompt', b'synthetic edit'), ('n', b'3'), ('stream', b'false'), ('future', b'preserved')]:
-                        multipart += f'Content-Disposition: form-data; name="{field}"\r\n\r\n'.encode() + value + b'\r\n--synthetic\r\n'
-                    for field in ('image[]', 'mask'):
-                        multipart += f'Content-Disposition: form-data; name="{field}"; filename="synthetic.png"\r\nContent-Type: image/png\r\n\r\n'.encode() + base64.b64decode(PNG) + b'\r\n--synthetic' + (b'\r\n' if field == 'image[]' else b'--\r\n')
-                    assert request(multipart, '/v1/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 200
-                    assert json.loads(upstream.requests[-1][1]) == {'model':'synthetic-image','prompt':'synthetic edit','n':3,'stream':False,'future':'preserved', 'images':[{'image_url':URL}], 'mask':{'image_url':URL}}
-                    assert request(multipart, '/backend-api/codex/images/edits', content_type='multipart/form-data; boundary=synthetic')[0] == 415
+                    verify_denied()
+                    verify_multipart()
                     for fault, expected in [('http400',400), ('http429',429), ('http500',502)]:
                         before = upstream.calls
                         status, error, headers = request({'prompt':fault})
@@ -587,10 +628,7 @@ def main():
                         state, usage, outcome = ledger()
                         assert outcome['kind'] == 'failed'
                         if fault != 'empty': assert state == 'unknown'
-                    assert request({'prompt':'missing-usage'})[0] == 200
-                    state, usage, outcome = ledger()
-                    assert state == 'unknown' and usage['completeness'] == 'partial' and 'imageInputTokens' not in usage and 'imageOutputTokens' not in usage
-                    assert usage['images'] == 1 and outcome['kind'] == 'succeeded'
+                    verify_missing_usage()
                     for prefix in ('/v1', '/backend-api/codex'):
                         for operation in ('generations', 'edits'):
                             before = upstream.calls
@@ -613,8 +651,7 @@ def main():
                             assert error['request_id'] == headers['x-request-id']
                             assert ledger()[2]['kind'] == 'failed'
                     for fault in ('stream-abort', 'stream-empty'):
-                        status, body, _ = request({'prompt':fault,'stream':True})
-                        assert status == 200 and ledger()[2]['kind'] == 'failed'
+                        verify_incomplete_stream(fault)
                     # Non-stream generation buffers until validated EOF, including failures after usage.
                     for fault in ('stream-abort', 'stream-empty', 'stream-duplicate', 'stream-tail', 'stream-missing-created', 'stream-error'):
                         before = upstream.calls

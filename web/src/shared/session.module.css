@@ -1,5 +1,8 @@
 .action {
   position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   right: 24px;
   top: 14px;
   z-index: 101;

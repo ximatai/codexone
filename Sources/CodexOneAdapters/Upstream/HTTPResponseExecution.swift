@@ -397,9 +397,13 @@ struct HTTPResponseExecution: Sendable {
       } else {
         executionFailure(error)
       }
+    let mapped = protocolFailure(error)
+    let reason =
+      mapped.detail.flatMap { RejectionReason(rawValue: $0.rawValue) }
+      ?? RejectionReason(rawValue: mapped.code)
     try? await diagnostics.recordRejection(
       requestID: requestID, keyID: currentKeyID,
-      model: model, mode: request?.mode ?? .generation, failure: failure)
+      model: model, mode: request?.mode ?? .generation, failure: failure, reason: reason)
   }
 
 }

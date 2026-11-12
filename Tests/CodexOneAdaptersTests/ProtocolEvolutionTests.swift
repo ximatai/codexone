@@ -222,6 +222,49 @@ func unattributedApplicationRiskCoversDispatchedNamedLanesWithoutDelivery(idleDe
   }
 }
 
+@Test func recognizedAuxiliaryEventsGrantNoResponseFactsOrReplayException() throws {
+  for type in ["response.metadata", "codex.response.metadata", "responsesapi.websocket_timing"] {
+    let registry = ClientProtocolExtensionRegistry()
+    let event = JSONValue.object([
+      "type": .string(type), "response_id": .string("synthetic-response"),
+      "usage": .object(["input_tokens": .number(5), "output_tokens": .number(3)]),
+    ])
+    let semantics = ProviderEventSemantics(event)
+    #expect(semantics.recognizedType)
+    #expect(!semantics.known && !semantics.connectionMetadata)
+    #expect(semantics.progress == .none)
+    let observation = try ProviderObservation(
+      event: event, model: evolutionModel, allowImages: true)
+    #expect(observation.bindings.isEmpty && observation.usage == nil && !observation.terminal)
+    registry.recordUpstreamEvent(event)
+
+    let turns = WebSocketTurns()
+    for lane in ["first", "second"] {
+      try turns.begin(lane: lane)
+      turns.markDispatched(lane: lane)
+    }
+    #expect(try turns.delivery(event.data()) == nil)
+    turns.close()
+    for lane in ["first", "second"] { #expect(!turns.mayAcceptSizeRefusal(lane: lane)) }
+    #expect(registry.snapshot().entries.isEmpty)
+  }
+}
+
+@Test func timingWithoutResponseIdentityStillClosesEveryDispatchedLanesReplayGate() throws {
+  let event: JSONValue = .object(["type": .string("responsesapi.websocket_timing")])
+  let semantics = ProviderEventSemantics(event)
+  #expect(semantics.recognizedType && !semantics.known && !semantics.connectionMetadata)
+  #expect(semantics.progress == .none)
+  let turns = WebSocketTurns()
+  for lane in ["first", "second"] {
+    try turns.begin(lane: lane)
+    turns.markDispatched(lane: lane)
+  }
+  _ = try turns.delivery(event.data())
+  turns.close()
+  for lane in ["first", "second"] { #expect(!turns.mayAcceptSizeRefusal(lane: lane)) }
+}
+
 @Test func upstreamExtensionObservationsRetainOnlyBoundedNames() {
   let registry = ClientProtocolExtensionRegistry()
   registry.recordUpstreamEvent(.object(["type": .string("response.created")]))

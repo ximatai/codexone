@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { useQuery } from "@tanstack/react-query";
 import { fetchHeadroom } from "../../shared/governance-api";
 import { QuotaPriming } from "./QuotaPriming";
@@ -208,7 +209,9 @@ export function AccountManagement({
                     >
                       <div aria-label="账号" className={styles.cardIdentity}>
                         <Text fw={700} size="xl" className="wrap-anywhere">
-                          {accountName(item.id, [], item.displayName)}
+                          <PrivateName>
+                            {accountName(item.id, [], item.displayName)}
+                          </PrivateName>
                         </Text>
                         <Text size="xs" c="dimmed">
                           {credentialExpiry(item.accessExpiresAtUnixSeconds)}
@@ -304,8 +307,15 @@ export function AccountManagement({
             禁用后不再发送新请求，包括已有会话的后续请求；进行中的请求继续。
           </Text>
           <Text>
-            {confirm &&
-              accountName(confirm.account.id, [], confirm.account.displayName)}
+            {confirm && (
+              <PrivateName>
+                {accountName(
+                  confirm.account.id,
+                  [],
+                  confirm.account.displayName,
+                )}
+              </PrivateName>
+            )}
           </Text>
           <Group justify="flex-end">
             <Button
@@ -526,7 +536,9 @@ function AccountDetailPanels({
     <div className={styles.detailLayout}>
       <Stack gap={8} className={styles.detailIdentity}>
         <Text size="xl" fw={700} className="wrap-anywhere">
-          {accountName(account.id, [], account.displayName)}
+          <PrivateName>
+            {accountName(account.id, [], account.displayName)}
+          </PrivateName>
         </Text>
         <Group gap="xs">
           <Badge
@@ -611,12 +623,7 @@ function AccountDetailPanels({
               onObserve={() =>
                 void state.mutation(
                   (csrf, signal) => observeAccount(account.id, csrf, signal),
-                  (result) => ({
-                    text: observationNotice(result),
-                    warning:
-                      result.quota.failure !== null ||
-                      result.quota.state === "unavailable",
-                  }),
+                  observationNotice,
                 )
               }
             />
@@ -747,7 +754,7 @@ function AccountDetailPanels({
                 <summary>技术信息</summary>
                 <Stack gap={6} mt="sm">
                   <Text size="sm" className="wrap-anywhere">
-                    账号标识：{account.id}
+                    账号标识：<PrivateName>{account.id}</PrivateName>
                   </Text>
                   <Text size="xs">
                     凭证 v{account.credentialVersion} · 修订 {account.revision}
@@ -788,6 +795,7 @@ function DisplayNameEditor({
   disabled: boolean;
   save: (name: string | null) => Promise<void>;
 }) {
+  const masked = usePrivacyMask();
   const [name, setName] = useState(account.displayName ?? "");
   const trimmed = name.trim();
   const valid =
@@ -797,6 +805,7 @@ function DisplayNameEditor({
     <Stack gap="xs">
       <TextInput
         label="账号显示名"
+        type={masked ? "password" : "text"}
         title="仅管理员可见，最多64个字符；清除后使用账号标识。"
         value={name}
         disabled={disabled}
@@ -848,6 +857,7 @@ function DeviceAuthorization({
 }: {
   state: ReturnType<typeof useAccounts>;
 }) {
+  const masked = usePrivacyMask();
   const result = state.flowStatus;
   const completed = state.accounts.find(
     (item) => item.id === result?.accountID,
@@ -862,6 +872,7 @@ function DeviceAuthorization({
           </Text>
           <TextInput
             label="设备码"
+            type={masked ? "password" : "text"}
             value={state.flow?.userCode ?? ""}
             readOnly
             autoComplete="off"

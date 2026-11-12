@@ -5,8 +5,11 @@ ARG RUNTIME_IMAGE=codexone:candidate
 FROM ${RUNTIME_IMAGE} AS bundle
 FROM ${TEST_BASE}
 USER 0:0
-RUN apt-get update && apt-get install -y --no-install-recommends nginx openssl python3 libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
+ARG APT_MIRROR=
+RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
+    && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
+    && apt-get update && apt-get install -y --no-install-recommends nginx openssl python3 libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 COPY --from=bundle /opt/codexone/web/ /test/web/dist/
 COPY --from=bundle /usr/local/bin/codexone /output/codexone
 USER 10001:10001

@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from verify_account_admin_ui import SyntheticOAuth, ADMIN
 from verify_admin import document, request
 from verify_process import environment, release
+from verify_protocol import current_schema_version
 
 
 def port_line(process, pattern):
@@ -146,7 +147,7 @@ def verify_previous(binary, previous):
         finally:
             release(process)
         with sqlite3.connect(database) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 13
+            assert db.execute('PRAGMA user_version').fetchone()[0] == current_schema_version(binary)
             assert 'display_name' in [row[1] for row in db.execute('PRAGMA table_info(accounts)')]
         before = hashlib.sha256(database.read_bytes()).digest()
         refused = subprocess.run([previous], env=env, capture_output=True, timeout=10)

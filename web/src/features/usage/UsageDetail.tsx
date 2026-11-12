@@ -1,3 +1,4 @@
+import { PrivateName } from "../../shared/privacy-mask";
 import { KeyName } from "../../shared/KeyName";
 import {
   accountName,
@@ -27,7 +28,8 @@ import {
   localTime,
   timeTitle,
 } from "../../shared/presentation";
-import { duration, number } from "./format";
+import { rejectionReason, duration, number } from "./format";
+import styles from "./usage.module.css";
 
 const incompleteReasons = {
   max_output_tokens: "达到输出限制",
@@ -36,7 +38,14 @@ const incompleteReasons = {
   steered: "上游按引导指令结束当前响应",
   unspecified: "原因未说明",
 };
-import styles from "./usage.module.css";
+const routingEvidence: Readonly<Record<string, string>> = {
+  account_cooldown: "当时选路受冷却限制。该记录没有保存每个候选账号的状态。",
+  account_dispatch_unavailable:
+    "当时没有可派发的账号。该记录没有保存各候选账号的排除原因。",
+  continuation_owner_unavailable:
+    "当时无法确认该续接状态所属的账号，未派发请求。",
+  account_state_changed: "账号状态在准备派发期间发生变化。",
+};
 export function UsageDetail({
   detail,
   onClose,
@@ -46,6 +55,14 @@ export function UsageDetail({
   onClose: () => void;
   accounts?: readonly AccountName[];
 }) {
+  const reason = detail?.rejectionReason;
+  const evidence =
+    detail?.kind === "rejected" &&
+    detail.rejectionStage === "routing" &&
+    reason &&
+    Object.hasOwn(routingEvidence, reason)
+      ? routingEvidence[reason]
+      : undefined;
   return (
     <Drawer
       removeScrollProps={{ removeScrollBar: false }}
@@ -90,14 +107,19 @@ export function UsageDetail({
                 [
                   "Key",
                   <span>
-                    <KeyName {...detail} /> · {detail.keyID}
+                    <KeyName {...detail} /> ·{" "}
+                    <PrivateName>{detail.keyID}</PrivateName>
                   </span>,
                 ],
                 [
                   "账号",
-                  detail.accountID
-                    ? accountName(detail.accountID, accounts)
-                    : "未派发",
+                  detail.accountID ? (
+                    <PrivateName>
+                      {accountName(detail.accountID, accounts)}
+                    </PrivateName>
+                  ) : (
+                    "未派发"
+                  ),
                 ],
                 ["模型", detail.model ?? "未记录"],
                 ["模式", modes[detail.mode]],
@@ -127,6 +149,20 @@ export function UsageDetail({
                       ? (failures[detail.failure] ?? "其他异常")
                       : "无已记录错误",
                 ],
+                ...(detail.kind === "rejected"
+                  ? [
+                      ["拒绝子原因", rejectionReason(detail.rejectionReason)],
+                      ...(evidence ? [["当时的选路证据", evidence]] : []),
+                      [
+                        "拒绝阶段",
+                        detail.rejectionStage === "routing"
+                          ? "账号路由"
+                          : detail.rejectionStage === "validation"
+                            ? "请求校验"
+                            : "未记录",
+                      ],
+                    ]
+                  : []),
               ].map(([label, value]) => (
                 <Group key={String(label)} display="contents">
                   <dt>{label}</dt>

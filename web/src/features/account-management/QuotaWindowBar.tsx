@@ -1,17 +1,26 @@
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import styles from "./accounts.module.css";
 import { Progress, Stack, Text } from "@mantine/core";
+import { IconChevronDown } from "@tabler/icons-react";
 import type { QuotaWindow } from "./observation-api";
 import { resetIn, timeTitle } from "../../shared/presentation";
 export function QuotaWindowBar({
   title,
   value,
   showUsed = false,
+  trend,
 }: {
   title: string;
   value: QuotaWindow | null;
   showUsed?: boolean;
+  trend?: {
+    expanded: boolean;
+    controls: string;
+    toggle: () => void;
+    stale: boolean;
+    details: ReactNode;
+  };
 }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -43,61 +52,133 @@ export function QuotaWindowBar({
   const countdown = resetIn(reset ?? null, now);
   const remaining =
     value?.usedPercent == null ? null : Math.max(0, 100 - value.usedPercent);
-  return (
-    <Stack gap={3} mb="xs" className={styles.quotaWindow}>
-      <Text size="xs">{title}</Text>
-      <Text size={showUsed ? "sm" : "xl"} fw={700}>
-        <ContinuousValue
-          text={
-            remaining === null
-              ? "比例未提供"
-              : showUsed
-                ? `${value?.usedPercent}% 已用`
-                : `剩余 ${remaining}%`
-          }
-        />
-      </Text>
-      {remaining !== null && (
-        <div className={styles.quotaTrack}>
-          <Progress
-            aria-label={`${title}${showUsed ? "已用" : "剩余"}比例`}
-            value={showUsed ? 100 - remaining : remaining}
-            color={remaining > 30 ? "green" : remaining > 10 ? "yellow" : "red"}
+  const track = remaining !== null && (
+    <div className={styles.quotaTrack}>
+      <Progress
+        aria-label={`${title}${showUsed ? "已用" : "剩余"}比例`}
+        value={showUsed ? 100 - remaining : remaining}
+        color={remaining > 30 ? "green" : remaining > 10 ? "yellow" : "red"}
+      />
+      {pace != null && (
+        <svg
+          className={styles.quotaPaceMarker}
+          viewBox="0 0 100 12"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={`参考进度 ${pace.toFixed(1)}%`}
+        >
+          <title>{`参考进度 ${pace.toFixed(1)}%`}</title>
+          <line
+            x1={pace}
+            x2={pace}
+            y1="0"
+            y2="12"
+            vectorEffect="non-scaling-stroke"
           />
-          {pace != null && (
-            <svg
-              className={styles.quotaPaceMarker}
-              viewBox="0 0 100 12"
-              preserveAspectRatio="none"
-              role="img"
-              aria-label={`参考进度 ${pace.toFixed(1)}%`}
-            >
-              <line
-                x1={pace}
-                x2={pace}
-                y1="0"
-                y2="12"
-                vectorEffect="non-scaling-stroke"
-              />
-            </svg>
-          )}
-        </div>
+        </svg>
       )}
-      {showUsed && resetTime ? (
-        <div className={styles.quotaReset} title={timeTitle(reset)}>
-          <Text size="xs" c="dimmed">
-            {secondsLeft != null && secondsLeft > 0
-              ? countdown.replaceAll(" ", "").replace("后重置", "后")
-              : "等待刷新"}
+    </div>
+  );
+  const usage = (
+    <ContinuousValue
+      text={
+        remaining === null
+          ? "比例未提供"
+          : showUsed
+            ? `${value?.usedPercent}% 已用`
+            : `剩余 ${remaining}%`
+      }
+    />
+  );
+  const deviation =
+    pace !== null && remaining !== null ? 100 - remaining - pace : null;
+  const resetDetails =
+    showUsed && resetTime ? (
+      <div className={styles.quotaReset} title={timeTitle(reset)}>
+        <Text size="xs" c="dimmed">
+          {secondsLeft != null && secondsLeft > 0
+            ? countdown.replaceAll(" ", "").replace("后重置", "后")
+            : "等待刷新"}
+        </Text>
+        <Text size="xs" c="dimmed">
+          {resetTime} 重置
+        </Text>
+      </div>
+    ) : (
+      <Text size="xs" c="dimmed" title={timeTitle(reset)}>
+        {countdown}
+      </Text>
+    );
+  return (
+    <Stack
+      gap={trend ? 8 : 3}
+      mb={trend ? 0 : "xs"}
+      className={`${styles.quotaWindow}${trend ? ` ${styles.overviewQuotaWindow}` : ""}`}
+    >
+      {trend && remaining !== null ? (
+        <>
+          <div className={styles.quotaSummary}>
+            <Text size="xs" fw={600}>
+              {title}
+            </Text>
+            <div className={styles.quotaMetrics}>
+              <Text size="xl" fw={700}>
+                {usage}
+              </Text>
+              <Text size="xs" c="dimmed">
+                剩余 {Number(remaining.toFixed(2))}%
+              </Text>
+            </div>
+            {track}
+            <button
+              type="button"
+              className={styles.quotaTrendTrigger}
+              aria-label={`${trend.expanded ? "收起" : "查看"}${title}趋势`}
+              aria-expanded={trend.expanded}
+              aria-controls={trend.controls}
+              title={`剩余 ${Number(remaining.toFixed(2))}%`}
+              onClick={trend.toggle}
+            >
+              <span aria-hidden="true">
+                趋势
+                <IconChevronDown size={14} stroke={1.75} />
+              </span>
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <Text size="xs">{title}</Text>
+          <Text size={showUsed ? "sm" : "xl"} fw={700}>
+            {usage}
           </Text>
-          <Text size="xs" c="dimmed">
-            {resetTime} 重置
-          </Text>
+          {track}
+        </>
+      )}
+      {trend ? (
+        <div>
+          <div className={styles.quotaMetrics}>
+            <Text size="xs" c="dimmed" title={timeTitle(reset)}>
+              {countdown}
+            </Text>
+            {!trend.stale &&
+              pace !== null &&
+              deviation !== null &&
+              Math.abs(deviation) >= 0.05 && (
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  title={`参考进度 ${pace.toFixed(1)}%`}
+                >
+                  {deviation > 0 ? "超前" : "滞后"}{" "}
+                  {Math.abs(deviation).toFixed(1)} 个百分点
+                </Text>
+              )}
+          </div>
+          {trend.details}
         </div>
       ) : (
-        <Text size="xs" c="dimmed" title={timeTitle(reset)}>
-          {countdown}
-        </Text>
+        resetDetails
       )}
     </Stack>
   );

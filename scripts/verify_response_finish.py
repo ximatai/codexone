@@ -215,8 +215,19 @@ def main():
     parser.add_argument('--route', choices=('sse', 'json', 'native'))
     parser.add_argument('--case')
     parser.add_argument('--repeat', type=int, default=1)
+    parser.add_argument('--smoke', action='store_true', help='Run representative termination cases across client routes')
     parser.add_argument('--baseline', action='store_true', help='Record pre-fix evidence without post-fix log assertions')
     args = parser.parse_args()
+    if args.smoke and (args.keep_alive or args.route or args.case or args.baseline or args.repeat != 1):
+        parser.error('--smoke cannot be combined with matrix selection, baseline or repeats')
+    smoke_cases = {
+        ('http', 'sse', False): ('before-terminal', 'upstream-before-terminal', 'before-done', 'after-done'),
+        ('http', 'json', False): ('upstream-auth-rejected',),
+        ('websocket', 'json', False): ('upstream-before-terminal-eof', 'upstream-connect-refused'),
+        ('websocket', 'native', False): ('before-terminal', 'upstream-terminal-close', 'upstream-handshake-eof'),
+        ('http', 'sse', True): ('next-request-reset',),
+        ('websocket', 'json', True): ('upstream-terminal-eof',),
+    }
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -240,6 +251,8 @@ def main():
                 if route == 'sse':
                     cases += ['before-done', 'after-done']
                 for case in cases:
+                    if args.smoke and case not in smoke_cases.get((transport, route, keep_alive), ()):
+                        continue
                     if args.case and args.case != case:
                         continue
                     for iteration in range(args.repeat):

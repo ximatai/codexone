@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -38,22 +39,40 @@ import { readPage } from "../../shared/view-memory";
 import { KeyName } from "../../shared/KeyName";
 import { localTime } from "../../shared/presentation";
 export function KeyManagement() {
+  const masked = usePrivacyMask();
   const navigationType = useNavigationType();
   const locationKey = useLocation().key;
   const positionedLocation = useRef<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const [detailID, setDetailID] = useState<string | null>(null);
+  const [selectedDetailID, setDetailID] = useState<string | null>(null);
+  const linkedDetailID = params.get("detail");
+  const detailID = selectedDetailID ?? linkedDetailID;
+  const closeDetails = useCallback(() => {
+    setDetailID(null);
+    if (linkedDetailID) {
+      setParams(
+        (previous) => {
+          const next = new URLSearchParams(previous);
+          next.delete("detail");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [linkedDetailID, setParams]);
   const status = params.get("status") ?? "available";
   const state = useKeys(
     status === "all" || status === "" ? "all" : status === "archived",
-    () => setDetailID(null),
+    closeDetails,
   );
   const owner = useManagementSession();
   const detail = state.keys.find((key) => key.id === detailID);
+  const detailOpened =
+    detailID !== null && (!linkedDetailID || detail !== undefined);
   useEffect(() => {
     if (detailID && state.readAt !== null && !state.loading && !detail)
-      setDetailID(null);
-  }, [detailID, detail, state.readAt, state.loading]);
+      closeDetails();
+  }, [detailID, detail, state.readAt, state.loading, closeDetails]);
   const [refresh, setRefresh] = useState(0);
   const search = params.get("q") ?? "";
   const target = params.get("target");
@@ -233,6 +252,7 @@ export function KeyManagement() {
       <Paper withBorder p="md" mb="md" className={styles.toolbar}>
         <TextInput
           aria-label="搜索主体名"
+          type={masked ? "password" : "text"}
           placeholder="搜索显示名、主体名或标识…"
           leftSection={<IconSearch size={18} />}
           value={search}
@@ -339,9 +359,9 @@ export function KeyManagement() {
         </Paper>
       )}
       <Drawer
-        opened={detailID !== null}
+        opened={detailOpened}
         onClose={() => {
-          if (!state.busy) setDetailID(null);
+          if (!state.busy) closeDetails();
         }}
         title={detail ? <KeyName {...detail} stacked /> : "密钥详情"}
         attributes={{ title: { "aria-label": "密钥详情" } }}
@@ -356,7 +376,7 @@ export function KeyManagement() {
         size="min(640px, 100vw)"
         closeButtonProps={{ "aria-label": "关闭" }}
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay={detailID !== null || undefined}
+        data-ui-overlay={detailOpened || undefined}
         closeOnEscape={
           !state.busy &&
           !expiring &&
@@ -484,7 +504,7 @@ export function KeyManagement() {
                     models={state.models}
                     imageModels={state.imageModels}
                     disabled={state.disabled}
-                    close={() => setDetailID(null)}
+                    close={closeDetails}
                     submit={(draft) =>
                       state.mutate(
                         (csrf, signal) =>
@@ -618,7 +638,9 @@ export function KeyManagement() {
           禁用后，持有该 Key
           的客户端会立即失败，后续请求将被拒绝。请先通知使用者。
         </Text>
-        <Text>{disabling?.principal}</Text>
+        <Text>
+          <PrivateName>{disabling?.principal}</PrivateName>
+        </Text>
       </ConfirmModal>
       <ConfirmModal
         opened={!!archiving}
@@ -650,7 +672,11 @@ export function KeyManagement() {
             ? "恢复后仍为停用状态，需要单独启用。"
             : "归档后从默认列表隐藏，用量统计和审计保留，可在已归档视图恢复。"}
         </Text>
-        <Text>{archiving?.displayName ?? archiving?.principal}</Text>
+        <Text>
+          <PrivateName>
+            {archiving?.displayName ?? archiving?.principal}
+          </PrivateName>
+        </Text>
       </ConfirmModal>
       <Drawer
         removeScrollProps={{ removeScrollBar: false }}
@@ -724,6 +750,7 @@ export function KeyManagement() {
             </Text>
             <TextInput
               label="密钥完整 ID"
+              type={masked ? "password" : "text"}
               readOnly
               value={state.rotating.id}
               onFocus={(event) => event.currentTarget.select()}
@@ -750,7 +777,7 @@ export function KeyManagement() {
               </Alert>
             )}
             <Text component="div">
-              {state.created.key.principal} ·{" "}
+              <PrivateName>{state.created.key.principal}</PrivateName> ·{" "}
               <StatusBadge color="gray">
                 {state.created.key.enabled ? "已启用" : "当前禁用"}
               </StatusBadge>
@@ -758,6 +785,7 @@ export function KeyManagement() {
             <TextInput
               classNames={{ input: "secret-value" }}
               label="新 API Key"
+              type={masked ? "password" : "text"}
               readOnly
               value={state.created.secret}
               autoComplete="off"

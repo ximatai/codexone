@@ -21,13 +21,23 @@ export function compactKeyTokens(value: string): string {
     : compactCount(count);
 }
 
-function formatCountUnit(count: bigint, unit: bigint, label: string): string {
-  const hundredths = (count * 100n) / unit;
-  const fraction = (hundredths % 100n)
-    .toString()
-    .padStart(2, "0")
-    .replace(/0+$/, "");
-  return `${hundredths / 100n}${fraction ? `.${fraction}` : ""} ${label}`;
+export function compactOverviewTokens(count: bigint): string {
+  if (count < 10_000_000n) return compactCount(count);
+  return count >= 1_000_000_000_000n
+    ? formatCountUnit(count, 1_000_000_000_000n, "万亿", true)
+    : formatCountUnit(count, 100_000_000n, "亿", true);
+}
+
+function formatCountUnit(
+  count: bigint,
+  unit: bigint,
+  label: string,
+  fixedDecimals = false,
+): string {
+  const hundredths = (count * 100n + (fixedDecimals ? unit / 2n : 0n)) / unit;
+  const fraction = (hundredths % 100n).toString().padStart(2, "0");
+  const decimals = fixedDecimals ? fraction : fraction.replace(/0+$/, "");
+  return `${hundredths / 100n}${decimals ? `.${decimals}` : ""} ${label}`;
 }
 
 export function compactMoney(value: string): string {

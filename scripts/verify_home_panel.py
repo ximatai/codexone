@@ -52,6 +52,7 @@ def verify(binary):
             assert time.monotonic() < deadline
             time.sleep(0.02)
         assert row['inputTokens'] == '5' and row['cachedTokens'] == '0'
+        assert row['images'] in (None, '0')
         assert row['tokens'] == '8' and row['tokenUsageIncomplete'] and row['cacheUsageIncomplete']
         status, report = call(f.ports['admin'], 'GET', '/api/usage?' + urlencode(dict(start=summary['startUnixSeconds'], end=summary['endUnixSeconds'], key=key['id'], outcome='failed')))
         assert status == 200

@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { accountName } from "../../shared/account-presentation";
 import { quotaStale } from "./quota";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +15,7 @@ import {
 } from "./observation-api";
 import { localTime, timeTitle } from "../../shared/presentation";
 import { QuotaWindowBar } from "./QuotaWindowBar";
+import { CreditBalance } from "./CreditBalance";
 export const utc = timeTitle;
 function duration(value: number | null): string {
   if (value === null) return "时长未提供";
@@ -68,10 +70,25 @@ function LimitStatus({ value }: { value: QuotaLimit | undefined }) {
   );
 }
 function state(value: Snapshot, now: number) {
-  if (value.quota.state === "unavailable") return "额度不可用";
-  if (quotaStale(value, now)) return "额度观测已陈旧";
+  if (value.quota.state === "unavailable") return "套餐额度不可用";
+  if (quotaStale(value, now)) return "套餐额度观测已陈旧";
   return "";
 }
+function routingStatus(account: Account) {
+  if (account.mode === "disabled") return "账号已停用";
+  if (account.authorization === "requires_auth") return "需要重新授权";
+  if (account.authorization === "auth_uncertain") return "凭证刷新结果未确认";
+  if (account.authorization === "refreshing") return "正在刷新凭证";
+  if (account.mode === "draining") return "仅允许符合条件的已有会话";
+}
+
+function executionHealth(health: Snapshot["health"] | undefined) {
+  if (health?.authenticationRejected) return "最近观测到上游拒绝凭证";
+  if (health?.cooldownCount)
+    return `最近观测到 ${health.cooldownCount} 个模型处于冷却`;
+  return health ? "最近观测无已知异常" : "尚无观测";
+}
+
 export function AccountObservability({
   account,
   now,
@@ -87,58 +104,60 @@ export function AccountObservability({
   onObserve: () => void;
   onUnauthorized: () => void;
 }) {
+  const masked = usePrivacyMask();
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
   const [expanded, setExpanded] = useState(inDetails);
-  const [details, setDetails] = useState<Snapshot | null>(null);
+  const { id, revision, credentialVersion } = account;
+  const observationKey = `${id}:${revision}:${credentialVersion}`;
+  const [detailRead, setDetailRead] = useState<{
+    key: string;
+    value: Snapshot;
+  } | null>(null);
+  const details = detailRead?.key === observationKey ? detailRead.value : null;
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!expanded) {
-      setDetails(null);
+      setDetailRead(null);
       return;
     }
     const abort = new AbortController();
-    setDetails(null);
     setFailed(false);
-    void fetchObservation(account.id, abort.signal)
+    void fetchObservation(id, abort.signal)
       .then((value) => {
-        if (!abort.signal.aborted) setDetails(value);
+        if (!abort.signal.aborted)
+          setDetailRead({ key: observationKey, value });
       })
       .catch((cause) => {
         if (abort.signal.aborted) return;
         if (cause instanceof ManagementError && cause.status === 401) {
-          setDetails(null);
+          setDetailRead(null);
           unauthorized.current();
         } else setFailed(true);
       });
     return () => abort.abort();
-  }, [expanded, account.id, account.revision, account.observability, retry]);
+  }, [expanded, id, observationKey, account.observability, retry]);
   const value = details ?? account.observability;
   const base = value?.quota.limits.find((limit) => limit.id === "codex");
   const health = value?.health;
+  const route = routingStatus(account);
   const current = Math.max(now, performance.now());
   return (
     <div className={styles.observation}>
       <span
         className={
-          health?.authenticationRejected || health?.cooldownCount
+          route || health?.authenticationRejected || health?.cooldownCount
             ? styles.attention
             : styles.subtle
         }
       >
-        {health?.authenticationRejected
-          ? "派发认证被拒绝，请刷新授权"
-          : health?.cooldownCount
-            ? `最近读取：${health.cooldownCount} 个模型冷却`
-            : value
-              ? inDetails
-                ? "无已知阻断"
-                : "执行健康：无已知阻断"
-              : "健康尚无观测"}
+        {route
+          ? `当前派发状态：${route}`
+          : `执行健康：${executionHealth(health)}`}
       </span>
       <small>
-        {value ? state(value, current) : "额度尚无观测"}
+        {value ? state(value, current) : "套餐额度尚无观测"}
         {value?.quota.failure ? " · 最近读取失败" : ""}
       </small>
 
@@ -160,7 +179,11 @@ export function AccountObservability({
         <div
           className={`${styles.details} ${inDetails ? styles.detailObservation : ""}`}
           role="region"
-          aria-label={`${accountName(account.id, [], account.displayName)} 额度与健康`}
+          aria-label={
+            masked
+              ? "账号额度与健康"
+              : `${accountName(account.id, [], account.displayName)} 额度与健康`
+          }
         >
           <Group justify="space-between">
             {inDetails && (
@@ -215,6 +238,18 @@ export function AccountObservability({
                   <Window title="主窗口" value={base?.primary ?? null} />
                   <Window title="次窗口" value={base?.secondary ?? null} />
                 </div>
+                {inDetails && (
+                  <CreditBalance
+                    key={id}
+                    accountID={id}
+                    balance={details.quota.usageCredits}
+                    observedAt={details.quota.observedAtUnixSeconds}
+                    stale={
+                      quotaStale(details, current) ||
+                      Boolean(details.quota.failure)
+                    }
+                  />
+                )}
                 <small
                   title={`最近成功：${utc(details.quota.observedAtUnixSeconds)}；最近尝试：${utc(details.quota.attemptedAtUnixSeconds)}`}
                 >
@@ -259,7 +294,7 @@ export function AccountObservability({
                 )}
                 {details.health.authenticationRejected && (
                   <p className={styles.warning}>
-                    当前凭证的实际派发曾被拒绝。新执行已暂停，请刷新授权或重新授权；已有未知执行仍保留。
+                    读取详情时，上游曾拒绝该凭证，新执行已暂停。请刷新授权或重新授权；已有未知执行仍保留。
                   </p>
                 )}
                 {(details.health.cooldowns ?? []).map((item) => (

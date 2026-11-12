@@ -208,6 +208,7 @@ public struct UsageAdminAPI: Sendable {
                 "enabled": .bool(value.enabled),
                 "admitted": .number(Decimal(value.admitted)),
                 "tokens": .string(String(value.tokens)),
+                "images": value.images.map { .string(String($0)) } ?? .null,
                 "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
                 "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
                 "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,
@@ -251,7 +252,7 @@ public struct UsageAdminAPI: Sendable {
   static func parse(_ url: String) throws -> UsageQuery {
     let allowed: Set<String> = [
       "start", "end", "key", "model", "mode", "failure", "failedOnly", "state", "after", "limit",
-      "reasoningEffort", "outcome",
+      "reasoningEffort", "outcome", "rejectedOnly", "rejectionGroup",
     ]
     let entries = URLComponents(string: url)?.queryItems ?? []
     guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,
@@ -263,11 +264,15 @@ public struct UsageAdminAPI: Sendable {
     else { throw ExecutionError.invalidCommand }
     let mode = values["mode"].flatMap(ExecutionMode.init(rawValue:))
     let failure = values["failure"].flatMap(ExecutionFailure.init(rawValue:))
+    let rejectionGroup = values["rejectionGroup"].flatMap(RejectionGroup.init(filter:))
     let state = values["state"].flatMap(ExecutionSnapshot.State.init(rawValue:))
     guard values["mode"] == nil || mode != nil, values["failure"] == nil || failure != nil,
       values["state"] == nil || state != nil,
+      values["rejectionGroup"] == nil || rejectionGroup != nil,
       values["outcome"] == nil || values["outcome"] == "failed",
-      values["failedOnly"] == nil || ["true", "false"].contains(values["failedOnly"]!)
+      ["failedOnly", "rejectedOnly"].allSatisfy({
+        values[$0].map { ["true", "false"].contains($0) } ?? true
+      })
     else { throw ExecutionError.invalidCommand }
     let limit: Int
     if let raw = values["limit"] {
@@ -282,7 +287,8 @@ public struct UsageAdminAPI: Sendable {
       mode: mode, failure: failure, failedOnly: values["failedOnly"] == "true", state: state,
       reasoningEffort: values["reasoningEffort"],
       outcome: values["outcome"].flatMap(ExecutionOutcome.Kind.init(rawValue:)),
-      cursor: cursor, limit: limit)
+      cursor: cursor, limit: limit, rejectedOnly: values["rejectedOnly"] == "true",
+      rejectionGroup: rejectionGroup)
   }
   private static func decodeCursor(_ raw: String) throws -> UsageCursor {
     guard !raw.isEmpty, raw.utf8.count <= 512,
@@ -378,6 +384,14 @@ public struct UsageAdminAPI: Sendable {
             "recordedRejections": count($0.rejected), "unresolved": count($0.unresolved),
           ])
         }),
+      "rejectionCounts": .array(
+        report.rejectionCounts.map { item in
+          .object([
+            "failure": .string(item.failure.rawValue),
+            "reason": text(item.reason?.rawValue),
+            "count": count(item.count),
+          ])
+        }),
       "rows": .array(
         report.rows.map { value in
           .object([
@@ -397,6 +411,8 @@ public struct UsageAdminAPI: Sendable {
             "accountID": text(value.accountID), "requestID": text(value.requestID),
             "state": text(value.state?.rawValue),
             "outcome": text(value.outcome?.rawValue), "failure": text(value.failure?.rawValue),
+            "rejectionReason": text(value.rejectionReason?.rawValue),
+            "rejectionStage": text(value.rejectionReason?.stage.rawValue),
             "completeness": text(value.completeness?.rawValue), "metrics": metrics(value.metrics),
             "svgAuthorModel": text(value.svgAuthorModel),
             "usageMissingReasons": .array(value.usageMissingReasons.map(JSONValue.string)),

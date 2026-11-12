@@ -13,7 +13,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let pacingWaiters: AccountPacingWaiters
   let usageReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
-  public let overviewActivity = OverviewActivity()
+  public let overviewActivity: OverviewActivity
   let liveFirstEvents = Mutex([String: Bool]())
   let storage: SQLiteStorageGuard
   public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
@@ -48,6 +48,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     self.path = path
     self.restoration = restoration
     self.connection = connection
+    self.overviewActivity = OverviewActivity(businessDay: connection.businessDay)
     self.limits = limits
     self.unresolvedCapacity = unresolvedCapacity
     try loadOutputRateHistory(connection)
@@ -56,7 +57,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   private func loadOutputRateHistory(_ db: SQLiteConnection) throws {
     let now = db.clock.unixSeconds
     let today = try db.businessDay.start(containing: now)
-    for day in stride(from: today - 6 * 86400, through: today, by: 86400) {
+    func restore(
+      from start: Int64, width: Int64, limit: Int, source: OverviewActivity.OutputSampleSource
+    ) throws {
       let samples = try db.rows(
         """
         SELECT output_rate_settled_at,rowid,output_rate FROM attempts
@@ -64,8 +67,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
         ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?
         """,
         [
-          .number(day), .number(min(day + 86400, now + 1)),
-          .number(Int64(OverviewActivity.outputDayCapacity)),
+          .number(start), .number(min(start + width, now + 1)), .number(Int64(limit)),
         ]
       ) { row -> (Int64, Int64, Decimal)? in
         guard let raw = sqlite3_column_text(row, 2),
@@ -76,15 +78,26 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       }
       for (second, rowID, rate) in samples.reversed().compactMap({ $0 }) {
         overviewActivity.recordRequestOutput(
-          rate, at: second, rowID: rowID, businessDay: db.businessDay, live: false)
+          rate, at: second, rowID: rowID, source: source)
       }
+    }
+    for day in stride(from: today - 6 * 86400, through: today, by: 86400) {
+      try restore(
+        from: day, width: 86400, limit: OverviewActivity.outputDayCapacity, source: .dailyHistory)
+    }
+    let hour = now / 3600 * 3600
+    let firstHour = hour - Int64(OverviewActivity.outputHistoryHours - 1) * 3600
+    for start in stride(from: firstHour, through: hour, by: 3600) {
+      try restore(
+        from: start, width: 3600, limit: OverviewActivity.outputHourCapacity, source: .hourlyHistory
+      )
     }
   }
   /// Call before publishing any admission path. Initialization never blocks a network event loop.
   public static func open(
     path: String, limits: ExecutionLimits,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
-    businessDay: BusinessDayDefinition = .utc,
+    businessDay: BusinessDayDefinition = .utc, allowStartupMigration: Bool = false,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -94,13 +107,13 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     try await open(
       path: path, limits: limits, storagePolicy: .standard, available: StorageCapacity.available,
       unresolvedCapacity: unresolvedCapacity, clock: clock, businessDay: businessDay,
-      pacingSleep: pacingSleep)
+      allowStartupMigration: allowStartupMigration, pacingSleep: pacingSleep)
   }
   package static func open(
     path: String, limits: ExecutionLimits, storagePolicy: StorageSpacePolicy,
     available: @escaping @Sendable (String) throws -> Int64,
     unresolvedCapacity: Int64 = ExecutionLimits.unresolvedCapacity, clock: WallClock = .system,
-    businessDay: BusinessDayDefinition = .utc,
+    businessDay: BusinessDayDefinition = .utc, allowStartupMigration: Bool = false,
     pacingSleep: @escaping @Sendable (Double) async throws -> Void = {
       try await Task.sleep(for: .seconds($0))
     }
@@ -118,7 +131,9 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
     return try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .utility).async {
         do {
-          let connection = try SQLiteConnection(path: path, clock: clock, businessDay: businessDay)
+          let connection = try SQLiteConnection(
+            path: path, allowStartupMigration: allowStartupMigration, clock: clock,
+            businessDay: businessDay)
           guard try connection.reencryptionCheckpoint()?.complete != false else {
             throw KeyMaintenanceError.incompleteReencryption
           }
@@ -525,8 +540,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
       }
       if let outputSample {
         self.overviewActivity.recordRequestOutput(
-          outputSample.rate, at: outputSample.second, rowID: outputSample.rowID,
-          businessDay: db.businessDay)
+          outputSample.rate, at: outputSample.second, rowID: outputSample.rowID)
       }
       self.overviewActivity.publish { .finished(id: attempt) }
     }

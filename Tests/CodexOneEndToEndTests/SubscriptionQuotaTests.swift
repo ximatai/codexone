@@ -42,7 +42,7 @@ func quotaUsesOnlyPassiveTrustedGETAndPreservesWindowRolesWithoutPrivateFields()
     do {
       try await awaitOAuth { provider.isAccepting }
       let quota = try await provider.observe(work)
-      #expect(quota.limits.count == 2)
+      #expect(quota.limits.count == 2 && quota.usageCredits == nil)
       #expect(
         quota.limits[0].primary?.usedPercent == 12.5
           && quota.limits[0].secondary?.durationSeconds == 604800)
@@ -113,4 +113,36 @@ func quotaRedirectMalformedOversizedAndTotalDeadlineReleaseSocketsWithoutRetry()
     _ = await owner.result
     await destination.close()
   }
+}
+
+@Test(
+  arguments: [
+    ("{}", nil),
+    (#"{"credits":{"balance":null}}"#, nil),
+    (#"{"credits":{"balance":"-1"}}"#, nil),
+    (#"{"credits":{"balance":12}}"#, nil),
+    (#"{"credits":{"balance":"0"}}"#, SubscriptionUsageCredits.balance("0")),
+    (#"{"credits":{"unlimited":false,"balance":"0"}}"#, .balance("0")),
+    (#"{"credits":{"unlimited":"true","balance":"12.34"}}"#, nil),
+    (#"{"credits":{"unlimited":null,"balance":"12.34"}}"#, nil),
+    (#"{"credits":{"unlimited":{},"balance":"12.34"}}"#, nil),
+    (#"{"credits":{"balance":"12345.67"}}"#, .balance("12345.67")),
+    (
+      #"{"credits":{"unlimited":false,"balance":"12345.1234567890"}}"#, .balance("12345.1234567890")
+    ),
+    (#"{"credits":{"balance":"1.1234567890123456789"}}"#, nil),
+    (#"{"credits":{"unlimited":true}}"#, .unlimited),
+  ] as [(String, SubscriptionUsageCredits?)])
+func quotaUsageCreditsAreOptionalAndKeepExactDecimal(
+  input: String, expected: SubscriptionUsageCredits?
+)
+  throws
+{
+  var document = try #require(JSONValue.decode(Data(input.utf8)).object)
+  document["rate_limit"] = .object(["primary_window": .object(["used_percent": .number(23)])])
+  let quota = try SubscriptionQuotaProvider.parse(.object(document))
+  #expect(quota.limits.first?.primary?.usedPercent == 23)
+  #expect(quota.usageCredits == expected)
+  #expect(
+    try JSONDecoder().decode(SubscriptionQuota.self, from: JSONEncoder().encode(quota)) == quota)
 }

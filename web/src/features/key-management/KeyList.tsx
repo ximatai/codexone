@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { Badge, Button, Group, Text } from "@mantine/core";
 import * as api from "./api";
 import type { useKeys } from "./useKeys";
@@ -19,6 +20,7 @@ export function KeyList({
   highlightedID?: string | null;
   onDetails: (key: api.ManagedKey) => void;
 }) {
+  const masked = usePrivacyMask();
   const columns: DataColumn<api.ManagedKey>[] = [
     {
       id: "identity",
@@ -130,7 +132,9 @@ export function KeyList({
       rowKey={(key) => key.id}
       highlightedID={highlightedID}
       rowLabel={(key) =>
-        `访问密钥 ${key.displayName ?? key.principal} · ${key.id}`
+        masked
+          ? "访问密钥 · 已隐藏"
+          : `访问密钥 ${key.displayName ?? key.principal} · ${key.id}`
       }
       loading={state.loading && state.readAt === null}
       error={state.readAt === null ? state.error || undefined : undefined}

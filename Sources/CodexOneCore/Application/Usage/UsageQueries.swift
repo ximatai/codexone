@@ -21,6 +21,8 @@ public struct UsageQuery: Sendable {
   public let failure: ExecutionFailure?
   public let outcome: ExecutionOutcome.Kind?
   public let failedOnly: Bool
+  public let rejectedOnly: Bool
+  public let rejectionGroup: RejectionGroup?
   public let state: ExecutionSnapshot.State?
   public let cursor: UsageCursor?
   public let limit: Int
@@ -29,7 +31,8 @@ public struct UsageQuery: Sendable {
     mode: ExecutionMode? = nil, failure: ExecutionFailure? = nil, failedOnly: Bool = false,
     state: ExecutionSnapshot.State? = nil, reasoningEffort: String? = nil,
     outcome: ExecutionOutcome.Kind? = nil,
-    cursor: UsageCursor? = nil, limit: Int = 50
+    cursor: UsageCursor? = nil, limit: Int = 50, rejectedOnly: Bool = false,
+    rejectionGroup: RejectionGroup? = nil
   ) throws {
     guard (0...1_000_000_000_000).contains(startUnixSeconds), endUnixSeconds > startUnixSeconds,
       endUnixSeconds <= 1_000_000_000_000, endUnixSeconds - startUnixSeconds <= 31 * 86400,
@@ -38,6 +41,7 @@ public struct UsageQuery: Sendable {
       model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true,
       reasoningEffort.map({ $0 == RequestMetadataValue.sanitize($0) }) ?? true,
       outcome == nil || outcome == .failed,
+      rejectionGroup == nil || rejectedOnly,
       (1...100).contains(limit),
       cursor.map({ $0.atUnixSeconds >= startUnixSeconds && $0.atUnixSeconds < endUnixSeconds })
         ?? true
@@ -51,6 +55,8 @@ public struct UsageQuery: Sendable {
     self.failure = failure
     self.outcome = outcome
     self.failedOnly = failedOnly
+    self.rejectedOnly = rejectedOnly
+    self.rejectionGroup = rejectionGroup
     self.state = state
     self.cursor = cursor
     self.limit = limit
@@ -156,6 +162,45 @@ public struct UsageBucket: Sendable {
     self.unresolved = unresolved
   }
 }
+public enum RejectionReason: String, Sendable, CaseIterable {
+  case backendMaxOutputTokens = "backend_parameter_max_output_tokens"
+  case backendTemperature = "backend_parameter_temperature"
+  case backendTopP = "backend_parameter_top_p"
+  case backendTruncation = "backend_parameter_truncation"
+  case backendPromptCacheRetention = "backend_parameter_prompt_cache_retention"
+  case backendMetadata = "backend_parameter_metadata"
+  case backendStore = "backend_parameter_store"
+  case backendPreviousResponseID = "backend_parameter_previous_response_id"
+  case invalidRequest = "invalid_request"
+  case conversationTooLarge = "conversation_too_large"
+  case invalidTurnState = "invalid_turn_state"
+  case conflictingTurnState = "conflicting_turn_state"
+  case invalidClientMetadata = "invalid_client_metadata"
+  case accountCooldown = "account_cooldown"
+  case accountDispatchUnavailable = "account_dispatch_unavailable"
+  case accountRefreshRequired = "account_refresh_required"
+  case accountAuthorizationRequired = "account_authorization_required"
+  case accountRefreshCapacity = "account_refresh_capacity"
+  case accountStateChanged = "account_state_changed"
+  case accountRefreshUnavailable = "account_refresh_unavailable"
+  case continuationOwnerUnavailable = "continuation_owner_unavailable"
+
+  public enum Stage: String, Sendable {
+    case validation, routing
+  }
+
+  public var stage: Stage {
+    switch self {
+    case .accountCooldown, .accountDispatchUnavailable, .accountRefreshRequired,
+      .accountAuthorizationRequired, .accountRefreshCapacity, .accountStateChanged,
+      .accountRefreshUnavailable, .continuationOwnerUnavailable:
+      .routing
+    default:
+      .validation
+    }
+  }
+}
+
 public struct UsageRow: Sendable {
   public enum Kind: String, Sendable { case admitted, rejected }
   public let svgAuthorModel: String?
@@ -171,6 +216,7 @@ public struct UsageRow: Sendable {
   public let state: ExecutionSnapshot.State?
   public let outcome: ExecutionOutcome.Kind?
   public let failure: ExecutionFailure?
+  public let rejectionReason: RejectionReason?
   public let upstreamIncompleteReason: UpstreamIncompleteReason?
   public let completeness: UsageEvidence.Completeness?
   public let metrics: UsageMetrics
@@ -194,7 +240,8 @@ public struct UsageRow: Sendable {
     totalMilliseconds: Int64? = nil, reasoningEffort: String? = nil,
     serviceTier: String? = nil, actualServiceTier: String? = nil,
     requestMetadataRecorded: Bool = false, svgAuthorModel: String? = nil,
-    usageMissingReasons: [String] = [], upstreamIncompleteReason: UpstreamIncompleteReason? = nil
+    usageMissingReasons: [String] = [], upstreamIncompleteReason: UpstreamIncompleteReason? = nil,
+    rejectionReason: RejectionReason? = nil
   ) {
     self.svgAuthorModel = svgAuthorModel
     self.usageMissingReasons = usageMissingReasons
@@ -213,6 +260,7 @@ public struct UsageRow: Sendable {
     self.state = state
     self.outcome = outcome
     self.failure = failure
+    self.rejectionReason = rejectionReason
     self.upstreamIncompleteReason = upstreamIncompleteReason
     self.completeness = completeness
     self.metrics = metrics
@@ -223,16 +271,44 @@ public struct UsageRow: Sendable {
     self.cursor = cursor
   }
 }
+public struct RejectionGroup: Sendable {
+  public let failure: ExecutionFailure
+  public let reason: RejectionReason?
+
+  public init?(filter: String) {
+    let parts = filter.split(separator: ":", omittingEmptySubsequences: false)
+    guard parts.count == 2, let failure = ExecutionFailure(rawValue: String(parts[0]))
+    else { return nil }
+    let reason = RejectionReason(rawValue: String(parts[1]))
+    guard reason != nil || parts[1] == "unrecorded" else { return nil }
+    self.failure = failure
+    self.reason = reason
+  }
+}
+
+public struct RejectionCount: Sendable {
+  public let failure: ExecutionFailure
+  public let reason: RejectionReason?
+  public let count: Int64
+  public init(failure: ExecutionFailure, reason: RejectionReason?, count: Int64) {
+    self.failure = failure
+    self.reason = reason
+    self.count = count
+  }
+}
 public struct UsageReport: Sendable {
+  public let rejectionCounts: [RejectionCount]
   public let totals: UsageTotals
   public let buckets: [UsageBucket]
   public let rows: [UsageRow]
   public let nextCursor: UsageCursor?
   public init(
-    totals: UsageTotals, buckets: [UsageBucket], rows: [UsageRow], nextCursor: UsageCursor?
+    totals: UsageTotals, buckets: [UsageBucket], rows: [UsageRow], nextCursor: UsageCursor?,
+    rejectionCounts: [RejectionCount] = []
   ) {
     self.totals = totals
     self.buckets = buckets
+    self.rejectionCounts = rejectionCounts
     self.rows = rows
     self.nextCursor = nextCursor
   }
@@ -250,6 +326,7 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public let images: Int64?
   public let inputTokens: Int64?
   public let cachedTokens: Int64?
   public let cacheUsageIncomplete: Bool
@@ -270,8 +347,9 @@ public struct KeyUsageSummary: Sendable {
     estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
-    cacheUsageIncomplete: Bool = true
+    cacheUsageIncomplete: Bool = true, images: Int64? = nil
   ) {
+    self.images = images
     self.inputTokens = inputTokens
     self.cachedTokens = cachedTokens
     self.cacheUsageIncomplete = cacheUsageIncomplete
@@ -304,8 +382,19 @@ public protocol UsageQuerying: Sendable {
 }
 public protocol ExecutionDiagnosticsStore: Sendable {
   func recordRejection(
-    requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
+    requestID: String, keyID: String, model: String?, mode: ExecutionMode,
+    failure: ExecutionFailure,
+    reason: RejectionReason?
   ) async throws
+}
+
+extension ExecutionDiagnosticsStore {
+  public func recordRejection(
+    requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
+  ) async throws {
+    try await recordRejection(
+      requestID: requestID, keyID: keyID, model: model, mode: mode, failure: failure, reason: nil)
+  }
 }
 
 public struct DailyUsageBucket: Sendable {
