@@ -1099,7 +1099,8 @@ func controlCooldownIsReadAfterOwnerRefresh(expired: Bool) async throws {
   await f.store.close()
   try rawSQL(
     f.path,
-    "DROP TABLE account_quota_cycle_samples; ALTER TABLE model_directory_routes DROP COLUMN reasoning_efforts; PRAGMA user_version=16")
+    "DROP TABLE account_quota_cycle_samples; ALTER TABLE model_directory_routes DROP COLUMN reasoning_efforts; PRAGMA user_version=16"
+  )
   let upgraded = try await SQLiteExecutionStore.open(
     path: f.path, limits: syntheticLimits, clock: testClock, allowStartupMigration: true)
   #expect(try await upgraded.quotaCycleTrend(id: "a").primary?.samples.count == 2)
