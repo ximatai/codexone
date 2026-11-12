@@ -87,8 +87,8 @@
 | `@rolldown/pluginutils` | 1.0.1 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/spec` | 1.1.0 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/utils` | 0.3.0 | MIT | 正文已读：`LICENSE` |
-| `@tabler/icons` | 3.35.0 | MIT | 正文已读：`LICENSE`, `icons/outline/license-off.svg`, `icons/outline/license.svg` |
-| `@tabler/icons-react` | 3.35.0 | MIT | 正文已读：`LICENSE` |
+| `@tabler/icons` | 3.50.0 | MIT | 正文已读：`LICENSE`, `icons/outline/license-off.svg`, `icons/outline/license.svg` |
+| `@tabler/icons-react` | 3.50.0 | MIT | 正文已读：`LICENSE` |
 | `@tanstack/query-core` | 5.104.5 | MIT | 正文已读：`LICENSE` |
 | `@tanstack/react-query` | 5.104.5 | MIT | 正文已读：`LICENSE` |
 | `@testing-library/dom` | 10.4.2 | MIT | 正文已读：`LICENSE` |
@@ -132,7 +132,7 @@
 | `@typescript/typescript-sunos-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-sunos-x64/7.0.2)；正文未在本地安装 |
 | `@typescript/typescript-win32-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-arm64/7.0.2)；正文未在本地安装 |
 | `@typescript/typescript-win32-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-x64/7.0.2)；正文未在本地安装 |
-| `@vitejs/plugin-react` | 6.1.2 | MIT | 正文已读：`LICENSE` |
+| `@vitejs/plugin-react` | 6.2.1 | MIT | 正文已读：`LICENSE` |
 | `@vitest/mocker` | 5.0.5 | MIT | 正文已读：`LICENSE` |
 | `@vitest/spy` | 5.0.5 | MIT | 正文已读：`LICENSE` |
 | `ansi-regex` | 5.0.1 | MIT | 正文已读：`license` |
@@ -223,7 +223,7 @@
 | `react-redux` | 9.3.1 | MIT | 正文已读：`LICENSE.md` |
 | `react-remove-scroll` | 2.7.2 | MIT | 正文已读：`LICENSE` |
 | `react-remove-scroll-bar` | 2.3.8 | MIT | 正文已读：`react-remove-scroll-bar/LICENSE` |
-| `react-router` | 8.5.0 | MIT | 正文已读：`LICENSE.md` |
+| `react-router` | 8.5.1 | MIT | 正文已读：`LICENSE.md` |
 | `react-style-singleton` | 2.2.3 | MIT | 正文已读：`LICENSE` |
 | `react-transition-group` | 4.4.5 | BSD-3-Clause | 正文已读：`LICENSE` |
 | `recharts` | 3.9.0 | MIT | 正文已读：`LICENSE` |
