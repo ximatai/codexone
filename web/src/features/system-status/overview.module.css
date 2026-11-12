@@ -61,13 +61,19 @@
 
 .outputRateValue {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: flex-end;
   gap: 4px;
   flex: 1;
   font-size: var(--mantine-font-size-md);
   font-weight: 650;
   white-space: nowrap;
+}
+
+.outputRateValue > [data-continuous-value] {
+  min-inline-size: 6ch;
+  block-size: 1em;
+  text-align: end;
 }
 
 @container (width < 260px) {
