@@ -1,3 +1,4 @@
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -5,7 +6,6 @@ import {
   Anchor,
   Badge,
   Button,
-  Drawer,
   Group,
   Paper,
   Stack,
@@ -70,10 +70,6 @@ export function KeyResults({
     "data" | "isError" | "isPending" | "dataUpdatedAt" | "refetch"
   >;
 }) {
-  const [detail, setDetail] = useState<{
-    row: KeySummary;
-    snapshot: string;
-  } | null>(null);
   const [now, setNow] = useState(Date.now() / 1000);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -99,16 +95,13 @@ export function KeyResults({
         }),
     [report?.keys],
   );
+  const masked = usePrivacyMask();
   const offset = report?.businessDay.offsetMinutes ?? 0;
   const oldWindow =
     report && (now < report.startUnixSeconds || now >= report.endUnixSeconds);
   const snapshot = report
     ? `${businessDate(report.startUnixSeconds, offset)} · ${report.timezone}`
     : "";
-  const refreshedDetail =
-    detail && report?.keys.find((row) => row.keyID === detail.row.keyID);
-  const detailRow = refreshedDetail ?? detail?.row;
-  const detailSnapshot = refreshedDetail ? snapshot : detail?.snapshot;
   const unknown = (row: KeySummary) =>
     row.admitted - row.succeeded - row.failed - row.cancelled - row.inFlight;
   const name = (row: KeySummary) =>
@@ -119,7 +112,7 @@ export function KeyResults({
     {
       id: "key",
       title: "Key",
-      width: "27%",
+      width: "23%",
       render: (row) => (
         <Stack gap={4} align="flex-start">
           <Group gap={6} wrap="nowrap" className={styles.keyIdentity}>
@@ -127,10 +120,19 @@ export function KeyResults({
               variant="subtle"
               size="compact-sm"
               className={styles.keyButton}
-              title={`${row.principal ?? "主体未记录"} · ${row.keyID}`}
-              onClick={() => setDetail({ row, snapshot })}
+              title={
+                masked
+                  ? undefined
+                  : `${row.principal ?? "主体未记录"} · ${row.keyID}`
+              }
+              component={Link}
+              to={`/keys?${new URLSearchParams({
+                status: "all",
+                target: row.keyID,
+                detail: row.keyID,
+              })}`}
             >
-              {name(row)}
+              <PrivateName>{name(row)}</PrivateName>
             </Button>
             {row.inFlight > 0 && (
               <Badge color="blue" aria-label={`执行中 ${row.inFlight}`}>
@@ -159,7 +161,7 @@ export function KeyResults({
     {
       id: "lastUsed",
       title: "最近活动",
-      width: "20%",
+      width: "17%",
       render: (row) => (
         <Text
           size="xs"
@@ -188,7 +190,7 @@ export function KeyResults({
     {
       id: "failed",
       title: "失败率",
-      width: "17%",
+      width: "13%",
       render: (row) => {
         const eligible = row.admitted - row.cancelled;
         if (eligible <= 0 || !report) return <Text size="sm">—</Text>;
@@ -199,7 +201,7 @@ export function KeyResults({
             to={failureLink(row, report)}
             size="sm"
             c={highFailure(row) ? "orange.8" : undefined}
-            aria-label={`${name(row)} 失败率 ${rate}`}
+            aria-label={`${masked ? "已隐藏 Key" : name(row)} 失败率 ${rate}`}
             title="查看失败请求"
           >
             <ContinuousValue text={rate} />
@@ -226,6 +228,25 @@ export function KeyResults({
                 ? "—"
                 : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactKeyTokens(row.tokens)}`
             }
+          />
+        </Text>
+      ),
+    },
+    {
+      id: "images",
+      title: "生图张数",
+      width: "11%",
+      render: (row) => (
+        <Text
+          size="sm"
+          title={
+            row.images == null
+              ? "无图片产出观测"
+              : BigInt(row.images).toLocaleString("zh-CN")
+          }
+        >
+          <ContinuousValue
+            text={row.images == null ? "—" : compactCount(row.images)}
           />
         </Text>
       ),
@@ -299,46 +320,6 @@ export function KeyResults({
           empty="暂无活跃 Key"
         />
       )}
-      <Drawer
-        opened={detail !== null}
-        onClose={() => setDetail(null)}
-        title="Key 详情"
-        size="sm"
-        closeButtonProps={{ "aria-label": "关闭" }}
-        lockScroll={false}
-        removeScrollProps={{ enabled: false }}
-        data-ui-overlay={detail !== null ? "true" : undefined}
-      >
-        {detailRow && (
-          <Stack>
-            <Text fw={600}>{name(detailRow)}</Text>
-            <Text className="wrap-anywhere">
-              主体：{detailRow.principal ?? "未记录"}
-            </Text>
-            <Text className="wrap-anywhere">Key ID：{detailRow.keyID}</Text>
-            <Text>{detailSnapshot}</Text>
-            <Text>
-              请求：{detailRow.admitted.toLocaleString("zh-CN")} · 失败：
-              {detailRow.failed.toLocaleString("zh-CN")}
-            </Text>
-            <Text>
-              Token：{detailRow.tokenUsageIncomplete ? "≥ " : ""}
-              {detailRow.tokens == null
-                ? "未观测"
-                : BigInt(detailRow.tokens).toLocaleString("zh-CN")}
-            </Text>
-            <Text>
-              缓存 / 输入 Token：{detailRow.cachedTokens ?? "未观测"} /{" "}
-              {detailRow.inputTokens ?? "未观测"}
-            </Text>
-            {detailRow.cacheUsageIncomplete && (
-              <Text size="sm">
-                部分请求没有完整宿主用量，缓存率只使用已观测输入。
-              </Text>
-            )}
-          </Stack>
-        )}
-      </Drawer>
     </Paper>
   );
 }

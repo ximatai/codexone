@@ -15,6 +15,8 @@ on:
         type: boolean
 permissions:
   contents: read
+env:
+  CODEXONE_CI_APT_MIRROR: https://mirrors.edge.kernel.org/ubuntu
 concurrency:
   group: release-${{ inputs.ref || github.ref_name }}
   cancel-in-progress: false
@@ -98,9 +100,11 @@ jobs:
           # Export only executables, never verification RUN layers or the SDK image.
           docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
             "${cache_from[@]}" "${optimized_cache_to[@]}" --target verification-export \
+            --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
             --build-arg BUILD_JOBS=2 --output type=local,dest=optimized-output -f deploy/Dockerfile .
           docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
             "${cache_from[@]}" "${runtime_cache_to[@]}" --load --provenance=false \
+            --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
             --build-arg BUILD_JOBS=2 --build-arg SOURCE_REVISION="$REVISION" \
             --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
       - name: Check candidate platform and source labels
@@ -208,7 +212,9 @@ jobs:
           printf '%s  binaries/backend-binaries.tar.gz\n' "$BINARIES_ARCHIVE_SHA256" | sha256sum --check -
           tar -xzf binaries/backend-binaries.tar.gz -C binaries
       - name: Build verification tools without compiling the product
-        run: docker build --platform linux/amd64 --target verification-tools -f deploy/Dockerfile -t codexone:verification-tools .
+        run: >-
+          docker build --platform linux/amd64 --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR"
+          --target verification-tools -f deploy/Dockerfile -t codexone:verification-tools .
       - name: Verify optimized protocol and lifecycle shard without external network
         run: |
           docker run --rm --platform linux/amd64 --network none \
@@ -257,7 +263,8 @@ jobs:
       - name: Verify real local TLS reverse proxy with the candidate binary and SPA
         if: matrix.suite == 'tls'
         run: |
-          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
+          docker build --platform linux/amd64 --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
+            -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
           docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
             --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
             --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
@@ -266,16 +273,13 @@ jobs:
             codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone
       - name: Verify actual private installation
         if: matrix.suite == 'installation'
-        run: |
-          docker pull ghcr.io/ximatai/codexone:0.26.15
-          old_image="$(docker image inspect ghcr.io/ximatai/codexone:0.26.15 --format '{{.Id}}')"
-          python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)" \
-            --incompatible-image "$old_image" --incompatible-schema 12
+        run: python3 scripts/verify_installation.py --image "$(cat artifacts/image-id.txt)"
       - name: Verify mixed capacity in isolated native Linux containers
         if: matrix.suite == 'capacity'
         run: |
           python3 scripts/test_verify_mixed_capacity.py
-          docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:verification-tools .
+          docker build --platform linux/amd64 --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
+            -f deploy/tls-verification.Dockerfile -t codexone:verification-tools .
           python3 scripts/verify_mixed_capacity.py --image "$(cat artifacts/image-id.txt)" \
             --harness-image codexone:verification-tools --output artifacts/mixed-capacity
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

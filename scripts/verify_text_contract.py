@@ -30,6 +30,10 @@ CASES = ['extension', 'ok', 'details-empty', 'sparse-stream', 'large-echo', 'eve
          'usage-progress-output', 'usage-progress-cached', 'usage-created-metadata', 'usage-progress-metadata',
          'usage-metadata', 'usage-root', 'usage-capacity', 'usage-details', 'usage-details-capacity',
          'usage-reasoning', 'usage-cache-write', 'usage-cached', 'total-negative', 'total-null', 'total-fraction', 'total-conflict', 'foreign-terminal', 'foreign-delta']
+PR_CASES = (
+    'ok', 'extension', 'sparse-stream', 'event-oversized', 'incomplete-known-reason',
+    'status-conflict', 'usage-root', 'total-conflict', 'foreign-terminal', 'foreign-delta',
+)
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -53,6 +57,10 @@ class Provider(BaseHTTPRequestHandler):
         mode = self.server.mode
         if mode == 'extension':
             assert request['synthetic_future'] == {'large':9007199254740993, 'nullable':None, 'values':[False, '合成']}
+            events[2:2] = [
+                dict(type='response.metadata', response_id=result['id'], metadata={'synthetic': True}),
+                dict(type='responsesapi.websocket_timing', duration_ms=1.25),
+            ]
             events.insert(2, dict(type='synthetic.future.event', response_id=result['id'],
                 item_id='synthetic-unowned-extension', item=dict(id='synthetic-unowned-extension', call_id='synthetic-unowned-call'),
                 future=request['synthetic_future']))
@@ -223,9 +231,12 @@ def outcomes(root):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--case', choices=CASES)
+    cases = parser.add_mutually_exclusive_group()
+    cases.add_argument('--case', choices=CASES)
+    cases.add_argument('--smoke', action='store_true', help='Run representative contract cases on both transports')
     parser.add_argument('--transport', choices=('http', 'websocket'))
     args = parser.parse_args()
+    selected_cases = (args.case,) if args.case else PR_CASES if args.smoke else CASES
     binary = str(args.binary.resolve())
     provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     provider.guard = threading.Lock()
@@ -237,7 +248,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='codexone-text-contract-') as temporary:
             for transport in ((args.transport,) if args.transport else ('http', 'websocket')):
                 transport_start = provider.calls
-                for mode in ([args.case] if args.case else CASES):
+                for mode in selected_cases:
                     if transport == 'websocket' and mode == 'sparse-stream':
                         continue  # Preserve native WS's existing stronger created/turn barrier.
                     if transport == 'http' and mode == 'event-oversized':
@@ -289,6 +300,11 @@ def main():
                                 extension = next(e for e in events if e['type'] == 'synthetic.future.event')
                                 assert extension['future'] == request['synthetic_future']
                                 assert extension['item_id'] == 'synthetic-unowned-extension'
+                                metadata = next(e for e in events if e['type'] == 'response.metadata')
+                                assert metadata['metadata'] == {'synthetic': True}
+                                assert metadata['response_id'] == events[-1]['response']['id']
+                                timing = next(e for e in events if e['type'] == 'responsesapi.websocket_timing')
+                                assert timing['duration_ms'] == 1.25
                             result = events[-1]
                             if mode not in FAILED:
                                 # Provider metadata variations are forwarded; they never fail delivery.

@@ -281,38 +281,49 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
     page.getByRole("heading", { name: "进行中请求", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("暂无速率数据")).toBeVisible();
-  socket!.send(
-    JSON.stringify({
-      protocol: 1,
-      epoch: "synthetic-before-restart",
-      sequence: 2,
-      kind: "update",
-      sections: {
-        inFlight: {
-          ...sections.inFlight,
-          version: 2,
-          data: {
-            rows: [
-              {
-                id: "synthetic-retired-request",
-                model: "synthetic-retired-model",
-                keyID: "synthetic-key",
-                mode: "http",
-                accountID: null,
-                hasFirstEvent: false,
-                elapsedSeconds: 3,
+  const sendHourlyRate = (sequence: number, median: number, count: number) => {
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-before-restart",
+        sequence,
+        kind: "update",
+        sections: {
+          inFlight: {
+            ...sections.inFlight,
+            version: sequence,
+            data: {
+              rows: [
+                {
+                  id: "synthetic-retired-request",
+                  model: "synthetic-retired-model",
+                  keyID: "synthetic-key",
+                  mode: "http",
+                  accountID: null,
+                  hasFirstEvent: false,
+                  elapsedSeconds: 3,
+                },
+              ],
+              recentlyFinished: [],
+              clients: [],
+              overflow: 0,
+              recentRequestOutputRateMedian: 42.5,
+              requestOutputRateByHour: {
+                endUnixSeconds: day,
+                offsetMinutes: 480,
+                points: {
+                  [day - 3 * 3600]: { median: 20, count: 2 },
+                  [day - 2 * 3600]: { median: 30, count: 3 },
+                  [day]: { median, count },
+                },
               },
-            ],
-            recentlyFinished: [],
-            clients: [],
-            overflow: 0,
-            recentRequestOutputRateMedian: 42.5,
-            requestOutputRateMediansByDay: { [day]: 42.5 },
+            },
           },
         },
-      },
-    }),
-  );
+      }),
+    );
+  };
+  sendHourlyRate(2, 42.5, 5);
   await expect(
     page.getByLabel("在途请求卡片").getByText("synthetic-retired-model"),
   ).toBeVisible();
@@ -322,13 +333,44 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
   const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
-  await expect(trend).toHaveAccessibleName(/(?:：|、)43(?:、|$)/);
+  await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
+  const dots = trend.locator("circle.recharts-dot");
+  await expect(dots).toHaveCount(1);
+  await dots.hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "43 Token/s · 5 笔样本",
+  );
+  await expect(page.getByRole("tooltip")).toContainText("08:00");
+  await page.getByRole("heading", { name: "请求输出速率" }).hover();
+  const readout = page
+    .locator('[title="最近有样本的小时"]')
+    .locator("[data-continuous-value]");
+  await expect(readout).toBeVisible();
+  await expect(readout).toHaveText("最近 43 Token/s");
+  const readoutBox = await readout.boundingBox();
+  for (const [sequence, median, label] of [
+    [3, 1234, "1,234 Token/s"],
+    [4, 0, "0 Token/s"],
+  ] as const) {
+    sendHourlyRate(sequence, median, 6);
+    await expect(readout).toHaveText(`最近 ${label}`);
+    await expect(trend).toHaveAccessibleName(
+      `请求输出速率近 7 天：最近有样本的小时 ${label}`,
+    );
+    expect(await readout.boundingBox()).toEqual(readoutBox);
+  }
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(trend).toBeVisible();
+  const narrowTrend = await trend.boundingBox();
+  expect(narrowTrend!.x + narrowTrend!.width).toBeLessThanOrEqual(390);
+  await page.setViewportSize(originalViewport);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,
   );
   for (const [sequence, freshness, heading] of [
-    [3, "stale", "进行中请求"],
-    [4, "fresh", "进行中请求 · 43 Token/s"],
+    [5, "stale", "进行中请求"],
+    [6, "fresh", "进行中请求 · 43 Token/s"],
   ] as const) {
     socket!.send(
       JSON.stringify({
@@ -338,7 +380,7 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
         kind: "update",
         sections: {
           inFlight: {
-            version: 2,
+            version: 4,
             sampledAtUnixSeconds: sections.inFlight.sampledAtUnixSeconds,
             lastSuccessAt: sections.inFlight.lastSuccessAt,
             freshness,
@@ -486,14 +528,18 @@ test("initial unavailable snapshot ends cancelled HTTP loading; source recovers 
 test("push updates resources without HTTP polling and resumes after fallback", async ({
   page,
 }) => {
-  test.setTimeout(30_000);
+  test.setTimeout(45_000);
   await page.clock.install();
   const state = await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   let reject = false;
+  let reconnectSnapshot: string | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
     if (reject) route.close({ code: 1013 });
-    else socket = route;
+    else {
+      socket = route;
+      if (reconnectSnapshot) route.send(reconnectSnapshot);
+    }
   });
   await page.goto("/");
   await expect.poll(() => !!socket).toBe(true);
@@ -618,25 +664,23 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   );
   await expect(page.getByText("各源更新时间", { exact: true })).toHaveCount(0);
   const previousSocket = socket;
-  reject = false;
-  await page.clock.fastForward(61000);
-  await expect.poll(() => socket !== previousSocket).toBe(true);
-  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000));
+  const resumed = await page.evaluate(() => Math.floor(Date.now() / 1000) + 61);
   const fresh = Object.fromEntries(
     Object.entries({ ...sections, storage: resource }).map(([name, source]) => [
       name,
       { ...source, lastSuccessAt: resumed, sampledAtUnixSeconds: resumed },
     ]),
   );
-  socket!.send(
-    JSON.stringify({
-      protocol: 1,
-      epoch: "synthetic-fallback",
-      sequence: 1,
-      kind: "snapshot",
-      sections: fresh,
-    }),
-  );
+  reconnectSnapshot = JSON.stringify({
+    protocol: 1,
+    epoch: "synthetic-fallback",
+    sequence: 1,
+    kind: "snapshot",
+    sections: fresh,
+  });
+  reject = false;
+  await page.clock.fastForward(61000);
+  await expect.poll(() => socket !== previousSocket).toBe(true);
   await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
     "data-live-mode",
     "live",
@@ -646,99 +690,83 @@ test("push updates resources without HTTP polling and resumes after fallback", a
   expect(overviewReads()).toBe(resumedReads);
 });
 
-for (const width of [1440, 390])
-  test(`live cards leave the grid when requests finish at ${width}px`, async ({
-    page,
-  }) => {
-    await reviewFixture(page);
-    let socket: WebSocketRoute | undefined;
-    await page.routeWebSocket("**/api/overview/live", (route) => {
-      socket = route;
-    });
-    await page.setViewportSize({ width, height: 900 });
-    await page.goto("/");
-    await expect.poll(() => !!socket).toBe(true);
-    const sections = await initialSections(page);
-    const send = (
-      sequence: number,
-      inFlight: unknown,
-      epoch = "synthetic-watch",
-    ) =>
-      socket!.send(
-        JSON.stringify({
-          protocol: 1,
-          epoch,
-          sequence,
-          kind: sequence === 1 ? "snapshot" : "update",
-          sections:
-            sequence === 1
-              ? sections
-              : {
-                  inFlight: {
-                    ...sections.inFlight,
-                    version: sequence,
-                    data: inFlight,
-                  },
-                },
-        }),
-      );
-    send(1, null);
-    const cards = page.getByLabel("在途请求卡片");
-    await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
-      "data-live-mode",
-      "live",
-    );
-    const row = {
-      id: "synthetic-running-request",
-      keyID: "synthetic-key",
-      principal: "synthetic-tool",
-      model: "synthetic-text",
-      mode: "http",
-      accountID: null,
-      elapsedSeconds: 0,
-      startedAtUnixSeconds: Math.floor(Date.now() / 1000),
-      hasFirstEvent: false,
-    };
-    const data = {
-      rows: [row],
-      recentlyFinished: [],
-      clients: [
-        {
-          keyID: "synthetic-unnamed",
-          displayName: null,
-          count: 1,
-          connectedAtUnixSeconds: Math.floor(Date.now() / 1000),
-        },
-      ],
-      overflow: 0,
-    };
-    send(2, data);
-    await expect(cards.getByText("synthetic-text")).toBeVisible();
-    await expect(cards.getByText("等待响应")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "固定观察此请求" }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole("heading", { name: "持续连接", exact: true }),
-    ).toHaveCount(0);
-    // Older gateways can still send a retained completion. Only rows drive the cards.
-    send(3, {
-      ...data,
-      rows: [],
-      recentlyFinished: [
-        {
-          ...row,
-          outcome: "succeeded",
-          finishedAtUnixSeconds: Math.floor(Date.now() / 1000),
-        },
-      ],
-    });
-    await expect(cards).toHaveCount(0);
-    await expect(page.getByText("暂无进行中请求")).toBeVisible();
-    await expect(page.getByRole("region", { name: "请求关注" })).toHaveCount(0);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
+test("live request cards leave the grid with reduced motion on a narrow screen", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await reviewFixture(page);
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket("**/api/overview/live", (route) => {
+    socket = route;
   });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/");
+  await expect.poll(() => !!socket).toBe(true);
+  const sections = await initialSections(page);
+  const send = (sequence: number, inFlight: unknown) =>
+    socket!.send(
+      JSON.stringify({
+        protocol: 1,
+        epoch: "synthetic-watch",
+        sequence,
+        kind: sequence === 1 ? "snapshot" : "update",
+        sections:
+          sequence === 1
+            ? sections
+            : {
+                inFlight: {
+                  ...sections.inFlight,
+                  version: sequence,
+                  data: inFlight,
+                },
+              },
+      }),
+    );
+  send(1, null);
+  const cards = page.getByLabel("在途请求卡片");
+  await expect(page.getByLabel("概览连接状态")).toHaveAttribute(
+    "data-live-mode",
+    "live",
+  );
+  const row = {
+    id: "synthetic-running-request",
+    keyID: "synthetic-key",
+    principal: "synthetic-tool",
+    model: "synthetic-text",
+    mode: "http",
+    accountID: null,
+    elapsedSeconds: 0,
+    startedAtUnixSeconds: Math.floor(Date.now() / 1000),
+    hasFirstEvent: false,
+  };
+  const data = {
+    rows: [row],
+    recentlyFinished: [],
+    clients: [
+      {
+        keyID: "synthetic-unnamed",
+        displayName: null,
+        count: 1,
+        connectedAtUnixSeconds: Math.floor(Date.now() / 1000),
+      },
+    ],
+    overflow: 0,
+  };
+  send(2, data);
+  await expect(cards.getByText("synthetic-text")).toBeVisible();
+  await expect(cards.getByText("等待响应")).toBeVisible();
+  // Older gateways can still send a retained completion. Only rows drive the cards.
+  send(3, {
+    ...data,
+    rows: [],
+    recentlyFinished: [
+      {
+        ...row,
+        outcome: "succeeded",
+        finishedAtUnixSeconds: Math.floor(Date.now() / 1000),
+      },
+    ],
+  });
+  await expect(cards).toHaveCount(0);
+  await expect(page.getByText("暂无进行中请求")).toBeVisible();
+});

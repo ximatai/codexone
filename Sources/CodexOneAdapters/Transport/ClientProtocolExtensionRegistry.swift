@@ -39,7 +39,7 @@ public final class ClientProtocolExtensionRegistry: Sendable {
 
   /// Observe names only, sharing the existing process-local capacity and overflow signal.
   func recordUpstreamEvent(_ event: JSONValue) {
-    guard !ProviderEventSemantics(event).known,
+    guard !ProviderEventSemantics(event).recognizedType,
       let type = try? ProviderObservation.eventType(event)
     else { return }
     let name = "upstream_event." + type

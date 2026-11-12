@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { DateInput } from "@mantine/dates";
 import { isUTCDateInput } from "./date-input";
 import { TokenLimitInput } from "./TokenLimitInput";
@@ -87,6 +88,7 @@ export function KeyEditor({
   hideSubmit?: boolean;
   formId?: string;
 }) {
+  const masked = usePrivacyMask();
   const retainedScopes = useRef({
     models: entry?.models ?? [],
     imageModels: entry?.imageModels ?? [],
@@ -183,6 +185,7 @@ export function KeyEditor({
         {!entry && (
           <TextInput
             label="主体标识"
+            type={masked ? "password" : "text"}
             aria-label="主体标识"
             withAsterisk
             placeholder="例如 team-a"
@@ -195,6 +198,7 @@ export function KeyEditor({
         {entry && (
           <TextInput
             label="显示名"
+            type={masked ? "password" : "text"}
             title="留空恢复主体标识"
             disabled={disabled}
             {...form.getInputProps("displayName")}

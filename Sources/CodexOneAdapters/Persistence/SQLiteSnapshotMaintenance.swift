@@ -148,7 +148,8 @@ public enum SQLiteSnapshotMaintenance {
         unchangedSource.1 == manifest.databaseSHA256
       else { throw ExecutionError.invalidCommand }
       let target = try SQLiteConnection(
-        path: staging, existingOnly: true, restoringV7: manifest.schema < 13, clock: clock)
+        path: staging, existingOnly: true,
+        restoringV7: Int64(manifest.schema) < SQLiteConnection.schemaVersion, clock: clock)
       let completedCopyAt = clock.unixSeconds
       let record = RestoreRecord(
         id: UUID().uuidString, backupID: manifest.id,
@@ -241,7 +242,8 @@ public enum SQLiteSnapshotMaintenance {
     let manifest: SnapshotManifest = try JSONDecoder().decode(
       SnapshotManifest.self, from: readFile(bundle + "/manifest.json", limit: 8192))
     let now = clock.unixSeconds
-    guard manifest.format == 1, (7...13).contains(manifest.schema),
+    guard manifest.format == 1,
+      (7...SQLiteConnection.schemaVersion).contains(Int64(manifest.schema)),
       UUID(uuidString: manifest.id) != nil,
       manifest.createdUnixSeconds > 0, manifest.createdUnixSeconds <= now,
       manifest.sourceGeneration.count == 32, manifest.requiredKeyIDs.count <= 64,

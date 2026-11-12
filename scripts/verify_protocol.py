@@ -22,6 +22,13 @@ TOKEN = "synthetic-client-token-for-local-tests"
 GATEWAY_OUTPUT_LIMIT = 65536
 
 
+def current_schema_version(binary):
+    result = subprocess.run([str(Path(binary).resolve()), '--schema-version'],
+        env={'PATH': os.defpath}, capture_output=True, timeout=5)
+    assert result.returncode == 0 and re.fullmatch(rb'[1-9][0-9]*\n', result.stdout), 'Invalid schema version output'
+    return int(result.stdout)
+
+
 def dump_gateway_failure(process, *, output=b""):
     """Snapshot a synthetic gateway before cleanup, without waiting for pipe EOF."""
     status = process.poll()

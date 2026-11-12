@@ -96,8 +96,10 @@ import Testing
     try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
   }
   let time = TestWallClock()
-  func open() async throws -> SQLiteExecutionStore {
-    try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits, clock: time.clock)
+  func open(automatic: Bool = true) async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(
+      path: path, limits: syntheticLimits, clock: time.clock,
+      allowStartupMigration: automatic)
   }
   func timed(_ milliseconds: Int64) throws -> ExecutionOutcome {
     try .init(failure: nil, atUnixSeconds: time.clock.unixSeconds, totalMilliseconds: milliseconds)
@@ -107,10 +109,32 @@ import Testing
   try await original.finalize(attempt: "legacy", evidence: usage(), outcome: timed(1000))
   await original.close()
   try rawSQL(path, removeOutputRateSchema + "PRAGMA user_version=12")
-  await #expect(throws: ExecutionError.incompatibleSchema) { try await open() }
-  try await SQLiteExecutionStore.migrate(path: path, clock: time.clock)
+  await #expect(throws: ExecutionError.incompatibleSchema) { try await open(automatic: false) }
+
+  // Force the DDL transaction to fail after ALTER TABLE has already executed.
+  try rawSQL(path, "CREATE INDEX attempts_output_rate ON attempts(id)")
+  await #expect(throws: StartupMigrationError.transactionFailed) { try await open() }
+  let failed = try SQLiteConnection(readOnlyPath: path)
+  #expect(try failed.scalar("PRAGMA user_version") == 12)
+  #expect(
+    try failed.scalar("SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name='output_rate'")
+      == 0)
+  failed.shutdown()
+  try rawSQL(path, "DROP INDEX attempts_output_rate")
+  let folder = (path as NSString).deletingLastPathComponent
+  func backups() throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: folder).filter { $0.contains(".pre-v13-") }
+  }
+  #expect(try backups().count == 1)
 
   let upgraded = try await open()
+  #expect(try backups().count == 2)
+  for backup in try backups() {
+    let source = try SQLiteConnection(readOnlyPath: folder + "/" + backup)
+    #expect(try source.scalar("PRAGMA user_version") == 12)
+    #expect(try source.scalar("SELECT COUNT(*) FROM attempts WHERE id='legacy'") == 1)
+    source.shutdown()
+  }
   #expect(try await upgraded.snapshot(attempt: "legacy").state == .settled)
   #expect(upgraded.overviewActivity.requestOutputSnapshot(at: time.clock.unixSeconds).days.isEmpty)
   try await upgraded.admit(admission("first-day"))
@@ -125,8 +149,10 @@ import Testing
   await upgraded.close()
 
   let reopened = try await open()
+  #expect(try backups().count == 2)
   let restored = reopened.overviewActivity.requestOutputSnapshot(at: now)
   #expect(restored.days == before.days)
+  #expect(restored.hours == before.hours)
   #expect(restored.rate == nil)
   try await reopened.finalize(attempt: "second-day", evidence: usage(revision: 2, amount: 30))
   #expect(reopened.overviewActivity.requestOutputSnapshot(at: now).days == before.days)
@@ -134,14 +160,71 @@ import Testing
   await reopened.close()
 }
 
+@Test func outputRateHoursKeepThePartialEighthDayAndOmitEmptyHours() throws {
+  let activity = OverviewActivity()
+  let now = testUnixSeconds / 86400 * 86400 + 3600
+  let first = now - 167 * 3600
+  for (index, sample) in [(first - 3600, 9), (first, 4), (first + 15, 8), (now, 20)].enumerated() {
+    activity.recordRequestOutput(
+      Decimal(sample.1), at: sample.0, rowID: Int64(index + 1))
+  }
+  let history = activity.requestOutputSnapshot(at: now).hours
+  let points = try #require(history["points"]?.object)
+  #expect(history["endUnixSeconds"]?.integer == now)
+  #expect(points.count == 2)
+  #expect(points[String(first)]?["median"]?.integer == 6)
+  #expect(points[String(first)]?["count"]?.integer == 2)
+  #expect(points[String(now)]?["median"]?.integer == 20)
+}
+
+@Test func outputRateHourlyCapDoesNotEvictEarlierHoursAfterRestart() async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let morning = testUnixSeconds / 86400 * 86400
+  let peak = morning + 3600
+  let time = TestWallClock(peak)
+  let day = try BusinessDayDefinition(offsetMinutes: 480)
+  func open() async throws -> SQLiteExecutionStore {
+    try await SQLiteExecutionStore.open(
+      path: path, limits: syntheticLimits, clock: time.clock, businessDay: day)
+  }
+  let store = try await open()
+  let activity = store.overviewActivity
+  activity.recordRequestOutput(12, at: morning, rowID: 1)
+  for i in 2...4098 {
+    activity.recordRequestOutput(i < 4000 ? 1 : 20, at: peak, rowID: Int64(i))
+  }
+  let before = activity.requestOutputSnapshot(at: peak).hours
+  let points = try #require(before["points"]?.object)
+  #expect(before["offsetMinutes"]?.integer == 480)
+  #expect(points[String(morning)]?["median"]?.integer == 12)
+  #expect(points[String(peak)]?["median"]?.integer == 1)
+  #expect(points[String(peak)]?["count"]?.integer == 256)
+  await store.close()
+  try rawSQL(
+    path,
+    """
+    WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<4098)
+    INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,reserved,state,admission_json,output_rate_settled_at,output_rate)
+    SELECT 'synthetic-hourly-'||i,'synthetic','synthetic','synthetic','synthetic','synthetic','1','1',1,'settled','{}',
+           CASE WHEN i=1 THEN \(morning) ELSE \(peak) END,
+           CASE WHEN i=1 THEN '12' WHEN i<4000 THEN '1' ELSE '20' END FROM n ORDER BY i;
+    """)
+  let restored = try await open()
+  #expect(restored.overviewActivity.requestOutputSnapshot(at: peak).hours == before)
+  await restored.close()
+}
+
 @Test func outputRateDailyCapBreaksSettlementTiesInRecoveryOrder() {
   let activity = OverviewActivity()
   let now = testUnixSeconds
   // The later admission settles first, but wins the final slot in both live and recovery order.
-  activity.recordRequestOutput(3, at: now, rowID: 2, businessDay: .utc)
-  activity.recordRequestOutput(1, at: now, rowID: 1, businessDay: .utc)
+  activity.recordRequestOutput(3, at: now, rowID: 2)
+  activity.recordRequestOutput(1, at: now, rowID: 1)
   for i in 3...4097 {
-    activity.recordRequestOutput(i < 2050 ? 1 : 3, at: now + 1, rowID: Int64(i), businessDay: .utc)
+    activity.recordRequestOutput(i < 2050 ? 1 : 3, at: now + 1, rowID: Int64(i))
   }
   #expect(activity.requestOutputSnapshot(at: now + 1).days.values.first == .number(3))
 }

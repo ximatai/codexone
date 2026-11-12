@@ -9,12 +9,24 @@ import {
   IconAlertTriangle,
 } from "@tabler/icons-react";
 import { AreaChart } from "@mantine/charts";
-import { Group, Paper, Text, ThemeIcon, Skeleton, Title } from "@mantine/core";
+import { Dot } from "recharts";
+import {
+  Anchor,
+  Group,
+  Paper,
+  Text,
+  ThemeIcon,
+  Skeleton,
+  Title,
+} from "@mantine/core";
 import { tokenTotal, type DailyBucket } from "./round2-api";
+import { Link } from "react-router";
+import { businessDate } from "../../shared/business-day";
 import { failures } from "../../shared/presentation";
-import { compactCount } from "./overview-format";
+import { compactCount, compactOverviewTokens } from "./overview-format";
 import styles from "./overview.module.css";
-const outputTrendHeight = 104;
+import type { HourlyOutputRate } from "./useOverviewLive";
+const outputTrendHeight = 84;
 const chartDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
   day: "numeric",
@@ -27,19 +39,21 @@ function Sparkline({
   format,
   label,
   compact = true,
+  description,
 }: {
   values: (number | null)[];
   dates: string[];
   format: (value: number, index: number) => string;
   label: string;
   compact?: boolean;
+  description?: string;
 }) {
   const motion = useOverviewMotion();
   return (
     <div
       className={compact ? styles.sparkline : undefined}
       role="img"
-      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(compact ? 1 : 0)))).join("、")}`}
+      aria-label={`${label}近 7 天：${description ?? values.map((v) => (v === null ? "不可用" : Number(v.toFixed(1)))).join("、")}`}
     >
       <AreaChart
         h={compact ? 64 : outputTrendHeight}
@@ -68,52 +82,88 @@ function Sparkline({
             );
           },
         }}
-        withDots={!compact}
+        withDots={false}
         withLegend={false}
         gridAxis="none"
         connectNulls={false}
         fillOpacity={0.2}
-        areaProps={{ isAnimationActive: motion, animationDuration: 250 }}
+        areaProps={{
+          isAnimationActive: compact && motion,
+          animationDuration: 250,
+          activeDot: compact ? false : { r: 3 },
+          dot: compact
+            ? false
+            : ({ index, cx, cy, stroke }) =>
+                values[index] != null &&
+                values[index - 1] == null &&
+                values[index + 1] == null ? (
+                  <Dot cx={cx} cy={cy} r={2} fill={stroke} />
+                ) : null,
+        }}
         curveType="monotone"
       />
     </div>
   );
 }
-export function OutputRateTrend({
-  buckets,
-  rates,
-  offsetMinutes = 0,
-}: {
-  buckets: DailyBucket[];
-  rates?: Readonly<Record<string, number>>;
-  offsetMinutes?: number;
-}) {
-  const values = buckets.map(
-    ({ atUnixSeconds }) => rates?.[atUnixSeconds] ?? null,
-  );
+const chartHour = new Intl.DateTimeFormat("zh-CN", {
+  month: "long",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZone: "UTC",
+});
+
+export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
+  const hours = history
+    ? Array.from(
+        { length: 168 },
+        (_, index) => history.endUnixSeconds - (167 - index) * 3600,
+      )
+    : [];
+  const points = hours.map((hour) => history?.points[hour]);
+  const latest = points.findLast((point) => point !== undefined);
+  const rate = (value: number) =>
+    `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`;
   return (
     <Paper withBorder p="md">
       <Title order={3} size="h4">
         请求输出速率
       </Title>
-      <Text
-        size="xs"
-        c="dimmed"
-        mt={4}
-        title="每日请求输出速率中位数，包含首输出前的等待。"
-      >
-        近 7 天
-      </Text>
-      {values.some((value) => value !== null) ? (
+      <Group justify="space-between" gap={4} mt={4} mih={24}>
+        <Text
+          size="xs"
+          c="dimmed"
+          title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
+        >
+          近 7 天
+        </Text>
+        {latest && (
+          <Text
+            className={styles.outputRateValue}
+            size="sm"
+            fw={600}
+            flex={1}
+            ta="right"
+            title="最近有样本的小时"
+          >
+            <ContinuousValue text={`最近 ${rate(latest.median)}`} />
+          </Text>
+        )}
+      </Group>
+      {latest ? (
         <Sparkline
           label="请求输出速率"
-          values={values}
-          dates={buckets.map((bucket) =>
-            chartDay.format((bucket.atUnixSeconds + offsetMinutes * 60) * 1000),
+          values={points.map((point) => point?.median ?? null)}
+          dates={hours.map((hour) =>
+            chartHour.format(
+              (hour + (history?.offsetMinutes ?? 0) * 60) * 1000,
+            ),
           )}
-          format={(value) =>
-            `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`
+          format={(value, index) =>
+            `${rate(value)} · ${points[index]?.count} 笔样本`
           }
+          description={`最近有样本的小时 ${rate(latest.median)}`}
           compact={false}
         />
       ) : (
@@ -137,6 +187,9 @@ export function OverviewStats({
   loading?: boolean;
 }) {
   const today = buckets.at(-1);
+  const rejectionDay = today
+    ? businessDate(today.atUnixSeconds, offsetMinutes)
+    : undefined;
   const todayImages = today?.metrics.images;
   const errorRate = (bucket: typeof today) => {
     if (!bucket) return null;
@@ -171,7 +224,7 @@ export function OverviewStats({
       label: "Token",
       value:
         today && tokenTotal(today) !== null
-          ? compactCount(
+          ? compactOverviewTokens(
               BigInt(today.metrics.inputTokens!) +
                 BigInt(today.metrics.outputTokens!),
             )
@@ -281,18 +334,32 @@ export function OverviewStats({
                 >
                   <ContinuousValue text={card.value} />
                 </Text>
-                <Text
-                  className={styles.metricNote}
-                  size="xs"
-                  c="dimmed"
-                  title={
-                    index === 0 && card.note
-                      ? `准入前${card.note}`
-                      : card.note || undefined
-                  }
-                >
-                  {card.count ?? card.note}
-                </Text>
+                {index === 0 &&
+                rejectionDay &&
+                (today?.recordedRejections ?? 0) > 0 ? (
+                  <Anchor
+                    className={styles.metricNote}
+                    size="xs"
+                    component={Link}
+                    to={`/usage?start=${rejectionDay}&end=${rejectionDay}&rejectedOnly=true`}
+                    aria-label={`查看今日${card.note}条记录`}
+                  >
+                    {card.note}
+                  </Anchor>
+                ) : (
+                  <Text
+                    className={styles.metricNote}
+                    size="xs"
+                    c="dimmed"
+                    title={
+                      index === 0 && card.note
+                        ? `准入前${card.note}`
+                        : card.note || undefined
+                    }
+                  >
+                    {card.count ?? card.note}
+                  </Text>
+                )}
               </div>
               <Sparkline
                 label={card.label}

@@ -12,6 +12,22 @@ import time
 from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, FIXTURE, call, rows
 
+
+def verify_namespaced_tool_output(port, route, base, server):
+    developer = dict(role='developer', content='synthetic plugin context')
+    result = dict(type='function_call_output', name='synthetic_snapshot',
+                  namespace='synthetic_browser', output='{"page_id":null}')
+    before = server.calls
+    status, events = call(port, route, {**base, 'input': [
+        developer, {**result, 'id': 'synthetic-client-local-output'},
+    ]})
+    assert status == 200 and 'error' not in events[-1], (route, status, events[-1])
+    assert server.calls == before + 1, 'Unexpected plugin result replay'
+    wire = server.received[-1]
+    assert wire['input'] == [developer, result], (route, wire['input'])
+    assert wire['instructions'] == base['instructions']
+
+
 class Provider(WireProvider):
     def do_GET(self):
         with self.server.guard: self.server.upgrades += 1
@@ -71,7 +87,9 @@ def main():
                             good += [dict(reasoning={'effort': value}, service_tier=value)
                                      for value in ('INVALID', 'bad value', 'a'*33, 7, True)]
                             # Values the provider judges are forwarded, including future fields.
-                            good += [dict(synthetic_future_field={'enabled':True})]
+                            good += [dict(synthetic_future_field={'enabled':True}),
+                                     dict(prompt_cache_options={'ttl':'30m'}),
+                                     dict(prompt_cache_options={'ttl':'12h'})]
                             for extra in good:
                                 before=server.calls;status,events=call(ports['data'],route,{**base,**extra});total+=1
                                 assert status==200 and 'error' not in events[-1],(contract,transport,route,extra,events)
@@ -105,6 +123,7 @@ def main():
                                 assert admission.get('serviceTier') == (observed(extra['service_tier']) if 'service_tier' in extra else None)
                                 assert admission['requestMetadataRecorded'] is True
                                 assert outcome.get('actualServiceTier') == ('default' if extra.get('service_tier') is not None else None)
+                                assert wire.get('prompt_cache_options') == extra.get('prompt_cache_options')
                                 if 'include' in extra: assert wire['include'] == extra['include']
                                 if 'synthetic_future_field' in extra: assert wire['synthetic_future_field']=={'enabled':True}
                             # Only explicit constraints the subscription backend cannot honor fail before dispatch.
@@ -114,6 +133,10 @@ def main():
                                 status,events=call(ports['data'],route,{**base,**extra});total+=1
                                 assert 'error' in events[-1] and (route=='native' or status==400),(contract,transport,route,extra,status,events)
                                 assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts,'Rejected request admitted, connected or dispatched'
+                                request_id=events[-1]['error']['request_id']
+                                with sqlite3.connect(root/'state/core.sqlite') as db:
+                                    recorded=db.execute('SELECT failure,reason FROM request_diagnostics WHERE request_id=?',(request_id,)).fetchone()
+                                assert recorded==('invalid_request','backend_parameter_'+next(iter(extra))),recorded
                             tool=dict(type='image_generation',output_format='png',synthetic_extension={'enabled':True})
                             tool_choice=dict(type='image_generation')
                             image_request={**base,'tools':[tool],'tool_choice':tool_choice,
@@ -133,6 +156,8 @@ def main():
                                 assert events[-1]['error']['code']=='unsupported_backend_parameter'
                                 assert route=='native' or status==400
                                 assert server.calls==before and server.upgrades==upgrades and attempt_count(root)==attempts
+                                verify_namespaced_tool_output(ports['data'], route, base, server)
+                                total += 1
                             else:
                                 assert wire['input']==base['input'] and 'store' not in wire
                                 if transport=='websocket': assert 'stream' not in wire

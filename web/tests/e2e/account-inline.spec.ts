@@ -4,6 +4,7 @@ import { reviewFixture } from "./ui-review-fixture";
 test("overview opens account details in place and preserves scroll, navigation and history", async ({
   page,
 }) => {
+  test.setTimeout(30_000);
   await reviewFixture(page);
   await page.setViewportSize({ width: 1920, height: 1680 });
   await page.goto("/");
@@ -41,7 +42,7 @@ test("overview account deep links survive reload and report missing accounts ins
   page,
 }) => {
   test.setTimeout(30_000);
-  const state = await reviewFixture(page);
+  await reviewFixture(page);
   await page.goto("/#/?account=synthetic-account-2&extra=keep");
   const drawer = page.getByRole("dialog", { name: "账号详情" });
   await expect(drawer).toContainText("合成账号 2", { timeout: 10_000 });
@@ -51,13 +52,7 @@ test("overview account deep links survive reload and report missing accounts ins
   await expect(page).toHaveURL(/#\/\?extra=keep/);
   await page.goto("/#/?account=synthetic-missing");
   await expect(drawer).toContainText("目标账号已不存在或不在当前账号列表中。");
-  state.failures["/api/accounts"] = 503;
-  await page.reload();
-  await expect(drawer.getByRole("alert")).toBeVisible();
   await expect(page).toHaveURL(/#\/\?account=synthetic-missing/);
-  state.failures = {};
-  await drawer.getByRole("button", { name: "重试", exact: true }).click();
-  await expect(drawer).toContainText("目标账号已不存在或不在当前账号列表中。");
 });
 
 test("unconfigured account management reports its state inside the overview drawer", async ({

@@ -8,8 +8,14 @@ import Foundation
   import Glibc
 #endif
 
+package enum StartupMigrationError: Error {
+  case backupFailed, transactionFailed
+}
+
 /// All access is confined to SQLiteExecutionStore's serial queue.
-final class SQLiteConnection: @unchecked Sendable {
+package final class SQLiteConnection: @unchecked Sendable {
+  package static let schemaVersion: Int64 = 15
+
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
   private var readOnly = false
@@ -25,7 +31,8 @@ final class SQLiteConnection: @unchecked Sendable {
 
   init(
     path: String, migrating: Bool = false, existingOnly: Bool = false, restoringV7: Bool = false,
-    clock: WallClock = .system, businessDay: BusinessDayDefinition = .utc
+    allowStartupMigration: Bool = false, clock: WallClock = .system,
+    businessDay: BusinessDayDefinition = .utc
   )
     throws
   {
@@ -66,13 +73,17 @@ final class SQLiteConnection: @unchecked Sendable {
       try exec("PRAGMA foreign_keys=ON")
       guard try scalar("PRAGMA foreign_keys") == 1 else { throw ExecutionError.storageUnavailable }
       let version = try scalar("PRAGMA user_version")
+      let upgrading = (1..<Self.schemaVersion).contains(version)
+      let startupUpgrade = allowStartupMigration && (12...14).contains(version)
       guard
-        version == 0 || version == 13 || (restoringV7 && (7...12).contains(version))
-          || (migrating && (1...12).contains(version))
+        version == 0 || version == Self.schemaVersion || (restoringV7 && version >= 7 && upgrading)
+          || (migrating && upgrading) || startupUpgrade
       else {
         throw ExecutionError.incompatibleSchema
       }
-      if existingOnly && version != 13 && !(restoringV7 && (7...12).contains(version)) {
+      if existingOnly && version != Self.schemaVersion
+        && !(restoringV7 && version >= 7 && upgrading)
+      {
         throw ExecutionError.incompatibleSchema
       }
       if version == 0 {
@@ -99,13 +110,19 @@ final class SQLiteConnection: @unchecked Sendable {
             ? Self.accountColumns.map { table, columns in
               (table, columns + (version >= 9 && table == "accounts" ? ["display_name"] : []))
             } : [])
-          + (version >= 5 ? Self.observationColumns : [])
+          + (version >= 5
+            ? Self.observationColumns.map { table, columns in
+              (table, columns + (version >= 14 && table == "request_diagnostics" ? ["reason"] : []))
+            } : [])
           + (version >= 7 ? Self.maintenanceColumns : [])
           + (version >= 10
             ? Self.governanceColumns.map { table, columns in
               (table, columns + (version >= 12 && table == "usage_daily" ? Self.authorColumns : []))
             } : [])
           + (version >= 11 ? Self.resetCreditColumns : [])
+          + (version >= 15
+            ? [("account_credit_samples", ["account_id", "bucket_epoch", "at_epoch", "balance"])]
+            : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -113,11 +130,23 @@ final class SQLiteConnection: @unchecked Sendable {
           guard actual == expected else { throw ExecutionError.incompatibleSchema }
         }
       }
-      if migrating, !(1...13).contains(version) {
+      if migrating, !(1...Self.schemaVersion).contains(version) {
         throw ExecutionError.incompatibleSchema
       }
       guard try scalar("PRAGMA busy_timeout") == 250 else {
         throw ExecutionError.storageUnavailable
+      }
+      if startupUpgrade {
+        guard try scalar("PRAGMA auto_vacuum") == 2 else {
+          throw ExecutionError.incompatibleSchema
+        }
+        guard try reencryptionCheckpoint()?.complete != false else {
+          throw KeyMaintenanceError.incompleteReencryption
+        }
+        try StorageCapacity.require(
+          (canonical as NSString).deletingLastPathComponent,
+          additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") * 3 + 16 * 1024
+            * 1024, optional: true)
       }
       if version == 0 { try exec("PRAGMA auto_vacuum=INCREMENTAL") }
       let journal = try rows("PRAGMA journal_mode=WAL") {
@@ -143,16 +172,21 @@ final class SQLiteConnection: @unchecked Sendable {
           if version < 11 { try exec(Self.resetCreditSchema) }
           if version < 12 { try exec(Self.authorSchema) }
           try exec(Self.outputRateSchema)
-          try exec("PRAGMA user_version=13")
+          try exec(Self.rejectionDetailSchema)
+          try exec(Self.creditHistorySchema)
+          try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
-      if (1...12).contains(version) {
-        guard
-          try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
-            "ok"
-          ]
-        else { throw ExecutionError.storageUnavailable }
-        if !restoringV7 { try backupBeforeUpgrade(canonical) }
+      if upgrading {
+        try requireIntegrity()
+        if !restoringV7 {
+          do { try backupBeforeUpgrade(canonical, from: version) } catch ExecutionError
+            .storageUnavailable
+            where startupUpgrade
+          {
+            throw StartupMigrationError.backupFailed
+          }
+        }
         try StorageCapacity.require(
           (canonical as NSString).deletingLastPathComponent,
           additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") * 2 + 8 * 1024
@@ -161,36 +195,43 @@ final class SQLiteConnection: @unchecked Sendable {
           try exec("PRAGMA auto_vacuum=INCREMENTAL")
           try exec("VACUUM")
         }
-        try transaction {
-          if version == 1 { try exec(Self.keySchema) }
-          if version < 3 { try exec(Self.accountSchema) }
-          if version < 5 { try exec(Self.observationSchema) }
-          if version < 7 { try exec(Self.maintenanceSchema) }
-          if version < 9 {
-            try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
-            try exec(
-              "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
-            )
+        do {
+          try transaction {
+            if version == 1 { try exec(Self.keySchema) }
+            if version < 3 { try exec(Self.accountSchema) }
+            if version < 5 { try exec(Self.observationSchema) }
+            if version < 7 { try exec(Self.maintenanceSchema) }
+            if version < 9 {
+              try exec("ALTER TABLE accounts ADD COLUMN display_name TEXT")
+              try exec(
+                "CREATE INDEX attempts_in_flight ON attempts(created_at_epoch DESC,id DESC) WHERE state='intent'"
+              )
+            }
+            if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
+            if version < 11 { try exec(Self.resetCreditSchema) }
+            if version < 12 { try exec(Self.authorSchema) }
+            if version < 13 { try exec(Self.outputRateSchema) }
+            if version < 14 { try exec(Self.rejectionDetailSchema) }
+            if version < 15 { try exec(Self.creditHistorySchema) }
+            try exec("PRAGMA user_version=\(Self.schemaVersion)")
+            if startupUpgrade { try requireIntegrity() }
           }
-          if version < 10 { try exec(Self.governanceSchema(now: clock.unixSeconds)) }
-          if version < 11 { try exec(Self.resetCreditSchema) }
-          if version < 12 { try exec(Self.authorSchema) }
-          try exec(Self.outputRateSchema)
-          try exec("PRAGMA user_version=13")
+        } catch ExecutionError.storageUnavailable where startupUpgrade {
+          throw StartupMigrationError.transactionFailed
         }
       }
       guard try scalar("PRAGMA auto_vacuum") == 2 else { throw ExecutionError.storageUnavailable }
-      guard
-        try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == [
-          "ok"
-        ]
-      else {
-        throw ExecutionError.storageUnavailable
-      }
+      if !startupUpgrade { try requireIntegrity() }
     } catch {
       shutdown()
       throw error
     }
+  }
+
+  private func requireIntegrity() throws {
+    guard
+      try rows("PRAGMA quick_check", map: { String(cString: sqlite3_column_text($0, 0)) }) == ["ok"]
+    else { throw ExecutionError.storageUnavailable }
   }
 
   /// The already locked primary store owns this one read-only WAL connection.
@@ -219,7 +260,7 @@ final class SQLiteConnection: @unchecked Sendable {
         throw ExecutionError.storageUnavailable
       }
       try exec("PRAGMA query_only=ON")
-      guard (7...13).contains(try scalar("PRAGMA user_version")),
+      guard (7...Self.schemaVersion).contains(try scalar("PRAGMA user_version")),
         try scalar("PRAGMA query_only") == 1
       else {
         throw ExecutionError.incompatibleSchema
@@ -403,6 +444,17 @@ final class SQLiteConnection: @unchecked Sendable {
     ("request_diagnostics", ["request_id", "at_epoch", "key_id", "model", "mode", "failure"]),
   ]
 
+  private static let creditHistorySchema = """
+    CREATE TABLE account_credit_samples (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      bucket_epoch INTEGER NOT NULL,
+      at_epoch INTEGER NOT NULL CHECK(at_epoch BETWEEN 1 AND 1000000000000 AND at_epoch / 300 = bucket_epoch),
+      balance TEXT NOT NULL CHECK(length(balance) BETWEEN 1 AND 37),
+      PRIMARY KEY(account_id, bucket_epoch)
+    );
+    CREATE INDEX account_credit_samples_retention ON account_credit_samples(at_epoch);
+    """
+
   static let maintenanceSchema = """
     CREATE TABLE maintenance_state (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL, restore_json TEXT);
     INSERT INTO maintenance_state VALUES(1, lower(hex(randomblob(16))), NULL);
@@ -483,16 +535,24 @@ final class SQLiteConnection: @unchecked Sendable {
       WHERE output_rate_settled_at IS NOT NULL;
     """
 
-  private func backupBeforeUpgrade(_ path: String) throws {
+  private static let rejectionDetailSchema = """
+    ALTER TABLE request_diagnostics ADD COLUMN reason TEXT;
+    """
+
+  private func backupBeforeUpgrade(_ path: String, from version: Int64) throws {
     try StorageCapacity.require(
       (path as NSString).deletingLastPathComponent,
       additionalBytes: scalar("PRAGMA page_count") * scalar("PRAGMA page_size") + 8 * 1024 * 1024,
       optional: true)
-    let destination = path + ".pre-v13-" + UUID().uuidString + ".sqlite"
+    let destination =
+      path + ".pre-v\(max(13, version + 1))-" + UUID().uuidString + ".sqlite"
     let partial = destination + ".partial"
     let fd = open(partial, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     guard fd >= 0 else { throw ExecutionError.storageUnavailable }
-    defer { close(fd) }
+    defer {
+      close(fd)
+      _ = unlink(partial)
+    }
     var target: OpaquePointer?
     guard
       sqlite3_open_v2(partial, &target, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nil)

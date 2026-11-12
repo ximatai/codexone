@@ -1,5 +1,6 @@
 import styles from "./session.module.css";
 import {
+  ActionIcon,
   Button,
   Paper,
   PasswordInput,
@@ -20,6 +21,10 @@ import {
 import * as api from "./management";
 import { useSearchParams } from "react-router";
 import { ViewMemory } from "./view-memory";
+import { PrivacyMask } from "./privacy-mask";
+import { IconEye, IconEyeOff } from "@tabler/icons-react";
+
+const privacyPreference = "codexone.privacy-mask";
 
 type Status =
   | "checking"
@@ -75,6 +80,22 @@ export function ManagementSession({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showLogin, setShowLogin] = useState(false);
+  const [privacy, setPrivacy] = useState(() => {
+    try {
+      return sessionStorage.getItem(privacyPreference) === "true";
+    } catch {
+      return false;
+    }
+  });
+  function togglePrivacy() {
+    const next = !privacy;
+    setPrivacy(next);
+    try {
+      sessionStorage.setItem(privacyPreference, String(next));
+    } catch {
+      // Keep the preference in memory when storage is unavailable.
+    }
+  }
   const [, updateLocks] = useState(0);
   const locks = useRef(new Set<Scope>());
   // Read-only navigation metadata only; never results, credentials or callbacks.
@@ -214,17 +235,34 @@ export function ManagementSession({
       updateLocks((previous) => previous + 1);
     },
   };
+  const content = (
+    <PrivacyMask.Provider value={privacy}>
+      <div key={generation}>{children}</div>
+    </PrivacyMask.Provider>
+  );
   return (
     <Context.Provider value={owner}>
       <div className={styles.action}>
         {status === "authenticated" && (
-          <Button
-            variant="subtle"
-            onClick={() => void logout()}
-            disabled={busy}
-          >
-            退出登录
-          </Button>
+          <>
+            <ActionIcon
+              variant="subtle"
+              size="lg"
+              aria-label="截图隐私模式"
+              aria-pressed={privacy}
+              title={privacy ? "显示敏感信息" : "隐藏敏感信息"}
+              onClick={togglePrivacy}
+            >
+              {privacy ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+            </ActionIcon>
+            <Button
+              variant="subtle"
+              onClick={() => void logout()}
+              disabled={busy}
+            >
+              退出登录
+            </Button>
+          </>
         )}
       </div>
       {status === "authenticated" && notice && (
@@ -241,7 +279,7 @@ export function ManagementSession({
         </Paper>
       )}
       {status === "authenticated" || (publicView && !showLogin) ? (
-        <div key={generation}>{children}</div>
+        content
       ) : (
         <Paper className={styles.login} withBorder p="xl" radius="md">
           <Stack>
@@ -312,9 +350,7 @@ export function ManagementSession({
           </Stack>
         </Paper>
       )}
-      {publicView && showLogin && status !== "authenticated" && (
-        <div key={generation}>{children}</div>
-      )}
+      {publicView && showLogin && status !== "authenticated" && content}
     </Context.Provider>
   );
 }

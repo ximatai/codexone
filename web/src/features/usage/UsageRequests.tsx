@@ -1,3 +1,4 @@
+import { usePrivacyMask } from "../../shared/privacy-mask";
 import { KeyName } from "../../shared/KeyName";
 import { Button, Text } from "@mantine/core";
 import { DataTable } from "../../shared/ui/DataTable";
@@ -9,7 +10,7 @@ import {
   timeTitle,
 } from "../../shared/presentation";
 import type { UsageReport } from "./api";
-import { duration } from "./format";
+import { duration, rejectionReason } from "./format";
 import styles from "./usage.module.css";
 export function UsageRequests({
   rows,
@@ -22,6 +23,7 @@ export function UsageRequests({
   retry: () => void;
   defaultReasoningEfforts?: Record<string, string>;
 }) {
+  const masked = usePrivacyMask();
   return (
     <div className={`usage-table ${styles.table}`}>
       <DataTable
@@ -47,7 +49,7 @@ export function UsageRequests({
             title: "Key / 模型",
             render: (row) => (
               <>
-                <span title={row.keyID}>
+                <span title={masked ? undefined : row.keyID}>
                   {
                     <KeyName
                       {...row}
@@ -91,6 +93,9 @@ export function UsageRequests({
                       ? (failures[row.failure] ?? "其他异常")
                       : ""}
                 </small>
+                {row.kind === "rejected" && (
+                  <small>{rejectionReason(row.rejectionReason)}</small>
+                )}
                 {row.state && row.state !== "settled" && (
                   <small>{states[row.state]}</small>
                 )}

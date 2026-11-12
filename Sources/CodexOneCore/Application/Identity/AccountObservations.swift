@@ -42,11 +42,27 @@ public struct SubscriptionQuotaLimit: Sendable, Equatable, Codable {
     self.secondary = secondary
   }
 }
+public enum SubscriptionUsageCredits: Sendable, Equatable, Codable {
+  case balance(String)
+  case unlimited
+
+  public static func parseBalance(_ value: String) -> Self? {
+    guard value.utf8.count <= 37,
+      value.wholeMatch(of: /[0-9]{1,18}(?:[.][0-9]{1,18})?/) != nil
+    else { return nil }
+    return .balance(value)
+  }
+}
+
 /// Normalized quota only. No provider account identifiers or raw response.
 public struct SubscriptionQuota: Sendable, Equatable, Codable {
   public let limits: [SubscriptionQuotaLimit]
   public let availableResetCredits: Int?
-  public init(limits: [SubscriptionQuotaLimit], availableResetCredits: Int? = nil) throws {
+  public let usageCredits: SubscriptionUsageCredits?
+  public init(
+    limits: [SubscriptionQuotaLimit], availableResetCredits: Int? = nil,
+    usageCredits: SubscriptionUsageCredits? = nil
+  ) throws {
     guard limits.count <= 17, limits.filter({ $0.id != "codex" }).count <= 16,
       Set(limits.map(\.id)).count == limits.count
     else {
@@ -55,6 +71,12 @@ public struct SubscriptionQuota: Sendable, Equatable, Codable {
     guard availableResetCredits.map({ (0...128).contains($0) }) ?? true else {
       throw ExecutionError.invalidCommand
     }
+    if case .balance(let value) = usageCredits,
+      SubscriptionUsageCredits.parseBalance(value) == nil
+    {
+      throw ExecutionError.invalidCommand
+    }
+    self.usageCredits = usageCredits
     self.availableResetCredits = availableResetCredits
     self.limits = limits
   }
@@ -70,7 +92,8 @@ public struct SubscriptionQuota: Sendable, Equatable, Codable {
         id: limit.id, allowed: limit.allowed, limitReached: limit.limitReached,
         primary: limit.primary, secondary: limit.secondary)
     }
-    _ = try Self(limits: limits, availableResetCredits: availableResetCredits)
+    _ = try Self(
+      limits: limits, availableResetCredits: availableResetCredits, usageCredits: usageCredits)
   }
 }
 public enum QuotaObservationFailure: String, Error, Sendable, Codable {
@@ -98,6 +121,7 @@ public struct AccountQuotaObservation: Sendable, Equatable, Codable {
   public let observedAtUnixSeconds: Int64?
   public let quota: SubscriptionQuota?
   public let failure: QuotaObservationFailure?
+  public var trend: AccountQuotaTrend?
   public init(
     attemptedAtUnixSeconds: Int64?, observedAtUnixSeconds: Int64?,
     quota: SubscriptionQuota?, failure: QuotaObservationFailure?
@@ -125,9 +149,21 @@ public protocol AccountQuotaObserving: Sendable {
   var isAccepting: Bool { get }
   func observeAccount(id: String) async throws -> AccountQuotaObservation
 }
+public struct AccountCreditSample: Sendable, Equatable, Codable {
+  public let at: Int64
+  public let balance: String
+
+  public init(at: Int64, balance: String) {
+    self.at = at
+    self.balance = balance
+  }
+}
+
 public protocol AccountObservationStore: AccountGovernanceStore {
   var allowsOptionalStorageWork: Bool { get }
   func quotaObservation(id: String) async throws -> AccountQuotaObservation
+  func creditHistory(id: String, from: Int64, through: Int64) async throws
+    -> [[AccountCreditSample]]
   func recordQuotaObservation(
     account: ManagedAccount, atUnixSeconds: Int64,
     result: Result<SubscriptionQuota, QuotaObservationFailure>

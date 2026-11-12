@@ -1,0 +1,12 @@
+.mask {
+  display: inline-block;
+  inline-size: 3rem;
+  max-inline-size: 100%;
+  block-size: 0.4375rem;
+  border-radius: 999px;
+  background: color-mix(
+    in srgb,
+    var(--mantine-color-default-border) 72%,
+    transparent
+  );
+}

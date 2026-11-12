@@ -216,7 +216,7 @@ import Testing
   try rawSQL(path, "DROP TABLE usage_daily")
   try await SQLiteExecutionStore.migrate(path: path)
   let migrated = try SQLiteConnection(path: path)
-  #expect(try migrated.scalar("PRAGMA user_version") == 13)
+  #expect(try migrated.scalar("PRAGMA user_version") == SQLiteConnection.schemaVersion)
   #expect(try migrated.scalar("PRAGMA auto_vacuum") == 2)
   migrated.shutdown()
 }

@@ -4,7 +4,35 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.16](https://github.com/ximatai/codexone/releases/tag/v0.26.16)**（2026-11-08），核心数据库 schema v13。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.30](https://github.com/ximatai/codexone/releases/tag/v0.26.30)**（2026-11-11），核心数据库 schema v15。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.30 补充原生 WebSocket 的预热后重连、同连接迟到中断和双账号 429 归属回归，沿用 schema v15。见[发布说明](CHANGELOG.md)。
+
+v0.26.29 在订阅账号详情展示近 24 小时和近 7 天的额外积分余额历史，升级至 schema v15。见[发布说明](CHANGELOG.md)。
+
+v0.26.28 缩短主分支日常验证，收敛重复浏览器用例，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.27 统一镜像清单的 schema 版本来源，按风险选择开发验证和旧镜像验收，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.26 调整首页 Token 卡的量级单位和账号详情的积分余额显示，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.25 将已知响应元数据及 WebSocket 耗时遥测从未知协议观测中排除，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.24 调整首页额度趋势图例顺序，缩短 PR 验证等待，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.23 新增管理台截图隐私模式和账号额外积分只读余额，优化额度趋势、侧栏与选路诊断，沿用 schema v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.22 在首页提供今日准入拒绝明细，支持按固定原因分组筛选。从正常 v13 启动时自动迁移到 v14。见[发布说明](CHANGELOG.md)。
+
+v0.26.21 在首页订阅额度卡展示额度历史与耗尽预测，沿用 schema v13。见[发布说明](CHANGELOG.md)。
+
+v0.26.20 更新首页请求输出速率曲线，增加今日 Key 生图统计和管理抽屉入口，为在途请求和桌面侧栏加入过渡。沿用 schema v13。见[发布说明](CHANGELOG.md)。
+
+v0.26.19 修正首页运行资源的曲线标题对齐，沿用 schema v13。见[发布说明](CHANGELOG.md)。
+
+v0.26.18 把首页请求输出速率改为近 7 天小时趋势，并统一运行资源折线读数布局。沿用 schema v13。见[发布说明](CHANGELOG.md)。
+
+v0.26.17 在启动时自动迁移符合条件的 v12 账本，先生成迁移前备份，再事务升级到 v13。升级与回退边界见[维护指南](docs/guide/backup-upgrade.md)。
 
 v0.26.16 让首页近 7 个业务日的请求输出速率跨重启恢复。升级需停服备份并显式迁移。见[发布说明](CHANGELOG.md)。
 

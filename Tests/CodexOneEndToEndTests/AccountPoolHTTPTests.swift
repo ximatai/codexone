@@ -36,6 +36,17 @@ private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
   ])
 }
 private func poolRefusalEvents(_ input: String?, response: JSONValue) -> [JSONValue]? {
+  if input == "rate-limit-continuation" {
+    return [
+      .object([
+        "type": .string("error"), "status": .number(429),
+        "error": .object([
+          "code": .string("usage_limit_reached"), "message": .string("Synthetic quota limit"),
+          "headers": .object(["retry-after": .string("120")]),
+        ]),
+      ])
+    ]
+  }
   guard let input,
     ["refuse-error", "refuse-failed", "output-error", "overload-error"].contains(input)
   else {
@@ -73,6 +84,7 @@ private final class PoolHTTPState: Sendable {
     var expected: [String: String] = [:]
     var calls: [Call] = []
     var stall = false
+    var heldWebSocketCompletion: (@Sendable () -> Void)?
     var invalid = 0
     var upgrades = 0
     var upgradeAccounts: [String] = []
@@ -898,7 +910,10 @@ private final class PoolWebSocketHandler: ChannelInboundHandler, @unchecked Send
             promise: nil)
         }
       }
-      if poolInput(request) == "hold" {
+      if poolInput(request) == "hold-queued" {
+        let eventLoop = context.eventLoop
+        state.value.withLock { $0.heldWebSocketCompletion = { eventLoop.execute(send) } }
+      } else if poolInput(request) == "hold" {
         _ = context.eventLoop.scheduleTask(in: .milliseconds(400), send)
       } else {
         send()
@@ -1068,6 +1083,55 @@ func poolNativeWebSocketPinsAllLanesAndFinalizesEachTurnWhileConnectionLives() a
 }
 
 @Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketRateLimitedContinuationDoesNotMoveToAnEligibleAccount() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let original = try PoolWSClient(h)
+    defer { original.close() }
+    _ = try await original.read()
+    let first = try await original.command()
+    let previous = try #require(first["response"]?["id"]?.string)
+    let owner = try #require(h.calls.first?.account)
+
+    let rejected = try await original.command([
+      "input": .string("rate-limit-continuation"), "previous_response_id": .string(previous),
+    ])
+    #expect(rejected["type"]?.string == "error" && rejected["status"]?.integer == 429)
+    #expect(rejected["error"]?["code"]?.string == "usage_limit_reached")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.map(\.account) == [owner, owner])
+    #expect(h.calls.last?.previous == previous)
+    let ownerID = owner.replacingOccurrences(of: "synthetic-", with: "")
+    let cooldowns = try await h.store.accountHealth(id: ownerID).cooldowns
+    #expect(cooldowns.count == 1)
+    #expect(cooldowns.first?.model == "synthetic-text" && cooldowns.first?.failure == .rateLimited)
+    let other = try #require(try await h.store.listAccounts().first { $0.id != ownerID })
+    #expect(try await h.store.accountHealth(id: other.id).cooldowns.isEmpty)
+
+    let fresh = try PoolWSClient(h)
+    defer { fresh.close() }
+    _ = try await fresh.read()
+    #expect(try await fresh.command()["type"]?.string == "response.completed")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.map(\.account) == [owner, owner, "synthetic-\(other.id)"])
+    #expect(h.calls.last?.previous == nil)
+    let rows = try await h.store.perform {
+      try $0.rows("SELECT state,usage_json FROM attempts ORDER BY rowid") { statement in
+        (
+          String(cString: sqlite3_column_text(statement, 0)),
+          sqlite3_column_text(statement, 1).map { String(cString: $0) }
+        )
+      }
+    }
+    #expect(rows.map(\.0) == ["settled", "settled", "settled"])
+    let usage = try rows.map { row in
+      let json = try #require(row.1)
+      return try JSONValue.decode(Data(json.utf8))
+    }
+    #expect(usage.map { $0["inputTokens"]?.integer } == [2, 0, 2])
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
 func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() async throws {
   for mutation in ["disabled", "draining", "key"] {
     try await withPoolHTTP(transport: "websocket") { h in
@@ -1108,6 +1172,43 @@ func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() a
       #expect(h.calls.count == (mutation == "draining" ? 3 : 1))
       #expect(h.state.value.withLock { $0.upgrades } == 1)
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketFinishesSentTurnButRejectsQueuedTurnAfterAccountDisabled() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    _ = try await client.command(["op": .string("send"), "input": .string("hold-queued")])
+    try await awaitOAuth { h.state.value.withLock { $0.heldWebSocketCompletion != nil } }
+    _ = try await client.command(["op": .string("send"), "input": .string("queued")])
+    let selected = try #require(h.calls.first?.account).replacingOccurrences(
+      of: "synthetic-", with: "")
+    let account = try await h.store.accountCredential(id: selected).account
+    _ = try await h.store.setAccountMode(id: selected, revision: account.revision, mode: .disabled)
+    let finish = h.state.value.withLock { state in
+      let finish = state.heldWebSocketCompletion
+      state.heldWebSocketCompletion = nil
+      return finish
+    }
+    let release = try #require(finish)
+    release()
+    #expect(
+      try await client.command(["op": .string("receive")])["type"]?.string == "response.created")
+    #expect(
+      try await client.command(["op": .string("receive")])["type"]?.string == "response.completed")
+    let rejected = try await client.command(["op": .string("receive")])
+    #expect(rejected["error"]?["code"]?.string == "account_unavailable")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.calls.count == 1)
+    #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
+    #expect(
+      try await h.store.perform {
+        try $0.scalar(
+          "SELECT COUNT(*) FROM request_diagnostics WHERE reason='account_dispatch_unavailable'")
+      } == 1)
   }
 }
 

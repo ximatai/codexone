@@ -70,7 +70,6 @@ def verify(binary, previous_binary=None):
             admission = json.loads(row[1])
             assert admission['window'] == 'business-day-' + str(start_at)
             db.execute('UPDATE attempts SET created_at_epoch=?', (old_point,))
-            assert db.execute('PRAGMA user_version').fetchone()[0] == 13
         f.process, f.ports = start(binary, f.config, f.root, admin_token_file=f.admin, business_day_offset=replacement)
         assert call(f.ports['admin'], 'GET', '/api/usage/keys')[1]['keys'][0]['tokens'] == '0'
         assert request(f.ports['data'], secret)[0] == 200
