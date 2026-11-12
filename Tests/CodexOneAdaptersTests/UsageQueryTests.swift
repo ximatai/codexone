@@ -724,7 +724,7 @@ private struct UsageFixture {
   await f.store.close()
   try rawSQL(
     f.path,
-    "DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13"
+    "DROP TABLE account_quota_cycle_samples; DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13"
   )
   let reopened = try await SQLiteExecutionStore.open(
     path: f.path, limits: UsageFixture.limits, clock: testClock, allowStartupMigration: true)

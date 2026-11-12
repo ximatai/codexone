@@ -19,7 +19,19 @@ package final class SQLiteConnection: @unchecked Sendable {
       singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision INTEGER NOT NULL, document TEXT NOT NULL);
     CREATE TABLE model_directory_routes(model TEXT PRIMARY KEY, account TEXT);
     """
-  package static let schemaVersion: Int64 = 16
+  private static let quotaCycleSchema = """
+    CREATE TABLE account_quota_cycle_samples (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      kind INTEGER NOT NULL CHECK(kind IN (0,1)),
+      bucket_epoch INTEGER NOT NULL,
+      at_epoch INTEGER NOT NULL CHECK(at_epoch BETWEEN 1 AND 1000000000000 AND at_epoch / 300 = bucket_epoch),
+      remaining TEXT NOT NULL CHECK(length(remaining) BETWEEN 1 AND 32),
+      reset_epoch INTEGER NOT NULL CHECK(reset_epoch BETWEEN 1 AND 1000000000000),
+      duration_seconds INTEGER NOT NULL CHECK(duration_seconds BETWEEN 1 AND 31536000),
+      PRIMARY KEY(account_id, kind, bucket_epoch)
+    );
+    """
+  package static let schemaVersion: Int64 = 17
 
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
@@ -134,6 +146,17 @@ package final class SQLiteConnection: @unchecked Sendable {
               ("model_directory_routes", ["model", "account"]),
             ]
             : [])
+          + (version >= 17
+            ? [
+              (
+                "account_quota_cycle_samples",
+                [
+                  "account_id", "kind", "bucket_epoch", "at_epoch", "remaining", "reset_epoch",
+                  "duration_seconds",
+                ]
+              )
+            ]
+            : [])
         for (table, expected) in expectedTables {
           let actual = try rows("PRAGMA table_info(\(table))") {
             String(cString: sqlite3_column_text($0, 1))
@@ -186,6 +209,7 @@ package final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.rejectionDetailSchema)
           try exec(Self.creditHistorySchema)
           try exec(Self.modelDirectorySchema)
+          try exec(Self.quotaCycleSchema)
           try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
@@ -226,6 +250,7 @@ package final class SQLiteConnection: @unchecked Sendable {
             if version < 14 { try exec(Self.rejectionDetailSchema) }
             if version < 15 { try exec(Self.creditHistorySchema) }
             if version < 16 { try exec(Self.modelDirectorySchema) }
+            if version < 17 { try exec(Self.quotaCycleSchema) }
             try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }

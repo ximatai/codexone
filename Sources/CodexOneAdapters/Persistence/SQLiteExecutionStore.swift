@@ -12,6 +12,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let path: String
   let pacingWaiters: AccountPacingWaiters
   let usageReaderGate = Mutex(false)
+  let quotaCycleReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
   public let overviewActivity: OverviewActivity
   let liveFirstEvents = Mutex([String: Bool]())

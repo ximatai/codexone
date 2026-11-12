@@ -23,7 +23,7 @@ import Testing
   await original.close()
   try rawSQL(
     path,
-    "DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; PRAGMA user_version=14"
+    "DROP TABLE account_quota_cycle_samples; DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; PRAGMA user_version=14"
   )
 
   let upgraded = try await SQLiteExecutionStore.open(

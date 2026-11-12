@@ -162,6 +162,7 @@ public struct AccountCreditSample: Sendable, Equatable, Codable {
 public protocol AccountObservationStore: AccountGovernanceStore {
   var allowsOptionalStorageWork: Bool { get }
   func quotaObservation(id: String) async throws -> AccountQuotaObservation
+  func quotaCycleTrend(id: String) async throws -> AccountQuotaTrend
   func creditHistory(id: String, from: Int64, through: Int64) async throws
     -> [[AccountCreditSample]]
   func recordQuotaObservation(
@@ -170,4 +171,9 @@ public protocol AccountObservationStore: AccountGovernanceStore {
   ) async throws -> AccountQuotaObservation
 }
 
-extension AccountObservationStore { public var allowsOptionalStorageWork: Bool { true } }
+extension AccountObservationStore {
+  public var allowsOptionalStorageWork: Bool { true }
+  public func quotaCycleTrend(id: String) async throws -> AccountQuotaTrend {
+    try await quotaObservation(id: id).trend ?? AccountQuotaTrend()
+  }
+}

@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { useReducedMotion } from "@mantine/hooks";
 import { QuotaWindowBar } from "../account-management/QuotaWindowBar";
 import type { QuotaWindow } from "../account-management/observation-api";
+import { ManagementError } from "../../shared/management";
 import {
   fetchQuotaTrend,
   predictQuota,
@@ -40,8 +41,12 @@ function QuotaChart({
   forecast: Forecast | undefined;
   hasScenario: boolean;
 }) {
-  const start = Math.min(history.samples[0][0], reset - 60);
-  const end = Math.max(start + 60, reset, now);
+  const start = Math.min(
+    reset - history.duration,
+    history.samples[0][0],
+    reset - 60,
+  );
+  const end = Math.max(start + 60, reset);
   const x = (at: number) => 30 + (290 * (at - start)) / (end - start);
   const y = (remaining: number) => 18 + ((100 - remaining) * 118) / 100;
   const path = (points: QuotaSample[]) =>
@@ -69,10 +74,10 @@ function QuotaChart({
           distinctDates > 1 ? { ...dateOptions, ...timeOptions } : timeOptions,
         );
   const chartLabel = [
-    "剩余额度走势，实线为历史",
+    "剩余额度走势，横轴为额度周期，实线为实际历史",
     forecast && "虚线为预测",
     hasScenario && scenarioDescription,
-    "竖线为现在和重置",
+    now <= reset ? "竖线为现在和重置" : "竖线为重置",
   ]
     .filter(Boolean)
     .join("，");
@@ -98,7 +103,7 @@ function QuotaChart({
         </g>
       ))}
       {[
-        { at: now, label: "现在" },
+        ...(now <= reset ? [{ at: now, label: "现在" }] : []),
         { at: reset, label: "重置" },
       ].map(({ at, label }) => (
         <g key={label}>
@@ -125,22 +130,23 @@ function QuotaChart({
           ])}
         />
       )}
-      {quotaSegments(history.samples).map((segment) =>
-        segment.length === 1 ? (
-          <circle
-            key={segment[0][0]}
-            cx={x(segment[0][0])}
-            cy={y(segment[0][1])}
-            r="2"
-            className={styles.quotaPoint}
-          />
-        ) : (
-          <polyline
-            key={segment[0][0]}
-            className={styles.quotaHistory}
-            points={path(segment)}
-          />
-        ),
+      {(history.historySegments ?? quotaSegments(history.samples)).map(
+        (segment) =>
+          segment.length === 1 ? (
+            <circle
+              key={segment[0][0]}
+              cx={x(segment[0][0])}
+              cy={y(segment[0][1])}
+              r="2"
+              className={styles.quotaPoint}
+            />
+          ) : (
+            <polyline
+              key={segment[0][0]}
+              className={styles.quotaHistory}
+              points={path(segment)}
+            />
+          ),
       )}
       {forecast && (
         <polyline
@@ -187,7 +193,11 @@ function QuotaTrendDetails({
     queryFn: ({ signal }) => fetchQuotaTrend(accountID, signal),
     staleTime: 30_000,
     gcTime: 0,
-    retry: false,
+    retry: (count, error) =>
+      count < 3 &&
+      error instanceof ManagementError &&
+      error.code === "quota_trend_capacity",
+    retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 2000),
     placeholderData: (previous) => previous,
   });
   const now = Date.now() / 1000;
@@ -298,6 +308,11 @@ function QuotaTrendDetails({
           hasScenario={hasScenario}
         />
       )}
+      {usableHistory?.historyOmitted ? (
+        <small>历史缺口较多，曲线已抽样并省略部分片段</small>
+      ) : usableHistory?.historySampled ? (
+        <small>历史曲线已抽样展示，预测使用原始近期数据</small>
+      ) : null}
       <div
         className={styles.quotaAssessment}
         data-warning={warning || undefined}
