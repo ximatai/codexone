@@ -122,9 +122,11 @@ def verify_accounts(probe):
                 assert request(port, 'PUT', '/api/models', enable, **auth)[0] == 409
                 with server.guard:
                     server.control['model_discovery_failure'] = False
+                    server.control['model_changed'] = True
                 assert request(port, 'POST', '/api/accounts/' + account['id'] + '/model-candidates', **auth)[0] == 200
                 restored = document(request(port, 'PUT', '/api/models', enable, **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
+                assert restored['active'][1]['reasoningEfforts'] == ['low', 'high']
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
                 assert account['accessExpiresAtUnixSeconds'] == expires
                 account = document(request(port, 'PUT', path, {'revision': account['revision'], 'displayName': None}, **auth))['account']

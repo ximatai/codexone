@@ -44,12 +44,13 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 assert self.headers.get('Authorization', '').removeprefix('Bearer ') in self.server.issued
                 assert self.headers.get('ChatGPT-Account-Id') == 'synthetic-account'
                 fail = self.server.control.get('model_discovery_failure')
+                changed = self.server.control.get('model_changed')
             assert parse_qs(urlsplit(self.path).query).get('client_version')
             if fail:
                 return self.reply({'error': 'synthetic-catalog-unavailable'}, status=503)
             return self.reply({'models': [
                 {'slug': 'synthetic-nova', 'visibility': 'list', 'base_instructions': 'Synthetic model guidance.',
-                 'supported_reasoning_levels': [{'effort': 'high', 'description': 'High'}],
+                 'supported_reasoning_levels': ([{'effort': 'low', 'description': 'Low'}] if changed else []) + [{'effort': 'high', 'description': 'High'}],
                  'default_reasoning_level': 'high'},
                 {'slug': 'synthetic-incomplete', 'visibility': 'list'},
             ]})

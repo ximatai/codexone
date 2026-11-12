@@ -69,7 +69,17 @@ public actor ModelDirectory {
     return .object([
       "revision": .number(Decimal(snapshot.revision)),
       "active": .array(snapshot.active.map { Self.metadata($0, state: "enabled") }),
-      "retired": .array(snapshot.retired.map { Self.metadata($0, state: "retired") }),
+      "retired": .array(
+        snapshot.retired.map { model in
+          guard let owner = snapshot.accountForModel[model.id],
+            let discovery, discovery.account == owner,
+            let entry = discovery.entries.first(where: { $0["slug"]?.string == model.id })
+          else { return Self.metadata(model, state: "retired") }
+          let refreshed = Self.discoveredModel(
+            id: model.id, entry: entry, input: model.inputMicrosPerMillion,
+            output: model.outputMicrosPerMillion)
+          return Self.metadata(refreshed, state: "retired")
+        }),
       "candidates": .array(candidates),
       "imageModels": .array((configuration.imageGeneration?.models ?? []).map { .string($0.id) }),
       "account": discovered.map { .string($0.account) } ?? .null,
@@ -95,13 +105,19 @@ public actor ModelDirectory {
       if let owner = next.accountForModel[id] {
         guard let discovery, discovery.account == owner,
           clock.unixSeconds - discovery.fetchedAt < 900,
-          discovery.entries.contains(where: { $0["slug"]?.string == id })
+          let entry = discovery.entries.first(where: { $0["slug"]?.string == id })
         else { throw ExecutionError.conflict }
         let account = try await store.accountCredential(id: owner).account
         guard account.revision == discovery.accountRevision, account.mode == .enabled,
           account.authorization == .ready
         else { throw ExecutionError.conflict }
         expectedAccount = (account.id, account.revision)
+        let previous = next.retired[index]
+        let refreshed = Self.discoveredModel(
+          id: id, entry: entry, input: previous.inputMicrosPerMillion,
+          output: previous.outputMicrosPerMillion)
+        try validateResponseModels([refreshed])
+        next.retired[index] = refreshed
       }
       next.active.append(next.retired.remove(at: index))
     } else if enabled {
