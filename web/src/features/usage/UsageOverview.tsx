@@ -45,6 +45,10 @@ import { UsageEvidence, UsageSummary } from "./UsageSummary";
 import { rejectionReason, utc } from "./format";
 export { duration } from "./format";
 export { failures } from "../../shared/presentation";
+
+// Keep the calendars below the fields so they cannot cover the range toggle.
+const datePopoverProps = { middlewares: { flip: false } };
+
 export interface UsageNavigation {
   history: (string | null)[];
   page: number;
@@ -599,6 +603,7 @@ export function UsageOverview({
               locale="zh-cn"
               valueFormat="YYYY-MM-DD"
               getDayProps={(day) => ({ "aria-label": day })}
+              popoverProps={datePopoverProps}
               fixOnBlur={false}
               disabled={busy}
               required
@@ -622,6 +627,7 @@ export function UsageOverview({
               locale="zh-cn"
               valueFormat="YYYY-MM-DD"
               getDayProps={(day) => ({ "aria-label": day })}
+              popoverProps={datePopoverProps}
               fixOnBlur={false}
               disabled={busy}
               required
