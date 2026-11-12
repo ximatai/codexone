@@ -51,8 +51,20 @@
   }
 }
 
-.outputRateValue > [data-continuous-value] {
-  display: block;
+.outputRateValue {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 1;
+  font-size: var(--mantine-font-size-md);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.outputRateBridge :global(.recharts-reference-line-line) {
+  stroke: var(--mantine-color-brand-5);
+  stroke-opacity: 0.55;
 }
 
 .quotaAccountHeader {

@@ -8,7 +8,7 @@ import {
   IconPhoto,
   IconAlertTriangle,
 } from "@tabler/icons-react";
-import { AreaChart } from "@mantine/charts";
+import { AreaChart, LineChart } from "@mantine/charts";
 import { Dot } from "recharts";
 import {
   Anchor,
@@ -26,7 +26,19 @@ import { failures } from "../../shared/presentation";
 import { compactCount, compactOverviewTokens } from "./overview-format";
 import styles from "./overview.module.css";
 import type { HourlyOutputRate } from "./useOverviewLive";
-const outputTrendHeight = 84;
+const outputTrendHeight = 108;
+const outputTrendHours = 168;
+const maxBridgedHours = 2;
+const outputDateTicks = [0, 56, 112, outputTrendHours - 1];
+const chartShortDay = new Intl.DateTimeFormat("en-US", {
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "UTC",
+});
+const axisRateFormat = new Intl.NumberFormat("zh-CN", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 const chartDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
   day: "numeric",
@@ -38,25 +50,21 @@ function Sparkline({
   dates,
   format,
   label,
-  compact = true,
-  description,
 }: {
   values: (number | null)[];
   dates: string[];
   format: (value: number, index: number) => string;
   label: string;
-  compact?: boolean;
-  description?: string;
 }) {
   const motion = useOverviewMotion();
   return (
     <div
-      className={compact ? styles.sparkline : undefined}
+      className={styles.sparkline}
       role="img"
-      aria-label={`${label}近 7 天：${description ?? values.map((v) => (v === null ? "不可用" : Number(v.toFixed(1)))).join("、")}`}
+      aria-label={`${label}近 7 天：${values.map((v) => (v === null ? "不可用" : Number(v.toFixed(1)))).join("、")}`}
     >
       <AreaChart
-        h={compact ? 64 : outputTrendHeight}
+        h={64}
         data={values.map((value, index) => ({ day: String(index), value }))}
         dataKey="day"
         series={[{ name: "value", color: "brand.5" }]}
@@ -88,17 +96,9 @@ function Sparkline({
         connectNulls={false}
         fillOpacity={0.2}
         areaProps={{
-          isAnimationActive: compact && motion,
+          isAnimationActive: motion,
           animationDuration: 250,
-          activeDot: compact ? false : { r: 3 },
-          dot: compact
-            ? false
-            : ({ index, cx, cy, stroke }) =>
-                values[index] != null &&
-                values[index - 1] == null &&
-                values[index + 1] == null ? (
-                  <Dot cx={cx} cy={cy} r={2} fill={stroke} />
-                ) : null,
+          activeDot: false,
         }}
         curveType="monotone"
       />
@@ -116,58 +116,136 @@ const chartHour = new Intl.DateTimeFormat("zh-CN", {
 
 export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
   const hours = history
-    ? Array.from(
-        { length: 168 },
-        (_, index) => history.endUnixSeconds - (167 - index) * 3600,
-      )
+    ? Array.from({ length: outputTrendHours }, (_, index) => {
+        const hour =
+          history.endUnixSeconds - (outputTrendHours - 1 - index) * 3600;
+        const point = history.points[hour];
+        return {
+          index,
+          businessTime: (hour + history.offsetMinutes * 60) * 1000,
+          value: point?.median ?? null,
+          count: point?.count,
+        };
+      })
     : [];
-  const points = hours.map((hour) => history?.points[hour]);
-  const latest = points.findLast((point) => point !== undefined);
+  const observed = hours.flatMap(({ index, value }) =>
+    value === null ? [] : [{ index, value }],
+  );
+  const latest = observed.at(-1);
+  const bridges = observed.slice(1).flatMap((end, index) => {
+    const start = observed[index];
+    const missing = end.index - start.index - 1;
+    if (missing < 1 || missing > maxBridgedHours) return [];
+    return [
+      {
+        segment: [
+          { x: start.index, y: start.value },
+          { x: end.index, y: end.value },
+        ] as const,
+        className: styles.outputRateBridge,
+        strokeDasharray: "2 2",
+      },
+    ];
+  });
   const rate = (value: number) =>
-    `${value.toLocaleString("zh-CN", { maximumFractionDigits: 0 })} Token/s`;
+    value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return (
     <Paper withBorder p="md">
-      <Title order={3} size="h4">
-        请求输出速率
-      </Title>
-      <Group justify="space-between" gap={4} mt={4} mih={24}>
-        <Text
-          size="xs"
-          c="dimmed"
+      <Group justify="space-between" align="baseline" gap="xs" wrap="nowrap">
+        <Title
+          order={3}
+          size="h4"
           title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
         >
-          近 7 天
-        </Text>
+          Token 输出速率
+        </Title>
         {latest && (
-          <Text
-            className={styles.outputRateValue}
-            size="sm"
-            fw={600}
-            flex={1}
-            ta="right"
-            title="最近有样本的小时"
-          >
-            <ContinuousValue text={`最近 ${rate(latest.median)}`} />
-          </Text>
+          <div className={styles.outputRateValue} title="最近有样本的小时">
+            <Text component="span" size="xs" c="dimmed">
+              最近
+            </Text>
+            <ContinuousValue text={rate(latest.value)} />
+            <Text component="span" size="xs" c="dimmed">
+              Token/s
+            </Text>
+          </div>
         )}
       </Group>
       {latest ? (
-        <Sparkline
-          label="请求输出速率"
-          values={points.map((point) => point?.median ?? null)}
-          dates={hours.map((hour) =>
-            chartHour.format(
-              (hour + (history?.offsetMinutes ?? 0) * 60) * 1000,
-            ),
-          )}
-          format={(value, index) =>
-            `${rate(value)} · ${points[index]?.count} 笔样本`
-          }
-          description={`最近有样本的小时 ${rate(latest.median)}`}
-          compact={false}
-        />
+        <div
+          role="img"
+          aria-label={`Token 输出速率近 7 天：最近有样本的小时 ${rate(latest.value)} Token/s`}
+        >
+          <LineChart
+            h={outputTrendHeight}
+            mt={4}
+            data={hours}
+            dataKey="index"
+            series={[{ name: "value", color: "brand.5" }]}
+            lineChartProps={{
+              margin: { top: 5, right: 17, bottom: 0, left: 0 },
+            }}
+            xAxisProps={{
+              type: "number",
+              domain: [0, outputTrendHours - 1],
+              ticks: outputDateTicks,
+              interval: 0,
+              height: 18,
+              tickSize: 3,
+              axisLine: false,
+              tick: { fontSize: 10, fill: "currentColor" },
+              tickFormatter: (index) =>
+                chartShortDay.format(hours[index].businessTime),
+              padding: { left: 8, right: 0 },
+            }}
+            yAxisProps={{
+              width: 27,
+              tickCount: 3,
+              allowDecimals: false,
+              domain: [0, "auto"],
+              tickSize: 3,
+              tick: { fontSize: 10, fill: "currentColor" },
+              tickFormatter: (value) => axisRateFormat.format(value),
+            }}
+            tickLine="none"
+            strokeDasharray="0"
+            strokeWidth={1.5}
+            connectNulls={false}
+            curveType="linear"
+            referenceLines={bridges}
+            lineProps={{
+              activeDot: { r: 3 },
+              dot: ({ index, cx, cy, stroke }) =>
+                hours[index]?.value != null &&
+                (index === latest.index ||
+                  (hours[index - 1]?.value == null &&
+                    hours[index + 1]?.value == null)) ? (
+                  <Dot cx={cx} cy={cy} r={2} fill={stroke} />
+                ) : null,
+            }}
+            tooltipProps={{
+              filterNull: false,
+              content: ({ active, label }) => {
+                const hour = label == null ? undefined : hours[Number(label)];
+                if (!active || !hour) return null;
+                return (
+                  <Paper withBorder p="xs" shadow="sm" role="tooltip">
+                    <Text size="xs" c="dimmed">
+                      {chartHour.format(hour.businessTime)}
+                    </Text>
+                    <Text size="sm" fw={600}>
+                      {hour.value == null
+                        ? "无样本"
+                        : `${rate(hour.value)} Token/s · ${hour.count} 笔样本`}
+                    </Text>
+                  </Paper>
+                );
+              },
+            }}
+          />
+        </div>
       ) : (
-        <Text size="sm" c="dimmed" h={outputTrendHeight} pt="sm">
+        <Text size="sm" c="dimmed" h={outputTrendHeight} mt={4} pt="sm">
           暂无速率数据
         </Text>
       )}
