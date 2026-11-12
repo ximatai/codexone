@@ -275,7 +275,7 @@
 
 | 包 | 锁定版本 | 根许可证 | 已读来源 |
 |---|---|---|---|
-| `async-http-client` | 1.36.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/4c005f955e83f888d5616e579717a36d2dfc6301/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/4c005f955e83f888d5616e579717a36d2dfc6301/NOTICE.txt) |
+| `async-http-client` | 1.37.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/d2dfb39bcb0fafd1834ec6e6334c1755360f856e/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/async-http-client/d2dfb39bcb0fafd1834ec6e6334c1755360f856e/NOTICE.txt) |
 | `async-kit` | 1.22.0 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/async-kit/6bbb83cbf9d886623a967a965c8fb1b73e6566f9/LICENSE) |
 | `console-kit` | 4.16.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/console-kit/04ebb8ff6424fc01f2c3b665a7e84a83226bfb76/LICENSE) |
 | `multipart-kit` | 4.7.1 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/multipart-kit/3498e60218e6003894ff95192d756e238c01f44e/LICENSE) |
@@ -292,25 +292,25 @@
 | `swift-distributed-tracing` | 1.7.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-distributed-tracing/297b5b9c82a5631e3199ce3ec0993a3cfb0fbb84/LICENSE.txt) |
 | `swift-http-structured-headers` | 1.7.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-structured-headers/933538faa42c432d385f02e07df0ace7c5ecfc47/LICENSE.txt) |
 | `swift-http-types` | 1.8.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/NOTICE.txt) |
-| `swift-log` | 1.16.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-log/4038b6a4f74a1426f47eb1dd5b4bb5628a15d597/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-log/4038b6a4f74a1426f47eb1dd5b4bb5628a15d597/NOTICE.txt) |
+| `swift-log` | 1.17.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-log/e3da04078777e6a1b72ce19981fbd6539b0847d8/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-log/e3da04078777e6a1b72ce19981fbd6539b0847d8/NOTICE.txt) |
 | `swift-metrics` | 2.12.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-metrics/9467f9cc3c32b4386fad1ecc4618328887ef5758/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-metrics/9467f9cc3c32b4386fad1ecc4618328887ef5758/NOTICE.txt) |
-| `swift-nio` | 2.104.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio/6db9d9abd92ad7399b8a564cafbb87d3507245fa/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio/6db9d9abd92ad7399b8a564cafbb87d3507245fa/NOTICE.txt) |
-| `swift-nio-extras` | 1.35.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/41449336c8ecfadac6b4b5be75f9c3c306e61ced/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/41449336c8ecfadac6b4b5be75f9c3c306e61ced/NOTICE.txt) |
+| `swift-nio` | 2.105.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio/2f58d8ef84438d6517fc78bcea2f8527e3c72936/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio/2f58d8ef84438d6517fc78bcea2f8527e3c72936/NOTICE.txt) |
+| `swift-nio-extras` | 1.35.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/8e1249b29f92574e05e0d91637f239e378a9a95b/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-extras/8e1249b29f92574e05e0d91637f239e378a9a95b/NOTICE.txt) |
 | `swift-nio-http2` | 1.46.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-http2/0f3e54e29c944c2e835ad52159da7d9e1c94ac69/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-http2/0f3e54e29c944c2e835ad52159da7d9e1c94ac69/NOTICE.txt) |
-| `swift-nio-ssl` | 2.37.5 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/322f3c2a4a21df31c84ca416bf65ee5e9059e440/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/322f3c2a4a21df31c84ca416bf65ee5e9059e440/NOTICE.txt) |
+| `swift-nio-ssl` | 2.37.6 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/15e0b9e495786807272dd4891fa4bac76aa43034/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-nio-ssl/15e0b9e495786807272dd4891fa4bac76aa43034/NOTICE.txt) |
 | `swift-nio-transport-services` | 1.28.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-nio-transport-services/67787bb645a5e67d2edcdfbe48a216cc549222d5/LICENSE.txt) |
 | `swift-numerics` | 1.1.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-numerics/0c0290ff6b24942dadb83a929ffaaa1481df04a2/LICENSE.txt) |
 | `swift-service-context` | 1.5.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-service-context/853ba3d9ce78851b9cc20108e8bd4f13f7fa546c/NOTICE.txt) |
 | `swift-service-lifecycle` | 2.13.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/swift-server/swift-service-lifecycle/a18ee16b8039866fd919bdb4e8e906882d4ecc75/NOTICE.txt) |
 | `swift-system` | 1.8.1 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-system/869129b7bf4ecc57b97d0193ad29690ca2134750/LICENSE.txt) |
-| `vapor` | 4.122.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/vapor/33e61d0a02a9ddc9f025f8398a0dc24774f6cbe1/LICENSE) |
+| `vapor` | 4.122.3 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/vapor/48852309b11230e62a89b41a9c578c93f4d2d916/LICENSE)、[NOTICES.txt](https://raw.githubusercontent.com/vapor/vapor/48852309b11230e62a89b41a9c578c93f4d2d916/NOTICES.txt) |
 | `websocket-kit` | 2.16.2 | MIT | [LICENSE](https://raw.githubusercontent.com/vapor/websocket-kit/90bbbdab3ede12c803cfbe91646f291c092517a3/LICENSE) |
 
 ### 嵌入组件的剩余核验边界
 
-`swift-nio-ssl` 的锁定 NOTICE 已明确声明 BoringSSL 为 ISC 与 OpenSSL 组合许可；须保留其多来源通知，不能仅分发包根 Apache-2.0。`swift-crypto` 的锁定 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0；测试材料不因出现在源码归档就免除许可保留。
+`swift-nio-ssl` 的根 NOTICE 仍将 BoringSSL 列为 ISC 与 OpenSSL 组合许可。2.37.6 中 `Sources/CNIOBoringSSL/hash.txt` 记录的上游提交 `8eb25be6fa18d475291122887a7bccd3762ff236` 提供 Apache-2.0 正文，并单列测试支持代码的许可。`swift-crypto` 4.5.2 的 `Sources/CCryptoBoringSSL/hash.txt` 记录上游提交 `0226f30467f540a3f62ef48d453f93927da199b6`，其 LICENSE 与前者逐字节相同。镜像保留两份包根 NOTICE，并在 `licenses/swift/BoringSSL-LICENSE.txt` 提供两者共用的固定上游正文。[NIOSSL 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/8eb25be6fa18d475291122887a7bccd3762ff236/LICENSE) · [Swift Crypto 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/0226f30467f540a3f62ef48d453f93927da199b6/LICENSE) · [分发副本](deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt)
 
-**待核验：两个包内嵌加密代码的完整许可正文与适用文件集合。** 在这两个锁定 revision 查询 `Sources/CCryptoBoringSSL` / `Sources/CNIOBoringSSL` 下的 LICENSE、LICENSE.txt、NOTICE、COPYING 均返回 HTTP 404；递归源码树元数据也未列出独立的组件许可文件。根 NOTICE 提及的 `license/LICENSE.<component>.txt` 未在树中取得，不能用浮动上游许可替代锁定产物的证据。正式分发前须检查实际 SwiftPM checkout 与镜像许可归档；若组件通知仍缺失，维护者应补全后再发布。
+`swift-crypto` 的根 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0。发布时检查 SwiftPM checkout 和镜像许可归档，确保分发产物保留实际包含组件的许可与通知。
 
 ## 相关文档
 
