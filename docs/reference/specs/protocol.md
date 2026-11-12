@@ -206,7 +206,7 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 保留传输内容、提取业务事实、判断执行风险互相独立。ProviderEventSemantics 仅映射已知 lifecycle、output_item、part/delta 及工具阶段；未知事件原样转发（须先满足 lane/response 隔离与资源边界），不能因携带 item/item_id/call_id 就授予归属、续期或终态。已知 output_item 封套仍可建立 item ID；function_call/custom_tool_call 才解释 call_id。未知事件、metadata 和空 delta 不推进 first/idle；原生 Images 只将已知 completed 与非空 partial_image 作为进展，未知图片事件不续期。total 期限继续独立生效；既有工具阶段事件的重复语义未在此承诺全面去重。
 
-协议观测对 response.metadata、codex.response.metadata 和 responsesapi.websocket_timing 识别名称；诊断名称识别不参与执行进度、响应归属、结算或 1009 分类。
+协议观测对 response.metadata、codex.response.metadata、responsesapi.websocket_timing 和 response.output_item.interrupted 识别名称；诊断名称识别不参与执行进度、响应归属、结算或 1009 分类。
 
 未知应用事件即使暂时不能关联到响应，也否定未处理的假设：reader 在入队/丢弃前关闭该 turn 的 1009 例外，无法归属到在途 lane 时保守作用于该连接已派发的在途 lane，但不将事件作为它们的归属、用量或完成证据。明确属于旧 response 的事件继续隔离，不污染新 turn。rate_limits.updated、codex.rate_limits、response.metadata、codex.response.metadata 仅在不携带 response/response_id/item/item_id/delta/output 时可作为连接元数据例外。transport 关闭后保留当前 turn 的风险证据供 1009 分类；仅连接上唯一已派发在途 turn 可接受该未处理例外，多 lane 同时在途时连接级 1009 无法证明每轮均未处理，保持 unknown。其他关闭不据此重放。
 

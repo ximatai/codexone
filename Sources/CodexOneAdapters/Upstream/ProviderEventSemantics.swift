@@ -68,8 +68,10 @@ struct ProviderEventSemantics {
     known = lifecycle || carriesItem || carriesItemID || connectionMetadata || type == "error"
     recognizedType =
       known
-      || ["response.metadata", "codex.response.metadata", "responsesapi.websocket_timing"]
-        .contains(type)
+      || [
+        "response.metadata", "codex.response.metadata", "responsesapi.websocket_timing",
+        "response.output_item.interrupted",
+      ].contains(type)
     if terminal || carriesItem || Self.partEvents.contains(type) {
       progress = .activity
     } else if Self.deltaEvents.contains(type), event["delta"]?.string?.isEmpty == false {

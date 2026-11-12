@@ -313,6 +313,9 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
                 endUnixSeconds: day,
                 offsetMinutes: 480,
                 points: {
+                  [day - 11 * 3600]: { median: 14, count: 1 },
+                  [day - 10 * 3600]: { median: 23, count: 2 },
+                  [day - 7 * 3600]: { median: 35, count: 2 },
                   [day - 3 * 3600]: { median: 20, count: 2 },
                   [day - 2 * 3600]: { median: 30, count: 3 },
                   [day]: { median, count },
@@ -331,40 +334,46 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "进行中请求 · 43 Token/s" }),
   ).toBeVisible();
-  const trend = page.getByRole("img", { name: /^请求输出速率近 7 天/ });
+  const trend = page.getByRole("img", { name: /^Token 输出速率近 7 天/ });
   const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
   await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
-  const dots = trend.locator("circle.recharts-dot");
-  await expect(dots).toHaveCount(1);
-  await dots.first().hover();
+  // The fixture has one one-hour gap, one two-hour gap and one longer gap.
+  await expect(trend.locator("line.recharts-reference-line-line")).toHaveCount(
+    2,
+  );
+  await trend.locator("circle.recharts-dot").last().hover();
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );
   await expect(page.getByRole("tooltip")).toContainText("08:00");
-  await page.getByRole("heading", { name: "请求输出速率" }).hover();
-  const readout = page
-    .locator('[title="最近有样本的小时"]')
-    .locator("[data-continuous-value]");
+  const title = page.getByRole("heading", { name: "Token 输出速率" });
+  await title.hover();
+  const readout = page.locator('[title="最近有样本的小时"]');
   await expect(readout).toBeVisible();
-  await expect(readout).toHaveText("最近 43 Token/s");
-  const readoutBox = await readout.boundingBox();
+  await expect(readout).toContainText("43");
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 320, height: 844 });
   for (const [sequence, median, label] of [
     [3, 1234, "1,234 Token/s"],
     [4, 0, "0 Token/s"],
   ] as const) {
     sendHourlyRate(sequence, median, 6);
-    await expect(readout).toHaveText(`最近 ${label}`);
+    await expect(readout).toContainText(median.toLocaleString("zh-CN"));
     await expect(trend).toHaveAccessibleName(
-      `请求输出速率近 7 天：最近有样本的小时 ${label}`,
+      `Token 输出速率近 7 天：最近有样本的小时 ${label}`,
     );
-    expect(await readout.boundingBox()).toEqual(readoutBox);
+    const narrowTitle = (await title.boundingBox())!;
+    const narrowReadout = (await readout.boundingBox())!;
+    const titleLineHeight = await title.evaluate((heading) =>
+      parseFloat(getComputedStyle(heading).lineHeight),
+    );
+    expect(narrowTitle.height).toBeLessThanOrEqual(titleLineHeight + 1);
+    expect(narrowReadout.x).toBeGreaterThan(narrowTitle.x + narrowTitle.width);
+    expect(narrowReadout.y).toBeLessThan(narrowTitle.y + narrowTitle.height);
   }
-  const originalViewport = page.viewportSize()!;
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(trend).toBeVisible();
-  const narrowTrend = await trend.boundingBox();
-  expect(narrowTrend!.x + narrowTrend!.width).toBeLessThanOrEqual(390);
+  const narrowTrend = (await trend.boundingBox())!;
+  expect(narrowTrend.x + narrowTrend.width).toBeLessThanOrEqual(320);
   await page.setViewportSize(originalViewport);
   const resourceTop = await resources.evaluate(
     (heading) => heading.getBoundingClientRect().top,

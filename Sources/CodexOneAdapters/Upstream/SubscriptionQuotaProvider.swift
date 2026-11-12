@@ -9,6 +9,8 @@ import Synchronization
 public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
   AccountResetCreditProvider, Sendable
 {
+  private static let modelDiscoveryTimeoutMilliseconds = 15_000
+
   private struct State {
     var started = false
     var client: HTTPClient?
@@ -60,12 +62,13 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
     var pool = HTTPClient.Configuration.ConnectionPool(
       idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 4)
     pool.retryConnectionEstablishment = false
-    // Connection setup may use the whole request deadline: through an explicit proxy it includes
-    // the CONNECT tunnel and TLS handshake, which can approach 3 s on a healthy path.
+    // The shared client must allow the longest operation. Each request enforces its own deadline,
+    // including connection setup through an explicit proxy and response body collection.
+    let clientTimeout = TimeAmount.milliseconds(
+      Int64(max(timeoutMilliseconds, Self.modelDiscoveryTimeoutMilliseconds)))
     var configuration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
-      timeout: .init(
-        connect: .milliseconds(Int64(timeoutMilliseconds)), read: .seconds(5)),
+      timeout: .init(connect: clientTimeout, read: clientTimeout),
       connectionPool: pool,
       proxy: proxy?.clientProxy, decompression: .disabled)
     configuration.httpVersion = .http1Only
@@ -118,11 +121,11 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
     guard let address = url.string else { throw ExecutionError.invalidCommand }
     return try await request(
       access, url: address, body: nil, maximumBytes: 4 * 1024 * 1024,
-      userAgent: fingerprint.userAgent)
+      userAgent: fingerprint.userAgent, timeout: Self.modelDiscoveryTimeoutMilliseconds)
   }
   private func request(
     _ access: SubscriptionDataAccess, url: String, body: JSONValue?,
-    maximumBytes: Int = 65_536, userAgent: String = "codex-cli"
+    maximumBytes: Int = 65_536, userAgent: String = "codex-cli", timeout: Int? = nil
   ) async throws -> JSONValue {
     let client = try state.withLock { value in
       guard let client = value.client else { throw QuotaObservationFailure.closed }
@@ -131,10 +134,11 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
       return client
     }
     defer { state.withLock { $0.active -= 1 } }
+    let timeoutMilliseconds = timeout ?? self.timeoutMilliseconds
     do {
       return try await withThrowingTaskGroup(of: JSONValue.self) { tasks in
         defer { tasks.cancelAll() }
-        tasks.addTask { [timeoutMilliseconds] in
+        tasks.addTask {
           var request = HTTPClientRequest(url: url)
           request.method = body == nil ? .GET : .POST
           if let body {
@@ -172,7 +176,7 @@ public final class SubscriptionQuotaProvider: Service, AccountQuotaProvider,
           }
           return document
         }
-        tasks.addTask { [timeoutMilliseconds] in
+        tasks.addTask {
           try await Task.sleep(for: .milliseconds(timeoutMilliseconds))
           throw QuotaObservationFailure.unavailable
         }
