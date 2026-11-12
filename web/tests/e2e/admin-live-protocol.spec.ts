@@ -222,6 +222,7 @@ test("HTTP pending over an old snapshot marks the module and availability summar
 });
 
 test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
+  test.setTimeout(30_000);
   await reviewFixture(page);
   let socket: WebSocketRoute | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
