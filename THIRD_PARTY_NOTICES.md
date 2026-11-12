@@ -65,7 +65,7 @@
 | `@oxlint/binding-win32-arm64-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-arm64-msvc/1.89.0)；正文未在本地安装 |
 | `@oxlint/binding-win32-ia32-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-ia32-msvc/1.89.0)；正文未在本地安装 |
 | `@oxlint/binding-win32-x64-msvc` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-win32-x64-msvc/1.89.0)；正文未在本地安装 |
-| `@playwright/test` | 1.64.1 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
+| `@playwright/test` | 1.65.0 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
 | `@reduxjs/toolkit` | 2.13.0 | MIT | 正文已读：`LICENSE` |
 | `immer` | 11.2.9 | MIT | 正文已读：`LICENSE` |
 | `@remix-run/route-pattern` | 0.22.1 | MIT | 正文已读：`LICENSE` |
@@ -107,7 +107,7 @@
 | `@types/d3-time` | 3.0.4 | MIT | 正文已读：`LICENSE` |
 | `@types/d3-timer` | 3.0.2 | MIT | 正文已读：`LICENSE` |
 | `@types/deep-eql` | 4.0.2 | MIT | 正文已读：`LICENSE` |
-| `@types/estree` | 1.0.9 | MIT | 正文已读：`LICENSE` |
+| `@types/estree` | 1.0.10 | MIT | 正文已读：`LICENSE` |
 | `@types/node` | 22.20.5 | MIT | 正文已读：`LICENSE` |
 | `@types/react` | 19.3.0 | MIT | 正文已读：`LICENSE` |
 | `@types/react-dom` | 19.3.0 | MIT | 正文已读：`LICENSE` |
@@ -133,8 +133,8 @@
 | `@typescript/typescript-win32-arm64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-arm64/7.0.2)；正文未在本地安装 |
 | `@typescript/typescript-win32-x64` | 7.0.2 | Apache-2.0 | [registry 声明已核验](https://registry.npmjs.org/%40typescript%2Ftypescript-win32-x64/7.0.2)；正文未在本地安装 |
 | `@vitejs/plugin-react` | 6.1.2 | MIT | 正文已读：`LICENSE` |
-| `@vitest/mocker` | 5.0.5 | MIT | 正文已读：`LICENSE` |
-| `@vitest/spy` | 5.0.5 | MIT | 正文已读：`LICENSE` |
+| `@vitest/mocker` | 5.1.0 | MIT | 正文已读：`LICENSE` |
+| `@vitest/spy` | 5.1.0 | MIT | 正文已读：`LICENSE` |
 | `ansi-regex` | 5.0.1 | MIT | 正文已读：`license` |
 | `ansi-styles` | 5.2.0 | MIT | 正文已读：`license` |
 | `aria-query` | 5.3.0 | Apache-2.0 | 正文已读：`LICENSE` |
@@ -198,7 +198,7 @@
 | `loose-envify` | 1.4.0 | MIT | 正文已读：`LICENSE` |
 | `lru-cache` | 11.5.3 | BlueOak-1.0.0 | 正文已读：`LICENSE.md` |
 | `lz-string` | 1.5.0 | MIT | 正文已读：`LICENSE` |
-| `magic-string` | 1.4.3 | MIT | 正文已读：`LICENSE` |
+| `magic-string` | 1.4.5 | MIT | 正文已读：`LICENSE` |
 | `mdn-data` | 2.27.1 | CC0-1.0 | 正文已读：`LICENSE` |
 | `min-indent` | 1.0.1 | MIT | 正文已读：`license` |
 | `nanoid` | 3.3.20 | MIT | 正文已读：`LICENSE` |
@@ -208,8 +208,8 @@
 | `parse5` | 8.0.1 | MIT | 正文已读：`LICENSE` |
 | `picocolors` | 1.1.1 | ISC | 正文已读：`LICENSE` |
 | `picomatch` | 4.0.7 | MIT | 正文已读：`LICENSE` |
-| `playwright` | 1.64.1 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
-| `playwright-core` | 1.64.1 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
+| `playwright` | 1.65.0 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
+| `playwright-core` | 1.65.0 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
 | `postcss` | 8.5.31 | MIT | 正文已读：`LICENSE` |
 | `prettier` | 3.9.10 | MIT | 正文已读：`LICENSE` |
 | `pretty-format` | 27.5.1 | MIT | 正文已读：`LICENSE` |
@@ -258,7 +258,7 @@
 | `use-sync-external-store` | 1.7.0 | MIT | 正文已读：`LICENSE` |
 | `victory-vendor` | 37.4.1 | MIT AND ISC AND BSD-3-Clause | 正文已读：`LICENSE.txt`, `lib-vendor/d3-format/LICENSE`, `lib-vendor/d3-shape/LICENSE`, `lib-vendor/d3-array/LICENSE`, `lib-vendor/d3-scale/LICENSE`, `lib-vendor/d3-color/LICENSE`, `lib-vendor/d3-timer/LICENSE`, `lib-vendor/d3-time-format/LICENSE`, `lib-vendor/d3-interpolate/LICENSE`, `lib-vendor/d3-time/LICENSE`, `lib-vendor/d3-path/LICENSE`, `lib-vendor/d3-voronoi/LICENSE`, `lib-vendor/d3-ease/LICENSE`, `lib-vendor/internmap/LICENSE` |
 | `vite` | 8.3.5 | MIT | 正文已读：`LICENSE.md` |
-| `vitest` | 5.0.5 | MIT | 正文已读：`LICENSE.md` |
+| `vitest` | 5.1.0 | MIT | 正文已读：`LICENSE.md` |
 | `w3c-xmlserializer` | 6.0.0 | MIT | 正文已读：`LICENSE.md` |
 | `webidl-conversions` | 8.0.1 | BSD-2-Clause | 正文已读：`LICENSE.md` |
 | `whatwg-mimetype` | 5.0.0 | MIT | 正文已读：`LICENSE.txt` |
