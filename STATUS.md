@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.34](https://github.com/ximatai/codexone/releases/tag/v0.26.34)**（2026-11-12），核心数据库 schema v16。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.35](https://github.com/ximatai/codexone/releases/tag/v0.26.35)**（2026-11-12），核心数据库 schema v17。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.35 展示完整额度周期的实际历史和预测，未采集的区间留白，并加强发布检查。见[发布说明](CHANGELOG.md)。
 
 v0.26.34 增加动态模型目录和 Key 推理档位配置，并从首页输出速率排除实际生图请求。见[发布说明](CHANGELOG.md)。
 
@@ -103,7 +105,6 @@ v0.26.10将订阅上游已知准入前 `unsupported_backend_parameter/400` 归�
 
 ## 路线图
 
-- [完整额度周期趋势](docs/changes/quota-cycle-history/proposal.md)。
 - 重置卡使用与空闲窗口预热的真实订阅验收（需维护者在场确认）。
 - [多账号路由治理](docs/requirements/account-routing-governance.md)与故障切换的完整兼容验收。
 - [用量分析](docs/changes/usage-analytics/proposal.md)：模型/客户端分布及 CSV。
