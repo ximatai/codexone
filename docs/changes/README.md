@@ -6,9 +6,6 @@
 
 ## 活动提案
 
-
-- [截图隐私模式](screenshot-privacy/proposal.md) · [任务](screenshot-privacy/tasks.md)
-
 - [额外使用积分只读观测](usage-credit-observation/proposal.md) · [任务](usage-credit-observation/tasks.md)
 
 - [准入拒绝下钻](rejection-diagnostics/proposal.md) · [任务](rejection-diagnostics/tasks.md)
@@ -16,14 +13,6 @@
 - [首页订阅额度趋势](overview-quota-trend/proposal.md) · [任务](overview-quota-trend/tasks.md)
 
 - [首页 Key 管理](overview-key-management/proposal.md) · [任务](overview-key-management/tasks.md)
-
-- [hourly-output-rate](hourly-output-rate/proposal.md) · [任务](hourly-output-rate/tasks.md)
-
-
-- [automatic-v12-migration](automatic-v12-migration/proposal.md) · [任务](automatic-v12-migration/tasks.md)
-
-- [persist-output-rate-history](persist-output-rate-history/proposal.md) · [任务](persist-output-rate-history/tasks.md)
-
 
 - [startup-rejection-visibility](startup-rejection-visibility/proposal.md) · [任务](startup-rejection-visibility/tasks.md)
 
