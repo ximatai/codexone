@@ -2,6 +2,7 @@ import { AttentionNavigation } from "../shared/attention-navigation";
 import styles from "./Workspace.module.css";
 import { ActionIcon, Burger, Drawer, Group, Stack, Text } from "@mantine/core";
 import {
+  IconBrandGithub,
   IconLayoutDashboard,
   IconUsers,
   IconKey,
@@ -66,6 +67,22 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
       ))}
     </Stack>
   );
+  const githubLink = (
+    <ActionIcon
+      className={styles.githubLink}
+      component="a"
+      href="https://github.com/ximatai/codexone"
+      target="_blank"
+      rel="noreferrer"
+      variant="subtle"
+      color="gray"
+      size={44}
+      aria-label="在新标签页打开 CodexOne 的 GitHub 仓库"
+      title="在新标签页打开 CodexOne 的 GitHub 仓库"
+    >
+      <IconBrandGithub size={21} aria-hidden="true" />
+    </ActionIcon>
+  );
   return (
     <AttentionNavigation.Provider value={setCritical}>
       <div
@@ -81,7 +98,10 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
             size="sm"
           />
           <Group gap="sm" className={styles.brand}>
-            <span className="brand-mark" aria-hidden="true">
+            <span
+              className={`brand-mark ${styles.brandMark}`}
+              aria-hidden="true"
+            >
               C
             </span>
             <Text fw={700} size="xl">
@@ -91,23 +111,27 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
         </header>
         <aside id="workspace-sidebar" className={styles.sidebar}>
           <nav aria-label="控制台导航">{navigation}</nav>
-          <ActionIcon
-            className={styles.sidebarToggle}
-            variant="subtle"
-            color="gray"
-            size="lg"
-            aria-label={toggleLabel}
-            aria-controls="workspace-sidebar"
-            aria-expanded={!collapsed}
-            title={toggleLabel}
-            onClick={toggleSidebar}
-          >
-            {collapsed ? (
-              <IconLayoutSidebarLeftExpand size={21} aria-hidden="true" />
-            ) : (
-              <IconLayoutSidebarLeftCollapse size={21} aria-hidden="true" />
-            )}
-          </ActionIcon>
+          <div className={styles.sidebarActions}>
+            {collapsed && githubLink}
+            <ActionIcon
+              className={styles.sidebarToggle}
+              variant="subtle"
+              color="gray"
+              size="lg"
+              aria-label={toggleLabel}
+              aria-controls="workspace-sidebar"
+              aria-expanded={!collapsed}
+              title={toggleLabel}
+              onClick={toggleSidebar}
+            >
+              {collapsed ? (
+                <IconLayoutSidebarLeftExpand size={21} aria-hidden="true" />
+              ) : (
+                <IconLayoutSidebarLeftCollapse size={21} aria-hidden="true" />
+              )}
+            </ActionIcon>
+            {!collapsed && githubLink}
+          </div>
         </aside>
         <Drawer
           opened={opened}
@@ -115,11 +139,14 @@ export function WorkspaceFrame({ children }: { children: ReactNode }) {
           title="CodexOne"
           position="left"
           size={280}
+          styles={{ content: { display: "flex", flexDirection: "column" } }}
+          classNames={{ body: styles.drawerBody }}
           removeScrollProps={{ removeScrollBar: false }}
           data-ui-overlay={opened || undefined}
           closeButtonProps={{ "aria-label": "关闭导航" }}
         >
           <nav aria-label="控制台导航">{navigation}</nav>
+          {githubLink}
         </Drawer>
         <div className={styles.content}>{children}</div>
       </div>

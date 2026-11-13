@@ -151,26 +151,17 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
   const rate = (value: number) =>
     value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return (
-    <Paper withBorder p="md" className={styles.outputRateCard}>
-      <Group
-        className={styles.outputRateHeader}
-        justify="space-between"
-        align="baseline"
-        wrap="nowrap"
-      >
+    <Paper withBorder p="md">
+      <Group className={styles.outputRateHeader} align="baseline" mb="xs">
         <Title
-          className={styles.outputRateTitle}
           order={3}
-          size="h4"
+          size="h5"
           title="每小时取最近至多 256 笔已结算请求的速率中位数，包含首输出前的等待。"
         >
           Token 输出速率
         </Title>
         {latest && (
           <div className={styles.outputRateValue} title="最近有样本的小时">
-            <Text component="span" size="xs" c="dimmed">
-              最近
-            </Text>
             <ContinuousValue text={rate(latest.value)} />
             <Text component="span" size="xs" c="dimmed">
               Token/s
@@ -185,7 +176,6 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
         >
           <LineChart
             h={outputTrendHeight}
-            mt={4}
             data={hours}
             dataKey="index"
             series={[{ name: "value", color: "brand.5" }]}
@@ -252,7 +242,7 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
           />
         </div>
       ) : (
-        <Text size="sm" c="dimmed" h={outputTrendHeight} mt={4} pt="sm">
+        <Text size="sm" c="dimmed" h={outputTrendHeight}>
           暂无速率数据
         </Text>
       )}

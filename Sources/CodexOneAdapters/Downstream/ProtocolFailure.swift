@@ -60,17 +60,22 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
         ? error : nil)
   }
   let explanation =
-    mapped.code == UpstreamWebSocketBodyLimit.errorCode
-    ? "The conversation or its images are too large. Start a new session or remove images before trying again."
-    : mapped.code == "continuation_owner_unavailable"
-      ? "Continuation source cannot be verified. The request was not dispatched."
-      : mapped.code == "unsupported_svg_model_selection"
-        ? "Choosing an SVG author model is not supported. Omit the svg object to use the image endpoint default. The request was not dispatched."
-        : mapped.code == "unsupported_image_format_combination"
-          ? "This image format cannot use streaming, partial images, masks or output compression. SVG also requires generation with one image and no prompt rewriter. The request was not dispatched."
-          : mapped.code == "invalid_upstream_image_format"
-            ? "The provider returned a different or unrecognized image format."
-            : "Gateway request failed."
+    switch mapped.code {
+    case "model_not_allowed":
+      "The selected model is not available for this request. Choose a model enabled for this operation and allowed by your API key."
+    case UpstreamWebSocketBodyLimit.errorCode:
+      "The conversation or its images are too large. Start a new session or remove images before trying again."
+    case "continuation_owner_unavailable":
+      "Continuation source cannot be verified. The request was not dispatched."
+    case "unsupported_svg_model_selection":
+      "Choosing an SVG author model is not supported. Omit the svg object to use the image endpoint default. The request was not dispatched."
+    case "unsupported_image_format_combination":
+      "This image format cannot use streaming, partial images, masks or output compression. SVG also requires generation with one image and no prompt rewriter. The request was not dispatched."
+    case "invalid_upstream_image_format":
+      "The provider returned a different or unrecognized image format."
+    default:
+      "Gateway request failed."
+    }
   let message =
     UUID(uuidString: requestID) != nil
     ? "\(explanation) Reference: \(requestID)." : explanation

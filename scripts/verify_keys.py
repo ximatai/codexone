@@ -263,7 +263,11 @@ def main():
                         status, document = call(ports['data'], 'GET', prefix + '/models?client_version=0.163.0', token=a_secret)
                         assert status == 200 and [m['id'] for m in document['data']] == ['synthetic-text']
                         assert [m['slug'] for m in document['models']] == ['synthetic-text']
-                        assert call(ports['data'], 'POST', prefix + '/responses', {**request, 'model': 'synthetic-other'}, token=a_secret)[0] == 403
+                        status, rejected = call(ports['data'], 'POST', prefix + '/responses',
+                            {**request, 'model': 'synthetic-other'}, token=a_secret)
+                        assert status == 403 and rejected['error']['code'] == 'model_not_allowed'
+                        assert 'allowed by your API key' in rejected['error']['message']
+                        assert rejected['error']['request_id'] in rejected['error']['message']
                     assert provider.calls == 0
                     empty, empty_secret = create(ports['admin'], principal='empty', models=['synthetic-unroutable'])
                     secrets.append(empty_secret)
@@ -306,6 +310,7 @@ def main():
                             assert update(ports['admin'], a, models=['synthetic-other'])[0] == 200
                             events = turn(downstream, request)
                             assert events[-1]['type'] == 'error' and events[-1]['error']['code'] == 'model_not_allowed'
+                            assert 'allowed by your API key' in events[-1]['error']['message']
                             assert provider.calls == count
                         with dial(ports['data'], token=b_secret) as downstream:
                             assert turn(downstream, request)[-1]['type'] == 'response.completed'

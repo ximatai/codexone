@@ -268,7 +268,7 @@ export function ActivityOverview({
             />
           )}
           <Paper withBorder p="md">
-            <Title order={3} size="h4" mb="xs" className={styles.requestTitle}>
+            <Title order={3} size="h5" mb="xs" className={styles.requestTitle}>
               <span>进行中请求</span>
               {outputRateLabel !== null && (
                 <Text
