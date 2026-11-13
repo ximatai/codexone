@@ -264,6 +264,34 @@ it("shows filtered aggregate latency, request duration columns and complete draw
   expect(screen.getByText(/^用量：/)).toBeVisible();
 });
 
+it("queries today from business midnight even when the UTC date differs", async () => {
+  setup();
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-31T18:25:00Z"));
+  vi.mocked(api.fetchUsageOptions).mockResolvedValue({
+    keys: [],
+    models: [],
+    failures: [],
+    businessDay: { offsetMinutes: 480 },
+  });
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  await screen.findByText("第 1 页");
+  fireEvent.click(screen.getByRole("button", { name: "最近 24 小时" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "最近 24 小时" }),
+    ).toHaveAttribute("aria-pressed", "true"),
+  );
+  const today = screen.getByRole("button", { name: "今日" });
+  fireEvent.click(today);
+  await waitFor(() => expect(today).toHaveAttribute("aria-pressed", "true"));
+  expect(vi.mocked(api.fetchUsage).mock.lastCall?.[0].window).toEqual({
+    start: Date.parse("2026-10-31T16:00:00Z") / 1000,
+    end: Date.parse("2026-11-01T16:00:00Z") / 1000,
+  });
+});
+
 it("derives preset selection only from successfully applied filters", async () => {
   setup();
   render(

@@ -441,21 +441,16 @@ export function UsageOverview({
     }
     void load({ ...draft });
   }
+  const now = Date.now() / 1000;
+  const offsetMinutes = options.businessDay?.offsetMinutes;
   const currentPreset =
     applied?.range === "24h"
-      ? 1
-      : [7, 30].find(
+      ? "24h"
+      : [1, 7, 30].find(
           (days) =>
-            applied?.end ===
-              businessDate(
-                Date.now() / 1000,
-                options.businessDay?.offsetMinutes,
-              ) &&
+            applied?.end === businessDate(now, offsetMinutes) &&
             applied?.start ===
-              businessDate(
-                Date.now() / 1000 - (days - 1) * 86400,
-                options.businessDay?.offsetMinutes,
-              ),
+              businessDate(now - (days - 1) * 86400, offsetMinutes),
         );
   if (paused)
     return (
@@ -481,30 +476,31 @@ export function UsageOverview({
         用量与请求诊断
       </Title>
       <Group mb="sm">
-        {[1, 7, 30].map((days) => (
+        {(["24h", 1, 7, 30] as const).map((preset) => (
           <Button
-            key={days}
-            variant={currentPreset === days ? "filled" : "default"}
-            aria-pressed={currentPreset === days}
+            key={preset}
+            variant={currentPreset === preset ? "filled" : "default"}
+            aria-pressed={currentPreset === preset}
             disabled={busy}
             onClick={() => {
-              const now = new Date(
-                Date.now() + (options.businessDay?.offsetMinutes ?? 0) * 60000,
-              );
+              const now = Date.now() / 1000;
+              const days = preset === "24h" ? 1 : preset;
               const next: api.UsageFilters = {
                 ...draft,
-                range: days === 1 ? "24h" : undefined,
-                start: new Date(now.getTime() - (days - 1) * 86400000)
-                  .toISOString()
-                  .slice(0, 10),
-                end: now.toISOString().slice(0, 10),
+                range: preset === "24h" ? preset : undefined,
+                start: businessDate(now - (days - 1) * 86400, offsetMinutes),
+                end: businessDate(now, offsetMinutes),
               };
               setDraft(next);
               setInvalidDates({ start: false, end: false });
               void load(next);
             }}
           >
-            {days === 1 ? "最近 24 小时" : `最近 ${days} 天`}
+            {preset === "24h"
+              ? "最近 24 小时"
+              : preset === 1
+                ? "今日"
+                : `最近 ${preset} 天`}
           </Button>
         ))}
         <Button

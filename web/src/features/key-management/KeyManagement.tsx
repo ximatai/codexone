@@ -277,15 +277,11 @@ export function KeyManagement() {
           {state.readAt === null ? "数量不可用" : `共 ${keys.length} 个`}
         </Text>
       </Paper>
-      <Text
-        size="xs"
-        c="dimmed"
-        mb="md"
-        title="筛选按启用状态与有效期；权限和其他准入限制独立生效。"
-      >
-        业务日今日
-        {usage.isError ? " · 今日摘要读取失败，请刷新重试。" : ""}
-      </Text>
+      {usage.isError && (
+        <Text size="xs" c="dimmed" mb="md">
+          今日摘要读取失败，请刷新重试。
+        </Text>
+      )}
       {state.error && state.readAt !== null && (
         <ErrorState retry={state.reload}>
           {state.error}
