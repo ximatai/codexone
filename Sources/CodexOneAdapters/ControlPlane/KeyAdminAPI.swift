@@ -108,7 +108,7 @@ public struct KeyAdminAPI: Sendable {
           request, allowed: ["model", "revision", "enabled"],
           optional: [
             "inputMicrosPerMillion", "outputMicrosPerMillion", "candidateRevision",
-            "resetReasoningSettings",
+            "resetReasoningSettings", "allowedReasoningEfforts", "defaultReasoningEffort",
           ])
         return try await Self.response(modelDirectory.change(document))
       }

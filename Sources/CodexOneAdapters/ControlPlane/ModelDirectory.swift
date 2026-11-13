@@ -104,6 +104,9 @@ public actor ModelDirectory {
     let baseFields: Set<String> = ["revision", "model", "enabled"]
     let candidateRevision = body["candidateRevision"]?.string
     let suppliedFields = baseFields.union(candidateRevision == nil ? [] : ["candidateRevision"])
+    let reasoningFields: Set<String> = ["allowedReasoningEfforts", "defaultReasoningEffort"]
+    let hasReasoning = !reasoningFields.isDisjoint(with: fields.keys)
+    let enableFields = suppliedFields.union(hasReasoning ? reasoningFields : [])
     let previous = snapshot()
     guard previous.revision == revision else { throw ExecutionError.conflict }
     var expectedAccount: (id: String, revision: Int64)?
@@ -117,7 +120,7 @@ public actor ModelDirectory {
     }
     if enabled, let index = next.retired.firstIndex(where: { $0.id == id }) {
       let reset = body["resetReasoningSettings"]?.bool == true
-      guard Set(fields.keys) == suppliedFields.union(reset ? ["resetReasoningSettings"] : []),
+      guard Set(fields.keys) == enableFields.union(reset ? ["resetReasoningSettings"] : []),
         !reset || next.accountForModel[id] != nil
       else { throw ExecutionError.invalidCommand }
       if let owner = next.accountForModel[id] {
@@ -142,11 +145,13 @@ public actor ModelDirectory {
         try validateResponseModels([refreshed])
         next.retired[index] = refreshed
       }
-      next.active.append(next.retired.remove(at: index))
+      var model = next.retired.remove(at: index)
+      if hasReasoning { model.reasoningSettings = try Self.reasoningSettings(body, for: model) }
+      next.active.append(model)
     } else if enabled {
       guard !next.active.contains(where: { $0.id == id }),
         Set(fields.keys)
-          == suppliedFields.union(["inputMicrosPerMillion", "outputMicrosPerMillion"]),
+          == enableFields.union(["inputMicrosPerMillion", "outputMicrosPerMillion"]),
         let input = body["inputMicrosPerMillion"]?.integer,
         let output = body["outputMicrosPerMillion"]?.integer,
         let discovery, discovery.candidateRevision == candidateRevision,
@@ -158,7 +163,9 @@ public actor ModelDirectory {
         account.authorization == .ready
       else { throw ExecutionError.conflict }
       expectedAccount = (account.id, account.revision)
-      next.active.append(Self.discoveredModel(id: id, entry: entry, input: input, output: output))
+      var model = Self.discoveredModel(id: id, entry: entry, input: input, output: output)
+      if hasReasoning { model.reasoningSettings = try Self.reasoningSettings(body, for: model) }
+      next.active.append(model)
       next.accountForModel[id] = account.id
     } else {
       guard Set(fields.keys) == baseFields,
@@ -174,8 +181,24 @@ public actor ModelDirectory {
 
   func changeReasoning(_ body: JSONValue) async throws -> JSONValue {
     guard let revision = body["revision"]?.integer, revision >= 0, revision < Int64.max,
-      let id = body["model"]?.string, (1...128).contains(id.utf8.count),
-      let range = body["allowedReasoningEfforts"],
+      let id = body["model"]?.string, (1...128).contains(id.utf8.count)
+    else { throw ExecutionError.invalidCommand }
+    let previous = snapshot()
+    guard previous.revision == revision else { throw ExecutionError.conflict }
+    guard let index = previous.active.firstIndex(where: { $0.id == id }) else {
+      throw ExecutionError.invalidCommand
+    }
+    var next = ModelDirectorySnapshot(
+      revision: revision + 1, active: previous.active, retired: previous.retired,
+      accountForModel: previous.accountForModel)
+    next.active[index].reasoningSettings = try Self.reasoningSettings(body, for: next.active[index])
+    return try await save(next, expected: revision)
+  }
+
+  private static func reasoningSettings(
+    _ body: JSONValue, for model: SingleIdentityConfiguration.Model
+  ) throws -> ModelReasoningSettings? {
+    guard let range = body["allowedReasoningEfforts"],
       let defaultEffort = body["defaultReasoningEffort"],
       defaultEffort == .null || defaultEffort.string != nil
     else { throw ExecutionError.invalidCommand }
@@ -190,24 +213,16 @@ public actor ModelDirectory {
       guard efforts.count == values.count else { throw ExecutionError.invalidCommand }
       allowed = efforts
     }
-    let previous = snapshot()
-    guard previous.revision == revision else { throw ExecutionError.conflict }
-    guard let index = previous.active.firstIndex(where: { $0.id == id }) else {
-      throw ExecutionError.invalidCommand
-    }
-    var next = ModelDirectorySnapshot(
-      revision: revision + 1, active: previous.active, retired: previous.retired,
-      accountForModel: previous.accountForModel)
-    let model = next.active[index]
     let settings = ModelReasoningSettings(allowed: allowed, preferred: defaultEffort.string)
     if allowed != nil || settings.preferred != nil {
       guard settings.isValid(for: model) else { throw ExecutionError.invalidCommand }
     }
-    let narrowed = allowed?.count == model.supportedReasoningEfforts.count ? nil : allowed
-    next.active[index].reasoningSettings =
-      narrowed == nil && settings.preferred == nil
+    // A refreshed profile can narrow to the existing explicit range.
+    let matchesSavedRange = allowed.map(Set.init) == model.reasoningSettings?.allowed.map(Set.init)
+    let narrowed =
+      !matchesSavedRange && allowed?.count == model.supportedReasoningEfforts.count ? nil : allowed
+    return narrowed == nil && settings.preferred == nil
       ? nil : .init(allowed: narrowed, preferred: settings.preferred)
-    return try await save(next, expected: revision)
   }
 
   private func save(
@@ -257,6 +272,9 @@ public actor ModelDirectory {
       "profileDefaultReasoningEffort": profileDefault ?? .null,
       "defaultReasoningEffort": model.effectiveDefaultReasoningEffort.map(JSONValue.string)
         ?? .null,
+      "configuredReasoningEfforts": model.reasoningSettings?.allowed.map {
+        .array($0.map(JSONValue.string))
+      } ?? .null,
       "configuredDefaultReasoningEffort": model.reasoningSettings?.preferred.map(JSONValue.string)
         ?? .null,
       "resetReasoningRequired": .bool(resetReasoningRequired),

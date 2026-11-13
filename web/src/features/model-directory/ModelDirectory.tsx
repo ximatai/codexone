@@ -34,6 +34,7 @@ const model = z.object({
   defaultReasoningEffort: z.string().max(32).nullable(),
   supportedReasoningEfforts: z.array(z.string().max(32)).max(8).optional(),
   profileDefaultReasoningEffort: z.string().max(32).nullable().optional(),
+  configuredReasoningEfforts: z.array(z.string()).max(8).nullish(),
   configuredDefaultReasoningEffort: z.string().max(32).nullable().optional(),
   resetReasoningRequired: z.boolean().optional(),
 });
@@ -55,6 +56,122 @@ function parse(value: unknown): Directory {
   return parsed.data;
 }
 
+// Standard input/output rates in USD per million tokens.
+const referenceRates = new Map<string, readonly [number, number]>([
+  ["gpt-5.6-luna", [0.2, 1.2]],
+  ["gpt-5.6-terra", [2, 12]],
+  ["gpt-6-luna", [0.1, 0.5]],
+  ["gpt-6-sol", [2, 10]],
+  ["gpt-6.1-sol", [2, 10]],
+  ["gpt-6.1-terra", [1, 5]],
+]);
+
+const maximumRateUSD = 500;
+
+function rateInMicros(value: number | string) {
+  if (typeof value === "string" && !/^\d+(\.\d{0,6})?$/.test(value))
+    return null;
+  const rate = Number(value);
+  return rate >= 0 && rate <= maximumRateUSD
+    ? Math.round(rate * 1_000_000)
+    : null;
+}
+
+type ReasoningDraft = { allowed: string[]; preferred: string | null };
+
+function supportedEfforts(model: Model) {
+  return model.supportedReasoningEfforts ?? model.reasoningEfforts;
+}
+
+function reasoningBody(model: Model, value: ReasoningDraft) {
+  const savedRange = model.configuredReasoningEfforts;
+  const keepsSavedRange =
+    savedRange?.length === value.allowed.length &&
+    savedRange.every((effort) => value.allowed.includes(effort));
+  return {
+    allowedReasoningEfforts:
+      !keepsSavedRange &&
+      value.allowed.length === supportedEfforts(model).length
+        ? null
+        : value.allowed,
+    defaultReasoningEffort: value.preferred,
+  };
+}
+
+function ReasoningFields({
+  model,
+  value,
+  onChange,
+  disabled,
+}: {
+  model: Model;
+  value: ReasoningDraft;
+  onChange: (draft: ReasoningDraft) => void;
+  disabled: boolean;
+}) {
+  const efforts = supportedEfforts(model);
+  const narrowed = reasoningBody(model, value).allowedReasoningEfforts !== null;
+  const profileDefault = model.profileDefaultReasoningEffort;
+  const autoEffort =
+    profileDefault && value.allowed.includes(profileDefault)
+      ? profileDefault
+      : narrowed
+        ? efforts.find((effort) => value.allowed.includes(effort))
+        : undefined;
+  return (
+    <>
+      <Checkbox.Group
+        label="可选档位"
+        value={value.allowed}
+        onChange={(allowed) =>
+          onChange({
+            ...value,
+            allowed,
+            preferred:
+              value.preferred && allowed.includes(value.preferred)
+                ? value.preferred
+                : null,
+          })
+        }
+      >
+        <Group gap="sm" mt={6}>
+          {efforts.map((effort) => (
+            <Checkbox
+              key={effort}
+              value={effort}
+              label={effort}
+              disabled={disabled}
+            />
+          ))}
+        </Group>
+      </Checkbox.Group>
+      <Select
+        label="默认档位"
+        value={value.preferred ?? ""}
+        data={[
+          {
+            value: "",
+            label: autoEffort ? `自动 · ${autoEffort}` : "跟随模型",
+          },
+          ...efforts.filter((effort) => value.allowed.includes(effort)),
+        ]}
+        allowDeselect={false}
+        disabled={disabled || !value.allowed.length}
+        onChange={(effort) => onChange({ ...value, preferred: effort || null })}
+      />
+      <Text size="sm" c="dimmed">
+        此设置适用于使用此模型的所有 Key。Key 自身的限制仍会生效。
+      </Text>
+      {narrowed && value.allowed.length > 0 && (
+        <Alert color="yellow">
+          收窄范围后，请求必须显式指定获准档位。若某个 Key
+          没有任何获准档位，客户端目录将不再显示此模型。
+        </Alert>
+      )}
+    </>
+  );
+}
+
 const states = {
   enabled: { label: "已启用", action: "停用", color: "green" },
   retired: { label: "已停用", action: "重新启用", color: "gray" },
@@ -68,12 +185,12 @@ export function ModelDirectory() {
   const masked = usePrivacyMask();
   const [account, setAccount] = useState<string | null>(null);
   const [selected, setSelected] = useState<Model | null>(null);
-  const [reasoning, setReasoning] = useState<{
-    model: Model;
-    revision: number;
-    allowed: string[];
-    preferred: string | null;
-  } | null>(null);
+  const [reasoning, setReasoning] = useState<
+    (ReasoningDraft & { model: Model; revision: number }) | null
+  >(null);
+  const [activationReasoning, setActivationReasoning] =
+    useState<ReasoningDraft | null>(null);
+  const [approvedRevision, setApprovedRevision] = useState(0);
   const [reasoningError, setReasoningError] = useState("");
   const [resetReasoning, setResetReasoning] = useState(false);
   const [approvedCandidateRevision, setApprovedCandidateRevision] = useState<
@@ -131,12 +248,16 @@ export function ModelDirectory() {
     }
   }
 
+  const inputMicros = rateInMicros(input);
+  const outputMicros = rateInMicros(output);
+  const ratesValid = inputMicros !== null && outputMicros !== null;
+
   async function apply() {
     if (!selected || !data || !owner.session || working) return;
     const newModel = selected.state === "candidate";
-    if (newModel && (typeof input !== "number" || typeof output !== "number"))
-      return;
+    if (newModel && !ratesValid) return;
     if (selected.resetReasoningRequired && !resetReasoning) return;
+    if (activationReasoning && !activationReasoning.allowed.length) return;
     setWorking("save");
     setFailure("");
     setNotice("");
@@ -146,9 +267,12 @@ export function ModelDirectory() {
           method: "PUT",
           csrf: owner.session.csrf,
           body: {
-            revision: data.revision,
+            revision: approvedRevision,
             model: selected.id,
             enabled: selected.state !== "enabled",
+            ...(activationReasoning
+              ? reasoningBody(selected, activationReasoning)
+              : {}),
             ...(selected.resetReasoningRequired && resetReasoning
               ? { resetReasoningSettings: true }
               : {}),
@@ -156,7 +280,10 @@ export function ModelDirectory() {
               ? { candidateRevision: approvedCandidateRevision }
               : {}),
             ...(newModel
-              ? { inputMicrosPerMillion: input, outputMicrosPerMillion: output }
+              ? {
+                  inputMicrosPerMillion: inputMicros,
+                  outputMicrosPerMillion: outputMicros,
+                }
               : {}),
           },
         }),
@@ -184,9 +311,6 @@ export function ModelDirectory() {
   async function saveReasoning() {
     if (!reasoning || !owner.session || working || !reasoning.allowed.length)
       return;
-    const supported =
-      reasoning.model.supportedReasoningEfforts ??
-      reasoning.model.reasoningEfforts;
     setWorking("save");
     setReasoningError("");
     setNotice("");
@@ -203,11 +327,7 @@ export function ModelDirectory() {
           body: {
             revision: reasoning.revision,
             model: reasoning.model.id,
-            allowedReasoningEfforts:
-              reasoning.allowed.length === supported.length
-                ? null
-                : reasoning.allowed,
-            defaultReasoningEffort: reasoning.preferred,
+            ...reasoningBody(reasoning.model, reasoning),
           },
         }),
       );
@@ -225,20 +345,6 @@ export function ModelDirectory() {
       setWorking(null);
     }
   }
-
-  const supportedEfforts =
-    reasoning?.model.supportedReasoningEfforts ??
-    reasoning?.model.reasoningEfforts ??
-    [];
-  const narrowed =
-    reasoning != null && reasoning.allowed.length < supportedEfforts.length;
-  const profileDefault = reasoning?.model.profileDefaultReasoningEffort;
-  const autoEffort =
-    profileDefault && reasoning?.allowed.includes(profileDefault)
-      ? profileDefault
-      : narrowed
-        ? supportedEfforts.find((effort) => reasoning.allowed.includes(effort))
-        : undefined;
 
   function row(item: Model) {
     const state = states[item.state];
@@ -298,11 +404,23 @@ export function ModelDirectory() {
             size="compact-sm"
             disabled={working !== null}
             onClick={() => {
+              if (!data) return;
               setSelected(item);
+              setApprovedRevision(data.revision);
+              setActivationReasoning(
+                (item.state === "candidate" || item.state === "retired") &&
+                  supportedEfforts(item).length > 0
+                  ? {
+                      allowed: item.reasoningEfforts,
+                      preferred: item.configuredDefaultReasoningEffort ?? null,
+                    }
+                  : null,
+              );
               setResetReasoning(false);
               setApprovedCandidateRevision(data?.candidateRevision ?? null);
-              setInput("");
-              setOutput("");
+              const [input, output] = referenceRates.get(item.id) ?? [0, 0];
+              setInput(input.toFixed(2));
+              setOutput(output.toFixed(2));
             }}
           >
             {state.action}
@@ -438,58 +556,12 @@ export function ModelDirectory() {
         {reasoning && (
           <Stack>
             <Text fw={650}>{reasoning.model.id}</Text>
-            <Checkbox.Group
-              label="可选档位"
-              value={reasoning.allowed}
-              onChange={(allowed) =>
-                setReasoning({
-                  ...reasoning,
-                  allowed,
-                  preferred:
-                    reasoning.preferred && allowed.includes(reasoning.preferred)
-                      ? reasoning.preferred
-                      : null,
-                })
-              }
-            >
-              <Group gap="sm" mt={6}>
-                {supportedEfforts.map((effort) => (
-                  <Checkbox
-                    key={effort}
-                    value={effort}
-                    label={effort}
-                    disabled={working !== null}
-                  />
-                ))}
-              </Group>
-            </Checkbox.Group>
-            <Select
-              label="默认档位"
-              value={reasoning.preferred ?? ""}
-              data={[
-                {
-                  value: "",
-                  label: autoEffort ? `自动 · ${autoEffort}` : "跟随模型",
-                },
-                ...supportedEfforts.filter((effort) =>
-                  reasoning.allowed.includes(effort),
-                ),
-              ]}
-              allowDeselect={false}
-              disabled={working !== null || !reasoning.allowed.length}
-              onChange={(value) =>
-                setReasoning({ ...reasoning, preferred: value || null })
-              }
+            <ReasoningFields
+              model={reasoning.model}
+              value={reasoning}
+              onChange={(value) => setReasoning({ ...reasoning, ...value })}
+              disabled={working !== null}
             />
-            <Text size="sm" c="dimmed">
-              此设置适用于使用此模型的所有 Key。Key 自身的限制仍会生效。
-            </Text>
-            {narrowed && reasoning.allowed.length > 0 && (
-              <Alert color="yellow">
-                收窄范围后，请求必须显式指定获准档位。若某个 Key
-                没有任何获准档位，客户端目录将不再显示此模型。
-              </Alert>
-            )}
             {reasoningError && <Alert color="red">{reasoningError}</Alert>}
             <Group justify="flex-end">
               <Button
@@ -551,13 +623,14 @@ export function ModelDirectory() {
                 }
               />
             )}
-            <Group gap={5}>
-              {selected.reasoningEfforts.map((effort) => (
-                <Badge key={effort} color="gray">
-                  {effort}
-                </Badge>
-              ))}
-            </Group>
+            {activationReasoning && (
+              <ReasoningFields
+                model={selected}
+                value={activationReasoning}
+                onChange={setActivationReasoning}
+                disabled={working !== null}
+              />
+            )}
             <Alert color="yellow">
               {selected.state === "incomplete"
                 ? "缺少完整 Codex profile。补齐并审核后可启用。"
@@ -568,21 +641,27 @@ export function ModelDirectory() {
             {selected.state === "candidate" && (
               <Stack gap="xs">
                 <Text size="sm" c="dimmed">
-                  填写每百万 Token 的估算费率，单位为微美元。暂不估算时填 0。
+                  {referenceRates.has(selected.id)
+                    ? "已预填公开参考价，可修改。"
+                    : "暂无参考价，预填 0，可修改。"}
                 </Text>
                 <NumberInput
-                  label="输入费率"
+                  label="输入费率（美元／百万 Token）"
                   min={0}
-                  max={500_000_000}
-                  allowDecimal={false}
+                  max={maximumRateUSD}
+                  allowNegative={false}
+                  decimalScale={6}
+                  step={0.01}
                   value={input}
                   onChange={setInput}
                 />
                 <NumberInput
-                  label="输出费率"
+                  label="输出费率（美元／百万 Token）"
                   min={0}
-                  max={500_000_000}
-                  allowDecimal={false}
+                  max={maximumRateUSD}
+                  allowNegative={false}
+                  decimalScale={6}
+                  step={0.01}
                   value={output}
                   onChange={setOutput}
                 />
@@ -601,9 +680,9 @@ export function ModelDirectory() {
                   loading={working === "save"}
                   onClick={() => void apply()}
                   disabled={
+                    activationReasoning?.allowed.length === 0 ||
                     (selected.resetReasoningRequired && !resetReasoning) ||
-                    (selected.state === "candidate" &&
-                      (typeof input !== "number" || typeof output !== "number"))
+                    (selected.state === "candidate" && !ratesValid)
                   }
                 >
                   {selected.state === "enabled" ? "确认停用" : "确认启用"}
