@@ -314,9 +314,9 @@ export function OverviewStats({
       values: buckets.map(tokenTotal),
       format: (_: number, index: number) => {
         const metrics = buckets[index].metrics;
-        return (
-          BigInt(metrics.inputTokens!) + BigInt(metrics.outputTokens!)
-        ).toLocaleString("zh-CN");
+        return compactOverviewTokens(
+          BigInt(metrics.inputTokens!) + BigInt(metrics.outputTokens!),
+        );
       },
       note:
         today?.metrics.cachedTokens != null &&
