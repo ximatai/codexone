@@ -110,7 +110,7 @@ function ReasoningFields({
   disabled: boolean;
 }) {
   const efforts = supportedEfforts(model);
-  const narrowed = value.allowed.length < efforts.length;
+  const narrowed = reasoningBody(model, value).allowedReasoningEfforts !== null;
   const profileDefault = model.profileDefaultReasoningEffort;
   const autoEffort =
     profileDefault && value.allowed.includes(profileDefault)
