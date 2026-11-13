@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.39](https://github.com/ximatai/codexone/releases/tag/v0.26.39)**（2026-11-13），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.40](https://github.com/ximatai/codexone/releases/tag/v0.26.40)**（2026-11-13），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.40 支持从订阅账号卡片直接启停，停用时等待在途请求结束，等待期间可选择强行停用。账号列表按实际周期标注额度，用量与诊断新增按业务日查询的「今日」快捷范围。见[发布说明](CHANGELOG.md)。
 
 v0.26.39 改进模型不可用的提示，统一首页主面板标题与输出速率图的留白，并在导航菜单底部加入 GitHub 仓库入口。见[发布说明](CHANGELOG.md)。
 
