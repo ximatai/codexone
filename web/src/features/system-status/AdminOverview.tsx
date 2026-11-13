@@ -13,7 +13,7 @@ import {
 } from "../../shared/account-presentation";
 import { localTime } from "../../shared/presentation";
 import { attentionQueryKey, fetchAttention } from "./attention-api";
-import { quotaStale } from "../account-management/quota";
+import { quotaStale, quotaWindowLabel } from "../account-management/quota";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 import { ActivityOverview } from "./ActivityOverview";
 import styles from "./overview.module.css";
@@ -43,13 +43,6 @@ const InlineAccountDetails = lazy(() =>
   })),
 );
 
-function quotaLabel(seconds: number | null | undefined, fallback: string) {
-  if (seconds === 18000) return "5 小时额度";
-  if (seconds === 604800) return "每周额度";
-  return seconds && seconds % 3600 === 0
-    ? `${seconds / 3600} 小时额度`
-    : fallback;
-}
 function backupTime(
   backup: Awaited<ReturnType<typeof fetchStorage>>["backup"],
 ) {
@@ -315,7 +308,7 @@ export function AdminOverview() {
                                   needsAuth ||
                                   account.mode === "disabled",
                                 )}
-                                title={quotaLabel(
+                                title={quotaWindowLabel(
                                   base.primary.durationSeconds,
                                   "主窗口",
                                 )}
@@ -335,7 +328,7 @@ export function AdminOverview() {
                                   needsAuth ||
                                   account.mode === "disabled",
                                 )}
-                                title={quotaLabel(
+                                title={quotaWindowLabel(
                                   base.secondary.durationSeconds,
                                   "次窗口",
                                 )}

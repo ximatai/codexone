@@ -293,6 +293,25 @@ it("confirms disabling from details and preserves in-flight requests", async () 
   expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("disabled");
 });
 
+it("labels a lone weekly primary window by its duration", async () => {
+  vi.mocked(sessions.fetchSession).mockResolvedValue({
+    csrf: "synthetic-csrf",
+  });
+  const fixture = observationFixture();
+  const limit = fixture.quota.limits[0];
+  limit.primary.durationSeconds = 604_800;
+  limit.primary.usedPercent = 69;
+  limit.secondary = null;
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { ...account, observability: observations.parseObservability(fixture) },
+  ]);
+  render(<AccountManagement />);
+  expect(
+    await screen.findByRole("progressbar", { name: "每周额度剩余比例" }),
+  ).toHaveAttribute("aria-valuenow", "31");
+  expect(screen.queryByText("5 小时额度", { exact: true })).toBeNull();
+});
+
 it("shows unavailable quota before elapsed freshness for an account with no successful observation", async () => {
   vi.mocked(sessions.fetchSession).mockResolvedValue({
     csrf: "synthetic-csrf",

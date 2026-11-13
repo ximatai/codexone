@@ -35,7 +35,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
-import { quotaStale } from "./quota";
+import { quotaStale, quotaWindowLabel } from "./quota";
 import * as api from "./api";
 import { AccountObservability, utc } from "./AccountObservability";
 import { observeAccount, observationNotice } from "./observation-api";
@@ -266,16 +266,33 @@ export function AccountManagement({
                       </Group>
                     </Group>
                     <div className={styles.cardSection} aria-label="额度与健康">
-                      <div className={styles.windows}>
-                        <QuotaWindowBar
-                          title="5 小时额度"
-                          value={quota?.primary ?? null}
-                        />
-                        <QuotaWindowBar
-                          title="每周额度"
-                          value={quota?.secondary ?? null}
-                        />
-                      </div>
+                      {(quota?.primary || quota?.secondary) && (
+                        <div className={styles.windows}>
+                          {quota.primary && (
+                            <QuotaWindowBar
+                              title={quotaWindowLabel(
+                                quota.primary.durationSeconds,
+                                "主窗口",
+                              )}
+                              value={quota.primary}
+                            />
+                          )}
+                          {quota.secondary && (
+                            <QuotaWindowBar
+                              title={quotaWindowLabel(
+                                quota.secondary.durationSeconds,
+                                "次窗口",
+                              )}
+                              value={quota.secondary}
+                            />
+                          )}
+                        </div>
+                      )}
+                      {!quota?.primary && !quota?.secondary && !attention && (
+                        <Text size="xs" c="dimmed">
+                          上游未提供额度窗口
+                        </Text>
+                      )}
                       {attention && (
                         <Text size="xs" c="orange">
                           {attention}
