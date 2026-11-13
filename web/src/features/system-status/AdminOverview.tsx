@@ -204,7 +204,7 @@ export function AdminOverview() {
                 })}
               />
               <Paper withBorder p="md">
-                <Title order={3} size="h4" mb="md">
+                <Title order={3} size="h5" mb="md">
                   订阅额度
                   {accounts.isError && (
                     <Text component="span" size="xs" c="orange">
@@ -380,7 +380,7 @@ export function AdminOverview() {
                   aria-labelledby="overview-protocol"
                 >
                   <Stack gap="xs" align="stretch">
-                    <Title order={3} size="h4" id="overview-protocol">
+                    <Title order={3} size="h5" id="overview-protocol">
                       协议观测
                     </Title>
                     <Stack gap="xs">

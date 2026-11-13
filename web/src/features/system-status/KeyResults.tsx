@@ -277,7 +277,7 @@ export function KeyResults({
         <Group gap={4}>
           <Title
             order={3}
-            size="h4"
+            size="h5"
             title="业务日内有准入的未归档 Key，按已观测 Token 降序；不含准入前拒绝。"
           >
             今日 Key 请求汇总

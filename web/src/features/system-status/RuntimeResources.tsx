@@ -217,7 +217,7 @@ export function RuntimeResources({
   return (
     <Paper withBorder p="md">
       <Stack gap="xs">
-        <Title order={3} size="h4">
+        <Title order={3} size="h5">
           服务器运行资源
         </Title>
         {stale && (

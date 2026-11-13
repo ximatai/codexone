@@ -38,7 +38,7 @@ export function AdministratorReminders({
       aria-labelledby="administrator-reminders"
     >
       <Stack gap="xs">
-        <Title id="administrator-reminders" order={3} size="h4">
+        <Title id="administrator-reminders" order={3} size="h5">
           运行提醒
         </Title>
         {disk && (
