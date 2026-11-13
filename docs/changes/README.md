@@ -6,8 +6,6 @@
 
 ## 活动提案
 
-- [启用模型时配置推理档位](model-activation-settings/proposal.md) · [任务](model-activation-settings/tasks.md)
-
 - [额外使用积分只读观测](usage-credit-observation/proposal.md) · [任务](usage-credit-observation/tasks.md)
 
 - [准入拒绝下钻](rejection-diagnostics/proposal.md) · [任务](rejection-diagnostics/tasks.md)
