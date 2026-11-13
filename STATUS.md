@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.37](https://github.com/ximatai/codexone/releases/tag/v0.26.37)**（2026-11-13），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.38](https://github.com/ximatai/codexone/releases/tag/v0.26.38)**（2026-11-13），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.38 支持启用或重新启用对话模型时同时设置推理档位。首次启用按美元／百万 Token 预填可编辑的参考费率。见[发布说明](CHANGELOG.md)。
 
 v0.26.37 支持在模型目录调整已启用对话模型的默认推理档位与可选范围。客户端档位同时受模型和 Key 限制。核心数据库升级至 v18，旧版无法打开升级后的原库。见[发布说明](CHANGELOG.md)。
 
