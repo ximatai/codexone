@@ -41,9 +41,9 @@ for (const width of [1320, 390]) {
       ],
       candidates: refreshed
         ? [
-            ...(active.some((item) => item.id === "demo-nova")
+            ...(active.some((item) => item.id === "gpt-5.6-luna")
               ? []
-              : [model("demo-nova", "candidate")]),
+              : [model("gpt-5.6-luna", "candidate")]),
             model("demo-edge", "incomplete"),
           ]
         : [],
@@ -58,13 +58,20 @@ for (const width of [1320, 390]) {
         expect(route.request().postDataJSON()).toEqual({
           revision: 1,
           candidateRevision: "00000000-0000-4000-8000-000000000000",
-          model: "demo-nova",
+          model: "gpt-5.6-luna",
           enabled: true,
-          inputMicrosPerMillion: 0,
-          outputMicrosPerMillion: 0,
+          inputMicrosPerMillion: 200_000,
+          outputMicrosPerMillion: 1_234_567,
+          allowedReasoningEfforts: ["medium", "high"],
+          defaultReasoningEffort: "high",
         });
         revision++;
-        active.push(model("demo-nova", "enabled"));
+        active.push({
+          ...model("gpt-5.6-luna", "enabled"),
+          reasoningEfforts: ["medium", "high"],
+          configuredDefaultReasoningEffort: "high",
+          defaultReasoningEffort: "high",
+        });
       }
       await route.fulfill({ json: document() });
     });
@@ -141,7 +148,7 @@ for (const width of [1320, 390]) {
         const draft = route.request().postDataJSON();
         expect(draft.reasoningEfforts).toEqual({
           "demo-sol": ["low", "medium"],
-          "demo-nova": ["high"],
+          "gpt-5.6-luna": ["high"],
         });
         key.models = draft.models;
         key.reasoningEfforts = draft.reasoningEfforts;
@@ -183,8 +190,22 @@ for (const width of [1320, 390]) {
         "启用后，选择「全部模型」的 Key 会自动获得此模型。",
       ),
     ).toBeVisible();
-    await confirmation.getByRole("textbox", { name: "输入费率" }).fill("0");
-    await confirmation.getByRole("textbox", { name: "输出费率" }).fill("0");
+    await expect(
+      confirmation.getByRole("textbox", { name: "输入费率" }),
+    ).toHaveValue("0.20");
+    await expect(
+      confirmation.getByRole("textbox", { name: "输出费率" }),
+    ).toHaveValue("1.20");
+    await confirmation
+      .getByRole("textbox", { name: "输出费率" })
+      .fill("1.234567");
+    await confirmation
+      .getByRole("checkbox", { name: "low", exact: true })
+      .uncheck();
+    await confirmation.getByRole("checkbox", { name: "xhigh" }).uncheck();
+    await confirmation.getByRole("combobox", { name: "默认档位" }).click();
+    await page.getByRole("option", { name: "high", exact: true }).click();
+    await expectNoHorizontalOverflow(page);
     await confirmation.getByRole("button", { name: "确认启用" }).click();
     await expect(
       page.getByText("模型已启用，可在 Key 权限中选择。"),
@@ -195,9 +216,9 @@ for (const width of [1320, 390]) {
       .click();
     await page.getByRole("button", { name: "查看详情" }).click();
     const drawer = page.getByRole("dialog");
-    await drawer.getByRole("checkbox", { name: "demo-nova" }).check();
+    await drawer.getByRole("checkbox", { name: "gpt-5.6-luna" }).check();
     await drawer.getByRole("radio", { name: "指定档位" }).check();
-    for (const effort of ["low", "medium", "xhigh"]) {
+    for (const effort of ["medium"]) {
       await drawer
         .getByRole("checkbox", { name: effort, exact: true })
         .uncheck();

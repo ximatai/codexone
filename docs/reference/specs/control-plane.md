@@ -180,7 +180,7 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 创建/更新必须显式提供 models：null 表示跟随全部当前配置对话模型，数组最多32个，[] 保持无对话授权（仅图片 Key）的语义。imageGeneration=true 时 imageModels 可为 null 表示全部配置图片模型；关闭时 null 与 [] 等价，缺失能力字段的关闭语义不变。管理与导入原样返回数组/null，策略版本包含 null。目录、准入、Responses 图片工具及 Images 共用当前配置与权限交集；配置生效后的新增/移除立即影响 null 范围 Key。列表与详情显示“全部模型”。不新增配置热重载。旧二进制不能解码 null 模型范围，回退前须转为显式清单，见[Key治理](../../guide/key-governance.md#兼容回退前提)。
 
-订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
+订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。启用表单以美元／百万 Token 显示和编辑费率，保存时换算为整数微美元。已知模型预填公开参考费率，其他模型预填 0。预填值来自 [OpenAI Codex 公开费率表](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing) 的标准输入和输出费率，供本地估算。首次或重新启用可随同一次写入提交 `allowedReasoningEfforts` 与 `defaultReasoningEffort`，两项同时提供才生效。重新启用省略两项时沿用兼容的已存设置。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
 
 已启用的对话模型可通过 `PUT /api/models/reasoning` 保存推理设置，请求包含 `model`、`revision`、`allowedReasoningEfforts` 和 `defaultReasoningEffort`。范围用非空、无重复的受支持档位数组，`null` 跟随模型支持的全部档位。默认值可选范围内的档位，`null` 优先沿用模型资料的默认值。若默认值不在收窄后的范围内，取模型资料顺序中的首个允许档位。模型重新启用时保留设置，如新资料不兼容，须明确确认重置。
 

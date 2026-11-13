@@ -111,7 +111,11 @@ def verify_accounts(probe, binary):
                 assert newer['candidateRevision'] != body['candidateRevision']
                 assert request(port, 'PUT', '/api/models', body, **auth)[0] == 409
                 body['candidateRevision'] = newer['candidateRevision']
-                assert request(port, 'PUT', '/api/models', body, **auth)[0] == 200
+                assert request(port, 'PUT', '/api/models',
+                    dict(body, allowedReasoningEfforts=['low'], defaultReasoningEffort='low'), **auth)[0] == 400
+                activated = document(request(port, 'PUT', '/api/models',
+                    dict(body, allowedReasoningEfforts=None, defaultReasoningEffort='high'), **auth))
+                assert activated['active'][1]['configuredDefaultReasoningEffort'] == 'high'
                 assert request(port, 'PUT', '/api/models', body, **auth)[0] == 409
                 key_options = document(request(port, 'GET', '/api/keys/options', **auth))
                 assert key_options['models'] == ['synthetic-text', 'synthetic-nova']
@@ -162,10 +166,13 @@ def verify_accounts(probe, binary):
                 assert refreshed['retired'][0]['visionInput'] is True
                 assert refreshed['retired'][0]['previousVisionInput'] is False
                 enable['candidateRevision'] = refreshed['candidateRevision']
-                restored = document(request(port, 'PUT', '/api/models', enable, **auth))
+                assert request(port, 'PUT', '/api/models',
+                    dict(enable, allowedReasoningEfforts=['high'], defaultReasoningEffort='low'), **auth)[0] == 400
+                restored = document(request(port, 'PUT', '/api/models',
+                    dict(enable, allowedReasoningEfforts=['low'], defaultReasoningEffort='low'), **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
-                assert restored['active'][1]['reasoningEfforts'] == ['low', 'high']
-                assert restored['active'][1]['configuredDefaultReasoningEffort'] == 'high'
+                assert restored['active'][1]['reasoningEfforts'] == ['low']
+                assert restored['active'][1]['configuredDefaultReasoningEffort'] == 'low'
                 assert restored['active'][1]['visionInput'] is True
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
                 assert account['accessExpiresAtUnixSeconds'] == expires
