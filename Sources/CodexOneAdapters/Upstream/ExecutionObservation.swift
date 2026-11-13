@@ -78,10 +78,16 @@ func observeExecutionFailure(_ error: any Error, context: ExecutionContext) {
   {
     try? observeProviderRejection(context)
   }
+  let providerFailure = error as? GatewayProtocolError
+  let classified = executionFailure(error)
+  let preserveProviderFailure =
+    providerFailure?.explicitProviderRejection == true || providerFailure?.upstreamStatus != nil
+  let interrupted = context.wasForceStopped && !preserveProviderFailure
   try? context.observeOutcome(
     .init(
-      failure: executionFailure(error), atUnixSeconds: context.clock.unixSeconds,
-      cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+      failure: interrupted ? .indeterminate : classified,
+      atUnixSeconds: context.clock.unixSeconds,
+      cooldownSeconds: interrupted ? nil : providerFailure?.cooldownSeconds))
 }
 
 /// A failed terminal response can carry complete usage. Result and evidence are independent.

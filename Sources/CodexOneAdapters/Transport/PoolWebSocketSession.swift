@@ -11,14 +11,17 @@ final class PoolWebSocketStart: Sendable {
   }
   private let selections: AsyncThrowingStream<Selection, any Error>
   private let selected: AsyncThrowingStream<Selection, any Error>.Continuation
-  private let results: AsyncThrowingStream<Void, any Error>
-  private let result: AsyncThrowingStream<Void, any Error>.Continuation
+  private let turn = Mutex(
+    (
+      result: Result<Void, any Error>?.none,
+      waiter: CheckedContinuation<Void, any Error>?.none,
+      cancelSocket: (@Sendable () -> Void)?.none, cancelled: false
+    ))
   private let preparedFrame = Mutex<Data?>(nil)
   private let reported = Mutex(
     (finished: false, reported: false, context: ExecutionContext?.none))
   init() {
     (selections, selected) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
-    (results, result) = AsyncThrowingStream.makeStream(bufferingPolicy: .bufferingOldest(1))
   }
   func prepareFrame(_ data: Data) throws {
     try UpstreamWebSocketBodyLimit.requireNativeFrame(data)
@@ -41,17 +44,53 @@ final class PoolWebSocketStart: Sendable {
     guard let value = try await iterator.next() else { throw CancellationError() }
     return value
   }
+  /// Cancellation stops the socket owner, but only transport completion releases this waiter.
   func waitForTurn() async throws {
-    var iterator = results.makeAsyncIterator()
-    guard try await iterator.next() != nil else { throw CancellationError() }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { waiter in
+        let result = turn.withLock { state -> Result<Void, any Error>? in
+          if let result = state.result { return result }
+          state.waiter = waiter
+          return nil
+        }
+        if let result { waiter.resume(with: result) }
+      }
+    } onCancel: {
+      let cancel = self.turn.withLock { state in
+        state.cancelled = true
+        return state.cancelSocket
+      }
+      cancel?()
+    }
+  }
+  var socketCancellationRequested: Bool { turn.withLock { $0.cancelled } }
+
+  func attachSocketCancellation(_ cancel: @escaping @Sendable () -> Void) {
+    let cancelled = turn.withLock { state in
+      state.cancelSocket = cancel
+      return state.cancelled
+    }
+    if cancelled { cancel() }
+  }
+  func detachSocketCancellation() {
+    turn.withLock { $0.cancelSocket = nil }
+  }
+  private func complete(_ result: Result<Void, any Error>) {
+    let waiter = turn.withLock { state in
+      guard state.result == nil else { return nil as CheckedContinuation<Void, any Error>? }
+      state.result = result
+      let waiter = state.waiter
+      state.waiter = nil
+      return waiter
+    }
+    waiter?.resume(with: result)
   }
   func finishTurn() {
     reported.withLock {
       $0.finished = true
       $0.context = nil
     }
-    result.yield(())
-    result.finish()
+    complete(.success(()))
   }
   func close(_ error: any Error) {
     // The socket sibling can throw and cancel the execution owner's deadline group
@@ -60,7 +99,7 @@ final class PoolWebSocketStart: Sendable {
       observeExecutionFailure(error, context: context)
     }
     selected.finish(throwing: error)
-    result.finish(throwing: error)
+    complete(.failure(error))
   }
   func claimError() -> Bool {
     reported.withLock { value in
@@ -86,6 +125,7 @@ enum PoolWebSocketSession {
     let refusals = Mutex<[(error: GatewayProtocolError, requestID: String, lane: String)]>([])
     guard executor.gateway != nil else { throw ExecutionError.unauthorized }
     let start = PoolWebSocketStart()
+    let lifetime = AccountExecutionConnection()
     let requestID = UUID().uuidString
     let lane = try webSocketLane(JSONValue.decode(firstBody.data))
     do {
@@ -104,7 +144,8 @@ enum PoolWebSocketSession {
                 model: first.model, references: first.references,
                 affinityHints: first.affinityHints,
                 requestID: requestID,
-                mode: first.mode, turnState: turnState, requirements: first.requirements,
+                mode: first.mode, turnState: turnState, connectionLifetime: lifetime,
+                requirements: first.requirements,
                 reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
               ) { context, authorization in
                 try await withExecutionDeadline(
@@ -123,14 +164,14 @@ enum PoolWebSocketSession {
           }
         }
         tasks.addTask {
-          do {
+          let socket = Task {
             let selection = try await start.receive()
             let owner = selection.context.admission.owner
             let pinned =
               selection.authorization == nil
               ? executor
               : executor.pinned(
-                to: try .init(id: owner.identity, namespace: owner.namespace))
+                to: try .init(id: owner.identity, namespace: owner.namespace), lifetime: lifetime)
             try await executor.webSocket.authorized(
               selection.authorization, headers: executor.clientHeaders
             ).run(
@@ -176,8 +217,22 @@ enum PoolWebSocketSession {
                   refusals.withLock { $0.append((error, requestID, lane)) }
                 })
             }
+          }
+          start.attachSocketCancellation { socket.cancel() }
+          defer { start.detachSocketCancellation() }
+          do {
+            try await withTaskCancellationHandler {
+              try await socket.value
+            } onCancel: {
+              socket.cancel()
+            }
+            // The connection can close without throwing before a first turn finishes.
+            start.close(CancellationError())
           } catch {
             start.close(error)
+            // A cancelled first-turn waiter is still joining this socket. Let its
+            // deadline or force-stop error win over errors from socket teardown.
+            if start.socketCancellationRequested || lifetime.isRetired { return }
             throw error
           }
         }

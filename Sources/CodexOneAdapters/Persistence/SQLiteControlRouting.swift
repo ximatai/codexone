@@ -5,7 +5,7 @@ import Foundation
 extension SQLiteExecutionStore {
   public func selectControlAccount(
     key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?,
-    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double]
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double], tracking: AccountExecution?
   ) async throws -> AccountRouteIdentity {
     guard (1...64).contains(candidates.count) else { throw AccountDispatchError.unavailable }
     return try await perform { db in
@@ -49,6 +49,7 @@ extension SQLiteExecutionStore {
         if let remaining { throw AccountCooldownUnavailable(seconds: remaining) }
         throw AccountDispatchError.unavailable
       }
+      if let tracking { self.accountExecutions?.register(tracking, account: selected.0.id) }
       return selected.0
     }
   }

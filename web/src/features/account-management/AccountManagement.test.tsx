@@ -1,6 +1,12 @@
 import { Notifications } from "@mantine/notifications";
 import { renderPrivate as render } from "../../../tests/render";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AccountManagement } from "./AccountManagement";
 import * as api from "./api";
@@ -53,21 +59,18 @@ it("locks writes after unknown results until a successful account read", async (
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
   fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
-  await screen.findByRole("radio", { name: "启用" });
-  await waitFor(() =>
-    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
+  const drawer = within(screen.getByRole("dialog", { name: "账号详情" }));
+  const mode = await drawer.findByRole("switch", { name: "已停用" });
+  await waitFor(() => expect(mode).toBeEnabled());
+  fireEvent.click(mode);
   await screen.findByText(/操作结果尚未确认/);
-  expect(screen.getByRole("radio", { name: "启用" })).toBeDisabled();
+  expect(mode).toBeDisabled();
   vi.mocked(api.fetchAccounts).mockRejectedValueOnce(new Error("network"));
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
   await screen.findByText(/账号读取失败/);
-  expect(screen.getByRole("radio", { name: "启用" })).toBeDisabled();
+  expect(mode).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "重新读取账号" }));
-  await waitFor(() =>
-    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
-  );
+  await waitFor(() => expect(mode).toBeEnabled());
   expect(api.setMode).toHaveBeenCalledTimes(1);
 });
 it("clears one-shot callback after failed submission and never offers replay", async () => {
@@ -123,14 +126,13 @@ it("clears account data and permits only logout retry while logout is unconfirme
     .mockRejectedValueOnce(new sessions.ManagementError(0, "connection_failed"))
     .mockResolvedValueOnce(undefined);
   setup();
-  await screen.findByText("授权有效");
+  await screen.findByRole("switch", { name: "已停用" });
   fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
   await screen.findByText("服务端登出尚未确认。本页内容已清除，请重试登出。");
-  expect(screen.queryByText("授权有效")).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "重新读取账号" }),
   ).not.toBeInTheDocument();
-  expect(screen.queryByRole("radio", { name: "启用" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "重试登出" }));
   await screen.findByRole("heading", { name: "管理员登录" });
   expect(logout).toHaveBeenCalledTimes(2);
@@ -170,10 +172,10 @@ it("refreshes replaced session proof and discards its old-owner authorization fl
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
   fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
-  await waitFor(() =>
-    expect(screen.getByRole("radio", { name: "启用" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
+  const drawer = within(screen.getByRole("dialog", { name: "账号详情" }));
+  const mode = await drawer.findByRole("switch", { name: "已停用" });
+  await waitFor(() => expect(mode).toBeEnabled());
+  fireEvent.click(mode);
   await waitFor(() =>
     expect(api.setMode).toHaveBeenCalledWith(
       account,
@@ -258,39 +260,6 @@ it("cancels the detail read when its drawer closes", async () => {
   await waitFor(() => expect(signal).toBeDefined());
   fireEvent.click(screen.getByRole("button", { name: "关闭" }));
   await waitFor(() => expect(signal?.aborted).toBe(true));
-});
-
-it("confirms disabling from details and preserves in-flight requests", async () => {
-  vi.mocked(sessions.fetchSession).mockResolvedValue({
-    csrf: "synthetic-csrf",
-  });
-  vi.mocked(api.fetchAccounts).mockResolvedValue([
-    { ...account, mode: "enabled" },
-  ]);
-  vi.mocked(observations.fetchObservation).mockRejectedValue(
-    new Error("synthetic unavailable"),
-  );
-  vi.mocked(api.setMode).mockResolvedValue({
-    ...account,
-    mode: "disabled",
-    revision: 2,
-  });
-  render(<AccountManagement />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "额度与健康详情" }),
-  );
-  fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
-  expect(screen.queryByRole("radio", { name: "排空" })).not.toBeInTheDocument();
-  fireEvent.click(await screen.findByRole("radio", { name: "禁用" }));
-  expect(await screen.findByText(/禁用后不再发送新请求/)).toHaveTextContent(
-    "进行中的请求继续",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  expect(api.setMode).not.toHaveBeenCalled();
-  fireEvent.click(await screen.findByRole("radio", { name: "禁用" }));
-  fireEvent.click(screen.getByRole("button", { name: "确认禁用" }));
-  await waitFor(() => expect(api.setMode).toHaveBeenCalledOnce());
-  expect(vi.mocked(api.setMode).mock.calls[0][1]).toBe("disabled");
 });
 
 it("labels a lone weekly primary window by its duration", async () => {
@@ -462,7 +431,6 @@ it("shows the default device code and keeps success and explicit enable in the s
   expect(screen.queryByLabelText("设备码")).toBeNull();
   expect(api.setMode).not.toHaveBeenCalled();
   const dialog = screen.getByRole("dialog", { name: "接入订阅账号" });
-  const { within } = await import("@testing-library/react");
   fireEvent.click(within(dialog).getByRole("button", { name: "启用" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalledTimes(1));
 });
@@ -713,11 +681,9 @@ it("keeps a legacy draining account explicit without offering draining as an act
     await screen.findByRole("button", { name: "额度与健康详情" }),
   );
   fireEvent.click(await screen.findByRole("tab", { name: "设置" }));
-  expect(screen.getByText(/当前仅允许已有会话继续/)).toBeInTheDocument();
-  expect(screen.getByRole("radio", { name: "启用" })).not.toBeChecked();
-  expect(screen.getByRole("radio", { name: "禁用" })).not.toBeChecked();
-  expect(screen.queryByRole("radio", { name: "排空" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("radio", { name: "启用" }));
+  expect(screen.getByText("当前仅续接已有会话。")).toBeInTheDocument();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "启用" }));
   await waitFor(() => expect(api.setMode).toHaveBeenCalled());
   expect(vi.mocked(api.setMode).mock.calls.at(-1)![1]).toBe("enabled");
 });

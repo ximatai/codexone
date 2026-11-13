@@ -17,6 +17,7 @@ export interface Account {
   accessExpiresAtUnixSeconds?: number | null;
   credentialUpdatedAtUnixSeconds?: number | null;
   observability?: AccountObservability;
+  inFlight?: number;
 }
 export interface AuthorizationFlow {
   flowID: string;
@@ -60,6 +61,9 @@ export function parseAccount(raw: unknown): Account {
     throw invalid();
   return {
     id: id(value.id),
+    ...(value.inFlight === undefined
+      ? {}
+      : { inFlight: count(value.inFlight) }),
     ...(value.displayName === undefined
       ? {}
       : {
@@ -114,6 +118,29 @@ export async function fetchAccounts(signal?: AbortSignal): Promise<Account[]> {
   }
   throw invalid();
 }
+function count(value: unknown): number {
+  return value === 0 ? 0 : integer(value);
+}
+
+export async function forceStop(
+  account: Account,
+  csrf: string,
+  signal?: AbortSignal,
+): Promise<number> {
+  const value = object(
+    await request(
+      "/api/accounts/" + encodeURIComponent(account.id) + "/force-stop",
+      {
+        method: "POST",
+        body: { revision: account.revision },
+        csrf,
+        signal,
+      },
+    ),
+  );
+  return count(value.cancellationRequested);
+}
+
 export async function setMode(
   account: Account,
   mode: AccountMode,

@@ -39,8 +39,8 @@ extension SQLiteExecutionStore: AccountRoutingStore {
       return nil
     }
   }
-  public func admitSelectingAccount(_ command: AccountPoolAdmission) async throws
-    -> ExecutionAdmission
+  public func admitSelectingAccount(_ command: AccountPoolAdmission, tracking: AccountExecution?)
+    async throws -> ExecutionAdmission
   {
     try Self.validateAccountReferences(
       principal: command.policy.key.principal, references: command.references)
@@ -48,6 +48,8 @@ extension SQLiteExecutionStore: AccountRoutingStore {
     for candidate in command.candidates { try validateAdmission(command.selecting(candidate)) }
     try Task.checkCancellation()
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
+      // Force-stop retires this connection on the same database queue as admission.
+      guard tracking?.connection?.isRetired != true else { throw AccountExecutionStopped() }
       let committed = try db.transaction {
         let affinity = try Self.accountAffinity(
           db, principal: command.policy.key.principal, references: command.references,
@@ -133,6 +135,9 @@ extension SQLiteExecutionStore: AccountRoutingStore {
             ])
         }
         return admission
+      }
+      if let tracking {
+        self.accountExecutions?.register(tracking, account: committed.owner.identity)
       }
       self.publishOverview(committed, at: db.clock.unixSeconds)
       return committed

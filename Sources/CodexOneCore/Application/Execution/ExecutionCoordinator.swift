@@ -8,13 +8,19 @@ public struct ExecutionContext: Sendable {
   public let clock: WallClock
   public let admission: ExecutionAdmission
   private let store: any ExecutionStore
+  private let tracking: AccountExecution?
+  public var wasForceStopped: Bool { tracking?.wasForced == true }
   private let observation = UsageObservation()
   private let bound = BoundObjects()
   public func observeProviderEvent() -> Bool { observation.recordProviderEvent() }
   public var hasProviderEvents: Bool { observation.hasProviderEvents }
   public var hasUpstreamEvent: Bool { observation.hasFirstEvent }
   public var providerRejectedBeforeOutput: Bool { observation.isProviderRejection }
-  init(admission: ExecutionAdmission, store: any ExecutionStore, clock: WallClock = .system) {
+  init(
+    admission: ExecutionAdmission, store: any ExecutionStore, clock: WallClock = .system,
+    tracking: AccountExecution? = nil
+  ) {
+    self.tracking = tracking
     self.clock = clock
     self.admission = admission
     self.store = store
@@ -142,26 +148,31 @@ public struct ExecutionCoordinator: Sendable {
   /// Exactly one operation call after durable intent; errors never transparently replay it.
   public func execute(
     _ command: ExecutionAdmission,
-    operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
+    operation: @escaping @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
     try await executeOwned(
-      admitting: {
-        let admitted = try await store.admit(command)
+      admitting: { tracking in
+        let admitted = try await store.admit(
+          command, tracking: command.accountSnapshot == nil ? nil : tracking)
         return (admitted, ())
       }, operation: { context, _ in try await operation(context) })
   }
 
   public func executeAccountPool(
+    connectionLifetime: AccountExecutionConnection? = nil,
     preparing: @Sendable () async throws -> PreparedAccountPoolAdmission,
-    operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
+    operation:
+      @escaping @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
     guard let routing = store as? any AccountRoutingStore else {
       throw ExecutionError.invalidCommand
     }
     try await executeOwned(
-      admitting: {
+      connectionLifetime: connectionLifetime,
+      admitting: { tracking in
         let prepared = try await preparing()
-        let admission = try await routing.admitSelectingAccount(prepared.command)
+        let admission = try await routing.admitSelectingAccount(
+          prepared.command, tracking: tracking)
         // Never throw between committing intent and transferring it to the owned context.
         let selected = prepared.credentials.first {
           $0.key.id == admission.owner.identity && $0.key.namespace == admission.owner.namespace
@@ -176,17 +187,20 @@ public struct ExecutionCoordinator: Sendable {
   }
 
   private func executeOwned<Payload: Sendable>(
-    admitting: @Sendable () async throws -> (ExecutionAdmission, Payload),
+    connectionLifetime: AccountExecutionConnection? = nil,
+    admitting: @Sendable (AccountExecution?) async throws -> (ExecutionAdmission, Payload),
     waitingForPacing: (@Sendable (Double) async throws -> Void)? = nil,
-    operation: @Sendable (ExecutionContext, Payload) async throws -> UsageEvidence?
+    operation: @escaping @Sendable (ExecutionContext, Payload) async throws -> UsageEvidence?
   ) async throws {
+    let registry = store.accountExecutions
+    let tracking = registry.map { _ in AccountExecution(connection: connectionLifetime) }
     var reserved: UUID
     let admitted: (ExecutionAdmission, Payload)
     while true {
       try Task.checkCancellation()
       reserved = try finalizer.reserve()
       do {
-        admitted = try await admitting()
+        admitted = try await admitting(tracking)
         break
       } catch {
         finalizer.abandon(reserved)
@@ -199,8 +213,13 @@ public struct ExecutionCoordinator: Sendable {
       }
     }
     let ticket = reserved
-    let context = ExecutionContext(admission: admitted.0, store: store, clock: clock)
+    let managedExecution = admitted.0.accountSnapshot == nil ? nil : tracking
+    let context = ExecutionContext(
+      admission: admitted.0, store: store, clock: clock, tracking: managedExecution)
     defer {
+      if let managedExecution {
+        registry?.finish(managedExecution, account: admitted.0.owner.identity)
+      }
       let (evidence, outcome) = context.finishObservation()
       finalizer.handoff(
         ticket,
@@ -209,14 +228,21 @@ public struct ExecutionCoordinator: Sendable {
     do {
       try Task.checkCancellation()
       guard finalizer.canExecute(ticket) else { throw ExecutionError.capacity }
-      if let terminal = try await operation(context, admitted.1) {
+      let terminal =
+        if let managedExecution {
+          try await managedExecution.run { try await operation(context, admitted.1) }
+        } else {
+          try await operation(context, admitted.1)
+        }
+      if let terminal {
         try context.observeUsage(terminal)
       }
       try context.observeOutcome(
         .init(failure: nil, atUnixSeconds: clock.unixSeconds))
     } catch {
       let failure: ExecutionFailure =
-        Task.isCancelled || error is CancellationError ? .clientCancelled : .indeterminate
+        !context.wasForceStopped && (Task.isCancelled || error is CancellationError)
+        ? .clientCancelled : .indeterminate
       try? context.observeOutcome(
         .init(failure: failure, atUnixSeconds: clock.unixSeconds))
       throw error

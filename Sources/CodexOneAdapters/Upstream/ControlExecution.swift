@@ -96,23 +96,31 @@ extension HTTPResponseExecution {
       status = try await withExecutionDeadline(seconds: route.seconds) {
         let metadataHeaders = try forwardedClientHeaders(
           head.headers, fingerprint: configuration.clientFingerprint, registry: protocolExtensions)
-        let authorization: SubscriptionDataAccess?
         let work: AccountDispatchWork?
+        let authorize: @Sendable () throws -> SubscriptionDataAccess?
         let routing = access.store as? any AccountRoutingStore
+        let tracking = access.store.accountExecutions.map { _ in AccountExecution() }
         if case .pool(let gateway, let provider, let target) = try access.gateway(policy) {
           let token = try requestTurnState(headers: metadataHeaders)
           let required = try token.map { try turnStateOwners.owner(key: key, token: $0) }
           let selected = try await gateway.authorizeControl(
             preferred: sessionAffinity.preferred(key: key, headers: metadataHeaders),
-            requiredAccount: required, cooldowns: { controlHealth.cooldowns(route: route.path) })
+            requiredAccount: required, cooldowns: { controlHealth.cooldowns(route: route.path) },
+            tracking: tracking)
           selectedAccount.withLock { $0 = selected.account.id }
           work = selected
-          authorization = try provider.dataAccess(work: selected, target: target)
+          authorize = { try provider.dataAccess(work: selected, target: target) }
         } else {
           work = nil
-          authorization = nil
+          authorize = { nil }
         }
-        do {
+        defer {
+          if let tracking, let work {
+            access.store.accountExecutions?.finish(tracking, account: work.account.id)
+          }
+        }
+        let forward: @Sendable () async throws -> Int = {
+          let authorization = try authorize()
           guard
             var url = URLComponents(string: authorization?.baseURL ?? configuration.upstreamBaseURL)
           else {
@@ -153,7 +161,9 @@ extension HTTPResponseExecution {
               }
               data.append(contentsOf: chunk.readableBytesView)
             }
-          } catch  where !succeeded && !(error is CancellationError) {
+          } catch
+            where !succeeded && (!(error is CancellationError) || tracking?.wasForced == true)
+          {
             // The status already classifies the account; an unreadable error body must not hide it.
             data = Data()
           }
@@ -186,24 +196,31 @@ extension HTTPResponseExecution {
           try await deliver(
             ControlReply(status: Int(response.status.code), headers: headers, body: data))
           return Int(response.status.code)
-        } catch {
-          if let work {
-            let failure = executionFailure(error)
-            if [.authenticationRejected, .rateLimited].contains(failure), let routing {
-              try await routing.recordAccountWideOutcome(
-                account: AccountRouteCandidate(work: work),
-                outcome: .init(
-                  failure: failure, atUnixSeconds: access.clock.unixSeconds,
-                  cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
-            } else if failure == .upstreamUnavailable {
-              controlHealth.record(
-                route: route.path,
-                account: try .init(id: work.account.id, namespace: work.account.namespace),
-                seconds: (error as? GatewayProtocolError)?.cooldownSeconds)
-            }
-          }
-          throw error
         }
+        let execute: @Sendable () async throws -> Int = {
+          do {
+            return try await forward()
+          } catch {
+            if let work {
+              let failure = executionFailure(error)
+              if [.authenticationRejected, .rateLimited].contains(failure), let routing {
+                try await routing.recordAccountWideOutcome(
+                  account: AccountRouteCandidate(work: work),
+                  outcome: .init(
+                    failure: failure, atUnixSeconds: access.clock.unixSeconds,
+                    cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+              } else if failure == .upstreamUnavailable {
+                controlHealth.record(
+                  route: route.path,
+                  account: try .init(id: work.account.id, namespace: work.account.namespace),
+                  seconds: (error as? GatewayProtocolError)?.cooldownSeconds)
+              }
+            }
+            throw error
+          }
+        }
+        if let tracking, work != nil { return try await tracking.run(execute) }
+        return try await execute()
       }
     } catch {
       status = protocolFailure(error).status

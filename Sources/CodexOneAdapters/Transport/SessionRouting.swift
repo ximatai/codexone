@@ -9,9 +9,11 @@ extension HTTPResponseExecution {
     model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
     requestID: String, mode: ExecutionMode, turnState: String? = nil,
     connection: AccountRouteIdentity? = nil,
+    connectionLifetime: AccountExecutionConnection? = nil,
     requirements: ExecutionRequirements = .init(),
     reasoningEffort: String? = nil, serviceTier: String? = nil,
-    operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
+    operation:
+      @escaping @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     guard let gateway else { throw ExecutionError.unauthorized }
     let required: AccountRouteIdentity?
@@ -26,7 +28,7 @@ extension HTTPResponseExecution {
     try await gateway.execute(
       model: model, references: references, affinityHints: affinityHints,
       requestID: requestID, mode: mode, preferred: preferred, requiredAccount: required,
-      connection: connection,
+      connection: connection, connectionLifetime: connectionLifetime,
       requirements: requirements, reasoningEffort: reasoningEffort, serviceTier: serviceTier
     ) { context, authorization in
       if let identity = authorization?.identity, let key = currentKeyID {

@@ -46,6 +46,7 @@ enum ProtocolFailureDiagnostics {
     "model_not_allowed", "quota_or_policy_denied", "storage_pressure", "maintenance_required",
     "capacity_exceeded", "capacity_exhausted", "execution_indeterminate", "upstream_rejected",
     "continuation_owner_unavailable", "account_unavailable", "account_refresh_required",
+    "account_force_stopped",
     "account_authorization_required", "account_refresh_capacity", "account_state_changed",
     "account_refresh_unavailable", "pool_websocket_unavailable",
     "upstream_compact_rejected",

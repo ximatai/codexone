@@ -23,17 +23,20 @@ public struct AccountPoolGateway: Sendable {
   public func execute(
     model: String, references: [ObjectBinding], affinityHints: [ObjectBinding] = [],
     connection: AccountRouteIdentity? = nil,
+    connectionLifetime: AccountExecutionConnection? = nil,
     preferred sessionPreferred: AccountRouteIdentity? = nil,
     requiredAccount: AccountRouteIdentity? = nil, requestID: String? = nil,
     mode: ExecutionMode = .generation,
     requirements: ExecutionRequirements = .init(),
     reasoningEffort: String? = nil, serviceTier: String? = nil,
-    operation: @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
+    operation:
+      @escaping @Sendable (ExecutionContext, AccountDispatchWork) async throws -> UsageEvidence?
   ) async throws {
     guard policy.models.contains(model),
       policy.key.policy.allows(model: model, requirements: requirements), references.count <= 32
     else { throw ExecutionError.denied }
     try await coordinator.executeAccountPool(
+      connectionLifetime: connectionLifetime,
       preparing: {
         let affinity = try await store.resolveAccountAffinity(
           principal: policy.key.principal, references: references, connection: connection)
@@ -59,12 +62,13 @@ public struct AccountPoolGateway: Sendable {
   /// Auxiliary dispatch has no generation admission, reservation or finalization ticket.
   public func authorizeControl(
     preferred: AccountRouteIdentity? = nil, requiredAccount: AccountRouteIdentity? = nil,
-    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double] = { [:] }
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double] = { [:] },
+    tracking: AccountExecution? = nil
   ) async throws -> AccountDispatchWork {
     let works = try await prepareWorks(affinity: nil, requiredAccount: requiredAccount)
     let selected = try await store.selectControlAccount(
       key: policy.key, candidates: try works.values.map { try AccountRouteCandidate(work: $0) },
-      preferred: preferred, cooldowns: cooldowns)
+      preferred: preferred, cooldowns: cooldowns, tracking: tracking)
     guard let work = works[selected] else { throw ExecutionError.conflict }
     return work
   }

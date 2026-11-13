@@ -4,6 +4,7 @@ import Foundation
 
 func protocolFailure(_ error: any Error) -> GatewayProtocolError {
   if let error = error as? GatewayProtocolError { return error }
+  if error is AccountExecutionStopped { return .init(503, "account_force_stopped") }
   // HTTP→WS bridges retain their existing failure contract; native connections consume this signal.
   if error is WebSocketUpstreamClosed {
     return .init(502, "invalid_upstream_turn", detail: .upstreamTurnLifecycle)
@@ -65,6 +66,8 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
       "The selected model is not available for this request. Choose a model enabled for this operation and allowed by your API key."
     case UpstreamWebSocketBodyLimit.errorCode:
       "The conversation or its images are too large. Start a new session or remove images before trying again."
+    case "account_force_stopped":
+      "An administrator stopped this account while the request was in progress. The upstream execution result may be unknown."
     case "continuation_owner_unavailable":
       "Continuation source cannot be verified. The request was not dispatched."
     case "unsupported_svg_model_selection":

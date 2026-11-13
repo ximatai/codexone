@@ -126,7 +126,7 @@ public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
   func waitForAccountPacing(seconds: Double) async throws
   func selectControlAccount(
     key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?,
-    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double]
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double], tracking: AccountExecution?
   ) async throws -> AccountRouteIdentity
   func recordAccountWideOutcome(account: AccountRouteCandidate, outcome: ExecutionOutcome)
     async throws
@@ -134,19 +134,34 @@ public protocol AccountRoutingStore: ExecutionStore, AccountGovernanceStore {
   func resolveAccountAffinity(
     principal: String, references: [ObjectBinding], connection: AccountRouteIdentity?
   ) async throws -> AccountRouteIdentity?
-  func admitSelectingAccount(_ command: AccountPoolAdmission) async throws -> ExecutionAdmission
+  func admitSelectingAccount(_ command: AccountPoolAdmission, tracking: AccountExecution?)
+    async throws -> ExecutionAdmission
   /// The account owning the most recent resolvable soft history label, if any.
   func resolveAccountHint(principal: String, hints: [ObjectBinding]) async throws
     -> AccountRouteIdentity?
 }
 
 extension AccountRoutingStore {
+  public func admitSelectingAccount(_ command: AccountPoolAdmission) async throws
+    -> ExecutionAdmission
+  {
+    try await admitSelectingAccount(command, tracking: nil)
+  }
+
+  public func selectControlAccount(
+    key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?,
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double]
+  ) async throws -> AccountRouteIdentity {
+    try await selectControlAccount(
+      key: key, candidates: candidates, preferred: preferred, cooldowns: cooldowns, tracking: nil)
+  }
+
   public func waitForAccountPacing(seconds: Double) async throws {
     throw ExecutionError.capacity
   }
   public func selectControlAccount(
     key: ManagedKey, candidates: [AccountRouteCandidate], preferred: AccountRouteIdentity?,
-    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double]
+    cooldowns: @escaping @Sendable () -> [AccountRouteIdentity: Double], tracking: AccountExecution?
   ) async throws -> AccountRouteIdentity {
     throw AccountDispatchError.unavailable
   }

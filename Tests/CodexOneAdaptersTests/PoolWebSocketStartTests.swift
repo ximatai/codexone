@@ -106,3 +106,66 @@ func poolWebSocketStartPreservesFailureBeforeOwnerCancellation(status: Int, prio
   }
   await store.close()
 }
+
+@Test(.timeLimit(.minutes(1)), arguments: [401, 429])
+func poolWebSocketForceStopWaitsForTransportAndPreservesRefusal(status: Int) async throws {
+  let path = try temporaryExecutionPath()
+  defer {
+    try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent)
+  }
+  let store = try await SQLiteExecutionStore.open(path: path, limits: syntheticLimits)
+  let account = try await store.createVerifiedAccount(
+    id: "synthetic", namespace: "synthetic",
+    envelope: "v1." + String(repeating: "a", count: 32) + "." + String(repeating: "A", count: 64))
+  let enabled = try await store.setAccountMode(
+    id: account.id, revision: account.revision, mode: .enabled)
+  let start = PoolWebSocketStart()
+  let finalizer = StartFinalizer()
+  let admission = ExecutionAdmission(
+    attempt: "synthetic-stop",
+    owner: .init(
+      principal: "synthetic", key: "synthetic", namespace: "synthetic", identity: "synthetic"),
+    window: "w", policyVersion: "1", pricingVersion: "1", reservedMicros: 10,
+    model: "synthetic-text",
+    accountSnapshot: try .init(
+      revision: enabled.revision, credentialVersion: enabled.credentialVersion,
+      accessExpiresAtUnixSeconds: 2_000_000_000, continuation: false))
+  let (cancelled, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+  start.attachSocketCancellation { signal.yield(()) }
+  let request = Task {
+    try await ExecutionCoordinator(store: store, finalizer: finalizer).execute(admission) {
+      context in
+      start.publish(.init(context: context, authorization: nil))
+      try await start.waitForTurn()
+      return nil
+    }
+  }
+  defer {
+    start.close(CancellationError())
+    request.cancel()
+  }
+  _ = try await start.receive()
+  let disabled = try await store.setAccountMode(
+    id: account.id, revision: enabled.revision, mode: .disabled)
+  #expect(try await store.forceStopAccount(id: account.id, revision: disabled.revision) == 1)
+  var events = cancelled.makeAsyncIterator()
+  _ = await events.next()
+  #expect(finalizer.results.withLock { $0.isEmpty })
+  #expect(store.accountExecutions?.count(account: account.id) == 1)
+  let rejection = upstreamRejection(
+    status: .init(statusCode: status), headers: ["retry-after": "60"])
+  start.close(rejection)
+  await #expect(throws: AccountExecutionStopped.self) { try await request.value }
+  #expect(store.accountExecutions?.count(account: account.id) == 0)
+  let result = try #require(finalizer.results.withLock { $0.first })
+  #expect(result.outcome?.failure == executionFailure(rejection))
+  #expect(result.outcome?.cooldownSeconds == rejection.cooldownSeconds)
+  #expect(result.evidence?.providerRejectedBeforeOutput == true)
+  try await store.configureHealthModels(["synthetic-text"])
+  try await store.finalize(
+    attempt: admission.attempt, evidence: result.evidence, outcome: result.outcome)
+  let health = try await store.accountHealth(id: account.id)
+  #expect(health.authenticationRejected == (status == 401))
+  #expect(health.cooldowns.first?.failure == (status == 429 ? .rateLimited : nil))
+  await store.close()
+}

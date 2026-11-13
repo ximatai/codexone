@@ -36,18 +36,20 @@
 
 ## A12：账号管理与一次性授权入口
 
-配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段为 id、displayName、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另含可空的 accessExpiresAtUnixSeconds 与 credentialUpdatedAtUnixSeconds，另有 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。到期字段由应用层读取并解密已有凭证后只提取 Unix 秒元数据，适配器不得获得凭证明文；未知或取值失败返回 null，不新增 schema。最近更新时间取已有account_events中create_verified/reauthorize_verified/refresh_commit的最后提交UTC秒，不用模式/显示名更新或刷新开始/失败时间；缺少可靠审计时返回null。详情以本地时间及相对时间展示，null显示“不可用”，不返回令牌内容或摘要、不新增schema。
+配置独立账号主密钥后提供 `/api/accounts`，复用 A10/A11 的认证、来源、CSRF、容量与 no-store 错误契约。GET 按 ID/after 有界分页，最多 64 条；公开账号 DTO 的身份字段为 id、displayName、revision、credentialVersion、mode、authorization 和 createdAtUnixSeconds，另含可空的 accessExpiresAtUnixSeconds 与 credentialUpdatedAtUnixSeconds，另含进程内在途请求数 inFlight 和 A13 的非秘密观测摘要，不返回 namespace、刷新 intent、明文/密文 token 或主密钥。到期字段由应用层读取并解密已有凭证后只提取 Unix 秒元数据，适配器不得获得凭证明文；未知或取值失败返回 null，不新增 schema。最近更新时间取已有account_events中create_verified/reauthorize_verified/refresh_commit的最后提交UTC秒，不用模式/显示名更新或刷新开始/失败时间；缺少可靠审计时返回null。详情以本地时间及相对时间展示，null显示“不可用”，不返回令牌内容或摘要、不新增schema。
 
 PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态冲突为 409，存储或提供者不明为安全 503，不透传错误正文。
 
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权；可选 method 为 device（默认）或 callback，拒绝其他值及未知字段。设备码创建响应为 flowID/method/userCode/verificationURL/expiresInSeconds/intervalSeconds；创建失败返回 flowID/method/expiresInSeconds/failureCode（404 未开启为 device_code_unavailable），不包含设备私有 ID。回调响应为 flowID/method/authorizationURL/expiresInSeconds。GET `/authorization/:flowID` 返回 status（pending/completed/failed/expired）、expiresInSeconds，pending 设备码包含 userCode，completed 包含 accountID，failed 包含 failureCode。POST `/authorization/:flowID` 只接受 callbackURL，且仅用于回调流程；DELETE 取消并等待本 owner 的流程退出。GET/DELETE 对错误 owner 或未知流程返回安全 409，不泄露流程是否存在；状态读取拒绝查询参数。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。流程信息不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 
 
-管理页面仅提供账号启用/禁用，禁用及 Key 禁用/轮换须先确认影响。历史排空账号保持原状态并明确提示，可显式切换启用/禁用；底层排空协议保留兼容。账号排空不接收新会话请求，已有身份关联续接仍可派发；禁用阻止后续派发（包括续接），两者均不主动取消已经派发的请求。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
+管理页面以二态开关启用或停用账号。普通停用提交 disabled 后立即阻止新准入（含已有会话续接），已准入请求自然结束。账号 disabled 且 inFlight 大于零时显示等待数量和强行停用入口，页面定期重读直到请求结束。历史 draining 保持原状态，只允许已验证归属的续接，详情可显式切换启用或停用。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
+
+POST `/:id/force-stop` 只接受 revision，复用管理认证、Origin/CSRF 和 no-store。仅当前修订匹配的 disabled 账号可执行；状态变化返回 409，已经结束或已收到取消信号的请求无需再次取消。响应 `cancellationRequested` 是本次收到取消指令的请求数，完成状态从 inFlight 重新读取。管理台在发送前展示账号、剩余请求数和上游结果可能未知的提示，须显式确认。
 
 授权失败 failureCode 取 I16 的 provider_rejected、exchange_failed、identity_mismatch、verification_failed、revision_conflict、device_code_unavailable、authorization_failed；最后一项保留通用回退。API 客户端必须接受新增代码并对未来未知代码回退，不把新代码当作响应损坏。前端仅接受有界代码标识，不显示未知原文；每种已知代码在授权对话框有中文解释。回调 POST 沿用安全错误格式，令牌端点以 400/401 拒绝兑换时返回 409/authorization_required（按状态判断，不读取错误响应体），其他兑换失败为 503/account_unavailable；前端失败后先 GET 本 owner 的已消费流程状态，再 DELETE；清除一次性输入及授权链接，只保留终态解释，不重发 callback。读取失败仍沿用未知结果锁与账号核对。旧客户端可能拒绝新代码，升级须同步 UI/API 客户端；无 schema 变更，内存流程不会跨版本/重启恢复。
 
-账号页面分别展示使用策略与授权状态；新账号保持禁用，刷新失效/授权未知引导重新授权，不能以刷新按钮自动重用失效令牌。设备码默认弹窗显示可复制 user code/验证链接、倒计时与轮询状态，完成结果保留在同一弹窗，新账号提供独立“启用”操作。底部允许切换回调；device_code_unavailable 提示 ChatGPT 安全设置可能需要开启设备码登录。关闭或离开取消流程。备用一次性回调以隐藏输入接受，提交前即清除；流程仅页面内存保留、期限到期或离开页面清除本地信息。远程操作者可在新窗口登录并复制最终 localhost 回调地址，不自动访问操作者的 callback 服务。账号列表不能包含 token；不把订阅授权状态称为可用余额。
+账号页面展示启停操作和需要关注的授权状态；新账号保持禁用，刷新失效/授权未知引导重新授权，不能以刷新按钮自动重用失效令牌。设备码默认弹窗显示可复制 user code/验证链接、倒计时与轮询状态，完成结果保留在同一弹窗，新账号提供独立“启用”操作。底部允许切换回调；device_code_unavailable 提示 ChatGPT 安全设置可能需要开启设备码登录。关闭或离开取消流程。备用一次性回调以隐藏输入接受，提交前即清除；流程仅页面内存保留、期限到期或离开页面清除本地信息。远程操作者可在新窗口登录并复制最终 localhost 回调地址，不自动访问操作者的 callback 服务。账号列表不能包含 token；不把订阅授权状态称为可用余额。
 
 CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败不能谎报已核对。成功写入后若后续读取失败，同样保持锁定；回调不再显示或提供重发。登录/登出失败给出明确重试，登出未确认也清本页授权信息。前端 API 与 session/CSRF 客户端是实际复用的 shared 模块，不把账号依赖放进 Key feature。
 
@@ -71,7 +73,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 保持静态管理资源的严格 CSP，不启用 unsafe-inline/unsafe-eval。主题使用外部CSS，Zod关闭JIT，弹层滚动锁用有owner的外部CSS class代替库的运行时样式标签；焦点/菜单/弹层行为复用组件库。管理响应在原1 MiB/5秒限制内等待最终socket flush完成后关闭，不把已排队当发送完成。
 
-账号治理采用列表→账号详情/一次性授权抽屉：列表分别展示状态、授权和额度摘要，右上角单一“查看详情”入口，启用/禁用统一置于详情设置页，详情承载启停、刷新/重新授权及额度窗口；创建授权成功仍默认禁用。抽屉内保留元数据重新读取入口和失败提示，未知结果不能被关闭/重新打开绕过；详情关闭或账号更换取消只读请求，授权关闭清除回调并按现有一次性丢弃契约处理。
+账号治理采用列表和按需打开的详情、授权抽屉。列表卡片提供启停、额度摘要和详情入口；需要重新授权时直接提示并提供重新授权，隐藏额度摘要。详情继续提供启停、刷新/重新授权及额度窗口；创建授权成功仍默认禁用。抽屉内保留元数据重新读取入口和失败提示，未知结果不能被关闭/重新打开绕过；详情关闭或账号更换取消只读请求，授权关闭清除回调并按现有一次性丢弃契约处理。
 
 ## A14：受控离线摘要导入
 

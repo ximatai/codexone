@@ -53,9 +53,11 @@ enum ResponsesGateway: Sendable {
     requestID: String, mode: ExecutionMode, preferred: AccountRouteIdentity? = nil,
     requiredAccount: AccountRouteIdentity? = nil,
     connection: AccountRouteIdentity? = nil,
+    connectionLifetime: AccountExecutionConnection? = nil,
     requirements: ExecutionRequirements = .init(),
     reasoningEffort: String? = nil, serviceTier: String? = nil,
-    operation: @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
+    operation:
+      @escaping @Sendable (ExecutionContext, SubscriptionDataAccess?) async throws -> UsageEvidence?
   ) async throws {
     switch self {
     case .priming(let coordinator, let command, let work, let provider, let target):
@@ -77,7 +79,8 @@ enum ResponsesGateway: Sendable {
     case .pool(let gateway, let provider, let target):
       try await gateway.execute(
         model: model, references: references, affinityHints: affinityHints,
-        connection: connection, preferred: preferred, requiredAccount: requiredAccount,
+        connection: connection, connectionLifetime: connectionLifetime,
+        preferred: preferred, requiredAccount: requiredAccount,
         requestID: requestID,
         mode: mode, requirements: requirements, reasoningEffort: reasoningEffort,
         serviceTier: serviceTier

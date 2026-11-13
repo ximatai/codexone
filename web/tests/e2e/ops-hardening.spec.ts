@@ -156,6 +156,11 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await expect(
     page.getByText("未命名账号 · 12345678", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("访问凭证约 1 小时后到期")).toBeVisible();
+  await page.getByRole("button", { name: "额度与健康详情" }).click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "账号详情" })
+      .getByText(/访问凭证约 .*后到期/),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });

@@ -23,14 +23,16 @@ struct HTTPResponseExecution: Sendable {
   let access: DataPlaneAuthorization
   let gateway: ResponsesGateway?
   var connection: AccountRouteIdentity? = nil
+  var connectionLifetime: AccountExecutionConnection? = nil
   var currentKeyID: String? = nil
   var keyCapabilities: KeyPolicy? = nil
   var effectiveImageModels: [ImageConfiguration.Model] = []
   let effectiveModels: [SingleIdentityConfiguration.Model]
 
-  func pinned(to identity: AccountRouteIdentity) -> Self {
+  func pinned(to identity: AccountRouteIdentity, lifetime: AccountExecutionConnection) -> Self {
     var copy = self
     copy.connection = identity
+    copy.connectionLifetime = lifetime
     return copy
   }
 
@@ -61,7 +63,8 @@ struct HTTPResponseExecution: Sendable {
       protocolClientHeaders: protocolClientHeaders, client: client,
       webSocket: webSocket, configuration: configuration, token: token,
       report: report, access: access,
-      gateway: try live.gateway(policy), connection: connection, currentKeyID: policy.keyID,
+      gateway: try live.gateway(policy), connection: connection,
+      connectionLifetime: connectionLifetime, currentKeyID: policy.keyID,
       keyCapabilities: policy.capabilities, effectiveImageModels: effectiveImages,
       effectiveModels: configuration.models.filter {
         policy.models.contains($0.id)

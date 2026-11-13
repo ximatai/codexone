@@ -84,6 +84,7 @@ public protocol AccountGovernanceStore: Sendable {
   func setAccountDisplayName(id: String, revision: Int64, displayName: String?) async throws
     -> ManagedAccount
   func setAccountMode(id: String, revision: Int64, mode: AccountMode) async throws -> ManagedAccount
+  func forceStopAccount(id: String, revision: Int64) async throws -> Int
   func beginAccountRefresh(id: String, revision: Int64, intent: String) async throws
     -> StoredAccountCredential
   func finishAccountRefresh(id: String, credentialVersion: Int64, intent: String, envelope: String)
@@ -99,4 +100,10 @@ public protocol AccountGovernanceStore: Sendable {
   func replaceVerifiedAccountCredential(
     id: String, revision: Int64, namespace: String, envelope: String
   ) async throws -> ManagedAccount
+}
+
+extension AccountGovernanceStore {
+  public func forceStopAccount(id: String, revision: Int64) async throws -> Int {
+    throw ExecutionError.invalidCommand
+  }
 }

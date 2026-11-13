@@ -209,6 +209,16 @@ public struct AccountAdminAPI: Sendable {
         id: request.parameters.get("id") ?? "", revision: revision, mode: mode)
       return try Self.response(.object(["account": await self.metadata(account)]))
     }
+    routes.post(":id", "force-stop") { request async throws -> Response in
+      guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+      let document = try Self.body(request, allowed: ["revision"])
+      guard let revision = document["revision"]?.integer else {
+        throw ExecutionError.invalidCommand
+      }
+      let count = try await store.forceStopAccount(
+        id: request.parameters.get("id") ?? "", revision: revision)
+      return try Self.response(.object(["cancellationRequested": .number(Decimal(count))]))
+    }
     routes.post(":id", "refresh") { request async throws -> Response in
       let document = try Self.body(request, allowed: ["revision"])
       guard let revision = document["revision"]?.integer else {
@@ -335,6 +345,9 @@ public struct AccountAdminAPI: Sendable {
       "id": .string(account.id), "revision": .number(Decimal(account.revision)),
       "credentialVersion": .number(Decimal(account.credentialVersion)),
       "mode": .string(account.mode.rawValue),
+      "inFlight": .number(
+        Decimal(
+          (store as? any ExecutionStore)?.accountExecutions?.count(account: account.id) ?? 0)),
       "authorization": .string(account.authorization.rawValue),
       "createdAtUnixSeconds": .number(Decimal(account.createdAtUnixSeconds)),
     ])

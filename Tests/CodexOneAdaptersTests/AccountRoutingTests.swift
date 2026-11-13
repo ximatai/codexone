@@ -1169,3 +1169,29 @@ func controlCooldownIsReadAfterOwnerRefresh(expired: Bool) async throws {
   #expect(trend.historyOmitted == true)
   await f.close()
 }
+
+@Test func forceStopRetiresOnlyTheAffectedSocketBeforeReenable() async throws {
+  let f = try await RoutingFixture.make(ids: ["a"])
+  let socket = AccountExecutionConnection()
+  let active = AccountExecution(connection: socket)
+  let first = try await f.command("active")
+  _ = try await f.store.admitSelectingAccount(first, tracking: active)
+  let account = try await f.store.accountCredential(id: "a").account
+  let stopped = try await f.store.setAccountMode(
+    id: "a", revision: account.revision, mode: .disabled)
+  #expect(try await f.store.forceStopAccount(id: "a", revision: stopped.revision) == 1)
+  _ = try await f.store.setAccountMode(id: "a", revision: stopped.revision, mode: .enabled)
+  let next = try await f.command(
+    "next", connection: .init(id: "a", namespace: "synthetic/a"), continuation: true)
+  await #expect(throws: AccountExecutionStopped.self) {
+    try await f.store.admitSelectingAccount(next, tracking: AccountExecution(connection: socket))
+  }
+  #expect(f.store.accountExecutions?.count(account: "a") == 1)
+  let fresh = AccountExecution(connection: AccountExecutionConnection())
+  let admitted = try await f.store.admitSelectingAccount(next, tracking: fresh)
+  #expect(admitted.owner.identity == "a")
+  #expect(!fresh.wasForced)
+  f.store.accountExecutions?.finish(active, account: "a")
+  f.store.accountExecutions?.finish(fresh, account: "a")
+  await f.close()
+}

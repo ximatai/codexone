@@ -40,6 +40,7 @@ export function useAccounts() {
   const [callback, setCallback] = useState("");
   const [remaining, setRemaining] = useState(0);
   const controller = useRef<AbortController | null>(null);
+  const waitingRead = useRef<AbortController | null>(null);
   const epoch = useRef(0);
   const deadline = useRef(0);
   function current(version: number) {
@@ -60,7 +61,7 @@ export function useAccounts() {
   ) {
     try {
       const fresh = await sessionAPI.fetchSession(signal);
-      if (!current(version)) return false;
+      if (!current(version) || signal?.aborted) return false;
       const replaced = !!proof.current && proof.current !== fresh.csrf;
       if (replaced) {
         const pending = flowRef.current;
@@ -75,7 +76,7 @@ export function useAccounts() {
       setSession(fresh);
       if (!owner.adopt(fresh)) return false;
       const list = await api.fetchAccounts(signal);
-      if (!current(version)) return false;
+      if (!current(version) || signal?.aborted) return false;
       setAccounts(list);
       setReadAt(Date.now() / 1000);
       setConfigured(true);
@@ -83,7 +84,7 @@ export function useAccounts() {
       owner.lock("accounts", false);
       return replaced ? "replaced" : "same";
     } catch (cause) {
-      if (current(version)) {
+      if (current(version) && !signal?.aborted) {
         setLocked(true);
         if (
           cause instanceof sessionAPI.ManagementError &&
@@ -242,6 +243,8 @@ export function useAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flow?.flowID, flowStatus?.status]);
   async function reread() {
+    if (managed.busy) return;
+    waitingRead.current?.abort();
     setBusy(true);
     setError("");
     setNotice("");
@@ -268,6 +271,7 @@ export function useAccounts() {
     success: string | ((result: T) => { text: string; warning: boolean }),
   ) {
     if (!session || busy || locked || managed.busy) return;
+    waitingRead.current?.abort();
     setError("");
     setNotice("");
     await managed.run(
@@ -404,6 +408,43 @@ export function useAccounts() {
       "账号策略已更新。",
     );
   }
+  function forceStop(account: Account) {
+    void mutation(
+      (csrf, signal) => api.forceStop(account, csrf, signal),
+      (count) => ({
+        text: count
+          ? `已向 ${count} 个请求发送取消信号。`
+          : "没有剩余请求需要取消。",
+        warning: false,
+      }),
+    );
+  }
+  const waiting = accounts.some(
+    (account) => account.mode === "disabled" && (account.inFlight ?? 0) > 0,
+  );
+  useEffect(() => {
+    if (!waiting || busy || managed.busy || locked || flow) return;
+    const abort = new AbortController();
+    waitingRead.current = abort;
+    const version = epoch.current;
+    let timer: number;
+    async function poll() {
+      if (document.visibilityState === "visible") {
+        const result = await read(version, abort.signal);
+        if (!result) return;
+      }
+      if (!abort.signal.aborted)
+        timer = window.setTimeout(() => void poll(), 2000);
+    }
+    timer = window.setTimeout(() => void poll(), 2000);
+    return () => {
+      abort.abort();
+      if (waitingRead.current === abort) waitingRead.current = null;
+      window.clearTimeout(timer);
+    };
+    // The loop is scoped to this page and only runs while a disabled account has live work.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting, busy, managed.busy, locked, flow, owner.generation]);
   function invalidate() {
     ++epoch.current;
     proof.current = null;
@@ -438,6 +479,7 @@ export function useAccounts() {
     complete,
     cancel,
     setMode,
+    forceStop,
     invalidate,
   };
 }

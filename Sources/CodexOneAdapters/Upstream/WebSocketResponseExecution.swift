@@ -23,6 +23,7 @@ extension HTTPResponseExecution {
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
         mode: request.mode, turnState: turnState, connection: connection,
+        connectionLifetime: connectionLifetime,
         requirements: request.requirements,
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, _ in
@@ -79,6 +80,14 @@ extension HTTPResponseExecution {
       handler: { event in
         context.observeUpstreamEvent()
         try observeProviderEvent(event, context: context)
+        if event["type"]?.string == "error" {
+          let error = ProviderObservation.providerFailure(event)
+          let failure = executionFailure(error)
+          if failure == .authenticationRejected || failure == .rateLimited {
+            // This error can be queued when an administrator stops the consumer.
+            observeExecutionFailure(error, context: context)
+          }
+        }
         guard !context.providerRejectedBeforeOutput,
           ProviderObservation.terminalEvents.contains(event["type"]?.string ?? "")
         else { return }
@@ -234,7 +243,7 @@ func webSocketCreate(
 
 /// A detached native turn may settle usage, but its caller still cancelled the response.
 private func observeDisconnectedOutcome(_ downstream: WebSocketPeer?, context: ExecutionContext) {
-  guard downstream?.isClosed == true else { return }
+  guard downstream?.isClosed == true, !context.wasForceStopped else { return }
   try? context.observeOutcome(
     .init(failure: .clientCancelled, atUnixSeconds: context.clock.unixSeconds))
 }

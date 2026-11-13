@@ -62,20 +62,13 @@ test("A01 A02: long account names fit all viewports and authorization warns inde
   await page.goto("/#/accounts");
   const unknown = page.getByText("授权结果未知", { exact: true });
   const reauth = page.getByText("需要重新授权", { exact: true });
-  expect(
-    await unknown
-      .locator("..")
-      .evaluate((element) =>
-        (element as HTMLElement).style.getPropertyValue("--badge-color"),
-      ),
-  ).toContain("yellow");
-  expect(
-    await reauth
-      .locator("..")
-      .evaluate((element) =>
-        (element as HTMLElement).style.getPropertyValue("--badge-color"),
-      ),
-  ).toContain("red");
+  await expect(unknown).toBeVisible();
+  await expect(reauth).toBeVisible();
+  const authCard = page.locator(".mantine-Paper-root").filter({ has: reauth });
+  await expect(
+    authCard.getByRole("button", { name: "重新授权" }),
+  ).toBeEnabled();
+  await expect(authCard.getByRole("progressbar")).toHaveCount(0);
   for (const [width, height] of [
     [1440, 900],
     [1920, 1080],

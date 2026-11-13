@@ -176,16 +176,24 @@
 }
 
 .cardHeader {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
   gap: 8px 12px;
 }
-.cardActions {
-  align-self: start;
+.modeControl {
+  flex: 0 1 auto;
 }
-.accountCard .cardSection {
-  margin-bottom: 0;
+.cardHeader .modeControl {
+  margin-inline-start: auto;
+}
+.accountCard {
+  display: flex;
+  flex-direction: column;
+}
+.cardFooter {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--mantine-color-default-border);
 }
 .accountCard .windows {
   gap: 10px;
@@ -198,17 +206,14 @@
   font-size: 18px;
 }
 @media (max-width: 600px) {
-  .cardActions {
-    display: contents;
+  .cardHeader {
+    flex-wrap: wrap;
   }
-  .cardDetails {
-    grid-column: 2;
-    grid-row: 1;
-    align-self: start;
+  .cardIdentity {
+    flex-basis: 100%;
   }
-  .cardBadges {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .cardHeader .modeControl {
+    margin-inline-start: 0;
   }
   .accountCard .windows {
     grid-template-columns: repeat(2, minmax(0, 1fr));

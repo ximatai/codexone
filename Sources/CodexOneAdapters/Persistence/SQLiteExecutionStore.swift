@@ -15,6 +15,7 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   let quotaCycleReaderGate = Mutex(false)
   let usageActivity = Mutex(false)
   public let overviewActivity: OverviewActivity
+  public let accountExecutions: AccountExecutions? = AccountExecutions()
   let liveFirstEvents = Mutex([String: Bool]())
   let storage: SQLiteStorageGuard
   public var allowsOptionalStorageWork: Bool { isAvailable && storage.snapshot.optionalWorkAllowed }
@@ -295,11 +296,20 @@ public final class SQLiteExecutionStore: ExecutionStore, Sendable {
   @discardableResult public func admit(_ command: ExecutionAdmission) async throws
     -> ExecutionAdmission
   {
+    try await admit(command, tracking: nil)
+  }
+
+  public func admit(_ command: ExecutionAdmission, tracking: AccountExecution?) async throws
+    -> ExecutionAdmission
+  {
     try validateAdmission(command)
     return try await perform(admission: true) { [limits, unresolvedCapacity] db in
       let admitted = try db.transaction {
         try Self.admitTransaction(
           db, command, limits: limits, unresolvedCapacity: unresolvedCapacity)
+      }
+      if let tracking {
+        self.accountExecutions?.register(tracking, account: admitted.owner.identity)
       }
       self.publishOverview(admitted, at: db.clock.unixSeconds)
       return admitted

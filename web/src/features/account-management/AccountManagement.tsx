@@ -29,7 +29,7 @@ import {
   Paper,
   PasswordInput,
   Stack,
-  Radio,
+  Switch,
   Text,
   TextInput,
   Title,
@@ -41,10 +41,7 @@ import { AccountObservability, utc } from "./AccountObservability";
 import { observeAccount, observationNotice } from "./observation-api";
 import { useAccounts } from "./useAccounts";
 import styles from "./accounts.module.css";
-import {
-  accountModes as modes,
-  authorizations as authorization,
-} from "../../shared/presentation";
+import { authorizations as authorization } from "../../shared/presentation";
 import { QuotaWindowBar } from "./QuotaWindowBar";
 export function AccountManagement({
   embedded = false,
@@ -53,14 +50,13 @@ export function AccountManagement({
 }) {
   const state = useAccounts();
   const [params, setParams] = useSearchParams();
-  const [confirm, setConfirm] = useState<{
-    account: api.Account;
-    mode: "disabled";
-  } | null>(null);
-  function changeMode(account: api.Account, mode: "enabled" | "disabled") {
-    if (mode === "enabled") state.setMode(account, mode);
-    else setConfirm({ account, mode });
-  }
+  const [forceTarget, setForceTarget] = useState<api.Account | null>(null);
+  const currentForceTarget = state.accounts.find(
+    (item) =>
+      item.id === forceTarget?.id &&
+      item.revision === forceTarget.revision &&
+      remainingRequests(item) > 0,
+  );
   const targetParam = embedded ? "account" : "target";
   const selected = params.get(targetParam);
   function setSelected(id: string | null) {
@@ -213,92 +209,91 @@ export function AccountManagement({
                             {accountName(item.id, [], item.displayName)}
                           </PrivateName>
                         </Text>
-                        <Text size="xs" c="dimmed">
-                          {credentialExpiry(item.accessExpiresAtUnixSeconds)}
-                        </Text>
                       </div>
-                      <Group
-                        className={styles.cardActions}
-                        gap="xs"
-                        align="center"
-                        wrap="nowrap"
-                      >
-                        <Group
-                          className={styles.cardBadges}
-                          gap={4}
-                          wrap="nowrap"
-                          aria-label="账号状态"
-                        >
-                          <Badge
-                            variant="light"
-                            color={
-                              item.mode === "enabled"
-                                ? "green"
-                                : item.mode === "draining"
-                                  ? "yellow"
-                                  : "gray"
-                            }
-                          >
-                            {modes[item.mode]}
-                          </Badge>
-                          <Badge
-                            variant="light"
-                            color={
-                              item.authorization === "ready"
-                                ? "green"
-                                : item.authorization === "requires_auth"
-                                  ? "red"
-                                  : "yellow"
-                            }
-                          >
-                            {authorization[item.authorization]}
-                          </Badge>
-                        </Group>
-                        <Button
-                          className={styles.cardDetails}
-                          variant="subtle"
-                          size="xs"
-                          aria-label="额度与健康详情"
-                          onClick={() => setSelected(item.id)}
-                        >
-                          查看详情
-                        </Button>
-                      </Group>
+                      {item.mode !== "draining" && (
+                        <AccountModeControl
+                          account={item}
+                          blocked={blocked}
+                          onChangeMode={state.setMode}
+                          onForce={setForceTarget}
+                        />
+                      )}
                     </Group>
-                    <div className={styles.cardSection} aria-label="额度与健康">
-                      {(quota?.primary || quota?.secondary) && (
-                        <div className={styles.windows}>
-                          {quota.primary && (
-                            <QuotaWindowBar
-                              title={quotaWindowLabel(
-                                quota.primary.durationSeconds,
-                                "主窗口",
-                              )}
-                              value={quota.primary}
-                            />
-                          )}
-                          {quota.secondary && (
-                            <QuotaWindowBar
-                              title={quotaWindowLabel(
-                                quota.secondary.durationSeconds,
-                                "次窗口",
-                              )}
-                              value={quota.secondary}
-                            />
-                          )}
-                        </div>
+                    {item.mode === "draining" && (
+                      <Alert mb="sm" color="yellow" title="仅续接已有会话">
+                        不接收新会话。可在详情的「设置」中启用或停用。
+                      </Alert>
+                    )}
+                    {item.authorization !== "ready" && (
+                      <Alert
+                        mb="sm"
+                        color={needsAuthorization(item) ? "red" : "yellow"}
+                      >
+                        {authorization[item.authorization]}
+                      </Alert>
+                    )}
+                    {!needsAuthorization(item) && (
+                      <div
+                        className={styles.cardSection}
+                        aria-label="额度与健康"
+                      >
+                        {(quota?.primary || quota?.secondary) && (
+                          <div className={styles.windows}>
+                            {quota.primary && (
+                              <QuotaWindowBar
+                                title={quotaWindowLabel(
+                                  quota.primary.durationSeconds,
+                                  "主窗口",
+                                )}
+                                value={quota.primary}
+                              />
+                            )}
+                            {quota.secondary && (
+                              <QuotaWindowBar
+                                title={quotaWindowLabel(
+                                  quota.secondary.durationSeconds,
+                                  "次窗口",
+                                )}
+                                value={quota.secondary}
+                              />
+                            )}
+                          </div>
+                        )}
+                        {!quota?.primary && !quota?.secondary && !attention && (
+                          <Text size="xs" c="dimmed">
+                            上游未提供额度窗口
+                          </Text>
+                        )}
+                        {attention && (
+                          <Text size="xs" c="orange">
+                            {attention}
+                          </Text>
+                        )}
+                      </div>
+                    )}
+                    <Group
+                      className={styles.cardFooter}
+                      justify="space-between"
+                      gap="xs"
+                    >
+                      <Button
+                        variant="default"
+                        size="xs"
+                        aria-label="额度与健康详情"
+                        onClick={() => setSelected(item.id)}
+                      >
+                        查看详情
+                      </Button>
+                      {needsAuthorization(item) && (
+                        <Button
+                          size="xs"
+                          disabled={blocked}
+                          onClick={() => begin(item)}
+                        >
+                          重新授权
+                        </Button>
                       )}
-                      {!quota?.primary && !quota?.secondary && !attention && (
-                        <Text size="xs" c="dimmed">
-                          上游未提供额度窗口
-                        </Text>
-                      )}
-                      {attention && (
-                        <Text size="xs" c="orange">
-                          {attention}
-                        </Text>
-                      )}
-                    </div>
+                    </Group>
                   </Paper>
                 );
               })}
@@ -308,51 +303,38 @@ export function AccountManagement({
       )}
       <Modal
         zIndex={400}
-        opened={!!confirm}
-        onClose={() => {
-          if (!state.busy) setConfirm(null);
-        }}
-        title="禁用账号"
+        opened={!!forceTarget}
+        onClose={() => setForceTarget(null)}
+        title="强行停用账号"
         removeScrollProps={{ removeScrollBar: false }}
-        data-ui-overlay={!!confirm || undefined}
-        closeOnEscape={!state.busy}
-        closeOnClickOutside={!state.busy}
-        withCloseButton={!state.busy}
+        data-ui-overlay={!!forceTarget || undefined}
       >
         <Stack>
-          <Text>
-            禁用后不再发送新请求，包括已有会话的后续请求；进行中的请求继续。
-          </Text>
-          <Text>
-            {confirm && (
+          <Text fw={600} className="wrap-anywhere">
+            {forceTarget && (
               <PrivateName>
-                {accountName(
-                  confirm.account.id,
-                  [],
-                  confirm.account.displayName,
-                )}
+                {accountName(forceTarget.id, [], forceTarget.displayName)}
               </PrivateName>
             )}
           </Text>
+          <Text size="sm">
+            {currentForceTarget
+              ? `网关将中断此账号剩余的 ${remainingRequests(currentForceTarget)} 个请求。上游可能已开始处理，无法确认的请求会记为「结果未知」。`
+              : "账号状态已变化或请求已经结束。"}
+          </Text>
           <Group justify="flex-end">
-            <Button
-              variant="default"
-              disabled={state.busy}
-              onClick={() => setConfirm(null)}
-            >
-              取消
+            <Button variant="default" onClick={() => setForceTarget(null)}>
+              {currentForceTarget ? "继续等待" : "关闭"}
             </Button>
             <Button
               color="red"
-              disabled={blocked}
+              disabled={blocked || !currentForceTarget}
               onClick={() => {
-                if (confirm) {
-                  state.setMode(confirm.account, confirm.mode);
-                  setConfirm(null);
-                }
+                if (currentForceTarget) state.forceStop(currentForceTarget);
+                setForceTarget(null);
               }}
             >
-              确认禁用
+              确认强行停用
             </Button>
           </Group>
         </Stack>
@@ -412,7 +394,7 @@ export function AccountManagement({
             account={account}
             state={state}
             blocked={blocked}
-            onChangeMode={changeMode}
+            onForce={setForceTarget}
             onBegin={begin}
           />
         )}
@@ -519,19 +501,77 @@ export function AccountManagement({
   );
 }
 
+function needsAuthorization(account: api.Account) {
+  return (
+    account.authorization === "requires_auth" ||
+    account.authorization === "auth_uncertain"
+  );
+}
+
+function remainingRequests(account: api.Account) {
+  return account.mode === "disabled" ? (account.inFlight ?? 0) : 0;
+}
+
+function AccountModeControl({
+  account,
+  blocked,
+  onChangeMode,
+  onForce,
+}: {
+  account: api.Account;
+  blocked: boolean;
+  onChangeMode: (account: api.Account, mode: "enabled" | "disabled") => void;
+  onForce: (account: api.Account) => void;
+}) {
+  const remaining = remainingRequests(account);
+  const enabled = account.mode === "enabled";
+  return (
+    <Group gap="xs" className={styles.modeControl} wrap="wrap">
+      {remaining > 0 && (
+        <>
+          <Text role="status" size="xs" c="dimmed">
+            正在等待 {remaining} 个请求结束
+          </Text>
+          <Button
+            size="xs"
+            variant="outline"
+            color="red"
+            disabled={blocked}
+            onClick={() => onForce(account)}
+          >
+            强行停用
+          </Button>
+        </>
+      )}
+      <Switch
+        size="sm"
+        label={enabled ? "已启用" : remaining > 0 ? "正在停用" : "已停用"}
+        checked={enabled}
+        disabled={blocked || (!enabled && account.authorization !== "ready")}
+        onChange={(event) =>
+          onChangeMode(
+            account,
+            event.currentTarget.checked ? "enabled" : "disabled",
+          )
+        }
+      />
+    </Group>
+  );
+}
+
 function AccountDetailPanels({
   embedded,
   account,
   state,
   blocked,
-  onChangeMode,
+  onForce,
   onBegin,
 }: {
   embedded?: boolean;
   account: api.Account;
   state: ReturnType<typeof useAccounts>;
   blocked: boolean;
-  onChangeMode: (account: api.Account, mode: "enabled" | "disabled") => void;
+  onForce: (account: api.Account) => void;
   onBegin: (account: api.Account) => void;
 }) {
   const [tab, setTab] = useState<string | null>("overview");
@@ -557,20 +597,14 @@ function AccountDetailPanels({
             {accountName(account.id, [], account.displayName)}
           </PrivateName>
         </Text>
-        <Group gap="xs">
+        {account.authorization !== "ready" && (
           <Badge
             variant="light"
-            color={account.mode === "enabled" ? "green" : "gray"}
-          >
-            {modes[account.mode]}
-          </Badge>
-          <Badge
-            variant="light"
-            color={account.authorization === "ready" ? "green" : "orange"}
+            color={needsAuthorization(account) ? "red" : "yellow"}
           >
             {authorization[account.authorization]}
           </Badge>
-        </Group>
+        )}
         <Text size="xs" c="dimmed">
           {credentialExpiry(account.accessExpiresAtUnixSeconds)}
         </Text>
@@ -717,22 +751,38 @@ function AccountDetailPanels({
                 }
               />
               <section aria-label="账号状态">
-                <Radio.Group
-                  label="账号状态"
-                  value={account.mode}
-                  onChange={(mode) =>
-                    onChangeMode(account, mode as "enabled" | "disabled")
-                  }
-                >
-                  <Group mt="xs">
-                    <Radio value="enabled" label="启用" disabled={blocked} />
-                    <Radio value="disabled" label="禁用" disabled={blocked} />
-                  </Group>
-                </Radio.Group>
-                {account.mode === "draining" && (
-                  <Text size="sm" c="yellow.8" mt="sm">
-                    当前仅允许已有会话继续，请选择启用或禁用。
-                  </Text>
+                <Title order={3} size="h5" mb="sm">
+                  账号状态
+                </Title>
+                {account.mode === "draining" ? (
+                  <Stack gap="xs">
+                    <Text size="sm" c="yellow.8">
+                      当前仅续接已有会话。
+                    </Text>
+                    <Group>
+                      <Button
+                        variant="default"
+                        disabled={blocked || account.authorization !== "ready"}
+                        onClick={() => state.setMode(account, "enabled")}
+                      >
+                        启用
+                      </Button>
+                      <Button
+                        variant="default"
+                        disabled={blocked}
+                        onClick={() => state.setMode(account, "disabled")}
+                      >
+                        停用
+                      </Button>
+                    </Group>
+                  </Stack>
+                ) : (
+                  <AccountModeControl
+                    account={account}
+                    blocked={blocked}
+                    onChangeMode={state.setMode}
+                    onForce={onForce}
+                  />
                 )}
               </section>
               <section aria-label="账号授权">

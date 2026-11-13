@@ -118,6 +118,20 @@ extension SQLiteExecutionStore: AccountGovernanceStore {
       }
     }
   }
+  public func forceStopAccount(id: String, revision: Int64) async throws -> Int {
+    try Self.validateAccountID(id)
+    guard (1...1_000_000).contains(revision) else { throw ExecutionError.invalidCommand }
+    let cancel = try await perform { db in
+      let account = try Self.loadAccount(db, id).account
+      guard account.revision == revision, account.mode == .disabled else {
+        throw ExecutionError.conflict
+      }
+      guard let executions = self.accountExecutions else { throw ExecutionError.closed }
+      return executions.cancellation(account: id)
+    }
+    return cancel()
+  }
+
   public func beginAccountRefresh(id: String, revision: Int64, intent: String) async throws
     -> StoredAccountCredential
   {

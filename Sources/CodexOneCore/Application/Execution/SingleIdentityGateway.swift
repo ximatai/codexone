@@ -47,7 +47,7 @@ public struct SingleIdentityGateway: Sendable {
     model: String, references: [ObjectBinding], requestID: String? = nil,
     mode: ExecutionMode = .generation, requirements: ExecutionRequirements = .init(),
     reasoningEffort: String? = nil, serviceTier: String? = nil,
-    operation: @Sendable (ExecutionContext) async throws -> UsageEvidence?
+    operation: @escaping @Sendable (ExecutionContext) async throws -> UsageEvidence?
   ) async throws {
     try requirements.validate()
     let allowed =

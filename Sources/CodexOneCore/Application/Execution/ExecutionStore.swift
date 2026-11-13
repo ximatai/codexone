@@ -291,7 +291,10 @@ public protocol ExecutionStore: Sendable {
   var isAdmissionReady: Bool { get }
   func recordUnexpectedExecution(basedOn attempt: String) async throws
   var businessDay: BusinessDayDefinition { get }
+  var accountExecutions: AccountExecutions? { get }
   @discardableResult func admit(_ command: ExecutionAdmission) async throws -> ExecutionAdmission
+  func admit(_ command: ExecutionAdmission, tracking: AccountExecution?) async throws
+    -> ExecutionAdmission
   func bind(attempt: String, object: ObjectBinding) async throws
   func resolve(principal: String, object: ObjectBinding, namespace: String?) async throws
     -> ExecutionOwner
@@ -300,6 +303,12 @@ public protocol ExecutionStore: Sendable {
 }
 
 extension ExecutionStore {
+  public var accountExecutions: AccountExecutions? { nil }
+  public func admit(_ command: ExecutionAdmission, tracking: AccountExecution?) async throws
+    -> ExecutionAdmission
+  {
+    try await admit(command)
+  }
   public func recordUnexpectedExecution(basedOn attempt: String) async throws {
     throw ExecutionError.storageUnavailable
   }

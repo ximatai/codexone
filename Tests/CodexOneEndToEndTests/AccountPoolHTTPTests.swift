@@ -699,6 +699,108 @@ func poolHTTPDisableAndKeyRevocationRefuseContinuationWithoutSwitching() async t
   }
 }
 
+@Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
+func accountForceStopCancelsOnlySelectedLiveRequests(transport: String) async throws {
+  try await withPoolHTTP(transport: transport, executionTimeout: 15) { h in
+    let secret = "synthetic-admin-" + String(repeating: "a", count: 32)
+    let path = h.oauth.root.appendingPathComponent("admin-stop")
+    try Data(secret.utf8).write(to: path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+    let keys = try await KeyAdminAPI.load(path: path.path, store: h.store)
+    let auth = try AccountAuthorizationSupervisor(
+      application: h.oauth.app, provider: h.oauth.provider)
+    let accounts = AccountAdminAPI(
+      store: h.store, authorization: auth, refreshing: h.oauth.supervisor)
+    let port = AccountAdminPort()
+    let admin = AdminService(
+      group: h.oauth.group, port: 0, reportProvider: { .init(checks: []) },
+      keys: keys, accounts: accounts
+    ) { value in port.value.withLock { $0 = value } }
+    let owner = Task {
+      try await GatewayRuntime(services: [auth, admin]).run(handleSignals: false)
+    }
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    do {
+      try await awaitOAuth { port.value.withLock { $0 > 0 } }
+      let client = AccountAdminClient(port: port.value.withLock { $0 }, session: session)
+      let headers = ["authorization": "Bearer " + secret]
+      // The WS bridge has an explicit release gate. HTTP withholds response headers.
+      if transport == "http" { h.state.value.withLock { $0.stall = true } }
+      let first = Task { try await h.request("hold-queued") }
+      defer { first.cancel() }
+      try await awaitOAuth {
+        h.calls.count == 1
+          && (transport == "http"
+            || h.state.value.withLock { $0.heldWebSocketCompletion != nil })
+      }
+      let selected = try #require(h.calls.first?.account).replacingOccurrences(
+        of: "synthetic-", with: "")
+      let base = "/api/accounts/" + selected
+      let original = try await h.store.accountCredential(id: selected).account
+      let forcePath = base + "/force-stop"
+      let oldRevision: JSONValue = .object(["revision": .number(Decimal(original.revision))])
+      #expect(
+        try await client.call(
+          "POST", forcePath, body: oldRevision,
+          headers: ["authorization": "Bearer " + String(repeating: "z", count: 32)]
+        ).0 == 401)
+      #expect(
+        try await client.call("POST", forcePath, body: oldRevision, headers: headers).0 == 409)
+      let disable = try await client.call(
+        "PUT", base,
+        body: .object([
+          "revision": .number(Decimal(original.revision)), "mode": .string("disabled"),
+        ]),
+        headers: headers)
+      #expect(disable.0 == 200)
+      #expect(disable.1["account"]?["inFlight"]?.integer == 1)
+      let list = try await client.call("GET", "/api/accounts", headers: headers)
+      #expect(
+        list.1["accounts"]?.array?.first { $0["id"]?.string == selected }?["inFlight"]?.integer == 1
+      )
+      #expect(
+        try await client.call("POST", forcePath, body: oldRevision, headers: headers).0 == 409)
+      h.state.value.withLock { $0.stall = false }
+      #expect(try await h.request("other-account", key: h.bob).0 == 200)
+      #expect(h.calls.last?.account != h.calls.first?.account)
+      let revision: JSONValue = .object(["revision": .number(Decimal(original.revision + 1))])
+      let force = try await client.call("POST", forcePath, body: revision, headers: headers)
+      #expect(force.0 == 200 && force.1["cancellationRequested"]?.integer == 1)
+      let result = try await first.value
+      #expect(result.0 == 503)
+      #expect(try JSONValue.decode(result.1)["error"]?["code"]?.string == "account_force_stopped")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let final = try await client.call("GET", "/api/accounts", headers: headers)
+      #expect(
+        final.1["accounts"]?.array?.first { $0["id"]?.string == selected }?["inFlight"]?.integer
+          == 0)
+      let repeatForce = try await client.call("POST", forcePath, body: revision, headers: headers)
+      #expect(repeatForce.1["cancellationRequested"]?.integer == 0)
+      #expect(h.calls.count == 2)
+      #expect(
+        try await h.store.perform {
+          try $0.scalar(
+            "SELECT COUNT(*) FROM attempts WHERE state='unknown' AND identity=?", [.text(selected)])
+        } == 1)
+      let enable = try await client.call(
+        "PUT", base,
+        body: .object([
+          "revision": .number(Decimal(original.revision + 1)), "mode": .string("enabled"),
+        ]),
+        headers: headers)
+      #expect(enable.0 == 200)
+      #expect(try await client.call("POST", forcePath, body: revision, headers: headers).0 == 409)
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      throw error
+    }
+    owner.cancel()
+    _ = await owner.result
+  }
+}
+
 @Test(.timeLimit(.minutes(1))) func poolHTTPRefreshesPinnedAccountThroughRealOAuthSocket()
   async throws
 {
@@ -1238,8 +1340,10 @@ func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() a
   }
 }
 
-@Test(.timeLimit(.minutes(1)))
-func poolNativeWebSocketFinishesSentTurnButRejectsQueuedTurnAfterAccountDisabled() async throws {
+@Test(.timeLimit(.minutes(1)), arguments: [false, true])
+func poolNativeWebSocketStopsQueuedTurnsAndCanForceStopTheSentTurn(force: Bool)
+  async throws
+{
   try await withPoolHTTP(transport: "websocket") { h in
     let client = try PoolWSClient(h)
     defer { client.close() }
@@ -1250,7 +1354,25 @@ func poolNativeWebSocketFinishesSentTurnButRejectsQueuedTurnAfterAccountDisabled
     let selected = try #require(h.calls.first?.account).replacingOccurrences(
       of: "synthetic-", with: "")
     let account = try await h.store.accountCredential(id: selected).account
-    _ = try await h.store.setAccountMode(id: selected, revision: account.revision, mode: .disabled)
+    let disabled = try await h.store.setAccountMode(
+      id: selected, revision: account.revision, mode: .disabled)
+    #expect(h.store.accountExecutions?.count(account: selected) == 1)
+    if force {
+      #expect(try await h.store.forceStopAccount(id: selected, revision: disabled.revision) == 1)
+      var result = try await client.command(["op": .string("receive")])
+      if result["type"]?.string == "response.created" {
+        result = try await client.command(["op": .string("receive")])
+      }
+      #expect(result["error"]?["code"]?.string == "account_force_stopped")
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      #expect(h.store.accountExecutions?.count(account: selected) == 0)
+      #expect(h.calls.count == 1)
+      #expect(
+        try await h.store.perform {
+          try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='unknown'")
+        } == 1)
+      return
+    }
     let finish = h.state.value.withLock { state in
       let finish = state.heldWebSocketCompletion
       state.heldWebSocketCompletion = nil
@@ -1265,6 +1387,7 @@ func poolNativeWebSocketFinishesSentTurnButRejectsQueuedTurnAfterAccountDisabled
     let rejected = try await client.command(["op": .string("receive")])
     #expect(rejected["error"]?["code"]?.string == "account_unavailable")
     try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(h.store.accountExecutions?.count(account: selected) == 0)
     #expect(h.calls.count == 1)
     #expect(try await h.store.perform { try $0.scalar("SELECT COUNT(*) FROM attempts") } == 1)
     #expect(
