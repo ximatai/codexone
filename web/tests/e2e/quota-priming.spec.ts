@@ -46,9 +46,10 @@ for (const width of [1440, 390]) {
       section.getByLabel("自动预热空闲窗口", { exact: true }),
     ).not.toBeChecked();
     await section.getByLabel("自动预热空闲窗口", { exact: true }).check();
-    await section
-      .getByLabel("预热模型", { exact: true })
-      .selectOption("synthetic-other");
+    await section.getByRole("combobox", { name: "预热模型" }).click();
+    await page
+      .getByRole("option", { name: "synthetic-other", exact: true })
+      .click();
     await section.getByLabel("预热消息", { exact: true }).fill("a".repeat(201));
     await expect(
       section.getByRole("button", { name: "保存预热设置" }),

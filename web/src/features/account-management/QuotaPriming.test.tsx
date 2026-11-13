@@ -45,13 +45,14 @@ it("defaults off and saves configured model/message with the account CAS, includ
   setup();
   await screen.findByText(/尚无预热尝试/);
   expect(screen.getByLabelText("自动预热空闲窗口")).not.toBeChecked();
-  expect(screen.getByLabelText("预热模型")).toHaveValue("synthetic-cheap");
+  expect(screen.getByRole("combobox", { name: "预热模型" })).toHaveValue(
+    "synthetic-cheap",
+  );
   expect(screen.getByText(/预热会发送请求/)).toHaveTextContent(/风控/);
   expect(screen.getByRole("button", { name: "保存预热设置" })).toBeDisabled();
   fireEvent.click(screen.getByLabelText("自动预热空闲窗口"));
-  fireEvent.change(screen.getByLabelText("预热模型"), {
-    target: { value: "synthetic-other" },
-  });
+  fireEvent.click(screen.getByRole("combobox", { name: "预热模型" }));
+  fireEvent.click(screen.getByRole("option", { name: "synthetic-other" }));
   fireEvent.change(screen.getByLabelText("预热消息"), {
     target: { value: "你好" },
   });
@@ -94,9 +95,11 @@ it("requires a replacement for a removed model and shows last result", async () 
   expect(screen.getByText(/失败或结果未知/)).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("自动预热空闲窗口"));
   expect(screen.getByRole("button", { name: "保存预热设置" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("预热模型"), {
-    target: { value: "synthetic-cheap" },
-  });
+  expect(screen.getByRole("combobox", { name: "预热模型" })).toHaveValue(
+    "removed（已移除）",
+  );
+  fireEvent.click(screen.getByRole("combobox", { name: "预热模型" }));
+  fireEvent.click(screen.getByRole("option", { name: "synthetic-cheap" }));
   expect(screen.getByRole("button", { name: "保存预热设置" })).toBeEnabled();
 });
 it("fails visibly and keeps saving blocked when the state cannot be read", async () => {

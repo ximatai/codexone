@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
-  NativeSelect,
+  Select,
   Stack,
   Switch,
   Text,
@@ -108,23 +108,26 @@ export function QuotaPriming({
           disabled={blocked || !state?.models.length}
           onChange={(e) => setEnabled(e.currentTarget.checked)}
         />
-        <NativeSelect
+        <Select
           label="预热模型"
           title="默认选择配置费率最低的对话模型。"
-          value={model}
+          value={state && model ? model : null}
+          placeholder={loading ? "正在读取模型…" : "没有配置模型"}
+          allowDeselect={false}
           disabled={blocked || !state?.models.length}
           data={[
-            ...(!state?.models.includes(model)
+            ...(state && model && !state.models.includes(model)
               ? [
                   {
                     value: model,
-                    label: model ? `${model}（已移除）` : "没有配置模型",
+                    label: `${model}（已移除）`,
+                    disabled: true,
                   },
                 ]
               : []),
             ...(state?.models.map((id) => ({ value: id, label: id })) ?? []),
           ]}
-          onChange={(e) => setModel(e.currentTarget.value)}
+          onChange={(value) => setModel(value ?? "")}
         />
         <Textarea
           label="预热消息"
