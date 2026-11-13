@@ -130,6 +130,14 @@ final class WebSocketTurns: Sendable {
       value.lanes[lane] = current
     }
   }
+  func abandonUndispatched(lane: String) {
+    state.withLock { value in
+      guard let turn = value.lanes[lane], case .awaitingCreated = turn.phase,
+        !turn.dispatched
+      else { return }
+      value.lanes[lane] = .init()
+    }
+  }
   func detachEvidence(lane: String) {
     state.withLock {
       $0.lanes[lane]?.evidence = nil

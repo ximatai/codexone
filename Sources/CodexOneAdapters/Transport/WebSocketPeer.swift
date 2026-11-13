@@ -244,6 +244,7 @@ struct WebSocketPeer: Sendable {
   func beginTurn(lane: String = "", compaction: Bool = false) throws {
     try turns?.begin(lane: lane, compaction: compaction)
   }
+  func abandonUndispatchedTurn(lane: String) { turns?.abandonUndispatched(lane: lane) }
   func attachEvidence(
     lane: String, unattributedProcessing: (@Sendable () -> Void)? = nil,
     handler: @escaping @Sendable (JSONValue) throws -> Void

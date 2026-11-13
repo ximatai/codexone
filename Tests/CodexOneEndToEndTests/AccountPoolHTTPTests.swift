@@ -1331,12 +1331,54 @@ func poolNativeWebSocketRechecksAccountAndKeyBetweenTurnsWithoutReconnecting() a
       }
       let result = try await client.command()
       #expect(result["type"]?.string == "error")
+      if mutation != "key" { client.close() }
       try await awaitOAuth {
         h.finalizer.outstanding == 0 && h.state.value.withLock { $0.channels.isEmpty }
       }
       #expect(h.calls.count == (mutation == "draining" ? 3 : 1))
       #expect(h.state.value.withLock { $0.upgrades } == 1)
     }
+  }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func poolNativeWebSocketGracefulStopPreservesActiveLane() async throws {
+  try await withPoolHTTP(transport: "websocket") { h in
+    let client = try PoolWSClient(h)
+    defer { client.close() }
+    _ = try await client.read()
+    _ = try await client.command([
+      "op": .string("send"), "input": .string("hold-queued"), "lane": .string("active"),
+    ])
+    try await awaitOAuth { h.state.value.withLock { $0.heldWebSocketCompletion != nil } }
+    let selected = try #require(h.calls.first?.account).replacingOccurrences(
+      of: "synthetic-", with: "")
+    let account = try await h.store.accountCredential(id: selected).account
+    let disabled = try await h.store.setAccountMode(
+      id: selected, revision: account.revision, mode: .disabled)
+    let rejected = try await client.command(["lane": .string("new")])
+    #expect(rejected["stream_id"]?.string == "new")
+    #expect(rejected["error"]?["code"]?.string == "account_unavailable")
+    #expect(h.calls.count == 1)
+    let release = try #require(h.state.value.withLock { $0.heldWebSocketCompletion })
+    release()
+    let created = try await client.command(["op": .string("receive")])
+    #expect(created["type"]?.string == "response.created")
+    let completed = try await client.command(["op": .string("receive")])
+    #expect(completed["type"]?.string == "response.completed")
+    #expect(completed["stream_id"]?.string == "active")
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    #expect(
+      try await h.store.perform {
+        try $0.scalar("SELECT COUNT(*) FROM attempts WHERE state='settled'")
+      } == 1)
+
+    _ = try await h.store.setAccountMode(
+      id: selected, revision: disabled.revision, mode: .enabled)
+    #expect(
+      try await client.command(["lane": .string("new")])["type"]?.string
+        == "response.completed")
+    #expect(h.calls.count == 2)
   }
 }
 

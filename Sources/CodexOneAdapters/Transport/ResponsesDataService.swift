@@ -534,8 +534,9 @@ public struct ResponsesDataService: Service {
                   if initialTurn == nil {
                     try? await sendWebSocketError(
                       error, requestID: requestID, lane: lane, to: downstream)
-                    // Provider refusals and local size rejections end only this turn.
-                    if (error as? GatewayProtocolError)?.providerError != nil
+                    // Reject the new turn without interrupting admitted turns in other lanes.
+                    if (error as? AccountDispatchError) == .unavailable
+                      || (error as? GatewayProtocolError)?.providerError != nil
                       || (error as? GatewayProtocolError)?.code
                         == UpstreamWebSocketBodyLimit.errorCode
                     {

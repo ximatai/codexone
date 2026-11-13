@@ -43,7 +43,7 @@ PUT `/:id` 接受 revision/mode，POST `/:id/refresh` 接受 revision；状态�
 POST `/authorization` 接受 target:null 创建新账号流程，或 target:{id,revision} 重新授权；可选 method 为 device（默认）或 callback，拒绝其他值及未知字段。设备码创建响应为 flowID/method/userCode/verificationURL/expiresInSeconds/intervalSeconds；创建失败返回 flowID/method/expiresInSeconds/failureCode（404 未开启为 device_code_unavailable），不包含设备私有 ID。回调响应为 flowID/method/authorizationURL/expiresInSeconds。GET `/authorization/:flowID` 返回 status（pending/completed/failed/expired）、expiresInSeconds，pending 设备码包含 userCode，completed 包含 accountID，failed 包含 failureCode。POST `/authorization/:flowID` 只接受 callbackURL，且仅用于回调流程；DELETE 取消并等待本 owner 的流程退出。GET/DELETE 对错误 owner 或未知流程返回安全 409，不泄露流程是否存在；状态读取拒绝查询参数。owner 从已认证 session 或独立 headless 管理凭证得出，不从请求 JSON/查询参数接受。流程信息不写持久缓存。不同 session/headless 域不能消费彼此流程，认证过期后须重新开始。其余责任遵循 I16，不能自动重发授权码或刷新 POST。
 
 
-管理页面以二态开关启用或停用账号。普通停用提交 disabled 后立即阻止新准入（含已有会话续接），已准入请求自然结束。账号 disabled 且 inFlight 大于零时显示等待数量和强行停用入口，页面定期重读直到请求结束。历史 draining 保持原状态，只允许已验证归属的续接，详情可显式切换启用或停用。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
+管理页面以二态开关启用或停用账号。普通停用提交 disabled 后立即阻止新准入（含已有会话续接），已准入请求自然结束。原生 WebSocket 上因账号不可用而被拒绝的新轮次只结束该轮，连接内其他已准入轮次继续执行。账号 disabled 且 inFlight 大于零时显示等待数量和强行停用入口，页面定期重读直到请求结束。历史 draining 保持原状态，只允许已验证归属的续接，详情可显式切换启用或停用。Key 禁用使持有该 Key 的客户端后续请求立即失败；轮换使旧凭证立即失效。
 
 POST `/:id/force-stop` 只接受 revision，复用管理认证、Origin/CSRF 和 no-store。仅当前修订匹配的 disabled 账号可执行；状态变化返回 409，已经结束或已收到取消信号的请求无需再次取消。响应 `cancellationRequested` 是本次收到取消指令的请求数，完成状态从 inFlight 重新读取。管理台在发送前展示账号、剩余请求数和上游结果可能未知的提示，须显式确认。
 
