@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.36](https://github.com/ximatai/codexone/releases/tag/v0.26.36)**（2026-11-12），核心数据库 schema v17。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+当前稳定版本为 **[v0.26.37](https://github.com/ximatai/codexone/releases/tag/v0.26.37)**（2026-11-13），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明；也可以从源码构建。
+
+v0.26.37 支持在模型目录调整已启用对话模型的默认推理档位与可选范围。客户端档位同时受模型和 Key 限制。核心数据库升级至 v18，旧版无法打开升级后的原库。见[发布说明](CHANGELOG.md)。
 
 v0.26.36 优化首页小时输出速率图，延长模型候选刷新期限，并识别输出项中断事件。见[发布说明](CHANGELOG.md)。
 
@@ -69,8 +71,6 @@ v0.26.5 起重置卡自动使用支持分钟级提前量和有界分钟重试，
 v0.26.10使用 64 MiB 共享正文预算并保留 8 MiB 小请求余量，短时等待容量。GIF/SVG 沿图片权限与模型范围转发，原生显式 GIF/SVG 按实际格式头验收。真实格式和 Responses 图片工具可用性依赖提供者。SVG 作者输入与输出计入 Key 每日 Token 上限，费用覆盖独立展示。升级至 schema v12 需要显式迁移与升级前备份。详见[协议](docs/reference/specs/protocol.md)、[兼容说明](docs/reference/compatibility.md)与[维护指南](docs/guide/backup-upgrade.md)。
 
 ## 管理界面与 Token 治理
-
-下一版候选支持在模型目录调整已启用对话模型的默认推理档位与允许范围。客户端可选档位同时受模型和 Key 限制。见[管理面规范](docs/reference/specs/control-plane.md)。
 
 首页大数按万/亿/万亿展示并保留精确值提示，容量以进度条区分参考阈值与阻断上限；今日未归档托管 Key 的成功、失败、取消、执行中与结果未明汇总（仅今日有准入，停用状态明确标注）替换最近请求明细。大屏拓宽侧栏并合并运行状态，订阅额度窗口纵向展示已用比例、时间参考线和重置时间。仅在有事项时显示运行提醒。只读摘要新增成功、取消与在途计数，无 schema 变化。本机定向验证与平台边界见[验证记录](docs/changes/overview-summary/verification.md)。 首页账号入口现就地打开复用的详情抽屉，保留首页导航、滚动与历史恢复；详情按概览/自动化/设置分组，固定头部、按需读取配置并保留页签间草稿；账号设置只提供启用/禁用；手动使用重置卡仅保留各卡自己的使用按钮与确认；精简重复说明，由分组与数字列传达信息，保留异常和操作后果提示。首页大屏分为用量与实时请求主栏、订阅额度与资源侧栏。进行中请求以卡片显示，结束后移除。今日活跃 Key 按已观测 Token 降序，可按失败率进入当日诊断。Linux CPU 和两种内存的小时趋势使用进程内采样。见[首页验收](docs/changes/overview-operations/tasks.md)。
 

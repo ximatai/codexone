@@ -6,8 +6,6 @@
 
 ## 活动提案
 
-- [已启用模型的推理设置](model-reasoning-settings/proposal.md) · [任务](model-reasoning-settings/tasks.md)
-
 - [额外使用积分只读观测](usage-credit-observation/proposal.md) · [任务](usage-credit-observation/tasks.md)
 
 - [准入拒绝下钻](rejection-diagnostics/proposal.md) · [任务](rejection-diagnostics/tasks.md)
