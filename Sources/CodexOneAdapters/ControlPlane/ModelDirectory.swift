@@ -217,7 +217,10 @@ public actor ModelDirectory {
     if allowed != nil || settings.preferred != nil {
       guard settings.isValid(for: model) else { throw ExecutionError.invalidCommand }
     }
-    let narrowed = allowed?.count == model.supportedReasoningEfforts.count ? nil : allowed
+    // A refreshed profile can narrow to the existing explicit range.
+    let matchesSavedRange = allowed.map(Set.init) == model.reasoningSettings?.allowed.map(Set.init)
+    let narrowed =
+      !matchesSavedRange && allowed?.count == model.supportedReasoningEfforts.count ? nil : allowed
     return narrowed == nil && settings.preferred == nil
       ? nil : .init(allowed: narrowed, preferred: settings.preferred)
   }
@@ -269,6 +272,9 @@ public actor ModelDirectory {
       "profileDefaultReasoningEffort": profileDefault ?? .null,
       "defaultReasoningEffort": model.effectiveDefaultReasoningEffort.map(JSONValue.string)
         ?? .null,
+      "configuredReasoningEfforts": model.reasoningSettings?.allowed.map {
+        .array($0.map(JSONValue.string))
+      } ?? .null,
       "configuredDefaultReasoningEffort": model.reasoningSettings?.preferred.map(JSONValue.string)
         ?? .null,
       "resetReasoningRequired": .bool(resetReasoningRequired),

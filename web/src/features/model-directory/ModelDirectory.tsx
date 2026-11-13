@@ -34,6 +34,7 @@ const model = z.object({
   defaultReasoningEffort: z.string().max(32).nullable(),
   supportedReasoningEfforts: z.array(z.string().max(32)).max(8).optional(),
   profileDefaultReasoningEffort: z.string().max(32).nullable().optional(),
+  configuredReasoningEfforts: z.array(z.string()).max(8).nullish(),
   configuredDefaultReasoningEffort: z.string().max(32).nullable().optional(),
   resetReasoningRequired: z.boolean().optional(),
 });
@@ -83,8 +84,13 @@ function supportedEfforts(model: Model) {
 }
 
 function reasoningBody(model: Model, value: ReasoningDraft) {
+  const savedRange = model.configuredReasoningEfforts;
+  const keepsSavedRange =
+    savedRange?.length === value.allowed.length &&
+    savedRange.every((effort) => value.allowed.includes(effort));
   return {
     allowedReasoningEfforts:
+      !keepsSavedRange &&
       value.allowed.length === supportedEfforts(model).length
         ? null
         : value.allowed,

@@ -169,10 +169,20 @@ def verify_accounts(probe, binary):
                 assert request(port, 'PUT', '/api/models',
                     dict(enable, allowedReasoningEfforts=['high'], defaultReasoningEffort='low'), **auth)[0] == 400
                 restored = document(request(port, 'PUT', '/api/models',
-                    dict(enable, allowedReasoningEfforts=['low'], defaultReasoningEffort='low'), **auth))
+                    dict(enable, allowedReasoningEfforts=['high'], defaultReasoningEffort='high'), **auth))
                 assert [item['id'] for item in restored['active']] == ['synthetic-text', 'synthetic-nova']
-                assert restored['active'][1]['reasoningEfforts'] == ['low']
-                assert restored['active'][1]['configuredDefaultReasoningEffort'] == 'low'
+                assert restored['active'][1]['reasoningEfforts'] == ['high']
+                assert restored['active'][1]['configuredDefaultReasoningEffort'] == 'high'
+                retired_again = document(request(port, 'PUT', '/api/models',
+                    dict(model='synthetic-nova', enabled=False, revision=restored['revision']), **auth))
+                with server.guard:
+                    server.control['model_changed'] = False
+                refreshed = document(request(port, 'POST', candidates_path, **auth))
+                assert refreshed['retired'][0]['configuredReasoningEfforts'] == ['high']
+                reenabled = document(request(port, 'PUT', '/api/models',
+                    dict(enable, revision=retired_again['revision'], candidateRevision=refreshed['candidateRevision'],
+                         allowedReasoningEfforts=['high'], defaultReasoningEffort=None), **auth))
+                assert reenabled['active'][1]['configuredReasoningEfforts'] == ['high']
                 assert restored['active'][1]['visionInput'] is True
                 assert account['credentialUpdatedAtUnixSeconds'] == updated
                 assert account['accessExpiresAtUnixSeconds'] == expires
