@@ -205,39 +205,40 @@ public struct UsageAdminAPI: Sendable {
           "endUnixSeconds": .number(Decimal(report.startUnixSeconds + 86400)),
           "businessDay": .object(["offsetMinutes": .number(Decimal(businessDay.offsetMinutes))]),
           "timezone": .string(businessDay.timezone),
-          "keys": .array(
-            report.keys.map { value in
-              .object([
-                "keyID": .string(value.key.id),
-                "displayName": value.key.displayName.map { .string($0) } ?? .null,
-                "principal": value.key.principal.map { .string($0) } ?? .null,
-                "enabled": .bool(value.enabled),
-                "admitted": .number(Decimal(value.admitted)),
-                "tokens": .string(String(value.tokens)),
-                "images": value.images.map { .string(String($0)) } ?? .null,
-                "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
-                "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
-                "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,
-                "cacheUsageIncomplete": .bool(value.cacheUsageIncomplete),
-                "inFlight": .number(Decimal(value.inFlight)),
-                "succeeded": .number(Decimal(value.succeeded)),
-                "cancelled": .number(Decimal(value.cancelled)),
-                "failed": .number(Decimal(value.failed)),
-                "pending": .number(Decimal(value.pending)),
-                "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
-                "firstUsedTodayAtUnixSeconds": value.firstUsedTodayAtUnixSeconds.map {
-                  .number(Decimal($0))
-                } ?? .null,
-                "lastUsedTodayAtUnixSeconds": value.lastUsedTodayAtUnixSeconds.map {
-                  .number(Decimal($0))
-                } ?? .null,
-                "lastUsedAtUnixSeconds": value.lastUsedAtUnixSeconds.map { .number(Decimal($0)) }
-                  ?? .null,
-              ])
-            }),
+          "keys": .array(report.keys.map(Self.keyUsageDocument)),
         ]))
     } catch ExecutionError.capacity { throw GatewayProtocolError(429, "usage_query_capacity") }
   }
+
+  private static func keyUsageDocument(_ value: KeyUsageSummary) -> JSONValue {
+    func timestamp(_ seconds: Int64?) -> JSONValue {
+      seconds.map { .number(Decimal($0)) } ?? .null
+    }
+    let fields: [String: JSONValue] = [
+      "keyID": .string(value.key.id),
+      "displayName": value.key.displayName.map { .string($0) } ?? .null,
+      "principal": value.key.principal.map { .string($0) } ?? .null,
+      "enabled": .bool(value.enabled),
+      "admitted": .number(Decimal(value.admitted)),
+      "tokens": .string(String(value.tokens)),
+      "images": value.images.map { .string(String($0)) } ?? .null,
+      "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
+      "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,
+      "cachedTokens": value.cachedTokens.map { .string(String($0)) } ?? .null,
+      "cacheUsageIncomplete": .bool(value.cacheUsageIncomplete),
+      "inFlight": .number(Decimal(value.inFlight)),
+      "succeeded": .number(Decimal(value.succeeded)),
+      "cancelled": .number(Decimal(value.cancelled)),
+      "failed": .number(Decimal(value.failed)),
+      "pending": .number(Decimal(value.pending)),
+      "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
+      "firstUsedTodayAtUnixSeconds": timestamp(value.firstUsedTodayAtUnixSeconds),
+      "lastUsedTodayAtUnixSeconds": timestamp(value.lastUsedTodayAtUnixSeconds),
+      "lastUsedAtUnixSeconds": timestamp(value.lastUsedAtUnixSeconds),
+    ]
+    return .object(fields)
+  }
+
   private static func parameters(_ url: String, allowed: Set<String>) throws -> [String: String] {
     let entries = URLComponents(string: url)?.queryItems ?? []
     guard entries.count <= allowed.count, Set(entries.map(\.name)).count == entries.count,
