@@ -17,6 +17,8 @@
 2. **分布查询**：`GET /api/usage/breakdown`，参数与 `/api/usage` 相同的时间与筛选（start/end、key、model、mode、failure、failedOnly、state），加 `by=model|client|clientVersion|key`。每组返回 requests、succeeded、failed、cancelled、metrics（与 totals 同口径，缺失保持 null/下界语义）。按请求数降序最多 50 组，其余合并为 `other`；未知值单独成组。复用单只读 reader、单在途、扫描预算与取消门禁，参数与鉴权错误契约同 A13。
 3. 明细行新增可空 `clientKind`、`clientVersion`，用量筛选新增可选 `client`（clientKind 枚举）。
 
+现有用量页的 Key Token 占比由 `GET /api/usage` 的 `keyTokens` 提供，和明细、合计共用同一读取快照。扩展分布查询时，按 Key 的 Token 聚合复用这套统计口径。分布查询的 Top 50 按请求数排序，不可直接用于需要全部匹配 Key 的占比图。
+
 ### 前端
 
 1. 用量页新增“分布”区：按模型、客户端、客户端版本、Key 切换；横向条形图（请求数）+ 表格（请求、失败、Token、估算费用），随页面筛选与时间范围联动，点击组可把该值加入筛选。
