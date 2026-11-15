@@ -97,28 +97,6 @@ extension SQLiteUsageReader {
         + (query.keyID == nil ? "" : " WHERE key_id=?"),
       query.keyID.map { [.text($0)] } ?? []
     ) { (sqlite3_column_int64($0, 0), sqlite3_column_int64($0, 1), sqlite3_column_int64($0, 2)) }[0]
-    let timing = try db.rows(
-      """
-      SELECT AVG(json_extract(outcome_json,'$.firstEventMilliseconds')),
-        AVG(json_extract(outcome_json,'$.totalMilliseconds')),
-        COUNT(json_extract(outcome_json,'$.firstEventMilliseconds')) FROM attempts WHERE \(attempts.sql)
-      """, attempts.values
-    ) { row in
-      (
-        sqlite3_column_type(row, 0) == SQLITE_NULL ? nil : sqlite3_column_double(row, 0),
-        sqlite3_column_type(row, 1) == SQLITE_NULL ? nil : sqlite3_column_double(row, 1),
-        sqlite3_column_int64(row, 2)
-      )
-    }[0]
-    let p95: Int64? =
-      timing.2 == 0
-      ? nil
-      : try db.scalar(
-        """
-        SELECT json_extract(outcome_json,'$.firstEventMilliseconds') FROM attempts
-        WHERE \(attempts.sql) AND json_extract(outcome_json,'$.firstEventMilliseconds') IS NOT NULL
-        ORDER BY json_extract(outcome_json,'$.firstEventMilliseconds') LIMIT 1 OFFSET ?
-        """, attempts.values + [.number((timing.2 * 95 + 99) / 100 - 1)])
     // Settled + partial evidence is an audited release, not complete metering. Retain
     // trusted metric lower bounds while projecting its completeness as unavailable.
     let unknownReasons = try db.rows(
@@ -135,10 +113,25 @@ extension SQLiteUsageReader {
         COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0),
         SUM(\(textInputTokens)),SUM(\(textOutputTokens)),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
-        SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END) FROM attempts WHERE \(attempts.sql)
+        SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END),
+        AVG(json_extract(outcome_json,'$.firstEventMilliseconds')),
+        AVG(json_extract(outcome_json,'$.totalMilliseconds')),
+        COUNT(json_extract(outcome_json,'$.firstEventMilliseconds'))
+      FROM attempts WHERE \(attempts.sql)
       """, attempts.values
     ) { row in
-      UsageTotals(
+      let firstEventCount = sqlite3_column_int64(row, 24)
+      // The aggregate above already counted latency samples. Only P95 needs a sorted read.
+      let p95: Int64? =
+        firstEventCount == 0
+        ? nil
+        : try db.scalar(
+          """
+          SELECT json_extract(outcome_json,'$.firstEventMilliseconds') FROM attempts
+          WHERE \(attempts.sql) AND json_extract(outcome_json,'$.firstEventMilliseconds') IS NOT NULL
+          ORDER BY json_extract(outcome_json,'$.firstEventMilliseconds') LIMIT 1 OFFSET ?
+          """, attempts.values + [.number((firstEventCount * 95 + 99) / 100 - 1)])
+      return UsageTotals(
         admitted: sqlite3_column_int64(row, 0), rejected: rejectionCount,
         inFlight: sqlite3_column_int64(row, 1), unknown: sqlite3_column_int64(row, 2),
         complete: sqlite3_column_int64(row, 3), partial: sqlite3_column_int64(row, 4),
@@ -147,8 +140,12 @@ extension SQLiteUsageReader {
         historicalWithoutTime: untimed, unresolvedExposureMicros: sqlite3_column_int64(row, 8),
         lifetimeInFlight: lifetime.0, lifetimeUnknown: lifetime.1,
         lifetimeExposureMicros: lifetime.2,
-        metrics: try metrics(row, offset: 9), averageFirstEventMilliseconds: timing.0,
-        p95FirstEventMilliseconds: p95, averageTotalMilliseconds: timing.1,
+        metrics: try metrics(row, offset: 9),
+        averageFirstEventMilliseconds: sqlite3_column_type(row, 22) == SQLITE_NULL
+          ? nil : sqlite3_column_double(row, 22),
+        p95FirstEventMilliseconds: p95,
+        averageTotalMilliseconds: sqlite3_column_type(row, 23) == SQLITE_NULL
+          ? nil : sqlite3_column_double(row, 23),
         usageUnknown: unknownReasons.reduce(0) { $0 + $1.1 },
         unknownReasons: Dictionary(uniqueKeysWithValues: unknownReasons))
     }[0]
