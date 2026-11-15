@@ -23,6 +23,7 @@ for (const width of [1440, 390]) {
     Object.assign(observation.limits[0].primary, {
       usedPercent: 88,
       resetsAtUnixSeconds: reset,
+      durationSeconds: 18000,
     });
     let reads = 0;
     await page.route("**/api/accounts/*/quota-trend", (route) => {
@@ -53,6 +54,13 @@ for (const width of [1440, 390]) {
     const panelID = await open.getAttribute("aria-controls");
     const panel = page.locator(`[id="${panelID}"]`);
     await expect(page.getByText("88% 已用")).toBeVisible();
+    await expect(page.getByText("1 小时后重置", { exact: true })).toBeVisible();
+    const deviation = page.getByRole("img", {
+      name: "比参考进度超前 8.0 个百分点",
+    });
+    await expect(deviation).toHaveText("8.0");
+    await deviation.focus();
+    await expect(page.getByRole("tooltip")).toContainText("参考进度 80.0%");
     await open.focus();
     await open.press("Space");
     const chart = panel.getByRole("img", { name: /剩余额度走势/ });
@@ -94,7 +102,7 @@ test("quota trend spans the full cycle without inventing early history", async (
   state.accounts.splice(1);
   const observation = state.accounts[0].observability.quota;
   const at = now.getTime() / 1000;
-  const reset = at + 23 * 3600;
+  const reset = at + 19 * 3600;
   const duration = 7 * 86400;
   observation.observedAtUnixSeconds = at;
   observation.attemptedAtUnixSeconds = at;
@@ -149,9 +157,17 @@ test("quota trend spans the full cycle without inventing early history", async (
 
   await expect(page.getByText(/^(预测|历史)$/)).toHaveText(["预测", "历史"]);
   await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("img", { name: "比参考进度滞后 0.7 个百分点" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(page.getByText("预测", { exact: true })).toBeFocused();
-  await expect(page.getByRole("tooltip")).toHaveText(explanation);
+  await expect(page.getByRole("tooltip", { name: explanation })).toBeVisible();
   await expectNoHorizontalOverflow(page);
+
+  observation.limits[0].primary.resetsAtUnixSeconds = at + 42 * 3600 + 35 * 60;
+  await page.reload();
+  await expect(page.getByText("1.77 天后重置", { exact: true })).toBeVisible();
 });
 
 test("expired cycle ends at reset and does not draw a future now marker", async ({
