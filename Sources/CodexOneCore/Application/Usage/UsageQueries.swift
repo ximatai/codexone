@@ -296,19 +296,35 @@ public struct RejectionCount: Sendable {
     self.count = count
   }
 }
+public struct UsageKeyTokens: Sendable {
+  public let keyID: String
+  public let inputTokens: Int64?
+  public let outputTokens: Int64?
+  public let incomplete: Bool
+
+  public init(keyID: String, inputTokens: Int64?, outputTokens: Int64?, incomplete: Bool) {
+    self.keyID = keyID
+    self.inputTokens = inputTokens
+    self.outputTokens = outputTokens
+    self.incomplete = incomplete
+  }
+}
+
 public struct UsageReport: Sendable {
   public let rejectionCounts: [RejectionCount]
+  public let keyTokens: [UsageKeyTokens]?
   public let totals: UsageTotals
   public let buckets: [UsageBucket]
   public let rows: [UsageRow]
   public let nextCursor: UsageCursor?
   public init(
     totals: UsageTotals, buckets: [UsageBucket], rows: [UsageRow], nextCursor: UsageCursor?,
-    rejectionCounts: [RejectionCount] = []
+    rejectionCounts: [RejectionCount] = [], keyTokens: [UsageKeyTokens]? = nil
   ) {
     self.totals = totals
     self.buckets = buckets
     self.rejectionCounts = rejectionCounts
+    self.keyTokens = keyTokens
     self.rows = rows
     self.nextCursor = nextCursor
   }

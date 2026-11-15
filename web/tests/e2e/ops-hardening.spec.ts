@@ -115,7 +115,11 @@ test("reviews unknown release, conflict and success at desktop size", async ({
   await expect(page.getByText("模型冷却")).toBeVisible();
   await expect(page.getByRole("region", { name: "运行提醒" })).toHaveCount(0);
   await page.getByRole("link", { name: "用量与诊断", exact: true }).click();
-  await page.getByRole("button", { name: "查看未结执行" }).click();
+  const releaseToggle = page.getByRole("button", {
+    name: "未结执行",
+    exact: true,
+  });
+  await releaseToggle.click();
   await page.getByRole("button", { name: /提前释放容量 ·/ }).click();
   const dialog = page.getByRole("dialog", { name: "提前释放容量" });
   await expect(dialog).toContainText("真实用量仍为未知");
@@ -152,6 +156,8 @@ test("reviews unknown release, conflict and success at desktop size", async ({
     page.getByText("已释放容量占用，统计仍显示用量未知。"),
   ).toBeVisible();
   expect(writes).toBe(2);
+  await releaseToggle.click();
+  await expect(page.getByText("暂无占用容量的未知执行。")).toBeHidden();
   await page.getByRole("link", { name: "订阅账号", exact: true }).click();
   await expect(
     page.getByText("未命名账号 · 12345678", { exact: true }),

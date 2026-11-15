@@ -1,22 +1,27 @@
 import { BarChart } from "@mantine/charts";
-import { Paper, Title, Text } from "@mantine/core";
+import { Box, Group } from "@mantine/core";
 import type { UsageReport } from "./api";
 import { businessTime, dayStart } from "../../shared/business-day";
+import { UsageChartCard } from "./UsageChartCard";
 import styles from "./usage.module.css";
+
+const series = [
+  { name: "admitted", label: "已准入", color: "brand.7" },
+  { name: "rejected", label: "已记录准入前拒绝", color: "brand.3" },
+];
+
 export function UsageTrend({ report }: { report: UsageReport }) {
   const daily = report.buckets.length > 168;
-  const grouped = new Map<
-    number,
-    { admitted: number; rejected: number; unresolved: number }
-  >();
+  const interval = daily ? "按日" : "按小时";
+  const timezone = report.timezone ?? "UTC";
+  const grouped = new Map<number, { admitted: number; rejected: number }>();
   for (const point of report.buckets) {
     const at = daily
       ? dayStart(point.atUnixSeconds, report.businessDay?.offsetMinutes)
       : point.atUnixSeconds;
-    const item = grouped.get(at) ?? { admitted: 0, rejected: 0, unresolved: 0 };
+    const item = grouped.get(at) ?? { admitted: 0, rejected: 0 };
     item.admitted += point.admitted;
     item.rejected += point.recordedRejections;
-    item.unresolved += point.unresolved;
     grouped.set(at, item);
   }
   const points = [...grouped].map(([at, item]) => ({
@@ -28,30 +33,40 @@ export function UsageTrend({ report }: { report: UsageReport }) {
     rejected: item.rejected,
   }));
   return (
-    <Paper withBorder p="md" className={styles.trend}>
-      <Title order={3} mb="xs">
-        请求趋势{" "}
-        <Text component="span" size="xs" c="dimmed">
-          {report.timezone ?? "UTC"} · 按{daily ? "日" : "小时"}
-        </Text>
-      </Title>
+    <UsageChartCard
+      title="请求趋势"
+      caption={
+        <Group gap="xs">
+          <span>
+            {interval} · {timezone}
+          </span>
+          {series.map(({ name, color, label }) => (
+            <Group key={name} gap={4} wrap="nowrap" c="text">
+              <Box
+                component="span"
+                className={styles.chartLegendDot}
+                bg={color}
+                aria-hidden="true"
+              />
+              <span>{label}</span>
+            </Group>
+          ))}
+        </Group>
+      }
+    >
       <div
         role="img"
-        aria-label={`${report.timezone ?? "UTC"} 按${daily ? "日" : "小时"}请求趋势，已准入 ${report.totals.admitted}，已记录拒绝 ${report.totals.recordedRejections}`}
+        aria-label={`${timezone} ${interval}请求趋势，已准入 ${report.totals.admitted}，已记录拒绝 ${report.totals.recordedRejections}`}
       >
         <BarChart
-          h={200}
+          h={176}
           data={points}
           dataKey="at"
           type="stacked"
-          withLegend
-          series={[
-            { name: "admitted", label: "已准入", color: "brand.7" },
-            { name: "rejected", label: "已记录准入前拒绝", color: "brand.3" },
-          ]}
+          series={series}
           barProps={{ isAnimationActive: false }}
         />
       </div>
-    </Paper>
+    </UsageChartCard>
   );
 }

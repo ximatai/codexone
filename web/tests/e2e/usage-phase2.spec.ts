@@ -32,8 +32,16 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
     if (url.pathname === "/api/usage/options")
       return route.fulfill({
         json: {
-          keys: ["alpha"],
-          keyOptions: [{ id: "alpha", principal: "合成团队" }],
+          keys: ["alpha", "beta"],
+          keyOptions: [
+            { id: "alpha", principal: "合成团队" },
+            {
+              id: "beta",
+              principal: null,
+              displayName: "合成工具",
+              archived: true,
+            },
+          ],
           models: ["synthetic-text"],
           failures: ["rate_limited"],
         },
@@ -46,6 +54,22 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
       return route.fulfill({
         json: {
           ...report,
+          keyTokens: url.searchParams.has("key")
+            ? null
+            : [
+                {
+                  keyID: "alpha",
+                  inputTokens: "9000",
+                  outputTokens: "1500",
+                  incomplete: false,
+                },
+                {
+                  keyID: "beta",
+                  inputTokens: "3000",
+                  outputTokens: "500",
+                  incomplete: true,
+                },
+              ],
           totals: {
             ...report.totals,
             failed: 1,
@@ -92,6 +116,28 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   ).toBeVisible();
   await expect(page.getByText("第 1 页", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/page=1/);
+  const keyShare = page.getByRole("region", { name: "Key 用量占比" });
+  const teamShare = keyShare
+    .getByRole("listitem")
+    .filter({ hasText: "合成团队" });
+  const archivedShare = keyShare
+    .getByRole("listitem")
+    .filter({ hasText: "合成工具 · 已归档" });
+  await expect(teamShare).toContainText("75%");
+  await expect(archivedShare).toContainText("25%");
+  const privacyToggle = page.getByRole("button", { name: "截图隐私模式" });
+  await privacyToggle.click();
+  await expect(keyShare.getByText("合成工具", { exact: false })).toHaveCount(0);
+  await privacyToggle.click();
+  const method = page.getByRole("button", { name: "统计口径" });
+  const methodInfo = page.getByRole("dialog", { name: "统计口径" });
+  await expect(methodInfo).toBeHidden();
+  await method.press("Enter");
+  await expect(methodInfo).toContainText("仅用于诊断");
+  await expect(methodInfo).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(methodInfo).toBeHidden();
+  await expect(method).toBeFocused();
   const presetButton = page.getByRole("button", { name: "最近 24 小时" });
   const presetResponse = page.waitForResponse((response) =>
     isPresetQuery(new URL(response.url())),
@@ -116,6 +162,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await page.getByRole("button", { name: "下一页" }).click();
   await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
   const nextPage = new URL((await nextPageResponse).url());
+  await expect(teamShare).toContainText("75%");
   expect(nextPage.searchParams.get("after")).toBe("synthetic_cursor");
   expect(nextPage.searchParams.get("start")).toBe(firstStart);
   await page.getByText("更多筛选", { exact: true }).click();
@@ -130,6 +177,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await page.getByRole("button", { name: "自定义", exact: true }).click();
   await expect(page.getByLabel("起始日（UTC）")).toBeVisible();
   await page.getByRole("button", { name: "自定义", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "执行模式" })).toBeHidden();
   await page.screenshot({
     path: "../artifacts/ui-phase2/usage-1440.png",
   });
@@ -153,4 +201,16 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await page.screenshot({
     path: "../artifacts/ui-phase2/usage-390.png",
   });
+  await method.click();
+  await expect(methodInfo).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.keyboard.press("Escape");
+  await keyShare.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "../artifacts/ui-phase2/usage-key-share-390.png",
+  });
+  await page.getByRole("combobox", { name: "Key 主体" }).click();
+  await page.getByRole("option", { name: "合成团队", exact: true }).click();
+  await page.getByRole("button", { name: "查询用量", exact: true }).click();
+  await expect(keyShare).toBeHidden();
 });

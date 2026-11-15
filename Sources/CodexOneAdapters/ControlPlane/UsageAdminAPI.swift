@@ -357,6 +357,16 @@ public struct UsageAdminAPI: Sendable {
       ])
     }
     let totals = report.totals
+    let keyTokens: JSONValue =
+      report.keyTokens.map { rows in
+        .array(
+          rows.map { row in
+            .object([
+              "keyID": .string(row.keyID), "inputTokens": metric(row.inputTokens),
+              "outputTokens": metric(row.outputTokens), "incomplete": .bool(row.incomplete),
+            ])
+          })
+      } ?? .null
     return try .object([
       "startUnixSeconds": count(query.startUnixSeconds),
       "endUnixSeconds": count(query.endUnixSeconds),
@@ -405,6 +415,7 @@ public struct UsageAdminAPI: Sendable {
             "count": count(item.count),
           ])
         }),
+      "keyTokens": keyTokens,
       "rows": .array(
         report.rows.map { value in
           .object([

@@ -1,3 +1,6 @@
+import { Button } from "@mantine/core";
+import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { useId, useState } from "react";
 import { EarlyCapacityRelease } from "./EarlyCapacityRelease";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { useNavigationType, useSearchParams } from "react-router";
@@ -7,6 +10,9 @@ import { defaults, type UsageFilters } from "./api";
 import type { UsageNavigation } from "./UsageOverview";
 import { readPage } from "../../shared/view-memory";
 export function UsagePage() {
+  const [releaseOpen, setReleaseOpen] = useState(false);
+  const releasePanelID = useId();
+  const ReleaseChevron = releaseOpen ? IconChevronUp : IconChevronDown;
   const restoreView = useNavigationType() === "POP";
   const [params, setParams] = useSearchParams();
   const owner = useManagementSession();
@@ -47,8 +53,23 @@ export function UsagePage() {
   }
   return (
     <section>
-      <PageHeader title="用量与诊断" />
-      <EarlyCapacityRelease />
+      <PageHeader
+        title="用量与诊断"
+        actions={
+          <Button
+            type="button"
+            variant="subtle"
+            size="xs"
+            rightSection={<ReleaseChevron size={14} aria-hidden="true" />}
+            aria-expanded={releaseOpen}
+            aria-controls={releasePanelID}
+            onClick={() => setReleaseOpen((open) => !open)}
+          >
+            未结执行
+          </Button>
+        }
+      />
+      <EarlyCapacityRelease open={releaseOpen} id={releasePanelID} />
       <UsageOverview
         initialFilters={filters}
         requestedPage={readPage(params.get("page"), 2201) - 1}

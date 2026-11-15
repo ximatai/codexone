@@ -43,6 +43,12 @@ export interface Metrics {
   images: string | null;
   estimatedMicros: string | null;
 }
+export interface UsageKeyTokens {
+  keyID: string;
+  inputTokens: string | null;
+  outputTokens: string | null;
+  incomplete: boolean;
+}
 export interface UsageReport {
   businessDay?: BusinessDay;
   timezone?: string;
@@ -80,6 +86,7 @@ export interface UsageReport {
     unresolved: number;
   }[];
   rejectionCounts?: { failure: string; reason: string | null; count: number }[];
+  keyTokens?: UsageKeyTokens[];
   rows: {
     reasoningEffort?: string | null;
     serviceTier?: string | null;
@@ -360,6 +367,24 @@ export function parseUsage(raw: unknown): UsageReport {
   });
   const next = nullableText(value.nextCursor, 512);
   if (next && !/^[A-Za-z0-9_-]+$/.test(next)) throw invalid();
+  const rawKeyTokens = value.keyTokens;
+  let keyTokens: UsageKeyTokens[] | undefined;
+  if (rawKeyTokens != null) {
+    if (!Array.isArray(rawKeyTokens) || rawKeyTokens.length > 256)
+      throw invalid();
+    keyTokens = rawKeyTokens.map((raw) => {
+      const row = object(raw);
+      if (typeof row.incomplete !== "boolean") throw invalid();
+      return {
+        keyID: text(row.keyID),
+        inputTokens: metric(row.inputTokens),
+        outputTokens: metric(row.outputTokens),
+        incomplete: row.incomplete,
+      };
+    });
+    if (new Set(keyTokens.map((row) => row.keyID)).size !== keyTokens.length)
+      throw invalid();
+  }
   return {
     businessDay: readBusinessDay(value),
     timezone: value.timezone as string,
@@ -374,6 +399,7 @@ export function parseUsage(raw: unknown): UsageReport {
     },
     buckets,
     rejectionCounts,
+    keyTokens,
     rows,
     nextCursor: next,
   };
