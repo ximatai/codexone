@@ -49,6 +49,53 @@ export { failures } from "../../shared/presentation";
 // Keep the calendars below the fields so they cannot cover the range toggle.
 const datePopoverProps = { middlewares: { flip: false } };
 
+const allKeysLabel = "全部 Key";
+
+function usageKeyLabels(ids: string[], options: api.UsageOptions) {
+  const keys = new Map(options.keyOptions?.map((key) => [key.id, key]));
+  const entries = ids.map((id) => {
+    const key = keys.get(id);
+    const name =
+      id === "internal:quota-priming"
+        ? "自动预热（系统）"
+        : (key?.displayName ?? key?.principal ?? `主体未记录 · ${id}`);
+    return {
+      id,
+      name,
+      principal: key?.principal,
+      status: key?.archived ? " · 已归档" : "",
+    };
+  });
+  function countLabels(labels: string[]) {
+    const counts = new Map([[allKeysLabel, 1]]);
+    for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+    return counts;
+  }
+  const names = countLabels(entries.map(({ name, status }) => name + status));
+  const qualified = entries.map(({ name, principal, status }) =>
+    (names.get(name + status) ?? 0) > 1 && principal && principal !== name
+      ? `${name} · ${principal}`
+      : name,
+  );
+  const counts = countLabels(
+    entries.map(({ status }, index) => qualified[index] + status),
+  );
+  const used = new Set(counts.keys());
+  return new Map(
+    entries.map(({ id, status }, index) => {
+      const name = qualified[index];
+      let label = name + status;
+      if ((counts.get(label) ?? 0) > 1) {
+        label = `${name} · ${id}${status}`;
+        for (let suffix = 2; used.has(label); suffix++)
+          label = `${name} · ${id} (${suffix})${status}`;
+        used.add(label);
+      }
+      return [id, label];
+    }),
+  );
+}
+
 export interface UsageNavigation {
   history: (string | null)[];
   page: number;
@@ -458,6 +505,15 @@ export function UsageOverview({
         <p role="status">管理操作进行中，用量查询暂缓。</p>
       </section>
     );
+  const keyIDs = [...new Set([...options.keys, draft.key].filter(Boolean))];
+  const labels = usageKeyLabels(
+    [...new Set([...keyIDs, applied?.key ?? ""].filter(Boolean))],
+    options,
+  );
+  const archivedKeyIDs = new Set(
+    options.keyOptions?.filter((key) => key.archived).map((key) => key.id),
+  );
+
   return (
     <Paper
       withBorder
@@ -521,24 +577,13 @@ export function UsageOverview({
             onChange={(value) => update("key", value ?? "")}
             allowDeselect={false}
             data={[
-              { value: "", label: "全部 Key" },
-              ...[
-                ...new Set([
-                  ...options.keys,
-                  ...(draft.key ? [draft.key] : []),
-                ]),
-              ].map((id, index) => {
-                const key = options.keyOptions?.find((item) => item.id === id);
-                const label = masked
-                  ? `已隐藏 Key ${index + 1}`
-                  : key?.displayName
-                    ? `${key.displayName} · ${key.principal ?? id}`
-                    : (key?.principal ?? `主体未记录 · ${id}`);
-                return {
-                  value: id,
-                  label: label + (key?.archived ? " · 已归档" : ""),
-                };
-              }),
+              { value: "", label: allKeysLabel },
+              ...keyIDs.map((id, index) => ({
+                value: id,
+                label: masked
+                  ? `已隐藏 Key ${index + 1}${archivedKeyIDs.has(id) ? " · 已归档" : ""}`
+                  : (labels.get(id) ?? id),
+              })),
             ]}
           />
           <Autocomplete
@@ -735,15 +780,9 @@ export function UsageOverview({
               : `${applied?.start} 至 ${applied?.end}（${timezone(options.businessDay?.offsetMinutes)}）`}{" "}
             ·{" "}
             {applied?.key ? (
-              <PrivateName>
-                {options.keyOptions?.find((k) => k.id === applied.key)
-                  ?.displayName ??
-                  options.keyOptions?.find((k) => k.id === applied.key)
-                    ?.principal ??
-                  applied.key}
-              </PrivateName>
+              <PrivateName>{labels.get(applied.key)}</PrivateName>
             ) : (
-              "全部 Key"
+              allKeysLabel
             )}
             {applied?.model ? ` · 模型 ${applied.model}` : ""}
             {applied?.reasoningEffort

@@ -617,3 +617,45 @@ it("navigating back to the shown view retires an in-flight read and clears busy"
     "全部 Key",
   );
 });
+
+it("distinguishes duplicate Key labels in the menu and the applied filter", async () => {
+  setup();
+  vi.mocked(api.fetchUsageOptions).mockResolvedValue({
+    keys: ["alpha", "beta", "gamma", "test", "internal:quota-priming"],
+    keyOptions: [
+      { id: "alpha", displayName: "办公", principal: "synthetic-office" },
+      { id: "beta", displayName: "办公", principal: "synthetic-office" },
+      { id: "gamma", displayName: "办公", principal: "synthetic-remote" },
+      { id: "test", displayName: "长期测试 Key", principal: "synthetic-test" },
+    ],
+    models: [],
+    failures: [],
+  });
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  const selector = await screen.findByRole("combobox", { name: "Key 主体" });
+  await waitFor(() => expect(selector).toBeEnabled());
+  fireEvent.click(selector);
+  expect(screen.getByRole("option", { name: "长期测试 Key" })).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: "自动预热（系统）" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: "办公 · synthetic-remote" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("option", { name: "办公 · synthetic-office · alpha" }),
+  ).toBeVisible();
+  const beta = "办公 · synthetic-office · beta";
+  fireEvent.click(screen.getByRole("option", { name: beta }));
+  fireEvent.click(screen.getByText("查询用量"));
+  await waitFor(() =>
+    expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent(beta),
+  );
+  expect(api.fetchUsage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ key: "beta" }),
+    null,
+    expect.any(AbortSignal),
+  );
+});

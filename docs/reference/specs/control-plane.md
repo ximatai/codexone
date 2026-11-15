@@ -145,7 +145,7 @@ Key 显示名与账号共用校验：1—64 个 Unicode 标量、最多 256 UTF-
 
 displayName 存于现有 managed_keys.metadata_json；旧记录缺字段视为 null，不新增 schema。全量策略更新、到期设置、轮换及恢复禁用均保留显示名。显示名不参与认证、归属、治理或结算，不要求唯一。
 
-所有 Key 管理 DTO、用量 keyOptions、按 Key 今日摘要、用量明细及进行中请求返回可空 displayName，按当前 Key 元数据关联，未知或已删除为 null。attention 的 Key subjectName 优先显示名，缺失回退 principal。界面优先显示名，主体名以次要灰字保留（原生筛选选项以文本并列），搜索同时匹配显示名。编辑抽屉允许留空清除；策略和显示名分两次 CAS 修改，部分成功须提示核对，不自动重放，409 刷新后重新确认。
+所有 Key 管理 DTO、用量 keyOptions、按 Key 今日摘要、用量明细及进行中请求返回可空 displayName，按当前 Key 元数据关联，未知或已删除为 null。attention 的 Key subjectName 优先显示名，缺失回退 principal。界面优先显示名，详情保留原始主体名，搜索同时匹配显示名。用量 Key 筛选和当前筛选摘要优先展示显示名，缺失时展示主体名。选项重名时补充主体名，仍无法区分时补充 Key ID。系统内部额度预热在该筛选中显示为「自动预热（系统）」。编辑抽屉允许留空清除；策略和显示名分两次 CAS 修改，部分成功须提示核对，不自动重放，409 刷新后重新确认。
 
 
 `GET /api/runtime/storage` 新增 `backup` 对象，复用管理员认证、只读/no-store：enabled、enabledUnixSeconds、lastSuccessUnixSeconds、lastFailureUnixSeconds、lastFailure、lastSkippedUnixSeconds、skippedPressure、retainedCount、totalBytes、largestBundleBytes。未发生的可空时间/分类省略；未启用为 enabled=false、零计数。固定失败分类 directory_unavailable/insufficient_space/snapshot_failed/verification_failed/retention_failed/cancelled，不含原始错误、路径或凭证；成功时间从保留 manifest 恢复，失败/跳过仅在当前进程保留。压力下仍可读健康快照，不增加采样或备份任务。
