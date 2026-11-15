@@ -168,6 +168,13 @@ test("quota trend spans the full cycle without inventing early history", async (
   observation.limits[0].primary.resetsAtUnixSeconds = at + 42 * 3600 + 35 * 60;
   await page.reload();
   await expect(page.getByText("1.77 天后重置", { exact: true })).toBeVisible();
+
+  Object.assign(observation.limits[0].primary, { usedPercent: null });
+  await page.reload();
+  await expect(
+    page.getByText("比例未提供", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("1.77 天后重置", { exact: true })).toBeVisible();
 });
 
 test("expired cycle ends at reset and does not draw a future now marker", async ({
