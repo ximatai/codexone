@@ -308,6 +308,25 @@ for (const realtime of [true, false]) {
               .filter((animation) => animation.playState === "running").length,
         ),
       ).toBe(0);
+      if (realtime) {
+        await page
+          .getByRole("link", { name: "查看用量与诊断", exact: true })
+          .click();
+        const charts = ["请求趋势", "Key 用量占比"].map((name) =>
+          page.getByRole("region", { name, exact: true }),
+        );
+        for (const chart of charts)
+          await expect(chart).toHaveCSS("padding", "12px");
+        await page.setViewportSize({ width: 1440, height: 900 });
+        for (const chart of charts)
+          await expect(chart).toHaveCSS("padding", "16px");
+        const violations = await page.evaluate(
+          () =>
+            (window as unknown as { livePresentation: { csp: string[] } })
+              .livePresentation.csp,
+        );
+        expect(violations).toEqual([]);
+      }
       expect(errors).toEqual([]);
     } finally {
       lines.close();
