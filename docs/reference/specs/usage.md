@@ -115,9 +115,9 @@ Responses 顶层、图片条目以及原生 Images 结果/图片项的独立 svg
 
 [文档导航](../../README.md)
 
-首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按全时间最近准入秒倒序，同秒按 keyID 稳定升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。六列为 Key、最近活动、请求、失败、Token、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。活动时间按业务日列出最早和最近准入时刻。其余列为 Key、请求、失败率、Token、生图张数和缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
 
-失败率=failed/admitted，取消/执行中/未明不计为失败；仅 admitted≥20、failed≥5 且失败率≥20% 时橙色强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
+失败率=failed/(admitted−cancelled)，取消/执行中/未明不计为失败；仅扣除取消后至少 20 个请求、failed≥5 且失败率≥20% 时橙色强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
 
 Token 与限额共用治理投影，部分证据显示已观测下界。缓存率=已观测宿主用量的 SUM(cached)/SUM(input)，无用量请求不进入分母且不使已有率变成 dash；tooltip/详情说明缺失，只有无已观测输入（含输入合计0）为 dash，真实0%保留；原生 Images 不适用宿主缓存。计数/比率用整数与 BigInt 保真，不平均逐请求百分比，拒绝缓存大于输入。单快照分组读取，禁止每 Key 追加统计请求或查询。
 

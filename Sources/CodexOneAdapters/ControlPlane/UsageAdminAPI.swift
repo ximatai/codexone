@@ -225,6 +225,12 @@ public struct UsageAdminAPI: Sendable {
                 "failed": .number(Decimal(value.failed)),
                 "pending": .number(Decimal(value.pending)),
                 "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
+                "firstUsedTodayAtUnixSeconds": value.firstUsedTodayAtUnixSeconds.map {
+                  .number(Decimal($0))
+                } ?? .null,
+                "lastUsedTodayAtUnixSeconds": value.lastUsedTodayAtUnixSeconds.map {
+                  .number(Decimal($0))
+                } ?? .null,
                 "lastUsedAtUnixSeconds": value.lastUsedAtUnixSeconds.map { .number(Decimal($0)) }
                   ?? .null,
               ])

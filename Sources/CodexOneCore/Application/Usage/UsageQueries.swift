@@ -342,12 +342,15 @@ public struct KeyUsageSummary: Sendable {
   public let pending: Int64
   public let estimatedMicros: Int64?
   public let lastUsedAtUnixSeconds: Int64?
+  public let firstUsedTodayAtUnixSeconds: Int64?
+  public let lastUsedTodayAtUnixSeconds: Int64?
   public init(
     key: UsageKeyOption, admitted: Int64, failed: Int64, pending: Int64,
     estimatedMicros: Int64?, lastUsedAtUnixSeconds: Int64?,
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
-    cacheUsageIncomplete: Bool = true, images: Int64? = nil
+    cacheUsageIncomplete: Bool = true, images: Int64? = nil,
+    firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil
   ) {
     self.images = images
     self.inputTokens = inputTokens
@@ -365,6 +368,8 @@ public struct KeyUsageSummary: Sendable {
     self.pending = pending
     self.estimatedMicros = estimatedMicros
     self.lastUsedAtUnixSeconds = lastUsedAtUnixSeconds
+    self.firstUsedTodayAtUnixSeconds = firstUsedTodayAtUnixSeconds
+    self.lastUsedTodayAtUnixSeconds = lastUsedTodayAtUnixSeconds
   }
 }
 public protocol UsageQuerying: Sendable {

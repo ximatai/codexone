@@ -19,7 +19,9 @@ const row: KeySummary = {
   inputTokens: "1000",
   cachedTokens: "250",
   cacheUsageIncomplete: true,
-  lastUsedAtUnixSeconds: 1793635200,
+  lastUsedAtUnixSeconds: 1793808000,
+  firstUsedTodayAtUnixSeconds: 1793635200,
+  lastUsedTodayAtUnixSeconds: 1793638800,
 };
 const report: KeySummaryReport = {
   timezone: "UTC+08:00",
@@ -106,7 +108,7 @@ it("shows image counts and links each active Key to its management drawer", () =
     screen.getAllByRole("columnheader").map((cell) => cell.textContent),
   ).toEqual([
     "Key",
-    "最近活动",
+    "活动时间",
     "请求",
     "失败率",
     "Token",
@@ -119,6 +121,9 @@ it("shows image counts and links each active Key to its management drawer", () =
     within(rows[0]).getByRole("link", { name: "未命名 Key" }),
   ).toBeVisible();
   expect(screen.queryByText(row.principal!)).toBeNull();
+  const activity = within(rows[0]).getAllByRole("cell")[1];
+  expect(activity).toHaveTextContent("最早 00:00");
+  expect(activity).toHaveTextContent("最近 01:00");
   expect(
     within(rows[0]).getByTitle(/部分请求没有完整宿主用量/),
   ).toHaveTextContent("25%");

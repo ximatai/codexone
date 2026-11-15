@@ -114,6 +114,8 @@ export const keySummary = z
             inputTokens: metric.optional(),
             cachedTokens: metric.optional(),
             cacheUsageIncomplete: z.boolean().optional(),
+            firstUsedTodayAtUnixSeconds: count.nullish(),
+            lastUsedTodayAtUnixSeconds: count.nullish(),
             lastUsedAtUnixSeconds: count.nullish(),
             displayName: z.string().nullish(),
             principal: z.string().nullish(),

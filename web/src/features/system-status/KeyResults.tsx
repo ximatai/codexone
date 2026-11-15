@@ -89,7 +89,8 @@ export function KeyResults({
           const right = BigInt(b.tokens ?? 0);
           if (left !== right) return left > right ? -1 : 1;
           return (
-            (b.lastUsedAtUnixSeconds ?? -1) - (a.lastUsedAtUnixSeconds ?? -1) ||
+            (b.lastUsedTodayAtUnixSeconds ?? -1) -
+              (a.lastUsedTodayAtUnixSeconds ?? -1) ||
             a.keyID.localeCompare(b.keyID)
           );
         }),
@@ -159,22 +160,35 @@ export function KeyResults({
       ),
     },
     {
-      id: "lastUsed",
-      title: "最近活动",
+      id: "activity",
+      title: "活动时间",
       width: "17%",
       render: (row) => (
-        <Text
-          size="xs"
-          title={
-            row.lastUsedAtUnixSeconds == null
-              ? undefined
-              : businessTime(row.lastUsedAtUnixSeconds, offset)
-          }
-        >
-          {row.lastUsedAtUnixSeconds == null
-            ? "未记录"
-            : businessTime(row.lastUsedAtUnixSeconds, offset).slice(5, 16)}
-        </Text>
+        <Stack gap={3}>
+          {[
+            { label: "最早", epoch: row.firstUsedTodayAtUnixSeconds },
+            { label: "最近", epoch: row.lastUsedTodayAtUnixSeconds },
+          ].map(({ label, epoch }) => {
+            const time =
+              epoch == null ? undefined : businessTime(epoch, offset);
+            return (
+              <Text
+                key={label}
+                size="xs"
+                title={time}
+                style={{
+                  whiteSpace: "nowrap",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                <Text component="span" inherit c="dimmed">
+                  {label}
+                </Text>{" "}
+                {time?.slice(11, 16) ?? "未记录"}
+              </Text>
+            );
+          })}
+        </Stack>
       ),
     },
     {

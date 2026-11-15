@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [首页 Key 今日活动时间](overview-key-activity-range/proposal.md) · [任务](overview-key-activity-range/tasks.md)
+
 - [账号停用与强行停用](account-stop/proposal.md) · [任务](account-stop/tasks.md)
 
 - [额外使用积分只读观测](usage-credit-observation/proposal.md) · [任务](usage-credit-observation/tasks.md)

@@ -81,7 +81,7 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 ### 管理产品化的兼容增量
 
-`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回businessDay={offsetMinutes}、timezone（UTC 或 UTC±HH:00）、startUnixSeconds/endUnixSeconds及keys数组；每项含既有 tokens（十进制字符串）、tokenUsageIncomplete，新增可空 inputTokens/cachedTokens（十进制字符串）、cacheUsageIncomplete，并保留keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
+`GET /api/usage/options` 保留 `keys`，新增 `keyOptions`（id、可空principal）；`GET /api/usage` 明细新增可空principal、firstEventMilliseconds、totalMilliseconds。`GET /api/usage/keys` 接受可选 includeArchived=true/false（默认 true）；首页传 false，密钥管理保持默认以保留归档 Key 用量与最近使用时间；其他值、重复或未知参数拒绝，返回businessDay={offsetMinutes}、timezone（UTC 或 UTC±HH:00）、startUnixSeconds/endUnixSeconds及keys数组；每项含既有 tokens（十进制字符串）、tokenUsageIncomplete，新增可空 inputTokens/cachedTokens（十进制字符串）、cacheUsageIncomplete，并保留keyID、enabled、可空principal、admitted、succeeded、failed、cancelled、inFlight、pending、可空十进制字符串estimatedMicros、可空lastUsedAtUnixSeconds。另返回可空 firstUsedTodayAtUnixSeconds 和 lastUsedTodayAtUnixSeconds，按同一业务日的准入时间取最小和最大值。口径见 U10；不返回摘要或凭证。沿用管理认证、浏览器来源/会话校验与只读reader容量/超时；容量拒绝429，不接受跨来源浏览器凭证。
 
 ## 管理台第二轮 API
 
@@ -221,7 +221,7 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 [文档导航](../../README.md)
 
-首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。六列为 Key、最近活动、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。列为 Key、活动时间（当日最早和最近准入）、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、生图张数、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
 
 失败率为 failed / (admitted − cancelled)，执行中和未明不计入失败数。扣除取消后至少有 20 条已准入请求、失败至少 5 条且失败率达到 20% 时，强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
 

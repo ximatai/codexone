@@ -119,12 +119,14 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND COALESCE(json_extract(a.usage_json,'$.nativeImages'),0)!=1 THEN json_extract(a.usage_json,'$.inputTokens') END),
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND COALESCE(json_extract(a.usage_json,'$.nativeImages'),0)!=1 THEN json_extract(a.usage_json,'$.cachedTokens') END),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND (a.usage_json IS NULL OR json_extract(a.usage_json,'$.nativeImages')=1 OR json_extract(a.usage_json,'$.completeness')!='complete') THEN 1 ELSE 0 END),0),
-          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.usage_json,'$.images') END)
+          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.usage_json,'$.images') END),
+          MIN(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.created_at_epoch END),
+          MAX(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.created_at_epoch END)
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         WHERE ? OR json_extract(k.metadata_json,'$.archivedAtUnixSeconds') IS NULL
         GROUP BY k.id ORDER BY k.id LIMIT 257
         """,
-        (0..<11).flatMap { _ in [.number(start), .number(start + 86400)] } + [
+        (0..<13).flatMap { _ in [.number(start), .number(start + 86400)] } + [
           .number(includeArchived ? 1 : 0)
         ]
       ) { row in
@@ -152,7 +154,11 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
             ? nil : sqlite3_column_int64(row, 13),
           cacheUsageIncomplete: sqlite3_column_int64(row, 14) > 0,
           images: sqlite3_column_type(row, 15) == SQLITE_NULL
-            ? nil : sqlite3_column_int64(row, 15))
+            ? nil : sqlite3_column_int64(row, 15),
+          firstUsedTodayAtUnixSeconds: sqlite3_column_type(row, 16) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 16),
+          lastUsedTodayAtUnixSeconds: sqlite3_column_type(row, 17) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 17))
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }
       return (start, rows)

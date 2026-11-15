@@ -79,7 +79,9 @@ for (const width of [1920, 390]) {
                   keyID: "high",
                   principal: "legacy-p-synthetic",
                   enabled: false,
-                  lastUsedAtUnixSeconds: start + 2,
+                  firstUsedTodayAtUnixSeconds: start + 60,
+                  lastUsedTodayAtUnixSeconds: start + 120,
+                  lastUsedAtUnixSeconds: start + 86400,
                 },
                 {
                   ...base,
@@ -90,7 +92,9 @@ for (const width of [1920, 390]) {
                   succeeded: 2,
                   failed: 5,
                   cachedTokens: "0",
-                  lastUsedAtUnixSeconds: start + 3,
+                  firstUsedTodayAtUnixSeconds: start + 180,
+                  lastUsedTodayAtUnixSeconds: start + 180,
+                  lastUsedAtUnixSeconds: start + 180,
                 },
                 {
                   ...base,
@@ -169,6 +173,8 @@ for (const width of [1920, 390]) {
     );
     const first = panel.locator("tbody tr").first();
     await expect(first).toContainText("最近设备");
+    await expect(first).toContainText("最早 00:03");
+    await expect(first).toContainText("最近 00:03");
     const name = panel.getByRole("link", { name: "未命名 Key", exact: true });
     await name.focus();
     await name.press("Enter");

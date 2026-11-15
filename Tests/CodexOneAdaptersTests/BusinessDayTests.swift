@@ -75,8 +75,11 @@ func businessDayAdmissionUsesTransactionTimeResetsLocallyAndReprojectsAfterResta
   #expect(try await store.snapshot(attempt: admitted.attempt).admission == admitted)
   try await store.finalize(attempt: admitted.attempt, evidence: usage(amount: 10))
   let reader = try await store.makeUsageReader()
-  #expect(try await reader.keyUsage().startUnixSeconds == midnight)
-  #expect(try await reader.keyUsage().keys.first?.tokens == 20)
+  let summary = try await reader.keyUsage()
+  let activity = try #require(summary.keys.first)
+  #expect(summary.startUnixSeconds == midnight && activity.tokens == 20)
+  #expect(activity.firstUsedTodayAtUnixSeconds == midnight)
+  #expect(activity.lastUsedTodayAtUnixSeconds == midnight)
   let buckets = try await reader.dailyUsage(days: 2, keyID: key.id, model: nil)
   #expect(buckets.map(\.requests) == [1, 1])
   let utcStart = (midnight / 86400 + 1) * 86400

@@ -327,11 +327,14 @@ private struct UsageFixture {
       alpha.admitted == 5 && alpha.failed == 1 && alpha.pending == 4
         && alpha.succeeded == 2 && alpha.cancelled == 1 && alpha.inFlight == 1)
     #expect(alpha.estimatedMicros == 3 && alpha.lastUsedAtUnixSeconds == start + 86400)
+    #expect(alpha.firstUsedTodayAtUnixSeconds == start)
+    #expect(alpha.lastUsedTodayAtUnixSeconds == testUnixSeconds)
     #expect(alpha.key.principal == "alpha")
     let beta = try #require(summary.keys.first { $0.key.id == "beta" })
     #expect(
       beta.admitted == 0 && beta.succeeded == 0 && beta.failed == 0 && beta.cancelled == 0
         && beta.inFlight == 0)
+    #expect(beta.firstUsedTodayAtUnixSeconds == nil && beta.lastUsedTodayAtUnixSeconds == nil)
     let query = try UsageQuery(startUnixSeconds: start, endUnixSeconds: start + 86400)
     let historical = try await f.reader.queryUsage(query)
     #expect(historical.rows.allSatisfy { $0.principal == "alpha" && $0.totalMilliseconds == nil })
