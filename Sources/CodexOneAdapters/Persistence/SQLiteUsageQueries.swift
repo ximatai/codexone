@@ -8,6 +8,11 @@ private struct UsagePredicate {
   var sql: String { terms.isEmpty ? "1" : terms.joined(separator: " AND ") }
 }
 extension SQLiteUsageReader {
+  private static let textInputTokens =
+    "CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END"
+  private static let textOutputTokens =
+    "CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END"
+
   private static func predicate(
     _ query: UsageQuery, diagnostic: Bool, timed: Bool = true, now: Int64
   )
@@ -128,7 +133,7 @@ extension SQLiteUsageReader {
         COALESCE(SUM(json_extract(outcome_json,'$.kind')='failed'),0),
         COALESCE(SUM(json_extract(outcome_json,'$.kind')='cancelled'),0),
         COALESCE(SUM(CASE WHEN state!='settled' THEN MAX(reserved,estimated) ELSE 0 END),0),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
+        SUM(\(textInputTokens)),SUM(\(textOutputTokens)),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
         SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END) FROM attempts WHERE \(attempts.sql)
       """, attempts.values
@@ -170,7 +175,7 @@ extension SQLiteUsageReader {
         json_extract(admission_json,'$.model') model,COALESCE(json_extract(admission_json,'$.mode'),'generation') mode,
         identity,request_id,CASE WHEN closed_unknown_at_epoch IS NOT NULL THEN 'closed_unknown' ELSE state END state,json_extract(outcome_json,'$.kind') outcome,
         json_extract(outcome_json,'$.failure') failure,CASE WHEN state='settled' AND json_extract(usage_json,'$.completeness')='partial' THEN NULL ELSE json_extract(usage_json,'$.completeness') END completeness,
-        CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END input_tokens,CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END output_tokens,
+        \(textInputTokens) input_tokens,\(textOutputTokens) output_tokens,
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
         CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0),json_extract(usage_json,'$.svgAuthorModel'),json_extract(usage_json,'$.usageMissingReasons'),json_extract(outcome_json,'$.upstreamIncompleteReason'),NULL FROM attempts WHERE \(attempts.sql)
       UNION ALL
@@ -240,7 +245,31 @@ extension SQLiteUsageReader {
       } else { [] }
     return .init(
       totals: totals, buckets: buckets, rows: rows, nextCursor: more ? rows.last?.cursor : nil,
-      rejectionCounts: counts)
+      rejectionCounts: counts,
+      keyTokens: query.keyID == nil && !query.rejectedOnly
+        ? try keyTokens(db, attempts) : nil)
+  }
+  private static func keyTokens(_ db: SQLiteConnection, _ predicate: UsagePredicate) throws
+    -> [UsageKeyTokens]?
+  {
+    let maximumKeys = 256
+    let rows = try db.rows(
+      """
+      SELECT key_id,SUM(\(textInputTokens)),SUM(\(textOutputTokens)),
+        MAX(COALESCE(json_extract(usage_json,'$.completeness'),'unavailable')!='complete')
+      FROM attempts WHERE \(predicate.sql)
+      GROUP BY key_id ORDER BY key_id LIMIT ?
+      """, predicate.values + [.number(Int64(maximumKeys + 1))]
+    ) { row in
+      UsageKeyTokens(
+        keyID: String(cString: sqlite3_column_text(row, 0)),
+        inputTokens: sqlite3_column_type(row, 1) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 1),
+        outputTokens: sqlite3_column_type(row, 2) == SQLITE_NULL
+          ? nil : sqlite3_column_int64(row, 2),
+        incomplete: sqlite3_column_int(row, 3) != 0)
+    }
+    return rows.count <= maximumKeys ? rows : nil
   }
   static func metrics(_ row: OpaquePointer, offset: Int32) throws -> UsageMetrics {
     func number(_ index: Int32) throws -> Int64? {
@@ -293,7 +322,7 @@ extension SQLiteUsageReader {
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='succeeded' THEN record_count ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='failed' THEN record_count ELSE 0 END),0),
         COALESCE(SUM(CASE WHEN json_extract(outcome_json,'$.kind')='cancelled' THEN record_count ELSE 0 END),0),
-        SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.inputTokens') END),SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.outputTokens') END),
+        SUM(\(textInputTokens)),SUM(\(textOutputTokens)),
         SUM(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END),SUM(json_extract(usage_json,'$.images')),
         SUM(CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END),SUM(json_extract(usage_json,'$.imageInputTokens')),SUM(json_extract(usage_json,'$.imageOutputTokens')),SUM(json_extract(usage_json,'$.imageInputTextTokens')),SUM(json_extract(usage_json,'$.imageInputImageTokens')),SUM(json_extract(usage_json,'$.svgInputTokens')),SUM(json_extract(usage_json,'$.svgOutputTokens')),SUM(json_extract(usage_json,'$.svgReasoningTokens')),SUM(CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END) FROM \(source) WHERE \(predicate) GROUP BY 1
       """, values

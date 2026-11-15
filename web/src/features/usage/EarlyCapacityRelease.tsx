@@ -1,4 +1,4 @@
-import { Alert, Button, Stack, Text } from "@mantine/core";
+import { Alert, Box, Button, Text } from "@mantine/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { fetchHeadroom } from "../../shared/governance-api";
@@ -10,10 +10,15 @@ import { releaseUnknown } from "../system-status/attention-api";
 
 const queryKey = ["usage", "release-capacity"] as const;
 
-export function EarlyCapacityRelease() {
+export function EarlyCapacityRelease({
+  open,
+  id,
+}: {
+  open: boolean;
+  id: string;
+}) {
   const owner = useManagementSession();
   const client = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [snapshot, setSnapshot] = useState<{
     count: number;
     beforeUnixSeconds: number;
@@ -43,9 +48,9 @@ export function EarlyCapacityRelease() {
   });
   const candidate = query.data?.unknownReconciliation;
   return (
-    <Stack gap="xs" mb="md" align="flex-start">
+    <>
       {locked && !mutation.busy && (
-        <Alert color="yellow" role="alert">
+        <Alert color="yellow" role="alert" mb="sm" w="fit-content">
           上次释放结果尚未确认。
           <Button
             size="xs"
@@ -61,12 +66,9 @@ export function EarlyCapacityRelease() {
           </Button>
         </Alert>
       )}
-      <Button variant="subtle" size="xs" onClick={() => setOpen(!open)}>
-        {open ? "收起未结执行" : "查看未结执行"}
-      </Button>
-      {open && (
-        <>
-          {query.isError ? (
+      <Box id={id} hidden={!open} mb="sm">
+        {open &&
+          (query.isError ? (
             <Button
               variant="subtle"
               size="xs"
@@ -87,9 +89,8 @@ export function EarlyCapacityRelease() {
             >
               提前释放容量 · {candidate.count} 条
             </Button>
-          )}
-        </>
-      )}
+          ))}
+      </Box>
       <ConfirmModal
         opened={!!snapshot}
         title="提前释放容量"
@@ -118,6 +119,6 @@ export function EarlyCapacityRelease() {
           条未知执行占用的本地容量。操作会保留审计记录，原请求的真实用量仍为未知。
         </Text>
       </ConfirmModal>
-    </Stack>
+    </>
   );
 }

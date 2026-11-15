@@ -71,12 +71,11 @@ function setup(conflict = false) {
       optionalWorkAllowed: true,
     };
   });
-  return renderPrivate(<EarlyCapacityRelease />);
+  return renderPrivate(<EarlyCapacityRelease open id="test-release-panel" />);
 }
 it("requires confirmation, cancels safely, releases unknown count and preserves unknown-use copy", async () => {
   const show = vi.spyOn(notifications, "show");
   setup();
-  fireEvent.click(await screen.findByRole("button", { name: "查看未结执行" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "提前释放容量 · 500 条" }),
   );
@@ -115,7 +114,6 @@ it("requires confirmation, cancels safely, releases unknown count and preserves 
 it("refreshes changed counts after a conflict without replaying release", async () => {
   const show = vi.spyOn(notifications, "show");
   setup(true);
-  fireEvent.click(await screen.findByRole("button", { name: "查看未结执行" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "提前释放容量 · 500 条" }),
   );

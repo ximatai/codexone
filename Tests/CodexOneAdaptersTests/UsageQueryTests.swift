@@ -91,6 +91,26 @@ private struct UsageFixture {
     #expect(
       first.totals.unresolvedExposureMicros == 20 && first.totals.lifetimeExposureMicros == 30)
     #expect(first.buckets.count == 3 && first.buckets[1].unresolved == 1)
+    #expect(first.keyTokens == nil)
+    let allKeysURL = "/api/usage?start=\(f.hour)&end=\(f.hour + 10800)&limit=1"
+    let allKeysQuery = try UsageAdminAPI.parse(allKeysURL)
+    let allKeys = try await f.reader.queryUsage(allKeysQuery)
+    let allKeysDocument = try UsageAdminAPI.document(allKeys, query: allKeysQuery)
+    let shares = try #require(allKeysDocument["keyTokens"]?.array)
+    #expect(shares.map { $0["keyID"]?.string } == ["alpha", "beta"])
+    #expect(shares.map { $0["inputTokens"]?.string } == ["13", "40"])
+    #expect(shares.map { $0["outputTokens"]?.string } == ["10", "40"])
+    #expect(shares.map { $0["incomplete"] } == [.bool(true), .bool(false)])
+    let shareCursor = try #require(allKeysDocument["nextCursor"]?.string)
+    let secondShareQuery = try UsageAdminAPI.parse(allKeysURL + "&after=" + shareCursor)
+    let secondSharePage = try await f.reader.queryUsage(secondShareQuery)
+    let secondShareDocument = try UsageAdminAPI.document(secondSharePage, query: secondShareQuery)
+    #expect(secondShareDocument["keyTokens"]?.array == shares)
+    let missingShares = try await f.reader.queryUsage(
+      .init(startUnixSeconds: f.hour + 7200, endUnixSeconds: f.hour + 10800, failedOnly: true))
+    let unknownKey = try #require(missingShares.keyTokens?.first)
+    #expect(unknownKey.keyID == "alpha" && unknownKey.incomplete)
+    #expect(unknownKey.inputTokens == nil && unknownKey.outputTokens == nil)
     let cursor = try #require(first.nextCursor)
     let second = try await f.reader.queryUsage(
       .init(

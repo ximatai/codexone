@@ -98,6 +98,8 @@ CAS/结果不明后锁定变更，成功重新读取才解锁；读取仍失败�
 
 日序列按准入账本计数，不包含可丢弃拒绝诊断；成功/失败/取消/尚无终态分别理解，失败类别包括取消。metrics沿用现有可空十进制字符串（token、图片计数、微美元），不把缺失值记零。首事件耗时不是下游首token；平均/P95按非空样本，P95 nearest-rank。合计不随分页改变。管理界面请求明细每页查询10条，沿用游标翻页。 自定义日期无效时阻止读取并展示日期错误；收起后点击查询须重新展开错误。进行中运行时未知的hasFirstEvent可缺省/为空，历史开始时间缺失同理；前端按未知展示，不推断false。编辑子路径不接受query参数。
 
+管理接口 `GET /api/usage` 在「全部 Key」的用量查询返回 `keyTokens`，基于同一只读快照和已应用条件、按匹配的准入记录分组，独立于明细游标。每项含 `keyID`、可空十进制字符串 `inputTokens` 与 `outputTokens` 和布尔 `incomplete`。输入含缓存，图片专用与 SVG 作者量保持单列，和 Token 合计一致。单 Key、仅准入前拒绝或匹配 Key 超过 256 时返回 null。界面用已记录 Token 的占比绘制饼图，列出匹配的 Key，包括归档主体。已知零值和缺失值分别显示，部分用量标为下界。Key 名称遵从管理台隐私模式。
+
 ## 首页需要处理提醒
 
 `GET /api/attention` 无查询参数，仅管理员可读，复用 A10/A11 的认证、来源、no-store、连接与共享管理容量；GET 不要求 CSRF。返回 `generatedAtUnixSeconds` 与 `items`，最多 50 条，critical 优先，同严重度按 `sinceUnixSeconds` 升序（未知时间最后），再按 kind/主体稳定排序。每项包含 kind、severity（critical/warning）、subjectType（account/key/system/protocol）、可空 subjectID/subjectName、detail、可空 sinceUnixSeconds。detail 包含固定枚举、布尔标记、数值及最多 5 个 Key 的用量排名（仅公开 Key 显示名/主体/ID 和计数），不包含错误正文、头值或凭证。

@@ -1,10 +1,31 @@
 .workspace {
   min-width: 0;
 }
-.method {
-  margin-bottom: 12px;
+.filterBar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  margin-top: 8px;
+}
+.filterBar > button {
+  min-height: 32px;
+  color: var(--mantine-primary-color-filled);
+}
+.filterChevron {
+  transition: transform 150ms ease;
+}
+.filterBar button[aria-expanded="true"] .filterChevron {
+  transform: rotate(180deg);
+}
+.resultFilters {
+  min-width: 0;
   color: var(--mantine-color-dimmed);
   font-size: var(--mantine-font-size-xs);
+  overflow-wrap: anywhere;
+}
+.methodButton {
+  grid-column: 3;
 }
 .filters {
   display: grid;
@@ -17,20 +38,16 @@
 .dateFilters,
 .advancedFilters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin: 12px 0;
+  margin: 8px 0 4px;
 }
 .dateFilters {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0 0;
 }
 .moreFilters {
   margin: 12px 0;
-}
-.moreFilters summary {
-  cursor: pointer;
-  font-size: var(--mantine-font-size-sm);
-  color: var(--mantine-primary-color-filled);
 }
 .summary,
 .metrics {
@@ -69,12 +86,66 @@
   font-size: var(--mantine-font-size-sm);
   overflow-wrap: anywhere;
 }
-.trend {
-  margin: 12px 0;
+.chartCard {
   min-width: 0;
   /* Keep chart decorations inside their panel while Recharts updates stale
      desktop tooltip/legend coordinates after a narrow viewport resize. */
   overflow-x: clip;
+}
+.analysisCharts {
+  display: grid;
+  gap: 12px;
+  margin-block: 12px;
+}
+@media (min-width: 1320px) {
+  .analysisCharts:has(> :nth-child(2)) {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+.keyShareContent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.keySharePlot {
+  flex: none;
+}
+.keyShareList {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.keyShareRow {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) minmax(0, max-content) 3.75em;
+  align-items: baseline;
+  column-gap: 8px;
+  padding-block: 5px;
+  font-size: var(--mantine-font-size-xs);
+}
+.chartLegendDot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.keyShareName,
+.keyShareTokens {
+  overflow-wrap: anywhere;
+}
+.keyShareTokens,
+.keySharePercent {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.keyShareTokens {
+  color: var(--mantine-color-dimmed);
 }
 .table {
   margin-top: 16px;
@@ -106,9 +177,16 @@
 }
 @media (max-width: 767px) {
   .filters,
-  .dateFilters,
-  .advancedFilters {
+  .dateFilters {
     grid-template-columns: 1fr;
+  }
+  .advancedFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .resultFilters {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    margin-top: 4px;
   }
   .summary,
   .metrics {
@@ -118,9 +196,6 @@
     font-size: 17px;
   }
   .workspace {
-    padding: 12px;
-  }
-  .trend {
     padding: 12px;
   }
   .pagination {

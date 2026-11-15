@@ -4,13 +4,13 @@ import { isUTCDateInput } from "../../shared/date-input";
 import { DateInput } from "@mantine/dates";
 import { UsageDisclosure } from "./UsageDisclosure";
 import { fetchAccounts } from "../account-management/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorState, LoadingState } from "../../shared/ui/States";
 import { UsageDetail } from "./UsageDetail";
 import styles from "./usage.module.css";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -22,15 +22,19 @@ import { KeyLimitsSummary } from "../key-management/KeyLimitsSummary";
 import {
   Button,
   Checkbox,
+  Collapse,
   Group,
   Select,
   Autocomplete,
   Paper,
+  Popover,
+  Stack,
   Text,
   TextInput,
   Title,
   UnstyledButton,
 } from "@mantine/core";
+import { IconChevronDown, IconInfoCircle } from "@tabler/icons-react";
 import {
   failures,
   modes,
@@ -40,11 +44,10 @@ import {
   localTime,
 } from "../../shared/presentation";
 import { UsageTrend } from "./UsageTrend";
+import { UsageKeyShare } from "./UsageKeyShare";
 import { UsageRequests } from "./UsageRequests";
 import { UsageEvidence, UsageSummary } from "./UsageSummary";
 import { rejectionReason, utc } from "./format";
-export { duration } from "./format";
-export { failures } from "../../shared/presentation";
 
 // Keep the calendars below the fields so they cannot cover the range toggle.
 const datePopoverProps = { middlewares: { flip: false } };
@@ -185,6 +188,8 @@ export function UsageOverview({
     failures: [],
   });
   const [customRange, setCustomRange] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedID = useId();
   const [invalidDates, setInvalidDates] = useState({
     start: false,
     end: false,
@@ -243,7 +248,6 @@ export function UsageOverview({
   // The view this owner last reported through onApplied. Its URL echo must not
   // retire a newer read the user started meanwhile (for example the next page).
   const appliedEcho = useRef<string | null>(null);
-  const optionsLoaded = useRef(false);
   useEffect(
     () => () => {
       // Unmount retires whichever read is current; route echoes do not.
@@ -279,7 +283,6 @@ export function UsageOverview({
       if (version !== epoch.current || abort.signal.aborted) return;
       const offsetMinutes = nextOptions.businessDay?.offsetMinutes ?? 0;
       setOptions(nextOptions);
-      optionsLoaded.current = true;
       filters = {
         ...filters,
         offsetMinutes,
@@ -490,6 +493,7 @@ export function UsageOverview({
   }
   const now = Date.now() / 1000;
   const offsetMinutes = options.businessDay?.offsetMinutes;
+  const dateTimezone = timezone(offsetMinutes);
   const currentPreset =
     applied?.range === "24h"
       ? "24h"
@@ -506,8 +510,17 @@ export function UsageOverview({
       </section>
     );
   const keyIDs = [...new Set([...options.keys, draft.key].filter(Boolean))];
+  const keyTokens = applied?.key ? undefined : report?.keyTokens;
   const labels = usageKeyLabels(
-    [...new Set([...keyIDs, applied?.key ?? ""].filter(Boolean))],
+    [
+      ...new Set(
+        [
+          ...keyIDs,
+          applied?.key ?? "",
+          ...(keyTokens?.map((row) => row.keyID) ?? []),
+        ].filter(Boolean),
+      ),
+    ],
     options,
   );
   const archivedKeyIDs = new Set(
@@ -625,10 +638,9 @@ export function UsageOverview({
         </div>
         {customRange && (
           <div className={styles.dateFilters}>
-            {" "}
             <DateInput
-              label={`起始日（${timezone(options.businessDay?.offsetMinutes)}）`}
-              aria-label={`起始日（${timezone(options.businessDay?.offsetMinutes)}）`}
+              label={`起始日（${dateTimezone}）`}
+              aria-label={`起始日（${dateTimezone}）`}
               value={draft.start || null}
               dateParser={(value) => (isUTCDateInput(value) ? value : null)}
               error={
@@ -654,8 +666,8 @@ export function UsageOverview({
               }}
             />
             <DateInput
-              label={`结束日（${timezone(options.businessDay?.offsetMinutes)}）`}
-              aria-label={`结束日（${timezone(options.businessDay?.offsetMinutes)}）`}
+              label={`结束日（${dateTimezone}）`}
+              aria-label={`结束日（${dateTimezone}）`}
               value={draft.end || null}
               dateParser={(value) => (isUTCDateInput(value) ? value : null)}
               error={
@@ -679,9 +691,100 @@ export function UsageOverview({
             />
           </div>
         )}
-        <UsageDisclosure className={styles.moreFilters} title="更多筛选">
+        <div className={styles.filterBar}>
+          <Button
+            type="button"
+            variant="subtle"
+            size="compact-sm"
+            aria-expanded={advancedOpen}
+            aria-controls={advancedID}
+            rightSection={
+              <IconChevronDown
+                aria-hidden="true"
+                size={14}
+                className={styles.filterChevron}
+              />
+            }
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            更多筛选
+          </Button>
+          {report && applied && (
+            <div
+              className={styles.resultFilters}
+              role="group"
+              aria-label="当前结果筛选"
+              aria-busy={busy}
+            >
+              <span>
+                {applied.range === "24h"
+                  ? `${utc(report.startUnixSeconds).slice(0, 16)} 至 ${utc(report.endUnixSeconds).slice(0, 16)} 前（UTC）`
+                  : `${applied.start}${applied.start === applied.end ? "" : ` 至 ${applied.end}`}（${report.timezone ?? dateTimezone}）`}
+              </span>
+              {" · "}
+              {applied.key ? (
+                <PrivateName>{labels.get(applied.key)}</PrivateName>
+              ) : (
+                allKeysLabel
+              )}
+              {applied.model ? ` · 模型 ${applied.model}` : ""}
+              {applied.reasoningEffort
+                ? ` · 推理 ${applied.reasoningEffort}`
+                : ""}
+              {applied.mode ? ` · ${modes[applied.mode]}` : ""}
+              {applied.failure
+                ? ` · ${failures[applied.failure] ?? "其他异常"}`
+                : ""}
+              {applied.state ? ` · ${states[applied.state]}` : ""}
+              {applied.outcome === "failed" ? " · 请求结果：失败" : ""}
+              {applied.rejectedOnly ? " · 仅准入前拒绝" : ""}
+              {applied.failedOnly ? " · 仅异常结果" : ""}
+              {stale ? " · 上次成功快照" : ""}
+            </div>
+          )}
+          <Popover
+            position="bottom-end"
+            width="min(22rem, calc(100vw - 24px))"
+            trapFocus
+            returnFocus
+          >
+            <Popover.Target>
+              <Button
+                type="button"
+                variant="subtle"
+                size="compact-sm"
+                className={styles.methodButton}
+                leftSection={<IconInfoCircle size={15} aria-hidden="true" />}
+              >
+                统计口径
+              </Button>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Stack gap={4}>
+                <Text size="sm" fw={600}>
+                  时间与用量
+                </Text>
+                <Text size="xs">
+                  按准入业务日统计，含起止日。最近 24 小时按完整 UTC
+                  小时统计。轮换保留原 Key
+                  历史，迟到用量补记到原时段。每次查询读取新快照。
+                </Text>
+                <Text size="sm" fw={600} mt={6}>
+                  拒绝诊断
+                </Text>
+                <Text size="xs">
+                  最多查询近 30
+                  天的一万条记录。系统繁忙或存储失败时可能缺失，仅用于诊断。
+                </Text>
+                <Text size="xs" c="dimmed" mt={6}>
+                  明细每页最多 10 条，不含请求或响应正文。
+                </Text>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        </div>
+        <Collapse expanded={advancedOpen} id={advancedID}>
           <div className={styles.advancedFilters}>
-            {" "}
             <Select
               label="执行模式"
               value={draft.mode}
@@ -736,7 +839,7 @@ export function UsageOverview({
               ]}
             />
           </div>
-        </UsageDisclosure>
+        </Collapse>
       </form>
       {error && !failedPage.current && (
         <ErrorState retry={() => void load({ ...draft })}>
@@ -773,41 +876,6 @@ export function UsageOverview({
       {busy && !report && <LoadingState>正在读取用量…</LoadingState>}
       {report && (
         <div aria-busy={busy} className={stale ? styles.stale : undefined}>
-          <p className={styles.hint} aria-label="当前结果筛选">
-            当前结果：
-            {applied?.range === "24h"
-              ? `${utc(report.startUnixSeconds)} 至 ${utc(report.endUnixSeconds)} 前`
-              : `${applied?.start} 至 ${applied?.end}（${timezone(options.businessDay?.offsetMinutes)}）`}{" "}
-            ·{" "}
-            {applied?.key ? (
-              <PrivateName>{labels.get(applied.key)}</PrivateName>
-            ) : (
-              allKeysLabel
-            )}
-            {applied?.model ? ` · 模型 ${applied.model}` : ""}
-            {applied?.reasoningEffort
-              ? ` · 推理 ${applied.reasoningEffort}`
-              : ""}
-            {applied?.mode ? ` · ${modes[applied.mode]}` : ""}
-            {applied?.failure
-              ? ` · ${failures[applied.failure] ?? "其他异常"}`
-              : ""}
-            {applied?.state ? ` · ${states[applied.state]}` : ""}
-            {applied?.outcome === "failed" ? " · 请求结果：失败" : ""}
-            {applied?.rejectedOnly ? " · 仅准入前拒绝" : ""}
-            {applied?.failedOnly ? " · 仅异常结果" : ""}
-            {stale ? " · 上次成功快照" : ""}
-          </p>
-          <UsageDisclosure className={styles.method} title="统计口径">
-            <p className={styles.hint}>
-              按准入业务日统计，起止日均包含；最近 24 小时按已完成 UTC
-              小时查询。轮换保留原 Key
-              历史，迟到用量更新原时段；每次查询为新账本快照。拒绝诊断查询最近
-              30
-              天、最多一万条，压力或存储失败时可能缺失，不作为全部流量计数。每页最多
-              10 条，不包含请求或响应正文。
-            </p>
-          </UsageDisclosure>
           {applied?.rejectionGroup && (
             <Button
               variant="subtle"
@@ -848,7 +916,12 @@ export function UsageOverview({
           {!applied?.rejectedOnly && (
             <>
               <UsageSummary report={report} />
-              <UsageTrend report={report} />
+              <div className={styles.analysisCharts}>
+                <UsageTrend report={report} />
+                {keyTokens && (
+                  <UsageKeyShare usage={keyTokens} labels={labels} />
+                )}
+              </div>
             </>
           )}
           <UsageDisclosure

@@ -53,16 +53,16 @@ it("preserves lower-bound evidence and the applied filter on failed reads, then 
   );
   fireEvent.click(screen.getByText("查询用量"));
   await screen.findByRole("alert");
-  expect(screen.getByText(/当前结果/)).toHaveTextContent(
-    "全部 Key · 上次成功快照",
-  );
-  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("全部 Key");
+  const appliedFilters = screen.getByRole("group", { name: "当前结果筛选" });
+  expect(appliedFilters).toHaveTextContent("全部 Key · 上次成功快照");
+  expect(appliedFilters).not.toHaveTextContent("beta");
+  expect(appliedFilters).not.toHaveTextContent("压缩");
   expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
   fireEvent.click(screen.getByText("查询用量"));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  expect(screen.getByText(/当前结果/)).toHaveTextContent("beta");
+  expect(appliedFilters).toHaveTextContent("beta");
   expect(screen.getByText("第 1 页")).toBeVisible();
-  expect(screen.getByLabelText("当前结果筛选")).toHaveTextContent("压缩");
+  expect(appliedFilters).toHaveTextContent("压缩");
   view.unmount();
 });
 it("aborts stale ownership on Key selection, pause and unmount, and clears private data on unauthorized", async () => {
@@ -93,7 +93,7 @@ it("aborts stale ownership on Key selection, pause and unmount, and clears priva
       onUnauthorized={onUnauthorized}
     />,
   );
-  await screen.findByText(/当前结果/);
+  await screen.findByRole("group", { name: "当前结果筛选" });
   expect(signal?.aborted).toBe(true);
   await act(async () => {
     finish?.({
