@@ -1,8 +1,12 @@
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
 import { useEffect, useState, type ReactNode } from "react";
 import styles from "./accounts.module.css";
-import { Progress, Stack, Text } from "@mantine/core";
-import { IconChevronDown } from "@tabler/icons-react";
+import { Progress, Stack, Text, Tooltip } from "@mantine/core";
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconChevronDown,
+} from "@tabler/icons-react";
 import type { QuotaWindow } from "./observation-api";
 import { resetIn, timeTitle } from "../../shared/presentation";
 export function QuotaWindowBar({
@@ -50,6 +54,10 @@ export function QuotaWindowBar({
           hourCycle: "h23",
         }).format(reset * 1000);
   const countdown = resetIn(reset ?? null, now);
+  const overviewCountdown =
+    secondsLeft != null && Math.ceil(secondsLeft / 60) >= 24 * 60
+      ? `${(secondsLeft / 86_400).toFixed(2)} 天后重置`
+      : countdown;
   const remaining =
     value?.usedPercent == null ? null : Math.max(0, 100 - value.usedPercent);
   const track = remaining !== null && (
@@ -92,6 +100,14 @@ export function QuotaWindowBar({
   );
   const deviation =
     pace !== null && remaining !== null ? 100 - remaining - pace : null;
+  const deviationAmount =
+    deviation == null ? "" : Math.abs(deviation).toFixed(1);
+  const deviationLabel =
+    deviation == null
+      ? ""
+      : `比参考进度${deviation > 0 ? "超前" : "滞后"} ${deviationAmount} 个百分点`;
+  const DeviationIcon =
+    deviation != null && deviation > 0 ? IconArrowUp : IconArrowDown;
   const resetDetails =
     showUsed && resetTime ? (
       <div className={styles.quotaReset} title={timeTitle(reset)}>
@@ -159,20 +175,29 @@ export function QuotaWindowBar({
         <div>
           <div className={styles.quotaMetrics}>
             <Text size="xs" c="dimmed" title={timeTitle(reset)}>
-              {countdown}
+              {overviewCountdown}
             </Text>
             {!trend.stale &&
               pace !== null &&
               deviation !== null &&
               Math.abs(deviation) >= 0.05 && (
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  title={`参考进度 ${pace.toFixed(1)}%`}
+                <Tooltip
+                  label={`${deviationLabel} · 参考进度 ${pace.toFixed(1)}%`}
+                  events={{ hover: true, focus: true, touch: true }}
                 >
-                  {deviation > 0 ? "超前" : "滞后"}{" "}
-                  {Math.abs(deviation).toFixed(1)} 个百分点
-                </Text>
+                  <Text
+                    component="span"
+                    size="xs"
+                    c="dimmed"
+                    className={styles.quotaDeviation}
+                    role="img"
+                    aria-label={deviationLabel}
+                    tabIndex={0}
+                  >
+                    <DeviationIcon size={13} stroke={1.75} aria-hidden="true" />
+                    {deviationAmount}
+                  </Text>
+                </Tooltip>
               )}
           </div>
           {trend.details}

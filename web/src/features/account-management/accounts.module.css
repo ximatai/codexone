@@ -270,6 +270,15 @@
   gap: 2px 8px;
 }
 
+.quotaDeviation {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .quotaTrendTrigger {
   position: absolute;
   inset: -4px -5px;
