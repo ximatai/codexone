@@ -15,7 +15,6 @@ export function UsageChartCard({
   return (
     <Paper
       withBorder
-      p={{ base: "sm", sm: "md" }}
       component="section"
       className={styles.chartCard}
       aria-labelledby={heading}

@@ -88,6 +88,7 @@
 }
 .chartCard {
   min-width: 0;
+  padding: var(--mantine-spacing-md);
   /* Keep chart decorations inside their panel while Recharts updates stale
      desktop tooltip/legend coordinates after a narrow viewport resize. */
   overflow-x: clip;
@@ -176,6 +177,9 @@
   }
 }
 @media (max-width: 767px) {
+  .chartCard {
+    padding: var(--mantine-spacing-sm);
+  }
   .filters,
   .dateFilters {
     grid-template-columns: 1fr;
