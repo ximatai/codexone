@@ -54,10 +54,10 @@ export function QuotaWindowBar({
           hourCycle: "h23",
         }).format(reset * 1000);
   const countdown = resetIn(reset ?? null, now);
-  const overviewCountdown =
-    secondsLeft != null && Math.ceil(secondsLeft / 60) >= 24 * 60
+  const decimalCountdown =
+    showUsed && secondsLeft != null && Math.ceil(secondsLeft / 60) >= 24 * 60
       ? `${(secondsLeft / 86_400).toFixed(2)} 天后重置`
-      : countdown;
+      : null;
   const remaining =
     value?.usedPercent == null ? null : Math.max(0, 100 - value.usedPercent);
   const track = remaining !== null && (
@@ -112,9 +112,10 @@ export function QuotaWindowBar({
     showUsed && resetTime ? (
       <div className={styles.quotaReset} title={timeTitle(reset)}>
         <Text size="xs" c="dimmed">
-          {secondsLeft != null && secondsLeft > 0
-            ? countdown.replaceAll(" ", "").replace("后重置", "后")
-            : "等待刷新"}
+          {decimalCountdown ??
+            (secondsLeft != null && secondsLeft > 0
+              ? countdown.replaceAll(" ", "").replace("后重置", "后")
+              : "等待刷新")}
         </Text>
         <Text size="xs" c="dimmed">
           {resetTime} 重置
@@ -175,7 +176,7 @@ export function QuotaWindowBar({
         <div>
           <div className={styles.quotaMetrics}>
             <Text size="xs" c="dimmed" title={timeTitle(reset)}>
-              {overviewCountdown}
+              {decimalCountdown ?? countdown}
             </Text>
             {!trend.stale &&
               pace !== null &&
