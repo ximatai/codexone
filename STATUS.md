@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.41](https://github.com/ximatai/codexone/releases/tag/v0.26.41)**（2026-11-15），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v0.26.42](https://github.com/ximatai/codexone/releases/tag/v0.26.42)**（2026-11-15），核心数据库 schema v18。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.42 简化首页额度卡的偏差和重置倒计时，优化用量与诊断页的筛选布局，并新增当前查询区间的 Key Token 占比。见[发布说明](CHANGELOG.md)。
 
 v0.26.41 在首页展示每把 Key 当天最早和最近的请求时间，改进用量筛选中的 Key 名称，并记录长期测试 Key 的运维规则。见[发布说明](CHANGELOG.md)。
 
