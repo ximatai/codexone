@@ -68,6 +68,27 @@ private func created(_ turns: WebSocketTurns, _ id: String = "synthetic-response
       .description == "usage_limit_reached")
 }
 
+@Test func absoluteQuotaResetIsBoundedAndFallsBackBehindExistingRetryHints() {
+  let now: Int64 = 1_800_000_000
+  let future = JSONValue.number(Decimal(now + 120))
+  for (reset, relative, retryAfter, expected): (JSONValue, JSONValue?, Int64?, Int64?) in [
+    (future, .number(90), nil, 90),
+    (future, .number(90), 60, 60),
+    (.number(Decimal(now + 7200)), nil, nil, 3600),
+    (.number(Decimal(now - 1)), nil, nil, nil),
+    (.string(String(now + 120)), nil, nil, nil),
+    (.number(Decimal(now + 120) + Decimal(0.5)), nil, nil, nil),
+  ] {
+    var error: JSONObject = ["code": .string("usage_limit_reached"), "resets_at": reset]
+    error["resets_in_seconds"] = relative
+    let failure = ProviderError.failure(status: 429, error: .object(error), retryAfter: retryAfter)
+    #expect(failure.accountCooldown(observedAt: now) == expected)
+  }
+  let unavailable = ProviderError.failure(
+    status: 503, error: .object(["resets_at": future]))
+  #expect(unavailable.accountCooldown(observedAt: now) == nil)
+}
+
 @Test func turnOwnershipAcceptsProviderExtensionsAndRejectsForeignResponses() throws {
   let turns = WebSocketTurns()
   // Outside a turn, provider notices such as rate-limit updates are dropped, not fatal.

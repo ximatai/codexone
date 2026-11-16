@@ -204,11 +204,13 @@ extension HTTPResponseExecution {
             if let work {
               let failure = executionFailure(error)
               if [.authenticationRejected, .rateLimited].contains(failure), let routing {
+                let observedAt = access.clock.unixSeconds
                 try await routing.recordAccountWideOutcome(
                   account: AccountRouteCandidate(work: work),
                   outcome: .init(
-                    failure: failure, atUnixSeconds: access.clock.unixSeconds,
-                    cooldownSeconds: (error as? GatewayProtocolError)?.cooldownSeconds))
+                    failure: failure, atUnixSeconds: observedAt,
+                    cooldownSeconds: (error as? GatewayProtocolError)?.accountCooldown(
+                      observedAt: observedAt)))
               } else if failure == .upstreamUnavailable {
                 controlHealth.record(
                   route: route.path,

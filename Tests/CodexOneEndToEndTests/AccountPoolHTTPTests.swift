@@ -36,6 +36,17 @@ private func poolImageOutput(_ request: JSONValue, count: Int) -> JSONValue {
   ])
 }
 private func poolRefusalEvents(_ input: String?, response: JSONValue) -> [JSONValue]? {
+  if input == "absolute-quota-reset" {
+    return [
+      .object([
+        "type": .string("error"), "status": .number(429),
+        "error": .object([
+          "code": .string("usage_limit_reached"),
+          "resets_at": .number(Decimal(testUnixSeconds + 120)),
+        ]),
+      ])
+    ]
+  }
   if input == "rate-limit-continuation" {
     return [
       .object([
@@ -1594,6 +1605,36 @@ func poolNativeWebSocketRefreshesPinnedIdentityWithoutOpeningAnotherSession() as
     #expect(h.calls.count == 2 && Set(h.calls.map(\.account)).count == 1)
     #expect(h.state.value.withLock { $0.upgrades == 1 && $0.invalid == 0 })
   }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func absoluteQuotaResetDelaysNewDispatchUntilTheAdvertisedTime() async throws {
+  let time = TestWallClock()
+  let oauth = try await OAuthHarness.open(timeout: 3000, clock: time.clock)
+  let h = try await PoolHTTPHarness.open(oauth)
+  do {
+    let other = try #require(try await h.store.listAccounts().first { $0.id == "b" })
+    _ = try await h.store.setAccountMode(id: other.id, revision: other.revision, mode: .disabled)
+    let (status, data) = try await h.request("absolute-quota-reset")
+    #expect(status == 429)
+    #expect(try JSONValue.decode(data)["error"]?["resets_at"]?.integer == testUnixSeconds + 120)
+    try await awaitOAuth { h.finalizer.outstanding == 0 }
+    let cooldowns = try await h.store.accountHealth(id: "a").cooldowns
+    #expect(cooldowns.first?.untilUnixSeconds == testUnixSeconds + 120)
+
+    time.advance(seconds: 31)
+    #expect(try await h.request().0 == 503)
+    #expect(h.calls.count == 1)
+    time.advance(seconds: 89)
+    #expect(try await h.request().0 == 200)
+    #expect(h.calls.count == 2)
+  } catch {
+    await h.close()
+    await oauth.close()
+    throw error
+  }
+  await h.close()
+  await oauth.close()
 }
 
 @Test(.timeLimit(.minutes(1)))
