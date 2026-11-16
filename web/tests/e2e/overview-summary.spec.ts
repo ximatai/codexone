@@ -31,7 +31,7 @@ for (const width of [1920, 390]) {
       cancelled: 1,
       pending: 2,
       inFlight: 1,
-      tokens: "10000000000000001",
+      tokens: "1500000",
       images: "3",
       tokenUsageIncomplete: true,
       inputTokens: "1000",
@@ -78,6 +78,7 @@ for (const width of [1920, 390]) {
                   ...base,
                   keyID: "high",
                   principal: "legacy-p-synthetic",
+                  tokenBreakdown: { input: "1200000", output: "300000" },
                   enabled: false,
                   firstUsedTodayAtUnixSeconds: start + 60,
                   lastUsedTodayAtUnixSeconds: start + 120,
@@ -88,6 +89,7 @@ for (const width of [1920, 390]) {
                   keyID: "latest",
                   principal: "合成新设备",
                   displayName: "最近设备",
+                  tokenBreakdown: { input: "1250000", output: "250000" },
                   admitted: 10,
                   succeeded: 2,
                   failed: 5,
@@ -175,6 +177,15 @@ for (const width of [1920, 390]) {
     await expect(first).toContainText("最近设备");
     await expect(first).toContainText("最早 00:03");
     await expect(first).toContainText("最近 00:03");
+    await expect(
+      first.getByTitle("输入 Token 已观测下界 1,250,000"),
+    ).toHaveText("输入 ≥ 125 万");
+    await expect(first.getByTitle("输出 Token 已观测下界 250,000")).toHaveText(
+      "输出 ≥ 25 万",
+    );
+    const second = panel.getByRole("row").filter({ hasText: "未命名 Key" });
+    await expect(second).toContainText("输入 ≥ 120 万");
+    await expect(second).toContainText("输出 ≥ 30 万");
     const name = panel.getByRole("link", { name: "未命名 Key", exact: true });
     await name.focus();
     await name.press("Enter");
@@ -188,7 +199,7 @@ for (const width of [1920, 390]) {
     await page.goBack();
     if (width > 750) {
       await expect(
-        panel.getByRole("columnheader", { name: "生图张数" }),
+        panel.getByRole("columnheader", { name: "生图", exact: true }),
       ).toBeVisible();
     }
     await expect(
@@ -202,6 +213,9 @@ for (const width of [1920, 390]) {
     await page.screenshot({
       path: `../artifacts/business-day/panel-${width}.png`,
       fullPage: true,
+    });
+    await panel.screenshot({
+      path: `../artifacts/business-day/key-token-breakdown-${width}.png`,
     });
     failKeys = true;
     await page.clock.runFor(15000);

@@ -290,6 +290,9 @@ private struct UsageFixture {
       evidence: .init(
         revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
         estimatedMicros: 0, completeness: .partial, nativeImages: true))
+    let key = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(key.tokenBreakdown != nil)
+    #expect(key.tokenBreakdown?.input == nil && key.tokenBreakdown?.output == nil)
     let missing = try await f.reader.queryUsage(
       .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600))
     #expect(missing.totals.metrics.inputTokens == nil && missing.totals.metrics.outputTokens == nil)
@@ -306,6 +309,9 @@ private struct UsageFixture {
         revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
         estimatedMicros: 13, completeness: .complete, imageInputTokens: 2, imageOutputTokens: 3,
         imageInputTextTokens: 1, imageInputImageTokens: 1, nativeImages: true))
+    let observed = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(observed.tokens == 5 && observed.tokenUsageIncomplete)
+    #expect(observed.tokenBreakdown?.input == 2 && observed.tokenBreakdown?.output == 3)
     let complete = try await f.reader.queryUsage(
       .init(startUnixSeconds: f.hour + 3600, endUnixSeconds: f.hour + 7200))
     #expect(

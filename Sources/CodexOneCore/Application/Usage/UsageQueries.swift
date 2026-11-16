@@ -342,6 +342,16 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public struct TokenBreakdown: Sendable {
+    public let input: Int64?
+    public let output: Int64?
+
+    public init(input: Int64?, output: Int64?) {
+      self.input = input
+      self.output = output
+    }
+  }
+
   public let images: Int64?
   public let inputTokens: Int64?
   public let cachedTokens: Int64?
@@ -349,6 +359,7 @@ public struct KeyUsageSummary: Sendable {
   public let enabled: Bool
   public let tokens: Int64
   public let tokenUsageIncomplete: Bool
+  public let tokenBreakdown: TokenBreakdown?
   public let key: UsageKeyOption
   public let admitted: Int64
   public let inFlight: Int64
@@ -366,7 +377,8 @@ public struct KeyUsageSummary: Sendable {
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
     cacheUsageIncomplete: Bool = true, images: Int64? = nil,
-    firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil
+    firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil,
+    tokenBreakdown: TokenBreakdown? = nil
   ) {
     self.images = images
     self.inputTokens = inputTokens
@@ -375,6 +387,7 @@ public struct KeyUsageSummary: Sendable {
     self.enabled = enabled
     self.tokens = tokens
     self.tokenUsageIncomplete = tokenUsageIncomplete
+    self.tokenBreakdown = tokenBreakdown
     self.key = key
     self.admitted = admitted
     self.inFlight = inFlight

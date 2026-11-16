@@ -223,7 +223,9 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 [文档导航](../../README.md)
 
-首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。列为 Key、活动时间（当日最早和最近准入）、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、生图张数、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。列为 Key、活动时间（当日最早和最近准入）、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、生图、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+
+今日 Key 汇总的可选 `tokenBreakdown` 含 `input`、`output` 两个可空十进制字符串。两项是既有 `tokens` 的方向拆分，沿用业务日、原生图片和 SVG 作者量的计量；沿用 `tokenUsageIncomplete` 标注已观测下界。缺失方向显示「—」，较早服务端未返回拆分时显示合计。缓存命中率继续使用 `inputTokens` 和 `cachedTokens`。
 
 失败率为 failed / (admitted − cancelled)，执行中和未明不计入失败数。扣除取消后至少有 20 条已准入请求、失败至少 5 条且失败率达到 20% 时，强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
 

@@ -253,11 +253,12 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
   static func keyTokenUsage(_ db: SQLiteConnection, keyID: String, now: Int64? = nil) throws -> (
     tokens: Int64, incomplete: Bool
   ) {
-    try keyTokenUsages(db, keyID: keyID, now: now)[keyID] ?? (tokens: 0, incomplete: false)
+    let usage = try keyTokenUsages(db, keyID: keyID, now: now)[keyID]
+    return (usage?.tokens ?? 0, usage?.incomplete ?? false)
   }
   /// Shared projection for admission and the single snapshot summary; no per-Key scans.
   static func keyTokenUsages(_ db: SQLiteConnection, keyID: String? = nil, now: Int64? = nil) throws
-    -> [String: (tokens: Int64, incomplete: Bool)]
+    -> [String: (tokens: Int64, incomplete: Bool, breakdown: KeyUsageSummary.TokenBreakdown)]
   {
     let keyPredicate = keyID == nil ? "" : "key_id=? AND "
     let keyValues: [SQLiteConnection.Value] = keyID.map { [.text($0)] } ?? []
@@ -266,27 +267,32 @@ extension SQLiteExecutionStore: KeyGovernanceStore {
     let coveringDay = try BusinessDayDefinition.utc.start(containing: day)
     let rows = try db.rows(
       """
-      SELECT key_id,COALESCE(SUM(input_count),0)+COALESCE(SUM(output_count),0),COALESCE(SUM(missing),0)
+      SELECT key_id,COALESCE(SUM(input_count),0)+COALESCE(SUM(output_count),0),COALESCE(SUM(missing),0),
+        SUM(input_count),SUM(output_count)
       FROM (
-        SELECT key_id,COALESCE(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageInputTokens') ELSE json_extract(usage_json,'$.inputTokens') END,0)+COALESCE(json_extract(usage_json,'$.svgInputTokens'),0) AS input_count,
-          COALESCE(CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageOutputTokens') ELSE json_extract(usage_json,'$.outputTokens') END,0)+COALESCE(json_extract(usage_json,'$.svgOutputTokens'),0) AS output_count,
+        SELECT key_id,COALESCE((CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageInputTokens') ELSE json_extract(usage_json,'$.inputTokens') END)+COALESCE(json_extract(usage_json,'$.svgInputTokens'),0),json_extract(usage_json,'$.svgInputTokens')) AS input_count,
+          COALESCE((CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN json_extract(usage_json,'$.imageOutputTokens') ELSE json_extract(usage_json,'$.outputTokens') END)+COALESCE(json_extract(usage_json,'$.svgOutputTokens'),0),json_extract(usage_json,'$.svgOutputTokens')) AS output_count,
           CASE WHEN usage_json IS NULL OR json_extract(usage_json,'$.completeness')!='complete' OR (json_extract(usage_json,'$.nativeImages')=1 AND (json_extract(usage_json,'$.imageInputTokens') IS NULL OR json_extract(usage_json,'$.imageOutputTokens') IS NULL)) THEN 1 ELSE 0 END AS missing
         FROM attempts WHERE \(keyPredicate)created_at_epoch>=? AND created_at_epoch<?
         UNION ALL
-        SELECT key_id,COALESCE(input_tokens,image_input_tokens,0)+COALESCE(svg_input_tokens,0),COALESCE(output_tokens,image_output_tokens,0)+COALESCE(svg_output_tokens,0),CASE WHEN completeness!='complete' OR usage_unknown=1 OR COALESCE(input_tokens,image_input_tokens) IS NULL OR COALESCE(output_tokens,image_output_tokens) IS NULL THEN 1 ELSE 0 END
+        SELECT key_id,COALESCE(COALESCE(input_tokens,image_input_tokens)+COALESCE(svg_input_tokens,0),svg_input_tokens),
+          COALESCE(COALESCE(output_tokens,image_output_tokens)+COALESCE(svg_output_tokens,0),svg_output_tokens),CASE WHEN completeness!='complete' OR usage_unknown=1 OR COALESCE(input_tokens,image_input_tokens) IS NULL OR COALESCE(output_tokens,image_output_tokens) IS NULL THEN 1 ELSE 0 END
         FROM usage_daily WHERE \(keyPredicate)(day_epoch=? OR day_epoch=?)
       ) GROUP BY key_id
       """,
       keyValues + [.number(day), .number(day + 86400)] + keyValues + [
         .number(mappedDay), .number(coveringDay),
       ]
-    ) {
+    ) { row in
       (
-        String(cString: sqlite3_column_text($0, 0)), sqlite3_column_int64($0, 1),
-        sqlite3_column_int64($0, 2) > 0
+        String(cString: sqlite3_column_text(row, 0)), sqlite3_column_int64(row, 1),
+        sqlite3_column_int64(row, 2) > 0,
+        KeyUsageSummary.TokenBreakdown(
+          input: sqlite3_column_type(row, 3) == SQLITE_NULL ? nil : sqlite3_column_int64(row, 3),
+          output: sqlite3_column_type(row, 4) == SQLITE_NULL ? nil : sqlite3_column_int64(row, 4))
       )
     }
-    return Dictionary(uniqueKeysWithValues: rows.map { ($0.0, (tokens: $0.1, incomplete: $0.2)) })
+    return Dictionary(uniqueKeysWithValues: rows.map { ($0.0, ($0.1, $0.2, $0.3)) })
   }
   static func loadKey(_ db: SQLiteConnection, _ id: String) throws -> ManagedKey {
     guard

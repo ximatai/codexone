@@ -131,7 +131,7 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
         ]
       ) { row in
         let id = String(cString: sqlite3_column_text(row, 0))
-        let tokenUsage = tokenUsages[id] ?? (tokens: 0, incomplete: false)
+        let tokenUsage = tokenUsages[id]
         return KeyUsageSummary(
           key: .init(
             id: String(cString: sqlite3_column_text(row, 0)),
@@ -146,8 +146,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
             ? nil : sqlite3_column_int64(row, 6),
           succeeded: sqlite3_column_int64(row, 8), cancelled: sqlite3_column_int64(row, 9),
           inFlight: sqlite3_column_int64(row, 10), enabled: sqlite3_column_int(row, 11) != 0,
-          tokens: tokenUsage.tokens,
-          tokenUsageIncomplete: tokenUsage.incomplete,
+          tokens: tokenUsage?.tokens ?? 0,
+          tokenUsageIncomplete: tokenUsage?.incomplete ?? false,
           inputTokens: sqlite3_column_type(row, 12) == SQLITE_NULL
             ? nil : sqlite3_column_int64(row, 12),
           cachedTokens: sqlite3_column_type(row, 13) == SQLITE_NULL
@@ -158,7 +158,8 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           firstUsedTodayAtUnixSeconds: sqlite3_column_type(row, 16) == SQLITE_NULL
             ? nil : sqlite3_column_int64(row, 16),
           lastUsedTodayAtUnixSeconds: sqlite3_column_type(row, 17) == SQLITE_NULL
-            ? nil : sqlite3_column_int64(row, 17))
+            ? nil : sqlite3_column_int64(row, 17),
+          tokenBreakdown: tokenUsage?.breakdown ?? .init(input: nil, output: nil))
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }
       return (start, rows)

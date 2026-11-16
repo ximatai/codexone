@@ -112,7 +112,7 @@ it("shows image counts and links each active Key to its management drawer", () =
     "请求",
     "失败率",
     "Token",
-    "生图张数",
+    "生图",
     "缓存命中率",
   ]);
   expect(screen.queryByText("闲置 Key")).toBeNull();
@@ -124,6 +124,9 @@ it("shows image counts and links each active Key to its management drawer", () =
   const activity = within(rows[0]).getAllByRole("cell")[1];
   expect(activity).toHaveTextContent("最早 00:00");
   expect(activity).toHaveTextContent("最近 01:00");
+  expect(
+    within(rows[0]).getByTitle("合计 Token 已观测下界 10,000,000,000,000,001"),
+  ).toHaveTextContent("合计 ≥");
   expect(
     within(rows[0]).getByTitle(/部分请求没有完整宿主用量/),
   ).toHaveTextContent("25%");

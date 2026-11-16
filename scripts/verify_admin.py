@@ -176,6 +176,9 @@ def verify(binary):
         row = document(request(port, 'GET', f'/api/usage?start={summary_start}&end={summary_start + 86400}', cookie=cookie))['rows'][0]
         assert row['displayName'] is None
         assert row['principal'] == 'browser-synthetic' and row['totalMilliseconds'] >= row['firstEventMilliseconds'] >= 0
+        assert summary['tokenBreakdown'] == {
+            'input': row['metrics']['inputTokens'], 'output': row['metrics']['outputTokens'],
+        }
         daily = document(request(port, 'GET', '/api/usage/daily?days=1&key=' + key['id'] + '&model=synthetic-text', cookie=cookie))['buckets'][0]
         assert daily['requests'] == daily['succeeded'] == 1 and daily['failed'] == 0
         assert daily['metrics'] == row['metrics']

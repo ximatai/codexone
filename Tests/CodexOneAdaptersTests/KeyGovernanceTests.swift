@@ -687,6 +687,9 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
   let report = try await reader.keyUsage()
   let value = try #require(report.keys.first { $0.key.id == "partial" })
   #expect(value.tokens == 6 && value.tokenUsageIncomplete)
+  #expect(value.tokenBreakdown?.input == 3 && value.tokenBreakdown?.output == 3)
+  let historical = try #require(report.keys.first { $0.key.id == "rolled" })
+  #expect(historical.tokenBreakdown?.input == 12 && historical.tokenBreakdown?.output == 8)
   try await store.admit(keyAdmission("partial-next", key: partial))
   await reader.close()
   await store.close()
@@ -713,8 +716,10 @@ private func decodedKeyPolicy(_ limits: [String: Any]) throws -> KeyPolicy {
     try await store.admit(keyAdmission("svg-over", key: key))
   }
   let reader = try await store.makeUsageReader()
-  #expect(try await reader.keyUsage().keys.first?.tokens == 50)
-  #expect(try await reader.keyUsage().keys.first?.tokenUsageIncomplete == false)
+  let summary = try #require(try await reader.keyUsage().keys.first)
+  #expect(summary.tokens == 50 && !summary.tokenUsageIncomplete)
+  #expect(summary.tokenBreakdown?.input == 22 && summary.tokenBreakdown?.output == 28)
+  #expect(summary.inputTokens == 12 && summary.cachedTokens == 10)
   await reader.close()
   await store.close()
   let reopened = try await SQLiteExecutionStore.open(

@@ -97,6 +97,9 @@
 .keyIdentity {
   max-inline-size: 100%;
 }
+.keyTokenLine {
+  font-variant-numeric: tabular-nums;
+}
 
 .keyIdentity :global(.mantine-Badge-root) {
   flex-shrink: 0;

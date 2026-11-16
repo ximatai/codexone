@@ -18,7 +18,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { businessDate, businessTime } from "../../shared/business-day";
 import type { KeySummary, KeySummaryReport } from "./round2-api";
-import { compactCount, compactKeyTokens } from "./overview-format";
+import { compactCount, compactKeyTokens } from "../../shared/compact-count";
 import styles from "./overview.module.css";
 
 export function highFailure(
@@ -227,28 +227,45 @@ export function KeyResults({
       id: "tokens",
       title: "Token",
       width: "13%",
-      render: (row) => (
-        <Text
-          size="sm"
-          title={
-            row.tokens == null
-              ? "无 Token 观测"
-              : `${row.tokenUsageIncomplete ? "已观测下界 " : ""}${BigInt(row.tokens).toLocaleString("zh-CN")}`
-          }
-        >
-          <ContinuousValue
-            text={
-              row.tokens == null
-                ? "—"
-                : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactKeyTokens(row.tokens)}`
-            }
-          />
-        </Text>
-      ),
+      render: (row) => {
+        const values = row.tokenBreakdown
+          ? [
+              { label: "输入", value: row.tokenBreakdown.input },
+              { label: "输出", value: row.tokenBreakdown.output },
+            ]
+          : [{ label: "合计", value: row.tokens }];
+        return (
+          <Stack gap={3}>
+            {values.map(({ label, value }) => (
+              <Text
+                key={label}
+                size="xs"
+                className={styles.keyTokenLine}
+                title={
+                  value == null
+                    ? `${label} Token 未记录`
+                    : `${label} Token ${row.tokenUsageIncomplete ? "已观测下界 " : ""}${BigInt(value).toLocaleString("zh-CN")}`
+                }
+              >
+                <Text component="span" inherit c="dimmed">
+                  {label}
+                </Text>{" "}
+                <ContinuousValue
+                  text={
+                    value == null
+                      ? "—"
+                      : `${row.tokenUsageIncomplete ? "≥ " : ""}${compactKeyTokens(value)}`
+                  }
+                />
+              </Text>
+            ))}
+          </Stack>
+        );
+      },
     },
     {
       id: "images",
-      title: "生图张数",
+      title: "生图",
       width: "11%",
       render: (row) => (
         <Text
