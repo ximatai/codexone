@@ -8,6 +8,7 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
 }) => {
   const now = new Date("2026-10-31T23:41:00Z");
   const presetEnd = Date.parse("2026-10-31T23:00:00Z") / 1000;
+  const legacyPrincipal = "legacy-p-synthetic";
   const isPresetQuery = (url: URL) =>
     url.pathname === "/api/usage" &&
     url.searchParams.get("start") === String(presetEnd - 86400) &&
@@ -51,22 +52,23 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
       queries.push(url);
       if (isPresetQuery(url)) await presetRead;
       const report = reportFixture();
+      const filteredByKey = url.searchParams.has("key");
       return route.fulfill({
         json: {
           ...report,
-          keyTokens: url.searchParams.has("key")
+          keyTokens: filteredByKey
             ? null
             : [
                 {
                   keyID: "alpha",
-                  inputTokens: "9000",
-                  outputTokens: "1500",
+                  inputTokens: "10000000",
+                  outputTokens: "2000000",
                   incomplete: false,
                 },
                 {
                   keyID: "beta",
-                  inputTokens: "3000",
-                  outputTokens: "500",
+                  inputTokens: "3000000",
+                  outputTokens: "1000000",
                   incomplete: true,
                 },
               ],
@@ -78,8 +80,8 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
             averageTotalMilliseconds: 34,
             metrics: {
               ...report.totals.metrics,
-              inputTokens: "12000",
-              outputTokens: "2000",
+              inputTokens: "13000000",
+              outputTokens: "3000000",
               estimatedMicros: "250000",
             },
           },
@@ -92,7 +94,8 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
                   upstreamIncompleteReason: "max_output_tokens",
                 }
               : {}),
-            principal: "合成团队",
+            displayName: filteredByKey ? null : "合成团队",
+            principal: legacyPrincipal,
             firstEventMilliseconds: 12,
             totalMilliseconds: 34,
           })),
@@ -123,10 +126,18 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   const archivedShare = keyShare
     .getByRole("listitem")
     .filter({ hasText: "合成工具 · 已归档" });
-  await expect(teamShare).toContainText("75%");
-  await expect(archivedShare).toContainText("25%");
+  await expect(teamShare).toContainText("0.12 亿");
+  await expect(archivedShare).toContainText("≥ 400 万");
+  const archivedSector = keyShare.locator(".recharts-pie-sector path").last();
+  const keyTooltip = keyShare.getByRole("tooltip", { includeHidden: true });
+  await archivedSector.hover({ position: { x: 40, y: 40 } });
+  await expect(keyTooltip).toContainText("合成工具 · 已归档");
+  await expect(keyTooltip).toContainText("≥ 400 万 Token · 25%");
   const privacyToggle = page.getByRole("button", { name: "截图隐私模式" });
   await privacyToggle.click();
+  await archivedSector.hover({ position: { x: 40, y: 40 } });
+  await expect(keyTooltip).toContainText("≥ 400 万 Token · 25%");
+  await expect(keyTooltip.getByLabel("已隐藏")).toBeVisible();
   await expect(keyShare.getByText("合成工具", { exact: false })).toHaveCount(0);
   await privacyToggle.click();
   const method = page.getByRole("button", { name: "统计口径" });
@@ -187,6 +198,14 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await expect(drawer).toContainText("request-first");
   await expect(drawer).toContainText("上游未完成 · 达到输出限制");
   await expect(drawer).toContainText("合成团队");
+  const originalPrincipal = drawer.getByText(legacyPrincipal, { exact: true });
+  await expect(originalPrincipal).toBeHidden();
+  await expect(drawer.getByText("alpha", { exact: true })).toBeHidden();
+  const keyIdentifiers = drawer.getByText("Key 标识", { exact: true });
+  await keyIdentifiers.click();
+  await expect(originalPrincipal).toBeVisible();
+  await expect(drawer.getByText("alpha", { exact: true })).toBeVisible();
+  await keyIdentifiers.click();
   await expect(drawer).toContainText("首事件耗时");
   await expect(drawer).toContainText("总耗时");
   await page.waitForTimeout(300);
@@ -213,4 +232,16 @@ test("usage filters, cursor pages and request drawer stay usable on desktop and 
   await page.getByRole("option", { name: "合成团队", exact: true }).click();
   await page.getByRole("button", { name: "查询用量", exact: true }).click();
   await expect(keyShare).toBeHidden();
+  const requestRow = page.locator(".usage-table tbody tr").first();
+  await requestRow.click();
+  await expect(drawer.getByText("未命名 Key", { exact: true })).toBeVisible();
+  await expect(originalPrincipal).toBeHidden();
+  await keyIdentifiers.click();
+  await expect(originalPrincipal).toBeVisible();
+  await drawer.getByRole("button", { name: "关闭", exact: true }).click();
+  await privacyToggle.click();
+  await requestRow.click();
+  await expect(drawer.getByLabel("已隐藏")).toBeVisible();
+  await expect(keyIdentifiers).toHaveCount(0);
+  await expect(originalPrincipal).toHaveCount(0);
 });

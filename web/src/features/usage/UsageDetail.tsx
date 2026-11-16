@@ -1,4 +1,4 @@
-import { PrivateName } from "../../shared/privacy-mask";
+import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { KeyName } from "../../shared/KeyName";
 import {
   accountName,
@@ -55,6 +55,11 @@ export function UsageDetail({
   onClose: () => void;
   accounts?: readonly AccountName[];
 }) {
+  const masked = usePrivacyMask();
+  const principal = detail?.principal;
+  const keyLabel =
+    detail?.displayName ||
+    (principal?.startsWith("legacy-p-") ? "未命名 Key" : principal);
   const reason = detail?.rejectionReason;
   const evidence =
     detail?.kind === "rejected" &&
@@ -104,13 +109,7 @@ export function UsageDetail({
                     {localTime(detail.atUnixSeconds)}
                   </span>,
                 ],
-                [
-                  "Key",
-                  <span>
-                    <KeyName {...detail} /> ·{" "}
-                    <PrivateName>{detail.keyID}</PrivateName>
-                  </span>,
-                ],
+                ["Key", <KeyName displayName={keyLabel} />],
                 [
                   "账号",
                   detail.accountID ? (
@@ -170,6 +169,23 @@ export function UsageDetail({
                 </Group>
               ))}
             </dl>
+            {!masked && (
+              <details className={styles.keyIdentifiers} key={detail.keyID}>
+                <summary>Key 标识</summary>
+                <dl className={styles.detailGrid}>
+                  {principal &&
+                    principal !== keyLabel &&
+                    principal !== detail.keyID && (
+                      <>
+                        <dt>原始主体</dt>
+                        <dd>{principal}</dd>
+                      </>
+                    )}
+                  <dt>Key ID</dt>
+                  <dd>{detail.keyID}</dd>
+                </dl>
+              </details>
+            )}
           </Paper>
           <Paper withBorder p="md">
             <Title order={3} size="h5" mb="md">
