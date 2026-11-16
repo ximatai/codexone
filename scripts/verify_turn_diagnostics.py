@@ -38,6 +38,52 @@ class Provider(WireProvider):
         created=dict(type='response.created',response=dict(id=f'synthetic-response-{index}',status='in_progress',output=[]))
         return [created,dict(type='response.completed',response=dict(id=f'synthetic-foreign-{index}',status='completed',output=[]))]
 
+def verify_selection_diagnostics(root, binary, server):
+    root.mkdir(mode=0o700)
+    config = root / 'identity.json'
+    model = dict(id='synthetic-contract', inputMicrosPerMillion=0, outputMicrosPerMillion=0)
+    config.write_text(json.dumps(dict(
+        principal='synthetic', keyID='synthetic', namespace='synthetic', identity='synthetic',
+        keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(), models=[model], reservedMicros=1,
+        upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1', upstreamTransport='websocket')))
+    config.chmod(0o600)
+    process, ports = start(str(binary.resolve()), config, root)
+    before = server.calls
+    cases = [
+        ('gpt-6-synthetic', dict(reasoning={'effort': 'xhigh'}), 'gpt-6-synthetic', 'xhigh', None),
+        ('gpt-6-synthetic', dict(reasoning_effort='high'), 'gpt-6-synthetic', 'missing', 'high'),
+        (TOKEN, dict(reasoning={'effort': TOKEN}), 'unrecognized', 'invalid', None),
+    ]
+    try:
+        expected = []
+        for route in ('json', 'native'):
+            for raw_model, fields, model, effort, legacy in cases:
+                status, events = call(ports['data'], route, {
+                    'model': raw_model, 'input': PRIVATE, **fields,
+                })
+                assert (events[-1]['status'] if route == 'native' else status) == 403
+                error = events[-1]['error']
+                assert error['code'] == 'model_not_allowed' and 'requested_model' not in error
+                assert 'requested_reasoning_effort' not in error and 'legacy_reasoning_effort' not in error
+                expected.append((error['request_id'], model, effort, legacy))
+        assert server.calls == before and rows(root) == []
+        process.terminate()
+        process.wait(10)
+        logs = process.stdout.read()
+        for request_id, model, effort, legacy in expected:
+            line = next((line for line in logs.splitlines() if request_id.encode() in line
+                         and b'Protocol request rejected' in line), b'')
+            assert f'requested_model={model} '.encode() in line, line
+            assert f'requested_reasoning_effort={effort} '.encode() in line, line
+            if legacy:
+                assert f'legacy_reasoning_effort={legacy} '.encode() in line, line
+            else:
+                assert b'legacy_reasoning_effort=' not in line, line
+        assert TOKEN.encode() not in logs and PRIVATE.encode() not in logs
+        print('PASS: HTTP and native WS model and reasoning refusals log bounded private selection metadata', flush=True)
+    finally:
+        stop(process)
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True);args=parser.parse_args()
     server=ThreadingHTTPServer(('127.0.0.1',0),Provider);server.guard=threading.Lock();server.calls=0
@@ -77,6 +123,7 @@ def main():
                         assert PRIVATE.encode() not in logs and ORG.encode() not in logs and TOKEN.encode() not in logs
                         assert server.calls==before+3,'Unexpected replay'
                     finally:stop(process)
+            verify_selection_diagnostics(Path(temporary)/'selection',args.binary,server)
         print(f'PASS: {server.calls} provider error/foreign-response turns; actionable sanitized errors across JSON/SSE/native, no provider payload logs, zero-cost explicit refusals, foreign-response unknown ledger and no replay',flush=True)
     finally:server.shutdown();server.server_close();worker.join(10)
 

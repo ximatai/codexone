@@ -45,6 +45,8 @@ Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP
 
 提供者错误中的单个有效 Retry-After 可回传给客户端，支持十位以内非负秒数或标准 IMF-fixdate。HTTP 失败响应回传头，Responses 已提交的失败流回传 error.headers，WS 错误使用内层 error.headers 或外层 headers。其余嵌套头不回传，大小写重复及畸形值忽略。客户端重试提示不改变内部冷却、重选或重放规则。
 
+已认证且已解析的 Responses 请求在模型或推理档位校验返回 403 时，`Protocol request rejected` 增加 `requested_model` 和 `requested_reasoning_effort`。模型保留安全的已配置 ID，或符合常见 OpenAI 系列格式的短 ID，其他值记为 `unrecognized`。档位只保留已知枚举，缺失记为 `missing`，无效记为 `invalid`。收到旧顶层 `reasoning_effort` 时同样按枚举检查并单独记为 `legacy_reasoning_effort`。字段仅用于私有服务端日志，沿用请求 UUID 和进程级 16 条/60 秒限额。客户端错误和持久用量记录不承载这些字段。
+
 ## P11：Desktop 与现有接入兼容
 
 首版必须以明确版本的 Codex Desktop 为主要真实客户端，CLI 为补充；允许清单必须覆盖实际使用的模型选择/目录、HTTP JSON/SSE、WS、连接预热、压缩、工具结果提交和续接。仅 CLI 成功不得表示 Desktop 通过；warmup/compact 不得在首版替代验收中整体标为可选而跳过。具体模型、参数与客户端版本由验收矩阵声明，未验证组合明确拒绝。

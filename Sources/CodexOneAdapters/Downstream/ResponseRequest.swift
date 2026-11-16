@@ -37,11 +37,13 @@ struct GatewayProtocolError: Error, Sendable {
   /// Sanitized provider error members forwarded so clients can apply their own error handling.
   let providerError: JSONValue?
   let explicitProviderRejection: Bool
+  let requestSelection: RequestSelectionDiagnostic?
   init(
     _ status: Int, _ code: String, cooldownSeconds: Int64? = nil, clientRetryAfter: String? = nil,
     detail: ProtocolRejectionDetail? = nil, upstreamStatus: Int? = nil,
     upstreamWebSocketCloseCode: UInt16? = nil,
-    providerError: JSONValue? = nil, explicitProviderRejection: Bool = false
+    providerError: JSONValue? = nil, explicitProviderRejection: Bool = false,
+    requestSelection: RequestSelectionDiagnostic? = nil
   ) {
     self.upstreamWebSocketCloseCode = upstreamWebSocketCloseCode
     self.explicitProviderRejection = explicitProviderRejection
@@ -52,6 +54,7 @@ struct GatewayProtocolError: Error, Sendable {
     self.status = status
     self.code = code
     self.providerError = providerError
+    self.requestSelection = requestSelection
   }
 }
 

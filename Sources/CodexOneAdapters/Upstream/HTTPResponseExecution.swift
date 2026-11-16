@@ -86,13 +86,22 @@ struct HTTPResponseExecution: Sendable {
           && effectiveImageModels.contains {
             $0.id == request.requirements.imageModel
           })
-    else { throw GatewayProtocolError(403, "model_not_allowed") }
+    else {
+      throw GatewayProtocolError(
+        403, "model_not_allowed",
+        requestSelection: .init(
+          request, configuredModel: configuration.models.contains { $0.id == request.model }))
+    }
     let keyRange = keyCapabilities?.reasoningEfforts?[model.id]
     if request.mode != .warmup, keyRange != nil || model.reasoningSettings?.allowed != nil {
       guard request.document["reasoning_effort"] == nil,
         let effort = request.document["reasoning"]?["effort"]?.string,
         keyRange?.contains(effort) ?? true, model.effectiveReasoningEfforts.contains(effort)
-      else { throw GatewayProtocolError(403, "reasoning_effort_not_allowed") }
+      else {
+        throw GatewayProtocolError(
+          403, "reasoning_effort_not_allowed",
+          requestSelection: .init(request, configuredModel: true))
+      }
     }
     return model
   }
