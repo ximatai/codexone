@@ -10,6 +10,7 @@ import threading
 import time
 from verify_protocol import TOKEN, start, stop
 from verify_text_contract import Provider as WireProvider, call, rows
+from verify_admin import ADMIN, document, request
 
 PRIVATE='synthetic-private-provider-error-never-log'
 ORG='org-SyntheticPrivateOrg42'
@@ -47,11 +48,15 @@ def verify_selection_diagnostics(root, binary, server):
         keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(), models=[model], reservedMicros=1,
         upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1', upstreamTransport='websocket')))
     config.chmod(0o600)
-    process, ports = start(str(binary.resolve()), config, root)
+    admin = root / 'admin'
+    admin.write_text(ADMIN)
+    admin.chmod(0o600)
+    process, ports = start(str(binary.resolve()), config, root, admin_token_file=admin)
     before = server.calls
     cases = [
         ('gpt-6-synthetic', dict(reasoning={'effort': 'xhigh'}), 'gpt-6-synthetic', 'xhigh', None),
-        ('gpt-6-synthetic', dict(reasoning_effort='high'), 'gpt-6-synthetic', 'missing', 'high'),
+        ('gpt-6-synthetic', dict(reasoning={'effort': 'high'}, reasoning_effort='low'),
+         'gpt-6-synthetic', 'high', 'low'),
         (TOKEN, dict(reasoning={'effort': TOKEN}), 'unrecognized', 'invalid', None),
     ]
     try:
@@ -67,6 +72,17 @@ def verify_selection_diagnostics(root, binary, server):
                 assert 'requested_reasoning_effort' not in error and 'legacy_reasoning_effort' not in error
                 expected.append((error['request_id'], model, effort, legacy))
         assert server.calls == before and rows(root) == []
+        hour = int(time.time()) // 3600 * 3600
+        usage = document(request(ports['admin'], 'GET',
+            f'/api/usage?start={hour - 3600}&end={hour + 7200}&rejectedOnly=true',
+            headers={'Authorization': 'Bearer ' + ADMIN}))
+        recorded = {row['requestID']: row for row in usage['rows']}
+        assert usage['totals']['admitted'] == 0 and usage['totals']['recordedRejections'] == len(expected)
+        for request_id, _, effort, _ in expected:
+            row = recorded[request_id]
+            assert row['model'] is None, row
+            assert row['reasoningEffort'] == effort, row
+            assert row['rejectionReason'] == 'model_not_allowed', row
         process.terminate()
         process.wait(10)
         logs = process.stdout.read()

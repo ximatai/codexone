@@ -28,7 +28,12 @@ import {
   localTime,
   timeTitle,
 } from "../../shared/presentation";
-import { rejectionReason, duration, number } from "./format";
+import {
+  rejectedReasoningEffort,
+  rejectionReason,
+  duration,
+  number,
+} from "./format";
 import styles from "./usage.module.css";
 
 const incompleteReasons = {
@@ -124,9 +129,11 @@ export function UsageDetail({
                 ["模式", modes[detail.mode]],
                 [
                   "请求推理强度",
-                  detail.requestMetadataRecorded
-                    ? (detail.reasoningEffort ?? "默认")
-                    : "—",
+                  detail.kind === "rejected"
+                    ? rejectedReasoningEffort(detail.reasoningEffort)
+                    : detail.requestMetadataRecorded
+                      ? (detail.reasoningEffort ?? "默认")
+                      : "—",
                 ],
                 [
                   "请求服务档位",

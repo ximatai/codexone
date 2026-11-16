@@ -174,9 +174,9 @@ unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、pe
 
 ## 请求推理强度与服务档位
 
-明细（含首页最近请求所用查询）增加可空 reasoningEffort、serviceTier、actualServiceTier 和布尔 requestMetadataRecorded。来源及有界值规则见 U10 补充；历史及准入前拒绝为 false，各值为 null。筛选 reasoningEffort 接受 `[a-z0-9_-]{1,32}`，精确匹配记录值，排除历史、未指定及准入前拒绝。筛选作用于明细、区间合计、小时桶和缺时间历史计数，既有全时间治理占用不变。
+明细（含首页最近请求所用查询）返回可空 reasoningEffort、serviceTier、actualServiceTier 和布尔 requestMetadataRecorded。来源及有界值规则见 U10。requestMetadataRecorded 标记准入请求的元数据是否已记录。准入前拒绝仍为 false，两个服务档位为 null。模型或推理档位拒绝可独立返回 reasoningEffort，包括固定的 missing 与 invalid 标签。筛选 reasoningEffort 接受 `[a-z0-9_-]{1,32}`，精确匹配准入和拒绝行的已记录值。筛选作用于明细、区间合计、小时桶和缺时间历史计数，全时间治理占用沿用既有口径。
 
-options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从可信配置 catalog.defaultReasoningEffort 或 upstream.default_reasoning_level 提取，不在线请求上游。明细表新增“推理”列：显式值原样展示，未指定显示灰字“默认”，目录有值时为“默认 · high”等；历史显示“—”。详情显示请求推理强度、请求服务档位和实际服务档位，实际未提供显示“—”。默认值仅为当前目录说明，不推测历史实际参数。
+options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从可信配置 catalog.defaultReasoningEffort 或 upstream.default_reasoning_level 提取，不在线请求上游。明细表的“推理”列在准入行显示显式档位或“默认”，目录有值时显示“默认 · high”等，历史元数据缺失时显示“—”。拒绝行显示记录的档位，或“未提交”“无效”“未记录”。详情显示请求推理强度、请求服务档位和实际服务档位，实际未提供显示“—”。默认值仅说明当前目录设置。
 
 ## Key 归档与模型范围
 

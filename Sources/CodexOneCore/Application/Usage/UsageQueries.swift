@@ -176,6 +176,11 @@ public enum RejectionReason: String, Sendable, CaseIterable {
   case invalidTurnState = "invalid_turn_state"
   case conflictingTurnState = "conflicting_turn_state"
   case invalidClientMetadata = "invalid_client_metadata"
+  case modelNotAllowed = "model_not_allowed"
+  case reasoningEffortNotAllowed = "reasoning_effort_not_allowed"
+  case reasoningEffortMissing = "reasoning_effort_missing"
+  case reasoningEffortInvalid = "reasoning_effort_invalid"
+  case reasoningEffortLegacyField = "reasoning_effort_legacy_field"
   case accountCooldown = "account_cooldown"
   case accountDispatchUnavailable = "account_dispatch_unavailable"
   case accountRefreshRequired = "account_refresh_required"
@@ -418,16 +423,19 @@ public protocol ExecutionDiagnosticsStore: Sendable {
   func recordRejection(
     requestID: String, keyID: String, model: String?, mode: ExecutionMode,
     failure: ExecutionFailure,
-    reason: RejectionReason?
+    reason: RejectionReason?, reasoningEffort: String?
   ) async throws
 }
 
 extension ExecutionDiagnosticsStore {
   public func recordRejection(
-    requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
+    requestID: String, keyID: String, model: String?, mode: ExecutionMode,
+    failure: ExecutionFailure,
+    reason: RejectionReason? = nil
   ) async throws {
     try await recordRejection(
-      requestID: requestID, keyID: keyID, model: model, mode: mode, failure: failure, reason: nil)
+      requestID: requestID, keyID: keyID, model: model, mode: mode, failure: failure,
+      reason: reason, reasoningEffort: nil)
   }
 }
 

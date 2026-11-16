@@ -133,6 +133,7 @@ def verify_accounts(probe, binary):
             database = root / 'state/core.sqlite'
             with sqlite3.connect(database) as db:
                 db.executescript("""
+                    ALTER TABLE request_diagnostics DROP COLUMN reasoning_effort;
                     ALTER TABLE model_directory_routes DROP COLUMN reasoning_efforts;
                     UPDATE model_directory SET document=json_remove(document,'$.active[1].reasoningSettings');
                     PRAGMA user_version=17;

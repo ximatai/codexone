@@ -619,8 +619,56 @@ func poolModelDirectoryReasoningSettingsApplyToAllKeys(_ transport: String) asyn
       #expect(
         try JSONValue.decode(denied.1)["error"]?["code"] == .string("reasoning_effort_not_allowed"))
       #expect(try await h.request().0 == 403)
+      #expect(try await h.request(effort: "synthetic-invalid-effort").0 == 403)
       #expect(try await h.request(key: h.bob, effort: "medium").0 == 403)
+      var nativeRejections: [(id: String, effort: String, reason: RejectionReason)] = []
+      if transport == "websocket" {
+        let cases: [([String: JSONValue], String, RejectionReason)] = [
+          (["reasoning": .object(["effort": .string("low")])], "low", .reasoningEffortNotAllowed),
+          (
+            [
+              "reasoning": .object(["effort": .string("medium")]),
+              "reasoning_effort": .string("high"),
+            ],
+            "high", .reasoningEffortLegacyField
+          ),
+        ]
+        for (fields, effort, reason) in cases {
+          let client = try PoolWSClient(h)
+          defer { client.close() }
+          #expect(try await client.read()["ready"]?.bool == true)
+          let denial = try await client.command(fields)
+          #expect(denial["status"]?.integer == 403)
+          #expect(denial["error"]?["code"]?.string == "reasoning_effort_not_allowed")
+          let id = try #require(denial["error"]?["request_id"]?.string)
+          nativeRejections.append((id, effort, reason))
+        }
+      }
       #expect(h.calls.isEmpty)
+      let reader = try await h.store.makeUsageReader()
+      let hour = h.store.clock.unixSeconds / 3600 * 3600
+      let report = try await reader.queryUsage(
+        .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600, rejectedOnly: true))
+      #expect(report.totals.rejected == 4 + Int64(nativeRejections.count))
+      #expect(
+        report.rows.allSatisfy { $0.model == "synthetic-text" && $0.failure == .invalidRequest })
+      #expect(
+        report.rows.contains {
+          $0.reasoningEffort == "low" && $0.rejectionReason == .reasoningEffortNotAllowed
+        })
+      #expect(
+        report.rows.contains {
+          $0.reasoningEffort == "missing" && $0.rejectionReason == .reasoningEffortMissing
+        })
+      #expect(
+        report.rows.contains {
+          $0.reasoningEffort == "invalid" && $0.rejectionReason == .reasoningEffortInvalid
+        })
+      for (id, effort, reason) in nativeRejections {
+        let row = try #require(report.rows.first { $0.requestID == id })
+        #expect(row.reasoningEffort == effort && row.rejectionReason == reason)
+      }
+      await reader.close()
       #expect(try await h.request(effort: "medium").0 == 200)
       #expect(try await h.request(key: h.bob, effort: "high").0 == 200)
     } catch {

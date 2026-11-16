@@ -5,12 +5,15 @@ extension SQLiteExecutionStore: ExecutionDiagnosticsStore {
   public func recordRejection(
     requestID: String, keyID: String, model: String?, mode: ExecutionMode,
     failure: ExecutionFailure,
-    reason: RejectionReason?
+    reason: RejectionReason?, reasoningEffort: String?
   ) async throws {
     guard
       [requestID, keyID].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.utf8.contains(0) }
       ),
-      model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true
+      model.map({ !$0.isEmpty && $0.utf8.count <= 128 && !$0.utf8.contains(0) }) ?? true,
+      reasoningEffort.map({
+        KeyPolicy.knownReasoningEfforts.contains($0) || $0 == "missing" || $0 == "invalid"
+      }) ?? true
     else { throw ExecutionError.invalidCommand }
     let now = clock.unixSeconds
     try await perform(optional: true) { db in
@@ -28,11 +31,12 @@ extension SQLiteExecutionStore: ExecutionDiagnosticsStore {
           )
         }
         try db.write(
-          "INSERT OR IGNORE INTO request_diagnostics VALUES(?,?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO request_diagnostics(request_id,at_epoch,key_id,model,mode,failure,reason,reasoning_effort) VALUES(?,?,?,?,?,?,?,?)",
           [
             .text(requestID), .number(now), .text(keyID), model.map { .text($0) } ?? .null,
             .text(mode.rawValue), .text(failure.rawValue),
             reason.map { .text($0.rawValue) } ?? .null,
+            reasoningEffort.map { .text($0) } ?? .null,
           ])
       }
     }

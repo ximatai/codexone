@@ -45,7 +45,7 @@ Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP
 
 提供者错误中的单个有效 Retry-After 可回传给客户端，支持十位以内非负秒数或标准 IMF-fixdate。HTTP 失败响应回传头，Responses 已提交的失败流回传 error.headers，WS 错误使用内层 error.headers 或外层 headers。其余嵌套头不回传，大小写重复及畸形值忽略。客户端重试提示不改变内部冷却、重选或重放规则。
 
-已认证且已解析的 Responses 请求在模型或推理档位校验返回 403 时，`Protocol request rejected` 增加 `requested_model` 和 `requested_reasoning_effort`。模型保留安全的已配置 ID，或符合常见 OpenAI 系列格式的短 ID，其他值记为 `unrecognized`。档位只保留已知枚举，缺失记为 `missing`，无效记为 `invalid`。收到旧顶层 `reasoning_effort` 时同样按枚举检查并单独记为 `legacy_reasoning_effort`。字段仅用于私有服务端日志，沿用请求 UUID 和进程级 16 条/60 秒限额。客户端错误和持久用量记录不承载这些字段。
+已认证且已解析的 Responses 请求在模型或推理档位校验返回 403 时，`Protocol request rejected` 增加 `requested_model` 和 `requested_reasoning_effort`。模型保留安全的已配置 ID，或符合常见 OpenAI 系列格式的短 ID，其他值记为 `unrecognized`。档位只保留已知枚举，缺失记为 `missing`，无效记为 `invalid`。收到旧顶层 `reasoning_effort` 时同样按枚举检查并单独记为 `legacy_reasoning_effort`。私有日志沿用请求 UUID 和进程级 16 条/60 秒限额。管理面拒绝诊断按 [U10](usage.md#u10订阅额度观测与按-key-统计) 保存档位及可信目录确认的模型。客户端错误和执行账本不承载这些拒绝诊断字段。
 
 ## P11：Desktop 与现有接入兼容
 

@@ -23,6 +23,11 @@ const rejectionLabels: Record<string, string> = {
   invalid_turn_state: "会话状态无效",
   conflicting_turn_state: "会话状态冲突",
   invalid_client_metadata: "客户端元数据无效",
+  model_not_allowed: "请求模型不可用",
+  reasoning_effort_not_allowed: "推理档位未获允许",
+  reasoning_effort_missing: "未提交推理档位",
+  reasoning_effort_invalid: "推理档位值无效",
+  reasoning_effort_legacy_field: "使用了旧的推理档位字段",
   account_cooldown: "账号冷却中",
   account_dispatch_unavailable: "没有可派发的账号",
   account_refresh_required: "凭证需要刷新",
@@ -32,6 +37,12 @@ const rejectionLabels: Record<string, string> = {
   account_refresh_unavailable: "凭证刷新失败",
   continuation_owner_unavailable: "续接所属账号不可用",
 };
+
+export function rejectedReasoningEffort(effort: string | null | undefined) {
+  if (effort === "missing") return "未提交";
+  if (effort === "invalid") return "无效";
+  return effort ?? "未记录";
+}
 
 export function rejectionReason(reason: string | null | undefined) {
   const prefix = "backend_parameter_";

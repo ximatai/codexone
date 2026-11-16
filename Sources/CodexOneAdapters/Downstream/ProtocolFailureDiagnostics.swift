@@ -25,7 +25,8 @@ enum UpstreamFailureStage: String, Sendable {
 
 /// A narrow projection of a parsed request for private authorization diagnostics.
 struct RequestSelectionDiagnostic: Sendable {
-  let model: String
+  let catalogModel: String?
+  let logModel: String?
   let effort: String
   let legacyEffort: String?
 
@@ -37,12 +38,13 @@ struct RequestSelectionDiagnostic: Sendable {
         (97...122).contains($0) || (65...90).contains($0) || (48...57).contains($0)
           || [45, 46, 95].contains($0)
       }
+    catalogModel = safeIdentifier && configuredModel ? rawModel : nil
     let publicIdentifier =
-      rawModel.utf8.count <= 64
+      safeIdentifier && rawModel.utf8.count <= 64
       && rawModel.range(
         of: #"^(?:(?:gpt|codex|chatgpt)-[a-z0-9]{1,16}|o[1-9])(?:[.-][a-z0-9]{1,16})*$"#,
         options: .regularExpression) != nil
-    model = safeIdentifier && (configuredModel || publicIdentifier) ? rawModel : "unrecognized"
+    logModel = catalogModel ?? (publicIdentifier ? rawModel : nil)
     let reasoning = request.document["reasoning"]
     if let reasoning, reasoning != .null, reasoning.object == nil {
       effort = "invalid"
@@ -50,6 +52,15 @@ struct RequestSelectionDiagnostic: Sendable {
       effort = reasoning?["effort"].map(Self.effortLabel) ?? "missing"
     }
     legacyEffort = request.document["reasoning_effort"].map(Self.effortLabel)
+  }
+
+  var reasoningRejection: RejectionReason {
+    if legacyEffort != nil { return .reasoningEffortLegacyField }
+    switch effort {
+    case "missing": return .reasoningEffortMissing
+    case "invalid": return .reasoningEffortInvalid
+    default: return .reasoningEffortNotAllowed
+    }
   }
 
   private static func effortLabel(_ value: JSONValue) -> String {
@@ -122,7 +133,7 @@ enum ProtocolFailureDiagnostics {
     }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
     if let selection = error.requestSelection {
-      value["requested_model"] = .string(selection.model)
+      value["requested_model"] = .string(selection.logModel ?? "unrecognized")
       value["requested_reasoning_effort"] = .string(selection.effort)
       if let legacy = selection.legacyEffort {
         value["legacy_reasoning_effort"] = .string(legacy)
