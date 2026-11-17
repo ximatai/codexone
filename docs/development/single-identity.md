@@ -94,6 +94,8 @@ CLI 0.163.0 接入模型目录须在临时配置显式设置 `[features].api_key
 
 此片段合入对应私有配置，不是完整配置。四个 fingerprint 字段分别可省略，每个显式值须为1—128字节可打印ASCII（0x20—0x7e）；空值、控制字符、非ASCII、超长拒绝。省略version时取已验证模型profile快照clientVersions按数字段比较的最大版本，无快照时用编译内置0.163.0；其余默认值如示例。不在线查询版本，不改变原生客户端标识。规则见[P28](../reference/specs/protocol.md#p28客户端标识与连接容量)。
 
+账号模型候选发现使用独立的客户端版本基线 0.169.1。其 client_version 查询参数和 User-Agent 使用同一版本，省略 version 时不取模型 profile 快照的来源版本。显式 clientFingerprint.version 仍优先，其余指纹字段沿用配置及上述缺省值。
+
 `dataConnections` 必须是8—1024的整数，省略为128；额外16条控制余量固定。该值不是活动生成许可，Key/全局并发、控制舱壁、正文预算不随之放宽。上游HTTP/WS连接期限10秒，HTTP允许总期限内发送前的连接建立重试，单连接最多使用一次，发送后失败不重放。容量资源测量见[迁移就绪验证](../reference/specs/operations.md)，不能外推为目标宿主容量保证。
 
 ## 相关文档

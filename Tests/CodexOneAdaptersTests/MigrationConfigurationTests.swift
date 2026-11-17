@@ -91,4 +91,8 @@ import Testing
     clientVersions: ["0.9.0", "0.163.0", "0.99.0"], sha256: "synthetic", overridden: false)
   #expect(ClientFingerprint().resolved(models: [model]).version == "0.163.0")
   #expect(ClientFingerprint(version: "custom").resolved(models: [model]).version == "custom")
+  let discovery = ClientFingerprint(os: "Synthetic OS").resolvedForModelDiscovery()
+  #expect(discovery.version == "0.169.1")
+  #expect(discovery.userAgent.hasPrefix("codex_cli_rs/0.169.1 (Synthetic OS;"))
+  #expect(ClientFingerprint(version: "custom").resolvedForModelDiscovery().version == "custom")
 }

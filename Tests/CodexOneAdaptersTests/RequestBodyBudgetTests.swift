@@ -22,6 +22,25 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   return buffer
 }
 
+@Test func cliFragmentedMessagePreservesUTF8AcrossOneMiBFrameBoundary() throws {
+  let budget = RequestBodyBudget()
+  let reservations = WebSocketBodyReservations()
+  let channel = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: reservations))
+  defer { _ = try? channel.finish() }
+  let boundary = 1024 * 1024
+  let bytes = Data((String(repeating: "a", count: boundary - 1) + "图").utf8)
+  try channel.writeInbound(maskedFrame(boundary, final: false))
+  try channel.writeInbound(ByteBuffer(bytes: bytes.prefix(boundary)))
+  #expect(try channel.readInbound(as: WebSocketFrame.self) == nil)
+  try channel.writeInbound(maskedFrame(bytes.count - boundary, opcode: 0))
+  try channel.writeInbound(ByteBuffer(bytes: bytes.dropFirst(boundary)))
+  let frame = try #require(try channel.readInbound(as: WebSocketFrame.self))
+  #expect(Data(frame.data.readableBytesView) == bytes)
+  reservations.take()?.release()
+  #expect(budget.occupiedBytes == 0)
+}
+
 @Test func websocketBudgetPrecedesSingleFrameBufferingAndDisconnectReturnsIt() throws {
   let size = 20 * 1024 * 1024
   let budget = RequestBodyBudget(capacity: size)

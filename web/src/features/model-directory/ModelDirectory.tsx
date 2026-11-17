@@ -25,7 +25,7 @@ import { localTime } from "../../shared/presentation";
 import { fetchAccounts } from "../account-management/api";
 import styles from "./ModelDirectory.module.css";
 
-const model = z.object({
+const profile = z.object({
   id: z.string().min(1).max(128),
   state: z.enum(["enabled", "retired", "candidate", "incomplete"]),
   reasoningEfforts: z.array(z.string().max(32)).max(8),
@@ -37,7 +37,10 @@ const model = z.object({
   configuredReasoningEfforts: z.array(z.string()).max(8).nullish(),
   configuredDefaultReasoningEffort: z.string().max(32).nullable().optional(),
   resetReasoningRequired: z.boolean().optional(),
+  contextWindow: z.number().nullable().optional(),
+  maxContextWindow: z.number().nullable().optional(),
 });
+const model = profile.extend({ profileUpdate: profile.optional() });
 const directory = z.object({
   revision: z.number().int().nonnegative(),
   active: z.array(model).max(32),
@@ -201,6 +204,12 @@ export function ModelDirectory() {
   const [working, setWorking] = useState<"refresh" | "save" | null>(null);
   const [notice, setNotice] = useState("");
   const [failure, setFailure] = useState("");
+  const [profileReview, setProfileReview] = useState<{
+    model: Model;
+    revision: number;
+    candidateRevision: string;
+  } | null>(null);
+  const [confirmProfileReset, setConfirmProfileReset] = useState(false);
   const query = useQuery({
     queryKey: ["model-directory"],
     queryFn: async ({ signal }) =>
@@ -346,6 +355,48 @@ export function ModelDirectory() {
     }
   }
 
+  async function saveProfile() {
+    if (!profileReview || !owner.session || working) return;
+    if (
+      profileReview.model.profileUpdate?.resetReasoningRequired &&
+      !confirmProfileReset
+    )
+      return;
+    setWorking("save");
+    setFailure("");
+    setNotice("");
+    try {
+      await queryClient.cancelQueries({
+        queryKey: ["model-directory"],
+        exact: true,
+      });
+      const next = parse(
+        await request("/api/models/profile", {
+          method: "PUT",
+          csrf: owner.session.csrf,
+          body: {
+            model: profileReview.model.id,
+            revision: profileReview.revision,
+            candidateRevision: profileReview.candidateRevision,
+            ...(confirmProfileReset ? { resetReasoningSettings: true } : {}),
+          },
+        }),
+      );
+      queryClient.setQueryData(["model-directory"], next);
+      setNotice("模型资料已更新。");
+    } catch (error) {
+      setFailure(
+        error instanceof ManagementError && error.status === 409
+          ? "模型目录或账号已变化。请刷新候选并重新核对资料。"
+          : "无法确认更新结果，请核对最新目录。",
+      );
+      await query.refetch();
+    } finally {
+      setProfileReview(null);
+      setWorking(null);
+    }
+  }
+
   function row(item: Model) {
     const state = states[item.state];
     return (
@@ -375,6 +426,24 @@ export function ModelDirectory() {
           </Group>
         </Stack>
         <Group gap="xs">
+          {item.profileUpdate && data?.candidateRevision && (
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              disabled={working !== null}
+              onClick={() => {
+                if (!data?.candidateRevision) return;
+                setConfirmProfileReset(false);
+                setProfileReview({
+                  model: item,
+                  revision: data.revision,
+                  candidateRevision: data.candidateRevision,
+                });
+              }}
+            >
+              资料更新
+            </Button>
+          )}
           <Badge color={state.color} variant="light">
             {state.label}
           </Badge>
@@ -548,6 +617,79 @@ export function ModelDirectory() {
           </Paper>
         </Stack>
       )}
+      <Modal
+        opened={profileReview !== null}
+        onClose={() => !working && setProfileReview(null)}
+        title="更新模型资料"
+      >
+        {profileReview?.model.profileUpdate &&
+          (() => {
+            const previous = profileReview.model;
+            const next = previous.profileUpdate!;
+            const window = (value?: number | null) =>
+              value == null ? "未提供" : value.toLocaleString();
+            return (
+              <Stack>
+                <Text fw={650}>{previous.id}</Text>
+                <Text size="sm">
+                  上下文窗口 {window(previous.contextWindow)} →{" "}
+                  {window(next.contextWindow)}
+                </Text>
+                <Text size="sm">
+                  最大窗口 {window(previous.maxContextWindow)} →{" "}
+                  {window(next.maxContextWindow)}
+                </Text>
+                <Text size="sm">
+                  支持档位 {supportedEfforts(previous).join(" / ") || "未提供"}{" "}
+                  → {supportedEfforts(next).join(" / ") || "未提供"}
+                </Text>
+                <Text size="sm">
+                  视觉输入 {previous.visionInput ? "支持" : "不支持"} →{" "}
+                  {next.visionInput ? "支持" : "不支持"}
+                </Text>
+                {previous.visionInput !== next.visionInput && (
+                  <Alert color="yellow">
+                    {next.visionInput
+                      ? "获视觉输入权限且可使用该模型的 Key 将可以处理图片。"
+                      : "相关 Key 将无法再通过该模型处理图片。"}
+                  </Alert>
+                )}
+                <Text size="sm" c="dimmed">
+                  同时更新上游指导和其他模型能力资料。费率沿用当前设置。
+                </Text>
+                {next.resetReasoningRequired && (
+                  <Checkbox
+                    label="原推理设置与新资料不兼容，确认重置为新模型默认范围"
+                    checked={confirmProfileReset}
+                    disabled={working !== null}
+                    onChange={(event) =>
+                      setConfirmProfileReset(event.currentTarget.checked)
+                    }
+                  />
+                )}
+                <Group justify="flex-end">
+                  <Button
+                    variant="default"
+                    disabled={working !== null}
+                    onClick={() => setProfileReview(null)}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    loading={working === "save"}
+                    disabled={
+                      working !== null ||
+                      (!!next.resetReasoningRequired && !confirmProfileReset)
+                    }
+                    onClick={() => void saveProfile()}
+                  >
+                    确认更新
+                  </Button>
+                </Group>
+              </Stack>
+            );
+          })()}
+      </Modal>
       <Modal
         opened={reasoning !== null}
         onClose={() => !working && setReasoning(null)}
