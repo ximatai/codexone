@@ -250,7 +250,8 @@ public struct ResponsesDataService: Service {
               upgraders: [upgrader],
               notUpgradingCompletionHandler: { channel in
                 channel.eventLoop.makeCompletedFuture {
-                  .http(
+                  try channel.pipeline.syncOperations.addHandler(HTTPResponseWriteGuard())
+                  return .http(
                     try NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>(
                       wrappingChannelSynchronously: channel,
                       configuration: .init(
@@ -819,6 +820,8 @@ private actor ProtocolResponseWriter {
   private var started = false
   private var streaming = false
   private var imageStream = false
+  // A write attempt sets started before suspension. Error bodies require a submitted head.
+  private var canSendStreamError = false
   private var ended = false
   var hasEnded: Bool { ended }
   private var completedTerminalSubmitted = false
@@ -896,11 +899,13 @@ private actor ProtocolResponseWriter {
     if !keepAlive { headers.add(name: "connection", value: "close") }
     started = true
     try await write(.head(.init(version: .http1_1, status: .ok, headers: headers)))
+    canSendStreamError = streaming
   }
   func raw(_ data: Data) async throws {
     try await write(.body(.byteBuffer(ByteBuffer(data: data))))
   }
   func finishRaw() async throws {
+    canSendStreamError = false
     try await write(.end(nil))
     ended = true
   }
@@ -922,6 +927,7 @@ private actor ProtocolResponseWriter {
       if !keepAlive { headers.add(name: "connection", value: "close") }
       started = true
       try await write(.head(.init(version: .http1_1, status: .ok, headers: headers)))
+      canSendStreamError = true
     }
     var data = Data(("event: " + type + "\ndata: ").utf8)
     data.append(try value.data())
@@ -937,8 +943,7 @@ private actor ProtocolResponseWriter {
     do {
       try await write(.body(.byteBuffer(ByteBuffer(string: "data: [DONE]\n\n"))))
       reason = .downstreamEndWrite
-      try await write(.end(nil))
-      ended = true
+      try await finishRaw()
     } catch {
       streamFinishFailure = reason
       throw error
@@ -963,7 +968,7 @@ private actor ProtocolResponseWriter {
         envelope, status: mapped.status,
         retryAfter: mapped.clientRetryAfter ?? mapped.cooldownSeconds.map(String.init),
         diagnostics: diagnostics)
-    } else if streaming && !ended {
+    } else if streaming && canSendStreamError {
       var clientError = envelope["error"]!.object!
       if let retryAfter = mapped.clientRetryAfter, clientError["headers"] == nil {
         clientError["headers"] = .object(["retry-after": .string(retryAfter)])
@@ -978,8 +983,7 @@ private actor ProtocolResponseWriter {
       } else {
         try await event(.object(["type": .string("error"), "error": .object(clientError)]))
       }
-      try await write(.end(nil))
-      ended = true
+      try await finishRaw()
     } else {
       throw mapped
     }

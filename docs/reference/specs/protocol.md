@@ -256,6 +256,8 @@ Responses 首个上游事件前失败时，可记录有界诊断，包含连接�
 
 入站 HTTP 正文超时以 408 request_body_timeout JSON envelope 结束（连接仍可写、已解析请求头且尚未提交响应时），随后关闭，不复用未读完的连接。只收到不完整请求头或空闲 keep-alive 超时直接关闭。正文读取与超时共用原子结束屏障，超时后的 buffered end 不能进入准入；活跃上传更新空闲期限但不延长 120 秒总期限。未映射执行错误与 downstream_json_write 诊断含有界 cause：固定通道/执行/JSON/HTTPClient 分类、有限 errno 或 other，不记录错误描述、正文或路径；映射状态与 unknown 语义不变。
 
+配置上游的数据面普通 HTTP/1 连接在进入 SwiftNIO 响应协议处理器前检查出站部件顺序。若出现未开始响应时的正文或结束部件、或响应未结束时的另一响应头，丢弃异常写并关闭该连接。独立的 warning `Invalid HTTP response write sequence` 每进程最多 16 条/60 秒，记录固定部件、响应状态及可用的最近已接受响应头的网关 UUID，无正文、任意头字段或客户端地址。流内错误只在响应头已成功交给写入器、尚未开始提交结束部件时写出。沿用既有断连与执行核对语义。
+
 执行失败 cause 诊断对 ChannelError 的已关闭、EOF、连接中、连接超时、不支持操作和无效状态分别使用固定 token，对 NIOWebSocketError 的帧长、分片控制帧及控制帧长度分别分类；无描述或正文，不据此推断根因或重放。
 
 原生 Images 的关键根成员 model、stream、output_format、images、mask、n、partial_images、output_compression、prompt_rewriter、svg 禁止重复，按解转义后的名称识别并在派发前返回 400 invalid_json；其他入口与未知成员的既有 JSON 语义不变。扩展 generation 非流式输出提交前验证完整 JSON、JSON 媒体类型、created 与全部规范非空 base64 图片；无效结果返回 502，先保留已观察用量，不重放。

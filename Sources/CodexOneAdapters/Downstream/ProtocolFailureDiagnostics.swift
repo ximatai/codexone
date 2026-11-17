@@ -77,6 +77,7 @@ enum ProtocolFailureDiagnostics {
   private static let gate = Mutex(ProtocolFailureLogGate())
   private static let upstreamFirstEventGate = Mutex(ProtocolFailureLogGate())
   private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
+  private static let httpResponseWriteGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "request_body_timeout", "invalid_api_key", "invalid_json", "invalid_request",
@@ -151,6 +152,18 @@ enum ProtocolFailureDiagnostics {
 
   static func recordOversizedFrame(bytes: Int, path: String, closeCode: UInt16? = nil) {
     recordBodyLimit(bytes: bytes, path: path, closeCode: closeCode)
+  }
+
+  static func recordHTTPResponseWriteViolation(part: String, lastResponseID: String?) {
+    guard httpResponseWriteGate.withLock({ $0.admit(now: .now) }) else { return }
+    var metadata: Logger.Metadata = [
+      "part": .string(part),
+      "response_state": .string(part == "head" ? "awaiting_end" : "awaiting_head"),
+    ]
+    if let lastResponseID, let id = UUID(uuidString: lastResponseID) {
+      metadata["last_response_id"] = .string(id.uuidString)
+    }
+    logger.warning("Invalid HTTP response write sequence", metadata: metadata)
   }
 
   private static let bodyLimitGate = Mutex(ProtocolFailureLogGate())
