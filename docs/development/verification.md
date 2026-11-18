@@ -85,7 +85,7 @@ GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Ker
 ```sh
 python3 scripts/measure_image_memory.py --image codexone:candidate \
   --memory 768m --cpuset 0-1 --output artifacts/memory-two-cpus.json \
-  --env MALLOC_ARENA_MAX=2 --env MALLOC_MMAP_THRESHOLD_=131072 \
+  --env MALLOC_ARENA_MAX=1 --env MALLOC_MMAP_THRESHOLD_=131072 \
   --env MALLOC_TRIM_THRESHOLD_=16777216
 ```
 
