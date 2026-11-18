@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import select
 import sqlite3
 import struct
 import subprocess
@@ -770,8 +771,21 @@ def main():
                         stalled.sendall(reservation_header + b'{"model":')
                         started = time.monotonic()
                         response = http.client.HTTPResponse(stalled); response.begin()
-                        stalled_error = json.loads(response.read())['error']['code']
-                        assert response.status == 408 and stalled_error == 'request_body_timeout', (response.status, stalled_error)
+                        stalled_error = json.loads(response.read())['error']
+                        assert response.status == 408 and stalled_error['code'] == 'request_body_timeout', (response.status, stalled_error)
+                        assert 'request upload did not finish' in stalled_error['message']
+                        diagnostic = b''
+                        deadline = time.monotonic() + 3
+                        while time.monotonic() < deadline:
+                            if select.select([process.stdout], [], [], .1)[0]:
+                                diagnostic += os.read(process.stdout.fileno(), 8192)
+                            lines = [line for line in diagnostic.splitlines() if b'Request body read timed out' in line
+                                     and stalled_error['request_id'].encode() in line]
+                            if lines: break
+                            assert len(diagnostic) < 65536
+                        assert len(lines) == 1, 'Missing bounded ingress timeout diagnostic'
+                        assert b'timeout_reason=idle' in lines[0] and b'body_started=true' in lines[0]
+                        assert b'received_size_bucket=at_most_16_mib' in lines[0]
                         assert time.monotonic() - started >= 9
                     assert upstream.calls == before and count_intents() == intents
                     assert request(large_native, '/backend-api/codex/images/generations')[0] == 200

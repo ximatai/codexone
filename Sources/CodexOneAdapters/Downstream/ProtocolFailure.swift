@@ -62,6 +62,8 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
   }
   let explanation =
     switch mapped.code {
+    case "request_body_timeout":
+      "The request upload did not finish in time. Check your connection or reduce conversation context and attached images before trying again. The request was not dispatched upstream."
     case "request_too_large":
       "Request body is too large. Reduce conversation context or attached images before trying again."
     case "model_not_allowed":

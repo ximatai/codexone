@@ -166,6 +166,28 @@ enum ProtocolFailureDiagnostics {
     logger.warning("Invalid HTTP response write sequence", metadata: metadata)
   }
 
+  private static let bodyTimeoutGate = Mutex(ProtocolFailureLogGate())
+  static func recordRequestBodyTimeout(
+    _ expiry: HTTPRequestReadDeadline.Expiry, requestID: String
+  ) {
+    guard let id = UUID(uuidString: requestID),
+      bodyTimeoutGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    func milliseconds(_ duration: Duration) -> String {
+      let parts = duration.components
+      return String(max(0, parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000))
+    }
+    logger.warning(
+      "Request body read timed out",
+      metadata: [
+        "request_id": .string(id.uuidString), "timeout_reason": .string(expiry.reason),
+        "received_size_bucket": .string(sizeBucket(expiry.receivedBytes)),
+        "body_started": .string(String(expiry.receivedBytes > 0)),
+        "elapsed_ms": .string(milliseconds(expiry.elapsed)),
+        "idle_ms": .string(milliseconds(expiry.idle)),
+      ])
+  }
+
   private static let bodyLimitGate = Mutex(ProtocolFailureLogGate())
   static func recordBodyLimit(bytes: Int, path: String, closeCode: UInt16? = nil) {
     guard bodyLimitGate.withLock({ $0.admit(now: .now) }) else { return }

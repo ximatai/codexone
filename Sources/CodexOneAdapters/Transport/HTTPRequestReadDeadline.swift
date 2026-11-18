@@ -9,6 +9,14 @@ final class HTTPRequestReadDeadline: Sendable {
     var active = true
     var expired = false
     var lastProgress = ContinuousClock.now
+    var receivedBytes = 0
+    var expiry: Expiry?
+  }
+  struct Expiry: Sendable {
+    let reason: String
+    let receivedBytes: Int
+    let elapsed: Duration
+    let idle: Duration
   }
   private final class Storage: Sendable {
     let value = Mutex(State())
@@ -19,7 +27,8 @@ final class HTTPRequestReadDeadline: Sendable {
   init(channel: any Channel) {
     let state = Storage()
     self.state = state
-    let total = ContinuousClock.now.advanced(by: .seconds(120))
+    let started = ContinuousClock.now
+    let total = started.advanced(by: .seconds(120))
     monitor = channel.eventLoop.scheduleRepeatedTask(
       initialDelay: .milliseconds(100), delay: .milliseconds(100)
     ) { task in
@@ -28,6 +37,10 @@ final class HTTPRequestReadDeadline: Sendable {
           ContinuousClock.now >= total
             || ContinuousClock.now >= value.lastProgress.advanced(by: .seconds(10))
         else { return false }
+        let now = ContinuousClock.now
+        value.expiry = Expiry(
+          reason: now >= total ? "total" : "idle", receivedBytes: value.receivedBytes,
+          elapsed: started.duration(to: now), idle: value.lastProgress.duration(to: now))
         value.active = false
         value.expired = true
         return true
@@ -39,7 +52,15 @@ final class HTTPRequestReadDeadline: Sendable {
     }
   }
 
-  func note() { state.value.withLock { if $0.active { $0.lastProgress = .now } } }
+  func note(bytes: Int = 0) {
+    state.value.withLock {
+      guard $0.active else { return }
+      $0.lastProgress = .now
+      $0.receivedBytes += min(max(0, bytes), Int.max - $0.receivedBytes)
+    }
+  }
+
+  var expiry: Expiry? { state.value.withLock { $0.expiry } }
 
   func complete() throws {
     let expired = state.value.withLock { value in

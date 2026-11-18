@@ -586,7 +586,11 @@ public struct ResponsesDataService: Service {
               var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
                 receivedPart = true
-                requestDeadline.note()
+                if case .body(let bytes) = part {
+                  requestDeadline.note(bytes: bytes.readableBytes)
+                } else {
+                  requestDeadline.note()
+                }
                 switch part {
                 case .head(let next):
                   guard head == nil else { throw GatewayProtocolError(400, "invalid_request") }
@@ -646,6 +650,10 @@ public struct ResponsesDataService: Service {
               let writer = ProtocolResponseWriter(
                 writer: outbound, channel: connection.channel, keepAlive: false)
               if control { await writer.setControlRequest() }
+              if !control, let expiry = requestDeadline.expiry {
+                ProtocolFailureDiagnostics.recordRequestBodyTimeout(
+                  expiry, requestID: writer.requestID)
+              }
               let idleReadFailure =
                 !receivedPart && previousResponseRequestID != nil
                 && (error is IOError || error is CancellationError)
