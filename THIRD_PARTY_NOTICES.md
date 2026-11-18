@@ -18,18 +18,9 @@
 |---|---|---|---|
 | `@formkit/auto-animate` | 0.10.0 | MIT | 正文已读：`LICENSE`（2026-11-04） |
 | `@adobe/css-tools` | 4.5.0 | MIT | 正文已读：`LICENSE` |
-| `@asamuzakjp/css-color` | 7.1.7 | MIT | 正文已读：`LICENSE` |
-| `@asamuzakjp/dom-selector` | 10.0.4 | MIT | 正文已读：`LICENSE` |
 | `@babel/code-frame` | 7.29.7 | MIT | 正文已读：`LICENSE` |
 | `@babel/helper-validator-identifier` | 7.29.7 | MIT | 正文已读：`LICENSE` |
 | `@babel/runtime` | 7.29.10 | MIT | 正文已读：`LICENSE` |
-| `@bramus/specificity` | 2.4.3 | MIT | 正文已读：`LICENSE` |
-| `@csstools/color-helpers` | 6.1.2 | MIT-0 | 正文已读：`LICENSE.md` |
-| `@csstools/css-calc` | 3.4.3 | MIT | 正文已读：`LICENSE.md` |
-| `@csstools/css-color-parser` | 4.2.6 | MIT | 正文已读：`LICENSE.md` |
-| `@csstools/css-parser-algorithms` | 4.0.2 | MIT | 正文已读：`LICENSE.md` |
-| `@csstools/css-syntax-patches-for-csstree` | 1.1.15 | MIT-0 | 正文已读：`LICENSE.md` |
-| `@csstools/css-tokenizer` | 4.0.2 | MIT | 正文已读：`LICENSE.md` |
 | `@exodus/bytes` | 1.16.0 | MIT | 正文已读：`LICENSE` |
 | `@floating-ui/core` | 1.8.0 | MIT | 正文已读：`LICENSE` |
 | `@floating-ui/dom` | 1.8.0 | MIT | 正文已读：`LICENSE` |
@@ -39,14 +30,14 @@
 | `@jridgewell/resolve-uri` | 3.1.2 | MIT | 正文已读：`LICENSE` |
 | `@jridgewell/sourcemap-codec` | 1.6.0 | MIT | 正文已读：`LICENSE` |
 | `@jridgewell/trace-mapping` | 0.3.31 | MIT | 正文已读：`LICENSE` |
-| `@mantine/charts` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/core` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/dates` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/form` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/hooks` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/notifications` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@mantine/store` | 9.7.5 | MIT | 正文已读：`LICENSE` |
-| `@oxc-project/types` | 0.155.0 | MIT | 正文已读：`LICENSE` |
+| `@mantine/charts` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fcharts/9.8.0)（2026-11-18） |
+| `@mantine/core` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fcore/9.8.0)（2026-11-18） |
+| `@mantine/dates` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fdates/9.8.0)（2026-11-18） |
+| `@mantine/form` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fform/9.8.0)（2026-11-18） |
+| `@mantine/hooks` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fhooks/9.8.0)（2026-11-18） |
+| `@mantine/notifications` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fnotifications/9.8.0)（2026-11-18） |
+| `@mantine/store` | 9.8.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40mantine%2Fstore/9.8.0)（2026-11-18） |
+| `@oxc-project/types` | 0.156.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxc-project%2Ftypes/0.156.0)（2026-11-18） |
 | `@oxlint/binding-android-arm-eabi` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm-eabi/1.89.0)；正文未在本地安装 |
 | `@oxlint/binding-android-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-android-arm64/1.89.0)；正文未在本地安装 |
 | `@oxlint/binding-darwin-arm64` | 1.89.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40oxlint%2Fbinding-darwin-arm64/1.89.0)；正文未在本地安装 |
@@ -70,28 +61,28 @@
 | `@reduxjs/toolkit` | 2.13.0 | MIT | 正文已读：`LICENSE` |
 | `immer` | 11.2.9 | MIT | 正文已读：`LICENSE` |
 | `@remix-run/route-pattern` | 0.22.1 | MIT | 正文已读：`LICENSE` |
-| `@rolldown/binding-android-arm-eabi` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm-eabi/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-android-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm64/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-darwin-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-arm64/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-darwin-x64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-x64/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-freebsd-x64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-freebsd-x64/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-arm-gnueabihf` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm-gnueabihf/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-arm64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-gnu/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-arm64-musl` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-musl/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-ppc64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-ppc64-gnu/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-s390x-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-s390x-gnu/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-x64-gnu` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-gnu/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-linux-x64-musl` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-musl/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-openharmony-arm64` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-openharmony-arm64/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-win32-arm64-msvc` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-arm64-msvc/1.2.15)；正文未在本地安装 |
-| `@rolldown/binding-win32-x64-msvc` | 1.2.15 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-x64-msvc/1.2.15)；正文未在本地安装 |
+| `@rolldown/binding-android-arm-eabi` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm-eabi/1.2.19)（2026-11-18） |
+| `@rolldown/binding-android-arm64` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-android-arm64/1.2.19)（2026-11-18） |
+| `@rolldown/binding-darwin-arm64` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-arm64/1.2.19)（2026-11-18） |
+| `@rolldown/binding-darwin-x64` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-darwin-x64/1.2.19)（2026-11-18） |
+| `@rolldown/binding-freebsd-x64` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-freebsd-x64/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-arm-gnueabihf` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm-gnueabihf/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-arm64-gnu` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-gnu/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-arm64-musl` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-arm64-musl/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-ppc64-gnu` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-ppc64-gnu/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-s390x-gnu` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-s390x-gnu/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-x64-gnu` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-gnu/1.2.19)（2026-11-18） |
+| `@rolldown/binding-linux-x64-musl` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-linux-x64-musl/1.2.19)（2026-11-18） |
+| `@rolldown/binding-openharmony-arm64` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-openharmony-arm64/1.2.19)（2026-11-18） |
+| `@rolldown/binding-win32-arm64-msvc` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-arm64-msvc/1.2.19)（2026-11-18） |
+| `@rolldown/binding-win32-x64-msvc` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-win32-x64-msvc/1.2.19)（2026-11-18） |
 | `@rolldown/pluginutils` | 1.0.1 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/spec` | 1.1.0 | MIT | 正文已读：`LICENSE` |
 | `@standard-schema/utils` | 0.3.0 | MIT | 正文已读：`LICENSE` |
 | `@tabler/icons` | 3.50.0 | MIT | 正文已读：`LICENSE`, `icons/outline/license-off.svg`, `icons/outline/license.svg` |
 | `@tabler/icons-react` | 3.50.0 | MIT | 正文已读：`LICENSE` |
-| `@tanstack/query-core` | 5.104.5 | MIT | 正文已读：`LICENSE` |
-| `@tanstack/react-query` | 5.104.5 | MIT | 正文已读：`LICENSE` |
+| `@tanstack/query-core` | 5.107.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40tanstack%2Fquery-core/5.107.1)（2026-11-18） |
+| `@tanstack/react-query` | 5.107.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40tanstack%2Freact-query/5.107.1)（2026-11-18） |
 | `@testing-library/dom` | 10.4.2 | MIT | 正文已读：`LICENSE` |
 | `@testing-library/jest-dom` | 7.0.1 | MIT | 正文已读：`LICENSE` |
 | `dom-accessibility-api` | 0.6.3 | MIT | 正文已读：`LICENSE.md` |
@@ -140,11 +131,9 @@
 | `ansi-styles` | 5.2.0 | MIT | 正文已读：`license` |
 | `aria-query` | 5.3.0 | Apache-2.0 | 正文已读：`LICENSE` |
 | `assertion-error` | 2.0.1 | MIT | 正文已读：`LICENSE` |
-| `bidi-js` | 1.1.0 | MIT | 正文已读：`LICENSE.txt` |
 | `chai` | 6.3.0 | MIT | 正文已读：`LICENSE` |
 | `clsx` | 2.1.1 | MIT | 正文已读：`license` |
 | `cookie-es` | 3.1.1 | MIT | 正文已读：`LICENSE` |
-| `css-tree` | 3.2.1 | MIT | 正文已读：`LICENSE` |
 | `css.escape` | 1.5.1 | MIT | 正文已读：`LICENSE-MIT.txt` |
 | `csstype` | 3.2.3 | MIT | 正文已读：`LICENSE` |
 | `d3-array` | 3.2.4 | ISC | 正文已读：`LICENSE` |
@@ -166,7 +155,7 @@
 | `detect-node-es` | 1.1.0 | MIT | 正文已读：`LICENSE` |
 | `dom-accessibility-api` | 0.5.16 | MIT | 正文已读：`LICENSE.md` |
 | `dom-helpers` | 5.2.1 | MIT | 正文已读：`LICENSE` |
-| `entities` | 8.1.0 | BSD-2-Clause | 正文已读：`LICENSE` |
+| `entities` | 9.0.0 | BSD-2-Clause | [registry 声明已核验](https://registry.npmjs.org/entities/9.0.0)（2026-11-18） |
 | `es-module-lexer` | 2.3.2 | MIT | 正文已读：`LICENSE` |
 | `es-toolkit` | 1.53.1 | MIT | 正文已读：`LICENSE`, `NOTICE` |
 | `estree-walker` | 3.0.3 | MIT | 正文已读：`LICENSE` |
@@ -182,7 +171,7 @@
 | `internmap` | 2.0.3 | ISC | 正文已读：`LICENSE` |
 | `is-potential-custom-element-name` | 1.0.1 | MIT | 正文已读：`LICENSE-MIT.txt` |
 | `js-tokens` | 4.0.0 | MIT | 正文已读：`LICENSE` |
-| `jsdom` | 30.1.3 | MIT | 正文已读：`LICENSE.txt` |
+| `jsdom` | 31.0.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/jsdom/31.0.1)（2026-11-18） |
 | `klona` | 2.0.6 | MIT | 正文已读：`license` |
 | `lightningcss` | 1.33.0 | MPL-2.0 | 正文已读：`LICENSE` |
 | `lightningcss-android-arm64` | 1.33.0 | MPL-2.0 | [registry 声明已核验](https://registry.npmjs.org/lightningcss-android-arm64/1.33.0)；正文未在本地安装 |
@@ -200,19 +189,18 @@
 | `lru-cache` | 11.5.3 | BlueOak-1.0.0 | 正文已读：`LICENSE.md` |
 | `lz-string` | 1.5.0 | MIT | 正文已读：`LICENSE` |
 | `magic-string` | 1.4.5 | MIT | 正文已读：`LICENSE` |
-| `mdn-data` | 2.27.1 | CC0-1.0 | 正文已读：`LICENSE` |
 | `min-indent` | 1.0.1 | MIT | 正文已读：`license` |
 | `nanoid` | 3.3.20 | MIT | 正文已读：`LICENSE` |
 | `object-assign` | 4.1.1 | MIT | 正文已读：`license` |
 | `obug` | 3.0.0 | MIT | 正文已读：`LICENSE` |
 | `oxlint` | 1.89.0 | MIT | 正文已读：`LICENSE` |
-| `parse5` | 8.0.1 | MIT | 正文已读：`LICENSE` |
+| `parse5` | 8.1.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/parse5/8.1.1)（2026-11-18） |
 | `picocolors` | 1.1.1 | ISC | 正文已读：`LICENSE` |
 | `picomatch` | 4.0.7 | MIT | 正文已读：`LICENSE` |
 | `playwright` | 1.65.0 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
 | `playwright-core` | 1.65.0 | Apache-2.0 | 正文已读：`LICENSE`, `NOTICE` |
-| `postcss` | 8.5.31 | MIT | 正文已读：`LICENSE` |
-| `prettier` | 3.9.10 | MIT | 正文已读：`LICENSE` |
+| `postcss` | 8.5.32 | MIT | [registry 声明已核验](https://registry.npmjs.org/postcss/8.5.32)（2026-11-18） |
+| `prettier` | 3.10.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/prettier/3.10.1)（2026-11-18） |
 | `pretty-format` | 27.5.1 | MIT | 正文已读：`LICENSE` |
 | `prop-types` | 15.8.1 | MIT | 正文已读：`LICENSE` |
 | `react-is` | 16.13.1 | MIT | 正文已读：`LICENSE` |
@@ -231,9 +219,8 @@
 | `redent` | 3.0.0 | MIT | 正文已读：`license` |
 | `redux` | 5.0.1 | MIT | 正文已读：`LICENSE.md` |
 | `redux-thunk` | 3.1.0 | MIT | 正文已读：`LICENSE.md` |
-| `require-from-string` | 2.0.2 | MIT | 正文已读：`license` |
 | `reselect` | 5.2.0 | MIT | 正文已读：`LICENSE` |
-| `rolldown` | 1.2.15 | MIT | 正文已读：`LICENSE` |
+| `rolldown` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/rolldown/1.2.19)（2026-11-18） |
 | `saxes` | 6.0.0 | ISC | [registry 声明已核验](https://registry.npmjs.org/saxes/6.0.0)；正文未在本地安装 |
 | `scheduler` | 0.28.0 | MIT | 正文已读：`LICENSE` |
 | `source-map-js` | 1.2.2 | BSD-3-Clause | 正文已读：`LICENSE` |
@@ -258,7 +245,7 @@
 | `use-sidecar` | 1.1.3 | MIT | 正文已读：`LICENSE` |
 | `use-sync-external-store` | 1.7.0 | MIT | 正文已读：`LICENSE` |
 | `victory-vendor` | 37.4.1 | MIT AND ISC AND BSD-3-Clause | 正文已读：`LICENSE.txt`, `lib-vendor/d3-format/LICENSE`, `lib-vendor/d3-shape/LICENSE`, `lib-vendor/d3-array/LICENSE`, `lib-vendor/d3-scale/LICENSE`, `lib-vendor/d3-color/LICENSE`, `lib-vendor/d3-timer/LICENSE`, `lib-vendor/d3-time-format/LICENSE`, `lib-vendor/d3-interpolate/LICENSE`, `lib-vendor/d3-time/LICENSE`, `lib-vendor/d3-path/LICENSE`, `lib-vendor/d3-voronoi/LICENSE`, `lib-vendor/d3-ease/LICENSE`, `lib-vendor/internmap/LICENSE` |
-| `vite` | 8.3.5 | MIT | 正文已读：`LICENSE.md` |
+| `vite` | 8.3.8 | MIT | [registry 声明已核验](https://registry.npmjs.org/vite/8.3.8)（2026-11-18） |
 | `vitest` | 5.1.0 | MIT | 正文已读：`LICENSE.md` |
 | `w3c-xmlserializer` | 6.0.0 | MIT | 正文已读：`LICENSE.md` |
 | `webidl-conversions` | 8.0.1 | BSD-2-Clause | 正文已读：`LICENSE.md` |
@@ -268,6 +255,18 @@
 | `xml-name-validator` | 5.0.0 | Apache-2.0 | 正文已读：`LICENSE.txt` |
 | `xmlchars` | 2.2.0 | MIT | 正文已读：`LICENSE` |
 | `zod` | 4.6.7 | MIT | 正文已读：`LICENSE` |
+| `@emnapi/core` | 2.0.0-beta.2 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40emnapi%2Fcore/2.0.0-beta.2)（2026-11-18） |
+| `@emnapi/runtime` | 2.0.0-beta.2 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40emnapi%2Fruntime/2.0.0-beta.2)（2026-11-18） |
+| `@emnapi/wasi-threads` | 2.2.0 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40emnapi%2Fwasi-threads/2.2.0)（2026-11-18） |
+| `@napi-rs/wasm-runtime` | 1.2.6 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40napi-rs%2Fwasm-runtime/1.2.6)（2026-11-18） |
+| `@rolldown/binding-wasm32-wasi` | 1.2.19 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40rolldown%2Fbinding-wasm32-wasi/1.2.19)（2026-11-18） |
+| `@tybys/wasm-util` | 0.10.4 | MIT | [registry 声明已核验](https://registry.npmjs.org/%40tybys%2Fwasm-util/0.10.4)（2026-11-18） |
+| `bcp-47` | 2.1.2 | MIT | [registry 声明已核验](https://registry.npmjs.org/bcp-47/2.1.2)（2026-11-18） |
+| `bcp-47-match` | 2.0.3 | MIT | [registry 声明已核验](https://registry.npmjs.org/bcp-47-match/2.0.3)（2026-11-18） |
+| `is-alphabetical` | 2.0.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/is-alphabetical/2.0.1)（2026-11-18） |
+| `is-alphanumerical` | 2.0.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/is-alphanumerical/2.0.1)（2026-11-18） |
+| `is-decimal` | 2.0.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/is-decimal/2.0.1)（2026-11-18） |
+| `parse5-parser-stream` | 8.1.1 | MIT | [registry 声明已核验](https://registry.npmjs.org/parse5-parser-stream/8.1.1)（2026-11-18） |
 
 ## Swift 锁定依赖
 
