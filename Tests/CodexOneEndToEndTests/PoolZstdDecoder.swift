@@ -29,7 +29,7 @@ final class PoolZstdDecoder {
       while input.pos < input.size {
         var out = ZSTD_outBuffer(dst: output, size: 65_536, pos: 0)
         let result = ZSTD_decompressStream(context, &out, &input)
-        guard ZSTD_isError(result) == 0, out.pos <= 32 * 1024 * 1024 - body.count else {
+        guard ZSTD_isError(result) == 0, out.pos <= 64 * 1024 * 1024 - body.count else {
           throw ExecutionError.invalidCommand
         }
         body.append(contentsOf: UnsafeRawBufferPointer(start: output, count: out.pos))
