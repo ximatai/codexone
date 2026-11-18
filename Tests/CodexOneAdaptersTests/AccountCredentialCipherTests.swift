@@ -10,6 +10,29 @@ private func syntheticCredential() throws -> AccountCredential {
     accessToken: "synthetic-access-token", refreshToken: "synthetic-refresh-token",
     idToken: "synthetic.id.token", expiresAtUnixSeconds: 2_000_000_000)
 }
+@Test func accountCredentialOpensFixedV1EnvelopeAcrossCryptoUpgrades() throws {
+  // Synthetic AES-256-GCM envelope generated independently with CryptoKit and a fixed nonce.
+  // Unlike a round trip, this catches changes that would make persisted credentials unreadable.
+  let envelope =
+    "v1.60bf07c488aad18fda339df07e4fbc47."
+    + "AAECAwQFBgcICQoLNoNMBl2mzb9aW6aL1AVvKvkyuQ81iQd7nwHby2dFtGkSSBsIuD1wAscryQGASwzN"
+    + "Wpg7uzl3G+K/52Lfa59mhQOWEyzdCMfkrxf0X0eNQQWiz3gV3OkecNDoQPdu68hv8xOQAs5mBhKfyDyl1"
+    + "Y7GQzTLcU0wOCfJkR4+qUFXbzOx3b1BjLesvj52fRfxMWzgI/Ei5bKGz1ADIiI3kb4S6CWK"
+  let cipher = try AccountCredentialCipher(hexKey: syntheticMaster)
+  let context = try AccountCredentialContext(
+    identity: "i", namespace: "synthetic/account-a", version: 1)
+  let opened = try cipher.open(envelope, context: context)
+  let expected = try syntheticCredential()
+  #expect(opened.accessToken == expected.accessToken)
+  #expect(opened.refreshToken == expected.refreshToken)
+  #expect(opened.idToken == expected.idToken)
+  #expect(opened.expiresAtUnixSeconds == expected.expiresAtUnixSeconds)
+  let wrongContext = try AccountCredentialContext(
+    identity: "i", namespace: "synthetic/account-a", version: 2)
+  #expect(throws: ExecutionError.invalidCommand) {
+    try cipher.open(envelope, context: wrongContext)
+  }
+}
 @Test func accountCredentialEnvelopeAuthenticatesIdentityNamespaceAndVersion() throws {
   let cipher = try AccountCredentialCipher(hexKey: syntheticMaster)
   let context = try AccountCredentialContext(
