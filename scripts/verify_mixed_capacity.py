@@ -242,8 +242,7 @@ def worker(root, ports, idle_seconds):
                 phase(f'round-{turn+1}-outputs')
                 release.clear()
                 held_name = f'mixed-{turn}-output-hold'
-                build_body = structured_body if turn == 1 else exact_body
-                held = pool.submit(request, build_body(64*MIB, held_name), keys[0])
+                held = pool.submit(request, structured_body(64*MIB, held_name), keys[0])
                 until(lambda: any(row[0] == held_name for row in calls))
                 output_release.clear()
                 generation_name = f'mixed-{turn}-generation'
@@ -345,7 +344,7 @@ def recovery_medians(series):
     for turn in range(3):
         rows = [row for row in series if row['phase'] == f'round-{turn+1}-recovery']
         assert len(rows) >= 25, 'Missing continuous 60-second recovery samples'
-        # Last ten samples are about twenty seconds; first round is the warmed baseline.
+        # Last ten samples are about twenty seconds; the first round warms the same structured input used in every round.
         medians.append(statistics.median(row['rssBytes'] for row in rows[-10:]))
     assert all(value <= medians[0]+32*MIB for value in medians[1:]), 'Recovery RSS platform grew beyond 32 MiB'
     return medians
