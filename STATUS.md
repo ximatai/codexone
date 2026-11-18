@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.44](https://github.com/ximatai/codexone/releases/tag/v0.26.44)**（2026-11-16），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v0.26.45](https://github.com/ximatai/codexone/releases/tag/v0.26.45)**（2026-11-18），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.45 将模型发现的客户端版本与旧 profile 解耦，支持发现 GPT-6.2，并可预览及确认更新已启用模型资料。数据面增加异常 HTTP 响应写入的连接级保护和有界诊断。见[发布说明](CHANGELOG.md)。
 
 v0.26.44 在用量与诊断中显示被拒请求的模型、推理档位和原因，补充私有日志字段，并改善上游 429 的账号冷却。已验证 v18 自动迁移。见[发布说明](CHANGELOG.md)。
 
