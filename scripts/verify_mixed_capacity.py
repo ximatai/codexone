@@ -38,6 +38,20 @@ def exact_body(size, nonce):
     return result
 
 
+def structured_body(size, nonce):
+    items = [{'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': nonce}]}]
+    for index in range(4096):
+        items.append({'type': 'function_call_output', 'call_id': f'call_{index}', 'output': 'x' * 8192})
+        items.append({'type': 'message', 'role': 'user',
+                      'content': [{'type': 'input_text', 'text': 'x' * 7680}]})
+    document = {'model': MODEL, 'input': items, 'instructions': '', 'stream': False}
+    encoded = json.dumps(document, separators=(',', ':')).encode()
+    assert len(encoded) <= size
+    result = encoded.replace(b'"instructions":""', b'"instructions":"' + b'x' * (size - len(encoded)) + b'"', 1)
+    assert len(result) == size
+    return result
+
+
 def image_body():
     # Pad a synthetic 1×1 GIF with comment sub-blocks. Keep the same wire size
     # and use the same immutable result body for both concurrent providers.
@@ -92,6 +106,8 @@ def worker(root, ports, idle_seconds):
             assert 0 < length <= 65*MIB
             document = json.loads(self.rfile.read(length))
             nonce = document.get('input', document.get('prompt'))
+            if isinstance(nonce, list):
+                nonce = nonce[0]['content'][0]['text']
             assert isinstance(nonce, str) and nonce.startswith('mixed-')
             digest = hashlib.sha256(nonce.encode()).digest()
             with guard:
@@ -226,7 +242,8 @@ def worker(root, ports, idle_seconds):
                 phase(f'round-{turn+1}-outputs')
                 release.clear()
                 held_name = f'mixed-{turn}-output-hold'
-                held = pool.submit(request, exact_body(64*MIB, held_name), keys[0])
+                build_body = structured_body if turn == 1 else exact_body
+                held = pool.submit(request, build_body(64*MIB, held_name), keys[0])
                 until(lambda: any(row[0] == held_name for row in calls))
                 output_release.clear()
                 generation_name = f'mixed-{turn}-generation'
