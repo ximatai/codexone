@@ -24,7 +24,7 @@
 
 参考[合成模板](../../deploy/pool.example.json)和[账号配置字段](account-credentials.md)。模型权限、价格和上限分别表达；未知字段拒绝。`modelProfilesFile` 指向已审核离线快照，格式见[模型 profile](model-profiles.md)。`clientFingerprint` 影响上游 Codex 标识，风险见[协议兼容](compatibility.md)。
 
-`dataConnections` 默认 128、范围 8—1024。执行总期限默认 600 秒（1—1800），首响应 30 秒（1—120），进度空闲 60 秒（1—300）；显式阶段值不能超过总期限。`imageConcurrency` 默认 2（1—8）。这些值不是可用吞吐或内存承诺，须结合实际负载验收。
+`dataConnections` 默认 128、范围 8—1024。`executionTimeoutSeconds` 总期限默认 600 秒（1—1800），`firstResponseTimeoutSeconds` 普通首响应 30 秒（1—120），`progressTimeoutSeconds` 进度空闲 60 秒（1—300）；显式阶段值不能超过总期限。原生 Images 的 `imageFirstResponseTimeoutSeconds` 独立设置首响应期限，默认 min(600, 总执行期限) 秒，显式范围为 1 至总执行期限；生成、编辑、流式与非流式共用，上传结束后起算，不继承普通首响应配置。总期限与进度空闲期限仍共用。`imageConcurrency` 默认 2（1—8）。这些值不是可用吞吐或内存承诺，须结合实际负载验收。
 
 `upstreamRequestCompression` 接受 `zstd`（默认）或 `off`；`upstreamZstdMinimumBytes` 是非负整数，默认 8,388,608，最终编码严格大于才启用。单身份配置同样支持；只用于订阅合约最终 HTTP POST /responses。关闭开关后重启回退明文，旧程序回退前删除新增字段；协议边界与一次 415 协商重发见 [P10](specs/protocol.md#p10重试超时与外部错误)。
 

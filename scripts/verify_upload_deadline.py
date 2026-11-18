@@ -132,6 +132,7 @@ def run(binary, root, transport, case):
         for key in ('principal', 'keyID', 'keySHA256'):
             document.pop(key)
         document['progressTimeoutSeconds'] = 4
+        document['imageFirstResponseTimeoutSeconds'] = FIRST
         config.write_text(json.dumps(document))
     config.chmod(0o600)
     process = None

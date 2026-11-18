@@ -40,6 +40,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
   public let upstreamTokenFile: String?
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
+  public let imageFirstResponseTimeoutSeconds: Int?
   public let firstResponseTimeoutSeconds: Int?
   public let progressTimeoutSeconds: Int?
   public let modelProfilesFile: String?
@@ -52,7 +53,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     case clientFingerprint, dataConnections, principal, keyID, keySHA256, imageConcurrency,
       imageGeneration, managedKeys, namespace,
       identity, models, upstreamBaseURL, upstreamTokenFile, reservedMicros, executionTimeoutSeconds,
-      firstResponseTimeoutSeconds, progressTimeoutSeconds, modelProfilesFile, upstreamTransport,
+      firstResponseTimeoutSeconds, imageFirstResponseTimeoutSeconds, progressTimeoutSeconds,
+      modelProfilesFile, upstreamTransport,
       upstreamContract, upstreamRequestCompression, upstreamZstdMinimumBytes
   }
   public init(from decoder: any Decoder) throws {
@@ -74,6 +76,8 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     upstreamTokenFile = try fields.decodeIfPresent(String.self, forKey: .upstreamTokenFile)
     reservedMicros = try fields.decode(Int64.self, forKey: .reservedMicros)
     executionTimeoutSeconds = try fields.decodeIfPresent(Int.self, forKey: .executionTimeoutSeconds)
+    imageFirstResponseTimeoutSeconds = try fields.decodeIfPresent(
+      Int.self, forKey: .imageFirstResponseTimeoutSeconds)
     firstResponseTimeoutSeconds = try fields.decodeIfPresent(
       Int.self, forKey: .firstResponseTimeoutSeconds)
     progressTimeoutSeconds = try fields.decodeIfPresent(Int.self, forKey: .progressTimeoutSeconds)
@@ -111,9 +115,10 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
     try validateUpstreamCompression(upstreamRequestCompression, upstreamZstdMinimumBytes)
     try clientFingerprint?.validate()
     guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
-    _ = try ExecutionBudget(
+    let budget = try ExecutionBudget(
       total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
       idle: progressTimeoutSeconds)
+    _ = try ExecutionBudget(imagesWith: budget, first: imageFirstResponseTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
     guard (1...8).contains(imageConcurrency ?? 2) else { throw ExecutionError.invalidCommand }
@@ -214,6 +219,7 @@ public struct SingleIdentityConfiguration: Sendable, Decodable {
           "reservation": .number(Decimal(reservedMicros)),
           "executionTimeoutSeconds": .number(Decimal(responses.budget.total)),
           "firstResponseTimeoutSeconds": .number(Decimal(responses.budget.first)),
+          "imageFirstResponseTimeoutSeconds": .number(Decimal(responses.imageBudget.first)),
           "progressTimeoutSeconds": .number(Decimal(responses.budget.idle)),
           "transport": .string(upstreamTransport ?? "http"),
           "requestContract": .string(responses.requestContract.rawValue),

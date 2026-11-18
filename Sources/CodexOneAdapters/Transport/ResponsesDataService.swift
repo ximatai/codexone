@@ -133,12 +133,13 @@ public struct ResponsesDataService: Service {
     var pool = HTTPClient.Configuration.ConnectionPool(
       idleTimeout: .seconds(10), concurrentHTTP1ConnectionsPerHostSoftLimit: 16)
     pool.retryConnectionEstablishment = true
+    let firstResponse = max(configuration.budget.first, configuration.imageBudget.first)
     var clientConfiguration = HTTPClient.Configuration(
       redirectConfiguration: .disallow,
       timeout: .init(
         connect: .seconds(10),
         read: .seconds(
-          Int64(max(300, max(configuration.budget.first, configuration.budget.idle)) + 5))),
+          Int64(max(300, max(firstResponse, configuration.budget.idle)) + 5))),
       connectionPool: pool, proxy: proxy?.clientProxy,
       decompression: .disabled)
     clientConfiguration.httpVersion = .http1Only

@@ -184,8 +184,9 @@ class Provider(BaseHTTPRequestHandler):
                 body = json.dumps(result).encode()
             if prompt == 'unknown-native-events':
                 event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
-                body = event * 12
+                body = event * 24
             if prompt == 'json-slow': time.sleep(.25)
+            if prompt == 'json-slow-headers': time.sleep(1.5)
             self.send_response(status)
             self.send_header('Content-Type', 'text/event-stream' if prompt == 'extended-sse' else ('text/html' if prompt == 'json-stream-html' else 'application/json; charset=utf-8')
                 if prompt.startswith('json-stream') else 'text/event-stream' if sse else 'application/json')
@@ -197,7 +198,7 @@ class Provider(BaseHTTPRequestHandler):
                 if prompt == 'unknown-native-events':
                     # Keep sending valid unknown events past first-response expiry.
                     event = b'data: {"type":"image_generation.synthetic_future","future":true}\n\n'
-                    for _ in range(12):
+                    for _ in range(24):
                         self.wfile.write(event); self.wfile.flush(); time.sleep(.2)
                 elif prompt in ('json-slow', 'json-stalled', 'json-truncated'):
                     split = len(body) // 2
@@ -787,13 +788,13 @@ def main():
                     # Reuse the same synthetic Keys after restart with a short deadline.
                     stop(process)
                     value = json.loads(config.read_text())
-                    value.update(executionTimeoutSeconds=5, firstResponseTimeoutSeconds=1, progressTimeoutSeconds=1)
+                    value.update(executionTimeoutSeconds=5, firstResponseTimeoutSeconds=1, imageFirstResponseTimeoutSeconds=3, progressTimeoutSeconds=1)
                     config.write_text(json.dumps(value))
                     process, ports = start(str(args.binary.resolve()), config, root, admin_token_file=admin)
                     port = ports['data']
                     before = upstream.calls
                     for prompt, expected, code in (
-                        ('json-slow', 200, None), ('json-stalled', 504, 'execution_progress_timeout'),
+                        ('json-slow-headers', 200, None), ('json-slow', 200, None), ('json-stalled', 504, 'execution_progress_timeout'),
                         ('json-truncated', 502, 'execution_indeterminate'),
                     ):
                         before = upstream.calls; intents = count_intents()
@@ -814,7 +815,7 @@ def main():
                     started = time.monotonic()
                     status, body, _ = request({'prompt':'unknown-native-events'})
                     assert status == 504 and json.loads(body)['error']['code'] == 'execution_first_response_timeout', (status,body[:200])
-                    assert time.monotonic() - started < 2
+                    assert 2 < time.monotonic() - started < 4
                     assert upstream.calls == before + 1 and ledger()[0] == 'unknown'
                     print('PASS: native Images byte/header/path parity, multipart, usage, SSE, provider failures, unknown/no replay and capacity via ' + transport)
                 finally:

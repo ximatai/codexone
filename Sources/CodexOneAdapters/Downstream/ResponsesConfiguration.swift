@@ -7,12 +7,16 @@ struct ResponsesConfiguration: Sendable {
   let executionTimeoutSeconds: Int?
   let upstreamTransport: String?
   var firstResponseTimeoutSeconds: Int? = nil
+  var imageFirstResponseTimeoutSeconds: Int? = nil
   var progressTimeoutSeconds: Int? = nil
   var budget: ExecutionBudget {
     // All entry configurations validate before assembly.
     try! ExecutionBudget(
       total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
       idle: progressTimeoutSeconds)
+  }
+  var imageBudget: ExecutionBudget {
+    try! ExecutionBudget(imagesWith: budget, first: imageFirstResponseTimeoutSeconds)
   }
   var budgetSummary: JSONValue {
     func value(_ effective: Int, _ configured: Int?) -> JSONValue {
@@ -24,6 +28,7 @@ struct ResponsesConfiguration: Sendable {
     return .object([
       "total": value(budget.total, executionTimeoutSeconds),
       "first_response": value(budget.first, firstResponseTimeoutSeconds),
+      "image_first_response": value(imageBudget.first, imageFirstResponseTimeoutSeconds),
       "progress_idle": value(budget.idle, progressTimeoutSeconds),
     ])
   }
@@ -40,6 +45,7 @@ extension SingleIdentityConfiguration {
       models: models, upstreamBaseURL: upstreamBaseURL,
       executionTimeoutSeconds: executionTimeoutSeconds, upstreamTransport: upstreamTransport,
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
+      imageFirstResponseTimeoutSeconds: imageFirstResponseTimeoutSeconds,
       progressTimeoutSeconds: progressTimeoutSeconds,
       requestContract: upstreamContract.flatMap(ResponseRequestContract.init(rawValue:))
         ?? (upstreamBaseURL.hasPrefix("https://") ? .codexSubscription : .responses),

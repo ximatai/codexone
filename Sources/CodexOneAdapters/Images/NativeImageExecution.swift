@@ -26,7 +26,7 @@ extension HTTPResponseExecution {
         requirements: try .init(route: .images, imageModel: request.model),
         serviceTier: request.serviceTier
       ) { context, authorization in
-        try await withProgressDeadline(budget: configuration.budget) { progress in
+        try await withProgressDeadline(budget: configuration.imageBudget) { progress in
           progress.noteUpload()
           let base = authorization?.baseURL ?? configuration.upstreamBaseURL
           guard var url = URLComponents(string: base) else { throw ExecutionError.invalidCommand }
