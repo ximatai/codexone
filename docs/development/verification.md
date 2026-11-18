@@ -30,7 +30,7 @@ python3 scripts/check_docs.py
 
 ## 大请求慢传验证
 
-`python3 scripts/verify_upload_deadline.py --binary .build/debug/codexone --three-mbps` 使用独立合成提供者，以约 3 Mbps 消费 64 MiB HTTP 请求，验证长上传不会提前耗尽首响应期限，且仅派发一次并完整结算。约需三分钟，按需执行，不加入日常快速测试。它不经过公网、真实账号或代理，不证明线上吞吐；Linux 768 MiB 容器容量另由发布演练覆盖。
+`python3 scripts/verify_upload_deadline.py --binary .build/debug/codexone --three-mbps` 使用独立合成提供者，以约 3 Mbps 消费 64 MiB HTTP 请求，验证长上传不会提前耗尽首响应期限，且仅派发一次并完整结算。约需三分钟，按需执行，不加入日常快速测试。它不经过公网、真实账号或代理，不证明线上吞吐；Linux 768 MiB 容器容量另由发布演练覆盖：三轮混合负载覆盖两条 32 MiB 或一条 64 MiB 占满共享正文预算、小请求继续处理、64 MiB 输入与并发生图输出、64 MiB 已派发请求取消、每轮 60 秒回收和管理入口可用性；测试刺激由独立 512 MiB 容器承担。
 
 ## 本地定向验证顺序
 
