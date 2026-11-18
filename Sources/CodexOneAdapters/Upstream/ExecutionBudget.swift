@@ -28,6 +28,15 @@ struct ExecutionBudget: Sendable {
     self.first = first ?? min(total, 30)
     self.idle = idle ?? min(total, 60)
   }
+  init(imagesWith budget: ExecutionBudget, first: Int?) throws {
+    let first = first ?? min(600, budget.total)
+    guard (1...budget.total).contains(first) else {
+      throw GatewayProtocolError(400, "invalid_execution_budget")
+    }
+    total = budget.total
+    self.first = first
+    idle = budget.idle
+  }
 }
 
 /// One bounded monitor per turn; control frames and SSE comments never call this owner.

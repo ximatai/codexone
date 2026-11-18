@@ -83,11 +83,13 @@ func observeExecutionFailure(_ error: any Error, context: ExecutionContext) {
   let preserveProviderFailure =
     providerFailure?.explicitProviderRejection == true || providerFailure?.upstreamStatus != nil
   let interrupted = context.wasForceStopped && !preserveProviderFailure
+  let observedAt = context.clock.unixSeconds
   try? context.observeOutcome(
     .init(
       failure: interrupted ? .indeterminate : classified,
-      atUnixSeconds: context.clock.unixSeconds,
-      cooldownSeconds: interrupted ? nil : providerFailure?.cooldownSeconds))
+      atUnixSeconds: observedAt,
+      cooldownSeconds: interrupted ? nil : providerFailure?.accountCooldown(observedAt: observedAt))
+  )
 }
 
 /// A failed terminal response can carry complete usage. Result and evidence are independent.

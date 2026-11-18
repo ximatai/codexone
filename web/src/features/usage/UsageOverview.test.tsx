@@ -1,5 +1,11 @@
 import { render } from "../../../tests/render";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
 import { UsageOverview, usageNavigationKey } from "./UsageOverview";
@@ -185,6 +191,34 @@ it("automatically queries the selected Key, shows principal and durations, and c
   expect(document.querySelector("[data-ui-overlay]")).toBeInTheDocument();
   view.unmount();
   expect(screen.queryByRole("dialog", { name: "请求详情" })).toBeNull();
+});
+
+it("shows the recorded model, rejected reasoning effort and validation reason", async () => {
+  setup();
+  const fixture = reportFixture();
+  const rejected = {
+    ...fixture.rows[0],
+    kind: "rejected",
+    model: "gpt-6-synthetic",
+    state: null,
+    outcome: "failed",
+    failure: "invalid_request",
+    rejectionReason: "reasoning_effort_not_allowed",
+    rejectionStage: "validation",
+    reasoningEffort: "xhigh",
+  };
+  vi.mocked(api.fetchUsage).mockResolvedValue(
+    api.parseUsage({ ...fixture, rows: [rejected] }),
+  );
+  render(
+    <UsageOverview selection={null} paused={false} onUnauthorized={vi.fn()} />,
+  );
+  const row = await screen.findByRole("row", { name: /gpt-6-synthetic/ });
+  expect(within(row).getByText("xhigh")).toBeVisible();
+  fireEvent.click(within(row).getByRole("button", { name: "查看详情" }));
+  const detail = await screen.findByRole("dialog", { name: "请求详情" });
+  expect(within(detail).getByText("xhigh")).toBeVisible();
+  expect(within(detail).getByText("推理档位未获允许")).toBeVisible();
 });
 
 it("keeps the completed-hour window through pagination across an hour and renews it on query", async () => {

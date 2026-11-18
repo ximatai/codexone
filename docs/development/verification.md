@@ -28,6 +28,10 @@ python3 scripts/check_docs.py
 
 线上验收按[长期测试 Key 运维规则](../operations/monitoring.md#线上验收)执行。需要创建、轮换或归档 Key 的测试在隔离环境中运行。
 
+## 大请求慢传验证
+
+`python3 scripts/verify_upload_deadline.py --binary .build/debug/codexone --three-mbps` 使用独立合成提供者，以约 3 Mbps 消费 64 MiB HTTP 请求，验证长上传不会提前耗尽首响应期限，且仅派发一次并完整结算。约需三分钟，按需执行，不加入日常快速测试。它不经过公网、真实账号或代理，不证明线上吞吐；Linux 768 MiB 容器容量另由发布演练覆盖：三轮混合负载覆盖两条 32 MiB 或一条 64 MiB 占满共享正文预算、小请求继续处理、每轮均有 64 MiB 结构化 JSON（消息与工具结果）与并发生图输出、64 MiB 已派发请求取消、每轮 60 秒回收和管理入口可用性；测试刺激由独立 512 MiB 容器承担。
+
 ## 本地定向验证顺序
 
 开始时按改动范围集中查阅实现、现有用例和部署约束。可以独立运行的检查合并发起。涉及 SQLite schema 时，同一轮定位迁移入口、快照兼容、部署清单和历史夹具。
@@ -81,7 +85,7 @@ GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Ker
 ```sh
 python3 scripts/measure_image_memory.py --image codexone:candidate \
   --memory 768m --cpuset 0-1 --output artifacts/memory-two-cpus.json \
-  --env MALLOC_ARENA_MAX=2 --env MALLOC_MMAP_THRESHOLD_=1048576 \
+  --env MALLOC_ARENA_MAX=1 --env MALLOC_MMAP_THRESHOLD_=131072 \
   --env MALLOC_TRIM_THRESHOLD_=16777216
 ```
 

@@ -93,7 +93,7 @@ class Provider(BaseHTTPRequestHandler):
                         assert part
                         length -= len(part)
                         decoder.feed(part, restored.extend)
-                        assert len(restored) <= 32 * 1024 * 1024
+                        assert len(restored) <= 64 * 1024 * 1024
                     assert self.rfile.read(2) == b'\r\n'
                 assert decoder.done
                 body = bytes(restored)
@@ -177,6 +177,7 @@ class Provider(BaseHTTPRequestHandler):
                         send(self.connection, struct.pack('!H', 1011 if mode.endswith('other') else 1009), opcode=8)
                     return
                 if self.server.mode == 'hold':
+                    self.server.started.set()
                     assert self.server.release.wait(45), 'Synthetic WS hold expired'
                 event = self.event(index)
                 lane = json.loads(body).get('stream_id')
@@ -476,6 +477,43 @@ def verify_lane_close(port, server, root, contract, count, repetitions=12):
     return count
 
 
+def verify_full_message_with_queued_lane(port, server, contract):
+    cap = 64 * 1024 * 1024
+    small = wire({**sized(1024, contract, native=True), 'type': 'response.create', 'stream_id': 'first'})
+    large = {**sized(cap - 128, contract, native=True), 'type': 'response.create', 'stream_id': 'second'}
+    large['instructions'] += 'x' * (cap - len(wire(large)))
+    payload = wire(large)
+    assert len(payload) == cap
+    before = len(server.calls)
+    server.mode = 'hold'
+    server.started.clear()
+    server.release.clear()
+    try:
+        with dial(port, headers=HEADERS, timeout=30) as peer:
+            send(peer, small, masked=True)
+            assert server.started.wait(5)
+            send(peer, small, masked=True)
+            for offset in range(0, cap, ONE_MIB):
+                send(peer, payload[offset:offset + ONE_MIB], masked=True, opcode=1 if offset == 0 else 0,
+                     fin=offset + ONE_MIB == cap, maximum_bytes=ONE_MIB)
+            opcode, body = receive(peer)
+            assert opcode == 1
+            event = json.loads(body)
+            assert event['status'] == 413 and event['stream_id'] == 'second', event
+            error(body)
+            assert len(server.calls) == before + 1
+            server.release.set()
+            for _ in range(2):
+                opcode, body = receive(peer)
+                assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+        assert len(server.calls) == before + 2
+    finally:
+        server.release.set()
+        server.mode = 'ok'
+    print('PASS: 64 MiB WS ingress returns lane-local 413 while queued and active turns survive', flush=True)
+    return 2
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -484,6 +522,7 @@ def main():
     modes.add_argument('--small-body-only', action='store_true', help='Verify ordinary HTTP/WS aggregate body reservations')
     modes.add_argument('--lane-close-only', action='store_true', help='Repeat the small two-lane connection-close regression only')
     modes.add_argument('--failures-only', action='store_true', help='Run below-threshold close/fallback matrix only')
+    modes.add_argument('--full-message-only', action='store_true')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     server.daemon_threads = True
@@ -502,13 +541,18 @@ def main():
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
                 configure(config, server.server_port, contract)
-                if not (args.small_body_only or args.smoke):
+                if not (args.small_body_only or args.smoke or args.full_message_only):
                     body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
                                            server, contract, args.failures_only)
                 server.mode = 'ok'
                 process, ports = start(str(args.binary.resolve()), config, root)
                 count = 0
                 try:
+                    if contract == 'responses' and (args.full_message_only or not (args.smoke or args.failures_only or args.small_body_only or args.lane_close_only)):
+                        count += verify_full_message_with_queued_lane(ports['data'], server, contract)
+                        ledger(root, count)
+                    if args.full_message_only:
+                        continue
                     if args.small_body_only:
                         count += verify_small_body_budget(ports['data'], server, contract)
                         ledger(root, count)
@@ -718,7 +762,7 @@ def main():
                     conn.putrequest('POST', '/v1/responses')
                     conn.putheader('Authorization', 'Bearer ' + TOKEN)
                     conn.putheader('Content-Type', 'application/json')
-                    conn.putheader('Content-Length', str(32 * 1024 * 1024 + 1))
+                    conn.putheader('Content-Length', str(64 * 1024 * 1024 + 1))
                     conn.endheaders()
                     response = conn.getresponse()
                     status, body = response.status, response.read()

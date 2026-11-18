@@ -38,6 +38,20 @@ def exact_body(size, nonce):
     return result
 
 
+def structured_body(size, nonce):
+    items = [{'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': nonce}]}]
+    for index in range(4096):
+        items.append({'type': 'function_call_output', 'call_id': f'call_{index}', 'output': 'x' * 8192})
+        items.append({'type': 'message', 'role': 'user',
+                      'content': [{'type': 'input_text', 'text': 'x' * 7680}]})
+    document = {'model': MODEL, 'input': items, 'instructions': '', 'stream': False}
+    encoded = json.dumps(document, separators=(',', ':')).encode()
+    assert len(encoded) <= size
+    result = encoded.replace(b'"instructions":""', b'"instructions":"' + b'x' * (size - len(encoded)) + b'"', 1)
+    assert len(result) == size
+    return result
+
+
 def image_body():
     # Pad a synthetic 1×1 GIF with comment sub-blocks. Keep the same wire size
     # and use the same immutable result body for both concurrent providers.
@@ -89,9 +103,11 @@ def worker(root, ports, idle_seconds):
         def do_POST(self):
             assert self.headers.get('Content-Encoding') is None
             length = int(self.headers['Content-Length'])
-            assert 0 < length <= 33*MIB
+            assert 0 < length <= 65*MIB
             document = json.loads(self.rfile.read(length))
             nonce = document.get('input', document.get('prompt'))
+            if isinstance(nonce, list):
+                nonce = nonce[0]['content'][0]['text']
             assert isinstance(nonce, str) and nonce.startswith('mixed-')
             digest = hashlib.sha256(nonce.encode()).digest()
             with guard:
@@ -207,9 +223,11 @@ def worker(root, ports, idle_seconds):
                 phase(f'round-{turn+1}-budget')
                 release.clear()
                 names = [f'mixed-{turn}-hold-{i}' for i in range(2)]
-                pending = [pool.submit(request, exact_body(32*MIB, name), keys[i]) for i, name in enumerate(names)]
+                sizes = (32*MIB, 32*MIB) if turn == 0 else (64*MIB, 1024)
+                pending = [pool.submit(request, exact_body(size, name), keys[i])
+                           for i, (size, name) in enumerate(zip(sizes, names))]
                 until(lambda: all(any(row[0] == name for row in calls) for name in names))
-                # Empty lease must wait while both 32 MiB owners are held.
+                # Fill the same shared pool with two 32 MiB owners, then one 64 MiB owner.
                 waiting_name = f'mixed-{turn}-wait'
                 waiter = pool.submit(request, exact_body(9*MIB, waiting_name), keys[2])
                 small = request(exact_body(8*MIB-1024, f'mixed-{turn}-small'), keys[2])
@@ -224,7 +242,7 @@ def worker(root, ports, idle_seconds):
                 phase(f'round-{turn+1}-outputs')
                 release.clear()
                 held_name = f'mixed-{turn}-output-hold'
-                held = pool.submit(request, exact_body(32*MIB, held_name), keys[0])
+                held = pool.submit(request, structured_body(64*MIB, held_name), keys[0])
                 until(lambda: any(row[0] == held_name for row in calls))
                 output_release.clear()
                 generation_name = f'mixed-{turn}-generation'
@@ -236,7 +254,7 @@ def worker(root, ports, idle_seconds):
                     'images':[{'image_url':'data:image/png;base64,'+base64.b64encode(capacity.png_payload()).decode()}]}).encode(),
                     keys[3], '/v1/images/edits', False, True)
                 # Both providers sent the first chunk and retain their remaining output.
-                # Check unrelated work while two image permits and the 32 MiB input are held.
+                # Check unrelated work while two image permits and the 64 MiB input are held.
                 until(lambda: generation_name in output_started and edit_name in output_started)
                 assert not generation.done() and not editing.done()
                 for path in ('/health/live', '/api/keys', '/api/runtime/storage'):
@@ -248,18 +266,20 @@ def worker(root, ports, idle_seconds):
                 edit = editing.result(timeout=40)
                 assert generated['status'] == 200 and edit['status'] == 200 and edit['cancelled']
                 results.extend([generated, edit])
+                release.set()
+                assert held.result(timeout=40)['status'] == 200
+                release.clear()
                 # Disconnect after confirmed dispatch, before provider result. Its unknown
                 # responsibility must survive local memory/socket reclamation.
                 cancelled_name = f'mixed-{turn}-cancel-hold'
                 cancelled = http.client.HTTPConnection('127.0.0.1', ports['data'], timeout=20)
                 try:
-                    cancelled.request('POST', '/v1/responses', exact_body(32*MIB, cancelled_name),
+                    cancelled.request('POST', '/v1/responses', exact_body(64*MIB, cancelled_name),
                         {'Authorization':'Bearer '+keys[2], 'Content-Type':'application/json'})
                     until(lambda: any(row[0] == cancelled_name for row in calls))
                 finally: cancelled.close()
                 time.sleep(.3)
                 release.set()
-                assert held.result(timeout=40)['status'] == 200
                 assert request(exact_body(32*MIB, f'mixed-{turn}-recovered'), keys[0])['status'] == 200
                 phase(f'round-{turn+1}-recovery')
                 time.sleep(idle_seconds)
@@ -324,7 +344,7 @@ def recovery_medians(series):
     for turn in range(3):
         rows = [row for row in series if row['phase'] == f'round-{turn+1}-recovery']
         assert len(rows) >= 25, 'Missing continuous 60-second recovery samples'
-        # Last ten samples are about twenty seconds; first round is the warmed baseline.
+        # Last ten samples are about twenty seconds; the first round warms the same structured input used in every round.
         medians.append(statistics.median(row['rssBytes'] for row in rows[-10:]))
     assert all(value <= medians[0]+32*MIB for value in medians[1:]), 'Recovery RSS platform grew beyond 32 MiB'
     return medians

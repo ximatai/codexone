@@ -23,7 +23,10 @@ import { tokenTotal, type DailyBucket } from "./round2-api";
 import { Link } from "react-router";
 import { businessDate } from "../../shared/business-day";
 import { failures } from "../../shared/presentation";
-import { compactCount, compactOverviewTokens } from "./overview-format";
+import {
+  compactCount,
+  compactOverviewTokens,
+} from "../../shared/compact-count";
 import styles from "./overview.module.css";
 import type { HourlyOutputRate } from "./useOverviewLive";
 const outputTrendHeight = 108;

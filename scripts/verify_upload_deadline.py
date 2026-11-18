@@ -50,7 +50,9 @@ class Provider(BaseHTTPRequestHandler):
             # Pace the prefix beyond FIRST, then drain the buffered tail promptly.
             # This measures transport completion without treating remote consumption
             # of several MiB of macOS socket buffers as an upload acknowledgement.
-            if self.server.case in ('slow', 'slow-silent', 'trickle') and len(body) < length - 6 * 1024 * 1024:
+            if self.server.case == 'three-mbps':
+                time.sleep(len(part) * 8 / 3_000_000)
+            elif self.server.case in ('slow', 'slow-silent', 'trickle') and len(body) < length - 6 * 1024 * 1024:
                 time.sleep(.05 if self.server.case == 'trickle' else .01 if self.server.transport in ('http', 'images') else .035)
         self.server.read_at = time.monotonic()
         self.server.body = apply_mask(body, mask) if mask else bytes(body)
@@ -119,19 +121,21 @@ def run(binary, root, transport, case):
     server.started, server.release, server.read_done = threading.Event(), threading.Event(), threading.Event()
     worker = threading.Thread(target=server.serve_forever)
     worker.start()
+    total, first = (240, 30) if case == 'three-mbps' else (TOTAL, FIRST)
     config = root / 'identity.json'
     config.write_text(json.dumps(dict(principal='synthetic-upload', keyID='synthetic-key',
         namespace='synthetic-upload', identity='synthetic-account',
         keySHA256=hashlib.sha256(TOKEN.encode()).hexdigest(),
         models=[dict(id='synthetic-order', inputMicrosPerMillion=0, outputMicrosPerMillion=0)],
         reservedMicros=1, upstreamBaseURL=f'http://127.0.0.1:{server.server_port}/v1',
-        upstreamTransport='http' if transport == 'images' else transport, executionTimeoutSeconds=TOTAL, firstResponseTimeoutSeconds=FIRST,
+        upstreamTransport='http' if transport == 'images' else transport, executionTimeoutSeconds=total, firstResponseTimeoutSeconds=first,
         **(dict(managedKeys=True, imageGeneration=dict(defaultModel='synthetic-image', models=[dict(id='synthetic-image', inputMicrosPerMillion=0, outputMicrosPerMillion=0)])) if transport == 'images' else {}))))
     if transport == 'images':
         document = json.loads(config.read_text())
         for key in ('principal', 'keyID', 'keySHA256'):
             document.pop(key)
         document['progressTimeoutSeconds'] = 4
+        document['imageFirstResponseTimeoutSeconds'] = FIRST
         config.write_text(json.dumps(document))
     config.chmod(0o600)
     process = None
@@ -149,8 +153,11 @@ def run(binary, root, transport, case):
         request = dict(model='synthetic-order', input='synthetic-upload-' + 'x' * ((28 if transport == 'http' else 10) * 1024 * 1024), stream=False)
         if transport == 'images':
             request = dict(model='synthetic-image', future='x' * (28 * 1024 * 1024), stream=False)
+        if case == 'three-mbps':
+            request['input'] = 'x' * (64 * 1024 * 1024 - len(wire({**request, 'input': ''})))
         body = wire(request)
         peer = socket.create_connection(('127.0.0.1', ports['data']), timeout=20)
+        if case == 'three-mbps': peer.settimeout(total + 10)
         begin = time.monotonic()
         path = '/v1/images/edits' if transport == 'images' else '/v1/responses'
         peer.sendall((f'POST {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {client_token}\r\n'
@@ -166,7 +173,11 @@ def run(binary, root, transport, case):
             response.begin()
             result = response.read()
             end = time.monotonic()
-            if case == 'slow':
+            if case == 'three-mbps':
+                assert response.status == 200 and json.loads(result)['status'] == 'completed', (response.status, result[:200])
+                assert len(body) == 64 * 1024 * 1024
+                assert 175 <= server.read_at - server.started_at < total
+            elif case == 'slow':
                 assert response.status == 200 and (json.loads(result).get('data') if transport == 'images' else json.loads(result)['status'] == 'completed'), (response.status, result[:200])
                 assert server.read_at - server.started_at > FIRST, 'Upload did not cross first deadline'
             elif case == 'disconnect':
@@ -194,7 +205,7 @@ def run(binary, root, transport, case):
             time.sleep(.02)
         assert len(records) == 1 and server.calls == 1, (records, server.calls)
         state, outcome, usage = records[0]
-        if case == 'slow':
+        if case in ('slow', 'three-mbps'):
             assert state == 'settled' and outcome['kind'] == 'succeeded' and usage['completeness'] == 'complete', records
         else:
             expected = 'client_cancelled' if case == 'cancel' else 'indeterminate' if case == 'disconnect' else 'deadline_exceeded'
@@ -212,7 +223,7 @@ def run(binary, root, transport, case):
         logs = process.stdout.read()
         uploads = [line for line in logs.splitlines() if b'Upstream request upload' in line]
         assert len(uploads) == 1, uploads
-        size_bucket = b'size_bucket=24_to_32_mib' if transport in ('http', 'images') else b'size_bucket=at_most_16_mib'
+        size_bucket = b'size_bucket=over_32_mib' if case == 'three-mbps' else b'size_bucket=24_to_32_mib' if transport in ('http', 'images') else b'size_bucket=at_most_16_mib'
         assert size_bucket in uploads[0] and b'upload_duration_bucket=' in uploads[0], uploads
         expected_result = b'result=interrupted' if case in ('stalled', 'cancel', 'disconnect', 'trickle') else b'result=sent'
         assert expected_result in uploads[0], uploads
@@ -237,6 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--transport', choices=['http', 'websocket', 'images'])
+    parser.add_argument('--three-mbps', action='store_true', help='One 64 MiB HTTP upload at approximately 3 Mbps; takes about three minutes')
     parser.add_argument('--smoke', action='store_true', help='Run representative upload deadlines and cancellation')
     args = parser.parse_args()
     smoke_cases = {
@@ -245,8 +257,10 @@ def main():
         'images': ('stalled', 'trickle'),
     }
     with tempfile.TemporaryDirectory(prefix='codexone-upload-') as temporary:
-        for transport in ([args.transport] if args.transport else ('http', 'websocket', 'images')):
-            if args.smoke:
+        for transport in (['http'] if args.three_mbps else [args.transport] if args.transport else ('http', 'websocket', 'images')):
+            if args.three_mbps:
+                cases = ('three-mbps',)
+            elif args.smoke:
                 cases = smoke_cases[transport]
             else:
                 cases = ('slow', 'silent', 'slow-silent', 'stalled', 'cancel', 'disconnect')

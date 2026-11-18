@@ -176,6 +176,11 @@ public enum RejectionReason: String, Sendable, CaseIterable {
   case invalidTurnState = "invalid_turn_state"
   case conflictingTurnState = "conflicting_turn_state"
   case invalidClientMetadata = "invalid_client_metadata"
+  case modelNotAllowed = "model_not_allowed"
+  case reasoningEffortNotAllowed = "reasoning_effort_not_allowed"
+  case reasoningEffortMissing = "reasoning_effort_missing"
+  case reasoningEffortInvalid = "reasoning_effort_invalid"
+  case reasoningEffortLegacyField = "reasoning_effort_legacy_field"
   case accountCooldown = "account_cooldown"
   case accountDispatchUnavailable = "account_dispatch_unavailable"
   case accountRefreshRequired = "account_refresh_required"
@@ -342,6 +347,16 @@ public struct UsageKeyOption: Sendable {
   }
 }
 public struct KeyUsageSummary: Sendable {
+  public struct TokenBreakdown: Sendable {
+    public let input: Int64?
+    public let output: Int64?
+
+    public init(input: Int64?, output: Int64?) {
+      self.input = input
+      self.output = output
+    }
+  }
+
   public let images: Int64?
   public let inputTokens: Int64?
   public let cachedTokens: Int64?
@@ -349,6 +364,7 @@ public struct KeyUsageSummary: Sendable {
   public let enabled: Bool
   public let tokens: Int64
   public let tokenUsageIncomplete: Bool
+  public let tokenBreakdown: TokenBreakdown?
   public let key: UsageKeyOption
   public let admitted: Int64
   public let inFlight: Int64
@@ -366,7 +382,8 @@ public struct KeyUsageSummary: Sendable {
     succeeded: Int64, cancelled: Int64, inFlight: Int64, enabled: Bool = true, tokens: Int64 = 0,
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
     cacheUsageIncomplete: Bool = true, images: Int64? = nil,
-    firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil
+    firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil,
+    tokenBreakdown: TokenBreakdown? = nil
   ) {
     self.images = images
     self.inputTokens = inputTokens
@@ -375,6 +392,7 @@ public struct KeyUsageSummary: Sendable {
     self.enabled = enabled
     self.tokens = tokens
     self.tokenUsageIncomplete = tokenUsageIncomplete
+    self.tokenBreakdown = tokenBreakdown
     self.key = key
     self.admitted = admitted
     self.inFlight = inFlight
@@ -405,16 +423,19 @@ public protocol ExecutionDiagnosticsStore: Sendable {
   func recordRejection(
     requestID: String, keyID: String, model: String?, mode: ExecutionMode,
     failure: ExecutionFailure,
-    reason: RejectionReason?
+    reason: RejectionReason?, reasoningEffort: String?
   ) async throws
 }
 
 extension ExecutionDiagnosticsStore {
   public func recordRejection(
-    requestID: String, keyID: String, model: String?, mode: ExecutionMode, failure: ExecutionFailure
+    requestID: String, keyID: String, model: String?, mode: ExecutionMode,
+    failure: ExecutionFailure,
+    reason: RejectionReason? = nil
   ) async throws {
     try await recordRejection(
-      requestID: requestID, keyID: keyID, model: model, mode: mode, failure: failure, reason: nil)
+      requestID: requestID, keyID: keyID, model: model, mode: mode, failure: failure,
+      reason: reason, reasoningEffort: nil)
   }
 }
 

@@ -113,3 +113,39 @@ import Testing
   #expect(try websocket.policy(key: key).policyVersion != http.policy(key: key).policyVersion)
   #expect(try websocket.policy(key: key).pricingVersion == http.policy(key: key).pricingVersion)
 }
+
+@Test func imageFirstResponseConfigurationReachesBothExecutionSources() throws {
+  let base: [String: Any] = [
+    "models": [["id": "synthetic-text", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0]],
+    "reservedMicros": 1, "executionTimeoutSeconds": 1800, "firstResponseTimeoutSeconds": 120,
+  ]
+  for configured in [nil, 900, 0, 1801] as [Int?] {
+    var pool = base
+    pool["imageFirstResponseTimeoutSeconds"] = configured
+    var single = pool
+    single["namespace"] = "synthetic"
+    single["identity"] = "synthetic"
+    single["managedKeys"] = true
+    single["upstreamBaseURL"] = "http://127.0.0.1:12345/v1"
+    let identity = try JSONDecoder().decode(
+      SingleIdentityConfiguration.self, from: JSONSerialization.data(withJSONObject: single))
+    if configured == 0 || configured == 1801 {
+      #expect(throws: (any Error).self) { try identity.validate() }
+      #expect(throws: (any Error).self) {
+        try JSONDecoder().decode(
+          AccountPoolConfiguration.self, from: JSONSerialization.data(withJSONObject: pool))
+      }
+    } else {
+      let accountPool = try JSONDecoder().decode(
+        AccountPoolConfiguration.self, from: JSONSerialization.data(withJSONObject: pool))
+      try identity.validate()
+      for responses in [accountPool.responses, identity.responses] {
+        #expect(responses.imageBudget.first == (configured ?? 600))
+        #expect(responses.budget.first == 120)
+        #expect(
+          responses.budgetSummary["image_first_response"]?["source"]?.string
+            == (configured == nil ? "default" : "configuration"))
+      }
+    }
+  }
+}

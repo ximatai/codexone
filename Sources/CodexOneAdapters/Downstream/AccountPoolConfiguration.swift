@@ -11,6 +11,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
   var accountForModel: [String: String] = [:]
   public let reservedMicros: Int64
   public let executionTimeoutSeconds: Int?
+  public let imageFirstResponseTimeoutSeconds: Int?
   public let firstResponseTimeoutSeconds: Int?
   public let progressTimeoutSeconds: Int?
   public let modelProfilesFile: String?
@@ -31,6 +32,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
           "upstreamRequestCompression", "upstreamZstdMinimumBytes", "models", "reservedMicros",
           "executionTimeoutSeconds", "upstreamTransport",
           "imageGeneration", "firstResponseTimeoutSeconds", "progressTimeoutSeconds",
+          "imageFirstResponseTimeoutSeconds",
           "modelProfilesFile", "imageConcurrency", "clientFingerprint", "dataConnections",
         ].contains(
           $0.stringValue)
@@ -49,6 +51,8 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     reservedMicros = try values.decode(Int64.self, forKey: Field(stringValue: "reservedMicros")!)
     executionTimeoutSeconds = try values.decodeIfPresent(
       Int.self, forKey: Field(stringValue: "executionTimeoutSeconds")!)
+    imageFirstResponseTimeoutSeconds = try values.decodeIfPresent(
+      Int.self, forKey: Field(stringValue: "imageFirstResponseTimeoutSeconds")!)
     firstResponseTimeoutSeconds = try values.decodeIfPresent(
       Int.self, forKey: Field(stringValue: "firstResponseTimeoutSeconds")!)
     progressTimeoutSeconds = try values.decodeIfPresent(
@@ -82,9 +86,10 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
     try validateUpstreamCompression(upstreamRequestCompression, upstreamZstdMinimumBytes)
     try clientFingerprint?.validate()
     guard (8...1024).contains(dataConnections ?? 128) else { throw ExecutionError.invalidCommand }
-    _ = try ExecutionBudget(
+    let budget = try ExecutionBudget(
       total: executionTimeoutSeconds, first: firstResponseTimeoutSeconds,
       idle: progressTimeoutSeconds)
+    _ = try ExecutionBudget(imagesWith: budget, first: imageFirstResponseTimeoutSeconds)
     try validateResponseModels(models)
     try imageGeneration?.validate(hosts: models)
     guard (1...8).contains(imageConcurrency ?? 2) else { throw ExecutionError.invalidCommand }
@@ -98,6 +103,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
       executionTimeoutSeconds: executionTimeoutSeconds,
       upstreamTransport: upstreamTransport ?? "http",
       firstResponseTimeoutSeconds: firstResponseTimeoutSeconds,
+      imageFirstResponseTimeoutSeconds: imageFirstResponseTimeoutSeconds,
       progressTimeoutSeconds: progressTimeoutSeconds, requestContract: .codexSubscription,
       upstreamRequestCompression: upstreamRequestCompression ?? "zstd",
       upstreamZstdMinimumBytes: upstreamZstdMinimumBytes ?? 8_388_608,
@@ -142,6 +148,7 @@ public struct AccountPoolConfiguration: Sendable, Decodable {
             "transport": .string(upstreamTransport ?? "http"),
             "timeout": .number(Decimal(responses.budget.total)),
             "firstResponseTimeout": .number(Decimal(responses.budget.first)),
+            "imageFirstResponseTimeout": .number(Decimal(responses.imageBudget.first)),
             "progressTimeout": .number(Decimal(responses.budget.idle)),
           ])), as: UTF8.self))
     return try .init(

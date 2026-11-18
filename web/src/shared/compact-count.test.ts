@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { compactCount, compactKeyTokens } from "./overview-format";
+import { compactCount, compactKeyTokens } from "./compact-count";
 it("formats integer magnitudes without rounding across unit boundaries or losing exact input", () => {
   expect(compactCount(0)).toBe("0");
   expect(compactCount(9999)).toBe("9,999");

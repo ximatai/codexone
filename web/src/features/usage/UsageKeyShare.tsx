@@ -1,5 +1,6 @@
 import { DonutChart } from "@mantine/charts";
-import { Box, Text } from "@mantine/core";
+import { Box, Paper, Text } from "@mantine/core";
+import { compactKeyTokens } from "../../shared/compact-count";
 import { PrivateName } from "../../shared/privacy-mask";
 import type { UsageKeyTokens } from "./api";
 import { UsageChartCard } from "./UsageChartCard";
@@ -19,6 +20,10 @@ const percent = new Intl.NumberFormat("zh-CN", {
   style: "percent",
   maximumFractionDigits: 1,
 });
+function shareLabel(ratio: number | null) {
+  if (ratio === null) return "—";
+  return ratio > 0 && ratio < 0.001 ? "<0.1%" : percent.format(ratio);
+}
 
 export function UsageKeyShare({
   usage,
@@ -44,9 +49,17 @@ export function UsageKeyShare({
   });
   const total = entries.reduce((sum, row) => sum + (row.tokens ?? 0n), 0n);
   const rows = entries.map((row, index) => ({
-    ...row,
+    keyID: row.keyID,
     color:
       row.tokens && row.tokens > 0n ? colors[index % colors.length] : "gray.5",
+    tokenLabel:
+      row.tokens == null
+        ? "未记录"
+        : `${row.incomplete ? "≥ " : ""}${compactKeyTokens(row.tokens)}`,
+    exactTokens:
+      row.tokens == null
+        ? undefined
+        : `${row.incomplete ? "≥ " : ""}${row.tokens.toLocaleString("zh-CN")} Token`,
     ratio:
       total > 0n && row.tokens != null
         ? Number(row.tokens) / Number(total)
@@ -71,7 +84,30 @@ export function UsageKeyShare({
                 data={wedges}
                 size={144}
                 thickness={32}
-                withTooltip={false}
+                tooltipProps={{
+                  content: ({ active, payload }) => {
+                    const index = payload?.[0]?.payload?.name;
+                    const row =
+                      typeof index === "string"
+                        ? rows[Number(index)]
+                        : undefined;
+                    if (!active || !row) return null;
+                    return (
+                      <Paper withBorder p="xs" shadow="sm" role="tooltip">
+                        <Text
+                          size="xs"
+                          className={styles.keyShareName}
+                          maw={200}
+                        >
+                          <PrivateName>{labels.get(row.keyID)}</PrivateName>
+                        </Text>
+                        <Text size="sm" fw={600}>
+                          {row.tokenLabel} Token · {shareLabel(row.ratio)}
+                        </Text>
+                      </Paper>
+                    );
+                  },
+                }}
                 accessibilityLayer={false}
                 pieProps={{ isAnimationActive: false }}
               />
@@ -93,17 +129,11 @@ export function UsageKeyShare({
                 <span className={styles.keyShareName}>
                   <PrivateName>{labels.get(row.keyID)}</PrivateName>
                 </span>
-                <span className={styles.keyShareTokens}>
-                  {row.tokens == null
-                    ? "未记录"
-                    : `${row.incomplete ? "≥ " : ""}${row.tokens.toLocaleString("zh-CN")}`}
+                <span className={styles.keyShareTokens} title={row.exactTokens}>
+                  {row.tokenLabel}
                 </span>
                 <strong className={styles.keySharePercent}>
-                  {row.ratio === null
-                    ? "—"
-                    : row.ratio > 0 && row.ratio < 0.001
-                      ? "<0.1%"
-                      : percent.format(row.ratio)}
+                  {shareLabel(row.ratio)}
                 </strong>
               </li>
             ))}

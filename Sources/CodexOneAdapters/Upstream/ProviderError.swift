@@ -176,3 +176,15 @@ enum ProviderError {
     return min(3600, max(1, raw))
   }
 }
+
+extension GatewayProtocolError {
+  /// The absolute reset is a fallback for account health only, independent of client retry advice.
+  func accountCooldown(observedAt: Int64) -> Int64? {
+    if let cooldownSeconds { return cooldownSeconds }
+    guard code == "upstream_rate_limited", let reset = providerError?["resets_at"]?.integer,
+      reset > observedAt
+    else { return nil }
+    let (remaining, overflow) = reset.subtractingReportingOverflow(observedAt)
+    return overflow ? 3600 : min(3600, remaining)
+  }
+}

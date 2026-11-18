@@ -109,6 +109,9 @@ export const keySummary = z
             keyID: z.string(),
             enabled: z.boolean().optional(),
             tokens: metric.optional(),
+            tokenBreakdown: z
+              .object({ input: metric, output: metric })
+              .nullish(),
             images: metric.optional(),
             tokenUsageIncomplete: z.boolean().optional(),
             inputTokens: metric.optional(),

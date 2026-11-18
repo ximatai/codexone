@@ -71,6 +71,9 @@ final class WebSocketInbox: Sendable {
       let result = try state.withLock {
         value -> (Bool, CheckedContinuation<WebSocketBody, any Error>?) in
         if let error = value.error { throw error }
+        guard data.count <= value.capacity else {
+          throw GatewayProtocolError(413, "websocket_message_too_large")
+        }
         if let waiter = value.waiters.removeValue(forKey: lane) { return (true, waiter) }
         guard value.hasSpace(lane: lane, bytes: data.count) else { return (false, nil) }
         guard value.queues[lane] != nil || value.queues.count < 33 else {

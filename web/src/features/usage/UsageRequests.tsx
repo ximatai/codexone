@@ -10,7 +10,7 @@ import {
   timeTitle,
 } from "../../shared/presentation";
 import type { UsageReport } from "./api";
-import { duration, rejectionReason } from "./format";
+import { duration, rejectedReasoningEffort, rejectionReason } from "./format";
 import styles from "./usage.module.css";
 export function UsageRequests({
   rows,
@@ -65,16 +65,18 @@ export function UsageRequests({
             id: "reasoning",
             title: "推理",
             render: (row) =>
-              !row.requestMetadataRecorded
-                ? "—"
-                : (row.reasoningEffort ?? (
-                    <Text component="span" size="sm" c="dimmed">
-                      默认
-                      {row.model && defaultReasoningEfforts[row.model]
-                        ? ` · ${defaultReasoningEfforts[row.model]}`
-                        : ""}
-                    </Text>
-                  )),
+              row.kind === "rejected"
+                ? rejectedReasoningEffort(row.reasoningEffort)
+                : !row.requestMetadataRecorded
+                  ? "—"
+                  : (row.reasoningEffort ?? (
+                      <Text component="span" size="sm" c="dimmed">
+                        默认
+                        {row.model && defaultReasoningEfforts[row.model]
+                          ? ` · ${defaultReasoningEfforts[row.model]}`
+                          : ""}
+                      </Text>
+                    )),
           },
           {
             id: "outcome",

@@ -35,11 +35,9 @@ extension SQLiteUsageReader {
       add(diagnostic ? "model=?" : "json_extract(admission_json,'$.model')=?", .text(model))
     }
     if let effort = query.reasoningEffort {
-      if diagnostic {
-        result.terms.append("0")
-      } else {
-        add("json_extract(admission_json,'$.reasoningEffort')=?", .text(effort))
-      }
+      add(
+        diagnostic ? "reasoning_effort=?" : "json_extract(admission_json,'$.reasoningEffort')=?",
+        .text(effort))
     }
     if let mode = query.mode {
       add(
@@ -176,7 +174,9 @@ extension SQLiteUsageReader {
         CASE WHEN json_extract(usage_json,'$.nativeImages')=1 THEN NULL ELSE json_extract(usage_json,'$.cachedTokens') END cached_tokens,json_extract(usage_json,'$.images') images,
         CASE WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(usage_json,'$.nativeImages')=1 AND json_extract(usage_json,'$.imageInputTokens') IS NULL AND json_extract(usage_json,'$.imageOutputTokens') IS NULL AND json_extract(usage_json,'$.svgInputTokens') IS NULL AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(usage_json,'$.estimatedMicros') END estimated_micros, json_extract(usage_json,'$.imageInputTokens') image_input_tokens,json_extract(usage_json,'$.imageOutputTokens') image_output_tokens,json_extract(usage_json,'$.imageInputTextTokens') image_input_text_tokens,json_extract(usage_json,'$.imageInputImageTokens') image_input_image_tokens,json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),json_extract(usage_json,'$.svgReasoningTokens'),CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END,json_extract(outcome_json,'$.firstEventMilliseconds'),json_extract(outcome_json,'$.totalMilliseconds'),json_extract(admission_json,'$.reasoningEffort'),json_extract(admission_json,'$.serviceTier'),json_extract(outcome_json,'$.actualServiceTier'),COALESCE(json_extract(admission_json,'$.requestMetadataRecorded'),0),json_extract(usage_json,'$.svgAuthorModel'),json_extract(usage_json,'$.usageMissingReasons'),json_extract(outcome_json,'$.upstreamIncompleteReason'),NULL FROM attempts WHERE \(attempts.sql)
       UNION ALL
-      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,0,NULL,NULL,NULL,reason
+      SELECT 'rejected','r:'||request_id,request_id,at_epoch,key_id,model,mode,NULL,request_id,NULL,'failed',failure,NULL,
+        NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+        reasoning_effort,NULL,NULL,0,NULL,NULL,NULL,reason
         FROM request_diagnostics WHERE \(rejected.sql)) history
       """
     var values = attempts.values + rejected.values

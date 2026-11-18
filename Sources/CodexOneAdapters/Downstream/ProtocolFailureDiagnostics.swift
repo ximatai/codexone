@@ -23,12 +23,61 @@ enum UpstreamFailureStage: String, Sendable {
   case httpResponse = "http_response"
 }
 
+/// A narrow projection of a parsed request for private authorization diagnostics.
+struct RequestSelectionDiagnostic: Sendable {
+  let catalogModel: String?
+  let logModel: String?
+  let effort: String
+  let legacyEffort: String?
+
+  init(_ request: ResponseRequest, configuredModel: Bool) {
+    let rawModel = request.model
+    let safeIdentifier =
+      (1...128).contains(rawModel.utf8.count)
+      && rawModel.utf8.allSatisfy {
+        (97...122).contains($0) || (65...90).contains($0) || (48...57).contains($0)
+          || [45, 46, 95].contains($0)
+      }
+    catalogModel = safeIdentifier && configuredModel ? rawModel : nil
+    let publicIdentifier =
+      safeIdentifier && rawModel.utf8.count <= 64
+      && rawModel.range(
+        of: #"^(?:(?:gpt|codex|chatgpt)-[a-z0-9]{1,16}|o[1-9])(?:[.-][a-z0-9]{1,16})*$"#,
+        options: .regularExpression) != nil
+    logModel = catalogModel ?? (publicIdentifier ? rawModel : nil)
+    let reasoning = request.document["reasoning"]
+    if let reasoning, reasoning != .null, reasoning.object == nil {
+      effort = "invalid"
+    } else {
+      effort = reasoning?["effort"].map(Self.effortLabel) ?? "missing"
+    }
+    legacyEffort = request.document["reasoning_effort"].map(Self.effortLabel)
+  }
+
+  var reasoningRejection: RejectionReason {
+    if legacyEffort != nil { return .reasoningEffortLegacyField }
+    switch effort {
+    case "missing": return .reasoningEffortMissing
+    case "invalid": return .reasoningEffortInvalid
+    default: return .reasoningEffortNotAllowed
+    }
+  }
+
+  private static func effortLabel(_ value: JSONValue) -> String {
+    guard let effort = value.string, KeyPolicy.knownReasoningEfforts.contains(effort) else {
+      return "invalid"
+    }
+    return effort
+  }
+}
+
 /// Optional, bounded diagnostics. No client document or arbitrary error description enters logs.
 enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
   private static let upstreamFirstEventGate = Mutex(ProtocolFailureLogGate())
   private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
+  private static let httpResponseWriteGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
   private static let codes: Set<String> = [
     "request_body_timeout", "invalid_api_key", "invalid_json", "invalid_request",
@@ -84,6 +133,13 @@ enum ProtocolFailureDiagnostics {
       value["provider_code"] = .string(code)
     }
     if let id = UUID(uuidString: requestID) { value["request_id"] = .string(id.uuidString) }
+    if let selection = error.requestSelection {
+      value["requested_model"] = .string(selection.logModel ?? "unrecognized")
+      value["requested_reasoning_effort"] = .string(selection.effort)
+      if let legacy = selection.legacyEffort {
+        value["legacy_reasoning_effort"] = .string(legacy)
+      }
+    }
     return value
   }
 
@@ -96,6 +152,40 @@ enum ProtocolFailureDiagnostics {
 
   static func recordOversizedFrame(bytes: Int, path: String, closeCode: UInt16? = nil) {
     recordBodyLimit(bytes: bytes, path: path, closeCode: closeCode)
+  }
+
+  static func recordHTTPResponseWriteViolation(part: String, lastResponseID: String?) {
+    guard httpResponseWriteGate.withLock({ $0.admit(now: .now) }) else { return }
+    var metadata: Logger.Metadata = [
+      "part": .string(part),
+      "response_state": .string(part == "head" ? "awaiting_end" : "awaiting_head"),
+    ]
+    if let lastResponseID, let id = UUID(uuidString: lastResponseID) {
+      metadata["last_response_id"] = .string(id.uuidString)
+    }
+    logger.warning("Invalid HTTP response write sequence", metadata: metadata)
+  }
+
+  private static let bodyTimeoutGate = Mutex(ProtocolFailureLogGate())
+  static func recordRequestBodyTimeout(
+    _ expiry: HTTPRequestReadDeadline.Expiry, requestID: String
+  ) {
+    guard let id = UUID(uuidString: requestID),
+      bodyTimeoutGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    func milliseconds(_ duration: Duration) -> String {
+      let parts = duration.components
+      return String(max(0, parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000))
+    }
+    logger.warning(
+      "Request body read timed out",
+      metadata: [
+        "request_id": .string(id.uuidString), "timeout_reason": .string(expiry.reason),
+        "received_size_bucket": .string(sizeBucket(expiry.receivedBytes)),
+        "body_started": .string(String(expiry.receivedBytes > 0)),
+        "elapsed_ms": .string(milliseconds(expiry.elapsed)),
+        "idle_ms": .string(milliseconds(expiry.idle)),
+      ])
   }
 
   private static let bodyLimitGate = Mutex(ProtocolFailureLogGate())

@@ -173,8 +173,14 @@ final class OAuthHandler: ChannelInboundHandler, @unchecked Sendable {
   private func validateRequest() -> Bool {
     if let head, head.method == .GET {
       let expected = state.mutex.withLock { $0.quotaAuthorization }
-      return ["/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits"].contains(
-        head.uri) && body.isEmpty
+      let modelDiscovery =
+        head.uri == "/backend-api/codex/models?client_version=0.169.1"
+        && head.headers.first(name: "user-agent")?.hasPrefix("codex_cli_rs/0.169.1 ") == true
+      return
+        (modelDiscovery
+        || ["/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits"].contains(
+          head.uri))
+        && body.isEmpty
         && expected.map {
           head.headers["authorization"] == ["Bearer " + $0.0]
             && head.headers["chatgpt-account-id"] == [$0.1]

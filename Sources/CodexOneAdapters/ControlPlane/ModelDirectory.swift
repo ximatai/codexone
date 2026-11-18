@@ -44,7 +44,7 @@ public actor ModelDirectory {
     refreshing = true
     defer { refreshing = false }
     let work = try await credentials.prepareObservation(id: account)
-    let fingerprint = configuration.responses.clientFingerprint
+    let fingerprint = (configuration.clientFingerprint ?? .init()).resolvedForModelDiscovery()
     let response = try await provider.modelCandidates(work, fingerprint: fingerprint)
     guard let entries = response["models"]?.array, entries.count <= 128,
       entries.allSatisfy({ Self.validModelID($0["slug"]?.string) }),
@@ -70,7 +70,17 @@ public actor ModelDirectory {
       } ?? []
     return .object([
       "revision": .number(Decimal(snapshot.revision)),
-      "active": .array(snapshot.active.map { Self.metadata($0, state: "enabled") }),
+      "active": .array(
+        snapshot.active.map { model in
+          var value = Self.metadata(model, state: "enabled").object!
+          if let update = refreshedProfile(for: model) {
+            let reset = !(update.reasoningSettings?.isValid(for: update) ?? true)
+            value["profileUpdate"] = Self.metadata(
+              update, state: "enabled", previousVisionInput: model.visionInput == true,
+              resetReasoningRequired: reset)
+          }
+          return .object(value)
+        }),
       "retired": .array(
         snapshot.retired.map { model in
           guard let owner = snapshot.accountForModel[model.id],
@@ -195,6 +205,53 @@ public actor ModelDirectory {
     return try await save(next, expected: revision)
   }
 
+  private func refreshedProfile(
+    for model: SingleIdentityConfiguration.Model
+  ) -> SingleIdentityConfiguration.Model? {
+    guard let discovery, clock.unixSeconds - discovery.fetchedAt < 900,
+      snapshot().accountForModel[model.id].map({ $0 == discovery.account }) ?? true,
+      let entry = discovery.entries.first(where: { $0["slug"]?.string == model.id }),
+      model.upstream != entry
+    else { return nil }
+    var updated = Self.discoveredModel(
+      id: model.id, entry: entry, input: model.inputMicrosPerMillion,
+      output: model.outputMicrosPerMillion)
+    updated.imageGeneration = model.imageGeneration
+    guard (try? validateResponseModels([updated])) != nil else { return nil }
+    updated.reasoningSettings = model.reasoningSettings
+    return updated
+  }
+
+  func changeProfile(_ body: JSONValue) async throws -> JSONValue {
+    guard let fields = body.object, let revision = body["revision"]?.integer,
+      let id = body["model"]?.string,
+      let candidateRevision = body["candidateRevision"]?.string,
+      body["resetReasoningSettings"] == nil || body["resetReasoningSettings"] == .bool(true),
+      Set(fields.keys)
+        == Set(["model", "revision", "candidateRevision"])
+        .union(body["resetReasoningSettings"] == nil ? [] : ["resetReasoningSettings"])
+    else { throw ExecutionError.invalidCommand }
+    let previous = snapshot()
+    guard previous.revision == revision, revision < Int64.max,
+      let index = previous.active.firstIndex(where: { $0.id == id }),
+      let discovery, discovery.candidateRevision == candidateRevision,
+      var updated = refreshedProfile(for: previous.active[index])
+    else { throw ExecutionError.conflict }
+    let resetRequired = !(updated.reasoningSettings?.isValid(for: updated) ?? true)
+    guard resetRequired == (body["resetReasoningSettings"] == .bool(true))
+    else { throw ExecutionError.conflict }
+    let account = try await store.accountCredential(id: discovery.account).account
+    guard account.revision == discovery.accountRevision, account.mode == .enabled,
+      account.authorization == .ready
+    else { throw ExecutionError.conflict }
+    if resetRequired { updated.reasoningSettings = nil }
+    var next = ModelDirectorySnapshot(
+      revision: revision + 1, active: previous.active, retired: previous.retired,
+      accountForModel: previous.accountForModel)
+    next.active[index] = updated
+    return try await save(next, expected: revision, expectedAccount: (account.id, account.revision))
+  }
+
   private static func reasoningSettings(
     _ body: JSONValue, for model: SingleIdentityConfiguration.Model
   ) throws -> ModelReasoningSettings? {
@@ -266,6 +323,12 @@ public actor ModelDirectory {
       "id": .string(model.id),
       "state": .string(state),
       "visionInput": .bool(model.visionInput == true),
+      "contextWindow": model.upstream?["context_window"]?.integer.map { .number(Decimal($0)) }
+        ?? model.catalog?.contextWindow.map { .number(Decimal($0)) } ?? .null,
+      "maxContextWindow": model.upstream?["max_context_window"]?.integer.map {
+        .number(Decimal($0))
+      }
+        ?? model.catalog?.maxContextWindow.map { .number(Decimal($0)) } ?? .null,
       "previousVisionInput": previousVisionInput.map(JSONValue.bool) ?? .null,
       "reasoningEfforts": .array(model.effectiveReasoningEfforts.map(JSONValue.string)),
       "supportedReasoningEfforts": .array(supported.map(JSONValue.string)),

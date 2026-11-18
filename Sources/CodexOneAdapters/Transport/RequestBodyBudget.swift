@@ -3,10 +3,11 @@ import Synchronization
 
 /// The data service owns one budget; request/turn owners retain leases through completion or discard.
 enum RequestBodyLimits {
-  static let maximumBytes = 32 * 1024 * 1024
+  static let maximumBytes = 64 * 1024 * 1024
   static let smallRequestBytes = 8 * 1024 * 1024
-  static let webSocketQueueBytes = 48 * 1024 * 1024
   static let budgetBytes = 64 * 1024 * 1024
+  // Downstream queues hold leases from both pools. The decoder bounds each message.
+  static let webSocketQueueBytes = budgetBytes + smallRequestBytes
 }
 
 final class RequestBodyBudget: Sendable {
@@ -79,8 +80,7 @@ final class RequestBodyBudget: Sendable {
       guard bytes <= capacity || (small && bytes <= headroomCapacity) else {
         throw Self.exhausted()
       }
-      // Prefer the small reserve for eligible bodies so arrival order does not
-      // prevent two maximum-sized requests from using the shared pool.
+      // Prefer the small reserve so eligible requests leave the shared pool available.
       // Large waiters do not block the small reserve; its own waiters stay FIFO.
       if small && !value.waiters.contains(where: { $0.small }),
         bytes <= headroomCapacity - value.headroom

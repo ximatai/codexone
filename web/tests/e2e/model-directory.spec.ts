@@ -2,6 +2,79 @@ import { expect, test } from "./fixtures";
 import { expectNoHorizontalOverflow } from "./layout";
 import { reviewFixture } from "./ui-review-fixture";
 
+test("reviews enabled model profile changes before applying incompatible settings", async ({
+  page,
+}) => {
+  await reviewFixture(page);
+  const current = {
+    id: "demo-sol",
+    state: "enabled",
+    visionInput: false,
+    reasoningEfforts: ["high"],
+    supportedReasoningEfforts: ["medium", "high"],
+    defaultReasoningEffort: "high",
+    contextWindow: 272_000,
+    maxContextWindow: 500_000,
+  };
+  const replacement = {
+    ...current,
+    visionInput: true,
+    reasoningEfforts: ["medium"],
+    supportedReasoningEfforts: ["medium"],
+    defaultReasoningEffort: "medium",
+    contextWindow: 500_000,
+    maxContextWindow: 1_000_000,
+    resetReasoningRequired: true,
+  };
+  let applied = false;
+  const candidateRevision = "00000000-0000-4000-8000-000000000000";
+  const document = () => ({
+    revision: applied ? 5 : 4,
+    active: [
+      applied ? replacement : { ...current, profileUpdate: replacement },
+    ],
+    retired: [],
+    candidates: [],
+    imageModels: [],
+    account: "synthetic-account",
+    candidateRevision,
+    fetchedAt: 1_785_000_000,
+  });
+  await page.route("**/api/models", (route) =>
+    route.fulfill({ json: document() }),
+  );
+  await page.route("**/api/accounts", (route) =>
+    route.fulfill({ json: { accounts: [], nextCursor: null } }),
+  );
+  await page.route("**/api/models/profile", async (route) => {
+    expect(route.request().method()).toBe("PUT");
+    expect(route.request().postDataJSON()).toEqual({
+      model: current.id,
+      revision: 4,
+      candidateRevision,
+      resetReasoningSettings: true,
+    });
+    applied = true;
+    await route.fulfill({ json: document() });
+  });
+  await page.goto("/#/models");
+  await page.getByRole("button", { name: "资料更新", exact: true }).click();
+  const modal = page.getByRole("dialog", { name: "更新模型资料" });
+  await expect(modal.getByText("最大窗口 500,000 → 1,000,000")).toBeVisible();
+  await expect(
+    modal.getByText("获视觉输入权限且可使用该模型的 Key 将可以处理图片。"),
+  ).toBeVisible();
+  const save = modal.getByRole("button", { name: "确认更新", exact: true });
+  await expect(save).toBeDisabled();
+  await modal.getByRole("checkbox").check();
+  await save.click();
+  await expect(modal).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "资料更新", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("模型资料已更新。")).toBeVisible();
+});
+
 for (const width of [1320, 390]) {
   test(`updates model and Key reasoning settings at ${width}px`, async ({
     page,

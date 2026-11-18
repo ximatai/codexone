@@ -22,6 +22,25 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   return buffer
 }
 
+@Test func cliFragmentedMessagePreservesUTF8AcrossOneMiBFrameBoundary() throws {
+  let budget = RequestBodyBudget()
+  let reservations = WebSocketBodyReservations()
+  let channel = EmbeddedChannel(
+    handler: DownstreamWebSocketDecoder(budget: budget, reservations: reservations))
+  defer { _ = try? channel.finish() }
+  let boundary = 1024 * 1024
+  let bytes = Data((String(repeating: "a", count: boundary - 1) + "图").utf8)
+  try channel.writeInbound(maskedFrame(boundary, final: false))
+  try channel.writeInbound(ByteBuffer(bytes: bytes.prefix(boundary)))
+  #expect(try channel.readInbound(as: WebSocketFrame.self) == nil)
+  try channel.writeInbound(maskedFrame(bytes.count - boundary, opcode: 0))
+  try channel.writeInbound(ByteBuffer(bytes: bytes.dropFirst(boundary)))
+  let frame = try #require(try channel.readInbound(as: WebSocketFrame.self))
+  #expect(Data(frame.data.readableBytesView) == bytes)
+  reservations.take()?.release()
+  #expect(budget.occupiedBytes == 0)
+}
+
 @Test func websocketBudgetPrecedesSingleFrameBufferingAndDisconnectReturnsIt() throws {
   let size = 20 * 1024 * 1024
   let budget = RequestBodyBudget(capacity: size)
@@ -159,7 +178,9 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   try channel.writeInbound(maskedFrame(size))
   let error = try #require(try channel.readOutbound(as: WebSocketFrame.self))
   #expect(try JSONValue.decode(Data(error.data.readableBytesView))["status"]?.integer == 413)
-  for _ in 0..<32 { try channel.writeInbound(ByteBuffer(repeating: 65, count: 1024 * 1024)) }
+  for _ in 0..<(RequestBodyLimits.maximumBytes / (1024 * 1024)) {
+    try channel.writeInbound(ByteBuffer(repeating: 65, count: 1024 * 1024))
+  }
   try channel.writeInbound(ByteBuffer(repeating: 65, count: 1))
   try channel.writeInbound(maskedFrame(9 * 1024 * 1024))
   for _ in 0..<9 { try channel.writeInbound(ByteBuffer(repeating: 65, count: 1024 * 1024)) }
@@ -232,21 +253,18 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
 }
 
-@Test func sharedBodyBudgetHoldsTwoMaximumRequestsAndQueuesTheThird() async throws {
+@Test func sharedBodyBudgetHoldsOneMaximumRequestAndQueuesTheNext() async throws {
   let budget = RequestBodyBudget()
   let first = budget.lease()
   let second = budget.lease()
-  let third = budget.lease()
   try first.reserve(RequestBodyLimits.maximumBytes)
-  try second.reserve(RequestBodyLimits.maximumBytes)
   #expect(budget.occupiedBytes == 64 * 1024 * 1024)
-  let waiting = Task { try await third.reserveWaiting(RequestBodyLimits.maximumBytes) }
+  let waiting = Task { try await second.reserveWaiting(RequestBodyLimits.maximumBytes) }
   while budget.waitingCount == 0 { await Task.yield() }
   first.release()
   try await waiting.value
   #expect(budget.occupiedBytes == 64 * 1024 * 1024)
   second.release()
-  third.release()
   #expect(budget.occupiedBytes == 0)
 }
 
@@ -384,20 +402,22 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
 }
 
-@Test func bodySmallFirstStillAllowsTwoMaximumSharedReservations() throws {
+@Test func bodySmallFirstAllowsFullSharedPoolInOneOrTwoReservations() throws {
   let mib = 1024 * 1024
-  let budget = RequestBodyBudget()
-  let small = budget.lease()
-  let first = budget.lease()
-  let second = budget.lease()
-  #expect(try small.beginWaiting(5 * mib) == nil)
-  #expect(budget.headroomOccupiedBytes == 5 * mib)
-  #expect(try first.beginWaiting(32 * mib) == nil)
-  #expect(try second.beginWaiting(32 * mib) == nil)
-  #expect(budget.occupiedBytes == 69 * mib)
-  #expect(budget.waitingCount == 0)
-  small.release()
-  first.release()
-  second.release()
-  #expect(budget.occupiedBytes == 0)
+  for sizes in [[64], [32, 32]] {
+    let budget = RequestBodyBudget()
+    let small = budget.lease()
+    #expect(try small.beginWaiting(5 * mib) == nil)
+    var owners: [RequestBodyLease] = []
+    for size in sizes {
+      let owner = budget.lease()
+      #expect(try owner.beginWaiting(size * mib) == nil)
+      owners.append(owner)
+    }
+    #expect(budget.occupiedBytes == 69 * mib)
+    #expect(budget.waitingCount == 0)
+    small.release()
+    for owner in owners { owner.release() }
+    #expect(budget.occupiedBytes == 0)
+  }
 }

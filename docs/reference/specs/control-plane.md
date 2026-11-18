@@ -174,9 +174,9 @@ unknownReconciliation 返回 count、beforeUnixSeconds（两者同快照）、pe
 
 ## 请求推理强度与服务档位
 
-明细（含首页最近请求所用查询）增加可空 reasoningEffort、serviceTier、actualServiceTier 和布尔 requestMetadataRecorded。来源及有界值规则见 U10 补充；历史及准入前拒绝为 false，各值为 null。筛选 reasoningEffort 接受 `[a-z0-9_-]{1,32}`，精确匹配记录值，排除历史、未指定及准入前拒绝。筛选作用于明细、区间合计、小时桶和缺时间历史计数，既有全时间治理占用不变。
+明细（含首页最近请求所用查询）返回可空 reasoningEffort、serviceTier、actualServiceTier 和布尔 requestMetadataRecorded。来源及有界值规则见 U10。requestMetadataRecorded 标记准入请求的元数据是否已记录。准入前拒绝仍为 false，两个服务档位为 null。模型或推理档位拒绝可独立返回 reasoningEffort，包括固定的 missing 与 invalid 标签。筛选 reasoningEffort 接受 `[a-z0-9_-]{1,32}`，精确匹配准入和拒绝行的已记录值。筛选作用于明细、区间合计、小时桶和缺时间历史计数，全时间治理占用沿用既有口径。
 
-options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从可信配置 catalog.defaultReasoningEffort 或 upstream.default_reasoning_level 提取，不在线请求上游。明细表新增“推理”列：显式值原样展示，未指定显示灰字“默认”，目录有值时为“默认 · high”等；历史显示“—”。详情显示请求推理强度、请求服务档位和实际服务档位，实际未提供显示“—”。默认值仅为当前目录说明，不推测历史实际参数。
+options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从可信配置 catalog.defaultReasoningEffort 或 upstream.default_reasoning_level 提取，不在线请求上游。明细表的“推理”列在准入行显示显式档位或“默认”，目录有值时显示“默认 · high”等，历史元数据缺失时显示“—”。拒绝行显示记录的档位，或“未提交”“无效”“未记录”。详情显示请求推理强度、请求服务档位和实际服务档位，实际未提供显示“—”。默认值仅说明当前目录设置。
 
 ## Key 归档与模型范围
 
@@ -185,6 +185,10 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 创建/更新必须显式提供 models：null 表示跟随全部当前配置对话模型，数组最多32个，[] 保持无对话授权（仅图片 Key）的语义。imageGeneration=true 时 imageModels 可为 null 表示全部配置图片模型；关闭时 null 与 [] 等价，缺失能力字段的关闭语义不变。管理与导入原样返回数组/null，策略版本包含 null。目录、准入、Responses 图片工具及 Images 共用当前配置与权限交集；配置生效后的新增/移除立即影响 null 范围 Key。列表与详情显示“全部模型”。不新增配置热重载。旧二进制不能解码 null 模型范围，回退前须转为显式清单，见[Key治理](../../guide/key-governance.md#兼容回退前提)。
 
 订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。启用表单以美元／百万 Token 显示和编辑费率，保存时换算为整数微美元。已知模型预填公开参考费率，其他模型预填 0。预填值来自 [OpenAI Codex 公开费率表](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing) 的标准输入和输出费率，供本地估算。首次或重新启用可随同一次写入提交 `allowedReasoningEfforts` 与 `defaultReasoningEffort`，两项同时提供才生效。重新启用省略两项时沿用兼容的已存设置。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
+
+账号模型候选发现的 client_version 与 User-Agent 使用网关编译内置的发现兼容版本 0.169.1，显式 clientFingerprint.version 优先。省略时独立于已加载模型 profile 的来源版本，避免旧快照缩小上游返回的候选集合。发现请求不在线查询或自动推断新版本。启用新模型仍通过目录审核流程完成。
+
+刷新候选后，已启用模型如有完整且不同的上游 profile，管理 DTO 的 active 项附可选 profileUpdate 预览。仅原发现账号可更新已绑定来源的模型；配置模型可由管理员选定的有效账号提供资料，更新沿用原有路由归属。上下文窗口、最大窗口、支持档位及视觉输入展示前后变化，其他能力和基础指导随完整 profile 更新。PUT /api/models/profile 接受 model、revision、candidateRevision 和可选 resetReasoningSettings=true。写入要求候选仍在十五分钟有效期内、目录及账号 revision 一致、账号已启用且授权 ready，事务内复核账号状态。费率及图片工具启用设置保留，兼容的推理设置保留；不兼容时须显式确认重置。无变化、不完整、来源不匹配或失效的资料不能提交。沿用目录持久化和备份，无 schema 变更。
 
 已启用的对话模型可通过 `PUT /api/models/reasoning` 保存推理设置，请求包含 `model`、`revision`、`allowedReasoningEfforts` 和 `defaultReasoningEffort`。范围用非空、无重复的受支持档位数组，`null` 跟随模型支持的全部档位。默认值可选范围内的档位，`null` 优先沿用模型资料的默认值。若默认值不在收窄后的范围内，取模型资料顺序中的首个允许档位。模型重新启用时保留设置，如新资料不兼容，须明确确认重置。
 
@@ -223,7 +227,9 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 [文档导航](../../README.md)
 
-首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。列为 Key、活动时间（当日最早和最近准入）、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、生图张数、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+首页仅展示当前业务日有准入的未归档托管 Key，无“全部”切换，保留已停用标记。按已观测 Token 降序，缺测排在最后，同量按当日最近准入秒倒序及 keyID 升序；每次刷新采用完整快照，保留 Key 身份/焦点/详情，失败标陈旧，跨日旧窗口明确标注。列为 Key、活动时间（当日最早和最近准入）、请求、失败率（失败数／扣除客户端取消后的已准入数）、Token、生图、缓存命中率。名称后备 principal，内部 legacy-p-* 仅在详情显示；非零执行中在名称旁，取消和结果未明始终可见。结果未明=admitted−succeeded−failed−cancelled−inFlight，不用 pending 推算。
+
+今日 Key 汇总的可选 `tokenBreakdown` 含 `input`、`output` 两个可空十进制字符串。两项是既有 `tokens` 的方向拆分，沿用业务日、原生图片和 SVG 作者量的计量；沿用 `tokenUsageIncomplete` 标注已观测下界。缺失方向显示「—」，较早服务端未返回拆分时显示合计。缓存命中率继续使用 `inputTokens` 和 `cachedTokens`。
 
 失败率为 failed / (admitted − cancelled)，执行中和未明不计入失败数。扣除取消后至少有 20 条已准入请求、失败至少 5 条且失败率达到 20% 时，强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
 

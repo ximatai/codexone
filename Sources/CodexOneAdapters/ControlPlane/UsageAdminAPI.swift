@@ -214,6 +214,13 @@ public struct UsageAdminAPI: Sendable {
     func timestamp(_ seconds: Int64?) -> JSONValue {
       seconds.map { .number(Decimal($0)) } ?? .null
     }
+    let tokenBreakdown: JSONValue =
+      value.tokenBreakdown.map { counts in
+        .object([
+          "input": counts.input.map { .string(String($0)) } ?? .null,
+          "output": counts.output.map { .string(String($0)) } ?? .null,
+        ])
+      } ?? .null
     let fields: [String: JSONValue] = [
       "keyID": .string(value.key.id),
       "displayName": value.key.displayName.map { .string($0) } ?? .null,
@@ -221,6 +228,7 @@ public struct UsageAdminAPI: Sendable {
       "enabled": .bool(value.enabled),
       "admitted": .number(Decimal(value.admitted)),
       "tokens": .string(String(value.tokens)),
+      "tokenBreakdown": tokenBreakdown,
       "images": value.images.map { .string(String($0)) } ?? .null,
       "tokenUsageIncomplete": .bool(value.tokenUsageIncomplete),
       "inputTokens": value.inputTokens.map { .string(String($0)) } ?? .null,

@@ -102,6 +102,13 @@ public struct KeyAdminAPI: Sendable {
           allowed: ["model", "revision", "allowedReasoningEfforts", "defaultReasoningEffort"])
         return try await Self.response(modelDirectory.changeReasoning(document))
       }
+      models.put("profile") { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(
+          request, allowed: ["model", "revision", "candidateRevision"],
+          optional: ["resetReasoningSettings"])
+        return try await Self.response(modelDirectory.changeProfile(document))
+      }
       models.put { request async throws -> Response in
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         let document = try Self.body(

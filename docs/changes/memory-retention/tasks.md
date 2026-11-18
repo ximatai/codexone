@@ -30,3 +30,7 @@
 ## 相关文档
 
 [运维规范](../../reference/specs/operations.md) · [验证定义](../../development/verification.md)
+
+2026-11-18，原生 Linux amd64 独立容器对照，同一优化二进制、三轮 64 MiB 结构化请求及并发生图。1 MiB mmap 阈值的恢复 RSS 中位数约为 130/199/201 MiB，峰值 527 MiB；128 KiB 时约为 130/139/140 MiB，峰值 503 MiB，通过原有回收阈值。其余分配器参数相同。正式镜像仍须通过完整 Release 检查。
+
+2026-11-18，128 KiB mmap 阈值在正式候选的 2 arena 配置下仍出现回收波动。同一候选的原生 Linux arena 对照复现该差异：2 arena 的恢复 RSS 约为 134/197/205 MiB，增长主要来自堆；1 arena 时约为 123/125/126 MiB，容器峰值约 499 MiB，通过原有回收阈值。

@@ -290,6 +290,9 @@ private struct UsageFixture {
       evidence: .init(
         revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
         estimatedMicros: 0, completeness: .partial, nativeImages: true))
+    let key = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(key.tokenBreakdown != nil)
+    #expect(key.tokenBreakdown?.input == nil && key.tokenBreakdown?.output == nil)
     let missing = try await f.reader.queryUsage(
       .init(startUnixSeconds: f.hour, endUnixSeconds: f.hour + 3600))
     #expect(missing.totals.metrics.inputTokens == nil && missing.totals.metrics.outputTokens == nil)
@@ -306,6 +309,9 @@ private struct UsageFixture {
         revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
         estimatedMicros: 13, completeness: .complete, imageInputTokens: 2, imageOutputTokens: 3,
         imageInputTextTokens: 1, imageInputImageTokens: 1, nativeImages: true))
+    let observed = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(observed.tokens == 5 && observed.tokenUsageIncomplete)
+    #expect(observed.tokenBreakdown?.input == 2 && observed.tokenBreakdown?.output == 3)
     let complete = try await f.reader.queryUsage(
       .init(startUnixSeconds: f.hour + 3600, endUnixSeconds: f.hour + 7200))
     #expect(
@@ -737,7 +743,8 @@ private struct UsageFixture {
   await f.close()
 }
 
-@Test func rejectionDrilldownKeepsV13RowsAndAggregatesBeforePagination() async throws {
+@Test(arguments: [13, 18])
+func rejectionDrilldownKeepsLegacyRowsAndAggregatesBeforePagination(_ version: Int) async throws {
   let f = try await UsageFixture.make()
   try await f.insert("admitted", at: f.hour, evidence: usage(amount: 1))
   try await f.store.recordRejection(
@@ -745,39 +752,47 @@ private struct UsageFixture {
     failure: .invalidRequest)
   await f.reader.close()
   await f.store.close()
+  let removeV14ToV18 =
+    "DROP TABLE account_quota_cycle_samples; DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason;"
   try rawSQL(
     f.path,
-    "DROP TABLE account_quota_cycle_samples; DROP TABLE model_directory_routes; DROP TABLE model_directory; DROP TABLE account_credit_samples; ALTER TABLE request_diagnostics DROP COLUMN reason; PRAGMA user_version=13"
-  )
+    "ALTER TABLE request_diagnostics DROP COLUMN reasoning_effort;"
+      + (version == 13 ? removeV14ToV18 : "") + "PRAGMA user_version=\(version)")
   let reopened = try await SQLiteExecutionStore.open(
     path: f.path, limits: UsageFixture.limits, clock: testClock, allowStartupMigration: true)
   let reader = try await reopened.makeUsageReader()
   try await reopened.recordRejection(
     requestID: "new-refusal", keyID: "alpha", model: "synthetic-text", mode: .generation,
-    failure: .invalidRequest, reason: .backendTemperature)
+    failure: .invalidRequest, reason: .reasoningEffortNotAllowed, reasoningEffort: "xhigh")
   let end = f.hour + 3600
   let query = try UsageAdminAPI.parse(
     "/api/usage?start=\(f.hour)&end=\(end)&rejectedOnly=true&limit=1")
   let report = try await reader.queryUsage(query)
   #expect(report.totals.admitted == 0 && report.totals.rejected == 2)
-  #expect(report.rows.count == 1 && report.rows.first?.rejectionReason == .backendTemperature)
+  #expect(
+    report.rows.count == 1 && report.rows.first?.rejectionReason == .reasoningEffortNotAllowed)
   #expect(report.rejectionCounts.count == 2 && report.rejectionCounts.map(\.count) == [1, 1])
   let dto = try UsageAdminAPI.document(report, query: query)
   #expect(dto["rows"]?.array?.first?["rejectionStage"]?.string == "validation")
+  #expect(dto["rows"]?.array?.first?["reasoningEffort"]?.string == "xhigh")
   let cursor = try #require(report.nextCursor)
   let older = try await reader.queryUsage(
     .init(
       startUnixSeconds: f.hour, endUnixSeconds: end, cursor: cursor, rejectedOnly: true))
   #expect(older.rows.map(\.id) == ["legacy-refusal"] && older.rows.first?.rejectionReason == nil)
+  #expect(older.rows.first?.reasoningEffort == nil)
   let base = "/api/usage?start=\(f.hour)&end=\(end)"
   for (reason, id) in [
-    ("backend_parameter_temperature", "new-refusal"), ("unrecorded", "legacy-refusal"),
+    ("reasoning_effort_not_allowed", "new-refusal"), ("unrecorded", "legacy-refusal"),
   ] {
     let selected = try await reader.queryUsage(
       UsageAdminAPI.parse(base + "&rejectedOnly=true&rejectionGroup=invalid_request:" + reason))
     #expect(selected.rows.map(\.id) == [id])
     #expect(selected.totals.rejected == 1 && selected.rejectionCounts.first?.count == 1)
   }
+  let effort = try await reader.queryUsage(
+    UsageAdminAPI.parse(base + "&rejectedOnly=true&reasoningEffort=xhigh"))
+  #expect(effort.rows.map(\.id) == ["new-refusal"])
   #expect(throws: ExecutionError.invalidCommand) {
     try UsageAdminAPI.parse(base + "&rejectionGroup=invalid_request:unrecorded")
   }
@@ -786,9 +801,9 @@ private struct UsageFixture {
   }
   let directory = (f.path as NSString).deletingLastPathComponent
   let names = try FileManager.default.contentsOfDirectory(atPath: directory)
-  let backup = try #require(names.first { $0.contains(".pre-v14-") })
+  let backup = try #require(names.first { $0.contains(".pre-v\(version + 1)-") })
   let old = try SQLiteConnection(readOnlyPath: directory + "/" + backup)
-  #expect(try old.scalar("PRAGMA user_version") == 13)
+  #expect(try old.scalar("PRAGMA user_version") == Int64(version))
   await reader.close()
   await reopened.close()
   await f.close()

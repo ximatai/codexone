@@ -44,6 +44,13 @@ public struct ClientFingerprint: Sendable, Decodable {
       arch: arch ?? "arm64", terminal: terminal ?? "iTerm.app/3.6.10")
   }
 
+  /// Catalog compatibility follows the gateway's discovery baseline, independently of old profiles.
+  func resolvedForModelDiscovery() -> Self {
+    ClientFingerprint(
+      version: version ?? "0.169.1", os: os, arch: arch, terminal: terminal
+    ).resolved(models: [])
+  }
+
   var userAgent: String {
     "codex_cli_rs/\(version!) (\(os!); \(arch!)) \(terminal!)"
   }

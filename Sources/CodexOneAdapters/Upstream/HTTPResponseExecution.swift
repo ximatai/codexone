@@ -86,13 +86,22 @@ struct HTTPResponseExecution: Sendable {
           && effectiveImageModels.contains {
             $0.id == request.requirements.imageModel
           })
-    else { throw GatewayProtocolError(403, "model_not_allowed") }
+    else {
+      throw GatewayProtocolError(
+        403, "model_not_allowed",
+        requestSelection: .init(
+          request, configuredModel: configuration.models.contains { $0.id == request.model }))
+    }
     let keyRange = keyCapabilities?.reasoningEfforts?[model.id]
     if request.mode != .warmup, keyRange != nil || model.reasoningSettings?.allowed != nil {
       guard request.document["reasoning_effort"] == nil,
         let effort = request.document["reasoning"]?["effort"]?.string,
         keyRange?.contains(effort) ?? true, model.effectiveReasoningEfforts.contains(effort)
-      else { throw GatewayProtocolError(403, "reasoning_effort_not_allowed") }
+      else {
+        throw GatewayProtocolError(
+          403, "reasoning_effort_not_allowed",
+          requestSelection: .init(request, configuredModel: true))
+      }
     }
     return model
   }
@@ -411,26 +420,39 @@ struct HTTPResponseExecution: Sendable {
   }
   func recordRejection(_ request: ResponseRequest?, requestID: String, error: any Error) async {
     guard let currentKeyID, let diagnostics = access.diagnostics else { return }
-    let model = request.flatMap { request in
-      configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
-    }
+    let mapped = protocolFailure(error)
+    let selection = mapped.requestSelection
+    let model =
+      if let selection {
+        selection.catalogModel
+      } else {
+        request.flatMap { request in
+          configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
+        }
+      }
     // This known local refusal is not an unknown execution. Keep the execution-time
     // mapping unchanged; the diagnostics store separately excludes committed intents.
     let failure =
-      if let mapped = error as? GatewayProtocolError,
-        mapped.status == 400, mapped.code == "unsupported_backend_parameter"
+      if (mapped.status == 400 && mapped.code == "unsupported_backend_parameter")
+        || mapped.code == "reasoning_effort_not_allowed"
       {
         ExecutionFailure.invalidRequest
       } else {
         executionFailure(error)
       }
-    let mapped = protocolFailure(error)
     let reason =
-      mapped.detail.flatMap { RejectionReason(rawValue: $0.rawValue) }
-      ?? RejectionReason(rawValue: mapped.code)
+      if mapped.code == "reasoning_effort_not_allowed" {
+        selection?.reasoningRejection ?? .reasoningEffortNotAllowed
+      } else {
+        mapped.detail.flatMap { RejectionReason(rawValue: $0.rawValue) }
+          ?? RejectionReason(rawValue: mapped.code)
+      }
     try? await diagnostics.recordRejection(
       requestID: requestID, keyID: currentKeyID,
-      model: model, mode: request?.mode ?? .generation, failure: failure, reason: reason)
+      model: model, mode: request?.mode ?? .generation, failure: failure, reason: reason,
+      reasoningEffort: selection.map {
+        reason == .reasoningEffortLegacyField ? ($0.legacyEffort ?? $0.effort) : $0.effort
+      })
   }
 
 }

@@ -4,6 +4,22 @@ import Testing
 @testable import CodexOneAdapters
 
 struct ExecutionBudgetTests {
+  @Test func imageFirstResponseBudgetIsIndependentAndBoundedByTotal() throws {
+    let conversation = try ExecutionBudget(total: 1800, first: 120, idle: 300)
+    let images = try ExecutionBudget(imagesWith: conversation, first: nil)
+    #expect(images.first == 600)
+    #expect(images.total == conversation.total && images.idle == conversation.idle)
+    #expect(conversation.first == 120)
+    #expect(try ExecutionBudget(imagesWith: conversation, first: 1800).first == 1800)
+    #expect(try ExecutionBudget(imagesWith: ExecutionBudget(total: 5), first: nil).first == 5)
+    for invalid in [0, 1801] {
+      #expect(throws: (any Error).self) {
+        try ExecutionBudget(imagesWith: conversation, first: invalid)
+      }
+    }
+    #expect(throws: (any Error).self) { try ExecutionBudget(total: 1800, first: 600) }
+  }
+
   @Test func imageUploadStallUsesProgressDeadline() async throws {
     let budget = try ExecutionBudget(total: 5, first: 4, idle: 1)
     do {

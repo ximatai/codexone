@@ -32,7 +32,7 @@ package final class SQLiteConnection: @unchecked Sendable {
     );
     """
   // v18 requires model-level reasoning policy enforcement when opening a directory.
-  package static let schemaVersion: Int64 = 18
+  package static let schemaVersion: Int64 = 19
 
   private(set) var handle: OpaquePointer?
   private var lockFD: Int32 = -1
@@ -130,7 +130,12 @@ package final class SQLiteConnection: @unchecked Sendable {
             } : [])
           + (version >= 5
             ? Self.observationColumns.map { table, columns in
-              (table, columns + (version >= 14 && table == "request_diagnostics" ? ["reason"] : []))
+              guard table == "request_diagnostics" else { return (table, columns) }
+              return (
+                table,
+                columns + (version >= 14 ? ["reason"] : [])
+                  + (version >= 19 ? ["reasoning_effort"] : [])
+              )
             } : [])
           + (version >= 7 ? Self.maintenanceColumns : [])
           + (version >= 10
@@ -215,6 +220,7 @@ package final class SQLiteConnection: @unchecked Sendable {
           try exec(Self.modelDirectorySchema)
           try exec(Self.quotaCycleSchema)
           try exec("ALTER TABLE model_directory_routes ADD COLUMN reasoning_efforts TEXT")
+          try exec(Self.rejectionReasoningSchema)
           try exec("PRAGMA user_version=\(Self.schemaVersion)")
         }
       }
@@ -259,6 +265,7 @@ package final class SQLiteConnection: @unchecked Sendable {
             if version < 18 {
               try exec("ALTER TABLE model_directory_routes ADD COLUMN reasoning_efforts TEXT")
             }
+            if version < 19 { try exec(Self.rejectionReasoningSchema) }
             try exec("PRAGMA user_version=\(Self.schemaVersion)")
             if startupUpgrade { try requireIntegrity() }
           }
@@ -583,6 +590,10 @@ package final class SQLiteConnection: @unchecked Sendable {
 
   private static let rejectionDetailSchema = """
     ALTER TABLE request_diagnostics ADD COLUMN reason TEXT;
+    """
+
+  private static let rejectionReasoningSchema = """
+    ALTER TABLE request_diagnostics ADD COLUMN reasoning_effort TEXT;
     """
 
   private func backupBeforeUpgrade(_ path: String, from version: Int64) throws {
