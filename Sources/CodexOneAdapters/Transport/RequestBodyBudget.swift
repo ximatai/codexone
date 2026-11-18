@@ -3,9 +3,9 @@ import Synchronization
 
 /// The data service owns one budget; request/turn owners retain leases through completion or discard.
 enum RequestBodyLimits {
-  static let maximumBytes = 32 * 1024 * 1024
+  static let maximumBytes = 64 * 1024 * 1024
   static let smallRequestBytes = 8 * 1024 * 1024
-  static let webSocketQueueBytes = 48 * 1024 * 1024
+  static let webSocketQueueBytes = maximumBytes
   static let budgetBytes = 64 * 1024 * 1024
 }
 

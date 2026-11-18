@@ -93,7 +93,7 @@ class Provider(BaseHTTPRequestHandler):
                         assert part
                         length -= len(part)
                         decoder.feed(part, restored.extend)
-                        assert len(restored) <= 32 * 1024 * 1024
+                        assert len(restored) <= 64 * 1024 * 1024
                     assert self.rfile.read(2) == b'\r\n'
                 assert decoder.done
                 body = bytes(restored)
@@ -718,7 +718,7 @@ def main():
                     conn.putrequest('POST', '/v1/responses')
                     conn.putheader('Authorization', 'Bearer ' + TOKEN)
                     conn.putheader('Content-Type', 'application/json')
-                    conn.putheader('Content-Length', str(32 * 1024 * 1024 + 1))
+                    conn.putheader('Content-Length', str(64 * 1024 * 1024 + 1))
                     conn.endheaders()
                     response = conn.getresponse()
                     status, body = response.status, response.read()

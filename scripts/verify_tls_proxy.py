@@ -501,9 +501,9 @@ def admin_live_checks(f, fields):
 def limits_checks(f, key):
     before, calls = ledger(f), f['provider'].calls
     for plane, size, path in (
-        ('data', 33 * 1024 * 1024 + 1, '/v1/responses'),
-        ('data', 33 * 1024 * 1024 + 1, '/backend-api/codex/responses'),
-        ('data', 32 * 1024 * 1024 + 1, '/v1/responses'),
+        ('data', 65 * 1024 * 1024 + 1, '/v1/responses'),
+        ('data', 65 * 1024 * 1024 + 1, '/backend-api/codex/responses'),
+        ('data', 64 * 1024 * 1024 + 1, '/v1/responses'),
         ('admin', 8193, '/api/session'),
     ):
         client = connection(f, plane)
@@ -519,7 +519,7 @@ def limits_checks(f, key):
                 error = json.loads(body)['error']
                 assert error['type'] == 'invalid_request_error' and error['code'] == 'request_too_large'
                 assert 'Reduce conversation context or attached images' in error['message']
-                if size > 33 * 1024 * 1024:
+                if size > 65 * 1024 * 1024:
                     assert response.getheader('x-should-retry') == 'false'
                     assert response.getheader('Cache-Control') == 'no-store'
                 else:

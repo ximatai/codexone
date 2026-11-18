@@ -38,9 +38,9 @@ GIF/SVG 原生输出在提交前必须收到 JSON 媒体类型、完整对象、
 
 Responses 托管 image_generation 工具仍单独解析和计量，图片 token 不加到宿主 token；宿主与工具费率分别估算后相加。工具模型缺省取部署默认值，须在 Key 有效 imageModels 内，对话模型须经 Key 授权并声明 imageGeneration。含图历史/图片工具可与 compact 和流式压缩组合；历史 image_generation_call 的 ID 仍须同主体/身份归属验证。图片内容与 prompt 不写入核心库。
 
-每请求最多 32 MiB 正文；参考图最多 16 张，单图解码最多 16 MiB，参考图/mask 合计最多 24 MiB，单图最多 50,000,000 像素。multipart 转为 base64 后会增加正文大小，但仍受已验证图片总字节限制。反代 client_max_body_size 使用 33m。共享原始正文预算 64 MiB（可容纳两个最大正文），超过 8 MiB 时 HTTP/WS 在缓冲前取得租约；HTTP 已知长度与 WS 首帧的大正文最多等待 5 秒，全局最多 4 个 FIFO 等待者；WS 暂停主动读取，在途暂存额外最多 256 KiB，超出提前拒绝。队满、超时或增量正文容量不足时 HTTP 503 capacity_exhausted、Retry-After: 1，WS error 丢弃该消息并保持连接；chunked/分片增长及辅助控制正文仍立即申请、不等待。读取结束、派发完成、失败、断开和超时归还租约；预算不代表进程 RSS 上限。
+每请求最多 64 MiB 正文；参考图最多 16 张，单图解码最多 16 MiB，参考图/mask 合计最多 24 MiB，单图最多 50,000,000 像素。multipart 转为 base64 后会增加正文大小，但仍受已验证图片总字节限制。反代 client_max_body_size 使用 65m。共享原始正文预算 64 MiB（可容纳一个 64 MiB 正文或两个 32 MiB 正文），另有 8 MiB 小请求余量，超过 8 MiB 时 HTTP/WS 在缓冲前取得租约；HTTP 已知长度与 WS 首帧的大正文最多等待 5 秒，全局最多 4 个 FIFO 等待者；WS 暂停主动读取，在途暂存额外最多 256 KiB，超出提前拒绝。队满、超时或增量正文容量不足时 HTTP 503 capacity_exhausted、Retry-After: 1，WS error 丢弃该消息并保持连接；chunked/分片增长及辅助控制正文仍立即申请、不等待。读取结束、派发完成、失败、断开和超时归还租约；预算不代表进程 RSS 上限。
 
-普通数据连接由dataConnections配置（默认128，8—1024），另有固定16条控制余量，WS 队列与任务限额仍见 P13/P14。HTTP 上传期限 10 秒，执行总期限默认 600 秒，可配置 1—1800 秒；首响应/进度空闲默认 30/60 秒，写入期限 5 秒。Responses 图片工具的上游单事件 8 MiB、总事件 32 MiB 上限保持。
+普通数据连接由dataConnections配置（默认128，8—1024），另有固定16条控制余量，WS 队列与任务限额仍见 P13/P14。HTTP 上传读取无进展期限 10 秒、总期限 120 秒，执行总期限默认 600 秒，可配置 1—1800 秒；首响应/进度空闲默认 30/60 秒，写入期限 5 秒。Responses 图片工具的上游单事件 8 MiB、总事件 32 MiB 上限保持。
 
 离线迁移与备份见[Key 治理](key-governance.md)。合成协议检查与 Desktop/真实订阅兼容是不同证据；真实原生端点的字段、SSE 完成形状、用量及账号头要求须经部署后网关内验收。
 

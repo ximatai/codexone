@@ -28,6 +28,10 @@ python3 scripts/check_docs.py
 
 线上验收按[长期测试 Key 运维规则](../operations/monitoring.md#线上验收)执行。需要创建、轮换或归档 Key 的测试在隔离环境中运行。
 
+## 大请求慢传验证
+
+`python3 scripts/verify_upload_deadline.py --binary .build/debug/codexone --three-mbps` 使用独立合成提供者，以约 3 Mbps 消费 64 MiB HTTP 请求，验证长上传不会提前耗尽首响应期限，且仅派发一次并完整结算。约需三分钟，按需执行，不加入日常快速测试。它不经过公网、真实账号或代理，不证明线上吞吐；Linux 768 MiB 容器容量另由发布演练覆盖。
+
 ## 本地定向验证顺序
 
 开始时按改动范围集中查阅实现、现有用例和部署约束。可以独立运行的检查合并发起。涉及 SQLite schema 时，同一轮定位迁移入口、快照兼容、部署清单和历史夹具。

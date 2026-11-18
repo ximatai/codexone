@@ -51,7 +51,7 @@ def main():
     worker.start()
     try:
         with tempfile.TemporaryDirectory(prefix='codexone-body-rss-') as temp:
-            for name, size, concurrency in (('17 MiB', 17, 1), ('32 MiB', 32, 1), ('2 x 32 MiB', 32, 2)):
+            for name, size, concurrency in (('32 MiB', 32, 1), ('64 MiB', 64, 1), ('2 x 32 MiB', 32, 2)):
                 root = Path(temp) / f'{size}-{concurrency}'
                 root.mkdir(mode=0o700)
                 config = root / 'identity.json'
@@ -80,7 +80,7 @@ def main():
                     time.sleep(.5)
                     idle = max(samples)
                     # Reject at headers, with no body sent and no execution admitted.
-                    refused_headers(ports['data'], 32 * MIB + 1, 413, 'request_too_large')
+                    refused_headers(ports['data'], 64 * MIB + 1, 413, 'request_too_large')
                     with ThreadPoolExecutor(max_workers=concurrency) as pool:
                         futures = [pool.submit(call_http, ports['data'], request) for _ in range(concurrency)]
                         with server.guard:

@@ -348,3 +348,18 @@ func webSocketQueueConcurrentCancellationAndFinishNeverResumeUnderItsLock() asyn
     }
   }
 }
+
+@Test func oversizedInboxMessageFailsWithoutBlockingLaterMessages() async throws {
+  let inbox = WebSocketInbox(capacity: 8)
+  do {
+    try await withExecutionDeadline(seconds: 2) {
+      try await inbox.push(Data(repeating: 65, count: 9))
+    }
+    Issue.record("Oversized message was accepted")
+  } catch let error as GatewayProtocolError {
+    #expect(error.status == 413 && error.code == "websocket_message_too_large")
+  }
+  let valid = Data(repeating: 65, count: 8)
+  try await inbox.push(valid)
+  #expect(try await inbox.next() == valid)
+}
