@@ -500,14 +500,30 @@ def admin_live_checks(f, fields):
 
 def limits_checks(f, key):
     before, calls = ledger(f), f['provider'].calls
-    for plane, size, path in (('data', 33 * 1024 * 1024 + 1, '/v1/responses'), ('admin', 8193, '/api/session')):
+    for plane, size, path in (
+        ('data', 33 * 1024 * 1024 + 1, '/v1/responses'),
+        ('data', 33 * 1024 * 1024 + 1, '/backend-api/codex/responses'),
+        ('data', 32 * 1024 * 1024 + 1, '/v1/responses'),
+        ('admin', 8193, '/api/session'),
+    ):
         client = connection(f, plane)
         try:
             # Content-Length alone must refuse an oversized body before gateway dispatch.
             client.putrequest('POST', path)
             client.putheader('Content-Length', str(size)); client.putheader('Authorization', 'Bearer ' + key)
             client.endheaders()
-            response = client.getresponse(); assert response.status == 413; response.read()
+            response = client.getresponse(); assert response.status == 413
+            body = response.read()
+            if plane == 'data':
+                assert response.getheader('Content-Type').startswith('application/json')
+                error = json.loads(body)['error']
+                assert error['type'] == 'invalid_request_error' and error['code'] == 'request_too_large'
+                assert 'Reduce conversation context or attached images' in error['message']
+                if size > 33 * 1024 * 1024:
+                    assert response.getheader('x-should-retry') == 'false'
+                    assert response.getheader('Cache-Control') == 'no-store'
+                else:
+                    assert error.get('request_id'), 'Gateway rejection was replaced by Nginx'
         finally: client.close()
     assert ledger(f) == before and f['provider'].calls == calls
     assert request(f, 'data', 'POST', '/v1/responses', {'model': MODEL, 'input': 'x' * 16384}, {'Authorization': 'Bearer ' + key})[0] == 200

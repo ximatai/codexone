@@ -36,7 +36,7 @@ CSP 仍为 `style-src 'self'`；数字滚动尚待兼容选择。实际本机及
 
 ## 限制与失败语义
 
-- 数据网关请求体上限 32 MiB，反代 client_max_body_size 为 33m，管理为 8 KiB；网关更细的模型/端点限制仍生效。反代超过 33m 时在生成准入前拒绝；网关对 JSON、multipart、WS 消息执行 32 MiB，并共享 48 MiB 正文预算（超过 8 MiB 先申请，耗尽返回 503 capacity_exhausted，HTTP Retry-After: 1），见[图片入口](../guide/images.md)。管理静态页面响应大小不受请求体上限影响。
+- 数据网关请求体上限 32 MiB，反代 client_max_body_size 为 33m，管理为 8 KiB；网关更细的模型/端点限制仍生效。反代超过 33m 时在生成准入前以 413 JSON（invalid_request_error/request_too_large）拒绝，并返回 x-should-retry: false 与 no-store，提示缩小上下文或图片；客户端是否采纳由客户端决定。proxy_intercept_errors 保持 off，网关错误原样转发；网关对 JSON、multipart、WS 消息执行 32 MiB，并共享 48 MiB 正文预算（超过 8 MiB 先申请，耗尽返回 503 capacity_exhausted，HTTP Retry-After: 1），见[图片入口](../guide/images.md)。管理静态页面响应大小不受请求体上限影响。
 - 数据 upstream 读/写空闲超时 1830 秒（高于网关最大执行期限 1800 秒），上传空闲超时 30 秒；管理分别 30/10 秒。它们是阶段之间的空闲间隔，不能当成整个执行的总期限；长 WS 空闲也可能触发关闭。
 - SSE 不缓冲、不 gzip，WS 显式传递 Upgrade；流式请求体不落普通代理缓冲文件。关闭下游取消忽略和代理自动重试。504 或流中途断开不证明上游没有执行；没有可信终态时保留 unknown，不自动生成、退款或恢复旧余额。
 - 原生 WSS 的 TLS/TCP 断开会经 Nginx 传至网关；上游并非必须在 3 秒内关闭。按 [P14a](../reference/specs/protocol.md#p14a原生-ws-客户端控制与前向兼容)，网关停止接收新请求，已 dispatch 的 turn 最多续读 10 秒且不超过原执行期限，有响应 ID 后仅补发一次定向中断。无 ID 时等待身份；有可信终态则保留用量并记客户端取消，否则关闭上游并保留 unknown 和预留暴露，不重放、不伪造额外费用。HTTP/SSE 断开仍直接取消。

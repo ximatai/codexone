@@ -62,6 +62,8 @@ func protocolErrorEnvelope(_ error: any Error, requestID: String, diagnostics: B
   }
   let explanation =
     switch mapped.code {
+    case "request_too_large":
+      "Request body is too large. Reduce conversation context or attached images before trying again."
     case "model_not_allowed":
       "The selected model is not available for this request. Choose a model enabled for this operation and allowed by your API key."
     case UpstreamWebSocketBodyLimit.errorCode:
