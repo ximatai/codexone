@@ -287,7 +287,7 @@
 | `swift-collections` | 1.7.3 | Apache-2.0 WITH Swift-exception | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-collections/35a1edcb8ebd2bfe251d587f0b69e62af28f508c/LICENSE.txt) |
 | `swift-configuration` | 1.3.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-configuration/4e916072eb34f3c136ae64bd2859d6072cdb1b6e/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-configuration/4e916072eb34f3c136ae64bd2859d6072cdb1b6e/NOTICE.txt) |
 | `zstd` | 1.5.7 | BSD-3-Clause（从 BSD/GPLv2 双许可中选择 BSD） | 固定 revision `f8745da6ff1ad1e7bab384bd1f9d742439278e99`；随包 LICENSE 的 Meta 版权、三项条件与免责全文；COPYING 保留另一可选许可 GPLv2 全文。镜像与归档验收仍为发布门禁。 |
-| `swift-crypto` | 4.5.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-crypto/da9d28d69ebe3894b18376c8f2395c2f37b8448f/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-crypto/da9d28d69ebe3894b18376c8f2395c2f37b8448f/NOTICE.txt) |
+| `swift-crypto` | 5.1.1 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-crypto/f8fad2f95ad67b45f6340c0960e2396094d67e07/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-crypto/f8fad2f95ad67b45f6340c0960e2396094d67e07/NOTICE.txt) |
 | `swift-distributed-tracing` | 1.7.2 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-distributed-tracing/297b5b9c82a5631e3199ce3ec0993a3cfb0fbb84/LICENSE.txt) |
 | `swift-http-structured-headers` | 1.7.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-structured-headers/933538faa42c432d385f02e07df0ace7c5ecfc47/LICENSE.txt) |
 | `swift-http-types` | 1.8.0 | Apache-2.0 | [LICENSE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/LICENSE.txt)、[NOTICE.txt](https://raw.githubusercontent.com/apple/swift-http-types/bff4b6903cdc99dda49649dd52f46c11cfd3ed50/NOTICE.txt) |
@@ -307,7 +307,7 @@
 
 ### 嵌入组件的剩余核验边界
 
-`swift-nio-ssl` 的根 NOTICE 仍将 BoringSSL 列为 ISC 与 OpenSSL 组合许可。2.37.6 中 `Sources/CNIOBoringSSL/hash.txt` 记录的上游提交 `8eb25be6fa18d475291122887a7bccd3762ff236` 提供 Apache-2.0 正文，并单列测试支持代码的许可。`swift-crypto` 4.5.2 的 `Sources/CCryptoBoringSSL/hash.txt` 记录上游提交 `0226f30467f540a3f62ef48d453f93927da199b6`，其 LICENSE 与前者逐字节相同。镜像保留两份包根 NOTICE，并在 `licenses/swift/BoringSSL-LICENSE.txt` 提供两者共用的固定上游正文。[NIOSSL 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/8eb25be6fa18d475291122887a7bccd3762ff236/LICENSE) · [Swift Crypto 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/0226f30467f540a3f62ef48d453f93927da199b6/LICENSE) · [分发副本](deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt)
+`swift-nio-ssl` 的根 NOTICE 仍将 BoringSSL 列为 ISC 与 OpenSSL 组合许可。2.37.6 中 `Sources/CNIOBoringSSL/hash.txt` 记录的上游提交 `8eb25be6fa18d475291122887a7bccd3762ff236` 提供 Apache-2.0 正文，并单列测试支持代码的许可。`swift-crypto` 5.1.1 的 `Sources/CCryptoBoringSSL/hash.txt` 记录上游提交 `0226f30467f540a3f62ef48d453f93927da199b6`，其 LICENSE 与前者逐字节相同。镜像保留两份包根 NOTICE，并在 `licenses/swift/BoringSSL-LICENSE.txt` 提供两者共用的固定上游正文。[NIOSSL 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/8eb25be6fa18d475291122887a7bccd3762ff236/LICENSE) · [Swift Crypto 对应的上游 LICENSE](https://boringssl.googlesource.com/boringssl/+/0226f30467f540a3f62ef48d453f93927da199b6/LICENSE) · [分发副本](deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt)
 
 `swift-crypto` 的根 NOTICE 另列 Wycheproof 测试向量和 SwiftNIO 派生代码为 Apache-2.0。发布时检查 SwiftPM checkout 和镜像许可归档，确保分发产物保留实际包含组件的许可与通知。
 

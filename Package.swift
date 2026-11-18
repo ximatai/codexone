@@ -11,7 +11,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/meta/zstd.git", exact: "1.5.7"),
     .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.37.0"),
-    .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.2"),
+    .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.1.1"),
     .package(url: "https://github.com/vapor/vapor.git", exact: "4.122.3"),
     .package(url: "https://github.com/apple/swift-nio.git", exact: "2.105.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", exact: "2.37.6"),
