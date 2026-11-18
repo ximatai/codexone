@@ -30,3 +30,5 @@
 ## 相关文档
 
 [运维规范](../../reference/specs/operations.md) · [验证定义](../../development/verification.md)
+
+2026-11-18，原生 Linux amd64 独立容器对照，同一优化二进制、三轮 64 MiB 结构化请求及并发生图。1 MiB mmap 阈值的恢复 RSS 中位数约为 130/199/201 MiB，峰值 527 MiB；128 KiB 时约为 130/139/140 MiB，峰值 503 MiB，通过原有回收阈值。其余分配器参数相同。正式镜像仍须通过完整 Release 检查。

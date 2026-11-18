@@ -93,7 +93,7 @@ gateway 以显式非 root UID 运行、只读根、丢弃 capabilities、禁止�
 
 ## 大请求内存与镜像默认值
 
-运行镜像为 Linux glibc 设置 `MALLOC_ARENA_MAX=2`、`MALLOC_MMAP_THRESHOLD_=1048576`、`MALLOC_TRIM_THRESHOLD_=16777216`，减少多核宿主连续大请求后的 allocator 保留。Compose 与安装器生成模板不覆盖这些 ENV，无需在私有 `.env` 重复添加；这三项也不是安装器的 `.env` 配置字段。自定义容器运行参数若覆盖它们，须重新测量峰值与空闲占用。
+运行镜像为 Linux glibc 设置 `MALLOC_ARENA_MAX=2`、`MALLOC_MMAP_THRESHOLD_=131072`、`MALLOC_TRIM_THRESHOLD_=16777216`，减少多核宿主连续大请求后的 allocator 保留。Compose 与安装器生成模板不覆盖这些 ENV，无需在私有 `.env` 重复添加；这三项也不是安装器的 `.env` 配置字段。自定义容器运行参数若覆盖它们，须重新测量峰值与空闲占用。
 
 升级到含此修改的 CI/发行镜像并重建容器才生效，仅重启旧容器不会更新镜像 ENV。无 schema 迁移；回退旧镜像会恢复旧默认值，须重新核对内存余量。768 MiB 限额仍不是吞吐或最低宿主承诺，Rosetta 合成结果不能替代原生 Linux、多核混合负载验收。独立复测工具及局限见[镜像内存测量](../development/verification.md#独立镜像内存测量)。
 

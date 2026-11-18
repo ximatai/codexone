@@ -131,7 +131,7 @@ COPY deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.
 COPY --from=web /licenses/ /opt/codexone/licenses/npm/
 # Bound glibc arena growth and return large request allocations on multi-core hosts.
 ENV MALLOC_ARENA_MAX=2 \
-    MALLOC_MMAP_THRESHOLD_=1048576 \
+    MALLOC_MMAP_THRESHOLD_=131072 \
     MALLOC_TRIM_THRESHOLD_=16777216
 ENV CODEXONE_DATA_DIRECTORY=/var/lib/codexone \
     CODEXONE_WEB_DIRECTORY=/opt/codexone/web
