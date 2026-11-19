@@ -162,6 +162,8 @@ extension LegacyJSONValue {
     corpus.append(unicode.data(using: encoding)!)
   }
   corpus += [Data([0x22, 0xFF, 0x22]), Data([0xEF, 0xBB, 0xBF]) + Data(unicode.utf8)]
+  let framed = Data([0, 0xEF, 0xBB, 0xBF]) + Data(unicode.utf8)
+  corpus.append(framed.dropFirst())
   for data in corpus {
     let before = Result { try LegacyJSONValue.decode(data) }
     let after = Result { try JSONValue.decode(data) }

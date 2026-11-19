@@ -50,10 +50,19 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
   subscript(_ key: String) -> JSONValue? { object?[key] }
   static func decode(_ data: Data, rejectingDuplicateRootKeys: Set<String> = []) throws -> JSONValue
   {
+    try data.withUnsafeBytes { try validateDepth($0) }
+    let value = try JSONDecoder().decode(Self.self, from: data)
+    let ordered = try JSONOrderScanner.restore(
+      value, from: data, rejectingDuplicateRootKeys: rejectingDuplicateRootKeys)
+    // Foundation owns the semantics on every platform; order is never worth a changed document.
+    return ordered == value ? ordered : value
+  }
+
+  private static func validateDepth(_ bytes: UnsafeRawBufferPointer) throws {
     var depth = 0
     var quoted = false
     var escaped = false
-    for byte in data {
+    for byte in bytes {
       if quoted {
         if escaped {
           escaped = false
@@ -71,14 +80,6 @@ indirect enum JSONValue: Sendable, Codable, Equatable {
         depth -= 1
       }
     }
-    let value = try JSONDecoder().decode(Self.self, from: data)
-    var scanner = JSONOrderScanner(data, trackedRootKeys: rejectingDuplicateRootKeys)
-    let ordered = try scanner.restore(value)
-    guard scanner.duplicateRootKeys.isDisjoint(with: rejectingDuplicateRootKeys) else {
-      throw GatewayProtocolError(400, "invalid_json")
-    }
-    // Foundation owns the semantics on every platform; order is never worth a changed document.
-    return ordered == value ? ordered : value
   }
   func data(escapingSlashes: Bool = true) throws -> Data {
     var writer = JSONOrderedWriter(escapingSlashes: escapingSlashes)

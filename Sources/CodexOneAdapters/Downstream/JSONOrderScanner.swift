@@ -3,14 +3,20 @@ import Foundation
 /// Restore order only after Foundation has accepted the document and chosen all semantic values.
 /// Duplicate keys are observed for optional caller policy; semantic values still come from Foundation.
 struct JSONOrderScanner {
-  private(set) var duplicateRootKeys: Set<String> = []
+  private var duplicateRootKeys: Set<String> = []
   private let trackedRootKeys: Set<String>
-  private let bytes: [UInt8]
+  private let bytes: UnsafeRawBufferPointer
   private var index = 0
   private let decoder = JSONDecoder()
 
-  init(_ data: Data, trackedRootKeys: Set<String> = []) {
+  private init(bytes: UnsafeRawBufferPointer, trackedRootKeys: Set<String>) {
+    self.bytes = bytes
     self.trackedRootKeys = trackedRootKeys
+  }
+
+  static func restore(
+    _ value: JSONValue, from data: Data, rejectingDuplicateRootKeys: Set<String>
+  ) throws -> JSONValue {
     // JSONDecoder accepts UTF-8/16/32, with or without a BOM. Normalize only this order scan.
     let prefix = Array(data.prefix(4))
     let encoding: String.Encoding?
@@ -27,10 +33,20 @@ struct JSONOrderScanner {
     } else {
       encoding = nil
     }
-    var normalized =
-      encoding.flatMap { String(data: data, encoding: $0).map { Array($0.utf8) } } ?? Array(data)
-    if normalized.starts(with: [239, 187, 191]) { normalized.removeFirst(3) }
-    bytes = normalized
+    let normalized =
+      encoding.flatMap { String(data: data, encoding: $0).map { Data($0.utf8) } } ?? data
+    // The scanner and all slices stay inside the lifetime of this borrowed buffer.
+    return try normalized.withUnsafeBytes { bytes in
+      let document =
+        bytes.starts(with: [239, 187, 191])
+        ? UnsafeRawBufferPointer(rebasing: bytes.dropFirst(3)) : bytes
+      var scanner = JSONOrderScanner(bytes: document, trackedRootKeys: rejectingDuplicateRootKeys)
+      let ordered = try scanner.restore(value)
+      guard scanner.duplicateRootKeys.isDisjoint(with: rejectingDuplicateRootKeys) else {
+        throw GatewayProtocolError(400, "invalid_json")
+      }
+      return ordered
+    }
   }
 
   private mutating func whitespace() {
@@ -55,7 +71,7 @@ struct JSONOrderScanner {
     return try decoder.decode(String.self, from: Data(bytes[start..<index]))
   }
 
-  mutating func restore(_ value: JSONValue?, depth: Int = 0) throws -> JSONValue {
+  private mutating func restore(_ value: JSONValue?, depth: Int = 0) throws -> JSONValue {
     whitespace()
     guard index < bytes.count else { return value ?? .null }
     if bytes[index] == 123 {
