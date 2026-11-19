@@ -219,7 +219,12 @@ public struct ResponsesDataService: Service {
                       channel.closeFuture.whenComplete { _ in activity.unregister(registration) }
                     }
                   }
-                  return HTTPHeaders()
+                  return HTTPHeaders([
+                    (
+                      "x-codex-websocket-max-message-bytes",
+                      String(UpstreamWebSocketBodyLimit.httpRoutingBytes)
+                    )
+                  ])
                 } catch {
                   // NIO's declined-upgrade path does not replay this request head/end.
                   // Write the rejection here so a full ordinary pool cannot hang the handshake.

@@ -80,7 +80,8 @@ class WebSocketHandshakeRejected(AssertionError):
         self.status = int(header.split(b' ', 2)[1])
 
 
-def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None, timeout=5):
+def dial(port, path='/v1/responses', authorized=True, extension_offer=False, token=TOKEN, headers=None, timeout=5,
+         *, expected_max_message_bytes=None):
     sock = socket.create_connection(('127.0.0.1', port), timeout=timeout)
     try:
         key = base64.b64encode(os.urandom(16)).decode()
@@ -97,6 +98,11 @@ def dial(port, path='/v1/responses', authorized=True, extension_offer=False, tok
         expected = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest())
         assert expected.lower() in header.lower()
         assert b'sec-websocket-extensions:' not in header.lower()
+        if expected_max_message_bytes is not None:
+            prefix = b'x-codex-websocket-max-message-bytes:'
+            limits = [line[len(prefix):].strip() for line in header.lower().split(b'\r\n')
+                      if line.startswith(prefix)]
+            assert limits == [str(expected_max_message_bytes).encode()], limits
         return sock
     except BaseException:
         sock.close()
@@ -257,7 +263,7 @@ def main():
             output = b''
             db = directory / 'state/core.sqlite'
             try:
-                with dial(ports['data'], extension_offer=True) as downstream:
+                with dial(ports['data'], extension_offer=True, expected_max_message_bytes=12 * 1024 * 1024) as downstream:
                     send(downstream, {'type': 'response.create', 'model': 'synthetic-text', 'input': 'forbidden compression'}, masked=True, rsv1=True)
                     try:
                         assert receive(downstream)[0] == 8
@@ -471,7 +477,8 @@ def main():
                         else: raise AssertionError(rows)
                     assert provider.calls == count + (2 if multi else 1)
                 print('PASS: idle close frame/TCP EOF sends 1000; fresh connection works; queued/late creates never dispatch; active/multi-lane EOF keeps unknown without replay')
-                with dial(ports['data'], '/backend-api/codex/responses') as downstream:
+                with dial(ports['data'], '/backend-api/codex/responses',
+                          expected_max_message_bytes=12 * 1024 * 1024) as downstream:
                     events = turn(downstream, {'model': 'synthetic-text', 'input': 'terminal-eof'})
                     assert events[-1]['type'] == 'response.completed'
                     assert latest(db, 'settled')['inputTokens'] == 5

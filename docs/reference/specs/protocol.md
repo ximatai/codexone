@@ -224,6 +224,8 @@ Responses 所有入口统一回传修正：保留未知 usage 根成员及嵌套
 
 ## 上游 WebSocket 消息大小与单轮 HTTP 回退
 
+成功的 Responses WebSocket 握手在两个数据入口均返回 `x-codex-websocket-max-message-bytes: 12582912`。支持该头的客户端可在上传前按其序列化消息的 UTF-8 字节数选择 HTTP，网关仍按转换后的上游载荷独立执行原生 WS 校验。该头仅说明 WS 预路由阈值，HTTP 正文上限沿用 64 MiB。
+
 上游 `response.create` 在发送前以实际有序编码后的 UTF-8 消息载荷字节数（不计 WS framing/mask）与 12 MiB（12,582,912 字节）的请求阈值比较。原生 WS 超过该值沿既有路径拒绝，独立 HTTP 调用超过该值预路由 HTTP；此前 16 MiB 为观察到的消息边界，并非其他传输的限制：依据维护者观察到的接受/失败边界推断，非提供者稳定承诺或已证实的真实 1009，可随提供者变化调整。等于对应边界仍发 WS，超过对应边界绝不发 WS；普通请求的上游 WS 载荷只编码一次，并发送用于判断的同一份字节。writer 同时保护上游控制消息。64 MiB 入站正文上限及 `request_too_large`、共享预算、期限和除此处定义的早期 1009 外，其他真实 WS close/EOF 分类不变。
 
 配置上游为 WS 的 HTTP JSON/SSE 独立请求，超限时仅该轮改用上游 HTTP `/responses`，复用 HTTP 编码、会话头、所选账号/认证、turn-state 来源约束、软亲和、对象归属、流式事件、用量与 finalizer；回退前未发送 WS，无第二个 attempt，不重选已准入账号。`x-codex-turn-state` 仅在既有来源校验后保留，来自文档的状态在需要时同时投影为 HTTP 头。下一请求仍按配置选择 WS。键顺序、HTTP 既有斜杠转义与相同输入字节稳定性不变；WS 专用 `type`/lane/generate 不移入 HTTP。
