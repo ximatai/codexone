@@ -903,7 +903,17 @@ private actor ProtocolResponseWriter {
       self.channel.close(promise: nil)
     }
     defer { deadline.cancel() }
-    try await writer.write(contentsOf: parts)
+    if let last = parts.last, case .end = last {
+      // The request loop can close the channel as soon as the response ends. Wait
+      // for the final write instead of relying on the outbound queue to drain.
+      let channel = self.channel
+      try await channel.eventLoop.flatSubmit {
+        for part in parts.dropLast() { channel.write(part, promise: nil) }
+        return channel.writeAndFlush(last)
+      }.get()
+    } else {
+      try await writer.write(contentsOf: parts)
+    }
   }
   func json(
     _ value: JSONValue, status: Int = 200, retryAfter: String? = nil, diagnostics: Bool = true

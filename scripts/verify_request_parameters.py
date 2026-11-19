@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import threading
 import time
-from verify_protocol import TOKEN, start, stop
+from verify_protocol import TOKEN, dump_gateway_failure, start, stop
 from verify_text_contract import Provider as WireProvider, FIXTURE, call, rows
 
 
@@ -167,6 +167,9 @@ def main():
                             assert time.monotonic()<deadline;time.sleep(.02)
                         assert all(s=='settled' and k=='succeeded' and u['inputTokens']==5 for s,k,u in rows(root)),rows(root)
                         print(f'PASS: {contract}/{transport}: exact wire fields, JSON/SSE/native, zero-attempt rejection and settled usage',flush=True)
+                    except Exception:
+                        dump_gateway_failure(process)
+                        raise
                     finally:stop(process)
         print(f'PASS: {total} synthetic request-parameter operations; no credentials or live models',flush=True)
     finally:server.shutdown();server.server_close();worker.join(10)

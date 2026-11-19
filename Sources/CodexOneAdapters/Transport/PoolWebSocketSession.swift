@@ -282,5 +282,5 @@ func sendWebSocketError(
     envelope["headers"] = .object(["retry-after": .string(retryAfter)])
   }
   if !lane.isEmpty { envelope["stream_id"] = .string(lane) }
-  try await downstream.send(.object(envelope))
+  try await downstream.send(.object(envelope), awaitWrite: true)
 }
