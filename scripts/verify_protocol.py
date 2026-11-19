@@ -242,15 +242,19 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
         raise
 
 
-def stop(process):
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=3)
-    process.stdout.close()
+def stop(process, *, drain_stdout=None):
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        if drain_stdout is not None:
+            return drain_stdout()
+    finally:
+        process.stdout.close()
 
 
 def latest(path, state):

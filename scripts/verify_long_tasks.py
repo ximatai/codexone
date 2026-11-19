@@ -187,11 +187,11 @@ def run(binary, transport, duration):
                     records.append({'case':case,'seconds':round(elapsed,3),'upstreamCalls':1})
                     print('PASS:',transport,case,round(elapsed,3),flush=True)
                 finally:
-                    stop(gateway)
+                    output = stop(gateway, drain_stdout=logs.read)
                     deadline=time.monotonic()+5
                     while provider.active and time.monotonic()<deadline: time.sleep(0.02)
                     assert provider.active==0, "Fixture handler did not finish"
-                deadline_logs = [line for line in logs.read().splitlines()
+                deadline_logs = [line for line in output.splitlines()
                                  if b'Responses execution deadline reached' in line]
                 if case == 'cancel':
                     # Native disconnect settlement may still reach the turn's idle deadline.
