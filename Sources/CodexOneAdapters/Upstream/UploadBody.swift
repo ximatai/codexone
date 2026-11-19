@@ -28,6 +28,11 @@ final class HTTPUploadPayload: Sendable {
 
   func sent() { update { $0.sent = true } }
   func useFinalEncoding() { update { $0.finalEncoding = true } }
+
+  // Exchange teardown invalidates any transport iterator still holding this payload.
+  // The ingress owner returns any lease that was not already released at EOF.
+  func discard() { state.withLock { $0.data = nil } }
+
   // After the zstd producer has stopped, only EOF from the plaintext retry counts.
   func retryPlaintext() {
     state.withLock {

@@ -30,6 +30,8 @@
 
 整体复盘收敛了上传初始化、HTTP 编码协商和容量夹具中的重复代码。macOS arm64 复跑 40 项定向 Swift 测试、既有 zstd 矩阵、两套契约的 WebSocket 完整边界及字节顺序检查、三轮混合容量演练，均通过。415 的重发仍使用同一份编码字节和原执行准入。
 
+PR 复核后，HTTP 交换最终退出时清空编码正文，晚到的明文读取失败，入站 owner 仍负责兜底归还租约。复用既有 zstd 单元测试，加入真实正文预算和竞争租约，覆盖提前接受编码、压缩 EOF 后仍待协商、415 明文重发和最终 EOF 放行。macOS arm64 上 30 项定向 Swift 测试与既有 zstd socket 矩阵通过，CI 入口和 socket 场景数保持原样。
+
 ## 相关文档
 
 [提案](proposal.md) · [资源限制](../../reference/specs/operations.md)

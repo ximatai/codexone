@@ -268,6 +268,7 @@ struct HTTPResponseExecution: Sendable {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
         let payload = try prepared.beginUpload(lease: bodyLease)
+        defer { payload.discard() }
         // One encoding, one selected account and one attempt, including a 415 negotiation retry.
         let canCompress =
           configuration.requestContract == .codexSubscription

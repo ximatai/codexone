@@ -45,7 +45,7 @@ swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/respon
 
 发行反代模板分别承载数据与管理 TLS 域，保留管理公开 authority（含端口），不依赖 forwarded 头授权；生成转发禁止自动重试，客户端断开须关闭对应上游且不自动释放 unknown。SSE 关闭响应缓冲，WS 显式升级。普通反代日志不得记录请求 URI/查询、认证与正文；私有故障诊断须单独受控。模板默认大小与空闲超时需按已验证模型/profile 明确配置，不能把空闲超时等同请求总期限。
 
-Linux glibc 运行镜像默认设置 `MALLOC_ARENA_MAX=1`、`MALLOC_MMAP_THRESHOLD_=131072`、`MALLOC_TRIM_THRESHOLD_=16777216`，限制多核 arena 保留并促进大块内存回收；Compose 与安装模板继承镜像 ENV，不另行覆盖。部署者显式覆盖须重新验收容量；macOS 不适用这些参数。Responses 入站原始正文在最后一次使用后丢弃。入站超过 8 MiB、直接选择 HTTP 上游（含 WS 大消息预路由）的 Responses 请求，在解析文档已释放且发送方已读至 EOF 后，归还全局正文租约。压缩发送须先确认无需 415 明文重发。其他请求与原生 WS turn 仍由原 owner 在结束时归还租约；所有路径保留原有字节、回退与入站限制。
+Linux glibc 运行镜像默认设置 `MALLOC_ARENA_MAX=1`、`MALLOC_MMAP_THRESHOLD_=131072`、`MALLOC_TRIM_THRESHOLD_=16777216`，限制多核 arena 保留并促进大块内存回收；Compose 与安装模板继承镜像 ENV，不另行覆盖。部署者显式覆盖须重新验收容量；macOS 不适用这些参数。Responses 入站原始正文在最后一次使用后丢弃。入站超过 8 MiB、直接选择 HTTP 上游（含 WS 大消息预路由）的 Responses 请求，在解析文档已释放且发送方已读至 EOF 后，归还全局正文租约。压缩发送须先确认无需 415 明文重发。Responses 的 HTTP 交换提前结束时，发送方在入站 owner 归还剩余租约前清空编码正文，存留的上传迭代器无法继续读取。其他请求与原生 WS turn 仍由原 owner 在结束时归还租约；所有路径保留原有字节、回退与入站限制。
 
 正式性能和容量指标须基于实际 Linux 硬件、负载、HTTP keepalive、WS 与图片峰值证据确定。资源回稳测 RSS/FD/task/队列，进程 kill 与系统/存储故障分别验收；不把 socket 释放包装成上游停止执行或收费。
 

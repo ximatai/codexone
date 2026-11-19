@@ -86,22 +86,68 @@ import libzstd
   #expect(pool.active == 0)
 }
 
-@Test func zstdReservationLastsUntilTransportPullsEOF() async throws {
+@Test func httpUploadDiscardInvalidatesAnIteratorBeforeReturningIngressCapacity() async throws {
+  let size = 65_537
+  let budget = RequestBodyBudget(capacity: size, headroomCapacity: 0)
+  let lease = budget.lease()
+  try lease.reserve(size)
+  let payload = HTTPUploadPayload(data: Data(count: size), lease: lease)
+  payload.useFinalEncoding()
+  var iterator = UploadBody(
+    payload: payload, progress: ExecutionProgress(try ExecutionBudget()),
+    upload: RequestUpload(bytes: size, transport: "http")
+  ).makeAsyncIterator()
+  _ = try #require(try await iterator.next())
+  await #expect(throws: CancellationError.self) {
+    payload.discard()
+    try await iterator.next()
+  }
+  #expect(budget.occupiedBytes == size)
+  lease.release()
+  #expect(budget.occupiedBytes == 0)
+}
+
+@Test(arguments: [true, false])
+func zstdReservationLastsThroughTransportEOFAndEncodingNegotiation(earlyAcceptance: Bool)
+  async throws
+{
+  let size = 9 * 1024 * 1024
+  let budget = RequestBodyBudget(capacity: size)
+  let lease = budget.lease()
+  try lease.reserve(size)
+  let waiting = budget.lease()
+  let ticket = try #require(try waiting.beginWaiting(size))
+  defer { budget.cancelWait(ticket) }
+  let payload = HTTPUploadPayload(data: Data(repeating: 65, count: size), lease: lease)
+  let progress = ExecutionProgress(try ExecutionBudget())
   let pool = ZstdUploadPool()
   #expect(pool.reserve())
   let owner = ZstdUpload(
-    data: Data(repeating: 65, count: 65_537), pool: pool,
-    progress: ExecutionProgress(try ExecutionBudget()),
-    upload: RequestUpload(bytes: 65_537, transport: "http", encoding: "zstd"))
+    payload: payload, pool: pool, progress: progress,
+    upload: RequestUpload(bytes: size, transport: "http", encoding: "zstd"))
+  if earlyAcceptance { payload.useFinalEncoding() }
   var chunks = 0
   while try await owner.next() != nil {
     chunks += 1
     // Even the final frame bytes must be consumed before EOF releases the workspace.
     #expect(pool.active == 1)
+    #expect(!waiting.reserveIfReady(size, ticket: ticket))
   }
   #expect(chunks > 0)
   #expect(pool.active == 0)
   await owner.close()
   #expect(pool.active == 0)
+  if !earlyAcceptance {
+    #expect(!waiting.reserveIfReady(size, ticket: ticket))
+    payload.retryPlaintext()
+    var retry = UploadBody(
+      payload: payload, progress: progress,
+      upload: RequestUpload(bytes: size, transport: "http")
+    ).makeAsyncIterator()
+    _ = try #require(try await retry.next())
+    #expect(!waiting.reserveIfReady(size, ticket: ticket))
+    while try await retry.next() != nil {}
+  }
+  #expect(waiting.reserveIfReady(size, ticket: ticket))
   try await pool.shutdown()
 }
