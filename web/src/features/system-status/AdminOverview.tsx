@@ -7,10 +7,7 @@ import { fetchSystemStatus } from "./api";
 import { OverviewMotion } from "../../shared/ui/ContinuousValue";
 import { fetchHeadroom } from "../../shared/governance-api";
 import { AdministratorReminders } from "./AdministratorReminders";
-import {
-  accountName,
-  credentialExpiry,
-} from "../../shared/account-presentation";
+import { accountName } from "../../shared/account-presentation";
 import { localTime } from "../../shared/presentation";
 import { attentionQueryKey, fetchAttention } from "./attention-api";
 import { quotaStale, quotaWindowLabel } from "../account-management/quota";
@@ -27,7 +24,6 @@ import {
   Text,
   Title,
   Skeleton,
-  Tooltip,
 } from "@mantine/core";
 import { Link, useSearchParams } from "react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -236,7 +232,6 @@ export function AdminOverview() {
                             : account.mode === "draining"
                               ? "排空中"
                               : null;
-                    const expires = account.accessExpiresAtUnixSeconds;
                     const quotaStatus =
                       !quota || quota.state === "unavailable"
                         ? "额度不可用"
@@ -254,7 +249,7 @@ export function AdminOverview() {
                         key={account.id}
                         className="wrap-anywhere"
                       >
-                        <div className={styles.quotaAccountHeader}>
+                        <div>
                           <Anchor
                             component={Link}
                             to={`/?account=${encodeURIComponent(account.id)}`}
@@ -263,23 +258,6 @@ export function AdminOverview() {
                               {accountName(account.id, [], account.displayName)}
                             </PrivateName>
                           </Anchor>
-                          {expires != null && (
-                            <Tooltip
-                              label={`访问凭证到期时间 · ${localTime(expires)}`}
-                              events={{
-                                hover: true,
-                                focus: true,
-                                touch: false,
-                              }}
-                            >
-                              <Text size="xs" c="dimmed" tabIndex={0}>
-                                {credentialExpiry(expires).replace(
-                                  /^访问凭证(?:约 )?/,
-                                  "",
-                                )}
-                              </Text>
-                            </Tooltip>
-                          )}
                         </div>
                         {accountStatus && (
                           <Text

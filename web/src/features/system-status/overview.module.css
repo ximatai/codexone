@@ -72,13 +72,6 @@
   text-align: end;
 }
 
-.quotaAccountHeader {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 8px;
-}
-
 .quotaWindows {
   display: grid;
   gap: 8px;
