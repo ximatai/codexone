@@ -299,6 +299,37 @@ private func maskedFrame(_ size: Int, opcode: UInt8 = 1, final: Bool = true) -> 
   #expect(budget.occupiedBytes == 0)
 }
 
+@Test func largeHTTPWaiterLimitLeavesRoomForAnotherKey() throws {
+  let large = 32 * 1024 * 1024
+  let budget = RequestBodyBudget()
+  let first = budget.lease()
+  let second = budget.lease()
+  #expect(try first.beginWaiting(large, keyID: "A") == nil)
+  #expect(try second.beginWaiting(large, keyID: "A") == nil)
+
+  let waitingA = budget.lease()
+  let ticketA = try #require(try waitingA.beginWaiting(large, keyID: "A"))
+  let retryA = budget.lease()
+  do {
+    _ = try retryA.beginWaiting(large, keyID: "A")
+    Issue.record("The same Key acquired a second large-body ticket")
+  } catch let error as GatewayProtocolError {
+    #expect(error.status == 503 && error.code == "capacity_exhausted")
+  }
+  let waitingB = budget.lease()
+  let ticketB = try #require(try waitingB.beginWaiting(large, keyID: "B"))
+
+  let smallA = budget.lease()
+  #expect(try smallA.beginWaiting(1024, keyID: "A") == nil)
+  budget.cancelWait(ticketA)
+  let retryTicketA = try #require(try retryA.beginWaiting(large, keyID: "A"))
+  first.release()
+  #expect(!retryA.reserveIfReady(large, ticket: retryTicketA))
+  #expect(waitingB.reserveIfReady(large, ticket: ticketB))
+  second.release()
+  #expect(retryA.reserveIfReady(large, ticket: retryTicketA))
+}
+
 @Test func bodyPartialGrowthMigratesAtomicallyAndFailurePreservesOldPool() throws {
   let mib = 1024 * 1024
   let budget = RequestBodyBudget(capacity: 16 * mib)

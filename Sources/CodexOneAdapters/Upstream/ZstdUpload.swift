@@ -87,7 +87,7 @@ final class ZstdEncoder: @unchecked Sendable {
 actor ZstdUpload {
   private let encoder = ZstdEncoder()
   private let pool: ZstdUploadPool
-  private let data: Data
+  private let payload: HTTPUploadPayload
   private let progress: ExecutionProgress
   private let upload: RequestUpload
   private var job: Task<(ByteBuffer?, Bool), any Error>?
@@ -96,7 +96,15 @@ actor ZstdUpload {
   private var ended = false
 
   init(data: Data, pool: ZstdUploadPool, progress: ExecutionProgress, upload: RequestUpload) {
-    self.data = data
+    self.init(
+      payload: HTTPUploadPayload(data: data), pool: pool, progress: progress, upload: upload)
+  }
+
+  init(
+    payload: HTTPUploadPayload, pool: ZstdUploadPool, progress: ExecutionProgress,
+    upload: RequestUpload
+  ) {
+    self.payload = payload
     self.pool = pool
     self.progress = progress
     self.upload = upload
@@ -106,6 +114,7 @@ actor ZstdUpload {
     try Task.checkCancellation()
     guard !stopped else { throw CancellationError() }
     if ended {
+      payload.sent()
       upload.sent()
       progress.requestSent()
       await close()
@@ -114,14 +123,14 @@ actor ZstdUpload {
     while !stopped {
       try Task.checkCancellation()
       let encoder = encoder
-      let data = data
+      let payload = payload
       let workers = pool.workers
       let upload = upload
       let task = Task {
         try await workers.runIfActive {
           let start = ContinuousClock.now
           defer { upload.compressed(for: start.duration(to: .now)) }
-          return try encoder.step(data)
+          return try payload.read { try encoder.step($0) }
         }
       }
       job = task
@@ -135,6 +144,7 @@ actor ZstdUpload {
         return buffer
       }
       if complete {
+        payload.sent()
         upload.sent()
         progress.requestSent()
         await close()

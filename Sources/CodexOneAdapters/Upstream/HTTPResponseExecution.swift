@@ -3,6 +3,45 @@ import CodexOneCore
 import Foundation
 import NIOCore
 import NIOHTTP1
+import Synchronization
+
+/// Moves a large value across an async task boundary without retaining a second owner.
+private final class PendingHTTPBody<Value: Sendable>: Sendable {
+  private let value: Mutex<Value?>
+
+  init(_ value: consuming Value) { self.value = Mutex(consume value) }
+
+  func take() throws -> Value {
+    try value.withLock {
+      guard let body = $0 else { throw ExecutionError.invalidCommand }
+      $0 = nil
+      return body
+    }
+  }
+}
+
+private struct PreparedHTTPResponse: Sendable {
+  let document: PendingHTTPBody<JSONValue>
+  let frame: PendingHTTPBody<Data>?
+  let output: ResponseOutputContext
+  let model: SingleIdentityConfiguration.Model
+  let references: [ObjectBinding]
+  let affinityHints: [ObjectBinding]
+  let mode: ExecutionMode
+  let requirements: ExecutionRequirements
+  let reasoningEffort: String?
+  let serviceTier: String?
+  let turnState: String?
+  let hasPrevious: Bool
+  let oversized: Bool
+  let streamCompaction: Bool
+  let wireStreaming: Bool
+  let usesResponsesLite: Bool
+
+  func beginUpload(lease: RequestBodyLease?) throws -> HTTPUploadPayload {
+    try HTTPUploadPayload(data: document.take().data(), lease: frame == nil ? lease : nil)
+  }
+}
 
 struct HTTPResponseExecution: Sendable {
   var protocolExtensions: ClientProtocolExtensionRegistry? = nil
@@ -107,32 +146,34 @@ struct HTTPResponseExecution: Sendable {
   }
 
   func execute(
-    _ request: ResponseRequest, requestID: String,
+    _ request: consuming ResponseRequest, requestID: String, bodyLease: RequestBodyLease? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    let requestedModel = request.model
+    let mode = request.mode
+    let pending = PendingHTTPBody(consume request)
     let timeoutTrace = ExecutionTimeoutTrace(requestID: requestID)
     defer { timeoutTrace.flush() }
     do {
       try await withExecutionDeadline(
         seconds: configuration.budget.total, timeoutTrace: timeoutTrace
       ) {
-        try await executeHTTP(request, requestID: requestID, emit: emit)
+        try await executeHTTP(pending, requestID: requestID, bodyLease: bodyLease, emit: emit)
       }
     } catch {
-      await recordRejection(request, requestID: requestID, error: error)
+      await recordRejection(model: requestedModel, mode: mode, requestID: requestID, error: error)
       throw error
     }
   }
-  private func executeHTTP(
-    _ request: ResponseRequest, requestID: String,
-    emit: @escaping @Sendable (JSONValue) async throws -> Void
-  ) async throws {
+
+  private func prepareHTTP(_ request: consuming ResponseRequest) throws -> PreparedHTTPResponse {
     guard gateway != nil else { throw ExecutionError.unauthorized }
     guard request.mode == .generation || request.mode == .priming || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
     }
     let model = try executionModel(request)
     let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
+    let hasPrevious = request.document["previous_response_id"].map { $0 != .null } ?? false
     // Discard an oversized WS encoding before allocating the HTTP body.
     let (frame, oversizedBytes): (Data?, Int?) = try {
       guard configuration.upstreamTransport == "websocket" else { return (nil, nil) }
@@ -140,27 +181,42 @@ struct HTTPResponseExecution: Sendable {
       return encoded.count > UpstreamWebSocketBodyLimit.httpRoutingBytes
         ? (nil, encoded.count) : (encoded, nil)
     }()
-    let oversized = oversizedBytes != nil
-    if let oversizedBytes, let previous = request.document["previous_response_id"],
-      previous != .null
-    {
+    if let oversizedBytes, hasPrevious {
       ProtocolFailureDiagnostics.recordOversizedFrame(
         bytes: oversizedBytes, path: "reject_continuation")
       throw UpstreamWebSocketBodyLimit.rejection()
     }
-    let wireDocument = try request.preparedDocument(
+    let document = try request.preparedDocument(
       contract: configuration.requestContract, nativeWebSocket: false)
     if let oversizedBytes {
       ProtocolFailureDiagnostics.recordOversizedFrame(bytes: oversizedBytes, path: "http")
     }
+    return PreparedHTTPResponse(
+      document: PendingHTTPBody(document), frame: frame.map { PendingHTTPBody($0) },
+      output: request.outputContext, model: model, references: request.references,
+      affinityHints: request.affinityHints, mode: request.mode, requirements: request.requirements,
+      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier,
+      turnState: turnState, hasPrevious: hasPrevious, oversized: oversizedBytes != nil,
+      streamCompaction: request.streamCompaction, wireStreaming: document["stream"]?.bool == true,
+      usesResponsesLite: request.usesResponsesLite)
+  }
+
+  private func executeHTTP(
+    _ pending: PendingHTTPBody<ResponseRequest>, requestID: String, bodyLease: RequestBodyLease?,
+    emit: @escaping @Sendable (JSONValue) async throws -> Void
+  ) async throws {
+    let prepared = try prepareHTTP(pending.take())
+    let model = prepared.model
+    let output = prepared.output
     try await executeRouted(
-      model: request.admissionModel, references: request.references,
-      affinityHints: request.affinityHints, requestID: requestID,
-      mode: request.mode, turnState: turnState, requirements: request.requirements,
-      reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
+      model: model.id, references: prepared.references,
+      affinityHints: prepared.affinityHints, requestID: requestID,
+      mode: prepared.mode, turnState: prepared.turnState, requirements: prepared.requirements,
+      reasoningEffort: prepared.reasoningEffort, serviceTier: prepared.serviceTier
     ) { context, authorization in
-      var fallback = oversized
-      if let frame {
+      var fallback = prepared.oversized
+      if let pendingFrame = prepared.frame {
+        let frame = try pendingFrame.take()
         do {
           try await webSocket.authorized(authorization, headers: clientHeaders).run(
             diagnosticContext: context,
@@ -168,20 +224,19 @@ struct HTTPResponseExecution: Sendable {
               await observeResponseHeaders($0, account: authorization?.identity)
             }
           ) { peer in
-            try peer.beginTurn(compaction: request.streamCompaction)
+            try peer.beginTurn(compaction: prepared.streamCompaction)
             try await exchange(
-              request, context: context, model: model, peer: peer,
+              output, context: context, model: model, peer: peer,
               frame: frame, allowSizeFallback: true,
-              sizeRefusalPath: request.document["previous_response_id"] == nil
-                || request.document["previous_response_id"] == .null
-                ? "http_1009" : "reject_continuation_1009", emit: emit)
+              sizeRefusalPath: prepared.hasPrevious ? "reject_continuation_1009" : "http_1009",
+              emit: emit)
           }
           return nil
         } catch let error as GatewayProtocolError
           where error.code == UpstreamWebSocketBodyLimit.errorCode
           && error.upstreamWebSocketCloseCode == 1009
         {
-          if let previous = request.document["previous_response_id"], previous != .null {
+          if prepared.hasPrevious {
             try observeProviderRejection(context)
             throw error
           }
@@ -189,21 +244,20 @@ struct HTTPResponseExecution: Sendable {
         }
       }
       let isFallback = fallback
-      let wireStreaming = wireDocument["stream"]?.bool == true
       try await withProgressDeadline(budget: configuration.budget) { progress in
         var upstream = HTTPClientRequest(
           url: (authorization?.baseURL ?? configuration.upstreamBaseURL) + "/responses")
         upstream.method = .POST
         upstream.headers = clientHeaders
         if isFallback, upstream.headers.first(name: "x-codex-turn-state") == nil,
-          let turnState = try requestTurnState(headers: clientHeaders, document: request.document)
+          let turnState = prepared.turnState
         {
           upstream.headers.add(name: "x-codex-turn-state", value: turnState)
         }
         upstream.headers.add(name: "content-type", value: "application/json")
         upstream.headers.add(
-          name: "accept", value: wireStreaming ? "text/event-stream" : "application/json")
-        if request.usesResponsesLite {
+          name: "accept", value: prepared.wireStreaming ? "text/event-stream" : "application/json")
+        if prepared.usesResponsesLite {
           upstream.headers.add(name: "x-openai-internal-codex-responses-lite", value: "true")
         }
         if let authorization {
@@ -213,34 +267,34 @@ struct HTTPResponseExecution: Sendable {
         } else if let token {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
-        let data = try wireDocument.data()
+        let payload = try prepared.beginUpload(lease: bodyLease)
         // One encoding, one selected account and one attempt, including a 415 negotiation retry.
         let canCompress =
           configuration.requestContract == .codexSubscription
           && configuration.upstreamRequestCompression == "zstd"
-          && data.count > configuration.upstreamZstdMinimumBytes
+          && payload.count > configuration.upstreamZstdMinimumBytes
         let template = upstream
         @Sendable func send(compressed: Bool) async throws -> (
-          HTTPClientResponse, ZstdUpload?, RequestUpload
+          response: HTTPClientResponse, owner: ZstdUpload?, upload: RequestUpload
         ) {
           var outgoing = template
           outgoing.headers.remove(name: "content-length")
           outgoing.headers.remove(name: "transfer-encoding")
           outgoing.headers.remove(name: "content-encoding")
           let upload = RequestUpload(
-            bytes: data.count, transport: "http", encoding: compressed ? "zstd" : "identity")
+            bytes: payload.count, transport: "http", encoding: compressed ? "zstd" : "identity")
           let owner: ZstdUpload?
           if compressed, let compressionPool {
             let zstd = ZstdUpload(
-              data: data, pool: compressionPool, progress: progress, upload: upload)
+              payload: payload, pool: compressionPool, progress: progress, upload: upload)
             owner = zstd
             outgoing.headers.add(name: "content-encoding", value: "zstd")
             outgoing.body = .stream(ZstdUploadBody(owner: zstd), length: .unknown)
           } else {
             owner = nil
             outgoing.body = .stream(
-              UploadBody(data: data, progress: progress, upload: upload),
-              length: .known(Int64(data.count)))
+              UploadBody(payload: payload, progress: progress, upload: upload),
+              length: .known(Int64(payload.count)))
           }
           do {
             let response = try await client.execute(
@@ -260,22 +314,24 @@ struct HTTPResponseExecution: Sendable {
             throw error
           }
         }
-        let compressed = canCompress && compressionPool?.reserve() == true
-        var firstResponse: HTTPClientResponse?
-        let owner: ZstdUpload?
-        var upload: RequestUpload
-        (firstResponse, owner, upload) = try await send(compressed: compressed)
-        let response: HTTPClientResponse
-        if compressed, firstResponse?.status == .unsupportedMediaType {
-          // No HTTP body events have been read; a prior WS fallback also proves no lifecycle.
-          // Negotiate once without changing admission or account health.
-          // Dispose the rejected response before creating a new connection; never re-encode Data.
-          firstResponse = nil
-          progress.negotiateUpload()
-          (response, _, upload) = try await send(compressed: false)
-        } else {
-          response = firstResponse!
+        func sendWithEncodingNegotiation() async throws -> (
+          HTTPClientResponse, ZstdUpload?, RequestUpload
+        ) {
+          if canCompress && compressionPool?.reserve() == true {
+            let first = try await send(compressed: true)
+            if first.response.status != .unsupportedMediaType {
+              payload.useFinalEncoding()
+              return first
+            }
+            // The rejected response stays in this scope. Retry the same bytes and admission.
+            progress.negotiateUpload()
+            payload.retryPlaintext()
+          } else {
+            payload.useFinalEncoding()
+          }
+          return try await send(compressed: false)
         }
+        let (response, owner, upload) = try await sendWithEncodingNegotiation()
         defer { upload.finish() }
         do {
           await observeResponseHeaders(
@@ -290,7 +346,7 @@ struct HTTPResponseExecution: Sendable {
             }
             throw await ProviderError.failure(response: response)
           }
-          if wireStreaming {
+          if prepared.wireStreaming {
             let header = response.headers.first(name: "content-type")?
               .trimmingCharacters(in: .whitespacesAndNewlines)
             let media =
@@ -308,9 +364,9 @@ struct HTTPResponseExecution: Sendable {
                 502, "invalid_upstream_content_type", detail: detail, upstreamStatus: 200)
             }
             var decoder = SSEDecoder(
-              maximumEventBytes: request.requirements.imageModel == nil
+              maximumEventBytes: output.imageModel == nil
                 ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes,
-              maximumTotalBytes: request.requirements.imageModel == nil
+              maximumTotalBytes: output.imageModel == nil
                 ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes)
             var responseID: String?
             var terminal = false
@@ -351,22 +407,22 @@ struct HTTPResponseExecution: Sendable {
                 if ProviderObservation.terminalEvents.contains(type),
                   !context.providerRejectedBeforeOutput
                 {
-                  try request.observeUsage(
+                  try output.observeUsage(
                     event["response"], context: context, model: model,
                     configuration: configuration.imageGeneration, authorModels: configuration.models
                   )
                 }
                 let observation = try ProviderObservation(
-                  event: event, model: model, allowImages: request.requirements.imageModel != nil)
+                  event: event, model: model, allowImages: output.imageModel != nil)
                 context.observeActualServiceTier(observation.actualServiceTier)
                 progress.note(event: event)
                 for object in observation.bindings { try await context.bind(object) }
                 try observeTerminalOutcome(event, context: context)
                 terminal = observation.terminal
-                if request.streaming || terminal {
-                  let output = request.streaming ? event : event["response"]!
+                if output.streaming || terminal {
+                  let eventToSend = output.streaming ? event : event["response"]!
                   try await emit(
-                    ProviderObservation.clientOutput(output))
+                    ProviderObservation.clientOutput(eventToSend))
                 }
                 if terminal { try observeSubmittedTerminal(event, context: context) }
                 if terminal { break readUpstream }
@@ -384,7 +440,7 @@ struct HTTPResponseExecution: Sendable {
             }
             let body = try await collectProgressBody(
               response.body, progress: progress,
-              maximum: request.requirements.imageModel == nil
+              maximum: output.imageModel == nil
                 ? ProviderObservation.maximumTextResponseBytes : ImageLimits.eventBytes)
             let document: JSONValue
             do {
@@ -395,14 +451,14 @@ struct HTTPResponseExecution: Sendable {
               throw GatewayProtocolError(502, "execution_indeterminate")
             }
             context.observeUpstreamEvent()
-            try request.observeUsage(
+            try output.observeUsage(
               document, context: context, model: model, configuration: configuration.imageGeneration
             )
             let event = JSONValue.object([
               "type": .string("response." + status!), "response": document,
             ])
             let observation = try ProviderObservation(
-              event: event, model: model, allowImages: request.requirements.imageModel != nil)
+              event: event, model: model, allowImages: output.imageModel != nil)
             context.observeActualServiceTier(observation.actualServiceTier)
             for object in observation.bindings { try await context.bind(object) }
             try observeTerminalOutcome(event, context: context)
@@ -423,6 +479,13 @@ struct HTTPResponseExecution: Sendable {
     }
   }
   func recordRejection(_ request: ResponseRequest?, requestID: String, error: any Error) async {
+    await recordRejection(
+      model: request?.model, mode: request?.mode ?? .generation, requestID: requestID, error: error)
+  }
+
+  private func recordRejection(
+    model requestedModel: String?, mode: ExecutionMode, requestID: String, error: any Error
+  ) async {
     guard let currentKeyID, let diagnostics = access.diagnostics else { return }
     let mapped = protocolFailure(error)
     let selection = mapped.requestSelection
@@ -430,8 +493,8 @@ struct HTTPResponseExecution: Sendable {
       if let selection {
         selection.catalogModel
       } else {
-        request.flatMap { request in
-          configuration.models.contains(where: { $0.id == request.model }) ? request.model : nil
+        requestedModel.flatMap { model in
+          configuration.models.contains(where: { $0.id == model }) ? model : nil
         }
       }
     // This known local refusal is not an unknown execution. Keep the execution-time
@@ -453,7 +516,7 @@ struct HTTPResponseExecution: Sendable {
       }
     try? await diagnostics.recordRejection(
       requestID: requestID, keyID: currentKeyID,
-      model: model, mode: request?.mode ?? .generation, failure: failure, reason: reason,
+      model: model, mode: mode, failure: failure, reason: reason,
       reasoningEffort: selection.map {
         reason == .reasoningEffortLegacyField ? ($0.legacyEffort ?? $0.effort) : $0.effort
       })

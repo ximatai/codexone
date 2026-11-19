@@ -494,7 +494,8 @@ public struct ResponsesDataService: Service {
                       try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
                       try await ExecutionDeadlineScope.$trace.withValue(initialTurn.timeoutTrace) {
                         try await executor.exchange(
-                          request, context: initialTurn.context, model: model, peer: upstream,
+                          request.outputContext, context: initialTurn.context, model: model,
+                          peer: upstream,
                           lane: lane,
                           downstream: downstream, frame: try initialTurn.start.takeFrame()
                         ) { event in
@@ -605,9 +606,11 @@ public struct ResponsesDataService: Service {
                   let path = String(next.uri.split(separator: "?", maxSplits: 1).first ?? "")
                   control = ControlRoute.match(method: next.method, path: path) != nil
                   if control { maximumBytes = ControlRoute.requestBytes }
+                  var keyID: String?
                   if !["/health/live", "/health/ready"].contains(path) {
-                    _ = try await executor.access.policy(
-                      executor.access.digest(next.headers["authorization"]))
+                    keyID = try await executor.access.policy(
+                      executor.access.digest(next.headers["authorization"])
+                    ).keyID
                   }
                   if !control, !normalChannels.register(connection.channel) {
                     throw ExecutionError.capacity
@@ -628,7 +631,7 @@ public struct ResponsesDataService: Service {
                     if control {
                       try lease.reserve(count, control: true)
                     } else {
-                      try await lease.reserveWaiting(count)
+                      try await lease.reserveWaiting(count, keyID: keyID)
                       try Task.checkCancellation()
                     }
                   }
@@ -677,7 +680,8 @@ public struct ResponsesDataService: Service {
             let writer = ProtocolResponseWriter(
               writer: outbound, channel: connection.channel, keepAlive: head.isKeepAlive)
             do {
-              try await route(head: head, body: &body, executor: executor, writer: writer)
+              try await route(
+                head: head, body: &body, lease: lease, executor: executor, writer: writer)
             } catch {
               try await writer.fail(error)
             }
@@ -700,7 +704,8 @@ public struct ResponsesDataService: Service {
   }
 
   private static func route(
-    head: HTTPRequestHead, body: inout Data, executor: HTTPResponseExecution,
+    head: HTTPRequestHead, body: inout Data, lease: RequestBodyLease,
+    executor: HTTPResponseExecution,
     writer: ProtocolResponseWriter
   ) async throws {
     let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
@@ -789,7 +794,8 @@ public struct ResponsesDataService: Service {
     let request = try ResponseRequest(
       data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
       imageConfiguration: executor.configuration.imageGeneration)
-    // Parsing owns the document; retain only the request lease through execution.
+    let largeBodyLease = body.count > RequestBodyLimits.smallRequestBytes ? lease : nil
+    // The parsed document owns the input after decoding.
     body = Data()
     if endpoint == "/responses/compact" {
       try await executor.compact(request, requestID: writer.requestID) { document in
@@ -797,15 +803,19 @@ public struct ResponsesDataService: Service {
       }
       return
     }
-    await writer.setStreaming(request.streaming)
-    try await executor.execute(request, requestID: writer.requestID) { document in
-      if request.streaming {
+    let streaming = request.streaming
+    await writer.setStreaming(streaming)
+    try await executor.execute(
+      consume request, requestID: writer.requestID, bodyLease: largeBodyLease
+    ) {
+      document in
+      if streaming {
         try await writer.event(document)
       } else {
         try await writer.json(document)
       }
     }
-    if request.streaming { try await writer.finishStream() }
+    if streaming { try await writer.finishStream() }
   }
 }
 

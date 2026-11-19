@@ -144,7 +144,7 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 数据服务持有 64 MiB 共享正文容量和额外合计 8 MiB 小请求余量，普通正文全部计量；总大小不超过 8 MiB 的普通正文优先使用余量，再使用共享。控制正文仅使用共享。HTTP 已知长度在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请。部分正文增长的转池在同一预算锁内完成，失败保留原预留至 owner 清理，不持有部分容量等待。
 
-HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者，最长 5 秒，计入原请求读取/首 create 期限。共享申请按空 lease FIFO；小请求余量按小请求等待顺序，不被大请求阻塞。等待时不占正文容量；取消/断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超限提前拒绝；事件循环延迟不能使超时请求获批。队满、超时或增量不足返回 HTTP 503 capacity_exhausted、Retry-After: 1，WS 返回带 status: 503 的 error 帧并丢弃该消息；单条超过 64 MiB 为 413。解析后可清除原 Data，lease 由请求/turn owner 持有至完成或丢弃，所有结束路径幂等释放。72 MiB 是正文预留上界，JSON 树、序列化、base64、网络队列和输出仍占额外内存。Images multipart 转原生 JSON，原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
+HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者，最长 5 秒，计入原请求读取/首 create 期限。已认证的普通 HTTP 已知正文超过 8 MiB 时，每个 Key 最多持有一张等候票据。获得容量后即移除票据，容量充足时仍允许同一 Key 并行上传。共享申请按空 lease FIFO；小请求余量按小请求等待顺序，不被大请求阻塞。等待时不占正文容量；取消/断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超限提前拒绝；事件循环延迟不能使超时请求获批。队满、同一 Key 重复申请大 HTTP 等候票据、超时或增量不足返回 HTTP 503 capacity_exhausted、Retry-After: 1，WS 的容量拒绝返回带 status: 503 的 error 帧并丢弃该消息；单条超过 64 MiB 为 413。解析后可清除原 Data，正文 lease 由请求/turn owner 在完成或丢弃时幂等释放，直走 HTTP 上游的大 Responses 正文可按[运行规范](operations.md)提前释放。72 MiB 是正文预留上界，JSON 树、序列化、base64、网络队列和输出仍占额外内存。Images multipart 转原生 JSON，原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
 
 可信离线profile导入及字段边界见[模型快照](../model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 

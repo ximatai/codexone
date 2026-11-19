@@ -234,14 +234,18 @@ def configure(config, provider_port, contract):
     config.chmod(0o600)
 
 
-def held_body_budgets(port, server, contract, process):
-    """Parsing can drop raw bytes, but real socket requests still own their leases."""
-    def wait_calls(expected):
-        with server.guard:
-            assert server.guard.wait_for(lambda: len(server.calls) == expected, timeout=30)
+def hold_http_reservation(stack, port, size):
+    """Reserve a declared body while sending only its first byte."""
+    sock = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=8))
+    sock.sendall((f'POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                  f'Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n'
+                  f'Content-Length: {size}\r\n\r\n').encode() + b'{')
 
+
+def held_body_budgets(port, server, contract):
+    """Hold actual ingress reservations while exercising HTTP and native WS contention."""
     def refused(size):
-        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=8)
         try:
             connection.putrequest('POST', '/v1/responses')
             connection.putheader('Authorization', 'Bearer ' + TOKEN)
@@ -254,77 +258,52 @@ def held_body_budgets(port, server, contract, process):
         finally:
             connection.close()
 
-    # Serialize once before any native connection starts its first-create clock.
-    native_payload = wire({'type':'response.create', **sized(9 * 1024 * 1024, contract, native=True)})
+    native_payload = wire({'type':'response.create', **sized(9 * ONE_MIB, contract, native=True)})
+    before = len(server.calls)
+    with ExitStack() as holders:
+        for _ in range(2):
+            hold_http_reservation(holders, port, 30 * ONE_MIB)
+        time.sleep(.15)
+        refused(20 * ONE_MIB)
+        assert len(server.calls) == before
+    with ExitStack() as holders, dial(port, headers=HEADERS, timeout=30) as peer:
+        for _ in range(2):
+            hold_http_reservation(holders, port, 32 * ONE_MIB)
+        time.sleep(.15)
+        peer.sendall(b'\x81\xff' + struct.pack('!Q', len(native_payload)) + b'\0' * 4)
+        time.sleep(.2)
+        assert len(server.calls) == before
+        holders.close()
+        peer.sendall(native_payload)
+        opcode, body = receive(peer)
+        assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
+
     server.release = threading.Event()
     server.mode = 'hold'
-    # A held client must outlast the provider's bounded 45-second fixture hold.
-    before = len(server.calls)
-    with ThreadPoolExecutor(max_workers=2) as worker:
-        holders = [worker.submit(call_http, port, sized(30 * 1024 * 1024, contract), timeout=60) for _ in range(2)]
-        try:
-            wait_calls(before + 2)
-            refused(20 * 1024 * 1024)
-            assert len(server.calls) == before + 2
-        finally:
+    try:
+        with ExitStack() as stack:
+            peers = []
+            for _ in range(2):
+                peer = stack.enter_context(dial(port, headers=HEADERS, timeout=30))
+                peers.append(peer)
+                send(peer, native_payload, masked=True, maximum_bytes=10 * ONE_MIB)
+                with server.guard:
+                    assert server.guard.wait_for(lambda: len(server.calls) == before + 1 + len(peers), 15)
+            hold_http_reservation(stack, port, 32 * ONE_MIB)
+            time.sleep(.15)
+            refused(20 * ONE_MIB)
+            assert len(server.calls) == before + 3
             server.release.set()
-        for holder in holders: assert holder.result(timeout=30)[0] == 200
-    server.release.clear()
-    # A native WS can wait with only its frame header present, then continue after
-    # the competing HTTP execution releases capacity; no full payload is queued.
-    with ThreadPoolExecutor(max_workers=2) as worker:
-        holders = [worker.submit(call_http, port, sized(32 * 1024 * 1024, contract), timeout=60) for _ in range(2)]
-        wait_calls(before + 4)
-        # Native Linux reports the process high-water mark, excluding fake-provider/client RSS.
-        status_file = Path(f'/proc/{process.pid}/status')
-        if status_file.exists():
-            peak = next(int(line.split()[1]) for line in status_file.read_text().splitlines() if line.startswith('VmHWM:'))
-            print('RESOURCE ' + json.dumps({'scenario':'two_maximum_bodies', 'peak_rss_kib':peak, 'budget_mib':64, 'contract':contract}), flush=True)
-        try:
-            with dial(port, headers=HEADERS, timeout=30) as peer:
-                peer.sendall(b'\x81\xff' + struct.pack('!Q', len(native_payload)) + b'\0' * 4)
-                time.sleep(.2)
-                assert len(server.calls) == before + 4
-                server.release.set()
-                for holder in holders: assert holder.result(timeout=30)[0] == 200
-                time.sleep(.5)
-                peer.sendall(native_payload)
+            for peer in peers:
                 opcode, body = receive(peer)
                 assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
-                wait_calls(before + 5)
-        finally:
-            server.release.set()
-    before = len(server.calls)
-    server.release.clear()
-    # Prepare large client bytes before starting the gateway's first-create timer.
-    # Hold a 32 MiB HTTP execution plus two 9 MiB native turns; another 20 MiB
-    # cannot fit. Opening each WS only when ready avoids idle clients expiring
-    # while a slower Linux runner serializes the other peers' large fixtures.
-    with ThreadPoolExecutor(max_workers=1) as worker:
-        held = worker.submit(call_http, port, sized(32 * 1024 * 1024, contract), timeout=60)
-        try:
-            wait_calls(before + 1)
-            with ExitStack() as stack:
-                peers = []
-                for _ in range(2):
-                    peer = stack.enter_context(dial(port, headers=HEADERS, timeout=30))
-                    peers.append(peer)
-                    send(peer, native_payload, masked=True, maximum_bytes=10 * 1024 * 1024)
-                    wait_calls(before + 1 + len(peers))
-                refused(20 * 1024 * 1024)
-                assert len(server.calls) == before + 3
-                server.release.set()
-                for peer in peers:
-                    opcode, body = receive(peer)
-                    assert opcode == 1 and json.loads(body)['type'] == 'response.completed'
-            assert held.result(timeout=30)[0] == 200
-        finally:
-            server.release.set()
-            server.mode = 'ok'
-    # Completion/connection teardown returns capacity; a fresh large request dispatches.
-    assert call_http(port, sized(31 * 1024 * 1024, contract))[0] == 200
-    print('PASS: HTTP and first WS turns retain body budget after parsing; completion returns capacity', flush=True)
-    return 9
+    finally:
+        server.release.set()
+        server.mode = 'ok'
+
+    assert call_http(port, sized(31 * ONE_MIB, contract))[0] == 200
+    print('PASS: HTTP ingress and native WS share bounded reservations; closure returns capacity', flush=True)
+    return 4
 
 
 def body_limit_diagnostics(binary, config, root, server, contract, failures_only):
@@ -393,11 +372,7 @@ def verify_small_body_budget(port, server, contract):
         # Park headers with a tiny prefix. This checks reservations without filling
         # memory or waiting for any provider execution.
         for _ in range(9):
-            sock = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=8))
-            header = (f'POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
-                      f'Authorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\n'
-                      f'Content-Length: {8 * 1024 * 1024}\r\n\r\n').encode()
-            sock.sendall(header + b'{')
+            hold_http_reservation(stack, port, 8 * ONE_MIB)
         time.sleep(.3)
         with ThreadPoolExecutor(max_workers=1) as worker, dial(port, headers=HEADERS, timeout=9) as peer:
             http_result = worker.submit(call_http, port, sized(1024, contract))
@@ -563,7 +538,7 @@ def main():
                     if not args.failures_only:
                         count += verify_small_body_budget(ports['data'], server, contract)
                         if not args.smoke:
-                            count += held_body_budgets(ports['data'], server, contract, process)
+                            count += held_body_budgets(ports['data'], server, contract)
                         ledger(root, count)
                         count += verify_native_fragments(ports['data'], server, root, contract, count)
                         for route in ('json', 'sse', 'native'):

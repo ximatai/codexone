@@ -58,6 +58,12 @@ struct GatewayProtocolError: Error, Sendable {
   }
 }
 
+struct ResponseOutputContext: Sendable {
+  let streaming: Bool
+  let imageModel: String?
+  let expectsSVG: Bool
+}
+
 struct ResponseRequest: Sendable {
   static let liteMetadataKey = "ws_request_header_x_openai_internal_codex_responses_lite"
   /// Most recent soft references kept for account affinity; older history adds no routing value.
@@ -75,7 +81,12 @@ struct ResponseRequest: Sendable {
   let mode: ExecutionMode
   let streamCompaction: Bool
   let usesResponsesLite: Bool
+  private let expectsSVG: Bool
   let document: JSONValue
+
+  var outputContext: ResponseOutputContext {
+    .init(streaming: streaming, imageModel: requirements.imageModel, expectsSVG: expectsSVG)
+  }
   init(data: Data, mode: ExecutionMode = .generation, imageConfiguration: ImageConfiguration? = nil)
     throws
   {
@@ -170,6 +181,7 @@ struct ResponseRequest: Sendable {
     let imageTool = try imageTools.first.map {
       try ImageToolRequest($0, configuration: imageConfiguration)
     }
+    expectsSVG = imageTool?.document["output_format"]?.string == "svg"
     let inherited =
       fields["tools"] == nil && packages.isEmpty
         && previousTools?.model == model

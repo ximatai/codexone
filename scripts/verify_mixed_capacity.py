@@ -227,18 +227,20 @@ def worker(root, ports, idle_seconds):
                 pending = [pool.submit(request, exact_body(size, name), keys[i])
                            for i, (size, name) in enumerate(zip(sizes, names))]
                 until(lambda: all(any(row[0] == name for row in calls) for name in names))
-                # Fill the same shared pool with two 32 MiB owners, then one 64 MiB owner.
+                # A response held upstream must no longer hold its uploaded input.
                 waiting_name = f'mixed-{turn}-wait'
                 waiter = pool.submit(request, exact_body(9*MIB, waiting_name), keys[2])
-                small = request(exact_body(8*MIB-1024, f'mixed-{turn}-small'), keys[2])
-                assert small['status'] == 200
-                time.sleep(.3)
-                assert not waiter.done()
-                assert not any(row[0] == waiting_name for row in calls)
-                release.set()
-                batch = [future.result(timeout=40) for future in pending+[waiter]]
+                try:
+                    result = waiter.result(timeout=15)
+                    assert result['status'] == 200
+                    assert all(not future.done() for future in pending)
+                    small = request(exact_body(8*MIB-1024, f'mixed-{turn}-small'), keys[2])
+                    assert small['status'] == 200
+                finally:
+                    release.set()
+                batch = [future.result(timeout=40) for future in pending]
                 assert all(row['status'] == 200 for row in batch)
-                results.extend(batch+[small])
+                results.extend(batch+[result,small])
                 phase(f'round-{turn+1}-outputs')
                 release.clear()
                 held_name = f'mixed-{turn}-output-hold'
@@ -254,7 +256,7 @@ def worker(root, ports, idle_seconds):
                     'images':[{'image_url':'data:image/png;base64,'+base64.b64encode(capacity.png_payload()).decode()}]}).encode(),
                     keys[3], '/v1/images/edits', False, True)
                 # Both providers sent the first chunk and retain their remaining output.
-                # Check unrelated work while two image permits and the 64 MiB input are held.
+                # Check unrelated work while two image permits and the large request are still active.
                 until(lambda: generation_name in output_started and edit_name in output_started)
                 assert not generation.done() and not editing.done()
                 for path in ('/health/live', '/api/keys', '/api/runtime/storage'):

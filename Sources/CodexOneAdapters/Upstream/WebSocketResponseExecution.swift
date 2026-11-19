@@ -33,7 +33,7 @@ extension HTTPResponseExecution {
         reasoningEffort: request.reasoningEffort, serviceTier: request.serviceTier
       ) { context, _ in
         try await exchange(
-          request, context: context, model: model, peer: peer, lane: lane,
+          request.outputContext, context: context, model: model, peer: peer, lane: lane,
           downstream: downstream, frame: frame, emit: emit)
         return nil
       }
@@ -69,7 +69,8 @@ extension HTTPResponseExecution {
 
   /// Performs one prepared wire turn under an already durable, owned execution context.
   func exchange(
-    _ request: ResponseRequest, context: ExecutionContext, model: SingleIdentityConfiguration.Model,
+    _ output: ResponseOutputContext, context: ExecutionContext,
+    model: SingleIdentityConfiguration.Model,
     peer: WebSocketPeer, lane: String = "",
     downstream: WebSocketPeer? = nil, frame: Data, allowSizeFallback: Bool = false,
     sizeRefusalPath: String = "reject_native_1009",
@@ -96,7 +97,7 @@ extension HTTPResponseExecution {
         guard !context.providerRejectedBeforeOutput,
           ProviderObservation.terminalEvents.contains(event["type"]?.string ?? "")
         else { return }
-        try request.observeUsage(
+        try output.observeUsage(
           event["response"], context: context, model: model,
           configuration: configuration.imageGeneration, authorModels: configuration.models)
       })
@@ -127,7 +128,7 @@ extension HTTPResponseExecution {
             let data = try await peer.next(lane: lane)
             context.observeUpstreamEvent()
             let limit =
-              request.requirements.imageModel == nil
+              output.imageModel == nil
               ? ProviderObservation.maximumTextResponseBytes : ImageLimits.responseBytes
             guard data.count <= limit - total else {
               throw GatewayProtocolError(502, "upstream_response_too_large")
@@ -135,7 +136,7 @@ extension HTTPResponseExecution {
             total += data.count
             guard
               data.count
-                <= (request.requirements.imageModel == nil
+                <= (output.imageModel == nil
                   ? ProviderObservation.maximumTextEventBytes : ImageLimits.eventBytes)
             else {
               throw GatewayProtocolError(502, "upstream_event_too_large")
@@ -155,12 +156,12 @@ extension HTTPResponseExecution {
             if ProviderObservation.terminalEvents.contains(type),
               !context.providerRejectedBeforeOutput
             {
-              try request.observeUsage(
+              try output.observeUsage(
                 event["response"], context: context, model: model,
                 configuration: configuration.imageGeneration, authorModels: configuration.models)
             }
             let observation = try ProviderObservation(
-              event: event, model: model, allowImages: request.requirements.imageModel != nil)
+              event: event, model: model, allowImages: output.imageModel != nil)
             context.observeActualServiceTier(observation.actualServiceTier)
             progress.note(event: event)
             for object in observation.bindings { try await context.bind(object) }
@@ -172,7 +173,7 @@ extension HTTPResponseExecution {
               bufferedMetadata.append(event)
               continue
             }
-            if request.streaming {
+            if output.streaming {
               for metadata in bufferedMetadata { try await emit(metadata) }
               bufferedMetadata.removeAll()
               try await emit(
@@ -195,7 +196,7 @@ extension HTTPResponseExecution {
             && peer.mayAcceptSizeRefusal(lane: lane)
           // Only the unprocessed 1009 discards metadata. Other failures retain the
           // established streamed-event/error behavior, including committed SSE status.
-          if !refusal, !lifecycle, request.streaming {
+          if !refusal, !lifecycle, output.streaming {
             for metadata in bufferedMetadata { try await emit(metadata) }
           }
           throw error
