@@ -206,6 +206,8 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 
 ## 协议扩展的解释边界
 
+普通 Responses 的首响应、进展空闲或总期限触发时，网关可记录一条按请求去重、每进程每分钟最多 16 条的私有诊断。字段为请求 UUID、固定触发原因、最近一次刷新进展期限的已知事件名称与 Unix 毫秒，以及触发时进展期限剩余毫秒数。非流式 HTTP 响应正文块使用固定标签 `response_body_bytes`。已结束的进展监视阶段只保留最后有效事件，省略计时余量。负数表示进展期限已经过去。计时任务只捕获有界快照，由请求 owner 在取消及等待相关任务退出后写日志。该日志记录计时器触发，账本另行反映实际结算结果；不记录事件正文，不改变原有计时和结算规则。
+
 保留传输内容、提取业务事实、判断执行风险互相独立。ProviderEventSemantics 仅映射已知 lifecycle、output_item、part/delta 及工具阶段；未知事件原样转发（须先满足 lane/response 隔离与资源边界），不能因携带 item/item_id/call_id 就授予归属、续期或终态。已知 output_item 封套仍可建立 item ID；function_call/custom_tool_call 才解释 call_id。未知事件、metadata 和空 delta 不推进 first/idle；原生 Images 只将已知 completed 与非空 partial_image 作为进展，未知图片事件不续期。total 期限继续独立生效；既有工具阶段事件的重复语义未在此承诺全面去重。
 
 协议观测对 response.metadata、codex.response.metadata、responsesapi.websocket_timing 和 response.output_item.interrupted 识别名称；诊断名称识别不参与执行进度、响应归属、结算或 1009 分类。

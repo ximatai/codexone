@@ -110,8 +110,12 @@ struct HTTPResponseExecution: Sendable {
     _ request: ResponseRequest, requestID: String,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
+    let timeoutTrace = ExecutionTimeoutTrace(requestID: requestID)
+    defer { timeoutTrace.flush() }
     do {
-      try await withExecutionDeadline(seconds: configuration.budget.total) {
+      try await withExecutionDeadline(
+        seconds: configuration.budget.total, timeoutTrace: timeoutTrace
+      ) {
         try await executeHTTP(request, requestID: requestID, emit: emit)
       }
     } catch {
@@ -459,20 +463,24 @@ struct HTTPResponseExecution: Sendable {
 
 /// The client's header deadline does not cover streaming body consumption.
 func withExecutionDeadline<Value: Sendable>(
-  seconds: Int,
+  seconds: Int, timeoutTrace: ExecutionTimeoutTrace? = nil,
   operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
   let cause = ExecutionDeadlineCause(parent: ExecutionDeadlineScope.cause)
-  return try await ExecutionDeadlineScope.$cause.withValue(cause) {
-    try await withThrowingTaskGroup(of: Value.self) { group in
-      group.addTask { try await operation() }
-      group.addTask {
-        try await Task.sleep(for: .seconds(seconds))
-        cause.expire()
-        throw GatewayProtocolError(504, "execution_deadline_exceeded")
+  let trace = timeoutTrace ?? ExecutionDeadlineScope.trace
+  return try await ExecutionDeadlineScope.$trace.withValue(trace) {
+    try await ExecutionDeadlineScope.$cause.withValue(cause) {
+      try await withThrowingTaskGroup(of: Value.self) { group in
+        group.addTask { try await operation() }
+        group.addTask {
+          try await Task.sleep(for: .seconds(seconds))
+          cause.expire()
+          timeoutTrace?.capture(.total)
+          throw ExecutionTimeoutReason.total.error
+        }
+        defer { group.cancelAll() }
+        return try await group.next()!
       }
-      defer { group.cancelAll() }
-      return try await group.next()!
     }
   }
 }

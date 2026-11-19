@@ -114,6 +114,7 @@ struct PoolWebSocketInitialTurn: Sendable {
   let context: ExecutionContext
   let start: PoolWebSocketStart
   let requestID: String
+  let timeoutTrace: ExecutionTimeoutTrace
 }
 
 enum PoolWebSocketSession {
@@ -127,6 +128,8 @@ enum PoolWebSocketSession {
     let start = PoolWebSocketStart()
     let lifetime = AccountExecutionConnection()
     let requestID = UUID().uuidString
+    let timeoutTrace = ExecutionTimeoutTrace(requestID: requestID)
+    defer { timeoutTrace.flush() }
     let lane = try webSocketLane(JSONValue.decode(firstBody.data))
     do {
       let turnState = try requestTurnState(
@@ -139,7 +142,9 @@ enum PoolWebSocketSession {
         }
         tasks.addTask {
           do {
-            try await withExecutionDeadline(seconds: executor.configuration.budget.total) {
+            try await withExecutionDeadline(
+              seconds: executor.configuration.budget.total, timeoutTrace: timeoutTrace
+            ) {
               try await executor.executeRouted(
                 model: first.model, references: first.references,
                 affinityHints: first.affinityHints,
@@ -149,7 +154,7 @@ enum PoolWebSocketSession {
                 reasoningEffort: first.reasoningEffort, serviceTier: first.serviceTier
               ) { context, authorization in
                 try await withExecutionDeadline(
-                  seconds: executor.configuration.budget.total
+                  seconds: executor.configuration.budget.total, timeoutTrace: timeoutTrace
                 ) {
                   start.publish(.init(context: context, authorization: authorization))
                   try await start.waitForTurn()
@@ -212,7 +217,9 @@ enum PoolWebSocketSession {
               try await ResponsesDataService.serveTurns(
                 downstream: downstream, upstream: upstream, firstBody: firstBody,
                 executor: pinned, digest: digest,
-                initial: .init(context: selection.context, start: start, requestID: requestID),
+                initial: .init(
+                  context: selection.context, start: start, requestID: requestID,
+                  timeoutTrace: timeoutTrace),
                 sizeRefused: { error, requestID, lane in
                   refusals.withLock { $0.append((error, requestID, lane)) }
                 })

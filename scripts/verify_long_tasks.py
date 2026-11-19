@@ -15,6 +15,7 @@ import threading
 import time
 from verify_protocol import TOKEN, start, stop, latest, connect
 from verify_websocket import receive, send, dial
+from verify_client_protocol import GatewayLogs
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -124,6 +125,11 @@ def run(binary, transport, duration):
                 config.write_text(json.dumps(value)); config.chmod(0o600)
                 provider.closed.clear(); before=provider.calls
                 gateway,ports=start(str(binary),config,directory)
+                logs=GatewayLogs(gateway)
+                expected_timeout = {
+                    'first-silent': b'execution_first_response_timeout',
+                    'total': b'execution_deadline_exceeded',
+                }.get(case, b'execution_progress_timeout')
                 began=time.monotonic()
                 try:
                     request={'model':'synthetic-text','input':case,'stream':case not in ('compact','json-silent')}
@@ -173,10 +179,7 @@ def run(binary, transport, duration):
                         assert b'response.completed' in body and elapsed>=duration
                         latest(directory/'state/core.sqlite','settled')
                     else:
-                        expected={'first-silent':b'execution_first_response_timeout','total':b'execution_deadline_exceeded',
-                                  'idle':b'execution_progress_timeout','comments':b'execution_progress_timeout',
-                                  'status-only':b'execution_progress_timeout','empty-delta':b'execution_progress_timeout','json-silent':b'execution_progress_timeout'}
-                        if case!='cancel': assert expected[case] in body, (transport,case,'wrong timeout classification')
+                        if case!='cancel': assert expected_timeout in body, (transport,case,'wrong timeout classification')
                         assert elapsed < (4 if case=='total' else 3)
                         assert provider.closed.wait(5),'Provider socket not closed'
                         latest(directory/'state/core.sqlite','unknown')
@@ -188,6 +191,30 @@ def run(binary, transport, duration):
                     deadline=time.monotonic()+5
                     while provider.active and time.monotonic()<deadline: time.sleep(0.02)
                     assert provider.active==0, "Fixture handler did not finish"
+                deadline_logs = [line for line in logs.read().splitlines()
+                                 if b'Responses execution deadline reached' in line]
+                if case == 'cancel':
+                    # Native disconnect settlement may still reach the turn's idle deadline.
+                    continue
+                if case in ('progress', 'compact'):
+                    assert not deadline_logs, (transport, case)
+                    continue
+                assert len(deadline_logs) == 1, (transport, case, deadline_logs)
+                log = deadline_logs[0]
+                assert b'reason=' + expected_timeout in log, (transport, case, log)
+                with sqlite3.connect(directory/'state/core.sqlite') as db:
+                    request_id, = db.execute('SELECT request_id FROM attempts').fetchone()
+                assert b'request_id=' + request_id.encode() in log
+                if case == 'first-silent':
+                    assert b'last_progress_' not in log
+                else:
+                    last = (b'response.output_text.delta' if case == 'total'
+                            else b'response_body_bytes' if case == 'json-silent'
+                            else b'response.output_item.added')
+                    assert b'last_progress_event=' + last in log, (transport, case, log)
+                    assert b'last_progress_at_unix_ms=' in log
+                    remaining = int(log.split(b'progress_deadline_remaining_ms=')[1].split()[0])
+                    assert (remaining > 0 if case == 'total' else remaining <= 0)
             assert not provider.failures,provider.failures
             return {'transport':transport,'longSingleTurn':duration>=125,'cases':records}
     finally:

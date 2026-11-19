@@ -492,13 +492,15 @@ public struct ResponsesDataService: Service {
                     if let initialTurn {
                       let model = try executor.executionModel(request)
                       try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
-                      try await executor.exchange(
-                        request, context: initialTurn.context, model: model, peer: upstream,
-                        lane: lane,
-                        downstream: downstream, frame: try initialTurn.start.takeFrame()
-                      ) { event in
-                        try await downstream.send(event)
-                        tools.observe(event, request: request)
+                      try await ExecutionDeadlineScope.$trace.withValue(initialTurn.timeoutTrace) {
+                        try await executor.exchange(
+                          request, context: initialTurn.context, model: model, peer: upstream,
+                          lane: lane,
+                          downstream: downstream, frame: try initialTurn.start.takeFrame()
+                        ) { event in
+                          try await downstream.send(event)
+                          tools.observe(event, request: request)
+                        }
                       }
                       initialTurn.start.finishTurn()
                     } else {

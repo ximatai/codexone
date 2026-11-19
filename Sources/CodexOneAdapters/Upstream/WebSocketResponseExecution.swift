@@ -19,7 +19,11 @@ extension HTTPResponseExecution {
     try UpstreamWebSocketBodyLimit.requireNativeFrame(frame)
     try peer.beginTurn(lane: lane, compaction: request.streamCompaction)
     defer { peer.abandonUndispatchedTurn(lane: lane) }
-    try await withExecutionDeadline(seconds: configuration.budget.total) {
+    let timeoutTrace = ExecutionTimeoutTrace(requestID: requestID)
+    defer { timeoutTrace.flush() }
+    try await withExecutionDeadline(
+      seconds: configuration.budget.total, timeoutTrace: timeoutTrace
+    ) {
       try await executeRouted(
         model: request.admissionModel, references: request.references,
         affinityHints: request.affinityHints, requestID: requestID,
