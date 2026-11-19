@@ -13,7 +13,7 @@ import threading
 import time
 
 from verify_admin import ADMIN, document, request as admin_request
-from verify_protocol import TOKEN, connect, start, stop
+from verify_protocol import TOKEN, connect, dump_gateway_failure, start, stop
 from verify_websocket import dial, receive, send
 
 FIXTURE = Path(__file__).resolve().parents[1] / 'Tests/CodexOneAdaptersTests/Fixtures/provider-text-contract.json'
@@ -290,7 +290,10 @@ def main():
                                 request['synthetic_future'] = {'large':9007199254740993, 'nullable':None, 'values':[False, '合成']}
                             if mode == 'large-echo':
                                 request['instructions'] = 'synthetic-large-echo-' + 'x' * 300000
-                            status, events = call(ports['data'], route, request)
+                            try:
+                                status, events = call(ports['data'], route, request)
+                            except (EOFError, OSError) as error:
+                                raise AssertionError((transport, mode, route)) from error
                             count += 1
                             assert events, (transport, mode, route, status)
                             assert 'synthetic-private-counter' not in json.dumps(events)
@@ -369,6 +372,9 @@ def main():
                         assert PRIVATE.encode() not in logs and b'synthetic echoed guidance' not in logs
                         assert b'synthetic usage metadata' not in logs
                         assert TOKEN.encode() not in logs and b'synthetic-metadata-only-id' not in logs
+                    except Exception:
+                        dump_gateway_failure(process)
+                        raise
                     finally:
                         stop(process)
                 print(f'PASS: {transport} {provider.calls - transport_start} independent literal JSON/SSE/native executions, full-window continuation, '

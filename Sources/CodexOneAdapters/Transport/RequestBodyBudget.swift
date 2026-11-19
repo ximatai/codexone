@@ -19,6 +19,7 @@ final class RequestBodyBudget: Sendable {
   private struct Waiter {
     let id: UUID
     let bytes: Int
+    let largeHTTPKeyID: String?
     var small: Bool { bytes <= RequestBodyLimits.smallRequestBytes }
   }
   private struct State {
@@ -74,7 +75,7 @@ final class RequestBodyBudget: Sendable {
   fileprivate func release(_ reservation: Reservation) {
     state.withLock { $0.replace(reservation, with: Reservation()) }
   }
-  fileprivate func begin(_ bytes: Int) throws -> (UUID?, Reservation?) {
+  fileprivate func begin(_ bytes: Int, keyID: String?) throws -> (UUID?, Reservation?) {
     try state.withLock { value in
       let small = bytes <= RequestBodyLimits.smallRequestBytes
       guard bytes <= capacity || (small && bytes <= headroomCapacity) else {
@@ -93,8 +94,14 @@ final class RequestBodyBudget: Sendable {
         return (nil, Reservation(bytes: bytes, pool: .shared))
       }
       guard value.waiters.count < Self.maximumWaiters else { throw Self.exhausted() }
+      let largeHTTPKeyID = small ? nil : keyID
+      if let largeHTTPKeyID,
+        value.waiters.contains(where: { $0.largeHTTPKeyID == largeHTTPKeyID })
+      {
+        throw Self.exhausted()
+      }
       let ticket = UUID()
-      value.waiters.append(Waiter(id: ticket, bytes: bytes))
+      value.waiters.append(Waiter(id: ticket, bytes: bytes, largeHTTPKeyID: largeHTTPKeyID))
       return (ticket, nil)
     }
   }
@@ -126,13 +133,13 @@ final class RequestBodyLease: Sendable {
   private let reservation = Mutex(RequestBodyBudget.Reservation())
   fileprivate init(budget: RequestBodyBudget) { self.budget = budget }
   /// Only an empty lease may wait: partial uploads must never hold capacity while waiting.
-  func beginWaiting(_ size: Int) throws -> UUID? {
+  func beginWaiting(_ size: Int, keyID: String? = nil) throws -> UUID? {
     precondition(size >= 0)
     guard size > 0 else { return nil }
     return try reservation.withLock { value in
       precondition(value.bytes == 0)
       do {
-        let (ticket, acquired) = try budget.begin(size)
+        let (ticket, acquired) = try budget.begin(size, keyID: keyID)
         if let acquired { value = acquired }
         return ticket
       } catch {
@@ -149,11 +156,13 @@ final class RequestBodyLease: Sendable {
       return true
     }
   }
-  func reserveWaiting(_ size: Int, timeout: Duration = .seconds(RequestBodyBudget.waitSeconds))
+  func reserveWaiting(
+    _ size: Int, keyID: String? = nil, timeout: Duration = .seconds(RequestBodyBudget.waitSeconds)
+  )
     async throws
   {
     try Task.checkCancellation()
-    guard let ticket = try beginWaiting(size) else { return }
+    guard let ticket = try beginWaiting(size, keyID: keyID) else { return }
     defer { budget.cancelWait(ticket) }
     let deadline = ContinuousClock.now + timeout
     while true {

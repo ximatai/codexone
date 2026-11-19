@@ -1,13 +1,13 @@
 import CodexOneCore
 import Foundation
 
-extension ResponseRequest {
+extension ResponseOutputContext {
   func observeUsage(
     _ response: JSONValue?, context: ExecutionContext,
     model: SingleIdentityConfiguration.Model, configuration: ImageConfiguration?,
     authorModels: [SingleIdentityConfiguration.Model] = []
   ) throws {
-    if requirements.imageModel != nil,
+    if imageModel != nil,
       let host = ProviderObservation.usage(response?["usage"], model: model)
     {
       // Host evidence survives malformed or unavailable tool metrics; only the combined revision can settle.
@@ -30,7 +30,7 @@ extension ResponseRequest {
     configuration: ImageConfiguration?, authorModels: [SingleIdentityConfiguration.Model] = []
   ) throws -> UsageEvidence? {
     let host = ProviderObservation.usage(response?["usage"], model: model)
-    guard let imageModel = requirements.imageModel else { return host }
+    guard let imageModel else { return host }
     guard let mapping = configuration?.models.first(where: { $0.id == imageModel }) else {
       throw GatewayProtocolError(502, "invalid_upstream_image")
     }
@@ -51,9 +51,7 @@ extension ResponseRequest {
     var observedOutput = knownOutputItems && items.isEmpty
     var images: Int64 = 0
     let expectsSVG =
-      document["tools"]?.array?.contains {
-        $0["type"]?.string == "image_generation" && $0["output_format"]?.string == "svg"
-      } == true || response?["output_format"]?.string == "svg"
+      self.expectsSVG || response?["output_format"]?.string == "svg"
       || items.contains { $0["output_format"]?.string == "svg" }
     let author = SVGUsage(
       response, items: items, expected: expectsSVG && !items.isEmpty, models: authorModels)

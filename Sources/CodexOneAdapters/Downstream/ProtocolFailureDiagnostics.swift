@@ -76,6 +76,7 @@ enum ProtocolFailureDiagnostics {
   private static let logger = Logger(label: "codexone.protocol")
   private static let gate = Mutex(ProtocolFailureLogGate())
   private static let upstreamFirstEventGate = Mutex(ProtocolFailureLogGate())
+  private static let executionTimeoutGate = Mutex(ProtocolFailureLogGate())
   private static let responseCleanupGate = Mutex(ProtocolFailureLogGate())
   private static let httpResponseWriteGate = Mutex(ProtocolFailureLogGate())
   private static let missingMediaTypeLogged = Mutex(false)
@@ -115,7 +116,9 @@ enum ProtocolFailureDiagnostics {
 
   static func metadata(_ error: GatewayProtocolError, requestID: String) -> Logger.Metadata {
     var value: Logger.Metadata = [
-      "code": .string(codes.contains(error.code) ? error.code : "other"),
+      "code": .string(
+        codes.contains(error.code) || ExecutionTimeoutReason(rawValue: error.code) != nil
+          ? error.code : "other"),
       "status": .string(String(error.status)),
     ]
     if let status = error.upstreamStatus, (100...599).contains(status) {
@@ -277,6 +280,28 @@ enum ProtocolFailureDiagnostics {
     logger.info(
       "Response cleanup after completion",
       metadata: ["reason": .string(reason.rawValue), "request_id": .string(id.uuidString)])
+  }
+
+  static func recordExecutionTimeout(
+    _ reason: ExecutionTimeoutReason, requestID: String, progress: ExecutionProgress.Snapshot?
+  ) {
+    guard let id = UUID(uuidString: requestID),
+      executionTimeoutGate.withLock({ $0.admit(now: .now) })
+    else { return }
+    var metadata: Logger.Metadata = [
+      "request_id": .string(id.uuidString),
+      "reason": .string(reason.rawValue),
+    ]
+    if let event = progress?.lastEvent, let at = progress?.lastEventAt {
+      metadata["last_progress_event"] = .string(event)
+      metadata["last_progress_at_unix_ms"] = .string(String(Int64(at.timeIntervalSince1970 * 1000)))
+    }
+    if let remaining = progress?.remaining {
+      let parts = remaining.components
+      metadata["progress_deadline_remaining_ms"] = .string(
+        String(parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000))
+    }
+    logger.warning("Responses execution deadline reached", metadata: metadata)
   }
 
   static func causeToken(_ error: any Error) -> String {

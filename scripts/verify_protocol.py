@@ -196,9 +196,11 @@ def connect(port, method, path, payload=None, *, authorization=True, timeout=8, 
     return status, body
 
 
-def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None, admin_live=None):
+def start(binary, configuration, directory, *, admin_token_file=None, web_directory=None, admin_public_origin=None, account_master_key_file=None, account_pool_config=None, upstream_proxy=None, business_day_offset=None, admin_live=None, http_body_staging=False):
     environment = {"PATH": os.defpath, "CODEXONE_DATA_PORT": "0", "CODEXONE_ADMIN_PORT": "0",
                                "CODEXONE_DATA_DIRECTORY": str(directory / "state")}
+    if http_body_staging:
+        environment["CODEXONE_HTTP_BODY_STAGING"] = "on"
     if admin_live is not None:
         environment["CODEXONE_ADMIN_LIVE"] = "on" if admin_live else "off"
     if business_day_offset is not None:
@@ -242,15 +244,19 @@ def start(binary, configuration, directory, *, admin_token_file=None, web_direct
         raise
 
 
-def stop(process):
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=3)
-    process.stdout.close()
+def stop(process, *, drain_stdout=None):
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+        if drain_stdout is not None:
+            return drain_stdout()
+    finally:
+        process.stdout.close()
 
 
 def latest(path, state):

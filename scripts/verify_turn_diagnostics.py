@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
-from verify_protocol import TOKEN, start, stop
+from verify_protocol import TOKEN, dump_gateway_failure, start, stop
 from verify_text_contract import Provider as WireProvider, call, rows
 from verify_admin import ADMIN, document, request
 
@@ -115,7 +115,10 @@ def main():
                     process,ports=start(str(args.binary.resolve()),config,root);before=server.calls;request_ids=[]
                     try:
                         for route in ('json','sse','native'):
-                            _,events=call(ports['data'],route,dict(model='synthetic-contract',input='synthetic error probe'))
+                            try:
+                                _,events=call(ports['data'],route,dict(model='synthetic-contract',input='synthetic error probe'))
+                            except EOFError as error:
+                                raise AssertionError(('socket closed before the error frame', case, nested, route)) from error
                             error=events[-1]['error'];provider=fields is not None and code!='upstream_authentication_rejected'
                             assert ORG not in json.dumps(events) and 'reason' not in error,(case,events)
                             if provider:
@@ -138,6 +141,9 @@ def main():
                         if case=='response':assert b'reason=upstream_turn_response_id' in logs
                         assert PRIVATE.encode() not in logs and ORG.encode() not in logs and TOKEN.encode() not in logs
                         assert server.calls==before+3,'Unexpected replay'
+                    except Exception:
+                        dump_gateway_failure(process)
+                        raise
                     finally:stop(process)
             verify_selection_diagnostics(Path(temporary)/'selection',args.binary,server)
         print(f'PASS: {server.calls} provider error/foreign-response turns; actionable sanitized errors across JSON/SSE/native, no provider payload logs, zero-cost explicit refusals, foreign-response unknown ledger and no replay',flush=True)

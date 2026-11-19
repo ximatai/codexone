@@ -27,6 +27,7 @@ public struct ResponsesDataService: Service {
   private let turnStateOwners = TurnStateOwners()
   private let controlHealth = ControlEndpointHealth()
   private let bodyBudget = RequestBodyBudget()
+  private let bodyStagingDirectory: String?
   private let onBound: @Sendable (Int) -> Void
 
   public init(
@@ -35,6 +36,7 @@ public struct ResponsesDataService: Service {
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
     listeners: ListenerConfiguration = .loopback,
+    bodyStagingDirectory: String? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try configuration.validate()
@@ -50,6 +52,7 @@ public struct ResponsesDataService: Service {
     self.store = store
     self.finalizer = finalizer
     self.onBound = onBound
+    self.bodyStagingDirectory = bodyStagingDirectory
   }
 
   public init(
@@ -61,6 +64,7 @@ public struct ResponsesDataService: Service {
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
     listeners: ListenerConfiguration = .loopback,
+    bodyStagingDirectory: String? = nil,
     onBound: @escaping @Sendable (Int) -> Void = { _ in }
   ) throws {
     try self.init(
@@ -68,7 +72,7 @@ public struct ResponsesDataService: Service {
       finalizer: finalizer, credentials: credentials, refresher: refresher, provider: provider,
       target: .openAI, modelDirectory: modelDirectory, proxy: proxy,
       protocolExtensions: protocolExtensions, clock: clock,
-      listeners: listeners,
+      listeners: listeners, bodyStagingDirectory: bodyStagingDirectory,
       onBound: onBound)
   }
   init(
@@ -81,6 +85,7 @@ public struct ResponsesDataService: Service {
     protocolExtensions: ClientProtocolExtensionRegistry? = nil,
     clock: WallClock = .system,
     listeners: ListenerConfiguration = .loopback,
+    bodyStagingDirectory: String? = nil,
     onBound: @escaping @Sendable (Int) -> Void
   ) throws {
     try configuration.validate()
@@ -96,6 +101,7 @@ public struct ResponsesDataService: Service {
     self.store = store
     self.finalizer = finalizer
     self.onBound = onBound
+    self.bodyStagingDirectory = bodyStagingDirectory
   }
 
   private var healthModelIDs: Set<String> {
@@ -147,6 +153,7 @@ public struct ResponsesDataService: Service {
     let client = HTTPClient(
       eventLoopGroupProvider: .shared(group), configuration: clientConfiguration)
     let compressionPool = ZstdUploadPool()
+    let bodyStaging = bodyStagingDirectory.map { HTTPBodyStaging(directory: $0) }
     let executor = HTTPResponseExecution(
       protocolExtensions: protocolExtensions, compressionPool: compressionPool,
       imageCapacity: imageCapacity,
@@ -303,7 +310,7 @@ public struct ResponsesDataService: Service {
                             case .http(let socket):
                               try await Self.serve(
                                 socket, executor: executor, budget: bodyBudget,
-                                normalChannels: normalChannels)
+                                staging: bodyStaging, normalChannels: normalChannels)
                             case .webSocket(
                               let socket, let digest, let reservations, let headers,
                               let diagnosticHeaders
@@ -336,11 +343,13 @@ public struct ResponsesDataService: Service {
     } catch {
       for server in servers { try? await server.channel.close().get() }
       await channels.shutdown()
+      try await bodyStaging?.workers.shutdownGracefully()
       try await compressionPool.shutdown()
       try await client.shutdown()
       throw error
     }
     await channels.shutdown()
+    try await bodyStaging?.workers.shutdownGracefully()
     try await compressionPool.shutdown()
     try await client.shutdown()
   }
@@ -492,13 +501,16 @@ public struct ResponsesDataService: Service {
                     if let initialTurn {
                       let model = try executor.executionModel(request)
                       try upstream.beginTurn(lane: lane, compaction: request.streamCompaction)
-                      try await executor.exchange(
-                        request, context: initialTurn.context, model: model, peer: upstream,
-                        lane: lane,
-                        downstream: downstream, frame: try initialTurn.start.takeFrame()
-                      ) { event in
-                        try await downstream.send(event)
-                        tools.observe(event, request: request)
+                      try await ExecutionDeadlineScope.$trace.withValue(initialTurn.timeoutTrace) {
+                        try await executor.exchange(
+                          request.outputContext, context: initialTurn.context, model: model,
+                          peer: upstream,
+                          lane: lane,
+                          downstream: downstream, frame: try initialTurn.start.takeFrame()
+                        ) { event in
+                          try await downstream.send(event)
+                          tools.observe(event, request: request)
+                        }
                       }
                       initialTurn.start.finishTurn()
                     } else {
@@ -569,7 +581,8 @@ public struct ResponsesDataService: Service {
 
   private static func serve(
     _ connection: NIOAsyncChannel<HTTPServerRequestPart, HTTPServerResponsePart>,
-    executor: HTTPResponseExecution, budget: RequestBodyBudget, normalChannels: ProtocolChannels
+    executor: HTTPResponseExecution, budget: RequestBodyBudget, staging: HTTPBodyStaging?,
+    normalChannels: ProtocolChannels
   ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { tasks in
       tasks.addTask {
@@ -582,11 +595,14 @@ public struct ResponsesDataService: Service {
             defer { requestDeadline.cancel() }
             let lease = budget.lease()
             defer { lease.release() }
+            var staged: StagedHTTPBody?
+            defer { staged?.discard() }
             var received: (HTTPRequestHead, Data)?
             var control = false
             do {
               var head: HTTPRequestHead?
               var body = Data()
+              var receivedBytes = 0
               var ended = false
               var maximumBytes = RequestBodyLimits.maximumBytes
               while let part = try await iterator.next() {
@@ -603,9 +619,11 @@ public struct ResponsesDataService: Service {
                   let path = String(next.uri.split(separator: "?", maxSplits: 1).first ?? "")
                   control = ControlRoute.match(method: next.method, path: path) != nil
                   if control { maximumBytes = ControlRoute.requestBytes }
+                  var keyID: String?
                   if !["/health/live", "/health/ready"].contains(path) {
-                    _ = try await executor.access.policy(
-                      executor.access.digest(next.headers["authorization"]))
+                    keyID = try await executor.access.policy(
+                      executor.access.digest(next.headers["authorization"])
+                    ).keyID
                   }
                   if !control, !normalChannels.register(connection.channel) {
                     throw ExecutionError.capacity
@@ -625,21 +643,35 @@ public struct ResponsesDataService: Service {
                   {
                     if control {
                       try lease.reserve(count, control: true)
+                    } else if let staging, count > RequestBodyLimits.smallRequestBytes,
+                      next.method == .POST,
+                      ["/v1/responses", "/backend-api/codex/responses"].contains(path),
+                      next.headers["content-type"].count == 1,
+                      next.headers.first(name: "content-type")?.lowercased().hasPrefix(
+                        "application/json") == true, next.headers["content-encoding"].isEmpty,
+                      next.headers["transfer-encoding"].isEmpty
+                    {
+                      staged = try await staging.begin(length: count)
                     } else {
-                      try await lease.reserveWaiting(count)
+                      try await lease.reserveWaiting(count, keyID: keyID)
                       try Task.checkCancellation()
                     }
                   }
                 case .body(let bytes):
                   guard head != nil,
-                    bytes.readableBytes <= maximumBytes - body.count
+                    bytes.readableBytes <= maximumBytes - receivedBytes
                   else {
                     ProtocolFailureDiagnostics.recordBodyLimit(
-                      bytes: body.count + bytes.readableBytes, path: "reject_ingress")
+                      bytes: receivedBytes + bytes.readableBytes, path: "reject_ingress")
                     throw GatewayProtocolError(413, "request_too_large")
                   }
-                  try lease.reserve(body.count + bytes.readableBytes, control: control)
-                  body.append(contentsOf: bytes.readableBytesView)
+                  receivedBytes += bytes.readableBytes
+                  if let staged {
+                    try await staged.append(Data(bytes.readableBytesView))
+                  } else {
+                    try lease.reserve(receivedBytes, control: control)
+                    body.append(contentsOf: bytes.readableBytesView)
+                  }
                 case .end: ended = true
                 }
                 if ended { break }
@@ -675,7 +707,9 @@ public struct ResponsesDataService: Service {
             let writer = ProtocolResponseWriter(
               writer: outbound, channel: connection.channel, keepAlive: head.isKeepAlive)
             do {
-              try await route(head: head, body: &body, executor: executor, writer: writer)
+              try await route(
+                head: head, body: &body, lease: lease, staged: staged,
+                executor: executor, writer: writer)
             } catch {
               try await writer.fail(error)
             }
@@ -698,7 +732,8 @@ public struct ResponsesDataService: Service {
   }
 
   private static func route(
-    head: HTTPRequestHead, body: inout Data, executor: HTTPResponseExecution,
+    head: HTTPRequestHead, body: inout Data, lease: RequestBodyLease, staged: StagedHTTPBody?,
+    executor: HTTPResponseExecution,
     writer: ProtocolResponseWriter
   ) async throws {
     let path = String(head.uri.split(separator: "?", maxSplits: 1).first ?? "")
@@ -784,26 +819,41 @@ public struct ResponsesDataService: Service {
       head.headers.first(name: "content-type")?.lowercased().hasPrefix("application/json") == true,
       head.headers["content-encoding"].isEmpty
     else { throw GatewayProtocolError(415, "unsupported_content_type") }
-    let request = try ResponseRequest(
-      data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
-      imageConfiguration: executor.configuration.imageGeneration)
-    // Parsing owns the document; retain only the request lease through execution.
-    body = Data()
-    if endpoint == "/responses/compact" {
-      try await executor.compact(request, requestID: writer.requestID) { document in
-        try await writer.json(document)
-      }
-      return
+    if let staged {
+      try await lease.reserveWaiting(staged.file.length, keyID: executor.currentKeyID)
+      try Task.checkCancellation()
+      body = try await staged.decodeInput()
+      try Task.checkCancellation()
     }
-    await writer.setStreaming(request.streaming)
-    try await executor.execute(request, requestID: writer.requestID) { document in
-      if request.streaming {
+    let largeBodyLease = body.count > RequestBodyLimits.smallRequestBytes ? lease : nil
+    let responseBody: HTTPResponseBody
+    do {
+      let request = try ResponseRequest(
+        data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
+        imageConfiguration: executor.configuration.imageGeneration)
+      // The parsed document owns the input after decoding.
+      body = Data()
+      if endpoint == "/responses/compact" {
+        try await executor.compact(request, requestID: writer.requestID) { document in
+          try await writer.json(document)
+        }
+        return
+      }
+      responseBody = HTTPResponseBody(request)
+    }
+    let streaming = responseBody.streaming
+    await writer.setStreaming(streaming)
+    try await executor.execute(
+      responseBody, requestID: writer.requestID, bodyLease: largeBodyLease, staged: staged
+    ) {
+      document in
+      if streaming {
         try await writer.event(document)
       } else {
         try await writer.json(document)
       }
     }
-    if request.streaming { try await writer.finishStream() }
+    if streaming { try await writer.finishStream() }
   }
 }
 
@@ -857,7 +907,17 @@ private actor ProtocolResponseWriter {
       self.channel.close(promise: nil)
     }
     defer { deadline.cancel() }
-    try await writer.write(contentsOf: parts)
+    if let last = parts.last, case .end = last {
+      // The request loop can close the channel as soon as the response ends. Wait
+      // for the final write instead of relying on the outbound queue to drain.
+      let channel = self.channel
+      try await channel.eventLoop.flatSubmit {
+        for part in parts.dropLast() { channel.write(part, promise: nil) }
+        return channel.writeAndFlush(last)
+      }.get()
+    } else {
+      try await writer.write(contentsOf: parts)
+    }
   }
   func json(
     _ value: JSONValue, status: Int = 200, retryAfter: String? = nil, diagnostics: Bool = true

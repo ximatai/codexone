@@ -142,9 +142,9 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 图片原生入口的配置、透传、并发与期限见[图片配置](../../guide/images.md)。所有入口将能力要求随 admission 持久保存并在原子准入复核；Images 不再选择宿主或改写为 Responses。原生非流式 200 仅在有效 data[].b64_json 非空时判成功；SSE 仅可信图片 completed 事件及有效图片授予完成证据。Responses 托管图片工具仍以可信 response.completed 判定，output_item.done 与预览不承诺整个操作成功。
 
-数据服务持有 64 MiB 共享正文容量和额外合计 8 MiB 小请求余量，普通正文全部计量；总大小不超过 8 MiB 的普通正文优先使用余量，再使用共享。控制正文仅使用共享。HTTP 已知长度在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请。部分正文增长的转池在同一预算锁内完成，失败保留原预留至 owner 清理，不持有部分容量等待。
+数据服务持有 64 MiB 共享正文容量和额外合计 8 MiB 小请求余量，普通正文全部计量；总大小不超过 8 MiB 的普通正文优先使用余量，再使用共享。控制正文仅使用共享。HTTP 已知长度在读取前一次申请，chunked 随读取增量申请；WS 单帧按声明长度、分片随聚合增量申请。启用[加密暂存](operations.md)的合格大 HTTP Responses 在接收期先申请独立磁盘额度，完整接收后才申请共享内存以校验正文，HTTP 发送正文完成加密暂存后即归还解析额度。部分正文增长的转池在同一预算锁内完成，失败保留原预留至 owner 清理，不持有部分内存容量等待。
 
-HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者，最长 5 秒，计入原请求读取/首 create 期限。共享申请按空 lease FIFO；小请求余量按小请求等待顺序，不被大请求阻塞。等待时不占正文容量；取消/断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超限提前拒绝；事件循环延迟不能使超时请求获批。队满、超时或增量不足返回 HTTP 503 capacity_exhausted、Retry-After: 1，WS 返回带 status: 503 的 error 帧并丢弃该消息；单条超过 64 MiB 为 413。解析后可清除原 Data，lease 由请求/turn owner 持有至完成或丢弃，所有结束路径幂等释放。72 MiB 是正文预留上界，JSON 树、序列化、base64、网络队列和输出仍占额外内存。Images multipart 转原生 JSON，原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
+HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者，最长 5 秒，计入原请求读取/首 create 期限。已认证的普通 HTTP 已知正文超过 8 MiB 时，每个 Key 最多持有一张等候票据。获得容量后即移除票据，容量充足时仍允许同一 Key 并行上传。共享申请按空 lease FIFO；小请求余量按小请求等待顺序，不被大请求阻塞。等待时不占正文容量；取消/断连移除票据。WS 暂停主动 read，已在途数据额外暂存最多 256 KiB，超限提前拒绝；事件循环延迟不能使超时请求获批。队满、同一 Key 重复申请大 HTTP 等候票据、超时或增量不足返回 HTTP 503 capacity_exhausted、Retry-After: 1，WS 的容量拒绝返回带 status: 503 的 error 帧并丢弃该消息；单条超过 64 MiB 为 413。解析后可清除原 Data，正文 lease 由请求/turn owner 在完成或丢弃时幂等释放，直走 HTTP 上游的大 Responses 正文可按[运行规范](operations.md)提前释放。72 MiB 是正文预留上界，JSON 树、序列化、base64、网络队列和输出仍占额外内存。Images multipart 转原生 JSON，原生 Images 响应上限 48 MiB，Responses 图片工具上游限制不变。
 
 可信离线profile导入及字段边界见[模型快照](../model-profiles.md)。目录的codexone_profile仅披露来源标签/版本/字节摘要/采集时间/客户端清单/覆盖与30天陈旧标记，不含本机路径；codexone_execution_budget披露有效三阶段秒数及默认/配置来源。均不授予权限或承诺客户端/提供者兼容，缺模型拒绝新启动，不静默替换。
 
@@ -205,6 +205,8 @@ Responses HTTP、compact、Images、控制接口和上游 WS 握手共用客户�
 请求 reasoning.effort/service_tier 的只读账本观察及终态实际档位见 U10 补充；该观察不增加协议值白名单、不拒绝或改写提供者参数，原有 null 省略规则不变。
 
 ## 协议扩展的解释边界
+
+普通 Responses 的首响应、进展空闲或总期限触发时，网关可记录一条按请求去重、每进程每分钟最多 16 条的私有诊断。字段为请求 UUID、固定触发原因、最近一次刷新进展期限的已知事件名称与 Unix 毫秒，以及触发时进展期限剩余毫秒数。非流式 HTTP 响应正文块使用固定标签 `response_body_bytes`。已结束的进展监视阶段只保留最后有效事件，省略计时余量。负数表示进展期限已经过去。计时任务只捕获有界快照，由请求 owner 在取消及等待相关任务退出后写日志。该日志记录计时器触发，账本另行反映实际结算结果；不记录事件正文，不改变原有计时和结算规则。
 
 保留传输内容、提取业务事实、判断执行风险互相独立。ProviderEventSemantics 仅映射已知 lifecycle、output_item、part/delta 及工具阶段；未知事件原样转发（须先满足 lane/response 隔离与资源边界），不能因携带 item/item_id/call_id 就授予归属、续期或终态。已知 output_item 封套仍可建立 item ID；function_call/custom_tool_call 才解释 call_id。未知事件、metadata 和空 delta 不推进 first/idle；原生 Images 只将已知 completed 与非空 partial_image 作为进展，未知图片事件不续期。total 期限继续独立生效；既有工具阶段事件的重复语义未在此承诺全面去重。
 

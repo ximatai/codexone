@@ -169,9 +169,10 @@ actor WebSocketWriter {
     self.channel = channel
     self.client = client
   }
-  func send(_ data: Data, opcode: WebSocketOpcode = .text, requestUpload: Bool = false)
-    async throws
-  {
+  func send(
+    _ data: Data, opcode: WebSocketOpcode = .text, requestUpload: Bool = false,
+    awaitWrite: Bool = false
+  ) async throws {
     if client { try UpstreamWebSocketBodyLimit.requireNativeFrame(data) }
     guard
       data.count
@@ -181,14 +182,13 @@ actor WebSocketWriter {
     else {
       throw GatewayProtocolError(413, "websocket_message_too_large")
     }
+    let frame = WebSocketFrame(
+      fin: true, opcode: opcode, maskKey: client ? .random() : nil, data: ByteBuffer(data: data))
     if client && requestUpload {
       // The turn's total deadline bounds upstream upload. Await the socket write,
       // rather than only handing the frame to the async outbound queue.
       try await withTaskCancellationHandler {
-        try await channel.writeAndFlush(
-          WebSocketFrame(
-            fin: true, opcode: opcode, maskKey: .random(), data: ByteBuffer(data: data))
-        ).get()
+        try await channel.writeAndFlush(frame).get()
       } onCancel: {
         self.channel.close(promise: nil)
       }
@@ -198,9 +198,12 @@ actor WebSocketWriter {
       self.channel.close(promise: nil)
     }
     defer { deadline.cancel() }
-    try await writer.write(
-      .init(
-        fin: true, opcode: opcode, maskKey: client ? .random() : nil, data: ByteBuffer(data: data)))
+    if awaitWrite {
+      // A protocol error may end the owner immediately. Keep the channel alive until it is flushed.
+      try await channel.writeAndFlush(frame).get()
+    } else {
+      try await writer.write(frame)
+    }
   }
 }
 
@@ -259,10 +262,10 @@ struct WebSocketPeer: Sendable {
   func detachEvidence(lane: String) { turns?.detachEvidence(lane: lane) }
   func next(lane: String = "") async throws -> Data { try await inbox.next(lane: lane) }
   func nextBody() async throws -> WebSocketBody { try await inbox.nextBody() }
-  func send(_ value: JSONValue) async throws {
+  func send(_ value: JSONValue, awaitWrite: Bool = false) async throws {
     guard turns != nil || !isClosed else { return }
     do {
-      try await writer.send(value.data(escapingSlashes: false))
+      try await writer.send(value.data(escapingSlashes: false), awaitWrite: awaitWrite)
     } catch {
       guard turns == nil, !(error is CancellationError), !Task.isCancelled else { throw error }
       closure.close()

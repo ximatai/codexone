@@ -125,7 +125,7 @@ public final class SubscriptionWindowPriming: Service, QuotaPrimingExecuting, Se
         ExecutionCoordinator(store: store, finalizer: finalizer, clock: clock), command, work,
         provider, target),
       effectiveModels: [model])
-    try await executor.execute(request, requestID: command.attempt) { _ in }
+    try await executor.execute(HTTPResponseBody(request), requestID: command.attempt) { _ in }
   }
   static func request(model: SingleIdentityConfiguration.Model, message: String) throws
     -> ResponseRequest

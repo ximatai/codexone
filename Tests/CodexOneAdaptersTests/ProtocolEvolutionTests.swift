@@ -181,7 +181,8 @@ private let evolutionModel = SingleIdentityConfiguration.Model(
       ]),
     ])
     let usage = try #require(
-      try request.usage(response, model: evolutionModel, configuration: configuration))
+      try request.outputContext.usage(response, model: evolutionModel, configuration: configuration)
+    )
     #expect(usage.imageInputTokens == input && usage.imageOutputTokens == 3)
     #expect(usage.completeness == .partial)
   }
@@ -329,7 +330,8 @@ func unattributedApplicationRiskCoversDispatchedNamedLanesWithoutDelivery(idleDe
   ])
   let model = SingleIdentityConfiguration.Model(
     id: "synthetic", inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000)
-  let usage = try #require(try request.usage(response, model: model, configuration: configuration))
+  let usage = try #require(
+    try request.outputContext.usage(response, model: model, configuration: configuration))
   #expect(usage.completeness == .complete)
   #expect(usage.estimatedMicros == 25)
 }

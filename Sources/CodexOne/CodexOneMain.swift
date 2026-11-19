@@ -32,6 +32,7 @@ struct CodexOneMain {
       case .invalidAccountMasterKeyFile: message = "Invalid account master key configuration."
       case .invalidBackupDirectory: message = "Invalid backup directory configuration."
       case .invalidDataDirectory: message = "Invalid data directory configuration."
+      case .invalidHTTPBodyStaging: message = "Invalid HTTP body staging configuration."
       case .conflictingPorts: message = "Data and admin ports must differ."
       }
       FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -400,7 +401,8 @@ struct CodexOneMain {
           credentials: application, refresher: refreshing, provider: provider,
           modelDirectory: modelDirectory,
           proxy: upstreamProxy,
-          protocolExtensions: protocolExtensions, clock: clock, listeners: configuration.listeners
+          protocolExtensions: protocolExtensions, clock: clock, listeners: configuration.listeners,
+          bodyStagingDirectory: configuration.httpBodyStagingDirectory
         ) { announce("data", port: $0) }
       }
       accountAdmin = AccountAdminAPI(
@@ -420,7 +422,8 @@ struct CodexOneMain {
           group: group, port: configuration.dataPort,
           configuration: identityConfiguration, store: store, finalizer: finalizer,
           proxy: upstreamProxy, protocolExtensions: protocolExtensions, clock: clock,
-          listeners: configuration.listeners
+          listeners: configuration.listeners,
+          bodyStagingDirectory: configuration.httpBodyStagingDirectory
         ) { announce("data", port: $0) })
     } else {
       services.append(

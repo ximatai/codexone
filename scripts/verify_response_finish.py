@@ -30,7 +30,7 @@ class Provider(BaseHTTPRequestHandler):
         self.server.calls += 1
         return json.loads(FIXTURE.read_text())['events']
 
-    def emit(self, write):
+    def emit(self, write, *, await_disconnect=False):
         events = self.events()
         if self.server.case == 'upstream-first-event-eof':
             self.server.started.set()
@@ -38,6 +38,12 @@ class Provider(BaseHTTPRequestHandler):
         for event in events[:-1]:
             write(event)
         self.server.started.set()
+        if await_disconnect:
+            # Keep the upstream open until the gateway observes the downstream reset.
+            # Releasing the terminal on a sleep races cancellation against upstream EOF.
+            self.connection.settimeout(5)
+            assert self.connection.recv(1) == b''
+            return
         assert self.server.release.wait(5)
         if self.server.case.startswith('upstream-before-terminal'):
             return
@@ -68,8 +74,9 @@ class Provider(BaseHTTPRequestHandler):
             self.wfile.write(b'data: ' + json.dumps(event).encode() + b'\n\n')
             self.wfile.flush()
         try:
-            self.emit(write)
-            if self.server.case not in ('upstream-terminal-close', 'upstream-before-terminal', 'upstream-first-event-eof'):
+            cancelled = self.server.case == 'before-terminal'
+            self.emit(write, await_disconnect=cancelled)
+            if not cancelled and self.server.case not in ('upstream-terminal-close', 'upstream-before-terminal', 'upstream-first-event-eof'):
                 self.wfile.write(b'data: [DONE]\n\n')
                 self.wfile.flush()
         except OSError:

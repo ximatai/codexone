@@ -4,6 +4,38 @@ import Testing
 @testable import CodexOneAdapters
 
 struct ExecutionBudgetTests {
+  @Test func timeoutAfterProgressScopeEndsKeepsEventWithoutRemainingTime() async throws {
+    let budget = try ExecutionBudget(total: 5, first: 4, idle: 2)
+    let trace = ExecutionTimeoutTrace(requestID: UUID().uuidString)
+    try await ExecutionDeadlineScope.$trace.withValue(trace) {
+      try await withProgressDeadline(budget: budget) { progress in
+        progress.note(event: .object(["type": .string("response.created")]))
+      }
+    }
+
+    trace.capture(.total)
+    let observation = try #require(trace.takeObservation())
+    #expect(observation.progress?.lastEvent == "response.created")
+    #expect(observation.progress?.lastEventAt != nil)
+    #expect(observation.progress?.remaining == nil)
+    #expect(trace.takeObservation() == nil)
+  }
+
+  @Test func earlierNestedTotalDeadlineIsCapturedByTheSharedTrace() async throws {
+    let trace = ExecutionTimeoutTrace(requestID: UUID().uuidString)
+    do {
+      try await withExecutionDeadline(seconds: 4, timeoutTrace: trace) {
+        try await withExecutionDeadline(seconds: 1, timeoutTrace: trace) {
+          try await Task.sleep(for: .seconds(10))
+        }
+      }
+      Issue.record("Expected nested total deadline")
+    } catch let error as GatewayProtocolError {
+      #expect(error.code == "execution_deadline_exceeded")
+    }
+    #expect(trace.takeObservation()?.reason == .total)
+  }
+
   @Test func imageFirstResponseBudgetIsIndependentAndBoundedByTotal() throws {
     let conversation = try ExecutionBudget(total: 1800, first: 120, idle: 300)
     let images = try ExecutionBudget(imagesWith: conversation, first: nil)

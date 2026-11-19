@@ -56,7 +56,8 @@ extension HTTPResponseExecution {
           defer { upload.finish() }
           upstream.body = .stream(
             UploadBody(
-              data: wireBody, progress: progress, upload: upload, trackUploadProgress: true),
+              payload: HTTPUploadPayload(data: wireBody), progress: progress, upload: upload,
+              trackUploadProgress: true),
             length: .known(Int64(wireBody.count)))
           let diagnostics = NativeImageDiagnostics(
             streaming: upstreamStreaming, editing: request.editing,
