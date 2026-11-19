@@ -6,7 +6,7 @@ import NIOHTTP1
 import Synchronization
 
 /// Moves a large value across an async task boundary without retaining a second owner.
-private final class PendingHTTPBody<Value: Sendable>: Sendable {
+final class PendingHTTPBody<Value: Sendable>: Sendable {
   private let value: Mutex<Value?>
 
   init(_ value: consuming Value) { self.value = Mutex(consume value) }
@@ -147,6 +147,7 @@ struct HTTPResponseExecution: Sendable {
 
   func execute(
     _ request: consuming ResponseRequest, requestID: String, bodyLease: RequestBodyLease? = nil,
+    staged: StagedHTTPBody? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     let requestedModel = request.model
@@ -158,7 +159,8 @@ struct HTTPResponseExecution: Sendable {
       try await withExecutionDeadline(
         seconds: configuration.budget.total, timeoutTrace: timeoutTrace
       ) {
-        try await executeHTTP(pending, requestID: requestID, bodyLease: bodyLease, emit: emit)
+        try await executeHTTP(
+          pending, requestID: requestID, bodyLease: bodyLease, staged: staged, emit: emit)
       }
     } catch {
       await recordRejection(model: requestedModel, mode: mode, requestID: requestID, error: error)
@@ -203,11 +205,22 @@ struct HTTPResponseExecution: Sendable {
 
   private func executeHTTP(
     _ pending: PendingHTTPBody<ResponseRequest>, requestID: String, bodyLease: RequestBodyLease?,
+    staged: StagedHTTPBody?,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
     let prepared = try prepareHTTP(pending.take())
     let model = prepared.model
     let output = prepared.output
+    let stagedPayload: HTTPUploadPayload?
+    if let staged, prepared.frame == nil {
+      // Reclaim the parse reservation before admission/slow upload, keeping the replay file.
+      stagedPayload = try await staged.staging.encode(prepared.document.take(), lease: staged.lease)
+      bodyLease?.release()
+    } else {
+      staged?.lease.release()
+      stagedPayload = nil
+    }
+    defer { stagedPayload?.discard() }
     try await executeRouted(
       model: model.id, references: prepared.references,
       affinityHints: prepared.affinityHints, requestID: requestID,
@@ -267,7 +280,7 @@ struct HTTPResponseExecution: Sendable {
         } else if let token {
           upstream.headers.add(name: "authorization", value: "Bearer " + token)
         }
-        let payload = try prepared.beginUpload(lease: bodyLease)
+        let payload = try stagedPayload ?? prepared.beginUpload(lease: bodyLease)
         defer { payload.discard() }
         // One encoding, one selected account and one attempt, including a 415 negotiation retry.
         let canCompress =

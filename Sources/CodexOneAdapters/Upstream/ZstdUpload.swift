@@ -51,6 +51,13 @@ final class ZstdEncoder: @unchecked Sendable {
     }
   }
   func step(_ data: Data) throws -> (ByteBuffer?, Bool) {
+    try step(length: data.count) { offset in
+      let start = data.startIndex + offset
+      return data[start..<min(start + EncryptedHTTPBody.block, data.endIndex)]
+    }
+  }
+
+  func step(length: Int, chunk: (Int) throws -> Data) throws -> (ByteBuffer?, Bool) {
     guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
     if ended { return (nil, true) }
     if context == nil {
@@ -64,11 +71,11 @@ final class ZstdEncoder: @unchecked Sendable {
       try check(ZSTD_CCtx_setParameter(created, ZSTD_c_contentSizeFlag, 0))
       try check(ZSTD_CCtx_setParameter(created, ZSTD_c_nbWorkers, 0))
     }
+    let finishing = offset == length
+    let data = try finishing ? Data() : chunk(offset)
     return try data.withUnsafeBytes { bytes in
-      let size = min(64 * 1024, data.count - offset)
-      var input = ZSTD_inBuffer(src: bytes.baseAddress?.advanced(by: offset), size: size, pos: 0)
+      var input = ZSTD_inBuffer(src: bytes.baseAddress, size: bytes.count, pos: 0)
       var out = ZSTD_outBuffer(dst: output, size: 64 * 1024, pos: 0)
-      let finishing = offset == data.count
       let result = ZSTD_compressStream2(
         context, &out, &input, finishing ? ZSTD_e_end : ZSTD_e_continue)
       try check(result)
@@ -130,7 +137,7 @@ actor ZstdUpload {
         try await workers.runIfActive {
           let start = ContinuousClock.now
           defer { upload.compressed(for: start.duration(to: .now)) }
-          return try payload.read { try encoder.step($0) }
+          return try encoder.step(length: payload.count) { try payload.chunk(at: $0) }
         }
       }
       job = task

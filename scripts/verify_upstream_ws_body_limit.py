@@ -520,7 +520,8 @@ def main():
                     body_limit_diagnostics(str(args.binary.resolve()), config, root / 'diagnostics',
                                            server, contract, args.failures_only)
                 server.mode = 'ok'
-                process, ports = start(str(args.binary.resolve()), config, root)
+                process, ports = start(str(args.binary.resolve()), config, root,
+                                       http_body_staging=args.smoke and contract == 'codex-subscription')
                 count = 0
                 try:
                     if contract == 'responses' and (args.full_message_only or not (args.smoke or args.failures_only or args.small_body_only or args.lane_close_only)):

@@ -241,7 +241,7 @@ def rss(pid):
 
 
 def run(binary, root, request, *, mode='zstd', contract='codex-subscription', threshold=8*MIB,
-        case='ok', expected_encoding='zstd', measure=False):
+        case='ok', expected_encoding='zstd', measure=False, staging=False):
     expected = dict(request)
     if expected.get("parallel_tool_calls", True) is None:
         del expected["parallel_tool_calls"]
@@ -278,7 +278,7 @@ def run(binary, root, request, *, mode='zstd', contract='codex-subscription', th
     sampling = threading.Event()
     peaks = [0, 0, 0]
     try:
-        process, ports = start(binary, config, root)
+        process, ports = start(binary, config, root, http_body_staging=staging)
         if measure:
             baseline = rss(process.pid)
             def sample():
@@ -557,7 +557,7 @@ def main():
         large = dict(model='synthetic-order', input=base64.b64encode(rng.randbytes(21*MIB)).decode(), stream=False)
         if args.smoke:
             for case in ('early415', 'twice415', 'partial'):
-                check(request, case=case)
+                check(request, case=case, staging=case == 'twice415')
             check(dict(large, stream=True), case='early200-cancel')
             check(large, case='stall')
             print('PASS: synthetic upstream zstd smoke; no real provider contacted')
@@ -569,7 +569,7 @@ def main():
         # Fast failure/lifecycle matrix; all requests still use the actual binary and sockets.
         for case in ('ok', '400', '415', 'early400', 'early415', 'twice415', '401', '429',
                      '500', 'disconnect', 'no-terminal', 'partial', 'silent'):
-            check(request, case=case)
+            check(request, case=case, staging=case == 'twice415')
         # Incompressible data forces actual backpressure instead of a tiny compressed upload.
         for case in ('early200', 'early200-cancel', 'early200-disconnect', 'early200-end'):
             check(dict(large, stream=True), case=case)

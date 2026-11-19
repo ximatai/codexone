@@ -44,6 +44,8 @@ GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖�
 
 Release 工作流的手动 dry-run 接受 ref，构建并执行 Linux 合成 socket、TLS 反代与真实安装验证，上传源码、二进制、许可、镜像 ID、校验和与独立镜像归档，不登录 registry 或推送/发布。将两个验证产物分别解压到 `verified-release-files/` 与 `verified-linux-amd64-image/` 后，在前者执行 `sha256sum --check SHA256SUMS`，再在后者用 `sha256sum --check ../verified-release-files/image-archive-sha256.txt` 核对归档，然后 `docker load --input codexone-linux-amd64.tar.gz`。正式 tag 流程验证后才推送同一镜像、生成来源证明并创建 Release；附件清单和 `gh attestation verify` 命令见[发版规则](../development/releasing.md)。校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 
+已知长度的大 Responses 上传可在安装目录的 `.env` 中设置 `CODEXONE_HTTP_BODY_STAGING=on` 后重启，启用数据卷上的短时加密暂存。默认 `off`。暂存额度为 192 MiB，要求数据卷有额外可用空间；低磁盘水位或额度用尽时会拒绝新暂存。标准配置保留 64 MiB 请求上限及现有 120 秒上传总期限。回退时从 `.env` 删除设置或改为 `off` 后重启。文件不纳入备份，详见[运行规范](../reference/specs/operations.md)。
+
 ## 局域网（无域名）
 
 先阅读[明文风险](../operations/tls-proxy.md#局域网-http-风险)。局域网模式从 v0.26.2 起提供。准备不可变镜像 ID 后，四步路线见 [README](../../README.md#局域网部署无域名)：初始化、配置模型、启动、打开管理页面。

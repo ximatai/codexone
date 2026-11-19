@@ -1,6 +1,17 @@
 import CodexOneRuntime
 import Testing
 
+@Test func httpBodyStagingRequiresAnExplicitOptInAndDataDirectory() throws {
+  let directory = ["CODEXONE_DATA_DIRECTORY": "/synthetic/data"]
+  #expect(try RuntimeConfiguration(environment: directory).httpBodyStagingDirectory == nil)
+  #expect(throws: RuntimeConfiguration.ConfigurationError.invalidHTTPBodyStaging) {
+    try RuntimeConfiguration(environment: ["CODEXONE_HTTP_BODY_STAGING": "on"])
+  }
+  let enabled = try RuntimeConfiguration(
+    environment: directory.merging(["CODEXONE_HTTP_BODY_STAGING": "on"]) { _, new in new })
+  #expect(enabled.httpBodyStagingDirectory == "/synthetic/data")
+}
+
 @Test func adminOverviewPushDefaultsOnAndCanBeDisabled() throws {
   #expect(try RuntimeConfiguration(environment: [:]).adminLiveEnabled)
   let disabled = try RuntimeConfiguration(environment: ["CODEXONE_ADMIN_LIVE": "off"])

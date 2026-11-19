@@ -8,6 +8,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
   public let adminPort: Int
   public let backupDirectory: String?
   public let dataDirectory: String?
+  public let httpBodyStagingDirectory: String?
   public let identityConfigurationPath: String?
   public let accountPoolConfigurationPath: String?
   public let adminTokenFile: String?
@@ -25,6 +26,7 @@ public struct RuntimeConfiguration: Sendable, Equatable {
     case conflictingPorts
     case invalidBackupDirectory
     case invalidDataDirectory
+    case invalidHTTPBodyStaging
     case invalidIdentityConfiguration
     case invalidAccountPoolConfiguration
     case invalidAdminTokenFile
@@ -65,6 +67,13 @@ public struct RuntimeConfiguration: Sendable, Equatable {
       dataDirectory = path
     } else {
       dataDirectory = nil
+    }
+    switch environment["CODEXONE_HTTP_BODY_STAGING"] ?? "off" {
+    case "off": httpBodyStagingDirectory = nil
+    case "on":
+      guard let dataDirectory else { throw ConfigurationError.invalidHTTPBodyStaging }
+      httpBodyStagingDirectory = dataDirectory
+    default: throw ConfigurationError.invalidHTTPBodyStaging
     }
     if let path = environment["CODEXONE_BACKUP_DIRECTORY"] {
       guard path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count <= 4096,

@@ -151,3 +151,59 @@ func zstdReservationLastsThroughTransportEOFAndEncodingNegotiation(earlyAcceptan
   #expect(waiting.reserveIfReady(size, ticket: ticket))
   try await pool.shutdown()
 }
+
+@Test func stagedResponsesRetryReplaysThePreparedBytesAndReturnsTheLease() async throws {
+  try await withStagingTestDirectory { directory in
+    let input = Data(#"{"model":"synthetic-host","input":"hello"}"#.utf8)
+    let expected = Data(
+      #"{"model":"synthetic-host","input":[{"role":"user","content":"hello"}],"store":false,"stream":true}"#
+        .utf8)
+    let capacity = EncryptedHTTPBody.diskBytes(expected.count)
+    let staging = HTTPBodyStaging(directory: directory.path, capacity: capacity)
+    let incoming = try await staging.begin(length: input.count)
+    defer { incoming.discard() }
+    try await incoming.append(input)
+    let request = try await ResponseRequest(data: incoming.decodeInput())
+    let document = try request.preparedDocument(
+      contract: .codexSubscription, nativeWebSocket: false)
+    let payload = try await staging.encode(document, lease: incoming.lease)
+    defer { payload.discard() }
+    let pool = ZstdUploadPool()
+    #expect(pool.reserve())
+    let progress = ExecutionProgress(try ExecutionBudget())
+    let first = ZstdUpload(
+      payload: payload, pool: pool, progress: progress,
+      upload: RequestUpload(bytes: payload.count, transport: "http", encoding: "zstd"))
+    var compressed = Data()
+    while let chunk = try await first.next() {
+      compressed.append(contentsOf: chunk.readableBytesView)
+    }
+    var restored = Data(count: expected.count)
+    let count = restored.withUnsafeMutableBytes { destination in
+      compressed.withUnsafeBytes { source in
+        ZSTD_decompress(
+          destination.baseAddress, destination.count, source.baseAddress, source.count)
+      }
+    }
+    #expect(count == expected.count && restored == expected)
+    await #expect(throws: GatewayProtocolError.self) {
+      try await staging.begin(length: input.count)
+    }
+    // A 415 selects one plaintext retry in the existing HTTP execution path.
+    payload.retryPlaintext()
+    var replay = UploadBody(
+      payload: payload, progress: progress,
+      upload: RequestUpload(bytes: payload.count, transport: "http")
+    ).makeAsyncIterator()
+    var replayed = Data()
+    while let chunk = try await replay.next() {
+      replayed.append(contentsOf: chunk.readableBytesView)
+    }
+    #expect(replayed == expected)
+    let next = try await staging.begin(length: input.count)
+    next.discard()
+    #expect(throws: CancellationError.self) { try payload.chunk(at: 0) }
+    try await pool.shutdown()
+    try await staging.workers.shutdownGracefully()
+  }
+}
