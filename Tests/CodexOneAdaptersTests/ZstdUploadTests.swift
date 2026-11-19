@@ -166,7 +166,7 @@ func zstdReservationLastsThroughTransportEOFAndEncodingNegotiation(earlyAcceptan
     let request = try await ResponseRequest(data: incoming.decodeInput())
     let document = try request.preparedDocument(
       contract: .codexSubscription, nativeWebSocket: false)
-    let payload = try await staging.encode(document, lease: incoming.lease)
+    let payload = try await staging.encode(PendingHTTPBody(document), lease: incoming.lease)
     defer { payload.discard() }
     let pool = ZstdUploadPool()
     #expect(pool.reserve())

@@ -34,13 +34,12 @@ final class HTTPBodyStaging: Sendable {
     return StagedHTTPBody(staging: self, file: file, lease: lease)
   }
 
-  func encode(_ document: consuming JSONValue, lease: RequestBodyLease) async throws
+  func encode(_ document: PendingHTTPBody<JSONValue>, lease: RequestBodyLease) async throws
     -> HTTPUploadPayload
   {
-    let pending = PendingHTTPBody(consume document)
     let file = try await workers.runIfActive {
       [directory, capacity = budget.capacity] in
-      let data = try pending.take().data()
+      let data = try document.take().data()
       try lease.reserve(EncryptedHTTPBody.diskBytes(data.count))
       try StorageCapacity.require(directory, additionalBytes: Int64(capacity), optional: true)
       let file = try EncryptedHTTPBody(directory: directory, length: data.count)

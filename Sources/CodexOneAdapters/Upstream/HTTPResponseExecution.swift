@@ -9,7 +9,7 @@ import Synchronization
 final class PendingHTTPBody<Value: Sendable>: Sendable {
   private let value: Mutex<Value?>
 
-  init(_ value: consuming Value) { self.value = Mutex(consume value) }
+  init(_ value: Value) { self.value = Mutex(value) }
 
   func take() throws -> Value {
     try value.withLock {
@@ -17,6 +17,20 @@ final class PendingHTTPBody<Value: Sendable>: Sendable {
       $0 = nil
       return body
     }
+  }
+}
+
+struct HTTPResponseBody: Sendable {
+  let pending: PendingHTTPBody<ResponseRequest>
+  let model: String
+  let mode: ExecutionMode
+  let streaming: Bool
+
+  init(_ request: ResponseRequest) {
+    pending = PendingHTTPBody(request)
+    model = request.model
+    mode = request.mode
+    streaming = request.streaming
   }
 }
 
@@ -146,13 +160,10 @@ struct HTTPResponseExecution: Sendable {
   }
 
   func execute(
-    _ request: consuming ResponseRequest, requestID: String, bodyLease: RequestBodyLease? = nil,
+    _ body: HTTPResponseBody, requestID: String, bodyLease: RequestBodyLease? = nil,
     staged: StagedHTTPBody? = nil,
     emit: @escaping @Sendable (JSONValue) async throws -> Void
   ) async throws {
-    let requestedModel = request.model
-    let mode = request.mode
-    let pending = PendingHTTPBody(consume request)
     let timeoutTrace = ExecutionTimeoutTrace(requestID: requestID)
     defer { timeoutTrace.flush() }
     do {
@@ -160,15 +171,15 @@ struct HTTPResponseExecution: Sendable {
         seconds: configuration.budget.total, timeoutTrace: timeoutTrace
       ) {
         try await executeHTTP(
-          pending, requestID: requestID, bodyLease: bodyLease, staged: staged, emit: emit)
+          body.pending, requestID: requestID, bodyLease: bodyLease, staged: staged, emit: emit)
       }
     } catch {
-      await recordRejection(model: requestedModel, mode: mode, requestID: requestID, error: error)
+      await recordRejection(model: body.model, mode: body.mode, requestID: requestID, error: error)
       throw error
     }
   }
 
-  private func prepareHTTP(_ request: consuming ResponseRequest) throws -> PreparedHTTPResponse {
+  private func prepareHTTP(_ request: ResponseRequest) throws -> PreparedHTTPResponse {
     guard gateway != nil else { throw ExecutionError.unauthorized }
     guard request.mode == .generation || request.mode == .priming || request.streamCompaction else {
       throw GatewayProtocolError(400, "unsupported_execution_mode")
@@ -214,7 +225,7 @@ struct HTTPResponseExecution: Sendable {
     let stagedPayload: HTTPUploadPayload?
     if let staged, prepared.frame == nil {
       // Reclaim the parse reservation before admission/slow upload, keeping the replay file.
-      stagedPayload = try await staged.staging.encode(prepared.document.take(), lease: staged.lease)
+      stagedPayload = try await staged.staging.encode(prepared.document, lease: staged.lease)
       bodyLease?.release()
     } else {
       staged?.lease.release()

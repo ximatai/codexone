@@ -825,22 +825,26 @@ public struct ResponsesDataService: Service {
       body = try await staged.decodeInput()
       try Task.checkCancellation()
     }
-    let request = try ResponseRequest(
-      data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
-      imageConfiguration: executor.configuration.imageGeneration)
     let largeBodyLease = body.count > RequestBodyLimits.smallRequestBytes ? lease : nil
-    // The parsed document owns the input after decoding.
-    body = Data()
-    if endpoint == "/responses/compact" {
-      try await executor.compact(request, requestID: writer.requestID) { document in
-        try await writer.json(document)
+    let responseBody: HTTPResponseBody
+    do {
+      let request = try ResponseRequest(
+        data: body, mode: endpoint == "/responses/compact" ? .compact : .generation,
+        imageConfiguration: executor.configuration.imageGeneration)
+      // The parsed document owns the input after decoding.
+      body = Data()
+      if endpoint == "/responses/compact" {
+        try await executor.compact(request, requestID: writer.requestID) { document in
+          try await writer.json(document)
+        }
+        return
       }
-      return
+      responseBody = HTTPResponseBody(request)
     }
-    let streaming = request.streaming
+    let streaming = responseBody.streaming
     await writer.setStreaming(streaming)
     try await executor.execute(
-      consume request, requestID: writer.requestID, bodyLease: largeBodyLease, staged: staged
+      responseBody, requestID: writer.requestID, bodyLease: largeBodyLease, staged: staged
     ) {
       document in
       if streaming {
