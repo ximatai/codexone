@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.50](https://github.com/ximatai/codexone/releases/tag/v0.26.50)**（2026-11-19），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v0.26.51](https://github.com/ximatai/codexone/releases/tag/v0.26.51)**（2026-11-19），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.51 改进大 Responses 正文预算和跨 Key 排队，补充超时诊断，支持显式启用短时加密暂存。暂存默认关闭。正式镜像通过了原生 Linux amd64 的 768 MiB 混合容量验证。见[发布说明](CHANGELOG.md)。
 
 v0.26.50 在 Responses WebSocket 握手中公布 12 MiB 消息阈值，实测 Codex CLI 0.170.0 可在上传前切到 HTTP，并在压缩后续接。首页订阅额度卡简化凭证到期展示。见[发布说明](CHANGELOG.md)。
 
