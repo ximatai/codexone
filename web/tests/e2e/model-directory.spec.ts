@@ -313,3 +313,87 @@ for (const width of [1320, 390]) {
     expect((await response).ok()).toBe(true);
   });
 }
+
+test("edits active model rates at microdollar precision and reloads after a conflict", async ({
+  page,
+}) => {
+  await reviewFixture(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const active = {
+    id: "demo-sol",
+    state: "enabled",
+    reasoningEfforts: [],
+    defaultReasoningEffort: null,
+    inputMicrosPerMillion: 1,
+    outputMicrosPerMillion: 500_000_000,
+  };
+  let revision = 4;
+  const document = () => ({
+    revision,
+    active: [active],
+    retired: [{ ...active, id: "demo-retired", state: "retired" }],
+    candidates: [],
+    imageModels: ["demo-image"],
+    account: null,
+    fetchedAt: null,
+  });
+  await page.route("**/api/models", (route) =>
+    route.fulfill({ json: document() }),
+  );
+  await page.route("**/api/accounts", (route) =>
+    route.fulfill({ json: { accounts: [], nextCursor: null } }),
+  );
+  await page.route("**/api/models/rates", async (route) => {
+    expect(route.request().method()).toBe("PUT");
+    expect(route.request().postDataJSON()).toEqual({
+      revision,
+      model: active.id,
+      inputMicrosPerMillion: 1_234_567,
+      outputMicrosPerMillion: 0,
+    });
+    revision++;
+    if (revision === 5) {
+      active.inputMicrosPerMillion = 2_000_000;
+      return route.fulfill({
+        status: 409,
+        json: { error: { code: "revision_conflict" } },
+      });
+    }
+    active.inputMicrosPerMillion = 1_234_567;
+    active.outputMicrosPerMillion = 0;
+    await route.fulfill({ json: document() });
+  });
+  await page.goto("/#/models");
+  await expect(
+    page.getByText("输入 0.000001 · 输出 500 美元／百万 Token"),
+  ).toBeVisible();
+  const edit = page.getByRole("button", { name: "编辑费率", exact: true });
+  await expect(edit).toHaveCount(1);
+  await edit.click();
+  const modal = page.getByRole("dialog", { name: "编辑模型费率" });
+  const input = modal.getByLabel("输入费率（美元／百万 Token）");
+  const output = modal.getByLabel("输出费率（美元／百万 Token）");
+  const save = modal.getByRole("button", { name: "保存", exact: true });
+  await expect(input).toHaveValue("0.000001");
+  await expect(output).toHaveValue("500");
+  await expectNoHorizontalOverflow(page);
+  await input.clear();
+  await expect(save).toBeDisabled();
+  await input.fill("1.234567");
+  await output.fill("0");
+  await save.click();
+  await expect(
+    modal.getByText("目录已变化，请关闭后重新打开费率编辑。"),
+  ).toBeVisible();
+  await expect(save).toBeDisabled();
+  await modal.getByRole("button", { name: "取消" }).click();
+  await edit.click();
+  await expect(input).toHaveValue("2");
+  await input.fill("1.234567");
+  await output.fill("0");
+  await save.click();
+  await expect(modal).not.toBeVisible();
+  await expect(
+    page.getByText("输入 1.234567 · 输出 0 美元／百万 Token"),
+  ).toBeVisible();
+});

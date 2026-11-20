@@ -73,6 +73,8 @@ public actor ModelDirectory {
       "active": .array(
         snapshot.active.map { model in
           var value = Self.metadata(model, state: "enabled").object!
+          value["inputMicrosPerMillion"] = .number(Decimal(model.inputMicrosPerMillion))
+          value["outputMicrosPerMillion"] = .number(Decimal(model.outputMicrosPerMillion))
           if let update = refreshedProfile(for: model) {
             let reset = !(update.reasoningSettings?.isValid(for: update) ?? true)
             value["profileUpdate"] = Self.metadata(
@@ -187,6 +189,26 @@ public actor ModelDirectory {
     try configuration.imageGeneration?.validate(hosts: next.active)
     guard next.active.count + next.retired.count <= 32 else { throw ExecutionError.capacity }
     return try await save(next, expected: revision, expectedAccount: expectedAccount)
+  }
+
+  func changeRates(_ body: JSONValue) async throws -> JSONValue {
+    guard let revision = body["revision"]?.integer, revision >= 0, revision < Int64.max,
+      let id = body["model"]?.string, (1...128).contains(id.utf8.count),
+      let input = body["inputMicrosPerMillion"]?.integer,
+      let output = body["outputMicrosPerMillion"]?.integer
+    else { throw ExecutionError.invalidCommand }
+    let previous = snapshot()
+    guard previous.revision == revision else { throw ExecutionError.conflict }
+    guard let index = previous.active.firstIndex(where: { $0.id == id }) else {
+      throw ExecutionError.invalidCommand
+    }
+    var next = ModelDirectorySnapshot(
+      revision: revision + 1, active: previous.active, retired: previous.retired,
+      accountForModel: previous.accountForModel)
+    next.active[index].inputMicrosPerMillion = input
+    next.active[index].outputMicrosPerMillion = output
+    try validateResponseModels(next.active)
+    return try await save(next, expected: revision)
   }
 
   func changeReasoning(_ body: JSONValue) async throws -> JSONValue {

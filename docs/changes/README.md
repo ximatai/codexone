@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [编辑已启用文本模型费率](active-model-rates/proposal.md) · [任务](active-model-rates/tasks.md)
+
 - [管理页面静态资源交付](admin-static-delivery/proposal.md) · [任务](admin-static-delivery/tasks.md)
 
 - [首页 Key 今日活动时间](overview-key-activity-range/proposal.md) · [任务](overview-key-activity-range/tasks.md)

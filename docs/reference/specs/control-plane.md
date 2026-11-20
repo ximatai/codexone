@@ -186,6 +186,8 @@ options 增加 defaultReasoningEfforts（模型 ID → 有界默认值），从�
 
 订阅账号池通过 `GET /api/models` 读取生效目录和最近一次发现，`POST /api/accounts/:id/model-candidates` 只读刷新账号候选，`PUT /api/models` 用目录 revision 审核启用或停用模型。候选发现最多等待上游 15 秒，包含连接与响应读取，失败保留最近成功候选；启用发现模型时同时核对所审阅的候选版本，须有完整 profile 和显式费率。启用表单以美元／百万 Token 显示和编辑费率，保存时换算为整数微美元。已知模型预填公开参考费率，其他模型预填 0。预填值来自 [OpenAI Codex 公开费率表](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing) 的标准输入和输出费率，供本地估算。首次或重新启用可随同一次写入提交 `allowedReasoningEfforts` 与 `defaultReasoningEffort`，两项同时提供才生效。重新启用省略两项时沿用兼容的已存设置。生效目录随核心库备份和重启保留。Key options 返回生效对话模型、其支持的档位及目录 revision。Key 创建和更新可附 `catalogRevision`，写入在事务内核对。更新省略 `reasoningEfforts` 保留原限制，显式空对象清除限制。
 
+管理目录的 `active` 项返回 `inputMicrosPerMillion` 和 `outputMicrosPerMillion`。管理员可通过 `PUT /api/models/rates` 提交 `model`、`revision` 和这两项费率。两项均为 0 到 500,000,000 的整数微美元／百万 Token。界面以美元／百万 Token 展示和编辑，最多六位小数。提交复用目录 revision 和事务内的并发检查，冲突返回 409，管理员重新核对后可提交。写入即时生效，模型保持启用，路由、权限、推理设置及模型资料保留。目录随核心库持久化，无 schema 变更。
+
 账号模型候选发现的 client_version 与 User-Agent 使用网关编译内置的发现兼容版本 0.169.1，显式 clientFingerprint.version 优先。省略时独立于已加载模型 profile 的来源版本，避免旧快照缩小上游返回的候选集合。发现请求不在线查询或自动推断新版本。启用新模型仍通过目录审核流程完成。
 
 刷新候选后，已启用模型如有完整且不同的上游 profile，管理 DTO 的 active 项附可选 profileUpdate 预览。仅原发现账号可更新已绑定来源的模型；配置模型可由管理员选定的有效账号提供资料，更新沿用原有路由归属。上下文窗口、最大窗口、支持档位及视觉输入展示前后变化，其他能力和基础指导随完整 profile 更新。PUT /api/models/profile 接受 model、revision、candidateRevision 和可选 resetReasoningSettings=true。写入要求候选仍在十五分钟有效期内、目录及账号 revision 一致、账号已启用且授权 ready，事务内复核账号状态。费率及图片工具启用设置保留，兼容的推理设置保留；不兼容时须显式确认重置。无变化、不完整、来源不匹配或失效的资料不能提交。沿用目录持久化和备份，无 schema 变更。

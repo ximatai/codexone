@@ -7,8 +7,8 @@ import Foundation
 public struct SingleIdentityConfiguration: Sendable, Decodable {
   public struct Model: Sendable, Codable {
     public let id: String
-    public let inputMicrosPerMillion: Int64
-    public let outputMicrosPerMillion: Int64
+    public internal(set) var inputMicrosPerMillion: Int64
+    public internal(set) var outputMicrosPerMillion: Int64
     public var catalog: Catalog? = nil
     var upstream: JSONValue? = nil
     public internal(set) var profileProvenance: ModelProfileProvenance? = nil

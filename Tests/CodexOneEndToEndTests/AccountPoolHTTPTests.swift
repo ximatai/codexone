@@ -578,6 +578,102 @@ private func withPoolHTTP(
   }
 }
 
+@Test(.timeLimit(.minutes(1)))
+func poolModelRateEditPreservesAdmittedAndHistoricalCosts() async throws {
+  try await withOAuth { oauth in
+    let h = try await PoolHTTPHarness.open(
+      oauth, transport: "websocket", executionTimeout: 15, reasoningDirectory: true)
+    let directory = try #require(h.modelDirectory)
+    let secret = "synthetic-model-rates-admin-" + String(repeating: "a", count: 32)
+    let path = oauth.root.appendingPathComponent("admin-model-rates")
+    try Data(secret.utf8).write(to: path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+    let keys = try await KeyAdminAPI.load(
+      path: path.path, store: h.store, modelDirectory: directory)
+    let port = AccountAdminPort()
+    let admin = AdminService(
+      group: oauth.group, port: 0, reportProvider: { .init(checks: []) }, keys: keys
+    ) { value in port.value.withLock { $0 = value } }
+    let owner = Task {
+      try await GatewayRuntime(services: [admin]).run(handleSignals: false)
+    }
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    do {
+      try await awaitOAuth { port.value.withLock { $0 > 0 } }
+      let client = AccountAdminClient(port: port.value.withLock { $0 }, session: session)
+      let headers = ["authorization": "Bearer " + secret]
+      let ratesPath = "/api/models/rates"
+      let initial = try await client.call("GET", "/api/models", headers: headers)
+      #expect(initial.0 == 200)
+      #expect(initial.1["active"]?.array?.first?["inputMicrosPerMillion"]?.integer == 1_000_000)
+      var command: JSONObject = [
+        "model": .string("synthetic-text"), "revision": .number(0),
+        "inputMicrosPerMillion": .number(3_123_456), "outputMicrosPerMillion": .number(4_000_000),
+      ]
+      #expect(
+        try await client.call(
+          "PUT", ratesPath, body: .object(command), headers: ["authorization": "Bearer " + h.alice]
+        ).0 == 401)
+      for invalid in [Decimal(-1), Decimal(string: "0.5")!, Decimal(500_000_001)] {
+        var invalidCommand = command
+        invalidCommand["inputMicrosPerMillion"] = .number(invalid)
+        #expect(
+          try await client.call("PUT", ratesPath, body: .object(invalidCommand), headers: headers).0
+            == 400)
+      }
+
+      #expect(try await h.request(effort: "low").0 == 200)
+      let inFlight = Task { try await h.request("hold-queued", effort: "low") }
+      defer { inFlight.cancel() }
+      try await awaitOAuth { h.state.value.withLock { $0.heldWebSocketCompletion != nil } }
+      let updated = try await client.call(
+        "PUT", ratesPath, body: .object(command), headers: headers)
+      #expect(updated.0 == 200)
+      #expect(updated.1["revision"]?.integer == 1)
+      let model = try #require(updated.1["active"]?.array?.first)
+      #expect(model["inputMicrosPerMillion"]?.integer == 3_123_456)
+      #expect(model["outputMicrosPerMillion"]?.integer == 4_000_000)
+      #expect(model["reasoningEfforts"] == initial.1["active"]?.array?.first?["reasoningEfforts"])
+      #expect(
+        try await client.call("PUT", ratesPath, body: .object(command), headers: headers).0 == 409)
+      command["revision"] = .number(1)
+      command["model"] = .string("synthetic-absent")
+      #expect(
+        try await client.call("PUT", ratesPath, body: .object(command), headers: headers).0 == 400)
+
+      let release = try #require(h.state.value.withLock { $0.heldWebSocketCompletion })
+      release()
+      #expect(try await inFlight.value.0 == 200)
+      #expect(try await h.request(effort: "low").0 == 200)
+      try await awaitOAuth { h.finalizer.outstanding == 0 }
+      let reader = try await h.store.makeUsageReader()
+      let hour = testUnixSeconds / 3600 * 3600
+      let report = try await reader.queryUsage(
+        .init(startUnixSeconds: hour, endUnixSeconds: hour + 3600))
+      #expect(report.rows.compactMap(\.metrics.estimatedMicros).sorted() == [3, 3, 11])
+      await reader.close()
+
+    } catch {
+      owner.cancel()
+      _ = await owner.result
+      await h.close()
+      throw error
+    }
+    owner.cancel()
+    _ = await owner.result
+    await h.close()
+
+    let restarted = try await PoolHTTPHarness.open(
+      oauth, existingState: h.state, reasoningDirectory: true)
+    let persisted = restarted.modelDirectory?.snapshot()
+    #expect(persisted?.active.first?.inputMicrosPerMillion == 3_123_456)
+    #expect(persisted?.active.first?.outputMicrosPerMillion == 4_000_000)
+    #expect(persisted?.revision == 1)
+    await restarted.close()
+  }
+}
+
 @Test(.timeLimit(.minutes(1)), arguments: ["http", "websocket"])
 func poolModelDirectoryReasoningSettingsApplyToAllKeys(_ transport: String) async throws {
   try await withOAuth { oauth in

@@ -40,7 +40,11 @@ const profile = z.object({
   contextWindow: z.number().nullable().optional(),
   maxContextWindow: z.number().nullable().optional(),
 });
-const model = profile.extend({ profileUpdate: profile.optional() });
+const model = profile.extend({
+  profileUpdate: profile.optional(),
+  inputMicrosPerMillion: z.number().int().min(0).max(500_000_000).optional(),
+  outputMicrosPerMillion: z.number().int().min(0).max(500_000_000).optional(),
+});
 const directory = z.object({
   revision: z.number().int().nonnegative(),
   active: z.array(model).max(32),
@@ -188,6 +192,11 @@ export function ModelDirectory() {
   const masked = usePrivacyMask();
   const [account, setAccount] = useState<string | null>(null);
   const [selected, setSelected] = useState<Model | null>(null);
+  const [rateEdit, setRateEdit] = useState<{
+    model: string;
+    revision: number;
+  } | null>(null);
+  const [rateError, setRateError] = useState("");
   const [reasoning, setReasoning] = useState<
     (ReasoningDraft & { model: Model; revision: number }) | null
   >(null);
@@ -317,6 +326,43 @@ export function ModelDirectory() {
     }
   }
 
+  async function saveRates() {
+    if (!rateEdit || !owner.session || working || !ratesValid) return;
+    setWorking("save");
+    setRateError("");
+    setNotice("");
+    setFailure("");
+    try {
+      await queryClient.cancelQueries({
+        queryKey: ["model-directory"],
+        exact: true,
+      });
+      const next = parse(
+        await request("/api/models/rates", {
+          method: "PUT",
+          csrf: owner.session.csrf,
+          body: {
+            ...rateEdit,
+            inputMicrosPerMillion: inputMicros,
+            outputMicrosPerMillion: outputMicros,
+          },
+        }),
+      );
+      queryClient.setQueryData(["model-directory"], next);
+      setRateEdit(null);
+      setNotice("模型费率已保存。");
+    } catch (error) {
+      setRateError(
+        error instanceof ManagementError && error.status === 409
+          ? "目录已变化，请关闭后重新打开费率编辑。"
+          : "无法确认保存结果。请关闭编辑后核对最新目录。",
+      );
+      await query.refetch();
+    } finally {
+      setWorking(null);
+    }
+  }
+
   async function saveReasoning() {
     if (!reasoning || !owner.session || working || !reasoning.allowed.length)
       return;
@@ -397,7 +443,40 @@ export function ModelDirectory() {
     }
   }
 
+  const rateFields = (
+    <>
+      <NumberInput
+        label="输入费率（美元／百万 Token）"
+        disabled={working !== null}
+        min={0}
+        max={maximumRateUSD}
+        allowNegative={false}
+        decimalScale={6}
+        step={0.01}
+        value={input}
+        onChange={setInput}
+      />
+      <NumberInput
+        label="输出费率（美元／百万 Token）"
+        disabled={working !== null}
+        min={0}
+        max={maximumRateUSD}
+        allowNegative={false}
+        decimalScale={6}
+        step={0.01}
+        value={output}
+        onChange={setOutput}
+      />
+    </>
+  );
+
   function row(item: Model) {
+    const inputRate = item.inputMicrosPerMillion;
+    const outputRate = item.outputMicrosPerMillion;
+    const editable =
+      item.state === "enabled" &&
+      inputRate !== undefined &&
+      outputRate !== undefined;
     const state = states[item.state];
     return (
       <Group
@@ -415,6 +494,12 @@ export function ModelDirectory() {
           {item.defaultReasoningEffort && (
             <Text size="xs" c="dimmed">
               默认 {item.defaultReasoningEffort}
+            </Text>
+          )}
+          {editable && (
+            <Text size="xs" c="dimmed">
+              输入 {inputRate / 1_000_000} · 输出 {outputRate / 1_000_000}{" "}
+              美元／百万 Token
             </Text>
           )}
           <Group gap={5}>
@@ -447,6 +532,22 @@ export function ModelDirectory() {
           <Badge color={state.color} variant="light">
             {state.label}
           </Badge>
+          {editable && (
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              disabled={working !== null}
+              onClick={() => {
+                if (!data) return;
+                setInput(inputRate / 1_000_000);
+                setOutput(outputRate / 1_000_000);
+                setRateError("");
+                setRateEdit({ model: item.id, revision: data.revision });
+              }}
+            >
+              编辑费率
+            </Button>
+          )}
           {item.state === "enabled" &&
             (item.supportedReasoningEfforts ?? item.reasoningEfforts).length >
               0 && (
@@ -691,6 +792,35 @@ export function ModelDirectory() {
           })()}
       </Modal>
       <Modal
+        opened={rateEdit !== null}
+        onClose={() => !working && setRateEdit(null)}
+        title="编辑模型费率"
+      >
+        {rateEdit && (
+          <Stack>
+            <Text fw={650}>{rateEdit.model}</Text>
+            {rateFields}
+            {rateError && <Alert color="red">{rateError}</Alert>}
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                disabled={working !== null}
+                onClick={() => setRateEdit(null)}
+              >
+                取消
+              </Button>
+              <Button
+                loading={working === "save"}
+                disabled={!ratesValid || !!rateError}
+                onClick={() => void saveRates()}
+              >
+                保存
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+      <Modal
         opened={reasoning !== null}
         onClose={() => !working && setReasoning(null)}
         title="推理设置"
@@ -787,26 +917,7 @@ export function ModelDirectory() {
                     ? "已预填公开参考价，可修改。"
                     : "暂无参考价，预填 0，可修改。"}
                 </Text>
-                <NumberInput
-                  label="输入费率（美元／百万 Token）"
-                  min={0}
-                  max={maximumRateUSD}
-                  allowNegative={false}
-                  decimalScale={6}
-                  step={0.01}
-                  value={input}
-                  onChange={setInput}
-                />
-                <NumberInput
-                  label="输出费率（美元／百万 Token）"
-                  min={0}
-                  max={maximumRateUSD}
-                  allowNegative={false}
-                  decimalScale={6}
-                  step={0.01}
-                  value={output}
-                  onChange={setOutput}
-                />
+                {rateFields}
               </Stack>
             )}
             <Group justify="flex-end">

@@ -95,6 +95,13 @@ public struct KeyAdminAPI: Sendable {
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         return try Self.response(await modelDirectory.document())
       }
+      models.put("rates") { request async throws -> Response in
+        guard request.url.query == nil else { throw ExecutionError.invalidCommand }
+        let document = try Self.body(
+          request,
+          allowed: ["model", "revision", "inputMicrosPerMillion", "outputMicrosPerMillion"])
+        return try await Self.response(modelDirectory.changeRates(document))
+      }
       models.put("reasoning") { request async throws -> Response in
         guard request.url.query == nil else { throw ExecutionError.invalidCommand }
         let document = try Self.body(
