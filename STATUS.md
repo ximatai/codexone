@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.52](https://github.com/ximatai/codexone/releases/tag/v0.26.52)**（2026-11-20），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v0.26.53](https://github.com/ximatai/codexone/releases/tag/v0.26.53)**（2026-11-20），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.53 支持在模型目录查看和编辑已启用文本模型的费率，并在首页今日 Key 汇总展示估算费用。见[发布说明](CHANGELOG.md)。
 
 v0.26.52 在首页并排展示今日 Key 用量占比与 Token 输出速率，管理页面的版本化 JS/CSS 使用长期缓存，HTTPS 反代模板支持静态资源 gzip。见[发布说明](CHANGELOG.md)。
 
