@@ -115,6 +115,7 @@ it("shows image counts and links each active Key to its management drawer", () =
     "Token",
     "生图",
     "缓存命中率",
+    "估算费用",
   ]);
   expect(screen.queryByText("闲置 Key")).toBeNull();
   const rows = screen.getAllByRole("row").slice(1);

@@ -78,6 +78,7 @@ func businessDayAdmissionUsesTransactionTimeResetsLocallyAndReprojectsAfterResta
   let summary = try await reader.keyUsage()
   let activity = try #require(summary.keys.first)
   #expect(summary.startUnixSeconds == midnight && activity.tokens == 20)
+  #expect(activity.estimatedMicros == 10 && activity.priceUsageIncomplete == false)
   #expect(activity.firstUsedTodayAtUnixSeconds == midnight)
   #expect(activity.lastUsedTodayAtUnixSeconds == midnight)
   let buckets = try await reader.dailyUsage(days: 2, keyID: key.id, model: nil)

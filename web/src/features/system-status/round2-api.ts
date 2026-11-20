@@ -113,6 +113,8 @@ export const keySummary = z
               .object({ input: metric, output: metric })
               .nullish(),
             images: metric.optional(),
+            estimatedMicros: metric.optional(),
+            priceUsageIncomplete: z.boolean().nullish(),
             tokenUsageIncomplete: z.boolean().optional(),
             inputTokens: metric.optional(),
             cachedTokens: metric.optional(),

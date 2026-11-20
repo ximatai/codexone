@@ -80,6 +80,8 @@ for (const width of [1920, 390]) {
                   principal: "legacy-p-synthetic",
                   tokenBreakdown: { input: "1200000", output: "300000" },
                   enabled: false,
+                  estimatedMicros: "0",
+                  priceUsageIncomplete: false,
                   firstUsedTodayAtUnixSeconds: start + 60,
                   lastUsedTodayAtUnixSeconds: start + 120,
                   lastUsedAtUnixSeconds: start + 86400,
@@ -89,6 +91,8 @@ for (const width of [1920, 390]) {
                   keyID: "latest",
                   principal: "合成新设备",
                   displayName: "最近设备",
+                  estimatedMicros: "1250000",
+                  priceUsageIncomplete: true,
                   tokenBreakdown: { input: "1250000", output: "250000" },
                   admitted: 10,
                   succeeded: 2,
@@ -229,6 +233,12 @@ for (const width of [1920, 390]) {
     const second = panel.getByRole("row").filter({ hasText: "未命名 Key" });
     await expect(second).toContainText("输入 ≥ 120 万");
     await expect(second).toContainText("输出 ≥ 30 万");
+    await expect(first.getByTitle(/已观测费用下界/)).toHaveText("≥ 估算 $1.25");
+    await expect(second.getByTitle(/按配置费率估算/)).toHaveText("估算 $0.00");
+    await expect(panel.getByTitle("估算费用未记录")).toHaveText("—");
+    if (width <= 750) {
+      await expect(first.getByText("估算费用", { exact: true })).toBeVisible();
+    }
     const name = panel.getByRole("link", { name: "未命名 Key", exact: true });
     await name.focus();
     await name.press("Enter");

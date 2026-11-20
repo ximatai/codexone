@@ -101,14 +101,24 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
       let now = db.clock.unixSeconds
       let start = try db.businessDay.start(containing: now)
       let tokenUsages = try SQLiteExecutionStore.keyTokenUsages(db, now: now)
+      let estimatedPrice = """
+        CASE
+          WHEN json_extract(a.usage_json,'$.priceCompleteness')='unavailable' THEN NULL
+          WHEN json_extract(a.usage_json,'$.nativeImages')=1
+            AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL
+            AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL
+            AND json_extract(a.usage_json,'$.svgInputTokens') IS NULL
+            AND json_extract(a.usage_json,'$.svgOutputTokens') IS NULL THEN NULL
+          ELSE json_extract(a.usage_json,'$.estimatedMicros')
+        END
+        """
       let rows = try db.rows(
         """
         SELECT k.id,json_extract(k.metadata_json,'$.principal'),
           COUNT(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN 1 END),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.outcome_json,'$.kind')='failed' ELSE 0 END),0),
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.state!='settled' ELSE 0 END),0),
-          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN
-            CASE WHEN json_extract(a.usage_json,'$.priceCompleteness')='unavailable' THEN NULL WHEN json_extract(a.usage_json,'$.nativeImages')=1 AND json_extract(a.usage_json,'$.imageInputTokens') IS NULL AND json_extract(a.usage_json,'$.imageOutputTokens') IS NULL AND json_extract(a.usage_json,'$.svgInputTokens') IS NULL AND json_extract(a.usage_json,'$.svgOutputTokens') IS NULL THEN NULL ELSE json_extract(a.usage_json,'$.estimatedMicros') END END),
+          SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN \(estimatedPrice) END),
           CASE WHEN MAX(a.created_at_epoch) IS NULL THEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)
             WHEN (SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id) IS NULL THEN MAX(a.created_at_epoch)
             ELSE MAX(MAX(a.created_at_epoch),(SELECT MAX(last_used_epoch) FROM usage_daily d WHERE d.key_id=k.id)) END,json_extract(k.metadata_json,'$.displayName'),
@@ -121,12 +131,15 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
           COALESCE(SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? AND (a.usage_json IS NULL OR json_extract(a.usage_json,'$.nativeImages')=1 OR json_extract(a.usage_json,'$.completeness')!='complete') THEN 1 ELSE 0 END),0),
           SUM(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN json_extract(a.usage_json,'$.images') END),
           MIN(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.created_at_epoch END),
-          MAX(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.created_at_epoch END)
+          MAX(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<? THEN a.created_at_epoch END),
+          COUNT(CASE WHEN a.created_at_epoch>=? AND a.created_at_epoch<?
+            AND COALESCE(json_extract(a.usage_json,'$.priceCompleteness'),json_extract(a.usage_json,'$.completeness'),'unavailable')='complete'
+            THEN \(estimatedPrice) END)
         FROM managed_keys k LEFT JOIN attempts a ON a.key_id=k.id
         WHERE ? OR json_extract(k.metadata_json,'$.archivedAtUnixSeconds') IS NULL
         GROUP BY k.id ORDER BY k.id LIMIT 257
         """,
-        (0..<13).flatMap { _ in [.number(start), .number(start + 86400)] } + [
+        (0..<14).flatMap { _ in [.number(start), .number(start + 86400)] } + [
           .number(includeArchived ? 1 : 0)
         ]
       ) { row in
@@ -159,7 +172,9 @@ public final class SQLiteUsageReader: UsageQuerying, Sendable {
             ? nil : sqlite3_column_int64(row, 16),
           lastUsedTodayAtUnixSeconds: sqlite3_column_type(row, 17) == SQLITE_NULL
             ? nil : sqlite3_column_int64(row, 17),
-          tokenBreakdown: tokenUsage?.breakdown ?? .init(input: nil, output: nil))
+          tokenBreakdown: tokenUsage?.breakdown ?? .init(input: nil, output: nil),
+          priceUsageIncomplete: sqlite3_column_type(row, 5) == SQLITE_NULL
+            ? nil : sqlite3_column_int64(row, 18) < sqlite3_column_int64(row, 2))
       }
       guard rows.count <= 256 else { throw ExecutionError.capacity }
       return (start, rows)

@@ -14,6 +14,10 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
   await page.goto("/");
   await expect.poll(() => !!socket).toBe(true);
   const sections = await initialSections(page);
+  const keys = keySummary.parse(sections.keys.data);
+  keys.keys[0].estimatedMicros = "1750000";
+  keys.keys[0].priceUsageIncomplete = true;
+  sections.keys.data = keys;
   const now = Date.now() / 1000;
   const snapshot = {
     protocol: 1,
@@ -27,6 +31,10 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
     "data-live-mode",
     "live",
   );
+  const keyPanel = page.getByRole("region", { name: "今日 Key 请求汇总" });
+  await expect(
+    keyPanel.getByText("≥ 估算 $1.75", { exact: true }),
+  ).toBeVisible();
   const protocol = page.getByRole("region", { name: "协议观测" });
   await expect(protocol).toHaveCount(0);
   const previous =

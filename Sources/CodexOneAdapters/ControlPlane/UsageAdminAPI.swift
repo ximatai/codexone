@@ -240,6 +240,7 @@ public struct UsageAdminAPI: Sendable {
       "failed": .number(Decimal(value.failed)),
       "pending": .number(Decimal(value.pending)),
       "estimatedMicros": value.estimatedMicros.map { .string(String($0)) } ?? .null,
+      "priceUsageIncomplete": value.priceUsageIncomplete.map { .bool($0) } ?? .null,
       "firstUsedTodayAtUnixSeconds": timestamp(value.firstUsedTodayAtUnixSeconds),
       "lastUsedTodayAtUnixSeconds": timestamp(value.lastUsedTodayAtUnixSeconds),
       "lastUsedAtUnixSeconds": timestamp(value.lastUsedAtUnixSeconds),

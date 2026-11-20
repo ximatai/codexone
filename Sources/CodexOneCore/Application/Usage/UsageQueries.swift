@@ -373,6 +373,7 @@ public struct KeyUsageSummary: Sendable {
   public let failed: Int64
   public let pending: Int64
   public let estimatedMicros: Int64?
+  public let priceUsageIncomplete: Bool?
   public let lastUsedAtUnixSeconds: Int64?
   public let firstUsedTodayAtUnixSeconds: Int64?
   public let lastUsedTodayAtUnixSeconds: Int64?
@@ -383,7 +384,7 @@ public struct KeyUsageSummary: Sendable {
     tokenUsageIncomplete: Bool = true, inputTokens: Int64? = nil, cachedTokens: Int64? = nil,
     cacheUsageIncomplete: Bool = true, images: Int64? = nil,
     firstUsedTodayAtUnixSeconds: Int64? = nil, lastUsedTodayAtUnixSeconds: Int64? = nil,
-    tokenBreakdown: TokenBreakdown? = nil
+    tokenBreakdown: TokenBreakdown? = nil, priceUsageIncomplete: Bool? = nil
   ) {
     self.images = images
     self.inputTokens = inputTokens
@@ -401,6 +402,7 @@ public struct KeyUsageSummary: Sendable {
     self.failed = failed
     self.pending = pending
     self.estimatedMicros = estimatedMicros
+    self.priceUsageIncomplete = priceUsageIncomplete
     self.lastUsedAtUnixSeconds = lastUsedAtUnixSeconds
     self.firstUsedTodayAtUnixSeconds = firstUsedTodayAtUnixSeconds
     self.lastUsedTodayAtUnixSeconds = lastUsedTodayAtUnixSeconds

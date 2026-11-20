@@ -291,6 +291,7 @@ private struct UsageFixture {
         revision: 1, inputTokens: 0, outputTokens: 0, cachedTokens: 0, images: 1,
         estimatedMicros: 0, completeness: .partial, nativeImages: true))
     let key = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(key.estimatedMicros == nil && key.priceUsageIncomplete == nil)
     #expect(key.tokenBreakdown != nil)
     #expect(key.tokenBreakdown?.input == nil && key.tokenBreakdown?.output == nil)
     let missing = try await f.reader.queryUsage(
@@ -310,6 +311,7 @@ private struct UsageFixture {
         estimatedMicros: 13, completeness: .complete, imageInputTokens: 2, imageOutputTokens: 3,
         imageInputTextTokens: 1, imageInputImageTokens: 1, nativeImages: true))
     let observed = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "alpha" })
+    #expect(observed.estimatedMicros == 13 && observed.priceUsageIncomplete == true)
     #expect(observed.tokens == 5 && observed.tokenUsageIncomplete)
     #expect(observed.tokenBreakdown?.input == 2 && observed.tokenBreakdown?.output == 3)
     let complete = try await f.reader.queryUsage(
@@ -323,6 +325,11 @@ private struct UsageFixture {
     let legacy = try await f.reader.queryUsage(
       .init(startUnixSeconds: f.hour + 7200, endUnixSeconds: f.hour + 10800))
     #expect(legacy.totals.metrics.inputTokens == 7 && legacy.totals.metrics.estimatedMicros == 7)
+    let start = testUnixSeconds / 86400 * 86400
+    try await f.insert("zero", key: "beta", at: start, evidence: usage(amount: 0))
+    try await f.insert("beta-outside", key: "beta", at: start - 1, evidence: nil)
+    let zero = try #require(try await f.reader.keyUsage().keys.first { $0.key.id == "beta" })
+    #expect(zero.estimatedMicros == 0 && zero.priceUsageIncomplete == false)
   } catch {
     await f.close()
     throw error
@@ -352,7 +359,8 @@ private struct UsageFixture {
     #expect(
       alpha.admitted == 5 && alpha.failed == 1 && alpha.pending == 4
         && alpha.succeeded == 2 && alpha.cancelled == 1 && alpha.inFlight == 1)
-    #expect(alpha.estimatedMicros == 3 && alpha.lastUsedAtUnixSeconds == start + 86400)
+    #expect(alpha.estimatedMicros == 3 && alpha.priceUsageIncomplete == true)
+    #expect(alpha.lastUsedAtUnixSeconds == start + 86400)
     #expect(alpha.firstUsedTodayAtUnixSeconds == start)
     #expect(alpha.lastUsedTodayAtUnixSeconds == testUnixSeconds)
     #expect(alpha.key.principal == "alpha")

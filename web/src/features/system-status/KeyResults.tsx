@@ -19,6 +19,7 @@ import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { businessDate, businessTime } from "../../shared/business-day";
 import type { KeySummary, KeySummaryReport } from "./round2-api";
 import { compactCount, compactKeyTokens } from "../../shared/compact-count";
+import { estimateNote, money } from "../../shared/presentation";
 import styles from "./overview.module.css";
 
 export function highFailure(
@@ -109,7 +110,7 @@ export function KeyResults({
     {
       id: "key",
       title: "Key",
-      width: "23%",
+      width: "20%",
       render: (row) => (
         <Stack gap={4} align="flex-start">
           <Group gap={6} wrap="nowrap" className={styles.keyIdentity}>
@@ -158,7 +159,7 @@ export function KeyResults({
     {
       id: "activity",
       title: "活动时间",
-      width: "17%",
+      width: "15%",
       render: (row) => (
         <Stack gap={3}>
           {[
@@ -190,7 +191,7 @@ export function KeyResults({
     {
       id: "admitted",
       title: "请求",
-      width: "10%",
+      width: "8%",
       render: (row) => (
         <Text size="sm" title={row.admitted.toLocaleString("zh-CN")}>
           <ContinuousValue text={compactCount(row.admitted)} />
@@ -262,7 +263,7 @@ export function KeyResults({
     {
       id: "images",
       title: "生图",
-      width: "11%",
+      width: "8%",
       render: (row) => (
         <Text
           size="sm"
@@ -290,6 +291,34 @@ export function KeyResults({
           <ContinuousValue text={cacheRate(row)} />
         </Text>
       ),
+    },
+    {
+      id: "estimatedMicros",
+      title: "估算费用",
+      width: "10%",
+      render: (row) => {
+        const incomplete = row.priceUsageIncomplete !== false;
+        return (
+          <Text
+            size="sm"
+            title={
+              row.estimatedMicros == null
+                ? "估算费用未记录"
+                : incomplete
+                  ? `已观测费用下界 · ${estimateNote}`
+                  : estimateNote
+            }
+          >
+            <ContinuousValue
+              text={
+                row.estimatedMicros == null
+                  ? "—"
+                  : `${incomplete ? "≥ " : ""}${money(row.estimatedMicros)}`
+              }
+            />
+          </Text>
+        );
+      },
     },
   ];
   return (

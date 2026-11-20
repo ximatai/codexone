@@ -233,6 +233,8 @@ lastResult 为 pending/success/unknown 或固定 ExecutionFailure 分类，结�
 
 今日 Key 汇总的可选 `tokenBreakdown` 含 `input`、`output` 两个可空十进制字符串。两项是既有 `tokens` 的方向拆分，沿用业务日、原生图片和 SVG 作者量的计量；沿用 `tokenUsageIncomplete` 标注已观测下界。缺失方向显示「—」，较早服务端未返回拆分时显示合计。缓存命中率继续使用 `inputTokens` 和 `cachedTokens`。
 
+今日 Key 摘要的 `estimatedMicros` 是同一业务日内账本已观测的估算费用，以可空的微美元十进制字符串返回。HTTP 与实时快照共用可选的 `priceUsageIncomplete`；有费用但至少一笔准入请求缺少完整费用时为 true，所有请求费用完整时为 false，无观测费用时为 null。首页沿用用量页的美元格式，缺失金额显示「—」，已知零显示估算 $0.00，部分费用加「≥」。旧快照有金额但缺少完整性标记时也以「≥」展示。
+
 失败率为 failed / (admitted − cancelled)，执行中和未明不计入失败数。扣除取消后至少有 20 条已准入请求、失败至少 5 条且失败率达到 20% 时，强调单元格。失败链接携 Key、摘要起止业务日期及 outcome=failed，点击时不重算今日。outcome 精确筛选只包含已准入且 kind=failed 的执行，排除准入前诊断；与 failedOnly/state/failure 按 AND，failedOnly 原有较宽语义不变。
 
 Token 与限额共用治理投影，部分证据显示已观测下界。缓存率=已观测宿主用量的 SUM(cached)/SUM(input)，无用量请求不进入分母且不使已有率变成 dash；tooltip/详情说明缺失，只有无已观测输入（含输入合计0）为 dash，真实0%保留；原生 Images 不适用宿主缓存。计数/比率用整数与 BigInt 保真，不平均逐请求百分比，拒绝缓存大于输入。单快照分组读取，禁止每 Key 追加统计请求或查询。
