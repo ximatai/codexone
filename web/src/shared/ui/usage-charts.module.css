@@ -56,8 +56,16 @@
   }
 }
 
+.compactCard {
+  display: flex;
+  flex-direction: column;
+}
+
 .compactCard .keyShareContent {
+  flex: 1;
+  min-height: 0;
   flex-wrap: nowrap;
+  column-gap: 8px;
 }
 
 .compactCard .keyShareRow {
@@ -80,6 +88,7 @@
 }
 
 .aggregateName {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

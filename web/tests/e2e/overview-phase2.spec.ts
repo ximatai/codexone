@@ -292,7 +292,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await expect(page.getByText("暂无速率数据")).toBeVisible();
   const keyShare = page.getByRole("region", { name: "今日 Key 用量占比" });
   const legend = keyShare.getByRole("listitem");
-  const other = legend.filter({ hasText: "其他（4 个 Key）" });
+  const other = legend.filter({ hasText: "其他（4）" });
   await expect(legend).toHaveCount(4);
   await expect(legend.first()).toContainText("75%");
   await expect(keyShare.getByTitle("1,500 Token")).toBeVisible();
@@ -326,7 +326,7 @@ test("overview keeps accessible trends, principal names, details and responsive 
     } else {
       expect(rateBounds.y).toBeGreaterThan(shareBounds.y + shareBounds.height);
     }
-    const name = other.getByTitle("其他（4 个 Key）");
+    const name = other.getByTitle("其他（4）");
     expect(
       await name.evaluate((item) => item.scrollWidth <= item.clientWidth),
     ).toBe(true);
