@@ -259,7 +259,11 @@ test("overview keeps accessible trends, principal names, details and responsive 
       name: "生图张数近 7 天：不可用、3、4、5、6、7、8",
     }),
   ).toBeVisible();
-  await expect(page.getByText("估算费用", { exact: true })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "今日 Key 请求汇总" })
+      .getByRole("columnheader", { name: "估算费用" }),
+  ).toBeVisible();
   await expect(page.getByText("5.0%", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("link", { name: "合成工作站 失败率 16.7%" }),
