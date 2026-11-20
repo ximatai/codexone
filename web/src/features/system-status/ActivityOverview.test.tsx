@@ -1,6 +1,6 @@
 import { keyReport } from "../../../tests/usage-reports";
 import { dailyReport } from "../../../tests/usage-reports";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { renderPrivate } from "../../../tests/render";
 import { ActivityOverview } from "./ActivityOverview";
@@ -124,7 +124,8 @@ it("keeps trend evidence accessible and shows principal names instead of key ide
   expect(screen.queryByText(/hidden-key-identifier/)).toBeNull();
   expect(screen.getByText("等待响应")).toBeVisible();
   expect(screen.getByText("极高")).toBeVisible();
-  expect(await screen.findByText("汇总别名")).toBeVisible();
+  const keyResults = screen.getByRole("region", { name: "今日 Key 请求汇总" });
+  expect(await within(keyResults).findByText("汇总别名")).toBeVisible();
   expect(screen.queryByText("最近请求")).toBeNull();
   expect(screen.getByLabelText("结果未明 3")).toBeVisible();
   expect(screen.queryByText(/object Object/)).toBeNull();

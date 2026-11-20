@@ -18,7 +18,11 @@ test("masks account and Key names without exposing them in titles or resetting o
   const account = page.getByText("合成隐私账号", { exact: true });
   const key = page.getByText("synthetic-private-key-label", { exact: true });
   await expect(account).toBeVisible();
-  await expect(key).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "今日 Key 用量占比" })
+      .getByText("synthetic-private-key-label", { exact: true }),
+  ).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
   await toggle.focus();

@@ -100,6 +100,21 @@ for (const width of [1920, 390]) {
                 },
                 {
                   ...base,
+                  keyID: "unrecorded",
+                  displayName: "未记录设备",
+                  admitted: 1,
+                  succeeded: 1,
+                  failed: 0,
+                  cancelled: 0,
+                  inFlight: 0,
+                  pending: 0,
+                  inputTokens: null,
+                  cachedTokens: null,
+                  tokens: null,
+                  tokenBreakdown: { input: null, output: null },
+                },
+                {
+                  ...base,
                   keyID: "idle",
                   principal: "不应出现",
                   admitted: 0,
@@ -157,6 +172,34 @@ for (const width of [1920, 390]) {
       });
     });
     await page.goto("/");
+    const share = page.getByRole("region", { name: "今日 Key 用量占比" });
+    const rate = page.getByRole("heading", { name: "Token 输出速率" });
+    const metrics = page.getByLabel("关键指标", { exact: true });
+    const requests = page.getByRole("heading", { name: "进行中请求" });
+    await expect(
+      share.getByText("输入 + 输出 Token · 2026-11-03"),
+    ).toBeVisible();
+    await expect(share.getByRole("listitem")).toHaveCount(3);
+    await expect(
+      share.getByRole("listitem").filter({ hasText: "最近设备" }),
+    ).toContainText("50%");
+    await expect(share.getByTitle("≥ 1,500,000 Token")).toHaveCount(2);
+    await expect(
+      share.getByRole("listitem").filter({ hasText: "未记录设备" }),
+    ).toHaveText("未记录设备未记录—");
+    const [metricsBox, shareBox, rateBox, requestsBox] = await Promise.all(
+      [metrics, share, rate, requests].map((item) => item.boundingBox()),
+    );
+    expect(shareBox!.y).toBeGreaterThan(metricsBox!.y + metricsBox!.height);
+    expect(requestsBox!.y).toBeGreaterThan(
+      Math.max(rateBox!.y, shareBox!.y + shareBox!.height),
+    );
+    if (width > 750) {
+      expect(rateBox!.x).toBeGreaterThan(shareBox!.x + shareBox!.width);
+      expect(rateBox!.y).toBeLessThan(shareBox!.y + shareBox!.height);
+    } else {
+      expect(rateBox!.y).toBeGreaterThan(shareBox!.y + shareBox!.height);
+    }
     const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
     await expect(
       panel.getByRole("link", { name: "未命名 Key", exact: true }),
@@ -168,12 +211,12 @@ for (const width of [1920, 390]) {
     await expect(
       panel.getByTitle(/部分请求/).filter({ hasText: /^25%$/ }),
     ).toBeVisible();
-    await expect(panel.getByText("0%", { exact: true })).toBeVisible();
+    const first = panel.locator("tbody tr").first();
+    await expect(first.getByText("0%", { exact: true })).toBeVisible();
     await expect(panel.getByLabel("取消 1", { exact: true })).toHaveCount(2);
     await expect(panel.getByLabel("结果未明 1", { exact: true })).toHaveCount(
       2,
     );
-    const first = panel.locator("tbody tr").first();
     await expect(first).toContainText("最近设备");
     await expect(first).toContainText("最早 00:03");
     await expect(first).toContainText("最近 00:03");
@@ -218,9 +261,17 @@ for (const width of [1920, 390]) {
       path: `../artifacts/business-day/key-token-breakdown-${width}.png`,
     });
     failKeys = true;
+    await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
     await page.clock.runFor(15000);
     await expect(panel.getByText(/更新失败 · 上次更新/)).toBeVisible();
-    await page.clock.setFixedTime(new Date("2026-11-04T02:00:00Z"));
+    await expect(share).toHaveCount(0);
+    const previousShare = page.getByRole("region", {
+      name: "Key 用量占比",
+      exact: true,
+    });
+    await expect(previousShare).toContainText("旧业务日快照 · 2026-11-03");
+    await expect(previousShare.getByRole("listitem")).toHaveCount(3);
+    await expect(previousShare.getByTitle("≥ 1,500,000 Token")).toHaveCount(2);
     await panel.getByRole("link", { name: /^未命名 Key 失败率 / }).click();
     await expect(page.getByText("请求明细", { exact: true })).toBeVisible();
     await expect(page.getByLabel("当前结果筛选")).toContainText(
@@ -236,15 +287,30 @@ for (const width of [1920, 390]) {
 }
 
 test("overview empty active list has no range toggle", async ({ page }) => {
+  const now = new Date();
+  await page.clock.install({ time: now });
   const state = await reviewFixture(page);
   state.empty = true;
   await page.goto("/");
   const panel = page.getByRole("region", { name: "今日 Key 请求汇总" });
   await expect(panel.getByText("暂无活跃 Key", { exact: true })).toBeVisible();
   await expect(
+    page.getByRole("region", { name: "今日 Key 用量占比" }),
+  ).toContainText("今日暂无活跃 Key");
+  await expect(
     panel.getByRole("textbox", { name: "Key 展示范围" }),
   ).toHaveCount(0);
   await expect(panel.getByText("全部", { exact: true })).toHaveCount(0);
+  await page.clock.setFixedTime(new Date(now.getTime() + 86400000));
+  await page.clock.runFor(15000);
+  await expect(panel.getByText(/旧业务日快照/)).toBeVisible();
+  const previousShare = page.getByRole("region", {
+    name: "Key 用量占比",
+    exact: true,
+  });
+  await expect(previousShare).toContainText("该业务日暂无活跃 Key");
+  await expect(previousShare).toContainText(now.toISOString().slice(0, 10));
+  await expect(page.getByText("今日暂无活跃 Key")).toHaveCount(0);
 });
 
 for (const width of [1440, 390]) {

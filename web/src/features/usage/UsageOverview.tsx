@@ -44,7 +44,7 @@ import {
   localTime,
 } from "../../shared/presentation";
 import { UsageTrend } from "./UsageTrend";
-import { UsageKeyShare } from "./UsageKeyShare";
+import { KeyUsageShare } from "../../shared/ui/KeyUsageShare";
 import { UsageRequests } from "./UsageRequests";
 import { UsageEvidence, UsageSummary } from "./UsageSummary";
 import { rejectionReason, utc } from "./format";
@@ -919,7 +919,20 @@ export function UsageOverview({
               <div className={styles.analysisCharts}>
                 <UsageTrend report={report} />
                 {keyTokens && (
-                  <UsageKeyShare usage={keyTokens} labels={labels} />
+                  <KeyUsageShare
+                    usage={keyTokens.map(
+                      ({ keyID, incomplete, inputTokens, outputTokens }) => ({
+                        keyID,
+                        name: labels.get(keyID),
+                        incomplete,
+                        tokens:
+                          inputTokens == null && outputTokens == null
+                            ? null
+                            : BigInt(inputTokens ?? 0) +
+                              BigInt(outputTokens ?? 0),
+                      }),
+                    )}
+                  />
                 )}
               </div>
             </>

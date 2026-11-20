@@ -29,7 +29,6 @@ import {
 } from "../../shared/compact-count";
 import styles from "./overview.module.css";
 import type { HourlyOutputRate } from "./useOverviewLive";
-const outputTrendHeight = 108;
 const outputTrendHours = 168;
 const maxBridgedHours = 2;
 const outputDateTicks = [0, 56, 112, outputTrendHours - 1];
@@ -154,7 +153,7 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
   const rate = (value: number) =>
     value.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
   return (
-    <Paper withBorder p="md">
+    <Paper withBorder p="md" className={styles.outputRateCard}>
       <Group className={styles.outputRateHeader} align="baseline" mb="xs">
         <Title
           order={3}
@@ -174,11 +173,12 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
       </Group>
       {latest ? (
         <div
+          className={styles.outputRatePlot}
           role="img"
           aria-label={`Token 输出速率近 7 天：最近有样本的小时 ${rate(latest.value)} Token/s`}
         >
           <LineChart
-            h={outputTrendHeight}
+            h="100%"
             data={hours}
             dataKey="index"
             series={[{ name: "value", color: "brand.5" }]}
@@ -196,7 +196,7 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
               tick: { fontSize: 10, fill: "currentColor" },
               tickFormatter: (index) =>
                 chartShortDay.format(hours[index].businessTime),
-              padding: { left: 8, right: 0 },
+              padding: { left: 8, right: 4 },
             }}
             yAxisProps={{
               width: 27,
@@ -245,7 +245,7 @@ export function OutputRateTrend({ history }: { history?: HourlyOutputRate }) {
           />
         </div>
       ) : (
-        <Text size="sm" c="dimmed" h={outputTrendHeight}>
+        <Text size="sm" c="dimmed">
           暂无速率数据
         </Text>
       )}
@@ -367,11 +367,12 @@ export function OverviewStats({
       {cards.map((card, index) => (
         <Paper key={card.label} withBorder p="md" className={styles.metricCard}>
           {loading ? (
-            <Skeleton h={190} />
+            <Skeleton h={148} />
           ) : (
             <>
-              <Group gap="sm">
+              <Group gap="sm" wrap="nowrap" className={styles.metricHeader}>
                 <ThemeIcon
+                  className={styles.metricIcon}
                   variant="light"
                   size={40}
                   radius="xl"

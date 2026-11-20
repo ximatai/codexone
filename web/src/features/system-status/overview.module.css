@@ -1,5 +1,6 @@
 .overview {
   --overview-gap: 16px;
+  --overview-card-height: 200px;
 }
 .connectionNotice {
   min-width: 0;
@@ -26,6 +27,30 @@
 .main {
   min-width: 0;
 }
+.usageCharts {
+  display: grid;
+  grid-auto-rows: var(--overview-card-height);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  gap: var(--overview-gap);
+}
+@media (min-width: 1200px) {
+  .kpis {
+    grid-auto-rows: var(--overview-card-height);
+  }
+  .usageCharts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 359px) {
+  .usageCharts {
+    --overview-card-height: 280px;
+  }
+}
+@media (max-width: 767px) {
+  .usageCharts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .sidebar {
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
@@ -49,6 +74,17 @@
   .sparkline {
     display: none;
   }
+}
+
+.outputRateCard {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.outputRatePlot {
+  flex: 1;
+  min-height: 0;
 }
 
 .outputRateHeader {
@@ -143,6 +179,15 @@
 }
 
 @container (width < 180px) {
+  .metricHeader {
+    gap: 8px;
+  }
+  .metricIcon {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
   .metricRow {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

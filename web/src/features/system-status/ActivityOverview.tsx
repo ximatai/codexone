@@ -25,7 +25,9 @@ import { OverviewStats, OutputRateTrend } from "./OverviewStats";
 import { useManagementSession } from "../../shared/session";
 import { ManagementError } from "../../shared/management";
 import { localTime } from "../../shared/presentation";
-import { KeyResults } from "./KeyResults";
+import { KeyResults, keySummaryName } from "./KeyResults";
+import { KeyUsageShare } from "../../shared/ui/KeyUsageShare";
+import { businessDate } from "../../shared/business-day";
 import { fetchDaily, fetchInFlight, fetchKeySummary } from "./round2-api";
 import { useOverviewRefresh } from "./useOverviewRefresh";
 import { useOverviewMotion } from "../../shared/ui/ContinuousValue";
@@ -117,12 +119,19 @@ export function ActivityOverview({
     isFetching: boolean;
     refetch: () => Promise<unknown>;
   }[];
-  sidebar?: (outputTrend: ReactNode) => ReactNode;
+  sidebar?: ReactNode;
   accounts?: readonly AccountName[];
 }) {
   const owner = useManagementSession();
   const localRefresh = useOverviewRefresh();
   const motion = useOverviewMotion();
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setNow(Date.now() / 1000);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, []);
   const attachRequestGrid = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const animation = autoAnimate(node, animateRequestCard);
@@ -240,6 +249,28 @@ export function ActivityOverview({
     <ErrorState retry={retrySources}>{readFailure}</ErrorState>
   ) : null;
 
+  const keyReport = keySummary.data;
+  const oldWindow =
+    !!keyReport &&
+    (now < keyReport.startUnixSeconds || now >= keyReport.endUnixSeconds);
+  const keyUsage = (keyReport?.keys ?? [])
+    .filter((row) => row.admitted > 0)
+    .map((row) => {
+      const breakdown = row.tokenBreakdown;
+      const hasDirection =
+        breakdown?.input != null || breakdown?.output != null;
+      return {
+        keyID: row.keyID,
+        name: keySummaryName(row),
+        incomplete: row.tokenUsageIncomplete === true,
+        tokens:
+          breakdown && hasDirection
+            ? BigInt(breakdown.input ?? 0) + BigInt(breakdown.output ?? 0)
+            : breakdown || row.tokens == null
+              ? null
+              : BigInt(row.tokens),
+      };
+    });
   const outputRate = live?.requestOutputRateMedian;
   const outputRateLabel =
     outputRate == null ? null : outputRateFormat.format(outputRate);
@@ -267,6 +298,28 @@ export function ActivityOverview({
               loading={daily.isPending}
             />
           )}
+          <div className={styles.usageCharts}>
+            <KeyUsageShare
+              compact
+              title={oldWindow ? "Key 用量占比" : "今日 Key 用量占比"}
+              caption={
+                keyReport
+                  ? `输入 + 输出 Token · ${oldWindow ? "旧业务日快照 · " : ""}${businessDate(keyReport.startUnixSeconds, keyReport.businessDay.offsetMinutes)}`
+                  : "输入 + 输出 Token"
+              }
+              emptyMessage={
+                keySummary.isPending
+                  ? "读取中…"
+                  : keySummary.isError && !keyReport
+                    ? "暂无可用的 Key 用量快照"
+                    : oldWindow
+                      ? "该业务日暂无活跃 Key"
+                      : "今日暂无活跃 Key"
+              }
+              usage={keyUsage}
+            />
+            <OutputRateTrend history={live?.requestOutputRateByHour} />
+          </div>
           <Paper withBorder p="md">
             <Title order={3} size="h5" mb="xs" className={styles.requestTitle}>
               <span>进行中请求</span>
@@ -420,13 +473,11 @@ export function ActivityOverview({
                 })}
             </div>
           </Paper>
-          <KeyResults query={keySummary} />
+          <KeyResults query={keySummary} oldWindow={oldWindow} />
         </Stack>
         {sidebar && (
           <aside className={styles.sidebar} aria-label="订阅额度与系统状态">
-            {sidebar(
-              <OutputRateTrend history={live?.requestOutputRateByHour} />,
-            )}
+            {sidebar}
             {connectionNotice}
           </aside>
         )}

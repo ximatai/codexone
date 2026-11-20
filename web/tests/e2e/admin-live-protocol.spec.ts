@@ -221,9 +221,15 @@ test("HTTP pending over an old snapshot marks the module and availability summar
   }
 });
 
-test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
+test("a new server epoch replaces the in-flight snapshot", async ({
+  page,
+}, info) => {
   test.setTimeout(30_000);
-  await reviewFixture(page);
+  await page.setViewportSize({ width: 1290, height: 900 });
+  const state = await reviewFixture(page);
+  state.alerts = 0;
+  state.accounts.splice(1);
+  state.keys.splice(7);
   let socket: WebSocketRoute | undefined;
   await page.routeWebSocket("**/api/overview/live", (route) => {
     socket = route;
@@ -338,11 +344,35 @@ test("a new server epoch replaces the in-flight snapshot", async ({ page }) => {
   const resources = page.getByRole("heading", { name: "服务器运行资源" });
   await expect(trend).toBeVisible();
   await expect(trend).toHaveAccessibleName(/最近有样本的小时 43 Token\/s/);
+  const rateCard = page
+    .getByRole("heading", { name: "Token 输出速率" })
+    .locator("xpath=../..");
+  const share = page.getByRole("region", { name: "今日 Key 用量占比" });
+  const kpi = page
+    .getByLabel("关键指标", { exact: true })
+    .locator(":scope > *")
+    .first();
+  await expect(share.getByRole("listitem")).toHaveCount(4);
+  const [rateBounds, shareBounds, kpiBounds, plotBounds] = await Promise.all(
+    [rateCard, share, kpi, trend.locator("svg.recharts-surface")].map((item) =>
+      item.boundingBox(),
+    ),
+  );
+  expect(rateBounds!.height).toBe(shareBounds!.height);
+  expect(rateBounds!.height).toBe(kpiBounds!.height);
+  expect(plotBounds!.height).toBeGreaterThan(100);
+  expect(plotBounds!.y + plotBounds!.height).toBeLessThan(
+    rateBounds!.y + rateBounds!.height,
+  );
+  await page.screenshot({ path: info.outputPath("overview-1290-live.png") });
   // The fixture has one one-hour gap, one two-hour gap and one longer gap.
   await expect(trend.locator("line.recharts-reference-line-line")).toHaveCount(
     2,
   );
-  await trend.locator("circle.recharts-dot").last().hover();
+  await trend
+    .locator("circle.recharts-dot")
+    .last()
+    .hover({ position: { x: 3, y: 2 } });
   await expect(page.getByRole("tooltip")).toContainText(
     "43 Token/s · 5 笔样本",
   );

@@ -85,6 +85,7 @@ it("shows image counts and links each active Key to its management drawer", () =
   };
   const result = render(
     <KeyResults
+      oldWindow={false}
       query={query({
         ...report,
         keys: [
@@ -142,6 +143,7 @@ it("shows image counts and links each active Key to its management drawer", () =
   ).toBe(row.keyID);
   result.rerender(
     <KeyResults
+      oldWindow={false}
       query={query({
         ...report,
         keys: [{ ...other, tokens: row.tokens }, row],
@@ -155,6 +157,7 @@ it("shows image counts and links each active Key to its management drawer", () =
   ).toBeVisible();
   result.rerender(
     <KeyResults
+      oldWindow={false}
       query={query({
         ...report,
         keys: [
@@ -182,7 +185,7 @@ it("shows all active Keys and leaves missing image counts unavailable", () => {
     keyID: `synthetic-bounded-${index}`,
     displayName: `合成 Key ${index}`,
   }));
-  render(<KeyResults query={query({ ...report, keys })} />);
+  render(<KeyResults oldWindow={false} query={query({ ...report, keys })} />);
   const panel = screen.getByRole("region", { name: "今日 Key 请求汇总" });
   expect(within(panel).getAllByRole("row")).toHaveLength(41);
   expect(within(panel).getAllByTitle("无图片产出观测")).toHaveLength(40);

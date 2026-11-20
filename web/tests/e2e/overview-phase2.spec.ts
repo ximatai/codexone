@@ -5,11 +5,12 @@ import { observationFixture } from "../../src/features/account-management/observ
 
 test("overview keeps accessible trends, principal names, details and responsive layout", async ({
   page,
-}) => {
+}, info) => {
   test.setTimeout(30_000);
   await page.clock.install();
   await page.setViewportSize({ width: 1440, height: 900 });
   let inFlightCount = 5;
+  let allKeyUsageUnknown = false;
   const now = Math.floor(Date.now() / 1000);
   const today = Math.floor(now / 86400) * 86400;
   const observation = observationFixture();
@@ -148,8 +149,19 @@ test("overview keeps accessible trends, principal names, details and responsive 
             pending: 0,
             estimatedMicros: "1250000",
             lastUsedAtUnixSeconds: now - 60,
-            tokens: "1500",
+            tokens: allKeyUsageUnknown ? null : "1500",
           },
+          ...["300", "100", "70", "30", null, null].map((tokens, index) => ({
+            keyID: `synthetic-extra-${index}`,
+            principal: `合成设备 ${index}${index === 0 ? "（用于验证图例长名称）" : ""}`,
+            admitted: 1,
+            succeeded: 1,
+            cancelled: 0,
+            inFlight: 0,
+            failed: 0,
+            pending: 0,
+            tokens: allKeyUsageUnknown ? null : tokens,
+          })),
         ],
       },
       "/api/usage/daily": {
@@ -269,8 +281,89 @@ test("overview keeps accessible trends, principal names, details and responsive 
   });
   await expect(
     sidebar.getByRole("heading", { name: "Token 输出速率" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Token 输出速率" }),
   ).toBeVisible();
-  await expect(sidebar.getByText("暂无速率数据")).toBeVisible();
+  await expect(page.getByText("暂无速率数据")).toBeVisible();
+  const keyShare = page.getByRole("region", { name: "今日 Key 用量占比" });
+  const legend = keyShare.getByRole("listitem");
+  const other = legend.filter({ hasText: "其他（4 个 Key）" });
+  await expect(legend).toHaveCount(4);
+  await expect(legend.first()).toContainText("75%");
+  await expect(keyShare.getByTitle("1,500 Token")).toBeVisible();
+  await expect(other).toContainText("5%");
+  await expect(other.getByTitle("≥ 100 Token")).toBeVisible();
+  await expect(other).toContainText("含 2 个未记录用量的 Key");
+  await expect(keyShare.locator(".recharts-pie-sector path")).toHaveCount(4);
+
+  const rateCard = page
+    .getByRole("heading", { name: "Token 输出速率" })
+    .locator("xpath=../..");
+  const expectChartLayout = async (sideBySide: boolean) => {
+    const legendBounds = (await legend.last().boundingBox())!;
+    const shareBounds = (await keyShare.boundingBox())!;
+    const rateBounds = (await rateCard.boundingBox())!;
+    expect(legendBounds.y + legendBounds.height).toBeLessThan(
+      shareBounds.y + shareBounds.height,
+    );
+    expect(legendBounds.x + legendBounds.width).toBeLessThan(
+      shareBounds.x + shareBounds.width,
+    );
+    expect(shareBounds.height).toBe(rateBounds.height);
+    if (sideBySide) {
+      const kpi = (await page
+        .getByLabel("关键指标", { exact: true })
+        .locator(":scope > *")
+        .first()
+        .boundingBox())!;
+      expect(shareBounds.height).toBe(kpi.height);
+      expect(shareBounds.y).toBe(rateBounds.y);
+    } else {
+      expect(rateBounds.y).toBeGreaterThan(shareBounds.y + shareBounds.height);
+    }
+    const name = other.getByTitle("其他（4 个 Key）");
+    expect(
+      await name.evaluate((item) => item.scrollWidth <= item.clientWidth),
+    ).toBe(true);
+    await expectNoHorizontalOverflow(page);
+  };
+  await page.setViewportSize({ width: 1290, height: 900 });
+  await expectChartLayout(true);
+  const kpis = page.getByLabel("关键指标", { exact: true });
+  await expect
+    .poll(() =>
+      kpis.locator(":scope > *").evaluateAll((items) =>
+        items.every((item) => {
+          const card = item.getBoundingClientRect();
+          const plot = item
+            .querySelector(".recharts-surface")
+            ?.getBoundingClientRect();
+          return plot && plot.right <= card.right && plot.bottom <= card.bottom;
+        }),
+      ),
+    )
+    .toBe(true);
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: info.outputPath("overview-1290.png") });
+
+  const privacy = page.getByRole("button", { name: "截图隐私模式" });
+  await privacy.click();
+  await expect(keyShare.getByRole("img", { name: "已隐藏" })).toHaveCount(3);
+  await expect(keyShare.getByText(/合成设备|合成工作站/)).toHaveCount(0);
+  await expect(
+    keyShare.locator('[title*="合成设备"], [title*="合成工作站"]'),
+  ).toHaveCount(0);
+  await expect(other).toContainText("5%");
+  await privacy.click();
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expectChartLayout(false);
+    await expect(other).toContainText("5%");
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   await expect(
     page.getByRole("img", { name: "CodexOne 内存占用最近一小时趋势" }),
@@ -406,4 +499,10 @@ test("overview keeps accessible trends, principal names, details and responsive 
   await page.clock.runFor(15000);
   await expect(cards).toHaveCount(0);
   await expect(page.getByText("暂无进行中请求")).toBeVisible();
+  allKeyUsageUnknown = true;
+  await page.reload();
+  await expect(legend).toHaveCount(4);
+  await expect(other).toContainText("未记录");
+  await expect(other).toContainText("—");
+  await expect(keyShare.locator(".recharts-pie-sector path")).toHaveCount(0);
 });

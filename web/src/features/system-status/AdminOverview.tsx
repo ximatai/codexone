@@ -164,7 +164,7 @@ export function AdminOverview() {
                 ),
             },
           ]}
-          sidebar={(outputTrend) => (
+          sidebar={
             <>
               <AdministratorReminders
                 storage={storage.data}
@@ -335,7 +335,6 @@ export function AdminOverview() {
                   })}
                 </Stack>
               </Paper>
-              {outputTrend}
               <RuntimeResources
                 storage={storage.data}
                 stale={
@@ -386,7 +385,7 @@ export function AdminOverview() {
                 </Paper>
               )}
             </>
-          )}
+          }
         />
         {accountDrawerMounted && (
           <Suspense fallback={null}>

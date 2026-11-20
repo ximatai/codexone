@@ -1,0 +1,99 @@
+.chartCard {
+  min-width: 0;
+  padding: var(--mantine-spacing-md);
+  /* Keep chart decorations inside their panel while Recharts updates stale
+     desktop tooltip/legend coordinates after a narrow viewport resize. */
+  overflow-x: clip;
+}
+.keyShareContent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.keySharePlot {
+  flex: none;
+}
+.keyShareList {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.keyShareRow {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) minmax(0, max-content) 3.75em;
+  align-items: baseline;
+  column-gap: 8px;
+  padding-block: 5px;
+  font-size: var(--mantine-font-size-xs);
+}
+.chartLegendDot {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.keyShareName,
+.keyShareTokens {
+  overflow-wrap: anywhere;
+}
+.keyShareTokens,
+.keySharePercent {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.keyShareTokens {
+  color: var(--mantine-color-dimmed);
+}
+@media (max-width: 767px) {
+  .chartCard {
+    padding: var(--mantine-spacing-sm);
+  }
+}
+
+.compactCard .keyShareContent {
+  flex-wrap: nowrap;
+}
+
+.compactCard .keyShareRow {
+  grid-template-columns: 8px minmax(0, 1fr) max-content 3em;
+  align-items: center;
+  column-gap: 4px;
+  line-height: 1.2;
+  padding-block: 4px;
+}
+
+.compactCard .keyShareList {
+  overflow: visible;
+  max-height: none;
+}
+
+.compactCard .keyShareRow .keyShareName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aggregateName {
+  overflow-wrap: anywhere;
+}
+
+.compactCard .keyShareTokens {
+  white-space: nowrap;
+}
+
+@media (max-width: 359px) {
+  .compactCard .keyShareContent {
+    flex-direction: column;
+  }
+
+  .compactCard .keyShareList {
+    flex: none;
+    width: 100%;
+  }
+}

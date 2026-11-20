@@ -1,11 +1,11 @@
 import { DonutChart } from "@mantine/charts";
-import { Box, Paper, Text } from "@mantine/core";
-import { compactKeyTokens } from "../../shared/compact-count";
-import { PrivateName } from "../../shared/privacy-mask";
-import type { UsageKeyTokens } from "./api";
+import { Box, Paper, Text, VisuallyHidden } from "@mantine/core";
+import { compactKeyTokens } from "../compact-count";
+import { PrivateName, usePrivacyMask } from "../privacy-mask";
 import { UsageChartCard } from "./UsageChartCard";
-import styles from "./usage.module.css";
+import styles from "./usage-charts.module.css";
 
+const compactRows = 4;
 const colors = [
   "brand.7",
   "teal.6",
@@ -25,33 +25,60 @@ function shareLabel(ratio: number | null) {
   return ratio > 0 && ratio < 0.001 ? "<0.1%" : percent.format(ratio);
 }
 
-export function UsageKeyShare({
+export function KeyUsageShare({
+  title = "Key 用量占比",
+  caption = "输入 + 输出 Token",
+  emptyMessage = "当前区间没有匹配的用量记录。",
   usage,
-  labels,
+  compact = false,
 }: {
-  usage: UsageKeyTokens[];
-  labels: Map<string, string>;
+  title?: string;
+  caption?: string;
+  emptyMessage?: string;
+  compact?: boolean;
+  usage: {
+    keyID: string;
+    name?: string;
+    incomplete: boolean;
+    tokens: bigint | null;
+  }[];
 }) {
-  const entries = usage.map(
-    ({ keyID, incomplete, inputTokens, outputTokens }) => ({
-      keyID,
-      incomplete,
-      tokens:
-        inputTokens == null && outputTokens == null
-          ? null
-          : BigInt(inputTokens ?? 0) + BigInt(outputTokens ?? 0),
-    }),
-  );
+  const masked = usePrivacyMask();
+  const entries = [...usage];
   entries.sort((a, b) => {
     const left = a.tokens ?? -1n;
     const right = b.tokens ?? -1n;
     return left === right ? 0 : left > right ? -1 : 1;
   });
   const total = entries.reduce((sum, row) => sum + (row.tokens ?? 0n), 0n);
-  const rows = entries.map((row, index) => ({
+  const remaining =
+    compact && entries.length > compactRows
+      ? entries.slice(compactRows - 1)
+      : [];
+  const unrecorded = remaining.filter((row) => row.tokens === null).length;
+  const visibleEntries = remaining.length
+    ? [
+        ...entries.slice(0, compactRows - 1),
+        {
+          keyID: null,
+          name: `其他（${remaining.length} 个 Key）`,
+          incomplete: unrecorded > 0 || remaining.some((row) => row.incomplete),
+          tokens:
+            unrecorded === remaining.length
+              ? null
+              : remaining.reduce((sum, row) => sum + (row.tokens ?? 0n), 0n),
+        },
+      ]
+    : entries;
+  const rows = visibleEntries.map((row, index) => ({
     keyID: row.keyID,
+    name: row.name,
     color:
-      row.tokens && row.tokens > 0n ? colors[index % colors.length] : "gray.5",
+      row.tokens && row.tokens > 0n
+        ? row.keyID === null
+          ? "gray.7"
+          : colors[index % colors.length]
+        : "gray.5",
     tokenLabel:
       row.tokens == null
         ? "未记录"
@@ -71,10 +98,14 @@ export function UsageKeyShare({
       : [],
   );
   return (
-    <UsageChartCard title="Key 用量占比" caption="输入 + 输出 Token">
+    <UsageChartCard
+      title={title}
+      caption={caption}
+      className={compact ? styles.compactCard : undefined}
+    >
       {!rows.length ? (
         <Text size="sm" c="dimmed">
-          当前区间没有匹配的用量记录。
+          {emptyMessage}
         </Text>
       ) : (
         <div className={styles.keyShareContent}>
@@ -82,8 +113,8 @@ export function UsageKeyShare({
             <div aria-hidden="true" className={styles.keySharePlot}>
               <DonutChart
                 data={wedges}
-                size={144}
-                thickness={32}
+                size={compact ? 88 : 144}
+                thickness={compact ? 20 : 32}
                 tooltipProps={{
                   content: ({ active, payload }) => {
                     const index = payload?.[0]?.payload?.name;
@@ -99,7 +130,11 @@ export function UsageKeyShare({
                           className={styles.keyShareName}
                           maw={200}
                         >
-                          <PrivateName>{labels.get(row.keyID)}</PrivateName>
+                          {row.keyID === null ? (
+                            row.name
+                          ) : (
+                            <PrivateName>{row.name}</PrivateName>
+                          )}
                         </Text>
                         <Text size="sm" fw={600}>
                           {row.tokenLabel} Token · {shareLabel(row.ratio)}
@@ -119,18 +154,41 @@ export function UsageKeyShare({
             tabIndex={rows.length > 6 ? 0 : undefined}
           >
             {rows.map((row) => (
-              <li key={row.keyID} className={styles.keyShareRow}>
+              <li
+                key={row.keyID === null ? "other" : `key:${row.keyID}`}
+                className={styles.keyShareRow}
+              >
                 <Box
                   component="span"
                   className={styles.chartLegendDot}
                   aria-hidden="true"
                   bg={row.color}
                 />
-                <span className={styles.keyShareName}>
-                  <PrivateName>{labels.get(row.keyID)}</PrivateName>
+                <span
+                  className={
+                    row.keyID === null
+                      ? styles.aggregateName
+                      : styles.keyShareName
+                  }
+                  title={
+                    compact && (!masked || row.keyID === null)
+                      ? row.name
+                      : undefined
+                  }
+                >
+                  {row.keyID === null ? (
+                    row.name
+                  ) : (
+                    <PrivateName>{row.name}</PrivateName>
+                  )}
                 </span>
                 <span className={styles.keyShareTokens} title={row.exactTokens}>
                   {row.tokenLabel}
+                  {row.keyID === null && unrecorded > 0 && (
+                    <VisuallyHidden>
+                      ，含 {unrecorded} 个未记录用量的 Key
+                    </VisuallyHidden>
+                  )}
                 </span>
                 <strong className={styles.keySharePercent}>
                   {shareLabel(row.ratio)}

@@ -25,7 +25,7 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await expect(page.getByText("在途请求读取失败")).toBeVisible();
   await expect(page.getByText("Key 汇总读取失败")).toBeVisible();
   await expect(page.getByText("暂无进行中请求")).toHaveCount(0);
-  await expect(page.getByText("暂无活跃 Key")).toHaveCount(0);
+  await expect(page.getByText("暂无活跃 Key", { exact: true })).toHaveCount(0);
   await expect(page.getByText("暂无未归档 Key。")).toHaveCount(0);
   for (const status of [503, 429]) {
     state.failures["/api/accounts"] = status;
@@ -47,7 +47,7 @@ test("O02 A03 K09: 503 and 429 never masquerade as successful empty lists", asyn
   await expect(page.getByText(/接入第一个账号/)).toBeVisible();
   await page.goto("/");
   await expect(page.getByText("暂无进行中请求")).toBeVisible();
-  await expect(page.getByText("暂无活跃 Key")).toBeVisible();
+  await expect(page.getByText("暂无活跃 Key", { exact: true })).toBeVisible();
   await expect(
     page
       .getByRole("region", { name: "今日 Key 请求汇总" })

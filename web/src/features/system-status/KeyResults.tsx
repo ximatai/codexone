@@ -1,6 +1,6 @@
 import { PrivateName, usePrivacyMask } from "../../shared/privacy-mask";
 import { ContinuousValue } from "../../shared/ui/ContinuousValue";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   ActionIcon,
   Anchor,
@@ -62,21 +62,23 @@ export function failureLink(row: KeySummary, report: KeySummaryReport) {
     })
   );
 }
+export function keySummaryName(row: KeySummary) {
+  return (
+    row.displayName ||
+    (row.principal?.startsWith("legacy-p-") ? null : row.principal) ||
+    "未命名 Key"
+  );
+}
 export function KeyResults({
   query,
+  oldWindow,
 }: {
+  oldWindow: boolean;
   query: Pick<
     UseQueryResult<KeySummaryReport, Error>,
     "data" | "isError" | "isPending" | "dataUpdatedAt" | "refetch"
   >;
 }) {
-  const [now, setNow] = useState(Date.now() / 1000);
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!document.hidden) setNow(Date.now() / 1000);
-    }, 15000);
-    return () => window.clearInterval(timer);
-  }, []);
   const report = query.data;
   const rows = useMemo(
     () =>
@@ -98,17 +100,11 @@ export function KeyResults({
   );
   const masked = usePrivacyMask();
   const offset = report?.businessDay.offsetMinutes ?? 0;
-  const oldWindow =
-    report && (now < report.startUnixSeconds || now >= report.endUnixSeconds);
   const snapshot = report
     ? `${businessDate(report.startUnixSeconds, offset)} · ${report.timezone}`
     : "";
   const unknown = (row: KeySummary) =>
     row.admitted - row.succeeded - row.failed - row.cancelled - row.inFlight;
-  const name = (row: KeySummary) =>
-    row.displayName ||
-    (row.principal?.startsWith("legacy-p-") ? "未命名 Key" : row.principal) ||
-    "未命名 Key";
   const columns: DataColumn<KeySummary>[] = [
     {
       id: "key",
@@ -133,7 +129,7 @@ export function KeyResults({
                 detail: row.keyID,
               })}`}
             >
-              <PrivateName>{name(row)}</PrivateName>
+              <PrivateName>{keySummaryName(row)}</PrivateName>
             </Button>
             {row.inFlight > 0 && (
               <Badge color="blue" aria-label={`执行中 ${row.inFlight}`}>
@@ -215,7 +211,7 @@ export function KeyResults({
             to={failureLink(row, report)}
             size="sm"
             c={highFailure(row) ? "orange.8" : undefined}
-            aria-label={`${masked ? "已隐藏 Key" : name(row)} 失败率 ${rate}`}
+            aria-label={`${masked ? "已隐藏 Key" : keySummaryName(row)} 失败率 ${rate}`}
             title="查看失败请求"
           >
             <ContinuousValue text={rate} />

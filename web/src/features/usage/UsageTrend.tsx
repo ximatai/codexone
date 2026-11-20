@@ -2,7 +2,7 @@ import { BarChart } from "@mantine/charts";
 import { Box, Group } from "@mantine/core";
 import type { UsageReport } from "./api";
 import { businessTime, dayStart } from "../../shared/business-day";
-import { UsageChartCard } from "./UsageChartCard";
+import { UsageChartCard } from "../../shared/ui/UsageChartCard";
 import styles from "./usage.module.css";
 
 const series = [
