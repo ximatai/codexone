@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.51](https://github.com/ximatai/codexone/releases/tag/v0.26.51)**（2026-11-19），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v0.26.52](https://github.com/ximatai/codexone/releases/tag/v0.26.52)**（2026-11-20），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v0.26.52 在首页并排展示今日 Key 用量占比与 Token 输出速率，管理页面的版本化 JS/CSS 使用长期缓存，HTTPS 反代模板支持静态资源 gzip。见[发布说明](CHANGELOG.md)。
 
 v0.26.51 改进大 Responses 正文预算和跨 Key 排队，补充超时诊断，支持显式启用短时加密暂存。暂存默认关闭。正式镜像通过了原生 Linux amd64 的 768 MiB 混合容量验证。见[发布说明](CHANGELOG.md)。
 
