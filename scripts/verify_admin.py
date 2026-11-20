@@ -75,8 +75,9 @@ def running_admin(binary, web_directory=None, account_master=False, business_day
             if web_directory is None:
                 web_directory = root / 'web'
                 (web_directory / 'assets').mkdir(parents=True)
-                (web_directory / 'index.html').write_text('<!doctype html><html><head><title>Synthetic Admin</title><script type="module" src="/assets/entry.js"></script></head><body>synthetic web bundle</body></html>')
+                (web_directory / 'index.html').write_text('<!doctype html><html><head><title>Synthetic Admin</title><script type="module" src="/assets/entry-h-Ab12_cd9.js"></script></head><body>synthetic web bundle</body></html>')
                 (web_directory / 'assets/entry.js').write_text('window.syntheticAsset = true;')
+                (web_directory / 'assets/entry-h-Ab12_cd9.js').write_text('window.syntheticAsset = true;')
                 (web_directory / 'assets/entry.css').write_text('body { color: black; }')
             master = root / 'master'
             if account_master:
@@ -270,7 +271,12 @@ def verify(binary):
         for path in ('/', '/index.html', '/assets/entry.js', '/assets/entry.css'):
             result = request(port, 'GET', path)
             assert result[0] == 200 and result[1]['x-content-type-options'] == 'nosniff'
+            assert result[1]['cache-control'] == 'no-store'
             assert "frame-ancestors 'none'" in result[1]['content-security-policy']
+        versioned = request(port, 'GET', '/assets/entry-h-Ab12_cd9.js')
+        assert versioned[0] == 200 and versioned[1]['cache-control'] == 'public, max-age=31536000, immutable'
+        missing_versioned = request(port, 'GET', '/assets/missing-h-Ab12_cd9.js')
+        assert missing_versioned[0] == 404 and missing_versioned[1]['cache-control'] == 'no-store'
         assert request(port, 'GET', '/assets/entry.js')[1]['content-type'].startswith('text/javascript')
         for path in ('/.env', '/core.sqlite', '/admin', '/assets/../admin', '/assets/%2e%2e%2fadmin', '/assets/missing.js'):
             assert request(port, 'GET', path)[0] == 404

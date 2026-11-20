@@ -14,11 +14,15 @@
 
 ## 接入配置
 
-从源码归档的 deploy 目录取 [TLS server 示例](../../deploy/nginx.conf.example)、[数据片段](../../deploy/nginx-data.conf)和[管理片段](../../deploy/nginx-admin.conf)。将片段安装到示例引用的 snippets 目录；TLS server/map 内容放入 Nginx 的 http 配置。替换域名、证书/私钥路径，按真实端口调整两个 proxy_pass，执行本机 `nginx -t` 后再按宿主管理方式加载。不要把示例直接覆盖用户现有 Nginx 配置。
+从源码归档的 deploy 目录取 [TLS server 示例](../../deploy/nginx.conf.example)、[数据片段](../../deploy/nginx-data.conf)和[管理片段](../../deploy/nginx-admin.conf)。将片段安装到示例引用的 snippets 目录；TLS server/map 内容放入 Nginx 的 http 配置。替换域名及证书和私钥路径，执行本机 `nginx -t` 后再按宿主管理方式加载。不要把示例直接覆盖用户现有 Nginx 配置。
+
+片段默认转发到数据端口 `18080` 和管理端口 `18081`，与官方 Compose 默认配置一致。如果自定义了监听端口，安装或更新片段时请同步调整对应片段中的所有 `proxy_pass`。管理片段有三处，分别用于普通管理请求、JS/CSS 静态资源和首页实时 WebSocket。
 
 私钥保持私有，仅 Nginx 主进程所需身份可读，不入源码/镜像。公开证书链与域名必须由客户端正常信任。管理 `.env` 的 `CODEXONE_ADMIN_PUBLIC_ORIGIN` 必须等于浏览器公开 origin（https、域名、非默认端口），修改后通过受控 Compose 重建 gateway。TLS 在外部终止不需要伪造 forwarded 头；模板保留 Host/Origin，清除 forwarded 类头。管理 session 仍由网关验证精确 Host/Origin/CSRF。
 
 数据域只转发 `/v1/` 和 `/backend-api/codex/`，其他路径 404；管理域不提供生成入口。数据面需高熵 Key，管理员秘密与 Key 互不替代。按宿主安全策略限制管理域接入，域名分离不替代认证。
+
+管理模板对至少 1 KiB 的 JS/CSS 启用按客户端能力协商的 gzip，返回 `Vary: Accept-Encoding`。模板沿用后端的缓存响应头。旧部署可更新管理片段并在 `nginx -t` 通过后重新加载。
 
 ## 可选首页实时通道
 

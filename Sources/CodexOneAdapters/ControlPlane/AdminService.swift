@@ -121,7 +121,7 @@ public struct AdminService: Service {
     return Response(
       status: .ok,
       headers: [
-        "content-type": asset.contentType, "cache-control": "no-store",
+        "content-type": asset.contentType, "cache-control": asset.cacheControl,
         "x-content-type-options": "nosniff",
         "referrer-policy": "no-referrer", "x-frame-options": "DENY",
         "content-security-policy":

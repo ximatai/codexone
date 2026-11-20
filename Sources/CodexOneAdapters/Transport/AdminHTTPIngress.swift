@@ -196,7 +196,9 @@ struct AdminHTTPIngress: Sendable {
     var headers = headers
     headers.replaceOrAdd(name: "content-length", value: String(body.count))
     headers.replaceOrAdd(name: "connection", value: "close")
-    headers.replaceOrAdd(name: "cache-control", value: "no-store")
+    if !headers.contains(name: "cache-control") {
+      headers.add(name: "cache-control", value: "no-store")
+    }
     if headers.first(name: "content-type") == nil {
       headers.add(name: "content-type", value: "application/json; charset=utf-8")
     }

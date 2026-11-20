@@ -4,6 +4,15 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [staticTheme(), react()],
+  build: {
+    rolldownOptions: {
+      output: {
+        entryFileNames: "assets/[name]-h-[hash:8].js",
+        chunkFileNames: "assets/[name]-h-[hash:8].js",
+        assetFileNames: "assets/[name]-h-[hash:8][extname]",
+      },
+    },
+  },
   server: {
     host: "127.0.0.1",
     port: 5179,

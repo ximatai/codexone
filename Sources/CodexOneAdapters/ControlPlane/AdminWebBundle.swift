@@ -13,6 +13,7 @@ public struct AdminWebBundle: Sendable {
   struct Asset: Sendable {
     let data: Data
     let contentType: String
+    let cacheControl: String
   }
   private let assets: [String: Asset]
   func asset(path: String) -> Asset? { assets[path] }
@@ -35,10 +36,9 @@ public struct AdminWebBundle: Sendable {
     defer { close(root) }
     try checkDirectory(root)
     let index = try file(root, name: "index.html", maximum: 65_536)
-    var assets: [String: Asset] = [
-      "/": .init(data: index, contentType: "text/html; charset=utf-8"),
-      "/index.html": .init(data: index, contentType: "text/html; charset=utf-8"),
-    ]
+    let entry = Asset(
+      data: index, contentType: "text/html; charset=utf-8", cacheControl: "no-store")
+    var assets: [String: Asset] = ["/": entry, "/index.html": entry]
     let directory = openat(root, "assets", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     guard directory >= 0 else { throw ExecutionError.invalidCommand }
     defer { close(directory) }
@@ -75,10 +75,13 @@ public struct AdminWebBundle: Sendable {
       let data = try file(directory, name: name, maximum: 1_048_576)
       total += data.count
       guard total <= 4_194_304 else { throw ExecutionError.invalidCommand }
+      // The web build reserves the -h- suffix for content-versioned filenames.
+      let versioned = name.wholeMatch(of: /.+-h-[A-Za-z0-9_-]{8}\.(js|css)/) != nil
       assets["/assets/" + name] = .init(
         data: data,
         contentType: name.hasSuffix(".js")
-          ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8")
+          ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8",
+        cacheControl: versioned ? "public, max-age=31536000, immutable" : "no-store")
     }
     guard count > 0 else { throw ExecutionError.invalidCommand }
     return Self(assets: assets)
