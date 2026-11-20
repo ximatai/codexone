@@ -61,7 +61,7 @@
 }
 
 .compactCard .keyShareRow {
-  grid-template-columns: 8px minmax(0, 1fr) max-content 3em;
+  grid-template-columns: 8px minmax(0, 1fr) 8ch 6ch;
   align-items: center;
   column-gap: 4px;
   line-height: 1.2;
@@ -83,7 +83,11 @@
   overflow-wrap: anywhere;
 }
 
-.compactCard .keyShareTokens {
+.compactCard .keyShareTokens,
+.compactCard .keySharePercent {
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

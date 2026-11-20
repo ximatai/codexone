@@ -153,9 +153,10 @@ export function KeyUsageShare({
             className={styles.keyShareList}
             tabIndex={rows.length > 6 ? 0 : undefined}
           >
-            {rows.map((row) => (
+            {rows.map((row, index) => (
               <li
-                key={row.keyID === null ? "other" : `key:${row.keyID}`}
+                // Live rankings update the contents of fixed visual slots.
+                key={compact ? index : row.keyID}
                 className={styles.keyShareRow}
               >
                 <Box
