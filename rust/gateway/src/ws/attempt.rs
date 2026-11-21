@@ -295,12 +295,12 @@ pub(super) fn connect_error(
         ConnectFailure::TransportSetup(error) => match error {
             codexone_http_upstream::Error::ProxyConnect
             | codexone_http_upstream::Error::ProxyAuthenticationRequired => error.into(),
-            _ => ProtocolError::new(502, "upstream_connect_failed").into(),
+            _ => INDETERMINATE.into(),
         },
         ConnectFailure::TimedOut if Instant::now() >= deadline => {
             ProtocolError::new(504, "execution_deadline_exceeded").into()
         }
         ConnectFailure::Cancelled => INDETERMINATE.into(),
-        _ => ProtocolError::new(502, "upstream_connect_failed").into(),
+        _ => INDETERMINATE.into(),
     }
 }

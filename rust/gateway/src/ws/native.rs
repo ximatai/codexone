@@ -365,6 +365,11 @@ impl NativeApplication for Session {
                 NativeFinish::BeforeDispatch { protocol, provider } => {
                     diagnostics::rejection(id, *protocol, provider.as_deref(), None)
                 }
+                NativeFinish::Indeterminate {
+                    protocol,
+                    socket: None,
+                    client_cancelled: false,
+                } => diagnostics::rejection(id, *protocol, None, None),
                 _ => {}
             }
         }

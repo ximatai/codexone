@@ -695,7 +695,7 @@ impl<A: NativeApplication> Session<A> {
                             if Instant::now() >= deadline {
                                 DEADLINE
                             } else {
-                                ProtocolError::new(502, "upstream_connect_failed")
+                                INDETERMINATE
                             },
                             None,
                         ),
@@ -708,7 +708,7 @@ impl<A: NativeApplication> Session<A> {
                         ConnectFailure::TransportSetup(
                             codexone_http_upstream::Error::ProxyConnect,
                         ) => (ProtocolError::new(502, "upstream_proxy_failed"), None),
-                        _ => (ProtocolError::new(502, "upstream_connect_failed"), None),
+                        _ => (INDETERMINATE, None),
                     };
                     let frame = websocket_error(error, provider.as_deref(), &request_id, &lane);
                     attempt.finish(NativeFinish::BeforeDispatch {

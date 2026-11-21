@@ -255,6 +255,15 @@ impl Attempt {
         }
     }
 
+    fn credential_version(&self) -> Option<i64> {
+        self.lease
+            .as_ref()?
+            .admission()
+            .account_snapshot
+            .as_ref()
+            .map(|account| account.credential_version)
+    }
+
     fn check_stopped(&self) -> Result<(), ResponseError> {
         if self
             .lease
@@ -344,6 +353,15 @@ impl Attempt {
 impl Drop for Attempt {
     fn drop(&mut self) {
         if let Some(lease) = self.lease.take() {
+            if let Some(id) = &lease.admission().request_id {
+                crate::diagnostics::rejection(
+                    id,
+                    ProtocolError::new(502, "execution_indeterminate")
+                        .with_detail("execution_cleanup_cancelled"),
+                    None,
+                    None,
+                );
+            }
             let _ = lease.finish(Some(
                 self.outcome(Some(execution::Failure::ClientCancelled)),
             ));
@@ -380,14 +398,8 @@ pub async fn forward(
     };
     let mut response_headers = HeaderMap::new();
     let result = async {
+        let credential = attempt.credential_version();
         let upstream = exchange.await.map_err(|error| {
-            let credential = attempt.lease.as_ref().and_then(|lease| {
-                lease
-                    .admission()
-                    .account_snapshot
-                    .as_ref()
-                    .map(|account| account.credential_version)
-            });
             crate::diagnostics::http_setup(&request_id, error, credential);
             ResponseError::from(error)
         })?;
@@ -398,6 +410,7 @@ pub async fn forward(
         );
         if status != StatusCode::OK {
             let error = refusal(upstream, transfer.compact).await;
+            crate::diagnostics::http_response(&request_id, &error, credential);
             if let Some(usage) = error.http_rejection_usage(transfer.usage.image.is_some()) {
                 attempt.lease().observe(evidence(usage))?;
             }

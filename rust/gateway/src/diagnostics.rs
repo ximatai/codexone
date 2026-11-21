@@ -37,7 +37,6 @@ impl<const LIMIT: u16> Gate<LIMIT> {
 
 static REJECTIONS: Gate<16> = Gate::new();
 static SETUP: Gate<16> = Gate::new();
-static CLOSED: Gate<16> = Gate::new();
 static EXTENSION_LOGS: Gate<128> = Gate::new();
 static MISSING_STREAM_TYPE: AtomicBool = AtomicBool::new(false);
 
@@ -369,6 +368,16 @@ pub fn http_setup(
     }
 }
 
+pub fn http_response(request_id: &str, failure: &ProviderFailure, credential: Option<i64>) {
+    setup(
+        request_id,
+        "http_response",
+        failure.protocol.detail.unwrap_or(failure.protocol.code),
+        provider_status(failure),
+        credential,
+    );
+}
+
 fn transport_status(error: codexone_http_upstream::Error) -> Option<u16> {
     (error == codexone_http_upstream::Error::ProxyAuthenticationRequired).then_some(407)
 }
@@ -413,7 +422,7 @@ fn setup(
         format!(" credential_version={version}")
     });
     eprintln!(
-        "Upstream failed before first event request_id={id} stage={stage} classification={classification} cause={cause}{status}{credential}"
+        "warning codexone.protocol: Upstream failed before first event request_id={id} stage={stage} classification={classification} cause={cause}{status}{credential}"
     );
 }
 
@@ -434,12 +443,12 @@ pub fn websocket_close(
         SocketEnd::Eof => ("upstream_websocket_eof", None),
         _ => return,
     };
-    if CLOSED.admit() {
+    if REJECTIONS.admit() {
         let code = code.map_or(String::new(), |code| {
             format!(" upstream_ws_close_code={code}")
         });
         eprintln!(
-            "Gateway request rejected code=execution_indeterminate status=502 request_id={id} reason={reason}{code}"
+            "warning codexone.protocol: Protocol request rejected code=execution_indeterminate status=502 request_id={id} reason={reason}{code}"
         );
     }
     if !first_event && SETUP.admit() {
@@ -447,7 +456,7 @@ pub fn websocket_close(
             format!(" credential_version={version}")
         });
         eprintln!(
-            "Upstream failed before first event request_id={id} stage=websocket_turn classification=no_provider_event cause={reason}{credential}"
+            "warning codexone.protocol: Upstream failed before first event request_id={id} stage=websocket_turn classification=no_provider_event cause={reason}{credential}"
         );
     }
 }

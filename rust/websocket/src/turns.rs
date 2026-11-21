@@ -148,7 +148,7 @@ impl Turns {
             && let (Some(embedded), Some(correlated)) = (embedded, correlated)
             && embedded != correlated
         {
-            return Err(INVALID_TURN);
+            return Err(INVALID_TURN.with_detail("upstream_turn_response_id"));
         }
         let identity = correlated.or(embedded);
         if let Some(owner) = identity.and_then(|identity| self.ended.get(identity)) {
@@ -215,7 +215,7 @@ impl Turns {
                 .is_some_and(|expected| expected != identity)
             {
                 return Err(if semantics.terminal {
-                    INVALID_TURN
+                    INVALID_TURN.with_detail("upstream_turn_response_id")
                 } else {
                     INVALID_TURN.with_detail("upstream_turn_unadmitted")
                 });
@@ -228,7 +228,7 @@ impl Turns {
             && turn.response_id.is_some()
             && correlated != turn.response_id.as_deref()
         {
-            return Err(INVALID_TURN);
+            return Err(INVALID_TURN.with_detail("upstream_turn_response_id"));
         } else if turn.response_id.is_none()
             && kind != "error"
             && (correlated.is_some()

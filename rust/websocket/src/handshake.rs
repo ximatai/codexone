@@ -274,7 +274,6 @@ fn handshake_failure(error: Error) -> ConnectFailure {
             }
             ConnectFailure::Rejected(Box::new(failure))
         }
-        Error::Io(_) => ConnectFailure::Transport,
         _ => ConnectFailure::Handshake,
     }
 }
