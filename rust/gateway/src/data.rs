@@ -18,6 +18,7 @@ use crate::{
     catalog, headers,
     image_route::NativeImages,
     listener::{DataBodies, ReadError},
+    managed::{Affinity, Pool},
     reply::{self, FlushDeliveries, Reply},
     response::{self, ResponseError, Transfer},
 };
@@ -27,9 +28,16 @@ pub struct DataPlane {
     generation_url: Uri,
     compact_url: Uri,
     upstream_authorization: Option<HeaderValue>,
+    managed: Option<ManagedResponses>,
     contract: protocol::Contract,
     upstream: upstream::HttpUpstream,
     bodies: DataBodies,
+}
+
+struct ManagedResponses {
+    pool: Arc<Pool>,
+    policy_version: String,
+    pricing_version: String,
 }
 
 impl DataPlane {
@@ -45,11 +53,47 @@ impl DataPlane {
         if let Some(header) = &mut upstream_authorization {
             header.set_sensitive(true);
         }
-        let base = config.upstream_base_url;
+        Self::with_upstream(
+            config.responses,
+            &config.upstream_base_url,
+            upstream_authorization,
+            config.upstream_contract,
+            proxy,
+        )
+    }
+
+    pub fn new_pool(
+        configuration: ResponsesConfiguration,
+        pool: Arc<Pool>,
+        (policy_version, pricing_version): (String, String),
+        proxy: Option<upstream::Proxy>,
+    ) -> Result<Self, ()> {
+        let mut plane = Self::with_upstream(
+            configuration,
+            pool.base(),
+            None,
+            UpstreamContract::CodexSubscription,
+            proxy,
+        )?;
+        plane.managed = Some(ManagedResponses {
+            pool,
+            policy_version,
+            pricing_version,
+        });
+        Ok(plane)
+    }
+
+    fn with_upstream(
+        configuration: ResponsesConfiguration,
+        base: &str,
+        upstream_authorization: Option<HeaderValue>,
+        contract: UpstreamContract,
+        proxy: Option<upstream::Proxy>,
+    ) -> Result<Self, ()> {
         let upstream = upstream::HttpUpstream::new(proxy);
         Ok(Self {
             images: Arc::new(NativeImages::new(
-                config.responses,
+                configuration,
                 base.parse().map_err(|_| ())?,
                 upstream_authorization.as_ref(),
                 upstream.clone(),
@@ -59,7 +103,8 @@ impl DataPlane {
                 .parse()
                 .map_err(|_| ())?,
             upstream_authorization,
-            contract: match config.upstream_contract {
+            managed: None,
+            contract: match contract {
                 UpstreamContract::Responses => protocol::Contract::Responses,
                 UpstreamContract::CodexSubscription => protocol::Contract::CodexSubscription,
             },
@@ -118,8 +163,12 @@ impl DataPlane {
         let Some(endpoint @ ("/models" | "/responses" | "/responses/compact")) = endpoint else {
             return Err(ProtocolError::new(404, "not_found").into());
         };
-        let authorization =
-            execution.authenticate_static(&headers::values(incoming.headers(), "authorization"))?;
+        let bearer = headers::values(incoming.headers(), "authorization");
+        let (authorization, static_authorization) = if self.managed.is_some() {
+            (Some(execution.authenticate(&bearer).await?), None)
+        } else {
+            (None, Some(execution.authenticate_static(&bearer)?))
+        };
         if endpoint == "/models" && incoming.method() == Method::GET {
             headers::client(
                 incoming.headers(),
@@ -127,7 +176,8 @@ impl DataPlane {
                 &configuration.client_fingerprint,
                 &configuration.models,
             )?;
-            let document = catalog::document(configuration, incoming.uri())?;
+            let document =
+                catalog::document(configuration, incoming.uri(), authorization.as_ref())?;
             return Ok(reply::json(
                 StatusCode::OK,
                 Bytes::from(document.to_string()),
@@ -180,15 +230,54 @@ impl DataPlane {
             .models
             .iter()
             .find(|model| model.id.nfc().eq(request.model.nfc()))
+            .filter(|model| {
+                authorization
+                    .as_ref()
+                    .is_none_or(|key| key.allows_model(&model.id))
+            })
             .ok_or(ProtocolError::new(403, "model_not_allowed"))?;
+        let effective_images: Vec<_> = image_ids
+            .iter()
+            .copied()
+            .filter(|image| {
+                authorization
+                    .as_ref()
+                    .is_none_or(|key| key.allows_image_model(image))
+            })
+            .collect();
+        let key_efforts = authorization
+            .as_ref()
+            .and_then(|key| key.reasoning_efforts(&model.id))
+            .map(|efforts| efforts.iter().map(String::as_str).collect::<Vec<_>>());
+        let model_efforts: Vec<_> = model
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.reasoning_efforts.as_ref())
+            .map(|efforts| efforts.iter().map(String::as_str).collect())
+            .or_else(|| {
+                let levels = model
+                    .upstream
+                    .as_ref()?
+                    .get("supported_reasoning_levels")?
+                    .as_array()?;
+                Some(
+                    levels
+                        .iter()
+                        .filter_map(|level| level.get("effort")?.as_str())
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
         protocol::ModelPolicy {
             id: &model.id,
-            vision_input: model.vision_input == Some(true),
-            image_generation: model.image_generation == Some(true),
-            effective_image_models: &image_ids,
-            effective_reasoning_efforts: &[],
+            vision_input: model.vision_input == Some(true)
+                && authorization.as_ref().is_none_or(|key| key.allows_vision()),
+            image_generation: model.image_generation == Some(true)
+                && authorization.as_ref().is_none_or(|key| key.allows_images()),
+            effective_image_models: &effective_images,
+            effective_reasoning_efforts: &model_efforts,
             restrict_reasoning_effort: false,
-            key_reasoning_efforts: None,
+            key_reasoning_efforts: key_efforts.as_deref(),
         }
         .validate(&request)?;
         let stream_compaction = request.stream_compaction;
@@ -240,6 +329,17 @@ impl DataPlane {
             &configuration.client_fingerprint,
             &configuration.models,
         )?;
+        let turn_state = if authorization.is_some() {
+            protocol::request_turn_state(
+                &headers::values(&parts.headers, "x-codex-turn-state"),
+                &headers::values(&parts.headers, "connection"),
+                request.document(),
+            )?
+            .map(str::to_owned)
+        } else {
+            None
+        };
+        let hints = response::bindings(request.affinity_hints.clone());
         let document = request.into_upstream_document(self.contract, false)?;
         let upstream_sse = !compact && document.get("stream") == Some(&JsonValue::Bool(true));
         let outbound = reply::encode(&document);
@@ -272,8 +372,6 @@ impl DataPlane {
         } else {
             self.generation_url.clone()
         };
-        *outbound.headers_mut() = request_headers;
-
         let budget = configuration.budget;
         let seconds = |value: u16| Duration::from_secs(value.into());
         let deadline = began + seconds(budget.total_seconds);
@@ -293,7 +391,52 @@ impl DataPlane {
         if upstream_sse {
             options.response_progress = upstream::ResponseProgress::Explicit;
         }
-        let mut lease = execution.admit_static(&authorization, admission).await?;
+        let (mut lease, turn_owner) =
+            if let (Some(managed), Some(key)) = (&self.managed, authorization) {
+                let key_id = key.id().to_owned();
+                let (lease, upstream_headers) = managed
+                    .pool
+                    .admit_with_affinity(
+                        execution,
+                        execution::ManagedAdmissionRequest {
+                            key,
+                            attempt: admission.attempt,
+                            request_id: admission.request_id,
+                            model: admission.model,
+                            mode: admission.mode,
+                            requirements: admission.requirements,
+                            references: admission.references,
+                            reasoning_effort: admission.reasoning_effort,
+                            service_tier: admission.service_tier,
+                            policy_version: managed.policy_version.clone(),
+                            pricing_version: managed.pricing_version.clone(),
+                            reserved_micros: configuration.reserved_micros,
+                        },
+                        deadline,
+                        Some(Affinity {
+                            hints: &hints,
+                            turn_state: turn_state.as_deref(),
+                            headers: &request_headers,
+                        }),
+                    )
+                    .await?;
+                let owner = &lease.admission().owner;
+                let provider = execution::AccountIdentity {
+                    id: owner.identity.clone(),
+                    namespace: owner.namespace.clone(),
+                };
+                request_headers.extend(upstream_headers);
+                (lease, Some((&managed.pool, key_id, provider)))
+            } else {
+                let authorization = static_authorization
+                    .as_ref()
+                    .ok_or(execution::ExecutionError::Unauthorized)?;
+                (
+                    execution.admit_static(authorization, admission).await?,
+                    None,
+                )
+            };
+        *outbound.headers_mut() = request_headers;
         if Instant::now() >= deadline {
             let error = ResponseError::from(upstream::Error::DeadlineExceeded);
             let _ = lease.finish(Some(execution::Outcome::new(
@@ -303,8 +446,17 @@ impl DataPlane {
             return Err(error);
         }
         lease.begin_dispatch()?;
+        let exchange = async {
+            let upstream = self.upstream.send(outbound, options).await?;
+            if upstream.status() == StatusCode::OK
+                && let Some((pool, key, owner)) = &turn_owner
+            {
+                pool.observe_turn_state(key, owner, upstream.headers());
+            }
+            Ok(upstream)
+        };
         Ok(response::forward(
-            self.upstream.send(outbound, options),
+            exchange,
             Transfer {
                 compact,
                 client_sse,
