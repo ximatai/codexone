@@ -204,6 +204,37 @@ impl<W: Writer> IdentityRuntime<W> {
         &self.inner.provider
     }
 
+    /// Discovery observes the current credential without refreshing it or changing account mode.
+    pub async fn model_candidates(
+        &self,
+        id: &str,
+        version: &str,
+        user_agent: &str,
+    ) -> Result<(i64, serde_json::Value)> {
+        validate_id(id)?;
+        let record = self.load(id, false).await?;
+        if record.account.authorization != AuthorizationState::Ready
+            || self.inner.stop.is_cancelled()
+        {
+            return Err(Error::AuthorizationUnavailable);
+        }
+        let credential = record
+            .open(&self.inner.cipher)
+            .ok_or(Error::AuthorizationUnavailable)?;
+        let headers = self
+            .inner
+            .provider
+            .verified_headers(&record.account.namespace, &credential)
+            .ok_or(Error::AuthorizationUnavailable)?;
+        let document = self
+            .inner
+            .provider
+            .model_candidates(headers, version, user_agent, self.inner.stop.clone())
+            .await
+            .ok_or(Error::AuthorizationUnavailable)?;
+        Ok((record.account.revision, document))
+    }
+
     fn check_dispatch_mode(&self, account: &Account, continuation: bool) -> Result<()> {
         match account.mode {
             AccountMode::Enabled => Ok(()),

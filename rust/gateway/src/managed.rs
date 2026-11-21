@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant as Monotonic};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Instant as Monotonic,
+};
 
 use bytes::Bytes;
 use codexone_admin::AdminRouter;
@@ -29,7 +32,7 @@ use crate::{
 const SUBSCRIPTION_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
 #[derive(Clone)]
-pub(crate) struct GovernanceWriter(ExecutionService);
+pub(crate) struct GovernanceWriter(pub(crate) ExecutionService);
 
 impl governance::Writer for GovernanceWriter {
     async fn run<T: Send + 'static>(
@@ -92,6 +95,7 @@ impl SubscriptionTarget {
 pub struct Managed {
     api: GovernanceApi<GovernanceWriter, SubscriptionProvider, Runtime>,
     options: KeyOptions,
+    pool: Option<Arc<Pool>>,
     runtime: Option<IdentityRuntime<GovernanceWriter>>,
     jobs: Option<Arc<Jobs>>,
     priming_worker: Option<Worker>,
@@ -145,6 +149,7 @@ impl Managed {
                 target,
                 sessions: SessionAffinity::default(),
                 turn_states: TurnStateOwners::default(),
+                directory: OnceLock::new(),
             })
         });
         let api = GovernanceApi::new(
@@ -163,6 +168,7 @@ impl Managed {
                 runtime,
                 jobs,
                 priming_worker,
+                pool: pool.clone(),
             },
             pool,
         ))
@@ -173,12 +179,23 @@ impl Managed {
         admin: &AdminRouter,
         request: &Request<Bytes>,
     ) -> Option<Response<Bytes>> {
+        let directory = self.pool.as_deref().and_then(Pool::directory);
+        if let Some(directory) = directory
+            && let Some(response) = directory.route(admin, request).await
+        {
+            return Some(response);
+        }
         self.api
-            .route(admin, request, || KeyOptions {
-                models: self.options.models.clone(),
-                image_models: self.options.image_models.clone(),
-                reasoning_efforts: self.options.reasoning_efforts.clone(),
-                catalog_revision: self.options.catalog_revision,
+            .route(admin, request, || {
+                directory.map_or_else(
+                    || KeyOptions {
+                        models: self.options.models.clone(),
+                        image_models: self.options.image_models.clone(),
+                        reasoning_efforts: self.options.reasoning_efforts.clone(),
+                        catalog_revision: self.options.catalog_revision,
+                    },
+                    crate::model_directory::Directory::options,
+                )
             })
             .await
     }
@@ -287,6 +304,7 @@ pub struct Pool {
     target: SubscriptionTarget,
     sessions: SessionAffinity,
     turn_states: TurnStateOwners,
+    directory: OnceLock<crate::model_directory::Directory>,
 }
 
 pub struct Affinity<'a> {
@@ -303,6 +321,24 @@ pub struct ManagedRoute {
 }
 
 impl ManagedRoute {
+    pub fn versioned(
+        &self,
+        config: &ResponsesConfiguration,
+        active: &[codexone_config::Model],
+    ) -> codexone_execution::Result<Self> {
+        let versions = crate::gateway::model_versions(
+            config,
+            active,
+            codexone_config::UpstreamContract::CodexSubscription,
+        )
+        .map_err(|_| ExecutionError::StorageUnavailable)?;
+        Ok(Self {
+            pool: self.pool.clone(),
+            versions,
+            reserved_micros: self.reserved_micros,
+        })
+    }
+
     pub async fn admit(
         &self,
         execution: &ExecutionService,
@@ -340,6 +376,26 @@ impl ManagedRoute {
 }
 
 impl Pool {
+    pub fn directory(&self) -> Option<&crate::model_directory::Directory> {
+        self.directory.get()
+    }
+
+    pub async fn open_directory(
+        &self,
+        execution: &ExecutionService,
+        config: &ResponsesConfiguration,
+    ) -> governance::Result<()> {
+        let directory = crate::model_directory::Directory::open(
+            GovernanceWriter(execution.clone()),
+            self.runtime.clone(),
+            config,
+        )
+        .await?;
+        self.directory
+            .set(directory)
+            .map_err(|_| governance::Error::Unavailable)
+    }
+
     pub fn base(&self) -> &str {
         &self.target.base
     }
@@ -573,19 +629,4 @@ fn session_labels(headers: &HeaderMap) -> Vec<(SessionLabel, &str)> {
             .map(|value| (label, value))
     })
     .collect()
-}
-
-pub fn health_models(config: &ResponsesConfiguration) -> Vec<String> {
-    config
-        .models
-        .iter()
-        .map(|model| model.id.clone())
-        .chain(
-            config
-                .image_generation
-                .iter()
-                .flat_map(|images| &images.models)
-                .map(|model| model.id.clone()),
-        )
-        .collect()
 }

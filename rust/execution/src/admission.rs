@@ -399,7 +399,7 @@ pub(crate) fn pool_readiness_credentials(
          AND EXISTS (
            SELECT 1 FROM health_models m
            WHERE (
-             NOT EXISTS (SELECT 1 FROM model_directory WHERE singleton=1)
+             NOT EXISTS (SELECT 1 FROM model_directory_routes WHERE model=m.model)
              OR EXISTS (SELECT 1 FROM model_directory_routes r WHERE r.model=m.model
                AND (r.account IS NULL OR r.account=a.id))
            )

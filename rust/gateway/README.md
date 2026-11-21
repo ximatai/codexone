@@ -31,6 +31,7 @@ python3 scripts/rust_compat/compare.py \
   --reference .build/debug/codexone \
   --candidate rust/gateway/target/debug/codexone
 python3 scripts/verify_protocol.py --binary rust/gateway/target/debug/codexone
+python3 scripts/verify_control.py --binary rust/gateway/target/debug/codexone
 cargo build --locked --release --manifest-path rust/gateway/Cargo.toml
 python3 scripts/verify_upstream_zstd.py --binary rust/gateway/target/release/codexone
 python3 scripts/verify_process.py --binary rust/gateway/target/debug/codexone
@@ -47,8 +48,8 @@ python3 rust/config/tests/compare_swift.py \
 
 ## Compatibility scope
 
-The Responses image tool uses the protocol crate's request and output handling, with SVG author rate attribution pending. Live catalog management and the remaining usage pages require further integration.
+The Responses image tool uses the protocol crate's request and output handling, with SVG author rate attribution pending. Subscription pools support dynamic model discovery, catalog administration and Desktop auxiliary control routes. The remaining usage pages require further integration.
 
-The Rust catalog currently omits execution-budget source metadata. Both readiness endpoints and the management system report check the writer's storage pressure and restore admission gates. Pool readiness also checks for an enabled account with a locally verifiable credential and a model available to that account. Liveness remains process-only. Ingress shares a 64 MiB body pool with 8 MiB of small-request headroom. Up to four requests can wait five seconds for an initial reservation. Partial uploads grow their reservations immediately. The process tests use private synthetic v19 databases and loopback providers. Swift-specific protocol diagnostics and address-candidate racing remain pending. Performance, Linux deployment, and live provider behavior require separate validation.
+Both readiness endpoints and the management system report check the writer's storage pressure and restore admission gates. Pool readiness also checks for an enabled account with a locally verifiable credential and a model available to that account. Liveness remains process-only. Ingress shares a 64 MiB body pool with 8 MiB of small-request headroom. Up to four requests can wait five seconds for an initial reservation. Partial uploads grow their reservations immediately. The process tests use private synthetic v19 databases and loopback providers. Swift-specific protocol diagnostics and address-candidate racing remain pending. Performance, Linux deployment, and live provider behavior require separate validation.
 
 When configured, online backups run after an initial ten-minute delay and again 24 hours after each round completes.

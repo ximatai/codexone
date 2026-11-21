@@ -235,6 +235,17 @@ impl DataPlane {
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
         let configuration = self.configuration();
+        let snapshot = self
+            .managed
+            .as_ref()
+            .and_then(|managed| managed.pool.as_deref())
+            .and_then(Pool::directory)
+            .map(|directory| directory.snapshot());
+        let models = snapshot
+            .as_ref()
+            .map_or(configuration.models.as_slice(), |directory| {
+                &directory.active
+            });
         let endpoint = incoming
             .uri()
             .path()
@@ -254,10 +265,14 @@ impl DataPlane {
                 incoming.headers(),
                 &JsonValue::Null,
                 &configuration.client_fingerprint,
-                &configuration.models,
+                models,
             )?;
-            let document =
-                catalog::document(configuration, incoming.uri(), authorization.as_ref())?;
+            let document = catalog::document(
+                configuration,
+                models,
+                incoming.uri(),
+                authorization.as_ref(),
+            )?;
             return Ok(reply::json(
                 StatusCode::OK,
                 Bytes::from(document.to_string()),
@@ -347,7 +362,7 @@ impl DataPlane {
             &parts.headers,
             request.document(),
             &configuration.client_fingerprint,
-            &configuration.models,
+            models,
         )?;
         let turn_state = protocol::request_turn_state(
             &headers::values(&parts.headers, "x-codex-turn-state"),

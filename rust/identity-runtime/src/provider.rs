@@ -144,6 +144,54 @@ impl SubscriptionProvider {
         (id.namespace(&self.realm) == namespace).then_some(id)
     }
 
+    pub(crate) async fn model_candidates(
+        &self,
+        mut headers: HeaderMap,
+        version: &str,
+        user_agent: &str,
+        stop: CancellationToken,
+    ) -> Option<serde_json::Value> {
+        let version = utf8_percent_encode(version, UNRESERVED);
+        let _slot = self.quota_slots.try_acquire().ok()?;
+        let origin = self.quota_url.strip_suffix(WHAM)?;
+        let target = format!("{origin}/backend-api/codex/models?client_version={version}");
+        let mut outbound = Request::builder()
+            .method(Method::GET)
+            .uri(target)
+            .body(RequestBody::bytes(Bytes::new()))
+            .ok()?;
+        headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert(header::USER_AGENT, user_agent.parse().ok()?);
+        *outbound.headers_mut() = headers;
+        let timeout = Duration::from_secs(15);
+        let mut options = ExchangeOptions::new(Instant::now() + timeout, timeout, 4 * 1024 * 1024);
+        options.cancellation = stop;
+        let reply = self
+            .quota
+            .send_buffered(outbound, options, |status, headers| {
+                let mut content_types = headers.get_all(header::CONTENT_TYPE).iter();
+                status == StatusCode::OK
+                    && !headers.contains_key(header::CONTENT_ENCODING)
+                    && content_types
+                        .next()
+                        .and_then(|value| value.to_str().ok())
+                        .is_some_and(|value| {
+                            value
+                                .split(';')
+                                .next()
+                                .unwrap_or_default()
+                                .trim()
+                                .eq_ignore_ascii_case("application/json")
+                        })
+                    && content_types.next().is_none()
+            })
+            .await
+            .ok()?;
+        let bytes = reply.body.ok()??;
+        let document = codexone_wire::JsonValue::decode(&bytes).ok()?;
+        serde_json::from_slice(&document.encode(false)).ok()
+    }
+
     pub(crate) async fn observe(
         &self,
         namespace: &str,

@@ -1281,3 +1281,354 @@ fn priming_completed() -> Value {
         "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
     }})
 }
+
+#[test]
+fn directory_rates_and_control_health_survive_normal_entry_points() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir(root.join("state")).unwrap();
+    let master = "6d".repeat(32);
+    private(&root.join("master"), &master);
+    private(&root.join("admin"), ADMIN);
+    private(&root.join("pool.json"), &json!({
+        "models": [{"id": "synth-text", "inputMicrosPerMillion": 0, "outputMicrosPerMillion": 0,
+            "catalog": {"baseInstructions": "Synthetic guidance", "reasoningEfforts": ["low", "high"],
+                "defaultReasoningEffort": "low"}}],
+        "reservedMicros": 10, "upstreamTransport": "http",
+    }).to_string());
+
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = upstream.local_addr().unwrap().port();
+    let path = root.join("state/core.sqlite");
+    let db = Database::open_or_create(&path).unwrap();
+    let now = unix_time();
+    let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
+    for (account, mode) in [("account-a", "enabled"), ("account-b", "disabled")] {
+        let namespace = namespace(account, port);
+        let token = token(account, now + 7200);
+        let credential = AccountCredential::new(
+            token.clone(),
+            "synthetic-refresh-token".into(),
+            Some(token),
+            now + 7200,
+        )
+        .unwrap();
+        let context = AccountCredentialContext::new(account, &namespace, 1).unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts VALUES(?,?,1,1,?,'ready',?,NULL,?,NULL)",
+                params![
+                    account,
+                    namespace,
+                    mode,
+                    cipher.seal(&credential, &context).unwrap(),
+                    now
+                ],
+            )
+            .unwrap();
+    }
+    drop(db);
+    upstream.set_nonblocking(true).unwrap();
+    let discoveries = Arc::new(AtomicUsize::new(0));
+    let controls = Arc::new(AtomicUsize::new(0));
+    let (stop, stopping) = mpsc::channel::<()>();
+    let worker = {
+        let discoveries = discoveries.clone();
+        let controls = controls.clone();
+        thread::spawn(move || {
+            while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+                match upstream.accept() {
+                    Ok((socket, _)) => serve_directory(socket, &discoveries, &controls),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("synthetic upstream: {error}"),
+                }
+            }
+        })
+    };
+
+    let (mut gateway, data, admin) = launch(root, port);
+    let manage = |method, path, body| request(admin, method, path, Some(ADMIN), body);
+    assert_eq!(request(admin, "GET", "/api/models", None, None).0, 401);
+    assert_eq!(manage("GET", "/api/models", None).1["revision"], 0);
+    let (status, issued) = manage(
+        "POST",
+        "/api/keys",
+        Some(json!({
+            "principal": "synthetic-directory-client", "models": null,
+            "limits": {"tokens": null, "active": 2}, "catalogRevision": 0,
+        })),
+    );
+    assert_eq!(status, 201, "{issued}");
+    let key = issued["secret"].as_str().unwrap();
+    let (status, found) = manage("POST", "/api/accounts/account-a/model-candidates", None);
+    assert_eq!(status, 200, "{found}");
+    assert_eq!(found["candidates"][0]["state"], "candidate");
+    assert_eq!(found["candidates"][1]["state"], "incomplete");
+    assert_eq!(found["candidates"].as_array().unwrap().len(), 2);
+    let (status, enabled) = manage(
+        "PUT",
+        "/api/models",
+        Some(json!({
+            "revision": 0, "model": "synth-next", "enabled": true, "candidateRevision": found["candidateRevision"],
+            "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1,
+            "allowedReasoningEfforts": ["high"], "defaultReasoningEffort": "high",
+        })),
+    );
+    assert_eq!(status, 200, "{enabled}");
+    assert_eq!(enabled["active"][1]["reasoningEfforts"], json!(["high"]));
+    let (status, revised) = manage(
+        "PUT",
+        "/api/models/rates",
+        Some(json!({
+            "revision": 1, "model": "synth-text", "inputMicrosPerMillion": 1_000_000,
+            "outputMicrosPerMillion": 2_000_000,
+        })),
+    );
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["active"][0]["inputMicrosPerMillion"], 1_000_000);
+    assert_eq!(manage("PUT", "/api/models/rates", Some(json!({
+        "revision": 1, "model": "synth-text", "inputMicrosPerMillion": 1, "outputMicrosPerMillion": 1,
+    }))).0, 409);
+    assert_eq!(
+        manage("GET", "/api/keys/options", None).1["catalogRevision"],
+        2
+    );
+
+    let (status, refreshed) = manage("POST", "/api/accounts/account-a/model-candidates", None);
+    assert_eq!(status, 200, "{refreshed}");
+    assert_eq!(
+        refreshed["active"][1]["profileUpdate"]["resetReasoningRequired"],
+        true
+    );
+    assert_eq!(
+        manage("POST", "/api/accounts/account-a/model-candidates", None).0,
+        503
+    );
+    assert_eq!(
+        manage("GET", "/api/models", None).1["candidateRevision"],
+        refreshed["candidateRevision"]
+    );
+    let update = json!({"revision": 2, "model": "synth-next", "candidateRevision": refreshed["candidateRevision"]});
+    assert_eq!(
+        manage("PUT", "/api/models/profile", Some(update.clone())).0,
+        409
+    );
+    let mut update = update;
+    update["resetReasoningSettings"] = true.into();
+    assert_eq!(manage("PUT", "/api/models/profile", Some(update)).0, 200);
+    let (status, catalog) = request(
+        data,
+        "GET",
+        "/backend-api/codex/models?client_version=0.169.1",
+        Some(key),
+        None,
+    );
+    assert_eq!(status, 200, "{catalog}");
+    assert_eq!(catalog["models"][1]["context_window"], 65_536);
+    assert_eq!(catalog["models"][1]["default_reasoning_level"], "low");
+    assert_eq!(
+        request(
+            data,
+            "POST",
+            "/v1/responses",
+            Some(key),
+            Some(json!({
+                "model": "synth-text", "input": "synthetic",
+            }))
+        )
+        .0,
+        200
+    );
+    gateway.terminate();
+
+    let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let estimated: i64 = db
+        .query_row("SELECT estimated FROM attempts", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(estimated, 11);
+    drop(db);
+
+    let (mut gateway, data, admin) = launch(root, port);
+    let (status, stored) = request(admin, "GET", "/api/models", Some(ADMIN), None);
+    assert_eq!(status, 200, "{stored}");
+    assert_eq!(stored["revision"], 3);
+    assert_eq!(stored["active"][0]["inputMicrosPerMillion"], 1_000_000);
+    assert_eq!(stored["active"][1]["contextWindow"], 65_536);
+    assert_eq!(stored["candidateRevision"], Value::Null);
+    assert_eq!(
+        request(
+            admin,
+            "PUT",
+            "/api/models/reasoning",
+            Some(ADMIN),
+            Some(json!({
+                "revision": 3, "model": "synth-text", "allowedReasoningEfforts": ["high"],
+                "defaultReasoningEffort": "high",
+            }))
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        request(
+            data,
+            "POST",
+            "/v1/responses",
+            Some(key),
+            Some(json!({
+                "model": "synth-text", "input": "synthetic", "reasoning": {"effort": "low"},
+            }))
+        )
+        .0,
+        403
+    );
+
+    let search = "/backend-api/codex/alpha/search";
+    let safety = "/backend-api/codex/safety/arc";
+    let control =
+        |path, fault| request(data, "POST", path, Some(key), Some(json!({"fault": fault}))).0;
+    assert_eq!(control(search, "500"), 502);
+    assert_eq!(control(search, "500"), 503);
+    assert_eq!(control(safety, "200"), 200);
+    assert_eq!(request(data, "GET", "/health/ready", None, None).0, 200);
+    assert_eq!(control(safety, "429"), 429);
+    assert_eq!(control(safety, "200"), 503);
+    assert_eq!(request(data, "GET", "/health/ready", None, None).0, 503);
+    assert_eq!(
+        request(
+            admin,
+            "PUT",
+            "/api/accounts/account-b",
+            Some(ADMIN),
+            Some(json!({
+                "revision": 1, "mode": "enabled",
+            }))
+        )
+        .0,
+        200
+    );
+    assert_eq!(control(safety, "401"), 502);
+    assert_eq!(control(safety, "200"), 503);
+    assert_eq!(request(data, "GET", "/health/ready", None, None).0, 503);
+    assert_eq!(controls.load(Ordering::Relaxed), 4);
+    gateway.terminate();
+    stop.send(()).unwrap();
+    worker.join().unwrap();
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM attempts", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM account_model_health WHERE failure='rate_limited'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT auth_rejected_version FROM account_health WHERE account_id='account-b'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+fn serve_directory(
+    mut socket: TcpStream,
+    discoveries: &std::sync::atomic::AtomicUsize,
+    controls: &std::sync::atomic::AtomicUsize,
+) {
+    use std::sync::atomic::Ordering;
+    socket.set_nonblocking(false).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    let mut reader = BufReader::new(&mut socket);
+    let mut head = String::new();
+    while !head.ends_with("\r\n\r\n") {
+        assert_ne!(reader.read_line(&mut head).unwrap(), 0);
+    }
+    let lower = head.to_ascii_lowercase();
+    assert!(
+        ["account-a", "account-b"]
+            .iter()
+            .any(|account| lower.contains(&format!("\r\nchatgpt-account-id: {account}\r\n")))
+    );
+    if head.starts_with("GET /backend-api/wham/usage ") {
+        write_response(&mut socket, "200 OK", "application/json", "{}");
+    } else if head.starts_with("GET /backend-api/codex/models?client_version=0.169.1 ") {
+        assert!(lower.contains("\r\nuser-agent: codex_cli_rs/0.169.1"));
+        let index = discoveries.fetch_add(1, Ordering::Relaxed);
+        if index >= 2 {
+            write_response(
+                &mut socket,
+                "200 OK",
+                "application/json",
+                r#"{"models":[{"slug":"synth-duplicate"},{"slug":"synth-duplicate"}]}"#,
+            );
+            return;
+        }
+        let levels = if index == 0 {
+            json!([{"effort": "low"}, {"effort": "high"}])
+        } else {
+            json!([{"effort": "low"}])
+        };
+        let body = json!({"models":[
+            {"slug":"synth-next","base_instructions":"Synthetic provider guidance",
+              "context_window": if index == 0 { 32_768 } else { 65_536 },
+              "supported_reasoning_levels": levels, "default_reasoning_level": "low"},
+            {"slug":"synth-incomplete"}, {"slug":"synth-hidden","visibility":"hide"}
+        ]});
+        write_response(&mut socket, "200 OK", "application/json", &body.to_string());
+    } else if head.starts_with("POST /backend-api/codex/responses ") {
+        let event = json!({"type":"response.completed", "response": {
+            "id":"resp_catalog_rates", "object":"response", "status":"completed",
+            "model":"synth-text", "output":[], "usage":{"input_tokens":5,"output_tokens":3}
+        }});
+        let length: usize = lower
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length: "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        reader.read_exact(&mut vec![0; length]).unwrap();
+        write_response(
+            &mut socket,
+            "200 OK",
+            "text/event-stream",
+            &format!("data: {event}\n\n"),
+        );
+    } else {
+        assert!(
+            head.starts_with("POST /backend-api/codex/alpha/search ")
+                || head.starts_with("POST /backend-api/codex/safety/arc ")
+        );
+        controls.fetch_add(1, Ordering::Relaxed);
+        let length: usize = lower
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length: "))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut bytes = vec![0; length];
+        reader.read_exact(&mut bytes).unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let status = match body["fault"].as_str().unwrap() {
+            "500" => "500 Unavailable",
+            "429" => "429 Rate limited",
+            "401" => "401 Unauthorized",
+            _ => "200 OK",
+        };
+        write_response(&mut socket, status, "application/json", "{}");
+    }
+}

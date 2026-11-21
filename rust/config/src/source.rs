@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
@@ -78,6 +78,24 @@ pub struct ResponsesConfiguration {
     pub upstream_transport: UpstreamTransport,
     pub upstream_zstd_minimum_bytes: Option<u64>,
     pub budget: ExecutionBudget,
+    budget_configured: [bool; 4],
+}
+
+impl ResponsesConfiguration {
+    pub fn budget_summary(&self) -> Value {
+        let budget = self.budget;
+        let fields = [
+            ("total", budget.total_seconds),
+            ("first_response", budget.first_response_seconds),
+            ("image_first_response", budget.image_first_response_seconds),
+            ("progress_idle", budget.progress_seconds),
+        ];
+        Value::Object(fields.into_iter().zip(self.budget_configured).map(|((name, seconds), configured)| {
+            (name.into(), serde_json::json!({
+                "seconds": seconds, "source": if configured { "configuration" } else { "default" },
+            }))
+        }).collect())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -88,7 +106,7 @@ pub struct ExecutionBudget {
     pub progress_seconds: u16,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientFingerprint {
     pub version: Option<String>,
@@ -109,7 +127,7 @@ impl ClientFingerprint {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
     pub id: String,
@@ -121,11 +139,105 @@ pub struct Model {
     pub vision_input: Option<bool>,
     pub image_generation: Option<bool>,
     pub upstream: Option<Value>,
-    #[serde(skip)]
     pub profile_provenance: Option<ModelProfileProvenance>,
+    pub reasoning_settings: Option<ModelReasoningSettings>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ModelReasoningSettings {
+    pub allowed: Option<Vec<String>>,
+    pub preferred: Option<String>,
+}
+
+impl ModelReasoningSettings {
+    pub fn valid_for(&self, model: &Model) -> bool {
+        let supported = model.supported_reasoning_efforts();
+        let range = self
+            .allowed
+            .as_ref()
+            .map(|allowed| allowed.iter().map(String::as_str).collect())
+            .unwrap_or_else(|| supported.clone());
+        !range.is_empty()
+            && unique(range.iter().copied())
+            && range.iter().all(|effort| supported.contains(effort))
+            && self
+                .preferred
+                .as_deref()
+                .is_none_or(|effort| range.contains(&effort))
+    }
+}
+
+impl Model {
+    pub fn supported_reasoning_efforts(&self) -> Vec<&str> {
+        let supported = self
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.reasoning_efforts.as_ref())
+            .map(|efforts| efforts.iter().map(String::as_str).collect::<Vec<_>>())
+            .unwrap_or_else(|| {
+                self.upstream
+                    .as_ref()
+                    .and_then(|profile| profile.get("supported_reasoning_levels"))
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|level| level.get("effort").and_then(Value::as_str))
+                    .collect()
+            });
+        let mut seen = std::collections::HashSet::new();
+        supported
+            .into_iter()
+            .filter(|effort| {
+                matches!(
+                    *effort,
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+                ) && seen.insert(*effort)
+            })
+            .collect()
+    }
+
+    pub fn profile_default_reasoning_effort(&self) -> Option<&str> {
+        self.catalog
+            .as_ref()
+            .and_then(|catalog| catalog.default_reasoning_effort.as_deref())
+            .or_else(|| {
+                self.upstream
+                    .as_ref()?
+                    .get("default_reasoning_level")?
+                    .as_str()
+            })
+    }
+
+    pub fn effective_reasoning_efforts(&self) -> Vec<&str> {
+        let mut supported = self.supported_reasoning_efforts();
+        if let Some(allowed) = self
+            .reasoning_settings
+            .as_ref()
+            .and_then(|settings| settings.allowed.as_ref())
+        {
+            supported.retain(|effort| allowed.iter().any(|entry| entry == *effort));
+        }
+        supported
+    }
+
+    pub fn effective_default_reasoning_effort(&self) -> Option<&str> {
+        let effective = self.effective_reasoning_efforts();
+        self.reasoning_settings
+            .as_ref()
+            .and_then(|settings| settings.preferred.as_deref())
+            .or_else(|| self.profile_default_reasoning_effort())
+            .filter(|effort| effective.contains(effort))
+            .or_else(|| {
+                self.reasoning_settings
+                    .as_ref()?
+                    .allowed
+                    .as_ref()
+                    .and(effective.first().copied())
+            })
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
     pub display_name: Option<String>,
@@ -173,7 +285,7 @@ impl Catalog {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageConfiguration {
     pub default_model: String,
@@ -188,6 +300,7 @@ pub enum ImageSizePolicy {
     Flexible3840,
 }
 
+#[derive(Clone)]
 pub struct ImageModel {
     pub id: String,
     pub host_model: String,
@@ -228,7 +341,7 @@ impl<'de> Deserialize<'de> for ImageModel {
 }
 
 impl ImageConfiguration {
-    fn is_valid(&self, hosts: &[Model]) -> bool {
+    pub fn is_valid(&self, hosts: &[Model]) -> bool {
         (1..=16).contains(&self.models.len())
             && unique(self.models.iter().map(|model| model.id.as_str()))
             && self
@@ -328,6 +441,12 @@ impl SourceFields {
                 != Some(Compression::Off))
             .then_some(self.upstream_zstd_minimum_bytes.unwrap_or(8_388_608) as u64),
             budget,
+            budget_configured: [
+                self.execution_timeout_seconds.is_some(),
+                self.first_response_timeout_seconds.is_some(),
+                self.image_first_response_timeout_seconds.is_some(),
+                self.progress_timeout_seconds.is_some(),
+            ],
         })
     }
 }
@@ -451,7 +570,7 @@ fn canonically_equal(left: &str, right: &str) -> bool {
     left == right || left.nfc().eq(right.nfc())
 }
 
-fn valid_models(models: &[Model]) -> bool {
+pub fn valid_models(models: &[Model]) -> bool {
     (1..=32).contains(&models.len())
         && unique(models.iter().map(|model| model.id.as_str()))
         && models.iter().all(|model| {
@@ -459,6 +578,10 @@ fn valid_models(models: &[Model]) -> bool {
                 && model.id.len() <= 128
                 && valid_price(model.input_micros_per_million)
                 && valid_price(model.output_micros_per_million)
+                && model
+                    .reasoning_settings
+                    .as_ref()
+                    .is_none_or(|settings| settings.valid_for(model))
                 && valid_model_profile(&model.id, model.catalog.as_ref(), model.upstream.as_ref())
         })
 }
@@ -486,14 +609,31 @@ fn valid_model_profile(id: &str, catalog: Option<&Catalog>, upstream: Option<&Va
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelProfileProvenance {
     pub source: String,
     pub revision: String,
     pub captured_at_unix_seconds: i64,
     pub client_versions: Vec<String>,
+    #[serde(with = "profile_digest")]
     pub sha256: [u8; 32],
     pub overridden: bool,
+}
+
+mod profile_digest {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(digest: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&hex::encode(digest))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 32], D::Error> {
+        let mut digest = [0; 32];
+        hex::decode_to_slice(String::deserialize(deserializer)?, &mut digest)
+            .map_err(D::Error::custom)?;
+        Ok(digest)
+    }
 }
 
 #[derive(Deserialize)]

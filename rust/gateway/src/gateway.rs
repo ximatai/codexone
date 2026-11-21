@@ -274,8 +274,12 @@ async fn run_configured(
     let pool = if let Some(pool_config) = pool_config {
         let execution = execution.as_ref().ok_or(Service)?;
         let pool = pool.ok_or(Service)?;
+        pool.open_directory(execution, &pool_config)
+            .await
+            .map_err(|_| Service)?;
+        let directory = pool.directory().ok_or(Service)?;
         execution
-            .configure_health_models(managed::health_models(&pool_config))
+            .configure_health_models(directory.health_models())
             .await
             .map_err(|_| Service)?;
         let versions = identity_versions(&pool_config, UpstreamContract::CodexSubscription)?;
@@ -485,8 +489,16 @@ pub(crate) fn identity_versions(
     config: &ResponsesConfiguration,
     contract: UpstreamContract,
 ) -> Result<(String, String), StartupError> {
+    model_versions(config, &config.models, contract)
+}
+
+pub(crate) fn model_versions(
+    config: &ResponsesConfiguration,
+    active: &[codexone_config::Model],
+    contract: UpstreamContract,
+) -> Result<(String, String), StartupError> {
     use StartupError::Service;
-    let mut models: Vec<_> = config.models.iter().collect();
+    let mut models: Vec<_> = active.iter().collect();
     models.sort_by_key(|model| &model.id);
     let images: Vec<_> = config
         .image_generation
@@ -528,10 +540,14 @@ pub(crate) fn identity_versions(
     let model_policies: Vec<_> = models
         .iter()
         .map(|model| {
-            json!({
+            let mut policy = json!({
                 "id": model.id, "vision": model.vision_input == Some(true),
                 "images": model.image_generation == Some(true),
-            })
+            });
+            if let Some(settings) = &model.reasoning_settings {
+                policy["reasoningSettings"] = json!(settings);
+            }
+            policy
         })
         .collect();
     let policy = json!({

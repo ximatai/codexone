@@ -9,6 +9,7 @@ mod http_upload;
 mod image_route;
 mod listener;
 mod managed;
+mod model_directory;
 mod online_backup;
 mod quota;
 mod reply;

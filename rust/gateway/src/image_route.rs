@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::{
     headers,
     listener::{DataBodies, ReadError},
-    managed::{Affinity, ManagedRoute},
+    managed::{Affinity, ManagedRoute, Pool},
     reply::{self, FlushDeliveries, Reply},
     response::ResponseError,
 };
@@ -284,6 +284,15 @@ impl NativeImages {
             ),
             Authorization::Managed(key) => {
                 let managed = self.managed.as_ref().ok_or(ExecutionError::Unauthorized)?;
+                let updated;
+                let managed =
+                    if let Some(directory) = managed.pool.as_deref().and_then(Pool::directory) {
+                        updated = managed
+                            .versioned(self.configuration(), &directory.snapshot().active)?;
+                        &updated
+                    } else {
+                        managed.as_ref()
+                    };
                 let turn_state = request
                     .turn_state
                     .as_ref()

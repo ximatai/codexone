@@ -14,8 +14,8 @@ pub use files::{AdminWebBundle, MasterKeyring};
 pub use runtime::{Network, RuntimeConfiguration};
 pub use source::{
     Catalog, ClientFingerprint, ExecutionBudget, ImageConfiguration, ImageModel, ImageSizePolicy,
-    Model, ModelProfileProvenance, ResponsesConfiguration, SingleIdentity, Source,
-    UpstreamContract, UpstreamTransport,
+    Model, ModelProfileProvenance, ModelReasoningSettings, ResponsesConfiguration, SingleIdentity,
+    Source, UpstreamContract, UpstreamTransport, valid_models,
 };
 pub use urls::UpstreamHttpProxy;
 

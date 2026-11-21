@@ -30,35 +30,35 @@ impl KeyOptions {
             return Self::default();
         };
         let responses = source.responses();
-        let mut options = Self::default();
-        for model in &responses.models {
+        let image_models = responses
+            .image_generation
+            .iter()
+            .flat_map(|images| &images.models)
+            .map(|model| model.id.clone())
+            .collect();
+        Self::for_models(&responses.models, image_models, None)
+    }
+
+    pub fn for_models(
+        models: &[codexone_config::Model],
+        image_models: Vec<String>,
+        catalog_revision: Option<i64>,
+    ) -> Self {
+        let mut options = Self {
+            image_models,
+            catalog_revision,
+            ..Self::default()
+        };
+        for model in models {
             options.models.push(model.id.clone());
-            let efforts = model
-                .catalog
-                .as_ref()
-                .and_then(|catalog| catalog.reasoning_efforts.clone())
-                .unwrap_or_else(|| {
-                    model
-                        .upstream
-                        .as_ref()
-                        .and_then(|upstream| upstream.get("supported_reasoning_levels"))
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|level| level.get("effort").and_then(Value::as_str))
-                        .map(str::to_owned)
-                        .collect()
-                });
-            let mut allowed = Vec::new();
-            for effort in efforts {
-                if crate::keys::known_effort(&effort) && !allowed.contains(&effort) {
-                    allowed.push(effort);
-                }
-            }
-            options.reasoning_efforts.insert(model.id.clone(), allowed);
-        }
-        if let Some(images) = &responses.image_generation {
-            options.image_models = images.models.iter().map(|model| model.id.clone()).collect();
+            options.reasoning_efforts.insert(
+                model.id.clone(),
+                model
+                    .supported_reasoning_efforts()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+            );
         }
         options
     }
@@ -768,7 +768,7 @@ fn owner(request: &Request<Bytes>, renewal: Option<&http::HeaderValue>) -> Resul
     codexone_storage::bearer_digest(&[bearer]).map_err(|_| Error::Unauthorized)
 }
 
-fn error_response(error: Error) -> Response<Bytes> {
+pub fn error_response(error: Error) -> Response<Bytes> {
     use StatusCode as S;
     let (status, code) = match error {
         Error::InvalidCommand => (S::BAD_REQUEST, "invalid_command"),
@@ -787,7 +787,7 @@ fn error_response(error: Error) -> Response<Bytes> {
     failure(status, code)
 }
 
-fn failure(status: StatusCode, code: &str) -> Response<Bytes> {
+pub fn failure(status: StatusCode, code: &str) -> Response<Bytes> {
     response(
         status,
         &json!({
@@ -797,7 +797,7 @@ fn failure(status: StatusCode, code: &str) -> Response<Bytes> {
     )
 }
 
-fn response(status: StatusCode, payload: &Value) -> Response<Bytes> {
+pub fn response(status: StatusCode, payload: &Value) -> Response<Bytes> {
     let mut response = Response::new(Bytes::from(
         serde_json::to_vec(payload).expect("serialize management JSON"),
     ));
