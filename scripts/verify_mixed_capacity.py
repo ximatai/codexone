@@ -384,6 +384,34 @@ def recovery_medians(series):
     return medians
 
 
+def recovery_detail(container):
+    # Attribute resident pages to the gateway PID. Count TCP sockets only if the
+    # gateway owns their inode, since the fixture shares its network namespace.
+    script = r"""
+awk '/^Rss(Anon|File|Shmem):/ { sub(/:/, "", $1); printf "proc.%s %.0f\n", $1, $2 * 1024 }' /proc/1/status
+awk '$1 ~ /^(anon|file|shmem|inactive_file)$/ { print "cgroup." $1, $2 }' /sys/fs/cgroup/memory.stat
+set -- /proc/1/net/tcp
+if [ -r /proc/1/net/tcp6 ]; then set -- "$@" /proc/1/net/tcp6; fi
+find /proc/1/fd -mindepth 1 -maxdepth 1 -type l -printf '%l\n' |
+    awk '
+        FILENAME == "-" {
+            if ($0 ~ /^socket:\[[0-9]+\]$/) { gsub(/[^0-9]/, ""); owned[$0] = 1 }
+            next
+        }
+        FNR > 1 && $10 in owned {
+            if ($4 == "01") established++
+            else if ($4 != "0A" && $4 != "07") other++
+        }
+        END { print "tcp.established", established + 0; print "tcp.other", other + 0 }
+    ' - "$@"
+sqlite3 -readonly -separator ' ' -cmd '.timeout 500' /var/lib/codexone/core.sqlite \
+    "SELECT 'ledger.intent',count(*) FROM attempts WHERE state='intent'
+     UNION ALL SELECT 'ledger.unknown',count(*) FROM attempts WHERE state='unknown';"
+"""
+    raw = capacity.run(['docker', 'exec', container, 'sh', '-ec', script]).stdout.decode()
+    return {key: int(value) for key, value in (line.split() for line in raw.splitlines())}
+
+
 def container_evidence(identifier):
     if not identifier:
         return {'available':False}
@@ -469,8 +497,11 @@ def orchestrate(args):
                         break
                     assert time.monotonic()-began < 600, 'Mixed worker exceeded deadline'
                     name = json.loads((root/'progress.json').read_text())['phase'] if (root/'progress.json').exists() else 'starting'
-                    series.append({'elapsedSeconds':round(time.monotonic()-began,2),
-                                   'phase':name, **capacity.resources(gateway_id)})
+                    sample = {'elapsedSeconds':round(time.monotonic()-began,2),
+                              'phase':name, **capacity.resources(gateway_id)}
+                    if args.recovery_detail and name.endswith('-recovery'):
+                        sample['recoveryDetail'] = recovery_detail(gateway_id)
+                    series.append(sample)
                     if len(series)%15 == 0: print('PROGRESS: mixed '+name, flush=True)
                     time.sleep(2)
                 report = json.loads((root/'worker-result.json').read_text())
@@ -562,6 +593,8 @@ def main():
     parser.add_argument('--output',type=Path)
     parser.add_argument('--emulated',action='store_true',help='run a comparison on an arm64 engine without native acceptance')
 
+    parser.add_argument('--recovery-detail',action='store_true',
+                        help='record memory attribution, owned TCP sockets and pending ledger counts')
     parser.add_argument('--binary',type=Path,help='macOS functional smoke only, one-second idle')
     args = parser.parse_args()
     if args.worker:
