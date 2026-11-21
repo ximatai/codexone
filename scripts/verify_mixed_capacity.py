@@ -434,6 +434,8 @@ def orchestrate(args):
             if os.getuid() == 0:
                 for item in root.iterdir(): os.chown(item, uid, gid)
                 os.chown(root,uid,gid)
+            series = []
+            report = None
             try:
                 run(['docker','volume','create','--label','codexone.capacity='+identifier,volume])
                 run(['docker','run','--rm','--platform','linux/amd64','--network','none','--read-only','--user','0:0',
@@ -459,7 +461,6 @@ def orchestrate(args):
                     '--env','CODEXONE_IDENTITY_CONFIG=/run/capacity/identity.json',
                     '--env','CODEXONE_HTTP_BODY_STAGING=on',
                     '--env','CODEXONE_ADMIN_TOKEN_FILE=/run/capacity/admin',runtime['Id']]).stdout.decode().strip()
-                series = []
                 began = time.monotonic()
                 while True:
                     state = json.loads(run(['docker','inspect',worker_id]).stdout)[0]['State']
@@ -506,11 +507,15 @@ def orchestrate(args):
                     output.mkdir(parents=True,mode=0o700)
                     progress_file = root/'progress.json'
                     worker_progress = json.loads(progress_file.read_text()) if progress_file.exists() else {}
-                    capacity.private_json(output/'report.json', {
-                        'success':False, 'platform':platform_label,
-                        'containerEvidence':failed_containers,
-                        'resources':locals().get('series', []), 'workerProgress':worker_progress,
-                        'limitations':['Failure evidence only; no capacity acceptance claimed']})
+                    failure = {'success':False, 'platform':platform_label,
+                               'containerEvidence':failed_containers,
+                               'resources':series, 'workerProgress':worker_progress,
+                               'workerResult':report, 'runtimeImageID':runtime['Id'],
+                               'sourceRevision':runtime['Config']['Labels']['org.opencontainers.image.revision'],
+                               'limitations':['Failure evidence only; no capacity acceptance claimed']}
+                    serialized = json.dumps(failure)
+                    assert (root/'admin').read_text() not in serialized and 'co1_' not in serialized
+                    capacity.private_json(output/'report.json', failure)
                 if worker_id:
                     captured = run(['docker','logs',worker_id],ok=False)
                     for line in (captured.stdout+captured.stderr).decode(errors='replace').splitlines():

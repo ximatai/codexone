@@ -641,13 +641,16 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             logs = failed_logs.stdout + failed_logs.stderr
             assert b'Invalid port configuration: CODEXONE_DATA_PORT.' in logs and b'LISTENING' not in logs
             assert invalid_port.encode() not in logs and all(secret.encode() not in logs for secret in secrets)
-            # The runtime image has no shell utilities; read only this owned
-            # container's log directory on the host (CI runners allow sudo -n).
-            retained = run(['sudo', '-n', 'find', str(log_path.parent), '-maxdepth', '1', '-type', 'f',
-                            '-name', '*-json.log*', '-printf', '%f %s\n']).stdout.decode().splitlines()
+            # Read the owned container's log directory from the Engine host.
+            if os.geteuid() == 0:
+                retained = [(entry.name, entry.stat().st_size)
+                            for entry in log_path.parent.glob('*-json.log*') if entry.is_file()]
+            else:
+                output = run(['sudo', '-n', 'find', str(log_path.parent), '-maxdepth', '1', '-type', 'f',
+                              '-name', '*-json.log*', '-printf', '%f %s\n']).stdout.decode()
+                retained = [record.split() for record in output.splitlines()]
             assert 1 <= len(retained) <= 5
-            for record in retained:
-                filename, size = record.split()
+            for filename, size in retained:
                 assert re.fullmatch(re.escape(log_path.name) + r'(\.[1-4])?', filename)
                 assert 0 < int(size) <= 10 * 1024 * 1024
             print('PASS: SIGKILL recovery to prior ready state, restart count, graceful stop/no restart for 5s, failed one-off removal; '
