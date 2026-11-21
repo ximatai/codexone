@@ -1,7 +1,64 @@
 use serde::Serialize;
-use std::{collections::VecDeque, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 const WINDOW_SECONDS: i64 = 3600;
+pub(crate) const FD_SCAN_LIMIT: libc::c_int = 1024;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct StorageProcessSample {
+    pub(crate) peak_resident_bytes: u64,
+    pub(crate) observed_fds: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct StorageProcessSampler(Mutex<Option<(Instant, StorageProcessSample)>>);
+
+impl StorageProcessSampler {
+    /// Share one bounded scan across HTTP and live overview reads, off the async executor.
+    pub(crate) fn sample(&self) -> StorageProcessSample {
+        let mut cached = self.0.lock().expect("storage process sample");
+        if let Some((at, sample)) = *cached
+            && at.elapsed() < Duration::from_secs(1)
+        {
+            return sample;
+        }
+        let sample = StorageProcessSample {
+            peak_resident_bytes: peak_resident_bytes()
+                .or_else(|| cached.map(|(_, sample)| sample.peak_resident_bytes))
+                .unwrap_or_default(),
+            observed_fds: (0..FD_SCAN_LIMIT)
+                // SAFETY: F_GETFD takes no third argument and leaves descriptor flags unchanged.
+                .filter(|&fd| unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0)
+                .count(),
+        };
+        *cached = Some((Instant::now(), sample));
+        sample
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn peak_resident_bytes() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: getrusage initializes the writable record on success.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let usage = unsafe { usage.assume_init() };
+    let peak = u64::try_from(usage.ru_maxrss).ok()?;
+    if cfg!(target_os = "linux") {
+        return peak.checked_mul(1024);
+    }
+    Some(peak)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peak_resident_bytes() -> Option<u64> {
+    None
+}
 
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]

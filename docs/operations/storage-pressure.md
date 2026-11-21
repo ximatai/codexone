@@ -39,7 +39,7 @@ StorageMonitor 可清理允许过期的 30 日拒绝诊断，每次最多 100 �
 - 用户可用字节、DB/WAL 字节、实际储备/目标字节、最近 checkpoint log/checkpointed frames 与 busy。空间压力时跳过 checkpoint，帧计数保留最近一次尝试值。
 - 当前普通/关键 DB 命令数、最近/最大排队等待微秒、报表 reader 是否活动。
 - `backup` 健康：enabled、enabledUnixSeconds、lastSuccessUnixSeconds、lastFailureUnixSeconds、lastFailure、lastSkippedUnixSeconds、skippedPressure、retainedCount、totalBytes、largestBundleBytes；未发生的可空时间/分类省略。最近成功从保留 manifest 恢复，失败/跳过只保留当前进程，不写核心库。固定失败分类及提醒边界见[管理契约](../reference/specs/control-plane.md)。
-- 进程峰值常驻字节（不是当前 RSS），0—1023 FD 扫描的已用数量与 scanLimit=1024（不是更高编号 FD 的全量统计）。
+- `peakResidentBytes` 为进程启动以来的峰值常驻字节。`observedFDs` 统计采样时编号在 0—1023 的已用 FD，`fdScanLimit` 固定为 1024。Rust 在管理面 HTTP 读取与实时推送间共享进程样本，按需刷新，刷新间隔至少一秒。
 
 没有路径、主机/请求/Key/账号 ID、正文或秘密，也不产生高基数 label。当前视图不提供完整 task/连接 tracing；完整混合负载及资源回稳仍须独立容量验收。
 

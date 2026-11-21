@@ -36,6 +36,7 @@ http-body = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2"
 percent-encoding = "2"
 rusqlite = { version = "0.43", features = ["bundled"] }
 self_cell = "1"
@@ -50,9 +51,6 @@ unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 zstd = { version = "0.13", default-features = false }
-
-[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
 tungstenite = "0.29"

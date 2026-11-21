@@ -16,7 +16,7 @@ use codexone_usage::{BusinessDay, Context, ProtocolExtensions, Reader, Usage};
 use http::{Method, Request, Response, header};
 use serde_json::{Value, json};
 
-use crate::overview_resources::ResourceHistory;
+use crate::overview_resources::{FD_SCAN_LIMIT, ResourceHistory, StorageProcessSampler};
 
 pub struct ManagementUsage {
     reader: Reader,
@@ -26,6 +26,7 @@ pub struct ManagementUsage {
     output_horizon: Option<i64>,
     protocol_extensions: Box<dyn Fn() -> ProtocolExtensions + Send + Sync>,
     backup: Option<BackupStatus>,
+    storage_process: Arc<StorageProcessSampler>,
     pub(crate) resources: Arc<ResourceHistory>,
     pub(crate) clients: Arc<DataClients>,
 }
@@ -80,6 +81,7 @@ impl ManagementUsage {
             output_horizon,
             protocol_extensions: Box::new(ProtocolExtensions::default),
             backup: None,
+            storage_process: Arc::default(),
             resources: Arc::default(),
             clients: Arc::new(DataClients::default()),
         };
@@ -147,9 +149,12 @@ impl ManagementUsage {
 
     pub async fn storage(&self, now: i64) -> Value {
         let execution = self.execution.clone();
-        let observation = tokio::task::spawn_blocking(move || execution.storage_observation())
-            .await
-            .unwrap_or_else(|_| StorageObservation::unavailable());
+        let sampler = self.storage_process.clone();
+        let (observation, process) = tokio::task::spawn_blocking(move || {
+            (execution.storage_observation(), sampler.sample())
+        })
+        .await
+        .unwrap_or_else(|_| (StorageObservation::unavailable(), Default::default()));
         let pressure = match observation.pressure {
             StoragePressure::Normal => "normal",
             StoragePressure::Degraded => "degraded",
@@ -163,6 +168,9 @@ impl ManagementUsage {
             "optionalWorkAllowed": observation.pressure == StoragePressure::Normal,
             "reserveTargetBytes": observation.reserve_target_bytes,
             "usageReaderActive": self.reader.is_active(),
+            "peakResidentBytes": process.peak_resident_bytes,
+            "observedFDs": process.observed_fds,
+            "fdScanLimit": FD_SCAN_LIMIT,
         });
         if observation.core_available {
             value["sampledUnixSeconds"] = json!(now);
