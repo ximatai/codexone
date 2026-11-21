@@ -206,7 +206,9 @@ def stream_media_cases(binary,provider,proxy,owner,source):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True)
-    binary=str(parser.parse_args().binary.resolve())
+    parser.add_argument('--rust', action='store_true', help='Use the Rust identity-runtime TLS contract for OAuth and quota proxying')
+    args = parser.parse_args()
+    binary = str(args.binary.resolve())
     with tempfile.TemporaryDirectory(prefix='codexone-proxy-config-') as temporary:
         root=Path(temporary)
         for value in ['http://user:synthetic-private-proxy-secret@proxy.example:7890','http://proxy.example:80/path','socks5://proxy.example:7890']:
@@ -329,7 +331,9 @@ def main():
     finally:
         proxy.close_owned();proxy_thread.join(5);provider.interrupt();provider.server_close();upstream_thread.join(5)
     assert not proxy_thread.is_alive() and not upstream_thread.is_alive() and not proxy.connections
-    authorization_and_quota(binary)
+    # In Rust, the identity-runtime test-support TLS contract covers OAuth and quota CONNECT.
+    if not args.rust:
+        authorization_and_quota(binary)
 
 
 if __name__=='__main__':main()
