@@ -172,6 +172,7 @@ impl ResponsesPriming {
             &protocol::JsonValue::Null,
             &config.client_fingerprint,
             &config.models,
+            None,
         )
         .map_err(|_| ())?;
         let client = HttpUpstream::new(proxy);
@@ -210,6 +211,7 @@ impl PrimingTransport for ResponsesPriming {
             client_sse: false,
             upstream_sse: true,
             size_fallback: false,
+            protocol_extensions: None,
             began,
             usage: protocol::UsageConfig {
                 host: protocol::Rates {

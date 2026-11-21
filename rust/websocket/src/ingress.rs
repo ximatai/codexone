@@ -20,6 +20,8 @@ const READ_CHUNK: usize = 8192;
 /// on drop, including when an initial capacity wait is cancelled.
 pub trait IngressBudget: Send + Sync {
     fn lease(&self) -> Box<dyn IngressLease>;
+
+    fn rejected(&self, _reason: IngressRefusal, _bytes: usize) {}
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,7 +61,7 @@ pub(crate) struct IngressMessage {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Rejection {
+pub enum IngressRefusal {
     Capacity,
     TooLarge,
 }
@@ -68,7 +70,7 @@ pub(crate) enum FrameEvent {
     Text(IngressMessage),
     Ping(Vec<u8>),
     Close(Option<CloseFrame>),
-    Rejected(Rejection),
+    Rejected(IngressRefusal),
 }
 
 struct Header {
@@ -140,7 +142,14 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
                 self.discard = Some(header);
                 continue;
             }
+            let already_received = match &self.state {
+                MessageState::Receiving(message) => message.bytes.len(),
+                _ => 0,
+            };
+            let declared = already_received
+                .saturating_add(usize::try_from(header.length).unwrap_or(usize::MAX));
             if let Some(rejection) = self.accept_header(&header).await? {
+                self.budget.rejected(rejection, declared);
                 self.state = MessageState::Discarding;
                 self.discard = Some(header);
                 return Ok(FrameEvent::Rejected(rejection));
@@ -169,26 +178,29 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         }
     }
 
-    async fn accept_header(&mut self, header: &Header) -> Result<Option<Rejection>, SocketEnd> {
+    async fn accept_header(
+        &mut self,
+        header: &Header,
+    ) -> Result<Option<IngressRefusal>, SocketEnd> {
         if header.length > MAX_MESSAGE as u64 {
-            return Ok(Some(Rejection::TooLarge));
+            return Ok(Some(IngressRefusal::TooLarge));
         }
         let length = header.length as usize;
         match &mut self.state {
             MessageState::Receiving(message) => {
                 if length > MAX_MESSAGE - message.bytes.len() || message.fragments >= MAX_FRAGMENTS
                 {
-                    return Ok(Some(Rejection::TooLarge));
+                    return Ok(Some(IngressRefusal::TooLarge));
                 }
                 if message.lease.grow(message.bytes.len() + length).is_err() {
-                    return Ok(Some(Rejection::Capacity));
+                    return Ok(Some(IngressRefusal::Capacity));
                 }
                 message.fragments += 1;
             }
             MessageState::Idle => {
                 let mut lease = self.budget.lease();
                 if !self.wait_for_first_frame(lease.as_mut(), length).await? {
-                    return Ok(Some(Rejection::Capacity));
+                    return Ok(Some(IngressRefusal::Capacity));
                 }
                 self.state = MessageState::Receiving(Fragmented {
                     lease,

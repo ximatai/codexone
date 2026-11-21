@@ -14,6 +14,8 @@ pub struct Attempt {
     usage: UsageConfig<'static>,
     began: Instant,
     pub encoded_bytes: usize,
+    pub request_id: Option<String>,
+    pub credential_version: Option<i64>,
     evidence: Mutex<Evidence>,
 }
 
@@ -34,7 +36,15 @@ impl Attempt {
         began: Instant,
         encoded_bytes: usize,
     ) -> Self {
+        let request_id = lease.admission().request_id.clone();
+        let credential_version = lease
+            .admission()
+            .account_snapshot
+            .as_ref()
+            .map(|account| account.credential_version);
         Self {
+            request_id,
+            credential_version,
             lease: sync::Mutex::new(Some(lease)),
             usage,
             began,
@@ -56,6 +66,10 @@ impl Attempt {
             .lock()
             .unwrap()
             .event(event, self.usage, self.began);
+    }
+
+    pub fn has_first_event(&self) -> bool {
+        self.evidence.lock().unwrap().first_event.is_some()
     }
 
     pub async fn bind(&self, document: &JsonValue, unwrapped: bool) -> Result<(), ProtocolError> {

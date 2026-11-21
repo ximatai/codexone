@@ -18,7 +18,9 @@ use uuid::Uuid;
 use crate::{
     body_budget::{BodyPermit, WAIT},
     body_staging::{BodyStaging, StageError, StageReservation, THRESHOLD},
-    catalog, headers,
+    catalog,
+    diagnostics::ClientProtocolExtensions,
+    headers,
     http_upload::{HttpUploads, Payload},
     image_route::NativeImages,
     listener::{self, DataBodies, ReadError, StagedReadError},
@@ -38,6 +40,7 @@ pub struct DataPlane {
     upstream: upstream::HttpUpstream,
     bodies: DataBodies,
     websocket: Option<ws::Connector>,
+    pub(crate) protocol_extensions: Arc<ClientProtocolExtensions>,
     uploads: Arc<HttpUploads>,
     staging: Option<BodyStaging>,
     control: crate::control::Control,
@@ -122,6 +125,7 @@ impl DataPlane {
             })
             .transpose()?;
         let control = crate::control::Control::new(base.parse().map_err(|_| ())?);
+        let protocol_extensions = Arc::new(ClientProtocolExtensions::default());
         Ok(Self {
             images: Arc::new(NativeImages::new(
                 configuration,
@@ -129,6 +133,7 @@ impl DataPlane {
                 upstream_authorization.as_ref(),
                 upstream.clone(),
                 managed.clone(),
+                protocol_extensions.clone(),
             )?),
             generation_url,
             compact_url: format!("{base}/responses/compact")
@@ -138,6 +143,7 @@ impl DataPlane {
             managed,
             contract,
             websocket,
+            protocol_extensions,
             uploads: Arc::new(HttpUploads::new().map_err(|_| ())?),
             staging: None,
             upstream,
@@ -210,6 +216,7 @@ impl DataPlane {
                     connector.clone(),
                     execution.clone(),
                     self.managed.clone(),
+                    self.protocol_extensions.clone(),
                     request.headers(),
                 )
                 .await?;
@@ -263,6 +270,7 @@ impl DataPlane {
                 &JsonValue::Null,
                 &configuration.client_fingerprint,
                 models,
+                None,
             )?;
             let document = catalog::document(
                 configuration,
@@ -316,6 +324,11 @@ impl DataPlane {
                 .bodies
                 .reserve_http(length, key_id, Instant::now() + WAIT)
                 .await
+                .inspect_err(|error| {
+                    if matches!(error, ReadError::Capacity) {
+                        ws::record_size(ws::SizePath::Budget, length);
+                    }
+                })
                 .map_err(bad_read)?;
             let (bytes, reservation) = staged.decode().await.map_err(bad_stage)?;
             (bytes, permit, Some((staging, reservation)))
@@ -367,6 +380,7 @@ impl DataPlane {
             request.document(),
             &configuration.client_fingerprint,
             models,
+            Some(&self.protocol_extensions),
         )?;
         let turn_state = protocol::request_turn_state(
             &headers::values(&parts.headers, "x-codex-turn-state"),
@@ -448,12 +462,13 @@ impl DataPlane {
         }
         let (mut body_permit, bridged) = if let Some(bridge) = bridge {
             match ws::forward(
-                bridge.authorize(provider.clone()),
+                bridge.authorize(provider.clone(), self.protocol_extensions.clone()),
                 Transfer {
                     compact,
                     client_sse,
                     upstream_sse: true,
                     size_fallback: false,
+                    protocol_extensions: Some(self.protocol_extensions.clone()),
                     usage,
                     began,
                 },
@@ -584,6 +599,7 @@ impl DataPlane {
                 client_sse,
                 upstream_sse,
                 size_fallback: self.websocket.is_some() && !compact,
+                protocol_extensions: Some(self.protocol_extensions.clone()),
                 usage,
                 began,
             },

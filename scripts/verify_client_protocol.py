@@ -55,6 +55,8 @@ def event(sock):
 
 
 class Provider(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
     def log_message(self, *_args):
         pass
 
@@ -344,7 +346,7 @@ def verify_settlement(binary, provider, directory, configuration, headers):
         await_rows(total, ['unknown'])
         assert process.returncode == 0
         logs = capture.read()
-        assert len(logs) > 8192, 'Exercise log draining beyond a small Linux pipe capacity'
+        assert b'reason=upstream_websocket_eof' in logs, 'Missing provider EOF diagnosis during settlement'
         assert all(secret.encode() not in logs for secret in
             (PRIVATE, TOKEN, ADMIN, 'synthetic-value', 'synthetic-gate', 'synthetic-known'))
         for name in ('x-codex-beta-features', 'x-codex-window-id', 'x-codex-parent-thread-id'):

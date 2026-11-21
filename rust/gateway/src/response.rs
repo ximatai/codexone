@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::{Bytes, BytesMut};
 use codexone_execution as execution;
 use codexone_http_upstream as upstream;
@@ -19,6 +21,7 @@ pub struct ResponseError {
     provider: Option<Box<ProviderFailure>>,
     failure: execution::Failure,
     retry_after_seconds: Option<u64>,
+    upstream_status: Option<u16>,
 }
 
 impl ResponseError {
@@ -32,10 +35,22 @@ impl ResponseError {
         if let Some(seconds) = self.retry_after_seconds {
             headers.insert(http::header::RETRY_AFTER, seconds.into());
         }
+        crate::diagnostics::rejection(
+            request_id,
+            self.protocol,
+            self.provider.as_deref(),
+            self.upstream_status,
+        );
         reply::error(self.protocol, self.provider.as_deref(), request_id, headers)
     }
 
     pub(crate) fn streaming_frame(&self, request_id: &str) -> Bytes {
+        crate::diagnostics::rejection(
+            request_id,
+            self.protocol,
+            self.provider.as_deref(),
+            self.upstream_status,
+        );
         let event =
             protocol::stream_error_event(self.protocol, self.provider.as_deref(), request_id);
         Bytes::from(protocol::encode_sse_event(&event).expect("gateway error event type"))
@@ -72,6 +87,7 @@ impl From<ProtocolError> for ResponseError {
             provider: None,
             failure,
             retry_after_seconds: None,
+            upstream_status: None,
         }
     }
 }
@@ -126,6 +142,7 @@ impl From<execution::ExecutionError> for ResponseError {
             protocol: ProtocolError::new(status, code),
             provider: None,
             failure,
+            upstream_status: None,
             retry_after_seconds: match error {
                 ExecutionError::AccountCooldown {
                     retry_after_seconds,
@@ -329,6 +346,7 @@ pub struct Transfer {
     pub client_sse: bool,
     pub upstream_sse: bool,
     pub size_fallback: bool,
+    pub protocol_extensions: Option<Arc<crate::diagnostics::ClientProtocolExtensions>>,
     pub usage: protocol::UsageConfig<'static>,
     pub began: Instant,
 }
@@ -348,7 +366,17 @@ pub async fn forward(
     };
     let mut response_headers = HeaderMap::new();
     let result = async {
-        let upstream = exchange.await?;
+        let upstream = exchange.await.map_err(|error| {
+            let credential = attempt.lease.as_ref().and_then(|lease| {
+                lease
+                    .admission()
+                    .account_snapshot
+                    .as_ref()
+                    .map(|account| account.credential_version)
+            });
+            crate::diagnostics::http_setup(&request_id, error, credential);
+            ResponseError::from(error)
+        })?;
         let status = upstream.status();
         response_headers = headers::provider(
             upstream.headers(),
@@ -368,8 +396,17 @@ pub async fn forward(
         let content_type = upstream
             .headers()
             .get(http::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok());
-        protocol::validate_upstream_media_type(content_type, transfer.upstream_sse)?;
+            .map(|value| value.to_str().unwrap_or("other"));
+        if transfer.upstream_sse && content_type.is_none_or(|value| value.trim().is_empty()) {
+            crate::diagnostics::missing_stream_type(&request_id);
+        }
+        protocol::validate_upstream_media_type(content_type, transfer.upstream_sse).map_err(
+            |error| {
+                let mut error = ResponseError::from(error);
+                error.upstream_status = Some(status.as_u16());
+                error
+            },
+        )?;
         if transfer.upstream_sse {
             let mut reader = EventReader::new(upstream, &transfer, Some(body_permit));
             loop {
@@ -573,6 +610,7 @@ struct EventReader {
     parser: protocol::ResponseStream<'static>,
     effective_progress: bool,
     returned_turn_state: bool,
+    protocol_extensions: Option<Arc<crate::diagnostics::ClientProtocolExtensions>>,
     _body_permit: Option<BodyPermit>,
 }
 
@@ -588,6 +626,7 @@ impl EventReader {
             parser: protocol::ResponseStream::new(transfer.client_sse, transfer.usage),
             effective_progress: false,
             returned_turn_state: false,
+            protocol_extensions: transfer.protocol_extensions.clone(),
             _body_permit: body_permit,
         }
     }
@@ -600,6 +639,13 @@ impl EventReader {
         let Some(observation) = self.next_observation().await? else {
             return Ok(None);
         };
+        if let Some((extensions, name)) = self
+            .protocol_extensions
+            .as_ref()
+            .zip(observation.upstream_extension.as_deref())
+        {
+            extensions.upstream_name(name);
+        }
         if !self.returned_turn_state
             && let Some(state) = observation.turn_state.as_deref()
         {

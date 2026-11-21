@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+    diagnostics::ClientProtocolExtensions,
     headers,
     listener::{DataBodies, ReadError},
     managed::{Affinity, ManagedRoute},
@@ -43,6 +44,7 @@ pub struct NativeImages {
     base: Uri,
     account_headers: HeaderMap,
     managed: Option<Arc<ManagedRoute>>,
+    protocol_extensions: Arc<ClientProtocolExtensions>,
 }
 
 enum Authorization {
@@ -57,6 +59,7 @@ impl NativeImages {
         authorization: Option<&HeaderValue>,
         upstream: HttpUpstream,
         managed: Option<Arc<ManagedRoute>>,
+        protocol_extensions: Arc<ClientProtocolExtensions>,
     ) -> Result<Self, ()> {
         let mut account_headers = HeaderMap::new();
         if let Some(authorization) = authorization {
@@ -70,6 +73,7 @@ impl NativeImages {
             base,
             account_headers,
             managed,
+            protocol_extensions,
         })
     }
 
@@ -139,6 +143,7 @@ impl NativeImages {
             &JsonValue::Null,
             &configuration.client_fingerprint,
             &configuration.models,
+            Some(&self.protocol_extensions),
         )?;
         let execution = execution.clone();
         let images = self.clone();

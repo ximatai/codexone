@@ -211,6 +211,7 @@ pub struct Observation {
     /// an invalid image item, a binding failure or a downstream write failure.
     pub usage: Vec<UsageEvidence>,
     pub turn_state: Option<String>,
+    pub upstream_extension: Option<String>,
     pub result: Result<Delivery, EventFailure>,
 }
 
@@ -240,8 +241,12 @@ pub fn correlated_bindings(
 
 pub fn event_terminal(event: &JsonValue) -> Option<(Terminal, Option<String>)> {
     let response = event.get("response");
-    Terminal::from_event(text(event, "type")?, response)
-        .map(|status| (status, metadata(response.and_then(|v| v.get("service_tier")))))
+    Terminal::from_event(text(event, "type")?, response).map(|status| {
+        (
+            status,
+            metadata(response.and_then(|v| v.get("service_tier"))),
+        )
+    })
 }
 
 /// Binding barrier for a terminal response extracted from a correlated event.
@@ -249,7 +254,10 @@ pub fn terminal_bindings(
     response: &JsonValue,
     images: bool,
 ) -> Result<Vec<ObjectBinding>, ProtocolError> {
-    let id = response.get("id").and_then(valid_id).ok_or(INVALID_RESPONSE)?;
+    let id = response
+        .get("id")
+        .and_then(valid_id)
+        .ok_or(INVALID_RESPONSE)?;
     let mut bindings = vec![ObjectBinding::new(BindingKind::Response, id)];
     output_bindings(response, images, &mut bindings)?;
     Ok(bindings)
@@ -322,6 +330,9 @@ impl<'a> ResponseStream<'a> {
     fn observe(&mut self, mut event: JsonValue) -> Observation {
         let mut usage = Vec::new();
         let mut turn_state = None;
+        let upstream_extension = (!EventSemantics::classify(&event).recognized_type)
+            .then(|| event_type(&event).ok().map(str::to_owned))
+            .flatten();
         let rejected = self.first_event && explicit_event_rejection(&event);
         self.first_event = false;
         if rejected {
@@ -394,6 +405,7 @@ impl<'a> ResponseStream<'a> {
         Observation {
             usage,
             turn_state,
+            upstream_extension,
             result,
         }
     }
@@ -493,6 +505,7 @@ pub fn observe_json(body: &[u8], usage_config: UsageConfig<'_>, compact: bool) -
     Observation {
         usage,
         turn_state: None,
+        upstream_extension: None,
         result,
     }
 }

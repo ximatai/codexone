@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use codexone_websocket::{CapacityExhausted, IngressBudget, IngressLease};
+use codexone_websocket::{CapacityExhausted, IngressBudget, IngressLease, IngressRefusal};
 
 use crate::body_budget::{BodyPermit, DataBodies};
 
@@ -13,6 +13,13 @@ impl IngressBudget for Ingress {
             bodies: self.0.clone(),
             permit: None,
         })
+    }
+    fn rejected(&self, reason: IngressRefusal, bytes: usize) {
+        let path = match reason {
+            IngressRefusal::TooLarge => super::SizePath::Ingress,
+            IngressRefusal::Capacity => super::SizePath::Budget,
+        };
+        super::record_size(path, bytes);
     }
 }
 

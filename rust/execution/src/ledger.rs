@@ -40,7 +40,13 @@ pub(crate) fn record_unadmitted(
         params![admission.attempt, owner.principal, owner.key, owner.namespace, owner.identity,
             admission.window, admission.policy_version, admission.pricing_version, admission.reserved_micros,
             serde_json::to_string(&admission)?, now, admission.request_id],
-    )?;
+    ).map_err(|error| match &error {
+        // A trigger can reject this append and leave the durable first execution
+        // intact. The affected socket closes; an I/O or storage failure remains fatal.
+        rusqlite::Error::SqliteFailure(code, _) if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER =>
+            Error::Conflict,
+        _ => Error::from(error),
+    })?;
     Ok(())
 }
 

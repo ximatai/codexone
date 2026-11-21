@@ -6,7 +6,7 @@ mod native;
 mod priming;
 
 pub use bridge::{BridgeRequest, BridgeResult, forward};
-pub use limits::Path as SizePath;
+pub use limits::{Path as SizePath, record_size};
 pub use native::{Session, Upgrade};
 pub use priming::discard_priming;
 
@@ -29,7 +29,6 @@ pub struct Connector {
     transport: HttpUpstream,
     pub contract: Contract,
     authorization: HeaderMap,
-    pub diagnostics: Arc<limits::SizeDiagnostics>,
 }
 
 impl Connector {
@@ -60,7 +59,6 @@ impl Connector {
             transport,
             contract,
             authorization: provider,
-            diagnostics: Arc::default(),
         })
     }
 

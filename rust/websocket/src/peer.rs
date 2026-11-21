@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::{
 
 use crate::{
     CancellationToken, DownstreamSocket, QUEUE_TIMEOUT, Socket, SocketEnd, SocketIo,
-    ingress::{FrameEvent, FrameReader, IngressMessage, Rejection},
+    ingress::{FrameEvent, FrameReader, IngressMessage, IngressRefusal},
     protocol::websocket_ingress_error,
 };
 
@@ -134,8 +134,8 @@ impl Peer<IngressMessage> {
                         }
                         Ok(FrameEvent::Rejected(reason)) => {
                             let (status, code) = match reason {
-                                Rejection::TooLarge => (413, "request_too_large"),
-                                Rejection::Capacity => (503, "capacity_exhausted"),
+                                IngressRefusal::TooLarge => (413, "request_too_large"),
+                                IngressRefusal::Capacity => (503, "capacity_exhausted"),
                             };
                             let command =
                                 Write::Frame(Message::Text(websocket_ingress_error(status, code)));

@@ -6,8 +6,8 @@ use std::{
 use codexone_execution::{self as execution, Failure};
 use codexone_responses::{self as protocol, JsonValue, ProtocolError};
 use codexone_websocket::{
-    self as websocket, Admitted, CancellationToken, ConnectFailure, NativeApplication,
-    NativeEvidence, NativeFinish, NativeOptions, PreparedCreate, Socket,
+    self as websocket, Admitted, CancellationToken, ConnectFailure, ControlOutcome,
+    NativeApplication, NativeEvidence, NativeFinish, NativeOptions, PreparedCreate, Socket,
 };
 use http::{HeaderMap, HeaderValue, header};
 use hyper::upgrade::OnUpgrade;
@@ -17,7 +17,9 @@ use tokio::time::Instant;
 use super::{Connector, Provider, SizePath, attempt::Attempt, ingress::Ingress};
 use crate::{
     body_budget::DataBodies,
-    data, headers,
+    data,
+    diagnostics::{self, Client, ClientProtocolExtensions},
+    headers,
     image_route::NativeImages,
     managed::{Affinity, ManagedRoute},
     response::{self, ResponseError},
@@ -61,6 +63,8 @@ pub struct Session {
     execution: execution::ExecutionService,
     authorization: Authorization,
     forwarded: HeaderMap,
+    protocol_extensions: Arc<ClientProtocolExtensions>,
+    client: Client,
     first_attempt: OnceLock<String>,
     previous_tools: Mutex<HashMap<String, ToolSnapshot>>,
 }
@@ -76,6 +80,7 @@ impl Session {
         connector: Connector,
         execution: execution::ExecutionService,
         managed: Option<Arc<ManagedRoute>>,
+        protocol_extensions: Arc<ClientProtocolExtensions>,
         headers: &HeaderMap,
     ) -> Result<Self, ResponseError> {
         let bearer = headers::values(headers, "authorization");
@@ -97,6 +102,7 @@ impl Session {
             &JsonValue::Null,
             &config.client_fingerprint,
             &config.models,
+            Some(&protocol_extensions),
         )?;
         Ok(Self {
             images,
@@ -104,6 +110,8 @@ impl Session {
             execution,
             authorization,
             forwarded,
+            protocol_extensions,
+            client: Client::inspect(headers),
             first_attempt: OnceLock::new(),
             previous_tools: Mutex::default(),
         })
@@ -196,9 +204,7 @@ impl NativeApplication for Session {
         )?;
         let encoded_bytes = frame.len();
         if encoded_bytes > websocket::WS_ROUTING_BYTES {
-            self.connector
-                .diagnostics
-                .record(SizePath::Native, encoded_bytes);
+            super::record_size(SizePath::Native, encoded_bytes);
             return Err(ProtocolError::new(413, "conversation_too_large"));
         }
         Ok(PreparedCreate {
@@ -238,6 +244,38 @@ impl NativeApplication for Session {
             .map(|(socket, _)| socket)
     }
 
+    fn connect_failed(&self, attempt: &TurnAttempt, error: &ConnectFailure) {
+        if let Some(id) = &attempt.inner.request_id {
+            diagnostics::websocket_setup(id, error, attempt.inner.credential_version);
+        }
+    }
+
+    fn control(&self, kind: &str, outcome: ControlOutcome) {
+        let outcome = match outcome {
+            ControlOutcome::Forwarded => "forwarded",
+            ControlOutcome::RejectedUnbound => "rejected_unbound",
+            ControlOutcome::RejectedGeneration => "rejected_generation",
+            ControlOutcome::RejectedRate => "rejected_rate",
+            ControlOutcome::RejectedSize => "rejected_size",
+        };
+        self.protocol_extensions.client(kind, outcome, &self.client);
+    }
+
+    fn upstream_event(&self, document: &JsonValue) {
+        self.protocol_extensions.upstream_event(document);
+    }
+
+    fn upstream_closed(&self, attempt: &TurnAttempt, socket: websocket::SocketEnd) {
+        if let Some(id) = &attempt.inner.request_id {
+            diagnostics::websocket_close(
+                id,
+                socket,
+                attempt.inner.has_first_event(),
+                attempt.inner.credential_version,
+            );
+        }
+    }
+
     fn connection_stop(&self, identity: &Identity) -> Option<CancellationToken> {
         identity
             .watch
@@ -274,8 +312,15 @@ impl NativeApplication for Session {
             .record_unadmitted(first.clone(), id(), id())
             .await
         {
-            Ok(()) => eprintln!("Upstream WS lifecycle outcome=recorded_unknown"),
-            Err(_) => eprintln!("Upstream WS lifecycle outcome=unknown_record_failed"),
+            Ok(()) => {
+                self.protocol_extensions
+                    .log("upstream.lifecycle", "recorded_unknown", &self.client)
+            }
+            Err(_) => self.protocol_extensions.log(
+                "upstream.lifecycle",
+                "unknown_record_failed",
+                &self.client,
+            ),
         }
     }
 
@@ -324,18 +369,25 @@ impl NativeApplication for Session {
             }
         }
         match &result {
-            NativeFinish::UnprocessedSizeRefusal => self
-                .connector
-                .diagnostics
-                .record(SizePath::Native1009, attempt.encoded_bytes),
+            NativeFinish::UnprocessedSizeRefusal => {
+                super::record_size(SizePath::Native1009, attempt.encoded_bytes)
+            }
             NativeFinish::Indeterminate {
                 socket: Some(websocket::SocketEnd::Close(1009)),
                 ..
-            } => self
-                .connector
-                .diagnostics
-                .record(SizePath::Indeterminate1009, attempt.encoded_bytes),
+            } => super::record_size(SizePath::Indeterminate1009, attempt.encoded_bytes),
             _ => {}
+        }
+        if let Some(id) = &attempt.request_id {
+            match &result {
+                NativeFinish::Provider { failure, .. } => {
+                    diagnostics::rejection(id, failure.protocol, Some(failure), None)
+                }
+                NativeFinish::BeforeDispatch { protocol, provider } => {
+                    diagnostics::rejection(id, *protocol, provider.as_deref(), None)
+                }
+                _ => {}
+            }
         }
         let provider;
         let (failure, source, size_refusal) = match result {

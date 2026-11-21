@@ -307,7 +307,13 @@ impl DataBodies {
                 usize::try_from(length)
                     .ok()
                     .filter(|length| *length <= maximum)
-                    .ok_or(ReadError::TooLarge)
+                    .ok_or_else(|| {
+                        crate::ws::record_size(
+                            crate::ws::SizePath::Ingress,
+                            usize::try_from(length).unwrap_or(usize::MAX),
+                        );
+                        ReadError::TooLarge
+                    })
             })
             .transpose()?;
         let deadline = Instant::now() + DATA_UPLOAD_LIMIT;
@@ -315,22 +321,27 @@ impl DataBodies {
             self.reserve_http_with_pool(declared.unwrap_or(0), key, deadline, shared_only);
         tokio::pin!(reservation);
         let mut prefetched = None;
-        let mut permit = if declared.is_some_and(|length| length > 0) {
+        let reserved = if declared.is_some_and(|length| length > 0) {
             // Hyper polls the socket for an incomplete body when its receiver
             // requests a frame. Keep one bounded frame so an abandoned upload
             // can release its waiting ticket before the capacity timeout.
             tokio::select! {
                 biased;
-                permit = &mut reservation => permit?,
+                permit = &mut reservation => permit,
                 frame = body.frame() => {
                     prefetched = Some(frame.ok_or(ReadError::Interrupted)?
                         .map_err(|_| ReadError::Interrupted)?);
-                    reservation.await?
+                    reservation.await
                 }
             }
         } else {
-            reservation.await?
+            reservation.await
         };
+        let mut permit = reserved.inspect_err(|error| {
+            if matches!(error, ReadError::Capacity) {
+                crate::ws::record_size(crate::ws::SizePath::Budget, declared.unwrap_or(0));
+            }
+        })?;
         let bytes = collect_body(
             body,
             declared.unwrap_or(maximum),
@@ -339,7 +350,11 @@ impl DataBodies {
             prefetched,
             |received| {
                 if declared.is_none() {
-                    self.grow_with_pool(&mut permit, received, shared_only)?;
+                    self.grow_with_pool(&mut permit, received, shared_only).inspect_err(|error| {
+                        if matches!(error, ReadError::Capacity) {
+                            crate::ws::record_size(crate::ws::SizePath::Budget, received);
+                        }
+                    })?;
                 }
                 Ok(())
             },
@@ -368,6 +383,7 @@ pub(crate) async fn read_staged(
 ) -> Result<StagedBody, StagedReadError> {
     use StagedReadError::Read;
     if length > codexone_responses::MAX_REQUEST_BYTES {
+        crate::ws::record_size(crate::ws::SizePath::Ingress, length);
         return Err(Read(ReadError::TooLarge));
     }
     let deadline = Instant::now() + DATA_UPLOAD_LIMIT;
@@ -381,6 +397,10 @@ pub(crate) async fn read_staged(
     {
         if let Ok(mut bytes) = frame.into_data() {
             if bytes.len() > length - received {
+                crate::ws::record_size(
+                    crate::ws::SizePath::Ingress,
+                    received.saturating_add(bytes.len()),
+                );
                 return Err(Read(ReadError::TooLarge));
             }
             received += bytes.len();
@@ -449,6 +469,12 @@ async fn collect_body(
         };
         if let Ok(bytes) = frame.into_data() {
             if bytes.len() > maximum - contents.len() {
+                if request_id.is_some() {
+                    crate::ws::record_size(
+                        crate::ws::SizePath::Ingress,
+                        contents.len().saturating_add(bytes.len()),
+                    );
+                }
                 return Err(ReadError::TooLarge);
             }
             reserve(contents.len() + bytes.len())?;

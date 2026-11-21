@@ -21,6 +21,7 @@ use super::{
 };
 use crate::{
     body_budget::BodyPermit,
+    diagnostics::{self, ClientProtocolExtensions},
     headers,
     reply::{self, Delivery, FlushDeliveries, Reply},
     response::{ResponseError, Transfer},
@@ -32,6 +33,7 @@ pub struct BridgeRequest {
     frame: Utf8Bytes,
     options: BridgeOptions,
     provider: Provider,
+    extensions: Option<Arc<ClientProtocolExtensions>>,
 }
 
 impl BridgeRequest {
@@ -64,7 +66,7 @@ impl BridgeRequest {
         let frame = websocket::create_frame(request.clone(), connector.contract, "", turn_state)?;
         let size = frame.len();
         if size > websocket::WS_ROUTING_BYTES {
-            connector.diagnostics.record(
+            super::record_size(
                 if continuation {
                     SizePath::Continuation
                 } else {
@@ -77,6 +79,7 @@ impl BridgeRequest {
             websocket::BridgeRoute::WebSocket(frame) => Ok(Some(Self {
                 connector: connector.clone(),
                 provider: Provider::default(),
+                extensions: None,
                 headers: forwarded.clone(),
                 frame,
                 options: BridgeOptions {
@@ -90,8 +93,13 @@ impl BridgeRequest {
             websocket::BridgeRoute::Http => Ok(None),
         }
     }
-    pub fn authorize(mut self, provider: Provider) -> Self {
+    pub fn authorize(
+        mut self,
+        provider: Provider,
+        extensions: Arc<ClientProtocolExtensions>,
+    ) -> Self {
         self.provider = provider;
+        self.extensions = Some(extensions);
         self
     }
 }
@@ -213,6 +221,7 @@ async fn exchange(
         frame,
         mut options,
         provider,
+        extensions,
     } = request;
     if let Some(stop) = lease.account_stop_token() {
         options.cancellation = stop.clone();
@@ -250,6 +259,9 @@ async fn exchange(
         move |evidence| match evidence {
             BridgeEvidence::Event(event) => {
                 event_provider.observe_event(event);
+                if let Some(extensions) = &extensions {
+                    extensions.upstream_event(event);
+                }
                 if !streaming {
                     apply_turn_state(event, &evidence_headers);
                 }
@@ -278,6 +290,23 @@ async fn exchange(
         let _ = lease.finish(Some(outcome));
         return (End::Failed(error), response_headers);
     }
+    if let Some(id) = &attempt.request_id {
+        match &result {
+            Err(BridgeFailure::BeforeSend(error)) => {
+                diagnostics::websocket_setup(id, error, attempt.credential_version)
+            }
+            Err(BridgeFailure::Interrupted {
+                socket: Some(socket),
+                ..
+            }) => diagnostics::websocket_close(
+                id,
+                *socket,
+                attempt.has_first_event(),
+                attempt.credential_version,
+            ),
+            _ => {}
+        }
+    }
     let boundary = match &result {
         Err(BridgeFailure::UnprocessedSizeRefusal {
             http_fallback: true,
@@ -292,7 +321,7 @@ async fn exchange(
         _ => None,
     };
     if let Some(path) = boundary {
-        connector.diagnostics.record(path, attempt.encoded_bytes);
+        super::record_size(path, attempt.encoded_bytes);
     }
     let end = match result {
         Ok(()) => {

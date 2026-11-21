@@ -12,7 +12,8 @@ pub use bridge::*;
 pub use codexone_http_upstream::CancellationToken;
 pub use handshake::*;
 pub use ingress::{
-    CapacityExhausted, DownstreamSocket, IngressBudget, IngressLease, downstream_socket,
+    CapacityExhausted, DownstreamSocket, IngressBudget, IngressLease, IngressRefusal,
+    downstream_socket,
 };
 pub use native::*;
 pub use protocol::*;

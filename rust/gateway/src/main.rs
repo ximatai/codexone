@@ -3,6 +3,7 @@ mod body_staging;
 mod catalog;
 mod control;
 mod data;
+mod diagnostics;
 mod gateway;
 mod headers;
 mod http_upload;

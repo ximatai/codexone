@@ -51,6 +51,15 @@ pub struct Admitted<T, I> {
     pub identity: I,
 }
 
+#[derive(Clone, Copy)]
+pub enum ControlOutcome {
+    Forwarded,
+    RejectedUnbound,
+    RejectedGeneration,
+    RejectedRate,
+    RejectedSize,
+}
+
 pub enum NativeEvidence<'a> {
     Event(&'a JsonValue),
     PossibleProcessing,
@@ -103,6 +112,14 @@ pub trait NativeApplication: Send + Sync + 'static {
         identity: &Self::Identity,
         deadline: Instant,
     ) -> impl Future<Output = Result<Socket, ConnectFailure>> + Send;
+
+    fn connect_failed(&self, _attempt: &Self::Attempt, _error: &ConnectFailure) {}
+
+    fn control(&self, _kind: &str, _outcome: ControlOutcome) {}
+
+    fn upstream_event(&self, _document: &JsonValue) {}
+
+    fn upstream_closed(&self, _attempt: &Self::Attempt, _socket: SocketEnd) {}
 
     fn connection_stop(&self, _identity: &Self::Identity) -> Option<CancellationToken> {
         None
@@ -172,6 +189,7 @@ impl<A: NativeApplication> ReaderState<A> {
     }
 
     fn inspect(&mut self, app: &A, document: JsonValue, bytes: usize) -> Read<UpstreamPacket> {
+        app.upstream_event(&document);
         let route = self.turns.observe(&document, bytes);
         for (lane, turn) in &mut self.turns.active {
             if std::mem::take(&mut turn.unattributed)
@@ -660,6 +678,7 @@ impl<A: NativeApplication> Session<A> {
                     self.replacing_refused_socket = false;
                 }
                 Err(error) => {
+                    self.app.connect_failed(attempt.attempt(), &error);
                     let (error, provider) = match error {
                         _ if self
                             .account_stop
@@ -955,6 +974,9 @@ impl<A: NativeApplication> Session<A> {
         kind: &str,
     ) -> Result<(), NativeEnd> {
         if original.len() > WS_ROUTING_BYTES {
+            if kind != "response.interrupt" {
+                self.app.control(kind, ControlOutcome::RejectedSize);
+            }
             return self.send_error(TOO_LARGE, None, &request_id(), lane).await;
         }
         if kind == "response.interrupt" {
@@ -978,17 +1000,26 @@ impl<A: NativeApplication> Session<A> {
                 }
             };
         }
-        if self.upstream.is_none()
-            || ["input", "model", "tools"]
-                .iter()
-                .any(|key| document.get(key).is_some())
-            || !self.admit_control()
+        let outcome = if self.upstream.is_none() {
+            ControlOutcome::RejectedUnbound
+        } else if ["input", "model", "tools"]
+            .iter()
+            .any(|key| document.get(key).is_some())
         {
-            return self
-                .send_error(UNSUPPORTED_CONTROL, None, &request_id(), lane)
-                .await;
+            ControlOutcome::RejectedGeneration
+        } else if !self.admit_control() {
+            ControlOutcome::RejectedRate
+        } else {
+            ControlOutcome::Forwarded
+        };
+        self.app.control(kind, outcome);
+        match outcome {
+            ControlOutcome::Forwarded => self.send_control(original, self.life).await,
+            _ => {
+                self.send_error(UNSUPPORTED_CONTROL, None, &request_id(), lane)
+                    .await
+            }
         }
-        self.send_control(original, self.life).await
     }
 
     fn admit_control(&mut self) -> bool {
@@ -1196,6 +1227,9 @@ impl<A: NativeApplication> Session<A> {
                 } if expired == &lane => *protocol,
                 _ => protocol,
             };
+            if !size_refusal && let NativeEnd::Upstream(socket) = end {
+                self.app.upstream_closed(attempt.attempt(), *socket);
+            }
             let result = if size_refusal {
                 NativeFinish::UnprocessedSizeRefusal
             } else {

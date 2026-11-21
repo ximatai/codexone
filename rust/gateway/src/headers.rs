@@ -23,6 +23,7 @@ pub fn client(
     document: &JsonValue,
     fingerprint: &ClientFingerprint,
     models: &[Model],
+    extensions: Option<&crate::diagnostics::ClientProtocolExtensions>,
 ) -> Result<HeaderMap, ProtocolError> {
     const ALLOWED: &[&str] = &[
         "user-agent",
@@ -34,28 +35,17 @@ pub fn client(
         "x-conversation-id",
         "session-id",
         "thread-id",
+        "x-codex-turn-metadata",
+        "x-codex-beta-features",
+        "x-codex-window-id",
+        "x-codex-parent-thread-id",
+        "x-codex-image-turn-id",
+        "x-codex-turn-state",
         "openai-beta",
         "x-openai-subagent",
         "x-openai-memgen-request",
     ];
-    const NATIVE_AGENTS: &[&str] = &[
-        "codex_cli_rs",
-        "codex-tui",
-        "codex_exec",
-        "codex_sdk_ts",
-        "codex_vscode",
-        "Codex Desktop",
-        "Codex ",
-    ];
-    const NATIVE_ORIGINATORS: &[&str] = &[
-        "codex_cli_rs",
-        "codex_vscode",
-        "codex_sdk_ts",
-        "codex_exec",
-        "codex_chatgpt_desktop",
-        "Codex Desktop",
-    ];
-
+    let client = extensions.map(|_| crate::diagnostics::Client::inspect(headers));
     let mut result = HeaderMap::new();
     let turn_states = values(headers, "x-codex-turn-state");
     request_turn_state(&turn_states, &values(headers, "connection"), document)?;
@@ -75,15 +65,15 @@ pub fn client(
         }
         codex_count += usize::from(codex);
         result.append(name.clone(), value.clone());
+        if codex
+            && !ALLOWED.contains(&name.as_str())
+            && let Some((extensions, client)) = extensions.zip(client.as_ref())
+        {
+            extensions.client(name.as_str(), "forwarded", client);
+        }
     }
 
-    let native = values(headers, "user-agent")
-        .into_iter()
-        .any(|agent| NATIVE_AGENTS.iter().any(|prefix| agent.starts_with(prefix)))
-        || values(headers, "originator")
-            .into_iter()
-            .any(|originator| NATIVE_ORIGINATORS.contains(&originator));
-    if !native {
+    if !is_native(headers) {
         let version = fingerprint.version.as_deref().unwrap_or_else(|| {
             models
                 .iter()
@@ -112,6 +102,33 @@ pub fn client(
         result.insert("version", version.parse().map_err(bad_fingerprint)?);
     }
     Ok(result)
+}
+
+pub(crate) fn is_native(headers: &HeaderMap) -> bool {
+    const NATIVE_AGENTS: &[&str] = &[
+        "codex_cli_rs",
+        "codex-tui",
+        "codex_exec",
+        "codex_sdk_ts",
+        "codex_vscode",
+        "Codex Desktop",
+        "Codex ",
+    ];
+    const NATIVE_ORIGINATORS: &[&str] = &[
+        "codex_cli_rs",
+        "codex_vscode",
+        "codex_sdk_ts",
+        "codex_exec",
+        "codex_chatgpt_desktop",
+        "Codex Desktop",
+    ];
+
+    values(headers, "user-agent")
+        .into_iter()
+        .any(|agent| NATIVE_AGENTS.iter().any(|prefix| agent.starts_with(prefix)))
+        || values(headers, "originator")
+            .into_iter()
+            .any(|originator| NATIVE_ORIGINATORS.contains(&originator))
 }
 
 pub fn provider(headers: &HeaderMap, include_model: bool) -> HeaderMap {
