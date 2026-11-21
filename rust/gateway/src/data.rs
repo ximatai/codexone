@@ -62,6 +62,7 @@ impl DataPlane {
                 pool: None,
                 versions,
                 reserved_micros: config.responses.reserved_micros,
+                catalog_revision: None,
             })
         });
         Self::with_upstream(
@@ -84,6 +85,7 @@ impl DataPlane {
             pool: Some(pool.clone()),
             versions: (policy_version, pricing_version),
             reserved_micros: configuration.reserved_micros,
+            catalog_revision: None,
         });
         Self::with_upstream(
             configuration,
@@ -235,17 +237,6 @@ impl DataPlane {
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
         let configuration = self.configuration();
-        let snapshot = self
-            .managed
-            .as_ref()
-            .and_then(|managed| managed.pool.as_deref())
-            .and_then(Pool::directory)
-            .map(|directory| directory.snapshot());
-        let models = snapshot
-            .as_ref()
-            .map_or(configuration.models.as_slice(), |directory| {
-                &directory.active
-            });
         let endpoint = incoming
             .uri()
             .path()
@@ -261,6 +252,12 @@ impl DataPlane {
             (None, Some(execution.authenticate_static(&bearer)?))
         };
         if endpoint == "/models" && incoming.method() == Method::GET {
+            let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);
+            let models = snapshot
+                .as_ref()
+                .map_or(configuration.models.as_slice(), |directory| {
+                    &directory.active
+                });
             headers::client(
                 incoming.headers(),
                 &JsonValue::Null,
@@ -349,8 +346,15 @@ impl DataPlane {
             return Err(ProtocolError::new(400, "unsupported_execution_mode").into());
         }
         let began = Instant::now();
+        let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);
+        let models = snapshot
+            .as_ref()
+            .map_or(configuration.models.as_slice(), |directory| {
+                &directory.active
+            });
         let (admission, usage) = prepare_admission(
             configuration,
+            models,
             &image_ids,
             &request,
             request_id,
@@ -401,7 +405,14 @@ impl DataPlane {
         let (mut lease, provider) =
             if let (Some(managed), Some(key)) = (&self.managed, authorization) {
                 let key_id = key.id().to_owned();
-                let (lease, upstream_headers) = managed
+                let updated;
+                let route = if let Some(snapshot) = &snapshot {
+                    updated = managed.versioned(configuration, snapshot)?;
+                    &updated
+                } else {
+                    managed.as_ref()
+                };
+                let (lease, upstream_headers) = route
                     .admit(
                         execution,
                         key,
@@ -646,6 +657,7 @@ pub(crate) fn image_models<'a>(
 
 pub(crate) fn prepare_admission(
     configuration: &ResponsesConfiguration,
+    models: &[Model],
     image_ids: &[&str],
     request: &protocol::Request,
     request_id: &str,
@@ -657,8 +669,7 @@ pub(crate) fn prepare_admission(
     ),
     ProtocolError,
 > {
-    let model = configuration
-        .models
+    let model = models
         .iter()
         .find(|model| model.id.nfc().eq(request.model.nfc()))
         .filter(|model| authorization.is_none_or(|key| key.allows_model(&model.id)))
@@ -671,25 +682,7 @@ pub(crate) fn prepare_admission(
     let key_efforts = authorization
         .and_then(|key| key.reasoning_efforts(&model.id))
         .map(|efforts| efforts.iter().map(String::as_str).collect::<Vec<_>>());
-    let model_efforts: Vec<_> = model
-        .catalog
-        .as_ref()
-        .and_then(|catalog| catalog.reasoning_efforts.as_ref())
-        .map(|efforts| efforts.iter().map(String::as_str).collect())
-        .or_else(|| {
-            let levels = model
-                .upstream
-                .as_ref()?
-                .get("supported_reasoning_levels")?
-                .as_array()?;
-            Some(
-                levels
-                    .iter()
-                    .filter_map(|level| level.get("effort")?.as_str())
-                    .collect(),
-            )
-        })
-        .unwrap_or_default();
+    let model_efforts = model.effective_reasoning_efforts();
     protocol::ModelPolicy {
         id: &model.id,
         vision_input: model.vision_input == Some(true)
@@ -698,7 +691,10 @@ pub(crate) fn prepare_admission(
             && authorization.is_none_or(|key| key.allows_images()),
         effective_image_models: &effective_images,
         effective_reasoning_efforts: &model_efforts,
-        restrict_reasoning_effort: false,
+        restrict_reasoning_effort: model
+            .reasoning_settings
+            .as_ref()
+            .is_some_and(|settings| settings.allowed.is_some()),
         key_reasoning_efforts: key_efforts.as_deref(),
     }
     .validate(request)?;

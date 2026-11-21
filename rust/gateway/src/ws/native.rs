@@ -403,8 +403,16 @@ impl Session {
                 Some(key)
             }
         };
+        let snapshot = match &self.authorization {
+            Authorization::Managed(route, _) => route.snapshot(),
+            Authorization::Static(_) => None,
+        };
+        let models = snapshot
+            .as_ref()
+            .map_or(config.models.as_slice(), |directory| &directory.active);
         let (admission, usage) = data::prepare_admission(
             config,
+            models,
             &ids,
             &input.protocol_request,
             &input.request_id,
@@ -422,7 +430,14 @@ impl Session {
                     namespace: fixed.owner.namespace.clone(),
                 });
                 let hints = response::bindings(input.protocol_request.affinity_hints);
-                let (lease, credentials) = route
+                let updated;
+                let admitted_route = if let Some(snapshot) = &snapshot {
+                    updated = route.versioned(config, snapshot)?;
+                    &updated
+                } else {
+                    route.as_ref()
+                };
+                let (lease, credentials) = admitted_route
                     .admit(
                         &self.execution,
                         key,

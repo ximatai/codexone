@@ -24,6 +24,8 @@ const EFFORTS: &[&str] = &[
 /// Current configured conversation-model capabilities, supplied by the gateway catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrimingModel {
+    pub catalog_revision: Option<i64>,
+    pub account: Option<String>,
     pub id: String,
     pub input_micros_per_million: i64,
     pub output_micros_per_million: i64,
@@ -131,16 +133,10 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
         (owner.clone(), signals, PrimingWorker { owner, inbox })
     }
 
-    fn models(&self) -> Vec<PrimingModel> {
-        let mut models = (self.models)();
-        models.sort_by(|a, b| {
-            let price = |model: &PrimingModel| {
-                i128::from(model.input_micros_per_million)
-                    + i128::from(model.output_micros_per_million)
-            };
-            price(a).cmp(&price(b)).then_with(|| a.id.cmp(&b.id))
-        });
-        models
+    fn models(&self, account: &str) -> (Option<i64>, Vec<PrimingModel>) {
+        let catalog = (self.models)();
+        let revision = catalog.first().and_then(|model| model.catalog_revision);
+        (revision, models_for_account(catalog, account))
     }
 
     fn status_from(&self, state: PrimingState, models: Vec<PrimingModel>) -> PrimingStatus {
@@ -157,7 +153,7 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
 
     pub async fn status(&self, id: &str) -> Result<PrimingStatus> {
         let (state, _, _) = self.snapshot(id).await?;
-        Ok(self.status_from(state, self.models()))
+        Ok(self.status_from(state, self.models(id).1))
     }
 
     async fn snapshot(&self, id: &str) -> Result<(PrimingState, bool, i64)> {
@@ -188,7 +184,7 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
             return Err(Error::InvalidCommand);
         }
         settings.validate()?;
-        let models = self.models();
+        let (catalog_revision, models) = self.models(id);
         if (settings.enabled && models.is_empty())
             || settings
                 .model
@@ -207,6 +203,7 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
             .writer
             .run(work, move |db, now, _| {
                 let tx = db.begin_immediate()?;
+                check_catalog_revision(&tx, catalog_revision)?;
                 let mut state = PrimingState::load(&tx, &owned)?;
                 state.revision =
                     change_quota_settings(&tx, &owned, revision, "quota_priming_settings", now)?;
@@ -222,12 +219,18 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
         Ok(self.status_from(state, models))
     }
 
-    async fn disable_removed_model(&self, id: &str, revision: i64) -> Result<()> {
+    async fn disable_removed_model(
+        &self,
+        id: &str,
+        revision: i64,
+        catalog_revision: Option<i64>,
+    ) -> Result<()> {
         let id = id.to_owned();
         self.writer
             .run(Work::Restrict, move |db, now, _| {
                 let tx = db.begin_immediate()?;
                 let mut state = PrimingState::load(&tx, &id)?;
+                check_catalog_revision(&tx, catalog_revision)?;
                 if state.settings.enabled {
                     state.revision = change_quota_settings(
                         &tx,
@@ -251,10 +254,12 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
         if !state.settings.enabled {
             return Ok(());
         }
-        let models = self.models();
+        let (catalog_revision, models) = self.models(id);
         let model = selected(&models, &state.settings);
         let Some(model) = model else {
-            return self.disable_removed_model(id, state.revision).await;
+            return self
+                .disable_removed_model(id, state.revision, catalog_revision)
+                .await;
         };
         if !eligible || !state.ready(&self.identity.quota(id).await?, now) {
             return Ok(());
@@ -270,7 +275,7 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
             return Ok(());
         }
         if work.account.revision != state.revision
-            || selected(&self.models(), &state.settings) != Some(model)
+            || selected(&self.models(id).1, &state.settings) != Some(model)
         {
             return Err(Error::AccountConflict);
         }
@@ -295,6 +300,7 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
             attempt: uuid::Uuid::new_v4().to_string().to_ascii_uppercase(),
             account,
             model: model.id.clone(),
+            catalog_revision: model.catalog_revision,
             settings: state.settings,
             pricing_version,
             reasoning_effort: effort.into(),
@@ -350,6 +356,36 @@ impl<W: Writer, T: PrimingTransport> PrimingSupervisor<W, T> {
         };
         lease.finish(outcome).map_err(execution_error)
     }
+}
+
+fn check_catalog_revision(db: &rusqlite::Connection, expected: Option<i64>) -> Result<()> {
+    if let Some(expected) = expected {
+        let revision: i64 = db.query_row(
+            "SELECT coalesce((SELECT revision FROM model_directory WHERE singleton=1),0)",
+            [],
+            |row| row.get(0),
+        )?;
+        if expected != revision {
+            return Err(Error::AccountConflict);
+        }
+    }
+    Ok(())
+}
+
+fn models_for_account(mut models: Vec<PrimingModel>, account: &str) -> Vec<PrimingModel> {
+    models.retain(|model| {
+        model
+            .account
+            .as_deref()
+            .is_none_or(|owner| owner == account)
+    });
+    models.sort_by(|a, b| {
+        let price = |model: &PrimingModel| {
+            i128::from(model.input_micros_per_million) + i128::from(model.output_micros_per_million)
+        };
+        price(a).cmp(&price(b)).then_with(|| a.id.cmp(&b.id))
+    });
+    models
 }
 
 fn selected<'a>(

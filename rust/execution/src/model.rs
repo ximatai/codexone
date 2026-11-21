@@ -296,6 +296,7 @@ pub struct PrimingAdmission {
     pub attempt: String,
     pub account: AccountDispatch,
     pub model: String,
+    pub catalog_revision: Option<i64>,
     pub settings: codexone_identity_runtime::priming::PrimingSettings,
     pub reasoning_effort: String,
     pub pricing_version: String,
@@ -346,6 +347,8 @@ pub struct ManagedAdmissionRequest {
 /// Affinity supplied by the request transport on each preparation pass.
 #[derive(Clone, Debug, Default)]
 pub struct PoolRouting {
+    /// Directory snapshot used to validate and price this turn.
+    pub catalog_revision: Option<i64>,
     /// Verified owner of the current upstream connection.
     pub connection: Option<crate::AccountIdentity>,
     /// Verified turn-state owner. This alone does not grant draining access.

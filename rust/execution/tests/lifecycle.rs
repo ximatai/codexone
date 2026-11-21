@@ -1287,3 +1287,38 @@ async fn pacing_releases_ticket_while_cancelled_or_repreparing_and_restores_cool
     );
     service.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn directory_update_between_preparation_and_admission_does_not_create_intent() {
+    let fixture = Fixture::new(None, None);
+    let cipher = synthetic_cipher();
+    fixture.configure_pool(&cipher);
+    let service = fixture.open_pool(4).await;
+    let key = service
+        .authenticate(&[&format!("Bearer {SECRET}")])
+        .await
+        .unwrap();
+    let request = operation("stale-directory", key);
+    let result = service
+        .admit_pool(request.clone(), || async {
+            let prepared = prepare_pool(&service, &request, &cipher, PoolRouting {
+                catalog_revision: Some(1),
+                ..PoolRouting::default()
+            }).await?;
+            service.governance_command(codexone_execution::GovernanceWork::Optional, |db, _, _| {
+                db.connection().execute(
+                    "UPDATE model_directory SET revision=2 WHERE singleton=1 AND revision=1",
+                    [],
+                ).unwrap();
+            }).await?;
+            Ok(prepared)
+        })
+        .await;
+    assert!(matches!(result, Err(ExecutionError::Conflict)));
+    assert!(matches!(
+        service.snapshot("stale-directory").await,
+        Err(ExecutionError::UnknownAttempt)
+    ));
+    assert_eq!(service.outstanding(), 0);
+    service.shutdown().await.unwrap();
+}

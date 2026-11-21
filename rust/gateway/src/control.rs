@@ -75,7 +75,6 @@ type RouteCooldowns = HashMap<(AccountIdentity, &'static str), Instant>;
 pub struct Control {
     base: Uri,
     slots: Arc<Mutex<HashMap<String, usize>>>,
-    cooldowns: Arc<Mutex<RouteCooldowns>>,
 }
 
 impl Control {
@@ -83,7 +82,6 @@ impl Control {
         Self {
             base,
             slots: Default::default(),
-            cooldowns: Default::default(),
         }
     }
 
@@ -176,19 +174,10 @@ impl Control {
                     }
                 }
             }
-            let cooldowns = self.cooldowns.clone();
             let selected = if let Some(pool) = pool {
                 let picked = timeout_at(
                     deadline,
-                    pool.select_control(execution, &key, &outbound_headers, move |identity| {
-                        cooldowns
-                            .lock()
-                            .unwrap()
-                            .get(&(identity.clone(), route.0))
-                            .map_or(Duration::ZERO, |until| {
-                                until.saturating_duration_since(Instant::now())
-                            })
-                    }),
+                    pool.select_control(execution, &key, &outbound_headers, route),
                 )
                 .await
                 .map_err(|_| ProtocolError::new(504, "execution_deadline_exceeded"))??;
@@ -255,7 +244,13 @@ impl Control {
                             })??;
                         }
                         "upstream_unavailable" => {
-                            self.cool(route, owner.identity(), failure.cooldown_seconds)
+                            if let Some(pool) = pool {
+                                pool.control_health.record(
+                                    route,
+                                    owner.identity(),
+                                    failure.cooldown_seconds,
+                                );
+                            }
                         }
                         _ => {}
                     }
@@ -303,11 +298,28 @@ impl Control {
         log(route, key.id(), response.status(), began);
         response
     }
+}
 
-    fn cool(&self, route: Route, identity: &AccountIdentity, hint: Option<i64>) {
+/// Endpoint-specific health belongs to the managed pool. Durable credential and
+/// rate-limit evidence uses the pool's execution writer.
+#[derive(Clone, Default)]
+pub struct EndpointHealth(Arc<Mutex<RouteCooldowns>>);
+
+impl EndpointHealth {
+    pub fn remaining(&self, route: Route, identity: &AccountIdentity) -> Duration {
+        self.0
+            .lock()
+            .unwrap()
+            .get(&(identity.clone(), route.0))
+            .map_or(Duration::ZERO, |until| {
+                until.saturating_duration_since(Instant::now())
+            })
+    }
+
+    pub fn record(&self, route: Route, identity: &AccountIdentity, hint: Option<i64>) {
         let now = Instant::now();
         let until = now + Duration::from_secs(hint.unwrap_or(15).clamp(1, 3600) as u64);
-        let mut cooldowns = self.cooldowns.lock().unwrap();
+        let mut cooldowns = self.0.lock().unwrap();
         cooldowns.retain(|_, until| *until > now);
         if cooldowns.len() >= 1024
             && !cooldowns.contains_key(&(identity.clone(), route.0))

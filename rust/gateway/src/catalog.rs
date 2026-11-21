@@ -1,4 +1,4 @@
-use codexone_config::{Model, ResponsesConfiguration};
+use codexone_config::{Model, ResponsesConfiguration, UpstreamTransport};
 use codexone_execution::AuthenticatedKey;
 use codexone_responses::ProtocolError;
 use http::Uri;
@@ -59,6 +59,7 @@ pub fn document(
                 index,
                 model,
                 vision_allowed,
+                config.upstream_transport,
                 key.and_then(|key| key.reasoning_efforts(&model.id)),
             )
         })
@@ -87,6 +88,7 @@ fn profile(
     index: usize,
     model: &Model,
     vision_allowed: bool,
+    transport: UpstreamTransport,
     key_range: Option<&[String]>,
 ) -> Option<Value> {
     let vision = vision_allowed && model.vision_input == Some(true);
@@ -99,7 +101,9 @@ fn profile(
         {
             modalities.retain(|modality| modality != "image");
         }
-        entry["prefer_websockets"] = json!(false);
+        if transport != UpstreamTransport::WebSocket {
+            entry["prefer_websockets"] = json!(false);
+        }
         entry
     } else {
         let metadata = model.catalog.as_ref()?;

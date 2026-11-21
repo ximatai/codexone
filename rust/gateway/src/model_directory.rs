@@ -27,7 +27,7 @@ const DISCOVERY_TTL: i64 = 900;
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    revision: i64,
+    pub revision: i64,
     pub active: Vec<Model>,
     retired: Vec<Model>,
     #[serde(default)]
@@ -35,6 +35,10 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn model_owner(&self, model: &str) -> Option<&str> {
+        self.account_for_model.get(model).map(String::as_str)
+    }
+
     fn validate(&self, images: Option<&ImageConfiguration>) -> Result<()> {
         if !valid_models(&self.active)
             || (!self.retired.is_empty() && !valid_models(&self.retired))

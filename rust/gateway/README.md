@@ -48,7 +48,7 @@ python3 rust/config/tests/compare_swift.py \
 
 ## Compatibility scope
 
-The Responses image tool uses the protocol crate's request and output handling, with SVG author rate attribution pending. Subscription pools support dynamic model discovery, catalog administration and Desktop auxiliary control routes. The remaining usage pages require further integration.
+The Responses image tool uses the protocol crate's request and output handling, with SVG author rate attribution pending. Subscription pools use the committed model directory for model listings, Key options, HTTP, WebSocket, and quota priming. Each admitted execution retains its captured rates through settlement. Desktop auxiliary controls share the pool’s credential health and keep upstream overload cooldowns scoped to the selected account and endpoint. The remaining usage pages require further integration.
 
 Both readiness endpoints and the management system report check the writer's storage pressure and restore admission gates. Pool readiness also checks for an enabled account with a locally verifiable credential and a model available to that account. Liveness remains process-only. Ingress shares a 64 MiB body pool with 8 MiB of small-request headroom. Up to four requests can wait five seconds for an initial reservation. Partial uploads grow their reservations immediately. The process tests use private synthetic v19 databases and loopback providers. Swift-specific protocol diagnostics and address-candidate racing remain pending. Performance, Linux deployment, and live provider behavior require separate validation.
 

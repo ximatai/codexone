@@ -293,6 +293,20 @@ fn reached_token_cap(
     Ok(false)
 }
 
+fn check_catalog_revision(db: &Connection, expected: Option<i64>) -> Result<()> {
+    if let Some(expected) = expected {
+        let actual: i64 = db.query_row(
+            "SELECT coalesce((SELECT revision FROM model_directory WHERE singleton=1),0)",
+            [],
+            |row| row.get(0),
+        )?;
+        if expected != actual {
+            return Err(Error::Conflict);
+        }
+    }
+    Ok(())
+}
+
 fn catalog_allows(
     db: &Connection,
     account: &str,
@@ -301,6 +315,22 @@ fn catalog_allows(
     if request.requirements.route != Route::Conversation {
         return Ok(true);
     }
+    catalog_supports(
+        db,
+        account,
+        &request.model,
+        request.mode == Mode::Warmup,
+        request.reasoning_effort.as_deref(),
+    )
+}
+
+fn catalog_supports(
+    db: &Connection,
+    account: &str,
+    model: &str,
+    warmup: bool,
+    reasoning: Option<&str>,
+) -> Result<bool> {
     let denied: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
           AND NOT EXISTS (
@@ -308,7 +338,7 @@ fn catalog_allows(
              AND (?3 OR reasoning_efforts IS NULL OR EXISTS
                (SELECT 1 FROM json_each(r.reasoning_efforts) WHERE value=?4))
           )",
-        params![request.model, account, request.mode == Mode::Warmup, request.reasoning_effort],
+        params![model, account, warmup, reasoning],
         |row| row.get(0),
     )?;
     Ok(!denied)
@@ -598,6 +628,16 @@ pub(crate) fn admit_priming(
     now: i64,
 ) -> Result<Admission> {
     let dispatch = request.account;
+    check_catalog_revision(tx, request.catalog_revision)?;
+    if !catalog_supports(
+        tx,
+        &dispatch.id,
+        &request.model,
+        false,
+        Some(&request.reasoning_effort),
+    )? {
+        return Err(Error::Conflict);
+    }
     check_intent(tx, &request.attempt, true, now)?;
     let namespace = account_namespace(tx, &dispatch.id, &dispatch, &request.model, now)?;
     let label = "internal:quota-priming";
@@ -640,6 +680,7 @@ pub(crate) fn admit_pool(
 ) -> Result<ControlFlow<Duration, Admission>> {
     let now = now_micros.div_euclid(1_000_000);
     let day = business_day_start(now, offset);
+    check_catalog_revision(tx, routing.catalog_revision)?;
     check_intent(tx, &request.attempt, true, now)?;
     if snapshots.is_empty() {
         return Err(Error::AccountUnavailable);

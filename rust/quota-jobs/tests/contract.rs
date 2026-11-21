@@ -358,6 +358,8 @@ impl PrimingTransport for PrimingProbe {
 
 fn catalog() -> Vec<PrimingModel> {
     vec![PrimingModel {
+        catalog_revision: None,
+        account: None,
         id: "synthetic-model".into(),
         input_micros_per_million: 1,
         output_micros_per_million: 1,
@@ -474,6 +476,7 @@ async fn interrupted_priming_finalization_recovers_pending_audit_without_releasi
     let mut lease = f
         .execution
         .admit_priming(PrimingAdmission {
+            catalog_revision: None,
             attempt: "interrupted-priming".into(),
             account: AccountDispatch::from_subscription(&credential),
             model: "synthetic-model".into(),
@@ -685,6 +688,7 @@ async fn force_stopping_dispatched_priming_keeps_its_window_barrier() {
     let mut lease = f
         .execution
         .admit_priming(PrimingAdmission {
+            catalog_revision: None,
             attempt: "forced-priming".into(),
             account: AccountDispatch::from_subscription(&credential),
             model: "synthetic-model".into(),

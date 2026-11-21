@@ -688,7 +688,9 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
                 Ok((socket, _)) => {
                     let report = report.clone();
                     let count = count.clone();
-                    connections.push(thread::spawn(move || serve_ws(socket, &count, report)));
+                    connections.push(thread::spawn(move || {
+                        serve_ws(socket, &count, report, None)
+                    }));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
@@ -888,6 +890,7 @@ fn serve_ws(
     mut socket: TcpStream,
     counter: &std::sync::atomic::AtomicUsize,
     report: mpsc::Sender<(String, String, usize)>,
+    rates_gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
 ) {
     socket.set_nonblocking(false).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
@@ -938,6 +941,16 @@ fn serve_ws(
         turn += 1;
         if prompt == "hold-bridge" {
             continue;
+        }
+        if prompt == "hold-rate" {
+            let id = format!("resp_pool_{index}_{turn}");
+            let created = json!({"type":"response.created", "response":{"id":id,"status":"in_progress","output":[]}});
+            socket.send(Message::text(created.to_string())).unwrap();
+            let (ready, changed) = rates_gate.as_ref().expect("rate gate").as_ref();
+            let (released, _) = changed
+                .wait_timeout_while(ready.lock().unwrap(), WAIT, |ready| !*ready)
+                .unwrap();
+            assert!(*released, "rate update did not release held turn");
         }
         let held = prompt == "hold-native";
         let mut reply = json!({
@@ -1071,6 +1084,9 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
         request(admin, "GET", &reset_status, Some(ADMIN), None).1["pending"],
         true
     );
+    assert_eq!(request(admin, "PUT", "/api/models/rates", Some(ADMIN), Some(json!({
+        "revision":0, "model":"synth-text", "inputMicrosPerMillion":2_000_000, "outputMicrosPerMillion":3_000_000,
+    }))).0, 200);
     let (status, configured) = request(
         admin,
         "PUT",
@@ -1128,12 +1144,12 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
         "priming crossed the window barrier"
     );
     let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let (mode, state, input): (String, String, i64) = db.query_row(
-        "SELECT json_extract(admission_json,'$.mode'),state,json_extract(usage_json,'$.inputTokens') FROM attempts WHERE principal='internal:quota-priming'",
-        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    let (mode, state, input, cost): (String, String, i64, i64) = db.query_row(
+        "SELECT json_extract(admission_json,'$.mode'),state,json_extract(usage_json,'$.inputTokens'), estimated FROM attempts WHERE principal='internal:quota-priming'",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
     assert_eq!(
-        (mode.as_str(), state.as_str(), input),
-        ("priming", "settled", 5)
+        (mode.as_str(), state.as_str(), input, cost),
+        ("priming", "settled", 5, 19)
     );
 }
 
@@ -1631,4 +1647,178 @@ fn serve_directory(
         };
         write_response(&mut socket, status, "application/json", "{}");
     }
+}
+
+#[test]
+fn directory_updates_apply_to_native_ws_and_http_bridge_without_repricing_admitted_turns() {
+    use std::sync::{Condvar, atomic::AtomicUsize};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir(root.join("state")).unwrap();
+    let master = "6f".repeat(32);
+    private(&root.join("master"), &master);
+    private(&root.join("admin"), ADMIN);
+    private(
+        &root.join("pool.json"),
+        &json!({
+            "models": (["synth-text", "synth-alt"].map(|id| json!({
+                "id":id, "inputMicrosPerMillion":1_000_000, "outputMicrosPerMillion":1_000_000,
+            }))),
+            "reservedMicros":10, "upstreamTransport":"websocket",
+        })
+        .to_string(),
+    );
+
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    upstream.set_nonblocking(true).unwrap();
+    let port = upstream.local_addr().unwrap().port();
+    let path = root.join("state/core.sqlite");
+    let database = Database::open_or_create(&path).unwrap();
+    let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
+    seed_account(
+        &database,
+        &cipher,
+        port,
+        "account-a",
+        ("enabled", "ready", None),
+        unix_time(),
+    );
+    drop(database);
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let (report, reports) = mpsc::channel();
+    let (stop, stopping) = mpsc::channel::<()>();
+    let worker_gate = gate.clone();
+    let worker = thread::spawn(move || {
+        let mut connections = Vec::new();
+        let count = Arc::new(AtomicUsize::new(0));
+        while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            match upstream.accept() {
+                Ok((socket, _)) => {
+                    let report = report.clone();
+                    let count = count.clone();
+                    let gate = worker_gate.clone();
+                    connections.push(thread::spawn(move || {
+                        serve_ws(socket, &count, report, Some(gate))
+                    }));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("synthetic WebSocket upstream: {error}"),
+            }
+        }
+        for connection in connections {
+            connection.join().unwrap();
+        }
+    });
+    let (mut process, data, admin) = launch(root, port);
+    let (_, issued) = request(
+        admin,
+        "POST",
+        "/api/keys",
+        Some(ADMIN),
+        Some(json!({
+            "principal":"synthetic-client", "models":["synth-text"], "limits":{"tokens":null,"active":2}
+        })),
+    );
+    let key = issued["secret"].as_str().unwrap();
+    let manage = |method, path, body| request(admin, method, path, Some(ADMIN), body);
+    let http = |path, prompt| {
+        request(
+            data,
+            "POST",
+            path,
+            Some(key),
+            Some(json!({"model":"synth-text","input":prompt})),
+        )
+    };
+
+    let mut native = dial_ws(data, key);
+    ws_create(&mut native, "hold-rate", None);
+    assert_eq!(ws_event(&mut native)["type"], "response.created");
+    assert_eq!(
+        reports.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "hold-rate".into(), 1)
+    );
+    let (status, changed) = manage(
+        "PUT",
+        "/api/models/rates",
+        Some(json!({
+            "revision":0, "model":"synth-text", "inputMicrosPerMillion":2_000_000, "outputMicrosPerMillion":3_000_000,
+        })),
+    );
+    assert_eq!(status, 200, "{changed}");
+    assert_eq!(changed["revision"], 1);
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_all();
+    assert_eq!(ws_event(&mut native)["type"], "response.completed");
+
+    ws_create(&mut native, "new-rate-native", None);
+    assert_eq!(ws_event(&mut native)["type"], "response.completed");
+    assert_eq!(
+        reports.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "new-rate-native".into(), 1)
+    );
+    assert_eq!(http("/v1/responses", "new-rate-bridge").0, 200);
+    assert_eq!(
+        reports.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "new-rate-bridge".into(), 2)
+    );
+
+    assert_eq!(
+        manage(
+            "PUT",
+            "/api/models",
+            Some(json!({
+                "revision":1, "model":"synth-text", "enabled":false,
+            }))
+        )
+        .0,
+        200
+    );
+    let options = manage("GET", "/api/keys/options", None).1;
+    assert_eq!(options["catalogRevision"], 2);
+    assert_eq!(options["models"], json!(["synth-alt"]));
+    assert_eq!(
+        request(data, "GET", "/v1/models", Some(key), None).1["data"],
+        json!([])
+    );
+    ws_create(&mut native, "retired-native", None);
+    assert_eq!(ws_event(&mut native)["error"]["code"], "model_not_allowed");
+    native.send(Message::text(json!({
+        "type":"response.create", "model":"synth-text", "input":"retired-warmup", "generate":false,
+    }).to_string())).unwrap();
+    assert_eq!(ws_event(&mut native)["error"]["code"], "model_not_allowed");
+    for path in ["/v1/responses", "/v1/responses/compact"] {
+        let (status, denied) = http(path, "retired-http");
+        assert_eq!(status, 403, "{denied}");
+        assert_eq!(denied["error"]["code"], "model_not_allowed");
+    }
+    drop(native);
+    process.terminate();
+    stop.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(
+        reports.try_recv().is_err(),
+        "retired model reached provider"
+    );
+
+    let database = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let rows: Vec<(String, i64, String)> = database
+        .prepare("SELECT state,estimated,pricing_version FROM attempts ORDER BY rowid")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|(state, estimate, _)| (state.as_str(), *estimate))
+            .collect::<Vec<_>>(),
+        [("settled", 8), ("settled", 19), ("settled", 19)]
+    );
+    assert_ne!(rows[0].2, rows[1].2);
+    assert_eq!(rows[1].2, rows[2].2);
 }

@@ -127,21 +127,6 @@ impl Managed {
         } else {
             None
         };
-        let (jobs, priming_worker) =
-            if let Some((config, identity)) = pool_config.zip(runtime.clone()) {
-                let (jobs, worker) = Jobs::new(
-                    config,
-                    &options,
-                    ResponsesPriming::new(config, &target.base, proxy)?,
-                    writer,
-                    store.clone(),
-                    identity,
-                    execution.clone(),
-                );
-                (Some(jobs), Some(worker))
-            } else {
-                (None, None)
-            };
         let pool = runtime.clone().zip(cipher()?).map(|(runtime, cipher)| {
             Arc::new(Pool {
                 runtime,
@@ -150,8 +135,23 @@ impl Managed {
                 sessions: SessionAffinity::default(),
                 turn_states: TurnStateOwners::default(),
                 directory: OnceLock::new(),
+                control_health: Default::default(),
             })
         });
+        let (jobs, priming_worker) = if let Some((config, pool)) = pool_config.zip(pool.clone()) {
+            let (jobs, worker) = Jobs::new(
+                config,
+                pool.clone(),
+                ResponsesPriming::new(config, pool.base(), proxy)?,
+                writer,
+                store.clone(),
+                pool.runtime.clone(),
+                execution.clone(),
+            );
+            (Some(jobs), Some(worker))
+        } else {
+            (None, None)
+        };
         let api = GovernanceApi::new(
             store,
             authorization,
@@ -305,6 +305,7 @@ pub struct Pool {
     sessions: SessionAffinity,
     turn_states: TurnStateOwners,
     directory: OnceLock<crate::model_directory::Directory>,
+    pub(crate) control_health: crate::control::EndpointHealth,
 }
 
 pub struct Affinity<'a> {
@@ -318,17 +319,25 @@ pub struct ManagedRoute {
     pub pool: Option<Arc<Pool>>,
     pub versions: (String, String),
     pub reserved_micros: i64,
+    pub catalog_revision: Option<i64>,
 }
 
 impl ManagedRoute {
+    pub fn snapshot(&self) -> Option<Arc<crate::model_directory::Snapshot>> {
+        self.pool
+            .as_deref()
+            .and_then(Pool::directory)
+            .map(|directory| directory.snapshot())
+    }
+
     pub fn versioned(
         &self,
         config: &ResponsesConfiguration,
-        active: &[codexone_config::Model],
+        snapshot: &crate::model_directory::Snapshot,
     ) -> codexone_execution::Result<Self> {
         let versions = crate::gateway::model_versions(
             config,
-            active,
+            &snapshot.active,
             codexone_config::UpstreamContract::CodexSubscription,
         )
         .map_err(|_| ExecutionError::StorageUnavailable)?;
@@ -336,6 +345,7 @@ impl ManagedRoute {
             pool: self.pool.clone(),
             versions,
             reserved_micros: self.reserved_micros,
+            catalog_revision: Some(snapshot.revision),
         })
     }
 
@@ -362,11 +372,16 @@ impl ManagedRoute {
             reserved_micros: self.reserved_micros,
         };
         match (&self.pool, affinity) {
-            (Some(pool), Some(affinity)) => {
-                pool.admit_with_affinity(execution, request, deadline, Some(affinity))
-                    .await
+            (Some(pool), affinity) => {
+                pool.admit_with_affinity(
+                    execution,
+                    request,
+                    deadline,
+                    affinity,
+                    self.catalog_revision,
+                )
+                .await
             }
-            (Some(pool), None) => pool.admit(execution, request, deadline).await,
             (None, _) => timeout_at(deadline, execution.admit_fixed(request))
                 .await
                 .map_err(|_| ExecutionError::DeadlineExceeded)?
@@ -430,22 +445,13 @@ impl Pool {
             })
     }
 
-    pub async fn admit(
-        &self,
-        execution: &ExecutionService,
-        request: ManagedAdmissionRequest,
-        deadline: Instant,
-    ) -> codexone_execution::Result<(Execution, HeaderMap)> {
-        self.admit_with_affinity(execution, request, deadline, None)
-            .await
-    }
-
     pub async fn admit_with_affinity(
         &self,
         execution: &ExecutionService,
         request: ManagedAdmissionRequest,
         deadline: Instant,
         affinity: Option<Affinity<'_>>,
+        catalog_revision: Option<i64>,
     ) -> codexone_execution::Result<(Execution, HeaderMap)> {
         let key_id = request.key.id();
         let labels = affinity
@@ -466,6 +472,7 @@ impl Pool {
                 None
             };
             let routing = PoolRouting {
+                catalog_revision,
                 connection: affinity
                     .as_ref()
                     .and_then(|affinity| affinity.connection)
@@ -560,7 +567,7 @@ impl Pool {
         execution: &ExecutionService,
         key: &AuthenticatedKey,
         headers: &HeaderMap,
-        cooldown: impl Fn(&AccountIdentity) -> std::time::Duration + Send + 'static,
+        route: crate::control::Route,
     ) -> codexone_execution::Result<(codexone_execution::ControlAccount, HeaderMap)> {
         let required = headers
             .get("x-codex-turn-state")
@@ -582,13 +589,14 @@ impl Pool {
                 headers.push(work_headers);
             }
         }
+        let health = self.control_health.clone();
         let (index, account) = execution
             .select_control(
                 key.clone(),
                 candidates,
                 preferred,
                 required.is_some(),
-                cooldown,
+                move |identity| health.remaining(route, identity),
             )
             .await?;
         Ok((account, headers.swap_remove(index)))

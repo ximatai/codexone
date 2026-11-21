@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use bytes::Bytes;
 use codexone_config::{ResponsesConfiguration, UpstreamTransport};
 use codexone_execution::{Execution, ExecutionService, Outcome};
-use codexone_governance::{Error, Governance, KeyOptions, QuotaCommand, Result};
+use codexone_governance::{Error, Governance, QuotaCommand, Result};
 use codexone_http_upstream::{self as upstream, CancellationToken, HttpUpstream};
 use codexone_identity_runtime::IdentityRuntime;
 use codexone_quota_jobs::{
@@ -16,7 +16,11 @@ use http::{HeaderMap, HeaderValue, Method, Request, Uri, header};
 use serde_json::Value;
 use tokio::{task::JoinSet, time::Instant};
 
-use crate::{headers, managed::GovernanceWriter, response, ws};
+use crate::{
+    headers,
+    managed::{GovernanceWriter, Pool},
+    response, ws,
+};
 
 pub(crate) type Worker = PrimingWorker<GovernanceWriter, ResponsesPriming>;
 
@@ -29,33 +33,13 @@ pub(crate) struct Jobs {
 impl Jobs {
     pub fn new(
         config: &ResponsesConfiguration,
-        key_options: &KeyOptions,
+        pool: Arc<Pool>,
         transport: ResponsesPriming,
         writer: GovernanceWriter,
         governance: Arc<Governance<GovernanceWriter>>,
         identity: IdentityRuntime<GovernanceWriter>,
         execution: ExecutionService,
     ) -> (Arc<Self>, Worker) {
-        let models: Vec<_> = config
-            .models
-            .iter()
-            .map(|model| PrimingModel {
-                id: model.id.clone(),
-                input_micros_per_million: model.input_micros_per_million,
-                output_micros_per_million: model.output_micros_per_million,
-                reasoning_efforts: key_options
-                    .reasoning_efforts
-                    .get(&model.id)
-                    .cloned()
-                    .unwrap_or_default(),
-                supports_verbosity: model
-                    .upstream
-                    .as_ref()
-                    .and_then(|value| value.get("support_verbosity"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
-            })
-            .collect();
         let (priming, signals, worker) = PrimingSupervisor::new(
             writer.clone(),
             governance.clone(),
@@ -63,7 +47,34 @@ impl Jobs {
             execution,
             transport,
             config.reserved_micros,
-            move || models.clone(),
+            move || {
+                let Some(directory) = pool.directory() else {
+                    return Vec::new();
+                };
+                let snapshot = directory.snapshot();
+                snapshot
+                    .active
+                    .iter()
+                    .map(|model| PrimingModel {
+                        id: model.id.clone(),
+                        catalog_revision: Some(snapshot.revision),
+                        account: snapshot.model_owner(&model.id).map(str::to_owned),
+                        input_micros_per_million: model.input_micros_per_million,
+                        output_micros_per_million: model.output_micros_per_million,
+                        reasoning_efforts: model
+                            .effective_reasoning_efforts()
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect(),
+                        supports_verbosity: model
+                            .upstream
+                            .as_ref()
+                            .and_then(|value| value.get("support_verbosity"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true),
+                    })
+                    .collect()
+            },
         );
         let reset = ResetSupervisor::new(writer, governance, identity.clone(), || {
             std::time::SystemTime::now()
