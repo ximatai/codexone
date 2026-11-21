@@ -108,7 +108,8 @@ RUN --mount=type=cache,id=codexone-cargo-1.96-registry,sharing=locked,target=/us
     mkdir -p /output/licenses/rust; \
     strip --strip-debug -o /output/codexone /build/target/release/codexone; \
     cd /vendor; \
-    find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
+    find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \
+      -o -iname 'copyright*' -o -iname 'unlicense*' \) \
       -exec cp --parents --target-directory=/output/licenses/rust -- {} +; \
     rm -rf /vendor /tmp/vendor.toml
 
