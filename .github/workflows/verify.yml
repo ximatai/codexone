@@ -237,6 +237,8 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
+    env:
+      CODEXONE_BACKEND_BIN_DIR: ${{ github.workspace }}/.build/rust-verify
     strategy:
       fail-fast: false
       matrix:
@@ -251,7 +253,6 @@ jobs:
       - name: Verify optimized Rust protocol and lifecycle shard
         shell: bash
         env:
-          CODEXONE_BACKEND_BIN_DIR: ${{ runner.temp }}/rust-bin
           VERIFY_EVENT: ${{ github.event_name }}
         run: |
           mkdir -p "$CODEXONE_BACKEND_BIN_DIR"
@@ -261,6 +262,9 @@ jobs:
             args+=(--pr)
           fi
           ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}" --rust
+      - name: Verify the Rust execution ledger across process restarts
+        if: matrix.shard == '3/4'
+        run: python3 scripts/rust_compat/execution_recovery.py --binary "$CODEXONE_BACKEND_BIN_DIR/codexone"
   backend-parity:
     needs: [changes, backend-build, backend-rust-build]
     if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.rust == 'true'

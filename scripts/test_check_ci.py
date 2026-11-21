@@ -50,6 +50,8 @@ class VerifyWorkflowTests(unittest.TestCase):
             ('needs: [changes, backend-rust-build]', 'needs: changes'),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
             ('"${args[@]}" --rust', '"${args[@]}"'),
+            ("if: matrix.shard == '3/4'", "if: matrix.shard == '5/4'"),
+            ('scripts/rust_compat/execution_recovery.py', 'unchecked'),
             ('scripts/rust_compat/compare.py', 'unchecked'),
         ]
         for before, after in mutations:
@@ -110,6 +112,7 @@ class ChangedPathsTests(unittest.TestCase):
             (['scripts/verify_admin_live.py'], {'backend', 'rust'}),
             (['scripts/verify_text_contract.py'], {'backend', 'rust'}),
             (['scripts/rust_compat/compare.py'], {'backend', 'rust'}),
+            (['scripts/rust_compat/execution_recovery.py'], {'rust'}),
             (['scripts/verify_migration_cutback.py'], {'backend', 'rust'}),
             (['rust/storage/src/migration.rs'], {'backend', 'rust'}),
             (['rust/maintenance/src/lib.rs'], {'backend', 'rust'}),

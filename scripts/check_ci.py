@@ -144,6 +144,9 @@ def check_rust(workflow, dockerfile):
         'Rust protocol checks must restore the matching gateway artifact')
     assert """./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}" --rust""" in shards, (
         'Use the Rust protocol shard entry point')
+    assert ("if: matrix.shard == '3/4'\n"
+            '        run: python3 scripts/rust_compat/execution_recovery.py --binary "$CODEXONE_BACKEND_BIN_DIR/codexone"'
+            ) in shards, 'Run execution recovery once against the matching optimized binary'
     assert 'needs: [changes, backend-build, backend-rust-build]' in parity and 'scripts/rust_compat/compare.py' in parity, (
         'Cross-backend checks must exercise both matching binaries')
 
