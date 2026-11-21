@@ -6,6 +6,8 @@ publish = false
 
 [dependencies]
 codexone-account-pool = { path = "../account-pool" }
+codexone-governance = { path = "../governance" }
+codexone-identity-runtime = { path = "../identity-runtime" }
 codexone-storage = { path = "../storage" }
 libc = "0.2"
 rusqlite = { version = "0.43", features = ["bundled", "wal"] }

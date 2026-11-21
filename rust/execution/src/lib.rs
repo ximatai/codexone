@@ -3,6 +3,7 @@
 mod admission;
 mod ledger;
 mod model;
+mod priming;
 mod reserve;
 pub use reserve::StoragePressure;
 mod static_identity;

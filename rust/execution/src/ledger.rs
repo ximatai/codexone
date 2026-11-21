@@ -10,6 +10,7 @@ const HISTORY: i64 = 128;
 const MAINTENANCE_BATCH: i64 = 100;
 
 pub(crate) fn recover(tx: &Transaction<'_>, now: i64) -> Result<()> {
+    crate::priming::recover(tx)?;
     tx.execute(
         "DELETE FROM account_concurrency
          WHERE peak<=(SELECT COUNT(*) FROM attempts a WHERE a.namespace=account_concurrency.namespace
@@ -320,6 +321,9 @@ pub(crate) fn finalize(
             "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?2) WHERE id=?1",
             params![attempt, now],
         )?;
+    }
+    if snapshot.admission.mode == Some(Mode::Priming) {
+        crate::priming::finish(&tx, attempt, outcome)?;
     }
     tx.commit()?;
     if let Some(update) = health_update {

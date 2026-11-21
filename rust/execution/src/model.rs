@@ -290,6 +290,42 @@ impl AdmissionRequest {
     }
 }
 
+/// Trusted account-specific operation submitted only by the quota worker.
+#[derive(Clone, Debug)]
+pub struct PrimingAdmission {
+    pub attempt: String,
+    pub account: AccountDispatch,
+    pub model: String,
+    pub settings: codexone_identity_runtime::priming::PrimingSettings,
+    pub reasoning_effort: String,
+    pub pricing_version: String,
+    pub reserved_micros: i64,
+}
+
+impl PrimingAdmission {
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.account.validate()?;
+        if !valid_id(&self.account.id)
+            || self.account.snapshot.continuation
+            || !valid_string(&self.attempt, 256)
+            || !valid_model(&self.model)
+            || !valid_string(&self.reasoning_effort, 32)
+            || !valid_string(&self.pricing_version, 128)
+            || !(0..=MAX_AMOUNT).contains(&self.reserved_micros)
+            || !self.settings.enabled
+            || self.settings.validate().is_err()
+            || self
+                .settings
+                .model
+                .as_ref()
+                .is_some_and(|model| *model != self.model)
+        {
+            return Err(ExecutionError::InvalidCommand);
+        }
+        Ok(())
+    }
+}
+
 /// Trusted operation classification shared by managed admission paths.
 #[derive(Clone, Debug)]
 pub struct ManagedAdmissionRequest {
@@ -361,6 +397,20 @@ impl ManagedAdmissionRequest {
 }
 
 impl AccountDispatch {
+    /// Capture the account metadata paired with verified subscription headers.
+    pub fn from_subscription(credential: &codexone_identity_runtime::DispatchCredential) -> Self {
+        Self {
+            id: credential.account.id.clone(),
+            namespace: credential.account.namespace.clone(),
+            snapshot: AccountDispatchSnapshot {
+                revision: credential.account.revision,
+                credential_version: credential.account.credential_version,
+                access_expires_at_unix_seconds: credential.expires_at_unix_seconds,
+                continuation: false,
+            },
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         let snapshot = &self.snapshot;
         if !(1..=1_000_000).contains(&snapshot.revision)

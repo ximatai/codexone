@@ -115,6 +115,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "codexone-admin"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bytes",
+ "codexone-config",
+ "codexone-wire",
+ "getrandom 0.4.3",
+ "http",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "codexone-config"
 version = "0.1.0"
 dependencies = [
@@ -135,6 +154,8 @@ name = "codexone-execution"
 version = "0.1.0"
 dependencies = [
  "codexone-account-pool",
+ "codexone-governance",
+ "codexone-identity-runtime",
  "codexone-storage",
  "libc",
  "rusqlite",
@@ -144,6 +165,31 @@ dependencies = [
  "subtle",
  "tokio",
  "tokio-util",
+ "zeroize",
+]
+
+[[package]]
+name = "codexone-governance"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bytes",
+ "codexone-admin",
+ "codexone-config",
+ "codexone-storage",
+ "codexone-wire",
+ "getrandom 0.4.3",
+ "http",
+ "percent-encoding",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tracing",
+ "unicode-general-category",
+ "unicode-normalization",
+ "uuid",
  "zeroize",
 ]
 
@@ -162,6 +208,28 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "webpki-roots",
+]
+
+[[package]]
+name = "codexone-identity-runtime"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "codexone-governance",
+ "codexone-http-upstream",
+ "codexone-storage",
+ "codexone-wire",
+ "http",
+ "percent-encoding",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-general-category",
+ "zeroize",
 ]
 
 [[package]]
@@ -1115,6 +1183,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+dependencies = [
+ "pin-project-lite",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1125,6 +1212,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "unicode-general-category"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
 [[package]]
 name = "unicode-ident"
@@ -1177,6 +1270,12 @@ name = "utf_types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
+
+[[package]]
+name = "uuid"
+version = "1.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 
 [[package]]
 name = "vcpkg"

@@ -528,7 +528,11 @@ impl ExecutionService {
             matches!(work, Critical),
             move |writer| {
                 let optional = match work {
-                    Read => false,
+                    Read => match writer.reserve.check_optional() {
+                        Ok(()) => true,
+                        Err(Error::StoragePressure) => false,
+                        Err(error) => return Err(error),
+                    },
                     Optional => {
                         writer.reserve.check_optional()?;
                         true
@@ -543,7 +547,11 @@ impl ExecutionService {
                     },
                     Admission => {
                         writer.reserve.check_admission()?;
-                        false
+                        match writer.reserve.check_optional() {
+                            Ok(()) => true,
+                            Err(Error::StoragePressure) => false,
+                            Err(error) => return Err(error),
+                        }
                     }
                     Critical => {
                         writer.reserve.prepare_critical()?;
@@ -604,6 +612,24 @@ impl ExecutionService {
             admission::admit_fixed(
                 tx,
                 identity,
+                options.day_offset,
+                request,
+                now_micros.div_euclid(1_000_000),
+            )
+        })
+        .await
+    }
+
+    /// Admit one internal priming attempt and its window barrier atomically.
+    pub async fn admit_priming(&self, request: PrimingAdmission) -> Result<Execution> {
+        request.validate()?;
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        let ticket = self.admission_ticket()?;
+        self.submit_single_admission(ticket, move |tx, options, now_micros| {
+            admission::admit_priming(
+                tx,
                 options.day_offset,
                 request,
                 now_micros.div_euclid(1_000_000),
@@ -1049,12 +1075,27 @@ impl Execution {
                 .active()
                 .remove(&attempt)
                 .is_some_and(|entry| entry.stop.is_cancelled());
-            if stopped {
+            let priming = self.admission.mode == Some(Mode::Priming);
+            let has_priming_result = priming
+                && outcome.as_ref().is_some_and(|outcome| {
+                    matches!(
+                        outcome.failure,
+                        None | Some(Failure::AuthenticationRejected | Failure::RateLimited)
+                    )
+                });
+            if stopped && !has_priming_result {
                 let at = outcome.as_ref().map_or_else(
                     || system_time().div_euclid(1_000_000).max(1),
                     |outcome| outcome.at_unix_seconds,
                 );
-                let mut updated = Outcome::new(Some(Failure::AccountUnavailable), at);
+                // A forced stop after dispatch may have started a priming window.
+                // Keep its barrier even when the generic account-stop result is definite.
+                let failure = if priming && self.dispatched {
+                    Failure::ClientCancelled
+                } else {
+                    Failure::AccountUnavailable
+                };
+                let mut updated = Outcome::new(Some(failure), at);
                 if let Some(previous) = outcome {
                     updated.first_event_milliseconds = previous.first_event_milliseconds;
                     updated.total_milliseconds = previous.total_milliseconds;

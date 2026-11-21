@@ -586,6 +586,44 @@ pub(crate) fn admit_fixed(
     insert_fixed_intent(tx, admission, now)
 }
 
+pub(crate) fn admit_priming(
+    tx: &Transaction<'_>,
+    offset: i64,
+    request: PrimingAdmission,
+    now: i64,
+) -> Result<Admission> {
+    let dispatch = request.account;
+    check_intent(tx, &request.attempt, true, now)?;
+    let namespace = account_namespace(tx, &dispatch.id, &dispatch, &request.model, now)?;
+    let label = "internal:quota-priming";
+    let admission = Admission {
+        attempt: request.attempt,
+        owner: Owner {
+            principal: label.into(),
+            key: label.into(),
+            namespace,
+            identity: dispatch.id,
+        },
+        window: format!("business-day-{}", business_day_start(now, offset)),
+        policy_version: "quota-priming-v1".into(),
+        pricing_version: request.pricing_version,
+        reserved_micros: request.reserved_micros,
+        request_id: None,
+        model: Some(request.model),
+        mode: Some(Mode::Priming),
+        key_revision: None,
+        account_snapshot: Some(dispatch.snapshot),
+        requirements: Some(Requirements::default()),
+        references: None,
+        reasoning_effort: Some(request.reasoning_effort),
+        service_tier: None,
+        request_metadata_recorded: Some(true),
+    };
+    let admission = insert_single_identity_intent(tx, admission, now)?;
+    crate::priming::begin(tx, &admission, &request.settings, now)?;
+    Ok(admission)
+}
+
 pub(crate) fn admit_pool(
     tx: &Transaction<'_>,
     health: &Health,

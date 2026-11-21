@@ -548,3 +548,39 @@ fn audit(tx: &Transaction<'_>, account: &Account, action: &str, now: i64) -> Res
     )?;
     Ok(())
 }
+
+/// Read the account and its revision in the settings writer snapshot.
+pub fn quota_account(db: &Connection, account_id: &str) -> Result<Account> {
+    id(account_id)?;
+    Ok(load(db, account_id)?.0)
+}
+
+/// Advance account CAS and record the settings command in its enclosing transaction.
+pub fn change_quota_settings(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    revision: i64,
+    action: &str,
+    now: i64,
+) -> Result<i64> {
+    id(account_id)?;
+    check_revision(revision)?;
+    let (mut account, envelope) = load(tx, account_id)?;
+    if account.revision != revision {
+        return Err(Error::AccountConflict);
+    }
+    capacity(tx, false, 1)?;
+    account.advance(account.authorization)?;
+    save(tx, &account, &envelope)?;
+    audit(tx, &account, action, now)?;
+    Ok(account.revision)
+}
+
+/// Automatic failure disablement uses its preallocated job audit event.
+pub fn bump_quota_revision(tx: &Transaction<'_>, account_id: &str) -> Result<()> {
+    let (mut account, envelope) = load(tx, account_id)?;
+    if account.advance(account.authorization).is_ok() {
+        save(tx, &account, &envelope)?;
+    }
+    Ok(())
+}

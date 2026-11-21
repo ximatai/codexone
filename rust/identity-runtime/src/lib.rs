@@ -1,6 +1,7 @@
 //! Subscription identity operations on the gateway's existing writer.
 
 mod claims;
+pub mod priming;
 mod provider;
 mod quota;
 mod runtime;

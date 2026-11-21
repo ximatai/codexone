@@ -14,7 +14,10 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 use uuid::Builder;
 use zeroize::Zeroizing;
 
-pub use accounts::{Account, AccountMode, AuthorizationState, RefreshIntent, recover_refreshes};
+pub use accounts::{
+    Account, AccountMode, AuthorizationState, RefreshIntent, bump_quota_revision,
+    change_quota_settings, quota_account, recover_refreshes,
+};
 pub use authorization::{
     AuthorizationMethod, AuthorizationProvider, Authorizations, DeviceCode, DeviceGrant,
     FailureCode, NoAuthorizationProvider, PollError, ProviderFailure, Started, Status, Target,

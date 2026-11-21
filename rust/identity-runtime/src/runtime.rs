@@ -28,6 +28,7 @@ const PROACTIVE_WINDOW: i64 = 15 * 60;
 const DISPATCH_WINDOW: i64 = 5 * 60;
 
 type Reply = watch::Receiver<Option<Result<Observation>>>;
+type ObservationListener = Arc<dyn Fn(&str, &Observation) + Send + Sync>;
 
 struct Job {
     reply: Reply,
@@ -41,6 +42,7 @@ struct Inner<W> {
     provider: SubscriptionProvider,
     refresh: RefreshService<W, SubscriptionProvider>,
     jobs: Mutex<HashMap<String, Job>>,
+    observation_listener: Mutex<Option<ObservationListener>>,
     waiters: Semaphore,
     parallel: Semaphore,
     stop: CancellationToken,
@@ -84,6 +86,7 @@ impl<W: Writer> IdentityRuntime<W> {
                 reads: TaskTracker::new(),
                 provider,
                 jobs: Mutex::new(HashMap::new()),
+                observation_listener: Mutex::new(None),
                 waiters: Semaphore::new(CAPACITY),
                 parallel: Semaphore::new(PARALLEL),
                 stop: CancellationToken::new(),
@@ -91,6 +94,18 @@ impl<W: Writer> IdentityRuntime<W> {
                 failed: AtomicBool::new(false),
             }),
         }
+    }
+
+    /// Install the assembly's bounded hint publisher for successful durable observations.
+    pub fn set_observation_listener(
+        &self,
+        listener: impl Fn(&str, &Observation) + Send + Sync + 'static,
+    ) {
+        *self
+            .inner
+            .observation_listener
+            .lock()
+            .expect("observation listener") = Some(Arc::new(listener));
     }
 
     /// Join the same per-identity owner as dispatch and periodic observation.
@@ -148,6 +163,45 @@ impl<W: Writer> IdentityRuntime<W> {
             expires_at_unix_seconds: credential.expires_at_unix_seconds(),
             headers,
         })
+    }
+
+    /// Prepare verified headers for an account-owned quota operation, including
+    /// manual management of a disabled account. No quota network operation is issued.
+    pub async fn prepare_quota_access(&self, id: &str) -> Result<DispatchCredential> {
+        validate_id(id)?;
+        if self.inner.stop.is_cancelled() {
+            return Err(Error::AuthorizationUnavailable);
+        }
+        let mut record = self.load(id, true).await?;
+        if self.should_refresh(&record) {
+            self.inner
+                .refresh
+                .refresh_account(id.to_owned(), record.account.revision)
+                .await?;
+            record = self.load(id, true).await?;
+        }
+        if record.account.authorization != AuthorizationState::Ready
+            || self.inner.stop.is_cancelled()
+        {
+            return Err(Error::AuthorizationUnavailable);
+        }
+        let credential = record
+            .open(&self.inner.cipher)
+            .ok_or(Error::AuthorizationUnavailable)?;
+        let headers = self
+            .inner
+            .provider
+            .verified_headers(&record.account.namespace, &credential)
+            .ok_or(Error::AuthorizationUnavailable)?;
+        Ok(DispatchCredential {
+            account: record.account,
+            expires_at_unix_seconds: credential.expires_at_unix_seconds(),
+            headers,
+        })
+    }
+
+    pub fn subscription_provider(&self) -> &SubscriptionProvider {
+        &self.inner.provider
     }
 
     fn check_dispatch_mode(&self, account: &Account, continuation: bool) -> Result<()> {
@@ -472,6 +526,21 @@ struct Task<W> {
 impl<W: Writer> Task<W> {
     async fn run(mut self) {
         let result = self.runtime.execute(&self.id).await;
+        if let Ok(observation) = &result
+            && observation.failure.is_none()
+            && observation.observed_at_unix_seconds.is_some()
+        {
+            let listener = self
+                .runtime
+                .inner
+                .observation_listener
+                .lock()
+                .expect("observation listener")
+                .clone();
+            if let Some(listener) = listener {
+                listener(&self.id, observation);
+            }
+        }
         if matches!(
             result,
             Err(Error::Unavailable | Error::AccountStorageUnavailable)

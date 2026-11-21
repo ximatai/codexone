@@ -29,7 +29,7 @@ const CALLBACK: &str = "http://localhost:1455/auth/callback";
 const TOKEN: &str = "/oauth/token";
 const DEVICE_CODE: &str = "/api/accounts/deviceauth/usercode";
 const DEVICE_POLL: &str = "/api/accounts/deviceauth/token";
-const USAGE: &str = "/backend-api/wham/usage";
+const WHAM: &str = "/backend-api/wham";
 const BODY_LIMIT: usize = 65_536;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 const QUOTA_TIMEOUT: Duration = Duration::from_secs(5);
@@ -43,7 +43,8 @@ const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
 #[derive(Clone)]
 pub struct SubscriptionProvider {
     realm: String,
-    usage_url: String,
+    quota_url: String,
+    quota_slots: Arc<Semaphore>,
     auth: HttpUpstream,
     quota: HttpUpstream,
     auth_slots: Arc<Semaphore>,
@@ -82,7 +83,8 @@ impl SubscriptionProvider {
     ) -> Self {
         Self {
             realm,
-            usage_url: format!("{usage_origin}{USAGE}"),
+            quota_url: format!("{usage_origin}{WHAM}"),
+            quota_slots: Arc::new(Semaphore::new(4)),
             auth: HttpUpstream::new(proxy.clone()),
             quota: HttpUpstream::new(proxy),
             auth_slots: Arc::new(Semaphore::new(4)),
@@ -153,10 +155,72 @@ impl SubscriptionProvider {
             .verified_headers(namespace, credential)
             .ok_or(QuotaFailure::Unavailable)?;
         let account = headers["chatgpt-account-id"].clone();
+        let doc = self
+            .quota_document(headers, "/usage", None, stop, deadline)
+            .await?;
+        if present(&doc, "account_id").is_some_and(|value| value.as_str() != account.to_str().ok())
+        {
+            return Err(QuotaFailure::InvalidResponse);
+        }
+        SubscriptionQuota::parse(&doc)
+    }
+
+    /// Read reset cards at the same pinned origin and with the same quota capacity as usage.
+    pub async fn reset_credits(
+        &self,
+        headers: HeaderMap,
+        stop: CancellationToken,
+    ) -> Result<Value, QuotaFailure> {
+        self.quota_document(
+            headers,
+            "/rate-limit-reset-credits",
+            None,
+            stop,
+            Instant::now() + QUOTA_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Submit a previously committed reset intent. The caller owns its original UUID.
+    pub async fn consume_reset_credit(
+        &self,
+        headers: HeaderMap,
+        request_id: &str,
+        credit_id: Option<&str>,
+        stop: CancellationToken,
+    ) -> Result<Value, QuotaFailure> {
+        let mut payload = serde_json::json!({"redeem_request_id": request_id});
+        if let Some(id) = credit_id {
+            payload["credit_id"] = id.into();
+        }
+        self.quota_document(
+            headers,
+            "/rate-limit-reset-credits/consume",
+            Some(payload),
+            stop,
+            Instant::now() + QUOTA_TIMEOUT,
+        )
+        .await
+    }
+
+    async fn quota_document(
+        &self,
+        headers: HeaderMap,
+        endpoint: &str,
+        payload: Option<Value>,
+        stop: CancellationToken,
+        deadline: Instant,
+    ) -> Result<Value, QuotaFailure> {
+        let _permit = self
+            .quota_slots
+            .try_acquire()
+            .map_err(|_| QuotaFailure::Capacity)?;
+        let has_body = payload.is_some();
+        let body = payload.map_or_else(Bytes::new, |payload| Bytes::from(payload.to_string()));
         let mut request = Request::builder()
-            .method(Method::GET)
-            .uri(&self.usage_url)
-            .body(RequestBody::bytes(Bytes::new()))
+            .method(if has_body { Method::POST } else { Method::GET })
+            .uri(format!("{}{endpoint}", self.quota_url))
+            .body(RequestBody::bytes(body))
             .map_err(|_| QuotaFailure::Unavailable)?;
         *request.headers_mut() = headers;
         request
@@ -165,6 +229,12 @@ impl SubscriptionProvider {
         request
             .headers_mut()
             .insert(header::USER_AGENT, HeaderValue::from_static("codex-cli"));
+        if has_body {
+            request.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+        }
         let mut options = ExchangeOptions::new(
             deadline.min(Instant::now() + QUOTA_TIMEOUT),
             QUOTA_TIMEOUT,
@@ -187,15 +257,10 @@ impl SubscriptionProvider {
         if let Some(failure) = failure {
             return Err(failure);
         }
-        let doc = document(response).map_err(|e| match e {
+        document(response).map_err(|e| match e {
             DocumentError::Transport(error) => quota_transport(error),
             DocumentError::Invalid => QuotaFailure::InvalidResponse,
-        })?;
-        if present(&doc, "account_id").is_some_and(|value| value.as_str() != account.to_str().ok())
-        {
-            return Err(QuotaFailure::InvalidResponse);
-        }
-        SubscriptionQuota::parse(&doc)
+        })
     }
 
     async fn post(&self, path: &str, payload: Payload<'_>) -> Result<AuthResponse, TransportError> {

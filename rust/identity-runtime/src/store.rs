@@ -160,6 +160,7 @@ pub(crate) fn record_quota(
          DO UPDATE SET record_json=excluded.record_json",
         params![account.id, document],
     )?;
+    crate::priming::record_observation(tx, &account.id, &observation, at)?;
     Ok(observation)
 }
 
