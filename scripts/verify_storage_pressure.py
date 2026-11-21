@@ -1,205 +1,285 @@
 #!/usr/bin/env python3
-"""Private storage observation and bounded Linux tmpfs pressure/ENOSPC; no real accounts."""
+"""Check storage observation and, on a private Linux tmpfs, real ENOSPC recovery."""
 import argparse
+from contextlib import closing, contextmanager
 import errno
-import hashlib
 import http.client
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 from pathlib import Path
-import signal
+import stat
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from http.server import BaseHTTPRequestHandler
+from unittest.mock import patch
 
 import verify_admin
-from verify_admin import running_admin, request, document, ADMIN
+from verify_admin import ADMIN, document, request, running_admin
 from verify_keys import create, update
-from verify_snapshot_restore import request as generate, ready, stopped
-from verify_execution import dispose
+from verify_protocol import current_schema_version
+from verify_snapshot_restore import ready, request as generate, stopped
 
-MIB=1048576
-
-
-def observation(f):
-    return document(request(f.ports['admin'],'GET','/api/runtime/storage',headers={'Authorization':'Bearer '+ADMIN}))
+MIB = 1024 * 1024
+STORAGE_ROUTE = "/api/runtime/storage"
+ADMIN_HEADERS = {"Authorization": "Bearer " + ADMIN}
 
 
-def until(predicate):
-    deadline=time.monotonic()+6
-    while True:
-        value=predicate()
-        if value:return value
-        assert time.monotonic()<deadline,'Storage state did not converge'
+def observation(fixture):
+    return document(request(fixture.ports["admin"], "GET", STORAGE_ROUTE, headers=ADMIN_HEADERS))
+
+
+def until(predicate, *, timeout=6):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "Storage state did not converge"
         time.sleep(0.05)
 
 
+def available(directory):
+    info = os.statvfs(directory)
+    return info.f_bavail * info.f_frsize
+
+
+def require_private_tmpfs(root):
+    assert sys.platform == "linux" and root.is_mount(), "Expected a dedicated Linux tmpfs mount"
+    assert subprocess.check_output(["stat", "-f", "-c", "%T", root]).strip() == b"tmpfs"
+    metadata = root.stat()
+    assert metadata.st_uid == os.geteuid() and stat.S_IMODE(metadata.st_mode) == 0o700
+    info = os.statvfs(root)
+    assert 384 * MIB <= info.f_blocks * info.f_frsize <= 512 * MIB, "Expected a 384–512 MiB tmpfs"
+    assert not any(root.iterdir()), "Expected an empty, private tmpfs"
+
+
 def fill(file, directory, target):
-    block=bytes(MIB)
-    while True:
-        info=os.statvfs(directory);available=info.f_bavail*info.f_frsize
-        if available<=target:break
-        try:file.write(block[:min(MIB,available-target)])
+    block = bytes(MIB)
+    while (remaining := available(directory) - target) > 0:
+        try:
+            assert file.write(block[:min(MIB, remaining)]) > 0
         except OSError as error:
-            assert error.errno==errno.ENOSPC
-            if target>0:raise
-            return True
-    if target==0:
-        try:file.write(block)
+            if target == 0 and error.errno == errno.ENOSPC:
+                return
+            raise
+    if target == 0:
+        try:
+            file.write(block)
         except OSError as error:
-            assert error.errno==errno.ENOSPC;return True
-    return False
+            if error.errno == errno.ENOSPC:
+                return
+            raise
+        raise AssertionError("Expected an actual ENOSPC write failure")
 
 
-def command(binary,state,*arguments,admin=None,master=None,ok=True):
-    environment={'PATH':os.defpath,'CODEXONE_DATA_DIRECTORY':str(state)}
-    if admin:environment['CODEXONE_ADMIN_TOKEN_FILE']=str(admin)
-    if master:environment['CODEXONE_ACCOUNT_MASTER_KEY_FILE']=str(master)
-    result=subprocess.run([binary,*map(str,arguments)],capture_output=True,timeout=30,env=environment)
-    assert len(result.stdout+result.stderr)<32768 and str(state.parent).encode() not in result.stdout+result.stderr
-    assert (result.returncode==0)==ok,'Offline pressure command returned an unexpected safe state'
-    return json.loads(result.stdout) if ok else result
+def command(binary, state, *arguments, admin=None, master=None, rejected=False):
+    environment = {"PATH": os.defpath, "CODEXONE_DATA_DIRECTORY": str(state)}
+    if admin:
+        environment["CODEXONE_ADMIN_TOKEN_FILE"] = str(admin)
+    if master:
+        environment["CODEXONE_ACCOUNT_MASTER_KEY_FILE"] = str(master)
+    result = subprocess.run([binary, *map(str, arguments)], capture_output=True, timeout=30, env=environment)
+    output = result.stdout + result.stderr
+    assert len(output) < 32768 and str(state.parent).encode() not in output
+    assert (result.returncode != 0) == rejected, "Unexpected maintenance command result"
 
 
 class PressureUpstream(BaseHTTPRequestHandler):
-    def log_message(self,*args):pass
+    def log_message(self, *_args):
+        pass
+
     def do_POST(self):
-        payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        with self.server.guard:self.server.calls+=1;index=self.server.calls
-        response={'id':'synthetic-pressure-'+str(index),'object':'response','status':'completed','model':payload['model'],
-                  'output':[{'id':'synthetic-message-'+str(index),'type':'message','role':'assistant',
-                             'content':[{'type':'output_text','text':'synthetic','annotations':[]}]}],
-                  'usage':{'input_tokens':5,'output_tokens':3,'input_tokens_details':{'cached_tokens':0}}}
-        if payload.get('stream'):
-            self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Connection','close');self.end_headers()
-            self.wfile.write(('data: '+json.dumps({'type':'response.created','response':{**response,'status':'in_progress','output':[],'usage':None}})+'\n\n').encode());self.wfile.flush()
-            self.server.held.set();assert self.server.release.wait(timeout=25)
-            self.wfile.write(('data: '+json.dumps({'type':'response.completed','response':response})+'\n\ndata: [DONE]\n\n').encode());self.wfile.flush()
+        payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        with self.server.guard:
+            self.server.calls += 1
+            index = self.server.calls
+        item = {"id": f"msg_{index}", "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": "synthetic", "annotations": []}]}
+        response = {"id": f"resp_{index}", "object": "response", "status": "completed",
+                    "model": payload["model"], "output": [item],
+                    "usage": {"input_tokens": 5, "output_tokens": 3,
+                              "input_tokens_details": {"cached_tokens": 0}}}
+        self.send_response(200)
+        if payload.get("stream"):
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.send_event("response.created", {**response, "status": "in_progress", "output": [], "usage": None})
+            self.server.entered.set()
+            if self.server.release.wait(timeout=25):
+                self.send_event("response.completed", response)
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
         else:
-            body=json.dumps(response).encode();self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+            body = json.dumps(response).encode()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def send_event(self, kind, response):
+        self.wfile.write(b"data: " + json.dumps({"type": kind, "response": response}).encode() + b"\n\n")
+        self.wfile.flush()
 
 
-def verify(binary,space_root):
-    if space_root:
-        assert sys.platform=='linux'
-        assert subprocess.check_output(['stat','-f','-c','%T',str(space_root)]).strip()==b'tmpfs'
-        info=os.statvfs(space_root)
-        assert 384*MIB<=info.f_blocks*info.f_frsize<=512*MIB,'Only an explicitly bounded private tmpfs may be filled'
-        os.environ['TMPDIR']=str(space_root);tempfile.tempdir=None
-        verify_admin.Upstream=PressureUpstream
-    with running_admin(binary) as f:
-        assert request(f.ports['admin'],'GET','/api/runtime/storage')[0]==401
-        sample=observation(f)
-        assert sample['pressure']=='normal' and sample['admissionAllowed'] and sample['optionalWorkAllowed']
-        assert sample['reserveBytes']==64*MIB and sample['reserveTargetBytes']==64*MIB
-        assert sample['peakResidentBytes']>0 and 0<sample['observedFDs']<=sample['fdScanLimit']==1024
-        assert str(f.root) not in json.dumps(sample) and 'synthetic' not in json.dumps(sample)
-        until(lambda:observation(f)['sampledUnixSeconds']>sample['sampledUnixSeconds'])
-        print('PASS: authenticated no-store fixed storage/process/queue observation; periodic owner and private allocated reserve')
-        if not space_root:return
-        f.provider.held=threading.Event();f.provider.release=threading.Event()
-        _,secret=create(f.ports['admin'],principal='synthetic-storage')
-        revocable,_=create(f.ports['admin'],principal='synthetic-revocable')
-        filler=f.root/'pressure-filler'
-        def held():
-            f.provider.held.clear();f.provider.release.clear()
-            client=http.client.HTTPConnection('127.0.0.1',f.ports['data'],timeout=25)
-            client.request('POST','/v1/responses',json.dumps({'model':'synthetic-text','input':'held','stream':True}),headers={'Authorization':'Bearer '+secret,'Content-Type':'application/json'})
-            response=client.getresponse();assert response.status==200 and f.provider.held.wait(timeout=5)
-            until(lambda:bool(response.fp))
-            return client,response
-        client,response=held()
-        with filler.open('wb',buffering=0) as file:
-            fill(file,f.root,200*MIB)
-            until(lambda:observation(f)['pressure']=='degraded')
-            assert ready(f.ports['admin'])==200
-            assert update(f.ports['admin'],revocable,enabled=False)[0]==200
-            assert request(f.ports['admin'],'GET','/api/usage/options',headers={'Authorization':'Bearer '+ADMIN})[0]==503
-            assert generate(f.ports['data'],secret)[0]==200
-            fill(file,f.root,100*MIB)
-            until(lambda:observation(f)['pressure']=='blocked')
-            assert ready(f.ports['admin'])==503
-            assert request(f.ports['admin'],'GET','/health/live')[0]==200
-            before=f.provider.calls
-            status,body=generate(f.ports['data'],secret)
-            assert status==503 and b'storage_pressure' in body and f.provider.calls==before
-            f.provider.release.set();assert b'response.completed' in response.read();client.close()
-            until(lambda:observation(f)['reserveBytes']<64*MIB)
-            assert observation(f)['coreAvailable'] and not observation(f)['admissionAllowed']
-        filler.unlink()
-        until(lambda:observation(f)['pressure']=='normal')
-        assert ready(f.ports['admin'])==200 and generate(f.ports['data'],secret)[0]==200
-        client,response=held()
-        with filler.open('wb',buffering=0) as file:
-            assert fill(file,f.root,0),'No actual ENOSPC observed'
-            until(lambda:observation(f)['pressure']=='blocked')
-            before=f.provider.calls
-            assert generate(f.ports['data'],secret)[0]==503 and f.provider.calls==before
-            f.provider.release.set();assert b'response.completed' in response.read();client.close()
-            until(lambda:observation(f)['reserveBytes']<64*MIB)
-            with sqlite3.connect(f.root/'state/core.sqlite') as db:
-                assert not db.execute("SELECT id FROM attempts WHERE state!='settled'").fetchall()
-            assert observation(f)['coreAvailable']
-        filler.unlink();until(lambda:observation(f)['pressure']=='normal')
-        assert ready(f.ports['admin'])==200
-        stopped(f.process);f.process=None
-        bundle=f.root/'normal-backup'
-        command(binary,f.root/'state','--backup',bundle)
-        with filler.open('wb',buffering=0) as file:
-            fill(file,f.root,100*MIB)
-            command(binary,f.root/'state','--backup',f.root/'refused-backup',ok=False)
-            assert not (f.root/'refused-backup').exists()
-            command(binary,f.root/'refused-restore','--restore',bundle,ok=False)
-            assert not (f.root/'refused-restore').exists()
-            master=f.root/'synthetic-master';master.write_text('5a'*32);master.chmod(0o600)
-            command(binary,f.root/'state','--reencrypt-credentials',f.root/'refused-rekey',admin=f.admin,master=master,ok=False)
-            assert not (f.root/'refused-rekey').exists()
-            with sqlite3.connect(f.root/'state/core.sqlite') as db:db.execute('PRAGMA user_version=7')
-            command(binary,f.root/'state','--migrate',ok=False)
-            assert not list((f.root/'state').glob('*.pre-v13-*.sqlite'))
-        filler.unlink()
-        subprocess.run([binary,'--migrate'],env={'PATH':os.defpath,'CODEXONE_DATA_DIRECTORY':str(f.root/'state')},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
-        print('PASS: real bounded tmpfs degraded/blocked/live/ready/no dispatch, actual ENOSPC with reserved in-flight settlement, hysteresis recovery and offline backup/restore/rekey/migration refusal')
-    if space_root:interrupted_copy(binary,space_root)
+@contextmanager
+def held_stream(fixture, secret):
+    fixture.provider.entered.clear()
+    fixture.provider.release.clear()
+    try:
+        with closing(http.client.HTTPConnection("127.0.0.1", fixture.ports["data"], timeout=15)) as client:
+            client.request("POST", "/v1/responses", json.dumps({
+                "model": "synthetic-text", "input": "synthetic held stream", "stream": True,
+            }), {"Authorization": "Bearer " + secret, "Content-Type": "application/json"})
+            with closing(client.getresponse()) as response:
+                assert response.status == 200 and fixture.provider.entered.wait(timeout=5)
+                line = response.readline(65537)
+                if line == b"event: response.created\n":
+                    line = response.readline(65537)
+                assert line.startswith(b"data: ") and json.loads(line[6:])["type"] == "response.created"
+                yield response
+    finally:
+        fixture.provider.release.set()
 
 
-def interrupted_copy(binary,space_root):
-    # Public synthetic pages on an ordinary private temp directory; only the bounded target is filled.
-    with tempfile.TemporaryDirectory(prefix='codexone-copy-source-',dir='/tmp') as source_tmp, tempfile.TemporaryDirectory(prefix='codexone-copy-target-',dir=space_root) as target_tmp:
-        source=Path(source_tmp);source.chmod(0o700);target=Path(target_tmp);target.chmod(0o700)
-        probe=str(Path(binary).with_name('ExecutionProbe'))
-        seeded=subprocess.run([probe,str(source/'core.sqlite')],input=b'close\n',capture_output=True,timeout=10,env={'PATH':os.defpath});assert seeded.returncode==0
-        db=sqlite3.connect(source/'core.sqlite');db.execute('CREATE TABLE synthetic_pages(payload BLOB)');db.execute('INSERT INTO synthetic_pages VALUES(zeroblob(134217728))');db.commit();db.execute('PRAGMA wal_checkpoint(TRUNCATE)');db.close()
-        bundle=source/'bundle';command(binary,source,'--backup',bundle)
-        digest=hashlib.sha256((bundle/'snapshot.sqlite').read_bytes()).hexdigest()
-        state=target/'state';filler=target/'filler'
-        process=subprocess.Popen([binary,'--restore',str(bundle)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'PATH':os.defpath,'CODEXONE_DATA_DIRECTORY':str(state)})
-        try:
-            until(lambda:(state/'core.sqlite.restore-pending').exists())
-            process.send_signal(signal.SIGSTOP)
-            with filler.open('wb',buffering=0) as file:fill(file,target,100*MIB)
-            process.send_signal(signal.SIGCONT);output,error=process.communicate(timeout=20)
-            assert process.returncode!=0 and b'Insufficient storage headroom' in error
-            assert not (state/'core.sqlite').exists() and (state/'core.sqlite.restore-pending').exists()
-            refused=command(binary,state,'--maintenance-status',ok=False)
-            assert b'Incomplete restore target' in refused.stderr
-            assert hashlib.sha256((bundle/'snapshot.sqlite').read_bytes()).hexdigest()==digest
-        finally:
-            if process.poll() is None:process.kill();process.wait(timeout=5)
-            process.stdout.close();process.stderr.close()
-        print('PASS: actual restore stopped at durable barrier, target space withdrawn, page-budget refusal preserves pending target and original backup')
+def assert_denied(fixture, secret):
+    for port in fixture.ports.values():
+        assert ready(port) == 503
+        assert request(port, "GET", "/health/live")[0] == 200
+    before = fixture.provider.calls
+    status, body = generate(fixture.ports["data"], secret)
+    assert status == 503 and json.loads(body)["error"]["code"] == "storage_pressure"
+    assert fixture.provider.calls == before
 
 
-if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,required=True);parser.add_argument('--space-root',type=Path)
-    args=parser.parse_args()
-    try:verify(str(args.binary.resolve()),args.space_root)
+def disk_pressure(fixture):
+    fixture.provider.entered = threading.Event()
+    fixture.provider.release = threading.Event()
+    _, secret = create(fixture.ports["admin"], principal="synthetic-storage")
+    revocable, other_secret = create(fixture.ports["admin"], principal="synthetic-revocable")
+    fixture.secrets.extend([secret, other_secret])
+    filler = fixture.root / "pressure-filler"
+
+    with held_stream(fixture, secret) as response, filler.open("wb", buffering=0) as file:
+        fill(file, fixture.root, 200 * MIB)
+        until(lambda: observation(fixture)["pressure"] == "degraded")
+        assert ready(fixture.ports["admin"]) == 200
+        assert update(fixture.ports["admin"], revocable, enabled=False)[0] == 200
+        assert request(fixture.ports["admin"], "GET", "/api/usage/options", headers=ADMIN_HEADERS)[0] == 503
+        assert generate(fixture.ports["data"], secret)[0] == 200
+        fill(file, fixture.root, 100 * MIB)
+        until(lambda: observation(fixture)["pressure"] == "blocked")
+        assert_denied(fixture, secret)
+
+        # Releasing space below the resume watermark must never reopen admission.
+        file.truncate(file.tell() - (160 * MIB - available(fixture.root)))
+        file.seek(0, os.SEEK_END)
+        assert 128 * MIB <= available(fixture.root) < 192 * MIB
+        assert_denied(fixture, secret)
+
+        fill(file, fixture.root, 0)
+        assert_denied(fixture, secret)
+        fixture.provider.release.set()
+        assert b"response.completed" in response.read()
+        until(lambda: observation(fixture)["reserveBytes"] < 64 * MIB)
+        sample = observation(fixture)
+        assert sample["coreAvailable"] and not sample["admissionAllowed"]
+
+        def all_settled():
+            database = fixture.root / "state/core.sqlite"
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
+                return db.execute(
+                    "SELECT count(*),sum(state='settled'),sum(json_extract(usage_json,'$.inputTokens')) FROM attempts"
+                ).fetchone() == (2, 2, 10)
+
+        until(all_settled)
+    filler.unlink()
+    # Rust replenishes the reserve on the gateway's 30-second maintenance interval.
+    until(lambda: observation(fixture)["pressure"] == "normal", timeout=40)
+    assert observation(fixture)["reserveBytes"] == 64 * MIB
+    assert ready(fixture.ports["admin"]) == 200 and generate(fixture.ports["data"], secret)[0] == 200
+    print("PASS: degraded, blocked and hysteresis watermarks, actual ENOSPC, in-flight settlement and reserve recovery", flush=True)
+
+
+def offline_pressure(binary, fixture):
+    stopped(fixture.process)
+    fixture.process = None
+    state = fixture.root / "state"
+    bundle = fixture.root / "normal-backup"
+    command(binary, state, "--backup", bundle)
+    master = fixture.root / "synthetic-master"
+    master.write_text("5a" * 32)
+    master.chmod(0o600)
+    database = state / "core.sqlite"
+    schema = current_schema_version(binary)
+    filler = fixture.root / "pressure-filler"
+    with filler.open("wb", buffering=0) as file:
+        fill(file, fixture.root, 100 * MIB)
+        command(binary, state, "--backup", fixture.root / "refused-backup", rejected=True)
+        command(binary, fixture.root / "refused-restore", "--restore", bundle, rejected=True)
+        command(binary, state, "--reencrypt-credentials", fixture.root / "refused-rekey",
+                admin=fixture.admin, master=master, rejected=True)
+        # Reconstruct the preceding compatible schema so migration can succeed after space returns.
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("ALTER TABLE request_diagnostics DROP COLUMN reasoning_effort")
+            db.execute("PRAGMA user_version=18")
+        command(binary, state, "--migrate", rejected=True)
+        assert not any(fixture.root.glob("refused-*")) and not list(state.glob("*.pre-v*"))
+        with closing(sqlite3.connect(database)) as db:
+            assert db.execute("PRAGMA user_version").fetchone() == (18,)
+    filler.unlink()
+    command(binary, state, "--migrate")
+    with closing(sqlite3.connect(database)) as db:
+        assert db.execute("PRAGMA user_version").fetchone() == (schema,)
+    assert len(list(state.glob("*.pre-v*.sqlite"))) == 1
+    command(binary, state, "--verify-backup", bundle)
+    command(binary, fixture.root / "restored", "--restore", bundle)
+    command(binary, state, "--reencrypt-credentials", fixture.root / "normal-rekey",
+            admin=fixture.admin, master=master)
+    print("PASS: low-space offline backup, restore, rekey and migration refusal, with intact backup and retry", flush=True)
+
+
+def verify(binary, space_root):
+    with running_admin(binary) as fixture:
+        assert request(fixture.ports["admin"], "GET", STORAGE_ROUTE)[0] == 401
+        sample = observation(fixture)
+        assert sample["pressure"] == "normal" and sample["admissionAllowed"] and sample["optionalWorkAllowed"]
+        reserve = (fixture.root / "state/core.sqlite.settlement-reserve").stat()
+        assert stat.S_IMODE(reserve.st_mode) == 0o600 and reserve.st_blocks * 512 >= 64 * MIB
+        assert sample["reserveBytes"] == sample["reserveTargetBytes"] == 64 * MIB
+        assert sample["peakResidentBytes"] > 0 and 0 < sample["observedFDs"] <= sample["fdScanLimit"] == 1024
+        assert str(fixture.root) not in json.dumps(sample) and "synthetic" not in json.dumps(sample)
+        print("PASS: authenticated no-store storage observation and private physically allocated reserve", flush=True)
+
+        if space_root:
+            disk_pressure(fixture)
+            offline_pressure(binary, fixture)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--space-root", type=Path, help="empty dedicated Linux tmpfs of 384–512 MiB")
+    args = parser.parse_args()
+    try:
+        binary = str(args.binary.resolve(strict=True))
+        if args.space_root:
+            space_root = args.space_root.resolve(strict=True)
+            require_private_tmpfs(space_root)
+            with patch.object(tempfile, "tempdir", str(space_root)), patch.object(verify_admin, "Upstream", PressureUpstream):
+                verify(binary, space_root)
+        else:
+            verify(binary, None)
     except Exception as error:
-        trace=error.__traceback__
-        while trace.tb_next:trace=trace.tb_next
-        location=Path(trace.tb_frame.f_code.co_filename).name+':'+str(trace.tb_lineno)
-        print('FAIL: storage pressure verification at '+location+' ('+type(error).__name__+'); private values withheld',file=sys.stderr);raise SystemExit(1)
+        trace = error.__traceback__
+        while trace.tb_next:
+            trace = trace.tb_next
+        location = Path(trace.tb_frame.f_code.co_filename).name + ":" + str(trace.tb_lineno)
+        print(f"FAIL: storage pressure verification at {location} ({type(error).__name__}); private values withheld",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

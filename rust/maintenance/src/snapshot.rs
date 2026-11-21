@@ -63,6 +63,8 @@ pub(crate) struct SnapshotCheck {
     poll: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
     #[cfg(feature = "backup-test-support")]
     pub(crate) after_first_batch: Option<Box<dyn FnOnce() + Send>>,
+    #[cfg(test)]
+    after_copy_batch: Option<Box<dyn FnOnce() -> Result<()> + Send>>,
 }
 
 impl SnapshotCheck {
@@ -71,6 +73,8 @@ impl SnapshotCheck {
             poll: Some(Arc::new(poll)),
             #[cfg(feature = "backup-test-support")]
             after_first_batch: None,
+            #[cfg(test)]
+            after_copy_batch: None,
         }
     }
 
@@ -232,7 +236,14 @@ pub(crate) fn restore(
     protection: Option<&AccountCredentialCipher>,
     day: BusinessDay,
 ) -> Result<RestoreRecord> {
-    restore_with_barrier(bundle, path, protection, day, || Ok(()))
+    restore_with_barrier(
+        bundle,
+        path,
+        protection,
+        day,
+        SnapshotCheck::default(),
+        || Ok(()),
+    )
 }
 
 fn restore_with_barrier(
@@ -240,9 +251,9 @@ fn restore_with_barrier(
     path: &Path,
     protection: Option<&AccountCredentialCipher>,
     day: BusinessDay,
+    mut check: SnapshotCheck,
     barrier_written: impl FnOnce() -> Result<()>,
 ) -> Result<RestoreRecord> {
-    let mut check = SnapshotCheck::default();
     let verified = verified_snapshot(bundle, protection, &check)?;
     let manifest = &verified.manifest;
     let previous = require_reconciled_source(&verified.source)?;
@@ -439,6 +450,12 @@ fn copy(source: &Connection, path: &Path, optional: bool, check: &mut SnapshotCh
             }
             require_free_space(directory, 2 * MIB, optional)?;
             let step = transfer.step(128)?;
+            #[cfg(test)]
+            if matches!(step, StepResult::More)
+                && let Some(after_batch) = check.after_copy_batch.take()
+            {
+                after_batch()?;
+            }
             if i64::from(transfer.progress().pagecount) > MAX_DATABASE_BYTES / page_size {
                 return Err(Error::Capacity);
             }
@@ -510,8 +527,13 @@ mod tests {
         let manifest = backup(&source, &bundle, None).unwrap();
         let target = workspace.join("restored/core.sqlite");
 
-        let error =
-            restore_with_barrier(&bundle, &target, None, BusinessDay::new(0).unwrap(), || {
+        let error = restore_with_barrier(
+            &bundle,
+            &target,
+            None,
+            BusinessDay::new(0).unwrap(),
+            SnapshotCheck::default(),
+            || {
                 assert_eq!(
                     fs::read(files::sidecar(&target, ".restore-pending")).unwrap(),
                     manifest.id.as_bytes()
@@ -519,7 +541,8 @@ mod tests {
                 assert!(!target.exists());
                 assert!(!files::sidecar(&target, ".restoring.partial").exists());
                 Err(Error::Storage)
-            });
+            },
+        );
         assert!(matches!(error, Err(Error::Storage)));
         assert_eq!(
             Database::open_or_create(&target).err(),
@@ -530,6 +553,109 @@ mod tests {
             Err(Error::Conflict)
         ));
         assert_eq!(verify_backup(&bundle, None).unwrap(), manifest);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires CODEXONE_TEST_TMPFS to point to an empty private 384–512 MiB tmpfs mount"]
+    fn restore_rechecks_capacity_between_copy_batches() {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::MetadataExt;
+
+        fn tmpfs_space(directory: &File) -> (u64, u64) {
+            let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+            // SAFETY: The directory FD is open and stat points to writable storage.
+            assert_eq!(
+                unsafe { libc::fstatfs(directory.as_raw_fd(), stat.as_mut_ptr()) },
+                0
+            );
+            // SAFETY: fstatfs succeeded and initialized stat.
+            let stat = unsafe { stat.assume_init() };
+            assert_eq!(stat.f_type, libc::TMPFS_MAGIC);
+            let block_bytes = stat.f_bsize as u64;
+            (stat.f_blocks * block_bytes, stat.f_bavail * block_bytes)
+        }
+
+        let volume = PathBuf::from(std::env::var_os("CODEXONE_TEST_TMPFS").unwrap())
+            .canonicalize()
+            .unwrap();
+        files::private_directory(&volume).unwrap();
+        assert_ne!(
+            volume.metadata().unwrap().dev(),
+            volume.parent().unwrap().metadata().unwrap().dev()
+        );
+        assert!(volume.read_dir().unwrap().next().is_none());
+        let directory = File::open(&volume).unwrap();
+        assert!((384 * MIB as u64..=512 * MIB as u64).contains(&tmpfs_space(&directory).0));
+
+        let source = tempfile::tempdir().unwrap();
+        let database = source.path().join("core.sqlite");
+        let db = Database::open_or_create(&database).unwrap();
+        db.connection()
+            .execute_batch(
+                "CREATE TABLE synthetic_pages(payload BLOB);
+                 INSERT INTO synthetic_pages VALUES(zeroblob(4194304));",
+            )
+            .unwrap();
+        drop(db);
+        let bundle = source.path().join("bundle");
+        let manifest = backup(&database, &bundle, None).unwrap();
+        let scratch = tempfile::tempdir_in(&volume).unwrap();
+        let target = scratch.path().join("restore/core.sqlite");
+        let filler = scratch.path().join("synthetic-filler");
+        let day = BusinessDay::new(0).unwrap();
+
+        let staging = files::sidecar(&target, ".restoring.partial");
+        let after_copy_batch = {
+            let filler = filler.clone();
+            let staging = staging.clone();
+            let target = target.clone();
+            let backup_id = manifest.id.clone();
+            move || {
+                assert_eq!(
+                    fs::read(files::sidecar(&target, ".restore-pending")).unwrap(),
+                    backup_id.as_bytes()
+                );
+                assert!(staging.exists() && !target.exists());
+                let mut file = files::new_file(&filler).unwrap();
+                let block = vec![0; MIB as usize];
+                let bytes_to_use = tmpfs_space(&directory).1.saturating_sub(100 * MIB as u64);
+                for _ in 0..bytes_to_use / MIB as u64 {
+                    file.write_all(&block).unwrap();
+                }
+                file.sync_all().unwrap();
+                Ok(())
+            }
+        };
+        let result = restore_with_barrier(
+            &bundle,
+            &target,
+            None,
+            day,
+            SnapshotCheck {
+                after_copy_batch: Some(Box::new(after_copy_batch)),
+                ..SnapshotCheck::default()
+            },
+            || Ok(()),
+        );
+        assert!(matches!(
+            result,
+            Err(Error::Database(DatabaseError::StoragePressure))
+        ));
+        assert!(!target.exists());
+        assert!(staging.exists());
+        assert_eq!(
+            Database::open_or_create(&target).err(),
+            Some(DatabaseError::IncompleteRestore)
+        );
+        assert_eq!(verify_backup(&bundle, None).unwrap(), manifest);
+        fs::remove_file(filler).unwrap();
+        assert!(matches!(
+            restore(&bundle, &target, None, day),
+            Err(Error::Conflict)
+        ));
+        assert!(restore(&bundle, &scratch.path().join("clean/core.sqlite"), None, day).is_ok());
     }
 
     #[test]
