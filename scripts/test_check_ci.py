@@ -226,7 +226,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('suite: [tls, installation, capacity]', 'suite: [tls, installation]'),
             ('scripts/verify_mixed_capacity.py --image', 'unchecked-capacity'),
             ('mixed-capacity-evidence', 'omitted-evidence'),
-            ('--probe /binaries/ExecutionProbe --slow-only', '--skip-live-capacity'),
+            ('/test/scripts/verify_live_overview_capacity.py --binary /output/codexone', '--skip-live-capacity'),
             ('ref: ${{ needs.build.outputs.revision }}', 'ref: main'),
             ('"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
             ('"$IMAGE_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),

@@ -173,7 +173,7 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 | backend-scripts 四分片 | 下载优化二进制 tar，核对 build 的 hash；只构建 `verification-tools`（固定 SDK、Python/OpenSSL/SQLite，不编译产品），在 `--network none` 容器中执行 `verify.sh --backend-scripts i/4 --rust-release` |
 | image-checks TLS | 下载并校验候选镜像 hash/image ID；测试镜像直接复制候选二进制和 SPA，在原非 root、只读、无网络、768 MiB 约束下验证真实 Nginx TLS |
 | image-checks installation | 独立下载同一镜像，以不可变 image ID 执行原 `verify_installation.py` 的 OCI/Compose 安装检查 |
-| image-checks capacity | 使用同一 Rust 镜像跑原生 Linux 混合负载，另保留 Swift 专用的慢读者容量夹具 |
+| image-checks capacity | 使用同一 Rust 镜像跑原生 Linux 混合负载，并用候选 Rust 网关验证慢查看器释放连接槽位、健康查看器和 HTTP 继续服务 |
 | verify | `always()` gate 拒绝任一失败、取消或跳过；再次核对 build 输出的镜像归档 hash，才上传原名称的 `verified-*` 制品 |
 | publish / release | publish 仅消费 gate 的 verified 制品，校验 gate 输出的同一归档 hash，加载而不重建；推送后按 digest 回拉核对 image ID，对推送 digest attestation，最后创建 Release |
 
