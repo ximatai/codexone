@@ -175,7 +175,11 @@ test("render synthetic documentation screenshots", async ({ page }) => {
   await expect(page.getByRole("region", { name: "协议观测" })).toBeVisible();
   await expect.poll(() => Boolean(socket)).toBe(true);
   const sections = await initialSections(page, now);
-  Object.assign(sections.inFlight.data, {
+  sections.inFlight.data = {
+    rows: [],
+    clients: [],
+    recentlyFinished: [],
+    overflow: 0,
     recentRequestOutputRateMedian: 42,
     requestOutputRateByHour: {
       endUnixSeconds: now,
@@ -187,7 +191,7 @@ test("render synthetic documentation screenshots", async ({ page }) => {
         ]),
       ),
     },
-  });
+  };
   socket!.send(
     JSON.stringify({
       protocol: 1,
