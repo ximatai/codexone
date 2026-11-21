@@ -245,20 +245,29 @@ impl DataPlane {
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
         let configuration = self.configuration();
+        let endpoint = incoming
+            .uri()
+            .path()
+            .strip_prefix("/v1")
+            .or_else(|| incoming.uri().path().strip_prefix("/backend-api/codex"))
+            .filter(|endpoint| {
+                matches!(*endpoint, "/models" | "/responses" | "/responses/compact")
+            });
+        let not_found = || ProtocolError::new(404, "not_found");
+        // Usage paths follow Swift's data-Key check before returning not found.
+        // Other non-data routes keep the listener's existing routing behavior.
+        if endpoint.is_none()
+            && !codexone_usage::Usage::matches(incoming.method(), incoming.uri().path())
+        {
+            return Err(not_found().into());
+        }
         let bearer = headers::values(incoming.headers(), "authorization");
         let (authorization, static_authorization) = if self.managed.is_some() {
             (Some(execution.authenticate(&bearer).await?), None)
         } else {
             (None, Some(execution.authenticate_static(&bearer)?))
         };
-        let endpoint = incoming
-            .uri()
-            .path()
-            .strip_prefix("/v1")
-            .or_else(|| incoming.uri().path().strip_prefix("/backend-api/codex"));
-        let Some(endpoint @ ("/models" | "/responses" | "/responses/compact")) = endpoint else {
-            return Err(ProtocolError::new(404, "not_found").into());
-        };
+        let endpoint = endpoint.ok_or_else(not_found)?;
         if endpoint == "/models" && incoming.method() == Method::GET {
             let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);
             let models = snapshot
