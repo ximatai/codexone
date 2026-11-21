@@ -86,6 +86,10 @@ def worker(root, ports, idle_seconds):
     progress = {'phase': 'starting'}
     def phase(name):
         progress['phase'] = name
+        with guard:
+            progress['providerCalls'] = len(calls)
+        progress['operationsCaptured'] = len(results)
+        progress['managementFailureCount'] = len(failures)
         capacity.private_json(root/'progress.json', progress)
     def until(predicate, timeout=15):
         end = time.monotonic()+timeout
@@ -148,6 +152,7 @@ def worker(root, ports, idle_seconds):
     monitor_thread = None
     results = []
     keys = []
+    management_paths = ('/health/live', '/api/keys', '/api/runtime/storage')
     def management_call(path):
         began = time.monotonic()
         connection = http.client.HTTPConnection('127.0.0.1', ports['admin'], timeout=2)
@@ -160,7 +165,7 @@ def worker(root, ports, idle_seconds):
         finally: connection.close()
     def monitor():
         while not stop.is_set():
-            for path in ('/health/live', '/api/keys', '/api/runtime/storage'):
+            for path in management_paths:
                 try:
                     management.append({'phase': progress['phase'], 'endpoint': path,
                                        'seconds': management_call(path)})
@@ -189,7 +194,8 @@ def worker(root, ports, idle_seconds):
             if cancel:
                 received = len(reply.read(65536))
                 assert received > 0 and reply.status == 200
-                return {'status': reply.status, 'cancelled': True, 'bytes': received}
+                return {'status': reply.status, 'cancelled': True, 'bytes': received,
+                        'seconds': time.monotonic()-started}
             chunks = []
             image_output = '/images/' in path and reply.status == 200
             digest = hashlib.sha256()
@@ -272,36 +278,48 @@ def worker(root, ports, idle_seconds):
                 # Check unrelated work while two image permits and the large request are still active.
                 until(lambda: generation_name in output_started and edit_name in output_started)
                 assert not generation.done() and not editing.done()
-                for path in ('/health/live', '/api/keys', '/api/runtime/storage'):
+                for path in management_paths:
                     management.append({'phase':progress['phase'], 'endpoint':path,
                                        'seconds':management_call(path)})
-                assert request(exact_body(1024, f'mixed-{turn}-alive'), keys[2])['status'] == 200
+                alive = request(exact_body(1024, f'mixed-{turn}-alive'), keys[2])
+                assert alive['status'] == 200
                 output_release.set()
                 generated = generation.result(timeout=40)
                 edit = editing.result(timeout=40)
                 assert generated['status'] == 200 and edit['status'] == 200 and edit['cancelled']
                 results.extend([generated, edit])
                 release.set()
-                assert held.result(timeout=40)['status'] == 200
+                large = held.result(timeout=40)
+                assert large['status'] == 200
+                results.extend([alive, large])
                 release.clear()
                 # Disconnect after confirmed dispatch, before provider result. Its unknown
                 # responsibility must survive local memory/socket reclamation.
                 cancelled_name = f'mixed-{turn}-cancel-hold'
                 cancelled = http.client.HTTPConnection('127.0.0.1', ports['data'], timeout=20)
+                cancel_started = time.monotonic()
                 try:
                     cancelled.request('POST', '/v1/responses', exact_body(64*MIB, cancelled_name),
                         {'Authorization':'Bearer '+keys[2], 'Content-Type':'application/json'})
                     until(lambda: any(row[0] == cancelled_name for row in calls))
                 finally: cancelled.close()
+                results.append({'status':None, 'cancelled':True,
+                                'dispatchSeconds':time.monotonic()-cancel_started})
                 time.sleep(.3)
                 release.set()
-                assert request(exact_body(32*MIB, f'mixed-{turn}-recovered'), keys[0])['status'] == 200
+                recovered = request(exact_body(32*MIB, f'mixed-{turn}-recovered'), keys[0])
+                assert recovered['status'] == 200
+                results.append(recovered)
                 phase(f'round-{turn+1}-recovery')
                 time.sleep(idle_seconds)
         assert not failures, 'Management API failed during mixed load'
         with guard:
             assert len(calls) == len(seen) == 30, 'Unexpected dispatch count'
+        assert len(results) == len(calls)
         report = {'rounds':3, 'providerCalls':len(calls), 'expectedCalls':30,
+                  'completedRequests':sum(row['status'] == 200 and not row['cancelled'] for row in results),
+                  'cancelledRequests':sum(row['cancelled'] for row in results),
+                  'failedRequests':sum(row['status'] != 200 and not row['cancelled'] for row in results),
                   'management':management, 'managementFailures':failures, 'operations':results,
                   'nativeImageBytes':expected_image_bytes, 'imageConcurrency':2, 'idleSecondsPerRound':idle_seconds,
                   'limitations':['HTTP upstream only; multiplexed lanes are separate verify_websocket.py evidence',
@@ -318,6 +336,7 @@ def worker(root, ports, idle_seconds):
         if monitor_thread: monitor_thread.join(8)
         provider.shutdown(); provider.server_close(); owner.join(5)
         assert not owner.is_alive()
+        phase(progress['phase'])
 
 
 def configuration():
@@ -385,7 +404,8 @@ def container_evidence(identifier):
 
 
 def orchestrate(args):
-    assert platform.system() == 'Linux' and platform.machine() in ('x86_64','amd64'), 'Native Linux amd64 required'
+    if not args.emulated:
+        assert platform.system() == 'Linux' and platform.machine() in ('x86_64','amd64'), 'Native Linux amd64 required'
     run = capacity.run
     output = args.output.resolve()
     assert not output.exists(), 'Refuse overwriting evidence'
@@ -394,7 +414,11 @@ def orchestrate(args):
     info = json.loads(run(['docker','info','--format','{{json .}}']).stdout)
     assert runtime['Architecture'] == harness['Architecture'] == 'amd64'
     assert runtime['Os'] == harness['Os'] == 'linux'
-    assert info['Architecture'] in ('x86_64','amd64')
+    if args.emulated:
+        assert info['Architecture'] in ('arm64', 'aarch64'), 'An arm64 engine is required for this emulation probe'
+    else:
+        assert info['Architecture'] in ('x86_64','amd64')
+    platform_label = 'emulated-linux-amd64' if args.emulated else 'native-linux-amd64'
     identifier = uuid.uuid4().hex
     volume = 'codexone-capacity-'+identifier
     worker_id = gateway_id = None
@@ -412,14 +436,14 @@ def orchestrate(args):
                 os.chown(root,uid,gid)
             try:
                 run(['docker','volume','create','--label','codexone.capacity='+identifier,volume])
-                run(['docker','run','--rm','--network','none','--read-only','--user','0:0',
+                run(['docker','run','--rm','--platform','linux/amd64','--network','none','--read-only','--user','0:0',
                      '--label','codexone.capacity='+identifier,'--memory','64m','--memory-swap','64m',
                      '--pids-limit','16','--cap-drop','ALL','--cap-add','CHOWN','--cap-add','FOWNER',
                      '--cap-add','DAC_OVERRIDE','--security-opt','no-new-privileges:true',
                      '--mount',f'type=volume,src={volume},dst=/var/lib/codexone,volume-nocopy',
                      '--entrypoint','sh',runtime['Id'],'-ec',
                      f'test -z "$(find /var/lib/codexone -mindepth 1 -maxdepth 1 -print -quit)"; chown {uid}:{gid} /var/lib/codexone; chmod 700 /var/lib/codexone'])
-                common = ['--read-only','--user',f'{uid}:{gid}','--cap-drop','ALL',
+                common = ['--platform','linux/amd64','--read-only','--user',f'{uid}:{gid}','--cap-drop','ALL',
                           '--security-opt','no-new-privileges:true','--cpus','1','--pids-limit','128',
                           '--label','codexone.capacity='+identifier]
                 worker_id = run(['docker','run','-d','--network','none',*common,
@@ -465,7 +489,7 @@ def orchestrate(args):
                 state = json.loads(run(['docker','inspect',gateway_id]).stdout)[0]['State']
                 assert state['ExitCode'] == 0 and not state['OOMKilled']
                 report.update(success=True, recoveryTailMedianRSSBytes=warmed_medians,
-                    containerEvidence={'worker':container_evidence(worker_id),'gateway':container_evidence(gateway_id)}, resources=series, ledger=rows, platform='native-linux-amd64',
+                    containerEvidence={'worker':container_evidence(worker_id),'gateway':container_evidence(gateway_id)}, resources=series, ledger=rows, platform=platform_label,
                     runtimeImageID=runtime['Id'], sourceRevision=runtime['Config']['Labels']['org.opencontainers.image.revision'],
                     harnessImageID=harness['Id'], harnessSHA256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     gatewayMemoryBytes=768*MIB, stimulusMemoryBytes=512*MIB,
@@ -474,16 +498,18 @@ def orchestrate(args):
                 assert (root/'admin').read_text() not in serialized and 'co1_' not in serialized
                 output.mkdir(parents=True,mode=0o700)
                 (output/'report.json').write_text(serialized+'\n')
-                print('PASS: native Linux mixed capacity; direct task/queue/lease snapshots remain unavailable',flush=True)
+                print(f'PASS: {platform_label} mixed workload; direct task/queue/lease snapshots remain unavailable',flush=True)
             except Exception:
                 failed_containers = {'worker':container_evidence(worker_id),
                                      'gateway':container_evidence(gateway_id)}
                 if not output.exists():
                     output.mkdir(parents=True,mode=0o700)
+                    progress_file = root/'progress.json'
+                    worker_progress = json.loads(progress_file.read_text()) if progress_file.exists() else {}
                     capacity.private_json(output/'report.json', {
-                        'success':False, 'platform':'native-linux-amd64',
+                        'success':False, 'platform':platform_label,
                         'containerEvidence':failed_containers,
-                        'resources':locals().get('series', []),
+                        'resources':locals().get('series', []), 'workerProgress':worker_progress,
                         'limitations':['Failure evidence only; no capacity acceptance claimed']})
                 if worker_id:
                     captured = run(['docker','logs',worker_id],ok=False)
@@ -529,6 +555,8 @@ def main():
     parser.add_argument('--image')
     parser.add_argument('--harness-image',default='codexone:v8-verification')
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--emulated',action='store_true',help='run a comparison on an arm64 engine without native acceptance')
+
     parser.add_argument('--binary',type=Path,help='macOS functional smoke only, one-second idle')
     args = parser.parse_args()
     if args.worker:

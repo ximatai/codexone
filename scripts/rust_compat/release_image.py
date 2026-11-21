@@ -10,6 +10,8 @@ from http.client import HTTPConnection
 import json
 from pathlib import Path
 import re
+import shutil
+import statistics
 import subprocess
 import tarfile
 import tempfile
@@ -40,6 +42,7 @@ def exercise():
                     self.server.active -= 1
 
     def turn(index):
+        started = time.monotonic()
         with closing(HTTPConnection("127.0.0.1", DATA_PORT, timeout=10)) as connection:
             body = json.dumps({
                 "model": "synthetic-text",
@@ -55,7 +58,7 @@ def exercise():
             require(response.status == 200, f"Responses HTTP {response.status}")
             document = json_object(response.read(131072), "Responses")
             require(document.get("status") == "completed", "Responses did not complete")
-            return document["id"]
+            return document["id"], time.monotonic() - started
 
     health({"data": DATA_PORT, "admin": ADMIN_PORT})
     with closing(HTTPConnection("127.0.0.1", ADMIN_PORT, timeout=5)) as connection:
@@ -72,12 +75,16 @@ def exercise():
         provider.active = provider.peak = 0
         started = time.monotonic()
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            ids = list(pool.map(turn, range(REQUESTS)))
+            completed = list(pool.map(turn, range(REQUESTS)))
         elapsed = time.monotonic() - started
+        ids, seconds = zip(*completed)
         require(len(set(ids)) == provider.calls == REQUESTS, "Responses were replayed or lost")
+        percentile95 = statistics.quantiles(seconds, n=100, method="inclusive")[94]
         require(provider.peak > 1, "Fixture did not exercise concurrent upstream requests")
-        return {"requests": REQUESTS, "clientWorkers": WORKERS,
-                "peakConcurrentUpstream": provider.peak, "workloadSeconds": round(elapsed, 3)}
+        return {"requests": REQUESTS, "successfulRequests": len(ids), "failedRequests": REQUESTS - len(ids),
+                "clientWorkers": WORKERS, "peakConcurrentUpstream": provider.peak,
+                "requestMedianSeconds": round(statistics.median(seconds), 3),
+                "requestP95Seconds": round(percentile95, 3), "workloadSeconds": round(elapsed, 3)}
 
 
 def docker(*args, data=None):
@@ -94,7 +101,7 @@ def image_sizes(image):
         with tarfile.open(archive) as bundle:
             manifests = json.load(bundle.extractfile("manifest.json"))
             require(len(manifests) == 1, "Expected a single image manifest")
-            stored = expanded = 0
+            stored = expanded = gzip_bytes = 0
             for name in manifests[0]["Layers"]:
                 size = bundle.getmember(name).size
                 stored += size
@@ -103,16 +110,21 @@ def image_sizes(image):
                     layer.seek(0)
                     require(signature != b"\x28\xb5\x2f\xfd", "Use gzip or uncompressed OCI layers")
                     if signature.startswith(b"\x1f\x8b"):
+                        gzip_bytes += size
                         with gzip.GzipFile(fileobj=layer) as decoded:
                             while chunk := decoded.read(1024 * 1024):
                                 expanded += len(chunk)
                     else:
                         expanded += size
+                        with tempfile.TemporaryFile(dir=directory) as encoded:
+                            with gzip.GzipFile(fileobj=encoded, mode="wb", compresslevel=6, mtime=0) as output:
+                                shutil.copyfileobj(layer, output, length=1024 * 1024)
+                            gzip_bytes += encoded.tell()
         return {"dockerArchiveBytes": archive.stat().st_size,
-                "storedLayerBytes": stored, "expandedLayerBytes": expanded}
+                "storedLayerBytes": stored, "gzipLayerBytes": gzip_bytes, "expandedLayerBytes": expanded}
 
 
-def verify(image, harness):
+def verify(image, harness, backend="rust"):
     candidate = json.loads(docker("image", "inspect", image))[0]
     harness_id = json.loads(docker("image", "inspect", harness))[0]["Id"]
     require((candidate["Os"], candidate["Architecture"], candidate["Config"]["User"]) ==
@@ -148,7 +160,7 @@ def verify(image, harness):
                              'test "$(id -u):$(id -g)" = 10001:10001; '
                              'test "$(stat -c %a:%u:%g .)" = 700:10001:10001; '
                              'test -s /etc/ssl/certs/ca-certificates.crt; '
-                             'test -n "$(find /opt/codexone/licenses/rust -type f -print -quit)"; '
+                             f'test -n "$(find /opt/codexone/licenses/{backend} -type f -print -quit)"; '
                              'test -n "$(find /opt/codexone/licenses/npm -type f -print -quit)"; '
                              'sqlite3 -version; getconf GNU_LIBC_VERSION; '
                              'cat /opt/release.json')
@@ -173,6 +185,16 @@ def verify(image, harness):
             time.sleep(0.05)
 
         startup = time.monotonic() - started
+        check = " && ".join(f"curl -fsS --max-time 2 http://127.0.0.1:{port}/health/ready >/dev/null"
+                            for port in (DATA_PORT, ADMIN_PORT))
+        while True:
+            result = subprocess.run(["docker", "exec", name, "sh", "-ec", check],
+                                    timeout=5, capture_output=True)
+            if result.returncode == 0:
+                break
+            require(time.monotonic() - started < 20, "Image did not become ready in 20 seconds")
+            time.sleep(0.05)
+        readiness = time.monotonic() - started
         baseline = int(docker("exec", name, "cat", "/sys/fs/cgroup/memory.current"))
         scripts = Path(__file__).resolve().parents[1]
         workload = json.loads(docker(
@@ -195,7 +217,7 @@ def verify(image, harness):
         return {**release, **workload, **image_sizes(image),
                 "engineArchitecture": docker("info", "--format", "{{.Architecture}}"),
                 "glibc": glibc, "maintenanceSQLite": sqlite.split()[0],
-                "runToLiveSeconds": round(startup, 3),
+                "runToLiveSeconds": round(startup, 3), "runToReadySeconds": round(readiness, 3),
                 "cgroupMemoryCurrentBeforeBytes": baseline, "cgroupMemoryPeakBytes": peak,
                 "cgroupMemoryCurrentAfterBytes": idle}
     finally:
@@ -206,13 +228,14 @@ def verify(image, harness):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", help="already loaded amd64 runtime")
+    parser.add_argument("--backend", choices=("rust", "swift"), default="rust")
     parser.add_argument("--harness-image", help="already loaded image with Python 3")
     parser.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.inside:
         report = exercise()
     elif args.image and args.harness_image:
-        report = verify(args.image, args.harness_image)
+        report = verify(args.image, args.harness_image, args.backend)
     else:
         parser.error("--image and --harness-image are required")
     print(json.dumps(report, indent=2))

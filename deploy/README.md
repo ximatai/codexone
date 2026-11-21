@@ -17,7 +17,7 @@ docker buildx build --platform linux/amd64 --load --provenance=false \
   --build-arg VERSION=0.0.0-dev -f deploy/Dockerfile -t codexone:rust-candidate .
 ```
 
-以下检查使用已经加载的候选和 Python 镜像。网关在专用回环网络、只读根、768 MiB 内存和 128 PID 限制下运行；单 CPU 配额用于重复测量。检查镜像元数据、非 root 文件权限、SPA、健康探针、并发 HTTP、SIGTERM、SQLite 结算和离线备份校验。内存来自 Linux cgroup v2，启动时间包含 Docker 启动和主动探测开销。
+以下检查使用已经加载的候选和 Python 镜像。网关在专用回环网络、只读根、768 MiB 内存和 128 PID 限制下运行；单 CPU 配额用于重复测量。检查镜像元数据、非 root 文件权限、SPA、健康探针、并发 HTTP、SIGTERM、SQLite 结算和离线备份校验。内存来自 Linux cgroup v2。启动时间包含 Docker 启动和针对 liveness、readiness 的主动探测开销。附带请求中位数和 p95。用 `--backend swift` 对同版 Swift 镜像运行同一检查。
 
 ```sh
 harness=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
@@ -25,7 +25,7 @@ docker pull "$harness"
 python3 scripts/rust_compat/release_image.py --image codexone:rust-candidate --harness-image "$harness"
 ```
 
-计时复用同一构建命令、构建器与参数。可用新建 BuildKit 构建器测冷构建，再原样重跑测热构建，记录基础镜像下载是否计入。脚本另报 `docker save` 归档字节、各层存储字节和解压后的层字节，支持 gzip 或未压缩归档层。候选验收还需原生 Linux 混合容量、完整协议、Compose 安装及双向切换证据。[Rust 兼容工作](../docs/changes/rust-backend/tasks.md)记录进度。
+计时复用同一构建命令、构建器与参数。可用新建 BuildKit 构建器测冷构建，再原样重跑测热构建，记录基础镜像下载是否计入。脚本另报 `docker save` 归档、存储层、gzip 层和解压层的字节数。若 Docker 导出了未压缩的层，脚本用 gzip 级别 6 计算每层的压缩体积。候选验收还需原生 Linux 混合容量、完整协议、Compose 安装及双向切换证据。[Rust 兼容工作](../docs/changes/rust-backend/tasks.md)记录进度。
 
 ## 相关文档
 
