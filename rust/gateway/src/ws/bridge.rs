@@ -45,7 +45,6 @@ impl BridgeRequest {
         deadline: tokio::time::Instant,
         budget: websocket::ExecutionBudget,
     ) -> Result<Option<Self>, ProtocolError> {
-        request.validate_contract(connector.contract, false)?;
         let states = headers::values(incoming, "x-codex-turn-state");
         let turn_state = protocol::request_turn_state(
             &states,
@@ -66,17 +65,12 @@ impl BridgeRequest {
             .is_some_and(|id| *id != protocol::JsonValue::Null);
         let frame = websocket::create_frame(request.clone(), connector.contract, "", turn_state)?;
         let size = frame.len();
-        if size > websocket::WS_ROUTING_BYTES {
-            super::record_size(
-                if continuation {
-                    SizePath::Continuation
-                } else {
-                    SizePath::Http
-                },
-                size,
-            );
+        if continuation && size > websocket::WS_ROUTING_BYTES {
+            super::record_size(SizePath::Continuation, size);
         }
-        match websocket::bridge_route(frame, continuation)? {
+        let route = websocket::bridge_route(frame, continuation)?;
+        request.validate_contract(connector.contract, false)?;
+        match route {
             websocket::BridgeRoute::WebSocket(frame) => Ok(Some(Self {
                 connector: connector.clone(),
                 provider: Provider::default(),
@@ -91,7 +85,10 @@ impl BridgeRequest {
                     cancellation: websocket::CancellationToken::new(),
                 },
             })),
-            websocket::BridgeRoute::Http => Ok(None),
+            websocket::BridgeRoute::Http => {
+                super::record_size(SizePath::Http, size);
+                Ok(None)
+            }
         }
     }
     pub fn authorize(
