@@ -4,7 +4,7 @@ ARG SWIFT_RUNTIME_IMAGE=swift:6.4.1-noble-slim@sha256:46c3f2b7b5f9ad083a941af264
 ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
 ARG RUST_BUILD_IMAGE=rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950
 ARG RUST_RUNTIME_IMAGE=ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
-ARG CODEXONE_BACKEND=swift
+ARG CODEXONE_BACKEND=rust
 # Optional pinned dependency mirrors: --build-context swiftpm-mirrors=<dir of OWNER/REPO.git>.
 # Empty by default; Package.resolved revisions still select the exact sources.
 FROM scratch AS swiftpm-mirrors
@@ -38,12 +38,14 @@ RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources 
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src"
 WORKDIR /build
 
-FROM verification-tools AS backend
+FROM verification-tools AS swift-build
 COPY Package.swift Package.resolved ./
 COPY Sources/ Sources/
 COPY Tests/ Tests/
 ARG BUILD_JOBS=1
 ARG SWIFT_BATCH_LIMIT=1
+
+FROM swift-build AS backend
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     --mount=type=bind,from=swiftpm-mirrors,target=/mirrors \
     if [ -n "$(ls -A /mirrors)" ]; then export GIT_CONFIG_COUNT=2 \
@@ -57,7 +59,7 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
     && find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
        -exec cp --parents --target-directory=/output/licenses -- {} +
 
-FROM backend AS verification-binaries
+FROM swift-build AS swift-probe
 # Test-only fixture executable; it is never copied into the runtime image.
 RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/build/.build \
     --mount=type=bind,from=swiftpm-mirrors,target=/mirrors \
@@ -66,12 +68,10 @@ RUN --mount=type=cache,id=codexone-swift64-amd64-release,sharing=locked,target=/
       GIT_CONFIG_KEY_1=safe.directory GIT_CONFIG_VALUE_1='*'; fi \
     && swift build --force-resolved-versions --build-system native -c release --product ExecutionProbe -j ${BUILD_JOBS} \
       -Xswiftc -driver-batch-size-limit -Xswiftc ${SWIFT_BATCH_LIMIT} \
-    && cp .build/release/ExecutionProbe /output/ExecutionProbe
+    && mkdir /output && cp .build/release/ExecutionProbe /output/ExecutionProbe
 
-FROM scratch AS verification-export
-COPY --from=verification-binaries /output/codexone /output/ExecutionProbe /
-
-FROM verification-binaries AS verification
+FROM backend AS verification
+COPY --from=swift-probe /output/ExecutionProbe /output/ExecutionProbe
 COPY scripts/ /build/scripts/
 RUN --network=none python3 scripts/verify_protocol.py --binary /output/codexone \
     && python3 scripts/verify_websocket.py --binary /output/codexone \
@@ -122,6 +122,11 @@ RUN mv /output/licenses /output/swift-licenses \
 COPY deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt /output/licenses/swift/BoringSSL-LICENSE.txt
 
 FROM backend-${CODEXONE_BACKEND} AS selected-backend
+
+FROM scratch AS verification-export
+COPY --from=selected-backend /output/codexone /
+COPY --from=swift-probe /output/ExecutionProbe /
+
 FROM ${SWIFT_RUNTIME_IMAGE} AS runtime-base-swift
 FROM ${RUST_RUNTIME_IMAGE} AS runtime-base-rust
 FROM runtime-base-${CODEXONE_BACKEND} AS runtime-files
@@ -147,12 +152,14 @@ COPY --from=runtime-files /runtime-root/ /
 SHELL ["/bin/sh", "-c"]
 ARG SOURCE_REVISION
 ARG VERSION=0.0.0-dev
+ARG CODEXONE_BACKEND
 LABEL org.opencontainers.image.title="CodexOne" \
       org.opencontainers.image.source="https://github.com/ximatai/codexone" \
       org.opencontainers.image.description="Personal self-hosted gateway for subscription accounts and device keys" \
       org.opencontainers.image.version=${VERSION} \
       org.opencontainers.image.revision=${SOURCE_REVISION} \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      net.ximatai.codexone.backend=${CODEXONE_BACKEND}
 COPY --from=selected-backend /output/codexone /usr/local/bin/codexone
 RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
     && test "${#SOURCE_REVISION}" = 40 \

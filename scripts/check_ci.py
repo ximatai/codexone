@@ -25,6 +25,14 @@ def check_release(release, dockerfile, tls, backend_scripts):
     assert re.search(r'^    needs: verify$', jobs['publish'], re.M), 'Publish must depend on the gate'
     for name in ('publish', 'release'):
         assert "if: github.event_name == 'push'" in jobs[name], 'Dry-runs must never publish'
+    assert re.search(r'^ARG CODEXONE_BACKEND=rust$', dockerfile, re.M), 'Docker builds must default to Rust'
+    assert '''FROM scratch AS verification-export
+COPY --from=selected-backend /output/codexone /
+COPY --from=swift-probe /output/ExecutionProbe /''' in dockerfile, (
+        'Extract the selected gateway and the separate Swift fixture')
+    assert 'CODEXONE_BACKEND=' not in jobs['build'], 'Release must exercise the default backend'
+    assert '''test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "net.ximatai.codexone.backend"}}')" = rust''' in jobs['build'], (
+        'Check the candidate backend before exporting')
     assert 'shard: [1/4, 2/4, 3/4, 4/4]' in jobs['backend-scripts'], 'Release must run all four shards'
     assert 'suite: [tls, installation, capacity]' in jobs['image-checks'], 'Release must run TLS, installation and mixed capacity'
     assert 'scripts/verify_mixed_capacity.py --image' in jobs['image-checks'], 'Run capacity against the exact candidate image'
@@ -35,7 +43,7 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
-    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'"
+    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}' --rust-release"
     assert shard_command in {line.strip() for line in shards.splitlines()}, 'Use the complete shard entry point'
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')

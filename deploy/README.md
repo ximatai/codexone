@@ -8,12 +8,12 @@ WSS 断开沿用最多 10 秒的终态续读；发版 TLS 验证同时检查定�
 
 ## Rust 候选镜像
 
-在干净的 checkout 构建 Linux amd64 候选。使用 `CODEXONE_BACKEND=rust` 选择 Rust，未指定时使用 Swift。候选复用同一前端、Ubuntu 24.04 glibc 运行根装配、系统 CA、维护工具、UID/GID 10001 和 liveness 探针。Dockerfile 中的 Rust 编译器和 Ubuntu 基础镜像均锁定 digest，Cargo 依赖来自网关 `Cargo.lock`。Rust HTTP 客户端使用它所锁定的 WebPKI 信任根，系统 CA 供镜像内 `curl` 等工具使用。
+在干净的 checkout 构建 Linux amd64 候选。Dockerfile 和 Release 默认构建 Rust。过渡期间可用 `--build-arg CODEXONE_BACKEND=swift` 构建同源码的 Swift 镜像。候选复用同一前端、Ubuntu 24.04 glibc 运行根装配、系统 CA、维护工具、UID/GID 10001 和 liveness 探针。Dockerfile 中的 Rust 编译器和 Ubuntu 基础镜像均锁定 digest，Cargo 依赖来自网关 `Cargo.lock`。Rust HTTP 客户端使用它所锁定的 WebPKI 信任根，系统 CA 供镜像内 `curl` 等工具使用。
 
 ```sh
 revision="$(git rev-parse HEAD)"
 docker buildx build --platform linux/amd64 --load --provenance=false \
-  --build-arg CODEXONE_BACKEND=rust --build-arg SOURCE_REVISION="$revision" \
+  --build-arg SOURCE_REVISION="$revision" \
   --build-arg VERSION=0.0.0-dev -f deploy/Dockerfile -t codexone:rust-candidate .
 ```
 

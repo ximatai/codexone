@@ -87,6 +87,8 @@ Restart Codex, start a new session, and send a message. If the request appears u
 
 ## Deploy on your own server (HTTPS)
 
+Linux amd64 images built from current source default to Rust. Rust releases use the existing GHCR repository and Compose installation commands. Choose a version from its release notes, or [build from source](docs/guide/linux-installation.md#从源码构建).
+
 These steps deploy the current release, [v0.26.9](https://github.com/ximatai/codexone/releases/tag/v0.26.9), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
 ### 0. Prerequisites

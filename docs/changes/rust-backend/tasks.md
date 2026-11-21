@@ -26,6 +26,14 @@
 - [ ] 独立发布镜像，原生 Linux 混合容量与双向切换演练，报告构建、体积、启动和运行资源。
   - [Rust 候选构建与合成镜像检查](../../../deploy/README.md#rust-候选镜像)可用于集成后复跑，已取得下列 amd64 仿真结果。
 
+## 默认镜像与发布门禁
+
+- [x] Dockerfile 和 Release 默认选择 Rust。Compose 继续固定到不可变镜像引用，Swift 过渡镜像通过显式构建参数选择。
+- [x] Release 从候选镜像提取 Rust 二进制并与优化导出逐字节比对。四分片、TLS、安装与容量继续组成发布门禁，Swift 专用探针留作独立夹具。
+- [x] 核对发布策略、工作流语法、分片清单、文档与安装器静态验证。
+- [ ] 在隔离环境构建并安装无后端参数的 Rust 镜像及显式 Swift 镜像，检查 v19 原卷切换。
+- [ ] 在原生 Linux amd64 跑整合提交的完整 Release dry-run，核对本次归档、分片与容量证据。
+
 ## Linux amd64 候选仿真实测
 
 2026-11-21 在 macOS arm64 的 Docker Desktop 4.100.0 上构建并运行 Linux amd64 候选。Docker VM 提供 14 vCPU 和约 16 GiB 内存，使用 BuildKit 0.34.2 与两个 Cargo 构建任务。镜像源码为 `50a2e4696707bd38eb47bda1dce5e2b3e5a05477`，本地 manifest 为 `sha256:8744bd7804641566879e79f84c95866b63343417c51abbd13f322c4f163841ab`，schema v19。镜像内 glibc 为 2.39，维护工具 SQLite 为 3.45.1。

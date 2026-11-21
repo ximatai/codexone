@@ -218,11 +218,14 @@ def verify_backend_licenses(container, backend):
 
 
 def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None,
-                   incompatible_schema=6, backend='swift'):
+                   incompatible_schema=6, backend='rust'):
     assert sys.platform == 'linux', 'Actual OCI checks require a local Linux Docker Engine'
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
     assert identifier['Config']['User'] == '10001:10001'
+    backend_label = identifier['Config']['Labels'].get('net.ximatai.codexone.backend')
+    if backend_label is not None:
+        assert backend_label == backend
     assert re.fullmatch('[0-9a-f]{40}', identifier['Config']['Labels']['org.opencontainers.image.revision'])
     with tempfile.TemporaryDirectory(prefix='codexone-oci-') as temporary:
         root = Path(temporary) / 'install'
@@ -676,7 +679,7 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--incompatible-schema', type=int, choices=[6, 7, 8, 9, 10, 11, 12], default=6); parser.add_argument('--browser-output', type=Path)
-    parser.add_argument('--backend', choices=('swift', 'rust'), default='swift')
+    parser.add_argument('--backend', choices=('swift', 'rust'), default='rust')
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
     if args.browser_output: assert args.browser, '--browser-output requires --browser'

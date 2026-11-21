@@ -97,7 +97,7 @@ jobs:
               runtime_cache_to+=(--cache-to "type=local,dest=$RUNNER_TEMP/release-buildkit-next/runtime,mode=max,ignore-error=true")
             fi
           fi
-          # Export only executables, never verification RUN layers or the SDK image.
+          # Export the selected gateway and the Swift-only fixture, without verification RUN layers.
           docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
             "${cache_from[@]}" "${optimized_cache_to[@]}" --target verification-export \
             --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
@@ -107,13 +107,14 @@ jobs:
             --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
             --build-arg BUILD_JOBS=2 --build-arg SOURCE_REVISION="$REVISION" \
             --build-arg VERSION="$VERSION" -f deploy/Dockerfile -t codexone:candidate .
-      - name: Check candidate platform and source labels
+      - name: Check candidate platform, backend and source labels
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
           REVISION: ${{ steps.metadata.outputs.revision }}
         run: |
           docker image inspect codexone:candidate --format '{{.Id}}' > artifacts/image-id.txt
           test "$(docker image inspect codexone:candidate --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "net.ximatai.codexone.backend"}}')" = rust
           test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$REVISION"
           test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
       - name: Export candidate image, optimized binaries, source and licenses
@@ -130,7 +131,7 @@ jobs:
           docker cp "$container:/usr/local/bin/codexone" binaries/codexone
           cp optimized-output/ExecutionProbe binaries/ExecutionProbe
           cmp binaries/codexone optimized-output/codexone
-          # Publish only the digest: the executable needs the image's Swift runtime.
+          # Publish the digest of the executable shipped inside the image.
           sha256sum binaries/codexone | sed 's|binaries/codexone|codexone-linux-amd64|' > artifacts/binary-sha256.txt
           tar -czf binaries/backend-binaries.tar.gz -C binaries codexone ExecutionProbe
           printf 'binaries_archive_sha256=%s\n' "$(sha256sum binaries/backend-binaries.tar.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
@@ -221,7 +222,7 @@ jobs:
             --env PYTHONDONTWRITEBYTECODE=1 --env CODEXONE_BACKEND_BIN_DIR=/binaries \
             --mount "type=bind,src=$PWD,dst=/build,readonly" \
             --mount "type=bind,src=$PWD/binaries,dst=/binaries,readonly" \
-            codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'
+            codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}' --rust-release
   image-checks:
     needs: build
     runs-on: ubuntu-24.04
@@ -288,7 +289,7 @@ jobs:
           digest-mismatch: error
           name: optimized-backend-binaries
           path: binaries
-      - name: Verify combined live overview and slow viewers under 768 MiB
+      - name: Verify Swift fixture for combined live overview and slow viewers under 768 MiB
         if: matrix.suite == 'capacity'
         env:
           BINARIES_ARCHIVE_SHA256: ${{ needs.build.outputs.binaries_archive_sha256 }}

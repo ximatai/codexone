@@ -11,3 +11,9 @@ Rust 镜像通过显式构建参数选择 Linux amd64 候选，使用相同的 S
 ## 相关文档
 
 [交付与验收](tasks.md)
+
+## 默认安装与发行切换
+
+Linux amd64 源码构建省略 `CODEXONE_BACKEND` 时生成 Rust。常规 Release 的版本 tag 与手动 dry-run 走同一个 Rust 构建和验收路径。按照 [O06/O11](../../reference/specs/operations.md#o11发行与容量验收细则)，测试分片、实际 Compose 安装、Nginx TLS 与混合容量检查必须验证同次构建产物。发布仍以经验证的镜像归档为唯一输入。
+
+Compose 安装继续接收经核验的不可变镜像引用。切换不新增安装参数或 schema 版本；当前 v19 库沿用同一配置、密钥和卷。过渡期间可显式以 `CODEXONE_BACKEND=swift` 构建同源码镜像，停服并核对兼容性及备份后再按镜像回退流程切换。发布门禁要区分候选 Rust 进程的证据与 Swift 专用探针的证据。

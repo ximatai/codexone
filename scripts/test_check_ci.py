@@ -104,7 +104,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('needs: verify', 'needs: build'),
             ("if result != 'success':", "if result == 'failure':"),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
-            ("--backend-scripts '${{ matrix.shard }}'", "--backend-scripts '${{ matrix.shard }}' --pr"),
+            ("--backend-scripts '${{ matrix.shard }}' --rust-release", "--backend-scripts '${{ matrix.shard }}' --pr"),
             ('suite: [tls, installation, capacity]', 'suite: [tls, installation]'),
             ('scripts/verify_mixed_capacity.py --image', 'unchecked-capacity'),
             ('mixed-capacity-evidence', 'omitted-evidence'),
@@ -113,6 +113,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
             ('"$IMAGE_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
             ('cmp binaries/codexone optimized-output/codexone', 'true'),
+            ('-f deploy/Dockerfile -t codexone:candidate', '--build-arg CODEXONE_BACKEND=swift -f deploy/Dockerfile -t codexone:candidate'),
             ('--network none', ''),
             ('subject-digest: ${{ steps.push.outputs.digest }}', 'subject-digest: other'),
             ("if: github.event_name == 'push'", 'if: always()'),
@@ -125,6 +126,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn(old, self.release)
                 with self.assertRaises(AssertionError):
                     check_release(self.release.replace(old, new), self.dockerfile, self.tls, self.backend)
+
+    def test_reject_swift_as_the_docker_default(self):
+        with self.assertRaisesRegex(AssertionError, 'must default to Rust'):
+            check_release(self.release, self.dockerfile.replace('ARG CODEXONE_BACKEND=rust',
+                                                              'ARG CODEXONE_BACKEND=swift'),
+                          self.tls, self.backend)
 
     def test_reject_omitted_original_verification(self):
         with self.assertRaisesRegex(AssertionError, 'retain every Dockerfile verification'):

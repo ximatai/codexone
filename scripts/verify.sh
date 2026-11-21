@@ -17,9 +17,14 @@ backend_build() {
 backend_scripts() {
   python3 scripts/backend_shards.py --check
   local backend_selected backend_bin_dir
-  local shard_args=() smoke_args=()
+  local shard_args=() smoke_args=() snapshot_args=() client_args=() admin_live_args=()
   case "${2:-}" in
     --pr) shard_args+=(--pr); smoke_args+=(--smoke) ;;
+    --rust-release)
+      snapshot_args+=(--linked-paths)
+      client_args+=(--expect-provider-eof)
+      admin_live_args+=(--backend rust)
+      ;;
     "") ;;
     *) echo "Unknown backend scripts mode: $2" >&2; return 64 ;;
   esac
@@ -33,13 +38,13 @@ backend_scripts() {
   done
   run_check scripts/verify_storage_pressure.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_key_maintenance.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_snapshot_restore.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_snapshot_restore.py --binary "$backend_bin_dir/codexone" ${snapshot_args[@]+"${snapshot_args[@]}"}
   run_check scripts/verify_process.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_execution.py --binary "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_accounts.py --binary "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_gateway_diagnostics.py
-  run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone" ${client_args[@]+"${client_args[@]}"}
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone" ${smoke_args[@]+"${smoke_args[@]}"}
   run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone" ${smoke_args[@]+"${smoke_args[@]}"}
@@ -70,7 +75,7 @@ backend_scripts() {
   run_check scripts/verify_key_import.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_trial_provider.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_lite.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_admin_live.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
+  run_check scripts/verify_admin_live.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe" ${admin_live_args[@]+"${admin_live_args[@]}"}
   run_check scripts/verify_admin.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_admin_round2.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_admin_assets.py --binary "$backend_bin_dir/codexone"
@@ -120,5 +125,5 @@ case "${1:-all}" in
   --backend-scripts) backend_scripts "${2:?Expected shard i/4}" "${3:-}" ;;
   --web) frontend "${2:-}" ;;
   all) backend; frontend ;;
-  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
+  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr|--rust-release] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
 esac

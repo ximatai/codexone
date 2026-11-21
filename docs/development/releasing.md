@@ -15,7 +15,7 @@
 1. 在待合并变更中核对版本、锁文件、兼容性与升级注意，将 CHANGELOG 对应标题的“未发布”替换为发布日期，例如 `## 0.26.1（2026-11-01）`；预发布须有独立的 `0.26.2-rc.1` 段落。扫描分发材料中的凭证和私人数据。
 2. 合并到 `main`，确认常规 Verify 和受影响范围的验收通过。通常直接走下述 tag 发布步骤；需要提前验证发布产物或发布链路时，可选择 dry-run。
 3. 在 `main` 历史上的选定提交创建并推送标签，例如 `git tag -a v0.26.1 -m 'Release v0.26.1'`、`git push origin v0.26.1`。不要改写已有发布标签。标签工作流拒绝非法格式、非 main 历史的提交、缺失/重复版本段落或仍标为未发布的标题。
-4. 观察 Release 工作流：build job 一次构建优化二进制和携带 SOURCE_REVISION/VERSION 的 runtime；四分片验证候选镜像的二进制，同时独立执行本地真实 TLS 反代及实际 Compose 安装；最终 verify gate 要求全部成功，核对原始镜像归档 hash 后转交同一镜像，发布 job 登录 GHCR、推送并生成来源证明，最后独立 job 创建 GitHub Release。相同标签串行且不取消在途发布。
+4. 观察 Release 工作流：build job 使用默认 Rust 后端构建优化二进制和携带 SOURCE_REVISION/VERSION 的 runtime；四分片验证候选镜像的二进制，同时独立执行本地真实 TLS 反代及实际 Compose 安装；最终 verify gate 要求全部成功，核对原始镜像归档 hash 后转交同一镜像，发布 job 登录 GHCR、推送并生成来源证明，最后独立 job 创建 GitHub Release。相同标签串行且不取消在途发布。
 5. **维护者首次发布后须在 GHCR 包设置中确认可见性为 Public，并确认关联 `ximatai/codexone` 仓库。** 镜像带 source 标签，但不能由工作流定义推断包可见性或现有包权限；若历史包不允许 GITHUB_TOKEN 写入，须先在包设置授予仓库 Actions 访问。组织设置默认可能禁止公开包，须先由组织管理员在 Packages 设置中允许 Public。检查未登录客户端能拉取精确版本。
 6. 核验附件、镜像和来源证明，再更新 STATUS 的实际可用状态。GitHub Private vulnerability reporting、fork PR 首次贡献者审批及 Actions/包权限设置仍须维护者核对。
 
@@ -39,9 +39,9 @@ python3 scripts/check_docs.py
 
 ## 产物与核验
 
-build 先上传保留 1 天的 `candidate-release-files`、`candidate-linux-amd64-image` 和 `optimized-backend-binaries`；验证与传输均以 build 解析的 revision 和归档 hash 固定。四分片、TLS 与安装全部成功后，verify gate 再校验镜像归档并上传 `verified-release-files` 与 `verified-linux-amd64-image`，保留 7 天；后者包含可用 `docker load --input codexone-linux-amd64.tar.gz` 导入的镜像。tag 发布成功后上传 `published-release-files`，保留 30 天，并把以下文件附到 Release：
+build 先上传保留 1 天的 `candidate-release-files`、`candidate-linux-amd64-image` 和 `optimized-backend-binaries`；验证与传输均以 build 解析的 revision 和归档 hash 固定。四分片、TLS、安装及容量检查全部成功后，verify gate 再校验镜像归档并上传 `verified-release-files` 与 `verified-linux-amd64-image`，保留 7 天；后者包含可用 `docker load --input codexone-linux-amd64.tar.gz` 导入的镜像。tag 发布成功后上传 `published-release-files`，保留 30 天，并把以下文件附到 Release：
 
-- 带版本前缀的源码归档、镜像内二进制的 SHA-256（二进制依赖镜像内 Swift 运行时，不单独提供下载）、实际镜像 `/opt/codexone/licenses` 和项目 LICENSE/清单打包的 `licenses.tar.gz`。
+- 带版本前缀的源码归档、镜像内二进制的 SHA-256（随镜像交付）、实际镜像 `/opt/codexone/licenses` 和项目 LICENSE/清单打包的 `licenses.tar.gz`。
 - `image-id.txt`、`image-digest.txt`、`source-revision.txt`、`binary-sha256.txt`、`release.json` 与 `release-notes.md`。
 - `SHA256SUMS` 覆盖上述文件及 `image-archive-sha256.txt`，后者核对工作流单独保存的镜像归档。Release 不附巨型 Docker 镜像归档；`sha256sum --check SHA256SUMS` 只需 Release 的全部附件。
 
@@ -66,7 +66,7 @@ sha256sum --check binary-sha256.txt
 
 发布权限按 job 隔离：验证只有 contents read；镜像发布只有 contents read、packages write、id-token write、attestations write；创建 Release 的 job 才有 contents write。推送、证明、latest 更新或建 Release 失败可能留下部分远端产物；先检查失败日志和已发布 digest，再重跑失败 job。已有 Release 时 `gh release create` 会拒绝，不自动覆盖附件或改写标签。不同版本并行完成时 latest 指向最后成功执行更新的正式版，维护者应顺序发布正式版。
 
-发布前须核验[第三方许可](../../THIRD_PARTY_NOTICES.md)，保留 Swift、npm、系统库的 LICENSE/NOTICE/COPYING；独立二进制或 SPA 分发也须附适用许可。前端包版本仍是内部开发占位值，不表示已有公开版本。仅实际发布成功才更新公开可用状态。
+发布前须核验[第三方许可](../../THIRD_PARTY_NOTICES.md)，保留实际后端、npm、系统库的 LICENSE/NOTICE/COPYING；独立二进制或 SPA 分发也须附适用许可。前端包版本仍是内部开发占位值，不表示已有公开版本。仅实际发布成功才更新公开可用状态。
 
 ## 相关文档
 
@@ -74,4 +74,4 @@ sha256sum --check binary-sha256.txt
 
 ## 混合容量候选检查
 
-Release 的 capacity 分片复用已校验的候选镜像，分别限制合成刺激 512 MiB、网关 768 MiB，保存白名单资源/责任报告。它覆盖大输入、大结果、慢消费者、断连与三轮恢复；线程数不代表 Swift Task，队列与共享租约回落仍是再次请求成功的行为证据。详细边界及本机/原生 Linux 证据见[协议验证](../changes/protocol-alignment/verification.md)。新增检查失败时不得绕过发布汇合门禁。
+Release 的 capacity 分片复用已校验的候选镜像，分别限制合成刺激 512 MiB、网关 768 MiB，保存白名单资源/责任报告。Swift 专用慢读者探针继续作为独立检查，记录的是测试夹具的表现。混合容量检查覆盖大输入、大结果、慢消费者、断连与三轮恢复；线程数不代表 Swift Task，队列与共享租约回落仍是再次请求成功的行为证据。详细边界及本机/原生 Linux 证据见[协议验证](../changes/protocol-alignment/verification.md)。新增检查失败时不得绕过发布汇合门禁。
