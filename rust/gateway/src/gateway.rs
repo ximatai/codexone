@@ -403,6 +403,10 @@ async fn run_configured(
     });
     let access: Arc<[_]> = runtime.allowed_networks.into();
     let stopping = CancellationToken::new();
+    let mut maintenance = app.execution.clone().map(|execution| {
+        let stopping = stopping.clone();
+        tokio::spawn(async move { supervise_execution_maintenance(&execution, stopping).await })
+    });
     let overview_task = overview.map(|overview| {
         let app = app.clone();
         let stopping = stopping.clone();
@@ -429,7 +433,16 @@ async fn run_configured(
         _ = terminate.recv() => false,
         _ = interrupt.recv() => false,
         _ = listeners.join_next() => true,
-        _ = supervise_execution(app.execution.as_ref()) => true,
+        _ = async {
+            match &app.execution {
+                Some(execution) => execution.wait_until_failed().await,
+                None => std::future::pending().await,
+            }
+        } => true,
+        _ = async { maintenance.as_mut().expect("maintenance task").await }, if maintenance.is_some() => {
+            maintenance = None;
+            true
+        },
         _ = managed_tasks.join_next(), if !managed_tasks.is_empty() => true,
     };
 
@@ -443,6 +456,9 @@ async fn run_configured(
         managed.stop_quota();
     }
     stopping.cancel();
+    if let Some(task) = maintenance {
+        failed |= task.await.is_err();
+    }
     while let Some(result) = listeners.join_next().await {
         failed |= !matches!(result, Ok(Ok(())));
     }
@@ -529,24 +545,28 @@ fn initialize_store(directory: &Path, static_identity: bool) -> Result<Database,
     Ok(database)
 }
 
-async fn supervise_execution(execution: Option<&ExecutionService>) {
-    let Some(execution) = execution else {
-        return std::future::pending().await;
-    };
+async fn supervise_execution_maintenance(
+    execution: &ExecutionService,
+    stopping: CancellationToken,
+) {
     let mut storage = time::interval_at(
         time::Instant::now() + Duration::from_secs(30),
         Duration::from_secs(30),
     );
     storage.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    tokio::select! {
-        _ = execution.wait_until_failed() => {}
-        _ = async {
-            loop {
-                storage.tick().await;
+    let mut retention = time::Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            _ = stopping.cancelled() => return,
+            _ = storage.tick() => {
                 let _ = execution.maintain_storage().await;
-                let _ = execution.expire_unknown().await;
             }
-        } => {}
+            _ = time::sleep_until(retention) => {
+                let _ = execution.maintain_executions().await;
+                retention = time::Instant::now() + Duration::from_secs(60);
+            }
+        }
     }
 }
 

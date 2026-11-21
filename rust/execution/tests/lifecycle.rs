@@ -584,9 +584,9 @@ async fn failure_before_commit_or_during_settlement_never_loses_the_intent_barri
         Err(ExecutionError::Conflict)
     );
     fixture.advance(86_399);
-    assert_eq!(service.expire_unknown().await.unwrap(), 0);
+    assert_eq!(service.maintain_executions().await.unwrap(), 0);
     fixture.advance(1);
-    assert_eq!(service.expire_unknown().await.unwrap(), 1);
+    assert_eq!(service.maintain_executions().await.unwrap(), 1);
     assert_eq!(
         service.snapshot("interrupted").await.unwrap().state,
         State::ClosedUnknown

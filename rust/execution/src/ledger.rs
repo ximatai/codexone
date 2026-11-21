@@ -8,6 +8,7 @@ use crate::{AccountIdentity, ExecutionError as Error, Result};
 
 const HISTORY: i64 = 128;
 const MAINTENANCE_BATCH: i64 = 100;
+const DETAIL_RETENTION_SECONDS: i64 = 90 * DAY;
 
 pub(crate) fn record_unadmitted(
     tx: &Transaction<'_>,
@@ -387,7 +388,7 @@ fn audit_release(
     Ok(())
 }
 
-pub(crate) fn expire_unknown(tx: &Transaction<'_>, now: i64) -> Result<usize> {
+fn expire_unknown(tx: &Transaction<'_>, now: i64) -> Result<usize> {
     let before = now - DAY;
     let count = tx.execute(
         "UPDATE attempts SET state='settled', closed_unknown_at_epoch=?1 WHERE id IN (
@@ -400,6 +401,114 @@ pub(crate) fn expire_unknown(tx: &Transaction<'_>, now: i64) -> Result<usize> {
         audit_release(tx, count, before, now, "reconciliation_expired")?;
     }
     Ok(count)
+}
+
+pub(crate) fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize> {
+    let closed = expire_unknown(tx, now)?;
+    tx.execute(
+        "DELETE FROM bindings WHERE rowid IN (
+           SELECT rowid FROM bindings WHERE expires_at_epoch<=?1
+           ORDER BY expires_at_epoch,rowid LIMIT ?2
+         )",
+        params![now, MAINTENANCE_BATCH],
+    )?;
+    let cutoff = now - DETAIL_RETENTION_SECONDS;
+    tx.execute(
+        "DELETE FROM maintenance_events WHERE id IN (
+           SELECT id FROM maintenance_events WHERE action='release_unknown' AND at_epoch<?1
+           ORDER BY id LIMIT ?2
+         )",
+        params![cutoff, MAINTENANCE_BATCH],
+    )?;
+    tx.execute(
+        "DELETE FROM account_concurrency WHERE rowid IN (
+           SELECT rowid FROM account_concurrency WHERE at_epoch<?1 LIMIT ?2
+         )",
+        params![now - DAY, MAINTENANCE_BATCH],
+    )?;
+    let mut retired = tx.prepare_cached(
+        "SELECT id FROM attempts WHERE state='settled' AND created_at_epoch<?1
+         AND id NOT IN (SELECT attempt FROM bindings)
+         ORDER BY created_at_epoch,id LIMIT ?2",
+    )?;
+    let ids = retired
+        .query_map(params![cutoff, MAINTENANCE_BATCH], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut roll_up = tx.prepare_cached(ROLL_UP)?;
+    let mut evidence = tx.prepare_cached("DELETE FROM evidence WHERE attempt=?1")?;
+    let mut attempts = tx.prepare_cached("DELETE FROM attempts WHERE id=?1")?;
+    for id in ids {
+        roll_up.execute([&id])?;
+        evidence.execute([&id])?;
+        attempts.execute([&id])?;
+    }
+    Ok(closed)
+}
+
+// Preserve the v19 UTC buckets and the distinction between missing measurements and zero.
+const ROLL_UP: &str = "
+    INSERT INTO usage_daily(
+        day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown,
+        requests,last_used_epoch,input_tokens,output_tokens,cached_tokens,images,estimated_micros,
+        image_input_tokens,image_output_tokens,image_input_text_tokens,image_input_image_tokens,
+        svg_input_tokens,svg_output_tokens,svg_reasoning_tokens,price_unknown
+    )
+    SELECT created_at_epoch/86400*86400,key_id,COALESCE(json_extract(admission_json,'$.model'),''),
+        COALESCE(json_extract(admission_json,'$.mode'),'generation'),
+        COALESCE(json_extract(outcome_json,'$.kind'),''),
+        COALESCE(json_extract(outcome_json,'$.failure'),''),
+        COALESCE(json_extract(usage_json,'$.completeness'),''),closed_unknown_at_epoch IS NOT NULL,
+        1,created_at_epoch,
+        CASE WHEN json_extract(usage_json,'$.nativeImages') IS NOT 1 THEN json_extract(usage_json,'$.inputTokens') END,
+        CASE WHEN json_extract(usage_json,'$.nativeImages') IS NOT 1 THEN json_extract(usage_json,'$.outputTokens') END,
+        CASE WHEN json_extract(usage_json,'$.nativeImages') IS NOT 1 THEN json_extract(usage_json,'$.cachedTokens') END,
+        json_extract(usage_json,'$.images'),
+        CASE
+            WHEN json_extract(usage_json,'$.priceCompleteness')='unavailable' THEN NULL
+            WHEN json_extract(usage_json,'$.nativeImages')=1
+                AND json_extract(usage_json,'$.imageInputTokens') IS NULL
+                AND json_extract(usage_json,'$.imageOutputTokens') IS NULL
+                AND json_extract(usage_json,'$.svgInputTokens') IS NULL
+                AND json_extract(usage_json,'$.svgOutputTokens') IS NULL THEN NULL
+            ELSE json_extract(usage_json,'$.estimatedMicros')
+        END,
+        json_extract(usage_json,'$.imageInputTokens'),json_extract(usage_json,'$.imageOutputTokens'),
+        json_extract(usage_json,'$.imageInputTextTokens'),json_extract(usage_json,'$.imageInputImageTokens'),
+        json_extract(usage_json,'$.svgInputTokens'),json_extract(usage_json,'$.svgOutputTokens'),
+        json_extract(usage_json,'$.svgReasoningTokens'),
+        CASE WHEN COALESCE(json_extract(usage_json,'$.priceCompleteness'),
+            json_extract(usage_json,'$.completeness'),'unavailable')='complete' THEN 0 ELSE 1 END
+    FROM attempts WHERE id=?1
+    ON CONFLICT(day_epoch,key_id,model,mode,outcome,failure,completeness,usage_unknown) DO UPDATE SET
+        requests=requests+excluded.requests,
+        last_used_epoch=MAX(last_used_epoch,excluded.last_used_epoch),
+        input_tokens=COALESCE(input_tokens+excluded.input_tokens,input_tokens,excluded.input_tokens),
+        output_tokens=COALESCE(output_tokens+excluded.output_tokens,output_tokens,excluded.output_tokens),
+        cached_tokens=COALESCE(cached_tokens+excluded.cached_tokens,cached_tokens,excluded.cached_tokens),
+        images=COALESCE(images+excluded.images,images,excluded.images),
+        estimated_micros=COALESCE(estimated_micros+excluded.estimated_micros,estimated_micros,excluded.estimated_micros),
+        image_input_tokens=COALESCE(image_input_tokens+excluded.image_input_tokens,image_input_tokens,excluded.image_input_tokens),
+        image_output_tokens=COALESCE(image_output_tokens+excluded.image_output_tokens,image_output_tokens,excluded.image_output_tokens),
+        image_input_text_tokens=COALESCE(image_input_text_tokens+excluded.image_input_text_tokens,image_input_text_tokens,excluded.image_input_text_tokens),
+        image_input_image_tokens=COALESCE(image_input_image_tokens+excluded.image_input_image_tokens,image_input_image_tokens,excluded.image_input_image_tokens),
+        svg_input_tokens=COALESCE(svg_input_tokens+excluded.svg_input_tokens,svg_input_tokens,excluded.svg_input_tokens),
+        svg_output_tokens=COALESCE(svg_output_tokens+excluded.svg_output_tokens,svg_output_tokens,excluded.svg_output_tokens),
+        svg_reasoning_tokens=COALESCE(svg_reasoning_tokens+excluded.svg_reasoning_tokens,svg_reasoning_tokens,excluded.svg_reasoning_tokens),
+        price_unknown=price_unknown+excluded.price_unknown
+";
+
+pub(crate) fn reclaim_free_pages(db: &Connection) -> Result<()> {
+    let free: i64 = db.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+    let total: i64 = db.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    if free > 0 && free * 20 >= total {
+        let mut vacuum = db.prepare("PRAGMA incremental_vacuum(32)")?;
+        let mut pages = vacuum.query([])?;
+        // SQLite returns one row for each reclaimed page.
+        while pages.next()?.is_some() {}
+    }
+    Ok(())
 }
 
 pub(crate) fn release_unknown(

@@ -1132,11 +1132,17 @@ impl ExecutionService {
         .await
     }
 
-    /// Close one bounded batch of expired unknowns. Schedule periodically from the runtime.
-    pub async fn expire_unknown(&self) -> Result<usize> {
+    /// Run one optional retention batch. Returns the number of unknown executions closed.
+    pub async fn maintain_executions(&self) -> Result<usize> {
         self.command(false, |writer| {
             writer.reserve.check_optional()?;
-            writer.write(false, ledger::expire_unknown)
+            let closed = writer.write(false, ledger::maintain)?;
+            match writer.reserve.check_optional() {
+                Ok(()) => ledger::reclaim_free_pages(writer.db.connection())?,
+                Err(Error::StoragePressure) => {}
+                Err(error) => return Err(error),
+            }
+            Ok(closed)
         })
         .await
     }
