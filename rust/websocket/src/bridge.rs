@@ -170,13 +170,13 @@ impl Exchange {
                 Ok(packet) => packet,
                 Err(end) => return Err(interrupted(end)),
             };
-            let document = decode_event(packet.text.as_bytes()).map_err(protocol)?;
+            let document = decode_event(packet.event.as_bytes()).map_err(protocol)?;
             if document.get("stream_id").is_some() {
                 return Err(protocol(ProtocolError::new(502, "invalid_upstream_lane")));
             }
             let route = self
                 .turns
-                .observe(&document, packet.text.len())
+                .observe(&document, packet.event.len())
                 .map_err(protocol)?;
             if std::mem::take(
                 &mut self

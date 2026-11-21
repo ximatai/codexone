@@ -1,5 +1,6 @@
 use std::{
     future::{pending, ready},
+    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -10,16 +11,17 @@ use std::{
 use codexone_responses::{Contract, JsonValue, Mode, ProtocolError};
 use codexone_websocket::{
     Admitted, BridgeEvidence, BridgeFailure, BridgeOptions, BridgeRoute, CancellationToken,
-    ExecutionBudget, NativeApplication, NativeEnd, NativeEvidence, NativeFinish, NativeOptions,
-    PreparedCreate, Socket, SocketEnd, UpstreamHandshake, WS_ROUTING_BYTES, bridge, bridge_route,
-    create_frame, downstream_socket, native_frame, parse_create, serve_native, upgrade_response,
+    CapacityExhausted, ExecutionBudget, IngressBudget, IngressLease, NativeApplication, NativeEnd,
+    NativeEvidence, NativeFinish, NativeOptions, PreparedCreate, Socket, SocketEnd,
+    UpstreamHandshake, WS_ROUTING_BYTES, bridge, bridge_route, create_frame, downstream_socket,
+    native_frame, parse_create, serve_native, upgrade_response,
 };
 use futures_util::{SinkExt, StreamExt};
 use http::{HeaderMap, HeaderValue, Request, StatusCode};
 use tokio::{
     io::{DuplexStream, duplex},
     net::TcpListener,
-    sync::mpsc,
+    sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc},
     time::{Instant, timeout},
 };
 use tokio_tungstenite::{
@@ -405,12 +407,96 @@ async fn bridge_cancel_during_upload_and_silent_upload_deadline() {
     ));
 }
 
+#[derive(Clone)]
+struct SharedBudget {
+    semaphore: Arc<Semaphore>,
+    total: usize,
+    requests: Arc<Mutex<Vec<usize>>>,
+}
+
+impl SharedBudget {
+    fn new(total: usize) -> Arc<Self> {
+        Arc::new(Self {
+            semaphore: Arc::new(Semaphore::new(total)),
+            total,
+            requests: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+}
+
+impl IngressBudget for SharedBudget {
+    fn lease(&self) -> Box<dyn IngressLease> {
+        Box::new(SharedLease {
+            budget: self.clone(),
+            permit: None,
+        })
+    }
+}
+
+struct SharedLease {
+    budget: SharedBudget,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl IngressLease for SharedLease {
+    fn reserve_first(
+        &mut self,
+        bytes: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapacityExhausted>> + Send + '_>> {
+        self.budget.requests.lock().unwrap().push(bytes);
+        Box::pin(async move {
+            if bytes > self.budget.total {
+                return Err(CapacityExhausted);
+            }
+            self.permit = Some(
+                self.budget
+                    .semaphore
+                    .clone()
+                    .acquire_many_owned(bytes as u32)
+                    .await
+                    .map_err(|_| CapacityExhausted)?,
+            );
+            Ok(())
+        })
+    }
+
+    fn grow(&mut self, total_bytes: usize) -> Result<(), CapacityExhausted> {
+        let permit = self.permit.as_mut().expect("initial reservation");
+        let extra = self
+            .budget
+            .semaphore
+            .clone()
+            .try_acquire_many_owned((total_bytes - permit.num_permits()) as u32)
+            .map_err(|_| CapacityExhausted)?;
+        permit.merge(extra);
+        Ok(())
+    }
+}
+
+async fn until(mut condition: impl FnMut() -> bool) {
+    timeout(TEST_TIMEOUT, async {
+        while !condition() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[derive(Default)]
+struct BindingHold {
+    entered: Notify,
+    release: Notify,
+}
+
 #[derive(Default)]
 struct TestApp {
     provider: Mutex<Option<mpsc::UnboundedSender<WebSocketStream<DuplexStream>>>>,
     admissions: AtomicUsize,
     connects: AtomicUsize,
     observations: Mutex<Vec<(usize, String)>>,
+    terminal_usage: Mutex<Vec<(usize, i64)>>,
+    binding: Mutex<Option<Arc<BindingHold>>>,
     finished: Mutex<Vec<(usize, NativeFinish)>>,
 }
 
@@ -470,10 +556,27 @@ impl NativeApplication for TestApp {
                 .lock()
                 .unwrap()
                 .push((*attempt, member(document, "type").to_owned()));
+            if let Some(input) = document
+                .get("response")
+                .and_then(|response| response.get("usage"))
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(JsonValue::as_i64)
+            {
+                self.terminal_usage.lock().unwrap().push((*attempt, input));
+            }
         }
     }
 
-    async fn before_output(&self, _: &usize, _: &JsonValue) -> Result<(), ProtocolError> {
+    async fn before_output(&self, _: &usize, document: &JsonValue) -> Result<(), ProtocolError> {
+        if document.get("stream_id").and_then(JsonValue::as_str) == Some("alpha")
+            && member(document, "type") == "response.created"
+        {
+            let binding = self.binding.lock().unwrap().clone();
+            if let Some(binding) = binding {
+                binding.entered.notify_one();
+                binding.release.notified().await;
+            }
+        }
         Ok(())
     }
 
@@ -482,27 +585,37 @@ impl NativeApplication for TestApp {
     }
 }
 
-async fn native_client(
-    app: Arc<TestApp>,
-) -> (
+type NativeClient = (
     WebSocketStream<DuplexStream>,
     mpsc::UnboundedReceiver<WebSocketStream<DuplexStream>>,
     tokio::task::JoinHandle<NativeEnd>,
-) {
+);
+
+async fn native_client(app: Arc<TestApp>) -> NativeClient {
+    native_client_with(
+        app,
+        SharedBudget::new(72 * 1024 * 1024),
+        64 * 1024,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+async fn native_client_with(
+    app: Arc<TestApp>,
+    budget: Arc<SharedBudget>,
+    socket_capacity: usize,
+    cancel: CancellationToken,
+) -> NativeClient {
     let (tx, rx) = mpsc::unbounded_channel();
     *app.provider.lock().unwrap() = Some(tx);
-    let (client, server) = duplex(64 * 1024);
+    let (client, server) = duplex(socket_capacity);
     let client = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
-    let server = downstream_socket(server).await;
-    let task = tokio::spawn(async move {
-        serve_native(
-            server,
-            app.as_ref(),
-            NativeOptions::default(),
-            &CancellationToken::new(),
-        )
-        .await
-    });
+    let server = downstream_socket(server, budget);
+    let task =
+        tokio::spawn(
+            async move { serve_native(server, app, NativeOptions::default(), &cancel).await },
+        );
     (client, rx, task)
 }
 
@@ -911,4 +1024,490 @@ async fn saturated_lane_releases_queued_creates_without_admitting_them() {
     assert!(matches!(end, NativeEnd::Downstream(SocketEnd::Congested)));
     assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
     assert_eq!(app.finished.lock().unwrap().len(), 1);
+}
+
+fn masked_header(opcode: u8, length: usize) -> Vec<u8> {
+    let mut bytes = vec![opcode];
+    match length {
+        0..=125 => bytes.push(0x80 | length as u8),
+        126..=65_535 => {
+            bytes.push(0x80 | 126);
+            bytes.extend_from_slice(&(length as u16).to_be_bytes());
+        }
+        _ => {
+            bytes.push(0x80 | 127);
+            bytes.extend_from_slice(&(length as u64).to_be_bytes());
+        }
+    }
+    bytes.extend_from_slice(&[1, 2, 3, 4]);
+    bytes
+}
+
+async fn assert_ingress_rejection(
+    client: &mut WebSocketStream<DuplexStream>,
+    status: i64,
+    code: &str,
+) {
+    let reply = read_json(client).await;
+    assert_eq!(
+        reply.get("status").and_then(JsonValue::as_i64),
+        Some(status)
+    );
+    assert_eq!(member(reply.get("error").unwrap(), "code"), code);
+    if status == 503 {
+        assert_eq!(member(reply.get("headers").unwrap(), "retry-after"), "1");
+    }
+}
+
+#[tokio::test]
+async fn frame_header_reserves_shared_capacity_before_payload_and_releases_on_disconnect() {
+    use tokio::io::AsyncWriteExt;
+    let budget = SharedBudget::new(CREATE.len());
+    let first_app = Arc::new(TestApp::default());
+    let (mut first, _, first_task) = native_client_with(
+        first_app.clone(),
+        budget.clone(),
+        4096,
+        CancellationToken::new(),
+    )
+    .await;
+    first
+        .get_mut()
+        .write_all(&masked_header(0x81, CREATE.len()))
+        .await
+        .unwrap();
+    until(|| budget.semaphore.available_permits() == 0).await;
+    assert_eq!(first_app.admissions.load(Ordering::Relaxed), 0);
+
+    let app = Arc::new(TestApp::default());
+    let cancellation = CancellationToken::new();
+    let (mut second, mut provider, second_task) =
+        native_client_with(app.clone(), budget.clone(), 4096, cancellation.clone()).await;
+    second.send(text(CREATE)).await.unwrap();
+    until(|| budget.requests.lock().unwrap().len() == 2).await;
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 0);
+
+    drop(first);
+    timeout(TEST_TIMEOUT, first_task).await.unwrap().unwrap();
+    let mut provider = provider_ready(&mut provider).await;
+    assert_eq!(
+        member(&read_json(&mut provider).await, "type"),
+        "response.create"
+    );
+    assert_eq!(
+        budget.semaphore.available_permits(),
+        0,
+        "owned by dispatched turn"
+    );
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+
+    cancellation.cancel();
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, second_task).await.unwrap().unwrap(),
+        NativeEnd::Cancelled
+    ));
+    assert_eq!(budget.semaphore.available_permits(), CREATE.len());
+    assert_eq!(app.finished.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn pending_header_ticket_is_cancelled_on_eof_without_payload() {
+    use tokio::io::AsyncWriteExt;
+    let budget = SharedBudget::new(CREATE.len());
+    let http = budget
+        .semaphore
+        .clone()
+        .try_acquire_many_owned(CREATE.len() as u32)
+        .unwrap();
+    let app = Arc::new(TestApp::default());
+    let (mut client, _, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    client
+        .get_mut()
+        .write_all(&masked_header(0x81, CREATE.len()))
+        .await
+        .unwrap();
+    until(|| budget.requests.lock().unwrap().len() == 1).await;
+    drop(client);
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Downstream(SocketEnd::Eof)
+    ));
+    drop(http);
+    assert_eq!(budget.semaphore.available_permits(), CREATE.len());
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn failed_fragment_growth_discards_message_and_releases_shared_capacity() {
+    use tokio_tungstenite::tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
+    let budget = SharedBudget::new(CREATE.len());
+    let app = Arc::new(TestApp::default());
+    let (mut client, mut rx, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    let first = vec![b' '; CREATE.len() - 1];
+    client
+        .send(Message::Frame(Frame::message(
+            first,
+            OpCode::Data(Data::Text),
+            false,
+        )))
+        .await
+        .unwrap();
+    until(|| budget.semaphore.available_permits() == 1).await;
+    client
+        .send(Message::Frame(Frame::message(
+            b"  ".as_slice(),
+            OpCode::Data(Data::Continue),
+            false,
+        )))
+        .await
+        .unwrap();
+    assert_ingress_rejection(&mut client, 503, "capacity_exhausted").await;
+    assert_eq!(budget.semaphore.available_permits(), CREATE.len());
+
+    client
+        .send(Message::Ping(b"ping".as_slice().into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        read(&mut client).await,
+        Message::Pong(b"ping".as_slice().into())
+    );
+    client
+        .send(Message::Frame(Frame::message(
+            b"ignored".as_slice(),
+            OpCode::Data(Data::Continue),
+            true,
+        )))
+        .await
+        .unwrap();
+    client.send(text(CREATE)).await.unwrap();
+    let mut provider = provider_ready(&mut rx).await;
+    read(&mut provider).await;
+    provider.send(text(COMPLETED)).await.unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.completed"
+    );
+    client.close(None).await.unwrap();
+    assert!(matches!(read(&mut client).await, Message::Close(None)));
+    timeout(TEST_TIMEOUT, task).await.unwrap().unwrap();
+    assert_eq!(budget.semaphore.available_permits(), CREATE.len());
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn fragment_1024_is_accepted_and_1025_is_rejected_before_a_later_create() {
+    use tokio_tungstenite::tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
+    async fn fragmented(client: &mut WebSocketStream<DuplexStream>, count: usize) {
+        let (first, rest) = CREATE.split_at(1);
+        client
+            .send(Message::Frame(Frame::message(
+                first,
+                OpCode::Data(Data::Text),
+                false,
+            )))
+            .await
+            .unwrap();
+        for _ in 2..count {
+            client
+                .send(Message::Frame(Frame::message(
+                    b"".as_slice(),
+                    OpCode::Data(Data::Continue),
+                    false,
+                )))
+                .await
+                .unwrap();
+        }
+        client
+            .send(Message::Ping(b"tail".as_slice().into()))
+            .await
+            .unwrap();
+        assert_eq!(read(client).await, Message::Pong(b"tail".as_slice().into()));
+        client
+            .send(Message::Frame(Frame::message(
+                rest,
+                OpCode::Data(Data::Continue),
+                true,
+            )))
+            .await
+            .unwrap();
+    }
+
+    let budget = SharedBudget::new(CREATE.len());
+    let app = Arc::new(TestApp::default());
+    let (mut client, mut rx, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    fragmented(&mut client, 1024).await;
+    let mut provider = provider_ready(&mut rx).await;
+    read(&mut provider).await;
+    provider.send(text(COMPLETED)).await.unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.completed"
+    );
+
+    fragmented(&mut client, 1025).await;
+    assert_ingress_rejection(&mut client, 413, "request_too_large").await;
+    assert_eq!(budget.semaphore.available_permits(), CREATE.len());
+    client.send(text(CREATE)).await.unwrap();
+    read(&mut provider).await;
+    provider
+        .send(text(
+            r#"{"type":"response.completed","response":{"id":"after_refusal"}}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.completed"
+    );
+    client.close(None).await.unwrap();
+    timeout(TEST_TIMEOUT, task).await.unwrap().unwrap();
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+async fn oversized_declared_frame_is_rejected_before_lease_and_discarded_in_chunks() {
+    use tokio::io::AsyncWriteExt;
+    let limit = codexone_responses::MAX_REQUEST_BYTES;
+    let budget = SharedBudget::new(limit);
+    let app = Arc::new(TestApp::default());
+    let (mut client, mut rx, task) = native_client_with(
+        app.clone(),
+        budget.clone(),
+        64 * 1024,
+        CancellationToken::new(),
+    )
+    .await;
+    client
+        .get_mut()
+        .write_all(&masked_header(0x81, limit + 1))
+        .await
+        .unwrap();
+    assert_ingress_rejection(&mut client, 413, "request_too_large").await;
+    assert!(budget.requests.lock().unwrap().is_empty());
+    timeout(TEST_TIMEOUT, async {
+        let scratch = [0; 64 * 1024];
+        for _ in 0..(limit / scratch.len()) {
+            client.get_mut().write_all(&scratch).await.unwrap();
+        }
+        client.get_mut().write_all(&scratch[..1]).await.unwrap();
+    })
+    .await
+    .unwrap();
+    client.send(text(CREATE)).await.unwrap();
+    let mut provider = provider_ready(&mut rx).await;
+    read(&mut provider).await;
+    provider.send(text(COMPLETED)).await.unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.completed"
+    );
+    client.close(None).await.unwrap();
+    timeout(TEST_TIMEOUT, task).await.unwrap().unwrap();
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+}
+
+const ALPHA_CREATED: &str =
+    r#"{"type":"response.created","stream_id":"alpha","response":{"id":"resp_alpha"}}"#;
+const BETA_TERMINAL: &str = r#"{"type":"response.completed","stream_id":"beta","response":{"id":"resp_beta","usage":{"input_tokens":11,"output_tokens":4}}}"#;
+
+async fn start_two_lanes(
+    client: &mut WebSocketStream<DuplexStream>,
+    rx: &mut mpsc::UnboundedReceiver<WebSocketStream<DuplexStream>>,
+) -> WebSocketStream<DuplexStream> {
+    client
+        .send(text(
+            r#"{"type":"response.create","model":"example","stream_id":"alpha","input":[]}"#,
+        ))
+        .await
+        .unwrap();
+    let mut provider = provider_ready(rx).await;
+    assert_eq!(
+        member(&read_json(&mut provider).await, "stream_id"),
+        "alpha"
+    );
+    client
+        .send(text(
+            r#"{"type":"response.create","model":"example","stream_id":"beta","input":[]}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(member(&read_json(&mut provider).await, "stream_id"), "beta");
+    provider
+}
+
+#[tokio::test]
+async fn slow_binding_does_not_delay_other_lane_terminal_evidence_or_disconnect_drain() {
+    let app = Arc::new(TestApp::default());
+    let binding = Arc::new(BindingHold::default());
+    *app.binding.lock().unwrap() = Some(binding.clone());
+    let budget = SharedBudget::new(4096);
+    let (mut client, mut rx, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    let mut provider = start_two_lanes(&mut client, &mut rx).await;
+    provider.send(text(ALPHA_CREATED)).await.unwrap();
+    timeout(TEST_TIMEOUT, binding.entered.notified())
+        .await
+        .unwrap();
+
+    provider.send(text(BETA_TERMINAL)).await.unwrap();
+    until(|| app.terminal_usage.lock().unwrap().as_slice() == [(1, 11)]).await;
+    assert!(app.finished.lock().unwrap().is_empty());
+    drop(client);
+    let interrupt = read_json(&mut provider).await;
+    assert_eq!(member(&interrupt, "type"), "response.interrupt");
+    assert_eq!(member(&interrupt, "response_id"), "resp_alpha");
+    provider.send(text(r#"{"type":"response.completed","response":{"id":"resp_alpha","usage":{"input_tokens":7,"output_tokens":1}}}"#)).await.unwrap();
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Downstream(_)
+    ));
+    assert_eq!(
+        app.terminal_usage.lock().unwrap().as_slice(),
+        [(1, 11), (0, 7)]
+    );
+    let finished = app.finished.lock().unwrap();
+    assert_eq!(finished.len(), 2);
+    assert!(finished.iter().all(|(_, finish)| matches!(
+        finish,
+        NativeFinish::Terminal {
+            client_cancelled: true
+        }
+    )));
+    assert_eq!(budget.semaphore.available_permits(), budget.total);
+}
+
+#[tokio::test]
+async fn blocked_downstream_write_does_not_delay_evidence_before_runtime_stop() {
+    use tokio::io::AsyncReadExt;
+    let app = Arc::new(TestApp::default());
+    let budget = SharedBudget::new(4096);
+    let cancelled = CancellationToken::new();
+    let (mut client, mut rx, task) =
+        native_client_with(app.clone(), budget.clone(), 256, cancelled.clone()).await;
+    let mut provider = start_two_lanes(&mut client, &mut rx).await;
+    provider.send(text(ALPHA_CREATED)).await.unwrap();
+    assert_eq!(member(&read_json(&mut client).await, "stream_id"), "alpha");
+    let large = format!(
+        r#"{{"type":"response.output_text.delta","stream_id":"alpha","delta":"{}"}}"#,
+        "x".repeat(16 * 1024)
+    );
+    provider.send(text(&large)).await.unwrap();
+    // Observe only the first byte of the server frame and leave the >16 KiB write blocked
+    // on the 256-byte duplex transport while the provider supplies beta's terminal.
+    assert_eq!(
+        timeout(TEST_TIMEOUT, client.get_mut().read_u8())
+            .await
+            .unwrap()
+            .unwrap(),
+        0x81
+    );
+    provider.send(text(BETA_TERMINAL)).await.unwrap();
+    until(|| app.terminal_usage.lock().unwrap().as_slice() == [(1, 11)]).await;
+    assert!(app.finished.lock().unwrap().is_empty());
+
+    cancelled.cancel();
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Cancelled
+    ));
+    let finished = app.finished.lock().unwrap();
+    assert_eq!(finished.len(), 2);
+    assert!(finished.iter().all(|(_, finish)| matches!(
+        finish,
+        NativeFinish::Indeterminate {
+            socket: Some(SocketEnd::Cancelled),
+            ..
+        }
+    )));
+    assert_eq!(app.terminal_usage.lock().unwrap().as_slice(), [(1, 11)]);
+    assert_eq!(budget.semaphore.available_permits(), budget.total);
+}
+
+#[tokio::test]
+async fn initial_wait_read_ahead_is_bounded_and_refusal_keeps_frame_alignment() {
+    use tokio::io::AsyncWriteExt;
+    let length = 300 * 1024;
+    let budget = SharedBudget::new(length);
+    let http = budget
+        .semaphore
+        .clone()
+        .try_acquire_many_owned(length as u32)
+        .unwrap();
+    let app = Arc::new(TestApp::default());
+    let (mut client, mut rx, task) = native_client_with(
+        app.clone(),
+        budget.clone(),
+        64 * 1024,
+        CancellationToken::new(),
+    )
+    .await;
+    timeout(TEST_TIMEOUT, async {
+        client
+            .get_mut()
+            .write_all(&masked_header(0x81, length))
+            .await
+            .unwrap();
+        for _ in 0..(length / 1024) {
+            client.get_mut().write_all(&[0; 1024]).await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    assert_ingress_rejection(&mut client, 503, "capacity_exhausted").await;
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 0);
+    drop(http);
+    client.send(text(CREATE)).await.unwrap();
+    let mut provider = provider_ready(&mut rx).await;
+    read(&mut provider).await;
+    provider.send(text(COMPLETED)).await.unwrap();
+    assert_eq!(
+        member(&read_json(&mut client).await, "type"),
+        "response.completed"
+    );
+    client.close(None).await.unwrap();
+    timeout(TEST_TIMEOUT, task).await.unwrap().unwrap();
+    assert_eq!(budget.semaphore.available_permits(), length);
+}
+
+#[tokio::test]
+async fn continuation_declared_length_counts_prior_fragments_and_releases_lease_on_error() {
+    use tokio::io::AsyncWriteExt;
+    use tokio_tungstenite::tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
+    let length = codexone_responses::MAX_REQUEST_BYTES;
+    let budget = SharedBudget::new(length);
+    let app = Arc::new(TestApp::default());
+    let (mut client, _, task) =
+        native_client_with(app.clone(), budget.clone(), 4096, CancellationToken::new()).await;
+    client
+        .send(Message::Frame(Frame::message(
+            b"{".as_slice(),
+            OpCode::Data(Data::Text),
+            false,
+        )))
+        .await
+        .unwrap();
+    until(|| budget.semaphore.available_permits() == length - 1).await;
+    client
+        .get_mut()
+        .write_all(&masked_header(0x80, length))
+        .await
+        .unwrap();
+    assert_ingress_rejection(&mut client, 413, "request_too_large").await;
+    assert_eq!(budget.semaphore.available_permits(), length);
+    drop(client);
+    timeout(TEST_TIMEOUT, task).await.unwrap().unwrap();
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 0);
 }

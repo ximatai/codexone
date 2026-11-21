@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     future::pending,
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 
@@ -12,9 +13,10 @@ use tokio::time::{Instant, sleep_until, timeout_at};
 use tokio_tungstenite::tungstenite::{Utf8Bytes, protocol::frame::coding::CloseCode};
 
 use crate::{
-    CancellationToken, ConnectFailure, ExecutionBudget, QUEUE_TIMEOUT, Socket, SocketEnd,
-    WS_ROUTING_BYTES,
-    peer::{DOWNSTREAM_QUEUE_BYTES, Packet, Peer},
+    CancellationToken, ConnectFailure, DownstreamSocket, ExecutionBudget, QUEUE_TIMEOUT, Socket,
+    SocketEnd, WS_ROUTING_BYTES,
+    ingress::{IngressLease, IngressMessage},
+    peer::{DOWNSTREAM_QUEUE_BYTES, Packet, Peer, Read},
     protocol::{
         DEADLINE, INDETERMINATE, TOO_LARGE, UNSUPPORTED_CONTROL, control, decode_client_message,
         websocket_error, websocket_lane, with_lane,
@@ -75,9 +77,9 @@ pub enum NativeFinish {
 
 /// Adapter for an already locally authenticated WebSocket session. Admission must be
 /// cancellation-safe, including any durable work completed before returning its handle.
-pub trait NativeApplication: Sync {
+pub trait NativeApplication: Send + Sync + 'static {
     type Input: Send;
-    type Attempt: Send + Sync;
+    type Attempt: Send + Sync + 'static;
     type Identity: Clone + Eq + Send + Sync;
 
     fn prepare(
@@ -99,7 +101,8 @@ pub trait NativeApplication: Sync {
         deadline: Instant,
     ) -> impl Future<Output = Result<Socket, ConnectFailure>> + Send;
 
-    /// Persist or hand off trusted evidence before any downstream submit or lane teardown.
+    /// Synchronously record or hand off trusted evidence before downstream submission.
+    /// This runs on the provider reader and may overlap another lane's async binding.
     fn evidence(&self, attempt: &Self::Attempt, evidence: NativeEvidence<'_>);
 
     /// Apply binding barriers and any application validation before forwarding a correlated event.
@@ -127,33 +130,102 @@ pub enum NativeEnd {
     Lifetime,
 }
 
-struct OwnedAttempt<'a, A: NativeApplication> {
-    app: &'a A,
-    attempt: Option<A::Attempt>,
-    dispatched: bool,
-    cancelled: bool,
-    terminal: bool,
+struct ReaderState<A: NativeApplication> {
+    turns: Turns,
+    attempts: HashMap<String, Weak<A::Attempt>>,
 }
 
-impl<A: NativeApplication> OwnedAttempt<'_, A> {
+type SharedReader<A> = Arc<Mutex<ReaderState<A>>>;
+type UpstreamPacket = Result<RoutedEvent, ProtocolError>;
+
+struct RoutedEvent {
+    document: JsonValue,
+    route: Route,
+}
+
+impl<A: NativeApplication> ReaderState<A> {
+    fn new() -> Self {
+        Self {
+            turns: Turns::new(),
+            attempts: HashMap::new(),
+        }
+    }
+
+    fn inspect(&mut self, app: &A, document: JsonValue, bytes: usize) -> Read<UpstreamPacket> {
+        let route = self.turns.observe(&document, bytes);
+        for (lane, turn) in &mut self.turns.active {
+            if std::mem::take(&mut turn.unattributed)
+                && let Some(attempt) = self.attempts.get(lane).and_then(Weak::upgrade)
+            {
+                app.evidence(&attempt, NativeEvidence::PossibleProcessing);
+            }
+        }
+        match route {
+            Ok(Route::Ignore) => Read::Ignore,
+            Ok(route) => {
+                if let Route::Turn { lane, .. } = &route
+                    && let Some(attempt) = self.attempts.get(lane).and_then(Weak::upgrade)
+                {
+                    app.evidence(&attempt, NativeEvidence::Event(&document));
+                }
+                Read::Deliver(Ok(RoutedEvent { document, route }))
+            }
+            Err(error) => Read::Stop(Err(error)),
+        }
+    }
+}
+
+struct OwnedAttempt<A: NativeApplication> {
+    app: Arc<A>,
+    attempt: Option<Arc<A::Attempt>>,
+    reader: Option<(SharedReader<A>, String)>,
+    _lease: Box<dyn IngressLease>,
+    cancelled: bool,
+}
+
+impl<A: NativeApplication> OwnedAttempt<A> {
+    fn register(&mut self, reader: SharedReader<A>, lane: String, turn: Turn) {
+        let handle = self.attempt.as_ref().expect("attempt owner");
+        {
+            let mut state = reader.lock().expect("provider reader state");
+            state.attempts.insert(lane.clone(), Arc::downgrade(handle));
+            state.turns.active.insert(lane.clone(), turn);
+        }
+        self.reader = Some((reader, lane));
+    }
+
+    fn take(&mut self) -> Option<A::Attempt> {
+        if let Some((reader, lane)) = self.reader.take() {
+            // The reader only upgrades the weak handle while holding this lock. Deregister
+            // before handing the attempt to the finalizer, including when the owner is dropped.
+            let mut state = reader.lock().expect("provider reader state");
+            state.attempts.remove(&lane);
+            state.turns.remove(&lane, true);
+        }
+        self.attempt
+            .take()
+            .map(|attempt| Arc::into_inner(attempt).expect("attempt owner"))
+    }
+
     fn finish(mut self, result: NativeFinish) {
-        self.app
-            .finish(self.attempt.take().expect("attempt owner"), result);
+        let attempt = self.take().expect("attempt owner");
+        self.app.finish(attempt, result);
     }
 
     fn attempt(&self) -> &A::Attempt {
-        self.attempt.as_ref().expect("attempt owner")
+        self.attempt.as_deref().expect("attempt owner")
     }
 }
 
-impl<A: NativeApplication> Drop for OwnedAttempt<'_, A> {
+impl<A: NativeApplication> Drop for OwnedAttempt<A> {
     fn drop(&mut self) {
-        if let Some(attempt) = self.attempt.take() {
-            let result = if self.dispatched {
+        let dispatched = self.reader.is_some();
+        if let Some(attempt) = self.take() {
+            let result = if dispatched {
                 NativeFinish::Indeterminate {
                     protocol: INDETERMINATE,
                     socket: Some(SocketEnd::Cancelled),
-                    client_cancelled: false,
+                    client_cancelled: self.cancelled,
                 }
             } else {
                 NativeFinish::BeforeDispatch {
@@ -167,31 +239,31 @@ impl<A: NativeApplication> Drop for OwnedAttempt<'_, A> {
 }
 
 struct Command {
-    packet: Packet,
+    packet: Packet<IngressMessage>,
     lane: String,
 }
 
-struct Admission<'a, A: NativeApplication> {
+struct Admission<A: NativeApplication> {
     lane: String,
     request_id: String,
     deadline: Instant,
     frame: Utf8Bytes,
     warmup: bool,
-    result: Result<(OwnedAttempt<'a, A>, A::Identity), ProtocolError>,
+    result: Result<(OwnedAttempt<A>, A::Identity), ProtocolError>,
 }
 
 type Uploads = FuturesUnordered<BoxFuture<'static, (String, String, Result<Instant, SocketEnd>)>>;
 
-struct Session<'a, A: NativeApplication> {
-    app: &'a A,
+struct Session<A: NativeApplication> {
+    app: Arc<A>,
     options: NativeOptions,
-    downstream: Peer,
-    upstream: Option<Peer>,
+    downstream: Peer<IngressMessage>,
+    upstream: Option<Peer<UpstreamPacket>>,
     fixed_identity: Option<A::Identity>,
     replacing_refused_socket: bool,
-    turns: Turns,
-    attempts: HashMap<String, (String, OwnedAttempt<'a, A>)>,
-    admissions: FuturesUnordered<BoxFuture<'a, Admission<'a, A>>>,
+    reader: SharedReader<A>,
+    attempts: HashMap<String, (String, OwnedAttempt<A>)>,
+    admissions: FuturesUnordered<BoxFuture<'static, Admission<A>>>,
     admitting_lanes: HashSet<String>,
     uploads: Uploads,
     lanes: HashSet<String>,
@@ -207,8 +279,8 @@ struct Session<'a, A: NativeApplication> {
 
 /// Own ingress and provider I/O until close, including bounded settlement reads after disconnect.
 pub async fn serve_native<A: NativeApplication>(
-    socket: Socket,
-    app: &A,
+    socket: DownstreamSocket,
+    app: Arc<A>,
     options: NativeOptions,
     cancellation: &CancellationToken,
 ) -> NativeEnd {
@@ -216,11 +288,11 @@ pub async fn serve_native<A: NativeApplication>(
     let mut session = Session {
         app,
         options,
-        downstream: Peer::new(socket, DOWNSTREAM_QUEUE_BYTES, MAX_EVENT_BYTES + 1024),
+        downstream: Peer::ingress(socket, MAX_EVENT_BYTES + 1024),
         upstream: None,
         fixed_identity: None,
         replacing_refused_socket: false,
-        turns: Turns::new(),
+        reader: Arc::new(Mutex::new(ReaderState::new())),
         attempts: HashMap::new(),
         admissions: FuturesUnordered::new(),
         admitting_lanes: HashSet::new(),
@@ -244,7 +316,7 @@ pub async fn serve_native<A: NativeApplication>(
     end
 }
 
-impl<'a, A: NativeApplication> Session<'a, A> {
+impl<A: NativeApplication> Session<A> {
     async fn run(&mut self) -> NativeEnd {
         loop {
             if let Some((end, _)) = self.disconnected
@@ -277,7 +349,7 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             _ = sleep_until(next_timer) => self.expire().map_or(Ok(()), Err),
             Some((lane, id, result)) = self.uploads.next(), if !self.uploads.is_empty() => {
                 if self.attempts.get(&lane).is_some_and(|(request, _)| *request == id)
-                    && let Some(turn) = self.turns.active.get_mut(&lane)
+                    && let Some(turn) = self.reader.lock().expect("provider reader state").turns.active.get_mut(&lane)
                     && let Ok(sent) = result
                 {
                     turn.sent = Some(sent);
@@ -294,13 +366,6 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             packet = self.downstream.recv(), if self.disconnected.is_none() && self.blocked.is_none() => {
                 match packet {
                     Ok(packet) => self.client_message(packet).await,
-                    Err(SocketEnd::MessageTooLarge) => {
-                        let _ = self.send_error(
-                            ProtocolError::new(413, "request_too_large"),
-                            None, &request_id(), "",
-                        ).await;
-                        Err(NativeEnd::Downstream(SocketEnd::MessageTooLarge))
-                    }
                     Err(end) => Err(NativeEnd::Downstream(end)),
                 }
             }
@@ -309,8 +374,8 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         }
     }
 
-    async fn client_message(&mut self, packet: Packet) -> Result<(), NativeEnd> {
-        let parsed = decode_client_message(packet.text.as_bytes()).and_then(|document| {
+    async fn client_message(&mut self, packet: Packet<IngressMessage>) -> Result<(), NativeEnd> {
+        let parsed = decode_client_message(packet.event.text.as_bytes()).and_then(|document| {
             websocket_lane(&document)?;
             if document.get("type").and_then(JsonValue::as_str).is_none() {
                 return Err(UNSUPPORTED_CONTROL);
@@ -335,7 +400,7 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             .expect("validated type");
         if kind != "response.create" {
             return self
-                .client_control(packet.text, &document, lane, kind)
+                .client_control(packet.event.text, &document, lane, kind)
                 .await;
         }
         if !lane.is_empty() && !self.lanes.contains(lane) && self.lanes.len() == MAX_LANES {
@@ -371,6 +436,13 @@ impl<'a, A: NativeApplication> Session<'a, A> {
                 < MAX_LANE_QUEUE
     }
 
+    fn next_command(&self) -> Option<usize> {
+        self.queue.iter().position(|command| {
+            !self.admitting_lanes.contains(&command.lane)
+                && !self.attempts.contains_key(&command.lane)
+        })
+    }
+
     async fn schedule(&mut self) -> Result<(), NativeEnd> {
         if self.disconnected.is_some()
             || self.downstream.read_closed().is_cancelled()
@@ -382,10 +454,7 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         {
             return Ok(());
         }
-        while let Some(index) = self.queue.iter().position(|command| {
-            !self.admitting_lanes.contains(&command.lane)
-                && !self.attempts.contains_key(&command.lane)
-        }) {
+        while let Some(index) = self.next_command() {
             if self.admitting_lanes.len() + self.attempts.len() >= MAX_ACTIVE {
                 return Err(NativeEnd::Protocol(ProtocolError::new(
                     503,
@@ -394,7 +463,7 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             }
             let Command { lane, packet } = self.queue.remove(index).expect("queued command");
             let request_id = request_id();
-            let prepared = decode_client_message(packet.text.as_bytes())
+            let prepared = decode_client_message(packet.event.text.as_bytes())
                 .and_then(|document| {
                     let continuation = document
                         .get("previous_response_id")
@@ -428,13 +497,14 @@ impl<'a, A: NativeApplication> Session<'a, A> {
                 }
             };
             self.received_first = true;
-            let app = self.app;
+            let lease = packet.event.lease;
+            let app = self.app.clone();
             let identity = self.fixed_identity.clone();
             let deadline = self.life.min(Instant::now() + self.options.budget.total);
             self.admitting_lanes.insert(lane.clone());
             self.admissions.push(
                 async move {
-                    // The packet keeps its byte reservation across preparation and durable admission.
+                    // Carry the shared lease into the execution owner, without retaining client bytes.
                     let result =
                         timeout_at(deadline, app.admit(prepared.admission, identity, deadline))
                             .await
@@ -443,15 +513,14 @@ impl<'a, A: NativeApplication> Session<'a, A> {
                                 (
                                     OwnedAttempt {
                                         app,
-                                        attempt: Some(admitted.attempt),
-                                        dispatched: false,
+                                        attempt: Some(Arc::new(admitted.attempt)),
+                                        reader: None,
+                                        _lease: lease,
                                         cancelled: false,
-                                        terminal: false,
                                     },
                                     admitted.identity,
                                 )
                             });
-                    drop(packet);
                     Admission {
                         lane,
                         request_id,
@@ -477,7 +546,7 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         Ok(())
     }
 
-    async fn admitted(&mut self, admission: Admission<'a, A>) -> Result<(), NativeEnd> {
+    async fn admitted(&mut self, admission: Admission<A>) -> Result<(), NativeEnd> {
         let Admission {
             lane,
             request_id,
@@ -522,8 +591,24 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             };
             match result {
                 Ok(socket) => {
-                    self.upstream =
-                        Some(Peer::new(socket, MAX_EVENT_BYTES, DOWNSTREAM_QUEUE_BYTES));
+                    let reader = self.reader.clone();
+                    let app = self.app.clone();
+                    self.upstream = Some(Peer::provider(
+                        socket,
+                        MAX_EVENT_BYTES,
+                        DOWNSTREAM_QUEUE_BYTES,
+                        move |text| {
+                            let document = match decode_event(text.as_bytes()) {
+                                Ok(document) => document,
+                                Err(error) => return Read::Stop(Err(error)),
+                            };
+                            reader.lock().expect("provider reader state").inspect(
+                                app.as_ref(),
+                                document,
+                                text.len(),
+                            )
+                        },
+                    ));
                     self.fixed_identity = Some(identity);
                     self.replacing_refused_socket = false;
                 }
@@ -563,12 +648,13 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             return Ok(());
         }
         // A request accepted by the writer can have reached the provider even if flush fails.
-        attempt.dispatched = true;
+        attempt.register(
+            self.reader.clone(),
+            lane.clone(),
+            Turn::new(deadline, warmup),
+        );
         self.attempts
             .insert(lane.clone(), (request_id.clone(), attempt));
-        self.turns
-            .active
-            .insert(lane.clone(), Turn::new(deadline, warmup));
         let receipt = upstream
             .queue(frame, deadline)
             .await
@@ -579,13 +665,17 @@ impl<'a, A: NativeApplication> Session<'a, A> {
     }
 
     fn can_refuse_size(&self) -> bool {
+        let reader = self.reader.lock().expect("provider reader state");
         self.disconnected.is_none()
-            && self.turns.active.len() == 1
-            && self.turns.active.values().all(|turn| !turn.processed)
+            && reader.turns.active.len() == 1
+            && reader.turns.active.values().all(|turn| !turn.processed)
     }
 
     async fn refuse_size(&mut self) -> Result<(), NativeEnd> {
         let lane = self
+            .reader
+            .lock()
+            .expect("provider reader state")
             .turns
             .active
             .keys()
@@ -606,19 +696,11 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         self.send_error(TOO_LARGE, None, &request_id, &lane).await
     }
 
-    async fn upstream_event(&mut self, packet: Packet) -> Result<(), NativeEnd> {
-        let mut document = decode_event(packet.text.as_bytes()).map_err(NativeEnd::Protocol)?;
-        let route = self
-            .turns
-            .observe(&document, packet.text.len())
-            .map_err(NativeEnd::Protocol)?;
-        for (lane, turn) in &mut self.turns.active {
-            if std::mem::take(&mut turn.unattributed) {
-                let (_, attempt) = &self.attempts[lane];
-                self.app
-                    .evidence(attempt.attempt(), NativeEvidence::PossibleProcessing);
-            }
-        }
+    async fn upstream_event(&mut self, packet: Packet<UpstreamPacket>) -> Result<(), NativeEnd> {
+        let RoutedEvent {
+            mut document,
+            route,
+        } = packet.event.map_err(NativeEnd::Protocol)?;
         match route {
             Route::Ignore => Ok(()),
             Route::Detached(lane) => {
@@ -651,11 +733,17 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         terminal: bool,
         provider_error: bool,
     ) -> Result<(), NativeEnd> {
-        let (request_id, attempt) = self.attempts.get_mut(lane).expect("active turn owner");
-        self.app
-            .evidence(attempt.attempt(), NativeEvidence::Event(&document));
-        attempt.terminal = terminal;
-        let deadline = self.turns.active[lane].deadline;
+        let Some((request_id, attempt)) = self.attempts.get(lane) else {
+            // A disconnected, timed-out lane may already have relinquished its attempt.
+            return Ok(());
+        };
+        let deadline = self
+            .reader
+            .lock()
+            .expect("provider reader state")
+            .turns
+            .active[lane]
+            .deadline;
         if provider_error {
             let failure = provider_failure(&document);
             let frame = websocket_error(failure.protocol, Some(&failure), request_id, lane);
@@ -728,7 +816,13 @@ impl<'a, A: NativeApplication> Session<'a, A> {
                 .and_then(JsonValue::as_str)
                 .unwrap_or("");
             let explicit = document.get("stream_id").map(|_| lane);
-            return match self.turns.interrupt(id, explicit, true) {
+            let interrupt = self
+                .reader
+                .lock()
+                .expect("provider reader state")
+                .turns
+                .interrupt(id, explicit, true);
+            return match interrupt {
                 Interrupt::Duplicate => Ok(()),
                 Interrupt::Send(_) => self.send_control(original, self.life).await,
                 Interrupt::Missing => {
@@ -779,11 +873,14 @@ impl<'a, A: NativeApplication> Session<'a, A> {
 
     async fn interrupt_dispatched(&mut self) -> Result<(), NativeEnd> {
         let targets: Vec<_> = self
+            .reader
+            .lock()
+            .expect("provider reader state")
             .turns
             .active
             .iter()
             .filter_map(|(lane, turn)| {
-                (!turn.interrupted && !self.attempts[lane].1.terminal)
+                (!turn.interrupted && !turn.provider_done)
                     .then(|| {
                         Some((
                             lane.clone(),
@@ -796,9 +893,16 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             .collect();
         for (lane, id, deadline) in targets {
             let deadline = deadline.min(self.disconnected.expect("draining").1);
-            if Instant::now() < deadline
-                && let Interrupt::Send(owner) = self.turns.interrupt(&id, Some(&lane), false)
-            {
+            if Instant::now() >= deadline {
+                continue;
+            }
+            let interrupt = self
+                .reader
+                .lock()
+                .expect("provider reader state")
+                .turns
+                .interrupt(&id, Some(&lane), false);
+            if let Interrupt::Send(owner) = interrupt {
                 self.send_control(control("response.interrupt", &id, &owner), deadline)
                     .await?;
             }
@@ -808,6 +912,9 @@ impl<'a, A: NativeApplication> Session<'a, A> {
 
     fn next_timer(&self) -> Instant {
         let mut deadline = self
+            .reader
+            .lock()
+            .expect("provider reader state")
             .turns
             .active
             .values()
@@ -844,6 +951,9 @@ impl<'a, A: NativeApplication> Session<'a, A> {
             return Some(NativeEnd::Idle);
         }
         let expired: Vec<_> = self
+            .reader
+            .lock()
+            .expect("provider reader state")
             .turns
             .active
             .iter()
@@ -885,7 +995,6 @@ impl<'a, A: NativeApplication> Session<'a, A> {
     }
 
     fn finish_lane(&mut self, lane: &str, result: NativeFinish) {
-        self.turns.remove(lane, true);
         if let Some((_, attempt)) = self.attempts.remove(lane) {
             attempt.finish(result);
         }
@@ -903,7 +1012,13 @@ impl<'a, A: NativeApplication> Session<'a, A> {
         let snapshot: Vec<_> = self.attempts.keys().cloned().collect();
         let size_refusal = matches!(end, NativeEnd::Upstream(SocketEnd::Close(1009)))
             && snapshot.len() == 1
-            && !self.turns.active[&snapshot[0]].processed;
+            && !self
+                .reader
+                .lock()
+                .expect("provider reader state")
+                .turns
+                .active[&snapshot[0]]
+                .processed;
         let protocol = match end {
             NativeEnd::Protocol(error) => *error,
             NativeEnd::Upstream(SocketEnd::MessageTooLarge) => {
@@ -1013,7 +1128,9 @@ impl<'a, A: NativeApplication> Session<'a, A> {
     }
 }
 
-async fn recv_upstream(upstream: &mut Option<Peer>) -> Result<Packet, SocketEnd> {
+async fn recv_upstream(
+    upstream: &mut Option<Peer<UpstreamPacket>>,
+) -> Result<Packet<UpstreamPacket>, SocketEnd> {
     match upstream {
         Some(upstream) => upstream.recv().await,
         None => pending().await,

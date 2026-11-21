@@ -26,6 +26,7 @@ pub(crate) struct Turn {
     pub response_id: Option<String>,
     pub created: bool,
     pub interrupted: bool,
+    pub provider_done: bool,
     pub processed: bool,
     pub unattributed: bool,
     pub warmup: bool,
@@ -41,6 +42,7 @@ impl Turn {
             response_id: None,
             created: false,
             interrupted: false,
+            provider_done: false,
             processed: false,
             unattributed: false,
             warmup,
@@ -49,7 +51,9 @@ impl Turn {
     }
 
     pub fn expiry(&self, budget: ExecutionBudget) -> (Instant, ProtocolError) {
-        let phase = if let Some(progress) = self.last_progress {
+        let phase = if self.provider_done {
+            None
+        } else if let Some(progress) = self.last_progress {
             Some((progress + budget.idle, IDLE))
         } else {
             self.sent
@@ -83,19 +87,27 @@ impl Turns {
     pub fn remove(&mut self, lane: &str, remember: bool) -> Option<Turn> {
         let turn = self.active.remove(lane)?;
         if remember && let Some(id) = &turn.response_id {
-            self.ended.insert(id.clone(), lane.to_owned());
-            self.history.push_back(id.clone());
-            if self.history.len() > HISTORY_LIMIT {
-                self.ended
-                    .remove(&self.history.pop_front().expect("oldest id"));
-            }
+            self.remember(id.clone(), lane);
         }
         Some(turn)
     }
 
+    fn remember(&mut self, id: String, lane: &str) {
+        if self.ended.contains_key(&id) {
+            return;
+        }
+        self.ended.insert(id.clone(), lane.to_owned());
+        self.history.push_back(id);
+        if self.history.len() > HISTORY_LIMIT {
+            self.ended
+                .remove(&self.history.pop_front().expect("oldest id"));
+        }
+    }
+
     pub fn interrupt(&mut self, id: &str, lane: Option<&str>, require_created: bool) -> Interrupt {
         let owner = self.active.iter_mut().find(|(owner, turn)| {
-            (!require_created || turn.created)
+            !turn.provider_done
+                && (!require_created || turn.created)
                 && turn.response_id.as_deref() == Some(id)
                 && lane.is_none_or(|lane| lane == *owner)
         });
@@ -154,7 +166,10 @@ impl Turns {
             }
         }
         let lane = owner.unwrap_or(supplied_lane).to_owned();
-        let has_owner = self.active.contains_key(&lane);
+        let has_owner = self
+            .active
+            .get(&lane)
+            .is_some_and(|turn| !turn.provider_done);
         if !semantics.connection_metadata
             && (!has_owner
                 || (owner.is_none()
@@ -162,12 +177,16 @@ impl Turns {
                     && identity.is_some()
                     && !semantics.lifecycle))
         {
-            for turn in self.active.values_mut() {
+            for turn in self.active.values_mut().filter(|turn| !turn.provider_done) {
                 turn.processed = true;
                 turn.unattributed = true;
             }
         }
-        let Some(turn) = self.active.get_mut(&lane) else {
+        let Some(turn) = self
+            .active
+            .get_mut(&lane)
+            .filter(|turn| !turn.provider_done)
+        else {
             return if semantics.lifecycle {
                 Err(INVALID_TURN.with_detail("upstream_turn_unadmitted"))
             } else {
@@ -220,10 +239,18 @@ impl Turns {
         if first_lifecycle || semantics.progress == Progress::Activity {
             turn.last_progress = Some(Instant::now());
         }
+        let terminal = semantics.terminal;
+        let provider_error = kind == "error";
+        if terminal || provider_error {
+            turn.provider_done = true;
+            if let Some(id) = turn.response_id.clone() {
+                self.remember(id, &lane);
+            }
+        }
         Ok(Route::Turn {
             lane,
-            terminal: semantics.terminal,
-            provider_error: kind == "error",
+            terminal,
+            provider_error,
         })
     }
 }

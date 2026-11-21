@@ -170,3 +170,20 @@ pub fn websocket_error(
     with_lane(&mut fields, lane);
     encode(JsonValue::Object(fields))
 }
+
+pub(crate) fn websocket_ingress_error(status: u16, code: &'static str) -> Utf8Bytes {
+    let error = ProtocolError::new(status, code);
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let frame = websocket_error(error, None, &request_id, "");
+    if status != 503 {
+        return frame;
+    }
+    let mut frame = JsonValue::decode(frame.as_bytes()).expect("encoded error");
+    let mut headers = JsonObject::new();
+    headers.insert("retry-after", string("1"));
+    frame
+        .as_object_mut()
+        .expect("error object")
+        .insert("headers", JsonValue::Object(headers));
+    encode(frame)
+}

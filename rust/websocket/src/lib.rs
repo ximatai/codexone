@@ -2,6 +2,7 @@
 //! object binding, usage and settlement.
 mod bridge;
 mod handshake;
+mod ingress;
 mod native;
 mod peer;
 mod protocol;
@@ -10,6 +11,9 @@ mod turns;
 pub use bridge::*;
 pub use codexone_http_upstream::CancellationToken;
 pub use handshake::*;
+pub use ingress::{
+    CapacityExhausted, DownstreamSocket, IngressBudget, IngressLease, downstream_socket,
+};
 pub use native::*;
 pub use protocol::*;
 

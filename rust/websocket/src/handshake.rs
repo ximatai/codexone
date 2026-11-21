@@ -10,10 +10,7 @@ use tokio::{
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
-        Error,
-        client::IntoClientRequest,
-        handshake::derive_accept_key,
-        protocol::{Role, WebSocketConfig},
+        Error, client::IntoClientRequest, handshake::derive_accept_key, protocol::WebSocketConfig,
     },
 };
 
@@ -89,17 +86,6 @@ pub(crate) fn limits(maximum: usize) -> WebSocketConfig {
         .read_buffer_size(64 * 1024)
         .write_buffer_size(0)
         .max_write_buffer_size(64 * 1024 * 1024 + 64)
-}
-
-/// Wrap upgraded ingress I/O only after local authorization and capacity admission. Pass the
-/// HTTP server's upgraded stream, including any bytes buffered during the HTTP handshake.
-pub async fn downstream_socket(io: impl SocketIo + 'static) -> Socket {
-    WebSocketStream::from_raw_socket(
-        Box::new(io) as Box<dyn SocketIo>,
-        Role::Server,
-        Some(limits(codexone_responses::MAX_REQUEST_BYTES)),
-    )
-    .await
 }
 
 #[derive(Debug)]
