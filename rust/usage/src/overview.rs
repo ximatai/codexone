@@ -233,9 +233,9 @@ fn activity(db: &Connection, now: i64, day: BusinessDay, context: &Context) -> R
     let mut days = Map::new();
     let mut recent = Vec::new();
     for start in (hour - 167 * 3600..=hour).step_by(3600) {
-        let mut rates: Vec<_> = samples(db, start, (start + 3600).min(now + 1), 256)?
+        let mut rates: Vec<_> = samples(db, start, (start + 3600).min(now + 1), 256, None)?
             .into_iter()
-            .map(|(_, rate)| rate)
+            .map(|sample| sample.rate)
             .collect();
         if let Some(value) = median(&mut rates) {
             hours.insert(
@@ -245,16 +245,23 @@ fn activity(db: &Connection, now: i64, day: BusinessDay, context: &Context) -> R
         }
     }
     for start in (today - 6 * DAY..=today).step_by(DAY as usize) {
-        let samples = samples(db, start, (start + DAY).min(now + 1), 4096)?;
-        if let Some(horizon) = context.live_output_after {
-            recent.extend(
-                samples
-                    .iter()
-                    .filter(|(at, _)| *at > horizon && now - at < 60)
-                    .map(|(_, rate)| *rate),
-            );
-        }
-        let mut rates: Vec<_> = samples.into_iter().map(|(_, rate)| rate).collect();
+        let samples = samples(db, start, (start + DAY).min(now + 1), 4096, Some(now - 59))?;
+        recent.extend(
+            samples
+                .iter()
+                .filter(|sample| {
+                    now - sample.settled_at < 60
+                        && (context
+                            .live_output_after
+                            .is_some_and(|at| sample.settled_at > at)
+                            || sample
+                                .attempt
+                                .as_ref()
+                                .is_some_and(|id| context.live_output_attempts.contains(id)))
+                })
+                .map(|sample| sample.rate),
+        );
+        let mut rates: Vec<_> = samples.into_iter().map(|sample| sample.rate).collect();
         if let Some(value) = median(&mut rates) {
             days.insert(start.to_string(), json!(value));
         }
@@ -280,19 +287,39 @@ fn activity(db: &Connection, now: i64, day: BusinessDay, context: &Context) -> R
     Ok(document)
 }
 
-fn samples(db: &Connection, start: i64, end: i64, limit: i64) -> Result<Vec<(i64, f64)>> {
+struct OutputSample {
+    attempt: Option<String>,
+    settled_at: i64,
+    rate: f64,
+}
+
+fn samples(
+    db: &Connection,
+    start: i64,
+    end: i64,
+    limit: i64,
+    live_since: Option<i64>,
+) -> Result<Vec<OutputSample>> {
     let mut statement = db.prepare_cached("
-        SELECT output_rate_settled_at,output_rate FROM attempts
+        SELECT output_rate_settled_at,output_rate,
+            CASE WHEN output_rate_settled_at>=?4 THEN id END FROM attempts
         WHERE output_rate_settled_at>=? AND output_rate_settled_at<?
           AND CASE WHEN json_valid(usage_json) THEN COALESCE(json_extract(usage_json,'$.images'),0) ELSE 0 END=0
         ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?")?;
-    let rows = statement.query_map(params![start, end, limit], |row| {
+    let rows = statement.query_map(params![start, end, limit, live_since], |row| {
         let at: i64 = row.get(0)?;
         let raw: Option<String> = row.get(1)?;
-        Ok(raw
+        let rate = raw
             .and_then(|raw| raw.parse::<f64>().ok())
-            .filter(|rate| rate.is_finite() && *rate >= 0.0)
-            .map(|rate| (at, rate)))
+            .filter(|rate| rate.is_finite() && *rate >= 0.0);
+        rate.map(|rate| {
+            Ok(OutputSample {
+                attempt: row.get(2)?,
+                settled_at: at,
+                rate,
+            })
+        })
+        .transpose()
     })?;
     Ok(rows
         .collect::<rusqlite::Result<Vec<_>>>()?

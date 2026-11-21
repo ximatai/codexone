@@ -11,7 +11,7 @@ mod sql;
 mod summary;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -106,8 +106,10 @@ pub struct Context {
     pub clients: Vec<ClientActivity>,
     pub activity_overflow: u64,
     pub protocol_extensions: ProtocolExtensions,
-    /// Only settlements strictly after the process's historical horizon qualify for the live median.
+    /// Later samples are known to have settled in this process.
     pub live_output_after: Option<i64>,
+    /// Settlements observed after commit, including ones that share a second with history.
+    pub live_output_attempts: HashSet<String>,
     pub daily_requests: Option<i64>,
     pub daily_budget_micros: Option<i64>,
     pub storage: Value,
@@ -124,6 +126,7 @@ impl Default for Context {
             activity_overflow: 0,
             protocol_extensions: ProtocolExtensions::default(),
             live_output_after: None,
+            live_output_attempts: HashSet::new(),
             daily_requests: None,
             daily_budget_micros: None,
             storage: json!({"pressure": "unknown"}),

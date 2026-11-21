@@ -129,7 +129,7 @@ impl OverviewHub {
                             .sample_overview(
                                 at,
                                 Arc::new(
-                                    usage.activity_context(storage.clone().unwrap_or_default()),
+                                    usage.activity_context(storage.clone().unwrap_or_default(), at),
                                 ),
                             )
                             .await;
@@ -143,7 +143,7 @@ impl OverviewHub {
                         activity_due = None;
                         dirty = false;
                     } else if sample_activity {
-                        let context = Arc::new(usage.activity_context(Value::Null));
+                        let context = Arc::new(usage.activity_context(Value::Null, at));
                         other.insert(
                             OverviewSource::InFlight,
                             usage.usage.sample_activity(at, context).await,

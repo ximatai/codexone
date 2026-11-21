@@ -321,6 +321,25 @@ async fn summaries_include_rollups_and_publish_live_sections_with_freshness() {
     assert!(clients.snapshot().is_empty());
     assert_eq!(flight["rows"][0]["hasFirstEvent"], false);
     assert_eq!(flight["recentRequestOutputRateMedian"], 24.0);
+    let mut shared_second = (*context).clone();
+    shared_second.live_output_after = Some(NOW - 2);
+    let historical = usage
+        .sample_activity(NOW, Arc::new(shared_second.clone()))
+        .await
+        .unwrap();
+    assert!(historical["recentRequestOutputRateMedian"].is_null());
+    shared_second
+        .live_output_attempts
+        .insert("price-unavailable".into());
+    let observed = usage
+        .sample_activity(NOW, Arc::new(shared_second))
+        .await
+        .unwrap();
+    assert_eq!(observed["recentRequestOutputRateMedian"], 24.0);
+    assert_eq!(
+        observed["requestOutputRateMediansByDay"],
+        historical["requestOutputRateMediansByDay"]
+    );
     assert_eq!(
         flight["requestOutputRateMediansByDay"][START.to_string()],
         20.0

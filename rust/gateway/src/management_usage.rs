@@ -196,9 +196,10 @@ impl ManagementUsage {
         self.reader.wait_idle().await;
     }
 
-    pub fn activity_context(&self, storage: Value) -> Context {
+    pub fn activity_context(&self, storage: Value, now: i64) -> Context {
         Context {
             clients: self.clients.snapshot(),
+            live_output_attempts: self.execution.live_output_attempts(now),
             ..self.context(storage)
         }
     }

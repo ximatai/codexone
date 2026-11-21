@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -21,6 +21,7 @@ use crate::{
 };
 
 const REGULAR_CAPACITY: usize = 16;
+const LIVE_OUTPUT_LIMIT: usize = 8192;
 
 type Job = Box<dyn FnOnce(&mut Writer) + Send>;
 type Recovery = fn(&Transaction<'_>, i64) -> Result<()>;
@@ -144,6 +145,7 @@ struct Inner {
     active: Mutex<HashMap<String, ActiveExecution>>,
     connections: Mutex<HashMap<String, ActiveAccountExecution>>,
     activity_revision: watch::Sender<u64>,
+    live_output: Mutex<VecDeque<(String, i64)>>,
 }
 
 struct ActiveExecution {
@@ -201,6 +203,20 @@ impl Inner {
         if self.active().remove(attempt).is_some() {
             self.notify_activity();
         }
+    }
+
+    fn live_output(&self) -> MutexGuard<'_, VecDeque<(String, i64)>> {
+        self.live_output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn record_output_settlement(&self, attempt: &str, at: i64) {
+        let mut live = self.live_output();
+        if live.len() == LIVE_OUTPUT_LIMIT {
+            live.pop_front();
+        }
+        live.push_back((attempt.to_owned(), at));
     }
 
     fn enqueue(&self, job: Job, admission: bool) -> Result<()> {
@@ -287,7 +303,7 @@ impl Writer {
         attempt: &str,
         evidence: Option<&UsageEvidence>,
         outcome: Option<&Outcome>,
-    ) -> Result<()> {
+    ) -> Result<Option<i64>> {
         self.reserve.prepare_critical()?;
         let now_micros = self.now_micros()?;
         // Keep the fixed-account route's original cooldown when no hint was supplied.
@@ -372,6 +388,7 @@ impl ExecutionService {
             done: done_rx,
             active: Mutex::new(HashMap::with_capacity(capacity as usize)),
             activity_revision: watch::channel(0).0,
+            live_output: Mutex::new(VecDeque::new()),
             connections: Mutex::new(HashMap::new()),
         });
         let exit = WorkerExit {
@@ -433,6 +450,16 @@ impl ExecutionService {
             .active()
             .iter()
             .filter_map(|(id, execution)| execution.first_event.map(|first| (id.clone(), first)))
+            .collect()
+    }
+
+    /// Current-process provenance for rates with a settlement second shared with history.
+    pub fn live_output_attempts(&self, now: i64) -> HashSet<String> {
+        self.inner
+            .live_output()
+            .iter()
+            .filter(|(_, at)| (now.saturating_sub(59)..=now).contains(at))
+            .map(|(attempt, _)| attempt.clone())
             .collect()
     }
 
@@ -1121,13 +1148,18 @@ impl ExecutionService {
         }
         evidence.validate()?;
         let attempt = attempt.to_owned();
+        let inner = self.inner.clone();
         self.command(false, move |writer| {
             let snapshot = ledger::snapshot(writer.db.connection(), &attempt)?;
             if snapshot.state == State::Intent {
                 return Err(Error::Conflict);
             }
             evidence.validate_for(&snapshot.admission)?;
-            writer.finalize(&attempt, Some(&evidence), None)
+            if let Some(at) = writer.finalize(&attempt, Some(&evidence), None)? {
+                inner.record_output_settlement(&attempt, at);
+                inner.notify_activity();
+            }
+            Ok(())
         })
         .await
     }
@@ -1425,6 +1457,9 @@ impl Execution {
                 let attempt = attempt_for_job;
                 let _ticket = ticket;
                 let result = writer.finalize(&attempt, evidence.as_ref(), outcome.as_ref());
+                if let Ok(Some(at)) = &result {
+                    inner.record_output_settlement(&attempt, *at);
+                }
                 inner.finish_activity(&attempt);
                 if let Err(error) = result {
                     // Evidence within a retired revision range cannot replace newer truth. An

@@ -139,7 +139,7 @@ fn save_evidence(
     snapshot: &Snapshot,
     evidence: &UsageEvidence,
     now: i64,
-) -> Result<()> {
+) -> Result<Option<i64>> {
     let attempt = &snapshot.admission.attempt;
     let revision = evidence.revision;
     let floor: i64 = tx.query_row(
@@ -159,7 +159,7 @@ fn save_evidence(
         .optional()?;
     if let Some(existing) = existing {
         return if serde_json::from_str::<UsageEvidence>(&existing)? == *evidence {
-            Ok(())
+            Ok(None)
         } else {
             Err(Error::Conflict)
         };
@@ -261,14 +261,15 @@ fn save_evidence(
                 "{:.12}",
                 evidence.output_tokens as f64 * 1000.0 / duration as f64
             );
-            tx.execute(
+            let recorded = tx.execute(
                 "UPDATE attempts SET output_rate_settled_at=?2,output_rate=?3 WHERE id=?1
                  AND output_rate_settled_at IS NULL",
                 params![attempt, now, rate],
             )?;
+            return Ok((recorded != 0).then_some(now));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn save_outcome(
@@ -329,7 +330,7 @@ pub(crate) fn finalize(
     outcome: Option<&Outcome>,
     now_micros: i64,
     overload_default: Option<i64>,
-) -> Result<()> {
+) -> Result<Option<i64>> {
     let now = now_micros.div_euclid(1_000_000);
     let tx = db.begin_immediate()?;
     let mut snapshot = snapshot(&tx, attempt)?;
@@ -356,14 +357,17 @@ pub(crate) fn finalize(
     } else {
         None
     };
-    if let Some(evidence) = evidence {
-        save_evidence(&tx, &snapshot, evidence, now)?;
-    } else if snapshot.state == State::Intent {
-        tx.execute(
-            "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?2) WHERE id=?1",
-            params![attempt, now],
-        )?;
-    }
+    let output_settled_at = if let Some(evidence) = evidence {
+        save_evidence(&tx, &snapshot, evidence, now)?
+    } else {
+        if snapshot.state == State::Intent {
+            tx.execute(
+                "UPDATE attempts SET state='unknown',unknown_since_epoch=COALESCE(unknown_since_epoch,?2) WHERE id=?1",
+                params![attempt, now],
+            )?;
+        }
+        None
+    };
     if snapshot.admission.mode == Some(Mode::Priming) {
         crate::priming::finish(&tx, attempt, outcome)?;
     }
@@ -371,7 +375,7 @@ pub(crate) fn finalize(
     if let Some(update) = health_update {
         health.apply(update);
     }
-    Ok(())
+    Ok(output_settled_at)
 }
 
 fn audit_release(
