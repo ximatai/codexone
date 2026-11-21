@@ -131,13 +131,23 @@ impl Jobs {
             PrimingStatus => serde_json::to_value(self.priming.status(id).await?),
             PrimingSettings => {
                 let (revision, settings) = decode::<PrimingSettingsUpdate>(body)?.settings();
-                serde_json::to_value(self.priming.set_settings(id, revision, settings).await?)
+                serde_json::to_value(
+                    self.priming
+                        .set_settings(id, revision, settings)
+                        .await
+                        .map_err(settings_error)?,
+                )
             }
             ResetList => serde_json::to_value(self.reset.list_with_status(id).await?),
             ResetStatus => serde_json::to_value(self.reset.status(id).await?),
             ResetSettings => {
                 let (revision, settings) = decode::<ResetSettingsUpdate>(body)?.settings()?;
-                serde_json::to_value(self.reset.set_settings(id, revision, settings).await?)
+                serde_json::to_value(
+                    self.reset
+                        .set_settings(id, revision, settings)
+                        .await
+                        .map_err(settings_error)?,
+                )
             }
             ResetConsume => {
                 let command = decode::<ResetConsumeInput>(body)?;
@@ -145,6 +155,13 @@ impl Jobs {
             }
         };
         payload.map_err(|_| Error::Unavailable)
+    }
+}
+
+fn settings_error(error: Error) -> Error {
+    match error {
+        Error::AccountConflict => Error::Conflict,
+        _ => error,
     }
 }
 
