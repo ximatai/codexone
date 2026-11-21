@@ -172,6 +172,12 @@ export function AdminOverview() {
                 backupOverdue={attention.data?.items.find(
                   (item) => item.kind === "backup_stale",
                 )}
+                backupDisabled={attention.data?.items.some(
+                  (item) => item.kind === "backup_disabled",
+                )}
+                backupSizeWarning={attention.data?.items.some(
+                  (item) => item.kind === "backup_size",
+                )}
                 backupUnconfirmed={attention.isError}
                 availability={availabilityBlocker({
                   ready: system.isError ? undefined : system.data?.ready,

@@ -41,15 +41,15 @@ python3 scripts/rust_compat/maintenance.py \
 
 ## 在线备份与并发结算
 
-从仓库根目录运行。使用提案指定的 Swift 基线。驱动构建 Rust CLI 和仅测试用的网关入口，使用私有临时目录、动态回环端口和合成上游。
+从仓库根目录运行。驱动构建 Rust CLI 和仅测试用的网关入口，使用私有临时目录、动态回环端口和合成上游。传入提案指定的 Swift 基线可追加跨实现快照验证。
 
 ```sh
-swift build --package-path "$SWIFT_BASELINE" --product codexone
-python3 scripts/rust_compat/online_backup.py \
-  --swift "$SWIFT_BASELINE/.build/debug/codexone"
+python3 scripts/rust_compat/online_backup.py
 ```
 
-测试网关立即开始第一次备份，并在 SQLite 复制完第一批页后暂停。驱动发送一次 HTTP 续接请求，先从源库核对该请求持久结算，再恢复复制。发布后，Swift 与 Rust CLI 均验证同一快照，驱动核对已在复制前完成的账本和绑定。并发请求是否进入快照取决于 SQLite 的快照时点，测试允许该请求处于尚未录入、执行中或已结算状态，若快照包含已结算请求则核对对应的用量和绑定。正式网关仍按首次 10 分钟、每轮结束后 24 小时的间隔运行。
+测试网关立即开始第一次备份，并在 SQLite 复制完第一批页后暂停。驱动发送一次 HTTP 续接请求，先从源库核对该请求持久结算，再恢复复制。发布后由 Rust CLI 验证快照，并可传入 `--swift` 用 Swift 校验同一份快照。并发请求是否进入快照取决于 SQLite 的快照时点，测试允许该请求处于尚未录入、执行中或已结算状态，若快照包含已结算请求则核对对应的用量和绑定。正式网关仍按首次 10 分钟、每轮结束后 24 小时的间隔运行。
+
+状态与轮转场景使用七份合成旧备份。启动后核对清单恢复和超时提醒，复制中模拟结算储备不足，随后用快照锁触发轮转失败。下次启动释放锁并轮转至七份，核对 HTTP 和 WebSocket 状态一致、手工备份保留及剩余 bundle 均可验证。
 
 ## HTTP 正文暂存故障
 
@@ -89,6 +89,7 @@ python3 scripts/rust_compat/retention.py --binary rust/gateway/target/debug/code
 驱动验证 91 天前的明细计入 UTC 日汇总，历史日汇总按现有业务日窗口展示，Key 最近使用保留实际时间。过期绑定、关闭审计和并发样本小批清理，有效绑定与核对期中的未知执行得到保留。人工释放覆盖 Bearer、会话与 CSRF、严格截止边界、旧快照冲突、审计和重启。
 
 ## 托管账号 SPA
+在 Linux 上给首页驱动传入 `--resources`，采集两次实际 Linux 读数，核对无查看者时的采样、同一份 HTTP/WS 历史、重启清空和关闭实时推送后的 HTTP 读数。历史保留窗口、边界和缺测使用定向 Rust 单测。
 
 使用当前生产 SPA 检查托管账号、额度无观测提醒、已结算用量和同会话撤销。需要 Node.js 26.13.0 和已安装的 Google Chrome。测试从现有托管池 fixture 发起，使用临时 Chrome 配置和合成账号。
 

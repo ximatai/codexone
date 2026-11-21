@@ -182,6 +182,42 @@ fn storage_and_backup(items: &mut Vec<Item>, storage: &Value, now: i64) {
     }
 }
 
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn overdue_thresholds_use_the_last_success_or_the_current_boot() {
+        let started = 1_800_000_000;
+        for (last, boot) in [(None, started), (Some(started), started + 60 * 3600)] {
+            let storage = json!({
+                "pressure": "normal",
+                "coreAvailable": true,
+                "backup": {
+                    "enabled": true,
+                    "enabledUnixSeconds": boot,
+                    "lastSuccessUnixSeconds": last,
+                },
+            });
+            for (age, severity) in [
+                (36 * 3600, None),
+                (36 * 3600 + 1, Some("warning")),
+                (72 * 3600, Some("warning")),
+                (72 * 3600 + 1, Some("critical")),
+            ] {
+                let mut items = Vec::new();
+                storage_and_backup(&mut items, &storage, started + age);
+                let reminder = items.iter().find(|item| item.kind == "backup_stale");
+                assert_eq!(reminder.map(|item| item.severity), severity);
+                assert_eq!(
+                    reminder.and_then(|item| item.since_unix_seconds),
+                    severity.map(|_| started)
+                );
+            }
+        }
+    }
+}
+
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct QuotaObservation {
