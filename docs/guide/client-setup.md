@@ -33,7 +33,7 @@ provider 名称和本地门控值是兼容设置，不代表官方授权；网�
 
 示例中的 `model` 应填写网关已启用且该 Key 获准使用的模型。CLI 0.171.0 在未指定模型且使用内置目录时默认选择 `gpt-6.2-sol`。若网关只启用了 `gpt-6.1-sol`，保留示例中的显式配置即可；省略它可能使首轮请求返回 403。
 
-如果希望 CLI 从网关目录选择模型，删除顶层的 `model`，在已有的 `[model_providers.codexone]` 段添加 `model_catalog_url = "https://<网关域名>/backend-api/codex/models"`，并在 `[features]` 段设置 `api_key_model_discovery = true`。两项需配合使用。此路径已用 CLI 0.171.0 和合成目录验证。
+如果希望 CLI 从网关目录选择模型，删除顶层的 `model`，在已有的 `[model_providers.codexone]` 段添加 `model_catalog_url = "https://<网关域名>/backend-api/codex/models"`。CLI 0.171.0 默认启用 API Key 模型发现；如果此前手动关闭过，请在 `[features]` 段将 `api_key_model_discovery` 恢复为 `true`。此路径已用 CLI 0.171.0 和合成目录验证。
 
 ## 会话和图片工具并发
 
