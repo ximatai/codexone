@@ -134,6 +134,7 @@ impl Application {
                 Response::builder()
                     .status(status)
                     .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+                    .header(header::CACHE_CONTROL, "no-store")
                     .body(Bytes::from(body.to_string()))
                     .expect("health response"),
             );
