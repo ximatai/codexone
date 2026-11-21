@@ -193,7 +193,32 @@ def verify_initializer(binary):
           + ('; host binary config validation' if binary and os.geteuid() != 0 else ''))
 
 
-def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None, incompatible_schema=6):
+def verify_backend_licenses(container, backend):
+    directory = f'/opt/codexone/licenses/{backend}'
+    command = ['docker', 'exec', container]
+    if backend == 'swift':
+        licenses = run([*command, 'find', directory, '-mindepth', '1', '-maxdepth', '1',
+                        '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
+        pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
+        assert set(licenses) == {pin['identity'] for pin in pins}
+        zstd = directory + '/zstd'
+    else:
+        lock = (REPO / 'rust/gateway/Cargo.lock').read_text()
+        versions = re.findall(r'^name = "zstd-sys"\nversion = "([^"]+)"', lock, re.M)
+        assert len(versions) == 1
+        crate = f'{directory}/zstd-sys-{versions[0]}'
+        for license_name in ('LICENSE', 'LICENSE.BSD-2-Clause', 'LICENSE.BSD-3-Clause'):
+            run([*command, 'test', '-s', f'{crate}/{license_name}'])
+        zstd = crate + '/zstd'
+    license_text = run([*command, 'cat', zstd + '/LICENSE']).stdout
+    assert all(text in license_text for text in (
+        b'Meta Platforms', b'Redistribution and use', b'Neither the name', b'AS IS'))
+    copying = run([*command, 'cat', zstd + '/COPYING']).stdout
+    assert b'GNU GENERAL PUBLIC LICENSE' in copying and b'Version 2, June 1991' in copying
+
+
+def verify_runtime(image, browser=False, previous_image=None, incompatible_image=None, browser_output=None,
+                   incompatible_schema=6, backend='swift'):
     assert sys.platform == 'linux', 'Actual OCI checks require a local Linux Docker Engine'
     identifier = json.loads(run(['docker', 'image', 'inspect', image]).stdout)[0]
     assert identifier['Architecture'] == 'amd64' and identifier['Os'] == 'linux'
@@ -307,15 +332,8 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
             assert current_schema > 0 and manifest['schemaVersion'] == current_schema
             storage_status, storage_body = request('/api/runtime/storage', token=admin)
             assert storage_status == 200 and json.loads(storage_body)['reserveTargetBytes'] == 64 * 1024 * 1024
-            licenses = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/swift', '-mindepth', '1', '-maxdepth', '1', '-type', 'd', '-printf', '%f\n']).stdout.decode().splitlines()
-            pins = json.loads((REPO / 'Package.resolved').read_text())['pins']
-            assert set(licenses) == {pin['identity'] for pin in pins}
             run(['docker', 'exec', name, 'test', '-s', '/opt/codexone/LICENSE'])
-            zstd_license = run(['docker', 'exec', name, 'cat', '/opt/codexone/licenses/swift/zstd/LICENSE']).stdout
-            assert all(text in zstd_license for text in (
-                b'Meta Platforms', b'Redistribution and use', b'Neither the name', b'AS IS'))
-            zstd_copying = run(['docker', 'exec', name, 'cat', '/opt/codexone/licenses/swift/zstd/COPYING']).stdout
-            assert b'GNU GENERAL PUBLIC LICENSE' in zstd_copying and b'Version 2, June 1991' in zstd_copying
+            verify_backend_licenses(name, backend)
             npm_files = run(['docker', 'exec', name, 'find', '/opt/codexone/licenses/npm', '-type', 'f', '-size', '+0c', '-printf', '%P\n']).stdout.decode().splitlines()
             npm_lock = json.loads((REPO / 'web/package-lock.json').read_text())['packages']
             runtime_packages = {path.removeprefix('node_modules/') for path, entry in npm_lock.items()
@@ -655,11 +673,14 @@ def verify_runtime(image, browser=False, previous_image=None, incompatible_image
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--binary', type=Path); parser.add_argument('--image'); parser.add_argument('--browser', action='store_true'); parser.add_argument('--previous-image'); parser.add_argument('--incompatible-image'); parser.add_argument('--incompatible-schema', type=int, choices=[6, 7, 8, 9, 10, 11, 12], default=6); parser.add_argument('--browser-output', type=Path)
+    parser.add_argument('--backend', choices=('swift', 'rust'), default='swift')
     args = parser.parse_args()
     if args.browser: assert args.image, '--browser requires an actual OCI image'
     if args.browser_output: assert args.browser, '--browser-output requires --browser'
     verify_initializer(args.binary)
     if args.previous_image or args.incompatible_image: assert args.image
-    if args.image: verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image, args.browser_output, args.incompatible_schema)
+    if args.image:
+        verify_runtime(args.image, args.browser, args.previous_image, args.incompatible_image,
+                       args.browser_output, args.incompatible_schema, args.backend)
 
 if __name__ == '__main__': main()
