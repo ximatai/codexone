@@ -655,16 +655,9 @@ impl DataPlane {
         } else {
             None
         };
-        let exchange = async {
-            let upstream = self
-                .uploads
-                .send(&self.upstream, outbound, options, zstd_minimum)
-                .await?;
-            if upstream.status() == StatusCode::OK {
-                provider.observe_headers(upstream.headers());
-            }
-            Ok(upstream)
-        };
+        let exchange = self
+            .uploads
+            .send(&self.upstream, outbound, options, zstd_minimum);
         Ok(response::forward(
             exchange,
             Transfer {
@@ -677,6 +670,7 @@ impl DataPlane {
                 began,
             },
             lease,
+            provider,
             request_id.to_owned(),
             pending,
             body_permit,

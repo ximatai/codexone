@@ -247,6 +247,10 @@ impl NativeApplication for Session {
         self.protocol_extensions.upstream_event(document);
     }
 
+    fn detached_event(&self, identity: &Identity, document: &JsonValue) {
+        identity.provider.observe_event(document);
+    }
+
     fn upstream_closed(&self, attempt: &TurnAttempt, socket: websocket::SocketEnd) {
         if let Some(id) = &attempt.inner.request_id {
             diagnostics::websocket_close(

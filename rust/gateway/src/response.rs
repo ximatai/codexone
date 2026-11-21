@@ -386,6 +386,7 @@ pub async fn forward(
     exchange: impl std::future::Future<Output = Result<upstream::Response, upstream::Error>>,
     transfer: Transfer,
     lease: execution::Execution,
+    provider: crate::ws::Provider,
     request_id: String,
     pending: FlushDeliveries,
     body_permit: BodyPermit,
@@ -419,6 +420,7 @@ pub async fn forward(
             return Err(ResponseError::from(Box::new(error)));
         }
 
+        provider.observe_headers(upstream.headers());
         let content_type = upstream
             .headers()
             .get(http::header::CONTENT_TYPE)
@@ -434,7 +436,7 @@ pub async fn forward(
             },
         )?;
         if transfer.upstream_sse {
-            let mut reader = EventReader::new(upstream, &transfer, Some(body_permit));
+            let mut reader = EventReader::new(upstream, &transfer, provider, Some(body_permit));
             loop {
                 let Some(delivery) = reader
                     .next(&mut attempt, Some(&mut response_headers))
@@ -542,7 +544,8 @@ pub(crate) async fn discard_priming(
             upstream.close().await;
             return Err(error.into());
         }
-        let mut reader = EventReader::new(upstream, &transfer, None);
+        let mut reader =
+            EventReader::new(upstream, &transfer, crate::ws::Provider::default(), None);
         let result = async {
             while let Some(observation) = reader.next_observation().await? {
                 if first_event.is_none() {
@@ -649,6 +652,7 @@ struct EventReader {
     reached_eof: bool,
     effective_progress: bool,
     returned_turn_state: bool,
+    provider: crate::ws::Provider,
     protocol_extensions: Option<Arc<crate::diagnostics::ClientProtocolExtensions>>,
     _body_permit: Option<BodyPermit>,
 }
@@ -657,6 +661,7 @@ impl EventReader {
     fn new(
         upstream: upstream::Response,
         transfer: &Transfer,
+        provider: crate::ws::Provider,
         body_permit: Option<BodyPermit>,
     ) -> Self {
         Self {
@@ -666,6 +671,7 @@ impl EventReader {
             reached_eof: false,
             effective_progress: false,
             returned_turn_state: false,
+            provider,
             protocol_extensions: transfer.protocol_extensions.clone(),
             _body_permit: body_permit,
         }
@@ -686,14 +692,15 @@ impl EventReader {
         {
             extensions.upstream_name(name);
         }
-        if !self.returned_turn_state
-            && let Some(state) = observation.turn_state.as_deref()
-        {
-            self.returned_turn_state = true;
-            if let Some(headers) = response_headers.as_mut()
-                && let Ok(header) = state.parse()
-            {
-                headers.insert("x-codex-turn-state", header);
+        if let Some(state) = observation.turn_state.as_deref() {
+            self.provider.observe_turn_token(state);
+            if !self.returned_turn_state {
+                self.returned_turn_state = true;
+                if let Some(headers) = response_headers.as_mut()
+                    && let Ok(header) = state.parse()
+                {
+                    headers.insert("x-codex-turn-state", header);
+                }
             }
         }
         let delivery = attempt.apply(observation).await?;

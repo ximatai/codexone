@@ -199,3 +199,7 @@
 ## 相关文档
 
 [架构提案](proposal.md)
+
+## Rust 协议回归修正
+
+- [x] 2026-11-21，macOS arm64。托管池进程套件通过 HTTP metadata-only 两轮续接、首个返回状态、后续事件来源、原生 WebSocket 已结束轮次状态以及跨账号拒绝。

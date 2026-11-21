@@ -275,6 +275,33 @@ fn durable_pool_and_governance() {
         });
     }
 
+    let (status, headers, first) = request_with_headers(
+        data,
+        "POST",
+        "/v1/responses",
+        Some(key),
+        Some(json!({"model": "synth-text", "input": "metadata-first"})),
+    );
+    assert_eq!(status, 200, "{first}");
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("\r\nx-codex-turn-state: state-first"),
+        "{headers}"
+    );
+    let (status, second) = request(
+        data,
+        "POST",
+        "/v1/responses",
+        Some(key),
+        Some(json!({
+            "model": "synth-text",
+            "input": "metadata-continuation",
+            "client_metadata": {"x-codex-turn-state": "state-later"}
+        })),
+    );
+    assert_eq!(status, 200, "{second}");
+
     let (status, revoked) = request(
         admin,
         "PUT",
@@ -296,6 +323,8 @@ fn durable_pool_and_governance() {
         [
             "account-a",
             "account-a",
+            "account-b",
+            "account-b",
             "account-b",
             "account-b",
             "account-b",
@@ -327,13 +356,15 @@ fn durable_pool_and_governance() {
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 8);
     for (index, (account, ledger_key, state, usage, outcome)) in rows.iter().enumerate() {
         assert_eq!(
             account,
             [
                 "account-a",
                 "account-a",
+                "account-b",
+                "account-b",
                 "account-b",
                 "account-b",
                 "account-b",
@@ -344,7 +375,7 @@ fn durable_pool_and_governance() {
         let outcome: Value = serde_json::from_str(outcome).unwrap();
         if index == 1 {
             assert_eq!(outcome["failure"], "authentication_rejected");
-        } else if index >= 4 {
+        } else if (4..6).contains(&index) {
             assert_eq!(state, "unknown");
             assert_eq!(outcome["failure"], "account_unavailable");
         } else if index == 3 {
@@ -641,7 +672,7 @@ fn serve(mut socket: TcpStream, capture: &Mutex<Vec<String>>) {
         capture.push(account.to_owned());
         capture.len()
     };
-    if index >= 5 {
+    if (5..=6).contains(&index) {
         assert!(if image {
             request["prompt"] == "synthetic-hold"
         } else {
@@ -685,7 +716,16 @@ fn serve(mut socket: TcpStream, capture: &Mutex<Vec<String>>) {
         "id": response["id"], "status": "in_progress", "output": []
     }});
     let event = json!({"type": "response.completed", "response": response});
-    let sse = format!("data: {created}\n\ndata: {event}\n\n");
+    let (before_created, after_created) = if request["input"][0]["content"] == "metadata-first" {
+        let first = json!({"type": "response.metadata",
+            "headers": {"x-codex-turn-state": "state-first"}});
+        let later = json!({"type": "codex.response.metadata",
+            "headers": {"x-codex-turn-state": ["state-later"]}});
+        (format!("data: {first}\n\n"), format!("data: {later}\n\n"))
+    } else {
+        (String::new(), String::new())
+    };
+    let sse = format!("{before_created}data: {created}\n\n{after_created}data: {event}\n\n");
     write_response(&mut socket, "200 OK", "text/event-stream", &sse);
 }
 
@@ -774,6 +814,12 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
     );
     let initial = initial.unwrap();
     assert_eq!(initial, ("account-a".into(), "initial".into(), 1));
+    let late_metadata = ws_event(&mut active_socket);
+    assert_eq!(late_metadata["type"], "response.metadata");
+    assert_eq!(
+        late_metadata["headers"]["x-codex-turn-state"],
+        "state-late-ws"
+    );
     assert_pool_admission_retry_after(&path, data, key, &mut active_socket);
     assert!(
         requests.try_recv().is_err(),
@@ -802,7 +848,14 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
         ("account-b".into(), "bridge".into(), 3)
     );
 
-    ws_create(&mut active_socket, "pinned", Some("additional-lane"));
+    let continued = json!({
+        "type": "response.create", "model": "synth-text", "input": "pinned",
+        "stream_id": "additional-lane",
+        "client_metadata": {"x-codex-turn-state": "state-late-ws"}
+    });
+    active_socket
+        .send(Message::text(continued.to_string()))
+        .unwrap();
     assert_eq!(ws_event(&mut active_socket)["stream_id"], "additional-lane");
     assert_eq!(
         requests.recv_timeout(WAIT).unwrap(),
@@ -1134,6 +1187,12 @@ fn serve_ws(
             reply["stream_id"] = lane.clone();
         }
         socket.send(Message::text(reply.to_string())).unwrap();
+        if prompt == "initial" {
+            let metadata = json!({"type": "response.metadata",
+                "response_id": reply["response"]["id"],
+                "headers": {"x-codex-turn-state": "state-late-ws"}});
+            socket.send(Message::text(metadata.to_string())).unwrap();
+        }
     }
 }
 
