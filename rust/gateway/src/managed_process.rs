@@ -1063,13 +1063,8 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
     );
     assert_eq!(status, 200, "{saved}");
     assert_eq!(saved["settings"]["leadHours"], 1);
-    let (status, result) = request(
-        admin,
-        "POST",
-        &reset_consume,
-        Some(ADMIN),
-        Some(json!({"creditID":"synth-card"})),
-    );
+    let (status, result) =
+        consume_when_idle(admin, &reset_consume, json!({"creditID":"synth-card"}));
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["code"], "unknown");
     assert_eq!(
@@ -1120,7 +1115,7 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
         .0,
         409
     );
-    let (status, recovered) = request(admin, "POST", &reset_consume, Some(ADMIN), Some(json!({})));
+    let (status, recovered) = consume_when_idle(admin, &reset_consume, json!({}));
     assert_eq!(status, 200, "{recovered}");
     assert_eq!(recovered["code"], "already_redeemed");
     gateway.terminate();
@@ -1240,6 +1235,23 @@ fn quota_upstream(
             );
         }
         _ => panic!("unexpected synthetic route {path}"),
+    }
+}
+
+// Changing settings wakes the reset observer. A rejected busy-slot request
+// has not started a redemption and can wait for the observer to finish.
+fn consume_when_idle(admin: u16, path: &str, body: Value) -> (u16, Value) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let response = request(admin, "POST", path, Some(ADMIN), Some(body.clone()));
+        if response.0 != 409 || response.1["error"]["code"] != "account_conflict" {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reset observer did not release its slot"
+        );
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
