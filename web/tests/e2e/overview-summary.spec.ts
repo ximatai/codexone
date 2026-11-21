@@ -233,8 +233,8 @@ for (const width of [1920, 390]) {
     const second = panel.getByRole("row").filter({ hasText: "未命名 Key" });
     await expect(second).toContainText("输入 ≥ 120 万");
     await expect(second).toContainText("输出 ≥ 30 万");
-    await expect(first.getByTitle(/已观测费用下界/)).toHaveText("≥ 估算 $1.25");
-    await expect(second.getByTitle(/按配置费率估算/)).toHaveText("估算 $0.00");
+    await expect(first.getByTitle(/已观测费用下界/)).toHaveText("≥ $1.25");
+    await expect(second.getByTitle(/按配置费率估算/)).toHaveText("$0.00");
     await expect(panel.getByTitle("估算费用未记录")).toHaveText("—");
     if (width <= 750) {
       await expect(first.getByText("估算费用", { exact: true })).toBeVisible();
