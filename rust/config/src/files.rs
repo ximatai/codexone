@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rustix::fd::AsFd;
 use rustix::fs::{self, Access, Dir, FileType, Mode, OFlags, Stat};
@@ -152,7 +152,9 @@ pub(crate) fn load_master_keyring(
 }
 
 pub(crate) fn validate_backup_directory(path: &Path) -> Option<()> {
-    let info = fs::statat(fs::CWD, path, fs::AtFlags::SYMLINK_NOFOLLOW).ok()?;
+    // Avoid letting a trailing slash make stat follow the final component.
+    let path = path.components().collect::<PathBuf>();
+    let info = fs::statat(fs::CWD, &path, fs::AtFlags::SYMLINK_NOFOLLOW).ok()?;
     if FileType::from_raw_mode(info.st_mode) != FileType::Directory
         || info.st_uid != geteuid().as_raw()
         || info.st_mode & 0o777 != 0o700

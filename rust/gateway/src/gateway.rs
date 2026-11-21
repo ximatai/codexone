@@ -12,7 +12,7 @@ use codexone_execution::{
 use codexone_governance::KeyOptions;
 use codexone_http_upstream::Proxy;
 use codexone_maintenance::online::OnlineBackup;
-use codexone_storage::{AccountCredentialCipher, Database};
+use codexone_storage::{AccountCredentialCipher, Database, DatabaseError};
 use http::{Method, Request, Response, StatusCode, header};
 use hyper::body::Incoming;
 use rusqlite::ffi;
@@ -37,6 +37,7 @@ use crate::{
 
 pub enum StartupError {
     RequiresManagedKeys,
+    IncompleteRestore,
     Service,
 }
 
@@ -512,7 +513,10 @@ fn initialize_store(directory: &Path, static_identity: bool) -> Result<Database,
         .create(directory)
         .map_err(|_| Service)?;
     let path = directory.join("core.sqlite");
-    let database = Database::open_or_create(&path).map_err(|_| Service)?;
+    let database = Database::open_or_create(&path).map_err(|error| match error {
+        DatabaseError::IncompleteRestore => IncompleteRestore,
+        _ => Service,
+    })?;
     if static_identity {
         let restored: bool = database
             .connection()

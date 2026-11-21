@@ -27,7 +27,7 @@ use std::{
 
 use codexone_config::{ConfigCommand, ConfigError, Configuration, RuntimeConfiguration};
 use codexone_maintenance::Command as MaintenanceCommand;
-use codexone_storage::{AccountCredentialCipher, Database, SCHEMA_VERSION};
+use codexone_storage::{AccountCredentialCipher, Database, DatabaseError, SCHEMA_VERSION};
 
 fn main() -> ExitCode {
     let arguments: Vec<_> = std::env::args_os()
@@ -86,6 +86,7 @@ fn main() -> ExitCode {
             eprintln!("Restored databases require managed Keys or account-pool configuration.");
             ExitCode::FAILURE
         }
+        Err(gateway::StartupError::IncompleteRestore) => incomplete_restore(),
         Err(gateway::StartupError::Service) => service_failure(),
     }
 }
@@ -152,11 +153,18 @@ fn migrate() -> ExitCode {
         Ok(directory) => directory,
         Err(error) => return configuration_error(error),
     };
-    if Database::migrate(directory.join("core.sqlite")).is_err() {
-        return service_failure();
+    match Database::migrate(directory.join("core.sqlite")) {
+        Ok(()) => {}
+        Err(DatabaseError::IncompleteRestore) => return incomplete_restore(),
+        Err(_) => return service_failure(),
     }
     println!("Schema migration completed; any pre-upgrade backup is beside the database.");
     ExitCode::SUCCESS
+}
+
+fn incomplete_restore() -> ExitCode {
+    eprintln!("{}", DatabaseError::IncompleteRestore);
+    ExitCode::FAILURE
 }
 
 fn configuration_error(error: ConfigError) -> ExitCode {

@@ -70,6 +70,12 @@ def killed_restore(binary, bundle, directory):
     # Ordinary startup must not initialize an empty ready DB or admit from a partial copy.
     refused = command(binary, directory, '--maintenance-status', ok=False)
     assert b'Incomplete restore target' in refused.stderr
+    for arguments in ([], ['--migrate']):
+        refused = subprocess.run([binary, *arguments],
+            env={'PATH': os.defpath, 'CODEXONE_DATA_DIRECTORY': str(directory)},
+            capture_output=True, timeout=10)
+        assert refused.returncode != 0 and b'LISTENING' not in refused.stdout
+        assert b'Incomplete restore target' in refused.stderr
     assert not (directory / 'core.sqlite').exists()
 
 
@@ -84,21 +90,36 @@ def main():
         command(binary, f.root / 'state', '--backup', f.root / 'online-refused', ok=False)
         assert not (f.root / 'online-refused').exists()
         stopped(f.process);f.process = None
-        bundle = f.root / 'bundle'
+        workspace = f.root / 'workspace'
+        workspace.mkdir(mode=0o700)
+        alias = f.root / 'alias'
+        alias.symlink_to(workspace, target_is_directory=True)
+        bundle = alias / 'bundle'
         manifest = command(binary, f.root / 'state', '--backup', bundle)
         assert manifest['schema'] == current_schema_version(binary) and len(manifest['databaseSHA256']) == 64
         assert hashlib.sha256((bundle / 'snapshot.sqlite').read_bytes()).hexdigest() == manifest['databaseSHA256']
         assert bundle.stat().st_mode & 511 == 448
         for path in bundle.iterdir():assert path.stat().st_mode & 511 == 384
         command(binary, f.root / 'state', '--backup', bundle, ok=False)
+        bundle_link = f.root / 'bundle-link'
+        bundle_link.symlink_to(bundle, target_is_directory=True)
+        command(binary, f.root / 'state', '--backup', str(bundle_link) + '/', ok=False)
+        command(binary, f.root / 'state', '--verify-backup', str(bundle_link) + '/', ok=False)
+        assert bundle_link.is_symlink()
         # Continue the original service after backup; this execution will be absent from the old snapshot.
         f.process, f.ports = start(binary, f.config, f.root, admin_token_file=f.admin, web_directory=f.web_directory)
         assert request(f.ports['data'], secret)[0] == 200
         stopped(f.process);f.process = None
         with sqlite3.connect(f.root / 'state/core.sqlite') as db:
             original_count = db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
-        parent = f.root / 'restored';parent.mkdir(mode=0o700)
+        parent = alias / 'restored';parent.mkdir(mode=0o700)
         state = parent / 'state'
+        empty = workspace / 'empty'
+        empty.mkdir(mode=0o700)
+        state.symlink_to(empty, target_is_directory=True)
+        command(binary, state, '--restore', bundle, ok=False)
+        assert state.is_symlink() and not list(empty.iterdir())
+        state.unlink()
         report = command(binary, state, '--restore', bundle)
         assert report['state'] == 'restored_unreconciled'
         record = report['restore']
@@ -183,6 +204,8 @@ def main():
         large = f.root / 'large'
         command(binary, f.root / 'state', '--backup', large)
         killed_restore(binary, large, f.root / 'killed-target')
+        retried = command(binary, f.root / 'retry-target', '--restore', large)
+        assert retried['state'] == 'restored_unreconciled'
         assert hashlib.sha256((large / 'snapshot.sqlite').read_bytes()).hexdigest() == json.loads((large / 'manifest.json').read_text())['databaseSHA256']
         print('PASS: private completed-bundle integrity/modes/symlink/refusal and actual SIGKILL restore barrier; original backup remains intact')
 

@@ -32,7 +32,9 @@ impl fmt::Display for DatabaseError {
         f.write_str(match self {
             Self::IncompatibleSchema => "incompatible SQLite schema",
             Self::InstanceLocked => "database is locked by another instance",
-            Self::IncompleteRestore => "database has an incomplete restore",
+            Self::IncompleteRestore => {
+                "Incomplete restore target; preserve the backup and use a new empty target."
+            }
             Self::IncompleteReencryption => "database has incomplete credential reencryption",
             Self::StoragePressure => "insufficient free space for database migration",
             Self::MigrationBackupFailed => "could not publish the pre-migration backup",
@@ -272,7 +274,8 @@ fn canonical_database_path(path: &Path, create: bool) -> io::Result<PathBuf> {
     }
     match path.canonicalize() {
         Ok(canonical) => Ok(canonical),
-        Err(error) if create && error.kind() == io::ErrorKind::NotFound => {
+        // A pending restore can exist before the database file does.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let name = path.file_name().ok_or(io::ErrorKind::InvalidInput)?;
             let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
             let parent = if parent.as_os_str().is_empty() {
@@ -280,7 +283,11 @@ fn canonical_database_path(path: &Path, create: bool) -> io::Result<PathBuf> {
             } else {
                 parent
             };
-            Ok(parent.canonicalize()?.join(name))
+            let path = parent.canonicalize()?.join(name);
+            if !create {
+                sidecar(&path, ".restore-pending").symlink_metadata()?;
+            }
+            Ok(path)
         }
         Err(error) => Err(error),
     }

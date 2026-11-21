@@ -116,6 +116,7 @@ impl OnlineBackup {
         source: DatabaseBackupSource,
         protection: Option<Arc<AccountCredentialCipher>>,
     ) -> Self {
+        let root = files::normalized_leaf(&root).unwrap_or(root);
         let backup = Self {
             root,
             source,

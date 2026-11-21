@@ -102,14 +102,30 @@ pub(crate) fn backup_checked(
     if check.poll.is_none() {
         verify_credentials(db, protection)?;
     }
-    let parent = files::parent(destination)?.canonicalize()?;
-    require_free_space(&parent, snapshot_bytes(db)? + 8 * MIB, true)?;
+    let destination = files::normalized_leaf(destination)?;
+    let parent = files::parent(&destination)?;
+    require_free_space(parent, snapshot_bytes(db)? + 8 * MIB, true)?;
     require_free_space(files::parent(database)?, 8 * MIB, true)?;
-    match files::create_directory(destination) {
+    match files::create_directory(&destination) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Err(Error::Conflict),
         Err(error) => return Err(error.into()),
     }
+    let result = write_bundle(db, &destination, protection, check);
+    if result.is_err() && check.poll.is_none() && fs::remove_dir_all(&destination).is_ok() {
+        // Only clean up a directory this invocation created. Online partials belong
+        // to the scheduled worker and are retired on its next normal pass.
+        let _ = files::sync_directory(parent);
+    }
+    result
+}
+
+fn write_bundle(
+    db: &Connection,
+    destination: &Path,
+    protection: Option<&AccountCredentialCipher>,
+    check: &mut SnapshotCheck,
+) -> Result<SnapshotManifest> {
     files::private_directory(destination)?;
     let partial = destination.join("snapshot.sqlite.partial");
     copy(db, &partial, true, check)?;
@@ -141,7 +157,7 @@ pub(crate) fn backup_checked(
     files::write_synced(&manifest_partial, &serde_json::to_vec(&manifest)?)?;
     fs::rename(manifest_partial, destination.join("manifest.json"))?;
     files::sync_directory(destination)?;
-    files::sync_directory(&parent)?;
+    files::sync_directory(files::parent(destination)?)?;
     Ok(manifest)
 }
 
@@ -157,7 +173,8 @@ fn verified_snapshot(
     protection: Option<&AccountCredentialCipher>,
     check: &SnapshotCheck,
 ) -> Result<VerifiedSnapshot> {
-    files::private_directory(bundle)?;
+    let bundle = files::normalized_leaf(bundle)?;
+    files::private_directory(&bundle)?;
     let path = bundle.join("snapshot.sqlite");
     let lock = files::lock(&files::sidecar(&path, ".lock"), false)?;
     files::require_absent(&path, &["-wal", "-shm", "-journal", ".restore-pending"])?;
@@ -229,24 +246,25 @@ fn restore_with_barrier(
     let verified = verified_snapshot(bundle, protection, &check)?;
     let manifest = &verified.manifest;
     let previous = require_reconciled_source(&verified.source)?;
-    let directory = files::parent(path)?;
-    let parent = files::parent(directory)?.canonicalize()?;
-    let capacity_path = if directory.exists() {
-        directory
-    } else {
-        &parent
+    let directory = files::normalized_leaf(files::parent(path)?)?;
+    let parent = files::parent(&directory)?;
+    let capacity_path = match directory.symlink_metadata() {
+        Ok(_) => {
+            files::private_directory(&directory)?;
+            directory.as_path()
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => parent,
+        Err(error) => return Err(error.into()),
     };
     require_free_space(capacity_path, manifest.database_bytes + 8 * MIB, false)?;
-    match files::create_directory(directory) {
+    match files::create_directory(&directory) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
-    files::private_directory(directory)?;
-    files::sync_directory(&parent)?;
-    let path = directory
-        .canonicalize()?
-        .join(path.file_name().ok_or(Error::Invalid)?);
+    files::private_directory(&directory)?;
+    files::sync_directory(parent)?;
+    let path = directory.join(path.file_name().ok_or(Error::Invalid)?);
     let lock_path = files::sidecar(&path, ".lock");
     let _lock = files::lock(&lock_path, true)?;
     for entry in directory.read_dir()? {
@@ -258,7 +276,7 @@ fn restore_with_barrier(
     // A crash from this point leaves the target closed until an operator disposes of the partial restore.
     let barrier = files::sidecar(&path, ".restore-pending");
     files::write_synced(&barrier, manifest.id.as_bytes())?;
-    files::sync_directory(directory)?;
+    files::sync_directory(&directory)?;
     barrier_written()?;
 
     let staging = files::sidecar(&path, ".restoring.partial");
@@ -314,9 +332,9 @@ fn restore_with_barrier(
     drop(target);
     files::sync_file(&staging)?;
     fs::rename(staging, &path)?;
-    files::sync_directory(directory)?;
+    files::sync_directory(&directory)?;
     fs::remove_file(barrier)?;
-    files::sync_directory(directory)?;
+    files::sync_directory(&directory)?;
     Ok(record)
 }
 
@@ -460,6 +478,27 @@ fn finish_copy(target: &Connection) -> Result<()> {
 mod tests {
     use super::*;
     use codexone_storage::DatabaseError;
+
+    #[test]
+    fn offline_backup_removes_its_bundle_when_snapshot_validation_fails() {
+        let temporary = tempfile::tempdir().unwrap();
+        let source = temporary.path().join("core.sqlite");
+        let db = Database::open_or_create(&source).unwrap();
+        db.connection()
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 CREATE TABLE synthetic_parent(id INTEGER PRIMARY KEY);
+                 CREATE TABLE synthetic_child(parent INTEGER REFERENCES synthetic_parent);
+                 INSERT INTO synthetic_child VALUES(1);",
+            )
+            .unwrap();
+        let bundle = temporary.path().join("bundle");
+        assert!(matches!(
+            backup_locked(db.connection(), db.path(), &bundle, None),
+            Err(Error::Invalid)
+        ));
+        assert!(!bundle.exists());
+    }
 
     #[test]
     fn interrupted_restore_leaves_a_barrier_before_any_target_page() {

@@ -21,6 +21,13 @@ pub(crate) fn parent(path: &Path) -> Result<&Path> {
         .ok_or(Error::Invalid)
 }
 
+/// Resolve ancestors while preserving the final name for no-follow checks.
+pub(crate) fn normalized_leaf(path: &Path) -> Result<PathBuf> {
+    Ok(parent(path)?
+        .canonicalize()?
+        .join(path.file_name().ok_or(Error::Invalid)?))
+}
+
 fn uid() -> u32 {
     // SAFETY: geteuid has no preconditions.
     unsafe { libc::geteuid() }
