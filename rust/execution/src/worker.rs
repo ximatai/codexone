@@ -13,7 +13,7 @@ use rusqlite::Transaction;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 
 use crate::model::*;
-use crate::reserve::StorageReserve;
+use crate::reserve::{StorageMonitor, StoragePressure, StorageReserve};
 use crate::{
     AccountIdentity, ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization,
     StaticIdentity, admission, ledger,
@@ -244,6 +244,7 @@ impl Writer {
 #[derive(Clone)]
 pub struct ExecutionService {
     inner: Arc<Inner>,
+    storage: StorageMonitor,
 }
 
 impl ExecutionService {
@@ -298,7 +299,7 @@ impl ExecutionService {
                 let _exit = exit;
                 match open().and_then(|db| Writer::open(db, options)) {
                     Ok(mut writer) => {
-                        if ready_tx.send(Ok(())).is_ok() {
+                        if ready_tx.send(Ok(writer.reserve.monitor())).is_ok() {
                             for job in receiver {
                                 job(&mut writer);
                             }
@@ -310,12 +311,21 @@ impl ExecutionService {
                 }
             })
             .map_err(|_| Error::StorageUnavailable)?;
-        ready_rx.await.map_err(|_| Error::StorageUnavailable)??;
-        Ok(Self { inner })
+        let storage = ready_rx.await.map_err(|_| Error::StorageUnavailable)??;
+        Ok(Self { inner, storage })
     }
 
     pub fn status(&self) -> ExecutionStatus {
         self.inner.gate().status()
+    }
+
+    /// Optional work uses a read-only pressure sample outside the bounded writer queue.
+    pub fn storage_pressure(&self) -> StoragePressure {
+        if self.status() == ExecutionStatus::Accepting {
+            self.storage.pressure()
+        } else {
+            StoragePressure::Unknown
+        }
     }
 
     /// Resolve on a fatal command or an unexpected writer panic, including prior failures.

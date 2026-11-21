@@ -1,8 +1,9 @@
-//! Offline Swift-compatible snapshot and master-key maintenance.
+//! Swift-compatible snapshot, scheduling, and offline master-key maintenance.
 
 mod files;
 mod keys;
 mod managed_keys;
+pub mod online;
 mod record;
 mod snapshot;
 

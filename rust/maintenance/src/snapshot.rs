@@ -1,7 +1,9 @@
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use codexone_storage::{AccountCredentialCipher, Database, SCHEMA_VERSION, require_free_space};
 use rusqlite::backup::{Backup, StepResult};
@@ -46,9 +48,48 @@ pub(crate) fn backup_locked(
     destination: &Path,
     protection: Option<&AccountCredentialCipher>,
 ) -> Result<SnapshotManifest> {
+    backup_checked(
+        db,
+        database,
+        destination,
+        protection,
+        &SnapshotCheck::default(),
+    )
+}
+
+/// The callback is shared with SQLite's VM progress handler on the private snapshot connection.
+#[derive(Default)]
+pub(crate) struct SnapshotCheck(pub(crate) Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>);
+
+impl SnapshotCheck {
+    pub(crate) fn run(&self) -> Result<()> {
+        match &self.0 {
+            Some(check) => check(),
+            None => Ok(()),
+        }
+    }
+
+    fn watch(&self, connection: &mut Connection) -> Result<()> {
+        if let Some(check) = self.0.clone() {
+            connection.progress_handler(1000, Some(move || check().is_err()))?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn backup_checked(
+    db: &Connection,
+    database: &Path,
+    destination: &Path,
+    protection: Option<&AccountCredentialCipher>,
+    check: &SnapshotCheck,
+) -> Result<SnapshotManifest> {
+    check.run()?;
     require_complete_reencryption(db)?;
     require_reconciled_source(db)?;
-    verify_credentials(db, protection)?;
+    if check.0.is_none() {
+        verify_credentials(db, protection)?;
+    }
     let parent = files::parent(destination)?.canonicalize()?;
     require_free_space(&parent, snapshot_bytes(db)? + 8 * MIB, true)?;
     require_free_space(files::parent(database)?, 8 * MIB, true)?;
@@ -59,15 +100,17 @@ pub(crate) fn backup_locked(
     }
     files::private_directory(destination)?;
     let partial = destination.join("snapshot.sqlite.partial");
-    copy(db, &partial, true)?;
-    let copy = open_snapshot(&partial)?;
+    copy(db, &partial, true, check)?;
+    check.run()?;
+    let mut copy = open_snapshot(&partial)?;
+    check.watch(&mut copy)?;
     let keys = verify_credentials(&copy, protection)?;
     require_integrity(&copy)?;
     let generation = generation(&copy)?;
     let schema = copy.pragma_query_value(None, "user_version", |row| row.get(0))?;
     drop(copy);
 
-    let (bytes, hash) = files::fingerprint(&partial)?;
+    let (bytes, hash) = files::fingerprint_checked(&partial, || check.run())?;
     let manifest = SnapshotManifest {
         format: 1,
         id: new_id(db)?,
@@ -79,6 +122,7 @@ pub(crate) fn backup_locked(
         required_key_ids: keys,
     };
 
+    check.run()?;
     fs::rename(partial, destination.join("snapshot.sqlite"))?;
     files::write_synced(&destination.join("snapshot.sqlite.lock"), b"")?;
     let manifest_partial = destination.join("manifest.partial");
@@ -99,6 +143,7 @@ struct VerifiedSnapshot {
 fn verified_snapshot(
     bundle: &Path,
     protection: Option<&AccountCredentialCipher>,
+    check: &SnapshotCheck,
 ) -> Result<VerifiedSnapshot> {
     files::private_directory(bundle)?;
     let path = bundle.join("snapshot.sqlite");
@@ -117,8 +162,9 @@ fn verified_snapshot(
     {
         return Err(Error::Invalid);
     }
-    require_fingerprint(&path, &manifest)?;
-    let source = open_snapshot(&path)?;
+    require_fingerprint(&path, &manifest, check)?;
+    let mut source = open_snapshot(&path)?;
+    check.watch(&mut source)?;
     let schema: i64 = source.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if schema != manifest.schema
         || verify_credentials(&source, protection)? != manifest.required_key_ids
@@ -140,7 +186,15 @@ pub(crate) fn verify_backup(
     bundle: &Path,
     protection: Option<&AccountCredentialCipher>,
 ) -> Result<SnapshotManifest> {
-    Ok(verified_snapshot(bundle, protection)?.manifest)
+    verify_backup_checked(bundle, protection, &SnapshotCheck::default())
+}
+
+pub(crate) fn verify_backup_checked(
+    bundle: &Path,
+    protection: Option<&AccountCredentialCipher>,
+    check: &SnapshotCheck,
+) -> Result<SnapshotManifest> {
+    Ok(verified_snapshot(bundle, protection, check)?.manifest)
 }
 
 pub(crate) fn restore(
@@ -159,7 +213,8 @@ fn restore_with_barrier(
     day: BusinessDay,
     barrier_written: impl FnOnce() -> Result<()>,
 ) -> Result<RestoreRecord> {
-    let verified = verified_snapshot(bundle, protection)?;
+    let check = SnapshotCheck::default();
+    let verified = verified_snapshot(bundle, protection, &check)?;
     let manifest = &verified.manifest;
     let previous = require_reconciled_source(&verified.source)?;
     let directory = files::parent(path)?;
@@ -195,8 +250,8 @@ fn restore_with_barrier(
     barrier_written()?;
 
     let staging = files::sidecar(&path, ".restoring.partial");
-    copy(&verified.source, &staging, false)?;
-    require_fingerprint(&verified.path, manifest)?;
+    copy(&verified.source, &staging, false, &check)?;
+    require_fingerprint(&verified.path, manifest, &check)?;
 
     let mut target = Database::open_restore_staging(&staging)?;
     let completed = now()?;
@@ -274,8 +329,12 @@ fn require_reconciled_source(db: &Connection) -> Result<Option<RestoreRecord>> {
     Ok(record)
 }
 
-fn require_fingerprint(path: &Path, manifest: &SnapshotManifest) -> Result<()> {
-    let (size, hash) = files::fingerprint(path)?;
+fn require_fingerprint(
+    path: &Path,
+    manifest: &SnapshotManifest,
+    check: &SnapshotCheck,
+) -> Result<()> {
+    let (size, hash) = files::fingerprint_checked(path, || check.run())?;
     if size != manifest.database_bytes || hash != manifest.database_sha256 {
         return Err(Error::Invalid);
     }
@@ -325,7 +384,7 @@ fn snapshot_bytes(source: &Connection) -> Result<i64> {
         .ok_or(Error::Capacity)
 }
 
-fn copy(source: &Connection, path: &Path, optional: bool) -> Result<()> {
+fn copy(source: &Connection, path: &Path, optional: bool, check: &SnapshotCheck) -> Result<()> {
     let directory = files::parent(path)?;
     let bytes = snapshot_bytes(source)?;
     require_free_space(directory, bytes + 8 * MIB, optional)?;
@@ -339,16 +398,32 @@ fn copy(source: &Connection, path: &Path, optional: bool) -> Result<()> {
     target.busy_timeout(Duration::ZERO)?;
     target.pragma_update(None, "synchronous", "FULL")?;
     {
+        let online = check.0.is_some();
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let page_size: i64 = source.pragma_query_value(None, "page_size", |row| row.get(0))?;
         let transfer = Backup::new(source, &mut target)?;
         loop {
+            check.run()?;
+            if online && Instant::now() >= deadline {
+                return Err(Error::Storage);
+            }
             require_free_space(directory, 2 * MIB, optional)?;
-            match transfer.step(128)? {
+            let step = transfer.step(128)?;
+            if i64::from(transfer.progress().pagecount) > MAX_DATABASE_BYTES / page_size {
+                return Err(Error::Capacity);
+            }
+            match step {
                 StepResult::Done => break,
+                StepResult::More if online => thread::sleep(Duration::from_millis(1)),
                 StepResult::More => {}
+                StepResult::Busy | StepResult::Locked if online => {
+                    thread::sleep(Duration::from_millis(10));
+                }
                 _ => return Err(Error::Storage),
             }
         }
     }
+    check.run()?;
     finish_copy(&target)?;
     target.close().map_err(|_| Error::Storage)?;
     file.sync_all()?;

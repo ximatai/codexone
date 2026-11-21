@@ -4,6 +4,7 @@ mod admission;
 mod ledger;
 mod model;
 mod reserve;
+pub use reserve::StoragePressure;
 mod static_identity;
 mod worker;
 

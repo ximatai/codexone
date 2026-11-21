@@ -169,8 +169,12 @@ impl Key {
     fn from_hex(hex_key: &str) -> Result<Self, CredentialError> {
         let mut material = Zeroizing::new([0; 32]);
         hex::decode_to_slice(hex_key, material.as_mut()).map_err(|_| CredentialError)?;
+        Ok(Self::from_material(material))
+    }
+
+    fn from_material(material: Zeroizing<[u8; 32]>) -> Self {
         let id = hex::encode(&Sha256::digest(material.as_ref())[..16]);
-        Ok(Self { id, material })
+        Self { id, material }
     }
 
     fn cipher(&self) -> Aes256Gcm {
@@ -201,10 +205,35 @@ impl AccountCredentialCipher {
         if decrypt_only_hex_keys.len() > 7 {
             return Err(CredentialError);
         }
-        let active = Key::from_hex(active_hex_key)?;
-        let mut decrypt_only: Vec<Key> = Vec::with_capacity(decrypt_only_hex_keys.len());
-        for hex_key in decrypt_only_hex_keys {
-            let key = Key::from_hex(hex_key)?;
+        Self::from_keys(
+            Key::from_hex(active_hex_key)?,
+            decrypt_only_hex_keys.iter().map(|key| Key::from_hex(key)),
+        )
+    }
+
+    /// Build the cipher from previously validated configuration key material.
+    pub fn from_key_bytes(
+        active: &[u8; 32],
+        decrypt_only: &[&[u8; 32]],
+    ) -> Result<Self, CredentialError> {
+        if decrypt_only.len() > 7 {
+            return Err(CredentialError);
+        }
+        Self::from_keys(
+            Key::from_material(Zeroizing::new(*active)),
+            decrypt_only
+                .iter()
+                .map(|key| Ok(Key::from_material(Zeroizing::new(**key)))),
+        )
+    }
+
+    fn from_keys(
+        active: Key,
+        old: impl ExactSizeIterator<Item = Result<Key, CredentialError>>,
+    ) -> Result<Self, CredentialError> {
+        let mut decrypt_only: Vec<Key> = Vec::with_capacity(old.len());
+        for key in old {
+            let key = key?;
             if key.id == active.id || decrypt_only.iter().any(|old| old.id == key.id) {
                 return Err(CredentialError);
             }

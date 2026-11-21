@@ -110,11 +110,19 @@ pub(crate) fn sync_file(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn fingerprint(path: &Path) -> Result<(i64, String)> {
+    fingerprint_checked(path, || Ok(()))
+}
+
+pub(crate) fn fingerprint_checked(
+    path: &Path,
+    check: impl Fn() -> Result<()>,
+) -> Result<(i64, String)> {
     let mut input = open_private(path, false)?;
     let mut bytes = 0;
     let mut digest = Sha256::new();
     let mut chunk = [0; 65_536];
     loop {
+        check()?;
         let count = input.read(&mut chunk)?;
         if count == 0 {
             break;

@@ -11,7 +11,8 @@ pub use credential::{
     AccountCredential, AccountCredentialCipher, AccountCredentialContext, CredentialError,
 };
 pub use database::{
-    Database, DatabaseError, ReencryptionCheckpoint, SCHEMA_VERSION, reencryption_checkpoint,
+    Database, DatabaseBackupSource, DatabaseError, ReencryptionCheckpoint, SCHEMA_VERSION,
+    reencryption_checkpoint,
 };
 pub use key::{InvalidBearer, bearer_digest, key_digest};
 pub use migration::require_free_space;

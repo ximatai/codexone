@@ -2,6 +2,7 @@ use std::fmt;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
@@ -53,8 +54,21 @@ impl From<rusqlite::Error> for DatabaseError {
 /// The connection closes before the lock file descriptor.
 pub struct Database {
     connection: Connection,
-    _lock: File,
+    lock: Arc<File>,
     path: PathBuf,
+}
+
+/// A path covered by the writer's existing instance lock while a backup runs.
+/// The lock is shared even if an unexpected writer exit closes its SQLite connection.
+pub struct DatabaseBackupSource {
+    _lock: Arc<File>,
+    path: PathBuf,
+}
+
+impl DatabaseBackupSource {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -218,7 +232,7 @@ impl Database {
         }
         Ok(Self {
             connection,
-            _lock: lock,
+            lock: Arc::new(lock),
             path,
         })
     }
@@ -226,6 +240,13 @@ impl Database {
     /// The canonical path protected by this database's instance lock.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn backup_source(&self) -> DatabaseBackupSource {
+        DatabaseBackupSource {
+            _lock: self.lock.clone(),
+            path: self.path.clone(),
+        }
     }
 
     /// Borrow the locked writer for adapter queries.
