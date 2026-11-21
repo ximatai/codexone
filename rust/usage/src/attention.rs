@@ -343,7 +343,8 @@ fn accounts(db: &Connection, now: i64) -> Result<Vec<Item>> {
             },
         )?,
         64,
-    )?;
+    )
+    .map_err(|_| Error::Unavailable)?;
     let mut items = Vec::new();
     for account in accounts {
         let mut add = |kind, critical, detail, since| {
@@ -500,7 +501,7 @@ fn keys(db: &Connection, now: i64, day: BusinessDay) -> Result<Vec<Item>> {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?,
             row.get::<_, bool>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?,
             row.get::<_, Option<i64>>(6)?))
-    })?, 256)?;
+    })?, 256).map_err(|_| Error::Unavailable)?;
     let tokens = summary::key_token_usages(db, day.start(now), day)?;
     let mut items = Vec::new();
     for (id, principal, name, enabled, archived, expires, limit) in keys {
@@ -593,7 +594,7 @@ fn capacity(db: &Connection, now: i64, day: BusinessDay, context: &Context) -> R
         let id = account["id"].as_str().ok_or(Error::Unavailable)?;
         let peak = account["peak24Hours"].as_i64().ok_or(Error::Unavailable)?;
         let limit = account["limit"].as_i64().ok_or(Error::Unavailable)?;
-        if peak * 5 >= limit * 4 {
+        if i128::from(peak) * 5 >= i128::from(limit) * 4 {
             items.push(
                 Item::new(
                     "account_concurrency_high",

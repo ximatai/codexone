@@ -394,6 +394,10 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
 
     /// Same account documents as authenticated HTTP, used directly by the overview.
     pub async fn overview_accounts(&self) -> Result<Value> {
+        if self.authorization.is_none() {
+            return Err(Error::AuthorizationUnavailable);
+        }
+        let _permit = self.capacity.try_acquire().map_err(|_| Error::Capacity)?;
         self.accounts_document(None, true).await
     }
 

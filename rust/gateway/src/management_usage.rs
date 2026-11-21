@@ -61,7 +61,7 @@ impl ManagementUsage {
         let output_horizon = reader
             .read(|db| {
                 Ok(db.query_row(
-                    "SELECT COALESCE(MAX(output_rate_settled_at),-1) FROM attempts",
+                    "SELECT COALESCE(MAX(output_rate_settled_at),-1) FROM attempts WHERE output_rate_settled_at IS NOT NULL",
                     [],
                     |row| row.get::<_, i64>(0),
                 )?)
@@ -122,8 +122,16 @@ impl ManagementUsage {
         } else {
             Value::Null
         };
+        let context = match path {
+            "/api/usage/options" => Context {
+                default_reasoning_efforts: (self.defaults)(),
+                ..self.context(storage)
+            },
+            "/api/attention" => self.attention_context(storage),
+            _ => self.context(storage),
+        };
         self.usage
-            .route(request, now, Arc::new(self.context(storage)))
+            .route(request, now, Arc::new(context))
             .await
             .unwrap_or_else(codexone_admin::not_found)
     }
@@ -174,12 +182,23 @@ impl ManagementUsage {
         self.reader.wait_idle().await;
     }
 
-    pub fn context(&self, storage: Value) -> Context {
+    pub fn activity_context(&self, storage: Value) -> Context {
         Context {
-            default_reasoning_efforts: (self.defaults)(),
-            first_events: self.execution.first_events(),
             clients: self.clients.snapshot(),
+            ..self.context(storage)
+        }
+    }
+
+    pub fn attention_context(&self, storage: Value) -> Context {
+        Context {
             protocol_extensions: (self.protocol_extensions)(),
+            ..self.context(storage)
+        }
+    }
+
+    fn context(&self, storage: Value) -> Context {
+        Context {
+            first_events: self.execution.first_events(),
             live_output_after: self.output_horizon,
             daily_requests: Some(10_000),
             daily_budget_micros: Some(1_000_000_000),

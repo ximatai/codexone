@@ -128,7 +128,9 @@ impl OverviewHub {
                             .usage
                             .sample_overview(
                                 at,
-                                Arc::new(usage.context(storage.clone().unwrap_or_default())),
+                                Arc::new(
+                                    usage.activity_context(storage.clone().unwrap_or_default()),
+                                ),
                             )
                             .await;
                         if state.update_usage(at, sampled).is_err() {
@@ -141,7 +143,7 @@ impl OverviewHub {
                         activity_due = None;
                         dirty = false;
                     } else if sample_activity {
-                        let context = Arc::new(usage.context(Value::Null));
+                        let context = Arc::new(usage.activity_context(Value::Null));
                         other.insert(
                             OverviewSource::InFlight,
                             usage.usage.sample_activity(at, context).await,
@@ -154,7 +156,8 @@ impl OverviewHub {
                             None => Err(Error::Unavailable),
                         };
                         other.insert(OverviewSource::Accounts, accounts);
-                        let context = Arc::new(usage.context(storage.clone().unwrap_or_default()));
+                        let context =
+                            Arc::new(usage.attention_context(storage.clone().unwrap_or_default()));
                         other.insert(
                             OverviewSource::Attention,
                             usage.usage.attention(at, context).await,
