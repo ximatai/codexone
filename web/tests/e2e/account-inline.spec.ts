@@ -59,6 +59,8 @@ test("unconfigured account management reports its state inside the overview draw
   page,
 }) => {
   const state = await reviewFixture(page);
+  state.alerts = 0;
+  state.keys.splice(1);
   state.failures["/api/accounts"] = 404;
   await page.goto("/#/?account=synthetic-account-1");
   await expect(page.getByRole("dialog", { name: "账号详情" })).toContainText(
