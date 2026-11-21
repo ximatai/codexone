@@ -91,7 +91,7 @@ def check_live_browser(workflow):
     jobs = workflow_jobs(workflow)
     live = jobs['frontend-live']
     compiled_tests = jobs['backend-swift-tests']
-    downstream = ('backend-swift-tests', 'backend-scripts', 'frontend-live')
+    downstream = ('backend-swift-tests', 'backend-scripts')
     for name in downstream:
         assert '    needs: [changes, backend-build]\n' in jobs[name], (
             f'{name} must start after the matching build, independently of the other tests')
@@ -101,30 +101,47 @@ def check_live_browser(workflow):
     assert '--testing-library xctest' in compiled_tests and '--testing-library swift-testing --no-parallel' in compiled_tests, (
         'Retain both Swift test libraries and their serial execution')
     gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
-    assert gate_needs and set(downstream) <= set(gate_needs[1].split(', ')), 'Verify must await all three test jobs'
-    assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
+    assert gate_needs and set(gate_needs[1].split(', ')) == jobs.keys() - {'verify'}, 'Verify must await every job'
+    assert 'needs: [changes, backend-build, backend-rust-build]' in live, 'Real browser must depend on both build jobs'
+    assert all(result in live for result in ('needs.backend-build.result', 'needs.backend-rust-build.result')), (
+        'Real browser must run when either backend is selected and require the selected build results')
+    assert """fromJSON(needs.changes.outputs.backend == 'true' && (needs.changes.outputs.rust == 'true' && '["swift","rust"]' || '["swift"]') || '["rust"]')""" in live, (
+        'Live browser matrix must contain one run per selected backend')
+    assert "matrix.backend == 'rust' && 'backend-rust-binaries' || 'backend-binaries'" in live, (
+        'Real browser must select the matching gateway artifact')
+    assert 'name: ${{ env.GATEWAY_ARTIFACT }}' in live and 'digest-mismatch: error' in live, (
+        'Real browser must restore the matching gateway artifact')
+    assert 'CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone' in live, 'Real browser must use the restored gateway'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
     assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests must keep their full entry point'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
     condition = "    if: needs.changes.outputs.backend == 'true'\n"
     assert condition in jobs['backend-build'], 'Backend build must follow backend selection'
-    assert condition in live, 'Real browser must follow backend selection'
-    assert "required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
-        'Final gate must require all real backend checks together')
     assert 'if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
         'PRs and main pushes use quick checks; manual Verify uses the full matrix')
 
 
 def check_rust(workflow, dockerfile):
     jobs = workflow_jobs(workflow)
-    rust = jobs['backend-rust']
-    version = re.search(r'^      RUSTUP_TOOLCHAIN: ([\d.]+)$', rust, re.M)
-    assert version and f'ARG RUST_BUILD_IMAGE=rust:{version[1]}-' in dockerfile, (
-        'Verify and the Rust candidate must use the same Rust version')
-    assert "    if: needs.changes.outputs.rust == 'true'\n" in rust, 'Rust job must follow Rust selection'
-    assert 'run: ./scripts/verify_rust.sh' in rust, 'Rust job must use the full verification entry point'
-    gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
-    assert gate_needs and 'backend-rust' in gate_needs[1].split(', '), 'Verify must await the Rust job'
+    tests, build, shards, parity = (jobs[name] for name in (
+        'backend-rust', 'backend-rust-build', 'backend-rust-scripts', 'backend-parity'))
+    for job in (tests, build):
+        version = re.search(r'^      RUSTUP_TOOLCHAIN: ([\d.]+)$', job, re.M)
+        assert version and f'ARG RUST_BUILD_IMAGE=rust:{version[1]}-' in dockerfile, (
+            'Verify and the Rust candidate must use the same Rust version')
+    for job in (tests, build, shards):
+        assert "    if: needs.changes.outputs.rust == 'true'\n" in job, 'Rust jobs must follow Rust selection'
+    assert 'run: ./scripts/verify_rust.sh --crate-tests' in tests, 'Retain Rust crate tests'
+    assert './scripts/verify_rust.sh --release-build' in build and '-C rust/gateway/target/release codexone' in build, (
+        'Package the optimized gateway executable from the selected commit')
+    assert 'needs: [changes, backend-rust-build]' in shards, 'Rust protocol checks need the matching build'
+    assert 'shard: [1/4, 2/4, 3/4, 4/4]' in shards, 'Rust must run all four protocol shards'
+    assert 'name: backend-rust-binaries' in shards and 'digest-mismatch: error' in shards, (
+        'Rust protocol checks must restore the matching gateway artifact')
+    assert """./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}" --rust""" in shards, (
+        'Use the Rust protocol shard entry point')
+    assert 'needs: [changes, backend-build, backend-rust-build]' in parity and 'scripts/rust_compat/compare.py' in parity, (
+        'Cross-backend checks must exercise both matching binaries')
 
 
 def check():

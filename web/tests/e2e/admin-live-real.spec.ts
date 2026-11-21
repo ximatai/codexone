@@ -12,7 +12,10 @@ for (const realtime of [true, false]) {
   }) => {
     test.setTimeout(120000);
     page.setDefaultTimeout(10000);
-    const binary = resolve("../.build/debug/codexone");
+    const binary = resolve(
+      globalThis.process.env.CODEXONE_WEB_TEST_BINARY ??
+        "../.build/debug/codexone",
+    );
     const process: ChildProcess = spawn(
       "python3",
       [

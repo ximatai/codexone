@@ -14,7 +14,7 @@ import tempfile
 import textwrap
 import unittest
 
-from check_ci import check_release, check_live_browser, workflow_jobs
+from check_ci import check_live_browser, check_release, check_rust, workflow_jobs
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,10 +27,11 @@ class VerifyWorkflowTests(unittest.TestCase):
     def test_real_stack_has_a_matching_binary_and_required_gate(self):
         check_live_browser(self.workflow)
         mutations = [
-            ('needs: [changes, backend-build]', 'needs: changes'),
+            ('needs: [changes, backend-build, backend-rust-build]', 'needs: changes'),
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
-            ("required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})", "required.add('backend-build')"),
+            ('CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone', 'CODEXONE_WEB_TEST_BINARY: ../.build/debug/codexone'),
+            ("'[\"swift\",\"rust\"]'", "'[\"swift\"]'"),
             ('if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then', 'if true; then'),
             ('backend-swift-tests, backend-scripts, backend-rust,', 'backend-scripts, backend-rust,'),
             ('--testing-library swift-testing --no-parallel', '--testing-library swift-testing'),
@@ -40,6 +41,21 @@ class VerifyWorkflowTests(unittest.TestCase):
             with self.subTest(before=before), self.assertRaises(AssertionError):
                 check_live_browser(self.workflow.replace(before, after))
 
+    def test_rust_protocol_jobs_require_the_optimized_gateway_and_all_shards(self):
+        dockerfile = (ROOT / 'deploy/Dockerfile').read_text()
+        check_rust(self.workflow, dockerfile)
+        mutations = [
+            ('./scripts/verify_rust.sh --crate-tests', 'true'),
+            ('-C rust/gateway/target/release codexone', '-C rust/gateway/target/debug codexone'),
+            ('needs: [changes, backend-rust-build]', 'needs: changes'),
+            ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
+            ('"${args[@]}" --rust', '"${args[@]}"'),
+            ('scripts/rust_compat/compare.py', 'unchecked'),
+        ]
+        for before, after in mutations:
+            with self.subTest(before=before), self.assertRaises(AssertionError):
+                check_rust(self.workflow.replace(before, after), dockerfile)
+
     def test_actual_gate_requires_selected_jobs(self):
         workflow = workflow_jobs(self.workflow)
         gate = workflow['verify']
@@ -47,11 +63,16 @@ class VerifyWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(script)
         code = textwrap.dedent(script[1])
         jobs = set(workflow) - {'verify'}
-        selections = [(), ('backend',), ('rust',), ('frontend',), ('backend', 'rust', 'frontend', 'devcontainer')]
+        selections = [(), ('backend',), ('rust',), ('frontend',), ('rust', 'frontend'),
+                      ('backend', 'rust'), ('devcontainer',), ('backend', 'rust', 'frontend', 'devcontainer')]
         for selected in selections:
             required = {'changes', 'docs'}
-            if 'backend' in selected: required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
-            if 'rust' in selected: required.add('backend-rust')
+            if 'backend' in selected:
+                required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
+            if 'rust' in selected:
+                required.update({'backend-rust', 'backend-rust-build', 'backend-rust-scripts', 'frontend-live'})
+            if {'backend', 'rust'} <= set(selected):
+                required.add('backend-parity')
             required.update({'frontend', 'devcontainer'}.intersection(selected))
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
             needs['changes']['outputs'] = {name: str(name in selected).lower()
@@ -61,23 +82,42 @@ class VerifyWorkflowTests(unittest.TestCase):
                                       env={**os.environ, 'RESULTS': json.dumps(payload)}).returncode
             self.assertEqual(run(needs), 0)
             for job in required:
+                with self.subTest(selected=selected, missing=job):
+                    self.assertNotEqual(run({name: value for name, value in needs.items() if name != job}), 0)
                 for failed in ('failure', 'cancelled', 'skipped'):
                     with self.subTest(selected=selected, job=job, failed=failed):
                         payload = {name: dict(value) for name, value in needs.items()}
                         payload[job]['result'] = failed
                         self.assertNotEqual(run(payload), 0)
+            for selection in needs['changes']['outputs']:
+                with self.subTest(selected=selected, invalid=selection):
+                    outputs = {**needs['changes']['outputs'], selection: ''}
+                    self.assertNotEqual(run({**needs, 'changes': {'result': 'success', 'outputs': outputs}}), 0)
 
 
 class ChangedPathsTests(unittest.TestCase):
-    def test_selects_rust_for_code_and_shared_inputs(self):
+    def test_selects_checks_for_code_shared_inputs_and_docs(self):
         cases = [
             (['rust/gateway/README.md'], set()),
             (['rust/gateway/Cargo.lock', 'rust/wire/src/With\nNewline.rs'], {'rust'}),
             (['scripts/verify_rust.sh'], {'rust'}),
+            (['scripts/verify.sh'], {'backend', 'rust', 'frontend', 'devcontainer'}),
+            (['.github/workflows/verify.yml'], {'backend', 'rust', 'frontend', 'devcontainer'}),
             (['deploy/Dockerfile'], {'backend', 'rust'}),
             (['scripts/verify_websocket.py'], {'backend', 'rust'}),
+            (['scripts/verify_admin_live.py'], {'backend', 'rust'}),
+            (['scripts/verify_text_contract.py'], {'backend', 'rust'}),
+            (['scripts/rust_compat/compare.py'], {'backend', 'rust'}),
+            (['scripts/verify_migration_cutback.py'], {'backend', 'rust'}),
+            (['rust/storage/src/migration.rs'], {'backend', 'rust'}),
+            (['rust/maintenance/src/lib.rs'], {'backend', 'rust'}),
+            (['Sources/CodexOneAdapters/Persistence/SQLiteSnapshotMaintenance.swift'], {'backend', 'rust'}),
             (['Tests/CodexOneAdaptersTests/Fixtures/system-status.json'], {'backend', 'rust'}),
-            (['Sources/CodexOne/main.swift', 'web/src/App.tsx'], {'backend', 'frontend'}),
+            (['Sources/CodexOne/main.swift'], {'backend'}),
+            (['web/src/App.tsx'], {'rust', 'frontend'}),
+            (['Sources/CodexOne/main.swift', 'web/src/App.tsx'], {'backend', 'rust', 'frontend'}),
+            (['.devcontainer/Dockerfile'], {'devcontainer'}),
+            (['unknown-root-file'], {'backend', 'rust', 'frontend'}),
             ([f'docs/{index:03}.md' for index in range(320)] + ['rust/gateway/Cargo.toml'], {'rust'}),
         ]
         for paths, expected in cases:
@@ -86,6 +126,27 @@ class ChangedPathsTests(unittest.TestCase):
                                         input='\0'.join(paths) + '\0', capture_output=True, text=True)
                 self.assertEqual({line.removesuffix('=true') for line in result.stdout.splitlines()
                                   if line.endswith('=true')}, expected)
+
+    def test_preserves_swift_coverage_when_adding_rust_shards(self):
+        swift_only = {
+            'verify_accounts.py', 'verify_admin_round2.py', 'verify_execution.py',
+            'verify_key_maintenance.py', 'verify_storage_pressure.py', 'verify_upstream_proxy.py',
+            'verify_gateway_diagnostics.py', 'verify_key_export.py', 'verify_model_profiles_import.py',
+        }
+        for mode in ([], ['--pr']):
+            def shard_suites(*flags):
+                suites = []
+                for shard in ('1/4', '2/4', '3/4', '4/4'):
+                    cmd = [sys.executable, 'scripts/backend_shards.py', '--list', shard, *mode, *flags]
+                    batch = subprocess.check_output(cmd, cwd=ROOT, text=True).split()
+                    self.assertTrue(batch)
+                    suites.extend(Path(name).name for name in batch)
+                self.assertEqual(len(suites), len(set(suites)))
+                return set(suites)
+
+            swift, rust = shard_suites(), shard_suites('--rust')
+            self.assertLessEqual(swift_only, swift)
+            self.assertEqual(rust, swift - swift_only)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):

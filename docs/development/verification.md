@@ -74,7 +74,7 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Kernel.org 的 Ubuntu HTTPS 镜像，APT 继续验证 Ubuntu 签名。相关容器构建仅在安装依赖时使用该镜像，默认的本地构建沿用基础镜像软件源。
 
-前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用固定 Playwright 镜像及同次 `backend-build` 产物运行真实网关/浏览器测试。PR 只有选中后端检查才构建网关并要求该任务成功。纯前端 PR 只跑合成浏览器，接受网关与 SPA 的联调回归在合并到 main 后才发现。需要合并前验收真实栈时，可手动运行 Verify；main 推送也总是运行。
+前端完整浏览器集合中的 `admin-live-real` 默认启动 `.build/debug/codexone`，也可通过 `CODEXONE_WEB_TEST_BINARY` 指定可执行文件。CI 的 `frontend` 仅跑合成 API 浏览器场景。`frontend-live` 为每个选中的后端运行生产 SPA 与真实网关的 Chromium 测试，覆盖实时 WebSocket 与 HTTP 回退。仅改动 web 时执行 Rust 联调。
 
 `scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
 
@@ -103,15 +103,15 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 ## 发版 CI 验证边界
 
-Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，不受 Actions 工作流路径过滤的 300 文件限制。Markdown、docs 和 LICENSE 只跑基础检查，web 选前端，Sources、Tests、Package、scripts 和 deploy 通常选 Swift 后端，`.devcontainer` 选开发容器。Rust 源码、锁文件及 Rust 验证脚本选 Rust 后端。两种后端共用的回环脚本及 fixture、还有固定 Rust 工具链的 Dockerfile，选两种后端。`.github` 和路径筛选脚本选全部，未知路径选两种后端和前端。混合修改取并集，重命名检查旧、新路径。main 推送如果只涉及文档且推送前的提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片完整性及工具链版本一致性。最终 `verify` 始终运行，要求所有已选任务成功，未选任务可跳过。可将它设为稳定的 required check。
+Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，重命名检查旧、新路径，混合修改取并集。Markdown、docs 和 LICENSE 只跑基础检查。web 选合成浏览器和 Rust，Rust 源码通常只选 Rust，Swift 源码、包和测试通常只选 Swift。共享脚本与夹具、部署、SQLite 持久化和备份维护路径选两种后端。开发容器文件选开发容器。CI 工作流和筛选脚本选全部，未知路径选两种后端及前端。main 推送若只涉及文档且推送前一提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片及工具链一致性。最终 `verify` 始终运行，拒绝缺失或无效的筛选结果，要求全部已选任务成功。可将它设为稳定的 required check。
 
-Rust 的 `backend-rust` 在 Ubuntu 24.04 使用与 Rust 候选 Dockerfile 同版本的工具链。它通过 `./scripts/verify_rust.sh` 使用各 crate 的 Cargo.lock 构建网关并运行测试，随后用同次构建的可执行文件检查进程生命周期、Responses HTTP/SSE、原生 WebSocket、中断结算及离线备份恢复。托管进程测试同时覆盖 HTTP 到 WebSocket 桥接、重启及持久状态。回环验证使用临时合成配置、SQLite 数据和合成上游。候选镜像、容量和真实提供者验收仍分别执行。
+`backend-rust` 按各 crate 的 Cargo.lock 运行单元与托管进程测试。`backend-rust-build` 在 Ubuntu 24.04 使用与候选 Dockerfile 同版本的工具链构建优化版 codexone。四个 `backend-rust-scripts` 分片和真实浏览器下载同一次构建的二进制归档并校验摘要。分片运行 36 项回环套件，验证 Responses HTTP/SSE、原生 WebSocket、终态与不重放、鉴权、用量、管理 WSS 与 SQLite 恢复等契约。两种后端均选中时，`backend-parity` 用同次工作流的两份产物验证同 schema 重启、双向切换、续接及账本结算。所有回环检查使用独立合成配置、SQLite 数据与临时端口。
 
-后端在 `changes → backend-build` 后并行运行 `backend-swift-tests`、四个 `backend-scripts` 分片和 `frontend-live`，普通前端在 changes 后独立运行。build 做格式检查及一次 `swift build --build-tests`；Swift 测试任务下载同次编译的 Linux 测试运行器、资源和 Swift 动态库，串行执行 XCTest 和 Swift Testing，最终门禁要求所有选中任务成功。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整编译，Swift 测试仍是合并门禁。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+Swift 在一次编译中生成 codexone、ExecutionProbe 和测试运行器，供四个 `backend-scripts` 分片、真实浏览器和 `backend-swift-tests` 使用。后者串行运行 XCTest 和 Swift Testing。Swift 仍运行全部 45 项脚本，包括尚未迁移的六项账号、管理变更、执行生命周期、Key 维护、存储水位及上游代理检查，以及三个与网关成品无关的工具检查。Swift 构建使用与 Dockerfile 一致的固定镜像 digest，按工具链、锁文件及源码恢复增量缓存。只有 main 推送可保存新缓存。
 
 常规浏览器用例验证交互、可达性和窄屏溢出。侧栏与额度趋势不固定像素、颜色或动画时间。账号详情桌面覆盖草稿保留与滚动，窄屏检查关键控件可达。文档截图单独通过 `npm --prefix web run test:docs-screenshots` 生成，常规套件仍留存失败截图和 trace。
 
-后端分片保留全部 45 个脚本。PR 与 main 推送对其中六个脚本使用快速模式。WS 大正文保留真实 HTTP/WS 入口的路由临界点、超限拒绝、续接保护、取消和不重放验收，将多尺寸与多传输的组合、并发正文预算矩阵、详细诊断以及重复竞争验证留给完整模式。文本契约在两个上游传输上跑代表性成功、扩展、终态冲突、用量错误和响应身份场景，其余变体留给完整模式。上传截止保留 HTTP 慢上传后的首响应超时、WS 停滞与取消、图片上传停滞与持续滴流超时，完整模式覆盖逐传输组合。zstd 保留压缩阈值、415 单次回退、响应发出后不重放、取消和停滞；完整模式覆盖容量竞争、额外故障和关闭组合。响应收尾保留终态前后断开、未知结算与不重放、SSE DONE、连接复用及代表性上游连接错误。图片保留生成和编辑的 JSON/SSE、multipart、授权拒绝、用量缺失及断流结算；扩展格式、容量和完整传输组合留给完整模式。手动 Verify 与 Release 执行完整矩阵。需要在合并前覆盖完整矩阵时，可对 PR 分支手动运行 Verify。
+PR 与 main 推送对两种后端共用的六个脚本使用快速模式。WS 大正文保留真实 HTTP/WS 入口的路由临界点、超限拒绝、续接保护、取消和不重放验收，将多尺寸与多传输的组合、并发正文预算矩阵、详细诊断以及重复竞争验证留给完整模式。文本契约在两个上游传输上跑代表性成功、扩展、终态冲突、用量错误和响应身份场景，其余变体留给完整模式。上传截止保留 HTTP 慢上传后的首响应超时、WS 停滞与取消、图片上传停滞与持续滴流超时，完整模式覆盖逐传输组合。zstd 保留压缩阈值、415 单次回退、响应发出后不重放、取消和停滞；完整模式覆盖容量竞争、额外故障和关闭组合。响应收尾保留终态前后断开、未知结算与不重放、SSE DONE、连接复用及代表性上游连接错误。图片保留生成和编辑的 JSON/SSE、multipart、授权拒绝、用量缺失及断流结算；扩展格式、容量和完整传输组合留给完整模式。手动 Verify 与 Release 执行完整矩阵。需要在合并前覆盖完整矩阵时，可对 PR 分支手动运行 Verify。
 
 本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
 
@@ -119,6 +119,8 @@ Rust 的 `backend-rust` 在 Ubuntu 24.04 使用与 Rust 候选 Dockerfile 同版
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-build
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-scripts 1/4
 CODEXONE_BACKEND_BIN_DIR=.build/debug ./scripts/verify.sh --backend-scripts 4/4 --pr
+./scripts/verify_rust.sh --release-build
+./scripts/verify.sh --backend-scripts 4/4 --pr --rust
 python3 scripts/backend_shards.py --check
 python3 scripts/check_ci.py
 ```
@@ -150,7 +152,8 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 | 产物名 | 上传内容 | 下载位置及消费者 |
 | --- | --- | --- |
 | `backend-swift-tests` | `backend-swift-tests.tar.gz` | 同次构建的 Swift 测试运行器、资源与动态库，解包到 `.build/debug` |
-| `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
+| `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录，Swift 分片、真实浏览器与双向切换检查 |
+| `backend-rust-binaries` | `backend-rust-binaries.tar.gz` | runner 临时目录，Rust 分片、真实浏览器与双向切换检查 |
 | `optimized-backend-binaries` | 候选镜像的 Rust codexone 和 Swift 测试夹具 ExecutionProbe 的 tar 归档 | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
 | `candidate-release-files` | `artifacts/` 下的发行说明、校验和等 | image-checks 和 verify gate 的 `artifacts/`，保留 1 天 |
 | `candidate-linux-amd64-image` | `image/codexone-linux-amd64.tar.gz` | image-checks 和 verify gate 的 `image/`，保留 1 天 |

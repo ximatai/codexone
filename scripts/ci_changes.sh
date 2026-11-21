@@ -17,16 +17,18 @@ else
   while IFS= read -r -d '' path; do
     case "$path" in
       .github/*|scripts/ci_changes.sh) backend=true; rust=true; frontend=true; devcontainer=true ;;
-      scripts/verify.sh) backend=true; frontend=true; devcontainer=true ;;
+      scripts/verify.sh) backend=true; rust=true; frontend=true; devcontainer=true ;;
       .devcontainer/*) devcontainer=true ;;
       *.md|docs/*|LICENSE*) ;;
+      scripts/rust_compat/compare.py|rust/storage/*|rust/maintenance/*|\
+      Sources/CodexOneAdapters/Persistence/*|Sources/CodexOneCore/Application/Execution/OnlineBackup.swift|\
+      Sources/CodexOneRuntime/OnlineBackupSupervisor.swift|rust/gateway/src/*maintenance*|\
+      deploy/*|Tests/CodexOneAdaptersTests/Fixtures/*) backend=true; rust=true ;;
       rust/*|scripts/verify_rust.sh|scripts/rust_compat/*) rust=true ;;
-      deploy/Dockerfile|Tests/CodexOneAdaptersTests/Fixtures/*|scripts/browser_env.py|\
-      scripts/verify_process.py|scripts/verify_protocol.py|scripts/verify_websocket.py|\
-      scripts/verify_client_protocol.py|scripts/verify_snapshot_restore.py|\
-      scripts/verify_admin.py|scripts/verify_keys.py) backend=true; rust=true ;;
-      web/*) frontend=true ;;
-      Sources/*|Tests/*|Package.swift|Package.resolved|scripts/*|deploy/*) backend=true ;;
+      web/*) rust=true; frontend=true ;;
+      # Shared suites also import helpers from existing Swift test scripts.
+      scripts/*) backend=true; rust=true ;;
+      Sources/*|Tests/*|Package.swift|Package.resolved|.swift-version) backend=true ;;
       *) backend=true; rust=true; frontend=true ;;
     esac
   done
