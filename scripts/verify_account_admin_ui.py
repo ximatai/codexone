@@ -59,6 +59,8 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 {'slug': 'synthetic-incomplete', 'visibility': 'list'},
             ]})
         if self.path == '/backend-api/wham/rate-limit-reset-credits' and self.server.rust:
+            with self.server.guard:
+                self.server.reset_credit_calls = getattr(self.server, 'reset_credit_calls', 0) + 1
             return self.reply({'available_count': 0, 'credits': []})
         if self.path == '/backend-api/wham/usage':
             with self.server.guard:
@@ -130,6 +132,12 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 assert encoded(hashlib.sha256(value['code_verifier'].encode()).digest()) == control['challenge']
         else:
             assert value['grant_type'] == 'refresh_token' and value['refresh_token'].startswith('synthetic-refresh-')
+            if gate := control.get('refresh_gate'):
+                dispatched, disconnect = gate
+                dispatched.set()
+                assert disconnect.wait(timeout=10)
+                self.close_connection = True
+                return
             if control.get('mode') == 'timeout':
                 # Leave the dispatched refresh without a terminal response.
                 time.sleep(12)
@@ -137,7 +145,7 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 return
             if control.get('mode') == 'reject':
                 return self.reply({'error': 'invalid_grant'}, status=400)
-        scope = {'chatgpt_account_id': 'synthetic-account', 'chatgpt_user_id': 'synthetic-user'}
+        scope = {'chatgpt_account_id': control.get('identity', 'synthetic-account'), 'chatgpt_user_id': 'synthetic-user'}
         common = {'iss': 'https://auth.openai.com', 'sub': 'synthetic-subject', 'exp': int(time.time()) + 3600,
                   'https://api.openai.com/auth': scope}
         tokens = {'access_token': jwt(common), 'id_token': jwt(dict(common, aud=CLIENT, nonce=control.get('nonce', 'synthetic-device-no-nonce'))),
