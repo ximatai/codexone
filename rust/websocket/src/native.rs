@@ -98,7 +98,9 @@ pub trait NativeApplication: Send + Sync + 'static {
         request_id: &str,
         lane: &str,
         document: JsonValue,
-    ) -> Result<PreparedCreate<Self::Input>, ProtocolError>;
+    ) -> impl Future<Output = Result<PreparedCreate<Self::Input>, ProtocolError>> + Send;
+
+    fn client_rejected(&self, _request_id: &str, _error: ProtocolError) {}
 
     fn admit(
         &self,
@@ -443,7 +445,9 @@ impl<A: NativeApplication> Session<A> {
         let document = match parsed {
             Ok(document) => document,
             Err(error) => {
-                self.send_error(error, None, &request_id(), "").await?;
+                let id = request_id();
+                self.app.client_rejected(&id, error);
+                self.send_error(error, None, &id, "").await?;
                 return if self.received_first {
                     Ok(())
                 } else {
@@ -521,23 +525,22 @@ impl<A: NativeApplication> Session<A> {
             }
             let Command { lane, packet } = self.queue.remove(index).expect("queued command");
             let request_id = request_id();
-            let prepared = decode_client_message(packet.event.text.as_bytes())
-                .and_then(|document| {
-                    let continuation = document
-                        .get("previous_response_id")
-                        .is_some_and(|id| *id != JsonValue::Null);
-                    if self.replacing_refused_socket && continuation {
-                        return Err(ProtocolError::new(409, "upstream_state_lost"));
-                    }
-                    self.app.prepare(&request_id, &lane, document)
-                })
-                .and_then(|prepared| {
-                    if prepared.frame.len() > WS_ROUTING_BYTES {
-                        Err(TOO_LARGE)
-                    } else {
-                        Ok(prepared)
-                    }
-                });
+            let prepared = async {
+                let document = decode_client_message(packet.event.text.as_bytes())?;
+                let continuation = document
+                    .get("previous_response_id")
+                    .is_some_and(|id| *id != JsonValue::Null);
+                if self.replacing_refused_socket && continuation {
+                    return Err(ProtocolError::new(409, "upstream_state_lost"));
+                }
+                let prepared = self.app.prepare(&request_id, &lane, document).await?;
+                if prepared.frame.len() > WS_ROUTING_BYTES {
+                    Err(TOO_LARGE)
+                } else {
+                    Ok(prepared)
+                }
+            }
+            .await;
             let prepared = match prepared {
                 Ok(prepared) => prepared,
                 Err(error) => {
@@ -977,7 +980,9 @@ impl<A: NativeApplication> Session<A> {
             if kind != "response.interrupt" {
                 self.app.control(kind, ControlOutcome::RejectedSize);
             }
-            return self.send_error(TOO_LARGE, None, &request_id(), lane).await;
+            let id = request_id();
+            self.app.client_rejected(&id, TOO_LARGE);
+            return self.send_error(TOO_LARGE, None, &id, lane).await;
         }
         if kind == "response.interrupt" {
             let id = document
@@ -1016,8 +1021,9 @@ impl<A: NativeApplication> Session<A> {
         match outcome {
             ControlOutcome::Forwarded => self.send_control(original, self.life).await,
             _ => {
-                self.send_error(UNSUPPORTED_CONTROL, None, &request_id(), lane)
-                    .await
+                let id = request_id();
+                self.app.client_rejected(&id, UNSUPPORTED_CONTROL);
+                self.send_error(UNSUPPORTED_CONTROL, None, &id, lane).await
             }
         }
     }

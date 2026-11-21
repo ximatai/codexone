@@ -45,6 +45,7 @@ impl BridgeRequest {
         deadline: tokio::time::Instant,
         budget: websocket::ExecutionBudget,
     ) -> Result<Option<Self>, ProtocolError> {
+        request.validate_contract(connector.contract, false)?;
         let states = headers::values(incoming, "x-codex-turn-state");
         let turn_state = protocol::request_turn_state(
             &states,

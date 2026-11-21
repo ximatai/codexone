@@ -173,60 +173,22 @@ impl NativeApplication for Session {
     type Attempt = TurnAttempt;
     type Identity = Identity;
 
-    fn prepare(
+    async fn prepare(
         &self,
         request_id: &str,
         lane: &str,
         document: JsonValue,
     ) -> Result<PreparedCreate<Input>, ProtocolError> {
-        let began = Instant::now();
-        let turn_states = if self.first_attempt.get().is_none() {
-            headers::values(&self.forwarded, "x-codex-turn-state")
-        } else {
-            Vec::new()
-        };
-        let turn_state =
-            protocol::request_turn_state(&turn_states, &[], &document)?.map(str::to_owned);
-        let previous = self.previous_tools.lock().unwrap().get(lane).cloned();
-        let previous = previous.as_ref().map(|snapshot| protocol::PreviousTools {
-            model: &snapshot.model,
-            response_id: &snapshot.response_id,
-            uses_responses_lite: true,
-        });
-        let config = self.images.configuration();
-        let ids = data::image_ids(config);
-        let request =
-            websocket::parse_create(document, data::image_models(config, &ids), previous)?;
-        let turn = TurnRequest {
-            lane: lane.to_owned(),
-            model: request.model.clone(),
-            uses_lite: request.uses_responses_lite,
-        };
-        let warmup = request.mode == protocol::Mode::Warmup;
-
-        let frame = websocket::create_frame(
-            request.clone(),
-            self.connector.contract,
-            lane,
-            turn_state.as_deref(),
-        )?;
-        let encoded_bytes = frame.len();
-        if encoded_bytes > websocket::WS_ROUTING_BYTES {
-            super::record_size(SizePath::Native, encoded_bytes);
-            return Err(ProtocolError::new(413, "conversation_too_large"));
+        let mut rejection = diagnostics::Rejection::default();
+        let result = self.prepare_turn(request_id, lane, document, &mut rejection);
+        if let Err(error) = result {
+            self.rejected(request_id, &rejection, error).await;
         }
-        Ok(PreparedCreate {
-            admission: Input {
-                request: turn,
-                protocol_request: request,
-                request_id: request_id.to_owned(),
-                turn_state,
-                began,
-                encoded_bytes,
-            },
-            frame,
-            warmup,
-        })
+        result
+    }
+
+    fn client_rejected(&self, request_id: &str, error: ProtocolError) {
+        diagnostics::rejection(request_id, error, None, None);
     }
 
     async fn admit(
@@ -235,9 +197,18 @@ impl NativeApplication for Session {
         identity: Option<Identity>,
         deadline: Instant,
     ) -> Result<Admitted<TurnAttempt, Identity>, ProtocolError> {
-        self.admit_turn(input, identity, deadline)
-            .await
-            .map_err(|error| error.protocol)
+        let request_id = input.request_id.clone();
+        let mut rejection = diagnostics::Rejection::default();
+        let result = self
+            .admit_turn(input, identity, deadline, &mut rejection)
+            .await;
+        match result {
+            Ok(admitted) => Ok(admitted),
+            Err(error) => {
+                self.rejected(&request_id, &rejection, error.protocol).await;
+                Err(error.protocol)
+            }
+        }
     }
 
     async fn connect(
@@ -451,11 +422,95 @@ impl NativeApplication for Session {
 }
 
 impl Session {
+    async fn rejected(
+        &self,
+        request_id: &str,
+        rejection: &diagnostics::Rejection,
+        error: ProtocolError,
+    ) {
+        rejection
+            .record(&self.execution, request_id, &self.key_id, error)
+            .await;
+        diagnostics::rejection_with_selection(
+            request_id,
+            error,
+            None,
+            None,
+            rejection.selection.as_ref(),
+        );
+    }
+
+    fn prepare_turn(
+        &self,
+        request_id: &str,
+        lane: &str,
+        document: JsonValue,
+        rejection: &mut diagnostics::Rejection,
+    ) -> Result<PreparedCreate<Input>, ProtocolError> {
+        let began = Instant::now();
+        let turn_states = if self.first_attempt.get().is_none() {
+            headers::values(&self.forwarded, "x-codex-turn-state")
+        } else {
+            Vec::new()
+        };
+        let turn_state =
+            protocol::request_turn_state(&turn_states, &[], &document)?.map(str::to_owned);
+        let previous = self.previous_tools.lock().unwrap().get(lane).cloned();
+        let previous = previous.as_ref().map(|snapshot| protocol::PreviousTools {
+            model: &snapshot.model,
+            response_id: &snapshot.response_id,
+            uses_responses_lite: true,
+        });
+        let config = self.images.configuration();
+        let ids = data::image_ids(config);
+        let request =
+            websocket::parse_create(document, data::image_models(config, &ids), previous)?;
+        let snapshot = match &self.authorization {
+            Authorization::Managed(route, _) => route.snapshot(),
+            Authorization::Static(_) => None,
+        };
+        let models = snapshot
+            .as_ref()
+            .map_or(config.models.as_slice(), |directory| &directory.active);
+        rejection.inspect(&request, models);
+        let turn = TurnRequest {
+            lane: lane.to_owned(),
+            model: request.model.clone(),
+            uses_lite: request.uses_responses_lite,
+        };
+        let warmup = request.mode == protocol::Mode::Warmup;
+
+        let frame = websocket::create_frame(
+            request.clone(),
+            self.connector.contract,
+            lane,
+            turn_state.as_deref(),
+        )?;
+        let encoded_bytes = frame.len();
+        if encoded_bytes > websocket::WS_ROUTING_BYTES {
+            super::record_size(SizePath::Native, encoded_bytes);
+            return Err(ProtocolError::new(413, "conversation_too_large"));
+        }
+        Ok(PreparedCreate {
+            admission: Input {
+                request: turn,
+                protocol_request: request,
+                request_id: request_id.to_owned(),
+                turn_state,
+                began,
+                encoded_bytes,
+            },
+            frame,
+            warmup,
+        })
+    }
+
     async fn admit_turn(
         &self,
         input: Input,
         identity: Option<Identity>,
         deadline: Instant,
+        rejection: &mut diagnostics::Rejection,
     ) -> Result<Admitted<TurnAttempt, Identity>, ResponseError> {
         let config = self.images.configuration();
         let ids = data::image_ids(config);
@@ -481,6 +536,7 @@ impl Session {
         let models = snapshot
             .as_ref()
             .map_or(config.models.as_slice(), |directory| &directory.active);
+        rejection.inspect(&input.protocol_request, models);
         let (admission, usage) = data::prepare_admission(
             config,
             models,
@@ -527,6 +583,7 @@ impl Session {
             }
             _ => return Err(execution::ExecutionError::Unauthorized.into()),
         };
+        rejection.admitted = true;
         let watch = match identity {
             Some(fixed) => fixed.watch,
             None => lease.watch_account_connection()?.map(Arc::new),

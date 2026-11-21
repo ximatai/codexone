@@ -31,15 +31,25 @@ impl ResponseError {
         error
     }
 
-    pub fn reply(&self, request_id: &str, mut headers: HeaderMap) -> Reply {
+    pub fn reply(&self, request_id: &str, headers: HeaderMap) -> Reply {
+        self.reply_with_selection(request_id, headers, None)
+    }
+
+    pub fn reply_with_selection(
+        &self,
+        request_id: &str,
+        mut headers: HeaderMap,
+        selection: Option<&crate::diagnostics::RequestSelection>,
+    ) -> Reply {
         if let Some(seconds) = self.retry_after_seconds {
             headers.insert(http::header::RETRY_AFTER, seconds.into());
         }
-        crate::diagnostics::rejection(
+        crate::diagnostics::rejection_with_selection(
             request_id,
             self.protocol,
             self.provider.as_deref(),
             self.upstream_status,
+            selection,
         );
         reply::error(self.protocol, self.provider.as_deref(), request_id, headers)
     }

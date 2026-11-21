@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use codexone_execution::{ExecutionService, GovernanceWork, Mode};
 use codexone_responses::{JsonValue, ProtocolError, ProviderFailure};
 use codexone_websocket::{ConnectFailure, SocketEnd};
 use http::HeaderMap;
@@ -60,6 +61,16 @@ pub fn rejection(
     provider: Option<&ProviderFailure>,
     status: Option<u16>,
 ) {
+    rejection_with_selection(request_id, error, provider, status, None);
+}
+
+pub fn rejection_with_selection(
+    request_id: &str,
+    error: ProtocolError,
+    provider: Option<&ProviderFailure>,
+    status: Option<u16>,
+    selection: Option<&RequestSelection>,
+) {
     let Some(id) = safe_request_id(request_id) else {
         return;
     };
@@ -77,10 +88,226 @@ pub fn rejection(
         .and_then(JsonValue::as_str)
         .and_then(public_provider_code)
         .map_or(String::new(), |code| format!(" provider_code={code}"));
+    let selection = selection
+        .filter(|_| {
+            matches!(
+                error.code,
+                "model_not_allowed" | "reasoning_effort_not_allowed"
+            )
+        })
+        .map_or_else(String::new, RequestSelection::log_fields);
     eprintln!(
-        "Gateway request rejected code={} status={} request_id={id}{status}{reason}{code}",
+        "warning codexone.protocol: Protocol request rejected code={} status={}{selection} request_id={id}{status}{reason}{code}",
         error.code, error.status,
     );
+}
+
+#[derive(Default)]
+pub struct Rejection {
+    pub mode: Mode,
+    pub selection: Option<RequestSelection>,
+    pub admitted: bool,
+}
+
+impl Rejection {
+    pub fn inspect(
+        &mut self,
+        request: &codexone_responses::Request,
+        models: &[codexone_config::Model],
+    ) {
+        self.mode = match request.mode {
+            codexone_responses::Mode::Generation => Mode::Generation,
+            codexone_responses::Mode::Compact => Mode::Compact,
+            codexone_responses::Mode::Warmup => Mode::Warmup,
+            codexone_responses::Mode::Priming => Mode::Priming,
+        };
+        self.selection = Some(RequestSelection::inspect(request, models));
+    }
+
+    pub async fn record(
+        &self,
+        execution: &ExecutionService,
+        request_id: &str,
+        key_id: &str,
+        error: ProtocolError,
+    ) {
+        let (failure, reason) = match error.code {
+            "invalid_api_key" | "api_key_expired" => return,
+            "model_not_allowed" => ("model_not_allowed", Some("model_not_allowed")),
+            "reasoning_effort_not_allowed" => (
+                "invalid_request",
+                Some(self.selection.as_ref().map_or(
+                    "reasoning_effort_not_allowed",
+                    RequestSelection::effort_reason,
+                )),
+            ),
+            "unsupported_backend_parameter" => ("invalid_request", error.detail),
+            "conversation_too_large" => ("invalid_request", Some("conversation_too_large")),
+            "unsupported_websocket_control" | "invalid_websocket_lane" => return,
+            "unknown_or_ambiguous_object" => ("object_unavailable", None),
+            "account_unavailable" => ("account_unavailable", Some("account_dispatch_unavailable")),
+            "continuation_owner_unavailable" => (
+                "account_unavailable",
+                Some("continuation_owner_unavailable"),
+            ),
+            "maintenance_required" => ("account_unavailable", None),
+            "storage_pressure" => ("storage_unavailable", None),
+            "capacity_exhausted"
+            | "capacity_exceeded"
+            | "account_concurrency_exceeded"
+            | "quota_or_policy_denied" => ("local_capacity", None),
+            "execution_deadline_exceeded" => ("deadline_exceeded", None),
+            "invalid_turn_state" => ("invalid_request", Some("invalid_turn_state")),
+            "conflicting_turn_state" => ("invalid_request", Some("conflicting_turn_state")),
+            "unsupported_client_metadata" => ("invalid_request", Some("invalid_client_metadata")),
+            _ if matches!(error.status, 400 | 408 | 413 | 415) => {
+                ("invalid_request", Some("invalid_request"))
+            }
+            _ => return,
+        };
+        if safe_request_id(request_id).is_none() || self.admitted {
+            return;
+        }
+        let request_id = request_id.to_owned();
+        let key_id = key_id.to_owned();
+        let model = self
+            .selection
+            .as_ref()
+            .and_then(|value| value.catalog_model.clone());
+        let effort = self.selection.as_ref().map(|value| {
+            if reason == Some("reasoning_effort_legacy_field") {
+                value.legacy_effort.unwrap_or(value.effort)
+            } else {
+                value.effort
+            }
+        });
+        let mode = match self.mode {
+            Mode::Generation => "generation",
+            Mode::Compact => "compact",
+            Mode::Warmup => "warmup",
+            Mode::Priming => "priming",
+        };
+        // Optional work drops on pressure or a full queue. SQL errors remain local to
+        // this best-effort diagnostic and never consume the execution reserve.
+        let _ = execution
+            .governance_command(GovernanceWork::Optional, move |db, now, _| {
+                let tx = db.begin_immediate().ok()?;
+                let seen: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM attempts WHERE request_id = ?1)
+                         OR EXISTS(SELECT 1 FROM request_diagnostics WHERE request_id = ?1)",
+                    [&request_id],
+                    |row| row.get(0),
+                ).ok()?;
+                if seen {
+                    return Some(());
+                }
+                tx.execute("DELETE FROM request_diagnostics WHERE at_epoch < ?1", [now - 30 * 86400]).ok()?;
+                tx.execute(
+                    "DELETE FROM request_diagnostics WHERE request_id IN (
+                         SELECT request_id FROM request_diagnostics
+                         ORDER BY at_epoch DESC, request_id DESC LIMIT -1 OFFSET 9999)",
+                    [],
+                ).ok()?;
+                tx.execute(
+                    "INSERT INTO request_diagnostics(request_id,at_epoch,key_id,model,mode,failure,reason,reasoning_effort)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                    rusqlite::params![request_id, now, key_id, model, mode, failure, reason, effort],
+                ).ok()?;
+                tx.commit().ok()
+            })
+            .await;
+    }
+}
+
+pub struct RequestSelection {
+    catalog_model: Option<String>,
+    public_model: Option<String>,
+    effort: &'static str,
+    legacy_effort: Option<&'static str>,
+}
+
+impl RequestSelection {
+    fn inspect(request: &codexone_responses::Request, models: &[codexone_config::Model]) -> Self {
+        let model = identifier(&request.model);
+        let catalog_model = model
+            .filter(|id| models.iter().any(|model| model.id == *id))
+            .map(str::to_owned);
+        let public_model = model.filter(|id| public_model_id(id)).map(str::to_owned);
+        let document = request.document();
+        let effort = match document.get("reasoning") {
+            None | Some(JsonValue::Null) => "missing",
+            Some(JsonValue::Object(object)) => object.get("effort").map_or("missing", effort_label),
+            _ => "invalid",
+        };
+        Self {
+            catalog_model,
+            public_model,
+            effort,
+            legacy_effort: document.get("reasoning_effort").map(effort_label),
+        }
+    }
+
+    fn effort_reason(&self) -> &'static str {
+        match (self.legacy_effort, self.effort) {
+            (Some(_), _) => "reasoning_effort_legacy_field",
+            (_, "missing") => "reasoning_effort_missing",
+            (_, "invalid") => "reasoning_effort_invalid",
+            _ => "reasoning_effort_not_allowed",
+        }
+    }
+
+    fn log_fields(&self) -> String {
+        let model = self
+            .catalog_model
+            .as_deref()
+            .or(self.public_model.as_deref())
+            .unwrap_or("unrecognized");
+        let mut fields = format!(
+            " requested_model={model} requested_reasoning_effort={}",
+            self.effort
+        );
+        if let Some(legacy) = self.legacy_effort {
+            fields.push_str(&format!(" legacy_reasoning_effort={legacy}"));
+        }
+        fields
+    }
+}
+
+fn public_model_id(id: &str) -> bool {
+    fn segment(value: &str) -> bool {
+        !value.is_empty()
+            && value.len() <= 16
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    }
+    if id.len() > 64 {
+        return false;
+    }
+    let mut segments = id.split(['-', '.']);
+    match segments.next().unwrap_or_default().as_bytes() {
+        b"gpt" | b"chatgpt" | b"codex" => {
+            id.as_bytes().get(id.find(['-', '.']).unwrap_or(id.len())) == Some(&b'-')
+                && segments.next().is_some_and(segment)
+                && segments.all(segment)
+        }
+        [b'o', b'1'..=b'9'] => segments.all(segment),
+        _ => false,
+    }
+}
+
+fn effort_label(value: &JsonValue) -> &'static str {
+    match value.as_str() {
+        Some("none") => "none",
+        Some("minimal") => "minimal",
+        Some("low") => "low",
+        Some("medium") => "medium",
+        Some("high") => "high",
+        Some("xhigh") => "xhigh",
+        Some("max") => "max",
+        Some("ultra") => "ultra",
+        _ => "invalid",
+    }
 }
 
 fn public_provider_code(code: &str) -> Option<&'static str> {

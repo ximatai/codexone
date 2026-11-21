@@ -301,11 +301,6 @@ impl DataPlane {
         }
 
         let compact = endpoint == "/responses/compact";
-        let (parts, incoming) = incoming.into_parts();
-        protocol::validate_request_media_type(
-            &headers::values(&parts.headers, "content-type"),
-            &headers::values(&parts.headers, "content-encoding"),
-        )?;
         let key_id = authorization
             .as_ref()
             .map(execution::AuthenticatedKey::id)
@@ -313,7 +308,63 @@ impl DataPlane {
                 static_authorization
                     .as_ref()
                     .map(execution::StaticAuthorization::key_id)
-            });
+            })
+            .ok_or(execution::ExecutionError::Unauthorized)?
+            .to_owned();
+        let mut rejection = crate::diagnostics::Rejection {
+            mode: if compact {
+                execution::Mode::Compact
+            } else {
+                execution::Mode::Generation
+            },
+            ..Default::default()
+        };
+        let result = self
+            .respond(
+                incoming,
+                execution,
+                request_id,
+                pending,
+                compact,
+                authorization,
+                static_authorization,
+                &key_id,
+                &mut rejection,
+            )
+            .await;
+        match result {
+            Err(error) if !rejection.admitted => {
+                rejection
+                    .record(execution, request_id, &key_id, error.protocol)
+                    .await;
+                Ok(error.reply_with_selection(
+                    request_id,
+                    HeaderMap::new(),
+                    rejection.selection.as_ref(),
+                ))
+            }
+            result => result,
+        }
+    }
+
+    async fn respond(
+        &self,
+        incoming: Request<Incoming>,
+        execution: &execution::ExecutionService,
+        request_id: &str,
+        pending: FlushDeliveries,
+        compact: bool,
+        authorization: Option<execution::AuthenticatedKey>,
+        static_authorization: Option<execution::StaticAuthorization>,
+        key_id: &str,
+        rejection: &mut crate::diagnostics::Rejection,
+    ) -> Result<Reply, ResponseError> {
+        let configuration = self.configuration();
+        let (parts, incoming) = incoming.into_parts();
+        protocol::validate_request_media_type(
+            &headers::values(&parts.headers, "content-type"),
+            &headers::values(&parts.headers, "content-encoding"),
+        )?;
         let staged_length = incoming
             .size_hint()
             .exact()
@@ -332,7 +383,7 @@ impl DataPlane {
                 })?;
             let permit = self
                 .bodies
-                .reserve_http(length, key_id, Instant::now() + WAIT)
+                .reserve_http(length, Some(key_id), Instant::now() + WAIT)
                 .await
                 .inspect_err(|error| {
                     if matches!(error, ReadError::Capacity) {
@@ -345,7 +396,7 @@ impl DataPlane {
         } else {
             let (body, permit) = self
                 .bodies
-                .read(incoming, key_id, request_id)
+                .read(incoming, Some(key_id), request_id)
                 .await
                 .map_err(bad_read)?;
             (body, permit, None)
@@ -361,6 +412,13 @@ impl DataPlane {
             image_models(configuration, &image_ids),
         )?;
         drop(body);
+        let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);
+        let models = snapshot
+            .as_ref()
+            .map_or(configuration.models.as_slice(), |directory| {
+                &directory.active
+            });
+        rejection.inspect(&request, models);
         let stream_compaction = request.stream_compaction;
         if compact && stream_compaction {
             return Err(ProtocolError::new(403, "model_not_allowed").into());
@@ -369,12 +427,6 @@ impl DataPlane {
             return Err(ProtocolError::new(400, "unsupported_execution_mode").into());
         }
         let began = Instant::now();
-        let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);
-        let models = snapshot
-            .as_ref()
-            .map_or(configuration.models.as_slice(), |directory| {
-                &directory.active
-            });
         let (admission, usage) = prepare_admission(
             configuration,
             models,
@@ -462,6 +514,7 @@ impl DataPlane {
                     ws::Provider::default(),
                 )
             };
+        rejection.admitted = true;
         if Instant::now() >= deadline {
             let error = ResponseError::from(upstream::Error::DeadlineExceeded);
             let _ = lease.finish(Some(execution::Outcome::new(

@@ -556,7 +556,7 @@ impl NativeApplication for TestApp {
     type Attempt = usize;
     type Identity = u8;
 
-    fn prepare(
+    async fn prepare(
         &self,
         _request_id: &str,
         lane: &str,
