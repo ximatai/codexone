@@ -120,6 +120,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "subtle",
+ "tokio",
+ "tokio-util",
  "uuid",
  "zeroize",
 ]
