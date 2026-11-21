@@ -120,6 +120,7 @@ def ledger(root):
 
 def authorization_and_quota(binary):
     provider=ThreadingHTTPServer(('127.0.0.1',0),SyntheticOAuth)
+    provider.rust=False
     provider.guard=threading.Lock();provider.control={};provider.calls=0;provider.quota_calls=0;provider.issued=[]
     provider_thread=threading.Thread(target=provider.serve_forever);provider_thread.start()
     proxy=Proxy(provider.server_port);proxy_thread=threading.Thread(target=proxy.serve_forever);proxy_thread.start()
