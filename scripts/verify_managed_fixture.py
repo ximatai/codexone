@@ -1,10 +1,13 @@
 """Private synthetic OAuth and managed Rust gateway setup for verification scripts."""
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from http.client import RemoteDisconnected
 from http.server import ThreadingHTTPServer
 import json
 import os
 import re
 import selectors
+import signal
 import subprocess
 import threading
 import time
@@ -24,7 +27,7 @@ def oauth_provider(*, rust):
         server.rust = rust
         server.guard = threading.Lock()
         server.control = {}
-        server.calls = server.quota_calls = server.reset_credit_calls = 0
+        server.calls = server.quota_calls = 0
         server.issued = []
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
@@ -115,3 +118,37 @@ def authorize(port, provider, *, identity='synthetic-account'):
 def refresh(port, account):
     return request(port, 'POST', '/api/accounts/' + account['id'] + '/refresh',
                    {'revision': account['revision']}, **AUTH)
+
+
+@contextmanager
+def dispatched_refresh(port, provider, account):
+    dispatched, disconnect = threading.Event(), threading.Event()
+    with provider.guard:
+        provider.control['refresh_gate'] = (dispatched, disconnect)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(refresh, port, account)
+        try:
+            assert dispatched.wait(timeout=5), 'Synthetic refresh did not reach the provider'
+            yield pending
+        finally:
+            disconnect.set()
+            with provider.guard:
+                provider.control.pop('refresh_gate')
+
+
+def kill(process):
+    process.kill()
+    assert process.wait(timeout=5) == -signal.SIGKILL
+
+
+def assert_disconnected(pending):
+    try:
+        pending.result(timeout=5)
+    except (RemoteDisconnected, ConnectionResetError):
+        return
+    raise AssertionError('The killed gateway returned a refresh response')
+
+
+def assert_refresh_denied(port, account):
+    status, _, body = refresh(port, account)
+    assert status == 409 and json.loads(body)['error']['code'] == 'account_conflict'

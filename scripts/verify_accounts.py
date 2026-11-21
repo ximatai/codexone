@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """Private synthetic account encryption/refresh crash barriers; no provider or account calls."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from http.client import RemoteDisconnected
 import os
 from pathlib import Path
-import signal
 import sqlite3
 import subprocess
 import tempfile
-import threading
 
 from verify_admin import document, request
 from verify_execution import line, dispose
 from verify_managed_fixture import (
-    ADMIN, AUTH, authorize, oauth_provider, prepare, refresh, start_gateway,
+    ADMIN, AUTH, assert_disconnected, assert_refresh_denied, authorize, dispatched_refresh,
+    kill, oauth_provider, prepare, refresh, start_gateway,
 )
 from verify_process import release
 from verify_protocol import current_schema_version
@@ -79,35 +75,6 @@ def verify(binary):
         print('PASS: account SIGKILL ' + barrier + '; encrypted credentials, durable refresh state and conservative restart')
 
 
-@contextmanager
-def dispatched_refresh(port, provider, account):
-    dispatched, disconnect = threading.Event(), threading.Event()
-    with provider.guard:
-        provider.control['refresh_gate'] = (dispatched, disconnect)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        pending = executor.submit(refresh, port, account)
-        try:
-            assert dispatched.wait(timeout=5), 'Synthetic refresh did not reach the provider'
-            yield pending
-        finally:
-            disconnect.set()
-            with provider.guard:
-                provider.control.pop('refresh_gate')
-
-
-def kill(process):
-    process.kill()
-    assert process.wait(timeout=5) == -signal.SIGKILL
-
-
-def assert_disconnected(pending):
-    try:
-        pending.result(timeout=5)
-    except (RemoteDisconnected, ConnectionResetError):
-        return
-    raise AssertionError('The killed gateway returned a refresh response')
-
-
 def stored_account(database, account):
     with sqlite3.connect(database) as db:
         return db.execute('''
@@ -159,10 +126,20 @@ def verify_rust(binary, probe):
                 assert (sealed == original) == (barrier != 'after_commit')
                 assert bool(intent) == (barrier == 'after_intent')
                 if barrier == 'after_intent':
-                    assert refresh(port, account)[0] in (409, 503)
+                    assert_refresh_denied(port, account)
                 assert provider.calls == (1 if barrier == 'before_intent' else 2)
                 with sqlite3.connect(database) as db:
                     assert db.execute('PRAGMA user_version').fetchone() == (schema,)
+                    actions = db.execute(
+                        "SELECT action FROM account_events WHERE account_id=? AND action LIKE 'refresh_%' ORDER BY revision",
+                        (account['id'],),
+                    ).fetchall()
+                    expected_actions = {
+                        'before_intent': [],
+                        'after_intent': [('refresh_begin',), ('refresh_restart_uncertain',)],
+                        'after_commit': [('refresh_begin',), ('refresh_commit',)],
+                    }
+                    assert actions == expected_actions[barrier]
                 recovered.terminate()
                 output += recovered.communicate(timeout=10)[0]
                 assert recovered.returncode == 0

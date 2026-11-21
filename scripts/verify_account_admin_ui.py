@@ -59,8 +59,6 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 {'slug': 'synthetic-incomplete', 'visibility': 'list'},
             ]})
         if self.path == '/backend-api/wham/rate-limit-reset-credits' and self.server.rust:
-            with self.server.guard:
-                self.server.reset_credit_calls = getattr(self.server, 'reset_credit_calls', 0) + 1
             return self.reply({'available_count': 0, 'credits': []})
         if self.path == '/backend-api/wham/usage':
             with self.server.guard:
