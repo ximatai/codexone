@@ -16,7 +16,7 @@ use http_body::Frame;
 use tokio::sync::mpsc;
 
 use super::{
-    Connector, SizePath,
+    Connector, Provider, SizePath,
     attempt::{Attempt, connect_error},
 };
 use crate::{
@@ -31,6 +31,7 @@ pub struct BridgeRequest {
     headers: HeaderMap,
     frame: Utf8Bytes,
     options: BridgeOptions,
+    provider: Provider,
 }
 
 impl BridgeRequest {
@@ -75,6 +76,7 @@ impl BridgeRequest {
         match websocket::bridge_route(frame, continuation)? {
             websocket::BridgeRoute::WebSocket(frame) => Ok(Some(Self {
                 connector: connector.clone(),
+                provider: Provider::default(),
                 headers: forwarded.clone(),
                 frame,
                 options: BridgeOptions {
@@ -87,6 +89,10 @@ impl BridgeRequest {
             })),
             websocket::BridgeRoute::Http => Ok(None),
         }
+    }
+    pub fn authorize(mut self, provider: Provider) -> Self {
+        self.provider = provider;
+        self
     }
 }
 
@@ -194,8 +200,13 @@ async fn exchange(
         connector,
         headers: forwarded,
         frame,
-        options,
+        mut options,
+        provider,
     } = request;
+    if let Some(stop) = lease.account_stop_token() {
+        options.cancellation = stop.clone();
+    }
+    let cancellation = options.cancellation.clone();
     let deadline = options.deadline;
     let streaming = options.stream;
     let terminal = Mutex::new(None);
@@ -210,7 +221,9 @@ async fn exchange(
     let evidence_owner = attempt.clone();
     let evidence_headers = response_headers.clone();
     let connect = async {
-        let (socket, upstream_headers) = connector.connect(&forwarded, deadline).await?;
+        let (socket, upstream_headers) = connector
+            .connect(&forwarded, &provider, deadline, &cancellation)
+            .await?;
         *response_headers.lock().unwrap() = headers::provider(&upstream_headers, true);
         if let Err(error) = attempt_ref.begin_dispatch().await {
             *local_error.lock().unwrap() = Some(error);
@@ -218,12 +231,14 @@ async fn exchange(
         }
         Ok(socket)
     };
+    let event_provider = provider.clone();
     let result = websocket::bridge(
         connect,
         frame,
         options,
         move |evidence| match evidence {
             BridgeEvidence::Event(event) => {
+                event_provider.observe_event(event);
                 if !streaming {
                     apply_turn_state(event, &evidence_headers);
                 }
@@ -246,6 +261,12 @@ async fn exchange(
 
     let response_headers = response_headers.lock().unwrap().clone();
     let mut attempt = Arc::into_inner(attempt).expect("bridge reader has stopped");
+    if cancellation.is_cancelled() {
+        let error = ResponseError::from(codexone_execution::ExecutionError::AccountForceStopped);
+        let (lease, outcome) = attempt.finish(Some(error.failure()), None, false);
+        let _ = lease.finish(Some(outcome));
+        return (End::Failed(error), response_headers);
+    }
     let boundary = match &result {
         Err(BridgeFailure::UnprocessedSizeRefusal {
             http_fallback: true,

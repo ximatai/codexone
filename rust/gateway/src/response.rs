@@ -35,10 +35,16 @@ impl ResponseError {
         reply::error(self.protocol, self.provider.as_deref(), request_id, headers)
     }
 
-    fn streaming_frame(&self, request_id: &str) -> Bytes {
+    pub(crate) fn streaming_frame(&self, request_id: &str) -> Bytes {
         let event =
             protocol::stream_error_event(self.protocol, self.provider.as_deref(), request_id);
         Bytes::from(protocol::encode_sse_event(&event).expect("gateway error event type"))
+    }
+}
+
+impl ResponseError {
+    pub(crate) fn failure(&self) -> execution::Failure {
+        self.failure
     }
 }
 
@@ -50,6 +56,8 @@ impl From<ProtocolError> for ResponseError {
             "upstream_rate_limited" => Failure::RateLimited,
             "upstream_unavailable" => Failure::UpstreamUnavailable,
             "upstream_rejected" | "upstream_compact_rejected" => Failure::UpstreamRejected,
+            "conversation_too_large" => Failure::InvalidRequest,
+            "account_force_stopped" => Failure::AccountUnavailable,
             "execution_deadline_exceeded"
             | "execution_first_response_timeout"
             | "execution_progress_timeout" => Failure::DeadlineExceeded,
@@ -163,7 +171,7 @@ pub fn bindings(objects: Vec<protocol::ObjectBinding>) -> Vec<execution::ObjectB
     objects.into_iter().map(binding).collect()
 }
 
-fn evidence(usage: protocol::UsageEvidence) -> execution::UsageEvidence {
+pub(crate) fn evidence(usage: protocol::UsageEvidence) -> execution::UsageEvidence {
     execution::UsageEvidence {
         revision: usage.revision.into(),
         input_tokens: usage.input_tokens,
@@ -312,7 +320,7 @@ impl Drop for Attempt {
     }
 }
 
-fn milliseconds(start: Instant) -> i64 {
+pub(crate) fn milliseconds(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
@@ -320,6 +328,7 @@ pub struct Transfer {
     pub compact: bool,
     pub client_sse: bool,
     pub upstream_sse: bool,
+    pub size_fallback: bool,
     pub usage: protocol::UsageConfig<'static>,
     pub began: Instant,
 }
@@ -349,6 +358,9 @@ pub async fn forward(
             let error = refusal(upstream, transfer.compact).await;
             if let Some(usage) = error.http_rejection_usage(transfer.usage.image.is_some()) {
                 attempt.lease().observe(evidence(usage))?;
+            }
+            if transfer.size_fallback && status == StatusCode::PAYLOAD_TOO_LARGE {
+                return Err(ProtocolError::new(413, "conversation_too_large").into());
             }
             return Err(ResponseError::from(Box::new(error)));
         }

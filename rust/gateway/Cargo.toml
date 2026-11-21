@@ -25,6 +25,7 @@ codexone-identity-runtime = { path = "../identity-runtime" }
 codexone-quota-jobs = { path = "../quota-jobs" }
 codexone-responses = { path = "../responses" }
 codexone-storage = { path = "../storage" }
+codexone-websocket = { path = "../websocket" }
 codexone-wire = { path = "../wire" }
 futures-util = "0.3"
 hex = "0.4"
@@ -48,5 +49,6 @@ zeroize = "1"
 zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
+tungstenite = "0.29"
 base64 = "0.22"
 codexone-maintenance = { path = "../maintenance", features = ["backup-test-support"] }

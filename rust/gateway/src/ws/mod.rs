@@ -11,11 +11,14 @@ pub use native::{Session, Upgrade};
 use std::{sync::Arc, time::Duration};
 
 use codexone_config::ExecutionBudget;
+use codexone_execution::{AccountIdentity, Execution};
 use codexone_http_upstream::HttpUpstream;
-use codexone_responses::Contract;
+use codexone_responses::{self as protocol, Contract, JsonValue};
 use codexone_websocket::{CancellationToken, ConnectFailure, Socket, UpstreamHandshake};
 use http::{HeaderMap, HeaderValue, Uri, header};
 use tokio::time::Instant;
+
+use crate::managed::Pool;
 
 #[derive(Clone)]
 pub struct Connector {
@@ -62,21 +65,71 @@ impl Connector {
     async fn connect(
         &self,
         forwarded: &HeaderMap,
+        provider: &Provider,
         deadline: Instant,
+        stop: &CancellationToken,
     ) -> Result<(Socket, HeaderMap), ConnectFailure> {
+        let mut authorization = self.authorization.clone();
+        authorization.extend(provider.credentials.clone());
         let handshake = UpstreamHandshake::new(
             self.ws_target.clone(),
             self.contract,
             forwarded,
-            &self.authorization,
+            &authorization,
         )?;
-        handshake
+        let (socket, headers) = handshake
             .connect_over(
                 self.transport.connect_stream(&self.http_target),
                 deadline,
-                &CancellationToken::new(),
+                stop,
             )
-            .await
+            .await?;
+        provider.observe_headers(&headers);
+        Ok((socket, headers))
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct Provider {
+    pub credentials: HeaderMap,
+    ownership: Option<(Arc<Pool>, String, AccountIdentity)>,
+}
+
+impl Provider {
+    pub fn selected(
+        pool: Option<&Arc<Pool>>,
+        key: String,
+        lease: &Execution,
+        credentials: HeaderMap,
+    ) -> Self {
+        let owner = &lease.admission().owner;
+        Self {
+            credentials,
+            ownership: pool.map(|pool| {
+                (
+                    pool.clone(),
+                    key,
+                    AccountIdentity {
+                        id: owner.identity.clone(),
+                        namespace: owner.namespace.clone(),
+                    },
+                )
+            }),
+        }
+    }
+
+    pub fn observe_headers(&self, headers: &HeaderMap) {
+        if let Some((pool, key, owner)) = &self.ownership {
+            pool.observe_turn_state(key, owner, headers);
+        }
+    }
+
+    pub fn observe_event(&self, event: &JsonValue) {
+        if let Some((pool, key, owner)) = &self.ownership
+            && let Some(token) = protocol::response_metadata_turn_state(event)
+        {
+            pool.observe_turn_token(key, owner, token);
+        }
     }
 }
 

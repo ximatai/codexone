@@ -3,20 +3,25 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-use codexone_config::ResponsesConfiguration;
 use codexone_execution::{self as execution, Failure};
-use codexone_responses::{self as protocol, JsonValue, ProtocolError, UsageConfig};
+use codexone_responses::{self as protocol, JsonValue, ProtocolError};
 use codexone_websocket::{
     self as websocket, Admitted, CancellationToken, ConnectFailure, NativeApplication,
     NativeEvidence, NativeFinish, NativeOptions, PreparedCreate, Socket,
 };
-use http::HeaderMap;
+use http::{HeaderMap, HeaderValue, header};
 use hyper::upgrade::OnUpgrade;
 use hyper_util::rt::TokioIo;
 use tokio::time::Instant;
 
-use super::{Connector, SizePath, attempt::Attempt, ingress::Ingress};
-use crate::{body_budget::DataBodies, data, headers, response::ResponseError};
+use super::{Connector, Provider, SizePath, attempt::Attempt, ingress::Ingress};
+use crate::{
+    body_budget::DataBodies,
+    data, headers,
+    image_route::NativeImages,
+    managed::{Affinity, ManagedRoute},
+    response::{self, ResponseError},
+};
 
 pub struct Upgrade {
     io: OnUpgrade,
@@ -43,7 +48,7 @@ impl Upgrade {
             },
         };
         let options = NativeOptions {
-            budget: super::budget(self.session.config.budget, false),
+            budget: super::budget(self.session.images.configuration().budget, false),
         };
         let socket = websocket::downstream_socket(TokioIo::new(io), self.bodies);
         websocket::serve_native(socket, self.session, options, draining).await;
@@ -51,32 +56,50 @@ impl Upgrade {
 }
 
 pub struct Session {
-    config: Arc<ResponsesConfiguration>,
+    images: Arc<NativeImages>,
     connector: Connector,
     execution: execution::ExecutionService,
-    authorization: execution::StaticAuthorization,
+    authorization: Authorization,
     forwarded: HeaderMap,
     first_attempt: OnceLock<String>,
     previous_tools: Mutex<HashMap<String, ToolSnapshot>>,
 }
 
+enum Authorization {
+    Static(execution::StaticAuthorization),
+    Managed(Arc<ManagedRoute>, HeaderValue),
+}
+
 impl Session {
-    pub fn new(
-        config: Arc<ResponsesConfiguration>,
+    pub async fn new(
+        images: Arc<NativeImages>,
         connector: Connector,
         execution: execution::ExecutionService,
-        authorization: execution::StaticAuthorization,
-        headers: HeaderMap,
-    ) -> Result<Self, ProtocolError> {
+        managed: Option<Arc<ManagedRoute>>,
+        headers: &HeaderMap,
+    ) -> Result<Self, ResponseError> {
+        let bearer = headers::values(headers, "authorization");
+        let authorization = match managed {
+            Some(route) => {
+                execution.authenticate(&bearer).await?;
+                let mut value = headers
+                    .get(header::AUTHORIZATION)
+                    .expect("authenticated bearer")
+                    .clone();
+                value.set_sensitive(true);
+                Authorization::Managed(route, value)
+            }
+            None => Authorization::Static(execution.authenticate_static(&bearer)?),
+        };
+        let config = images.configuration();
         let forwarded = headers::client(
-            &headers,
+            headers,
             &JsonValue::Null,
             &config.client_fingerprint,
             &config.models,
         )?;
-        // Retain only the checked metadata used when preparing turns.
         Ok(Self {
-            config,
+            images,
             connector,
             execution,
             authorization,
@@ -86,6 +109,21 @@ impl Session {
         })
     }
 }
+
+#[derive(Clone)]
+pub struct Identity {
+    owner: execution::Owner,
+    provider: Provider,
+    watch: Option<Arc<execution::AccountConnection>>,
+}
+
+impl PartialEq for Identity {
+    fn eq(&self, other: &Self) -> bool {
+        self.owner == other.owner
+    }
+}
+
+impl Eq for Identity {}
 
 #[derive(Clone)]
 struct ToolSnapshot {
@@ -102,12 +140,14 @@ struct TurnRequest {
 pub struct TurnAttempt {
     inner: Attempt,
     request: TurnRequest,
+    provider: Provider,
 }
 
 pub struct Input {
     request: TurnRequest,
-    admission: execution::StaticAdmissionRequest,
-    usage: UsageConfig<'static>,
+    protocol_request: protocol::Request,
+    request_id: String,
+    turn_state: Option<String>,
     began: Instant,
     encoded_bytes: usize,
 }
@@ -115,7 +155,7 @@ pub struct Input {
 impl NativeApplication for Session {
     type Input = Input;
     type Attempt = TurnAttempt;
-    type Identity = ();
+    type Identity = Identity;
 
     fn prepare(
         &self,
@@ -137,18 +177,19 @@ impl NativeApplication for Session {
             response_id: &snapshot.response_id,
             uses_responses_lite: true,
         });
-        let ids = data::image_ids(&self.config);
+        let config = self.images.configuration();
+        let ids = data::image_ids(config);
         let request =
-            websocket::parse_create(document, data::image_models(&self.config, &ids), previous)?;
+            websocket::parse_create(document, data::image_models(config, &ids), previous)?;
         let turn = TurnRequest {
             lane: lane.to_owned(),
             model: request.model.clone(),
             uses_lite: request.uses_responses_lite,
         };
         let warmup = request.mode == protocol::Mode::Warmup;
-        let (admission, usage) = data::prepare_admission(&self.config, &ids, &request, request_id)?;
+
         let frame = websocket::create_frame(
-            request,
+            request.clone(),
             self.connector.contract,
             lane,
             turn_state.as_deref(),
@@ -163,8 +204,9 @@ impl NativeApplication for Session {
         Ok(PreparedCreate {
             admission: Input {
                 request: turn,
-                admission,
-                usage,
+                protocol_request: request,
+                request_id: request_id.to_owned(),
+                turn_state,
                 began,
                 encoded_bytes,
             },
@@ -176,32 +218,38 @@ impl NativeApplication for Session {
     async fn admit(
         &self,
         input: Input,
-        _identity: Option<()>,
-        _deadline: Instant,
-    ) -> Result<Admitted<TurnAttempt, ()>, ProtocolError> {
-        let lease = self
-            .execution
-            .admit_static(&self.authorization, input.admission)
+        identity: Option<Identity>,
+        deadline: Instant,
+    ) -> Result<Admitted<TurnAttempt, Identity>, ProtocolError> {
+        self.admit_turn(input, identity, deadline)
             .await
-            .map_err(|error| ResponseError::from(error).protocol)?;
-        Ok(Admitted {
-            identity: (),
-            attempt: TurnAttempt {
-                inner: Attempt::new(lease, input.usage, input.began, input.encoded_bytes),
-                request: input.request,
-            },
-        })
+            .map_err(|error| error.protocol)
     }
 
-    async fn connect(&self, _identity: &(), deadline: Instant) -> Result<Socket, ConnectFailure> {
+    async fn connect(
+        &self,
+        identity: &Identity,
+        deadline: Instant,
+    ) -> Result<Socket, ConnectFailure> {
+        let stop = self.connection_stop(identity).unwrap_or_default();
         self.connector
-            .connect(&self.forwarded, deadline)
+            .connect(&self.forwarded, &identity.provider, deadline, &stop)
             .await
             .map(|(socket, _)| socket)
     }
 
+    fn connection_stop(&self, identity: &Identity) -> Option<CancellationToken> {
+        identity
+            .watch
+            .as_ref()
+            .map(|watch| watch.stop_token().clone())
+    }
+
     fn first_response_timeout(&self, attempt: &TurnAttempt) -> Option<std::time::Duration> {
-        Some(super::budget(self.config.budget, attempt.inner.images()).first_response)
+        Some(
+            super::budget(self.images.configuration().budget, attempt.inner.images())
+                .first_response,
+        )
     }
 
     fn begin_dispatch(&self, attempt: &mut TurnAttempt) -> Result<(), ProtocolError> {
@@ -233,7 +281,10 @@ impl NativeApplication for Session {
 
     fn evidence(&self, attempt: &TurnAttempt, evidence: NativeEvidence<'_>) {
         match evidence {
-            NativeEvidence::Event(event) => attempt.inner.event(event),
+            NativeEvidence::Event(event) => {
+                attempt.provider.observe_event(event);
+                attempt.inner.event(event);
+            }
             NativeEvidence::PossibleProcessing => attempt.inner.possible_processing(),
         }
     }
@@ -250,6 +301,7 @@ impl NativeApplication for Session {
         let TurnAttempt {
             inner: mut attempt,
             request,
+            ..
         } = attempt;
         if matches!(
             result,
@@ -324,5 +376,87 @@ impl NativeApplication for Session {
         };
         let (lease, outcome) = attempt.finish(failure, source, size_refusal);
         let _ = lease.finish(Some(outcome));
+    }
+}
+
+impl Session {
+    async fn admit_turn(
+        &self,
+        input: Input,
+        identity: Option<Identity>,
+        deadline: Instant,
+    ) -> Result<Admitted<TurnAttempt, Identity>, ResponseError> {
+        let config = self.images.configuration();
+        let ids = data::image_ids(config);
+        let key = match &self.authorization {
+            Authorization::Static(_) => None,
+            Authorization::Managed(_, bearer) => {
+                let key = self
+                    .execution
+                    .authenticate(&[bearer.to_str().unwrap_or_default()])
+                    .await?;
+                if let Some(fixed) = &identity
+                    && (fixed.owner.key != key.id() || fixed.owner.principal != key.principal())
+                {
+                    return Err(execution::ExecutionError::Unauthorized.into());
+                }
+                Some(key)
+            }
+        };
+        let (admission, usage) = data::prepare_admission(
+            config,
+            &ids,
+            &input.protocol_request,
+            &input.request_id,
+            key.as_ref(),
+        )?;
+        let (lease, provider) = match (&self.authorization, key) {
+            (Authorization::Static(auth), _) => (
+                self.execution.admit_static(auth, admission).await?,
+                Provider::default(),
+            ),
+            (Authorization::Managed(route, _), Some(key)) => {
+                let key_id = key.id().to_owned();
+                let connection = identity.as_ref().map(|fixed| execution::AccountIdentity {
+                    id: fixed.owner.identity.clone(),
+                    namespace: fixed.owner.namespace.clone(),
+                });
+                let hints = response::bindings(input.protocol_request.affinity_hints);
+                let (lease, credentials) = route
+                    .admit(
+                        &self.execution,
+                        key,
+                        admission,
+                        deadline,
+                        Some(Affinity {
+                            connection: connection.as_ref(),
+                            hints: &hints,
+                            turn_state: input.turn_state.as_deref(),
+                            headers: &self.forwarded,
+                        }),
+                    )
+                    .await?;
+                let provider = Provider::selected(route.pool.as_ref(), key_id, &lease, credentials);
+                (lease, provider)
+            }
+            _ => return Err(execution::ExecutionError::Unauthorized.into()),
+        };
+        let watch = match identity {
+            Some(fixed) => fixed.watch,
+            None => lease.watch_account_connection()?.map(Arc::new),
+        };
+        let owner = lease.admission().owner.clone();
+        Ok(Admitted {
+            identity: Identity {
+                owner,
+                provider: provider.clone(),
+                watch,
+            },
+            attempt: TurnAttempt {
+                inner: Attempt::new(lease, usage, input.began, input.encoded_bytes),
+                request: input.request,
+                provider,
+            },
+        })
     }
 }

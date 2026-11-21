@@ -8,11 +8,12 @@ mod http_upload;
 mod image_route;
 mod listener;
 mod managed;
-mod quota;
 mod online_backup;
+mod quota;
 mod reply;
 mod response;
 mod upload_workers;
+mod ws;
 
 use std::{
     process::ExitCode,
@@ -76,12 +77,6 @@ fn main() -> ExitCode {
     };
     match runtime.block_on(gateway::run(config)) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(gateway::StartupError::UnsupportedConfiguration) => {
-            eprintln!(
-                "This backend supports HTTP upstream transport for single identities and account pools."
-            );
-            ExitCode::from(78)
-        }
         Err(gateway::StartupError::RequiresManagedKeys) => {
             eprintln!("Restored databases require managed Keys or account-pool configuration.");
             ExitCode::FAILURE

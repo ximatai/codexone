@@ -193,12 +193,14 @@ async fn serve_connection(
         deadline: None,
         entire_write: admin,
     });
+    let (upgrades, mut upgraded) = tokio::sync::mpsc::channel(1);
     let service = service_fn(move |request| {
         let app = app.clone();
         let pending = pending.clone();
+        let upgrades = upgrades.clone();
         async move {
             let response = match plane {
-                Plane::Data => app.data(request, pending).await,
+                Plane::Data => app.data(request, pending, &upgrades).await,
                 Plane::Admin => admin_response(&app, request, accepted).await,
             };
             Ok::<_, std::convert::Infallible>(response)
@@ -211,13 +213,16 @@ async fn serve_connection(
         .max_headers(if admin { 32 } else { 64 })
         .max_buf_size(if admin { 8 * 1024 } else { 64 * 1024 })
         .auto_date_header(false);
-    let mut connection = std::pin::pin!(http.serve_connection(io, service));
+    let mut connection = std::pin::pin!(http.serve_connection(io, service).with_upgrades());
     tokio::select! {
         _ = &mut connection => {}
         _ = draining.cancelled() => {
             connection.as_mut().graceful_shutdown();
             let _ = connection.await;
         }
+    }
+    if let Ok(upgrade) = upgraded.try_recv() {
+        upgrade.serve(&draining).await;
     }
 }
 

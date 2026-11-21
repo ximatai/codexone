@@ -295,6 +295,7 @@ impl NativeImages {
                         admission,
                         request.deadline,
                         Some(Affinity {
+                            connection: None,
                             hints: &[],
                             turn_state,
                             headers,

@@ -184,6 +184,7 @@ impl PrimingTransport for HttpPriming {
             compact: false,
             client_sse: false,
             upstream_sse: true,
+            size_fallback: false,
             began,
             usage: protocol::UsageConfig {
                 host: protocol::Rates {
