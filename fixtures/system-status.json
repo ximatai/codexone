@@ -1,0 +1,10 @@
+{
+  "transportMode": "loopback",
+  "service": "codexone",
+  "ready": false,
+  "checks": [
+    {"name": "execution_store", "ready": false},
+    {"name": "upstream_accounts", "ready": false},
+    {"name": "authorization", "ready": false}
+  ]
+}

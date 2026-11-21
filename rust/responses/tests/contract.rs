@@ -202,7 +202,7 @@ fn turn_state_and_model_permissions_are_bound_to_trusted_configuration() {
 fn swift_fixture_replays_as_sse_and_terminal_json() {
     // Existing synthetic fixture used by verify_text_contract.py against the Swift service.
     let fixture = JsonValue::decode(include_bytes!(
-        "../../../Tests/CodexOneAdaptersTests/Fixtures/provider-text-contract.json"
+        "../../../fixtures/provider-text-contract.json"
     ))
     .unwrap();
     let provider = fixture.get("events").unwrap().as_array().unwrap();

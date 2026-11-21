@@ -4,7 +4,7 @@ import { expect, test } from "./fixtures";
 
 const fixture = readFileSync(
   new URL(
-    "../../../Tests/CodexOneAdaptersTests/Fixtures/system-status.json",
+    "../../../fixtures/system-status.json",
     import.meta.url,
   ),
   "utf8",

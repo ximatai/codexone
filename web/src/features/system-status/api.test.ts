@@ -7,7 +7,7 @@ const fixture: unknown = JSON.parse(
   readFileSync(
     resolve(
       process.cwd(),
-      "../Tests/CodexOneAdaptersTests/Fixtures/system-status.json",
+      "../fixtures/system-status.json",
     ),
     "utf8",
   ),

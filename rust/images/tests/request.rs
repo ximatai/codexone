@@ -116,9 +116,9 @@ fn checks_only_local_image_controls_and_accepts_provider_extensions() {
 #[test]
 fn inline_png_jpeg_and_webp_check_container_and_declared_type() {
     let jpeg =
-        include_bytes!("../../../Tests/CodexOneAdaptersTests/Fixtures/image-input/synthetic.jpg");
+        include_bytes!("../../../fixtures/image-input/synthetic.jpg");
     let webp =
-        include_bytes!("../../../Tests/CodexOneAdaptersTests/Fixtures/image-input/synthetic.webp");
+        include_bytes!("../../../fixtures/image-input/synthetic.webp");
     let png = STANDARD.decode(PNG).unwrap();
     for (media, bytes) in [
         ("png", png.as_slice()),

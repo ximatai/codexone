@@ -16,7 +16,7 @@ from verify_admin import ADMIN, document, request as admin_request
 from verify_protocol import TOKEN, connect, dump_gateway_failure, start, stop
 from verify_websocket import dial, receive, send
 
-FIXTURE = Path(__file__).resolve().parents[1] / 'Tests/CodexOneAdaptersTests/Fixtures/provider-text-contract.json'
+FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures/provider-text-contract.json'
 PRIVATE = 'synthetic independent contract output'
 INCOMPLETE_REASONS = {
     'incomplete': {},

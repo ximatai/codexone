@@ -48,7 +48,7 @@ python3 scripts/check_docs.py
 
 两脚本失败时在清理前打印 `process.poll()`、保留的启动输出及当前可读的 stdout/stderr（合并流，尾部最多 64 KiB），不等待运行中进程的 EOF；临时目录、二进制路径和已知合成秘密会替换。该诊断只用于脚本自己创建的合成进程，不采集部署日志或真实账号数据。`verify_gateway_diagnostics.py` 覆盖启动失败、非零退出、无 EOF 的活进程、输出上限与脱敏。
 
-Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。前后端共用 `Tests/CodexOneAdaptersTests/Fixtures/system-status.json` 契约样例。需要验证 SQLite 或真实上游行为时，使用对应实现的入口和数据。
+Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded 测协议 handler，临时端口测实际 HTTP，进程脚本测配置、信号、部分启动失败和端口释放。Rust 与前端共用 `fixtures/system-status.json` 契约样例。需要验证 SQLite 或真实上游行为时，使用对应实现的入口和数据。
 
 前端使用 Vitest + Testing Library 测状态/校验和重试，Playwright 测真实浏览器的桌面/移动流程；浏览器测试可拦截合成 API。`scripts/verify.sh` 组合边界、格式、构建、各层测试；支持只验证后端或前端；浏览器项目区分配套 Chromium 与本机 Chrome，新建临时上下文，避免依赖用户浏览数据。设置 `PW_TEST_CONNECT_WS_ENDPOINT` 时 Playwright 与 `web/scripts` 的实际界面脚本改为连接外部浏览器（`web/scripts/browser-server.mjs` 启动），供无法启动 Chrome 的 macOS 沙箱贡献者使用。依赖安装、浏览器准备和运行命令见贡献指南，CI 使用锁文件，测试默认不读账号/外部上游。
 
