@@ -22,6 +22,7 @@ from verify_images import native_body
 
 FIRST = 2
 TOTAL = 12
+BODY_MARKER = 'synthetic-upload-body-marker'
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -134,27 +135,32 @@ def run(binary, root, transport, case):
         document = json.loads(config.read_text())
         for key in ('principal', 'keyID', 'keySHA256'):
             document.pop(key)
-        document['progressTimeoutSeconds'] = 4
+        # Allow the trickle to drain a full socket buffer between idle refreshes.
+        # A completely stalled upload still uses the shorter four-second check.
+        document['progressTimeoutSeconds'] = 8 if case == 'trickle' else 4
         document['imageFirstResponseTimeoutSeconds'] = FIRST
         config.write_text(json.dumps(document))
     config.chmod(0o600)
     process = None
     peer = None
+    logs = b''
     try:
         admin = root / 'admin'
         admin.write_text(ADMIN); admin.chmod(0o600)
         process, ports = start(binary, config, root, admin_token_file=admin if transport == 'images' else None)
+        process.gateway_redactions += (ADMIN, BODY_MARKER)
         client_token = TOKEN
         if transport == 'images':
             status, created = call(ports['admin'], 'POST', '/api/keys', dict(principal='synthetic', models=[], limits=LIMITS, imageGeneration=True, imageModels=['synthetic-image']))
             assert status == 201, created
             client_token = created['secret']
+            process.gateway_redactions += (client_token,)
         # 28 MiB HTTP and 10 MiB WS force backpressure without crossing either body limit.
-        request = dict(model='synthetic-order', input='synthetic-upload-' + 'x' * ((28 if transport == 'http' else 10) * 1024 * 1024), stream=False)
+        request = dict(model='synthetic-order', input=BODY_MARKER + 'x' * ((28 if transport == 'http' else 10) * 1024 * 1024), stream=False)
         if transport == 'images':
-            request = dict(model='synthetic-image', future='x' * (28 * 1024 * 1024), stream=False)
+            request = dict(model='synthetic-image', future=BODY_MARKER + 'x' * (28 * 1024 * 1024), stream=False)
         if case == 'three-mbps':
-            request['input'] = 'x' * (64 * 1024 * 1024 - len(wire({**request, 'input': ''})))
+            request['input'] = BODY_MARKER + 'x' * (64 * 1024 * 1024 - len(wire({**request, 'input': BODY_MARKER})))
         body = wire(request)
         peer = socket.create_connection(('127.0.0.1', ports['data']), timeout=20)
         if case == 'three-mbps': peer.settimeout(total + 10)
@@ -222,16 +228,20 @@ def run(binary, root, transport, case):
         process.wait(10)
         logs = process.stdout.read()
         uploads = [line for line in logs.splitlines() if b'Upstream request upload' in line]
-        assert len(uploads) == 1, uploads
+        assert len(uploads) == 1, f'Expected one upload diagnostic, found {len(uploads)}'
+        fields = uploads[0].split()
         size_bucket = b'size_bucket=over_32_mib' if case == 'three-mbps' else b'size_bucket=24_to_32_mib' if transport in ('http', 'images') else b'size_bucket=at_most_16_mib'
-        assert size_bucket in uploads[0] and b'upload_duration_bucket=' in uploads[0], uploads
+        assert size_bucket in fields
+        assert b'transport=' + (b'websocket' if transport == 'websocket' else b'http') in fields
+        assert any(b'upload_duration_bucket=' + bucket in fields for bucket in (
+            b'under_1_s', b'1_to_10_s', b'10_to_30_s', b'30_to_60_s', b'at_least_60_s'))
         expected_result = b'result=interrupted' if case in ('stalled', 'cancel', 'disconnect', 'trickle') else b'result=sent'
-        assert expected_result in uploads[0], uploads
-        assert TOKEN.encode() not in logs and b'synthetic-upload-' not in logs
+        assert expected_result in fields
+        assert all(marker.encode() not in logs for marker in (client_token, TOKEN, ADMIN, BODY_MARKER))
         print(f'PASS: {transport}/{case}: timing, single dispatch, body bytes, ledger, health, bounded diagnostic', flush=True)
     except BaseException:
         if process:
-            dump_gateway_failure(process)
+            dump_gateway_failure(process, output=logs)
         raise
     finally:
         if peer:

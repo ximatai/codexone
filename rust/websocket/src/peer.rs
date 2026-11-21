@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codexone_http_upstream::UploadDiagnostics;
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use tokio::{
     io::{AsyncWriteExt, WriteHalf},
@@ -41,6 +42,7 @@ struct PendingWrite {
     command: Write,
     deadline: Instant,
     receipt: Option<oneshot::Sender<Result<Instant, SocketEnd>>>,
+    upload: Option<UploadDiagnostics>,
     _bytes: Option<OwnedSemaphorePermit>,
 }
 
@@ -113,6 +115,7 @@ pub(crate) struct Peer<T = Utf8Bytes> {
     output_bytes: Arc<Semaphore>,
     tasks: JoinSet<()>,
     read_closed: CancellationToken,
+    provider: bool,
 }
 
 impl Peer<IngressMessage> {
@@ -156,6 +159,7 @@ impl Peer<IngressMessage> {
                                 &reader.output,
                                 Message::Close(frame),
                                 Instant::now() + QUEUE_TIMEOUT,
+                                None,
                                 None,
                             )
                             .await
@@ -237,6 +241,7 @@ impl<T: Send + 'static> Peer<T> {
     {
         let (incoming, input) = mpsc::channel(QUEUE_ITEMS);
         let (output, mut outgoing) = mpsc::channel::<PendingWrite>(QUEUE_ITEMS);
+        let provider = matches!(&writer, Writer::Provider(_));
         let mut tasks = JoinSet::new();
         let read_closed = CancellationToken::new();
         let reader_closed = read_closed.clone();
@@ -258,6 +263,7 @@ impl<T: Send + 'static> Peer<T> {
                     command,
                     deadline,
                     receipt,
+                    mut upload,
                     _bytes,
                 } = message;
                 let closing = matches!(&command, Write::Frame(Message::Close(_)));
@@ -269,6 +275,12 @@ impl<T: Send + 'static> Peer<T> {
                         .unwrap_or(Err(SocketEnd::Write))
                         .map(|()| Instant::now())
                 };
+                if result.is_ok()
+                    && let Some(upload) = &mut upload
+                {
+                    upload.mark_sent();
+                }
+                drop(upload);
                 if let Some(receipt) = receipt {
                     let _ = receipt.send(result);
                 }
@@ -283,6 +295,7 @@ impl<T: Send + 'static> Peer<T> {
             output_bytes: Arc::new(Semaphore::new(output_bytes)),
             tasks,
             read_closed,
+            provider,
         }
     }
 
@@ -295,6 +308,11 @@ impl<T: Send + 'static> Peer<T> {
     }
 
     pub async fn queue(&self, text: Utf8Bytes, deadline: Instant) -> Result<Receipt, SocketEnd> {
+        let upload = if self.provider {
+            UploadDiagnostics::websocket(text.len())
+        } else {
+            None
+        };
         let permit = timeout_at(
             deadline.min(Instant::now() + QUEUE_TIMEOUT),
             self.output_bytes
@@ -304,7 +322,14 @@ impl<T: Send + 'static> Peer<T> {
         .await
         .map_err(|_| SocketEnd::Congested)?
         .map_err(|_| SocketEnd::Write)?;
-        write_frame(&self.output, Message::Text(text), deadline, Some(permit)).await
+        write_frame(
+            &self.output,
+            Message::Text(text),
+            deadline,
+            Some(permit),
+            upload,
+        )
+        .await
     }
 
     pub async fn send(&self, text: Utf8Bytes, deadline: Instant) -> Result<Instant, SocketEnd> {
@@ -316,8 +341,14 @@ impl<T: Send + 'static> Peer<T> {
             code,
             reason: Utf8Bytes::default(),
         }));
-        if let Ok(receipt) =
-            write_frame(&self.output, frame, Instant::now() + QUEUE_TIMEOUT, None).await
+        if let Ok(receipt) = write_frame(
+            &self.output,
+            frame,
+            Instant::now() + QUEUE_TIMEOUT,
+            None,
+            None,
+        )
+        .await
         {
             let _ = receipt.wait().await;
         }
@@ -336,6 +367,7 @@ async fn write_frame(
     frame: Message,
     deadline: Instant,
     bytes: Option<OwnedSemaphorePermit>,
+    upload: Option<UploadDiagnostics>,
 ) -> Result<Receipt, SocketEnd> {
     let (receipt, ready) = oneshot::channel();
     timeout_at(
@@ -344,6 +376,7 @@ async fn write_frame(
             command: Write::Frame(frame),
             deadline,
             receipt: Some(receipt),
+            upload,
             _bytes: bytes,
         }),
     )
@@ -361,6 +394,7 @@ async fn enqueue_control(output: &WriteQueue, command: Write) -> Result<(), Sock
             command,
             deadline,
             receipt: None,
+            upload: None,
             _bytes: None,
         }),
     )

@@ -275,7 +275,7 @@ impl ImageRequest {
                     "application/json"
                 },
             )
-            .body(RequestBody::bytes(self.body.clone()))
+            .body(RequestBody::bytes(self.body.clone()).with_diagnostics(self.body.len(), None))
             .map_err(|_| invalid())?;
         let headers = request.headers_mut();
         let mut extension_count = usize::from(self.turn_state.is_some());
