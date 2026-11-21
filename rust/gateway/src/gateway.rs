@@ -29,7 +29,9 @@ use crate::{
     data::{self, DataPlane},
     listener::{Listeners, Plane, ReadError, read_body},
     managed::{self, Managed, Pool, SubscriptionTarget},
+    management_usage::{DataClients, ManagementUsage},
     online_backup::BackupTask,
+    overview_live::OverviewHub,
     reply::{self, FlushDeliveries, Reply},
 };
 
@@ -39,10 +41,13 @@ pub enum StartupError {
 }
 
 pub struct Application {
-    admin: AdminRouter,
+    pub(crate) admin: AdminRouter,
     data: Option<DataPlane>,
-    execution: Option<ExecutionService>,
-    managed: Option<Managed>,
+    pub(crate) execution: Option<ExecutionService>,
+    pub(crate) usage: Option<ManagementUsage>,
+    pub(crate) overview: Option<Arc<OverviewHub>>,
+    pub(crate) data_clients: Option<Arc<DataClients>>,
+    pub(crate) managed: Option<Managed>,
     pool: Option<Arc<Pool>>,
 }
 
@@ -61,7 +66,31 @@ impl Application {
         report
     }
 
+    pub(crate) async fn overview_system(&self) -> codexone_usage::Result<serde_json::Value> {
+        let request = Request::builder()
+            .uri("/api/system")
+            .body(Bytes::new())
+            .expect("static system path");
+        let response = self
+            .admin
+            .route(&request, async || self.readiness().await)
+            .await
+            .ok_or(codexone_usage::Error::Unavailable)?;
+        serde_json::from_slice(response.body()).map_err(|_| codexone_usage::Error::Unavailable)
+    }
+
     pub async fn admin(&self, request: &Request<Bytes>) -> Response<Bytes> {
+        if let Some(usage) = &self.usage
+            && ManagementUsage::matches(request.method(), request.uri().path())
+        {
+            let authorization = match self.admin.authorize(request.method(), request.headers()) {
+                Ok(authorization) => authorization,
+                Err(rejection) => return *rejection,
+            };
+            let mut response = usage.route(request).await;
+            authorization.apply(&mut response);
+            return response;
+        }
         if let Some(response) = self
             .admin
             .route(request, async || self.readiness().await)
@@ -170,6 +199,7 @@ async fn run_configured(
 
     let key_options = KeyOptions::configured(&config);
     let runtime = config.runtime;
+    let mut model_efforts = Default::default();
     let static_identity =
         matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
     let (mut options, mut data, pool_config) = match config.source.take() {
@@ -177,6 +207,17 @@ async fn run_configured(
         Some(Source::SingleIdentity(identity)) => {
             let token = identity.read_upstream_token().map_err(|_| Service)?;
             let token = token.as_ref().map(|token| token.as_str());
+            model_efforts = identity
+                .responses
+                .models
+                .iter()
+                .filter_map(|model| {
+                    Some((
+                        model.id.clone(),
+                        model.catalog.as_ref()?.default_reasoning_effort.clone()?,
+                    ))
+                })
+                .collect();
             let (options, versions) = if identity.managed_keys {
                 let fixed = FixedIdentity::new(
                     &identity.namespace,
@@ -202,7 +243,19 @@ async fn run_configured(
                 DataPlane::new(*identity, token, proxy.clone(), versions).map_err(|_| Service)?;
             (options, Some(data), None)
         }
-        Some(Source::AccountPool(pool)) => (Options::for_account_pool(), None, Some(pool)),
+        Some(Source::AccountPool(pool)) => {
+            model_efforts = pool
+                .models
+                .iter()
+                .filter_map(|model| {
+                    Some((
+                        model.id.clone(),
+                        model.catalog.as_ref()?.default_reasoning_effort.clone()?,
+                    ))
+                })
+                .collect();
+            (Options::for_account_pool(), None, Some(pool))
+        }
     };
     if config.master_keys.is_some() {
         options = options.with_governance_recovery(managed::recover);
@@ -216,12 +269,13 @@ async fn run_configured(
         .await
         .map_err(|_| Service)?;
     let offset = (runtime.business_day_offset_minutes / 60) as i8;
-    let (execution, backup) = match runtime.data_directory {
+    let (execution, mut usage, backup) = match runtime.data_directory {
         Some(directory) => {
             let database =
                 tokio::task::spawn_blocking(move || initialize_store(&directory, static_identity))
                     .await
                     .map_err(|_| Service)??;
+            let path = database.path().to_owned();
             let backup = runtime
                 .backup_directory
                 .map(|root| (root, database.backup_source()));
@@ -231,6 +285,20 @@ async fn run_configured(
             )
             .await
             .map_err(|_| Service)?;
+            let usage = if config.admin_digest.is_some() {
+                Some(
+                    ManagementUsage::open(
+                        &path,
+                        runtime.business_day_offset_minutes,
+                        service.clone(),
+                        model_efforts,
+                    )
+                    .await
+                    .map_err(|_| Service)?,
+                )
+            } else {
+                None
+            };
             let backup = if let Some((root, source)) = backup {
                 let protection = config
                     .master_keys
@@ -251,10 +319,13 @@ async fn run_configured(
             } else {
                 None
             };
-            (Some(service), backup)
+            (Some(service), usage, backup)
         }
-        None => (None, None),
+        None => (None, None, None),
     };
+    if let Some((usage, backup)) = usage.as_mut().zip(backup.as_ref()) {
+        usage.attach_backup(backup.status.clone());
+    }
     let (mut managed, pool) = if let Some(execution) = &execution
         && config.admin_digest.is_some()
     {
@@ -294,11 +365,38 @@ async fn run_configured(
     if let Some((data, directory)) = data.as_mut().zip(runtime.http_body_staging_directory) {
         data.enable_staging(directory).map_err(|_| Service)?;
     }
+    if let Some((usage, data)) = usage.as_mut().zip(data.as_ref()) {
+        let extensions = data.protocol_extensions.clone();
+        usage.attach_protocol_extensions(move || extensions.snapshot());
+    }
+    if let Some((usage, pool)) = usage.as_mut().zip(pool.as_ref()) {
+        let pool = pool.clone();
+        usage.attach_model_efforts(move || {
+            pool.directory()
+                .map(|directory| {
+                    directory
+                        .snapshot()
+                        .active
+                        .iter()
+                        .filter_map(|model| {
+                            Some((
+                                model.id.clone(),
+                                model.effective_default_reasoning_effort()?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+    }
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
     let mut managed_tasks = JoinSet::new();
     if let Some(managed) = &mut managed {
         managed.spawn_workers(&mut managed_tasks);
     }
+    let overview =
+        (runtime.admin_live_enabled && usage.is_some()).then(|| Arc::new(OverviewHub::new()));
+    let data_clients = usage.as_ref().map(|usage| usage.clients.clone());
     let app = Arc::new(Application {
         admin: AdminRouter::new(
             admin_listener.port,
@@ -311,9 +409,17 @@ async fn run_configured(
         execution,
         managed,
         pool,
+        usage,
+        overview: overview.clone(),
+        data_clients,
     });
     let access: Arc<[_]> = runtime.allowed_networks.into();
     let stopping = CancellationToken::new();
+    let overview_task = overview.map(|overview| {
+        let app = app.clone();
+        let stopping = stopping.clone();
+        tokio::spawn(async move { overview.run(app, stopping).await })
+    });
     data_listener.announce();
     admin_listener.announce();
     let mut listeners = JoinSet::new();
@@ -353,6 +459,9 @@ async fn run_configured(
         failed |= !matches!(result, Ok(Ok(())));
     }
     app.admin.revoke_sessions();
+    if let Some(task) = overview_task {
+        failed |= task.await.is_err();
+    }
     if let Some(backup) = backup {
         backup.join().await;
     }
@@ -368,6 +477,9 @@ async fn run_configured(
             managed_tasks.abort_all();
             failed = true;
         }
+    }
+    if let Some(usage) = &app.usage {
+        failed |= usage.usage.close().await.is_err();
     }
     if let Some(execution) = &app.execution {
         let drained = match time::timeout(Duration::from_secs(3), async {

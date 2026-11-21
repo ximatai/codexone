@@ -55,6 +55,15 @@ impl Reader {
         })
     }
 
+    pub fn is_active(&self) -> bool {
+        !self.slot.is_closed() && self.slot.available_permits() == 0
+    }
+
+    /// Wait for an already-cancelled job to release its WAL snapshot.
+    pub async fn wait_idle(&self) {
+        drop(self.slot.acquire().await);
+    }
+
     pub async fn close(&self) -> Result<()> {
         self.slot.close();
         let connection = self.connection.clone();

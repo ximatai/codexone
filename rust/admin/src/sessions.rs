@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::num::NonZeroU16;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -14,6 +14,8 @@ use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use super::{AdminAuthorization, Failure, json_response};
@@ -40,11 +42,51 @@ struct Session {
     csrf: String,
     last_activity: Instant,
     absolute_deadline: Instant,
+    live_connections: Arc<Semaphore>,
+    revoked: CancellationToken,
 }
 
 impl Session {
     fn valid_at(&self, now: Instant) -> bool {
         now < self.absolute_deadline && now.duration_since(self.last_activity) < IDLE_LIFETIME
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.revoked.cancel();
+    }
+}
+
+/// Owns one admitted browser live connection. A session replacement, logout or
+/// server revocation cancels the connection without retaining the browser cookie.
+pub struct OverviewSession {
+    owner: Arc<Sessions>,
+    digest: [u8; 32],
+    revoked: CancellationToken,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl OverviewSession {
+    pub async fn revoked(&self) {
+        self.revoked.cancelled().await;
+    }
+
+    pub fn valid(&self) -> bool {
+        self.with_valid(false, || ()).is_some()
+    }
+
+    /// Serialize admitting a frame to the connection's write buffer with logout
+    /// and session replacement. The callback must not await or block on I/O.
+    pub fn with_valid<T>(&self, renew_idle: bool, send: impl FnOnce() -> T) -> Option<T> {
+        let mut entries = self.owner.entries.lock().expect("admin sessions");
+        let now = Instant::now();
+        entries.retain(|_, session| session.valid_at(now));
+        let session = entries.get_mut(&self.digest)?;
+        if renew_idle {
+            session.last_activity = now;
+        }
+        Some(send())
     }
 }
 
@@ -214,6 +256,8 @@ impl Sessions {
                 csrf: csrf.clone(),
                 last_activity: now,
                 absolute_deadline,
+                live_connections: Arc::new(Semaphore::new(2)),
+                revoked: CancellationToken::new(),
             },
         );
         Ok(Renewal {
@@ -239,6 +283,28 @@ impl Sessions {
             token: Zeroizing::new(token.to_owned()),
             csrf: session.csrf.clone(),
             absolute_deadline: session.absolute_deadline,
+        })
+    }
+
+    pub(crate) fn overview(
+        self: &Arc<Self>,
+        headers: &HeaderMap,
+    ) -> Result<OverviewSession, Failure> {
+        let digest = digest(self.browser_token(headers, true)?);
+        let mut entries = self.entries.lock().expect("admin sessions");
+        let now = Instant::now();
+        entries.retain(|_, session| session.valid_at(now));
+        let session = entries.get_mut(&digest).ok_or(Failure::Credential)?;
+        let permit = session
+            .live_connections
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Failure::OverviewCapacity)?;
+        Ok(OverviewSession {
+            owner: self.clone(),
+            digest,
+            revoked: session.revoked.clone(),
+            _permit: permit,
         })
     }
 
@@ -366,6 +432,8 @@ mod tests {
     fn activity_slides_until_the_exact_idle_or_absolute_boundary() {
         let start = Instant::now();
         let mut session = Session {
+            live_connections: Arc::new(Semaphore::new(2)),
+            revoked: CancellationToken::new(),
             csrf: "synthetic-proof".into(),
             last_activity: start,
             absolute_deadline: start + ABSOLUTE_LIFETIME,

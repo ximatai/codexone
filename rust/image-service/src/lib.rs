@@ -419,6 +419,7 @@ impl ImageSession<'_> {
             .as_ref()
             .and_then(Execution::account_stop_token);
         let exchange = self.exchange.as_mut().expect("started session");
+        let had_event = exchange.evidence().first_event_at.is_some();
         let result = tokio::select! {
             biased;
             _ = async {
@@ -429,6 +430,12 @@ impl ImageSession<'_> {
                 Err(ImageError::cancelled(codexone_images::ExecutionOutcome::Indeterminate))
             }
         };
+        if !had_event
+            && exchange.evidence().first_event_at.is_some()
+            && let Some(execution) = &self.execution
+        {
+            execution.note_first_event();
+        }
         match result {
             Ok(Some(ImageOutput::Begin(mut headers))) => {
                 headers.insert("x-request-id", self.request_id.clone());

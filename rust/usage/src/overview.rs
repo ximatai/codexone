@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -60,6 +60,16 @@ impl Usage {
     }
 }
 
+impl Usage {
+    pub async fn sample_activity(&self, now: i64, context: Arc<Context>) -> Result<Value> {
+        validate_now(now)?;
+        let day = self.day;
+        self.reader
+            .read(move |db| activity(db, now, day, &context))
+            .await
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OverviewSection {
@@ -71,7 +81,41 @@ pub struct OverviewSection {
     data: Value,
 }
 
+/// Per-viewer delivery metadata, without retaining older section payloads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct OverviewStamp {
+    version: u64,
+    sampled_at: i64,
+    last_success_at: Option<i64>,
+    freshness: &'static str,
+    code: Option<&'static str>,
+}
+
 impl OverviewSection {
+    pub fn stamp(&self) -> OverviewStamp {
+        OverviewStamp {
+            version: self.version,
+            sampled_at: self.sampled_at_unix_seconds,
+            last_success_at: self.last_success_at,
+            freshness: self.freshness,
+            code: self.code,
+        }
+    }
+
+    pub fn update_document(&self, previous: OverviewStamp) -> Result<Option<Value>> {
+        if self.stamp() == previous {
+            return Ok(None);
+        }
+        let mut document = serde_json::to_value(self).map_err(|_| Error::Unavailable)?;
+        if self.version == previous.version {
+            document
+                .as_object_mut()
+                .expect("section object")
+                .remove("data");
+        }
+        Ok(Some(document))
+    }
+
     fn unavailable(now: i64) -> Self {
         Self {
             version: 0,
@@ -152,15 +196,7 @@ impl OverviewState {
                     section.code = Some("source_unavailable");
                 }
             }
-            if section != old {
-                let mut document =
-                    serde_json::to_value(&*section).map_err(|_| Error::Unavailable)?;
-                if section.version == old.version {
-                    document
-                        .as_object_mut()
-                        .expect("section object")
-                        .remove("data");
-                }
+            if let Some(document) = section.update_document(old.stamp())? {
                 updates.insert(source, document);
             }
         }
@@ -225,7 +261,17 @@ fn activity(db: &Connection, now: i64, day: BusinessDay, context: &Context) -> R
     }
     document["recentlyFinished"] = json!([]);
     document["overflow"] = json!(context.activity_overflow);
-    document["clients"] = json!(context.clients);
+    let mut clients = context.clients.clone();
+    let mut names = db.prepare_cached(
+        "SELECT json_extract(metadata_json,'$.displayName') FROM managed_keys WHERE id=?",
+    )?;
+    for client in &mut clients {
+        client.display_name = names
+            .query_row([&client.key_id], |row| row.get(0))
+            .optional()?
+            .flatten();
+    }
+    document["clients"] = json!(clients);
     document["recentRequestOutputRateMedian"] = json!(median(&mut recent));
     document["requestOutputRateMediansByDay"] = Value::Object(days);
     document["requestOutputRateByHour"] = json!({

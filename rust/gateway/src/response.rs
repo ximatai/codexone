@@ -237,8 +237,10 @@ impl Attempt {
     }
 
     fn note_event(&mut self) {
-        self.first_event_ms
-            .get_or_insert_with(|| milliseconds(self.began));
+        if self.first_event_ms.is_none() {
+            self.first_event_ms = Some(milliseconds(self.began));
+            self.lease().note_first_event();
+        }
     }
 
     fn check_stopped(&self) -> Result<(), ResponseError> {
@@ -510,7 +512,10 @@ pub(crate) async fn discard_priming(
         let mut reader = EventReader::new(upstream, &transfer, None);
         let result = async {
             while let Some(observation) = reader.next_observation().await? {
-                first_event.get_or_insert_with(|| milliseconds(transfer.began));
+                if first_event.is_none() {
+                    first_event = Some(milliseconds(transfer.began));
+                    lease.note_first_event();
+                }
                 for usage in observation.usage {
                     lease.observe(evidence(usage))?;
                 }

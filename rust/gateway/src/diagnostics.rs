@@ -10,7 +10,6 @@ use std::{
 use codexone_responses::{JsonValue, ProtocolError, ProviderFailure};
 use codexone_websocket::{ConnectFailure, SocketEnd};
 use http::HeaderMap;
-use serde_json::{Value, json};
 use uuid::Uuid;
 
 struct Gate<const LIMIT: u16>(Mutex<Option<(Instant, u16)>>);
@@ -280,21 +279,13 @@ impl ClientProtocolExtensions {
         });
     }
 
-    /// A projection for the shared attention route. Entries contain machine identifiers only.
-    pub fn attention_items(&self) -> Vec<Value> {
+    /// A bounded projection for the shared attention and live overview reader.
+    pub fn snapshot(&self) -> codexone_usage::ProtocolExtensions {
         let entries = self.0.lock().unwrap();
-        let mut items: Vec<_> = entries.first_seen.iter().collect();
-        items.sort_by_key(|(name, seen)| (**seen, *name));
-        items
-            .into_iter()
-            .map(|(name, since)| {
-                json!({
-                    "kind": "client_protocol_extension", "severity": "warning",
-                    "subjectType": "protocol", "subjectID": null, "subjectName": name,
-                    "detail": {"overflow": entries.overflow}, "sinceUnixSeconds": since,
-                })
-            })
-            .collect()
+        codexone_usage::ProtocolExtensions {
+            names: entries.first_seen.clone(),
+            overflow: entries.overflow,
+        }
     }
 }
 

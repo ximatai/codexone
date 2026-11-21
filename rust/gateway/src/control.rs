@@ -109,6 +109,7 @@ impl Control {
         token: Option<&HeaderValue>,
         pool: Option<&Pool>,
         request_id: &str,
+        protocol_extensions: &crate::diagnostics::ClientProtocolExtensions,
     ) -> Reply {
         let key = match execution
             .authenticate(&headers::values(request.headers(), "authorization"))
@@ -166,6 +167,7 @@ impl Control {
                 &JsonValue::Null,
                 &config.client_fingerprint,
                 &config.models,
+                Some(protocol_extensions),
             )?;
             for name in [header::CONTENT_TYPE, header::ACCEPT] {
                 if !hop_by_hop(&parts.headers, name.as_str()) {

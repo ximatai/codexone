@@ -22,6 +22,7 @@ use crate::{
     headers,
     image_route::NativeImages,
     managed::{Affinity, ManagedRoute},
+    management_usage::DataClients,
     response::{self, ResponseError},
 };
 
@@ -40,7 +41,7 @@ impl Upgrade {
         }
     }
 
-    pub async fn serve(self, draining: &CancellationToken) {
+    pub async fn serve(self, draining: &CancellationToken, clients: Option<&Arc<DataClients>>) {
         let io = tokio::select! {
             biased;
             _ = draining.cancelled() => return,
@@ -49,6 +50,7 @@ impl Upgrade {
                 Err(_) => return,
             },
         };
+        let _client = clients.map(|clients| clients.register(&self.session.key_id));
         let options = NativeOptions {
             budget: super::budget(self.session.images.configuration().budget, false),
         };
@@ -62,6 +64,7 @@ pub struct Session {
     connector: Connector,
     execution: execution::ExecutionService,
     authorization: Authorization,
+    key_id: String,
     forwarded: HeaderMap,
     protocol_extensions: Arc<ClientProtocolExtensions>,
     client: Client,
@@ -84,17 +87,21 @@ impl Session {
         headers: &HeaderMap,
     ) -> Result<Self, ResponseError> {
         let bearer = headers::values(headers, "authorization");
-        let authorization = match managed {
+        let (authorization, key_id) = match managed {
             Some(route) => {
-                execution.authenticate(&bearer).await?;
+                let key = execution.authenticate(&bearer).await?;
                 let mut value = headers
                     .get(header::AUTHORIZATION)
                     .expect("authenticated bearer")
                     .clone();
                 value.set_sensitive(true);
-                Authorization::Managed(route, value)
+                (Authorization::Managed(route, value), key.id().to_owned())
             }
-            None => Authorization::Static(execution.authenticate_static(&bearer)?),
+            None => {
+                let auth = execution.authenticate_static(&bearer)?;
+                let id = auth.key_id().to_owned();
+                (Authorization::Static(auth), id)
+            }
         };
         let config = images.configuration();
         let forwarded = headers::client(
@@ -109,6 +116,7 @@ impl Session {
             connector,
             execution,
             authorization,
+            key_id,
             forwarded,
             protocol_extensions,
             client: Client::inspect(headers),

@@ -61,3 +61,18 @@ python3 scripts/rust_compat/http_staging.py --binary rust/gateway/target/release
 ```
 
 驱动通过 HTTP/1.1 的 `100 Continue` 确认三个 62 MiB 请求各自取得暂存租约，检查第四个收到 `503 capacity_exhausted`。客户端 TCP reset 后，替补请求可重新取得租约。驱动在其余上传未完成时向网关发送 SIGKILL，核对没有上游调用、没有账本记录，且数据目录没有出现命名暂存文件。重启同一个数据目录后，驱动检查暂存明文字节与 Content-Length、一次结算及三个租约重新可用，并检查进程日志中无合成正文标记或 Bearer Key。
+
+## 用量、存储水位与首页推送
+
+从仓库根目录运行，Swift 使用提案指定的兼容基线。脚本各自使用合成上游、动态回环端口与独立临时数据库。
+
+```sh
+swift build --package-path "$SWIFT_BASELINE" --product codexone
+cargo build --locked --manifest-path rust/gateway/Cargo.toml
+python3 scripts/rust_compat/usage.py \
+  --reference "$SWIFT_BASELINE/.build/debug/codexone" \
+  --candidate rust/gateway/target/debug/codexone
+python3 scripts/rust_compat/overview.py --candidate rust/gateway/target/debug/codexone
+```
+
+用量驱动对照 Swift v19 的管理响应、浏览器与 Bearer 鉴权和数据入口状态码，并在同一 Rust 进程中核对 WAL 增长、结算预留压力和恢复。首页驱动校验快照顺序、在途首事件及结算更新、握手约束、每会话连接数、登出与关机关闭帧。

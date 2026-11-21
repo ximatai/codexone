@@ -5,7 +5,10 @@ mod sessions;
 
 use std::net::IpAddr;
 use std::num::NonZeroU16;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -17,6 +20,7 @@ use serde_json::json;
 use uuid::Builder;
 
 use assets::Assets;
+pub use sessions::OverviewSession;
 use sessions::Sessions;
 
 /// The ingress must enforce these limits before dispatch and during the socket write.
@@ -64,7 +68,7 @@ struct SystemStatus<'a> {
 }
 
 pub struct AdminRouter {
-    sessions: Option<Sessions>,
+    sessions: Option<Arc<Sessions>>,
     assets: Option<Assets>,
     lan_http: bool,
 }
@@ -79,9 +83,13 @@ impl AdminRouter {
         admin_origin: Option<&str>,
         web_bundle: Option<AdminWebBundle>,
     ) -> Self {
-        let sessions = admin_digest.map(|digest| Sessions::new(digest, admin_origin, bound_port));
+        let sessions =
+            admin_digest.map(|digest| Arc::new(Sessions::new(digest, admin_origin, bound_port)));
         Self {
-            lan_http: listen_address.is_some() || sessions.as_ref().is_some_and(Sessions::lan_http),
+            lan_http: listen_address.is_some()
+                || sessions
+                    .as_ref()
+                    .is_some_and(|sessions| sessions.lan_http()),
             sessions,
             assets: web_bundle.map(Assets::new),
         }
@@ -152,6 +160,20 @@ impl AdminRouter {
         Some(response)
     }
 
+    /// Reserve one of the session's two live connections using strict browser authorization.
+    pub fn overview_session(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<OverviewSession, Box<Response<Bytes>>> {
+        let sessions = self
+            .sessions
+            .as_ref()
+            .ok_or_else(|| Box::new(not_found()))?;
+        sessions
+            .overview(headers)
+            .map_err(|failure| Box::new(failure.response()))
+    }
+
     /// Invalidates browser sessions for the current listener. New login remains possible.
     pub fn revoke_sessions(&self) {
         if let Some(sessions) = &self.sessions {
@@ -200,6 +222,7 @@ enum Failure {
     Origin,
     Csrf,
     Mixed,
+    OverviewCapacity,
     Unavailable,
 }
 
@@ -214,6 +237,7 @@ impl Failure {
             Self::Origin => (Status::FORBIDDEN, "invalid_management_origin"),
             Self::Csrf => (Status::FORBIDDEN, "invalid_csrf"),
             Self::Mixed => (Status::FORBIDDEN, "mixed_browser_credentials"),
+            Self::OverviewCapacity => (Status::TOO_MANY_REQUESTS, "overview_capacity"),
             Self::Unavailable => (Status::SERVICE_UNAVAILABLE, "management_unavailable"),
         };
         json_response(
@@ -242,6 +266,10 @@ fn request_id() -> String {
         // Keep error reporting available if the OS random source itself failed.
         format!("local-{}", FALLBACK.fetch_add(1, Ordering::Relaxed))
     }
+}
+
+pub fn overview_capacity() -> Response<Bytes> {
+    Failure::OverviewCapacity.response()
 }
 
 pub fn not_found() -> Response<Bytes> {

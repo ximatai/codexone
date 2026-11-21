@@ -141,8 +141,14 @@ struct Inner {
     pacing: PacingWaiters,
     capacity: u32,
     done: watch::Receiver<bool>,
-    active: Mutex<HashMap<String, ActiveAccountExecution>>,
+    active: Mutex<HashMap<String, ActiveExecution>>,
     connections: Mutex<HashMap<String, ActiveAccountExecution>>,
+    activity_revision: watch::Sender<u64>,
+}
+
+struct ActiveExecution {
+    account: Option<ActiveAccountExecution>,
+    first_event: Option<bool>,
 }
 
 struct ActiveAccountExecution {
@@ -161,7 +167,7 @@ impl Inner {
         self.gate().status.send_replace(ExecutionStatus::Failed);
     }
 
-    fn active(&self) -> MutexGuard<'_, HashMap<String, ActiveAccountExecution>> {
+    fn active(&self) -> MutexGuard<'_, HashMap<String, ActiveExecution>> {
         self.active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -171,6 +177,30 @@ impl Inner {
         self.connections
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn notify_activity(&self) {
+        if self.activity_revision.receiver_count() > 0 {
+            self.activity_revision
+                .send_modify(|revision| *revision = revision.wrapping_add(1));
+        }
+    }
+
+    fn note_first_event(&self, attempt: &str) {
+        let changed = self
+            .active()
+            .get_mut(attempt)
+            .and_then(|entry| entry.first_event.as_mut())
+            .is_some_and(|first| !std::mem::replace(first, true));
+        if changed {
+            self.notify_activity();
+        }
+    }
+
+    fn finish_activity(&self, attempt: &str) {
+        if self.active().remove(attempt).is_some() {
+            self.notify_activity();
+        }
     }
 
     fn enqueue(&self, job: Job, admission: bool) -> Result<()> {
@@ -340,7 +370,8 @@ impl ExecutionService {
             pacing: PacingWaiters::default(),
             capacity: capacity as u32,
             done: done_rx,
-            active: Mutex::new(HashMap::new()),
+            active: Mutex::new(HashMap::with_capacity(capacity as usize)),
+            activity_revision: watch::channel(0).0,
             connections: Mutex::new(HashMap::new()),
         });
         let exit = WorkerExit {
@@ -392,6 +423,19 @@ impl ExecutionService {
         }
     }
 
+    /// Bounded by finalization tickets, with changes coalesced for the overview.
+    pub fn activity_revision(&self) -> watch::Receiver<u64> {
+        self.inner.activity_revision.subscribe()
+    }
+
+    pub fn first_events(&self) -> HashMap<String, bool> {
+        self.inner
+            .active()
+            .iter()
+            .filter_map(|(id, execution)| execution.first_event.map(|first| (id.clone(), first)))
+            .collect()
+    }
+
     /// Resolve on a fatal command or an unexpected writer panic, including prior failures.
     pub async fn wait_until_failed(&self) {
         let mut status = self.inner.gate().status.subscribe();
@@ -421,6 +465,7 @@ impl ExecutionService {
         self.inner
             .active()
             .values()
+            .filter_map(|entry| entry.account.as_ref())
             .filter(|entry| entry.account == account)
             .count()
     }
@@ -429,7 +474,11 @@ impl ExecutionService {
     pub fn stop_account_executions(&self, account: &str) -> usize {
         let active = self.inner.active();
         let mut count = 0;
-        for entry in active.values().filter(|entry| entry.account == account) {
+        for entry in active
+            .values()
+            .filter_map(|entry| entry.account.as_ref())
+            .filter(|entry| entry.account == account)
+        {
             if !entry.stop.is_cancelled() {
                 count += 1;
                 entry.stop.cancel();
@@ -778,9 +827,12 @@ impl ExecutionService {
             let stop = CancellationToken::new();
             service.inner.active().insert(
                 registry_id.clone(),
-                ActiveAccountExecution {
-                    account: identity.id.clone(),
-                    stop: stop.clone(),
+                ActiveExecution {
+                    account: Some(ActiveAccountExecution {
+                        account: identity.id.clone(),
+                        stop: stop.clone(),
+                    }),
+                    first_event: None,
                 },
             );
             Ok((
@@ -999,19 +1051,23 @@ impl ExecutionService {
                 ControlFlow::Break(delay) => return Ok(ControlFlow::Break(delay)),
             };
             tx.commit()?;
-            // Registration is ordered with account mode and force-stop commands on
-            // this writer. The finalization ticket bounds the live registry.
-            let stop = admission.account_snapshot.as_ref().map(|_| {
-                let stop = CancellationToken::new();
-                service.inner.active().insert(
-                    admission.attempt.clone(),
-                    ActiveAccountExecution {
+            // Register observations and force-stop ownership in writer order, after commit.
+            // The finalization ticket bounds the registry until settlement.
+            let stop = admission
+                .account_snapshot
+                .as_ref()
+                .map(|_| CancellationToken::new());
+            service.inner.active().insert(
+                admission.attempt.clone(),
+                ActiveExecution {
+                    account: stop.as_ref().map(|stop| ActiveAccountExecution {
                         account: admission.owner.identity.clone(),
                         stop: stop.clone(),
-                    },
-                );
-                stop
-            });
+                    }),
+                    first_event: Some(false),
+                },
+            );
+            service.inner.notify_activity();
             // If the admission future is cancelled after commit, dropping the undelivered
             // lease transfers finalization to the worker just like any other cancellation.
             Ok(ControlFlow::Continue(Execution {
@@ -1210,6 +1266,22 @@ impl Execution {
         }
     }
 
+    /// Record the first valid provider event for the bounded management activity view.
+    pub fn note_first_event(&self) {
+        if self.dispatched {
+            self.service.inner.note_first_event(&self.admission.attempt);
+        }
+    }
+
+    /// Give the correlated provider reader a single-use first-event notification.
+    /// This does not reserve a ticket or keep the execution active after finalization.
+    pub fn first_event_observer(&self) -> FirstEventObserver {
+        FirstEventObserver {
+            inner: Arc::downgrade(&self.service.inner),
+            attempt: self.admission.attempt.clone(),
+        }
+    }
+
     /// Commit all referenceable identifiers in an output before emitting any of that output.
     /// An error or cancelled bind poisons further binding on this lease. Stop exposing output.
     pub async fn bind(&mut self, objects: &[ObjectBinding]) -> Result<()> {
@@ -1290,7 +1362,8 @@ impl Execution {
         if self.stop.is_some() {
             let stopped = inner
                 .active()
-                .remove(&attempt)
+                .get_mut(&attempt)
+                .and_then(|entry| entry.account.take())
                 .is_some_and(|entry| entry.stop.is_cancelled());
             let priming = self.admission.mode == Some(Mode::Priming);
             let has_priming_result = priming
@@ -1321,10 +1394,13 @@ impl Execution {
                 outcome = Some(updated);
             }
         }
-        self.service.inner.enqueue(
+        let attempt_for_job = attempt.clone();
+        let queued = self.service.inner.enqueue(
             Box::new(move |writer| {
+                let attempt = attempt_for_job;
                 let _ticket = ticket;
                 let result = writer.finalize(&attempt, evidence.as_ref(), outcome.as_ref());
+                inner.finish_activity(&attempt);
                 if let Err(error) = result {
                     // Evidence within a retired revision range cannot replace newer truth. An
                     // active lease's normal handoff cannot be stale; other failures close admission.
@@ -1334,7 +1410,24 @@ impl Execution {
                 }
             }),
             false,
-        )
+        );
+        if queued.is_err() {
+            self.service.inner.finish_activity(&attempt);
+        }
+        queued
+    }
+}
+
+pub struct FirstEventObserver {
+    inner: Weak<Inner>,
+    attempt: String,
+}
+
+impl FirstEventObserver {
+    pub fn observe(self) {
+        if let Some(inner) = self.inner.upgrade() {
+            inner.note_first_event(&self.attempt);
+        }
     }
 }
 

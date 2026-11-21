@@ -177,17 +177,15 @@ pub(crate) fn in_flight(
     Ok(json!({"rows": rows}))
 }
 
-pub(crate) fn keys(
+pub(crate) fn key_token_usages(
     db: &Connection,
-    now: i64,
+    start: i64,
     day: BusinessDay,
-    include_archived: bool,
-) -> Result<Value> {
-    let start = day.start(now);
+) -> Result<BTreeMap<String, Value>> {
     let end = start + DAY;
     let mapped_day = start + day.seconds();
     let covering_day = start.div_euclid(DAY) * DAY;
-    let token_usages: BTreeMap<String, Value> = rows(db, "
+    Ok(rows(db, "
         SELECT key_id,COALESCE(SUM(input_count),0)+COALESCE(SUM(output_count),0),SUM(missing),
           SUM(input_count),SUM(output_count)
         FROM (
@@ -211,8 +209,18 @@ pub(crate) fn keys(
         ) GROUP BY key_id", &[start.into(), end.into(), mapped_day.into(), covering_day.into()], |row| {
         Ok((row.get(0)?, json!({"tokens": metric(row, 1)?, "incomplete": row.get::<_, i64>(2)? > 0,
             "breakdown": {"input": metric(row, 3)?, "output": metric(row, 4)?}})))
-    })?.into_iter().collect();
+    })?.into_iter().collect())
+}
 
+pub(crate) fn keys(
+    db: &Connection,
+    now: i64,
+    day: BusinessDay,
+    include_archived: bool,
+) -> Result<Value> {
+    let start = day.start(now);
+    let end = start + DAY;
+    let token_usages = key_token_usages(db, start, day)?;
     let today = "a.created_at_epoch>=?1 AND a.created_at_epoch<?2";
     let outcome = "json_extract(a.outcome_json,'$.kind')";
     let active = "COALESCE(json_extract(a.usage_json,'$.nativeImages'),0)!=1";

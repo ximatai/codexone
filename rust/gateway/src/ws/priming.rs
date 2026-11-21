@@ -24,7 +24,7 @@ pub async fn discard_priming(
     options: BridgeOptions,
 ) -> Outcome {
     let deadline = options.deadline;
-    let evidence = Arc::new(Mutex::new(Evidence::default()));
+    let evidence = Arc::new(Mutex::new(Evidence::new(lease)));
     let observer = evidence.clone();
     let usage = transfer.usage;
     let began = transfer.began;

@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use codexone_execution::{Execution, Failure, IncompleteReason, Outcome};
+use codexone_execution::{Execution, Failure, FirstEventObserver, IncompleteReason, Outcome};
 use codexone_responses::{self as protocol, JsonValue, ProtocolError, Terminal, UsageConfig};
 use tokio::{sync, time::Instant};
 
@@ -23,6 +23,7 @@ pub struct Attempt {
 pub(super) struct Evidence {
     processed: bool,
     first_event: Option<i64>,
+    first_event_observer: Option<FirstEventObserver>,
     usage: Vec<protocol::UsageEvidence>,
     terminal: Option<(Terminal, Option<String>)>,
     completed_id: Option<String>,
@@ -36,6 +37,7 @@ impl Attempt {
         began: Instant,
         encoded_bytes: usize,
     ) -> Self {
+        let evidence = Mutex::new(Evidence::new(&lease));
         let request_id = lease.admission().request_id.clone();
         let credential_version = lease
             .admission()
@@ -49,7 +51,7 @@ impl Attempt {
             usage,
             began,
             encoded_bytes,
-            evidence: Mutex::default(),
+            evidence,
         }
     }
 
@@ -172,11 +174,21 @@ impl Drop for Attempt {
 }
 
 impl Evidence {
+    pub fn new(lease: &Execution) -> Self {
+        Self {
+            first_event_observer: Some(lease.first_event_observer()),
+            ..Self::default()
+        }
+    }
+
     pub fn possible_processing(&mut self) {
         self.processed = true;
     }
 
     pub fn event(&mut self, event: &JsonValue, config: UsageConfig<'_>, began: Instant) {
+        if let Some(observer) = self.first_event_observer.take() {
+            observer.observe();
+        }
         self.first_event
             .get_or_insert_with(|| response::milliseconds(began));
         if let Err(error) =

@@ -271,14 +271,7 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
             }
             Endpoint::Accounts => {
                 let mut query = query(request, &["after"])?;
-                let accounts = self.governance.list_accounts(query.remove("after")).await?;
-                let mut entries = Vec::with_capacity(accounts.len());
-                for account in &accounts {
-                    let mut metadata = self.account_metadata(account).await?;
-                    metadata["observability"] = self.runtime.observability(&account.id).await?;
-                    entries.push(metadata);
-                }
-                json!({"accounts": entries, "nextCursor": cursor(&accounts, |account| &account.id)})
+                self.accounts_document(query.remove("after"), false).await?
             }
             Endpoint::Account(id, kind) => {
                 let id = decoded(id)?;
@@ -397,6 +390,27 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
             }
         };
         Ok((StatusCode::OK, payload))
+    }
+
+    /// Same account documents as authenticated HTTP, used directly by the overview.
+    pub async fn overview_accounts(&self) -> Result<Value> {
+        self.accounts_document(None, true).await
+    }
+
+    async fn accounts_document(&self, after: Option<String>, all: bool) -> Result<Value> {
+        let accounts = self.governance.list_accounts(after).await?;
+        let mut entries = Vec::with_capacity(accounts.len());
+        for account in &accounts {
+            let mut metadata = self.account_metadata(account).await?;
+            metadata["observability"] = self.runtime.observability(&account.id).await?;
+            entries.push(metadata);
+        }
+        let next = if all {
+            None
+        } else {
+            cursor(&accounts, |account| &account.id)
+        };
+        Ok(json!({"accounts": entries, "nextCursor": next}))
     }
 
     async fn account_metadata(&self, account: &Account) -> Result<Value> {

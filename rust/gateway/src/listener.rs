@@ -4,7 +4,10 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     num::NonZeroU16,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -20,7 +23,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinSet,
     time::{Instant, Sleep, sleep_until, timeout, timeout_at},
 };
@@ -30,6 +33,7 @@ use crate::{
     body_budget::BodyPermit,
     body_staging::{BodyStaging, StageError, StagedBody},
     gateway::Application,
+    overview_live::{self, PendingUpgrade},
     reply::{self, FlushDeliveries, Reply},
 };
 
@@ -92,7 +96,9 @@ impl Listeners {
             ..
         } = self;
         let data = matches!(plane, Plane::Data);
-        let slots = Arc::new(Semaphore::new(max_connections + if data { DATA_REFUSAL_SLOTS } else { 0 }));
+        let slots = Arc::new(Semaphore::new(
+            max_connections + if data { DATA_REFUSAL_SLOTS } else { 0 },
+        ));
         let ordinary = data.then(|| Arc::new(Semaphore::new(max_connections)));
         let draining = CancellationToken::new();
         let mut connections = JoinSet::new();
@@ -171,16 +177,20 @@ async fn serve_connection(
     let _ = socket.set_nodelay(true);
     let admin = matches!(plane, Plane::Admin);
     let pending = FlushDeliveries::default();
+    let upgraded = Arc::new(AtomicBool::new(false));
     let io = TokioIo::new(DownstreamIo {
         socket,
         pending: pending.clone(),
         deadline: None,
         entire_write: admin,
+        upgraded: upgraded.clone(),
     });
-    let (upgrades, mut upgraded) = tokio::sync::mpsc::channel(1);
+    let (upgrades, mut data_upgrades) = mpsc::channel(1);
+    let (upgrade_tx, mut upgrade_rx) = mpsc::channel::<PendingUpgrade>(1);
+    let clients = app.data_clients.clone();
     let connection_slot = Arc::new(Mutex::new(None::<OwnedSemaphorePermit>));
     let reservation = connection_slot.clone();
-    let service = service_fn(move |request: Request<Incoming>| {
+    let service = service_fn(move |mut request: Request<Incoming>| {
         let ordinary_capacity = ordinary.as_ref().is_none_or(|slots| {
             if crate::control::Route::recognize(request.method(), request.uri().path()).is_some() {
                 return true;
@@ -193,6 +203,7 @@ async fn serve_connection(
         });
         let app = app.clone();
         let pending = pending.clone();
+        let upgrade_tx = upgrade_tx.clone();
         let upgrades = upgrades.clone();
         async move {
             if !ordinary_capacity {
@@ -206,7 +217,25 @@ async fn serve_connection(
             }
             let response = match plane {
                 Plane::Data => app.data(request, pending, &upgrades).await,
-                Plane::Admin => admin_response(&app, request, accepted).await,
+                Plane::Admin => {
+                    match app
+                        .overview
+                        .as_ref()
+                        .filter(|_| request.uri().path() == overview_live::PATH)
+                    {
+                        Some(hub) => match overview_live::upgrade(&mut request, &app.admin, hub) {
+                            Ok((response, admission)) => {
+                                if upgrade_tx.try_send(admission).is_ok() {
+                                    reply::from_bytes(response)
+                                } else {
+                                    reply::from_bytes(codexone_admin::not_found())
+                                }
+                            }
+                            Err(response) => reply::from_bytes(*response),
+                        },
+                        None => admin_response(&app, request, accepted).await,
+                    }
+                }
             };
             Ok::<_, std::convert::Infallible>(response)
         }
@@ -218,16 +247,23 @@ async fn serve_connection(
         .max_headers(if admin { 32 } else { 64 })
         .max_buf_size(if admin { 8 * 1024 } else { 64 * 1024 })
         .auto_date_header(false);
-    let mut connection = std::pin::pin!(http.serve_connection(io, service).with_upgrades());
-    tokio::select! {
-        _ = &mut connection => {}
-        _ = draining.cancelled() => {
-            connection.as_mut().graceful_shutdown();
-            let _ = connection.await;
+    {
+        let mut connection = std::pin::pin!(http.serve_connection(io, service).with_upgrades());
+        tokio::select! {
+            _ = &mut connection => {}
+            _ = draining.cancelled() => {
+                connection.as_mut().graceful_shutdown();
+                let _ = connection.await;
+            }
         }
     }
-    if let Ok(upgrade) = upgraded.try_recv() {
-        upgrade.serve(&draining).await;
+    if let Ok(admission) = upgrade_rx.try_recv() {
+        admission
+            .run(draining.clone(), upgraded, accepted + READ_IDLE)
+            .await;
+    }
+    if let Ok(upgrade) = data_upgrades.try_recv() {
+        upgrade.serve(&draining, clients.as_ref()).await;
     }
     drop(connection_slot);
 }
@@ -350,11 +386,12 @@ impl DataBodies {
             prefetched,
             |received| {
                 if declared.is_none() {
-                    self.grow_with_pool(&mut permit, received, shared_only).inspect_err(|error| {
-                        if matches!(error, ReadError::Capacity) {
-                            crate::ws::record_size(crate::ws::SizePath::Budget, received);
-                        }
-                    })?;
+                    self.grow_with_pool(&mut permit, received, shared_only)
+                        .inspect_err(|error| {
+                            if matches!(error, ReadError::Capacity) {
+                                crate::ws::record_size(crate::ws::SizePath::Budget, received);
+                            }
+                        })?;
                 }
                 Ok(())
             },
@@ -521,6 +558,7 @@ struct DownstreamIo {
     pending: FlushDeliveries,
     deadline: Option<Pin<Box<Sleep>>>,
     entire_write: bool,
+    upgraded: Arc<AtomicBool>,
 }
 
 impl DownstreamIo {
@@ -530,6 +568,10 @@ impl DownstreamIo {
         poll: Poll<io::Result<usize>>,
         image_limit: Option<Instant>,
     ) -> Poll<io::Result<usize>> {
+        if self.upgraded.load(Ordering::Relaxed) {
+            self.deadline = None;
+            return poll;
+        }
         if matches!(&poll, Poll::Ready(Err(_))) {
             self.pending.abort_image_write(DeliveryAbort::Disconnected);
             return poll;

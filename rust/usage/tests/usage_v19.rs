@@ -428,3 +428,130 @@ async fn sqlite_cancellation_budget_and_storage_gate_release_the_reader() {
     allowed.store(true, Ordering::Relaxed);
     assert_eq!(reader.read(|_| Ok(())).await, Ok(()));
 }
+
+#[tokio::test]
+async fn attention_preserves_missing_and_independently_unavailable_sources() {
+    use codexone_usage::ProtocolExtensions;
+
+    let fixture = Fixture::new();
+    fixture.seed();
+    let db = fixture.db.connection();
+    db.execute(
+        "INSERT INTO accounts VALUES ('account','namespace',1,1,'enabled',
+         'auth_uncertain','synthetic-unused',NULL,?,'Synthetic account')",
+        [NOW],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE managed_keys SET metadata_json=json_set(metadata_json,
+          '$.expiresAtUnixSeconds',?,'$.policy.limits.tokens',50) WHERE id='key'",
+        [NOW + DAY],
+    )
+    .unwrap();
+    let usage = Usage::new(fixture.reader(), BusinessDay::new(480).unwrap());
+    let storage = json!({
+        "pressure": "normal", "coreAvailable": true, "optionalWorkAllowed": true,
+        "sampledUnixSeconds": NOW,
+        "backup": {"enabled": true, "enabledUnixSeconds": NOW - 73 * 3600,
+            "totalBytes": 0, "largestBundleBytes": 800 * 1024 * 1024},
+    });
+    let context = Arc::new(Context {
+        storage,
+        daily_requests: Some(5),
+        protocol_extensions: ProtocolExtensions {
+            names: [("x-codex-synthetic".to_owned(), NOW)].into(),
+            overflow: false,
+        },
+        ..Context::default()
+    });
+    let (status, report) = fetch(&usage, "/api/attention", context.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = report["items"].as_array().unwrap();
+    let item = |kind: &str| items.iter().find(|entry| entry["kind"] == kind).unwrap();
+    assert_eq!(
+        item("account_auth_uncertain")["subjectName"],
+        "Synthetic account"
+    );
+    assert_eq!(item("quota_stale")["detail"]["reason"], "unavailable");
+    assert_eq!(item("quota_stale")["sinceUnixSeconds"], Value::Null);
+    assert_eq!(item("key_expiring")["sinceUnixSeconds"], NOW + DAY);
+    assert_eq!(item("key_limit_near")["detail"]["usedPercent"], 146.0);
+    assert_eq!(item("capacity_reference")["detail"]["exceeded"], true);
+    assert_eq!(item("backup_stale")["severity"], "critical");
+    assert_eq!(
+        item("backup_size")["detail"]["largestBundleBytes"],
+        800 * 1024 * 1024
+    );
+    assert_eq!(
+        item("client_protocol_extension")["subjectName"],
+        "x-codex-synthetic"
+    );
+    assert!(!items.iter().any(|entry| entry["kind"] == "quota_high"));
+
+    db.execute(
+        "INSERT INTO account_quota VALUES ('account',?)",
+        [
+            json!({"attemptedAtUnixSeconds": NOW, "observedAtUnixSeconds": NOW, "quota": {
+                "limits": [{"id":"codex","primary":{"usedPercent":99.0}}],
+            }})
+            .to_string(),
+        ],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO account_quota_priming VALUES ('account',?)",
+        [json!({"attention":"model_removed","lastAttemptAt":NOW}).to_string()],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO account_reset_credits VALUES ('account',?)",
+        [json!({"failures":4,"settings":{"retryCount":3},"lastFailureAt":NOW}).to_string()],
+    )
+    .unwrap();
+    let (_, report) = fetch(&usage, "/api/attention", context.clone()).await;
+    let items = report["items"].as_array().unwrap();
+    let item = |kind: &str| items.iter().find(|entry| entry["kind"] == kind).unwrap();
+    assert_eq!(item("quota_high")["detail"]["usedPercent"], 99.0);
+    assert!(
+        item("quota_high")["detail"]["keyRanking"]
+            .as_str()
+            .unwrap()
+            .contains("$0.000016")
+    );
+    assert_eq!(item("quota_priming")["detail"]["code"], "model_removed");
+    assert_eq!(item("reset_credits")["detail"]["code"], "repeated_failure");
+
+    db.execute("UPDATE account_quota SET record_json='not-json'", [])
+        .unwrap();
+    let (_, report) = fetch(&usage, "/api/attention", context.clone()).await;
+    let items = report["items"].as_array().unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|entry| entry["kind"] == "attention_source_unavailable"
+                && entry["detail"]["source"] == "accounts")
+    );
+    assert!(items.iter().any(|entry| entry["kind"] == "key_expiring"));
+
+    let blocked = Arc::new(Context {
+        storage: json!({"pressure":"blocked","coreAvailable":true,"optionalWorkAllowed":false}),
+        ..Context::default()
+    });
+    let (_, report) = fetch(&usage, "/api/attention", blocked).await;
+    let items = report["items"].as_array().unwrap();
+    assert_eq!(items[0]["kind"], "storage_pressure");
+    assert_eq!(
+        items
+            .iter()
+            .filter(|entry| entry["kind"] == "attention_source_unavailable")
+            .count(),
+        3
+    );
+    assert!(items.iter().any(|entry| entry["kind"] == "backup_disabled"));
+    assert_eq!(
+        fetch(&usage, "/api/attention?unexpected=1", context)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+}

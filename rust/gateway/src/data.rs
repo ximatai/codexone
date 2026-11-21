@@ -190,6 +190,7 @@ impl DataPlane {
                         .as_ref()
                         .and_then(|managed| managed.pool.as_deref()),
                     &request_id,
+                    &self.protocol_extensions,
                 )
                 .await;
         }
@@ -244,6 +245,12 @@ impl DataPlane {
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
         let configuration = self.configuration();
+        let bearer = headers::values(incoming.headers(), "authorization");
+        let (authorization, static_authorization) = if self.managed.is_some() {
+            (Some(execution.authenticate(&bearer).await?), None)
+        } else {
+            (None, Some(execution.authenticate_static(&bearer)?))
+        };
         let endpoint = incoming
             .uri()
             .path()
@@ -251,12 +258,6 @@ impl DataPlane {
             .or_else(|| incoming.uri().path().strip_prefix("/backend-api/codex"));
         let Some(endpoint @ ("/models" | "/responses" | "/responses/compact")) = endpoint else {
             return Err(ProtocolError::new(404, "not_found").into());
-        };
-        let bearer = headers::values(incoming.headers(), "authorization");
-        let (authorization, static_authorization) = if self.managed.is_some() {
-            (Some(execution.authenticate(&bearer).await?), None)
-        } else {
-            (None, Some(execution.authenticate_static(&bearer)?))
         };
         if endpoint == "/models" && incoming.method() == Method::GET {
             let snapshot = self.managed.as_deref().and_then(ManagedRoute::snapshot);

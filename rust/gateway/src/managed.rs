@@ -200,6 +200,13 @@ impl Managed {
             .await
     }
 
+    pub async fn overview_accounts(&self) -> codexone_usage::Result<serde_json::Value> {
+        self.api
+            .overview_accounts()
+            .await
+            .map_err(|_| codexone_usage::Error::Unavailable)
+    }
+
     pub fn spawn_workers(&mut self, tasks: &mut tokio::task::JoinSet<governance::Result<()>>) {
         if let Some(runtime) = self.runtime.clone() {
             tasks.spawn(async move { runtime.run_periodic().await });
