@@ -14,6 +14,8 @@
   - Rust HTTP 已接入 zstd 流式上传、一次 415 明文协商和可选加密暂存。macOS arm64 的 release 网关通过 `verify_upstream_zstd.py` 完整合成矩阵和 `verify_protocol.py`。[暂存定向验收](../../../scripts/rust_compat/README.md#http-正文暂存故障)覆盖容量耗尽、TCP reset、半途 SIGKILL、目录清理及重启后的明文上传与租约归还。WS 回退接线随 WS 集成验收。
   - macOS arm64 同一 release 二进制的 `--memory-output` 压缩开关对照使用三类 30 MiB 单请求和四压缩加一明文并发场景，各运行三对进程。进程峰值 RSS 差值分别为 2.23–5.41 MiB 和 11.97–20.81 MiB。RSS 同时计入映射页、分配器、解析和网络缓冲。个别对照高于 5/20 MiB 编码工作区预留，原生 Linux RSS、发行许可归档和真实订阅的 chunked 兼容性仍待验收。
 - [ ] 管理 API、会话、用量、首页、CLI、备份恢复与现有 SPA 联调。
+  - macOS arm64 Rust 网关通过 [U15/O15 与人工释放验收](../../../scripts/rust_compat/README.md#执行保留与人工释放)。覆盖 91 天明细的事务汇总、每轮上限、过期绑定与审计、UTC 汇总在业务日查询中的投影、Key 最近使用、Cookie/CSRF 与 Bearer、CAS 冲突和重启续作。Rust 执行测试另覆盖存储压力暂停、事务回滚、有界增量回收，以及人工释放后迟到证据的修订。
+  - 独立 Rust 网关试验以只读 SQLite 事务固定合成 WAL。首轮在压力下保留明细，释放读事务后，同一进程约 60 秒在下一轮继续汇总。
 - [x] 离线 CLI 与 Swift 双向维护验证，覆盖备份校验、恢复冻结与凭证重加密续作。
 - [ ] 在线备份调度、保留和状态展示。
   - Rust 网关已接入调度、快照自检与轮转，提供兼容的备份状态 DTO。macOS arm64 合成进程验证覆盖分批复制期间结算、Swift 读取带账本和旧密钥依赖的 v19 快照、SIGKILL 后旧份保留及下一轮清理，以及复制途中 SIGTERM 正常退出。[在线并发结算验收](../../../scripts/rust_compat/README.md#在线备份与并发结算)使用一次性复制同步点，支持从干净 checkout 复现。管理状态端点与 SPA 待联调。

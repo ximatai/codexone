@@ -616,6 +616,205 @@ async fn failure_before_commit_or_during_settlement_never_loses_the_intent_barri
 }
 
 #[tokio::test]
+async fn retention_pauses_under_pressure_and_rolls_back_on_delete_failure() {
+    let fixture = Fixture::new(None, None);
+    let service = fixture.open(2, 8).await;
+    let mut turn = service
+        .admit(request(&service, "old-detail", SECRET).await)
+        .await
+        .unwrap();
+    turn.begin_dispatch().unwrap();
+    turn.bind(&[object("old-response")]).await.unwrap();
+    turn.observe(evidence(1, 5, true)).unwrap();
+    turn.finish(Some(Outcome::new(None, NOW))).unwrap();
+    assert_eq!(
+        service.snapshot("old-detail").await.unwrap().state,
+        State::Settled
+    );
+
+    let db = fixture.raw();
+    db.execute(
+        "UPDATE attempts SET created_at_epoch=?1",
+        [NOW - 91 * 86400],
+    )
+    .unwrap();
+    db.execute("UPDATE bindings SET expires_at_epoch=?1", [NOW])
+        .unwrap();
+    let mut continuation = request(&service, "expired-continuation", SECRET).await;
+    continuation.references.push(object("old-response"));
+    assert_eq!(
+        service.admit(continuation).await.err(),
+        Some(ExecutionError::UnknownObject)
+    );
+    db.execute_batch(
+        "CREATE TABLE synthetic_pages(payload BLOB);
+         INSERT INTO synthetic_pages VALUES(zeroblob(1048576));
+         DROP TABLE synthetic_pages;",
+    )
+    .unwrap();
+    let counts = || {
+        db.query_row(
+            "SELECT (SELECT COUNT(*) FROM attempts), (SELECT COUNT(*) FROM evidence),
+                    (SELECT COUNT(*) FROM bindings), (SELECT COUNT(*) FROM usage_daily)",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .unwrap()
+    };
+    let pages = || {
+        db.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    let original_pages = pages();
+    let reserve = fixture
+        .db
+        .with_file_name("synthetic.sqlite.settlement-reserve");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(reserve)
+        .unwrap()
+        .set_len(0)
+        .unwrap();
+    assert_eq!(
+        service.maintain_executions().await,
+        Err(ExecutionError::StoragePressure)
+    );
+    assert_eq!(counts(), (1, 1, 1, 0));
+    assert_eq!(pages(), original_pages);
+    service.maintain_storage().await.unwrap();
+    assert_eq!(service.storage_pressure(), StoragePressure::Normal);
+
+    db.execute_batch(
+        "CREATE TRIGGER synthetic_delete_fault BEFORE DELETE ON attempts
+         BEGIN SELECT RAISE(ABORT,'synthetic retention failure'); END;",
+    )
+    .unwrap();
+    assert_eq!(
+        service.maintain_executions().await,
+        Err(ExecutionError::StorageUnavailable)
+    );
+    assert_eq!(counts(), (1, 1, 1, 0));
+    assert_eq!(pages(), original_pages);
+    assert_eq!(
+        service.shutdown().await,
+        Err(ExecutionError::StorageUnavailable)
+    );
+    db.execute_batch("DROP TRIGGER synthetic_delete_fault")
+        .unwrap();
+
+    let reopened = fixture.open(2, 8).await;
+    assert_eq!(reopened.maintain_executions().await.unwrap(), 0);
+    assert_eq!(counts(), (0, 0, 0, 1));
+    assert_eq!(original_pages - pages(), 32);
+    reopened.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn manual_release_preserves_late_evidence_across_restart() {
+    let fixture = Fixture::new(Some(1), None);
+    let service = fixture.open(2, 0).await;
+    let mut turn = service
+        .admit(request(&service, "manual-release", SECRET).await)
+        .await
+        .unwrap();
+    let db = fixture.raw();
+    db.execute(
+        "UPDATE attempts SET created_at_epoch=?1 WHERE id='manual-release'",
+        [NOW - 91 * 86400],
+    )
+    .unwrap();
+    assert_eq!(service.maintain_executions().await.unwrap(), 0);
+    assert_eq!(
+        service.snapshot("manual-release").await.unwrap().state,
+        State::Intent
+    );
+    db.execute(
+        "UPDATE attempts SET created_at_epoch=?1 WHERE id='manual-release'",
+        [NOW],
+    )
+    .unwrap();
+    turn.begin_dispatch().unwrap();
+    turn.observe(evidence(1, 5, false)).unwrap();
+    turn.cancel(NOW).unwrap();
+    assert_eq!(
+        service.snapshot("manual-release").await.unwrap().state,
+        State::Unknown
+    );
+    assert_eq!(
+        service.release_unknown(NOW, 1).await,
+        Err(ExecutionError::Conflict)
+    );
+    db.execute_batch(
+        "CREATE TRIGGER synthetic_audit_fault BEFORE INSERT ON maintenance_events
+         WHEN NEW.action='release_unknown'
+         BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END;",
+    )
+    .unwrap();
+    assert_eq!(
+        service.release_unknown(NOW + 1, 1).await,
+        Err(ExecutionError::StorageUnavailable)
+    );
+    let state: String = db
+        .query_row(
+            "SELECT state FROM attempts WHERE id='manual-release'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "unknown");
+    assert_eq!(
+        service.shutdown().await,
+        Err(ExecutionError::StorageUnavailable)
+    );
+    db.execute_batch("DROP TRIGGER synthetic_audit_fault")
+        .unwrap();
+
+    let service = fixture.open(2, 0).await;
+    assert_eq!(service.release_unknown(NOW + 1, 1).await.unwrap(), 1);
+    assert_eq!(
+        service.release_unknown(NOW + 1, 1).await,
+        Err(ExecutionError::Conflict)
+    );
+    service.shutdown().await.unwrap();
+
+    let reopened = fixture.open(2, 0).await;
+    let closed = reopened.snapshot("manual-release").await.unwrap();
+    assert_eq!(closed.state, State::ClosedUnknown);
+    assert_eq!(closed.usage.unwrap().input_tokens, 5);
+    reopened
+        .reconcile("manual-release", evidence(2, 6, false))
+        .await
+        .unwrap();
+    let partial = reopened.snapshot("manual-release").await.unwrap();
+    assert_eq!(partial.state, State::ClosedUnknown);
+    assert_eq!(partial.usage.unwrap().input_tokens, 6);
+    reopened
+        .reconcile("manual-release", evidence(3, 7, true))
+        .await
+        .unwrap();
+    let complete = reopened.snapshot("manual-release").await.unwrap();
+    assert_eq!(complete.state, State::Settled);
+    assert_eq!(complete.usage.unwrap().input_tokens, 7);
+    let audits: (i64, String) = db
+        .query_row(
+            "SELECT COUNT(*),json_extract(MAX(record_json),'$.reason')
+         FROM maintenance_events WHERE action='release_unknown'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(audits, (1, "manual".into()));
+    reopened.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn binding_batch_rolls_back_and_cancellation_keeps_observed_usage() {
     let fixture = Fixture::new(None, None);
     let service = fixture.open(1, 0).await;

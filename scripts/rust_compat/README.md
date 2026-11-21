@@ -77,6 +77,19 @@ python3 scripts/rust_compat/overview.py --candidate rust/gateway/target/debug/co
 
 用量驱动对照 Swift v19 的管理响应、浏览器与 Bearer 鉴权和数据入口状态码，并在同一 Rust 进程中核对 WAL 增长、结算预留压力和恢复。首页驱动校验快照顺序、在途首事件及结算更新、握手约束、每会话连接数、登出与关机关闭帧。
 
+## 执行保留与人工释放
+
+从仓库根目录运行。驱动仅启动 Rust 网关，并用合成提供者和临时 v19 数据库验证管理接口与持久账本。
+
+```sh
+cargo build --locked --manifest-path rust/gateway/Cargo.toml
+python3 scripts/rust_compat/retention.py --binary rust/gateway/target/debug/codexone
+```
+
+驱动验证 91 天前的明细计入 UTC 日汇总，历史日汇总按现有业务日窗口展示，Key 最近使用保留实际时间。过期绑定、关闭审计和并发样本小批清理，有效绑定与核对期中的未知执行得到保留。人工释放覆盖 Bearer、会话与 CSRF、严格截止边界、旧快照冲突、审计和重启。
+
+## 托管账号 SPA
+
 使用当前生产 SPA 检查托管账号、额度无观测提醒、已结算用量和同会话撤销。需要 Node.js 26.13.0 和已安装的 Google Chrome。测试从现有托管池 fixture 发起，使用临时 Chrome 配置和合成账号。
 
 ```sh
