@@ -11,16 +11,27 @@ use rusqlite::params;
 fn swift_database() {
     let path = std::env::var_os("CODEXONE_STORAGE_DB").unwrap();
     let phase = std::env::var("CODEXONE_STORAGE_PHASE").unwrap();
-    if phase == "locked" {
-        assert_eq!(
-            Database::open_existing(&path).err(),
-            Some(DatabaseError::InstanceLocked)
-        );
-        return;
+    match phase.as_str() {
+        "locked" => {
+            assert_eq!(
+                Database::open_existing(&path).err(),
+                Some(DatabaseError::InstanceLocked)
+            );
+            assert_eq!(
+                Database::open_or_create(&path).err(),
+                Some(DatabaseError::InstanceLocked)
+            );
+            assert_eq!(Database::migrate(&path), Err(DatabaseError::InstanceLocked));
+        }
+        "startup" => drop(Database::open_or_create(&path).unwrap()),
+        "migrate" => Database::migrate(&path).unwrap(),
+        "rewrite" => rewrite(Path::new(&path)),
+        _ => panic!("unknown interoperability phase"),
     }
-    assert_eq!(phase, "rewrite");
+}
 
-    let mut database = Database::open_existing(&path).unwrap();
+fn rewrite(path: &Path) {
+    let mut database = Database::open_existing(path).unwrap();
     let connection = database.connection();
     let (namespace, version, envelope): (String, i64, String) = connection
         .query_row(

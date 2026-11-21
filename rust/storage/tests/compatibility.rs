@@ -18,6 +18,11 @@ fn rejects_missing_and_incompatible_ledger_without_switching_journal() {
         Some(DatabaseError::StorageUnavailable)
     );
     assert!(!path.exists());
+    assert_eq!(
+        Database::migrate(&path),
+        Err(DatabaseError::StorageUnavailable)
+    );
+    assert!(!path.exists());
     let sqlite = Connection::open(&path).unwrap();
     for schema in [0, 18, 20, 19] {
         sqlite.pragma_update(None, "user_version", schema).unwrap();
@@ -32,6 +37,31 @@ fn rejects_missing_and_incompatible_ledger_without_switching_journal() {
             "delete",
         );
     }
+}
+
+#[test]
+fn startup_rejects_unversioned_files_with_user_objects() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("ledger.sqlite");
+    let sqlite = Connection::open(&path).unwrap();
+    sqlite
+        .execute_batch("CREATE TABLE unrelated(id INTEGER);")
+        .unwrap();
+
+    assert_eq!(
+        Database::open_or_create(&path).err(),
+        Some(DatabaseError::IncompatibleSchema)
+    );
+    assert_eq!(
+        Database::migrate(&path),
+        Err(DatabaseError::IncompatibleSchema)
+    );
+    assert_eq!(
+        sqlite
+            .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
+            .unwrap(),
+        "delete"
+    );
 }
 
 #[test]

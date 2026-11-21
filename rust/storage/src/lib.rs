@@ -4,6 +4,7 @@ mod credential;
 mod database;
 mod files;
 mod key;
+mod migration;
 mod schema;
 
 pub use credential::{
