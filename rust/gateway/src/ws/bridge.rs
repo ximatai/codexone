@@ -232,12 +232,9 @@ async fn exchange(
     let streaming = options.stream;
     let terminal = Mutex::new(None);
     let local_error = Mutex::new(None);
-    let attempt = Arc::new(Attempt::new(
-        lease,
-        transfer.usage,
-        transfer.began,
-        frame.len(),
-    ));
+    let attempt = Arc::new(
+        Attempt::new(lease, transfer.usage, transfer.began, frame.len()).for_http_bridge(),
+    );
     let attempt_ref = attempt.as_ref();
     let evidence_owner = attempt.clone();
     let evidence_headers = response_headers.clone();

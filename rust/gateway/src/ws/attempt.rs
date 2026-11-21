@@ -4,7 +4,10 @@ use codexone_execution::{Execution, Failure, FirstEventObserver, IncompleteReaso
 use codexone_responses::{self as protocol, JsonValue, ProtocolError, Terminal, UsageConfig};
 use tokio::{sync, time::Instant};
 
-use crate::response::{self, ResponseError};
+use crate::{
+    diagnostics,
+    response::{self, ResponseError},
+};
 
 const INDETERMINATE: ProtocolError = ProtocolError::new(502, "execution_indeterminate");
 
@@ -17,6 +20,7 @@ pub struct Attempt {
     pub request_id: Option<String>,
     pub credential_version: Option<i64>,
     evidence: Mutex<Evidence>,
+    report_http_cancellation: bool,
 }
 
 #[derive(Default)]
@@ -52,7 +56,13 @@ impl Attempt {
             began,
             encoded_bytes,
             evidence,
+            report_http_cancellation: false,
         }
+    }
+
+    pub(super) fn for_http_bridge(mut self) -> Self {
+        self.report_http_cancellation = true;
+        self
     }
 
     pub fn images(&self) -> bool {
@@ -180,6 +190,19 @@ impl Attempt {
 impl Drop for Attempt {
     fn drop(&mut self) {
         if let Some(lease) = self.lease.get_mut().take() {
+            let evidence = self.evidence.get_mut().unwrap();
+            if self.report_http_cancellation
+                && evidence.terminal.is_none()
+                && evidence.error.is_none()
+                && let Some(id) = &self.request_id
+            {
+                diagnostics::rejection(
+                    id,
+                    INDETERMINATE.with_detail("execution_cleanup_cancelled"),
+                    None,
+                    None,
+                );
+            }
             let (lease, outcome) =
                 self.finalize(lease, Some(Failure::ClientCancelled), None, false);
             let _ = lease.finish(Some(outcome));
