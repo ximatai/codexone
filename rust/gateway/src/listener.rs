@@ -643,6 +643,11 @@ impl AsyncWrite for DownstreamIo {
     fn poll_flush(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
         let image_limit = self.image_write_limit()?;
         let poll = Pin::new(&mut self.socket).poll_flush(context);
+        // Hyper may flush before the handler produces any bytes. The admin
+        // write deadline begins with the first response write.
+        if self.entire_write && self.deadline.is_none() {
+            return poll;
+        }
         let poll = self.write_deadline(context, poll.map_ok(|()| 0), image_limit);
         if matches!(poll, Poll::Ready(Ok(_))) {
             self.pending.submitted();
