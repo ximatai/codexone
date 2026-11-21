@@ -220,7 +220,50 @@ def run(candidate):
     print("PASS: overview snapshot, in-flight/first-event/settlement updates, strict upgrade, per-session bound, logout and shutdown")
 
 
+def native_clients(candidate):
+    with tempfile.TemporaryDirectory(prefix="codexone-overview-native-") as work:
+        with fixture(Path(work) / "case") as (_, database, env):
+            root = database.parent.parent
+            token = "synthetic-" + secrets.token_hex(24)
+            secret = root / "admin-token"
+            secret.write_text(token, encoding="utf-8")
+            secret.chmod(0o600)
+            env["CODEXONE_ADMIN_TOKEN_FILE"] = str(secret)
+            identity = Path(env["CODEXONE_IDENTITY_CONFIG"])
+            configuration = json.loads(identity.read_text())
+            configuration["upstreamTransport"] = "websocket"
+            identity.write_text(json.dumps(configuration))
+            with tempfile.TemporaryFile(dir=root) as output:
+                gateway = subprocess.Popen([candidate], env=env, cwd=root, stdin=subprocess.DEVNULL,
+                                           stdout=output, stderr=subprocess.STDOUT)
+                try:
+                    ports = listener_ports(gateway, output)
+                    browser, _ = log_in(ports["admin"], token)
+                    with closing(Socket(ports["admin"], browser)) as viewer:
+                        require(viewer.status == 101, "overview upgrade failed")
+                        viewer.until(lambda data: data.get("inFlight", {}).get("clients") == [])
+                        headers = {"Authorization": f"Bearer {TOKEN}"}
+                        with closing(Socket(ports["data"], headers, "/v1/responses")) as native:
+                            require(native.status == 101, "native client upgrade failed")
+                            viewer.until(lambda data: any(
+                                row["keyID"] == "synthetic-key" and row["count"] == 1
+                                for row in data["inFlight"]["clients"]
+                            ))
+                        viewer.until(lambda data: data["inFlight"]["clients"] == [])
+                finally:
+                    gateway.terminate()
+                    try:
+                        gateway.wait(timeout=8)
+                    finally:
+                        if gateway.poll() is None:
+                            gateway.kill()
+                            gateway.wait(timeout=3)
+    print("PASS: authenticated native WebSocket registers under its key and unregisters on socket close")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=lambda arg: Path(arg).resolve(), required=True)
-    run(parser.parse_args().candidate)
+    candidate = parser.parse_args().candidate
+    run(candidate)
+    native_clients(candidate)

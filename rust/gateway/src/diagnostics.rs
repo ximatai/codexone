@@ -40,8 +40,12 @@ static CLOSED: Gate<16> = Gate::new();
 static EXTENSION_LOGS: Gate<128> = Gate::new();
 static MISSING_STREAM_TYPE: AtomicBool = AtomicBool::new(false);
 
+fn safe_request_id(value: &str) -> Option<&str> {
+    (value.len() == 36 && Uuid::parse_str(value).is_ok()).then_some(value)
+}
+
 pub fn missing_stream_type(request_id: &str) {
-    if let Ok(id) = Uuid::parse_str(request_id)
+    if let Some(id) = safe_request_id(request_id)
         && !MISSING_STREAM_TYPE.swap(true, Ordering::Relaxed)
     {
         eprintln!(
@@ -56,7 +60,7 @@ pub fn rejection(
     provider: Option<&ProviderFailure>,
     status: Option<u16>,
 ) {
-    let Ok(id) = Uuid::parse_str(request_id) else {
+    let Some(id) = safe_request_id(request_id) else {
         return;
     };
     if !REJECTIONS.admit() {
@@ -104,7 +108,11 @@ pub fn websocket_setup(request_id: &str, failure: &ConnectFailure, credential: O
     use ConnectFailure::*;
     let (stage, cause, status) = match failure {
         Cancelled => return,
-        TransportSetup(error) => ("websocket_connect", transport_cause(*error), None),
+        TransportSetup(error) => (
+            "websocket_connect",
+            transport_cause(*error),
+            transport_status(*error),
+        ),
         TimedOut => ("websocket_connect", "connect_timeout", None),
         Transport => ("websocket_connect", "connection_failed", None),
         InvalidTarget => ("websocket_connect", "invalid_target", None),
@@ -128,10 +136,14 @@ pub fn http_setup(
             request_id,
             "http_request",
             transport_cause(failure),
-            None,
+            transport_status(failure),
             credential,
         );
     }
+}
+
+fn transport_status(error: codexone_http_upstream::Error) -> Option<u16> {
+    (error == codexone_http_upstream::Error::ProxyAuthenticationRequired).then_some(407)
 }
 
 fn transport_cause(error: codexone_http_upstream::Error) -> &'static str {
@@ -156,7 +168,7 @@ fn setup(
     status: Option<u16>,
     credential: Option<i64>,
 ) {
-    let Ok(id) = Uuid::parse_str(request_id) else {
+    let Some(id) = safe_request_id(request_id) else {
         return;
     };
     if !SETUP.admit() {
@@ -184,7 +196,7 @@ pub fn websocket_close(
     first_event: bool,
     credential: Option<i64>,
 ) {
-    let Ok(id) = Uuid::parse_str(request_id) else {
+    let Some(id) = safe_request_id(request_id) else {
         return;
     };
     let (reason, code) = match socket {
@@ -310,9 +322,11 @@ impl Client {
                         .ok()
                         .and_then(identifier)
                         .filter(|version| {
-                            // Accept version-shaped labels and omit unrelated header values.
-                            version.starts_with(|c: char| c.is_ascii_digit())
-                                && version.contains('.')
+                            version.contains('.')
+                                && version.split('.').all(|part| {
+                                    !part.is_empty()
+                                        && part.bytes().all(|byte| byte.is_ascii_digit())
+                                })
                         })
                         .unwrap_or("invalid")
                 })
