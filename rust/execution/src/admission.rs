@@ -775,7 +775,7 @@ fn insert_fixed_intent(tx: &Transaction<'_>, admission: Admission, now: i64) -> 
     insert_single_identity_intent(tx, admission, now)
 }
 
-fn business_day_start(now: i64, offset: i64) -> i64 {
+pub(crate) fn business_day_start(now: i64, offset: i64) -> i64 {
     (now + offset).div_euclid(DAY) * DAY - offset
 }
 

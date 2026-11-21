@@ -278,15 +278,19 @@ async fn bridge_delivers_terminal_before_immediate_eof_and_json_is_unwrapped() {
         assert_eq!(read(&mut provider).await, text(CREATE));
         provider.send(text(COMPLETED)).await.unwrap();
     });
-    let mut observations = Vec::new();
+    let observations = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let evidence = observations.clone();
     let mut output = Vec::new();
     let result = bridge(
         ready(Ok(upstream)),
         CREATE.to_owned().into(),
         bridge_options(false),
-        |event| {
+        move |event| {
             if let BridgeEvidence::Event(document) = event {
-                observations.push(member(document, "type").to_owned());
+                evidence
+                    .lock()
+                    .unwrap()
+                    .push(member(document, "type").to_owned());
             }
         },
         |event| {
@@ -296,11 +300,58 @@ async fn bridge_delivers_terminal_before_immediate_eof_and_json_is_unwrapped() {
     )
     .await;
     assert!(result.is_ok(), "{result:?}");
-    assert_eq!(observations, ["response.completed"]);
+    assert_eq!(*observations.lock().unwrap(), ["response.completed"]);
     assert_eq!(output.len(), 1);
     assert!(output[0].terminal);
     assert_eq!(member(&output[0].document, "id"), "resp_case");
     timeout(TEST_TIMEOUT, provider).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn bridge_observes_terminal_while_http_output_is_blocked() {
+    let (upstream, mut provider) = provider_pair().await;
+    let output = Arc::new(Notify::new());
+    let output_blocked = output.clone();
+    let terminal = Arc::new(Notify::new());
+    let terminal_seen = terminal.clone();
+    let cancellation = CancellationToken::new();
+    let operation = tokio::spawn(bridge(
+        ready(Ok(upstream)),
+        CREATE.to_owned().into(),
+        BridgeOptions {
+            cancellation: cancellation.clone(),
+            ..bridge_options(true)
+        },
+        move |evidence| {
+            if let BridgeEvidence::Event(event) = evidence
+                && member(event, "type") == "response.completed"
+            {
+                terminal_seen.notify_one();
+            }
+        },
+        move |_| {
+            output_blocked.notify_one();
+            pending()
+        },
+    ));
+    assert_eq!(read(&mut provider).await, text(CREATE));
+    provider
+        .send(text(
+            r#"{"type":"response.created","response":{"id":"resp_case"}}"#,
+        ))
+        .await
+        .unwrap();
+    timeout(TEST_TIMEOUT, output.notified()).await.unwrap();
+    provider.send(text(COMPLETED)).await.unwrap();
+    timeout(TEST_TIMEOUT, terminal.notified()).await.unwrap();
+    cancellation.cancel();
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, operation).await.unwrap().unwrap(),
+        Err(BridgeFailure::Interrupted {
+            socket: Some(SocketEnd::Cancelled),
+            ..
+        })
+    ));
 }
 
 #[tokio::test]
@@ -507,6 +558,7 @@ impl NativeApplication for TestApp {
 
     fn prepare(
         &self,
+        _request_id: &str,
         lane: &str,
         document: JsonValue,
     ) -> Result<PreparedCreate<()>, ProtocolError> {

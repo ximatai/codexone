@@ -909,6 +909,26 @@ impl ExecutionService {
         .await
     }
 
+    /// Account for an upstream execution that has already happened outside an admitted turn.
+    /// A server-generated ID and the first durable turn on that connection identify the entry.
+    pub async fn record_unadmitted(
+        &self,
+        first_attempt: String,
+        attempt: String,
+        request_id: String,
+    ) -> Result<()> {
+        if !valid_id(&first_attempt) || !valid_id(&attempt) || !valid_id(&request_id) {
+            return Err(Error::InvalidCommand);
+        }
+        self.command(false, move |writer| {
+            let offset = writer.options.day_offset;
+            writer.write(true, |tx, now| {
+                ledger::record_unadmitted(tx, &first_attempt, attempt, request_id, offset, now)
+            })
+        })
+        .await
+    }
+
     /// Reconcile a trusted observation delivered after the attempt's transport handed off.
     pub async fn reconcile(&self, attempt: &str, evidence: UsageEvidence) -> Result<()> {
         if !valid_string(attempt, 256) {

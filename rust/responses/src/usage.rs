@@ -71,7 +71,8 @@ impl UsageEvidence {
         }
     }
 
-    pub(crate) fn provider_rejection(images: bool) -> Self {
+    /// Zero usage for an explicitly rejected request with no possible provider processing.
+    pub fn provider_rejection(images: bool) -> Self {
         let image_zero = images.then_some(0);
         Self {
             provider_rejected_before_output: true,

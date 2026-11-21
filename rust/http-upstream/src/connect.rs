@@ -40,7 +40,7 @@ impl std::fmt::Debug for Proxy {
     }
 }
 
-pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
+pub trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Io for T {}
 
 pub(crate) fn tls_config() -> ClientConfig {

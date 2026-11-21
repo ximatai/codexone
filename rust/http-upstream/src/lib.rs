@@ -10,7 +10,7 @@ mod upload_diagnostics;
 use std::{fmt, future::pending, sync::Arc, time::Duration};
 
 pub use bytes::Bytes;
-pub use connect::Proxy;
+pub use connect::{Io, Proxy};
 pub use http::{HeaderMap, Method, Request, StatusCode, Uri};
 pub use tokio::time::Instant;
 pub use tokio_rustls::rustls::RootCertStore;
@@ -132,6 +132,13 @@ pub struct HttpUpstream {
 }
 
 impl HttpUpstream {
+    /// Open a raw stream to a validated HTTP(S) target, including configured CONNECT and TLS.
+    /// The calling transport owns cancellation, timeouts and application headers.
+    pub async fn connect_stream(&self, target: &Uri) -> Result<Box<dyn Io>, Error> {
+        target_authority(target)?;
+        connect::connect(target, self.proxy.as_ref(), self.tls.clone()).await
+    }
+
     pub fn new(proxy: Option<Proxy>) -> Self {
         Self {
             proxy,
@@ -210,14 +217,8 @@ impl HttpUpstream {
     ) -> Result<Prepared, Error> {
         check_abort(&options)?;
         let uri = request.uri().clone();
-        let authority = uri.authority().ok_or(Error::InvalidRequest)?;
-        if !matches!(uri.scheme_str(), Some("http" | "https"))
-            || authority.host().is_empty()
-            || authority.as_str().contains(['@', '%'])
-            || (authority.as_str() != authority.host()
-                && !matches!(authority.port_u16(), Some(1..=u16::MAX)))
-            || request.method() == Method::CONNECT
-        {
+        let authority = target_authority(&uri)?;
+        if request.method() == Method::CONNECT {
             return Err(Error::InvalidRequest);
         }
 
@@ -554,6 +555,19 @@ impl Drop for Driver {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+fn target_authority(uri: &Uri) -> Result<&http::uri::Authority, Error> {
+    let authority = uri.authority().ok_or(Error::InvalidRequest)?;
+    if !matches!(uri.scheme_str(), Some("http" | "https"))
+        || authority.host().is_empty()
+        || authority.as_str().contains(['@', '%'])
+        || (authority.as_str() != authority.host()
+            && !matches!(authority.port_u16(), Some(1..=u16::MAX)))
+    {
+        return Err(Error::InvalidRequest);
+    }
+    Ok(authority)
 }
 
 fn check_abort(options: &ExchangeOptions) -> Result<(), Error> {

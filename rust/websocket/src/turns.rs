@@ -1,4 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Duration,
+};
 
 use codexone_responses::{
     EventFailure, EventSemantics, JsonValue, MAX_RESPONSE_BYTES, Progress, ProtocolError,
@@ -22,6 +25,7 @@ pub(crate) struct Turns {
 pub(crate) struct Turn {
     pub deadline: Instant,
     pub sent: Option<Instant>,
+    pub first_response: Option<Duration>,
     pub last_progress: Option<Instant>,
     pub response_id: Option<String>,
     pub created: bool,
@@ -38,6 +42,7 @@ impl Turn {
         Self {
             deadline,
             sent: None,
+            first_response: None,
             last_progress: None,
             response_id: None,
             created: false,
@@ -56,8 +61,12 @@ impl Turn {
         } else if let Some(progress) = self.last_progress {
             Some((progress + budget.idle, IDLE))
         } else {
-            self.sent
-                .map(|sent| (sent + budget.first_response, FIRST_RESPONSE))
+            self.sent.map(|sent| {
+                (
+                    sent + self.first_response.unwrap_or(budget.first_response),
+                    FIRST_RESPONSE,
+                )
+            })
         };
         phase
             .filter(|(time, _)| *time < self.deadline)

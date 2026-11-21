@@ -34,7 +34,7 @@ pub struct PreviousTools<'a> {
     pub uses_responses_lite: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub model: String,
     pub stream: bool,

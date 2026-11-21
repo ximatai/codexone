@@ -28,6 +28,7 @@ const MAX_LANES: usize = 32;
 const MAX_ACTIVE: usize = 16;
 const MAX_QUEUE: usize = 64;
 const MAX_LANE_QUEUE: usize = 4;
+const MAX_BUFFERED_METADATA: usize = 64;
 const FIRST_CREATE: Duration = Duration::from_secs(10);
 const CONNECTION_IDLE: Duration = Duration::from_secs(120);
 const CONNECTION_LIFETIME: Duration = Duration::from_secs(3600);
@@ -84,6 +85,7 @@ pub trait NativeApplication: Send + Sync + 'static {
 
     fn prepare(
         &self,
+        request_id: &str,
         lane: &str,
         document: JsonValue,
     ) -> Result<PreparedCreate<Self::Input>, ProtocolError>;
@@ -100,6 +102,19 @@ pub trait NativeApplication: Send + Sync + 'static {
         identity: &Self::Identity,
         deadline: Instant,
     ) -> impl Future<Output = Result<Socket, ConnectFailure>> + Send;
+
+    fn first_response_timeout(&self, _attempt: &Self::Attempt) -> Option<Duration> {
+        None
+    }
+
+    fn begin_dispatch(&self, _attempt: &mut Self::Attempt) -> Result<(), ProtocolError> {
+        Ok(())
+    }
+
+    /// The reader saw a new upstream response with no admitted turn to own it.
+    fn record_unadmitted(&self) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
 
     /// Synchronously record or hand off trusted evidence before downstream submission.
     /// This runs on the provider reader and may overlap another lane's async binding.
@@ -257,6 +272,7 @@ type Uploads = FuturesUnordered<BoxFuture<'static, (String, String, Result<Insta
 struct Session<A: NativeApplication> {
     app: Arc<A>,
     options: NativeOptions,
+    cancellation: CancellationToken,
     downstream: Peer<IngressMessage>,
     upstream: Option<Peer<UpstreamPacket>>,
     fixed_identity: Option<A::Identity>,
@@ -268,6 +284,8 @@ struct Session<A: NativeApplication> {
     uploads: Uploads,
     lanes: HashSet<String>,
     queue: VecDeque<Command>,
+    buffered_metadata: VecDeque<Packet<UpstreamPacket>>,
+    output_started: HashSet<String>,
     blocked: Option<(Command, Instant)>,
     life: Instant,
     idle: Instant,
@@ -288,6 +306,7 @@ pub async fn serve_native<A: NativeApplication>(
     let mut session = Session {
         app,
         options,
+        cancellation: cancellation.clone(),
         downstream: Peer::ingress(socket, MAX_EVENT_BYTES + 1024),
         upstream: None,
         fixed_identity: None,
@@ -299,6 +318,8 @@ pub async fn serve_native<A: NativeApplication>(
         uploads: FuturesUnordered::new(),
         lanes: HashSet::new(),
         queue: VecDeque::new(),
+        buffered_metadata: VecDeque::new(),
+        output_started: HashSet::new(),
         blocked: None,
         life: now + CONNECTION_LIFETIME,
         idle: now + FIRST_CREATE,
@@ -307,25 +328,28 @@ pub async fn serve_native<A: NativeApplication>(
         control_tokens: 20.0,
         control_tick: now,
     };
-    let end = tokio::select! {
-        biased;
-        _ = cancellation.cancelled() => NativeEnd::Cancelled,
-        end = session.run() => end,
-    };
-    session.shutdown(&end, cancellation).await;
+    let end = session.run(cancellation).await;
+    if matches!(&end, NativeEnd::Protocol(error) if error.detail == Some("upstream_turn_unadmitted"))
+    {
+        session.app.record_unadmitted().await;
+    }
+    session.shutdown(&end).await;
     end
 }
 
 impl<A: NativeApplication> Session<A> {
-    async fn run(&mut self) -> NativeEnd {
+    async fn run(&mut self, cancellation: &CancellationToken) -> NativeEnd {
         loop {
+            if cancellation.is_cancelled() {
+                return NativeEnd::Cancelled;
+            }
             if let Some((end, _)) = self.disconnected
                 && self.attempts.is_empty()
             {
                 return NativeEnd::Downstream(end);
             }
             let result = match self.schedule().await {
-                Ok(()) => self.step().await,
+                Ok(()) => self.step(cancellation).await,
                 Err(end) => Err(end),
             };
             match result {
@@ -342,10 +366,11 @@ impl<A: NativeApplication> Session<A> {
         }
     }
 
-    async fn step(&mut self) -> Result<(), NativeEnd> {
+    async fn step(&mut self, cancellation: &CancellationToken) -> Result<(), NativeEnd> {
         let next_timer = self.next_timer();
         tokio::select! {
             biased;
+            _ = cancellation.cancelled() => Err(NativeEnd::Cancelled),
             _ = sleep_until(next_timer) => self.expire().map_or(Ok(()), Err),
             Some((lane, id, result)) = self.uploads.next(), if !self.uploads.is_empty() => {
                 if self.attempts.get(&lane).is_some_and(|(request, _)| *request == id)
@@ -370,7 +395,7 @@ impl<A: NativeApplication> Session<A> {
                 }
             }
             Some(admission) = self.admissions.next(), if !self.admissions.is_empty() =>
-                self.admitted(admission).await,
+                self.admitted(admission, cancellation).await,
         }
     }
 
@@ -471,7 +496,7 @@ impl<A: NativeApplication> Session<A> {
                     if self.replacing_refused_socket && continuation {
                         return Err(ProtocolError::new(409, "upstream_state_lost"));
                     }
-                    self.app.prepare(&lane, document)
+                    self.app.prepare(&request_id, &lane, document)
                 })
                 .and_then(|prepared| {
                     if prepared.frame.len() > WS_ROUTING_BYTES {
@@ -546,7 +571,11 @@ impl<A: NativeApplication> Session<A> {
         Ok(())
     }
 
-    async fn admitted(&mut self, admission: Admission<A>) -> Result<(), NativeEnd> {
+    async fn admitted(
+        &mut self,
+        admission: Admission<A>,
+        cancellation: &CancellationToken,
+    ) -> Result<(), NativeEnd> {
         let Admission {
             lane,
             request_id,
@@ -585,6 +614,7 @@ impl<A: NativeApplication> Session<A> {
             let read_closed = self.downstream.read_closed();
             let result = tokio::select! {
                 biased;
+                _ = cancellation.cancelled() => return Err(NativeEnd::Cancelled),
                 _ = read_closed.cancelled() => return Err(NativeEnd::Downstream(SocketEnd::Eof)),
                 result = timeout_at(deadline, self.app.connect(&identity, deadline)) =>
                     result.unwrap_or(Err(ConnectFailure::TimedOut)),
@@ -623,6 +653,15 @@ impl<A: NativeApplication> Session<A> {
                             },
                             None,
                         ),
+                        ConnectFailure::TransportSetup(
+                            codexone_http_upstream::Error::ProxyAuthenticationRequired,
+                        ) => (
+                            ProtocolError::new(502, "upstream_proxy_authentication_required"),
+                            None,
+                        ),
+                        ConnectFailure::TransportSetup(
+                            codexone_http_upstream::Error::ProxyConnect,
+                        ) => (ProtocolError::new(502, "upstream_proxy_failed"), None),
                         _ => (ProtocolError::new(502, "upstream_connect_failed"), None),
                     };
                     let frame = websocket_error(error, provider.as_deref(), &request_id, &lane);
@@ -647,18 +686,31 @@ impl<A: NativeApplication> Session<A> {
             });
             return Ok(());
         }
+        if cancellation.is_cancelled() {
+            return Err(NativeEnd::Cancelled);
+        }
+        let handle = Arc::get_mut(attempt.attempt.as_mut().expect("attempt owner"))
+            .expect("attempt not registered");
+        if let Err(error) = self.app.begin_dispatch(handle) {
+            attempt.finish(NativeFinish::BeforeDispatch {
+                protocol: error,
+                provider: None,
+            });
+            self.send_error(error, None, &request_id, &lane).await?;
+            self.update_idle();
+            return Ok(());
+        }
         // A request accepted by the writer can have reached the provider even if flush fails.
-        attempt.register(
-            self.reader.clone(),
-            lane.clone(),
-            Turn::new(deadline, warmup),
-        );
+        let mut turn = Turn::new(deadline, warmup);
+        turn.first_response = self.app.first_response_timeout(handle);
+        attempt.register(self.reader.clone(), lane.clone(), turn);
         self.attempts
             .insert(lane.clone(), (request_id.clone(), attempt));
-        let receipt = upstream
-            .queue(frame, deadline)
-            .await
-            .map_err(NativeEnd::Upstream)?;
+        let receipt = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(NativeEnd::Cancelled),
+            receipt = upstream.queue(frame, deadline) => receipt.map_err(NativeEnd::Upstream)?,
+        };
         self.uploads
             .push(async move { (lane, request_id, receipt.wait().await) }.boxed());
         Ok(())
@@ -691,12 +743,32 @@ impl<A: NativeApplication> Session<A> {
         if let Some(mut upstream) = self.upstream.take() {
             upstream.stop().await;
         }
+        self.buffered_metadata.clear();
+        self.output_started.clear();
         self.finish_lane(&lane, NativeFinish::UnprocessedSizeRefusal);
         self.replacing_refused_socket = true;
         self.send_error(TOO_LARGE, None, &request_id, &lane).await
     }
 
     async fn upstream_event(&mut self, packet: Packet<UpstreamPacket>) -> Result<(), NativeEnd> {
+        if let Ok(event) = &packet.event
+            && let Route::Turn { lane, .. } = &event.route
+            && !self.output_started.contains(lane)
+            && self.disconnected.is_none()
+        {
+            if codexone_responses::EventSemantics::classify(&event.document).connection_metadata {
+                if self.buffered_metadata.len() == MAX_BUFFERED_METADATA {
+                    return Err(NativeEnd::Protocol(ProtocolError::new(
+                        502,
+                        "upstream_response_too_large",
+                    )));
+                }
+                self.buffered_metadata.push_back(packet);
+                return Ok(());
+            }
+            self.output_started.insert(lane.clone());
+            self.flush_metadata(Some(lane)).await?;
+        }
         let RoutedEvent {
             mut document,
             route,
@@ -724,6 +796,29 @@ impl<A: NativeApplication> Session<A> {
                     .await
             }
         }
+    }
+
+    async fn flush_metadata(&mut self, selected_lane: Option<&str>) -> Result<(), NativeEnd> {
+        let deadline = self.life.min(Instant::now() + QUEUE_TIMEOUT);
+        let mut pending = std::mem::take(&mut self.buffered_metadata);
+        while let Some(mut packet) = pending.pop_front() {
+            let Ok(RoutedEvent {
+                document,
+                route: Route::Turn { lane, .. },
+            }) = &mut packet.event
+            else {
+                continue;
+            };
+            if selected_lane.is_none_or(|selected| selected == lane) {
+                self.forward(document, lane, deadline).await?;
+                if self.disconnected.is_some() {
+                    break;
+                }
+            } else {
+                self.buffered_metadata.push_back(packet);
+            }
+        }
+        Ok(())
     }
 
     async fn turn_event(
@@ -773,20 +868,39 @@ impl<A: NativeApplication> Session<A> {
             return Ok(());
         }
         let downstream_closed = self.downstream.read_closed();
-        let binding = tokio::select! {
-            biased;
-            _ = downstream_closed.cancelled() => {
-                self.disconnect(SocketEnd::Eof).await?;
-                if terminal {
-                    self.finish_lane(lane, NativeFinish::Terminal { client_cancelled: true });
+        let disconnected = {
+            let binding = timeout_at(
+                deadline,
+                self.app.before_output(attempt.attempt(), &document),
+            );
+            tokio::pin!(binding);
+            tokio::select! {
+                biased;
+                _ = downstream_closed.cancelled() => true,
+                result = &mut binding => {
+                    result.unwrap_or(Err(DEADLINE)).map_err(NativeEnd::Protocol)?;
+                    false
+                },
+                _ = self.cancellation.cancelled() => {
+                    // A core fault can initiate shutdown before its binding reply reaches us.
+                    match tokio::time::timeout(Duration::from_millis(200), &mut binding).await {
+                        Ok(Ok(Err(error))) => return Err(NativeEnd::Protocol(error)),
+                        _ => return Err(NativeEnd::Cancelled),
+                    }
                 }
-                return Ok(());
             }
-            binding = timeout_at(deadline, self.app.before_output(attempt.attempt(), &document)) =>
-                binding.unwrap_or(Err(DEADLINE)),
         };
-        if let Err(error) = binding {
-            return Err(NativeEnd::Protocol(error));
+        if disconnected {
+            self.disconnect(SocketEnd::Eof).await?;
+            if terminal {
+                self.finish_lane(
+                    lane,
+                    NativeFinish::Terminal {
+                        client_cancelled: true,
+                    },
+                );
+            }
+            return Ok(());
         }
         self.forward(&mut document, lane, deadline).await?;
         if terminal {
@@ -998,14 +1112,21 @@ impl<A: NativeApplication> Session<A> {
         if let Some((_, attempt)) = self.attempts.remove(lane) {
             attempt.finish(result);
         }
+        self.output_started.remove(lane);
         self.update_idle();
     }
 
-    async fn shutdown(&mut self, end: &NativeEnd, cancellation: &CancellationToken) {
+    async fn shutdown(&mut self, end: &NativeEnd) {
         self.queue.clear();
         self.blocked = None;
         self.admissions.clear();
         self.uploads.clear();
+        if self.disconnected.is_none()
+            && !matches!(end, NativeEnd::Cancelled | NativeEnd::Downstream(_))
+        {
+            let _ = self.flush_metadata(None).await;
+        }
+        self.buffered_metadata.clear();
         if let Some(upstream) = self.upstream.as_mut() {
             upstream.stop().await;
         }
@@ -1068,17 +1189,12 @@ impl<A: NativeApplication> Session<A> {
             return;
         }
         let deadline = Instant::now() + QUEUE_TIMEOUT;
-        tokio::select! {
-            _ = cancellation.cancelled() => self.downstream.stop().await,
-            _ = async {
-                for error in errors {
-                    if self.downstream.send(error, deadline).await.is_err() {
-                        break;
-                    }
-                }
-                self.downstream.close(CloseCode::Normal).await;
-            } => {}
+        for error in errors {
+            if self.downstream.send(error, deadline).await.is_err() {
+                break;
+            }
         }
+        self.downstream.close(CloseCode::Normal).await;
     }
 
     async fn forward(
@@ -1099,21 +1215,22 @@ impl<A: NativeApplication> Session<A> {
     }
 
     async fn send(&mut self, frame: Utf8Bytes, deadline: Instant) -> Result<(), NativeEnd> {
-        self.downstream
-            .send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT))
-            .await
-            .map(|_| ())
-            .map_err(NativeEnd::Downstream)
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(NativeEnd::Cancelled),
+            result = self.downstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) =>
+                result.map(|_| ()).map_err(NativeEnd::Downstream),
+        }
     }
 
     async fn send_control(&mut self, frame: Utf8Bytes, deadline: Instant) -> Result<(), NativeEnd> {
-        self.upstream
-            .as_ref()
-            .expect("active socket")
-            .send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT))
-            .await
-            .map(|_| ())
-            .map_err(NativeEnd::Upstream)
+        let upstream = self.upstream.as_ref().expect("active socket");
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(NativeEnd::Cancelled),
+            result = upstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) =>
+                result.map(|_| ()).map_err(NativeEnd::Upstream),
+        }
     }
 
     async fn send_error(

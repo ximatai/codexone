@@ -115,12 +115,6 @@ pub(crate) struct Peer<T = Utf8Bytes> {
     read_closed: CancellationToken,
 }
 
-impl Peer {
-    pub fn new(socket: Socket, input_bytes: usize, output_bytes: usize) -> Self {
-        Self::provider(socket, input_bytes, output_bytes, Read::Deliver)
-    }
-}
-
 impl Peer<IngressMessage> {
     pub fn ingress(socket: DownstreamSocket, output_bytes: usize) -> Self {
         let (read, write) = tokio::io::split(socket.io);

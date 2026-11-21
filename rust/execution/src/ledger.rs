@@ -2,12 +2,47 @@ use codexone_account_pool::{Health, HealthObservation, HealthOutcome, HealthUpda
 use codexone_storage::Database;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use crate::admission::record_concurrency;
+use crate::admission::{business_day_start, record_concurrency};
 use crate::model::*;
 use crate::{AccountIdentity, ExecutionError as Error, Result};
 
 const HISTORY: i64 = 128;
 const MAINTENANCE_BATCH: i64 = 100;
+
+pub(crate) fn record_unadmitted(
+    tx: &Transaction<'_>,
+    first_attempt: &str,
+    attempt: String,
+    request_id: String,
+    offset: i64,
+    now: i64,
+) -> Result<()> {
+    let original = snapshot(tx, first_attempt)?.admission;
+    let day = business_day_start(now, offset);
+    let admission = Admission {
+        attempt,
+        window: format!("business-day-{day}"),
+        request_id: Some(request_id),
+        model: None,
+        mode: Some(Mode::Generation),
+        requirements: None,
+        references: None,
+        reasoning_effort: None,
+        service_tier: None,
+        request_metadata_recorded: None,
+        ..original
+    };
+    let owner = &admission.owner;
+    tx.execute(
+        "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,
+                              reserved,state,admission_json,created_at_epoch,unknown_since_epoch,request_id)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'unknown',?10,?11,?11,?12)",
+        params![admission.attempt, owner.principal, owner.key, owner.namespace, owner.identity,
+            admission.window, admission.policy_version, admission.pricing_version, admission.reserved_micros,
+            serde_json::to_string(&admission)?, now, admission.request_id],
+    )?;
+    Ok(())
+}
 
 pub(crate) fn recover(tx: &Transaction<'_>, now: i64) -> Result<()> {
     crate::priming::recover(tx)?;
