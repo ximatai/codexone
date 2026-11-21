@@ -303,9 +303,9 @@ fn samples(
     let mut statement = db.prepare_cached("
         SELECT output_rate_settled_at,output_rate,
             CASE WHEN output_rate_settled_at>=?4 THEN id END FROM attempts
-        WHERE output_rate_settled_at>=? AND output_rate_settled_at<?
+        WHERE output_rate_settled_at>=?1 AND output_rate_settled_at<?2
           AND CASE WHEN json_valid(usage_json) THEN COALESCE(json_extract(usage_json,'$.images'),0) ELSE 0 END=0
-        ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?")?;
+        ORDER BY output_rate_settled_at DESC,rowid DESC LIMIT ?3")?;
     let rows = statement.query_map(params![start, end, limit, live_since], |row| {
         let at: i64 = row.get(0)?;
         let raw: Option<String> = row.get(1)?;
