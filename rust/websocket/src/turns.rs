@@ -214,7 +214,11 @@ impl Turns {
                 .as_deref()
                 .is_some_and(|expected| expected != identity)
             {
-                return Err(INVALID_TURN);
+                return Err(if semantics.terminal {
+                    INVALID_TURN
+                } else {
+                    INVALID_TURN.with_detail("upstream_turn_unadmitted")
+                });
             }
             if first_lifecycle {
                 turn.response_id = Some(identity.to_owned());
