@@ -381,21 +381,67 @@ def verify_slow(probe):
             shutdown(process, root, [])
 
 
-def verify_source_failure(binary):
+def verify_source_failure(binary, backend):
     with running_admin(binary, admin_live=True) as f:
         cookie, _ = login(f)
         database = f.root / 'state/core.sqlite'
+        if backend == 'rust':
+            _, secret = create(f.ports['admin'])
+            f.secrets.append(secret)
+
+            def generate():
+                response = request(
+                    f.ports['data'], 'POST', '/v1/responses',
+                    {'model': 'synthetic-text', 'input': 'synthetic', 'stream': False},
+                    headers={'Authorization': 'Bearer ' + secret},
+                )
+                assert response[0] == 200
+
+            generate()
+            deadline = time.monotonic() + 5
+            while True:
+                with sqlite3.connect(database) as db:
+                    row = db.execute(
+                        'SELECT id, output_rate FROM attempts WHERE output_rate IS NOT NULL'
+                    ).fetchone()
+                if row is not None:
+                    break
+                assert time.monotonic() < deadline, 'Synthetic request did not persist an output rate'
+                time.sleep(.02)
+            attempt, rate = row
+            # An invalid read-side type fails the usage projection without
+            # removing the live writer's table, schema or settlement columns.
+            fault = ('UPDATE attempts SET output_rate=zeroblob(1) WHERE id=?', (attempt,))
+            repair = ('UPDATE attempts SET output_rate=? WHERE id=?', (rate, attempt))
+        else:
+            fault = ('ALTER TABLE attempts RENAME TO synthetic_unavailable_attempts', ())
+            repair = ('ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts', ())
         broken = False
         viewer = None
         try:
             with sqlite3.connect(database) as db:
-                db.execute('ALTER TABLE attempts RENAME TO synthetic_unavailable_attempts')
+                db.execute(*fault)
             broken = True
-            viewer = dial(f, cookie)[1]
-            initial = frame(viewer)['sections']['inFlight']
+            status, viewer = dial(f, cookie)
+            assert status == 101
+            snapshot = frame(viewer)
+            assert snapshot.get('kind') == 'snapshot', snapshot.get('close')
+            initial = snapshot['sections']['inFlight']
             assert initial['freshness'] == 'unavailable' and initial['data'] is None and initial['lastSuccessAt'] is None
+            if backend == 'rust':
+                generate()
+                deadline = time.monotonic() + 5
+                while True:
+                    with sqlite3.connect(database) as db:
+                        count = db.execute(
+                            "SELECT count(*) FROM attempts WHERE state='settled'"
+                        ).fetchone()[0]
+                    if count == 2:
+                        break
+                    assert time.monotonic() < deadline, 'Writer did not settle during read failure'
+                    time.sleep(.02)
             with sqlite3.connect(database) as db:
-                db.execute('ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts')
+                db.execute(*repair)
             broken = False
             restored = until(viewer, lambda value: value.get('sections', {}).get('inFlight', {}).get('freshness') == 'fresh', seconds=8)
             assert restored['sections']['inFlight']['data']['rows'] == []
@@ -404,7 +450,7 @@ def verify_source_failure(binary):
             if viewer: viewer.close()
             if broken:
                 with sqlite3.connect(database) as db:
-                    db.execute('ALTER TABLE synthetic_unavailable_attempts RENAME TO attempts')
+                    db.execute(*repair)
 
 
 def verify_control_limit(binary):
@@ -449,6 +495,7 @@ def serve(binary, web):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=Path)
+    parser.add_argument('--backend', choices=('swift', 'rust'), default='swift')
     parser.add_argument('--serve', action='store_true')
     parser.add_argument('--slow-only', action='store_true', help='Only the combined DTO/slow-viewer resource probe')
     parser.add_argument('--probe', type=Path)
@@ -461,6 +508,6 @@ if __name__ == '__main__':
         serve(str(args.binary.resolve()), args.web.resolve())
     else:
         verify(str(args.binary.resolve()))
-        verify_source_failure(str(args.binary.resolve()))
+        verify_source_failure(str(args.binary.resolve()), args.backend)
         verify_control_limit(str(args.binary.resolve()))
         if args.probe: verify_slow(str(args.probe.resolve()))
