@@ -53,24 +53,36 @@ pub(crate) fn backup_locked(
         database,
         destination,
         protection,
-        &SnapshotCheck::default(),
+        &mut SnapshotCheck::default(),
     )
 }
 
 /// The callback is shared with SQLite's VM progress handler on the private snapshot connection.
 #[derive(Default)]
-pub(crate) struct SnapshotCheck(pub(crate) Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>);
+pub(crate) struct SnapshotCheck {
+    poll: Option<Arc<dyn Fn() -> Result<()> + Send + Sync>>,
+    #[cfg(feature = "backup-test-support")]
+    pub(crate) after_first_batch: Option<Box<dyn FnOnce() + Send>>,
+}
 
 impl SnapshotCheck {
+    pub(crate) fn online(poll: impl Fn() -> Result<()> + Send + Sync + 'static) -> Self {
+        Self {
+            poll: Some(Arc::new(poll)),
+            #[cfg(feature = "backup-test-support")]
+            after_first_batch: None,
+        }
+    }
+
     pub(crate) fn run(&self) -> Result<()> {
-        match &self.0 {
+        match &self.poll {
             Some(check) => check(),
             None => Ok(()),
         }
     }
 
     fn watch(&self, connection: &mut Connection) -> Result<()> {
-        if let Some(check) = self.0.clone() {
+        if let Some(check) = self.poll.clone() {
             connection.progress_handler(1000, Some(move || check().is_err()))?;
         }
         Ok(())
@@ -82,12 +94,12 @@ pub(crate) fn backup_checked(
     database: &Path,
     destination: &Path,
     protection: Option<&AccountCredentialCipher>,
-    check: &SnapshotCheck,
+    check: &mut SnapshotCheck,
 ) -> Result<SnapshotManifest> {
     check.run()?;
     require_complete_reencryption(db)?;
     require_reconciled_source(db)?;
-    if check.0.is_none() {
+    if check.poll.is_none() {
         verify_credentials(db, protection)?;
     }
     let parent = files::parent(destination)?.canonicalize()?;
@@ -213,7 +225,7 @@ fn restore_with_barrier(
     day: BusinessDay,
     barrier_written: impl FnOnce() -> Result<()>,
 ) -> Result<RestoreRecord> {
-    let check = SnapshotCheck::default();
+    let mut check = SnapshotCheck::default();
     let verified = verified_snapshot(bundle, protection, &check)?;
     let manifest = &verified.manifest;
     let previous = require_reconciled_source(&verified.source)?;
@@ -250,7 +262,7 @@ fn restore_with_barrier(
     barrier_written()?;
 
     let staging = files::sidecar(&path, ".restoring.partial");
-    copy(&verified.source, &staging, false, &check)?;
+    copy(&verified.source, &staging, false, &mut check)?;
     require_fingerprint(&verified.path, manifest, &check)?;
 
     let mut target = Database::open_restore_staging(&staging)?;
@@ -384,7 +396,7 @@ fn snapshot_bytes(source: &Connection) -> Result<i64> {
         .ok_or(Error::Capacity)
 }
 
-fn copy(source: &Connection, path: &Path, optional: bool, check: &SnapshotCheck) -> Result<()> {
+fn copy(source: &Connection, path: &Path, optional: bool, check: &mut SnapshotCheck) -> Result<()> {
     let directory = files::parent(path)?;
     let bytes = snapshot_bytes(source)?;
     require_free_space(directory, bytes + 8 * MIB, optional)?;
@@ -398,7 +410,7 @@ fn copy(source: &Connection, path: &Path, optional: bool, check: &SnapshotCheck)
     target.busy_timeout(Duration::ZERO)?;
     target.pragma_update(None, "synchronous", "FULL")?;
     {
-        let online = check.0.is_some();
+        let online = check.poll.is_some();
         let deadline = Instant::now() + Duration::from_secs(300);
         let page_size: i64 = source.pragma_query_value(None, "page_size", |row| row.get(0))?;
         let transfer = Backup::new(source, &mut target)?;
@@ -414,7 +426,13 @@ fn copy(source: &Connection, path: &Path, optional: bool, check: &SnapshotCheck)
             }
             match step {
                 StepResult::Done => break,
-                StepResult::More if online => thread::sleep(Duration::from_millis(1)),
+                StepResult::More if online => {
+                    #[cfg(feature = "backup-test-support")]
+                    if let Some(after_first_batch) = check.after_first_batch.take() {
+                        after_first_batch();
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
                 StepResult::More => {}
                 StepResult::Busy | StepResult::Locked if online => {
                     thread::sleep(Duration::from_millis(10));

@@ -106,6 +106,8 @@ pub struct OnlineBackup {
     source: DatabaseBackupSource,
     protection: Option<Arc<AccountCredentialCipher>>,
     status: BackupStatus,
+    #[cfg(feature = "backup-test-support")]
+    after_first_batch: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl OnlineBackup {
@@ -119,6 +121,8 @@ impl OnlineBackup {
             source,
             protection,
             status: BackupStatus::default(),
+            #[cfg(feature = "backup-test-support")]
+            after_first_batch: None,
         };
         backup.status.update(|status| {
             status.enabled = true;
@@ -134,6 +138,12 @@ impl OnlineBackup {
         self.status.clone()
     }
 
+    /// Pause a synthetic process fixture after SQLite copies the first batch.
+    #[cfg(feature = "backup-test-support")]
+    pub fn after_first_batch(&mut self, callback: impl FnOnce() + Send + 'static) {
+        self.after_first_batch = Some(Box::new(callback));
+    }
+
     /// Call on the blocking worker. A failed or skipped backup never fails the gateway.
     pub fn perform(&mut self, pressure: impl Fn() -> BackupPressure + Send + Sync + 'static) {
         if self.status.cancelled() {
@@ -141,7 +151,7 @@ impl OnlineBackup {
         }
         let status = self.status.clone();
         let pressure_sample = Arc::new(Mutex::new((None, BackupPressure::Normal)));
-        let check = SnapshotCheck(Some(Arc::new({
+        let mut check = SnapshotCheck::online({
             let pressure_sample = pressure_sample.clone();
             move || {
                 if status.cancelled() {
@@ -162,9 +172,13 @@ impl OnlineBackup {
                     Err(Error::Storage)
                 }
             }
-        })));
+        });
+        #[cfg(feature = "backup-test-support")]
+        {
+            check.after_first_batch = self.after_first_batch.take();
+        }
         let mut phase = BackupFailure::DirectoryUnavailable;
-        if let Err(error) = self.perform_checked(&check, &mut phase) {
+        if let Err(error) = self.perform_checked(&mut check, &mut phase) {
             let skipped = pressure_sample.lock().expect("backup pressure").1;
             if self.status.cancelled() {
                 self.status.failure(BackupFailure::Cancelled);
@@ -187,7 +201,7 @@ impl OnlineBackup {
         }
     }
 
-    fn perform_checked(&self, check: &SnapshotCheck, phase: &mut BackupFailure) -> Result<()> {
+    fn perform_checked(&self, check: &mut SnapshotCheck, phase: &mut BackupFailure) -> Result<()> {
         check.run()?;
         validate_root(&self.root)?;
         let (mut count, owned) = self.owned_entries()?;
@@ -457,15 +471,15 @@ mod tests {
         job.perform(normal);
         let original = job.inventory().unwrap().pop().unwrap().path;
         let calls = std::sync::atomic::AtomicUsize::new(0);
-        let check = SnapshotCheck(Some(Arc::new(move || {
+        let mut check = SnapshotCheck::online(move || {
             if calls.fetch_add(1, Ordering::Relaxed) >= 2 {
                 Err(Error::Storage)
             } else {
                 Ok(())
             }
-        })));
+        });
         let mut failure = BackupFailure::DirectoryUnavailable;
-        assert!(job.perform_checked(&check, &mut failure).is_err());
+        assert!(job.perform_checked(&mut check, &mut failure).is_err());
         assert_eq!(failure, BackupFailure::SnapshotFailed);
         assert!(
             job.owned_entries()

@@ -38,3 +38,15 @@ python3 scripts/rust_compat/maintenance.py \
 ```
 
 驱动验证实例锁冲突、格式 1 bundle 双向校验和恢复、v18 bundle 恢复升级、代际及 Key 停用、审计幂等、业务日冻结、缺失占用继承，以及 Swift 进程中断后由 Rust 继续重加密。退役检查覆盖保留 bundle、恢复演练与迁移前裸库清单。所有输入均为合成数据，命令使用临时目录。
+
+## 在线备份与并发结算
+
+从仓库根目录运行。使用提案指定的 Swift 基线。驱动构建 Rust CLI 和仅测试用的网关入口，使用私有临时目录、动态回环端口和合成上游。
+
+```sh
+swift build --package-path "$SWIFT_BASELINE" --product codexone
+python3 scripts/rust_compat/online_backup.py \
+  --swift "$SWIFT_BASELINE/.build/debug/codexone"
+```
+
+测试网关立即开始第一次备份，并在 SQLite 复制完第一批页后暂停。驱动发送一次 HTTP 续接请求，先从源库核对该请求持久结算，再恢复复制。发布后，Swift 与 Rust CLI 均验证同一快照，驱动核对已在复制前完成的账本和绑定。并发请求是否进入快照取决于 SQLite 的快照时点，测试允许该请求处于尚未录入、执行中或已结算状态，若快照包含已结算请求则核对对应的用量和绑定。正式网关仍按首次 10 分钟、每轮结束后 24 小时的间隔运行。

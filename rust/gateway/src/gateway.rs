@@ -104,7 +104,14 @@ impl Application {
     }
 }
 
-pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
+pub async fn run(config: Configuration) -> Result<(), StartupError> {
+    run_with_backup(config, BackupTask::start).await
+}
+
+pub(crate) async fn run_with_backup(
+    mut config: Configuration,
+    start_backup: impl FnOnce(OnlineBackup, ExecutionService) -> BackupTask,
+) -> Result<(), StartupError> {
     use StartupError::*;
     let runtime = config.runtime;
     let mut terminate = signal(SignalKind::terminate()).map_err(|_| Service)?;
@@ -180,7 +187,7 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
                 })
                 .await
                 .map_err(|_| Service)?;
-                Some(BackupTask::start(worker, service.clone()))
+                Some(start_backup(worker, service.clone()))
             } else {
                 None
             };
