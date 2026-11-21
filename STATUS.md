@@ -4,7 +4,9 @@
 
 ## 版本与能力
 
-当前稳定版本为 **[v0.26.53](https://github.com/ximatai/codexone/releases/tag/v0.26.53)**（2026-11-20），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+当前稳定版本为 **[v1.26.55](https://github.com/ximatai/codexone/releases/tag/v1.26.55)**（2026-11-21），核心数据库 schema v19。镜像发布在 GHCR `ghcr.io/ximatai/codexone`（Linux amd64），附来源证明。也可以从源码构建。
+
+v1.26.55 是首个正式发布的 Rust 后端版本，支持从 v19 数据卷升级，补齐了订阅池续接状态归属与 WebSocket 迟到输出检查。上一个 Swift 正式版保存在 [Swift 归档分支](https://github.com/ximatai/codexone/tree/archive/swift-v0.26.53)。
 
 v0.26.53 支持在模型目录查看和编辑已启用文本模型的费率，并在首页今日 Key 汇总展示估算费用。见[发布说明](CHANGELOG.md)。
 
