@@ -165,7 +165,8 @@ impl OverviewHub {
                         reports_due = now + Duration::from_secs(15);
                     }
                     if sample_storage {
-                        other.insert(OverviewSource::Storage, Ok(storage.unwrap_or_default()));
+                        let storage = usage.storage_with_resources(storage.unwrap_or_default(), at);
+                        other.insert(OverviewSource::Storage, Ok(storage));
                         storage_due = now + Duration::from_secs(2);
                     }
                     if !other.is_empty() && state.update(at, other).is_err() {

@@ -16,6 +16,8 @@ use codexone_usage::{BusinessDay, Context, ProtocolExtensions, Reader, Usage};
 use http::{Method, Request, Response, header};
 use serde_json::{Value, json};
 
+use crate::overview_resources::ResourceHistory;
+
 pub struct ManagementUsage {
     reader: Reader,
     pub usage: Usage,
@@ -24,6 +26,7 @@ pub struct ManagementUsage {
     output_horizon: Option<i64>,
     protocol_extensions: Box<dyn Fn() -> ProtocolExtensions + Send + Sync>,
     backup: Option<BackupStatus>,
+    pub(crate) resources: Arc<ResourceHistory>,
     pub(crate) clients: Arc<DataClients>,
 }
 
@@ -77,6 +80,7 @@ impl ManagementUsage {
             output_horizon,
             protocol_extensions: Box::new(ProtocolExtensions::default),
             backup: None,
+            resources: Arc::default(),
             clients: Arc::new(DataClients::default()),
         };
         management.attach_model_efforts(move || defaults.clone());
@@ -110,9 +114,10 @@ impl ManagementUsage {
         let path = request.uri().path().trim_end_matches('/');
         let now = unix_now();
         if path == "/api/runtime/storage" {
+            let storage = self.storage_with_resources(self.storage(now).await, now);
             return Response::builder()
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Bytes::from(self.storage(now).await.to_string()))
+                .body(Bytes::from(storage.to_string()))
                 .expect("static response headers");
         }
         let storage = if matches!(path, "/api/usage/headroom" | "/api/attention")
@@ -175,6 +180,11 @@ impl ManagementUsage {
                 .map(BackupStatus::observation)
                 .unwrap_or_default()
         );
+        value
+    }
+
+    pub(crate) fn storage_with_resources(&self, mut value: Value, now: i64) -> Value {
+        value["resources"] = json!(self.resources.snapshot(now));
         value
     }
 

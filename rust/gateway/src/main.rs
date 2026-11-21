@@ -14,6 +14,7 @@ mod management_usage;
 mod model_directory;
 mod online_backup;
 mod overview_live;
+mod overview_resources;
 mod quota;
 mod reply;
 mod response;

@@ -11,12 +11,13 @@ import secrets
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 
-from compare import fixture, listener_ports, require
-from usage import request
+from compare import fixture, listener_ports, require, running_gateway
+from usage import get, request
 from verify_protocol import TOKEN, Upstream
 
 PATH = "/api/overview/live"
@@ -261,9 +262,65 @@ def native_clients(candidate):
     print("PASS: authenticated native WebSocket registers under its key and unregisters on socket close")
 
 
+def resources(candidate):
+    require(sys.platform == "linux", "the live resource sampler requires Linux")
+    storage = "/api/runtime/storage"
+    with tempfile.TemporaryDirectory(prefix="codexone-overview-resources-") as work:
+        root = Path(work) / "case"
+        with fixture(root) as (_, _, env):
+            token = "synthetic-" + secrets.token_hex(24)
+            secret = root / "admin-token"
+            secret.write_text(token, encoding="utf-8")
+            secret.chmod(0o600)
+            env["CODEXONE_ADMIN_TOKEN_FILE"] = str(secret)
+            headers = {"Authorization": f"Bearer {token}"}
+            with running_gateway(candidate, root, env) as ports:
+                port = ports["admin"]
+                # Let two independent samples accumulate before the first admin request.
+                time.sleep(31)
+                deadline = time.monotonic() + 5
+                history = get(port, storage, headers)["resources"]
+                while len(history) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    history = get(port, storage, headers)["resources"]
+                require(len(history) == 2, "resource sampling did not run without viewers")
+                first, second = history
+                require(29 <= second["unixSeconds"] - first["unixSeconds"] <= 36,
+                        "unexpected resource sample cadence")
+                for sample in history:
+                    for field in ("processResidentBytes", "hostTotalBytes", "diskAvailableBytes"):
+                        require(sample[field] > 0, f"missing Linux resource {field}")
+                    require(0 <= sample["hostAvailableBytes"] <= sample["hostTotalBytes"]
+                            and sample["hostLoadAverage1m"] >= 0, "invalid Linux host metrics")
+                require("hostCPUPercent" not in first and 0 <= second["hostCPUPercent"] <= 100,
+                        "CPU requires consecutive Linux counter samples")
+                browser, _ = log_in(port, token)
+                with closing(Socket(port, browser)) as viewer:
+                    require(viewer.status == 101, "resource overview upgrade failed")
+                    viewer.until(lambda data: "resources" in data.get("storage", {}))
+                    require(viewer.data["storage"]["resources"] == history,
+                            "HTTP and WebSocket resource snapshots differ")
+
+            env["CODEXONE_ADMIN_LIVE"] = "off"
+            with running_gateway(candidate, root, env) as ports:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    restarted = get(ports["admin"], storage, headers)["resources"]
+                    if restarted:
+                        break
+                    time.sleep(0.05)
+                require(len(restarted) == 1 and "hostCPUPercent" not in restarted[0]
+                        and restarted[0]["unixSeconds"] > first["unixSeconds"],
+                        "restart kept old resource history or HTTP-only mode did not sample")
+    print("PASS: Linux resource DTO over HTTP and WebSocket, no-viewer sampling and restart")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=lambda arg: Path(arg).resolve(), required=True)
-    candidate = parser.parse_args().candidate
-    run(candidate)
-    native_clients(candidate)
+    parser.add_argument("--resources", action="store_true", help="also check live Linux resource readings")
+    args = parser.parse_args()
+    run(args.candidate)
+    native_clients(args.candidate)
+    if args.resources:
+        resources(args.candidate)

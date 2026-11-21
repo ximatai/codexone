@@ -408,6 +408,18 @@ async fn run_configured(
         let stopping = stopping.clone();
         tokio::spawn(async move { supervise_execution_maintenance(&execution, stopping).await })
     });
+    #[cfg(target_os = "linux")]
+    let resources_task =
+        app.usage
+            .as_ref()
+            .zip(app.execution.as_ref())
+            .map(|(usage, execution)| {
+                tokio::spawn(crate::overview_resources::run(
+                    usage.resources.clone(),
+                    execution.clone(),
+                    stopping.clone(),
+                ))
+            });
     let overview_task = overview.map(|overview| {
         let app = app.clone();
         let stopping = stopping.clone();
@@ -465,6 +477,10 @@ async fn run_configured(
     }
     app.admin.revoke_sessions();
     if let Some(task) = overview_task {
+        failed |= task.await.is_err();
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(task) = resources_task {
         failed |= task.await.is_err();
     }
     if let Some(backup) = backup {
