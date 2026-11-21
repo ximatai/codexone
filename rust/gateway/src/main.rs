@@ -88,6 +88,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         Err(gateway::StartupError::IncompleteRestore) => incomplete_restore(),
+        Err(gateway::StartupError::IncompleteReencryption) => {
+            eprintln!(
+                "Incomplete credential reencryption; retain all keys and run --resume-reencryption offline."
+            );
+            ExitCode::FAILURE
+        }
         Err(gateway::StartupError::Service) => service_failure(),
     }
 }

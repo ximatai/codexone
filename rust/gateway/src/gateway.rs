@@ -38,6 +38,7 @@ use crate::{
 pub enum StartupError {
     RequiresManagedKeys,
     IncompleteRestore,
+    IncompleteReencryption,
     Service,
 }
 
@@ -533,6 +534,7 @@ fn initialize_store(directory: &Path, static_identity: bool) -> Result<Database,
     let path = directory.join("core.sqlite");
     let database = Database::open_or_create(&path).map_err(|error| match error {
         DatabaseError::IncompleteRestore => IncompleteRestore,
+        DatabaseError::IncompleteReencryption => IncompleteReencryption,
         _ => Service,
     })?;
     if static_identity {
