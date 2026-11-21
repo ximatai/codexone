@@ -6,6 +6,8 @@ use serde::Deserialize;
 use crate::model::*;
 use crate::{ExecutionError as Error, Result};
 
+const ACCOUNT_CONCURRENCY_LIMIT: i64 = 16;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Key {
@@ -121,13 +123,14 @@ pub(crate) fn credential(db: &Connection, account: &str) -> Result<AccountCreden
 fn account_namespace(
     tx: &Transaction<'_>,
     account: &str,
-    request: &AdmissionRequest,
+    dispatch: &AccountDispatch,
+    model: &str,
     now: i64,
 ) -> Result<String> {
-    if request.account.id != account {
+    if dispatch.id != account {
         return Err(Error::AccountUnavailable);
     }
-    let snapshot = &request.account.snapshot;
+    let snapshot = &dispatch.snapshot;
     let namespace = tx.query_row(
         "SELECT namespace FROM accounts a
          WHERE id=?1 AND revision=?2 AND credential_version=?3 AND authorization='ready' AND namespace=?7
@@ -135,7 +138,7 @@ fn account_namespace(
            AND NOT EXISTS (SELECT 1 FROM account_health h WHERE h.account_id=a.id AND h.auth_rejected_version=a.credential_version)
            AND NOT EXISTS (SELECT 1 FROM account_model_health h WHERE h.account_id=a.id AND h.model=?5 AND h.until_epoch>?6)",
         params![account, snapshot.revision, snapshot.credential_version, snapshot.continuation,
-            request.model, now, request.account.namespace],
+            model, now, dispatch.namespace],
         |row| row.get::<_, String>(0),
     ).optional()?.ok_or(Error::AccountUnavailable)?;
     if snapshot.access_expires_at_unix_seconds <= now {
@@ -149,7 +152,7 @@ fn account_namespace(
 
 fn key_authorizes(
     tx: &Transaction<'_>,
-    request: &AdmissionRequest,
+    request: &ManagedAdmissionRequest,
     now: i64,
     day: i64,
     offset: i64,
@@ -267,7 +270,7 @@ fn reached_token_cap(
 fn catalog_authorizes(
     tx: &Transaction<'_>,
     account: &str,
-    request: &AdmissionRequest,
+    request: &ManagedAdmissionRequest,
 ) -> Result<()> {
     if request.requirements.route == Route::Conversation {
         let denied: bool = tx.query_row(
@@ -418,22 +421,33 @@ pub(crate) fn admit(
     tx: &Transaction<'_>,
     account: &str,
     offset: i64,
-    request: AdmissionRequest,
+    request: ManagedAdmissionRequest,
+    dispatch: AccountDispatch,
     now: i64,
 ) -> Result<Admission> {
-    let day = (now + offset).div_euclid(DAY) * DAY - offset;
+    let day = business_day_start(now, offset);
     check_intent(tx, &request.attempt, true, now)?;
-    let namespace = account_namespace(tx, account, &request, now)?;
+    let namespace = account_namespace(tx, account, &dispatch, &request.model, now)?;
     catalog_authorizes(tx, account, &request)?;
     key_authorizes(tx, &request, now, day, offset)?;
 
-    let admission = Admission {
+    let admission = managed_intent(request, dispatch, namespace, day);
+    insert_single_identity_intent(tx, admission, now)
+}
+
+fn managed_intent(
+    request: ManagedAdmissionRequest,
+    dispatch: AccountDispatch,
+    namespace: String,
+    day: i64,
+) -> Admission {
+    Admission {
         attempt: request.attempt,
         owner: Owner {
             principal: request.key.principal,
             key: request.key.id,
             namespace,
-            identity: account.into(),
+            identity: dispatch.id,
         },
         window: format!("business-day-{day}"),
         policy_version: request.policy_version,
@@ -443,14 +457,13 @@ pub(crate) fn admit(
         model: Some(request.model),
         mode: Some(request.mode),
         key_revision: Some(request.key.revision),
-        account_snapshot: Some(request.account.snapshot),
+        account_snapshot: Some(dispatch.snapshot),
         requirements: Some(request.requirements),
         references: Some(request.references),
         reasoning_effort: request.reasoning_effort.map(sanitize_metadata),
         service_tier: request.service_tier.map(sanitize_metadata),
         request_metadata_recorded: Some(true),
-    };
-    insert_intent(tx, admission, now)
+    }
 }
 
 pub(crate) fn admit_static(
@@ -468,9 +481,13 @@ pub(crate) fn admit_static(
     if collision {
         return Err(Error::InvalidCommand);
     }
-    let day = (now + offset).div_euclid(DAY) * DAY - offset;
+    let day = business_day_start(now, offset);
     admission.window = format!("business-day-{day}");
-    insert_intent(tx, admission, now)
+    insert_single_identity_intent(tx, admission, now)
+}
+
+fn business_day_start(now: i64, offset: i64) -> i64 {
+    (now + offset).div_euclid(DAY) * DAY - offset
 }
 
 fn check_intent(tx: &Transaction<'_>, attempt: &str, managed: bool, now: i64) -> Result<()> {
@@ -486,14 +503,22 @@ fn check_intent(tx: &Transaction<'_>, attempt: &str, managed: bool, now: i64) ->
     Ok(())
 }
 
-fn insert_intent(tx: &Transaction<'_>, admission: Admission, now: i64) -> Result<Admission> {
-    let owner = &admission.owner;
-    let active: i64 = tx.query_row(
+fn active_intents(tx: &Transaction<'_>, namespace: &str, identity: &str) -> Result<i64> {
+    Ok(tx.query_row(
         "SELECT COUNT(*) FROM attempts WHERE namespace=?1 AND identity=?2 AND state='intent'",
-        params![owner.namespace, owner.identity],
+        params![namespace, identity],
         |row| row.get(0),
-    )?;
-    if active >= 16 {
+    )?)
+}
+
+fn insert_single_identity_intent(
+    tx: &Transaction<'_>,
+    admission: Admission,
+    now: i64,
+) -> Result<Admission> {
+    let owner = &admission.owner;
+    let active = active_intents(tx, &owner.namespace, &owner.identity)?;
+    if active >= ACCOUNT_CONCURRENCY_LIMIT {
         return Err(Error::AccountConcurrency);
     }
 
@@ -508,19 +533,40 @@ fn insert_intent(tx: &Transaction<'_>, admission: Admission, now: i64) -> Result
         if binding.namespace != owner.namespace || binding.identity != owner.identity {
             return Err(Error::UnknownObject);
         }
-        tx.execute(
-            "UPDATE bindings SET expires_at_epoch=?1
-             WHERE principal=?2 AND namespace=?3 AND identity=?4 AND object_type=?5 AND raw_id=?6",
-            params![
-                now + BINDING_TTL,
-                owner.principal,
-                owner.namespace,
-                owner.identity,
-                reference.kind,
-                reference.raw_id
-            ],
-        )?;
+        refresh_reference(tx, owner, reference, now)?;
     }
+    insert_intent(tx, admission, now, active)
+}
+
+fn refresh_reference(
+    tx: &Transaction<'_>,
+    owner: &Owner,
+    reference: &ObjectBinding,
+    now: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE bindings SET expires_at_epoch=?1
+         WHERE principal=?2 AND namespace=?3 AND identity=?4 AND object_type=?5 AND raw_id=?6",
+        params![
+            now + BINDING_TTL,
+            owner.principal,
+            owner.namespace,
+            owner.identity,
+            reference.kind,
+            reference.raw_id
+        ],
+    )?;
+    Ok(())
+}
+
+// Call only after checking restore, authorization, capacity and reference ownership in this tx.
+fn insert_intent(
+    tx: &Transaction<'_>,
+    admission: Admission,
+    now: i64,
+    active: i64,
+) -> Result<Admission> {
+    let owner = &admission.owner;
     tx.execute(
         "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,
                               reserved,state,admission_json,created_at_epoch,request_id)

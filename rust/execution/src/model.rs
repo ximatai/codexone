@@ -192,8 +192,60 @@ pub struct AdmissionRequest {
 }
 
 impl AdmissionRequest {
+    pub(crate) fn into_parts(self) -> (ManagedAdmissionRequest, AccountDispatch) {
+        let Self {
+            attempt,
+            request_id,
+            key,
+            account,
+            model,
+            mode,
+            requirements,
+            references,
+            reasoning_effort,
+            service_tier,
+            policy_version,
+            pricing_version,
+            reserved_micros,
+        } = self;
+        (
+            ManagedAdmissionRequest {
+                attempt,
+                request_id,
+                key,
+                model,
+                mode,
+                requirements,
+                references,
+                reasoning_effort,
+                service_tier,
+                policy_version,
+                pricing_version,
+                reserved_micros,
+            },
+            account,
+        )
+    }
+}
+
+/// The Key and operation fields shared by managed admission paths.
+pub(crate) struct ManagedAdmissionRequest {
+    pub attempt: String,
+    pub request_id: Option<String>,
+    pub key: AuthenticatedKey,
+    pub model: String,
+    pub mode: Mode,
+    pub requirements: Requirements,
+    pub references: Vec<ObjectBinding>,
+    pub reasoning_effort: Option<String>,
+    pub service_tier: Option<String>,
+    pub policy_version: String,
+    pub pricing_version: String,
+    pub reserved_micros: i64,
+}
+
+impl ManagedAdmissionRequest {
     pub(crate) fn validate(&self) -> Result<()> {
-        let account = &self.account.snapshot;
         validate_operation(
             &self.attempt,
             self.request_id.as_deref(),
@@ -215,9 +267,19 @@ impl AdmissionRequest {
             || !valid_string(&self.policy_version, 128)
             || !valid_string(&self.pricing_version, 128)
             || !(0..=MAX_AMOUNT).contains(&self.reserved_micros)
-            || !(1..=1_000_000).contains(&account.revision)
-            || !(1..=1_000_000).contains(&account.credential_version)
-            || !(1..=MAX_AMOUNT).contains(&account.access_expires_at_unix_seconds)
+        {
+            return Err(ExecutionError::InvalidCommand);
+        }
+        Ok(())
+    }
+}
+
+impl AccountDispatch {
+    pub(crate) fn validate(&self) -> Result<()> {
+        let snapshot = &self.snapshot;
+        if !(1..=1_000_000).contains(&snapshot.revision)
+            || !(1..=1_000_000).contains(&snapshot.credential_version)
+            || !(1..=MAX_AMOUNT).contains(&snapshot.access_expires_at_unix_seconds)
         {
             return Err(ExecutionError::InvalidCommand);
         }

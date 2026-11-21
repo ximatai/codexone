@@ -212,7 +212,27 @@ async fn durable_admission_binding_and_rotation_gates() {
     );
     let mut continuation = request(&service, "continuation", SECOND).await;
     continuation.references.push(object("resp_owned"));
+    let db = fixture.raw();
+    let expires_at = || {
+        db.query_row(
+            "SELECT expires_at_epoch FROM bindings WHERE raw_id='resp_owned'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    let original_expiry = expires_at();
+    fixture.advance(1);
+    let mut missing = continuation.clone();
+    missing.references.push(object("resp_missing"));
+    assert_eq!(
+        service.admit(missing).await.err(),
+        Some(ExecutionError::UnknownObject)
+    );
+    assert_eq!(expires_at(), original_expiry);
+
     let admitted = service.admit(continuation).await.unwrap();
+    assert_eq!(expires_at(), original_expiry + 1);
     assert_eq!(
         admitted.admission().owner.principal,
         turn.admission().owner.principal
@@ -220,8 +240,7 @@ async fn durable_admission_binding_and_rotation_gates() {
     assert_ne!(admitted.admission().owner.key, turn.admission().owner.key);
     drop(admitted);
 
-    let db = fixture.raw();
-    let mut stale = initial;
+    let mut stale = initial.clone();
     stale.attempt = "stale-key".into();
     stale.request_id = None;
     db.execute(
@@ -230,8 +249,18 @@ async fn durable_admission_binding_and_rotation_gates() {
     )
     .unwrap();
     assert_eq!(
-        service.admit(stale).await.err(),
+        service.admit(stale.clone()).await.err(),
         Some(ExecutionError::Unauthorized)
+    );
+    db.execute("UPDATE accounts SET mode='disabled' WHERE id=?1", [ACCOUNT])
+        .unwrap();
+    assert_eq!(
+        service.admit(initial).await.err(),
+        Some(ExecutionError::Conflict)
+    );
+    assert_eq!(
+        service.admit(stale).await.err(),
+        Some(ExecutionError::AccountUnavailable)
     );
     turn.cancel(NOW).unwrap();
     assert_eq!(
@@ -385,11 +414,19 @@ async fn failure_before_commit_or_during_settlement_never_loses_the_intent_barri
          BEGIN SELECT RAISE(ABORT,'synthetic settlement failure'); END;",
     )
     .unwrap();
-    turn.finish(Some(Outcome::new(None, NOW))).unwrap();
+    turn.finish(Some(Outcome::new(
+        Some(Failure::AuthenticationRejected),
+        NOW,
+    )))
+    .unwrap();
     let intent = service.snapshot("interrupted").await.unwrap();
     assert_eq!(intent.state, State::Intent);
     assert_eq!(intent.outcome, None);
     assert_eq!(intent.usage, None);
+    let health_rows: i64 = db
+        .query_row("SELECT COUNT(*) FROM account_health", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(health_rows, 0);
     assert_eq!(
         db.query_row("SELECT COUNT(*) FROM evidence", [], |row| row
             .get::<_, i64>(0))

@@ -357,12 +357,14 @@ impl ExecutionService {
     }
 
     pub async fn admit(&self, request: AdmissionRequest) -> Result<Execution> {
+        let (request, dispatch) = request.into_parts();
         request.validate()?;
+        dispatch.validate()?;
         self.submit_admission(move |tx, options, now| {
             let IdentitySource::Managed(account) = &options.identity else {
                 return Err(Error::Unauthorized);
             };
-            admission::admit(tx, account, options.day_offset, request, now)
+            admission::admit(tx, account, options.day_offset, request, dispatch, now)
         })
         .await
     }

@@ -43,6 +43,14 @@ Open with `Options::new(account_id)`.
    Call `admit` and then `Execution::begin_dispatch` immediately before the
    logical upstream operation. Admission commits the intent and verifies the
    current Key revision, account, model, reference ownership and limits.
+
+Future pool admission can use the same `submit_admission` worker path from a
+dedicated pool command. In its transaction, check the restore and duplicate
+barriers, verify the managed Key and its limits once, and resolve reference
+ownership and the selected account's snapshot, model and capacity. Extend the
+selected bindings and insert the intent and concurrency sample in that
+transaction. The low-level write stays private to the admission module.
+
 ## Execution lease and shutdown
 
 1. Call `observe` for trusted cumulative usage before forwarding any associated
@@ -61,6 +69,13 @@ Open with `Options::new(account_id)`.
    open. Watch `status` for fatal writer or finalizer failure; the accepting
    status describes queue liveness, and each admission also checks storage and
    restore gates.
+
+Health writes for a matching credential version share the settlement
+transaction with the first recorded outcome and any usage evidence. They
+become visible to later admissions at commit. An identical outcome skips
+health writes, a different outcome conflicts, and late usage reconciliation
+supplies no outcome. Any future in-memory health publication belongs on
+the same writer after commit and should use only newly applied health changes.
 
 The async API uses one SQLite worker thread. It has 16 regular slots and at
 most 16 finalization tickets across active leases, queued settlements, and the
