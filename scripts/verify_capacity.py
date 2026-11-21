@@ -499,7 +499,7 @@ def orchestrate(args):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker',action='store_true');parser.add_argument('--root',type=Path)
-    parser.add_argument('--image');parser.add_argument('--harness-image',default='codexone:v8-verification')
+    parser.add_argument('--image');parser.add_argument('--harness-image',default='codexone:verification-tools')
     parser.add_argument('--output',type=Path);parser.add_argument('--duration',type=int,default=600)
     parser.add_argument('--transport',choices=('http','websocket','both'),default='both')
     args=parser.parse_args();assert 10<=args.duration<=900
