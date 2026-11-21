@@ -15,7 +15,11 @@ esac
 
 # Cargo does not run dependency tests. Each standalone crate has its own lockfile.
 for manifest in rust/*/Cargo.toml; do
-  cargo test --locked --manifest-path "$manifest"
+  if [[ "$manifest" == rust/identity-runtime/Cargo.toml ]]; then
+    cargo test --locked --manifest-path "$manifest" --features test-support
+  else
+    cargo test --locked --manifest-path "$manifest"
+  fi
 done
 
 if [[ "${1:-}" == --crate-tests ]]; then exit; fi
