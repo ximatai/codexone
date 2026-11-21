@@ -558,7 +558,27 @@ async fn automatic_reset_learns_expiry_and_reuses_missing_card_only_before_expir
     };
     let (mut socket, head, _) = request(&f.quota).await;
     assert!(head.starts_with("GET "));
+    // Hold the startup scan's upstream reply while a manual list competes for the account slot.
+    assert!(matches!(
+        owner.list_with_status(&f.account).await,
+        Err(Error::AccountConflict)
+    ));
     respond(&mut socket, card()).await;
+    tokio::time::timeout(WAIT, async {
+        while owner.active_operations() != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let manual = owner.list_with_status(&f.account);
+    let upstream = async {
+        let (mut socket, head, _) = request(&f.quota).await;
+        assert!(head.starts_with("GET /backend-api/wham/rate-limit-reset-credits "));
+        respond(&mut socket, card()).await;
+    };
+    let (list, ()) = tokio::join!(manual, upstream);
+    assert_eq!(list.unwrap().list.credits[0].id, "synthetic-card");
     assert!(
         tokio::time::timeout(Duration::from_millis(100), f.quota.accept())
             .await

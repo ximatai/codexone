@@ -1393,7 +1393,7 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
         .0,
         400
     );
-    let (status, list) = request(admin, "GET", reset, Some(ADMIN), None);
+    let (status, list) = reset_when_idle(|| request(admin, "GET", reset, Some(ADMIN), None));
     assert_eq!(status, 200, "{list}");
     assert_eq!(list["credits"][0]["id"], "synth-card");
     let (status, saved) = request(
@@ -1407,8 +1407,15 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
     );
     assert_eq!(status, 200, "{saved}");
     assert_eq!(saved["settings"]["leadHours"], 1);
-    let (status, result) =
-        consume_when_idle(admin, &reset_consume, json!({"creditID":"synth-card"}));
+    let (status, result) = reset_when_idle(|| {
+        request(
+            admin,
+            "POST",
+            &reset_consume,
+            Some(ADMIN),
+            Some(json!({"creditID":"synth-card"})),
+        )
+    });
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["code"], "unknown");
     assert_eq!(
@@ -1462,7 +1469,8 @@ fn quota_management_and_priming_survive_gateway_restart(transport: &'static str)
         .0,
         409
     );
-    let (status, recovered) = consume_when_idle(admin, &reset_consume, json!({}));
+    let (status, recovered) =
+        reset_when_idle(|| request(admin, "POST", &reset_consume, Some(ADMIN), Some(json!({}))));
     assert_eq!(status, 200, "{recovered}");
     assert_eq!(recovered["code"], "already_redeemed");
     gateway.terminate();
@@ -1585,19 +1593,18 @@ fn quota_upstream(
     }
 }
 
-// Changing settings wakes the reset observer. A rejected busy-slot request
-// has not started a redemption and can wait for the observer to finish.
-fn consume_when_idle(admin: u16, path: &str, body: Value) -> (u16, Value) {
+// The startup scan and settings updates can briefly take the same reset slot
+// used by the manual endpoints. Recheck only the API's bounded conflict result.
+fn reset_when_idle(mut request: impl FnMut() -> (u16, Value)) -> (u16, Value) {
     let deadline = Instant::now() + WAIT;
     loop {
-        let response = request(admin, "POST", path, Some(ADMIN), Some(body.clone()));
-        if response.0 != 409 || response.1["error"]["code"] != "account_conflict" {
+        let response = request();
+        if response.0 != 409
+            || response.1["error"]["code"] != "account_conflict"
+            || Instant::now() >= deadline
+        {
             return response;
         }
-        assert!(
-            Instant::now() < deadline,
-            "reset observer did not release its slot"
-        );
         thread::sleep(Duration::from_millis(10));
     }
 }
