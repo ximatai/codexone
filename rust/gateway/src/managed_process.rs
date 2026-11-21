@@ -120,6 +120,19 @@ fn durable_pool_and_governance() {
                 account["id"] == "account-c" && account["authorization"] == "auth_uncertain"
             })
     );
+    assert_eq!(request(admin, "GET", "/api/attention", None, None).0, 401);
+    let (status, attention) = request(admin, "GET", "/api/attention", Some(ADMIN), None);
+    assert_eq!(status, 200, "{attention}");
+    let items = attention["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(
+            |item| item["kind"] == "account_auth_uncertain" && item["subjectID"] == "account-c"
+        )
+    );
+    assert!(items.iter().any(|item| item["kind"] == "quota_stale"
+        && item["subjectID"] == "account-a"
+        && item["detail"]["reason"] == "unavailable"));
+    assert!(items.iter().any(|item| item["kind"] == "backup_disabled"));
     let (status, issued) = request(
         admin,
         "POST",
@@ -152,6 +165,17 @@ fn durable_pool_and_governance() {
     assert_eq!(status, 200, "{first}");
     assert_eq!(first["id"], "resp_synth_1");
 
+    if std::env::var_os("CODEXONE_TEST_MANAGED_SPA").is_some() {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../web/scripts/managed-overview-smoke.mjs");
+        let result = Command::new("node")
+            .arg(script)
+            .arg(format!("http://127.0.0.1:{admin}"))
+            .arg(root.join("admin"))
+            .status()
+            .expect("launch production SPA smoke");
+        assert!(result.success(), "managed SPA smoke failed");
+    }
     let continuation =
         json!({"model": "synth-text", "input": [{"type": "item_reference", "id": "msg_synth_1"}]});
     let (status, refused) = request(
@@ -477,21 +501,26 @@ impl Drop for Gateway {
 }
 
 fn launch(root: &Path, upstream: u16) -> (Gateway, u16, u16) {
-    let mut gateway = Gateway(
-        Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "managed_process::child", "--nocapture"])
-            .env_clear()
-            .env("CODEXONE_MANAGED_TEST_PORT", upstream.to_string())
-            .env("CODEXONE_ACCOUNT_POOL_CONFIG", root.join("pool.json"))
-            .env("CODEXONE_ACCOUNT_MASTER_KEY_FILE", root.join("master"))
-            .env("CODEXONE_ADMIN_TOKEN_FILE", root.join("admin"))
-            .env("CODEXONE_DATA_DIRECTORY", root.join("state"))
-            .env("CODEXONE_DATA_PORT", "0")
-            .env("CODEXONE_ADMIN_PORT", "0")
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "managed_process::child", "--nocapture"])
+        .env_clear()
+        .env("CODEXONE_MANAGED_TEST_PORT", upstream.to_string())
+        .env("CODEXONE_ACCOUNT_POOL_CONFIG", root.join("pool.json"))
+        .env("CODEXONE_ACCOUNT_MASTER_KEY_FILE", root.join("master"))
+        .env("CODEXONE_ADMIN_TOKEN_FILE", root.join("admin"))
+        .env("CODEXONE_DATA_DIRECTORY", root.join("state"))
+        .env("CODEXONE_DATA_PORT", "0")
+        .env("CODEXONE_ADMIN_PORT", "0")
+        .stdout(Stdio::piped());
+    if std::env::var_os("CODEXONE_TEST_MANAGED_SPA").is_some() {
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../web/dist")
+            .canonicalize()
+            .unwrap();
+        command.env("CODEXONE_WEB_DIRECTORY", bundle);
+    }
+    let mut gateway = Gateway(command.spawn().unwrap());
     let stdout = gateway.0.stdout.take().unwrap();
     let (report, lines) = mpsc::channel();
     thread::spawn(move || {

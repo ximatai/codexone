@@ -82,6 +82,11 @@ def pressure_round(ports, token, path):
         storage = get(port, "/api/runtime/storage", headers)
         require(storage["pressure"] == "blocked" and storage["reserveBytes"] == MIB
                 and storage["optionalWorkAllowed"] is False, "lost reserve did not block optional work")
+        attention = get(port, "/api/attention", headers)["items"]
+        require(any(item["kind"] == "storage_pressure" and item["detail"]["pressure"] == "blocked"
+                    for item in attention), "attention did not expose the known pressure")
+        require({item["detail"]["source"] for item in attention if item["kind"] == "attention_source_unavailable"}
+                == {"accounts", "keys", "executions"}, "blocked attention did not mark skipped sources")
         time.sleep(0.035)  # allow the progress gate's short sample cache to expire
         status, error, _ = request(port, headroom, headers)
         require(status == 429 and error["error"]["code"] == "usage_query_capacity",

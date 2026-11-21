@@ -76,3 +76,12 @@ python3 scripts/rust_compat/overview.py --candidate rust/gateway/target/debug/co
 ```
 
 用量驱动对照 Swift v19 的管理响应、浏览器与 Bearer 鉴权和数据入口状态码，并在同一 Rust 进程中核对 WAL 增长、结算预留压力和恢复。首页驱动校验快照顺序、在途首事件及结算更新、握手约束、每会话连接数、登出与关机关闭帧。
+
+使用当前生产 SPA 检查托管账号、额度无观测提醒、已结算用量和同会话撤销。需要 Node.js 26.13.0 和已安装的 Google Chrome。测试从现有托管池 fixture 发起，使用临时 Chrome 配置和合成账号。
+
+```sh
+npm --prefix web ci --ignore-scripts --no-audit --no-fund
+npm --prefix web run build
+CODEXONE_TEST_MANAGED_SPA=1 cargo test --locked --manifest-path rust/gateway/Cargo.toml \
+  managed_process::durable_pool_and_governance -- --nocapture
+```

@@ -285,7 +285,13 @@ async fn summaries_include_rollups_and_publish_live_sections_with_freshness() {
     assert_eq!(key["priceUsageIncomplete"], true);
     assert_eq!(key["tokenUsageIncomplete"], true);
 
+    let clients = Arc::new(codexone_usage::DataClients::default());
+    let mut revisions = clients.revision();
+    let first = clients.register("key");
+    let second = clients.register("key");
+    revisions.changed().await.unwrap();
     let context = Arc::new(Context {
+        clients: clients.snapshot(),
         live_output_after: Some(NOW - 3),
         first_events: [("inflight".into(), false)].into(),
         default_reasoning_efforts: [("model".into(), "low".into())].into(),
@@ -304,6 +310,15 @@ async fn summaries_include_rollups_and_publish_live_sections_with_freshness() {
     let sample = usage.sample_overview(NOW, context.clone()).await;
     let updates = state.update_usage(NOW, sample).unwrap();
     let flight = &updates[&OverviewSource::InFlight]["data"];
+    assert_eq!(flight["clients"][0]["keyID"], "key");
+    assert_eq!(flight["clients"][0]["displayName"], "Test key");
+    assert_eq!(flight["clients"][0]["count"], 2);
+    drop(first);
+    revisions.changed().await.unwrap();
+    assert_eq!(clients.snapshot()[0].count, 1);
+    drop(second);
+    revisions.changed().await.unwrap();
+    assert!(clients.snapshot().is_empty());
     assert_eq!(flight["rows"][0]["hasFirstEvent"], false);
     assert_eq!(flight["recentRequestOutputRateMedian"], 24.0);
     assert_eq!(
