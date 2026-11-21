@@ -7,7 +7,8 @@ use codexone_execution::{
     ExecutionService, ExecutionStatus, Options, StaticIdentity, StaticIdentityConfig,
 };
 use codexone_http_upstream::Proxy;
-use codexone_storage::Database;
+use codexone_maintenance::online::OnlineBackup;
+use codexone_storage::{AccountCredentialCipher, Database};
 use http::{Method, Request, Response, StatusCode, header};
 use hyper::body::Incoming;
 use rusqlite::ffi;
@@ -23,6 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     data::{self, DataPlane},
     listener::{Listeners, Plane, ReadError, read_body},
+    online_backup::BackupTask,
     reply::{self, FlushDeliveries, Reply},
 };
 
@@ -120,7 +122,7 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         .transpose()
         .map_err(|_| Service)?;
 
-    if runtime.backup_directory.is_some() || runtime.http_body_staging_directory.is_some() {
+    if runtime.http_body_staging_directory.is_some() {
         return Err(UnsupportedSettings);
     }
     let (options, data) = match config.source.take() {
@@ -146,22 +148,45 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         .await
         .map_err(|_| Service)?;
     let offset = (runtime.business_day_offset_minutes / 60) as i8;
-    let execution = match runtime.data_directory {
+    let (execution, backup) = match runtime.data_directory {
         Some(directory) => {
             let static_identity = data.is_some();
             let database =
                 tokio::task::spawn_blocking(move || initialize_store(&directory, static_identity))
                     .await
                     .map_err(|_| Service)??;
+            let backup = runtime
+                .backup_directory
+                .map(|root| (root, database.backup_source()));
             let service = ExecutionService::open_database(
                 database,
                 options.with_business_day_offset_hours(offset),
             )
             .await
             .map_err(|_| Service)?;
-            Some(service)
+            let backup = if let Some((root, source)) = backup {
+                let protection = config
+                    .master_keys
+                    .as_ref()
+                    .map(|keys| {
+                        let old: Vec<&[u8; 32]> =
+                            keys.decrypt_only.iter().map(|key| &**key).collect();
+                        AccountCredentialCipher::from_key_bytes(&keys.active, &old).map(Arc::new)
+                    })
+                    .transpose()
+                    .map_err(|_| Service)?;
+                let worker = tokio::task::spawn_blocking(move || {
+                    OnlineBackup::new(root, source, protection)
+                })
+                .await
+                .map_err(|_| Service)?;
+                Some(BackupTask::start(worker, service.clone()))
+            } else {
+                None
+            };
+            (Some(service), backup)
         }
-        None => None,
+        None => (None, None),
     };
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
     let app = Arc::new(Application {
@@ -201,6 +226,9 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         _ = supervise_execution(app.execution.as_ref()) => true,
     };
 
+    if let Some(backup) = &backup {
+        backup.cancel();
+    }
     if let Some(execution) = &app.execution {
         execution.stop_admission();
     }
@@ -209,6 +237,9 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         failed |= !matches!(result, Ok(Ok(())));
     }
     app.admin.revoke_sessions();
+    if let Some(backup) = backup {
+        backup.join().await;
+    }
     if let Some(execution) = &app.execution {
         let drained = match time::timeout(Duration::from_secs(3), async {
             let checkpoint = execution.maintain_storage().await;

@@ -4,6 +4,7 @@ mod gateway;
 mod headers;
 mod image_route;
 mod listener;
+mod online_backup;
 mod reply;
 mod response;
 
@@ -76,9 +77,7 @@ fn main() -> ExitCode {
             ExitCode::from(78)
         }
         Err(gateway::StartupError::UnsupportedSettings) => {
-            eprintln!(
-                "This backend does not support configured online backups or HTTP body staging."
-            );
+            eprintln!("This backend does not support configured HTTP body staging.");
             ExitCode::from(78)
         }
         Err(gateway::StartupError::RequiresManagedKeys) => {
