@@ -115,6 +115,10 @@ Responses Lite允许在input原位置使用additional_tools包，包与其中工
 
 受管 Key 配置模型档位限制后，Codex 条目仅提供 Key 获准且 profile 支持的档位。原默认档位不可用时，目录默认显示第一个允许值。该显示值供客户端选择，请求仍须显式发送档位。有效档位为空的模型从两种目录移除。越权、缺失或无效档位在执行前返回 403 `reasoning_effort_not_allowed`。
 
+Rust 网关在显式档位限制下，把请求顶层基准、`configuration_update` 的有序档位变化和已证明的引用历史一起核对。预热可省略顶层档位，但任何已提供的档位都须获准。档位更新只接受可解释的 `type` 与 `reasoning.effort` 结构，其余协议字段保持既有规则。不明上下文、档位更新项中的未知字段或未经允许的历史档位在准入前返回 403 `reasoning_effort_not_allowed`；日志只使用 P10 的有界档位观测和固定原因。通过授权的报文保留档位字段和条目顺序。
+
+原生 WS 只对同一活动上游连接、同一 lane 的最近成功且已绑定响应保存有界档位事实，并要求模型与 `previous_response_id` 匹配。发送新一轮时旧事实失效，可信完成后才建立下一轮事实。失败、压缩输出和上游替换均不能提供新的连续档位事实。HTTP 独立请求按完整输入校验；需要未证实的 HTTP 引用续接、跨 WS 连接、重启后旧引用或不透明压缩上下文时，有限制的请求默认拒绝。无限制的请求沿用既有透明转发。
+
 ## P17：Responses 流式压缩 v2
 
 普通 /responses 的输入可含单个末尾 `{"type":"compaction_trigger"}`；该控制无 ID/状态/附加 payload，不与 generate:false 或独立 /responses/compact 混用。它使用 compact 执行模式与相同授权/准入/用量/归属屏障，传输仍走普通 HTTP JSON/SSE、桥接或原生 WS，不改路由为独立压缩端点。
@@ -180,7 +184,7 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 
 客户端与提供者协议持续演进，网关不以封闭允许集合解释它们。复盘与取舍见 [开放协议透传](protocol.md)。
 
-- 请求：Images JSON 原字节转发，仅缺 model 时补部署默认并重新序列化；multipart 仅在 /v1 edits 转换为原生 JSON。未知字段保留，尺寸/质量/背景/格式/fidelity/n 由提供者判定；网关检查模型/Key 授权、stream 类型、内联参考图与容量边界，对象须含字符串 image_url。Responses 除 P09/P13/P15 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；Images 参考图/mask 只接受有界内联 PNG/JPEG/WebP，mask 参数关系交由提供者判定。
+- 请求：Images JSON 原字节转发，仅缺 model 时补部署默认并重新序列化；multipart 仅在 /v1 edits 转换为原生 JSON。未知字段保留，尺寸/质量/背景/格式/fidelity/n 由提供者判定；网关检查模型/Key 授权、stream 类型、内联参考图与容量边界，对象须含字符串 image_url。Responses 除 P09/P13/P15/P16 列出的网关职责外，未知字段、条目、part 与工具声明原样转发。仍拒绝 background=true、conversation/prompt、HTTP generate、错位或带成员的 compaction_trigger、非布尔 store/stream、包内或 namespace 内 image_generation、未拥有的硬引用。任何位置的 input_image（含工具结果数组）要求视觉权限；Images 参考图/mask 只接受有界内联 PNG/JPEG/WebP，mask 参数关系交由提供者判定。
 - 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
 - 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds 及 P10 允许的 Retry-After。message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429。内部账号冷却按账号健康规范处理 Retry-After、resets_in_seconds 和 resets_at，不因此改写客户端错误或重试提示。无数字状态的 SSE error 根据已识别的永久拒绝 code/type 映射 400，显式状态优先；未知拒绝仍为 502。Responses SSE 已开始时以 response.failed 下发，原生 Images SSE 使用 error 事件。原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
 
