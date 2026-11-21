@@ -1,0 +1,17 @@
+[package]
+name = "codexone-execution"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+codexone-storage = { path = "../storage" }
+libc = "0.2"
+rusqlite = { version = "0.43", features = ["bundled", "wal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "time"] }
