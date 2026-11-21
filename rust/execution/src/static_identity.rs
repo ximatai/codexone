@@ -197,6 +197,12 @@ impl StaticIdentity {
 #[derive(Clone)]
 pub struct StaticAuthorization(pub(crate) Arc<StaticIdentity>);
 
+impl StaticAuthorization {
+    pub fn key_id(&self) -> &str {
+        &self.0.owner.key
+    }
+}
+
 /// Trusted request classification. The service supplies the owner, price
 /// version and estimate exclusively from its configured static policy.
 #[derive(Clone, Debug)]

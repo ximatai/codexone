@@ -98,19 +98,14 @@ impl NativeImages {
         if *incoming.method() != Method::POST {
             return Err(ProtocolError::new(405, "method_not_allowed").into());
         }
+        let key_id = match &authorization {
+            Authorization::Static(key) => key.key_id(),
+            Authorization::Managed(key) => key.id(),
+        };
         let (parts, incoming) = incoming.into_parts();
-        let (body, ingress_permit) = match bodies.read(incoming).await {
+        let (body, ingress_permit) = match bodies.read(incoming, Some(key_id), request_id).await {
             Ok(body) => body,
-            Err(ReadError::Capacity) => {
-                let mut headers = HeaderMap::new();
-                headers.insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-                return Ok(reply::error(
-                    ProtocolError::new(503, "capacity_exhausted"),
-                    None,
-                    request_id,
-                    headers,
-                ));
-            }
+            Err(ReadError::Capacity) => return Err(ResponseError::body_capacity()),
             Err(error) => {
                 return Err(match error {
                     ReadError::TooLarge => ProtocolError::new(413, "request_too_large"),

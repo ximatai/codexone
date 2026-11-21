@@ -4,7 +4,7 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     num::NonZeroU16,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::Duration,
 };
@@ -20,16 +20,19 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::Semaphore,
     task::JoinSet,
     time::{Instant, Sleep, sleep_until, timeout, timeout_at},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    body_budget::BodyPermit,
     gateway::Application,
     reply::{self, FlushDeliveries, Reply},
 };
+
+pub use crate::body_budget::DataBodies;
 
 const READ_IDLE: Duration = Duration::from_secs(10);
 const DATA_UPLOAD_LIMIT: Duration = Duration::from_secs(120);
@@ -212,7 +215,7 @@ async fn admin_response(app: &Application, request: Request<Incoming>, accepted:
     reply::from_bytes(response)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ReadError {
     TooLarge,
     Timeout,
@@ -220,16 +223,13 @@ pub enum ReadError {
     Capacity,
 }
 
-pub struct DataBodies(Arc<Semaphore>);
-
 impl DataBodies {
-    pub fn new() -> Self {
-        Self(Arc::new(Semaphore::new(
-            codexone_responses::MAX_REQUEST_BYTES,
-        )))
-    }
-
-    pub async fn read(&self, body: Incoming) -> Result<(Bytes, OwnedSemaphorePermit), ReadError> {
+    pub async fn read(
+        &self,
+        body: Incoming,
+        key: Option<&str>,
+        request_id: &str,
+    ) -> Result<(Bytes, BodyPermit), ReadError> {
         use codexone_responses::MAX_REQUEST_BYTES;
         let declared = body
             .size_hint()
@@ -241,27 +241,24 @@ impl DataBodies {
                     .ok_or(ReadError::TooLarge)
             })
             .transpose()?;
-        let mut permit = self.reserve(declared.unwrap_or(0))?;
+        let deadline = Instant::now() + DATA_UPLOAD_LIMIT;
+        let mut permit = self
+            .reserve_http(declared.unwrap_or(0), key, deadline)
+            .await?;
         let bytes = collect_body(
             body,
             declared.unwrap_or(MAX_REQUEST_BYTES),
-            Instant::now() + DATA_UPLOAD_LIMIT,
+            deadline,
+            Some(request_id),
             |received| {
                 if declared.is_none() {
-                    permit.merge(self.reserve(received)?);
+                    self.grow(&mut permit, received)?;
                 }
                 Ok(())
             },
         )
         .await?;
         Ok((bytes, permit))
-    }
-
-    fn reserve(&self, bytes: usize) -> Result<OwnedSemaphorePermit, ReadError> {
-        self.0
-            .clone()
-            .try_acquire_many_owned(bytes as u32)
-            .map_err(|_| ReadError::Capacity)
     }
 }
 
@@ -270,13 +267,14 @@ pub async fn read_body(
     maximum: usize,
     deadline: Instant,
 ) -> Result<Bytes, ReadError> {
-    collect_body(body, maximum, deadline, |_| Ok(())).await
+    collect_body(body, maximum, deadline, None, |_| Ok(())).await
 }
 
 async fn collect_body(
     mut body: Incoming,
     maximum: usize,
     deadline: Instant,
+    request_id: Option<&str>,
     mut reserve: impl FnMut(usize) -> Result<(), ReadError>,
 ) -> Result<Bytes, ReadError> {
     if body.size_hint().lower() > maximum as u64 {
@@ -285,20 +283,54 @@ async fn collect_body(
     let mut contents = BytesMut::new();
     loop {
         let limit = deadline.min(Instant::now() + READ_IDLE);
-        let Some(frame) = timeout_at(limit, body.frame())
-            .await
-            .map_err(|_| ReadError::Timeout)?
-        else {
+        let frame = timeout_at(limit, body.frame()).await.map_err(|_| {
+            if let Some(request_id) = request_id {
+                record_upload_timeout(request_id, contents.len(), limit == deadline);
+            }
+            ReadError::Timeout
+        })?;
+        let Some(frame) = frame else {
             return Ok(contents.freeze());
         };
         if let Ok(bytes) = frame.map_err(|_| ReadError::Interrupted)?.into_data() {
             if bytes.len() > maximum - contents.len() {
                 return Err(ReadError::TooLarge);
             }
-            reserve(bytes.len())?;
+            reserve(contents.len() + bytes.len())?;
             contents.extend_from_slice(&bytes);
         }
     }
+}
+
+fn record_upload_timeout(request_id: &str, received: usize, total: bool) {
+    use std::time::Instant as Monotonic;
+    static LIMIT: Mutex<Option<(Monotonic, u8)>> = Mutex::new(None);
+    let now = Monotonic::now();
+    let mut gate = LIMIT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (window, count) = gate.get_or_insert((now, 0));
+    if now.duration_since(*window) >= Duration::from_secs(60) {
+        (*window, *count) = (now, 0);
+    }
+    if *count >= 16 {
+        return;
+    }
+    *count += 1;
+    drop(gate);
+    let mib = 1024 * 1024;
+    let bucket = if received <= 16 * mib {
+        "at_most_16_mib"
+    } else if received <= 32 * mib {
+        "at_most_32_mib"
+    } else {
+        "over_32_mib"
+    };
+    let reason = if total { "total" } else { "idle" };
+    eprintln!(
+        "Request body read timed out request_id={request_id} timeout_reason={reason} received_size_bucket={bucket} body_started={}",
+        received > 0
+    );
 }
 
 struct DownstreamIo {

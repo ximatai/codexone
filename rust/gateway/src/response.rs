@@ -5,9 +5,10 @@ use codexone_responses::{self as protocol, ProtocolError, ProviderFailure};
 use futures_util::stream;
 use http::{HeaderMap, StatusCode};
 use http_body::Frame;
-use tokio::{sync::OwnedSemaphorePermit, time::Instant};
+use tokio::time::Instant;
 
 use crate::{
+    body_budget::BodyPermit,
     headers,
     reply::{self, Delivery, FlushDeliveries, Reply},
     unix_time,
@@ -21,6 +22,12 @@ pub struct ResponseError {
 }
 
 impl ResponseError {
+    pub fn body_capacity() -> Self {
+        let mut error = Self::from(ProtocolError::new(503, "capacity_exhausted"));
+        error.retry_after_seconds = Some(1);
+        error
+    }
+
     pub fn reply(&self, request_id: &str, mut headers: HeaderMap) -> Reply {
         if let Some(seconds) = self.retry_after_seconds {
             headers.insert(http::header::RETRY_AFTER, seconds.into());
@@ -323,7 +330,7 @@ pub async fn forward(
     lease: execution::Execution,
     request_id: String,
     pending: FlushDeliveries,
-    body_permit: OwnedSemaphorePermit,
+    body_permit: BodyPermit,
 ) -> Reply {
     let mut attempt = Attempt {
         lease: Some(lease),
@@ -478,15 +485,11 @@ struct EventReader {
     parser: protocol::ResponseStream<'static>,
     effective_progress: bool,
     returned_turn_state: bool,
-    _body_permit: OwnedSemaphorePermit,
+    _body_permit: BodyPermit,
 }
 
 impl EventReader {
-    fn new(
-        upstream: upstream::Response,
-        transfer: &Transfer,
-        body_permit: OwnedSemaphorePermit,
-    ) -> Self {
+    fn new(upstream: upstream::Response, transfer: &Transfer, body_permit: BodyPermit) -> Self {
         Self {
             upstream,
             chunk: Bytes::new(),

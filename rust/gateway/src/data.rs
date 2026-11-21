@@ -201,16 +201,24 @@ impl DataPlane {
             &headers::values(&parts.headers, "content-type"),
             &headers::values(&parts.headers, "content-encoding"),
         )?;
-        let (body, body_permit) =
-            self.bodies
-                .read(incoming)
-                .await
-                .map_err(|error| match error {
-                    ReadError::TooLarge => ProtocolError::new(413, "request_too_large"),
-                    ReadError::Timeout => ProtocolError::new(408, "request_body_timeout"),
-                    ReadError::Interrupted => ProtocolError::new(400, "invalid_json"),
-                    ReadError::Capacity => ProtocolError::new(503, "capacity_exceeded"),
-                })?;
+        let key_id = authorization
+            .as_ref()
+            .map(execution::AuthenticatedKey::id)
+            .or_else(|| {
+                static_authorization
+                    .as_ref()
+                    .map(execution::StaticAuthorization::key_id)
+            });
+        let (body, body_permit) = self
+            .bodies
+            .read(incoming, key_id, request_id)
+            .await
+            .map_err(|error| match error {
+                ReadError::TooLarge => ProtocolError::new(413, "request_too_large").into(),
+                ReadError::Timeout => ProtocolError::new(408, "request_body_timeout").into(),
+                ReadError::Interrupted => ProtocolError::new(400, "invalid_json").into(),
+                ReadError::Capacity => ResponseError::body_capacity(),
+            })?;
         let images = configuration.image_generation.as_ref();
         let image_ids: Vec<_> = images
             .iter()

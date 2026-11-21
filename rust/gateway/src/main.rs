@@ -1,3 +1,4 @@
+pub mod body_budget;
 mod catalog;
 mod data;
 mod gateway;
