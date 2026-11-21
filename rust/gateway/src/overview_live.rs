@@ -43,6 +43,8 @@ const PING_PERIOD: Duration = Duration::from_secs(15);
 const PONG_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_DELAY: Duration = Duration::from_millis(100);
+const CONTROL_WINDOW: Duration = Duration::from_secs(1);
+const MAX_CONTROL_FRAMES: u8 = 64;
 
 type Sections = BTreeMap<OverviewSource, OverviewSection>;
 type Stamps = BTreeMap<OverviewSource, OverviewStamp>;
@@ -359,6 +361,8 @@ impl PendingUpgrade {
         let mut ping = time::interval_at(Instant::now() + PING_PERIOD, PING_PERIOD);
         ping.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         let mut awaiting_pong: Option<(Instant, Bytes)> = None;
+        let mut control_window = Instant::now();
+        let mut control_frames = 0;
         let close = loop {
             if draining.is_cancelled() {
                 break CloseCode::Away;
@@ -400,26 +404,38 @@ impl PendingUpgrade {
                     previous = Some(stamps);
                     sequence += 1;
                 }
-                message = socket.next() => match message {
-                    Some(Ok(Message::Pong(payload))) if awaiting_pong.as_ref().is_some_and(|(_, expected)| payload == *expected) => {
-                        awaiting_pong = None;
+                message = socket.next() => {
+                    let Some(Ok(message)) = message else { return; };
+                    let now = Instant::now();
+                    if now.duration_since(control_window) >= CONTROL_WINDOW {
+                        control_window = now;
+                        control_frames = 0;
                     }
-                    Some(Ok(Message::Pong(_))) => {}
-                    Some(Ok(Message::Ping(_))) => {
-                        tokio::select! {
-                            biased;
-                            _ = draining.cancelled() => break CloseCode::Away,
-                            _ = session.revoked() => break CloseCode::Policy,
-                            sent = time::timeout_at(write_deadline(), socket.flush()) => {
-                                if !matches!(sent, Ok(Ok(()))) { break CloseCode::Again; }
+                    control_frames += 1;
+                    if control_frames > MAX_CONTROL_FRAMES {
+                        break CloseCode::Policy;
+                    }
+                    match message {
+                        Message::Pong(payload) if awaiting_pong.as_ref().is_some_and(|(_, expected)| payload == *expected) => {
+                            awaiting_pong = None;
+                        }
+                        Message::Pong(_) => {}
+                        Message::Ping(_) => {
+                            tokio::select! {
+                                biased;
+                                _ = draining.cancelled() => break CloseCode::Away,
+                                _ = session.revoked() => break CloseCode::Policy,
+                                sent = time::timeout_at(write_deadline(), socket.flush()) => {
+                                    if !matches!(sent, Ok(Ok(()))) { break CloseCode::Again; }
+                                }
                             }
                         }
+                        Message::Close(_) => {
+                            let _ = timeout(CLOSE_TIMEOUT, socket.flush()).await;
+                            return;
+                        }
+                        _ => return,
                     }
-                    Some(Ok(Message::Close(_))) => {
-                        let _ = timeout(CLOSE_TIMEOUT, socket.flush()).await;
-                        return;
-                    }
-                    _ => return,
                 },
             }
         };
