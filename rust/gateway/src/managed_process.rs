@@ -501,6 +501,10 @@ impl Drop for Gateway {
 }
 
 fn launch(root: &Path, upstream: u16) -> (Gateway, u16, u16) {
+    launch_with_stderr(root, upstream, Stdio::inherit())
+}
+
+fn launch_with_stderr(root: &Path, upstream: u16, stderr: Stdio) -> (Gateway, u16, u16) {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "managed_process::child", "--nocapture"])
@@ -512,7 +516,8 @@ fn launch(root: &Path, upstream: u16) -> (Gateway, u16, u16) {
         .env("CODEXONE_DATA_DIRECTORY", root.join("state"))
         .env("CODEXONE_DATA_PORT", "0")
         .env("CODEXONE_ADMIN_PORT", "0")
-        .stdout(Stdio::piped());
+        .stdout(Stdio::piped())
+        .stderr(stderr);
     if std::env::var_os("CODEXONE_TEST_MANAGED_SPA").is_some() {
         let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../web/dist")
@@ -1808,7 +1813,9 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
     assert_eq!(estimated, 11);
     drop(db);
 
-    let (mut gateway, data, admin) = launch(root, port);
+    let stderr = tempfile::NamedTempFile::new_in(root).unwrap();
+    let (mut gateway, data, admin) =
+        launch_with_stderr(root, port, stderr.reopen().unwrap().into());
     let (status, stored) = request(admin, "GET", "/api/models", Some(ADMIN), None);
     assert_eq!(status, 200, "{stored}");
     assert_eq!(stored["revision"], 3);
@@ -1845,14 +1852,20 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
 
     let search = "/backend-api/codex/alpha/search";
     let safety = "/backend-api/codex/safety/arc";
+    let realtime = "/backend-api/codex/realtime/calls";
     let control =
-        |path, fault| request(data, "POST", path, Some(key), Some(json!({"fault": fault}))).0;
-    assert_eq!(control(search, "500"), 502);
-    assert_eq!(control(search, "500"), 503);
-    assert_eq!(control(safety, "200"), 200);
+        |path, fault| request(data, "POST", path, Some(key), Some(json!({"fault": fault})));
+    let (status, error) = control(search, "500");
+    assert_eq!(status, 502);
+    assert_eq!(error["error"]["code"], "upstream_unavailable");
+    let (status, error) = control(search, "500");
+    assert_eq!(status, 503);
+    assert_eq!(error["error"]["code"], "account_unavailable");
+    assert_eq!(control(safety, "200"), (200, json!({})));
+    assert_eq!(control(realtime, "200"), (200, json!({})));
     assert_eq!(request(data, "GET", "/health/ready", None, None).0, 200);
-    assert_eq!(control(safety, "429"), 429);
-    assert_eq!(control(safety, "200"), 503);
+    assert_eq!(control(safety, "429").0, 429);
+    assert_eq!(control(safety, "200").0, 503);
     assert_eq!(request(data, "GET", "/health/ready", None, None).0, 503);
     assert_eq!(
         request(
@@ -1867,13 +1880,45 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
         .0,
         200
     );
-    assert_eq!(control(safety, "401"), 502);
-    assert_eq!(control(safety, "200"), 503);
+    assert_eq!(control(safety, "401").0, 502);
+    assert_eq!(control(safety, "200").0, 503);
     assert_eq!(request(data, "GET", "/health/ready", None, None).0, 503);
-    assert_eq!(controls.load(Ordering::Relaxed), 4);
+    assert_eq!(controls.load(Ordering::Relaxed), 5);
     gateway.terminate();
     stop.send(()).unwrap();
     worker.join().unwrap();
+    let key_id = issued["key"]["id"].as_str().unwrap();
+    let control_fields: Vec<_> = fs::read_to_string(stderr.path())
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.strip_prefix("Control request ended "))
+        .map(|fields| {
+            let (fields, elapsed) = fields.rsplit_once(" elapsed_ms=").unwrap();
+            assert!(elapsed.parse::<u128>().is_ok(), "{elapsed}");
+            fields.to_owned()
+        })
+        .collect();
+    assert_eq!(
+        control_fields,
+        [
+            format!(
+                "path_category=codex/alpha/search key_id={key_id} account_id=account-a status=502"
+            ),
+            format!("path_category=codex/alpha/search key_id={key_id} status=503"),
+            format!(
+                "path_category=codex/safety/arc key_id={key_id} account_id=account-a status=200"
+            ),
+            "status=200".to_owned(),
+            format!(
+                "path_category=codex/safety/arc key_id={key_id} account_id=account-a status=429"
+            ),
+            format!("path_category=codex/safety/arc key_id={key_id} status=503"),
+            format!(
+                "path_category=codex/safety/arc key_id={key_id} account_id=account-b status=502"
+            ),
+            format!("path_category=codex/safety/arc key_id={key_id} status=503"),
+        ]
+    );
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     assert_eq!(
         db.query_row("SELECT count(*) FROM attempts", [], |row| row
@@ -1968,6 +2013,7 @@ fn serve_directory(
         assert!(
             head.starts_with("POST /backend-api/codex/alpha/search ")
                 || head.starts_with("POST /backend-api/codex/safety/arc ")
+                || head.starts_with("POST /backend-api/codex/realtime/calls ")
         );
         controls.fetch_add(1, Ordering::Relaxed);
         let length: usize = lower

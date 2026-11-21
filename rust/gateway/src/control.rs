@@ -68,6 +68,10 @@ impl Route {
             60
         })
     }
+
+    fn realtime(self) -> bool {
+        self.0 == "/backend-api/codex/realtime/calls"
+    }
 }
 
 type RouteCooldowns = HashMap<(AccountIdentity, &'static str), Instant>;
@@ -127,6 +131,7 @@ impl Control {
             );
         };
         let began = Instant::now();
+        let mut account_id = None;
         let result = async {
             if request.headers().contains_key(header::CONTENT_ENCODING) {
                 return Err(ProtocolError::new(415, "unsupported_content_type").into());
@@ -183,6 +188,9 @@ impl Control {
                 )
                 .await
                 .map_err(|_| ProtocolError::new(504, "execution_deadline_exceeded"))??;
+                if !route.realtime() {
+                    account_id = Some(picked.0.identity().id.clone());
+                }
                 outbound_headers.extend(picked.1);
                 Some(picked.0)
             } else {
@@ -297,7 +305,13 @@ impl Control {
         .await;
         let response =
             result.unwrap_or_else(|error: ResponseError| error.reply(request_id, HeaderMap::new()));
-        log(route, key.id(), response.status(), began);
+        log(
+            route,
+            key.id(),
+            account_id.as_deref(),
+            response.status(),
+            began,
+        );
         response
     }
 }
@@ -377,7 +391,7 @@ fn control_transport(error: UpstreamError) -> ResponseError {
     }
 }
 
-fn log(route: Route, key: &str, status: StatusCode, began: Instant) {
+fn log(route: Route, key: &str, account_id: Option<&str>, status: StatusCode, began: Instant) {
     static GATE: Mutex<Option<(Instant, u8)>> = Mutex::new(None);
     let now = Instant::now();
     let mut gate = GATE.lock().unwrap();
@@ -391,15 +405,16 @@ fn log(route: Route, key: &str, status: StatusCode, began: Instant) {
     *count += 1;
     drop(gate);
     let elapsed = now.duration_since(began).as_millis();
-    if route.0.ends_with("/realtime/calls") {
+    if route.realtime() {
         eprintln!(
             "Control request ended status={} elapsed_ms={elapsed}",
             status.as_u16()
         );
     } else {
         let path = route.0.trim_start_matches("/backend-api/");
+        let account = account_id.map_or_else(String::new, |id| format!(" account_id={id}"));
         eprintln!(
-            "Control request ended path_category={path} key_id={key} status={} elapsed_ms={elapsed}",
+            "Control request ended path_category={path} key_id={key}{account} status={} elapsed_ms={elapsed}",
             status.as_u16()
         );
     }
