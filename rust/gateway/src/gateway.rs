@@ -10,7 +10,7 @@ use codexone_http_upstream::Proxy;
 use codexone_storage::Database;
 use http::{Method, Request, Response, StatusCode, header};
 use hyper::body::Incoming;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::ffi;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::{
@@ -40,21 +40,20 @@ pub struct Application {
 }
 
 impl Application {
-    fn readiness(&self) -> ReadinessReport {
+    async fn readiness(&self) -> ReadinessReport {
         let mut report = ReadinessReport::unconfigured();
-        let available = self
-            .execution
-            .as_ref()
-            .is_some_and(|execution| execution.status() == ExecutionStatus::Accepting);
-        report.checks[0].ready = available;
         report.checks[1].ready = self.data.is_some();
-        report.checks[2].ready = self.data.is_some() && available;
+        if let Some(execution) = &self.execution {
+            report.checks[0].ready = execution.admission_ready().await;
+            report.checks[2].ready =
+                self.data.is_some() && execution.status() == ExecutionStatus::Accepting;
+        }
         report
     }
 
     pub async fn admin(&self, request: &Request<Bytes>) -> Response<Bytes> {
         self.admin
-            .route(request, async || self.readiness())
+            .route(request, async || self.readiness().await)
             .await
             .unwrap_or_else(codexone_admin::not_found)
     }
@@ -65,7 +64,7 @@ impl Application {
             let (status, body) = if path == "/health/live" {
                 (StatusCode::OK, json!({"status": "alive"}))
             } else {
-                let report = self.readiness();
+                let report = self.readiness().await;
                 let ready = report.is_ready();
                 let status = if ready {
                     StatusCode::OK
@@ -147,24 +146,22 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         .await
         .map_err(|_| Service)?;
     let offset = (runtime.business_day_offset_minutes / 60) as i8;
-    let (execution, inspection) = match runtime.data_directory {
+    let execution = match runtime.data_directory {
         Some(directory) => {
             let static_identity = data.is_some();
-            let path =
+            let database =
                 tokio::task::spawn_blocking(move || initialize_store(&directory, static_identity))
                     .await
                     .map_err(|_| Service)??;
-            let service =
-                ExecutionService::open(&path, options.with_business_day_offset_hours(offset))
-                    .await
-                    .map_err(|_| Service)?;
-            let inspection = tokio::task::spawn_blocking(move || open_inspection_reader(&path))
-                .await
-                .map_err(|_| Service)?
-                .map_err(|_| Service)?;
-            (Some(service), Some(inspection))
+            let service = ExecutionService::open_database(
+                database,
+                options.with_business_day_offset_hours(offset),
+            )
+            .await
+            .map_err(|_| Service)?;
+            Some(service)
         }
-        None => (None, None),
+        None => None,
     };
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
     let app = Arc::new(Application {
@@ -183,14 +180,14 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
     data_listener.announce();
     admin_listener.announce();
     let mut listeners = JoinSet::new();
-    listeners.spawn_local(data_listener.serve(
+    listeners.spawn(data_listener.serve(
         app.clone(),
         Plane::Data,
         access.clone(),
         stopping.clone(),
         data_connections,
     ));
-    listeners.spawn_local(admin_listener.serve(
+    listeners.spawn(admin_listener.serve(
         app.clone(),
         Plane::Admin,
         access,
@@ -201,7 +198,7 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         _ = terminate.recv() => false,
         _ = interrupt.recv() => false,
         _ = listeners.join_next() => true,
-        _ = maintain(app.execution.as_ref()) => true,
+        _ = supervise_execution(app.execution.as_ref()) => true,
     };
 
     if let Some(execution) = &app.execution {
@@ -228,14 +225,10 @@ pub async fn run(mut config: Configuration) -> Result<(), StartupError> {
         };
         failed |= !drained;
     }
-    drop(inspection);
     if failed { Err(Service) } else { Ok(()) }
 }
 
-fn initialize_store(
-    directory: &Path,
-    static_identity: bool,
-) -> Result<std::path::PathBuf, StartupError> {
+fn initialize_store(directory: &Path, static_identity: bool) -> Result<Database, StartupError> {
     use StartupError::*;
     DirBuilder::new()
         .recursive(true)
@@ -257,45 +250,43 @@ fn initialize_store(
             return Err(RequiresManagedKeys);
         }
     }
-    drop(database);
-    path.canonicalize().map_err(|_| Service)
+    // Keep the WAL and SHM files available to offline read-only clients. The writer can
+    // checkpoint and close under the instance lock without a second SQLite connection.
+    let mut persist: std::ffi::c_int = 1;
+    // SAFETY: The connection is open and unshared. This SQLite opcode takes a pointer
+    // to a C int and does not retain it.
+    let result = unsafe {
+        ffi::sqlite3_file_control(
+            database.connection().handle(),
+            c"main".as_ptr(),
+            ffi::SQLITE_FCNTL_PERSIST_WAL,
+            std::ptr::from_mut(&mut persist).cast(),
+        )
+    };
+    if result != ffi::SQLITE_OK {
+        return Err(Service);
+    }
+    Ok(database)
 }
 
-// Keep a read-only connection through the writer's final checkpoint and close. An idle
-// reader holds no transaction that pins WAL frames. Its presence retains SQLite's WAL
-// and SHM files for offline read-only opening, including on macOS without a writable open.
-fn open_inspection_reader(path: &Path) -> rusqlite::Result<Connection> {
-    let reader = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )?;
-    reader.query_row(
-        "SELECT generation FROM maintenance_state WHERE id=1",
-        [],
-        |_| Ok(()),
-    )?;
-    Ok(reader)
-}
-
-async fn maintain(execution: Option<&ExecutionService>) {
+async fn supervise_execution(execution: Option<&ExecutionService>) {
     let Some(execution) = execution else {
         return std::future::pending().await;
     };
-    let mut watch = time::interval(Duration::from_millis(50));
-    watch.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut storage = time::interval_at(
         time::Instant::now() + Duration::from_secs(30),
         Duration::from_secs(30),
     );
     storage.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            _ = watch.tick() => if execution.status() == ExecutionStatus::Failed { return; },
-            _ = storage.tick() => {
+    tokio::select! {
+        _ = execution.wait_until_failed() => {}
+        _ = async {
+            loop {
+                storage.tick().await;
                 let _ = execution.maintain_storage().await;
                 let _ = execution.expire_unknown().await;
             }
-        }
+        } => {}
     }
 }
 

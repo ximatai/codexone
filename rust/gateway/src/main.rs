@@ -54,9 +54,7 @@ fn main() -> ExitCode {
         Ok(runtime) => runtime,
         Err(_) => return service_failure(),
     };
-    // The HTTP adapter's watch-based read futures stay on the ingress event loop.
-    let local = tokio::task::LocalSet::new();
-    match local.block_on(&runtime, gateway::run(config)) {
+    match runtime.block_on(gateway::run(config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(gateway::StartupError::UnsupportedConfiguration) => {
             eprintln!(

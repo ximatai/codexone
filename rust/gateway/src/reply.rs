@@ -1,8 +1,7 @@
 use std::{
-    cell::RefCell,
     convert::Infallible,
     pin::Pin,
-    rc::Rc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
@@ -15,27 +14,27 @@ use http::{HeaderMap, HeaderValue, Response, StatusCode, header};
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::{Full, StreamBody};
 
-pub type ReplyBody = Pin<Box<dyn Body<Data = Bytes, Error = Infallible>>>;
+pub type ReplyBody = Pin<Box<dyn Body<Data = Bytes, Error = Infallible> + Send>>;
 pub type Reply = Response<ReplyBody>;
 
 /// A successful terminal is recorded when Hyper flushes its bytes to the socket.
 /// A disconnected or aborted connection drops any pending delivery with its usage intact.
 #[derive(Clone, Default)]
-pub struct FlushDeliveries(Rc<FlushState>);
+pub struct FlushDeliveries(Arc<FlushState>);
 
 #[derive(Default)]
 struct FlushState {
-    pending: RefCell<Vec<Delivery>>,
+    pending: Mutex<Vec<Delivery>>,
     flushed: tokio::sync::Notify,
 }
 
 impl FlushDeliveries {
     pub fn enqueue(&self, delivery: Delivery) {
-        self.0.pending.borrow_mut().push(delivery);
+        self.0.pending.lock().unwrap().push(delivery);
     }
 
     pub fn submitted(&self) {
-        let pending = std::mem::take(&mut *self.0.pending.borrow_mut());
+        let pending = std::mem::take(&mut *self.0.pending.lock().unwrap());
         if pending.is_empty() {
             return;
         }
@@ -46,8 +45,12 @@ impl FlushDeliveries {
     }
 
     pub async fn wait(&self) {
-        while !self.0.pending.borrow().is_empty() {
-            self.0.flushed.notified().await;
+        loop {
+            let flushed = self.0.flushed.notified();
+            if self.0.pending.lock().unwrap().is_empty() {
+                return;
+            }
+            flushed.await;
         }
     }
 }
@@ -142,7 +145,7 @@ pub fn json(
 pub fn sse(
     mut headers: HeaderMap,
     request_id: &str,
-    stream: impl Stream<Item = Result<Frame<Bytes>, Infallible>> + 'static,
+    stream: impl Stream<Item = Result<Frame<Bytes>, Infallible>> + Send + 'static,
 ) -> Reply {
     headers.insert(
         header::CONTENT_TYPE,

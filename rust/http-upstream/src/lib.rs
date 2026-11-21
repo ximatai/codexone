@@ -392,10 +392,15 @@ fn check_abort(options: &ExchangeOptions) -> Result<(), Error> {
 }
 
 async fn wait_for_failure(failures: &mut watch::Receiver<Option<Error>>) -> Error {
-    match failures.wait_for(Option::is_some).await {
-        Ok(error) => error.expect("the predicate only accepts an error"),
-        // A complete HTTP response can still have pending bytes after the driver exits.
-        Err(_) => pending().await,
+    loop {
+        let error = *failures.borrow_and_update();
+        if let Some(error) = error {
+            return error;
+        }
+        if failures.changed().await.is_err() {
+            // A complete HTTP response can still have pending bytes after the driver exits.
+            return pending().await;
+        }
     }
 }
 

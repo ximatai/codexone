@@ -155,7 +155,8 @@ def ledger(path, expected_attempts):
     return {"schemaVersion": version, "attempts": attempts}
 
 
-def probe(binary, root):
+@contextmanager
+def fixture(root):
     root.mkdir(mode=0o700)
     config = root / "identity.json"
     database = root / "state" / "core.sqlite"
@@ -176,6 +177,11 @@ def probe(binary, root):
             "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1",
         }), encoding="utf-8")
         config.chmod(0o600)
+        yield upstream, database, environment
+
+
+def probe(binary, root, restart_with=None):
+    with fixture(root) as (upstream, database, environment):
         try:
             checked = subprocess.run([binary, "--check-config"], cwd=root, env=environment,
                                      stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
@@ -192,7 +198,7 @@ def probe(binary, root):
         require(upstream.calls == 1, "expected one upstream call after the first shutdown")
         initial_ledger = ledger(database, 1)
 
-        with running_gateway(binary, root, environment) as ports:
+        with running_gateway(restart_with or binary, root, environment) as ports:
             restarted_health = health(ports)
             second = generate(ports["data"], 2, previous=first["body"]["id"])
         require(upstream.calls == 2, "expected exactly two upstream calls after restart")
@@ -218,9 +224,19 @@ def main():
     reports = {}
     failures = {}
     with tempfile.TemporaryDirectory(prefix="codexone-rust-compat-") as temporary:
-        for role, binary in (("reference", args.reference), ("candidate", args.candidate)):
+        runs = (
+            ("reference", args.reference, None),
+            ("candidate", args.candidate, None),
+            ("reference-to-candidate", args.reference, args.candidate),
+            ("candidate-to-reference", args.candidate, args.reference),
+        )
+        for role, binary, restart_with in runs:
             try:
-                reports[role] = snapshot(probe(binary.resolve(strict=True), Path(temporary).resolve() / role))
+                reports[role] = snapshot(probe(
+                    binary.resolve(strict=True),
+                    Path(temporary).resolve() / role,
+                    restart_with.resolve(strict=True) if restart_with else None,
+                ))
             except ProbeError as error:
                 failures[role] = str(error)
             except (OSError, ValueError) as error:
@@ -230,11 +246,13 @@ def main():
         print(f"{role}: {error}", file=sys.stderr)
     if failures:
         return 2
-    reference, candidate = reports["reference"], reports["candidate"]
-    if reference != candidate:
+    reference = reports.pop("reference")
+    differences = {role: actual for role, actual in reports.items() if reference != actual}
+    for role, actual in differences.items():
         sys.stderr.writelines(unified_diff(reference.splitlines(keepends=True),
-                                           candidate.splitlines(keepends=True),
-                                           fromfile="reference", tofile="candidate"))
+                                           actual.splitlines(keepends=True),
+                                           fromfile="reference", tofile=role))
+    if differences:
         return 1
     sys.stdout.write(reference)
     return 0

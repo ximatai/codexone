@@ -114,7 +114,7 @@ impl Listeners {
             };
             let application = app.clone();
             let draining = draining.clone();
-            connections.spawn_local(async move {
+            connections.spawn(async move {
                 let _permit = permit;
                 serve_connection(socket, application, plane, draining, Instant::now()).await;
             });
