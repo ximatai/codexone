@@ -1,0 +1,13 @@
+//! Subscription identity operations on the gateway's existing writer.
+
+mod claims;
+mod provider;
+mod quota;
+mod runtime;
+mod store;
+
+pub use provider::SubscriptionProvider;
+pub use quota::{
+    Observation, QuotaFailure, QuotaLimit, QuotaWindow, SubscriptionQuota, UsageCredits,
+};
+pub use runtime::{DispatchCredential, IdentityRuntime};

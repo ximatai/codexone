@@ -1,0 +1,26 @@
+[package]
+name = "codexone-identity-runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+codexone-governance = { path = "../governance" }
+codexone-http-upstream = { path = "../http-upstream" }
+codexone-storage = { path = "../storage" }
+codexone-wire = { path = "../wire" }
+http = "1"
+percent-encoding = "2"
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "net", "test-util"] }
