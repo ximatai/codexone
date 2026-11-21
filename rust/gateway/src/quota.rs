@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use codexone_config::ResponsesConfiguration;
+use codexone_config::{ResponsesConfiguration, UpstreamTransport};
 use codexone_execution::{Execution, ExecutionService, Outcome};
 use codexone_governance::{Error, Governance, KeyOptions, QuotaCommand, Result};
 use codexone_http_upstream::{self as upstream, CancellationToken, HttpUpstream};
@@ -16,13 +16,13 @@ use http::{HeaderMap, HeaderValue, Method, Request, Uri, header};
 use serde_json::Value;
 use tokio::{task::JoinSet, time::Instant};
 
-use crate::{headers, managed::GovernanceWriter, response};
+use crate::{headers, managed::GovernanceWriter, response, ws};
 
-pub(crate) type Worker = PrimingWorker<GovernanceWriter, HttpPriming>;
+pub(crate) type Worker = PrimingWorker<GovernanceWriter, ResponsesPriming>;
 
 pub(crate) struct Jobs {
     reset: Arc<ResetSupervisor<GovernanceWriter>>,
-    priming: Arc<PrimingSupervisor<GovernanceWriter, HttpPriming>>,
+    priming: Arc<PrimingSupervisor<GovernanceWriter, ResponsesPriming>>,
     signals: PrimingSignals,
 }
 
@@ -30,7 +30,7 @@ impl Jobs {
     pub fn new(
         config: &ResponsesConfiguration,
         key_options: &KeyOptions,
-        transport: HttpPriming,
+        transport: ResponsesPriming,
         writer: GovernanceWriter,
         governance: Arc<Governance<GovernanceWriter>>,
         identity: IdentityRuntime<GovernanceWriter>,
@@ -142,14 +142,15 @@ fn decode<T: serde::de::DeserializeOwned>(body: Option<protocol::JsonValue>) -> 
         .map_err(|_| Error::InvalidCommand)
 }
 
-pub(crate) struct HttpPriming {
+pub(crate) struct ResponsesPriming {
     client: HttpUpstream,
     fingerprint: HeaderMap,
     uri: Uri,
+    websocket: Option<ws::Connector>,
     budget: codexone_config::ExecutionBudget,
 }
 
-impl HttpPriming {
+impl ResponsesPriming {
     pub fn new(
         config: &ResponsesConfiguration,
         base: &str,
@@ -162,16 +163,29 @@ impl HttpPriming {
             &config.models,
         )
         .map_err(|_| ())?;
+        let client = HttpUpstream::new(proxy);
+        let uri: Uri = format!("{base}/responses").parse().map_err(|_| ())?;
+        let websocket = (config.upstream_transport == UpstreamTransport::WebSocket)
+            .then(|| {
+                ws::Connector::new(
+                    uri.clone(),
+                    client.clone(),
+                    protocol::Contract::CodexSubscription,
+                    None,
+                )
+            })
+            .transpose()?;
         Ok(Self {
-            client: HttpUpstream::new(proxy),
+            client,
             fingerprint,
-            uri: format!("{base}/responses").parse().map_err(|_| ())?,
+            uri,
+            websocket,
             budget: config.budget,
         })
     }
 }
 
-impl PrimingTransport for HttpPriming {
+impl PrimingTransport for ResponsesPriming {
     async fn exchange(
         &self,
         request: PrimingRequest,
@@ -184,6 +198,7 @@ impl PrimingTransport for HttpPriming {
             compact: false,
             client_sse: false,
             upstream_sse: true,
+            size_fallback: false,
             began,
             usage: protocol::UsageConfig {
                 host: protocol::Rates {
@@ -192,6 +207,58 @@ impl PrimingTransport for HttpPriming {
                 },
                 image: None,
             },
+        };
+        let normalized = protocol::Request::parse(
+            request.body.to_string().as_bytes(),
+            protocol::Mode::Priming,
+            None,
+        );
+        let Ok(normalized) = normalized else {
+            return Some(Outcome::new(
+                Some(codexone_execution::Failure::InvalidRequest),
+                crate::unix_time(),
+            ));
+        };
+        if let Some(socket) = &self.websocket {
+            let Ok(frame) = codexone_websocket::native_frame(normalized, socket.contract, "", None)
+            else {
+                return Some(Outcome::new(
+                    Some(codexone_execution::Failure::InvalidRequest),
+                    crate::unix_time(),
+                ));
+            };
+            let provider = ws::Provider::with_credentials(request.headers);
+            let connect_stop = stop.clone();
+            let connect = async {
+                socket
+                    .connect(&self.fingerprint, &provider, deadline, &connect_stop)
+                    .await
+                    .map(|(socket, _)| socket)
+            };
+            return Some(
+                ws::discard_priming(
+                    connect,
+                    frame,
+                    lease,
+                    transfer,
+                    codexone_websocket::BridgeOptions {
+                        deadline,
+                        budget: ws::budget(self.budget, false),
+                        stream: true,
+                        continuation: false,
+                        cancellation: stop,
+                    },
+                )
+                .await,
+            );
+        }
+        let Ok(normalized) =
+            normalized.into_upstream_document(protocol::Contract::CodexSubscription, false)
+        else {
+            return Some(Outcome::new(
+                Some(codexone_execution::Failure::InvalidRequest),
+                crate::unix_time(),
+            ));
         };
         let mut headers = self.fingerprint.clone();
         headers.extend(request.headers);
@@ -203,20 +270,6 @@ impl PrimingTransport for HttpPriming {
             header::ACCEPT,
             HeaderValue::from_static("text/event-stream"),
         );
-        let normalized = protocol::Request::parse(
-            request.body.to_string().as_bytes(),
-            protocol::Mode::Priming,
-            None,
-        )
-        .and_then(|request| {
-            request.into_upstream_document(protocol::Contract::CodexSubscription, false)
-        });
-        let Ok(normalized) = normalized else {
-            return Some(Outcome::new(
-                Some(codexone_execution::Failure::InvalidRequest),
-                crate::unix_time(),
-            ));
-        };
         let mut outbound = Request::new(upstream::RequestBody::bytes(Bytes::from(
             normalized.encode(false),
         )));

@@ -23,7 +23,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     headers,
-    quota::{HttpPriming, Jobs, Worker},
+    quota::{Jobs, ResponsesPriming, Worker},
 };
 
 const SUBSCRIPTION_BASE: &str = "https://chatgpt.com/backend-api/codex";
@@ -128,7 +128,7 @@ impl Managed {
                 let (jobs, worker) = Jobs::new(
                     config,
                     &options,
-                    HttpPriming::new(config, &target.base, proxy)?,
+                    ResponsesPriming::new(config, &target.base, proxy)?,
                     writer,
                     store.clone(),
                     identity,
@@ -290,6 +290,7 @@ pub struct Pool {
 }
 
 pub struct Affinity<'a> {
+    pub connection: Option<&'a AccountIdentity>,
     pub hints: &'a [ObjectBinding],
     pub turn_state: Option<&'a str>,
     pub headers: &'a HeaderMap,
@@ -409,10 +410,13 @@ impl Pool {
                 None
             };
             let routing = PoolRouting {
+                connection: affinity
+                    .as_ref()
+                    .and_then(|affinity| affinity.connection)
+                    .cloned(),
                 required,
                 preferred: preferred
                     .or_else(|| self.sessions.preferred(key_id, &labels, Monotonic::now())),
-                ..Default::default()
             };
             let result = execution
                 .admit_pool(request.clone(), || async {
@@ -497,9 +501,13 @@ impl Pool {
             .get("x-codex-turn-state")
             .and_then(|value| value.to_str().ok())
         {
-            self.turn_states
-                .observe(key, token, owner, Monotonic::now());
+            self.observe_turn_token(key, owner, token);
         }
+    }
+
+    pub fn observe_turn_token(&self, key: &str, owner: &AccountIdentity, token: &str) {
+        self.turn_states
+            .observe(key, token, owner, Monotonic::now());
     }
 }
 

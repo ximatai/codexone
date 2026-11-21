@@ -19,7 +19,9 @@ pub use static_identity::{
     FixedIdentity, StaticAdmissionRequest, StaticAuthorization, StaticIdentity,
     StaticIdentityConfig,
 };
-pub use worker::{Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options};
+pub use worker::{
+    AccountConnection, Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options,
+};
 
 use std::{error::Error, fmt};
 

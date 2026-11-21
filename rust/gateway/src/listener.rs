@@ -18,7 +18,7 @@ use http_body_util::BodyExt;
 use hyper::{body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::Semaphore,
     task::JoinSet,
@@ -39,6 +39,7 @@ const READ_IDLE: Duration = Duration::from_secs(10);
 const DATA_UPLOAD_LIMIT: Duration = Duration::from_secs(120);
 const DRAIN_LIMIT: Duration = Duration::from_secs(4);
 const DATA_WRITE_IDLE: Duration = Duration::from_secs(5);
+const DATA_REFUSAL_SLOTS: usize = 16;
 
 #[derive(Clone, Copy)]
 pub enum Plane {
@@ -91,6 +92,7 @@ impl Listeners {
             ..
         } = self;
         let slots = Arc::new(Semaphore::new(max_connections));
+        let refusals = Arc::new(Semaphore::new(DATA_REFUSAL_SLOTS));
         let draining = CancellationToken::new();
         let mut connections = JoinSet::new();
         let result = loop {
@@ -115,6 +117,18 @@ impl Listeners {
                 continue;
             }
             let Ok(permit) = slots.clone().try_acquire_owned() else {
+                if matches!(plane, Plane::Data)
+                    && let Ok(permit) = refusals.clone().try_acquire_owned()
+                {
+                    let draining = draining.clone();
+                    connections.spawn(async move {
+                        let _permit = permit;
+                        tokio::select! {
+                            _ = draining.cancelled() => {}
+                            _ = timeout(Duration::from_secs(1), refuse_connection(socket)) => {}
+                        }
+                    });
+                }
                 continue;
             };
             let application = app.clone();
@@ -137,6 +151,21 @@ impl Listeners {
         }
         result
     }
+}
+
+async fn refuse_connection(mut socket: TcpStream) -> io::Result<()> {
+    let body = br#"{"error":{"message":"Data connection capacity exhausted.","type":"server_error","code":"capacity_exceeded"}}"#;
+    let head = format!(
+        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len(),
+    );
+    socket.write_all(head.as_bytes()).await?;
+    socket.write_all(body).await?;
+    socket.shutdown().await?;
+    // Drain a bounded prefix so unread request bytes do not reset a successfully written 503.
+    let mut ignored = [0; 4096];
+    let _ = socket.read(&mut ignored).await;
+    Ok(())
 }
 
 async fn accept_additional(
@@ -164,12 +193,14 @@ async fn serve_connection(
         deadline: None,
         entire_write: admin,
     });
+    let (upgrades, mut upgraded) = tokio::sync::mpsc::channel(1);
     let service = service_fn(move |request| {
         let app = app.clone();
         let pending = pending.clone();
+        let upgrades = upgrades.clone();
         async move {
             let response = match plane {
-                Plane::Data => app.data(request, pending).await,
+                Plane::Data => app.data(request, pending, &upgrades).await,
                 Plane::Admin => admin_response(&app, request, accepted).await,
             };
             Ok::<_, std::convert::Infallible>(response)
@@ -182,13 +213,16 @@ async fn serve_connection(
         .max_headers(if admin { 32 } else { 64 })
         .max_buf_size(if admin { 8 * 1024 } else { 64 * 1024 })
         .auto_date_header(false);
-    let mut connection = std::pin::pin!(http.serve_connection(io, service));
+    let mut connection = std::pin::pin!(http.serve_connection(io, service).with_upgrades());
     tokio::select! {
         _ = &mut connection => {}
         _ = draining.cancelled() => {
             connection.as_mut().graceful_shutdown();
             let _ = connection.await;
         }
+    }
+    if let Ok(upgrade) = upgraded.try_recv() {
+        upgrade.serve(&draining).await;
     }
 }
 

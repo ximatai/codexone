@@ -34,7 +34,6 @@ use crate::{
 };
 
 pub enum StartupError {
-    UnsupportedConfiguration,
     RequiresManagedKeys,
     Service,
 }
@@ -78,7 +77,12 @@ impl Application {
         codexone_admin::not_found()
     }
 
-    pub async fn data(&self, request: Request<Incoming>, pending: FlushDeliveries) -> Reply {
+    pub async fn data(
+        &self,
+        request: Request<Incoming>,
+        pending: FlushDeliveries,
+        upgrades: &tokio::sync::mpsc::Sender<crate::ws::Upgrade>,
+    ) -> Reply {
         let path = request.uri().path();
         if request.method() == Method::GET && (path == "/health/live" || path == "/health/ready") {
             let (status, body) = if path == "/health/live" {
@@ -105,7 +109,7 @@ impl Application {
             );
         }
         if let (Some(data), Some(execution)) = (&self.data, &self.execution) {
-            data.handle(request, execution, pending).await
+            data.handle(request, execution, pending, upgrades).await
         } else {
             let (parts, body) = request.into_parts();
             match read_body(body, 4096, time::Instant::now() + Duration::from_secs(10)).await {
@@ -170,9 +174,7 @@ async fn run_configured(
         matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
     let (mut options, mut data, pool_config) = match config.source.take() {
         None => (Options::new("storage-only"), None, None),
-        Some(Source::SingleIdentity(identity))
-            if identity.responses.upstream_transport == UpstreamTransport::Http =>
-        {
+        Some(Source::SingleIdentity(identity)) => {
             let token = identity.read_upstream_token().map_err(|_| Service)?;
             let token = token.as_ref().map(|token| token.as_str());
             let (options, versions) = if identity.managed_keys {
@@ -200,10 +202,7 @@ async fn run_configured(
                 DataPlane::new(*identity, token, proxy.clone(), versions).map_err(|_| Service)?;
             (options, Some(data), None)
         }
-        Some(Source::AccountPool(pool)) if pool.upstream_transport == UpstreamTransport::Http => {
-            (Options::for_account_pool(), None, Some(pool))
-        }
-        _ => return Err(UnsupportedConfiguration),
+        Some(Source::AccountPool(pool)) => (Options::for_account_pool(), None, Some(pool)),
     };
     if config.master_keys.is_some() {
         options = options.with_governance_recovery(managed::recover);
@@ -536,7 +535,10 @@ pub(crate) fn identity_versions(
         })
         .collect();
     let policy = json!({
-        "protocolVersion": "rust-http-1",
+        "protocolVersion": match config.upstream_transport {
+            UpstreamTransport::Http => "rust-http-1",
+            UpstreamTransport::WebSocket => "rust-websocket-1",
+        },
         "models": model_policies,
         "images": image_prices,
         "reservation": config.reserved_micros,

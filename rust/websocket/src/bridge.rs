@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use codexone_responses::{
     EventSemantics, JsonValue, MAX_EVENT_BYTES, ProtocolError, ProviderFailure,
     sanitize_client_output,
@@ -8,7 +10,7 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use crate::{
     CancellationToken, ConnectFailure, ExecutionBudget, QUEUE_TIMEOUT, Socket, SocketEnd,
     WS_ROUTING_BYTES,
-    peer::{DOWNSTREAM_QUEUE_BYTES, Peer},
+    peer::{DOWNSTREAM_QUEUE_BYTES, Peer, Read},
     protocol::{DEADLINE, INDETERMINATE, TOO_LARGE},
     turns::{Route, Turn, Turns, decode_event, provider_failure},
 };
@@ -65,7 +67,7 @@ pub enum BridgeEvidence<'a> {
 
 struct Exchange {
     options: BridgeOptions,
-    turns: Turns,
+    turns: Arc<Mutex<Turns>>,
     buffered_metadata: Vec<JsonValue>,
     visible: bool,
 }
@@ -81,7 +83,7 @@ pub async fn bridge<E, F, O>(
     mut output: O,
 ) -> Result<(), BridgeFailure>
 where
-    E: FnMut(BridgeEvidence<'_>),
+    E: FnMut(BridgeEvidence<'_>) + Send + 'static,
     O: FnMut(BridgeOutput) -> F,
     F: Future<Output = Result<(), ProtocolError>>,
 {
@@ -97,16 +99,29 @@ where
             result.unwrap_or(Err(ConnectFailure::TimedOut)),
     }
     .map_err(BridgeFailure::BeforeSend)?;
-    let mut peer = Peer::new(socket, MAX_EVENT_BYTES, DOWNSTREAM_QUEUE_BYTES);
+    let mut turns = Turns::new();
+    turns
+        .active
+        .insert(String::new(), Turn::new(options.deadline, false));
+    let turns = Arc::new(Mutex::new(turns));
+    let reader = turns.clone();
+    let mut peer = Peer::provider(
+        socket,
+        MAX_EVENT_BYTES,
+        DOWNSTREAM_QUEUE_BYTES,
+        move |frame| match inspect(&mut reader.lock().unwrap(), frame, &mut evidence) {
+            Ok(Some(event)) => Read::Deliver(Ok(event)),
+            Ok(None) => Read::Ignore,
+            Err(error) => Read::Stop(Err(error)),
+        },
+    );
     let mut exchange = Exchange {
         options,
-        turns: Turns::new(),
+        turns,
         buffered_metadata: Vec::new(),
         visible: false,
     };
-    let result = exchange
-        .run(&mut peer, frame, &mut evidence, &mut output)
-        .await;
+    let result = exchange.run(&mut peer, frame, &mut output).await;
     if result.is_err()
         && !matches!(result, Err(BridgeFailure::UnprocessedSizeRefusal { .. }))
         && !exchange.options.cancellation.is_cancelled()
@@ -122,15 +137,13 @@ where
 }
 
 impl Exchange {
-    async fn run<E, F, O>(
+    async fn run<F, O>(
         &mut self,
-        peer: &mut Peer,
+        peer: &mut Peer<Result<TurnEvent, ProtocolError>>,
         frame: Utf8Bytes,
-        evidence: &mut E,
         output: &mut O,
     ) -> Result<(), BridgeFailure>
     where
-        E: FnMut(BridgeEvidence<'_>),
         O: FnMut(BridgeOutput) -> F,
         F: Future<Output = Result<(), ProtocolError>>,
     {
@@ -139,21 +152,24 @@ impl Exchange {
         let upload = receipt.wait();
         tokio::pin!(upload);
         let mut uploaded = false;
-        self.turns
-            .active
-            .insert(String::new(), Turn::new(deadline, false));
         loop {
-            let (expires, failure) = self.turns.active[""].expiry(self.options.budget);
+            let (expires, _) = self.expiry();
             let packet = tokio::select! {
                 biased;
                 _ = self.options.cancellation.cancelled() =>
                     return Err(interrupted(SocketEnd::Cancelled)),
-                _ = sleep_until(expires) => return Err(protocol(failure)),
+                _ = sleep_until(expires) => {
+                    let (expires, failure) = self.expiry();
+                    if Instant::now() >= expires {
+                        return Err(protocol(failure));
+                    }
+                    continue;
+                }
                 packet = peer.recv() => packet,
                 result = &mut upload, if !uploaded => {
                     uploaded = true;
                     match result {
-                        Ok(sent) => self.turns.active.get_mut("").expect("bridge turn").sent = Some(sent),
+                        Ok(sent) => self.turns.lock().unwrap().active.get_mut("").expect("bridge turn").sent = Some(sent),
                         Err(_) if Instant::now() >= deadline => return Err(protocol(DEADLINE)),
                         // A close may have reached the sole reader ahead of the writer failure.
                         Err(_) => {}
@@ -161,66 +177,61 @@ impl Exchange {
                     continue;
                 }
             };
-            let packet = match packet {
-                Err(SocketEnd::Close(1009)) if !self.turns.active[""].processed => {
+            let event = match packet {
+                Err(SocketEnd::Close(1009)) if !self.turns.lock().unwrap().active[""].processed => {
                     return Err(BridgeFailure::UnprocessedSizeRefusal {
                         http_fallback: !self.options.continuation,
                     });
                 }
-                Ok(packet) => packet,
+                Ok(packet) => packet.event.map_err(protocol)?,
                 Err(end) => return Err(interrupted(end)),
             };
-            let document = decode_event(packet.event.as_bytes()).map_err(protocol)?;
-            if document.get("stream_id").is_some() {
-                return Err(protocol(ProtocolError::new(502, "invalid_upstream_lane")));
-            }
-            let route = self
-                .turns
-                .observe(&document, packet.event.len())
-                .map_err(protocol)?;
-            if std::mem::take(
-                &mut self
-                    .turns
-                    .active
-                    .get_mut("")
-                    .expect("bridge turn")
-                    .unattributed,
-            ) {
-                evidence(BridgeEvidence::PossibleProcessing);
-            }
-            if let Route::Turn {
+            let TurnEvent {
+                document,
                 terminal,
                 provider_error,
-                ..
-            } = route
-            {
-                evidence(BridgeEvidence::Event(&document));
-                if provider_error {
-                    return Err(BridgeFailure::Provider(Box::new(provider_failure(
-                        &document,
-                    ))));
-                }
-                if self.options.stream {
-                    if !self.visible && EventSemantics::classify(&document).connection_metadata {
-                        self.buffered_metadata.push(document);
-                        continue;
-                    }
-                    for metadata in std::mem::take(&mut self.buffered_metadata) {
-                        self.emit(metadata, false, output).await?;
-                    }
-                    self.visible = true;
-                    self.emit(document, terminal, output).await?;
-                } else if terminal {
-                    let response = document
-                        .get("response")
-                        .expect("correlated terminal")
-                        .clone();
-                    self.emit(response, true, output).await?;
-                }
-                if terminal {
-                    return Ok(());
-                }
+            } = event;
+            if provider_error {
+                return Err(BridgeFailure::Provider(Box::new(provider_failure(
+                    &document,
+                ))));
             }
+            if self.options.stream {
+                if !self.visible && EventSemantics::classify(&document).connection_metadata {
+                    if self.buffered_metadata.len() == 64 {
+                        return Err(protocol(ProtocolError::new(
+                            502,
+                            "upstream_response_too_large",
+                        )));
+                    }
+                    self.buffered_metadata.push(document);
+                    continue;
+                }
+                for metadata in std::mem::take(&mut self.buffered_metadata) {
+                    self.emit(metadata, false, output).await?;
+                }
+                self.visible = true;
+                self.emit(document, terminal, output).await?;
+            } else if terminal {
+                let response = document
+                    .get("response")
+                    .expect("correlated terminal")
+                    .clone();
+                self.emit(response, true, output).await?;
+            }
+            if terminal {
+                return Ok(());
+            }
+        }
+    }
+
+    fn expiry(&self) -> (Instant, ProtocolError) {
+        let turns = self.turns.lock().unwrap();
+        let turn = &turns.active[""];
+        if turn.provider_done {
+            (self.options.deadline, DEADLINE)
+        } else {
+            turn.expiry(self.options.budget)
         }
     }
 
@@ -251,6 +262,42 @@ impl Exchange {
                 DEADLINE
             }))
             .map_err(protocol)
+    }
+}
+
+struct TurnEvent {
+    document: JsonValue,
+    terminal: bool,
+    provider_error: bool,
+}
+
+fn inspect(
+    turns: &mut Turns,
+    frame: Utf8Bytes,
+    evidence: &mut impl FnMut(BridgeEvidence<'_>),
+) -> Result<Option<TurnEvent>, ProtocolError> {
+    let document = decode_event(frame.as_bytes())?;
+    if document.get("stream_id").is_some() {
+        return Err(ProtocolError::new(502, "invalid_upstream_lane"));
+    }
+    let route = turns.observe(&document, frame.len())?;
+    if std::mem::take(&mut turns.active.get_mut("").expect("bridge turn").unattributed) {
+        evidence(BridgeEvidence::PossibleProcessing);
+    }
+    if let Route::Turn {
+        terminal,
+        provider_error,
+        ..
+    } = route
+    {
+        evidence(BridgeEvidence::Event(&document));
+        Ok(Some(TurnEvent {
+            document,
+            terminal,
+            provider_error,
+        }))
+    } else {
+        Ok(None)
     }
 }
 

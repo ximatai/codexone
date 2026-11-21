@@ -214,6 +214,47 @@ pub struct Observation {
     pub result: Result<Delivery, EventFailure>,
 }
 
+/// Inspect evidence from an event already correlated to a particular attempt by its transport.
+/// `has_processed` includes earlier unattributed events that may belong to this attempt.
+pub fn correlated_usage(
+    event: &JsonValue,
+    config: UsageConfig<'_>,
+    has_processed: bool,
+    usage: &mut Vec<UsageEvidence>,
+) -> Result<(), ProtocolError> {
+    if !has_processed && explicit_event_rejection(event) {
+        usage.push(UsageEvidence::provider_rejection(config.image.is_some()));
+    } else if EventSemantics::classify(event).terminal {
+        config.observe(event.get("response"), usage)?;
+    }
+    Ok(())
+}
+
+/// Validate referenceable output from an event after transport-level turn correlation.
+pub fn correlated_bindings(
+    event: &JsonValue,
+    images: bool,
+) -> Result<Vec<ObjectBinding>, ProtocolError> {
+    event_bindings(event, EventSemantics::classify(event), images)
+}
+
+pub fn event_terminal(event: &JsonValue) -> Option<(Terminal, Option<String>)> {
+    let response = event.get("response");
+    Terminal::from_event(text(event, "type")?, response)
+        .map(|status| (status, metadata(response.and_then(|v| v.get("service_tier")))))
+}
+
+/// Binding barrier for a terminal response extracted from a correlated event.
+pub fn terminal_bindings(
+    response: &JsonValue,
+    images: bool,
+) -> Result<Vec<ObjectBinding>, ProtocolError> {
+    let id = response.get("id").and_then(valid_id).ok_or(INVALID_RESPONSE)?;
+    let mut bindings = vec![ObjectBinding::new(BindingKind::Response, id)];
+    output_bindings(response, images, &mut bindings)?;
+    Ok(bindings)
+}
+
 /// Interpret one HTTP upstream attempt, with bounded incremental framing and response correlation.
 /// Callers stop polling upon terminal delivery or any error, and own deadlines and settlement.
 pub struct ResponseStream<'a> {

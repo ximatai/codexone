@@ -19,6 +19,9 @@ use codexone_storage::{
 use rusqlite::{Connection, OpenFlags, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tungstenite::{
+    Message, WebSocket, accept_hdr, client, client::IntoClientRequest, handshake::server,
+};
 
 use crate::{gateway, managed::SubscriptionTarget, unix_time};
 
@@ -84,24 +87,7 @@ fn durable_pool_and_governance() {
             Some("synthetic-refresh"),
         ),
     ] {
-        let namespace = namespace(id, port);
-        let token = token(id, now + 7200);
-        let credential = AccountCredential::new(
-            token.clone(),
-            "synthetic-refresh-token".into(),
-            Some(token),
-            now + 7200,
-        )
-        .unwrap();
-        let context = AccountCredentialContext::new(id, &namespace, 1).unwrap();
-        let sealed = cipher.seal(&credential, &context).unwrap();
-        database
-            .connection()
-            .execute(
-                "INSERT INTO accounts VALUES(?,?,1,1,?,?,?,?,?,NULL)",
-                params![id, namespace, mode, auth, sealed, intent, now],
-            )
-            .unwrap();
+        seed_account(&database, &cipher, port, id, (mode, auth, intent), now);
     }
     drop(database);
 
@@ -371,6 +357,34 @@ fn durable_pool_and_governance() {
     );
 }
 
+fn seed_account(
+    database: &Database,
+    cipher: &AccountCredentialCipher,
+    port: u16,
+    id: &str,
+    (mode, auth, intent): (&str, &str, Option<&str>),
+    now: i64,
+) {
+    let namespace = namespace(id, port);
+    let token = token(id, now + 7200);
+    let credential = AccountCredential::new(
+        token.clone(),
+        "synthetic-refresh-token".into(),
+        Some(token),
+        now + 7200,
+    )
+    .unwrap();
+    let context = AccountCredentialContext::new(id, &namespace, 1).unwrap();
+    let sealed = cipher.seal(&credential, &context).unwrap();
+    database
+        .connection()
+        .execute(
+            "INSERT INTO accounts VALUES(?,?,1,1,?,?,?,?,?,NULL)",
+            params![id, namespace, mode, auth, sealed, intent, now],
+        )
+        .unwrap();
+}
+
 fn active(admin: u16) -> u64 {
     let (status, accounts) = request(admin, "GET", "/api/accounts", Some(ADMIN), None);
     assert_eq!(status, 200, "{accounts}");
@@ -385,10 +399,14 @@ fn active(admin: u16) -> u64 {
 }
 
 fn mode(admin: u16, mode: &str, revision: i64) -> i64 {
+    mode_for(admin, "account-b", mode, revision)
+}
+
+fn mode_for(admin: u16, account: &str, mode: &str, revision: i64) -> i64 {
     let (status, response) = request(
         admin,
         "PUT",
-        "/api/accounts/account-b",
+        &format!("/api/accounts/{account}"),
         Some(ADMIN),
         Some(json!({"revision": revision, "mode": mode})),
     );
@@ -631,7 +649,326 @@ fn write_response(socket: &mut TcpStream, status: &str, content_type: &str, body
 }
 
 #[test]
+fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    let master = "66".repeat(32);
+    private(&root.join("master"), &master);
+    private(&root.join("admin"), ADMIN);
+    private(
+        &root.join("pool.json"),
+        &json!({
+            "models": [{"id": "synth-text", "inputMicrosPerMillion": 1000000,
+                "outputMicrosPerMillion": 1000000}],
+            "reservedMicros": 10, "upstreamTransport": "websocket",
+        })
+        .to_string(),
+    );
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    upstream.set_nonblocking(true).unwrap();
+    let port = upstream.local_addr().unwrap().port();
+    let path = state.join("core.sqlite");
+    let database = Database::open_or_create(&path).unwrap();
+    let now = unix_time();
+    let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
+    for (id, mode) in [("account-a", "enabled"), ("account-b", "disabled")] {
+        seed_account(&database, &cipher, port, id, (mode, "ready", None), now);
+    }
+    drop(database);
+
+    let (report, requests) = mpsc::channel();
+    let (stop, stopping) = mpsc::channel::<()>();
+    let worker = thread::spawn(move || {
+        let mut connections = Vec::new();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            match upstream.accept() {
+                Ok((socket, _)) => {
+                    let report = report.clone();
+                    let count = count.clone();
+                    connections.push(thread::spawn(move || serve_ws(socket, &count, report)));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("synthetic WebSocket upstream: {error}"),
+            }
+        }
+        for connection in connections {
+            connection.join().unwrap();
+        }
+    });
+    let (mut process, data, admin) = launch(root, port);
+    let (status, issued) = request(
+        admin,
+        "POST",
+        "/api/keys",
+        Some(ADMIN),
+        Some(
+            json!({"principal": "synthetic-client", "models": ["synth-text"],
+            "limits": {"tokens": null, "active": 4}}),
+        ),
+    );
+    assert_eq!(status, 201, "{issued}");
+    let key = issued["secret"].as_str().unwrap();
+    let mut active_socket = dial_ws(data, key);
+    assert!(
+        requests.try_recv().is_err(),
+        "upgrade dispatched before a create"
+    );
+    ws_create(&mut active_socket, "initial", None);
+    let first_event = ws_event(&mut active_socket);
+    let initial = requests.recv_timeout(WAIT);
+    assert_eq!(
+        first_event["type"], "response.completed",
+        "{first_event}, provider {initial:?}"
+    );
+    let initial = initial.unwrap();
+    assert_eq!(initial, ("account-a".into(), "initial".into(), 1));
+    let mut idle = dial_ws(data, key);
+    ws_create(&mut idle, "idle", None);
+    assert_eq!(ws_event(&mut idle)["type"], "response.completed");
+    assert_eq!(
+        requests.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "idle".into(), 2)
+    );
+
+    let revision_a = mode_for(admin, "account-a", "draining", 1);
+    let revision_b = mode_for(admin, "account-b", "enabled", 1);
+    let (status, bridged) = request(
+        data,
+        "POST",
+        "/v1/responses",
+        Some(key),
+        Some(json!({"model": "synth-text", "input": "bridge"})),
+    );
+    assert_eq!(status, 200, "{bridged}");
+    assert_eq!(
+        requests.recv_timeout(WAIT).unwrap(),
+        ("account-b".into(), "bridge".into(), 3)
+    );
+
+    ws_create(&mut active_socket, "pinned", Some("additional-lane"));
+    assert_eq!(ws_event(&mut active_socket)["stream_id"], "additional-lane");
+    assert_eq!(
+        requests.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "pinned".into(), initial.2)
+    );
+
+    // This state came from a different pool account. A socket fixed to A cannot use it.
+    let misrouted = json!({"type": "response.create", "model": "synth-text", "input": "misrouted",
+        "client_metadata": {"x-codex-turn-state": "state-account-b"}});
+    active_socket
+        .send(Message::text(misrouted.to_string()))
+        .unwrap();
+    assert_eq!(
+        ws_event(&mut active_socket)["error"]["code"],
+        "continuation_owner_unavailable"
+    );
+    assert!(requests.try_recv().is_err());
+
+    ws_create(&mut active_socket, "hold-native", None);
+    assert_eq!(ws_event(&mut active_socket)["type"], "response.created");
+    assert_eq!(
+        requests.recv_timeout(WAIT).unwrap(),
+        ("account-a".into(), "hold-native".into(), 1)
+    );
+    let revision_a = mode_for(admin, "account-a", "disabled", revision_a);
+    assert_eq!(force(admin, "account-a", revision_a), 1);
+    assert_eq!(
+        ws_event(&mut active_socket)["error"]["code"],
+        "account_force_stopped"
+    );
+    assert!(active_socket.read().unwrap().is_close());
+    assert!(
+        idle.read().unwrap().is_close(),
+        "an idle fixed socket survived force-stop"
+    );
+
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| {
+            request(
+                data,
+                "POST",
+                "/v1/responses",
+                Some(key),
+                Some(json!({"model": "synth-text", "input": "hold-bridge"})),
+            )
+        });
+        assert_eq!(
+            requests.recv_timeout(WAIT).unwrap(),
+            ("account-b".into(), "hold-bridge".into(), 4)
+        );
+        let disabled = mode_for(admin, "account-b", "disabled", revision_b);
+        assert_eq!(force(admin, "account-b", disabled), 1);
+        let (status, stopped) = pending.join().unwrap();
+        assert_eq!(status, 503, "{stopped}");
+        assert_eq!(stopped["error"]["code"], "account_force_stopped");
+    });
+    process.terminate();
+    stop.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(
+        requests.try_recv().is_err(),
+        "a stopped request was replayed"
+    );
+    let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let mut rows = db
+        .prepare("SELECT identity, state, json_extract(outcome_json, '$.failure') FROM attempts ORDER BY rowid")
+        .unwrap();
+    assert_eq!(
+        rows.query_map([], |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?
+        )))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>(),
+        [
+            ("account-a".into(), "settled".into(), None),
+            ("account-a".into(), "settled".into(), None),
+            ("account-b".into(), "settled".into(), None),
+            ("account-a".into(), "settled".into(), None),
+            (
+                "account-a".into(),
+                "unknown".into(),
+                Some("account_unavailable".into())
+            ),
+            (
+                "account-b".into(),
+                "unknown".into(),
+                Some("account_unavailable".into())
+            ),
+        ]
+    );
+}
+
+fn force(admin: u16, account: &str, revision: i64) -> u64 {
+    let (status, response) = request(
+        admin,
+        "POST",
+        &format!("/api/accounts/{account}/force-stop"),
+        Some(ADMIN),
+        Some(json!({"revision": revision})),
+    );
+    assert_eq!(status, 200, "{response}");
+    response["cancellationRequested"].as_u64().unwrap()
+}
+
+fn dial_ws(port: u16, key: &str) -> WebSocket<TcpStream> {
+    let socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    let mut request = format!("ws://127.0.0.1:{port}/backend-api/codex/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("authorization", format!("Bearer {key}").parse().unwrap());
+    client(request, socket).unwrap().0
+}
+
+fn ws_create(socket: &mut WebSocket<TcpStream>, prompt: &str, lane: Option<&str>) {
+    let mut event = json!({"type": "response.create", "model": "synth-text", "input": prompt});
+    if let Some(lane) = lane {
+        event["stream_id"] = json!(lane);
+    }
+    socket.send(Message::text(event.to_string())).unwrap();
+}
+
+fn ws_event(socket: &mut WebSocket<TcpStream>) -> Value {
+    serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap()
+}
+
+// Tungstenite fixes the callback's rejection type to an HTTP response.
+#[allow(clippy::result_large_err)]
+fn serve_ws(
+    mut socket: TcpStream,
+    counter: &std::sync::atomic::AtomicUsize,
+    report: mpsc::Sender<(String, String, usize)>,
+) {
+    socket.set_nonblocking(false).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    let request_line = peek_request_line(&socket);
+    if request_line.starts_with("GET /backend-api/wham/") {
+        let mut reader = BufReader::new(&mut socket);
+        let mut head = String::new();
+        while !head.ends_with("\r\n\r\n") {
+            if reader.read_line(&mut head).unwrap() == 0 {
+                return;
+            }
+        }
+        write_response(&mut socket, "200 OK", "application/json", "{}");
+        return;
+    }
+    let index = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let mut account = String::new();
+    let mut socket = accept_hdr(
+        socket,
+        |request: &server::Request, mut response: server::Response| {
+            account = request.headers()["chatgpt-account-id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert!(matches!(account.as_str(), "account-a" | "account-b"));
+            assert!(
+                request.headers()["authorization"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("Bearer ey")
+            );
+            response.headers_mut().insert(
+                "x-codex-turn-state",
+                format!("state-{account}").parse().unwrap(),
+            );
+            Ok(response)
+        },
+    )
+    .unwrap();
+    let mut turn = 0;
+    while let Ok(Message::Text(input)) = socket.read() {
+        let event: Value = serde_json::from_str(input.as_str()).unwrap();
+        assert_eq!(event["type"], "response.create");
+        let prompt = event["input"][0]["content"].as_str().unwrap();
+        report
+            .send((account.clone(), prompt.into(), index))
+            .unwrap();
+        turn += 1;
+        if prompt == "hold-bridge" {
+            continue;
+        }
+        let held = prompt == "hold-native";
+        let mut reply = json!({
+            "type": if held { "response.created" } else { "response.completed" },
+            "response": {
+                "id": format!("resp_pool_{index}_{turn}"),
+                "status": if held { "in_progress" } else { "completed" },
+                "output": [],
+                "usage": if held { Value::Null } else {
+                    json!({"input_tokens": 5, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 0}})
+                }
+            }
+        });
+        if let Some(lane) = event.get("stream_id") {
+            reply["stream_id"] = lane.clone();
+        }
+        socket.send(Message::text(reply.to_string())).unwrap();
+    }
+}
+
+#[test]
 fn quota_management_and_http_priming_survive_gateway_restart() {
+    quota_management_and_priming_survive_gateway_restart("http");
+}
+
+#[test]
+fn quota_management_and_websocket_priming_survive_gateway_restart() {
+    quota_management_and_priming_survive_gateway_restart("websocket");
+}
+
+fn quota_management_and_priming_survive_gateway_restart(transport: &'static str) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let state = root.join("state");
@@ -643,7 +980,7 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
         &root.join("pool.json"),
         &json!({
             "models": [{"id":"synth-text", "inputMicrosPerMillion":1, "outputMicrosPerMillion":1}],
-            "reservedMicros":10, "upstreamTransport":"http"
+            "reservedMicros":10, "upstreamTransport":transport
         })
         .to_string(),
     );
@@ -684,7 +1021,7 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
         let mut consumed = Vec::new();
         while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
             match upstream.accept() {
-                Ok((socket, _)) => quota_upstream(socket, &mut consumed, &records),
+                Ok((socket, _)) => quota_upstream(socket, &mut consumed, &records, transport),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5))
                 }
@@ -726,13 +1063,8 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
     );
     assert_eq!(status, 200, "{saved}");
     assert_eq!(saved["settings"]["leadHours"], 1);
-    let (status, result) = request(
-        admin,
-        "POST",
-        &reset_consume,
-        Some(ADMIN),
-        Some(json!({"creditID":"synth-card"})),
-    );
+    let (status, result) =
+        consume_when_idle(admin, &reset_consume, json!({"creditID":"synth-card"}));
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["code"], "unknown");
     assert_eq!(
@@ -783,7 +1115,7 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
         .0,
         409
     );
-    let (status, recovered) = request(admin, "POST", &reset_consume, Some(ADMIN), Some(json!({})));
+    let (status, recovered) = consume_when_idle(admin, &reset_consume, json!({}));
     assert_eq!(status, 200, "{recovered}");
     assert_eq!(recovered["code"], "already_redeemed");
     gateway.terminate();
@@ -805,9 +1137,46 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
     );
 }
 
-fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &mpsc::Sender<()>) {
+// Tungstenite fixes the callback's rejection type to an HTTP response.
+#[allow(clippy::result_large_err)]
+fn quota_upstream(
+    mut socket: TcpStream,
+    consumed: &mut Vec<Value>,
+    observed: &mpsc::Sender<()>,
+    transport: &str,
+) {
     socket.set_nonblocking(false).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
+    if peek_request_line(&socket).starts_with("GET /backend-api/codex/responses ") {
+        assert_eq!(transport, "websocket");
+        let mut socket = accept_hdr(
+            socket,
+            |request: &server::Request, response: server::Response| {
+                assert_eq!(request.headers()["chatgpt-account-id"], "synth-quota");
+                assert!(
+                    request.headers()["user-agent"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("codex_cli_rs/")
+                );
+                assert!(request.headers().contains_key("authorization"));
+                Ok(response)
+            },
+        )
+        .unwrap();
+        let body = ws_event(&mut socket);
+        assert_eq!(body["type"], "response.create");
+        assert!(
+            body.get("generate").is_none(),
+            "priming must run generation"
+        );
+        validate_priming_body(&body);
+        observed.send(()).unwrap();
+        socket
+            .send(Message::text(priming_completed().to_string()))
+            .unwrap();
+        return;
+    }
     let mut reader = BufReader::new(&mut socket);
     let mut head = String::new();
     while !head.ends_with("\r\n\r\n") {
@@ -853,15 +1222,10 @@ fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &m
                 }
                 return;
             }
-            assert_eq!(body["input"][0]["content"], "start window");
-            assert_eq!(body["tools"], json!([]));
-            assert_eq!(body["store"], false);
-            assert_eq!(body["stream"], true);
+            assert_eq!(transport, "http");
+            validate_priming_body(&body);
             assert!(fields["user-agent"].starts_with("codex_cli_rs/"));
-            let completed = json!({"type":"response.completed","response":{
-                "id":"resp_synth_priming","status":"completed","model":"synth-text","output":[],
-                "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
-            }});
+            let completed = priming_completed();
             observed.send(()).unwrap();
             write_response(
                 &mut socket,
@@ -872,4 +1236,48 @@ fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &m
         }
         _ => panic!("unexpected synthetic route {path}"),
     }
+}
+
+// Changing settings wakes the reset observer. A rejected busy-slot request
+// has not started a redemption and can wait for the observer to finish.
+fn consume_when_idle(admin: u16, path: &str, body: Value) -> (u16, Value) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let response = request(admin, "POST", path, Some(ADMIN), Some(body.clone()));
+        if response.0 != 409 || response.1["error"]["code"] != "account_conflict" {
+            return response;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reset observer did not release its slot"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn peek_request_line(socket: &TcpStream) -> String {
+    let deadline = Instant::now() + WAIT;
+    let mut bytes = [0; 1024];
+    loop {
+        let count = socket.peek(&mut bytes).unwrap();
+        if let Some(newline) = bytes[..count].iter().position(|&byte| byte == b'\n') {
+            return String::from_utf8(bytes[..newline].to_vec()).unwrap();
+        }
+        assert!(count > 0 && count < bytes.len() && Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn validate_priming_body(body: &Value) {
+    assert_eq!(body["input"][0]["content"], "start window");
+    assert_eq!(body["tools"], json!([]));
+    assert_eq!(body["store"], false);
+    assert_eq!(body["stream"], true);
+}
+
+fn priming_completed() -> Value {
+    json!({"type":"response.completed","response":{
+        "id":"resp_synth_priming","status":"completed","model":"synth-text","output":[],
+        "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
+    }})
 }

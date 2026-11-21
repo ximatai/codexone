@@ -57,6 +57,11 @@ pub fn upgrade_response<B>(
         || versions.next().is_none_or(|version| version != "13")
         || versions.next().is_some()
         || headers.contains_key(header::SEC_WEBSOCKET_PROTOCOL)
+        || headers.contains_key(header::TRANSFER_ENCODING)
+        || headers
+            .get_all(header::CONTENT_LENGTH)
+            .iter()
+            .any(|value| value != "0")
         || !tokens(headers, "connection").any(|value| value.eq_ignore_ascii_case("upgrade"))
         || !STANDARD
             .decode(key.as_bytes())
