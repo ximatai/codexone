@@ -14,7 +14,7 @@ pub use model::*;
 pub use static_identity::{
     StaticAdmissionRequest, StaticAuthorization, StaticIdentity, StaticIdentityConfig,
 };
-pub use worker::{Execution, ExecutionService, ExecutionStatus, Options};
+pub use worker::{Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options};
 
 use std::{error::Error, fmt};
 
@@ -39,6 +39,7 @@ pub enum ExecutionError {
     StoragePressure,
     StorageUnavailable,
     MaintenanceRequired,
+    DeadlineExceeded,
     Database(codexone_storage::DatabaseError),
     Closed,
 }

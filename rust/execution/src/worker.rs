@@ -22,6 +22,7 @@ use crate::{
 const REGULAR_CAPACITY: usize = 16;
 
 type Job = Box<dyn FnOnce(&mut Writer) + Send>;
+type Recovery = fn(&Transaction<'_>, i64) -> Result<()>;
 
 enum IdentitySource {
     Managed(String),
@@ -34,6 +35,7 @@ pub struct Options {
     day_offset: i64,
     capacity: usize,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    governance_recovery: Option<Recovery>,
 }
 
 impl Options {
@@ -55,6 +57,7 @@ impl Options {
             day_offset: 0,
             capacity: 16,
             clock: Arc::new(system_time),
+            governance_recovery: None,
         }
     }
 
@@ -79,6 +82,12 @@ impl Options {
         self.clock = Arc::new(clock);
         self
     }
+
+    /// Recover durable governance intents in the startup ledger transaction.
+    pub fn with_governance_recovery(mut self, recover: Recovery) -> Self {
+        self.governance_recovery = Some(recover);
+        self
+    }
 }
 
 fn system_time() -> i64 {
@@ -95,6 +104,15 @@ pub enum ExecutionStatus {
     Draining,
     Failed,
     Closed,
+}
+
+#[derive(Clone, Copy)]
+pub enum GovernanceWork {
+    Read,
+    Optional,
+    Restrict,
+    Admission,
+    Critical,
 }
 
 struct Gate {
@@ -188,7 +206,14 @@ impl Writer {
             health: Health::default(),
         };
         writer.reserve.maintain(writer.db.connection())?;
-        writer.write(true, ledger::recover)?;
+        let governance = writer.options.governance_recovery;
+        writer.write(true, |tx, now| {
+            ledger::recover(tx, now)?;
+            if let Some(recover) = governance {
+                recover(tx, now)?;
+            }
+            Ok(())
+        })?;
         Ok(writer)
     }
 
@@ -392,6 +417,17 @@ impl ExecutionService {
         opening_attempt: bool,
         body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        self.regular_command(opening_attempt, !opening_attempt, false, body)
+            .await
+    }
+
+    async fn regular_command<T: Send + 'static>(
+        &self,
+        accepting_required: bool,
+        allow_drain: bool,
+        complete_on_cancel: bool,
+        body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
         let permit = self
             .inner
             .regular
@@ -403,13 +439,13 @@ impl ExecutionService {
         self.inner.enqueue(
             Box::new(move |writer| {
                 let _permit = permit;
-                if reply.is_closed() {
+                if !complete_on_cancel && reply.is_closed() {
                     return;
                 }
                 let status = inner.gate().status();
-                let result = match (opening_attempt, status) {
-                    (true, ExecutionStatus::Accepting) | (false, _) => body(writer),
-                    (true, ExecutionStatus::Failed) => Err(Error::StorageUnavailable),
+                let result = match (allow_drain, status) {
+                    (_, ExecutionStatus::Accepting) | (true, _) => body(writer),
+                    (_, ExecutionStatus::Failed) => Err(Error::StorageUnavailable),
                     _ => Err(Error::Closed),
                 };
                 if matches!(result, Err(Error::StorageUnavailable)) {
@@ -417,9 +453,47 @@ impl ExecutionService {
                 }
                 let _ = reply.send(result);
             }),
-            opening_attempt,
+            accepting_required,
         )?;
         response.await.map_err(|_| Error::StorageUnavailable)?
+    }
+
+    /// Give a bounded governance command the existing writer, its clock and storage gates.
+    /// The command owns its transaction and runs to completion after enqueueing.
+    pub async fn governance_command<T: Send + 'static>(
+        &self,
+        work: GovernanceWork,
+        operation: impl FnOnce(&mut Database, i64, bool) -> T + Send + 'static,
+    ) -> Result<T> {
+        use GovernanceWork::*;
+        self.regular_command(!matches!(work, Critical), true, true, move |writer| {
+            let optional = match work {
+                Read => false,
+                Optional => {
+                    writer.reserve.check_optional()?;
+                    true
+                }
+                Restrict => match writer.reserve.check_optional() {
+                    Ok(()) => true,
+                    Err(Error::StoragePressure) => {
+                        writer.reserve.prepare_critical()?;
+                        false
+                    }
+                    Err(error) => return Err(error),
+                },
+                Admission => {
+                    writer.reserve.check_admission()?;
+                    false
+                }
+                Critical => {
+                    writer.reserve.prepare_critical()?;
+                    false
+                }
+            };
+            let now = writer.now()?;
+            Ok(operation(&mut writer.db, now, optional))
+        })
+        .await
     }
 
     pub async fn authenticate(&self, headers: &[&str]) -> Result<AuthenticatedKey> {
@@ -504,7 +578,22 @@ impl ExecutionService {
         let request = request.clone();
         let routing = routing.clone();
         self.command(true, move |writer| {
-            admission::pool_credentials(writer.db.connection(), &request, &routing, writer.now()?)
+            let now = writer.now()?;
+            writer.reserve.check_admission()?;
+            admission::restore_allows_admission(writer.db.connection(), true, now)?;
+            admission::pool_credentials(writer.db.connection(), &request, &routing, now)
+        })
+        .await
+    }
+
+    /// Local readiness candidates have at least one usable configured model and no
+    /// credential-version authentication barrier. The caller verifies the envelope.
+    pub async fn pool_readiness_credentials(&self) -> Result<Vec<AccountCredentialRecord>> {
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        self.command(true, |writer| {
+            admission::pool_readiness_credentials(writer.db.connection(), writer.now()?)
         })
         .await
     }

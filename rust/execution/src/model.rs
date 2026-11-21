@@ -50,6 +50,16 @@ pub struct AuthenticatedKey {
     pub(crate) id: String,
     pub(crate) principal: String,
     pub(crate) revision: i64,
+    pub(crate) scope: KeyScope,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct KeyScope {
+    pub(crate) models: Option<Vec<String>>,
+    pub(crate) vision_input: bool,
+    pub(crate) image_generation: bool,
+    pub(crate) image_models: Option<Vec<String>>,
+    pub(crate) reasoning_efforts: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl AuthenticatedKey {
@@ -61,6 +71,27 @@ impl AuthenticatedKey {
     }
     pub fn revision(&self) -> i64 {
         self.revision
+    }
+
+    pub fn allows_model(&self, model: &str) -> bool {
+        self.scope.models.as_ref().is_none_or(|models| models.iter().any(|id| id == model))
+    }
+
+    pub fn allows_vision(&self) -> bool {
+        self.scope.vision_input
+    }
+
+    pub fn allows_images(&self) -> bool {
+        self.scope.image_generation
+    }
+
+    pub fn allows_image_model(&self, model: &str) -> bool {
+        self.allows_images()
+            && self.scope.image_models.as_ref().is_none_or(|models| models.iter().any(|id| id == model))
+    }
+
+    pub fn reasoning_efforts(&self, model: &str) -> Option<&[String]> {
+        self.scope.reasoning_efforts.as_ref()?.get(model).map(Vec::as_slice)
     }
 }
 
@@ -133,6 +164,16 @@ pub struct AccountDispatch {
     pub(crate) id: String,
     pub(crate) namespace: String,
     pub(crate) snapshot: AccountDispatchSnapshot,
+}
+
+impl AccountDispatch {
+    pub fn from_snapshot(identity: crate::AccountIdentity, snapshot: AccountDispatchSnapshot) -> Self {
+        Self {
+            id: identity.id,
+            namespace: identity.namespace,
+            snapshot,
+        }
+    }
 }
 
 /// Encrypted material for a stored account. Decrypt through codexone-storage.
