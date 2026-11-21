@@ -12,7 +12,8 @@ use std::{
 };
 
 use codexone_config::{ConfigCommand, ConfigError, Configuration, RuntimeConfiguration};
-use codexone_storage::{Database, SCHEMA_VERSION};
+use codexone_maintenance::Command as MaintenanceCommand;
+use codexone_storage::{AccountCredentialCipher, Database, SCHEMA_VERSION};
 
 fn main() -> ExitCode {
     let arguments: Vec<_> = std::env::args_os()
@@ -28,9 +29,20 @@ fn main() -> ExitCode {
             Err(error) => configuration_error(error),
         };
     }
+    if let Some(command) = MaintenanceCommand::parse(&arguments) {
+        return maintenance(command);
+    }
     match arguments.as_slice() {
         [flag] if flag == "--help" => {
-            println!("Usage: codexone [--check-config | --schema-version | --migrate | --help]");
+            println!(concat!(
+                "Usage: codexone [--check-config | --schema-version | --migrate",
+                " | --import-keys ABSOLUTE_MANIFEST",
+                " | --backup ABSOLUTE_NEW_BUNDLE | --verify-backup ABSOLUTE_BUNDLE",
+                " | --restore ABSOLUTE_BUNDLE | --maintenance-status",
+                " | --reconcile-restored ABSOLUTE_BASELINE_JSON | --key-status",
+                " | --reencrypt-credentials ABSOLUTE_NEW_BUNDLE | --resume-reencryption",
+                " | --check-key-retirement ABSOLUTE_INVENTORY_JSON | --help]"
+            ));
             return ExitCode::SUCCESS;
         }
         [flag] if flag == "--migrate" => return migrate(),
@@ -76,10 +88,65 @@ fn main() -> ExitCode {
     }
 }
 
+fn maintenance(command: MaintenanceCommand) -> ExitCode {
+    let runtime = match RuntimeConfiguration::from_process().and_then(|runtime| {
+        runtime.validate_backup_directory()?;
+        Ok(runtime)
+    }) {
+        Ok(runtime) => runtime,
+        Err(error) => return configuration_error(error),
+    };
+    let Some(directory) = &runtime.data_directory else {
+        return configuration_error(ConfigError::DataDirectory);
+    };
+    let importing_keys = matches!(command, MaintenanceCommand::ImportKeys(_));
+    let admin_digest = if importing_keys {
+        match runtime.key_import_admin_digest() {
+            Ok(digest) => Some(digest),
+            Err(error) => return configuration_error(error),
+        }
+    } else {
+        None
+    };
+    let protection =
+        if let Some(path) = runtime.master_key_file.as_ref().filter(|_| !importing_keys) {
+            let forbidden_digest = match runtime.maintenance_identity_digest(unix_time()) {
+                Ok(digest) => digest,
+                Err(error) => return configuration_error(error),
+            };
+            match AccountCredentialCipher::load(
+                path,
+                runtime.admin_token_file.as_deref(),
+                forbidden_digest.as_deref(),
+            ) {
+                Ok(cipher) => Some(cipher),
+                Err(_) => return configuration_error(ConfigError::AccountMasterKey),
+            }
+        } else {
+            None
+        };
+    match command.run(
+        &directory.join("core.sqlite"),
+        protection.as_ref(),
+        runtime.business_day_offset_minutes,
+        admin_digest.as_ref(),
+    ) {
+        Ok(result) => {
+            println!("{result}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn migrate() -> ExitCode {
-    let directory = match RuntimeConfiguration::from_process()
-        .and_then(|runtime| runtime.data_directory.ok_or(ConfigError::DataDirectory))
-    {
+    let directory = match RuntimeConfiguration::from_process().and_then(|runtime| {
+        runtime.validate_backup_directory()?;
+        runtime.data_directory.ok_or(ConfigError::DataDirectory)
+    }) {
         Ok(directory) => directory,
         Err(error) => return configuration_error(error),
     };

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::credential::valid_key_id;
 use crate::files::{database_file, lock_exclusive, sidecar};
@@ -60,6 +60,9 @@ pub struct Database {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OpenMode {
     Existing,
+    CredentialMaintenance,
+    RestoreStaging,
+    KeyImport,
     Startup,
     Migrate,
 }
@@ -70,6 +73,24 @@ impl Database {
     /// and verification of credentials, policy limits, and readiness are separate.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
         Self::open(path.as_ref(), OpenMode::Existing)
+    }
+
+    /// Open an existing database for inspecting or resuming a credential job.
+    /// A malformed checkpoint or pending restore still prevents this open.
+    pub fn open_for_credential_maintenance(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
+        Self::open(path.as_ref(), OpenMode::CredentialMaintenance)
+    }
+
+    /// Open an empty or current database for a managed-Key import. Older schemas
+    /// require an explicit migration.
+    pub fn open_for_key_import(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
+        Self::open(path.as_ref(), OpenMode::KeyImport)
+    }
+
+    /// Prepare a private staging copy for restore. The original verified bundle is
+    /// the pre-upgrade backup, so no raw migration backup is created.
+    pub fn open_restore_staging(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
+        Self::open(path.as_ref(), OpenMode::RestoreStaging)
     }
 
     /// Create a v19 database or open an existing one for service startup.
@@ -89,8 +110,8 @@ impl Database {
     fn open(path: &Path, mode: OpenMode) -> Result<Self, DatabaseError> {
         use DatabaseError::*;
 
-        let path = canonical_database_path(path, mode == OpenMode::Startup)
-            .map_err(|_| StorageUnavailable)?;
+        let create = matches!(mode, OpenMode::Startup | OpenMode::KeyImport);
+        let path = canonical_database_path(path, create).map_err(|_| StorageUnavailable)?;
         let lock = database_file(&sidecar(&path, ".lock"), true).map_err(|_| StorageUnavailable)?;
         lock_exclusive(&lock).map_err(|error| match error.kind() {
             io::ErrorKind::WouldBlock => InstanceLocked,
@@ -101,7 +122,7 @@ impl Database {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(_) => return Err(StorageUnavailable),
         }
-        database_file(&path, mode == OpenMode::Startup).map_err(|_| StorageUnavailable)?;
+        database_file(&path, create).map_err(|_| StorageUnavailable)?;
         for suffix in ["-wal", "-shm"] {
             match database_file(&sidecar(&path, suffix), false) {
                 Ok(_) => {}
@@ -120,7 +141,9 @@ impl Database {
         }
         let version = pragma_integer(&connection, "user_version")?;
         let supported = match mode {
-            OpenMode::Existing => version == SCHEMA_VERSION,
+            OpenMode::Existing | OpenMode::CredentialMaintenance => version == SCHEMA_VERSION,
+            OpenMode::KeyImport => version == 0 || version == SCHEMA_VERSION,
+            OpenMode::RestoreStaging => (7..=SCHEMA_VERSION).contains(&version),
             OpenMode::Startup => version == 0 || (12..=SCHEMA_VERSION).contains(&version),
             OpenMode::Migrate => (1..=SCHEMA_VERSION).contains(&version),
         };
@@ -149,8 +172,12 @@ impl Database {
             check_integrity(&connection)?;
             // The Swift offline migration changes schema only; service opens honor
             // the credential barrier before making any migration changes.
-            if mode != OpenMode::Migrate {
-                check_reencryption(&connection)?;
+            match mode {
+                OpenMode::Migrate => {}
+                OpenMode::CredentialMaintenance => {
+                    reencryption_checkpoint(&connection)?;
+                }
+                _ => check_reencryption(&connection)?,
             }
         }
 
@@ -166,13 +193,15 @@ impl Database {
             return Err(StorageUnavailable);
         }
         if upgrading {
-            backup_before_upgrade(&path, directory, &connection, version).map_err(|error| {
-                if mode == OpenMode::Startup && error == StorageUnavailable {
-                    MigrationBackupFailed
-                } else {
-                    error
-                }
-            })?;
+            if mode != OpenMode::RestoreStaging {
+                backup_before_upgrade(&path, directory, &connection, version).map_err(|error| {
+                    if mode == OpenMode::Startup && error == StorageUnavailable {
+                        MigrationBackupFailed
+                    } else {
+                        error
+                    }
+                })?;
+            }
             require_capacity(directory, &connection, 2, 8)?;
             if pragma_integer(&connection, "auto_vacuum")? != 2 {
                 connection.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;")?;
@@ -296,46 +325,62 @@ fn validate_schema(connection: &Connection, version: i64) -> Result<(), Database
     Ok(())
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Reencryption {
+pub struct ReencryptionCheckpoint {
     #[serde(rename = "jobID")]
-    job_id: String,
+    pub job_id: String,
     #[serde(rename = "backupID")]
-    backup_id: String,
+    pub backup_id: String,
     #[serde(rename = "targetKeyID")]
-    target_key_id: String,
-    started_unix_seconds: i64,
-    rewritten: i64,
-    complete: bool,
+    pub target_key_id: String,
+    pub started_unix_seconds: i64,
+    pub rewritten: i64,
+    pub complete: bool,
 }
 
-fn check_reencryption(connection: &Connection) -> Result<(), DatabaseError> {
-    use DatabaseError::*;
+impl ReencryptionCheckpoint {
+    pub fn validate(&self) -> Result<(), DatabaseError> {
+        if !uuid_shape(&self.job_id)
+            || !uuid_shape(&self.backup_id)
+            || !valid_key_id(&self.target_key_id)
+            || !(1..=1_000_000_000_000).contains(&self.started_unix_seconds)
+            || !(0..=64).contains(&self.rewritten)
+        {
+            return Err(DatabaseError::StorageUnavailable);
+        }
+        Ok(())
+    }
+}
+
+/// Read the last durable checkpoint. Schema versions 7 and later have this audit table.
+pub fn reencryption_checkpoint(
+    connection: &Connection,
+) -> Result<Option<ReencryptionCheckpoint>, DatabaseError> {
+    use DatabaseError::StorageUnavailable;
 
     let record: Option<Option<String>> = connection
         .query_row(
             "SELECT CASE WHEN length(CAST(record_json AS BLOB)) <= 8192 THEN record_json END
-         FROM maintenance_events WHERE action='credential_reencryption' ORDER BY id DESC LIMIT 1",
+             FROM maintenance_events WHERE action='credential_reencryption' ORDER BY id DESC LIMIT 1",
             [],
             |row| row.get(0),
         )
         .optional()?;
-    if let Some(record) = record {
-        let record: Reencryption =
-            serde_json::from_str(record.as_deref().ok_or(StorageUnavailable)?)
-                .map_err(|_| StorageUnavailable)?;
-        if !uuid_shape(&record.job_id)
-            || !uuid_shape(&record.backup_id)
-            || !valid_key_id(&record.target_key_id)
-            || !(1..=1_000_000_000_000).contains(&record.started_unix_seconds)
-            || !(0..=64).contains(&record.rewritten)
-        {
-            return Err(StorageUnavailable);
-        }
-        if !record.complete {
-            return Err(IncompleteReencryption);
-        }
+    record
+        .map(|record| {
+            let record: ReencryptionCheckpoint =
+                serde_json::from_str(record.as_deref().ok_or(StorageUnavailable)?)
+                    .map_err(|_| StorageUnavailable)?;
+            record.validate()?;
+            Ok(record)
+        })
+        .transpose()
+}
+
+fn check_reencryption(connection: &Connection) -> Result<(), DatabaseError> {
+    if reencryption_checkpoint(connection)?.is_some_and(|job| !job.complete) {
+        return Err(DatabaseError::IncompleteReencryption);
     }
     Ok(())
 }

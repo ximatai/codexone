@@ -75,6 +75,31 @@ pub struct RuntimeConfiguration {
 }
 
 impl RuntimeConfiguration {
+    /// Offline maintenance loads only the static identity needed to check key separation.
+    pub fn maintenance_identity_digest(&self, now: i64) -> Result<Option<String>, ConfigError> {
+        match self.identity_path.as_deref() {
+            Some(path) => super::source::load_identity(path, now)
+                .ok_or(ConfigError::InvalidFileOrSetting)
+                .map(|identity| identity.key_sha256.map(hex::encode)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn key_import_admin_digest(&self) -> Result<[u8; 32], ConfigError> {
+        let path = self
+            .admin_token_file
+            .as_deref()
+            .ok_or(ConfigError::AdminTokenPath)?;
+        super::files::load_admin_digest(path, None).ok_or(ConfigError::InvalidFileOrSetting)
+    }
+
+    pub fn validate_backup_directory(&self) -> Result<(), ConfigError> {
+        if let Some(path) = self.backup_directory.as_deref() {
+            super::files::validate_backup_directory(path).ok_or(ConfigError::BackupDirectory)?;
+        }
+        Ok(())
+    }
+
     pub fn from_process() -> Result<Self, ConfigError> {
         Self::from_lookup(|key| {
             std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())

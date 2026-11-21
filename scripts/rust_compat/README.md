@@ -22,3 +22,19 @@ python3 scripts/rust_compat/readiness.py --binary rust/gateway/target/debug/code
 ```
 
 SSE、WebSocket 和异常退出后的执行恢复另有验证场景。
+
+## 离线维护互操作
+
+使用提案指定的 Swift 兼容基线构建 `codexone` 和合成数据探针。在当前迁移分支构建 Rust 网关，然后运行：
+
+```sh
+swift build --package-path "$SWIFT_BASELINE" --product codexone
+swift build --package-path "$SWIFT_BASELINE" --product ExecutionProbe
+cargo build --locked --manifest-path rust/gateway/Cargo.toml
+python3 scripts/rust_compat/maintenance.py \
+  --swift "$SWIFT_BASELINE/.build/debug/codexone" \
+  --probe "$SWIFT_BASELINE/.build/debug/ExecutionProbe" \
+  --rust rust/gateway/target/debug/codexone
+```
+
+驱动验证实例锁冲突、格式 1 bundle 双向校验和恢复、v18 bundle 恢复升级、代际及 Key 停用、审计幂等、业务日冻结、缺失占用继承，以及 Swift 进程中断后由 Rust 继续重加密。退役检查覆盖保留 bundle、恢复演练与迁移前裸库清单。所有输入均为合成数据，命令使用临时目录。

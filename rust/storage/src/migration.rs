@@ -29,10 +29,15 @@ pub(crate) fn require_capacity(
         .and_then(|size| size.checked_mul(copies))
         .and_then(|size| size.checked_add(extra_mib * MIB))
         .ok_or(DatabaseError::StoragePressure)?;
-    require_available(directory, additional)
+    require_free_space(directory, additional, true)
 }
 
-fn require_available(directory: &Path, additional: i64) -> Result<(), DatabaseError> {
+/// Check user-available capacity against the Swift storage pressure thresholds.
+pub fn require_free_space(
+    directory: &Path,
+    additional: i64,
+    optional: bool,
+) -> Result<(), DatabaseError> {
     use DatabaseError::StoragePressure;
 
     let path = CString::new(directory.as_os_str().as_bytes()).map_err(|_| StoragePressure)?;
@@ -44,8 +49,13 @@ fn require_available(directory: &Path, additional: i64) -> Result<(), DatabaseEr
     // SAFETY: statvfs initialized volume on success.
     let volume = unsafe { volume.assume_init() };
     let available = u128::from(volume.f_bavail) * u128::from(volume.f_frsize);
+    let headroom = if optional {
+        OPTIONAL_HEADROOM
+    } else {
+        128 * MIB
+    };
     if !(0..=MAX_ADDITIONAL_BYTES).contains(&additional)
-        || available < (OPTIONAL_HEADROOM + additional) as u128
+        || available < (headroom + additional) as u128
         || available > i64::MAX as u128
     {
         return Err(StoragePressure);
@@ -85,7 +95,7 @@ pub(crate) fn backup_before_upgrade(
     {
         let copy = Backup::new(source, &mut target)?;
         loop {
-            require_available(directory, 2 * MIB)?;
+            require_free_space(directory, 2 * MIB, true)?;
             match copy.step(128)? {
                 StepResult::Done => break,
                 StepResult::More => {}

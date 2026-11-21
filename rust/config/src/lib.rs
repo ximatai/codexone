@@ -88,13 +88,9 @@ pub struct Configuration {
 
 impl Configuration {
     pub fn load(runtime: RuntimeConfiguration, now_unix_seconds: i64) -> Result<Self, ConfigError> {
-        use ConfigError::{
-            AccountMasterKey, AdminTokenPath, BackupDirectory, InvalidFileOrSetting,
-        };
+        use ConfigError::{AccountMasterKey, AdminTokenPath, InvalidFileOrSetting};
 
-        if let Some(path) = runtime.backup_directory.as_deref() {
-            files::validate_backup_directory(path).ok_or(BackupDirectory)?;
-        }
+        runtime.validate_backup_directory()?;
         let source = if let Some(path) = runtime.identity_path.as_deref() {
             let identity =
                 source::load_identity(path, now_unix_seconds).ok_or(InvalidFileOrSetting)?;

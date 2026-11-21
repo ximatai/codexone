@@ -180,6 +180,7 @@ dependencies = [
  "codexone-config",
  "codexone-execution",
  "codexone-http-upstream",
+ "codexone-maintenance",
  "codexone-responses",
  "codexone-storage",
  "codexone-wire",
@@ -214,6 +215,20 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "webpki-roots",
+]
+
+[[package]]
+name = "codexone-maintenance"
+version = "0.1.0"
+dependencies = [
+ "codexone-storage",
+ "hex",
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]

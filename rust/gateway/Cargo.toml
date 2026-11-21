@@ -15,6 +15,7 @@ codexone-admin = { path = "../admin" }
 codexone-config = { path = "../config" }
 codexone-execution = { path = "../execution" }
 codexone-http-upstream = { path = "../http-upstream" }
+codexone-maintenance = { path = "../maintenance" }
 codexone-responses = { path = "../responses" }
 codexone-storage = { path = "../storage" }
 codexone-wire = { path = "../wire" }
