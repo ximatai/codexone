@@ -9,8 +9,8 @@ use codexone_governance::{
     RefreshFailure, RefreshProvider, VerifiedAuthorization,
 };
 use codexone_http_upstream::{
-    Bytes, CancellationToken, Error as TransportError, ExchangeOptions, HttpUpstream, Instant,
-    Proxy, RequestBody, Response,
+    BufferedResponse, Bytes, CancellationToken, Error as TransportError, ExchangeOptions,
+    HttpUpstream, Instant, Proxy, RequestBody,
 };
 use codexone_storage::AccountCredential;
 use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
@@ -90,6 +90,16 @@ impl SubscriptionProvider {
         }
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn driver_probes(
+        &self,
+    ) -> (
+        codexone_http_upstream::DriverProbe,
+        codexone_http_upstream::DriverProbe,
+    ) {
+        (self.auth.driver_probe(), self.quota.driver_probe())
+    }
+
     pub(crate) fn now(&self) -> i64 {
         (self.now)().clamp(0, MAX_EPOCH)
     }
@@ -163,20 +173,21 @@ impl SubscriptionProvider {
         options.cancellation = stop;
         let response = self
             .quota
-            .send(request, options)
+            .send_buffered(request, options, |status, headers| {
+                status == StatusCode::OK && json_headers(headers)
+            })
             .await
             .map_err(quota_transport)?;
-        let failure = match response.status() {
+        let failure = match response.status {
             StatusCode::OK => None,
             StatusCode::UNAUTHORIZED => Some(QuotaFailure::AuthorizationRejected),
             StatusCode::TOO_MANY_REQUESTS => Some(QuotaFailure::RateLimited),
             _ => Some(QuotaFailure::Unavailable),
         };
         if let Some(failure) = failure {
-            response.close().await;
             return Err(failure);
         }
-        let doc = document(response).await.map_err(|e| match e {
+        let doc = document(response).map_err(|e| match e {
             DocumentError::Transport(error) => quota_transport(error),
             DocumentError::Invalid => QuotaFailure::InvalidResponse,
         })?;
@@ -215,19 +226,22 @@ impl SubscriptionProvider {
             .body(RequestBody::bytes(Bytes::from_owner(Zeroizing::new(body))))
             .map_err(|_| TransportError::InvalidRequest)?;
         let options = ExchangeOptions::new(deadline, AUTH_TIMEOUT, BODY_LIMIT);
-        let response = self.auth.send(request, options).await?;
-        let status = response.status();
-        // Authorization status determines diagnostics before any untrusted error body.
-        let read = status == StatusCode::OK
-            || matches!(payload, Payload::Json(fields) if path == TOKEN && fields.iter().any(|(key, _)| *key == "refresh_token"))
-                && matches!(status, StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED);
-        let json = if read {
-            document(response).await.ok()
-        } else {
-            response.close().await;
-            None
-        };
-        Ok(AuthResponse { status, json })
+        let refresh = matches!(payload, Payload::Json(fields) if path == TOKEN && fields.iter().any(|(key, _)| *key == "refresh_token"));
+        let response = self
+            .auth
+            .send_buffered(request, options, move |status, headers| {
+                // Initial authorization diagnostics use status only on rejection.
+                (status == StatusCode::OK
+                    || refresh
+                        && matches!(status, StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED))
+                    && json_headers(headers)
+            })
+            .await?;
+        let status = response.status;
+        Ok(AuthResponse {
+            status,
+            json: document(response).ok(),
+        })
     }
 
     async fn exchange(
@@ -531,20 +545,21 @@ enum DocumentError {
     Transport(TransportError),
 }
 
-async fn document(response: Response) -> Result<Value, DocumentError> {
-    let types = response.headers().get_all(header::CONTENT_TYPE);
-    let mut types = types.iter();
+fn json_headers(headers: &HeaderMap) -> bool {
+    let mut types = headers.get_all(header::CONTENT_TYPE).iter();
     let json = types
         .next()
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"));
-    if !json || types.next().is_some() || response.headers().contains_key(header::CONTENT_ENCODING)
-    {
-        response.close().await;
-        return Err(DocumentError::Invalid);
-    }
-    let bytes = response.collect().await.map_err(DocumentError::Transport)?;
+    json && types.next().is_none() && !headers.contains_key(header::CONTENT_ENCODING)
+}
+
+fn document(response: BufferedResponse) -> Result<Value, DocumentError> {
+    let bytes = response
+        .body
+        .map_err(DocumentError::Transport)?
+        .ok_or(DocumentError::Invalid)?;
     let document: Value = serde_json::from_slice(&bytes).map_err(|_| DocumentError::Invalid)?;
     document
         .is_object()

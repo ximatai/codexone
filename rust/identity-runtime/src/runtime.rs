@@ -12,10 +12,11 @@ use codexone_governance::{
     Result, Work, Writer,
 };
 use codexone_http_upstream::{CancellationToken, Instant};
-use codexone_storage::AccountCredentialCipher;
+use codexone_storage::{AccountCredentialCipher, Database};
 use http::HeaderMap;
 use serde_json::{Value, json};
 use tokio::sync::{Semaphore, watch};
+use tokio_util::task::TaskTracker;
 
 use crate::{Observation, QuotaFailure, SubscriptionProvider, UsageCredits, store};
 
@@ -35,7 +36,7 @@ struct Job {
 
 struct Inner<W> {
     writer: W,
-    governance: Arc<Governance<W>>,
+    reads: TaskTracker,
     cipher: AccountCredentialCipher,
     provider: SubscriptionProvider,
     refresh: RefreshService<W, SubscriptionProvider>,
@@ -79,8 +80,8 @@ impl<W: Writer> IdentityRuntime<W> {
             inner: Arc::new(Inner {
                 writer,
                 cipher,
-                refresh: RefreshService::new(governance.clone(), provider.clone()),
-                governance,
+                refresh: RefreshService::new(governance, provider.clone()),
+                reads: TaskTracker::new(),
                 provider,
                 jobs: Mutex::new(HashMap::new()),
                 waiters: Semaphore::new(CAPACITY),
@@ -172,32 +173,29 @@ impl<W: Writer> IdentityRuntime<W> {
     pub async fn quota(&self, id: &str) -> Result<Observation> {
         validate_id(id)?;
         let id = id.to_owned();
-        self.inner
-            .writer
-            .run(Work::Read, move |db, _, _| {
-                store::load(db.connection(), &id)?;
-                store::load_quota(db.connection(), &id)
-            })
-            .await
+        self.read(move |db, _, _| {
+            store::load(db.connection(), &id)?;
+            store::load_quota(db.connection(), &id)
+        })
+        .await
     }
 
     /// One scan. Callers may use this for deterministic scheduling and tests.
     pub async fn schedule_cycle(&self) -> Result<()> {
-        if self.inner.stop.is_cancelled() {
-            return Err(Error::AuthorizationUnavailable);
-        }
-        for account in self.inner.governance.list_accounts(None).await? {
-            if account.mode != AccountMode::Disabled
-                && matches!(
-                    account.authorization,
-                    AuthorizationState::Ready | AuthorizationState::Refreshing
-                )
-            {
-                match self.enqueue(&account.id, false) {
-                    Ok(_) => {}
-                    Err(Error::Capacity) => break,
-                    Err(error) => return Err(error),
+        let accounts = self
+            .read(|db, _, optional| {
+                if !optional {
+                    return Err(Error::StoragePressure);
                 }
+                store::observation_accounts(db.connection())
+            })
+            .await?;
+        for id in accounts {
+            validate_id(&id).map_err(|_| Error::Unavailable)?;
+            match self.enqueue(&id, false) {
+                Ok(_) => {}
+                Err(Error::Capacity) => break,
+                Err(error) => return Err(error),
             }
         }
         Ok(())
@@ -240,6 +238,7 @@ impl<W: Writer> IdentityRuntime<W> {
         let jobs = {
             let jobs = self.inner.jobs.lock().expect("observation jobs");
             self.inner.stop.cancel();
+            self.inner.reads.close();
             jobs.values()
                 .map(|job| job.reply.clone())
                 .collect::<Vec<_>>()
@@ -248,6 +247,7 @@ impl<W: Writer> IdentityRuntime<W> {
         for reply in jobs {
             let _ = wait(reply).await;
         }
+        self.inner.reads.wait().await;
     }
 
     fn enqueue(&self, id: &str, manual: bool) -> Result<Reply> {
@@ -280,17 +280,37 @@ impl<W: Writer> IdentityRuntime<W> {
         Ok(reply)
     }
 
+    async fn read<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&mut Database, i64, bool) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let reply = {
+            let _gate = self.inner.jobs.lock().expect("observation jobs");
+            if self.inner.stop.is_cancelled() {
+                return Err(Error::AuthorizationUnavailable);
+            }
+            if self.inner.reads.len() >= CAPACITY {
+                return Err(Error::Capacity);
+            }
+            let runtime = self.clone();
+            // The runtime owns the writer reply even if a dispatch or management
+            // caller is cancelled while the command is pending.
+            self.inner
+                .reads
+                .spawn(async move { runtime.inner.writer.run(Work::Read, operation).await })
+        };
+        reply.await.map_err(|_| Error::Unavailable)?
+    }
+
     async fn load(&self, id: &str, optional: bool) -> Result<store::Record> {
         let id = id.to_owned();
-        self.inner
-            .writer
-            .run(Work::Read, move |db, _, allowed| {
-                if optional && !allowed {
-                    return Err(Error::StoragePressure);
-                }
-                store::load(db.connection(), &id)
-            })
-            .await
+        self.read(move |db, _, allowed| {
+            if optional && !allowed {
+                return Err(Error::StoragePressure);
+            }
+            store::load(db.connection(), &id)
+        })
+        .await
     }
 
     async fn execute(&self, id: &str) -> Result<Observation> {
@@ -406,13 +426,11 @@ impl<W: Writer> IdentityRuntime<W> {
         // error. Require the matching durable terminal event before proceeding.
         let id = account.id.clone();
         let revision = previous.account.revision;
-        self.inner
-            .writer
-            .run(Work::Read, move |db, _, _| {
-                let action = store::last_refresh_action(db.connection(), &id, revision)?;
-                Ok(action.as_deref() == Some("refresh_not_completed"))
-            })
-            .await
+        self.read(move |db, _, _| {
+            let action = store::last_refresh_action(db.connection(), &id, revision)?;
+            Ok(action.as_deref() == Some("refresh_not_completed"))
+        })
+        .await
     }
 
     fn should_refresh(&self, record: &store::Record) -> bool {
@@ -504,9 +522,7 @@ impl<W: Writer> AccountRuntime for IdentityRuntime<W> {
         validate_id(account)?;
         let id = account.to_owned();
         let (quota, health, now) = self
-            .inner
-            .writer
-            .run(Work::Read, move |db, now, _| {
+            .read(move |db, now, _| {
                 let quota = store::load_quota(db.connection(), &id)?;
                 let health = store::health(db.connection(), &id, now)?;
                 Ok((quota, health, now))

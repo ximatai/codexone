@@ -30,7 +30,7 @@ use tokio::{
     time::{sleep_until, timeout},
 };
 use tokio_rustls::rustls::ClientConfig;
-use upload::UploadOwner;
+use upload::{UploadOwner, WireBody};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -124,6 +124,8 @@ impl ExchangeOptions {
 pub struct HttpUpstream {
     proxy: Option<Proxy>,
     tls: Arc<ClientConfig>,
+    #[cfg(feature = "test-support")]
+    drivers: DriverProbe,
 }
 
 impl HttpUpstream {
@@ -131,6 +133,8 @@ impl HttpUpstream {
         Self {
             proxy,
             tls: Arc::new(connect::tls_config()),
+            #[cfg(feature = "test-support")]
+            drivers: DriverProbe::default(),
         }
     }
 
@@ -143,9 +147,64 @@ impl HttpUpstream {
     /// Dispatch exactly once. The response owns the live connection; use its methods to read or close it.
     pub async fn send(
         &self,
-        mut request: Request<RequestBody>,
+        request: Request<RequestBody>,
         options: ExchangeOptions,
     ) -> Result<Response, Error> {
+        let (response, driver) = self.prepare(request, options).await?.split();
+        let driver = Driver(tokio::spawn(driver));
+        match response.await {
+            Ok(inner) => Ok(Response {
+                inner,
+                driver: Some(driver),
+            }),
+            Err(error) => {
+                driver.close().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Dispatch once and optionally collect a bounded body. The connection is
+    /// driven inline, so dropping the future or returning ends all HTTP I/O.
+    /// A body failure is reported separately from failure to receive headers.
+    pub async fn send_buffered(
+        &self,
+        request: Request<RequestBody>,
+        options: ExchangeOptions,
+        read_body: impl FnOnce(StatusCode, &HeaderMap) -> bool + Send,
+    ) -> Result<BufferedResponse, Error> {
+        let (response, driver) = self.prepare(request, options).await?.split();
+        let read = async {
+            let mut response = response.await?;
+            let body = if read_body(response.status, &response.headers) {
+                response.collect().await.map(Some)
+            } else {
+                Ok(None)
+            };
+            Ok(BufferedResponse {
+                status: response.status,
+                headers: response.headers,
+                body,
+            })
+        };
+        tokio::pin!(read);
+        // If the driver reaches EOF first, the body may still hold final buffered bytes.
+        tokio::select! {
+            result = &mut read => result,
+            () = driver => read.await,
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn driver_probe(&self) -> DriverProbe {
+        self.drivers.clone()
+    }
+
+    async fn prepare(
+        &self,
+        mut request: Request<RequestBody>,
+        options: ExchangeOptions,
+    ) -> Result<Prepared, Error> {
         check_abort(&options)?;
         let uri = request.uri().clone();
         let authority = uri.authority().ok_or(Error::InvalidRequest)?;
@@ -196,7 +255,7 @@ impl HttpUpstream {
                 io.map_err(|_| Error::ConnectTimeout)??
             }
         };
-        let (mut sender, connection) = http1::Builder::new()
+        let (sender, connection) = http1::Builder::new()
             .max_buf_size(64 * 1024)
             .handshake(TokioIo::new(io))
             .await
@@ -206,11 +265,58 @@ impl HttpUpstream {
         let (parts, body) = request.into_parts();
         let upload = UploadOwner::new(body);
         let request = Request::from_parts(parts, upload.wire_body(progress.clone()));
+        Ok(Prepared {
+            sender,
+            connection,
+            request,
+            options,
+            progress,
+            upload,
+            #[cfg(feature = "test-support")]
+            drivers: self.drivers.clone(),
+        })
+    }
+}
+
+type Connection = http1::Connection<TokioIo<Box<dyn connect::Io>>, WireBody>;
+
+struct Prepared {
+    sender: http1::SendRequest<WireBody>,
+    connection: Connection,
+    request: Request<WireBody>,
+    options: ExchangeOptions,
+    progress: Progress,
+    upload: UploadOwner,
+    #[cfg(feature = "test-support")]
+    drivers: DriverProbe,
+}
+
+impl Prepared {
+    fn split(
+        self,
+    ) -> (
+        impl Future<Output = Result<ResponseBody, Error>> + Send + 'static,
+        impl Future<Output = ()> + Send + 'static,
+    ) {
+        let Self {
+            mut sender,
+            connection,
+            request,
+            options,
+            progress,
+            upload,
+            #[cfg(feature = "test-support")]
+            drivers,
+        } = self;
         let (failure, mut failures) = watch::channel(None);
         let cancel = options.cancellation.clone();
         let deadline = options.deadline;
         let monitor = progress.clone();
-        let driver = Driver(tokio::spawn(async move {
+        #[cfg(feature = "test-support")]
+        let response_probe = drivers.clone();
+        let driver = async move {
+            #[cfg(feature = "test-support")]
+            let _active = drivers.started();
             let error = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Error::Cancelled,
@@ -219,34 +325,34 @@ impl HttpUpstream {
                 _ = connection => return,
             };
             failure.send_replace(Some(error));
-        }));
-        let response = tokio::select! {
-            biased;
-            error = wait_for_failure(&mut failures) => Err(error),
-            result = sender.send_request(request) => result.map_err(|error| classify(error, Error::Transport)),
         };
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                driver.close().await;
-                return Err(error);
+        let response = async move {
+            let response = tokio::select! {
+                biased;
+                error = wait_for_failure(&mut failures) => return Err(error),
+                result = sender.send_request(request) => result.map_err(|error| classify(error, Error::Transport))?,
+            };
+            #[cfg(feature = "test-support")]
+            response_probe
+                .0
+                .headers
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (parts, body) = response.into_parts();
+            if !parts.status.is_success() {
+                progress.rejected();
+                upload.stop();
             }
+            Ok(ResponseBody {
+                status: parts.status,
+                headers: parts.headers,
+                body,
+                options,
+                progress,
+                failures,
+                received: 0,
+            })
         };
-        let (parts, body) = response.into_parts();
-        if !parts.status.is_success() {
-            progress.rejected();
-            upload.stop();
-        }
-        Ok(Response {
-            status: parts.status,
-            headers: parts.headers,
-            body,
-            options,
-            progress,
-            failures,
-            received: 0,
-            driver: Some(driver),
-        })
+        (response, driver)
     }
 }
 
@@ -256,8 +362,20 @@ impl Default for HttpUpstream {
     }
 }
 
+/// Headers and optional body from a completed buffered exchange.
+pub struct BufferedResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Result<Option<Bytes>, Error>,
+}
+
 /// Owns one live upstream response. Dropping it cancels outstanding connection I/O.
 pub struct Response {
+    inner: ResponseBody,
+    driver: Option<Driver>,
+}
+
+struct ResponseBody {
     status: StatusCode,
     headers: HeaderMap,
     body: Incoming,
@@ -265,31 +383,30 @@ pub struct Response {
     progress: Progress,
     failures: watch::Receiver<Option<Error>>,
     received: usize,
-    driver: Option<Driver>,
 }
 
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Response")
-            .field("status", &self.status)
+            .field("status", &self.inner.status)
             .finish_non_exhaustive()
     }
 }
 
 impl Response {
     pub fn status(&self) -> StatusCode {
-        self.status
+        self.inner.status
     }
 
     pub fn headers(&self) -> &HeaderMap {
-        &self.headers
+        &self.inner.headers
     }
 
     /// Mark an effective SSE event. Callers should exclude comments, empty deltas and heartbeats.
     pub fn mark_response_progress(&mut self) -> Result<(), Error> {
-        self.check_deadline()?;
-        if self.driver.is_some() && self.status.is_success() {
-            self.progress.response_progress();
+        self.inner.check_deadline()?;
+        if self.driver.is_some() && self.inner.status.is_success() {
+            self.inner.progress.response_progress();
         }
         Ok(())
     }
@@ -300,7 +417,7 @@ impl Response {
         if self.driver.is_none() {
             return Ok(None);
         }
-        let result = self.read_chunk().await;
+        let result = self.inner.read_chunk().await;
         if !matches!(&result, Ok(Some(_))) {
             self.stop().await;
         }
@@ -309,16 +426,33 @@ impl Response {
 
     /// Collect the remaining body within the exchange's configured byte limit.
     pub async fn collect(mut self) -> Result<Bytes, Error> {
-        let mut output = bytes::BytesMut::new();
-        while let Some(chunk) = self.next_chunk().await? {
-            output.extend_from_slice(&chunk);
+        if self.driver.is_none() {
+            return Ok(Bytes::new());
         }
-        Ok(output.freeze())
+        let result = self.inner.collect().await;
+        self.stop().await;
+        result
     }
 
     /// Close the exchange and wait for its connection task to leave.
     pub async fn close(mut self) {
         self.stop().await;
+    }
+
+    async fn stop(&mut self) {
+        if let Some(driver) = self.driver.take() {
+            driver.close().await;
+        }
+    }
+}
+
+impl ResponseBody {
+    async fn collect(&mut self) -> Result<Bytes, Error> {
+        let mut output = bytes::BytesMut::new();
+        while let Some(chunk) = self.read_chunk().await? {
+            output.extend_from_slice(&chunk);
+        }
+        Ok(output.freeze())
     }
 
     async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
@@ -358,11 +492,49 @@ impl Response {
         }
         Ok(())
     }
+}
 
-    async fn stop(&mut self) {
-        if let Some(driver) = self.driver.take() {
-            driver.close().await;
-        }
+#[cfg(feature = "test-support")]
+#[derive(Clone, Default)]
+pub struct DriverProbe(Arc<DriverCounts>);
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct DriverCounts {
+    started: std::sync::atomic::AtomicUsize,
+    headers: std::sync::atomic::AtomicUsize,
+    exited: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "test-support")]
+impl DriverProbe {
+    /// Number of drivers polled and number of driver futures exited or dropped.
+    pub fn counts(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (self.0.started.load(SeqCst), self.0.exited.load(SeqCst))
+    }
+
+    pub fn received_headers(&self) -> usize {
+        self.0.headers.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn started(&self) -> DriverExit {
+        self.0
+            .started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        DriverExit(self.0.clone())
+    }
+}
+
+#[cfg(feature = "test-support")]
+struct DriverExit(Arc<DriverCounts>);
+
+#[cfg(feature = "test-support")]
+impl Drop for DriverExit {
+    fn drop(&mut self) {
+        self.0
+            .exited
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

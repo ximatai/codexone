@@ -62,6 +62,20 @@ pub(crate) fn load(db: &Connection, id: &str) -> Result<Record> {
     })
 }
 
+pub(crate) fn observation_accounts(db: &Connection) -> Result<Vec<String>> {
+    let mut statement = db.prepare(
+        "SELECT id FROM accounts WHERE mode IN ('enabled','draining')
+         AND authorization IN ('ready','refreshing') ORDER BY id LIMIT 65",
+    )?;
+    let ids = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if ids.len() > 64 {
+        return Err(Error::Unavailable);
+    }
+    Ok(ids)
+}
+
 pub(crate) fn last_refresh_action(db: &Connection, id: &str, after: i64) -> Result<Option<String>> {
     Ok(db.query_row(
         "SELECT action FROM account_events WHERE account_id=? AND revision>?

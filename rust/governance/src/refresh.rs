@@ -21,7 +21,9 @@ pub enum RefreshFailure {
     Unknown,
 }
 
-/// Implement with bounded, cancellation-safe transport and no token POST retry.
+/// Implement with bounded transport and no token POST retry. Shutdown or timeout
+/// drops the provider future before settling the refresh intent. Dropping it
+/// must synchronously release the exchange's I/O ownership.
 pub trait RefreshProvider: Send + Sync + 'static {
     fn refresh(
         &self,
