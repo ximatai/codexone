@@ -73,6 +73,8 @@ class VerifyWorkflowTests(unittest.TestCase):
                 required.update({'backend-rust', 'backend-rust-build', 'backend-rust-scripts', 'frontend-live'})
             if {'backend', 'rust'} <= set(selected):
                 required.add('backend-parity')
+            if 'frontend' in selected:
+                required.update({'backend-rust-build', 'frontend-live'})
             required.update({'frontend', 'devcontainer'}.intersection(selected))
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
             needs['changes']['outputs'] = {name: str(name in selected).lower()
@@ -111,11 +113,14 @@ class ChangedPathsTests(unittest.TestCase):
             (['scripts/verify_migration_cutback.py'], {'backend', 'rust'}),
             (['rust/storage/src/migration.rs'], {'backend', 'rust'}),
             (['rust/maintenance/src/lib.rs'], {'backend', 'rust'}),
+            (['rust/gateway/src/online_backup.rs'], {'backend', 'rust'}),
+            (['rust/gateway/src/main.rs'], {'backend', 'rust'}),
+            (['Sources/CodexOne/CodexOneMain.swift'], {'backend', 'rust'}),
             (['Sources/CodexOneAdapters/Persistence/SQLiteSnapshotMaintenance.swift'], {'backend', 'rust'}),
             (['Tests/CodexOneAdaptersTests/Fixtures/system-status.json'], {'backend', 'rust'}),
-            (['Sources/CodexOne/main.swift'], {'backend'}),
-            (['web/src/App.tsx'], {'rust', 'frontend'}),
-            (['Sources/CodexOne/main.swift', 'web/src/App.tsx'], {'backend', 'rust', 'frontend'}),
+            (['Sources/CodexOneCore/Domain/Identity/AccountCredential.swift'], {'backend'}),
+            (['web/src/App.tsx'], {'frontend'}),
+            (['Sources/CodexOneCore/Domain/Identity/AccountCredential.swift', 'web/src/App.tsx'], {'backend', 'frontend'}),
             (['.devcontainer/Dockerfile'], {'devcontainer'}),
             (['unknown-root-file'], {'backend', 'rust', 'frontend'}),
             ([f'docs/{index:03}.md' for index in range(320)] + ['rust/gateway/Cargo.toml'], {'rust'}),
@@ -147,6 +152,42 @@ class ChangedPathsTests(unittest.TestCase):
             swift, rust = shard_suites(), shard_suites('--rust')
             self.assertLessEqual(swift_only, swift)
             self.assertEqual(rust, swift - swift_only)
+
+    def test_quick_rust_shards_call_the_selected_binary_and_protocol_modes(self):
+        # Run the shell dispatcher without starting any gateway or provider.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'calls'
+            binary = root / 'codexone'
+            binary.touch(mode=0o755)
+            python = root / 'python3'
+            python.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+if sys.argv[1] == 'scripts/backend_shards.py':
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+with open(os.environ['CALL_LOG'], 'a') as output:
+    output.write(json.dumps(sys.argv[1:]) + '\\n')
+''')
+            python.chmod(0o755)
+            env = {**os.environ, 'CODEXONE_BACKEND_BIN_DIR': str(root),
+                   'PATH': str(root) + os.pathsep + os.environ['PATH'], 'CALL_LOG': str(log)}
+            cmd = ['bash', 'scripts/verify.sh', '--backend-scripts', 'all', '--pr', '--rust']
+            subprocess.run(cmd, cwd=ROOT, env=env, check=True, capture_output=True)
+            recorded = log.read_text().splitlines()
+            calls = {path: args for path, *args in map(json.loads, recorded)}
+            expected = subprocess.check_output(
+                [sys.executable, 'scripts/backend_shards.py', '--list', 'all', '--pr', '--rust'],
+                cwd=ROOT, text=True).split()
+            self.assertEqual(set(calls), set(expected))
+            self.assertEqual(len(recorded), len(expected))
+            for args in calls.values():
+                self.assertEqual(args[:2], ['--binary', str(binary)])
+            self.assertEqual(calls['scripts/verify_client_protocol.py'][2:], ['--expect-provider-eof'])
+            self.assertEqual(calls['scripts/verify_snapshot_restore.py'][2:], ['--linked-paths'])
+            self.assertEqual(calls['scripts/verify_admin_live.py'][2:], ['--backend', 'rust'])
+            self.assertEqual({Path(path).name for path, args in calls.items() if '--smoke' in args}, {
+                'verify_images.py', 'verify_response_finish.py', 'verify_text_contract.py',
+                'verify_upload_deadline.py', 'verify_upstream_ws_body_limit.py', 'verify_upstream_zstd.py',
+            })
 
 
 class ReleaseWorkflowTests(unittest.TestCase):

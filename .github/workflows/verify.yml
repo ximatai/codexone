@@ -208,7 +208,7 @@ jobs:
         run: ./scripts/verify_rust.sh --crate-tests
   backend-rust-build:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -322,13 +322,18 @@ jobs:
     needs: [changes, backend-build, backend-rust-build]
     if: >-
       ${{ !cancelled() && needs.changes.result == 'success' &&
-          (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rust == 'true') &&
+          (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rust == 'true' ||
+            needs.changes.outputs.frontend == 'true') &&
           (needs.changes.outputs.backend != 'true' || needs.backend-build.result == 'success') &&
-          (needs.changes.outputs.rust != 'true' || needs.backend-rust-build.result == 'success') }}
+          ((needs.changes.outputs.rust != 'true' && needs.changes.outputs.frontend != 'true') ||
+            needs.backend-rust-build.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
-        backend: ${{ fromJSON(needs.changes.outputs.backend == 'true' && (needs.changes.outputs.rust == 'true' && '["swift","rust"]' || '["swift"]') || '["rust"]') }}
+        backend: >-
+          ${{ fromJSON(needs.changes.outputs.backend == 'true' &&
+              ((needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true') &&
+                '["swift","rust"]' || '["swift"]') || '["rust"]') }}
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
@@ -409,15 +414,18 @@ jobs:
           required = {'changes', 'docs'}
           swift = selected['backend'] == 'true'
           rust = selected['rust'] == 'true'
+          frontend = selected['frontend'] == 'true'
           if swift:
               required.update({'backend-build', 'backend-swift-tests', 'backend-scripts'})
           if rust:
-              required.update({'backend-rust', 'backend-rust-build', 'backend-rust-scripts'})
-          if swift or rust:
+              required.update({'backend-rust', 'backend-rust-scripts'})
+          if rust or frontend:
+              required.add('backend-rust-build')
+          if swift or rust or frontend:
               required.add('frontend-live')
           if swift and rust:
               required.add('backend-parity')
-          if selected['frontend'] == 'true':
+          if frontend:
               required.add('frontend')
           if selected['devcontainer'] == 'true':
               required.add('devcontainer')

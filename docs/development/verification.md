@@ -103,7 +103,7 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 ## 发版 CI 验证边界
 
-Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，重命名检查旧、新路径，混合修改取并集。Markdown、docs 和 LICENSE 只跑基础检查。web 选合成浏览器和 Rust，Rust 源码通常只选 Rust，Swift 源码、包和测试通常只选 Swift。共享脚本与夹具、部署、SQLite 持久化和备份维护路径选两种后端。开发容器文件选开发容器。CI 工作流和筛选脚本选全部，未知路径选两种后端及前端。main 推送若只涉及文档且推送前一提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片及工具链一致性。最终 `verify` 始终运行，拒绝缺失或无效的筛选结果，要求全部已选任务成功。可将它设为稳定的 required check。
+Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，重命名检查旧、新路径，混合修改取并集。Markdown、docs 和 LICENSE 只跑基础检查。web 选合成浏览器、优化 Rust 构建及真实联调，Rust 源码通常只选 Rust，Swift 源码、包和测试通常只选 Swift。共享脚本与夹具、部署、SQLite 持久化和备份维护路径选两种后端。开发容器文件选开发容器。CI 工作流和筛选脚本选全部，未知路径选两种后端及前端。main 推送若只涉及文档且推送前一提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片及工具链一致性。最终 `verify` 始终运行，拒绝缺失或无效的筛选结果，要求全部已选任务成功。可将它设为稳定的 required check。
 
 `backend-rust` 按各 crate 的 Cargo.lock 运行单元与托管进程测试。`backend-rust-build` 在 Ubuntu 24.04 使用与候选 Dockerfile 同版本的工具链构建优化版 codexone。四个 `backend-rust-scripts` 分片和真实浏览器下载同一次构建的二进制归档并校验摘要。分片运行 36 项回环套件，验证 Responses HTTP/SSE、原生 WebSocket、终态与不重放、鉴权、用量、管理 WSS 与 SQLite 恢复等契约。两种后端均选中时，`backend-parity` 用同次工作流的两份产物验证同 schema 重启、双向切换、续接及账本结算。所有回环检查使用独立合成配置、SQLite 数据与临时端口。
 

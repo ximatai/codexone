@@ -105,7 +105,9 @@ def check_live_browser(workflow):
     assert 'needs: [changes, backend-build, backend-rust-build]' in live, 'Real browser must depend on both build jobs'
     assert all(result in live for result in ('needs.backend-build.result', 'needs.backend-rust-build.result')), (
         'Real browser must run when either backend is selected and require the selected build results')
-    assert """fromJSON(needs.changes.outputs.backend == 'true' && (needs.changes.outputs.rust == 'true' && '["swift","rust"]' || '["swift"]') || '["rust"]')""" in live, (
+    matrix = ' '.join(live.split())
+    assert ("""fromJSON(needs.changes.outputs.backend == 'true' && ((needs.changes.outputs.rust == 'true' || """
+            """needs.changes.outputs.frontend == 'true') && '["swift","rust"]' || '["swift"]') || '["rust"]')""") in matrix, (
         'Live browser matrix must contain one run per selected backend')
     assert "matrix.backend == 'rust' && 'backend-rust-binaries' || 'backend-binaries'" in live, (
         'Real browser must select the matching gateway artifact')
@@ -129,8 +131,10 @@ def check_rust(workflow, dockerfile):
         version = re.search(r'^      RUSTUP_TOOLCHAIN: ([\d.]+)$', job, re.M)
         assert version and f'ARG RUST_BUILD_IMAGE=rust:{version[1]}-' in dockerfile, (
             'Verify and the Rust candidate must use the same Rust version')
-    for job in (tests, build, shards):
+    for job in (tests, shards):
         assert "    if: needs.changes.outputs.rust == 'true'\n" in job, 'Rust jobs must follow Rust selection'
+    assert "    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'\n" in build, (
+        'Rust protocol and frontend-only changes must both build the optimized gateway')
     assert 'run: ./scripts/verify_rust.sh --crate-tests' in tests, 'Retain Rust crate tests'
     assert './scripts/verify_rust.sh --release-build' in build and '-C rust/gateway/target/release codexone' in build, (
         'Package the optimized gateway executable from the selected commit')

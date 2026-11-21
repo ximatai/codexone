@@ -20,12 +20,14 @@ else
       scripts/verify.sh) backend=true; rust=true; frontend=true; devcontainer=true ;;
       .devcontainer/*) devcontainer=true ;;
       *.md|docs/*|LICENSE*) ;;
-      scripts/rust_compat/compare.py|rust/storage/*|rust/maintenance/*|\
-      Sources/CodexOneAdapters/Persistence/*|Sources/CodexOneCore/Application/Execution/OnlineBackup.swift|\
-      Sources/CodexOneRuntime/OnlineBackupSupervisor.swift|rust/gateway/src/*maintenance*|\
+      scripts/rust_compat/compare.py|rust/storage/*|rust/maintenance/*|rust/config/*|\
+      rust/gateway/src/main.rs|rust/gateway/src/gateway.rs|rust/gateway/src/online_backup.rs|\
+      Sources/CodexOne/CodexOneMain.swift|Sources/CodexOneAdapters/Persistence/*|\
+      Sources/CodexOneCore/Application/Execution/OnlineBackup.swift|\
+      Sources/CodexOneRuntime/OnlineBackupSupervisor.swift|Sources/CodexOneRuntime/RuntimeConfiguration.swift|\
       deploy/*|Tests/CodexOneAdaptersTests/Fixtures/*) backend=true; rust=true ;;
       rust/*|scripts/verify_rust.sh|scripts/rust_compat/*) rust=true ;;
-      web/*) rust=true; frontend=true ;;
+      web/*) frontend=true ;;
       # Shared suites also import helpers from existing Swift test scripts.
       scripts/*) backend=true; rust=true ;;
       Sources/*|Tests/*|Package.swift|Package.resolved|.swift-version) backend=true ;;
