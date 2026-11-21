@@ -171,6 +171,23 @@
 
 后续管理控制帧检查定位到 Rust 缺失既有的每连接每秒 64 帧限制。修正候选 `5f6d572` 对第 65 帧发出 1008。原生优化二进制通过完整管理 WSS，观测到超限关闭帧、健康 viewer 的后续更新、HTTP 会话和替补 viewer 正常。核心绑定故障退出、完整 WS 超限矩阵和真实 Nginx TLS 均通过。待最终整合 SHA 再构建与验收发行归档。[修正候选定向验证](https://github.com/ximatai/codexone/actions/runs/44870085027)
 
+## 执行账本重启 QA
+
+在 macOS arm64 从 `8f68c4b` 构建 Swift 和 Rust debug 网关。正常重启对照通过两端各自重启及双向切换，四组都保持 schema v19 和首轮结算，续接前上游调用为 1 次，续接后为 2 次。
+
+[执行账本重启驱动](../../../scripts/rust_compat/README.md#执行账本重启恢复) 在正式 Rust 网关进程通过四个 SIGKILL 场景、恢复后继续执行，以及再次正常重启后的账本一致性。旧工作树留下的合成对照构建省略启动时的 intent 恢复，驱动在第一个有 intent 的场景以 `expected unknown, found intent` 失败。同一 Rust 构建也通过 `readiness.py` 和 `verify_protocol.py`。原生 Linux amd64 发行制品仍待运行同一重启入口。
+
+### Swift ExecutionProbe 覆盖盘点
+
+| 覆盖 | Rust 证据与剩余范围 |
+| --- | --- |
+| 执行持久化（`verify_execution.py`） | 正式监听器已覆盖四个重启场景及恢复后的单次派发。直接重复提交同一结算证据和探针的容量命令仍由各自的定向用例覆盖，HTTP 驱动不注入内部命令。 |
+| 账号刷新恢复（`verify_accounts.py`） | 仍需正式 Rust 进程联验刷新 intent 前、intent 后、提交后的三段退出恢复，核对凭证版本、未知状态拒绝再次刷新及密文扫描。 |
+| 托管账号管理与代理（`verify_admin_round2.py`、`verify_upstream_proxy.py` 的 OAuth 分支） | 已有 Rust 托管账号与 SPA 局部证据，仍需整组复跑会话、授权、刷新和观察，并确认 OAuth 与 quota 请求经过显式代理，核对日志和账本脱敏。 |
+| 管理实时慢接收方（`verify_admin_live.py --slow-only`） | 正式监听器已有通常升级、快照和关闭证据。仍需让 Rust 进程承载满 DTO 和事件风暴，复验慢连接退槽、七个健康连接存活及 RSS 上限。 |
+| 凭证重加密（`verify_key_maintenance.py`） | 已有 Swift 中断、Rust 续作的维护互操作证据。仍需用 Rust 自行中断，验证页与 checkpoint、启动拒绝、正确 keyring 续作及退役核对。 |
+| 磁盘压力下的恢复复制（`verify_storage_pressure.py --space-root`） | Swift 探针只负责种库。仍需在原生 Linux 的有界私有 tmpfs 中，由 Rust CLI 验证恢复复制途中撤去空间、pending 屏障与源 bundle 完整性。 |
+
 ## 相关文档
 
 [架构提案](proposal.md)

@@ -21,7 +21,16 @@ Rust 的就绪故障场景使用同一套合成数据和临时端口。它验证
 python3 scripts/rust_compat/readiness.py --binary rust/gateway/target/debug/codexone
 ```
 
-SSE、WebSocket 和异常退出后的执行恢复另有验证场景。
+## 执行账本重启恢复
+
+从仓库根目录运行。可在 Rust 后端 CI 构建正式网关后直接运行同一命令。
+
+```sh
+cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone
+python3 scripts/rust_compat/execution_recovery.py --binary rust/gateway/target/debug/codexone
+```
+
+驱动在独立临时目录使用回环合成上游。四个 SIGKILL 场景分别为空闲且未收到请求、上游收到请求但未发首事件、客户端收到 SSE 首事件且账本已有响应绑定、以及请求完成且已持久结算。同库重启后核对 intent 转为 unknown、原始预留及归属、结算证据、SQLite 文件模式和上游调用次数。续接未绑定 ID 应被拒绝，已绑定 ID 可以续接；每个场景只有一条新请求派发并结算。随后用 SIGTERM 正常停机并再次启动，核对账本和派发次数不变。覆盖范围为单身份 HTTP/JSON/SSE 与进程级重启。
 
 ## 离线维护互操作
 

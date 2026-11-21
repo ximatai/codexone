@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -73,19 +74,23 @@ def listener_ports(process, output):
 
 
 @contextmanager
-def running_gateway(binary, root, environment):
+def running_gateway(binary, root, environment, *, crash=False):
     with tempfile.TemporaryFile(dir=root) as output:
         process = subprocess.Popen([binary], cwd=root, env=environment, stdin=subprocess.DEVNULL,
                                    stdout=output, stderr=subprocess.STDOUT)
         try:
             yield listener_ports(process, output)
-            require(process.poll() is None, "gateway exited before graceful shutdown")
-            process.terminate()
+            require(process.poll() is None, "gateway exited before the requested shutdown")
+            if crash:
+                process.kill()
+            else:
+                process.terminate()
             try:
                 status = process.wait(timeout=10)
             except subprocess.TimeoutExpired as error:
                 raise ProbeError("gateway did not shut down within 10 seconds") from error
-            require(status == 0, f"gateway shutdown failed ({status})")
+            expected = -signal.SIGKILL if crash else 0
+            require(status == expected, f"gateway exited with {status}, expected {expected}")
         finally:
             if process.poll() is None:
                 process.kill()
@@ -156,7 +161,7 @@ def ledger(path, expected_attempts):
 
 
 @contextmanager
-def fixture(root, *, handler=Upstream):
+def fixture(root, *, handler=Upstream, execution_timeout=5):
     root.mkdir(mode=0o700)
     config = root / "identity.json"
     database = root / "state" / "core.sqlite"
@@ -171,7 +176,7 @@ def fixture(root, *, handler=Upstream):
             "principal": "synthetic-principal", "keyID": "synthetic-key",
             "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(),
             "namespace": "synthetic-provider", "identity": "synthetic-account",
-            "reservedMicros": 10, "executionTimeoutSeconds": 5,
+            "reservedMicros": 10, "executionTimeoutSeconds": execution_timeout,
             "models": [{"id": "synthetic-text", "inputMicrosPerMillion": 1000000,
                         "outputMicrosPerMillion": 1000000}],
             "upstreamBaseURL": f"http://127.0.0.1:{upstream.server_port}/v1",
@@ -200,9 +205,13 @@ def probe(binary, root, restart_with=None):
 
         with running_gateway(restart_with or binary, root, environment) as ports:
             restarted_health = health(ports)
+            require(upstream.calls == 1, "restart replayed a completed request")
             second = generate(ports["data"], 2, previous=first["body"]["id"])
         require(upstream.calls == 2, "expected exactly two upstream calls after restart")
         restarted_ledger = ledger(database, 2)
+        require(restarted_ledger["schemaVersion"] == initial_ledger["schemaVersion"]
+                and restarted_ledger["attempts"][:1] == initial_ledger["attempts"],
+                "restart changed the schema version or first settlement")
 
     return {
         "checkConfig": configuration,
