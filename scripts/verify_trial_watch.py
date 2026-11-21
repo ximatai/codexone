@@ -141,7 +141,7 @@ class WatchTests(unittest.TestCase):
     def test_real_remote_program(self):
         from verify_admin import running_admin
         from verify_keys import ADMIN
-        binary = Path(__file__).resolve().parents[1]/'.build/debug/codexone'
+        binary = Path(__file__).resolve().parents[1]/'rust/gateway/target/debug/codexone'
         self.assertTrue(binary.exists(),'Build codexone before running this entry')
         with running_admin(str(binary),account_master=True) as fixture:
             # Fake Docker only: real probe script, credential file and gateway HTTP.

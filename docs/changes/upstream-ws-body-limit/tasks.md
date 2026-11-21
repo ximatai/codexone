@@ -39,7 +39,7 @@
 
 ## macOS RSS 指示性测量
 
-2026-11-03，macOS 27.2 arm64，`swift build -j 12` 的 debug binary；`python3 scripts/measure_upstream_ws_body_limit.py --binary .build/debug/codexone`。每组新建真实网关进程，fake provider 持有 HTTP 回复，`ps -o rss` 约每 20 ms 采样（另加 ps 启动耗时），覆盖解析、预检编码、HTTP 回退、持有及结算；仅统计网关进程，排除 Python 客户端/provider。每组先采样 0.5 秒空闲；正文为精确入站 JSON UTF-8 大小，WS 帧另有协议开销；32 MiB 请求恰好到 ingress 上限，两路 24 MiB 恰好占满 48 MiB 共享预算。
+2026-11-03，macOS 27.2 arm64，`swift build -j 12` 的 debug binary；[当时的 RSS 测量脚本](https://github.com/ximatai/codexone/blob/da07634c09eba69395bff9b8da36d2e0b92897f4/scripts/measure_upstream_ws_body_limit.py)。每组新建真实网关进程，fake provider 持有 HTTP 回复，`ps -o rss` 约每 20 ms 采样（另加 ps 启动耗时），覆盖解析、预检编码、HTTP 回退、持有及结算；仅统计网关进程，排除 Python 客户端/provider。每组先采样 0.5 秒空闲；正文为精确入站 JSON UTF-8 大小，WS 帧另有协议开销；32 MiB 请求恰好到 ingress 上限，两路 24 MiB 恰好占满 48 MiB 共享预算。
 
 | 负载 | 空闲峰值 RSS（MiB） | 请求阶段峰值 RSS（MiB） | 采样数 |
 | --- | --- | --- | --- |

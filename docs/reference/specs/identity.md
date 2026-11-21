@@ -70,7 +70,7 @@ Rust 网关在生效的 Key 或模型档位限制下，还按 [P16](protocol.md#
 
 ## I15：订阅认证传输的可信来源
 
-首个订阅适配固定 HTTPS 认证 authority 和数据 origin/协议，不提供任意地址或组织/项目头覆盖。专用 AHC client 只用 HTTP/1、每连接一次请求、最多 4 个调用，禁止重定向、连接建立重试、压缩及代理继承；单次请求含正文总期限默认 10 秒、最大 30 秒，响应最多 64 KiB，由 Service 拥有和关闭。测试工厂只允许显式 127.0.0.1 合成端口，认证 realm 进入 namespace，不能借此铸造生产命名空间。
+首个订阅适配固定 HTTPS 认证 authority 和数据 origin/协议，不提供任意地址或组织/项目头覆盖。专用认证 HTTP 客户端 只用 HTTP/1、每连接一次请求、最多 4 个调用，禁止重定向、连接建立重试、压缩及代理继承；单次请求含正文总期限默认 10 秒、最大 30 秒，响应最多 64 KiB，由 Service 拥有和关闭。测试工厂只允许显式 127.0.0.1 合成端口，认证 realm 进入 namespace，不能借此铸造生产命名空间。
 
 授权码请求使用 form/PKCE，刷新使用独立 JSON 请求；state/nonce 和一次性消费必须由管理授权用例持有。ID/access 只在来自固定 token endpoint 的可信直接响应中解析：校验 issuer、ID audience/当前有效期、subject/account 范围及新 access 有效期；回调兑换另核对本地 nonce，设备码兑换没有本地 nonce，不做 nonce 比对。namespace 包含认证 realm、客户端、数据 origin/协议、subject 和 account。设备码同样依赖固定端点的可信直接传输，不是通用 JWT 签名验证器，禁止用于授权任意上传或本地缓存的 JWT。生产传输使用系统 TLS 验证，合成 HTTP 结果不等于真实订阅验收。
 

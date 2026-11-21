@@ -9,13 +9,13 @@ The product executable can dispatch `ConfigCommand::parse` before startup.
 Pass the storage adapter's `SCHEMA_VERSION` to `ConfigCommand::run`; the example
 uses the pinned Swift version for standalone testing.
 
-From the repository root, compare the example against the Swift baseline:
+From the repository root, compare the example against the [archived Swift executable](../../scripts/rust_compat/README.md):
 
 ```sh
-cargo test --manifest-path rust/config/Cargo.toml
-cargo build --manifest-path rust/config/Cargo.toml --example config_cli
+cargo test --locked --manifest-path rust/config/Cargo.toml
+cargo build --locked --manifest-path rust/config/Cargo.toml --example config_cli
 python3 rust/config/tests/compare_swift.py \
-  --reference /path/to/swift/codexone \
+  --reference "$SWIFT_BASELINE/.build/debug/codexone" \
   --candidate rust/config/target/debug/examples/config_cli
 ```
 

@@ -48,12 +48,15 @@ CSP 仍为 `style-src 'self'`；数字滚动尚待兼容选择。实际本机及
 
 ## 隔离的本地验证
 
-需要 Nginx（支持 `-e`）、OpenSSL CLI、编译后的网关和生产 SPA：
+需要 Nginx（支持 `-e`）和 OpenSSL CLI。从仓库根目录构建网关和生产 SPA，再运行合成检查。
 
 ```sh
-python3 scripts/verify_tls_proxy.py --binary .build/debug/codexone
+cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone
+npm --prefix web ci --ignore-scripts --no-audit --no-fund
+npm --prefix web run build
+python3 scripts/verify_tls_proxy.py --binary rust/gateway/target/debug/codexone
 # 已安装 web 锁文件依赖和本机 Chrome 时：
-python3 scripts/verify_tls_proxy.py --binary .build/debug/codexone --browser
+python3 scripts/verify_tls_proxy.py --binary rust/gateway/target/debug/codexone --browser
 ```
 
 脚本使用临时端口、私有 CA/叶证书、合成上游和临时 SQLite；直接加载交付的 TLS 示例及两个片段，只替换端口/证书路径。验证默认配置后，为故障注入将私有副本的读/上传空闲超时缩至 1 秒，不更改交付默认值。进程退出回收全部证书、配置与临时状态；不访问个人认证，不改系统 Nginx 或证书信任。
@@ -65,12 +68,11 @@ TLS socket 实际验证 CA 链和主机名，并拒绝不可信 CA/错误主机�
 Linux amd64 release 的隔离复现（先完成候选构建）：
 
 ```sh
-docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 # 按 Linux 安装文档构建 codexone:candidate，传入实际 SOURCE_REVISION。
 docker build --platform linux/amd64 -f deploy/tls-verification.Dockerfile -t codexone:tls-verification .
 docker run --rm --platform linux/amd64 --network none --read-only --user 10001:10001 \
   --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 128 --memory 768m \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=512m,mode=1777 --env PYTHONDONTWRITEBYTECODE=1 \
   --mount "type=bind,src=$PWD/scripts,dst=/test/scripts,readonly" \
   --mount "type=bind,src=$PWD/deploy,dst=/test/deploy,readonly" \
   codexone:tls-verification /test/scripts/verify_tls_proxy.py --binary /output/codexone

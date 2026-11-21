@@ -136,7 +136,7 @@ fn health_and_system_use_the_swift_dto_and_current_readiness() {
     assert_eq!(document(&live), json!({"status": "alive"}));
 
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../Tests/CodexOneAdaptersTests/Fixtures/system-status.json"
+        "../../../fixtures/system-status.json"
     ))
     .unwrap();
     let system = get(

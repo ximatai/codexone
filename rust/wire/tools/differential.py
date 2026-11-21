@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Rust wire behavior to the Swift sources in this checkout."""
+"""Compare Rust wire behavior to the archived Swift release."""
 
 import argparse
 import base64
@@ -12,8 +12,9 @@ import tempfile
 SEED = 8093
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = "rust/wire/Cargo.toml"
+SWIFT_REF = "65624e4c45ee1f86560b7640abe42bec31a25f60"
+SWIFT_ORACLE = ROOT / "rust/wire/tools/SwiftOracle.swift"
 SWIFT_SOURCES = [
-    "rust/wire/tools/SwiftOracle.swift",
     "Sources/CodexOneAdapters/Downstream/JSONObject.swift",
     "Sources/CodexOneAdapters/Downstream/JSONOrderedWriter.swift",
     "Sources/CodexOneAdapters/Downstream/JSONOrderScanner.swift",
@@ -156,18 +157,26 @@ def check_legacy_duplicate(swift, rust):
 
 
 def compile_swift(output, image):
+    sources = [SWIFT_ORACLE.name]
+    (output / SWIFT_ORACLE.name).write_bytes(SWIFT_ORACLE.read_bytes())
+    for source in SWIFT_SOURCES:
+        name = Path(source).name
+        with (output / name).open("wb") as staged:
+            subprocess.run(["git", "show", f"{SWIFT_REF}:{source}"],
+                           cwd=ROOT, stdout=staged, check=True)
+        sources.append(name)
+
     if image:
         docker = [
             "docker", "run", "--rm", "--network", "none", "-i",
-            "--mount", f"type=bind,source={ROOT},target=/repo,readonly",
             "--mount", f"type=bind,source={output},target=/out",
-            "--workdir", "/repo", image,
+            "--workdir", "/out", image,
         ]
-        subprocess.run([*docker, "swiftc", "-O", *SWIFT_SOURCES, "-o", "/out/wire-swift-oracle"],
-                       cwd=ROOT, check=True)
+        subprocess.run([*docker, "swiftc", "-O", *sources, "-o", "/out/wire-swift-oracle"],
+                       check=True)
         return [*docker, "/out/wire-swift-oracle"]
     program = output / "wire-swift-oracle"
-    subprocess.run(["swiftc", "-O", *SWIFT_SOURCES, "-o", program], cwd=ROOT, check=True)
+    subprocess.run(["swiftc", "-O", *sources, "-o", program], cwd=output, check=True)
     return [program]
 
 

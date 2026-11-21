@@ -6,9 +6,9 @@
 
 ## 技术栈与组织
 
-Swift 6 严格并发，NIO 掌控数据面，Vapor 承担管理 API，AHC 调用上游；SQLite 单节点。管理台 TypeScript/React/Vite 静态 SPA。Linux amd64 OCI/Compose，由 GitHub CI 构建，服务器不承担编译。
+后端采用 Rust、Tokio 与 Hyper，使用 SQLite 单节点。管理台为 TypeScript/React/Vite 静态 SPA。GitHub CI 构建 Linux amd64 OCI 镜像，服务器只运行。后端切换的兼容与发布边界见 [Rust 迁移记录](../../changes/rust-backend/tasks.md)，旧技术栈见 [Swift 归档](https://github.com/ximatai/codexone/tree/65624e4c45ee1f86560b7640abe42bec31a25f60)。
 
-依据：传输实验表明应显式控制 channel 生命周期；单体和 SQLite 适合小规模自托管，静态前端无需 Node 运行服务。代价是维护窄传输层，SQLite 不提供多写 HA，Swift 并发检查不能替代事务与生命周期验证。
+依据：传输实验表明应显式控制 channel 生命周期；单体和 SQLite 适合小规模自托管，静态前端无需 Node 运行服务。代价是维护窄传输层，SQLite 不提供多写 HA，编译期检查不能替代事务与生命周期验证。
 
 ### 管理台组件与状态基础
 
@@ -36,14 +36,14 @@ unknown 保留 24 小时核对期，期满审计关闭，用量仍未知。90 �
 
 ## 最小持久化适配
 
-持久层使用系统 SQLite C API 的窄适配与串行 DB 队列，业务层只见原子命令。理由是当前功能需要少量条件事务、明确的连接初始化与失败语义，无需引入通用逐表 repository 或完整 ORM；代价是适配器自行管理语句和绑定寿命，必须以真实数据库与失败测试约束。Core 仍不依赖 SQL/NIO；CSQLite 仅为系统库桥接。
+持久层使用系统 SQLite C API 的窄适配与串行 DB 队列，业务层只见原子命令。理由是当前功能需要少量条件事务、明确的连接初始化与失败语义，无需引入通用逐表 repository 或完整 ORM；代价是适配器自行管理语句和绑定寿命，必须以真实数据库与失败测试约束。SQLite 初始化与迁移由存储 crate 管理，执行 crate 持有 writer 和业务事务。
 
 ## Key 轮换与管理连接
 
 
 Key 轮换保留标识和治理计数，只替换验证材料；理由是轮换不应赠送新请求/预算额度，历史用量与同主体归属也应连续。显式创建另一个 Key 仍是独立治理操作。最小管理 API 使用独立管理员 Bearer、只允许非浏览器本机请求；浏览器使用 session/CSRF，不以页面存储 Bearer 替代。
 
-管理面同样由 NIO 拥有连接/正文读取/关闭，完整请求交给 Vapor 路由；理由是实际慢速正文实验中，单纯路由超时不能证明底层连接与 collect 资源已结束。复用现有连接 owner，不改 Core 用例、不开额外网络 listener，也不为绕过寿命问题引入代理服务。
+管理监听负责连接、正文读取和关闭，再将请求交给管理路由。实际慢速正文实验表明，路由超时本身不足以证明底层连接和正文读取资源已经释放，因此验证覆盖真实连接及释放路径。
 
 
 ## 托管账号准入的语义版本

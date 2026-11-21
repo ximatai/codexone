@@ -5,10 +5,7 @@ import { fetchSystemStatus, parseSystemStatus } from "./api";
 
 const fixture: unknown = JSON.parse(
   readFileSync(
-    resolve(
-      process.cwd(),
-      "../Tests/CodexOneAdaptersTests/Fixtures/system-status.json",
-    ),
+    resolve(process.cwd(), "../fixtures/system-status.json"),
     "utf8",
   ),
 );

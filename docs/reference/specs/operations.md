@@ -13,7 +13,7 @@
 
 ## O09：持久与恢复细则
 
-首版显式设置 WAL + `synchronous=FULL`；所有连接初始化并读回验证 `foreign_keys=ON`、synchronous、busy_timeout，数据库初始化验证 WAL。使用有限繁忙重试与专用有限 DB 线程池；不在 NIO event loop 执行阻塞 I/O，不跨流式持有事务。FULL 的持久性以磁盘/文件系统正确执行同步为前提，不承诺抵御失信硬件。[synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous)、[foreign keys](https://www.sqlite.org/foreignkeys.html#fk_enable)
+首版显式设置 WAL + `synchronous=FULL`；所有连接初始化并读回验证 `foreign_keys=ON`、synchronous、busy_timeout，数据库初始化验证 WAL。使用有限繁忙重试与专用有限 DB 线程池；数据库阻塞 I/O 留在专用线程，不跨流式持有事务。FULL 的持久性以磁盘/文件系统正确执行同步为前提，不承诺抵御失信硬件。[synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous)、[foreign keys](https://www.sqlite.org/foreignkeys.html#fk_enable)
 
 启动扫描所有旧 boot 的 held/dispatch_intent/unfinalized：确定未 dispatch 的可释放，其余默认 pending，重建其 exposure 占用；同时处理未完成 refresh_intent 为 auth_uncertain，完成后才发布路由快照。不能因 pending 标记未写成功而丢掉。正常进程崩溃恢复与主机掉电/存储故障分开验收；kill -9 仅证明前者。FULL 不允许作为未测掉电恢复的证据。
 
@@ -35,11 +35,11 @@
 
 普通日志、指标及审计不记录正文/图片/凭证/签名 URL。正文存储限于允许的加密恢复缓存和本规范的短时加密上传暂存。诊断显示阶段时间线、归属选择理由、策略与计价版本、取消与释放时间、pending 原因。管理台围绕身份、Key/策略、请求/会话、用量/待核对、备份与配置，不扩展成通用控制平台。
 
-swift-log + swift-metrics 接导出适配器；指标不以 requestID/Key/responseID 做 label。重点观察队列字节、写等待、task/FD/RSS、取消释放、刷新、未知暴露、账本/DB 和 WAL。完整 tracing exporter 可延期，不承诺未验证 SDK 支持。关键审计/账本可靠保存，非关键统计有界采样。协议拒绝日志仅记录固定允许列表中的错误码、状态及服务端生成UUID；未知码归other，进程全局按单调时钟每60秒最多16条，溢出直接丢弃，无正文、头值、路径、客户端lane或任意Error描述。
+日志及指标使用有界输出；指标不以 requestID/Key/responseID 做 label。重点观察队列字节、写等待、task/FD/RSS、取消释放、刷新、未知暴露、账本/DB 和 WAL。完整 tracing exporter 可延期，不承诺未验证 SDK 支持。关键审计/账本可靠保存，非关键统计有界采样。协议拒绝日志仅记录固定允许列表中的错误码、状态及服务端生成UUID；未知码归other，进程全局按单调时钟每60秒最多16条，溢出直接丢弃，无正文、头值、路径、客户端lane或任意Error描述。
 
 ## O11：发行与容量验收细则
 
-Linux amd64 源码镜像和正式 Release 默认使用 Rust，过渡期间可显式构建 Swift 镜像。安装与升级选用已核验的不可变镜像引用。Rust 切换沿用 schema v19、配置和密钥；同库切换须先正常停机，并核对同版本兼容性与备份。
+Linux amd64 源码构建和正式 Release 使用 Rust。安装与升级选用已核验的不可变镜像引用。从最后一个 Swift 正式版切换沿用 schema v19、配置和密钥。同库切换须先正常停机，并核对版本兼容性及备份，回退用[经验证的旧镜像](../../guide/backup-upgrade.md#回退)。
 
 发行必须在本次运行中验证将要发布的优化二进制和同一镜像，所有必需分片、TLS、安装及容量检查通过后才能转交发布；制品跨 job 核对原始归档 hash 与镜像 ID，不在发布 job 重建，对推送后核验的 registry digest 生成来源证明。缓存只加速构建，不能替代本次验证。
 

@@ -27,15 +27,12 @@ class VerifyWorkflowTests(unittest.TestCase):
     def test_real_stack_has_a_matching_binary_and_required_gate(self):
         check_live_browser(self.workflow)
         mutations = [
-            ('needs: [changes, backend-build, backend-rust-build]', 'needs: changes'),
+            ('needs: [changes, backend-rust-build]', 'needs: changes'),
             ("CODEXONE_WEB_STUBS_ONLY: '0'", "CODEXONE_WEB_STUBS_ONLY: '1'"),
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
             ('CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone', 'CODEXONE_WEB_TEST_BINARY: ../.build/debug/codexone'),
-            ("'[\"swift\",\"rust\"]'", "'[\"swift\"]'"),
-            ('if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then', 'if true; then'),
-            ('backend-swift-tests, backend-scripts, backend-rust,', 'backend-scripts, backend-rust,'),
-            ('--testing-library swift-testing --no-parallel', '--testing-library swift-testing'),
-            ('./scripts/verify.sh --backend-compile', './scripts/verify.sh --backend-build'),
+            ('run: ../scripts/verify.sh --web', 'run: npm run build'),
+            ('backend-rust-scripts, frontend-live, devcontainer]', 'backend-rust-scripts, devcontainer]'),
         ]
         for before, after in mutations:
             with self.subTest(before=before), self.assertRaises(AssertionError):
@@ -49,10 +46,11 @@ class VerifyWorkflowTests(unittest.TestCase):
             ('-C rust/gateway/target/release codexone', '-C rust/gateway/target/debug codexone'),
             ('needs: [changes, backend-rust-build]', 'needs: changes'),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
-            ('"${args[@]}" --rust', '"${args[@]}"'),
-            ("if: matrix.shard == '3/4'", "if: matrix.shard == '5/4'"),
-            ('scripts/rust_compat/execution_recovery.py', 'unchecked'),
-            ('scripts/rust_compat/compare.py', 'unchecked'),
+            ('--release-probe "$RUNNER_TEMP/probe/RustGatewayProbe"', '--release-build'),
+            ("if: needs.changes.outputs.rust == 'true'\n        run: |",
+             "if: needs.changes.outputs.frontend == 'true'\n        run: |"),
+            ('if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then', 'if true; then'),
+            ('name: rust-gateway-probe', 'name: product-only'),
         ]
         for before, after in mutations:
             with self.subTest(before=before), self.assertRaises(AssertionError):
@@ -65,22 +63,19 @@ class VerifyWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(script)
         code = textwrap.dedent(script[1])
         jobs = set(workflow) - {'verify'}
-        selections = [(), ('backend',), ('rust',), ('frontend',), ('rust', 'frontend'),
-                      ('backend', 'rust'), ('devcontainer',), ('backend', 'rust', 'frontend', 'devcontainer')]
+        selections = [(), ('rust',), ('frontend',), ('rust', 'frontend'),
+                      ('devcontainer',), ('rust', 'storage'), ('rust', 'storage', 'frontend', 'devcontainer')]
         for selected in selections:
             required = {'changes', 'docs'}
-            if 'backend' in selected:
-                required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
             if 'rust' in selected:
-                required.update({'backend-rust', 'backend-rust-build', 'backend-rust-scripts', 'frontend-live'})
-            if {'backend', 'rust'} <= set(selected):
-                required.add('backend-parity')
-            if 'frontend' in selected:
+                required.update({'backend-rust', 'backend-rust-scripts'})
+            if 'rust' in selected or 'frontend' in selected:
                 required.update({'backend-rust-build', 'frontend-live'})
-            required.update({'frontend', 'devcontainer'}.intersection(selected))
+            if 'devcontainer' in selected:
+                required.add('devcontainer')
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
             needs['changes']['outputs'] = {name: str(name in selected).lower()
-                                          for name in ('backend', 'rust', 'frontend', 'devcontainer')}
+                                          for name in ('rust', 'storage', 'frontend', 'devcontainer')}
             def run(payload):
                 return subprocess.run([sys.executable, '-c', code], capture_output=True,
                                       env={**os.environ, 'RESULTS': json.dumps(payload)}).returncode
@@ -105,27 +100,23 @@ class ChangedPathsTests(unittest.TestCase):
             (['rust/gateway/README.md'], set()),
             (['rust/gateway/Cargo.lock', 'rust/wire/src/With\nNewline.rs'], {'rust'}),
             (['scripts/verify_rust.sh'], {'rust'}),
-            (['scripts/verify.sh'], {'backend', 'rust', 'frontend', 'devcontainer'}),
-            (['.github/workflows/verify.yml'], {'backend', 'rust', 'frontend', 'devcontainer'}),
-            (['deploy/Dockerfile'], {'backend', 'rust'}),
-            (['scripts/verify_websocket.py'], {'backend', 'rust'}),
-            (['scripts/verify_admin_live.py'], {'backend', 'rust'}),
-            (['scripts/verify_text_contract.py'], {'backend', 'rust'}),
-            (['scripts/rust_compat/compare.py'], {'backend', 'rust'}),
+            (['scripts/verify.sh'], {'rust', 'frontend'}),
+            (['.github/workflows/verify.yml'], {'rust', 'storage', 'frontend', 'devcontainer'}),
+            (['.github/workflows/release.yml'], {'rust', 'frontend'}),
+            (['.github/dependabot.yml'], set()),
+            (['deploy/Dockerfile'], {'rust', 'frontend'}),
+            (['.dockerignore'], {'rust', 'frontend'}),
+            (['scripts/verify_websocket.py'], {'rust'}),
+            (['scripts/verify_admin_live.py'], {'rust'}),
             (['scripts/rust_compat/execution_recovery.py'], {'rust'}),
-            (['scripts/verify_migration_cutback.py'], {'backend', 'rust'}),
-            (['rust/storage/src/migration.rs'], {'backend', 'rust'}),
-            (['rust/maintenance/src/lib.rs'], {'backend', 'rust'}),
-            (['rust/gateway/src/online_backup.rs'], {'backend', 'rust'}),
-            (['rust/gateway/src/main.rs'], {'backend', 'rust'}),
-            (['Sources/CodexOne/CodexOneMain.swift'], {'backend', 'rust'}),
-            (['Sources/CodexOneAdapters/Persistence/SQLiteSnapshotMaintenance.swift'], {'backend', 'rust'}),
-            (['Tests/CodexOneAdaptersTests/Fixtures/system-status.json'], {'backend', 'rust'}),
-            (['Sources/CodexOneCore/Domain/Identity/AccountCredential.swift'], {'backend'}),
+            (['fixtures/system-status.json'], {'rust', 'frontend'}),
+            (['fixtures/provider-text-contract.json', 'fixtures/image-input/synthetic.jpg'], {'rust'}),
+            (['Sources/CodexOne/CodexOneMain.swift', 'Package.swift'], set()),
             (['web/src/App.tsx'], {'frontend'}),
-            (['Sources/CodexOneCore/Domain/Identity/AccountCredential.swift', 'web/src/App.tsx'], {'backend', 'frontend'}),
+            (['rust/storage/src/migration.rs'], {'rust', 'storage'}),
+            (['rust/maintenance/src/snapshot.rs'], {'rust', 'storage'}),
             (['.devcontainer/Dockerfile'], {'devcontainer'}),
-            (['unknown-root-file'], {'backend', 'rust', 'frontend'}),
+            (['unknown-root-file'], {'rust', 'frontend'}),
             ([f'docs/{index:03}.md' for index in range(320)] + ['rust/gateway/Cargo.toml'], {'rust'}),
         ]
         for paths, expected in cases:
@@ -135,26 +126,21 @@ class ChangedPathsTests(unittest.TestCase):
                 self.assertEqual({line.removesuffix('=true') for line in result.stdout.splitlines()
                                   if line.endswith('=true')}, expected)
 
-    def test_preserves_swift_coverage_when_adding_rust_shards(self):
-        swift_only = {
-            'verify_accounts.py', 'verify_admin_round2.py', 'verify_execution.py',
-            'verify_key_maintenance.py', 'verify_storage_pressure.py', 'verify_upstream_proxy.py',
-            'verify_gateway_diagnostics.py', 'verify_key_export.py', 'verify_model_profiles_import.py',
+    def test_keeps_migrated_Rust_checks_in_all_shard_modes(self):
+        replacements = {
+            'scripts/verify_accounts.py', 'scripts/verify_admin_round2.py',
+            'scripts/rust_compat/execution_recovery.py', 'scripts/verify_key_maintenance.py',
+            'scripts/verify_storage_pressure.py', 'scripts/verify_upstream_proxy.py', 'scripts/rust_compat/readiness.py',
         }
         for mode in ([], ['--pr']):
-            def shard_suites(*flags):
-                suites = []
-                for shard in ('1/4', '2/4', '3/4', '4/4'):
-                    cmd = [sys.executable, 'scripts/backend_shards.py', '--list', shard, *mode, *flags]
-                    batch = subprocess.check_output(cmd, cwd=ROOT, text=True).split()
-                    self.assertTrue(batch)
-                    suites.extend(Path(name).name for name in batch)
-                self.assertEqual(len(suites), len(set(suites)))
-                return set(suites)
-
-            swift, rust = shard_suites(), shard_suites('--rust')
-            self.assertLessEqual(swift_only, swift)
-            self.assertEqual(rust, swift - swift_only)
+            suites = []
+            for shard in ('1/4', '2/4', '3/4', '4/4'):
+                cmd = [sys.executable, 'scripts/backend_shards.py', '--list', shard, *mode]
+                batch = subprocess.check_output(cmd, cwd=ROOT, text=True).split()
+                self.assertTrue(batch)
+                suites.extend(batch)
+            self.assertEqual(len(suites), len(set(suites)))
+            self.assertLessEqual(replacements, set(suites))
 
     def test_rust_pr_and_release_shards_dispatch_their_protocol_modes(self):
         # Run the shell dispatcher without starting any gateway or provider.
@@ -163,6 +149,8 @@ class ChangedPathsTests(unittest.TestCase):
             log = root / 'calls'
             binary = root / 'codexone'
             binary.touch(mode=0o755)
+            probe = root / "RustGatewayProbe"
+            probe.touch(mode=0o755)
             python = root / 'python3'
             python.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
 if sys.argv[1] == 'scripts/backend_shards.py':
@@ -172,18 +160,25 @@ with open(os.environ['CALL_LOG'], 'a') as output:
 ''')
             python.chmod(0o755)
             env = {**os.environ, 'CODEXONE_BACKEND_BIN_DIR': str(root),
-                   'PATH': str(root) + os.pathsep + os.environ['PATH'], 'CALL_LOG': str(log)}
-            cmd = ['bash', 'scripts/verify.sh', '--backend-scripts', 'all', '--pr', '--rust']
+                   'PATH': str(root) + os.pathsep + os.environ['PATH'], 'CALL_LOG': str(log),
+                   'CODEXONE_STORAGE_PRESSURE_ROOT': str(root / 'pressure')}
+            cmd = ['bash', 'scripts/verify.sh', '--backend-scripts', 'all', '--pr']
             subprocess.run(cmd, cwd=ROOT, env=env, check=True, capture_output=True)
             recorded = log.read_text().splitlines()
             calls = {path: args for path, *args in map(json.loads, recorded)}
             expected = subprocess.check_output(
-                [sys.executable, 'scripts/backend_shards.py', '--list', 'all', '--pr', '--rust'],
+                [sys.executable, 'scripts/backend_shards.py', '--list', 'all', '--pr'],
                 cwd=ROOT, text=True).split()
             self.assertEqual(set(calls), set(expected))
             self.assertEqual(len(recorded), len(expected))
-            for args in calls.values():
-                self.assertEqual(args[:2], ['--binary', str(binary)])
+            for path, args in calls.items():
+                if Path(path).name in ('verify_gateway_diagnostics.py', 'verify_key_export.py', 'verify_model_profiles_import.py'):
+                    self.assertEqual(args, [])
+                else:
+                    self.assertEqual(args[:2], ['--binary', str(binary)])
+            for name in ('verify_accounts.py', 'verify_admin_round2.py', 'verify_key_maintenance.py'):
+                self.assertEqual(calls['scripts/' + name][2:], ['--rust-probe', str(probe)])
+            self.assertEqual(calls['scripts/verify_upstream_proxy.py'][2:], ['--rust'])
             self.assertEqual(calls['scripts/verify_client_protocol.py'][2:], ['--expect-provider-eof'])
             self.assertEqual(calls['scripts/verify_snapshot_restore.py'][2:], ['--linked-paths'])
             self.assertEqual(calls['scripts/verify_admin_live.py'][2:], ['--backend', 'rust'])
@@ -193,8 +188,7 @@ with open(os.environ['CALL_LOG'], 'a') as output:
             })
 
             log.unlink()
-            (root / 'ExecutionProbe').touch(mode=0o755)
-            subprocess.run(cmd[:-2] + ['--rust-release'], cwd=ROOT, env=env,
+            subprocess.run(cmd[:-1] + ['--release'], cwd=ROOT, env=env,
                            check=True, capture_output=True)
             release_calls = [json.loads(line) for line in log.read_text().splitlines()]
             full = subprocess.check_output(
@@ -202,6 +196,8 @@ with open(os.environ['CALL_LOG'], 'a') as output:
                 cwd=ROOT, text=True).split()
             self.assertCountEqual([call[0] for call in release_calls], full)
             self.assertTrue(all('--smoke' not in call for call in release_calls))
+            self.assertIn(['scripts/verify_storage_pressure.py', '--binary', str(binary),
+                           '--space-root', str(root / 'pressure')], release_calls)
             self.assertIn(['scripts/verify_client_protocol.py', '--binary', str(binary),
                            '--expect-provider-eof'], release_calls)
 
@@ -222,11 +218,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
             ('needs: verify', 'needs: build'),
             ("if result != 'success':", "if result == 'failure':"),
             ('shard: [1/4, 2/4, 3/4, 4/4]', 'shard: [1/4, 2/4, 3/4]'),
-            ("--backend-scripts '${{ matrix.shard }}' --rust-release", "--backend-scripts '${{ matrix.shard }}' --pr"),
+            ("--backend-scripts '${{ matrix.shard }}' --release", "--backend-scripts '${{ matrix.shard }}' --pr"),
             ('suite: [tls, installation, capacity]', 'suite: [tls, installation]'),
             ('scripts/verify_mixed_capacity.py --image', 'unchecked-capacity'),
             ('mixed-capacity-evidence', 'omitted-evidence'),
-            ('--probe /binaries/ExecutionProbe --slow-only', '--skip-live-capacity'),
+            ('/test/scripts/verify_live_overview_capacity.py --binary /output/codexone', '--skip-live-capacity'),
             ('ref: ${{ needs.build.outputs.revision }}', 'ref: main'),
             ('"$BINARIES_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
             ('"$IMAGE_ARCHIVE_SHA256" | sha256sum --check -', 'unchecked'),
@@ -245,14 +241,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     check_release(self.release.replace(old, new), self.dockerfile, self.tls, self.backend)
 
-    def test_reject_swift_as_the_docker_default(self):
-        with self.assertRaisesRegex(AssertionError, 'must default to Rust'):
-            check_release(self.release, self.dockerfile.replace('ARG CODEXONE_BACKEND=rust',
-                                                              'ARG CODEXONE_BACKEND=swift'),
+    def test_reject_test_harness_in_product(self):
+        with self.assertRaisesRegex(AssertionError, 'must exclude the test harness'):
+            check_release(self.release, self.dockerfile.replace('FROM scratch AS runtime\n',
+                         'FROM scratch AS runtime\nCOPY --from=rust-probe /output/RustGatewayProbe /\n'),
                           self.tls, self.backend)
 
     def test_reject_omitted_original_verification(self):
-        with self.assertRaisesRegex(AssertionError, 'retain every Dockerfile verification'):
+        with self.assertRaisesRegex(AssertionError, 'Retain the release check'):
             check_release(self.release, self.dockerfile, self.tls,
                           self.backend.replace('run_check scripts/verify_protocol.py', 'omitted'))
 
@@ -357,12 +353,12 @@ if os.environ['FAIL_BUILD'] == 'true' and sys.argv[1:3] == ['buildx', 'build']:
 class AptFallbackTests(unittest.TestCase):
     def test_docker_package_steps_restore_sources_and_fail_closed(self):
         blocks = []
-        for name in ('deploy/Dockerfile', 'deploy/tls-verification.Dockerfile', '.devcontainer/Dockerfile'):
+        for name in ('deploy/Dockerfile', 'deploy/tls-verification.Dockerfile'):
             text = (ROOT / name).read_text()
             for block in re.findall(r'RUN src=/etc/apt/sources.list.d/ubuntu.sources.*?(?=\n(?:WORKDIR|COPY|USER|FROM|RUN|ARG|$))', text, re.S):
                 script = block.replace('\\\n', ' ').removeprefix('RUN ')
                 blocks.append(script.split('    && groupadd --gid')[0])
-        self.assertEqual(len(blocks), 4)
+        self.assertEqual(len(blocks), 3)
         for script in blocks:
             for fail_all in (False, True):
                 with self.subTest(fail_all=fail_all), tempfile.TemporaryDirectory(prefix="synthetic ' $() ") as temporary:

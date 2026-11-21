@@ -1,6 +1,6 @@
 # Test-only runtime extension. Build or load the runtime candidate first.
 # The product runtime does not gain Nginx/Python/OpenSSL CLI.
-ARG TEST_BASE=swift:6.4.1-noble-slim@sha256:46c3f2b7b5f9ad083a941af264fec95b3dcd66e41885d6458606316c62e0d5c8
+ARG TEST_BASE=ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
 ARG RUNTIME_IMAGE=codexone:candidate
 FROM ${RUNTIME_IMAGE} AS bundle
 FROM ${TEST_BASE}

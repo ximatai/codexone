@@ -38,7 +38,7 @@ HTTP JSON/SSE 回传首输出前观察的有界非逐跳 x-codex-turn-state。Re
 
 结构化控制日志每进程最多 16 条/60 秒，只含固定路径类别、Key ID、账号 ID、状态和耗时；realtime/calls 只记录状态与耗时。超时日志的 504 是进程内结果未知证据，不产生持久执行/恢复责任或 schema 变更。诊断限额可能抑制单次日志，不能作为完整审计账本。
 
-合成验证：`python3 scripts/verify_control.py --binary .build/debug/codexone`（包含真实 60 秒期限）；账号池 OAuth、亲和、无 intent 与冷却联动由 Swift `poolControl*` 端到端测试覆盖。入口注册在 `verify.sh --backend`。真实提供者路由的可用性、错误形状与 Desktop 体验仍须部署后使用授权账号验收；本地合成证据不能替代它。
+合成验证：`python3 scripts/verify_control.py --binary rust/gateway/target/debug/codexone`（包含真实 60 秒期限）；Rust 网关的 `managed_process::directory_rates_and_control_health_survive_normal_entry_points` 另验证账号池控制请求、冷却与正常生成入口的联动。入口注册在 `verify.sh --backend`。真实提供者路由的可用性、错误形状与 Desktop 体验仍须部署后使用授权账号验收；本地合成证据不能替代它。
 
 ## 相关文档
 

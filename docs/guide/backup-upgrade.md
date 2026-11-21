@@ -32,7 +32,7 @@ python3 compose-install.py ps
 
 ## 回退
 
-发布说明标明从 Swift 切换到 Rust 的版本。目标与源版本均已使用兼容的 v19 格式时，切换沿用原数据卷、备份卷和 secrets。升级前停服并校验完整备份，保留先前的不可变镜像引用。需要切回 Swift 时，可使用经验证的原镜像，或用同一份源码显式构建 [Swift 过渡镜像](linux-installation.md#过渡期间构建-swift-镜像)。在现有安装目录更换 `CODEXONE_IMAGE`，再运行 `--check-config` 并验证启动结果。
+发布说明标明从 Swift 切换到 Rust 的版本。目标与源版本均已使用兼容的 v19 格式时，切换沿用原数据卷、备份卷和 secrets。升级前停服并校验完整备份，保留先前的不可变镜像引用。需要切回 Swift 时，使用经验证的原镜像。最后一个 Swift 正式版可查阅[归档源码](https://github.com/ximatai/codexone/tree/65624e4c45ee1f86560b7640abe42bec31a25f60)。在现有安装目录更换 `CODEXONE_IMAGE`，再运行 `--check-config` 并验证启动结果。
 
 只有 schema、凭证信封、配置与 Key 策略均兼容并实际验证过的旧二进制才能使用原库回退。v12 及更旧二进制不能打开 v13，v13 及更旧二进制不能打开 v14，v14 及更旧二进制不能打开 v15，v15 及更旧二进制不能打开 v16，v16 及更旧二进制不能打开 v17，v17 及更旧二进制不能打开 v18。回退到 v0.26.15 时须保留新库责任证据，独立恢复升级前完整 bundle 并完成核对。
 

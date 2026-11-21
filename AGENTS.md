@@ -6,7 +6,7 @@
 
 先读 README、STATUS、CONTRIBUTING 和任务相关规范，先检查 Git 状态，不覆盖未知工作。项目定位为个人自托管网关，管理自己的订阅账号，为自己的设备和工具分配 Key。
 
-`Sources/CodexOneCore` 保存领域与应用用例，不依赖网络/数据库框架；用例决定事务与授权。Adapters 实现传输、提供者、持久化与管理 I/O；Runtime 监督启动恢复、任务寿命与关闭；CodexOne 入口组装。禁止把 NIO/Vapor/SQL 类型带进 Core，不为未来插件或每个函数预建抽象。前端按功能聚合，shared 仅放实际复用内容。详见[目录](docs/development/layout.md)和[职责](docs/architecture/ownership.md)。
+`rust/gateway` 组装入口、监听、启动恢复与关闭。准入、绑定和结算由 `rust/execution` 管理，SQLite 初始化、迁移与锁在 `rust/storage`，其余 crate 按能力组织。事务与授权由对应业务 owner 决定，保持传输类型与 SQL 实现细节在各自边界内。不为未来插件或每个函数预建抽象。前端按功能聚合，shared 仅放实际复用内容。详见[目录](docs/development/layout.md)和[职责](docs/architecture/ownership.md)。
 
 ## 变更流程
 

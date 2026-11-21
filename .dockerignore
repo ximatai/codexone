@@ -1,11 +1,7 @@
 **
-!Package.swift
-!Package.resolved
 !LICENSE
-!Sources/
-!Sources/**
-!Tests/
-!Tests/**
+!fixtures/
+!fixtures/**
 !rust/
 !rust/**/
 !rust/**/Cargo.toml
@@ -30,11 +26,5 @@ rust/**/target/
 !deploy/
 !deploy/Dockerfile
 !deploy/assemble-runtime-root.sh
-!deploy/licenses/
-!deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt
 !scripts/
-!scripts/verify_protocol.py
-!scripts/verify_websocket.py
-!scripts/verify_images.py
-!scripts/verify_keys.py
-!scripts/*.py
+!scripts/export_rust_probe.py

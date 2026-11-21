@@ -4,16 +4,20 @@
 
 ## 前提
 
-按 O14 显式执行，独立于例行后端验证。使用本机已验候选和带 Python 的 verification 镜像，不调用真实账号/付费模型，不连接旧服务。Docker Engine 需支持 Linux amd64、cgroup v2 的 memory/cpu 计数、本地命名卷和共享网络 namespace；在 arm64 Engine 上运行 amd64 会包含仿真开销，不能推导原生目标 CPU 吞吐。
+按 O14 显式执行，独立于例行后端验证。使用本机已验候选和带 Python 的验证工具镜像，不调用真实账号/付费模型，不连接旧服务。Docker Engine 需支持 Linux amd64、cgroup v2 的 memory/cpu 计数、本地命名卷和共享网络 namespace；在 arm64 Engine 上运行 amd64 会包含仿真开销，不能推导原生目标 CPU 吞吐。
 
 ```sh
+# 按安装指南构建或加载 codexone:candidate 后，在仓库根目录构建工具镜像。
+docker build --platform linux/amd64 --target verification-tools \
+  -f deploy/Dockerfile -t codexone:verification-tools .
+
 # 新的工作负载/夹具先短程检查；已通过且未改变时不重复。
 python3 scripts/verify_capacity.py --image codexone:candidate \
-  --harness-image codexone:verification --duration 10 \
+  --harness-image codexone:verification-tools --duration 10 \
   --output artifacts/capacity-smoke-001
 # 两种上游分别持续600秒；输出目录必须是新的。
 python3 scripts/verify_capacity.py --image codexone:candidate \
-  --harness-image codexone:verification --duration 600 \
+  --harness-image codexone:verification-tools --duration 600 \
   --output artifacts/capacity-run-001
 ```
 
@@ -32,17 +36,17 @@ python3 scripts/verify_capacity.py --image codexone:candidate \
 ## 指标解释和不能推出的结论
 
 - `operations` 为每类调用数量/状态、整次操作p50/p95/max与响应字节；`completedSustainedRPS` 使用实际持续和收尾时间。包括合成提供者处理、客户端和仿真成本；不是模型吞吐上限或真实订阅速度。
-- 网关 PID1 当前 RSS 来自 `/proc`；cgroup current/peak 包含文件页缓存和短命采样 helper。存储 API 的 peakResidentBytes 是进程历史峰值，不能当当前 RSS。FD/线程每约2秒采样，因此是采样峰值；线程数不是 Swift async task 数。CPU usage/throttle 为实际 cgroup 累计计数。
+- 网关 PID1 当前 RSS 来自 `/proc`；cgroup current/peak 包含文件页缓存和短命采样 helper。存储 API 的 peakResidentBytes 是进程历史峰值，不能当当前 RSS。FD 和操作系统线程每约 2 秒采样，因此是采样峰值。CPU usage/throttle 为实际 cgroup 累计计数。
 - storage 保存认证固定 DTO：DB/WAL/储备、checkpoint、writer排队/等待与用量reader。WAL/queue 指标按周期采样，最大等待为累积高水位；不要把没有采到峰值当作没有峰值。
 - `vmBefore/vmAfter` 给 Linux VM 内存/可用/swap/负载；报告还列 Engine CPU/架构与共存容器数量。1 CPU/768 MiB cgroup 不能代证约1.6 GiB宿主的OS/共存服务预算；使用共享或仿真环境时必须明确记录参考宿主差异。
 
-此包络覆盖单参考图、HTTP Images generation/edit、JSON/SSE与WS文本/warmup/compact；不代表当前 24 MiB 图片合计上限、16 张参考图或所有最大帧组合均已覆盖、完整图片流/工具峰值、HTTP keepalive与长寿命多turn连接压力、真实提供者迟延分布、Swift async task tracing或实际旧服务混合负载。正文恢复缓存未实现，不伪造缓存压力/恢复重播。低磁盘/WAL/备份不足的独立真实故障证据见[存储压力](storage-pressure.md)。结果只能用于当前合成包络和后续调参，不据此扩大已公布硬边界或宣布O14/首版完成；公开状态与路线图见[STATUS](../../STATUS.md)。
+此包络覆盖单参考图、HTTP Images generation/edit、JSON/SSE与WS文本/warmup/compact；不代表当前 24 MiB 图片合计上限、16 张参考图或所有最大帧组合均已覆盖、完整图片流/工具峰值、HTTP keepalive与长寿命多turn连接压力、真实提供者迟延分布、异步任务追踪或实际旧服务混合负载。正文恢复缓存未实现，不伪造缓存压力/恢复重播。低磁盘/WAL/备份不足的独立真实故障证据见[存储压力](storage-pressure.md)。结果只能用于当前合成包络和后续调参，不据此扩大已公布硬边界或宣布O14/首版完成；公开状态与路线图见[STATUS](../../STATUS.md)。
 
 故障保护可独立运行：
 
 ```sh
 python3 scripts/verify_capacity_guards.py --image codexone:candidate \
-  --report artifacts/capacity-600/report.json
+  --harness-image codexone:verification-tools --report artifacts/capacity-run-001/report.json
 ```
 
 此检查用真实Engine创建卷/初始化容器，再注入CLI结果丢失，确认本次资源回收；并用报告验证恢复样本拒绝陈旧、缺失或未归零队列。不会重跑持续负载。报告应区分聚合统计与逐请求责任证据，记录实际测量与工具版本。

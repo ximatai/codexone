@@ -2,76 +2,40 @@
 """Round-two backend HTTP and real previous-binary migration checks; synthetic loopback only."""
 import argparse
 import hashlib
-from http.server import ThreadingHTTPServer
 import json
-import os
 from pathlib import Path
-import re
-import selectors
 import sqlite3
 import subprocess
 import tempfile
-import threading
 import time
-from urllib.parse import parse_qs, urlencode, urlsplit
-from verify_account_admin_ui import SyntheticOAuth, ADMIN
 from verify_admin import document, request
+from verify_managed_fixture import AUTH, authorize, listening, oauth_provider, prepare, start_gateway
 from verify_process import environment, release
 from verify_protocol import current_schema_version
 
 
 def port_line(process, pattern):
-    output = b''
-    deadline = time.monotonic() + 15
-    with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ)
-        while time.monotonic() < deadline:
-            assert process.poll() is None, 'Synthetic assembly exited before listening '
-            if selector.select(.1):
-                output += os.read(process.stdout.fileno(), 4096)
-                assert len(output) <= 65536
-                match = re.search(pattern, output)
-                if match:
-                    return int(match[1])
-    raise AssertionError('Synthetic assembly did not listen within budget')
+    port, _ = listening(process, pattern)
+    return port
 
 
 def verify_accounts(probe, binary):
     schema = current_schema_version(binary)
-    server = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticOAuth)
-    server.daemon_threads = True
-    server.guard = threading.Lock()
-    server.control = {}
-    server.calls = server.quota_calls = 0
-    server.issued = []
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
+    with oauth_provider() as server:
         with tempfile.TemporaryDirectory(prefix='codexone-round2-') as directory:
             root = Path(directory)
-            for name, value in [('admin', ADMIN), ('master', '6b' * 32)]:
-                (root / name).write_text(value)
-                (root / name).chmod(0o600)
+            database = prepare(root)
             web = root / 'web'
             (web / 'assets').mkdir(parents=True)
             (web / 'index.html').write_text('<!doctype html><html><head><script type="module" src="/assets/entry.js"></script></head><body>synthetic</body></html>')
             (web / 'assets/entry.js').write_text('window.synthetic=true;')
             def start():
-                process = subprocess.Popen([probe, '--account-admin-ui', str(root), str(web), str(server.server_port)],
-                    env={'PATH': os.defpath}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                try:
-                    return process, port_line(process, rb'ADMIN_PORT (\d+)')
-                except BaseException:
-                    release(process)
-                    raise
+                process, port, _ = start_gateway(probe, root, server, web=web)
+                return process, port
             process, port = start()
-            auth = {'headers': {'Authorization': 'Bearer ' + ADMIN}}
+            auth = AUTH
             try:
-                flow = document(request(port, 'POST', '/api/accounts/authorization', {'target': None, 'method': 'callback'}, **auth))
-                query = parse_qs(urlsplit(flow['authorizationURL']).query)
-                with server.guard:
-                    server.control.update(challenge=query['code_challenge'][0], nonce=query['nonce'][0])
-                callback = 'http://localhost:1455/auth/callback?' + urlencode({'state': query['state'][0], 'code': 'synthetic-code+/='})
-                account = document(request(port, 'POST', '/api/accounts/authorization/' + flow['flowID'], {'callbackURL': callback}, **auth))['account']
+                account = authorize(port, server)
                 assert account['accessExpiresAtUnixSeconds'] > int(time.time())
                 assert isinstance(account['credentialUpdatedAtUnixSeconds'], int)
                 for secret in server.issued:
@@ -130,7 +94,6 @@ def verify_accounts(probe, binary):
                 assert request(port, 'PUT', settings_path, settings, **auth)[0] == 409
             finally:
                 release(process)
-            database = root / 'state/core.sqlite'
             with sqlite3.connect(database) as db:
                 db.executescript("""
                     ALTER TABLE request_diagnostics DROP COLUMN reasoning_effort;
@@ -192,7 +155,6 @@ def verify_accounts(probe, binary):
             finally:
                 release(process)
             # Missing historical audit evidence must remain null, never use mode/name time.
-            database = next(root.rglob('core.sqlite'))
             with sqlite3.connect(database) as db:
                 db.execute("DELETE FROM account_events WHERE action IN ('create_verified','reauthorize_verified','refresh_commit')")
             process, port = start()
@@ -204,9 +166,6 @@ def verify_accounts(probe, binary):
                 release(process)
             assert server.calls == 1
             print('PASS: account and model-directory HTTP, CAS, failed discovery retention, persisted activation and retirement')
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 def verify_previous(binary, previous):
@@ -250,9 +209,9 @@ def verify_previous(binary, previous):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--probe', type=Path, required=True)
+    parser.add_argument('--rust-probe', type=Path, required=True)
     parser.add_argument('--previous-binary', type=Path)
     args = parser.parse_args()
-    verify_accounts(str(args.probe.resolve()), str(args.binary.resolve()))
+    verify_accounts(str(args.rust_probe.resolve()), str(args.binary.resolve()))
     if args.previous_binary:
         verify_previous(str(args.binary.resolve()), str(args.previous_binary.resolve()))

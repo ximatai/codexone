@@ -359,6 +359,9 @@ mod tests {
         let old = AccountCredentialCipher::from_hex(&"a1".repeat(32), &[]).unwrap();
         let ring =
             AccountCredentialCipher::from_hex(&"b2".repeat(32), &[&"a1".repeat(32)]).unwrap();
+        let wrong_active =
+            AccountCredentialCipher::from_hex(&"a1".repeat(32), &[&"b2".repeat(32)]).unwrap();
+        let reduced = AccountCredentialCipher::from_hex(&"b2".repeat(32), &[]).unwrap();
         let synthetic = AccountCredential::new(
             "synthetic-access".into(),
             "synthetic-refresh".into(),
@@ -404,6 +407,20 @@ mod tests {
             verify_backup(&bundle, Some(&old)).unwrap().id,
             checkpoint.backup_id
         );
+        assert!(matches!(
+            crate::Command::ResumeReencryption.run(&path, Some(&wrong_active), 0, None),
+            Err(Error::WrongActiveKey)
+        ));
+        assert!(matches!(
+            crate::Command::ResumeReencryption.run(&path, Some(&reduced), 0, None),
+            Err(Error::Credential)
+        ));
+        let pending_backup = workspace.join("pending");
+        assert!(matches!(
+            crate::Command::Backup(pending_backup.clone()).run(&path, Some(&ring), 0, None),
+            Err(Error::Database(DatabaseError::IncompleteReencryption))
+        ));
+        assert!(!pending_backup.exists());
 
         let first_page_envelope = |db: Database| -> String {
             db.connection()

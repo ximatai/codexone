@@ -24,4 +24,4 @@ cargo test --locked --manifest-path rust/storage/Cargo.toml
 rust/storage/tests/verify-swift.sh
 ```
 
-第二条需要仓库规定的 Swift 工具链、Python 3 和本地 Swift 兼容基线提交。脚本在临时位置构建基线 Swift 包。Swift 打开并写入 Rust 创建的 v19 库，并以 v9 离线迁移和 v18 启动迁移对照 schema、已迁移记录和迁移前备份。测试还用同一份 v12 夹具验证两端均会自动迁移增量回收库，并拒绝未启用增量回收的库。双向测试覆盖实例锁、旧信封解密、以 active key 重新封装以及更换托管 Key 摘要后的 Swift 认证。
+第二条是可选对照，需要 Swift 6.4、Python 3 和本地的[固定 Swift 兼容基线提交](https://github.com/ximatai/codexone/tree/3c82d71f47b1c14a05a1e450fcd29b3061755aec)。脚本在临时位置构建基线 Swift 包。Swift 打开并写入 Rust 创建的 v19 库，并以 v9 离线迁移和 v18 启动迁移对照 schema、已迁移记录和迁移前备份。测试还用同一份 v12 夹具验证两端均会自动迁移增量回收库，并拒绝未启用增量回收的库。双向测试覆盖实例锁、旧信封解密、以 active key 重新封装以及更换托管 Key 摘要后的 Swift 认证。

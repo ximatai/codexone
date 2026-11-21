@@ -261,6 +261,10 @@ def verify(binary):
         rotated = document(request(port, 'POST', '/api/keys/' + key['id'] + '/rotate', {'revision': disabled['revision']}, cookie=cookie, origin=f.origin, csrf=csrf), 201)
         f.secrets.append(rotated['secret'])
         assert not rotated['key']['enabled'] and rotated['key']['id'] == key['id']
+        history_path = f"/api/usage?start={summary_start}&end={summary_start + 86400}&key={key['id']}"
+        history = document(request(port, 'GET', history_path, cookie=cookie))['rows']
+        previous, = [entry for entry in history if entry['id'] == row['id']]
+        assert previous['metrics'] == row['metrics'] and previous['principal'] == row['principal']
         for token in (secret, rotated['secret']):
             assert request(f.ports['data'], 'GET', '/v1/models', headers={'Authorization': 'Bearer ' + token})[0] == 401
         fresh = rotated['key']

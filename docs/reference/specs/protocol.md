@@ -37,11 +37,11 @@
 
 Rust 数据面 HTTP 在 TCP 建连失败后可在原有 10 秒连接预算及执行总期限内退避重试，最多三次重拨。使用显式代理时始终拨同一代理。代理 CONNECT、TLS 和首次 HTTP 派发都在 TCP 建连成功后进行，三者的失败不触发拨号重试。取消也会结束退避等待。
 
-排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
+排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。下游连接关闭即使上游静默也必须触发取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
-Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP 明文使用已知 Content-Length 的 Data 流，zstd 使用 unknown 长度的 chunked 单帧流，每块最多 64 KiB，Swift HTTP 在 AHC 消费最后一块并请求 EOF 时启动，Rust 的 HTTP/1 定长上传在消费最后一块时启动，chunked 上传在消费 EOF 时启动；WS 在完整 frame 的 transport write future 成功后启动。两者都是本机传输边界，不是提供者收完/消费确认；NIO、TLS 和 socket 缓冲可能仍有尾部数据。总执行期限仍从执行开始覆盖路由、连接及上传，未完成上传由总期限取消，沿用 execution_deadline_exceeded / deadline_exceeded；请求 frame 不引入独立上游五秒写期限，控制帧仍沿既有五秒期限。上传后静默由 execution_first_response_timeout 结束，首事件后的 idle 不变；早到事件不会被上传完成信号重置。取消沿既有路径关闭 I/O、最终化未知/取消，不重试或重放。复用唯一最终编码 Data，不增加整份输入或压缩产物副本；压缩尾帧完全消费后才报告 EOF。2xx 响应头早于上传 EOF 时，压缩与明文均允许继续上传；压缩 owner 在 EOF 或 exchange 结束时关闭，非 2xx 仍立即停止，不能因 execute 返回响应头而取消成功请求的上传。初始化、worker 排队及压缩均计入总期限；415 明文重发的首响应期限从新上传 EOF 开始，总期限不重置。
+Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP 明文使用有 Content-Length 的定长流，zstd 使用 chunked 单帧流，每块最多 64 KiB。HTTP/1 定长上传在消费最后一块时启动，chunked 上传在消费 EOF 时启动；WS 在完整 frame 的 transport write future 成功后启动。这些本机边界允许传输、TLS 和 socket 缓冲仍持有尾部数据，不能据此确认提供者已收完。总执行期限仍从执行开始覆盖路由、连接及上传，未完成上传由总期限取消，沿用 execution_deadline_exceeded / deadline_exceeded；请求 frame 不引入独立上游五秒写期限，控制帧仍沿既有五秒期限。上传后静默由 execution_first_response_timeout 结束，首事件后的 idle 不变；早到事件不会被上传完成信号重置。取消沿既有路径关闭 I/O、最终化未知/取消，不重试或重放。复用唯一最终编码字节，不增加整份输入或压缩产物副本；压缩尾帧完全消费后才报告 EOF。2xx 响应头早于上传 EOF 时，压缩与明文均允许继续上传；压缩 owner 在 EOF 或 exchange 结束时关闭，非 2xx 仍立即停止，不能因 execute 返回响应头而取消成功请求的上传。初始化、worker 排队及压缩均计入总期限；415 明文重发沿用总期限，首响应期限以新定长上传完成为起点。
 
-大于 8 MiB 的上传记录一次 info `Upstream request upload`，上传耗时截至发送完成（失败/取消则截至退出），独立进程级限额 16 条/60 秒。仅含 transport（http/websocket）、result（sent/interrupted）、size_bucket（at_most_16_mib/16_to_24_mib/24_to_32_mib/over_32_mib）与 upload_duration_bucket（under_1_s/1_to_10_s/10_to_30_s/30_to_60_s/at_least_60_s），无内容、身份、精确字节或耗时。HTTP 另含 content_encoding（identity/zstd）、wire_size_bucket（≤1、1–4、4–8、8–16、16–24、24–32、>32 MiB 的互斥固定桶）与 compression_duration_bucket（not_applicable/under_1_ms/1_to_10_ms/10_to_100_ms/100_to_1000_ms/at_least_1000_ms）；wire 仅累计交给 AHC 的块，interrupted 仅为部分值，不含 framing/TLS；压缩耗时仅累计 worker 内工作。HTTP 两种编码在 2xx 响应时均等待上传 EOF 或 exchange 退出（含取消、超时、断流）再结束诊断，非 2xx 与发送抛错立即结束；只有消费上传 EOF 才记 sent，否则记 interrupted。每次上传仅记录一条，415 明文重发的两次上传各自记录。
+大于 8 MiB 的上传记录一次 info `Upstream request upload`，上传耗时截至发送完成（失败/取消则截至退出），独立进程级限额 16 条/60 秒。仅含 transport（http/websocket）、result（sent/interrupted）、size_bucket（at_most_16_mib/16_to_24_mib/24_to_32_mib/over_32_mib）与 upload_duration_bucket（under_1_s/1_to_10_s/10_to_30_s/30_to_60_s/at_least_60_s），无内容、身份、精确字节或耗时。HTTP 另含 content_encoding（identity/zstd）、wire_size_bucket（≤1、1–4、4–8、8–16、16–24、24–32、>32 MiB 的互斥固定桶）与 compression_duration_bucket（not_applicable/under_1_ms/1_to_10_ms/10_to_100_ms/100_to_1000_ms/at_least_1000_ms）；wire 仅累计交给 HTTP 传输的块，interrupted 仅为部分值，不含 framing/TLS；压缩耗时仅累计 worker 内工作。HTTP 两种编码在 2xx 响应时均等待上传 EOF 或 exchange 退出（含取消、超时、断流）再结束诊断，非 2xx 与发送抛错立即结束；只有消费上传 EOF 才记 sent，否则记 interrupted。每次上传仅记录一条，415 明文重发的两次上传各自记录。
 
 网关错误保持协议 envelope、稳定 code、脱敏信息与 request ID；区分权限、quota、capacity、unknown/ambiguous binding、上游状态丢失、授权需要更新、client_too_slow、execution_indeterminate。提供者错误按 P27 脱敏透传其可操作成员。HTTP 提交前可回 4xx/429/502/503/504；Responses SSE 提交后提供者失败以 response.failed 事件、网关失败以 error 事件结束。原生 Images SSE 提交后的失败以 Images error 事件结束。WS 握手后不可返回 HTTP 状态响应；error 帧携带 status，lane 错误服从执行生命周期规范的 FIFO。认证升级后的首条create解析失败时，先尽力发送标准error帧再关闭连接，不回显未验证lane，不建立上游或创建执行；发送失败仍关闭，不自动重放。失败不伪装成功、EOF 不视为终态。
 
@@ -160,7 +160,7 @@ HTTP 已知长度和 WS 首帧的空 lease 可进入全局最多 4 个等待者�
 
 CODEXONE_UPSTREAM_HTTP_PROXY为可信进程配置，未设置或空值直连；非空仅接受http://proxy.example.invalid:7890及可选根斜线，不接受userinfo、非根路径、query或fragment。无效值在启动/check-config拒绝且不回显；不自动采纳HTTP_PROXY/HTTPS_PROXY/NO_PROXY或下游headers。生成HTTP、原生WS、认证/刷新及额度GET统一使用该代理，管理/健康监听不改变。代理失效不得回退直连、重定向或重放已派发请求；提供者authority和TLS主机名/证书校验保持。
 
-上游 WS 直连及代理主机名均交由 NIO Happy Eyeballs 选择地址，允许多个候选 channel 并存；单次建连 owner 最多跟踪 64 个尚未完成关闭的候选。此内部上限依据既有 10 秒连接期限与 NIO 2.104.0 默认 250 ms 候选间隔（约 40 个并行候选），并为失败关闭回调交错留出余量；不是解析结果条数限制或重试额度。失败及落选候选由 NIO 关闭，closeFuture 释放 owner 槽位；取消、超时及服务停止关闭并等待全部已登记候选，结束后拒绝登记并关闭迟到候选。地址竞速属于同一次建连，不改变 CONNECT、TLS、提供者握手或请求不重放规则。
+上游 WS 直连和代理主机名的地址选择在同一次连接尝试的期限内完成。Rust 使用 Tokio 的 TCP 连接，按解析结果尝试地址。取消、超时及服务停止回收在途连接；地址选择不改变 CONNECT、TLS、提供者握手及请求不重放规则。
 
 原生WS先完成有界HTTP CONNECT，再在隧道内对原目标握手TLS/WS，CONNECT不含订阅Bearer或下游凭证；代理握手复用连接owner/期限/取消关闭路径。代理拒绝与提供者拒绝分别分类；有可信HTTP状态时仅记录100—599整数、固定错误码/reason及服务端UUID，受既有16条/60秒限额。上游 WS 在等待终态时收到 close 帧，保持既有 execution_indeterminate/502，附固定 reason `upstream_websocket_close`，仅记录 1000—4999 的数字 `upstream_ws_close_code`；无 close 帧的正常 EOF 为 `upstream_websocket_eof`。不记录关闭文本，不把下游关闭归为上游关闭，不改变终态队列、账本或 envelope；终态已完成的正常关闭不新增拒绝日志。不记录代理地址、提供者错误正文、任意字段或标识，不在公开envelope增加内部字段。已知不支持max_output_tokens仅记固定分类，不静默删掉请求约束。没有用量证据的失败继续保留unknown责任，提供者明确拒绝的例外见 U13；代理拒绝不属于该例外。
 
@@ -190,7 +190,7 @@ usage 只解释 input_tokens、output_tokens 与 input_tokens_details.cached_tok
 - 响应：只提取 response ID、条目 ID、call_id、reasoning/compaction 指纹、已知计数和终态；未知字段、条目类型、part、annotations、状态值、回显与输出项数不导致失败，未知事件原样转发给流式客户端但不授予归属/用量/终态。普通输出不再做多视图语义关联，流式压缩不再做窗口一致性校验。绑定对同一主体/身份幂等，每 attempt 最多 1024 个，超出后续对象不绑定。
 - 提供者错误：保留 type/code/param/message/plan_type/resets_at/resets_in_seconds 及 P10 允许的 Retry-After。message 中 org-/user-/proj-/acct 标识和邮箱替换为 [redacted]，附网关 request_id。HTTP 非200 返回对应 4xx（401 映射 502 upstream_authentication_rejected，5xx 映射 502/503）；429/额度类错误为 429。内部账号冷却按账号健康规范处理 Retry-After、resets_in_seconds 和 resets_at，不因此改写客户端错误或重试提示。无数字状态的 SSE error 根据已识别的永久拒绝 code/type 映射 400，显式状态优先；未知拒绝仍为 502。Responses SSE 已开始时以 response.failed 下发，原生 Images SSE 使用 error 事件。原生 WS 以带 status 的 error 帧下发且连接保持；response.failed 终态原样下发、error 脱敏，结果记为失败并保留可信用量。
 
-订阅合约最终 HTTP POST /responses 的唯一明文编码严格大于 8 MiB 时默认 zstd（level 3、无校验/内容大小/字典、单线程、单帧）。可信启动配置 upstreamRequestCompression 接受 zstd/off，upstreamZstdMinimumBytes 为非负整数且严格大于才启用。压缩由网关设置唯一 Content-Encoding，删除长度和传输编码后交 AHC 生成 chunked；明文保留 Content-Length。官方客户端使用整包 Content-Length，此 framing 差异仍待真实上游兼容验收；off 重启回退明文。真实 WS（含未压缩 12 MiB 请求边界）、独立 compact、Images、辅助端点和第三方 responses 合约无条件明文；合法 WS→HTTP 大请求回退可压缩。解压字节与同一份最终编码完全一致，未知字段及顺序不变；不扩展入站或响应解压。
+订阅合约最终 HTTP POST /responses 的唯一明文编码严格大于 8 MiB 时默认 zstd（level 3、无校验/内容大小/字典、单线程、单帧）。可信启动配置 upstreamRequestCompression 接受 zstd/off，upstreamZstdMinimumBytes 为非负整数且严格大于才启用。压缩由网关设置唯一 Content-Encoding，删除长度和传输编码后由 HTTP 传输生成 chunked；明文保留 Content-Length。官方客户端使用整包 Content-Length，此 framing 差异仍待真实上游兼容验收；off 重启回退明文。真实 WS（含未压缩 12 MiB 请求边界）、独立 compact、Images、辅助端点和第三方 responses 合约无条件明文；合法 WS→HTTP 大请求回退可压缩。解压字节与同一份最终编码完全一致，未知字段及顺序不变；不扩展入站或响应解压。
 
 原生 Images SSE 按完整事件有界暂存后检查，普通事件原字节下发（含注释、event 行、CRLF、`[DONE]`），`type: error` 原文不下发，按上述 P27 脱敏后结束；不缓冲整流，沿用单事件与总量上限。
 
@@ -258,7 +258,7 @@ Responses 首个上游事件前失败时，可记录有界诊断，包含连接�
 
 [文档导航](../../README.md)
 
-原生 Images 首响应使用独立可信启动配置 imageFirstResponseTimeoutSeconds，默认 min(600, 总执行期限) 秒，显式范围 1 至总执行期限；生成/编辑及流式/非流式统一使用，不继承普通 firstResponseTimeoutSeconds。修改后重启生效，总期限与 progress_idle 仍共用。原生 Images 与 Responses 共用上传 EOF 首响应边界：AHC 消费完最后一块并请求 EOF 后开始首响应期限，不是远端确认。图片上传开始及每次背压拉取正文块更新 progress_idle 空闲期限，停滞以 execution_progress_timeout 取消；总执行期限仍覆盖持续慢传。EOF 原子切换到 first_response 期限，早到有效事件不会被上传进度或 EOF 覆盖。保持未知责任；首事件后进度期限不变。
+原生 Images 首响应使用独立可信启动配置 imageFirstResponseTimeoutSeconds，默认 min(600, 总执行期限) 秒，显式范围 1 至总执行期限；生成/编辑及流式/非流式统一使用，不继承普通 firstResponseTimeoutSeconds。修改后重启生效，总期限与 progress_idle 仍共用。原生 Images 与 Responses 共用本机上传完成边界。HTTP 定长请求在传输消费最后一块时启动首响应期限，流式上传在消费 EOF 时启动。图片上传开始及每次背压拉取正文块更新 progress_idle 空闲期限，停滞以 execution_progress_timeout 取消；总执行期限仍覆盖持续慢传。上传完成原子切换到 first_response 期限，早到有效事件不会被上传进度或完成信号覆盖。保持未知责任；首事件后进度期限不变。
 
 流式原生 Images 收到 `application/json` 时只接受完整对象：非负整数 created、非空 data 数组、每项含非空规范 base64 b64_json，且无 error/type 错误文档；有界收完整后再提交 SSE，每项一个 image_edit.completed 或 image_generation.completed，created 转为 created_at，聚合 usage 仅放最后一项，结束 [DONE]。账本只观察一次聚合用量；先独立保存可信计数，再校验输出，畸形图片不丢弃可信用量。显式 status 仅 completed 可合成成功；failed/cancelled 失败，其他状态保留执行未知和部分用量，不合成完成事件。HTML、缺失或其他媒体类型不猜测为 JSON；无效、空、截断结果仍失败。图片诊断 content_type 仅取 json/sse/html/text/binary/missing/other，不记录原始头部。
 
@@ -268,8 +268,8 @@ Responses 首个上游事件前失败时，可记录有界诊断，包含连接�
 
 入站 HTTP 正文超时以 408 request_body_timeout JSON envelope 结束，公开文案说明上传未完成且未转发上游；有限频率私有诊断记录请求 UUID、固定 idle/total 原因、是否收到正文、已接收大小桶和总耗时/最后读取进展后的毫秒数，不记录正文、身份、地址、请求头或路径。连接仍可写、已解析请求头且尚未提交响应时发送错误，随后关闭，不复用未读完的连接。只收到不完整请求头或空闲 keep-alive 超时直接关闭。正文读取与超时共用原子结束屏障，超时后的 buffered end 不能进入准入；活跃上传更新空闲期限但不延长 120 秒总期限。未映射执行错误与 downstream_json_write 诊断含有界 cause：固定通道/执行/JSON/HTTPClient 分类、有限 errno 或 other，不记录错误描述、正文或路径；映射状态与 unknown 语义不变。
 
-配置上游的数据面普通 HTTP/1 连接在进入 SwiftNIO 响应协议处理器前检查出站部件顺序。若出现未开始响应时的正文或结束部件、或响应未结束时的另一响应头，丢弃异常写并关闭该连接。独立的 warning `Invalid HTTP response write sequence` 每进程最多 16 条/60 秒，记录固定部件、响应状态及可用的最近已接受响应头的网关 UUID，无正文、任意头字段或客户端地址。流内错误只在响应头已成功交给写入器、尚未开始提交结束部件时写出。沿用既有断连与执行核对语义。
+数据面 HTTP/1 每个请求仅交付一个响应头。流内错误沿已提交响应的正文通道写出；写入失败沿用断连与执行核对语义。旧 Swift 的出站序列告警见[归档规范](https://github.com/ximatai/codexone/blob/65624e4c45ee1f86560b7640abe42bec31a25f60/docs/reference/specs/protocol.md)。
 
-执行失败 cause 诊断对 ChannelError 的已关闭、EOF、连接中、连接超时、不支持操作和无效状态分别使用固定 token，对 NIOWebSocketError 的帧长、分片控制帧及控制帧长度分别分类；无描述或正文，不据此推断根因或重放。
+执行失败的 cause 使用固定传输、协议与执行分类，无底层错误原文或请求正文，不据此推断根因或重放。
 
 原生 Images 的关键根成员 model、stream、output_format、images、mask、n、partial_images、output_compression、prompt_rewriter、svg 禁止重复，按解转义后的名称识别并在派发前返回 400 invalid_json；其他入口与未知成员的既有 JSON 语义不变。扩展 generation 非流式输出提交前验证完整 JSON、JSON 媒体类型、created 与全部规范非空 base64 图片；无效结果返回 502，先保留已观察用量，不重放。

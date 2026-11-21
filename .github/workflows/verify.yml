@@ -19,8 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
       rust: ${{ steps.filter.outputs.rust }}
+      storage: ${{ steps.filter.outputs.storage }}
       frontend: ${{ steps.filter.outputs.frontend }}
       devcontainer: ${{ steps.filter.outputs.devcontainer }}
     steps:
@@ -44,7 +44,6 @@ jobs:
           elif [[ "$EVENT" == push ]] &&
             git diff --name-only -z --no-renames "$PUSH_BEFORE" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths" &&
             selection="$(bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths")" &&
-            [[ "$selection" == $'backend=false\nrust=false\nfrontend=false\ndevcontainer=false' ]] &&
             [[ "$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --branch main \
               --event push --commit "$PUSH_BEFORE" --status success --limit 1 \
               --json databaseId --jq 'length > 0')" == true ]]; then
@@ -58,138 +57,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 scripts/check_docs.py
-      - run: python3 scripts/check_architecture.py
       - run: python3 scripts/backend_shards.py --check
       - run: python3 scripts/check_ci.py
       - run: python3 scripts/test_check_ci.py
-  backend-build:
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-24.04
-    container: swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install verification prerequisite
-        run: |
-          cp /etc/apt/sources.list.d/ubuntu.sources /tmp/codexone-ubuntu.sources
-          sed -i -E "s@http://(archive|security)\.ubuntu\.com/ubuntu@$CODEXONE_CI_APT_MIRROR@g" /etc/apt/sources.list.d/ubuntu.sources
-          if ! (apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=20 -o Acquire::Retries=2 update && apt-get -o Acquire::https::Timeout=20 -o Acquire::Retries=2 install -y --no-install-recommends python3 libsqlite3-dev zstd); then
-            cp /tmp/codexone-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
-            rm -rf /var/lib/apt/lists/*
-            apt-get -o APT::Update::Error-Mode=any update
-            apt-get install -y --no-install-recommends python3 libsqlite3-dev zstd
-          fi
-          tar --version && zstd --version && gzip --version
-      # Every run restores; only main pushes save, so PR pushes cannot fill the cache quota.
-      - name: Restore incremental Swift build cache
-        id: swift-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .build
-          key: ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-${{ hashFiles('Package.resolved') }}-${{ hashFiles('Package.swift', 'Sources/**', 'Tests/**') }}
-          restore-keys: |
-            ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-${{ hashFiles('Package.resolved') }}-
-            ${{ runner.os }}-swift-19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63-
-      - name: Compile Swift executables and tests
-        run: ./scripts/verify.sh --backend-compile
-      - name: Save Swift build cache from main
-        if: github.event_name == 'push' && steps.swift-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .build
-          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
-      - name: Package debug executables and compiled tests
-        shell: bash
-        run: |
-          bundle() {
-            local name=$1 directory dependencies
-            shift
-            directory=$(mktemp -d)
-            cp -R "$@" "$directory/"
-            dependencies=$(ldd "$@")
-            printf '%s\n' "$dependencies" |
-              awk '$2 == "=>" && $3 ~ /^\/usr\/lib\/swift\/linux\// {print $3}' | sort -u |
-              while IFS= read -r library; do cp -L "$library" "$directory/"; done
-            test -f "$directory/libswiftCore.so"
-            if [[ "$name" == backend-swift-tests ]]; then
-              cp -R -- *.bundle PackageFrameworks "$directory/"
-            fi
-            tar -I 'gzip -1' -cf "$RUNNER_TEMP/$name.tar.gz" -C "$directory" .
-            rm -r "$directory"
-          }
-          cd .build/debug
-          bundle backend-binaries codexone ExecutionProbe
-          bundle backend-swift-tests *Tests-test-runner *Tests.so
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          archive: true
-          include-hidden-files: false
-          name: backend-binaries
-          path: ${{ runner.temp }}/backend-binaries.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          archive: true
-          include-hidden-files: false
-          name: backend-swift-tests
-          path: ${{ runner.temp }}/backend-swift-tests.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-  backend-swift-tests:
-    needs: [changes, backend-build]
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          digest-mismatch: error
-          name: backend-swift-tests
-          path: ${{ runner.temp }}
-      - name: Run compiled Swift tests serially
-        shell: bash
-        run: |
-          mkdir -p .build/debug
-          tar -xzf "$RUNNER_TEMP/backend-swift-tests.tar.gz" -C .build/debug
-          for runner in .build/debug/*Tests-test-runner; do
-            "$runner" --testing-library xctest
-          done
-          for runner in .build/debug/*Tests-test-runner; do
-            "$runner" --testing-library swift-testing --no-parallel
-          done
-  backend-scripts:
-    needs: [changes, backend-build]
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1/4, 2/4, 3/4, 4/4]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          digest-mismatch: error
-          name: backend-binaries
-          path: ${{ runner.temp }}
-      - name: Restore debug executables
-        run: |
-          mkdir -p .build/debug
-          tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C .build/debug
-      - name: Verify protocol and lifecycle shard
-        shell: bash
-        env:
-          VERIFY_EVENT: ${{ github.event_name }}
-        run: |
-          args=()
-          if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then
-            args+=(--pr)
-          fi
-          ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}"
   backend-rust:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
@@ -205,7 +75,14 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
       - name: Verify the independently locked Rust crates
-        run: ./scripts/verify_rust.sh --crate-tests
+        env:
+          STORAGE_PRESSURE: ${{ needs.changes.outputs.storage }}
+        run: |
+          if [[ "$STORAGE_PRESSURE" == true ]]; then
+            ./scripts/verify_rust.sh --with-storage-tmpfs ./scripts/verify_rust.sh --crate-tests
+          else
+            ./scripts/verify_rust.sh --crate-tests
+          fi
   backend-rust-build:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'
@@ -232,6 +109,18 @@ jobs:
           path: ${{ runner.temp }}/backend-rust-binaries.tar.gz
           if-no-files-found: error
           retention-days: 1
+      - name: Build the isolated Rust gateway probe
+        if: needs.changes.outputs.rust == 'true'
+        run: |
+          ./scripts/verify_rust.sh --release-probe "$RUNNER_TEMP/probe/RustGatewayProbe"
+          tar -czf "$RUNNER_TEMP/rust-gateway-probe.tar.gz" -C "$RUNNER_TEMP/probe" RustGatewayProbe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.rust == 'true'
+        with:
+          name: rust-gateway-probe
+          path: ${{ runner.temp }}/rust-gateway-probe.tar.gz
+          if-no-files-found: error
+          retention-days: 1
   backend-rust-scripts:
     needs: [changes, backend-rust-build]
     if: needs.changes.outputs.rust == 'true'
@@ -250,94 +139,32 @@ jobs:
           digest-mismatch: error
           name: backend-rust-binaries
           path: ${{ runner.temp }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          digest-mismatch: error
+          name: rust-gateway-probe
+          path: ${{ runner.temp }}
       - name: Verify optimized Rust protocol and lifecycle shard
         shell: bash
         env:
           VERIFY_EVENT: ${{ github.event_name }}
+          STORAGE_PRESSURE: ${{ needs.changes.outputs.storage }}
         run: |
           mkdir -p "$CODEXONE_BACKEND_BIN_DIR"
           tar -xzf "$RUNNER_TEMP/backend-rust-binaries.tar.gz" -C "$CODEXONE_BACKEND_BIN_DIR"
+          tar -xzf "$RUNNER_TEMP/rust-gateway-probe.tar.gz" -C "$CODEXONE_BACKEND_BIN_DIR"
           args=()
           if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then
             args+=(--pr)
           fi
-          ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}" --rust
-      - name: Verify the Rust execution ledger across process restarts
-        if: matrix.shard == '3/4'
-        run: python3 scripts/rust_compat/execution_recovery.py --binary "$CODEXONE_BACKEND_BIN_DIR/codexone"
-  backend-parity:
-    needs: [changes, backend-build, backend-rust-build]
-    if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          digest-mismatch: error
-          name: backend-binaries
-          path: ${{ runner.temp }}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          digest-mismatch: error
-          name: backend-rust-binaries
-          path: ${{ runner.temp }}
-      - name: Verify same-schema continuation across both gateways
-        run: |
-          mkdir -p "$RUNNER_TEMP/swift-bin" "$RUNNER_TEMP/rust-bin"
-          tar -xzf "$RUNNER_TEMP/backend-binaries.tar.gz" -C "$RUNNER_TEMP/swift-bin"
-          tar -xzf "$RUNNER_TEMP/backend-rust-binaries.tar.gz" -C "$RUNNER_TEMP/rust-bin"
-          python3 scripts/rust_compat/compare.py \
-            --reference "$RUNNER_TEMP/swift-bin/codexone" \
-            --candidate "$RUNNER_TEMP/rust-bin/codexone"
-  frontend:
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
-      options: --init --ipc=host
-    timeout-minutes: 15
-    env:
-      CODEXONE_WEB_STUBS_ONLY: '1'
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26.13.0
-          cache: npm
-          package-manager-cache: false
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: ../scripts/verify.sh --web
-      - name: Upload browser failure evidence
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          archive: true
-          include-hidden-files: false
-          name: browser-failure-evidence
-          path: web/test-results/
-          retention-days: 7
+          runner=()
+          if [[ "$STORAGE_PRESSURE" == true && '${{ matrix.shard }}' == '4/4' ]]; then
+            runner+=(./scripts/verify_rust.sh --with-storage-tmpfs)
+          fi
+          "${runner[@]}" ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}"
   frontend-live:
-    needs: [changes, backend-build, backend-rust-build]
-    if: >-
-      ${{ !cancelled() && needs.changes.result == 'success' &&
-          (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rust == 'true' ||
-            needs.changes.outputs.frontend == 'true') &&
-          (needs.changes.outputs.backend != 'true' || needs.backend-build.result == 'success') &&
-          ((needs.changes.outputs.rust != 'true' && needs.changes.outputs.frontend != 'true') ||
-            needs.backend-rust-build.result == 'success') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        backend: >-
-          ${{ fromJSON(needs.changes.outputs.backend == 'true' &&
-              ((needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true') &&
-                '["swift","rust"]' || '["swift"]') || '["rust"]') }}
+    needs: [changes, backend-rust-build]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     container:
       image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
@@ -346,7 +173,6 @@ jobs:
     env:
       CODEXONE_WEB_STUBS_ONLY: '0'
       CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone
-      GATEWAY_ARTIFACT: ${{ matrix.backend == 'rust' && 'backend-rust-binaries' || 'backend-binaries' }}
     defaults:
       run:
         working-directory: web
@@ -362,13 +188,20 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           digest-mismatch: error
-          name: ${{ env.GATEWAY_ARTIFACT }}
+          name: backend-rust-binaries
           path: ${{ runner.temp }}
       - name: Restore matching gateway
         run: |
           mkdir -p ../.build/live
-          tar -xzf "$RUNNER_TEMP/$GATEWAY_ARTIFACT.tar.gz" -C ../.build/live
-      - run: npm run build
+          tar -xzf "$RUNNER_TEMP/backend-rust-binaries.tar.gz" -C ../.build/live
+      - name: Verify frontend and build the shared SPA
+        if: needs.changes.outputs.frontend == 'true'
+        env:
+          CODEXONE_WEB_STUBS_ONLY: '1'
+        run: ../scripts/verify.sh --web
+      - name: Build the SPA for Rust-only changes
+        if: needs.changes.outputs.frontend != 'true'
+        run: npm run build
       - name: Verify real gateway and browser together
         run: npm run test:e2e -- admin-live-real --workers=1
       - name: Upload real browser failure evidence
@@ -377,7 +210,7 @@ jobs:
         with:
           archive: true
           include-hidden-files: false
-          name: live-browser-failure-evidence-${{ matrix.backend }}
+          name: live-browser-failure-evidence
           path: web/test-results/
           retention-days: 7
   devcontainer:
@@ -390,17 +223,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Build the development container
-        run: docker build --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" -t codexone-dev .devcontainer
+        run: docker build -t codexone-dev .devcontainer
       - name: Build backend and check frontend inside it
         run: >-
           docker run --rm -v "$PWD":/workspace -w /workspace codexone-dev bash -c
-          'set -e; node --version; swift --version; python3 --version;
-          swift build --product codexone;
+          'set -e; node --version; rustc --version; python3 --version;
+          cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone;
           npm --prefix web ci --ignore-scripts --no-audit --no-fund;
           npm --prefix web run typecheck'
   verify:
     if: always()
-    needs: [changes, docs, backend-build, backend-swift-tests, backend-scripts, backend-rust, backend-rust-build, backend-rust-scripts, backend-parity, frontend, frontend-live, devcontainer]
+    needs: [changes, docs, backend-rust, backend-rust-build, backend-rust-scripts, frontend-live, devcontainer]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -412,25 +245,18 @@ jobs:
           import json, os
           needs = json.loads(os.environ['RESULTS'])
           selected = needs['changes'].get('outputs', {})
-          for name in ('backend', 'rust', 'frontend', 'devcontainer'):
+          for name in ('rust', 'storage', 'frontend', 'devcontainer'):
               if selected.get(name) not in ('true', 'false'):
                   raise SystemExit(f'Missing or invalid selection for {name}')
           required = {'changes', 'docs'}
-          swift = selected['backend'] == 'true'
           rust = selected['rust'] == 'true'
           frontend = selected['frontend'] == 'true'
-          if swift:
-              required.update({'backend-build', 'backend-swift-tests', 'backend-scripts'})
+          if selected['storage'] == 'true' and not rust:
+              raise SystemExit('Storage validation requires Rust checks')
           if rust:
               required.update({'backend-rust', 'backend-rust-scripts'})
           if rust or frontend:
-              required.add('backend-rust-build')
-          if swift or rust or frontend:
-              required.add('frontend-live')
-          if swift and rust:
-              required.add('backend-parity')
-          if frontend:
-              required.add('frontend')
+              required.update({'backend-rust-build', 'frontend-live'})
           if selected['devcontainer'] == 'true':
               required.add('devcontainer')
           if missing := required - needs.keys():

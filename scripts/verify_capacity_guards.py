@@ -14,6 +14,7 @@ import verify_capacity as capacity
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image',required=True)
+    parser.add_argument('--harness-image', default='codexone:verification-tools')
     parser.add_argument('--report',type=Path,required=True)
     args=parser.parse_args()
     report=json.loads(args.report.read_text())
@@ -53,7 +54,7 @@ def main():
             with tempfile.TemporaryDirectory(prefix='codexone-capacity-guard-') as temporary:
                 try:
                     capacity.orchestrate(SimpleNamespace(output=Path(temporary)/'result',image=args.image,
-                        harness_image='codexone:v8-verification',transport='http',duration=10))
+                        harness_image=args.harness_image,transport='http',duration=10))
                 except subprocess.TimeoutExpired:pass
                 else:raise AssertionError('Expected injected CLI failure')
             assert injected

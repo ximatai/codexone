@@ -87,7 +87,7 @@ Restart Codex, start a new session, and send a message. If the request appears u
 
 ## Deploy on your own server (HTTPS)
 
-Linux amd64 images built from current source default to Rust. Before upgrading from v0.26.53, back up the data and keep the previous image reference. The [Swift archive branch](https://github.com/ximatai/codexone/tree/archive/swift-v0.26.53) preserves the source of the last Swift release. Choose a version from its release notes, or [build from source](docs/guide/linux-installation.md#从源码构建).
+Current source builds a Linux amd64 Rust image. Before upgrading from v0.26.53, back up the data and keep the previous image reference. The [Swift archive branch](https://github.com/ximatai/codexone/tree/archive/swift-v0.26.53) preserves the source of the last Swift release. Choose a version from its release notes, or [build from source](docs/guide/linux-installation.md#从源码构建).
 
 These steps deploy the current release, [v0.26.9](https://github.com/ximatai/codexone/releases/tag/v0.26.9), on a fresh Linux server. Expect 20–30 minutes, mostly for HTTPS certificates and account authorization.
 
@@ -210,7 +210,7 @@ Restart Codex Desktop or the CLI, start a new session and send a message. If the
 
 ## Requirements and limits
 
-Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development works on Linux, macOS, and Windows (WSL2) using Rust 1.96.0 for the gateway, Node.js 26.13.0 for the frontend, and Python 3 for verification. Swift compatibility checks additionally use Swift 6.4. See [contributing](CONTRIBUTING.md).
+Linux amd64 containers use host networking, loopback listeners by default, and local named volumes behind a host TLS proxy, with opt-in private-address LAN HTTP; the template does not directly support Docker Desktop. Its 768 MiB memory limit is not a minimum host requirement or throughput guarantee. Source development works on Linux, macOS, and Windows (WSL2) using Rust 1.96.0 for the gateway, Node.js 26.13.0 for the frontend, and Python 3 for verification. See [contributing](CONTRIBUTING.md).
 
 Single node and administrator only. Full multi-account routing validation remains pending. No billing service, multi-admin RBAC, or high availability. Costs are estimates, quotas are observations, and token/cost limits are not absolute caps. Client-facing body/image recovery caching is not implemented; output recovery after disconnection or restart is not guaranteed. See [compatibility](docs/reference/compatibility.md).
 

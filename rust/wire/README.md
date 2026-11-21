@@ -10,7 +10,7 @@ Swift Foundation 将非标准标记 `FE FF 00 00` 解码为 UTF-32LE。Swift 的
 
 ## 本地验证
 
-从仓库根目录运行。差分脚本使用固定种子 8093，编译当前 checkout 的 Swift wire 源码，比较 JSON/SSE 输出字节、错误码、SSE 状态和出错时已消费的字节数。Linux 可使用本机 Swift 6.4.1，也可用仓库验证所用的镜像。在 macOS 使用本机 Swift 时，脚本单独报告上述 CRCRLF 差异。
+从仓库根目录运行。差分脚本使用固定种子 8093，从[固定 Swift 归档](https://github.com/ximatai/codexone/tree/65624e4c45ee1f86560b7640abe42bec31a25f60)提取 wire 源码并编译，比较 JSON/SSE 输出字节、错误码、SSE 状态和出错时已消费的字节数。Linux 可使用本机 Swift 6.4.1，也可使用下列 Swift 容器。浅克隆缺少归档提交时，先执行 `git fetch origin refs/heads/archive/swift-v0.26.53`。在 macOS 使用本机 Swift 时，脚本单独报告上述 CRCRLF 差异。
 
 ```sh
 cargo test --locked --manifest-path rust/wire/Cargo.toml

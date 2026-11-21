@@ -11,18 +11,18 @@
 
 ## 获取镜像
 
-发布说明会标明后端切换。采用 Rust 的版本沿用原 GHCR 仓库、版本标签和 Compose 安装命令。从 GHCR 拉取对应版本并解析本机不可变 ID。下例用历史版本演示，实际安装请替换为目标版本：
+从 GHCR 拉取对应版本并解析本机不可变 ID。下例使用 Rust 正式版 v1.26.55，安装时请按发布说明选择目标版本。
 
 ```sh
-docker pull ghcr.io/ximatai/codexone:0.26.9
-docker image inspect ghcr.io/ximatai/codexone:0.26.9 --format '{{.Id}}'
+docker pull ghcr.io/ximatai/codexone:1.26.55
+docker image inspect ghcr.io/ximatai/codexone:1.26.55 --format '{{.Id}}'
 ```
 
 下文初始化的 `--image` 必须使用实际输出的完整 `sha256:` ID 或受信 digest。该 ID 只在本机有意义：containerd 镜像存储下等于拉取的 registry digest，传统存储下等于镜像配置 digest（Release 的 `image-id.txt`）；跨机器核对以 registry digest 和来源证明为准。正式版镜像提供精确版本与 latest；预发布只提供精确版本，不更新 latest，也不提供年份浮动标签。
 
 ## 从源码构建
 
-在干净源码提交上构建，保持账号、安装目录和构建缓存位于上下文之外。默认构建 Rust：
+在干净源码提交上构建，保持账号、安装目录和构建缓存位于上下文之外。以下命令构建并验证 Rust 镜像。
 
 ```sh
 docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
@@ -38,19 +38,6 @@ docker image inspect codexone:candidate --format '{{.Id}} {{index .Config.Labels
 镜像标签 `net.ximatai.codexone.backend` 可用于确认后端。安装时传入该镜像的不可变 ID 或 registry digest。镜像标签和 `/opt/release.json` 记录 revision/version，清单的 schema 版本由镜像内二进制报告。Rust 构建使用固定工具链和 `Cargo.lock`，前端使用固定 Node 和 npm 锁文件。运行镜像包含剥离调试段的优化二进制、SPA 和运行所需系统工具。项目 LICENSE 位于 `/opt/codexone/LICENSE`，依赖许可按来源收录于 `/opt/codexone/licenses/rust` 和 `/opt/codexone/licenses/npm`。
 
 npm 官方源受限时可加 `--build-arg NPM_REGISTRY=<镜像源>`，完整性哈希仍逐包校验。Ubuntu 源受限时可加 `--build-arg APT_MIRROR=<镜像源 /ubuntu 地址>`，仅在安装期间替换源配置。
-
-### 过渡期间构建 Swift 镜像
-
-在需要验证同版本回退时，显式选择 Swift。安装仍使用该镜像的不可变 ID，已部署实例按[备份和回退](backup-upgrade.md#回退)操作：
-
-```sh
-docker build --platform linux/amd64 --build-arg CODEXONE_BACKEND=swift \
-  --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" --build-arg VERSION=0.0.0-dev \
-  -f deploy/Dockerfile -t codexone:swift-transition .
-python3 scripts/verify_installation.py --image codexone:swift-transition --backend swift
-```
-
-Swift 依赖许可位于 `/opt/codexone/licenses/swift`。SwiftPM 访问受限时，可将 `Package.resolved` 的锁定 revision 预取到 `OWNER/REPO.git` 布局的本地裸仓库，再追加 `--build-context swiftpm-mirrors=<该目录>`。只读镜像目录仅在构建期使用。专门验收 Swift 时可另行构建 Dockerfile 的 `verification` target，它在无网络环境运行 Swift 的优化二进制验证。
 
 ### 发行验收
 

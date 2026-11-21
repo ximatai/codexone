@@ -50,12 +50,12 @@ codexone --migrate
 
 ```sh
 ./scripts/verify.sh --backend
-python3 scripts/verify_keys.py --binary .build/debug/codexone
+python3 scripts/verify_keys.py --binary rust/gateway/target/debug/codexone
 ```
 
 使用私有临时状态和公开合成管理员凭证，数据 Key 仅在测试内存中生成/使用。覆盖独立认证、Origin/Cookie 拒绝、同主体轮换/跨主体拒绝、已连 WS 撤销、限额与重启、迁移和 DB/WAL/输出无原文；不代表 Desktop、真实账号、浏览器管理界面或生产部署验收。
 
-`python3 scripts/verify_admin.py --binary .build/debug/codexone` 验证会话 API、安全头、静态路径及禁用轮换；纳入后端统一验证。管理界面的 Chrome 检查使用 `./scripts/verify.sh --web --chrome`，在独立浏览器上下文中使用合成数据。真实 HTTP 与 SQLite 边界由上面的后端检查覆盖。
+`python3 scripts/verify_admin.py --binary rust/gateway/target/debug/codexone` 验证会话 API、安全头、静态路径及禁用轮换；纳入后端统一验证。管理界面的 Chrome 检查使用 `./scripts/verify.sh --web --chrome`，在独立浏览器上下文中使用合成数据。真实 HTTP 与 SQLite 边界由上面的后端检查覆盖。
 
 按 Key 的用量与诊断通过管理台访问密钥页面进入，或使用同一管理员认证的 `/api/usage`；查询和估算口径见 [U10](../reference/specs/usage.md)。读取接口不向普通数据 Key 开放。
 

@@ -1,15 +1,18 @@
 # Rust 后端兼容性对照
 
-从仓库根目录构建基线并自对照：
+从仓库根目录构建当前 Rust 网关和固定的 Swift 归档参考。需要 Swift 6.4、Rust 和 Python 3。浅克隆缺少提交时，先执行 `git fetch origin refs/heads/archive/swift-v0.26.53`。
 
 ```sh
-swift build --product codexone
+SWIFT_BASELINE="$(mktemp -d)"
+git worktree add --detach "$SWIFT_BASELINE" 65624e4c45ee1f86560b7640abe42bec31a25f60
+swift build --package-path "$SWIFT_BASELINE" --product codexone
+cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone
 python3 scripts/rust_compat/compare.py \
-  --reference .build/debug/codexone \
-  --candidate .build/debug/codexone
+  --reference "$SWIFT_BASELINE/.build/debug/codexone" \
+  --candidate rust/gateway/target/debug/codexone
 ```
 
-后续将 `--candidate` 改成 Rust 后端可执行文件路径。驱动使用 Python 3 标准库和仓库里现有的 HTTP 合成上游。后端须支持 `--check-config`、单身份环境变量配置、端口 `0` 和启动输出 `LISTENING data/admin 127.0.0.1:<port>`，其中 `data` 和 `admin` 各占一行。
+下文的 Swift 对照沿用同一个 `SWIFT_BASELINE`。全部跑完后可以执行 `git worktree remove "$SWIFT_BASELINE"`。驱动使用 Python 3 标准库和回环合成上游。两个后端均须支持 `--check-config`、单身份环境变量配置、端口 `0` 和启动输出 `LISTENING data/admin 127.0.0.1:<port>`，其中 `data` 和 `admin` 各占一行。
 
 每种运行方式各用私有临时目录、独立 SQLite 库和回环上游。驱动检查配置校验没有建库或触发上游，然后采集数据和管理入口的健康响应。首轮 HTTP JSON Responses 完成后正常停机，再由同一个后端或另一后端打开同一个库，用首轮响应 ID 发起续接。驱动覆盖 Swift 与 Rust 各自重启、Swift 切到 Rust、Rust 切到 Swift，逐轮核对上游调用次数、SQLite schema 版本、持久结算状态和用量。每次停机后才以只读方式查询数据库。
 
@@ -34,7 +37,7 @@ python3 scripts/rust_compat/execution_recovery.py --binary rust/gateway/target/d
 
 ## 离线维护互操作
 
-使用提案指定的 Swift 兼容基线构建 `codexone` 和合成数据探针。在当前迁移分支构建 Rust 网关，然后运行：
+使用上述归档构建 `codexone` 和合成数据探针。在当前工作区构建 Rust 网关，然后运行：
 
 ```sh
 swift build --package-path "$SWIFT_BASELINE" --product codexone
@@ -50,7 +53,7 @@ python3 scripts/rust_compat/maintenance.py \
 
 ## 在线备份与并发结算
 
-从仓库根目录运行。驱动构建 Rust CLI 和仅测试用的网关入口，使用私有临时目录、动态回环端口和合成上游。传入提案指定的 Swift 基线可追加跨实现快照验证。
+从仓库根目录运行。驱动构建 Rust CLI 和仅测试用的网关入口，使用私有临时目录、动态回环端口和合成上游。传入上述 Swift 归档编译出的网关可追加跨实现快照验证。
 
 ```sh
 python3 scripts/rust_compat/online_backup.py
@@ -73,7 +76,7 @@ python3 scripts/rust_compat/http_staging.py --binary rust/gateway/target/release
 
 ## 用量、存储水位与首页推送
 
-从仓库根目录运行，Swift 使用提案指定的兼容基线。脚本各自使用合成上游、动态回环端口与独立临时数据库。
+从仓库根目录运行，Swift 使用上述归档。脚本各自使用合成上游、动态回环端口与独立临时数据库。
 
 ```sh
 swift build --package-path "$SWIFT_BASELINE" --product codexone

@@ -25,16 +25,3 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
-    groups:
-      swift-images:
-        patterns: ['swift']
-  - package-ecosystem: swift
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      swift-nio:
-        patterns: ['*swift-nio*']
-      vapor:
-        patterns: ['*vapor*', '*async-kit*', '*console-kit*', '*routing-kit*', '*multipart-kit*', '*websocket-kit*']

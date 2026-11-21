@@ -1,53 +1,26 @@
 # 运行责任与边界设计
 
-职责分配按共识执行，可随实际功能验证调整。行为不变量见规范，本表只定义执行位置和调用方向。
+本页说明 Rust 网关的运行责任。行为不变量和具体容量以[能力规范](../reference/specs/README.md)为准。
 
-| 责任 | 业务 owner / 类型位置 | Task/资源 owner | 调用与结束责任 |
-|---|---|---|---|
-| 准入、归属、结算、核对 | Core/Application（Domain 值类型） | 单次执行协调器；后台任务由 Runtime 监督 | 调事务端口，返回语义结果；不调用全局 Runtime 服务 |
-| 账号池选择 | Core/Application 的单次 AccountPoolGateway | 既有 finalizer ticket 先覆盖候选准备；无独立后台任务 | 调归属/原子选择端口；Adapters 在同一 DB 事务选择并准入，已准入只由 finalizer 收尾 |
-| 过载节流与等待 | Core/Application 定义步长、等待/拒绝规则及重选用例；Adapters/Persistence 原子保存健康截止与进程内连续计数 | 每次准备/准入前预留 finalizer ticket，确认未建 intent 的过载等待先归还票据；store 拥有最多 64 个可取消等待计时器 | intent 前等待，释放后完整重选；传输取消/总期限取消执行任务，store 关闭取消并 await 计时器后关 DB |
-| 会话元数据与端点健康 | Adapters/Transport 解析/摘要元数据，Core 决定软偏好与最终准入 | 数据服务持有 SessionAffinity（1024 soft 标签/一小时）、TurnStateOwners（1024 来源/一小时）及 ControlEndpointHealth（1024 账号/端点截止/最长一小时），无后台任务 | HTTP/WS/compact/Images 共享选择观察；辅助只读会话偏好；真实 token 仅约束来源不授予权限；实际选择读取新截止；401/429 提交账号级健康，5xx 仅端点冷却；关闭随服务释放 |
-| 连接与 WS lane | Adapters/Transport | 每连接 supervisor，受总容量监督 | 调 Core 执行用例；拥有 channel，取消后关闭并 await 网络任务 |
-| finalizer | Core/Application 定义结算/合并规则 | Runtime 监督有限 worker 与预分配 ticket | worker 调核心用例，核心调事务端口；禁止反向等待连接 |
-| 刷新与身份验证 | Core/Application/Identity | Runtime AccountRefreshSupervisor 的有界队列/共享任务 | 通过上游/凭证端口执行；等待者取消不取消共享刷新，关闭信号取消网络并 await/收敛 intent |
-| 被动额度观察 | Core/Application 定义凭证/观察端口 | Runtime AccountObservationSupervisor 单飞有界工作；Adapters 独立 HTTP owner | 等待者取消不取消工作；关闭 await，提交核对身份/版本，不占刷新网络容量 |
-| 空闲窗口预热 | Core/Application/Identity 检测、设置与持久屏障；复用 ExecutionCoordinator | Runtime QuotaPrimingSupervisor 单顺序 worker/64 提示/60 秒扫描；Adapters SubscriptionWindowPriming 拥有 transport | 正常执行准入原子锁窗口与审计；关闭取消并 await，finalizer 独立收敛，不重放 |
-| 重置卡 | Core/Application/Identity 的卡/设置/持久消费端口 | Runtime ResetCreditSupervisor 每账号单飞、四工作、30 分钟列表周期/有界提示流、单分钟定时任务/每账号一个到期与重试状态；复用独立配额 HTTP client | 先提交 intent/审计，再发送；未知沿原 ID；关闭取消并 await 网络与 critical 收尾 |
-| 用量查询 | Core/Application/Usage 查询值与端口 | Adapters 单一只读 WAL reader/专用队列 | 一个在途快照、有总预算/取消；入口先关闭 reader 再关闭主库，不占 writer 队列 |
-| SQL 原子操作 | Core/Application 定义命令端口 | Adapters/Persistence 有界 DB 执行 | 一次命令一个事务；不跨网络持有，不向核心返回 SQL row |
-| 恢复授权与代际 | Core/Application/Recovery | Runtime 监督缓存 worker；Transport 只交内容 | 先查核心归属/当前策略，后调缓存端口；restore 用例协调新 generation/清理 |
-| 未知关闭与保留 | Core ExecutionMaintaining，Adapters 原子汇总/清理 | Runtime ExecutionMaintenanceSupervisor 单一顺序 owner | await 每轮最多 100 条后等待 60 秒；非 normal 暂停，关闭 await 后再关 DB |
-| 存储压力与周期观测 | Core 定义水位与观测端口，Adapters 采样/储备/SQLite | Runtime StorageMonitor 单一顺序 owner | await 一次维护再等待；writer 队列复核，关键收尾保留，先停 monitor 再关闭 DB |
-| 启动、drain、维护锁 | Core 定义所需端口/结果 | Runtime | 入口组装；启动恢复前不开放准入，关闭有顺序且有期限 |
-| 管理 API | Core 的管理用例 | Adapters/ControlPlane 的请求/会话 | DTO 转应用命令；不直接改共享字典/DB |
+| 责任 | 实现位置 | 持有的状态与结束责任 |
+|---|---|---|
+| 连接与请求 | `gateway/src/listener.rs`、`gateway/src/ws/` | 监听任务管理连接容量、正文读取、写入进度及关闭。连接负责取消自己的 I/O，已准入执行仍须收尾。 |
+| 准入、归属、结算与恢复 | `execution`、`storage` | 执行 worker 持有 SQLite writer 与准入票据。原子事务校验 Key、账号及容量，提交绑定后才可向客户端暴露 ID。启动恢复先收敛遗留 intent，关闭时排空 writer 并释放实例锁。 |
+| 账号池与会话路由 | `account-pool`、`gateway/src/managed.rs` | 准入在同一 writer 事务复核候选状态；会话亲和、续接来源和端点健康有各自限额与期限。关闭时取消等待。 |
+| 授权、刷新与被动额度观察 | `identity-runtime` | 共享工作各自拥有并发容量和网络任务。等待者可独立取消；服务停止时取消共享任务并处理已有持久刷新责任。 |
+| 窗口预热和重置卡 | `quota-jobs` | 各任务持有定时器与执行状态。预热复用执行准入并持久化窗口屏障；重置卡先存 intent，未知结果沿原请求 ID 核对。 |
+| 管理请求与会话 | `admin`、`governance` | 管理路由校验会话、Origin 与 CSRF，再通过业务入口读写。会话撤销同时撤销关联的实时连接。 |
+| 首页实时观察和用量 | `gateway/src/overview_live.rs`、`usage` | 实时服务持有 viewer、采样任务和有界邮箱，用量读独立 WAL 连接。发布活动不等待 viewer；退出收回 viewer 资源，关闭读侧后再结束 writer。 |
+| 存储水位、快照与离线维护 | `execution/src/reserve.rs`、`maintenance`、`gateway/src/online_backup.rs` | writer 复核关键空间并保留收尾优先级。在线快照持有只读连接并自行退出，离线维护使用独占实例锁与持久恢复屏障。 |
 
-## 端口和可变状态
+连接状态归连接，持久执行状态由条件事务决定。网络和管理 DTO 不进入账本持久模型。SQLite 事务完成准入、绑定或结算等单个原子命令，跨网络等待不持有事务。证据不足时保留执行责任，恢复期间不重放。
 
-端口由消费者一侧在 Core/Application 定义；具体 NIO/AHC/SQL/Vapor/密钥实现只在 Adapters。Runtime 只依赖 Core 的用例/寿命端口，Adapters 不依赖 Runtime；CodexOne 入口持有二者并组装。若真实依赖要求反向 import，应先调整端口归属，不用全局 service locator 绕过。
+核心账本的写入配额须与可选任务隔离。短时加密上传暂存由 `gateway/src/body_staging.rs` 管理，独立核算字节额度，清理随请求或进程结束。核心账本、暂存空间和备份的安全边界见[运行规范](../reference/specs/operations.md)。
 
-attempt 的执行状态由执行协调器单一修改；持久真相由条件事务决定；连接状态属于连接，身份刷新状态属于共享刷新协调器。actor 不是事务，也不是取消所有权；不得让一个全局 actor 串行所有 token、DB 与加密。
+网关入口组织停收、连接 drain、管理与身份任务结束、只读连接清理、writer 排空和锁释放。时钟判断应使用适合语义的来源，账期和持久时间使用 UTC，耗时和截止时间使用单调时钟。
 
-## 原子命令与两种存储
-
-核心事务端口以准入、归属提交、结算和核对等业务原子操作为边界，不预建逐表通用 repository。它们在适配器内一次事务校验/更新必要多表，条件失败返回类型化结果。具体库/驱动按实际 API 验证，不能为了未来 PostgreSQL 牺牲当前条件事务。
-
-RecoveryStore 只处理加密内容、顺序/完整性、代际条件写与删除；授权/重复执行判断在核心恢复用例。核心库与缓存库无联合提交保证；核心绑定失败必须停止 ID 暴露，缓存失败只使该恢复记录不可用。
-
-核心写入/最终化保留不可被缓存占用的执行配额；缓存加密/批写/清理有独立字节、条目、worker 与批次上限。具体线程池与调度实现按实际负载确定。磁盘水位以实际文件/WAL/在途增长衡量，在耗尽前停止缓存，再停止新准入；“清缓存”不能代替预留核心结算空间，磁盘真满按核心故障恢复，不能保证仍写得下。
-
-## 验收要求
-
-持久执行验证 DB 不可写＋断连＋finalizer 满时无循环等待、意图可恢复；协议用提供者差异夹具证明客户端 DTO 不穿入上游/账本；缓存验证加密/清理饱和不抢走核心配额、删除代际及 restore 次序。测试要测所有权，不为表中每格制造一个抽象类。
+验收选取可直接观察的责任交接，包括断连与持久收尾并发、归属失败不暴露响应 ID，以及有未完成交接时的退出与重启。当前入口见[验证说明](../development/verification.md)。旧实现细节见 [Swift v0.26.53 的运行边界](https://github.com/ximatai/codexone/blob/65624e4c45ee1f86560b7640abe42bec31a25f60/docs/architecture/ownership.md)。
 
 ## 相关文档
 
 [文档导航](../README.md)
-
-墙上时间由 Core 的 `WallClock` 值提供，生产入口显式组装 `.system`，需要时间决策的 owner 在构造时接收。公开构造器保留 `.system` 默认值以兼容无需控制时间的调用；测试可注入固定或手动推进的闭包。SQLite store 在 `open` 时接收并将同一值传给 writer、只读 reader、存储观测及在线备份；连接仅携带该依赖供事务 helper 使用。已有显式 `now:` 的操作继续以调用者时间为准。秒、微秒文件名和 UTC 日窗口保留各自取整方式；耗时和截止时间仍使用单调时钟。
-
-## 首页实时观察 owner
-
-Core 定义 overview 寿命端口，Runtime 监督单一 producer，Adapters 组装既有查询 DTO 并维护共享快照。每 viewer 的传输 owner 持有有界队列、写任务、心跳与 channel；AdminSessions 持有最多八个连接绑定并同步撤销。SQLite 提交后向有界活动缓冲发布，发布不等待 reader 或 transport；数据面认证连接注册表不保存地址、头或会话 ID。最后 viewer 退出清快照并 join 采样；进程关闭先结束 overview，再关 usage reader、store 与 event loop。具体容量和期限见 A20，不创建第二套 reader。
-
-实现资源由 `OverviewLiveSupervisor` 调用 Core 寿命端口，Adapters `OverviewLive` 持有最多八个 viewer、一个可取消采样 task、一个仅有 viewer 时运行的 ticker；最后离开先关闭发布门和 ticker，再取消并 join 查询。`OverviewActivity` 的零 viewer 路径只读一个原子位；有 viewer 时 try-lock 发布，竞争/512 条事件缓冲溢出计数，不等待读者或网络。单槽唤醒、64 条/10 秒最近结束、200 条首事件与有界数据连接注册表随各自 owner 结束。`OverviewMailbox` 每 viewer 两个待发消息/2 MiB，传输另持一个在途消息/1 MiB；每连接一个读、写、心跳任务，控制流量最多每秒 64 帧。会话 owner 将发送检查与撤销串行，transport 拥有 2 秒强制关闭路径；共享 sampler 完成后才关闭 reader/store。
