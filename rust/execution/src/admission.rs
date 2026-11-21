@@ -171,6 +171,26 @@ fn account_namespace(
     Ok(namespace)
 }
 
+fn reload_key(db: &Connection, expected: &AuthenticatedKey, now: i64) -> Result<Key> {
+    let payload = db
+        .query_row(
+            "SELECT CASE WHEN length(CAST(metadata_json AS BLOB)) <= 65536 THEN metadata_json END
+         FROM managed_keys WHERE id=?1",
+            [&expected.id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(Error::Unauthorized)?;
+    let key = checked_key(payload, now)?;
+    if key.id != expected.id
+        || key.revision != expected.revision
+        || key.principal != expected.principal
+    {
+        return Err(Error::Unauthorized);
+    }
+    Ok(key)
+}
+
 fn key_authorizes(
     tx: &Transaction<'_>,
     request: &ManagedAdmissionRequest,
@@ -178,22 +198,7 @@ fn key_authorizes(
     day: i64,
     offset: i64,
 ) -> Result<()> {
-    let payload = tx
-        .query_row(
-            "SELECT CASE WHEN length(CAST(metadata_json AS BLOB)) <= 65536 THEN metadata_json END
-         FROM managed_keys WHERE id=?1",
-            [&request.key.id],
-            |row| row.get(0),
-        )
-        .optional()?
-        .ok_or(Error::Unauthorized)?;
-    let key = checked_key(payload, now)?;
-    if key.id != request.key.id
-        || key.revision != request.key.revision
-        || key.principal != request.key.principal
-    {
-        return Err(Error::Unauthorized);
-    }
+    let key = reload_key(tx, &request.key, now)?;
     let policy = key.policy;
     if request.requirements.route == Route::Conversation {
         if policy
@@ -885,4 +890,106 @@ pub(crate) fn record_concurrency(
         params![namespace, identity, now, active],
     )?;
     Ok(())
+}
+
+pub(crate) fn control_accounts(
+    db: &Connection,
+    required: Option<&AccountIdentity>,
+) -> Result<Vec<AccountIdentity>> {
+    let mut statement = db.prepare_cached(
+        "SELECT id,namespace FROM accounts WHERE mode='enabled'
+            AND authorization IN ('ready','refreshing')
+            AND (?1 IS NULL OR (id=?1 AND namespace=?2)) ORDER BY id LIMIT 65",
+    )?;
+    let accounts = statement
+        .query_map(
+            params![
+                required.map(|owner| &owner.id),
+                required.map(|owner| &owner.namespace)
+            ],
+            |row| {
+                Ok(AccountIdentity {
+                    id: row.get(0)?,
+                    namespace: row.get(1)?,
+                })
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if accounts.len() > 64 {
+        return Err(Error::StorageUnavailable);
+    }
+    Ok(accounts)
+}
+
+pub(crate) fn select_control(
+    db: &Connection,
+    now: i64,
+    key: &AuthenticatedKey,
+    candidates: &[AccountDispatch],
+    preferred: Option<&AccountIdentity>,
+    required: bool,
+    cooldown: impl Fn(&AccountIdentity) -> Duration,
+) -> Result<usize> {
+    reload_key(db, key, now)?;
+    let mut statement = db.prepare_cached(
+        "SELECT (SELECT COUNT(*) FROM attempts WHERE identity=a.id AND namespace=a.namespace AND state='intent'),
+           COALESCE((SELECT MAX(until_epoch) FROM account_model_health WHERE account_id=a.id), 0)
+         FROM accounts a WHERE a.id=?1 AND a.namespace=?2 AND a.revision=?3
+           AND a.credential_version=?4 AND a.mode='enabled' AND a.authorization='ready'
+           AND NOT EXISTS (SELECT 1 FROM account_health h
+               WHERE h.account_id=a.id AND h.auth_rejected_version=a.credential_version)",
+    )?;
+    let mut ranked = None;
+    let mut remaining = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        let snapshot = &candidate.snapshot;
+        if snapshot.access_expires_at_unix_seconds <= now {
+            continue;
+        }
+        let Some((active, until)) = statement
+            .query_row(
+                params![
+                    candidate.id,
+                    candidate.namespace,
+                    snapshot.revision,
+                    snapshot.credential_version
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?
+        else {
+            continue;
+        };
+        let identity = AccountIdentity {
+            id: candidate.id.clone(),
+            namespace: candidate.namespace.clone(),
+        };
+        let wait =
+            cooldown(&identity).max(Duration::from_secs(until.saturating_sub(now).max(0) as u64));
+        if !wait.is_zero() {
+            let seconds = wait.as_secs() + u64::from(wait.subsec_nanos() != 0);
+            remaining = Some(remaining.map_or(seconds, |old: u64| old.min(seconds)));
+            continue;
+        }
+        let rank = (
+            Some(&identity) != preferred,
+            active,
+            candidate.id.as_str(),
+            index,
+        );
+        if ranked.is_none_or(|old| rank < old) {
+            ranked = Some(rank);
+        }
+    }
+    ranked.map(|rank| rank.3).ok_or_else(|| {
+        if let Some(retry_after_seconds) = remaining {
+            Error::AccountCooldown {
+                retry_after_seconds,
+            }
+        } else if required {
+            Error::ContinuationOwnerUnavailable
+        } else {
+            Error::AccountUnavailable
+        }
+    })
 }

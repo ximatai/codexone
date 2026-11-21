@@ -448,41 +448,8 @@ impl Pool {
     ) -> codexone_execution::Result<PreparedPool<HeaderMap>> {
         let records = execution.pool_credentials(request, routing).await?;
         let mut prepared = stream::iter(records)
-            .map(|candidate| async move {
-                let identity = candidate.record.identity();
-                match self
-                    .runtime
-                    .prepare_dispatch(&identity.id, candidate.continuation)
-                    .await
-                {
-                    Ok(credential) if identity.namespace == credential.account.namespace => {
-                        Ok(Some((
-                            AccountDispatch::from_snapshot(
-                                identity,
-                                AccountDispatchSnapshot {
-                                    revision: credential.account.revision,
-                                    credential_version: credential.account.credential_version,
-                                    access_expires_at_unix_seconds: credential
-                                        .expires_at_unix_seconds,
-                                    continuation: candidate.continuation,
-                                },
-                            ),
-                            credential.headers,
-                        )))
-                    }
-                    Ok(_)
-                    | Err(
-                        governance::Error::UnknownAccount
-                        | governance::Error::AuthorizationUnavailable
-                        | governance::Error::AuthorizationRequired
-                        | governance::Error::AccountConflict
-                        | governance::Error::Conflict
-                        | governance::Error::IdentityMismatch,
-                    ) => Ok(None),
-                    Err(governance::Error::Capacity) => Err(ExecutionError::Capacity),
-                    Err(governance::Error::StoragePressure) => Err(ExecutionError::StoragePressure),
-                    Err(_) => Err(ExecutionError::StorageUnavailable),
-                }
+            .map(|candidate| {
+                self.prepare_candidate(candidate.record.identity(), candidate.continuation)
             })
             .buffer_unordered(4);
         let mut candidates = Vec::new();
@@ -493,6 +460,82 @@ impl Pool {
             routing: routing.clone(),
             candidates,
         })
+    }
+
+    async fn prepare_candidate(
+        &self,
+        identity: AccountIdentity,
+        continuation: bool,
+    ) -> codexone_execution::Result<Option<(AccountDispatch, HeaderMap)>> {
+        match self
+            .runtime
+            .prepare_dispatch(&identity.id, continuation)
+            .await
+        {
+            Ok(credential) if identity.namespace == credential.account.namespace => Ok(Some((
+                AccountDispatch::from_snapshot(
+                    identity,
+                    AccountDispatchSnapshot {
+                        revision: credential.account.revision,
+                        credential_version: credential.account.credential_version,
+                        access_expires_at_unix_seconds: credential.expires_at_unix_seconds,
+                        continuation,
+                    },
+                ),
+                credential.headers,
+            ))),
+            Ok(_)
+            | Err(
+                governance::Error::UnknownAccount
+                | governance::Error::AuthorizationUnavailable
+                | governance::Error::AuthorizationRequired
+                | governance::Error::AccountConflict
+                | governance::Error::Conflict
+                | governance::Error::IdentityMismatch,
+            ) => Ok(None),
+            Err(governance::Error::Capacity) => Err(ExecutionError::Capacity),
+            Err(governance::Error::StoragePressure) => Err(ExecutionError::StoragePressure),
+            Err(_) => Err(ExecutionError::StorageUnavailable),
+        }
+    }
+
+    pub async fn select_control(
+        &self,
+        execution: &ExecutionService,
+        key: &AuthenticatedKey,
+        headers: &HeaderMap,
+        cooldown: impl Fn(&AccountIdentity) -> std::time::Duration + Send + 'static,
+    ) -> codexone_execution::Result<(codexone_execution::ControlAccount, HeaderMap)> {
+        let required = headers
+            .get("x-codex-turn-state")
+            .and_then(|value| value.to_str().ok())
+            .map(|token| self.turn_states.owner(key.id(), token, Monotonic::now()))
+            .transpose()?;
+        let preferred =
+            self.sessions
+                .preferred(key.id(), &session_labels(headers), Monotonic::now());
+        let accounts = execution.control_accounts(required.clone()).await?;
+        let mut prepared = stream::iter(accounts)
+            .map(|identity| self.prepare_candidate(identity, false))
+            .buffer_unordered(4);
+        let mut candidates = Vec::new();
+        let mut headers = Vec::new();
+        while let Some(candidate) = prepared.next().await {
+            if let Some((dispatch, work_headers)) = candidate? {
+                candidates.push(dispatch);
+                headers.push(work_headers);
+            }
+        }
+        let (index, account) = execution
+            .select_control(
+                key.clone(),
+                candidates,
+                preferred,
+                required.is_some(),
+                cooldown,
+            )
+            .await?;
+        Ok((account, headers.swap_remove(index)))
     }
 
     pub fn observe_turn_state(&self, key: &str, owner: &AccountIdentity, response: &HeaderMap) {

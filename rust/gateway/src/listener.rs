@@ -20,7 +20,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::{TcpListener, TcpStream},
-    sync::Semaphore,
+    sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
     time::{Instant, Sleep, sleep_until, timeout, timeout_at},
 };
@@ -91,8 +91,9 @@ impl Listeners {
             additional,
             ..
         } = self;
-        let slots = Arc::new(Semaphore::new(max_connections));
-        let refusals = Arc::new(Semaphore::new(DATA_REFUSAL_SLOTS));
+        let data = matches!(plane, Plane::Data);
+        let slots = Arc::new(Semaphore::new(max_connections + if data { DATA_REFUSAL_SLOTS } else { 0 }));
+        let ordinary = data.then(|| Arc::new(Semaphore::new(max_connections)));
         let draining = CancellationToken::new();
         let mut connections = JoinSet::new();
         let result = loop {
@@ -117,25 +118,22 @@ impl Listeners {
                 continue;
             }
             let Ok(permit) = slots.clone().try_acquire_owned() else {
-                if matches!(plane, Plane::Data)
-                    && let Ok(permit) = refusals.clone().try_acquire_owned()
-                {
-                    let draining = draining.clone();
-                    connections.spawn(async move {
-                        let _permit = permit;
-                        tokio::select! {
-                            _ = draining.cancelled() => {}
-                            _ = timeout(Duration::from_secs(1), refuse_connection(socket)) => {}
-                        }
-                    });
-                }
                 continue;
             };
             let application = app.clone();
             let draining = draining.clone();
+            let ordinary = ordinary.clone();
             connections.spawn(async move {
                 let _permit = permit;
-                serve_connection(socket, application, plane, draining, Instant::now()).await;
+                serve_connection(
+                    socket,
+                    application,
+                    plane,
+                    draining,
+                    Instant::now(),
+                    ordinary,
+                )
+                .await;
             });
         };
         drop(loopback);
@@ -153,21 +151,6 @@ impl Listeners {
     }
 }
 
-async fn refuse_connection(mut socket: TcpStream) -> io::Result<()> {
-    let body = br#"{"error":{"message":"Data connection capacity exhausted.","type":"server_error","code":"capacity_exceeded"}}"#;
-    let head = format!(
-        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-        body.len(),
-    );
-    socket.write_all(head.as_bytes()).await?;
-    socket.write_all(body).await?;
-    socket.shutdown().await?;
-    // Drain a bounded prefix so unread request bytes do not reset a successfully written 503.
-    let mut ignored = [0; 4096];
-    let _ = socket.read(&mut ignored).await;
-    Ok(())
-}
-
 async fn accept_additional(
     listener: Option<&TcpListener>,
 ) -> io::Result<(TcpStream, std::net::SocketAddr)> {
@@ -183,6 +166,7 @@ async fn serve_connection(
     plane: Plane,
     draining: CancellationToken,
     accepted: Instant,
+    ordinary: Option<Arc<Semaphore>>,
 ) {
     let _ = socket.set_nodelay(true);
     let admin = matches!(plane, Plane::Admin);
@@ -194,11 +178,32 @@ async fn serve_connection(
         entire_write: admin,
     });
     let (upgrades, mut upgraded) = tokio::sync::mpsc::channel(1);
-    let service = service_fn(move |request| {
+    let connection_slot = Arc::new(Mutex::new(None::<OwnedSemaphorePermit>));
+    let reservation = connection_slot.clone();
+    let service = service_fn(move |request: Request<Incoming>| {
+        let ordinary_capacity = ordinary.as_ref().is_none_or(|slots| {
+            if crate::control::Route::recognize(request.method(), request.uri().path()).is_some() {
+                return true;
+            }
+            let mut lease = reservation.lock().unwrap();
+            if lease.is_none() {
+                *lease = slots.clone().try_acquire_owned().ok();
+            }
+            lease.is_some()
+        });
         let app = app.clone();
         let pending = pending.clone();
         let upgrades = upgrades.clone();
         async move {
+            if !ordinary_capacity {
+                let response = Response::builder()
+                    .status(503)
+                    .header(header::CONNECTION, "close")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Bytes::from_static(br#"{"error":{"message":"Data connection capacity exhausted.","type":"server_error","code":"capacity_exceeded"}}"#))
+                    .expect("connection capacity response");
+                return Ok(reply::from_bytes(response));
+            }
             let response = match plane {
                 Plane::Data => app.data(request, pending, &upgrades).await,
                 Plane::Admin => admin_response(&app, request, accepted).await,
@@ -224,6 +229,7 @@ async fn serve_connection(
     if let Ok(upgrade) = upgraded.try_recv() {
         upgrade.serve(&draining).await;
     }
+    drop(connection_slot);
 }
 
 async fn admin_response(app: &Application, request: Request<Incoming>, accepted: Instant) -> Reply {
@@ -261,23 +267,52 @@ pub enum ReadError {
 impl DataBodies {
     pub async fn read(
         &self,
-        mut body: Incoming,
+        body: Incoming,
         key: Option<&str>,
         request_id: &str,
     ) -> Result<(Bytes, BodyPermit), ReadError> {
-        use codexone_responses::MAX_REQUEST_BYTES;
+        self.read_with_limit(
+            body,
+            key,
+            request_id,
+            codexone_responses::MAX_REQUEST_BYTES,
+            false,
+        )
+        .await
+    }
+
+    pub async fn read_control(
+        &self,
+        body: Incoming,
+        key: &str,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<(Bytes, BodyPermit), ReadError> {
+        self.read_with_limit(body, Some(key), request_id, limit, true)
+            .await
+    }
+
+    async fn read_with_limit(
+        &self,
+        mut body: Incoming,
+        key: Option<&str>,
+        request_id: &str,
+        maximum: usize,
+        shared_only: bool,
+    ) -> Result<(Bytes, BodyPermit), ReadError> {
         let declared = body
             .size_hint()
             .exact()
             .map(|length| {
                 usize::try_from(length)
                     .ok()
-                    .filter(|length| *length <= MAX_REQUEST_BYTES)
+                    .filter(|length| *length <= maximum)
                     .ok_or(ReadError::TooLarge)
             })
             .transpose()?;
         let deadline = Instant::now() + DATA_UPLOAD_LIMIT;
-        let reservation = self.reserve_http(declared.unwrap_or(0), key, deadline);
+        let reservation =
+            self.reserve_http_with_pool(declared.unwrap_or(0), key, deadline, shared_only);
         tokio::pin!(reservation);
         let mut prefetched = None;
         let mut permit = if declared.is_some_and(|length| length > 0) {
@@ -298,13 +333,13 @@ impl DataBodies {
         };
         let bytes = collect_body(
             body,
-            declared.unwrap_or(MAX_REQUEST_BYTES),
+            declared.unwrap_or(maximum),
             deadline,
             Some(request_id),
             prefetched,
             |received| {
                 if declared.is_none() {
-                    self.grow(&mut permit, received)?;
+                    self.grow_with_pool(&mut permit, received, shared_only)?;
                 }
                 Ok(())
             },

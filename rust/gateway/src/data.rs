@@ -40,6 +40,7 @@ pub struct DataPlane {
     websocket: Option<ws::Connector>,
     uploads: Arc<HttpUploads>,
     staging: Option<BodyStaging>,
+    control: crate::control::Control,
 }
 
 impl DataPlane {
@@ -118,6 +119,7 @@ impl DataPlane {
                 )
             })
             .transpose()?;
+        let control = crate::control::Control::new(base.parse().map_err(|_| ())?);
         Ok(Self {
             images: Arc::new(NativeImages::new(
                 configuration,
@@ -138,6 +140,7 @@ impl DataPlane {
             staging: None,
             upstream,
             bodies: DataBodies::new(),
+            control,
         })
     }
 
@@ -162,6 +165,26 @@ impl DataPlane {
         upgrades: &tokio::sync::mpsc::Sender<ws::Upgrade>,
     ) -> Reply {
         let request_id = Uuid::new_v4().hyphenated().to_string().to_ascii_uppercase();
+        if let Some(route) =
+            crate::control::Route::recognize(request.method(), request.uri().path())
+        {
+            return self
+                .control
+                .handle(
+                    route,
+                    request,
+                    execution,
+                    &self.bodies,
+                    &self.upstream,
+                    self.configuration(),
+                    self.upstream_authorization.as_ref(),
+                    self.managed
+                        .as_ref()
+                        .and_then(|managed| managed.pool.as_deref()),
+                    &request_id,
+                )
+                .await;
+        }
         if let Some(route) = codexone_images::ImageRoute::from_path(request.uri().path()) {
             return self
                 .images

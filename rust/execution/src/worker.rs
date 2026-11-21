@@ -730,6 +730,119 @@ impl ExecutionService {
         .await
     }
 
+    pub async fn control_accounts(
+        &self,
+        required: Option<AccountIdentity>,
+    ) -> Result<Vec<AccountIdentity>> {
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        self.command(true, move |writer| {
+            admission::control_accounts(writer.db.connection(), required.as_ref())
+        })
+        .await
+    }
+
+    /// Recheck account and Key revisions on the writer, and register cancellation
+    /// before a concurrent account mode change can pass the selected request.
+    pub async fn select_control(
+        &self,
+        key: AuthenticatedKey,
+        candidates: Vec<AccountDispatch>,
+        preferred: Option<AccountIdentity>,
+        required: bool,
+        cooldown: impl Fn(&AccountIdentity) -> Duration + Send + 'static,
+    ) -> Result<(usize, ControlAccount)> {
+        if !self.inner.pool_enabled || candidates.len() > 64 {
+            return Err(Error::InvalidCommand);
+        }
+        let service = self.clone();
+        self.command(true, move |writer| {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+            let index = admission::select_control(
+                writer.db.connection(),
+                writer.now()?,
+                &key,
+                &candidates,
+                preferred.as_ref(),
+                required,
+                cooldown,
+            )?;
+            let picked = &candidates[index];
+            let identity = AccountIdentity {
+                id: picked.id.clone(),
+                namespace: picked.namespace.clone(),
+            };
+            let registry_id = format!("control:{}", SEQUENCE.fetch_add(1, Ordering::Relaxed));
+            let stop = CancellationToken::new();
+            service.inner.active().insert(
+                registry_id.clone(),
+                ActiveAccountExecution {
+                    account: identity.id.clone(),
+                    stop: stop.clone(),
+                },
+            );
+            Ok((
+                index,
+                ControlAccount {
+                    service,
+                    registry_id,
+                    identity,
+                    stop,
+                    credential_version: picked.snapshot.credential_version,
+                },
+            ))
+        })
+        .await
+    }
+
+    pub async fn record_control_failure(
+        &self,
+        account: &ControlAccount,
+        rejected: bool,
+        cooldown_seconds: Option<i64>,
+    ) -> Result<()> {
+        use codexone_account_pool::{HealthObservation, HealthOutcome};
+        let identity = account.identity.clone();
+        let credential_version = account.credential_version;
+        self.command(false, move |writer| {
+            let outcome = if rejected {
+                HealthOutcome::AuthenticationRejected
+            } else {
+                HealthOutcome::RateLimited { cooldown_seconds }
+            };
+            writer.reserve.prepare_critical()?;
+            let micros = writer.now_micros()?;
+            let tx = writer.db.begin_immediate()?;
+            let models = if rejected {
+                Vec::new()
+            } else {
+                tx.prepare("SELECT model FROM health_models")?
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for model in
+                std::iter::once(None).chain(models.iter().map(|model| Some(model.as_str())))
+            {
+                let _ = writer.health.record(
+                    &tx,
+                    HealthObservation {
+                        identity: &identity,
+                        credential_version,
+                        model,
+                        outcome,
+                        at_unix_seconds: micros / 1_000_000,
+                    },
+                    micros,
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
     /// Resolve recent object history to a soft affinity for this Key's principal.
     pub async fn pool_hint(
         &self,
@@ -996,6 +1109,30 @@ impl ExecutionService {
 /// Linear dispatch and finalization ownership. Dropping an unfinished lease enqueues its
 /// last captured usage snapshot, or leaves a durable intent if the worker has already closed.
 #[must_use]
+/// Live auxiliary dispatch with no ledger intent or quota reservation.
+pub struct ControlAccount {
+    service: ExecutionService,
+    registry_id: String,
+    identity: AccountIdentity,
+    credential_version: i64,
+    stop: CancellationToken,
+}
+
+impl ControlAccount {
+    pub fn identity(&self) -> &AccountIdentity {
+        &self.identity
+    }
+    pub fn stop_token(&self) -> &CancellationToken {
+        &self.stop
+    }
+}
+
+impl Drop for ControlAccount {
+    fn drop(&mut self) {
+        self.service.inner.active().remove(&self.registry_id);
+    }
+}
+
 pub struct Execution {
     service: ExecutionService,
     admission: Admission,

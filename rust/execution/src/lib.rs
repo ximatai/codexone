@@ -20,7 +20,7 @@ pub use static_identity::{
     StaticIdentityConfig,
 };
 pub use worker::{
-    AccountConnection, Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options,
+    AccountConnection, ControlAccount, Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options,
 };
 
 use std::{error::Error, fmt};

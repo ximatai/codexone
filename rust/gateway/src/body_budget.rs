@@ -26,6 +26,7 @@ struct Waiter {
     id: u64,
     bytes: usize,
     key: Option<String>,
+    shared_only: bool,
 }
 
 #[derive(Default)]
@@ -77,7 +78,7 @@ impl State {
         let first = self
             .waiters
             .iter()
-            .find(|waiter| !small || waiter.bytes <= SMALL);
+            .find(|waiter| !small || (!waiter.shared_only && waiter.bytes <= SMALL));
         first.map(|waiter| waiter.id) == ticket
     }
 }
@@ -115,6 +116,17 @@ impl DataBodies {
         key: Option<&str>,
         deadline: Instant,
     ) -> Result<BodyPermit, ReadError> {
+        self.reserve_http_with_pool(total, key, deadline, false)
+            .await
+    }
+
+    pub(crate) async fn reserve_http_with_pool(
+        &self,
+        total: usize,
+        key: Option<&str>,
+        deadline: Instant,
+        shared_only: bool,
+    ) -> Result<BodyPermit, ReadError> {
         if total > MAX_REQUEST_BYTES {
             return Err(ReadError::TooLarge);
         }
@@ -128,7 +140,7 @@ impl DataBodies {
                 return Err(ReadError::Capacity);
             }
             if let Some(reservation) = state.available(Reservation::default(), total, |small| {
-                state.is_turn(small, None)
+                (!small || !shared_only) && state.is_turn(small, None)
             }) {
                 state.replace(Reservation::default(), reservation);
                 return Ok(self.permit(reservation));
@@ -150,6 +162,7 @@ impl DataBodies {
                 id,
                 bytes: total,
                 key: key.map(str::to_owned),
+                shared_only,
             });
             id
         };
@@ -165,7 +178,7 @@ impl DataBodies {
                     return Err(ReadError::Capacity);
                 }
                 let available = state.available(Reservation::default(), total, |small| {
-                    state.is_turn(small, Some(id))
+                    (!small || !shared_only) && state.is_turn(small, Some(id))
                 });
                 if let Some(reservation) = available {
                     state.replace(Reservation::default(), reservation);
@@ -185,6 +198,15 @@ impl DataBodies {
     /// Grow an existing lease immediately. Crossing the small reserve is an
     /// atomic move to the shared pool or a rejection with the old lease intact.
     pub fn grow(&self, permit: &mut BodyPermit, total: usize) -> Result<(), ReadError> {
+        self.grow_with_pool(permit, total, false)
+    }
+
+    pub(crate) fn grow_with_pool(
+        &self,
+        permit: &mut BodyPermit,
+        total: usize,
+        shared_only: bool,
+    ) -> Result<(), ReadError> {
         assert!(
             Arc::ptr_eq(&self.0, &permit.budget),
             "lease belongs to another body budget"
@@ -200,7 +222,7 @@ impl DataBodies {
             let mut state = self.0.state();
             let next = state
                 .available(old, total, |small| {
-                    old.bytes > 0 || state.is_turn(small, None)
+                    (!small || !shared_only) && (old.bytes > 0 || state.is_turn(small, None))
                 })
                 .ok_or(ReadError::Capacity)?;
             state.replace(old, next);

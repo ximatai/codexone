@@ -11,7 +11,7 @@ pub fn values<'a>(headers: &'a HeaderMap, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-fn hop_by_hop(headers: &HeaderMap, name: &str) -> bool {
+pub(crate) fn hop_by_hop(headers: &HeaderMap, name: &str) -> bool {
     values(headers, "connection")
         .into_iter()
         .flat_map(|value| value.split(','))
