@@ -99,3 +99,17 @@ npm --prefix web run build
 CODEXONE_TEST_MANAGED_SPA=1 cargo test --locked --manifest-path rust/gateway/Cargo.toml \
   managed_process::durable_pool_and_governance -- --nocapture
 ```
+
+## 账号观测、历史和 SPA
+
+Rust 进程测试使用临时 v19 库与动态回环端口，覆盖旧格式趋势回读、分段与抽样、扫描上限、空历史和重启。
+
+```sh
+cargo test --locked --manifest-path rust/gateway/Cargo.toml \
+  managed_process::account_history_uses_bounded_swift_compatible_reads_after_restart
+npm --prefix web run build
+cargo test --locked --manifest-path rust/gateway/Cargo.toml --no-run
+python3 scripts/verify_account_admin_ui.py --rust --binary "$RUST_GATEWAY_TEST"
+```
+
+`RUST_GATEWAY_TEST` 指向 `--no-run` 打印的网关测试可执行文件。该文件启动真实的 Rust 管理与数据监听器，通过测试入口将订阅和 OAuth 地址一起指向同一回环夹具。Chrome 会从 Rust 管理端口加载生产 SPA，使用合成管理员和独立的浏览器上下文。

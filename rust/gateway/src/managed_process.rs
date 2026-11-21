@@ -1001,6 +1001,171 @@ fn serve_ws(
 }
 
 #[test]
+fn account_history_uses_bounded_swift_compatible_reads_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    let master = "57".repeat(32);
+    private(&root.join("master"), &master);
+    private(&root.join("admin"), ADMIN);
+    private(
+        &root.join("pool.json"),
+        r#"{"models":[{"id":"synth-text","inputMicrosPerMillion":0,"outputMicrosPerMillion":0}],"reservedMicros":10}"#,
+    );
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = upstream.local_addr().unwrap().port();
+    let now = unix_time();
+    let bucket = now / 300 * 300;
+    let db_path = state.join("core.sqlite");
+    let db = Database::open_or_create(&db_path).unwrap();
+    let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
+    for id in [
+        "synth-history",
+        "synth-empty",
+        "synth-overflow",
+        "synth-gaps",
+    ] {
+        seed_account(&db, &cipher, port, id, ("disabled", "ready", None), now);
+    }
+    let quota = json!({"trend":{
+        "secondary":{"reset":bucket+300,"duration":3600,"samples":[[bucket-300,75]]}
+    }});
+    db.connection()
+        .execute(
+            "INSERT INTO account_quota VALUES('synth-history',?)",
+            [quota.to_string()],
+        )
+        .unwrap();
+    let tx = db.connection().unchecked_transaction().unwrap();
+    let old = (now - 172_800) / 3600 * 3600;
+    // Three adjacent five-minute samples in the same hour and quota chart bucket.
+    let old = (0..12)
+        .map(|n| old + n * 300)
+        .find(|at| at / 1182 == (at + 600) / 1182 && at / 3600 == (at + 600) / 3600)
+        .unwrap();
+    let reset = bucket + 300;
+    for (at, remaining) in [
+        (old, 90),
+        (old + 300, 85),
+        (old + 600, 80),
+        (bucket - 300, 74),
+        (bucket, 73),
+    ] {
+        tx.execute(
+            "INSERT INTO account_quota_cycle_samples VALUES('synth-history',0,?,?,?, ?,604800)",
+            params![at / 300, at, remaining.to_string(), reset],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO account_credit_samples VALUES('synth-history',?,?,?)",
+            params![at / 300, at, "12.500"],
+        )
+        .unwrap();
+    }
+    tx.execute(
+        "WITH RECURSIVE buckets(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM buckets WHERE n<105123)
+         INSERT INTO account_quota_cycle_samples
+         SELECT 'synth-overflow',0,n,n*300,'10',31537500,31536000 FROM buckets",
+        [],
+    )
+    .unwrap();
+    tx.execute(
+        "WITH RECURSIVE buckets(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM buckets WHERE n<1025)
+         INSERT INTO account_quota_cycle_samples
+         SELECT 'synth-gaps',0,n*4,n*1200,'10',1231200,1231200 FROM buckets",
+        [],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    drop(db);
+
+    let trend = "/api/accounts/synth-history/quota-trend";
+    let week = "/api/accounts/synth-history/usage-credit-history?range=7d";
+    let day = "/api/accounts/synth-history/usage-credit-history?range=24h";
+    for _ in 0..2 {
+        let (mut gateway, data, admin) = launch(root, port);
+        let get = |path| request(admin, "GET", path, Some(ADMIN), None);
+        assert_eq!(request(admin, "GET", trend, None, None).0, 401);
+        assert_eq!(request(data, "GET", trend, Some(ADMIN), None).0, 404);
+        let (status, history) = get(trend);
+        assert_eq!(status, 200, "{history}");
+        assert_eq!(history["primary"]["reset"], reset);
+        assert_eq!(
+            history["primary"]["samples"],
+            json!([[bucket - 300, 74.0], [bucket, 73.0]])
+        );
+        assert_eq!(history["primary"]["historySampled"], true);
+        assert_eq!(
+            history["primary"]["historySegments"],
+            json!([
+                [[old, 90.0], [old + 600, 80.0]],
+                [[bucket - 300, 74.0], [bucket, 73.0]]
+            ])
+        );
+        assert_eq!(
+            history["secondary"]["samples"],
+            json!([[bucket - 300, 75.0]])
+        );
+        assert_eq!(
+            get("/api/accounts/synth-empty/quota-trend"),
+            (200, json!({}))
+        );
+        assert_eq!(
+            get("/api/accounts/synth-empty/usage-credit-history?range=7d").1["segments"],
+            json!([])
+        );
+        let (status, credits) = get(week);
+        assert_eq!(status, 200, "{credits}");
+        assert_eq!(
+            credits["through"].as_i64().unwrap() - credits["from"].as_i64().unwrap(),
+            604800
+        );
+        assert_eq!(
+            credits["segments"],
+            json!([
+                [{"at":old,"balance":"12.500"},{"at":old+600,"balance":"12.500"}],
+                [{"at":bucket-300,"balance":"12.500"},{"at":bucket,"balance":"12.500"}]
+            ])
+        );
+        assert_eq!(get(day).1["segments"].as_array().unwrap().len(), 1);
+        assert_eq!(get("/api/accounts/synth-history/quota-trend?").0, 400);
+        assert_eq!(
+            get("/api/accounts/synth-history/observation?unexpected=1").0,
+            400
+        );
+        assert_eq!(
+            get("/api/accounts/synth-history/usage-credit-history?range=7d&range=24h").0,
+            400
+        );
+        assert_eq!(
+            request(
+                admin,
+                "POST",
+                "/api/accounts/synth-history/observe",
+                Some(ADMIN),
+                Some(json!({"model":"forbidden"}))
+            )
+            .0,
+            400
+        );
+        let (status, capacity) = get("/api/accounts/synth-overflow/quota-trend");
+        assert_eq!(status, 429, "{capacity}");
+        assert_eq!(capacity["error"]["code"], "quota_trend_capacity");
+        let (status, gaps) = get("/api/accounts/synth-gaps/quota-trend");
+        assert_eq!(status, 200);
+        let gaps = &gaps["primary"];
+        assert_eq!(gaps["historyOmitted"], true);
+        assert_eq!(gaps["historySampled"], false);
+        let segments = gaps["historySegments"].as_array().unwrap();
+        assert_eq!(segments.len(), 1024);
+        assert_eq!(segments.first().unwrap(), &json!([[1200, 10.0]]));
+        assert_eq!(segments.last().unwrap(), &json!([[1230000, 10.0]]));
+        gateway.terminate();
+    }
+}
+
+#[test]
 fn quota_management_and_http_priming_survive_gateway_restart() {
     quota_management_and_priming_survive_gateway_restart("http");
 }

@@ -22,6 +22,11 @@
 - **管理、设置与 SPA**。候选通过 `verify_admin.py`、`verify_admin_assets.py`、`verify_home_panel.py`、`verify_pool_config.py`、`rust_compat/overview.py`，覆盖认证/CSRF、Key 操作、账户装配与无效回调、首页摘要、首事件/结算、原生 WS 客户端登记和登出关闭。本次运行的六项[托管进程用例](../../../rust/gateway/src/managed_process.rs)覆盖模型目录 CRUD、费率/档位/profile、固定账号路由与强停、A18/A19 及 HTTP/WS 预热重启屏障；现有生产 SPA 记录覆盖首页与登出。仍需同一 Rust 进程 + 生产 SPA 行为验收账号授权成功/设备码/刷新/取消、Key 策略编辑、模型与自动化设置的读取和保存、四个观测/历史动作、人工释放和 live→HTTP 降级。设置验收应检查 CAS 冲突与回读、旧格式 `leadHours`、当前 `leadMinutes`/重试次数及 provider 超时后的未知状态。
 - **定时备份与探针归属**。已接运行时 10 分钟首次/结束后 24 小时循环、压力跳过、轮转/恢复及 HTTP/WS `backup` DTO。有[并发复制、关机及中断证据](../../../scripts/rust_compat/README.md#在线备份与并发结算)，还需生产进程联验启动恢复上次成功、压力、跳过/失败、保留 7 份与 36/72 小时 SPA 提醒。[`verify.sh`](../../../scripts/verify.sh) 中 `verify_execution.py`、`verify_accounts.py` 用 Swift ExecutionProbe；`verify_admin_round2.py` 的账号部分及 `verify_admin_live.py` 的慢接收方部分也运行 Swift 探针。Swift 可用于种 v19 库或提供参考 DTO，待验收项须由 Rust 目标监听器和持久状态给结论。独立发布流程须明确 Rust 二进制的产物身份、脚本分片与运行证据。
 
+## 账号管理缺口复验
+
+- **账号观察和历史**。Rust 管理入口已接入四条路由。读取使用已有管理鉴权和有界只读连接，手动观察复用周期任务的账号 owner 和持久化写入。macOS arm64 托管进程验证了旧趋势回读、空历史、分段和抽样、最多保留 1024 段、扫描超限的 429，以及重启后的真实 HTTP 历史响应。Chrome 158.0.8127.37 验证了禁用账号的手动观察、失败时保留读数、积分的 24 小时及 7 天曲线和首页额度趋势。
+- **授权、设置与降级**。用同一 Rust 监听器和生产 SPA 验证设备码取消及授权、浏览器回调重新授权、成功刷新、授权被拒和上游超时。超时返回 503，账户持久状态进入 `auth_uncertain`。验证账号显示名、Key 本地限额、模型费率、额度预热和重置卡设置的保存回读，以及后两类设置与模型费率的旧修订拒绝。重置卡同时覆盖旧 `leadHours` 和当前 `leadMinutes`／重试次数。首页先收到真实 live 快照，断开后由真实 HTTP 轮询续接。人工释放和目标 Linux 发行制品仍需单独复验。见[复跑命令](../../../scripts/rust_compat/README.md#账号观测历史和-spa)。
+
 ## 相关文档
 
 [架构提案](proposal.md) · [交付与验收](tasks.md) · [兼容性对照脚本](../../../scripts/rust_compat/README.md)
