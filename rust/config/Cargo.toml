@@ -1,0 +1,18 @@
+[package]
+name = "codexone-config"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+hex = "0.4"
+idna = "1"
+indexmap = "2"
+percent-encoding = "2"
+rustix = { version = "1", features = ["fs", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision", "raw_value"] }
+sha2 = "0.10"
+unicode-normalization = "0.1"
+zeroize = { version = "1", features = ["alloc"] }
