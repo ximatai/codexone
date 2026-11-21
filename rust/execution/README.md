@@ -71,9 +71,9 @@ Pass the request and an async preparation callback to `admit_pool`. Each pass:
 A short pacing wait leaves no intent and releases the ticket and prepared
 work. The service acquires a new ticket and calls the preparation callback on
 wake. The request owns cancellation and the total deadline. Preserve the
-rounded seconds in `AccountCooldown` as `Retry-After`; other availability
-errors follow the gateway's normal mapping. Shutdown closes outstanding
-pacing waits.
+rounded seconds in `AccountCooldown` in the HTTP `Retry-After` header or the
+native WebSocket error's `headers.retry-after`. Other availability errors
+follow the gateway's normal mapping. Shutdown closes outstanding pacing waits.
 
 ## Execution lease and shutdown
 

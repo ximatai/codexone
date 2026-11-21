@@ -22,6 +22,7 @@ pub struct ProtocolError {
     pub status: u16,
     pub code: &'static str,
     pub detail: Option<&'static str>,
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl ProtocolError {
@@ -30,12 +31,20 @@ impl ProtocolError {
             status,
             code,
             detail: None,
+            retry_after_seconds: None,
         }
     }
 
     pub const fn with_detail(self, detail: &'static str) -> Self {
         Self {
             detail: Some(detail),
+            ..self
+        }
+    }
+
+    pub const fn with_retry_after_seconds(self, seconds: u64) -> Self {
+        Self {
+            retry_after_seconds: Some(seconds),
             ..self
         }
     }

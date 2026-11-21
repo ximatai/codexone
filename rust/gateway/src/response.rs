@@ -20,15 +20,14 @@ pub struct ResponseError {
     pub protocol: ProtocolError,
     provider: Option<Box<ProviderFailure>>,
     failure: execution::Failure,
-    retry_after_seconds: Option<u64>,
     upstream_status: Option<u16>,
 }
 
 impl ResponseError {
     pub fn body_capacity() -> Self {
-        let mut error = Self::from(ProtocolError::new(503, "capacity_exhausted"));
-        error.retry_after_seconds = Some(1);
-        error
+        ProtocolError::new(503, "capacity_exhausted")
+            .with_retry_after_seconds(1)
+            .into()
     }
 
     pub fn reply(&self, request_id: &str, headers: HeaderMap) -> Reply {
@@ -41,7 +40,7 @@ impl ResponseError {
         mut headers: HeaderMap,
         selection: Option<&crate::diagnostics::RequestSelection>,
     ) -> Reply {
-        if let Some(seconds) = self.retry_after_seconds {
+        if let Some(seconds) = self.protocol.retry_after_seconds {
             headers.insert(http::header::RETRY_AFTER, seconds.into());
         }
         crate::diagnostics::rejection_with_selection(
@@ -98,7 +97,6 @@ impl From<ProtocolError> for ResponseError {
             protocol: error,
             provider: None,
             failure,
-            retry_after_seconds: None,
             upstream_status: None,
         }
     }
@@ -150,17 +148,18 @@ impl From<execution::ExecutionError> for ResponseError {
             }
             _ => (503, "execution_indeterminate", Failure::Indeterminate),
         };
+        let protocol = ProtocolError::new(status, code);
+        let protocol = match error {
+            ExecutionError::AccountCooldown {
+                retry_after_seconds,
+            } => protocol.with_retry_after_seconds(retry_after_seconds),
+            _ => protocol,
+        };
         Self {
-            protocol: ProtocolError::new(status, code),
+            protocol,
             provider: None,
             failure,
             upstream_status: None,
-            retry_after_seconds: match error {
-                ExecutionError::AccountCooldown {
-                    retry_after_seconds,
-                } => Some(retry_after_seconds),
-                _ => None,
-            },
         }
     }
 }

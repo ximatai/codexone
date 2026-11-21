@@ -552,6 +552,17 @@ fn request(
     token: Option<&str>,
     body: Option<Value>,
 ) -> (u16, Value) {
+    let (status, _, value) = request_with_headers(port, method, path, token, body);
+    (status, value)
+}
+
+fn request_with_headers(
+    port: u16,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Option<Value>,
+) -> (u16, String, Value) {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
     let body = body.map_or_else(String::new, |body| body.to_string());
@@ -582,7 +593,7 @@ fn request(
     } else {
         serde_json::from_str(body).unwrap_or(Value::Null)
     };
-    (status, value)
+    (status, head.to_owned(), value)
 }
 
 fn wait_for_health(port: u16, wanted: u16) {
@@ -758,6 +769,11 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
     );
     let initial = initial.unwrap();
     assert_eq!(initial, ("account-a".into(), "initial".into(), 1));
+    assert_pool_admission_retry_after(&path, data, key, &mut active_socket);
+    assert!(
+        requests.try_recv().is_err(),
+        "a rejected turn reached the provider"
+    );
     let mut idle = dial_ws(data, key);
     ws_create(&mut idle, "idle", None);
     assert_eq!(ws_event(&mut idle)["type"], "response.completed");
@@ -838,6 +854,15 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
         assert_eq!(status, 503, "{stopped}");
         assert_eq!(stopped["error"]["code"], "account_force_stopped");
     });
+
+    let mut unavailable = dial_ws(data, key);
+    ws_create(&mut unavailable, "disabled pool", None);
+    let event = ws_event(&mut unavailable);
+    assert_eq!(event["status"], 503);
+    assert_eq!(event["error"]["code"], "account_unavailable");
+    assert!(event.get("headers").is_none(), "{event}");
+    drop(unavailable);
+
     process.terminate();
     stop.send(()).unwrap();
     worker.join().unwrap();
@@ -874,6 +899,113 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
                 Some("account_unavailable".into())
             ),
         ]
+    );
+}
+
+fn assert_pool_admission_retry_after(
+    path: &Path,
+    data: u16,
+    key: &str,
+    pinned: &mut WebSocket<TcpStream>,
+) {
+    let db = Connection::open(path).unwrap();
+    db.busy_timeout(WAIT).unwrap();
+    let until = unix_time() + 30;
+    let deadline = Instant::now() + WAIT;
+    while db
+        .execute(
+            "INSERT INTO account_model_health (account_id,model,until_epoch,failure)
+             SELECT 'account-a','synth-text',?1,'upstream_unavailable'
+             WHERE EXISTS(SELECT 1 FROM attempts WHERE state='settled')",
+            [until],
+        )
+        .unwrap()
+        == 0
+    {
+        assert!(
+            Instant::now() < deadline,
+            "waiting for the initial turn to settle"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let assert_remaining = |retry: &str, before| {
+        let after = unix_time();
+        assert!(until - after > 15);
+        // ceil(integer deadline - fractional wall time) is deadline - floor(wall time).
+        // Allow crossing a wall-clock second during the socket round trip.
+        let remaining = retry.parse::<i64>().unwrap();
+        assert!((until - after..=until - before).contains(&remaining));
+    };
+    let http = || {
+        request_with_headers(
+            data,
+            "POST",
+            "/v1/responses",
+            Some(key),
+            Some(json!({"model": "synth-text", "input": "synthetic denied"})),
+        )
+    };
+    let retry_header = |headers: &str| {
+        headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+            .map(|(_, value)| value.trim().to_owned())
+    };
+    let before = unix_time();
+    let (status, headers, error) = http();
+    assert_eq!(
+        (status, error["error"]["code"].as_str()),
+        (503, Some("account_unavailable"))
+    );
+    assert_remaining(&retry_header(&headers).expect("HTTP Retry-After"), before);
+
+    let mut fresh = dial_ws(data, key);
+    for socket in [&mut fresh, pinned] {
+        let before = unix_time();
+        ws_create(socket, "synthetic denied", Some("cooldown"));
+        let event = ws_event(socket);
+        assert_eq!(event["type"], "error");
+        assert_eq!(event["status"], 503);
+        assert_eq!(event["stream_id"], "cooldown");
+        assert_eq!(event["error"]["code"], "account_unavailable");
+        assert!(event["error"].get("headers").is_none(), "{event}");
+        assert_remaining(
+            event["headers"]["retry-after"]
+                .as_str()
+                .expect("WS Retry-After"),
+            before,
+        );
+    }
+
+    db.execute(
+        "UPDATE account_model_health SET failure='rate_limited'
+         WHERE account_id='account-a' AND model='synth-text'",
+        [],
+    )
+    .unwrap();
+    let (status, headers, error) = http();
+    assert_eq!(
+        (status, error["error"]["code"].as_str()),
+        (503, Some("account_unavailable"))
+    );
+    assert_eq!(retry_header(&headers), None);
+    let mut fresh = dial_ws(data, key);
+    ws_create(&mut fresh, "synthetic denied", None);
+    let event = ws_event(&mut fresh);
+    assert_eq!(event["status"], 503);
+    assert_eq!(event["error"]["code"], "account_unavailable");
+    assert!(event.get("headers").is_none(), "{event}");
+    db.execute(
+        "DELETE FROM account_model_health WHERE account_id='account-a' AND model='synth-text'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM attempts", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
     );
 }
 

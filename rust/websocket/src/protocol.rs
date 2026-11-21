@@ -157,7 +157,10 @@ pub fn websocket_error(
         "error",
         envelope.get("error").expect("error envelope").clone(),
     );
-    if let Some(retry_after) = provider.and_then(|failure| failure.client_retry_after.as_ref())
+    let local_retry_after = error.retry_after_seconds.map(|seconds| seconds.to_string());
+    if let Some(retry_after) = provider
+        .and_then(|failure| failure.client_retry_after.as_deref())
+        .or(local_retry_after.as_deref())
         && fields
             .get("error")
             .and_then(|error| error.get("headers"))
@@ -173,17 +176,10 @@ pub fn websocket_error(
 
 pub(crate) fn websocket_ingress_error(status: u16, code: &'static str) -> Utf8Bytes {
     let error = ProtocolError::new(status, code);
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let frame = websocket_error(error, None, &request_id, "");
-    if status != 503 {
-        return frame;
-    }
-    let mut frame = JsonValue::decode(frame.as_bytes()).expect("encoded error");
-    let mut headers = JsonObject::new();
-    headers.insert("retry-after", string("1"));
-    frame
-        .as_object_mut()
-        .expect("error object")
-        .insert("headers", JsonValue::Object(headers));
-    encode(frame)
+    let error = if status == 503 {
+        error.with_retry_after_seconds(1)
+    } else {
+        error
+    };
+    websocket_error(error, None, &uuid::Uuid::new_v4().to_string(), "")
 }
