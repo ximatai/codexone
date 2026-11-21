@@ -14,7 +14,7 @@ for (const realtime of [true, false]) {
     page.setDefaultTimeout(10000);
     const binary = resolve(
       globalThis.process.env.CODEXONE_WEB_TEST_BINARY ??
-        "../.build/debug/codexone",
+        "../rust/gateway/target/release/codexone",
     );
     const process: ChildProcess = spawn(
       "python3",
