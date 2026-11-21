@@ -4,12 +4,15 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+import gzip
 import hashlib
 from http.client import HTTPConnection
 import json
 from pathlib import Path
 import re
 import subprocess
+import tarfile
+import tempfile
 import time
 import uuid
 
@@ -82,6 +85,31 @@ def docker(*args, data=None):
     if result.returncode:
         raise RuntimeError(f"docker {args[0]} failed: {result.stderr.decode(errors='replace').strip()}")
     return result.stdout.decode().strip()
+
+
+def image_sizes(image):
+    with tempfile.TemporaryDirectory(prefix="codexone-image-size-") as directory:
+        archive = Path(directory) / "image.tar"
+        docker("save", "--platform", "linux/amd64", "-o", str(archive), image)
+        with tarfile.open(archive) as bundle:
+            manifests = json.load(bundle.extractfile("manifest.json"))
+            require(len(manifests) == 1, "Expected a single image manifest")
+            stored = expanded = 0
+            for name in manifests[0]["Layers"]:
+                size = bundle.getmember(name).size
+                stored += size
+                with bundle.extractfile(name) as layer:
+                    signature = layer.read(4)
+                    layer.seek(0)
+                    require(signature != b"\x28\xb5\x2f\xfd", "Use gzip or uncompressed OCI layers")
+                    if signature.startswith(b"\x1f\x8b"):
+                        with gzip.GzipFile(fileobj=layer) as decoded:
+                            while chunk := decoded.read(1024 * 1024):
+                                expanded += len(chunk)
+                    else:
+                        expanded += size
+        return {"dockerArchiveBytes": archive.stat().st_size,
+                "storedLayerBytes": stored, "expandedLayerBytes": expanded}
 
 
 def verify(image, harness):
@@ -164,7 +192,8 @@ def verify(image, harness):
                           image, "-readonly", f"{DATA}/core.sqlite",
                           "SELECT count(*) FROM attempts WHERE state = 'settled' AND usage_json IS NOT NULL")
         require(int(attempts) == REQUESTS, "Expected every request to settle durably")
-        return {**release, **workload, "engineArchitecture": docker("info", "--format", "{{.Architecture}}"),
+        return {**release, **workload, **image_sizes(image),
+                "engineArchitecture": docker("info", "--format", "{{.Architecture}}"),
                 "glibc": glibc, "maintenanceSQLite": sqlite.split()[0],
                 "runToLiveSeconds": round(startup, 3),
                 "cgroupMemoryCurrentBeforeBytes": baseline, "cgroupMemoryPeakBytes": peak,

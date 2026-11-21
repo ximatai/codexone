@@ -17,7 +17,25 @@
 - [ ] 在线备份调度、保留和状态展示。
   - Rust 网关已接入调度、快照自检与轮转，提供兼容的备份状态 DTO。macOS arm64 合成进程验证覆盖分批复制期间结算、Swift 读取带账本和旧密钥依赖的 v19 快照、SIGKILL 后旧份保留及下一轮清理，以及复制途中 SIGTERM 正常退出。[在线并发结算验收](../../../scripts/rust_compat/README.md#在线备份与并发结算)使用一次性复制同步点，支持从干净 checkout 复现。管理状态端点与 SPA 待联调。
 - [ ] 独立发布镜像，原生 Linux 混合容量与双向切换演练，报告构建、体积、启动和运行资源。
-  - [Rust 候选构建与合成镜像检查](../../../deploy/README.md#rust-候选镜像)可用于集成后复跑。
+  - [Rust 候选构建与合成镜像检查](../../../deploy/README.md#rust-候选镜像)可用于集成后复跑，已取得下列 amd64 仿真结果。
+
+## Linux amd64 候选仿真实测
+
+2026-11-21 在 macOS arm64 的 Docker Desktop 4.100.0 上构建并运行 Linux amd64 候选。Docker VM 提供 14 vCPU 和约 16 GiB 内存，使用 BuildKit 0.34.2 与两个 Cargo 构建任务。镜像源码为 `50a2e4696707bd38eb47bda1dce5e2b3e5a05477`，本地 manifest 为 `sha256:8744bd7804641566879e79f84c95866b63343417c51abbd13f322c4f163841ab`，schema v19。镜像内 glibc 为 2.39，维护工具 SQLite 为 3.45.1。
+
+| 项目 | 结果 |
+| --- | ---: |
+| 空 Cargo 缓存和 `--no-cache` 构建 | 397.87 秒 |
+| 同参数热构建（命中全部构建层，manifest 相同） | 7.09 秒 |
+| gzip 层存储体积 / 解压后层体积 | 21.42 / 56.11 MiB |
+| `docker save` 归档 | 21.44 MiB |
+| `docker run` 至 liveness 通过 | 0.252–0.480 秒 |
+| cgroup 内存（负载前 / 峰值 / 负载结束一秒后） | 82.53–88.19 / 93.08–95.02 / 88.66–94.45 MiB |
+| 每轮 32 个约 64 KiB 的 Responses JSON 请求 | 1.129–1.224 秒，峰值 8 个并发上游请求 |
+
+冷构建使用独立缓存命名空间，计时包含该次仍需下载的基础层和包。镜像基础层已经部分下载。三轮镜像检查各用独立数据目录与回环网络，通过非 root 只读根启动、两个监听器的 liveness/readiness、SPA 资源、SIGTERM、32 条持久结算与离线备份校验。网关限制为 1 CPU、768 MiB、128 PID，内存读数来自 cgroup v2。以已存在的 Swift `0.26.45` 镜像供体积参照，其 gzip 层为 57.83 MiB，解压后 168.11 MiB。两个镜像来自不同源码版本。
+
+原生 Linux 混合容量、完整协议、实际 Compose 安装、上游 TLS 与双向切换仍待验收。
 
 ## 相关文档
 

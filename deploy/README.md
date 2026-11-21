@@ -25,7 +25,7 @@ docker pull "$harness"
 python3 scripts/rust_compat/release_image.py --image codexone:rust-candidate --harness-image "$harness"
 ```
 
-计时复用同一构建命令、构建器与参数。可用新建 BuildKit 构建器测冷构建，再原样重跑测热构建；报告时记录基础镜像下载是否计入。镜像体积按 OCI gzip 层压缩字节和解压后的层字节报告。候选验收还需原生 Linux 混合容量、完整协议、Compose 安装及双向切换证据。[Rust 兼容工作](../docs/changes/rust-backend/tasks.md)记录进度。
+计时复用同一构建命令、构建器与参数。可用新建 BuildKit 构建器测冷构建，再原样重跑测热构建，记录基础镜像下载是否计入。脚本另报 `docker save` 归档字节、各层存储字节和解压后的层字节，支持 gzip 或未压缩归档层。候选验收还需原生 Linux 混合容量、完整协议、Compose 安装及双向切换证据。[Rust 兼容工作](../docs/changes/rust-backend/tasks.md)记录进度。
 
 ## 相关文档
 
