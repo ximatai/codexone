@@ -112,6 +112,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "codexone-account-pool"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "codexone-admin"
 version = "0.1.0"
 dependencies = [
@@ -150,6 +159,7 @@ dependencies = [
 name = "codexone-execution"
 version = "0.1.0"
 dependencies = [
+ "codexone-account-pool",
  "codexone-storage",
  "libc",
  "rusqlite",
