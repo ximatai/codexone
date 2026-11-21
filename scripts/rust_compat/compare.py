@@ -44,8 +44,8 @@ def json_object(raw, source):
 
 
 @contextmanager
-def synthetic_upstream():
-    with ThreadingHTTPServer(("127.0.0.1", 0), Upstream) as server:
+def synthetic_upstream(handler=Upstream):
+    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
         server.guard = threading.Lock()
         server.calls = 0
         thread = threading.Thread(target=server.serve_forever, args=(0.05,))
@@ -156,7 +156,7 @@ def ledger(path, expected_attempts):
 
 
 @contextmanager
-def fixture(root):
+def fixture(root, *, handler=Upstream):
     root.mkdir(mode=0o700)
     config = root / "identity.json"
     database = root / "state" / "core.sqlite"
@@ -166,7 +166,7 @@ def fixture(root):
         "CODEXONE_IDENTITY_CONFIG": str(config),
         "CODEXONE_DATA_DIRECTORY": str(database.parent),
     }
-    with synthetic_upstream() as upstream:
+    with synthetic_upstream(handler) as upstream:
         config.write_text(json.dumps({
             "principal": "synthetic-principal", "keyID": "synthetic-key",
             "keySHA256": hashlib.sha256(TOKEN.encode()).hexdigest(),
