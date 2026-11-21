@@ -31,15 +31,105 @@ const NONCE: &str = "synthetic_nonce_0123456789012345678";
 const VERIFIER: &str = "synthetic_verifier_01234567890123456789012345678";
 const WAIT: Duration = Duration::from_secs(3);
 
+#[cfg(feature = "test-support")]
+use std::sync::atomic::AtomicUsize;
+#[cfg(feature = "test-support")]
+use tokio::sync::{Notify, oneshot};
+
 #[derive(Clone)]
-struct TestWriter(Arc<Mutex<Database>>, Arc<AtomicI64>);
+struct TestWriter(
+    Arc<Mutex<Database>>,
+    Arc<AtomicI64>,
+    #[cfg(feature = "test-support")] Arc<WriterProbe>,
+);
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct WriterProbe {
+    in_flight: AtomicUsize,
+    pause: Mutex<Option<(Work, Arc<WriterPause>)>>,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct WriterPause {
+    entered: Notify,
+    on_accept: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    release: Notify,
+    hold_reply: bool,
+    replied: Notify,
+    release_reply: Notify,
+}
+
+#[cfg(feature = "test-support")]
+impl TestWriter {
+    fn pause_next(&self, work: Work) -> Arc<WriterPause> {
+        self.pause(work, false)
+    }
+
+    fn pause(&self, work: Work, hold_reply: bool) -> Arc<WriterPause> {
+        let pause = Arc::new(WriterPause {
+            hold_reply,
+            ..WriterPause::default()
+        });
+        assert!(
+            self.2
+                .pause
+                .lock()
+                .unwrap()
+                .replace((work, pause.clone()))
+                .is_none()
+        );
+        pause
+    }
+
+    fn in_flight(&self) -> usize {
+        self.2.in_flight.load(Ordering::SeqCst)
+    }
+}
 
 impl Writer for TestWriter {
     async fn run<T: Send + 'static>(
         &self,
-        _: Work,
+        _work: Work,
         operation: impl FnOnce(&mut Database, i64, bool) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        #[cfg(feature = "test-support")]
+        let pause = {
+            let mut pending = self.2.pause.lock().unwrap();
+            if pending.as_ref().is_some_and(|(work, _)| *work == _work) {
+                pending.take().map(|(_, pause)| pause)
+            } else {
+                None
+            }
+        };
+        #[cfg(feature = "test-support")]
+        if let Some(pause) = pause {
+            let on_accept = pause.on_accept.lock().unwrap().take();
+            if let Some(on_accept) = on_accept {
+                on_accept();
+            }
+            let worker = self.clone();
+            let (reply, receive) = oneshot::channel();
+            // An accepted writer command outlives its cancelled caller.
+            self.2.in_flight.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                pause.entered.notify_one();
+                pause.release.notified().await;
+                let result = operation(
+                    &mut worker.0.lock().unwrap(),
+                    worker.1.load(Ordering::Relaxed),
+                    true,
+                );
+                if pause.hold_reply {
+                    pause.replied.notify_one();
+                    pause.release_reply.notified().await;
+                }
+                worker.2.in_flight.fetch_sub(1, Ordering::SeqCst);
+                let _ = reply.send(result);
+            });
+            return receive.await.unwrap();
+        }
         operation(
             &mut self.0.lock().unwrap(),
             self.1.load(Ordering::Relaxed),
@@ -64,6 +154,8 @@ impl Fixture {
         let writer = TestWriter(
             Arc::new(Mutex::new(Database::open_or_create(path).unwrap())),
             now.clone(),
+            #[cfg(feature = "test-support")]
+            Arc::new(WriterProbe::default()),
         );
         let governance = Arc::new(Governance::new(writer.clone(), Some(cipher())));
         let provider = SubscriptionProvider::synthetic_loopback(auth, quota, move || {
@@ -609,10 +701,14 @@ async fn quota_waiter_cancellation_and_shutdown_own_the_live_get() {
     let quota = listener().await;
     let fixture = Fixture::new(port(&auth), port(&quota));
     let account = fixture.authorize(&auth, NOW + 3600).await;
+    #[cfg(feature = "test-support")]
+    let (_, driver) = fixture.provider.driver_probes();
     let runtime = fixture.runtime.clone();
     let id = account.id.clone();
     let waiter = tokio::spawn(async move { runtime.observe_account(&id).await });
     let (mut socket, _) = accept(&quota).await;
+    #[cfg(feature = "test-support")]
+    assert_eq!(driver.counts(), (1, 0));
     waiter.abort();
     assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
 
@@ -626,6 +722,8 @@ async fn quota_waiter_cancellation_and_shutdown_own_the_live_get() {
                 .is_err()
         );
         timeout(WAIT, fixture.runtime.shutdown()).await.unwrap();
+        #[cfg(feature = "test-support")]
+        assert_eq!(driver.counts(), (1, 1));
         let mut byte = [0u8; 1];
         assert_eq!(
             timeout(WAIT, socket.read(&mut byte))
@@ -715,4 +813,163 @@ async fn device_authorization_matches_pending_poll_and_pkce_exchange() {
         let (verified, ()) = tokio::join!(exchange, upstream);
         assert_eq!(verified.unwrap().namespace, expected_namespace(port(&auth)));
     }
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn cancellation_and_deadline_end_the_refresh_driver_before_terminal_write() {
+    for (received_headers, expire) in [(false, false), (true, false), (true, true)] {
+        let auth = listener().await;
+        let fixture = Fixture::new(port(&auth), port(&auth));
+        let account = fixture.authorize(&auth, NOW + 3600).await;
+        let (driver, _) = fixture.provider.driver_probes();
+        assert_eq!(driver.counts(), (1, 1));
+
+        let runtime = fixture.runtime.clone();
+        let waiter =
+            tokio::spawn(
+                async move { runtime.refresh_account(account.id, account.revision).await },
+            );
+        let (mut socket, _) = accept(&auth).await;
+        if received_headers {
+            socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 900\r\n\r\n{")
+                .await.unwrap();
+            timeout(WAIT, async {
+                while driver.received_headers() < 2 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(driver.counts(), (2, 1));
+        assert_eq!(driver.received_headers(), 1 + usize::from(received_headers));
+        waiter.abort();
+        assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
+        assert_eq!(driver.counts(), (2, 1));
+
+        let finish = fixture.writer.pause_next(Work::Critical);
+        let driver_at_submission = driver.clone();
+        *finish.on_accept.lock().unwrap() = Some(Box::new(move || {
+            assert_eq!(driver_at_submission.counts(), (2, 2));
+        }));
+
+        if expire {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(10)).await;
+            timeout(WAIT, finish.entered.notified()).await.unwrap();
+        }
+        let shutdown = fixture.runtime.shutdown();
+        tokio::pin!(shutdown);
+        if expire {
+            tokio::select! {
+                biased;
+                () = &mut shutdown => panic!("shutdown returned with the timeout terminal write pending"),
+                () = tokio::task::yield_now() => {}
+            }
+        } else {
+            tokio::select! {
+                () = &mut shutdown => panic!("shutdown returned with a terminal write pending"),
+                result = timeout(WAIT, finish.entered.notified()) => result.unwrap(),
+            }
+        }
+        assert_eq!(driver.counts(), (2, 2));
+        assert_eq!(fixture.writer.in_flight(), 1);
+        assert_eq!(
+            fixture.current().await.authorization,
+            AuthorizationState::Refreshing
+        );
+        finish.release.notify_one();
+        timeout(WAIT, &mut shutdown).await.unwrap();
+        assert_eq!(fixture.writer.in_flight(), 0);
+        let terminal = fixture.current().await;
+        assert_eq!(terminal.authorization, AuthorizationState::AuthUncertain);
+        assert_eq!(terminal.credential_version, 1);
+        assert!(terminal.refresh_intent.is_some());
+        let mut byte = [0u8; 1];
+        assert_eq!(
+            timeout(WAIT, socket.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn shutdown_waits_for_commit_of_already_verified_rotation() {
+    let auth = listener().await;
+    let fixture = Fixture::new(port(&auth), port(&auth));
+    let account = fixture.authorize(&auth, NOW + 3600).await;
+    let (driver, _) = fixture.provider.driver_probes();
+    let runtime = fixture.runtime.clone();
+    let waiter =
+        tokio::spawn(async move { runtime.refresh_account(account.id, account.revision).await });
+    let (mut socket, _) = accept(&auth).await;
+    let finish = fixture.writer.pause_next(Work::Critical);
+    reply(
+        &mut socket,
+        200,
+        &token_doc("synthetic/account", NOW + 7200, None),
+    )
+    .await;
+    timeout(WAIT, finish.entered.notified()).await.unwrap();
+    assert_eq!(driver.counts(), (2, 2));
+
+    waiter.abort();
+    assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
+    let shutdown = fixture.runtime.shutdown();
+    tokio::pin!(shutdown);
+    tokio::select! {
+        biased;
+        () = &mut shutdown => panic!("shutdown returned before the credential commit"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(fixture.writer.in_flight(), 1);
+    finish.release.notify_one();
+    timeout(WAIT, &mut shutdown).await.unwrap();
+
+    assert_eq!(fixture.writer.in_flight(), 0);
+    let terminal = fixture.current().await;
+    assert_eq!(terminal.authorization, AuthorizationState::Ready);
+    assert_eq!(terminal.credential_version, 2);
+    assert_eq!(terminal.mode, AccountMode::Disabled);
+    assert!(terminal.refresh_intent.is_none());
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn identity_shutdown_waits_for_accepted_scan_after_caller_cancellation() {
+    let auth = listener().await;
+    let fixture = Fixture::new(port(&auth), port(&auth));
+    let pause = fixture.writer.pause(Work::Read, true);
+    let runtime = fixture.runtime.clone();
+    let scan = tokio::spawn(async move { runtime.schedule_cycle().await });
+    timeout(WAIT, pause.entered.notified()).await.unwrap();
+    scan.abort();
+    assert!(matches!(scan.await, Err(error) if error.is_cancelled()));
+
+    let shutdown = fixture.runtime.shutdown();
+    tokio::pin!(shutdown);
+    tokio::select! {
+        biased;
+        () = &mut shutdown => panic!("shutdown returned with an accepted read pending"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(fixture.writer.in_flight(), 1);
+    assert_eq!(
+        fixture.runtime.schedule_cycle().await,
+        Err(Error::AuthorizationUnavailable)
+    );
+    pause.release.notify_one();
+    tokio::select! {
+        () = &mut shutdown => panic!("shutdown returned before the writer replied"),
+        result = timeout(WAIT, pause.replied.notified()) => result.unwrap(),
+    }
+    assert_eq!(fixture.writer.in_flight(), 1);
+    pause.release_reply.notify_one();
+    timeout(WAIT, &mut shutdown).await.unwrap();
+    assert_eq!(fixture.writer.in_flight(), 0);
 }

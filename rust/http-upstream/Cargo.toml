@@ -5,6 +5,9 @@ edition = "2024"
 license = "MIT"
 publish = false
 
+[features]
+test-support = []
+
 [dependencies]
 bytes = "1"
 futures-core = "0.3"
