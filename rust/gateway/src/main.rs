@@ -1,15 +1,18 @@
 pub mod body_budget;
+mod body_staging;
 mod catalog;
 mod data;
 mod gateway;
 mod headers;
+mod http_upload;
 mod image_route;
 mod listener;
-mod online_backup;
 mod managed;
 mod quota;
+mod online_backup;
 mod reply;
 mod response;
+mod upload_workers;
 
 use std::{
     process::ExitCode,
@@ -77,10 +80,6 @@ fn main() -> ExitCode {
             eprintln!(
                 "This backend supports HTTP upstream transport for single identities and account pools."
             );
-            ExitCode::from(78)
-        }
-        Err(gateway::StartupError::UnsupportedSettings) => {
-            eprintln!("This backend does not support configured HTTP body staging.");
             ExitCode::from(78)
         }
         Err(gateway::StartupError::RequiresManagedKeys) => {

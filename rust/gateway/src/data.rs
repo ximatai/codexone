@@ -8,6 +8,7 @@ use codexone_execution as execution;
 use codexone_http_upstream as upstream;
 use codexone_responses::{self as protocol, JsonValue, ProtocolError};
 use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri, header};
+use http_body::Body;
 use hyper::body::Incoming;
 use serde_json::json;
 use tokio::time::Instant;
@@ -15,9 +16,12 @@ use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
+    body_budget::WAIT,
+    body_staging::{BodyStaging, StageError, THRESHOLD},
     catalog, headers,
+    http_upload::{HttpUploads, Payload},
     image_route::NativeImages,
-    listener::{DataBodies, ReadError},
+    listener::{self, DataBodies, ReadError, StagedReadError},
     managed::{Affinity, ManagedRoute, Pool},
     reply::{self, FlushDeliveries, Reply},
     response::{self, ResponseError, Transfer},
@@ -32,6 +36,8 @@ pub struct DataPlane {
     contract: protocol::Contract,
     upstream: upstream::HttpUpstream,
     bodies: DataBodies,
+    uploads: Arc<HttpUploads>,
+    staging: Option<BodyStaging>,
 }
 
 impl DataPlane {
@@ -115,7 +121,14 @@ impl DataPlane {
             },
             upstream,
             bodies: DataBodies::new(),
+            uploads: Arc::new(HttpUploads::new().map_err(|_| ())?),
+            staging: None,
         })
+    }
+
+    pub(crate) fn enable_staging(&mut self, directory: std::path::PathBuf) -> std::io::Result<()> {
+        self.staging = Some(BodyStaging::new(directory)?);
+        Ok(())
     }
 
     pub fn max_connections(&self) -> usize {
@@ -209,16 +222,37 @@ impl DataPlane {
                     .as_ref()
                     .map(execution::StaticAuthorization::key_id)
             });
-        let (body, body_permit) = self
-            .bodies
-            .read(incoming, key_id, request_id)
-            .await
-            .map_err(|error| match error {
-                ReadError::TooLarge => ProtocolError::new(413, "request_too_large").into(),
-                ReadError::Timeout => ProtocolError::new(408, "request_body_timeout").into(),
-                ReadError::Interrupted => ProtocolError::new(400, "invalid_json").into(),
-                ReadError::Capacity => ResponseError::body_capacity(),
-            })?;
+        let staged_length = incoming
+            .size_hint()
+            .exact()
+            .and_then(|length| usize::try_from(length).ok())
+            .filter(|length| *length > THRESHOLD);
+        let (body, mut body_permit, staged) = if let Some(staging) = &self.staging
+            && let Some(length) = staged_length
+            && !compact
+            && !parts.headers.contains_key(header::TRANSFER_ENCODING)
+        {
+            let staged = listener::read_staged(incoming, staging, length, request_id)
+                .await
+                .map_err(|error| match error {
+                    StagedReadError::Read(error) => bad_read(error),
+                    StagedReadError::Stage(error) => bad_stage(error),
+                })?;
+            let permit = self
+                .bodies
+                .reserve_http(length, key_id, Instant::now() + WAIT)
+                .await
+                .map_err(bad_read)?;
+            let (bytes, reservation) = staged.decode().await.map_err(bad_stage)?;
+            (bytes, permit, Some((staging, reservation)))
+        } else {
+            let (body, permit) = self
+                .bodies
+                .read(incoming, key_id, request_id)
+                .await
+                .map_err(bad_read)?;
+            (body, permit, None)
+        };
         let images = configuration.image_generation.as_ref();
         let image_ids: Vec<_> = images
             .iter()
@@ -378,16 +412,26 @@ impl DataPlane {
                 HeaderValue::from_static("true"),
             );
         }
-        let mut outbound = Request::new(upstream::RequestBody::bytes(outbound));
+        let budget = configuration.budget;
+        let seconds = |value: u16| Duration::from_secs(value.into());
+        let deadline = began + seconds(budget.total_seconds);
+        let payload = if let Some((staging, staged)) = staged {
+            let payload = tokio::time::timeout_at(deadline, staging.rewrite(outbound, staged))
+                .await
+                .map_err(|_| ResponseError::from(upstream::Error::DeadlineExceeded))?
+                .map_err(bad_stage)?;
+            body_permit.release();
+            Payload::Staged(payload)
+        } else {
+            Payload::Memory(outbound)
+        };
+        let mut outbound = Request::new(payload);
         *outbound.method_mut() = Method::POST;
         *outbound.uri_mut() = if compact {
             self.compact_url.clone()
         } else {
             self.generation_url.clone()
         };
-        let budget = configuration.budget;
-        let seconds = |value: u16| Duration::from_secs(value.into());
-        let deadline = began + seconds(budget.total_seconds);
         let first_response = if usage.image.is_some() {
             budget.image_first_response_seconds
         } else {
@@ -452,8 +496,14 @@ impl DataPlane {
         if let Some(stop) = lease.account_stop_token() {
             options.cancellation = stop.clone();
         }
+        let zstd_minimum = (!compact && self.contract == protocol::Contract::CodexSubscription)
+            .then_some(configuration.upstream_zstd_minimum_bytes)
+            .flatten();
         let exchange = async {
-            let upstream = self.upstream.send(outbound, options).await?;
+            let upstream = self
+                .uploads
+                .send(&self.upstream, outbound, options, zstd_minimum)
+                .await?;
             if upstream.status() == StatusCode::OK
                 && let Some((pool, key, owner)) = &turn_owner
             {
@@ -476,6 +526,24 @@ impl DataPlane {
             body_permit,
         )
         .await)
+    }
+}
+
+fn bad_read(error: ReadError) -> ResponseError {
+    match error {
+        ReadError::TooLarge => ProtocolError::new(413, "request_too_large").into(),
+        ReadError::Timeout => ProtocolError::new(408, "request_body_timeout").into(),
+        ReadError::Interrupted => ProtocolError::new(400, "invalid_json").into(),
+        ReadError::Capacity => ResponseError::body_capacity(),
+    }
+}
+
+fn bad_stage(error: StageError) -> ResponseError {
+    match error {
+        StageError::Capacity => ResponseError::body_capacity(),
+        StageError::StoragePressure => execution::ExecutionError::StoragePressure.into(),
+        StageError::StorageUnavailable => ProtocolError::new(503, "storage_unavailable").into(),
+        StageError::InvalidLength => bad_read(ReadError::Interrupted),
     }
 }
 

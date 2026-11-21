@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     body_budget::BodyPermit,
+    body_staging::{BodyStaging, StageError, StagedBody},
     gateway::Application,
     reply::{self, FlushDeliveries, Reply},
 };
@@ -279,6 +280,75 @@ impl DataBodies {
     }
 }
 
+pub(crate) enum StagedReadError {
+    Read(ReadError),
+    Stage(StageError),
+}
+
+impl From<StageError> for StagedReadError {
+    fn from(error: StageError) -> Self {
+        Self::Stage(error)
+    }
+}
+
+pub(crate) async fn read_staged(
+    mut body: Incoming,
+    stage: &BodyStaging,
+    length: usize,
+    request_id: &str,
+) -> Result<StagedBody, StagedReadError> {
+    use StagedReadError::Read;
+    if length > codexone_responses::MAX_REQUEST_BYTES {
+        return Err(Read(ReadError::TooLarge));
+    }
+    let deadline = Instant::now() + DATA_UPLOAD_LIMIT;
+    let mut writer = timeout_at(deadline, stage.begin(length))
+        .await
+        .map_err(|_| Read(ReadError::Timeout))??;
+    let mut received = 0;
+    while let Some(frame) = data_frame(&mut body, deadline, Some(request_id), received)
+        .await
+        .map_err(Read)?
+    {
+        if let Ok(mut bytes) = frame.into_data() {
+            if bytes.len() > length - received {
+                return Err(Read(ReadError::TooLarge));
+            }
+            received += bytes.len();
+            while !bytes.is_empty() {
+                let chunk =
+                    bytes.split_to(bytes.len().min(codexone_http_upstream::UPLOAD_CHUNK_BYTES));
+                writer = timeout_at(deadline, writer.append(chunk))
+                    .await
+                    .map_err(|_| Read(ReadError::Timeout))??;
+            }
+        }
+    }
+    timeout_at(deadline, writer.seal())
+        .await
+        .map_err(|_| Read(ReadError::Timeout))?
+        .map_err(Into::into)
+}
+
+async fn data_frame(
+    body: &mut Incoming,
+    deadline: Instant,
+    request_id: Option<&str>,
+    received: usize,
+) -> Result<Option<http_body::Frame<Bytes>>, ReadError> {
+    let limit = deadline.min(Instant::now() + READ_IDLE);
+    timeout_at(limit, body.frame())
+        .await
+        .map_err(|_| {
+            if let Some(request_id) = request_id {
+                record_upload_timeout(request_id, received, limit == deadline);
+            }
+            ReadError::Timeout
+        })?
+        .transpose()
+        .map_err(|_| ReadError::Interrupted)
+}
+
 pub async fn read_body(
     body: Incoming,
     maximum: usize,
@@ -300,21 +370,15 @@ async fn collect_body(
     }
     let mut contents = BytesMut::new();
     loop {
-        let limit = deadline.min(Instant::now() + READ_IDLE);
         let frame = if let Some(frame) = prefetched.take() {
-            Some(Ok(frame))
+            Some(frame)
         } else {
-            timeout_at(limit, body.frame()).await.map_err(|_| {
-                if let Some(request_id) = request_id {
-                    record_upload_timeout(request_id, contents.len(), limit == deadline);
-                }
-                ReadError::Timeout
-            })?
+            data_frame(&mut body, deadline, request_id, contents.len()).await?
         };
         let Some(frame) = frame else {
             return Ok(contents.freeze());
         };
-        if let Ok(bytes) = frame.map_err(|_| ReadError::Interrupted)?.into_data() {
+        if let Ok(bytes) = frame.into_data() {
             if bytes.len() > maximum - contents.len() {
                 return Err(ReadError::TooLarge);
             }

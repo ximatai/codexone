@@ -14,7 +14,7 @@ use crate::listener::ReadError;
 
 const SMALL: usize = 8 * 1024 * 1024;
 const MAX_WAITERS: usize = 4;
-const WAIT: Duration = Duration::from_secs(5);
+pub(crate) const WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Default)]
 struct Reservation {
@@ -226,14 +226,21 @@ pub struct BodyPermit {
     reservation: Reservation,
 }
 
-impl Drop for BodyPermit {
-    fn drop(&mut self) {
+impl BodyPermit {
+    pub(crate) fn release(&mut self) {
         if self.reservation.bytes != 0 {
-            self.budget
-                .state()
-                .replace(self.reservation, Reservation::default());
+            self.budget.state().replace(
+                std::mem::take(&mut self.reservation),
+                Reservation::default(),
+            );
             self.budget.changed.notify_waiters();
         }
+    }
+}
+
+impl Drop for BodyPermit {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 

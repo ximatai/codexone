@@ -35,7 +35,6 @@ use crate::{
 
 pub enum StartupError {
     UnsupportedConfiguration,
-    UnsupportedSettings,
     RequiresManagedKeys,
     Service,
 }
@@ -167,9 +166,6 @@ async fn run_configured(
 
     let key_options = KeyOptions::configured(&config);
     let runtime = config.runtime;
-    if runtime.http_body_staging_directory.is_some() {
-        return Err(UnsupportedSettings);
-    }
     let static_identity =
         matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
     let (mut options, mut data, pool_config) = match config.source.take() {
@@ -292,6 +288,9 @@ async fn run_configured(
     } else {
         None
     };
+    if let Some((data, directory)) = data.as_mut().zip(runtime.http_body_staging_directory) {
+        data.enable_staging(directory).map_err(|_| Service)?;
+    }
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
     let mut managed_tasks = JoinSet::new();
     if let Some(managed) = &mut managed {
