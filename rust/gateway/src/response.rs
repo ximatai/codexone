@@ -439,7 +439,16 @@ pub async fn forward(
             loop {
                 let Some(delivery) = reader
                     .next(&mut attempt, Some(&mut response_headers))
-                    .await?
+                    .await
+                    .inspect_err(|_| {
+                        if reader.reached_eof && attempt.first_event_ms.is_none() {
+                            crate::diagnostics::http_response_eof(
+                                &request_id,
+                                status.as_u16(),
+                                credential,
+                            );
+                        }
+                    })?
                 else {
                     return Err(ProtocolError::new(502, "execution_indeterminate").into());
                 };
@@ -638,6 +647,7 @@ struct EventReader {
     upstream: upstream::Response,
     chunk: Bytes,
     parser: protocol::ResponseStream<'static>,
+    reached_eof: bool,
     effective_progress: bool,
     returned_turn_state: bool,
     protocol_extensions: Option<Arc<crate::diagnostics::ClientProtocolExtensions>>,
@@ -654,6 +664,7 @@ impl EventReader {
             upstream,
             chunk: Bytes::new(),
             parser: protocol::ResponseStream::new(transfer.client_sse, transfer.usage),
+            reached_eof: false,
             effective_progress: false,
             returned_turn_state: false,
             protocol_extensions: transfer.protocol_extensions.clone(),
@@ -695,6 +706,7 @@ impl EventReader {
         loop {
             if self.chunk.is_empty() {
                 let Some(chunk) = self.upstream.next_chunk().await? else {
+                    self.reached_eof = true;
                     self.parser.finish()?;
                     return Ok(None);
                 };

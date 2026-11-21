@@ -382,6 +382,16 @@ pub fn http_response(request_id: &str, failure: &ProviderFailure, credential: Op
     );
 }
 
+pub fn http_response_eof(request_id: &str, status: u16, credential: Option<i64>) {
+    setup(
+        request_id,
+        "http_response",
+        "upstream_http_eof",
+        Some(status),
+        credential,
+    );
+}
+
 fn transport_status(error: codexone_http_upstream::Error) -> Option<u16> {
     (error == codexone_http_upstream::Error::ProxyAuthenticationRequired).then_some(407)
 }
