@@ -33,6 +33,7 @@ const FIRST_CREATE: Duration = Duration::from_secs(10);
 const CONNECTION_IDLE: Duration = Duration::from_secs(120);
 const CONNECTION_LIFETIME: Duration = Duration::from_secs(3600);
 const DISCONNECT_DRAIN: Duration = Duration::from_secs(10);
+const ACCOUNT_STOPPED: ProtocolError = ProtocolError::new(503, "account_force_stopped");
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeOptions {
@@ -102,6 +103,10 @@ pub trait NativeApplication: Send + Sync + 'static {
         identity: &Self::Identity,
         deadline: Instant,
     ) -> impl Future<Output = Result<Socket, ConnectFailure>> + Send;
+
+    fn connection_stop(&self, _identity: &Self::Identity) -> Option<CancellationToken> {
+        None
+    }
 
     fn first_response_timeout(&self, _attempt: &Self::Attempt) -> Option<Duration> {
         None
@@ -276,6 +281,7 @@ struct Session<A: NativeApplication> {
     downstream: Peer<IngressMessage>,
     upstream: Option<Peer<UpstreamPacket>>,
     fixed_identity: Option<A::Identity>,
+    account_stop: Option<CancellationToken>,
     replacing_refused_socket: bool,
     reader: SharedReader<A>,
     attempts: HashMap<String, (String, OwnedAttempt<A>)>,
@@ -310,6 +316,7 @@ pub async fn serve_native<A: NativeApplication>(
         downstream: Peer::ingress(socket, MAX_EVENT_BYTES + 1024),
         upstream: None,
         fixed_identity: None,
+        account_stop: None,
         replacing_refused_socket: false,
         reader: Arc::new(Mutex::new(ReaderState::new())),
         attempts: HashMap::new(),
@@ -343,6 +350,13 @@ impl<A: NativeApplication> Session<A> {
             if cancellation.is_cancelled() {
                 return NativeEnd::Cancelled;
             }
+            if self
+                .account_stop
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+            {
+                return NativeEnd::Protocol(ACCOUNT_STOPPED);
+            }
             if let Some((end, _)) = self.disconnected
                 && self.attempts.is_empty()
             {
@@ -371,6 +385,7 @@ impl<A: NativeApplication> Session<A> {
         tokio::select! {
             biased;
             _ = cancellation.cancelled() => Err(NativeEnd::Cancelled),
+            _ = wait_for_stop(&self.account_stop) => Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
             _ = sleep_until(next_timer) => self.expire().map_or(Ok(()), Err),
             Some((lane, id, result)) = self.uploads.next(), if !self.uploads.is_empty() => {
                 if self.attempts.get(&lane).is_some_and(|(request, _)| *request == id)
@@ -611,10 +626,12 @@ impl<A: NativeApplication> Session<A> {
             return Ok(());
         }
         if self.upstream.is_none() {
+            self.account_stop = self.app.connection_stop(&identity);
             let read_closed = self.downstream.read_closed();
             let result = tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => return Err(NativeEnd::Cancelled),
+                _ = wait_for_stop(&self.account_stop) => Err(ConnectFailure::Cancelled),
                 _ = read_closed.cancelled() => return Err(NativeEnd::Downstream(SocketEnd::Eof)),
                 result = timeout_at(deadline, self.app.connect(&identity, deadline)) =>
                     result.unwrap_or(Err(ConnectFailure::TimedOut)),
@@ -644,6 +661,13 @@ impl<A: NativeApplication> Session<A> {
                 }
                 Err(error) => {
                     let (error, provider) = match error {
+                        _ if self
+                            .account_stop
+                            .as_ref()
+                            .is_some_and(CancellationToken::is_cancelled) =>
+                        {
+                            (ACCOUNT_STOPPED, None)
+                        }
                         ConnectFailure::Rejected(failure) => (failure.protocol, Some(failure)),
                         ConnectFailure::TimedOut => (
                             if Instant::now() >= deadline {
@@ -669,7 +693,14 @@ impl<A: NativeApplication> Session<A> {
                         protocol: error,
                         provider,
                     });
-                    self.send(frame, self.life).await?;
+                    if error == ACCOUNT_STOPPED {
+                        let _ = self
+                            .downstream
+                            .send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT))
+                            .await;
+                    } else {
+                        self.send(frame, self.life).await?;
+                    }
                     return Err(NativeEnd::Protocol(error));
                 }
             }
@@ -709,6 +740,7 @@ impl<A: NativeApplication> Session<A> {
         let receipt = tokio::select! {
             biased;
             _ = cancellation.cancelled() => return Err(NativeEnd::Cancelled),
+            _ = wait_for_stop(&self.account_stop) => return Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
             receipt = upstream.queue(frame, deadline) => receipt.map_err(NativeEnd::Upstream)?,
         };
         self.uploads
@@ -876,6 +908,7 @@ impl<A: NativeApplication> Session<A> {
             tokio::pin!(binding);
             tokio::select! {
                 biased;
+                _ = wait_for_stop(&self.account_stop) => return Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
                 _ = downstream_closed.cancelled() => true,
                 result = &mut binding => {
                     result.unwrap_or(Err(DEADLINE)).map_err(NativeEnd::Protocol)?;
@@ -1218,6 +1251,7 @@ impl<A: NativeApplication> Session<A> {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(NativeEnd::Cancelled),
+            _ = wait_for_stop(&self.account_stop) => Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
             result = self.downstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) =>
                 result.map(|_| ()).map_err(NativeEnd::Downstream),
         }
@@ -1228,6 +1262,7 @@ impl<A: NativeApplication> Session<A> {
         tokio::select! {
             biased;
             _ = self.cancellation.cancelled() => Err(NativeEnd::Cancelled),
+            _ = wait_for_stop(&self.account_stop) => Err(NativeEnd::Protocol(ACCOUNT_STOPPED)),
             result = upstream.send(frame, deadline.min(Instant::now() + QUEUE_TIMEOUT)) =>
                 result.map(|_| ()).map_err(NativeEnd::Upstream),
         }
@@ -1242,6 +1277,13 @@ impl<A: NativeApplication> Session<A> {
     ) -> Result<(), NativeEnd> {
         self.send(websocket_error(error, provider, id, lane), self.life)
             .await
+    }
+}
+
+async fn wait_for_stop(stop: &Option<CancellationToken>) {
+    match stop {
+        Some(stop) => stop.cancelled().await,
+        None => pending::<()>().await,
     }
 }
 

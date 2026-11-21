@@ -142,6 +142,7 @@ struct Inner {
     capacity: u32,
     done: watch::Receiver<bool>,
     active: Mutex<HashMap<String, ActiveAccountExecution>>,
+    connections: Mutex<HashMap<String, ActiveAccountExecution>>,
 }
 
 struct ActiveAccountExecution {
@@ -162,6 +163,12 @@ impl Inner {
 
     fn active(&self) -> MutexGuard<'_, HashMap<String, ActiveAccountExecution>> {
         self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn connections(&self) -> MutexGuard<'_, HashMap<String, ActiveAccountExecution>> {
+        self.connections
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -334,6 +341,7 @@ impl ExecutionService {
             capacity: capacity as u32,
             done: done_rx,
             active: Mutex::new(HashMap::new()),
+            connections: Mutex::new(HashMap::new()),
         });
         let exit = WorkerExit {
             inner: Arc::downgrade(&inner),
@@ -426,6 +434,14 @@ impl ExecutionService {
                 count += 1;
                 entry.stop.cancel();
             }
+        }
+        for entry in self
+            .inner
+            .connections()
+            .values()
+            .filter(|entry| entry.account == account)
+        {
+            entry.stop.cancel();
         }
         count
     }
@@ -999,6 +1015,40 @@ impl Execution {
         self.stop.as_ref()
     }
 
+    /// Register the pooled WebSocket connection before its first execution is released.
+    /// Force-stop takes the same locks in this order, so it cannot miss the handoff.
+    pub fn watch_account_connection(&self) -> Result<Option<AccountConnection>> {
+        let Some(stop) = &self.stop else {
+            return Ok(None);
+        };
+        let _active = self.service.inner.active();
+        if stop.is_cancelled() {
+            return Err(Error::AccountForceStopped);
+        }
+        let mut connections = self.service.inner.connections();
+        let id = &self.admission.attempt;
+        if connections.contains_key(id) {
+            return Err(Error::Conflict);
+        }
+        // The transport also retains its data connection slot for the watcher's lifetime.
+        if connections.len() >= 1024 {
+            return Err(Error::Capacity);
+        }
+        let stop = CancellationToken::new();
+        connections.insert(
+            id.clone(),
+            ActiveAccountExecution {
+                account: self.admission.owner.identity.clone(),
+                stop: stop.clone(),
+            },
+        );
+        Ok(Some(AccountConnection {
+            inner: self.service.inner.clone(),
+            id: id.clone(),
+            stop,
+        }))
+    }
+
     pub fn was_force_stopped(&self) -> bool {
         self.stop
             .as_ref()
@@ -1148,6 +1198,25 @@ impl Execution {
             }),
             false,
         )
+    }
+}
+
+/// Lifetime of the fixed account binding for a native pooled socket.
+pub struct AccountConnection {
+    inner: Arc<Inner>,
+    id: String,
+    stop: CancellationToken,
+}
+
+impl AccountConnection {
+    pub fn stop_token(&self) -> &CancellationToken {
+        &self.stop
+    }
+}
+
+impl Drop for AccountConnection {
+    fn drop(&mut self) {
+        self.inner.connections().remove(&self.id);
     }
 }
 
