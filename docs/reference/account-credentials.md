@@ -30,7 +30,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 ## 合成验证
 
-后端统一验证包含密码学/文件/SQLite 测试与 `scripts/verify_accounts.py`。后者控制独立 `ExecutionProbe`：在刷新 intent 前、intent 后及完成后真实 SIGKILL，再打开同一个临时库核对版本/状态、未知刷新不能再次开始、DB/WAL 不含 token 或主密钥。它不连接提供者、不读取个人登录文件，不证明真实刷新协议或账号池可路由；SIGKILL 也不是掉电验收。
+账号刷新恢复使用 `python3 scripts/verify_accounts.py --binary <codexone> --rust-probe <RustGatewayProbe>` 验证。脚本从正式网关读取 schema 版本，用独立 Rust 测试进程运行回环 OAuth，在刷新前、上游收到刷新但尚未答复、凭证提交后三个边界终止进程。重启后核对同一 SQLite 库中的账号状态和凭证版本，并检查不确定刷新没有再次派发、DB/WAL 和进程输出中没有合成凭证或主密钥。
 
 ## 可信订阅 HTTP 适配
 
@@ -57,7 +57,7 @@ Runtime `AccountRefreshSupervisor` 由入口注入 Core 凭证用例及可信 `A
 
 控制台的“订阅账号”复用管理 session；未配置账号主密钥时提示安全配置尚未开启。初次与重新授权默认采用 I16 的设备码流程，弹窗保留倒计时、轮询状态与结果；新账号需独立点击“启用”。不可用时提示 ChatGPT 安全设置可能需要开启设备码登录，可切换回调方式；新窗口完成登录后，将最终回调地址粘贴到隐藏输入，再一次性提交。前端不会自行探测或访问 localhost callback 服务，不保存浏览器本地/会话存储；取消和超时应重新开始流程。未知 mutation 或 CAS 冲突先读列表核对，不能直接重发。
 
-`ExecutionProbe --account-admin-ui` 是测试可执行文件的专用合成组装，生产 codexone 没有该参数或认证地址覆盖。它启动真实管理 API、Runtime owner、AES/SQLite 与显式合成 loopback OAuth。浏览器脚本允许访问临时管理 origin 和合成登录页，拒绝其他地址；设备码在合成验证页确认，备用回调只读取合成链接而不访问真实 localhost callback 端口。截图只用合成数据并掩码敏感输入，日志与 DB/WAL 核对无合成 token、主密钥、user code 或 device_auth_id 原文；不替代真实订阅或 Desktop 验收。
+账号管理浏览器验收使用 `python3 scripts/verify_account_admin_ui.py --rust --binary <RustGatewayProbe>`。测试网关在临时端口提供管理 API，通过回环 OAuth 和私有 SQLite 验证授权流程。浏览器只访问临时管理站点和合成登录页；截图使用合成数据并遮盖敏感输入。验证结束后检查日志和持久文件是否包含合成凭证。实际订阅和 Desktop 客户端另行验收。
 
 
 ## Dispatch 准备与持久快照
