@@ -105,7 +105,12 @@ backend() {
 }
 
 frontend() {
+  local backend_bin_dir="${CODEXONE_BACKEND_BIN_DIR:-${CARGO_TARGET_DIR:-rust/gateway/target}/release}"
+  if [[ "$backend_bin_dir" != /* ]]; then
+    backend_bin_dir="$PWD/$backend_bin_dir"
+  fi
   (
+    export CODEXONE_WEB_TEST_BINARY="${CODEXONE_WEB_TEST_BINARY:-$backend_bin_dir/codexone}"
     cd web
     npm run lint
     npm run format:check
