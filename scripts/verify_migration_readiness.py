@@ -230,6 +230,7 @@ def sample(pid, label):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--refusals-only', action='store_true', help='Run the provider and CONNECT refusal matrices')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     server.daemon_threads = True
@@ -299,6 +300,8 @@ def main():
                 finally: stop(process)
             finally: proxy.shutdown(); proxy_thread.join(3)
         print('PASS: CONNECT refusal stays unknown for bridged and native WS without provider dispatch', flush=True)
+        if args.refusals_only:
+            return
         # Refused TCP connection retries before dispatch, while post-send failures above never replay.
         with tempfile.TemporaryDirectory(prefix='codexone-connect-retry-') as temporary:
             root = Path(temporary)
