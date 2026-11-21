@@ -7,7 +7,7 @@ use codexone_config::{
     UpstreamTransport,
 };
 use codexone_execution::{
-    ExecutionService, ExecutionStatus, Options, StaticIdentity, StaticIdentityConfig,
+    ExecutionService, ExecutionStatus, FixedIdentity, Options, StaticIdentity, StaticIdentityConfig,
 };
 use codexone_governance::KeyOptions;
 use codexone_http_upstream::Proxy;
@@ -151,17 +151,39 @@ pub(crate) async fn run_with_target(
     if runtime.backup_directory.is_some() || runtime.http_body_staging_directory.is_some() {
         return Err(UnsupportedSettings);
     }
+    let static_identity =
+        matches!(&config.source, Some(Source::SingleIdentity(identity)) if !identity.managed_keys);
     let (mut options, mut data, pool_config) = match config.source.take() {
         None => (Options::new("storage-only"), None, None),
         Some(Source::SingleIdentity(identity))
-            if !identity.managed_keys
-                && identity.responses.upstream_transport == UpstreamTransport::Http =>
+            if identity.responses.upstream_transport == UpstreamTransport::Http =>
         {
             let token = identity.read_upstream_token().map_err(|_| Service)?;
             let token = token.as_ref().map(|token| token.as_str());
-            let policy = identity_policy(&identity, token)?;
-            let data = DataPlane::new(*identity, token, proxy.clone()).map_err(|_| Service)?;
-            (Options::for_static_identity(policy), Some(data), None)
+            let (options, versions) = if identity.managed_keys {
+                let fixed = FixedIdentity::new(
+                    &identity.namespace,
+                    identity.identity.clone(),
+                    &identity.upstream_base_url,
+                    token,
+                )
+                .map_err(|_| Service)?;
+                (
+                    Options::for_fixed_identity_with_managed_keys(fixed),
+                    Some(identity_versions(
+                        &identity.responses,
+                        identity.upstream_contract,
+                    )?),
+                )
+            } else {
+                (
+                    Options::for_static_identity(identity_policy(&identity, token)?),
+                    None,
+                )
+            };
+            let data =
+                DataPlane::new(*identity, token, proxy.clone(), versions).map_err(|_| Service)?;
+            (options, Some(data), None)
         }
         Some(Source::AccountPool(pool)) if pool.upstream_transport == UpstreamTransport::Http => {
             (Options::for_account_pool(), None, Some(pool))
@@ -182,7 +204,6 @@ pub(crate) async fn run_with_target(
     let offset = (runtime.business_day_offset_minutes / 60) as i8;
     let execution = match runtime.data_directory {
         Some(directory) => {
-            let static_identity = data.is_some();
             let database =
                 tokio::task::spawn_blocking(move || initialize_store(&directory, static_identity))
                     .await

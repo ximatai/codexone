@@ -228,7 +228,7 @@ pub struct Affinity<'a> {
 }
 
 pub struct ManagedRoute {
-    pub pool: Arc<Pool>,
+    pub pool: Option<Arc<Pool>>,
     pub versions: (String, String),
     pub reserved_micros: i64,
 }
@@ -256,13 +256,16 @@ impl ManagedRoute {
             pricing_version: self.versions.1.clone(),
             reserved_micros: self.reserved_micros,
         };
-        match affinity {
-            Some(affinity) => {
-                self.pool
-                    .admit_with_affinity(execution, request, deadline, Some(affinity))
+        match (&self.pool, affinity) {
+            (Some(pool), Some(affinity)) => {
+                pool.admit_with_affinity(execution, request, deadline, Some(affinity))
                     .await
             }
-            None => self.pool.admit(execution, request, deadline).await,
+            (Some(pool), None) => pool.admit(execution, request, deadline).await,
+            (None, _) => timeout_at(deadline, execution.admit_fixed(request))
+                .await
+                .map_err(|_| ExecutionError::DeadlineExceeded)?
+                .map(|lease| (lease, HeaderMap::new())),
         }
     }
 }

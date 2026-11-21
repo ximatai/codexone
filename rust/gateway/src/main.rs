@@ -72,7 +72,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(gateway::StartupError::UnsupportedConfiguration) => {
             eprintln!(
-                "This backend supports HTTP upstream transport for unmanaged single identities and account pools."
+                "This backend supports HTTP upstream transport for single identities and account pools."
             );
             ExitCode::from(78)
         }

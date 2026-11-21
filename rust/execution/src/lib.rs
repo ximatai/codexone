@@ -12,7 +12,8 @@ pub use codexone_account_pool::{
 };
 pub use model::*;
 pub use static_identity::{
-    StaticAdmissionRequest, StaticAuthorization, StaticIdentity, StaticIdentityConfig,
+    FixedIdentity, StaticAdmissionRequest, StaticAuthorization, StaticIdentity,
+    StaticIdentityConfig,
 };
 pub use worker::{Execution, ExecutionService, ExecutionStatus, GovernanceWork, Options};
 

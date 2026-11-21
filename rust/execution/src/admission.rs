@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Deserialize;
 
 use crate::model::*;
-use crate::{AccountIdentity, ExecutionError as Error, Result};
+use crate::{AccountIdentity, ExecutionError as Error, FixedIdentity, Result};
 
 const ACCOUNT_CONCURRENCY_LIMIT: i64 = 16;
 
@@ -556,8 +556,34 @@ pub(crate) fn admit(
     }
     key_authorizes(tx, &request, now, day, offset)?;
 
-    let admission = managed_intent(&request, dispatch, namespace, day);
+    let admission = managed_intent(
+        &request,
+        dispatch.id,
+        namespace,
+        Some(dispatch.snapshot),
+        day,
+    );
     insert_single_identity_intent(tx, admission, now)
+}
+
+pub(crate) fn admit_fixed(
+    tx: &Transaction<'_>,
+    identity: &FixedIdentity,
+    offset: i64,
+    request: ManagedAdmissionRequest,
+    now: i64,
+) -> Result<Admission> {
+    let day = business_day_start(now, offset);
+    check_intent(tx, &request.attempt, true, now)?;
+    key_authorizes(tx, &request, now, day, offset)?;
+    let admission = managed_intent(
+        &request,
+        identity.identity.clone(),
+        identity.namespace.clone(),
+        None,
+        day,
+    );
+    insert_fixed_intent(tx, admission, now)
 }
 
 pub(crate) fn admit_pool(
@@ -618,7 +644,13 @@ pub(crate) fn admit_pool(
                     continuation: candidate.continuation,
                 },
             };
-            let admission = managed_intent(&request, dispatch, identity.namespace.clone(), day);
+            let admission = managed_intent(
+                &request,
+                dispatch.id,
+                dispatch.namespace,
+                Some(dispatch.snapshot),
+                day,
+            );
             Ok(insert_intent(tx, admission, now, active)?)
         },
     );
@@ -651,8 +683,9 @@ impl From<Error> for PoolAdmissionError {
 
 fn managed_intent(
     request: &ManagedAdmissionRequest,
-    dispatch: AccountDispatch,
+    identity: String,
     namespace: String,
+    account_snapshot: Option<AccountDispatchSnapshot>,
     day: i64,
 ) -> Admission {
     Admission {
@@ -661,7 +694,7 @@ fn managed_intent(
             principal: request.key.principal.clone(),
             key: request.key.id.clone(),
             namespace,
-            identity: dispatch.id,
+            identity,
         },
         window: format!("business-day-{day}"),
         policy_version: request.policy_version.clone(),
@@ -671,7 +704,7 @@ fn managed_intent(
         model: Some(request.model.clone()),
         mode: Some(request.mode),
         key_revision: Some(request.key.revision),
-        account_snapshot: Some(dispatch.snapshot),
+        account_snapshot,
         requirements: Some(request.requirements.clone()),
         references: Some(request.references.clone()),
         reasoning_effort: request.reasoning_effort.clone().map(sanitize_metadata),
@@ -687,6 +720,12 @@ pub(crate) fn admit_static(
     now: i64,
 ) -> Result<Admission> {
     check_intent(tx, &admission.attempt, false, now)?;
+    let day = business_day_start(now, offset);
+    admission.window = format!("business-day-{day}");
+    insert_fixed_intent(tx, admission, now)
+}
+
+fn insert_fixed_intent(tx: &Transaction<'_>, admission: Admission, now: i64) -> Result<Admission> {
     let collision: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1 AND namespace=?2)",
         params![admission.owner.identity, admission.owner.namespace],
@@ -695,8 +734,6 @@ pub(crate) fn admit_static(
     if collision {
         return Err(Error::InvalidCommand);
     }
-    let day = business_day_start(now, offset);
-    admission.window = format!("business-day-{day}");
     insert_single_identity_intent(tx, admission, now)
 }
 
@@ -739,7 +776,7 @@ fn insert_single_identity_intent(
     // Swift's static gateway scopes references to the effective configured namespace;
     // managed routing retains its existing cross-namespace ambiguity check.
     let scope = admission
-        .key_revision
+        .account_snapshot
         .is_none()
         .then_some(owner.namespace.as_str());
     for reference in admission.references.iter().flatten() {

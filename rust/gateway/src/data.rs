@@ -39,6 +39,7 @@ impl DataPlane {
         config: SingleIdentity,
         token: Option<&str>,
         proxy: Option<upstream::Proxy>,
+        managed_versions: Option<(String, String)>,
     ) -> Result<Self, ()> {
         let mut upstream_authorization: Option<HeaderValue> = token
             .map(|token| format!("Bearer {token}").parse())
@@ -47,13 +48,20 @@ impl DataPlane {
         if let Some(header) = &mut upstream_authorization {
             header.set_sensitive(true);
         }
+        let managed = managed_versions.map(|versions| {
+            Arc::new(ManagedRoute {
+                pool: None,
+                versions,
+                reserved_micros: config.responses.reserved_micros,
+            })
+        });
         Self::with_upstream(
             config.responses,
             &config.upstream_base_url,
             upstream_authorization,
             config.upstream_contract,
             proxy,
-            None,
+            managed,
         )
     }
 
@@ -64,7 +72,7 @@ impl DataPlane {
         proxy: Option<upstream::Proxy>,
     ) -> Result<Self, ()> {
         let managed = Arc::new(ManagedRoute {
-            pool: pool.clone(),
+            pool: Some(pool.clone()),
             versions: (policy_version, pricing_version),
             reserved_micros: configuration.reserved_micros,
         });
@@ -410,7 +418,10 @@ impl DataPlane {
                     namespace: owner.namespace.clone(),
                 };
                 request_headers.extend(upstream_headers);
-                (lease, Some((&managed.pool, key_id, provider)))
+                (
+                    lease,
+                    managed.pool.as_ref().map(|pool| (pool, key_id, provider)),
+                )
             } else {
                 let authorization = static_authorization
                     .as_ref()

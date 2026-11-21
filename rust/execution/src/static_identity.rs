@@ -40,6 +40,46 @@ pub struct StaticIdentity {
     reserved_micros: i64,
 }
 
+/// The configured upstream scope used with externally managed Keys.
+pub struct FixedIdentity {
+    pub(crate) namespace: String,
+    pub(crate) identity: String,
+}
+
+impl FixedIdentity {
+    pub fn new(
+        namespace: &str,
+        identity: String,
+        upstream_base_url: &str,
+        upstream_token: Option<&str>,
+    ) -> Result<Self> {
+        if !valid_string(namespace, 128)
+            || !valid_string(&identity, 256)
+            || !valid_string(upstream_base_url, 65_536)
+            || upstream_token.is_some_and(|token| {
+                !(1..=16_384).contains(&token.len())
+                    || !token.bytes().all(|byte| byte.is_ascii_graphic())
+            })
+        {
+            return Err(Error::InvalidCommand);
+        }
+        // Both backends use Swift's slash-escaped JSON input so existing object
+        // bindings survive a compatible change of executable.
+        let input = Zeroizing::new(serde_json::to_string(&[
+            upstream_base_url,
+            "responses",
+            &identity,
+            upstream_token.unwrap_or("synthetic"),
+        ])?);
+        let swift_json = Zeroizing::new(input.replace('/', "\\/"));
+        let scope = key_digest(&swift_json);
+        Ok(Self {
+            namespace: format!("{namespace}:{scope}"),
+            identity,
+        })
+    }
+}
+
 impl StaticIdentity {
     /// Use the same trusted upstream token value used by the provider adapter.
     /// Only the derived scope is retained.
@@ -48,9 +88,6 @@ impl StaticIdentity {
         let image_models: HashSet<_> = config.image_models.iter().cloned().collect();
         if !valid_string(&config.principal, 256)
             || !valid_string(&config.key_id, 256)
-            || !valid_string(&config.namespace, 128)
-            || !valid_string(&config.identity, 256)
-            || !valid_string(&config.upstream_base_url, 65_536)
             || !valid_string(&config.policy_version, 128)
             || !valid_string(&config.pricing_version, 128)
             || !(0..=MAX_AMOUNT).contains(&config.reserved_micros)
@@ -63,30 +100,22 @@ impl StaticIdentity {
                 .iter()
                 .chain(&image_models)
                 .any(|model| !valid_string(model, 128))
-            || upstream_token.is_some_and(|token| {
-                !(1..=16_384).contains(&token.len())
-                    || !token.bytes().all(|byte| byte.is_ascii_graphic())
-            })
         {
             return Err(Error::InvalidCommand);
         }
 
-        // Swift JSONEncoder escapes slashes by default. Keep its exact scope input
-        // so static response IDs produced by either backend share the same owner.
-        let scope_input = Zeroizing::new(serde_json::to_string(&[
+        let fixed = FixedIdentity::new(
+            &config.namespace,
+            config.identity,
             &config.upstream_base_url,
-            "responses",
-            &config.identity,
-            upstream_token.unwrap_or("synthetic"),
-        ])?);
-        let swift_json = Zeroizing::new(scope_input.replace('/', "\\/"));
-        let scope = key_digest(&swift_json);
+            upstream_token,
+        )?;
         Ok(Self {
             owner: Owner {
                 principal: config.principal,
                 key: config.key_id,
-                namespace: format!("{}:{scope}", config.namespace),
-                identity: config.identity,
+                namespace: fixed.namespace,
+                identity: fixed.identity,
             },
             key_sha256: config.key_sha256,
             models,

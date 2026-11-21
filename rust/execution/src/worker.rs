@@ -15,8 +15,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use crate::model::*;
 use crate::reserve::StorageReserve;
 use crate::{
-    AccountIdentity, ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization,
-    StaticIdentity, admission, ledger,
+    AccountIdentity, ExecutionError as Error, FixedIdentity, Result, StaticAdmissionRequest,
+    StaticAuthorization, StaticIdentity, admission, ledger,
 };
 
 const REGULAR_CAPACITY: usize = 16;
@@ -26,6 +26,7 @@ type Recovery = fn(&Transaction<'_>, i64) -> Result<()>;
 
 enum IdentitySource {
     Managed(String),
+    Fixed(FixedIdentity),
     Pool,
     Static(Arc<StaticIdentity>),
 }
@@ -45,6 +46,10 @@ impl Options {
 
     pub fn for_account_pool() -> Self {
         Self::with_identity(IdentitySource::Pool)
+    }
+
+    pub fn for_fixed_identity_with_managed_keys(identity: FixedIdentity) -> Self {
+        Self::with_identity(IdentitySource::Fixed(identity))
     }
 
     pub fn for_static_identity(policy: StaticIdentity) -> Self {
@@ -300,7 +305,9 @@ impl ExecutionService {
         let inner = Arc::new(Inner {
             static_identity: match &options.identity {
                 IdentitySource::Static(policy) => Some(policy.clone()),
-                IdentitySource::Managed(_) | IdentitySource::Pool => None,
+                IdentitySource::Managed(_) | IdentitySource::Fixed(_) | IdentitySource::Pool => {
+                    None
+                }
             },
             pool_enabled: matches!(options.identity, IdentitySource::Pool),
             gate: Mutex::new(Gate {
@@ -537,6 +544,25 @@ impl ExecutionService {
                 return Err(Error::Unauthorized);
             };
             admission::admit(tx, account, options.day_offset, request, dispatch, now)
+        })
+        .await
+    }
+
+    /// Recheck current Key limits and revision for the configured fixed upstream.
+    pub async fn admit_fixed(&self, request: ManagedAdmissionRequest) -> Result<Execution> {
+        request.validate()?;
+        let ticket = self.admission_ticket()?;
+        self.submit_single_admission(ticket, move |tx, options, now_micros| {
+            let IdentitySource::Fixed(identity) = &options.identity else {
+                return Err(Error::Unauthorized);
+            };
+            admission::admit_fixed(
+                tx,
+                identity,
+                options.day_offset,
+                request,
+                now_micros.div_euclid(1_000_000),
+            )
         })
         .await
     }

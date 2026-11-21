@@ -196,9 +196,12 @@ impl NativeImages {
                 }
             };
             if status == StatusCode::OK
-                && let (Some(managed), Some((key, identity))) = (&images.managed, selected)
+                && let (Some(pool), Some((key, identity))) = (
+                    images.managed.as_ref().and_then(|route| route.pool.as_ref()),
+                    selected,
+                )
             {
-                managed.pool.observe_turn_state(key, &identity, &headers);
+                pool.observe_turn_state(key, &identity, &headers);
             }
             let streaming = is_sse(&headers);
             if streaming {
@@ -279,10 +282,10 @@ impl NativeImages {
             reasoning_effort: None,
             service_tier: request.service_tier,
         };
-        let (execution, full_headers) = match authorization {
+        let (execution, routed_headers) = match authorization {
             Authorization::Static(authorization) => (
                 execution.admit_static(authorization, admission).await?,
-                self.account_headers.clone(),
+                HeaderMap::new(),
             ),
             Authorization::Managed(key) => {
                 let managed = self.managed.as_ref().ok_or(ExecutionError::Unauthorized)?;
@@ -305,10 +308,12 @@ impl NativeImages {
                     .await?
             }
         };
+        let mut account_headers = self.account_headers.clone();
+        account_headers.extend(routed_headers);
         Ok(ImageDispatch {
             execution,
             base: self.base.clone(),
-            account_headers: full_headers,
+            account_headers,
         })
     }
 }
