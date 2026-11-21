@@ -92,6 +92,14 @@ impl SubscriptionProvider {
         }
     }
 
+    /// Extend fixture trust while preserving the pinned origins and configured proxy.
+    #[cfg(feature = "test-support")]
+    pub fn with_test_roots(mut self, roots: tokio_rustls::rustls::RootCertStore) -> Self {
+        self.auth = self.auth.with_root_certificates(roots.clone());
+        self.quota = self.quota.with_root_certificates(roots);
+        self
+    }
+
     #[cfg(feature = "test-support")]
     pub fn driver_probes(
         &self,

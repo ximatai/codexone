@@ -13,4 +13,4 @@ cargo test --locked --features test-support --manifest-path rust/identity-runtim
 rust/identity-runtime/tests/verify-swift.sh
 ```
 
-The test feature enables per-client driver completion probes for the shutdown cases. The Swift check compiles the production quota Codable types and round-trips the same synthetic record through both implementations.
+The test feature enables driver completion probes and a TLS fixture for the production auth and quota origins. The fixture checks one OAuth exchange, one refresh, and one quota observation through a loopback CONNECT proxy, with credentials confined to the TLS endpoint. The Swift check compiles the production quota Codable types and round-trips the same synthetic record through both implementations.

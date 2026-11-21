@@ -25,6 +25,10 @@ use tokio::{
     time::timeout,
 };
 
+#[cfg(feature = "test-support")]
+#[path = "support/proxy.rs"]
+mod proxy;
+
 const NOW: i64 = 1_700_000_000;
 const CLIENT: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const NONCE: &str = "synthetic_nonce_0123456789012345678";
@@ -148,6 +152,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(auth: NonZeroU16, quota: NonZeroU16) -> Self {
+        Self::with_provider(move |now| {
+            SubscriptionProvider::synthetic_loopback(auth, quota, move || {
+                now.load(Ordering::Relaxed)
+            })
+        })
+    }
+
+    fn with_provider(provider: impl FnOnce(Arc<AtomicI64>) -> SubscriptionProvider) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("synthetic.sqlite");
         let now = Arc::new(AtomicI64::new(NOW));
@@ -158,9 +170,7 @@ impl Fixture {
             Arc::new(WriterProbe::default()),
         );
         let governance = Arc::new(Governance::new(writer.clone(), Some(cipher())));
-        let provider = SubscriptionProvider::synthetic_loopback(auth, quota, move || {
-            now.load(Ordering::Relaxed)
-        });
+        let provider = provider(now);
         let runtime = IdentityRuntime::new(
             writer.clone(),
             governance.clone(),
@@ -283,32 +293,37 @@ struct Request {
 async fn accept(listener: &TcpListener) -> (TcpStream, Request) {
     timeout(WAIT, async {
         let (mut socket, _) = listener.accept().await.unwrap();
-        let mut bytes = Vec::new();
-        let boundary = loop {
-            assert_ne!(socket.read_buf(&mut bytes).await.unwrap(), 0);
-            if let Some(pos) = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                break pos + 4;
-            }
-            assert!(bytes.len() < 65_536);
-        };
-        let head = String::from_utf8(bytes[..boundary].to_vec()).unwrap();
-        let size: usize = head
-            .lines()
-            .find_map(|line| line.strip_prefix("content-length: "))
-            .unwrap_or("0")
-            .parse()
-            .unwrap();
-        while bytes.len() < boundary + size {
-            assert_ne!(socket.read_buf(&mut bytes).await.unwrap(), 0);
-        }
-        let body = String::from_utf8(bytes[boundary..boundary + size].to_vec()).unwrap();
-        (socket, Request { head, body })
+        let request = read_request(&mut socket).await;
+        (socket, request)
     })
     .await
     .unwrap()
 }
 
-async fn reply(socket: &mut TcpStream, status: u16, value: &Value) {
+async fn read_request(socket: &mut (impl tokio::io::AsyncRead + Unpin)) -> Request {
+    let mut bytes = Vec::new();
+    let boundary = loop {
+        assert_ne!(socket.read_buf(&mut bytes).await.unwrap(), 0);
+        if let Some(pos) = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+            break pos + 4;
+        }
+        assert!(bytes.len() < 65_536);
+    };
+    let head = String::from_utf8(bytes[..boundary].to_vec()).unwrap();
+    let size: usize = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length: "))
+        .unwrap_or("0")
+        .parse()
+        .unwrap();
+    while bytes.len() < boundary + size {
+        assert_ne!(socket.read_buf(&mut bytes).await.unwrap(), 0);
+    }
+    let body = String::from_utf8(bytes[boundary..boundary + size].to_vec()).unwrap();
+    Request { head, body }
+}
+
+async fn reply(socket: &mut (impl tokio::io::AsyncWrite + Unpin), status: u16, value: &Value) {
     let body = serde_json::to_vec(value).unwrap();
     let headers = format!(
         "HTTP/1.1 {status} Test\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
