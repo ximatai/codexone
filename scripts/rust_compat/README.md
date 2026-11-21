@@ -50,3 +50,14 @@ python3 scripts/rust_compat/online_backup.py \
 ```
 
 测试网关立即开始第一次备份，并在 SQLite 复制完第一批页后暂停。驱动发送一次 HTTP 续接请求，先从源库核对该请求持久结算，再恢复复制。发布后，Swift 与 Rust CLI 均验证同一快照，驱动核对已在复制前完成的账本和绑定。并发请求是否进入快照取决于 SQLite 的快照时点，测试允许该请求处于尚未录入、执行中或已结算状态，若快照包含已结算请求则核对对应的用量和绑定。正式网关仍按首次 10 分钟、每轮结束后 24 小时的间隔运行。
+
+## HTTP 正文暂存故障
+
+从仓库根目录运行。临时数据卷需有至少 448 MiB 可用空间，外加 SQLite 运行所需空间。
+
+```sh
+cargo build --locked --release --manifest-path rust/gateway/Cargo.toml
+python3 scripts/rust_compat/http_staging.py --binary rust/gateway/target/release/codexone
+```
+
+驱动通过 HTTP/1.1 的 `100 Continue` 确认三个 62 MiB 请求各自取得暂存租约，检查第四个收到 `503 capacity_exhausted`。客户端 TCP reset 后，替补请求可重新取得租约。驱动在其余上传未完成时向网关发送 SIGKILL，核对没有上游调用、没有账本记录，且数据目录没有出现命名暂存文件。重启同一个数据目录后，驱动检查暂存明文字节与 Content-Length、一次结算及三个租约重新可用，并检查进程日志中无合成正文标记或 Bearer Key。
