@@ -135,10 +135,14 @@ impl Rejection {
             "model_not_allowed" => ("model_not_allowed", Some("model_not_allowed")),
             "reasoning_effort_not_allowed" => (
                 "invalid_request",
-                Some(self.selection.as_ref().map_or(
-                    "reasoning_effort_not_allowed",
-                    RequestSelection::effort_reason,
-                )),
+                Some(if error.detail.is_some() {
+                    "reasoning_effort_not_allowed"
+                } else {
+                    self.selection.as_ref().map_or(
+                        "reasoning_effort_not_allowed",
+                        RequestSelection::effort_reason,
+                    )
+                }),
             ),
             "unsupported_backend_parameter" => ("invalid_request", error.detail),
             "conversation_too_large" => ("invalid_request", Some("conversation_too_large")),

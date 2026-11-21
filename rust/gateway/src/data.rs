@@ -427,13 +427,14 @@ impl DataPlane {
             return Err(ProtocolError::new(400, "unsupported_execution_mode").into());
         }
         let began = Instant::now();
-        let (admission, usage) = prepare_admission(
+        let (admission, usage, reasoning_context) = prepare_admission(
             configuration,
             models,
             &image_ids,
             &request,
             request_id,
             authorization.as_ref(),
+            None,
         )?;
         let client_sse = !compact && request.stream;
         let lite = request.uses_responses_lite;
@@ -493,6 +494,7 @@ impl DataPlane {
                         execution,
                         key,
                         admission,
+                        reasoning_context,
                         deadline,
                         Some(Affinity {
                             connection: None,
@@ -741,10 +743,12 @@ pub(crate) fn prepare_admission(
     request: &protocol::Request,
     request_id: &str,
     authorization: Option<&execution::AuthenticatedKey>,
+    previous_reasoning: Option<protocol::ReasoningContext>,
 ) -> Result<
     (
         execution::StaticAdmissionRequest,
         protocol::UsageConfig<'static>,
+        Option<protocol::ReasoningContext>,
     ),
     ProtocolError,
 > {
@@ -762,7 +766,7 @@ pub(crate) fn prepare_admission(
         .and_then(|key| key.reasoning_efforts(&model.id))
         .map(|efforts| efforts.iter().map(String::as_str).collect::<Vec<_>>());
     let model_efforts = model.effective_reasoning_efforts();
-    protocol::ModelPolicy {
+    let reasoning_context = protocol::ModelPolicy {
         id: &model.id,
         vision_input: model.vision_input == Some(true)
             && authorization.is_none_or(|key| key.allows_vision()),
@@ -776,7 +780,7 @@ pub(crate) fn prepare_admission(
             .is_some_and(|settings| settings.allowed.is_some()),
         key_reasoning_efforts: key_efforts.as_deref(),
     }
-    .validate(request)?;
+    .validate(request, previous_reasoning)?;
     let images = configuration.image_generation.as_ref();
     let admission = execution::StaticAdmissionRequest {
         attempt: Uuid::new_v4().hyphenated().to_string().to_ascii_uppercase(),
@@ -812,7 +816,7 @@ pub(crate) fn prepare_admission(
                 author_rates: &[],
             }),
     };
-    Ok((admission, usage))
+    Ok((admission, usage, reasoning_context))
 }
 
 fn model_rates(model: &Model) -> protocol::Rates {

@@ -186,6 +186,7 @@ async fn request(service: &ExecutionService, id: &str, secret: &str) -> Admissio
         requirements: request.requirements,
         references: request.references,
         reasoning_effort: request.reasoning_effort,
+        reasoning_context: request.reasoning_context,
         service_tier: request.service_tier,
         policy_version: request.policy_version,
         pricing_version: request.pricing_version,
@@ -203,6 +204,7 @@ fn operation(id: &str, key: AuthenticatedKey) -> ManagedAdmissionRequest {
         requirements: Requirements::default(),
         references: vec![],
         reasoning_effort: Some("high".into()),
+        reasoning_context: Some(vec!["high"]),
         service_tier: None,
         policy_version: "synthetic-policy".into(),
         pricing_version: "synthetic-price".into(),
@@ -283,6 +285,83 @@ fn evidence(revision: i64, input: i64, complete: bool) -> UsageEvidence {
         },
         ..UsageEvidence::default()
     }
+}
+
+#[tokio::test]
+async fn effort_policy_rechecks_current_revision_and_context_before_intent() {
+    let fixture = Fixture::new(None, None);
+    let db = fixture.raw();
+    db.execute(
+        "UPDATE managed_keys SET metadata_json=json_set(metadata_json,?1,json(?2)) WHERE id='synthetic-key'",
+        [format!("$.policy.reasoningEfforts.{MODEL}"), r#"["medium","high"]"#.into()],
+    ).unwrap();
+    let service = fixture.open(4, 0).await;
+    let mut turn = request(&service, "effort-catalog", SECRET).await;
+    turn.reasoning_context = Some(vec!["medium", "high"]);
+
+    // The Key permits both values, but the saved model route permits only the top value.
+    assert_eq!(
+        service.admit(turn.clone()).await.err(),
+        Some(ExecutionError::Unauthorized)
+    );
+    assert_eq!(
+        service.snapshot("effort-catalog").await.err(),
+        Some(ExecutionError::UnknownAttempt)
+    );
+    db.execute(
+        "UPDATE model_directory_routes SET reasoning_efforts=?1 WHERE model=?2",
+        params![r#"["medium","high"]"#, MODEL],
+    )
+    .unwrap();
+    let accepted = service.admit(turn.clone()).await.unwrap();
+    assert_eq!(
+        accepted.admission().reasoning_effort.as_deref(),
+        Some("high")
+    );
+    drop(accepted);
+
+    // Narrow the Key after preparing the authorization snapshot. The old turn's
+    // known history must still be denied after a fresh authentication too.
+    db.execute(
+        "UPDATE managed_keys SET metadata_json=json_set(metadata_json,'$.revision',2,?1,json(?2))
+         WHERE id='synthetic-key'",
+        [
+            format!("$.policy.reasoningEfforts.{MODEL}"),
+            r#"["high"]"#.into(),
+        ],
+    )
+    .unwrap();
+    turn.attempt = "effort-stale".into();
+    turn.request_id = None;
+    assert_eq!(
+        service.admit(turn.clone()).await.err(),
+        Some(ExecutionError::Unauthorized)
+    );
+    assert_eq!(
+        service.snapshot("effort-stale").await.err(),
+        Some(ExecutionError::UnknownAttempt)
+    );
+
+    let mut current = request(&service, "effort-current", SECRET).await;
+    current.reasoning_context = turn.reasoning_context;
+    assert_eq!(
+        service.admit(current.clone()).await.err(),
+        Some(ExecutionError::Unauthorized)
+    );
+    assert_eq!(
+        service.snapshot("effort-current").await.err(),
+        Some(ExecutionError::UnknownAttempt)
+    );
+
+    current.reasoning_context = None;
+    assert_eq!(
+        service.admit(current).await.err(),
+        Some(ExecutionError::Unauthorized)
+    );
+    assert_eq!(
+        service.snapshot("effort-current").await.err(),
+        Some(ExecutionError::UnknownAttempt)
+    );
 }
 
 #[tokio::test]

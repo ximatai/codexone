@@ -305,6 +305,7 @@ impl NativeImages {
                         execution,
                         key.clone(),
                         admission,
+                        None,
                         request.deadline,
                         Some(Affinity {
                             connection: None,

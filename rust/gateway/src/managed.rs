@@ -409,6 +409,7 @@ impl ManagedRoute {
         execution: &ExecutionService,
         key: AuthenticatedKey,
         request: StaticAdmissionRequest,
+        reasoning_context: Option<codexone_responses::ReasoningContext>,
         deadline: Instant,
         affinity: Option<Affinity<'_>>,
     ) -> codexone_execution::Result<(Execution, HeaderMap)> {
@@ -421,6 +422,7 @@ impl ManagedRoute {
             requirements: request.requirements,
             references: request.references,
             reasoning_effort: request.reasoning_effort,
+            reasoning_context: reasoning_context.map(|facts| facts.efforts().collect()),
             service_tier: request.service_tier,
             policy_version: self.versions.0.clone(),
             pricing_version: self.versions.1.clone(),

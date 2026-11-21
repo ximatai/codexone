@@ -1,6 +1,6 @@
 use crate::{
-    BindingKind, JsonValue, ObjectBinding, ProtocolError, image_payload::validate_mask, metadata,
-    object, opaque_context, same_text, text, valid_id,
+    BindingKind, JsonValue, ObjectBinding, ProtocolError, ReasoningContext,
+    image_payload::validate_mask, metadata, object, opaque_context, same_text, text, valid_id,
 };
 
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024 * 1024;
@@ -302,6 +302,10 @@ impl Request {
         &self.document
     }
 
+    pub fn previous_response_id(&self) -> Option<&str> {
+        self.document.get("previous_response_id").and_then(valid_id)
+    }
+
     /// Check the selected contract before admission when the request must remain available.
     pub fn validate_contract(
         &self,
@@ -527,7 +531,11 @@ pub struct ModelPolicy<'a> {
 }
 
 impl ModelPolicy<'_> {
-    pub fn validate(&self, request: &Request) -> Result<(), ProtocolError> {
+    pub fn validate(
+        &self,
+        request: &Request,
+        previous_reasoning: Option<ReasoningContext>,
+    ) -> Result<Option<ReasoningContext>, ProtocolError> {
         if !same_text(self.id, &request.model)
             || (request.vision_input && !self.vision_input)
             || request.image_model.as_deref().is_some_and(|image| {
@@ -540,27 +548,12 @@ impl ModelPolicy<'_> {
         {
             return Err(ProtocolError::new(403, "model_not_allowed"));
         }
-        if request.mode == Mode::Warmup
-            || !(self.restrict_reasoning_effort || self.key_reasoning_efforts.is_some())
-        {
-            return Ok(());
-        }
-        let effort = request
-            .document
-            .get("reasoning")
-            .and_then(|value| text(value, "effort"));
-        let allowed =
-            |effort: &str, options: &[&str]| options.iter().any(|option| same_text(effort, option));
-        if request.document.get("reasoning_effort").is_some()
-            || !effort.is_some_and(|effort| {
-                allowed(effort, self.effective_reasoning_efforts)
-                    && self
-                        .key_reasoning_efforts
-                        .is_none_or(|options| allowed(effort, options))
-            })
-        {
-            return Err(ProtocolError::new(403, "reasoning_effort_not_allowed"));
-        }
-        Ok(())
+        crate::reasoning::evaluate(
+            request,
+            previous_reasoning,
+            self.effective_reasoning_efforts,
+            self.restrict_reasoning_effort,
+            self.key_reasoning_efforts,
+        )
     }
 }

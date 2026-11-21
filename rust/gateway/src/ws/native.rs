@@ -69,7 +69,7 @@ pub struct Session {
     protocol_extensions: Arc<ClientProtocolExtensions>,
     client: Client,
     first_attempt: OnceLock<String>,
-    previous_tools: Mutex<HashMap<String, ToolSnapshot>>,
+    previous_turns: Mutex<HashMap<String, TurnSnapshot>>,
 }
 
 enum Authorization {
@@ -121,7 +121,7 @@ impl Session {
             protocol_extensions,
             client: Client::inspect(headers),
             first_attempt: OnceLock::new(),
-            previous_tools: Mutex::default(),
+            previous_turns: Mutex::default(),
         })
     }
 }
@@ -142,9 +142,11 @@ impl PartialEq for Identity {
 impl Eq for Identity {}
 
 #[derive(Clone)]
-struct ToolSnapshot {
+struct TurnSnapshot {
     model: String,
     response_id: String,
+    uses_lite: bool,
+    reasoning: Option<protocol::ReasoningContext>,
 }
 
 struct TurnRequest {
@@ -157,6 +159,7 @@ pub struct TurnAttempt {
     inner: Attempt,
     request: TurnRequest,
     provider: Provider,
+    reasoning: Option<protocol::ReasoningContext>,
 }
 
 pub struct Input {
@@ -271,9 +274,25 @@ impl NativeApplication for Session {
 
     fn begin_dispatch(&self, attempt: &mut TurnAttempt) -> Result<(), ProtocolError> {
         attempt.inner.dispatch()?;
+        if let Some(previous) = self
+            .previous_turns
+            .lock()
+            .unwrap()
+            .get_mut(&attempt.request.lane)
+        {
+            previous.reasoning = None;
+        }
         self.first_attempt
             .get_or_init(|| attempt.inner.id().to_owned());
         Ok(())
+    }
+
+    fn upstream_reset(&self) {
+        // Tool inheritance retains its existing behavior. Effort facts only apply
+        // to continuations on the upstream connection that established them.
+        for previous in self.previous_turns.lock().unwrap().values_mut() {
+            previous.reasoning = None;
+        }
     }
 
     async fn record_unadmitted(&self) {
@@ -325,6 +344,7 @@ impl NativeApplication for Session {
         let TurnAttempt {
             inner: mut attempt,
             request,
+            reasoning,
             ..
         } = attempt;
         if matches!(
@@ -334,17 +354,19 @@ impl NativeApplication for Session {
             }
         ) && let Some(response_id) = attempt.completed_id()
         {
-            let mut tools = self.previous_tools.lock().unwrap();
-            if request.uses_lite {
-                tools.insert(
+            let mut previous = self.previous_turns.lock().unwrap();
+            if request.uses_lite || reasoning.is_some() {
+                previous.insert(
                     request.lane,
-                    ToolSnapshot {
+                    TurnSnapshot {
                         model: request.model,
                         response_id,
+                        uses_lite: request.uses_lite,
+                        reasoning,
                     },
                 );
             } else {
-                tools.remove(&request.lane);
+                previous.remove(&request.lane);
             }
         }
         match &result {
@@ -460,11 +482,11 @@ impl Session {
         };
         let turn_state =
             protocol::request_turn_state(&turn_states, &[], &document)?.map(str::to_owned);
-        let previous = self.previous_tools.lock().unwrap().get(lane).cloned();
+        let previous = self.previous_turns.lock().unwrap().get(lane).cloned();
         let previous = previous.as_ref().map(|snapshot| protocol::PreviousTools {
             model: &snapshot.model,
             response_id: &snapshot.response_id,
-            uses_responses_lite: true,
+            uses_responses_lite: snapshot.uses_lite,
         });
         let config = self.images.configuration();
         let ids = data::image_ids(config);
@@ -542,14 +564,27 @@ impl Session {
             .as_ref()
             .map_or(config.models.as_slice(), |directory| &directory.active);
         rejection.inspect(&input.protocol_request, models);
-        let (admission, usage) = data::prepare_admission(
+        let previous_reasoning = identity.as_ref().and_then(|_| {
+            let previous = self.previous_turns.lock().unwrap();
+            let snapshot = previous.get(&input.request.lane)?;
+            if input.protocol_request.previous_response_id() == Some(snapshot.response_id.as_str())
+                && input.request.model == snapshot.model
+            {
+                snapshot.reasoning
+            } else {
+                None
+            }
+        });
+        let (admission, usage, reasoning_context) = data::prepare_admission(
             config,
             models,
             &ids,
             &input.protocol_request,
             &input.request_id,
             key.as_ref(),
+            previous_reasoning,
         )?;
+        let admission_mode = input.protocol_request.mode;
         let (lease, provider) = match (&self.authorization, key) {
             (Authorization::Static(auth), _) => (
                 self.execution.admit_static(auth, admission).await?,
@@ -574,6 +609,7 @@ impl Session {
                         &self.execution,
                         key,
                         admission,
+                        reasoning_context,
                         deadline,
                         Some(Affinity {
                             connection: connection.as_ref(),
@@ -604,6 +640,11 @@ impl Session {
                 inner: Attempt::new(lease, usage, input.began, input.encoded_bytes),
                 request: input.request,
                 provider,
+                reasoning: if admission_mode == protocol::Mode::Compact {
+                    None
+                } else {
+                    reasoning_context
+                },
             },
         })
     }

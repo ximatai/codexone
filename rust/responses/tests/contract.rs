@@ -185,7 +185,7 @@ fn turn_state_and_model_permissions_are_bound_to_trusted_configuration() {
         key_reasoning_efforts: Some(&["medium"]),
     };
     assert_eq!(
-        policy.validate(&request).unwrap_err().code,
+        policy.validate(&request, None).unwrap_err().code,
         "reasoning_effort_not_allowed"
     );
     assert!(
@@ -193,7 +193,7 @@ fn turn_state_and_model_permissions_are_bound_to_trusted_configuration() {
             key_reasoning_efforts: None,
             ..policy
         }
-        .validate(&request)
+        .validate(&request, None)
         .is_ok()
     );
 }

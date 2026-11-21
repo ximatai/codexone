@@ -123,6 +123,8 @@ pub trait NativeApplication: Send + Sync + 'static {
 
     fn upstream_closed(&self, _attempt: &Self::Attempt, _socket: SocketEnd) {}
 
+    fn upstream_reset(&self) {}
+
     fn connection_stop(&self, _identity: &Self::Identity) -> Option<CancellationToken> {
         None
     }
@@ -800,6 +802,7 @@ impl<A: NativeApplication> Session<A> {
         self.buffered_metadata.clear();
         self.output_started.clear();
         self.finish_lane(&lane, NativeFinish::UnprocessedSizeRefusal);
+        self.app.upstream_reset();
         self.replacing_refused_socket = true;
         self.send_error(TOO_LARGE, None, &request_id, &lane).await
     }

@@ -209,15 +209,18 @@ fn key_authorizes(
         {
             return Err(Error::Unauthorized);
         }
-        if request.mode != Mode::Warmup
-            && let Some(allowed) = policy
-                .reasoning_efforts
-                .as_ref()
-                .and_then(|efforts| efforts.get(&request.model))
-            && !request
-                .reasoning_effort
-                .as_ref()
-                .is_some_and(|value| allowed.contains(value))
+        if let Some(allowed) = policy
+            .reasoning_efforts
+            .as_ref()
+            .and_then(|efforts| efforts.get(&request.model))
+            && (!request.reasoning_context.as_ref().is_some_and(|context| {
+                context
+                    .iter()
+                    .all(|effort| allowed.iter().any(|value| value == effort))
+            }) || match request.reasoning_effort.as_ref() {
+                Some(value) => !allowed.contains(value),
+                None => request.mode != Mode::Warmup,
+            })
         {
             return Err(Error::Unauthorized);
         }
@@ -321,6 +324,7 @@ fn catalog_allows(
         &request.model,
         request.mode == Mode::Warmup,
         request.reasoning_effort.as_deref(),
+        request.reasoning_context.as_deref(),
     )
 }
 
@@ -330,15 +334,22 @@ fn catalog_supports(
     model: &str,
     warmup: bool,
     reasoning: Option<&str>,
+    context: Option<&[&str]>,
 ) -> Result<bool> {
+    let context = context.map(serde_json::to_string).transpose()?;
     let denied: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
           AND NOT EXISTS (
             SELECT 1 FROM model_directory_routes r WHERE model=?1 AND (account IS NULL OR account=?2)
-             AND (?3 OR reasoning_efforts IS NULL OR EXISTS
-               (SELECT 1 FROM json_each(r.reasoning_efforts) WHERE value=?4))
+             AND (reasoning_efforts IS NULL OR (
+               ((?4 IS NULL AND ?3) OR ?4 IN (SELECT value FROM json_each(r.reasoning_efforts)))
+               AND ?5 IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM json_each(?5) AS seen
+                   WHERE NOT EXISTS (SELECT 1 FROM json_each(r.reasoning_efforts) AS allowed
+                                     WHERE allowed.value = seen.value))
+             ))
           )",
-        params![model, account, warmup, reasoning],
+        params![model, account, warmup, reasoning, context],
         |row| row.get(0),
     )?;
     Ok(!denied)
@@ -635,6 +646,7 @@ pub(crate) fn admit_priming(
         &request.model,
         false,
         Some(&request.reasoning_effort),
+        Some(&[request.reasoning_effort.as_str()]),
     )? {
         return Err(Error::Conflict);
     }

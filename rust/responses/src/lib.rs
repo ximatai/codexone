@@ -3,12 +3,14 @@
 mod events;
 mod image_payload;
 mod provider_error;
+mod reasoning;
 mod request;
 mod usage;
 
 pub use codexone_wire::{JsonObject, JsonValue};
 pub use events::*;
 pub use provider_error::*;
+pub use reasoning::ReasoningContext;
 pub use request::*;
 pub use usage::*;
 

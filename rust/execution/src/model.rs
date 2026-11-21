@@ -247,6 +247,8 @@ pub struct AdmissionRequest {
     pub requirements: Requirements,
     pub references: Vec<ObjectBinding>,
     pub reasoning_effort: Option<String>,
+    /// Validated, complete effort set for this context. Admission only, never persisted.
+    pub reasoning_context: Option<Vec<&'static str>>,
     pub service_tier: Option<String>,
     pub policy_version: String,
     pub pricing_version: String,
@@ -265,6 +267,7 @@ impl AdmissionRequest {
             requirements,
             references,
             reasoning_effort,
+            reasoning_context,
             service_tier,
             policy_version,
             pricing_version,
@@ -280,6 +283,7 @@ impl AdmissionRequest {
                 requirements,
                 references,
                 reasoning_effort,
+                reasoning_context,
                 service_tier,
                 policy_version,
                 pricing_version,
@@ -338,6 +342,8 @@ pub struct ManagedAdmissionRequest {
     pub requirements: Requirements,
     pub references: Vec<ObjectBinding>,
     pub reasoning_effort: Option<String>,
+    /// Validated, complete effort set for this context. Admission only, never persisted.
+    pub reasoning_context: Option<Vec<&'static str>>,
     pub service_tier: Option<String>,
     pub policy_version: String,
     pub pricing_version: String,
@@ -383,7 +389,9 @@ impl ManagedAdmissionRequest {
                 self.service_tier.as_deref(),
             ],
         )?;
-        if !valid_model(&self.model)
+        if self.reasoning_context.as_ref().is_some_and(|context| {
+            context.len() > 8 || context.iter().any(|effort| !valid_string(effort, 32))
+        }) || !valid_model(&self.model)
             || self
                 .requirements
                 .image_model
