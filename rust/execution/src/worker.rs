@@ -417,7 +417,7 @@ impl ExecutionService {
         opening_attempt: bool,
         body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        self.regular_command(opening_attempt, !opening_attempt, false, body)
+        self.regular_command(opening_attempt, !opening_attempt, false, false, body)
             .await
     }
 
@@ -426,14 +426,17 @@ impl ExecutionService {
         accepting_required: bool,
         allow_drain: bool,
         complete_on_cancel: bool,
+        wait_for_capacity: bool,
         body: impl FnOnce(&mut Writer) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let permit = self
-            .inner
-            .regular
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::Capacity)?;
+        let slots = self.inner.regular.clone();
+        let permit = if wait_for_capacity {
+            // Only already-durable refresh operations may wait. Their owner bounds
+            // the number of refresh jobs and is joined before shutting down this writer.
+            slots.acquire_owned().await.map_err(|_| Error::Closed)?
+        } else {
+            slots.try_acquire_owned().map_err(|_| Error::Capacity)?
+        };
         let inner = self.inner.clone();
         let (reply, response) = oneshot::channel();
         self.inner.enqueue(
@@ -466,33 +469,39 @@ impl ExecutionService {
         operation: impl FnOnce(&mut Database, i64, bool) -> T + Send + 'static,
     ) -> Result<T> {
         use GovernanceWork::*;
-        self.regular_command(!matches!(work, Critical), true, true, move |writer| {
-            let optional = match work {
-                Read => false,
-                Optional => {
-                    writer.reserve.check_optional()?;
-                    true
-                }
-                Restrict => match writer.reserve.check_optional() {
-                    Ok(()) => true,
-                    Err(Error::StoragePressure) => {
+        self.regular_command(
+            !matches!(work, Read | Critical),
+            true,
+            true,
+            matches!(work, Critical),
+            move |writer| {
+                let optional = match work {
+                    Read => false,
+                    Optional => {
+                        writer.reserve.check_optional()?;
+                        true
+                    }
+                    Restrict => match writer.reserve.check_optional() {
+                        Ok(()) => true,
+                        Err(Error::StoragePressure) => {
+                            writer.reserve.prepare_critical()?;
+                            false
+                        }
+                        Err(error) => return Err(error),
+                    },
+                    Admission => {
+                        writer.reserve.check_admission()?;
+                        false
+                    }
+                    Critical => {
                         writer.reserve.prepare_critical()?;
                         false
                     }
-                    Err(error) => return Err(error),
-                },
-                Admission => {
-                    writer.reserve.check_admission()?;
-                    false
-                }
-                Critical => {
-                    writer.reserve.prepare_critical()?;
-                    false
-                }
-            };
-            let now = writer.now()?;
-            Ok(operation(&mut writer.db, now, optional))
-        })
+                };
+                let now = writer.now()?;
+                Ok(operation(&mut writer.db, now, optional))
+            },
+        )
         .await
     }
 

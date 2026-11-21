@@ -74,7 +74,10 @@ impl AuthenticatedKey {
     }
 
     pub fn allows_model(&self, model: &str) -> bool {
-        self.scope.models.as_ref().is_none_or(|models| models.iter().any(|id| id == model))
+        self.scope
+            .models
+            .as_ref()
+            .is_none_or(|models| models.iter().any(|id| id == model))
     }
 
     pub fn allows_vision(&self) -> bool {
@@ -87,11 +90,19 @@ impl AuthenticatedKey {
 
     pub fn allows_image_model(&self, model: &str) -> bool {
         self.allows_images()
-            && self.scope.image_models.as_ref().is_none_or(|models| models.iter().any(|id| id == model))
+            && self
+                .scope
+                .image_models
+                .as_ref()
+                .is_none_or(|models| models.iter().any(|id| id == model))
     }
 
     pub fn reasoning_efforts(&self, model: &str) -> Option<&[String]> {
-        self.scope.reasoning_efforts.as_ref()?.get(model).map(Vec::as_slice)
+        self.scope
+            .reasoning_efforts
+            .as_ref()?
+            .get(model)
+            .map(Vec::as_slice)
     }
 }
 
@@ -167,7 +178,10 @@ pub struct AccountDispatch {
 }
 
 impl AccountDispatch {
-    pub fn from_snapshot(identity: crate::AccountIdentity, snapshot: AccountDispatchSnapshot) -> Self {
+    pub fn from_snapshot(
+        identity: crate::AccountIdentity,
+        snapshot: AccountDispatchSnapshot,
+    ) -> Self {
         Self {
             id: identity.id,
             namespace: identity.namespace,
