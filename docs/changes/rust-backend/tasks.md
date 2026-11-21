@@ -157,6 +157,12 @@
 
 两次运行均保持两路 40 MiB 上传并发、两个并行原生图片输出、30 次派发和 627 次成功管理探针，无 OOM。修正候选三轮的匿名 RSS 尾段为 4.30、4.45、4.43 MiB，活动 TCP 与账本 `intent` 均为 0，既有取消留下的 `unknown` 计数为 1、2、3。延迟来自同机型两次独立运行。剩余验证包括 O11 最终发布镜像的所有分片和安装，以及 O14 约 1.6 GiB 整机约束下的完整负载包络。[修正候选运行与归档](https://github.com/ximatai/codexone/actions/runs/44866706438)
 
+## 定版发行镜像与两项协议复查
+
+固定 `11e92c0` 的 Rust 原生 amd64 镜像通过容量、完整 Nginx TLS、加密暂存故障恢复、实际 Compose 安装及备份恢复/日常维护。原生容量三轮 RSS 为 17.68、17.74、17.79 MiB，最大增量 0.11 MiB。标准 Verify 全部通过。用同一归档加载优化 Rust 网关运行扩展分片，补齐共享文本夹具后 45 项中 30 通过、6 失败、9 未运行；后者依赖 Swift 专用探针或属于独立于产品二进制的工具与源码检查。[定版镜像验收](https://github.com/ximatai/codexone/actions/runs/44867789791) · [标准 Verify](https://github.com/ximatai/codexone/actions/runs/44867656559) · [同归档夹具复跑](https://github.com/ximatai/codexone/actions/runs/44868277082)
+
+在 `11e92c0` 基线上修复两项既有行为。HTTP 桥接按实际 WS 编码长度先拒绝超限续接，等于阈值时仍按订阅 HTTP 参数校验处理。原生定向验证确认超阈值一字节为 413，等于阈值为 400，两个拒绝均无新增派发和 attempt，原有原生 WS 续接仍可用。共享 WS 阈值冒烟套件在 Responses 与 Codex subscription 两种契约上通过。首页记录当前进程实际提交的速率样本，用于区分启动秒或历史时钟范围内的结算归属。原生定向验证收到已结算请求的 Key 聚合及匹配账本的近 60 秒和分日速率，Rust 用量及执行测试通过。共享管理 WSS 已通过通常的升级、结算推送及关闭检查，独立的 SQLite 故障用例重命名核心 attempts 表后连接关闭，尚未验证读源恢复快照。其余扩展分片差异继续独立跟进。[原生定向复查](https://github.com/ximatai/codexone/actions/runs/44868885506)
+
 ## 相关文档
 
 [架构提案](proposal.md)
