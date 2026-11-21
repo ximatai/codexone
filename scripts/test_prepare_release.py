@@ -16,9 +16,9 @@ SCRIPT = Path(__file__).with_name('prepare_release.py').resolve()
 
 class ReleasePolicyTests(unittest.TestCase):
     def test_tag_policy(self):
-        for tag in ('v0.26.1', 'v0.26.12', 'v0.27.2-rc.1'):
+        for tag in ('v0.26.1', 'v0.26.12', 'v0.27.2-rc.1', 'v1.26.54', 'v1.26.54-rc.1'):
             self.assertEqual(version_from_tag(tag), tag[1:])
-        for tag in ('0.26.1', 'v1.26.1', 'v0.2026.1', 'v0.6.1', 'v0.26.0',
+        for tag in ('0.26.1', 'v2.26.1', 'v01.26.54', 'v0.2026.1', 'v0.6.1', 'v0.26.0',
                     'v0.26.01', 'v0.26.1-rc.0', 'v0.26.1-rc.01', 'v0.26.1-beta.1',
                     'v0.26.1+build', 'v0.26.1\n', 'v0.26.1;echo bad'):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
@@ -81,21 +81,24 @@ class ReleasePolicyTests(unittest.TestCase):
             git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid',
                 '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'Synthetic release')
             git('update-ref', 'refs/remotes/origin/main', 'HEAD')
-            git('tag', 'v0.26.2-rc.1')
+            git('tag', 'v1.26.54-rc.1')
             changelog = root / 'CHANGELOG.md'
-            changelog.write_text('## 0.26.2-rc.1（未发布）\n\n### 升级注意\n\nSynthetic RC.\n')
+            changelog.write_text('## 1.26.54-rc.1（未发布）\n\n### 升级注意\n\nSynthetic RC.\n\n'
+                                 '## 0.26.53（2026-11-20）\n\n### 升级注意\n\nSynthetic previous release.\n')
             command = [sys.executable, str(SCRIPT), '--output-dir', 'artifacts', '--github-output', 'outputs']
             dry = subprocess.run([*command, '--dry-run'], cwd=root, capture_output=True, text=True)
             self.assertEqual(dry.returncode, 0, dry.stderr)
-            self.assertTrue(json.loads((root / 'artifacts/release.json').read_text())['dry_run'])
-            release = subprocess.run([*command, '--tag', 'v0.26.2-rc.1'], cwd=root, capture_output=True)
+            dry_metadata = json.loads((root / 'artifacts/release.json').read_text())
+            self.assertTrue(dry_metadata['dry_run'])
+            self.assertEqual(dry_metadata['tag'], 'v1.26.54-rc.1')
+            release = subprocess.run([*command, '--tag', 'v1.26.54-rc.1'], cwd=root, capture_output=True)
             self.assertNotEqual(release.returncode, 0)
             changelog.write_text(changelog.read_text().replace('未发布', '2026-11-01'))
             (root / 'outputs').unlink()
-            release = subprocess.run([*command, '--tag', 'v0.26.2-rc.1'], cwd=root, capture_output=True, text=True)
+            release = subprocess.run([*command, '--tag', 'v1.26.54-rc.1'], cwd=root, capture_output=True, text=True)
             self.assertEqual(release.returncode, 0, release.stderr)
             metadata = json.loads((root / 'artifacts/release.json').read_text())
-            self.assertEqual(metadata, dict(version='0.26.2-rc.1', tag='v0.26.2-rc.1',
+            self.assertEqual(metadata, dict(version='1.26.54-rc.1', tag='v1.26.54-rc.1',
                                             revision=git('rev-parse', 'HEAD'), prerelease=True, dry_run=False))
             self.assertIn('prerelease=true\n', (root / 'outputs').read_text())
             self.assertTrue((root / 'artifacts/release-notes.md').read_text().startswith('### 升级注意'))

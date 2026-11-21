@@ -7,14 +7,14 @@ import re
 import subprocess
 
 
-VERSION = r'0\.[0-9]{2}\.[1-9][0-9]*(?:-rc\.[1-9][0-9]*)?'
+VERSION = r'[01]\.[0-9]{2}\.[1-9][0-9]*(?:-rc\.[1-9][0-9]*)?'
 TAG = re.compile(r'v(' + VERSION + r')', re.ASCII)
 
 
 def version_from_tag(tag):
     match = TAG.fullmatch(tag)
     if not match:
-        raise ValueError('Expected v0.YY.N or v0.YY.N-rc.N; sequence numbers start at 1')
+        raise ValueError('Expected a v0 or v1 release in vMAJOR.YY.N or vMAJOR.YY.N-rc.R format; N and R start at 1')
     return match[1]
 
 
