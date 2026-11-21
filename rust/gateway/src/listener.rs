@@ -233,11 +233,11 @@ async fn serve_connection(
                             }
                             Err(response) => reply::from_bytes(*response),
                         },
-                        None => admin_response(&app, request, accepted).await,
+                        None => admin_response(&app, request, accepted).await?,
                     }
                 }
             };
-            Ok::<_, std::convert::Infallible>(response)
+            Ok::<_, io::Error>(response)
         }
     });
     let mut http = http1::Builder::new();
@@ -268,17 +268,20 @@ async fn serve_connection(
     drop(connection_slot);
 }
 
-async fn admin_response(app: &Application, request: Request<Incoming>, accepted: Instant) -> Reply {
+async fn admin_response(
+    app: &Application,
+    request: Request<Incoming>,
+    accepted: Instant,
+) -> io::Result<Reply> {
     use codexone_admin::{MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, REQUEST_READ_DEADLINE};
     let (parts, body) = request.into_parts();
     let collected = read_body(body, MAX_REQUEST_BYTES, accepted + REQUEST_READ_DEADLINE).await;
     let mut response = match collected {
         Ok(body) => app.admin(&Request::from_parts(parts, body)).await,
         Err(ReadError::TooLarge) => codexone_admin::request_too_large(),
-        Err(_) => Response::builder()
-            .status(408)
-            .body(Bytes::new())
-            .expect("admin timeout"),
+        // A service error closes the connection without writing a response to an incomplete request.
+        Err(ReadError::Timeout) => return Err(io::ErrorKind::TimedOut.into()),
+        Err(_) => return Err(io::ErrorKind::ConnectionAborted.into()),
     };
     if response.body().len() > MAX_RESPONSE_BYTES {
         response = Response::builder()
@@ -289,7 +292,7 @@ async fn admin_response(app: &Application, request: Request<Incoming>, accepted:
     response
         .headers_mut()
         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
-    reply::from_bytes(response)
+    Ok(reply::from_bytes(response))
 }
 
 #[derive(Clone, Copy, Debug)]
