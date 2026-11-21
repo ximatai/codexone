@@ -87,7 +87,7 @@ fn durable_pool_and_governance() {
             Some("synthetic-refresh"),
         ),
     ] {
-        seed_account(&database, &cipher, port, id, mode, auth, intent, now);
+        seed_account(&database, &cipher, port, id, (mode, auth, intent), now);
     }
     drop(database);
 
@@ -362,9 +362,7 @@ fn seed_account(
     cipher: &AccountCredentialCipher,
     port: u16,
     id: &str,
-    mode: &str,
-    auth: &str,
-    intent: Option<&str>,
+    (mode, auth, intent): (&str, &str, Option<&str>),
     now: i64,
 ) {
     let namespace = namespace(id, port);
@@ -676,7 +674,7 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
     let now = unix_time();
     let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
     for (id, mode) in [("account-a", "enabled"), ("account-b", "disabled")] {
-        seed_account(&database, &cipher, port, id, mode, "ready", None, now);
+        seed_account(&database, &cipher, port, id, (mode, "ready", None), now);
     }
     drop(database);
 
@@ -684,12 +682,13 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
     let (stop, stopping) = mpsc::channel::<()>();
     let worker = thread::spawn(move || {
         let mut connections = Vec::new();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
             match upstream.accept() {
                 Ok((socket, _)) => {
                     let report = report.clone();
-                    let index = connections.len() + 1;
-                    connections.push(thread::spawn(move || serve_ws(socket, index, report)));
+                    let count = count.clone();
+                    connections.push(thread::spawn(move || serve_ws(socket, &count, report)));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
@@ -883,9 +882,28 @@ fn ws_event(socket: &mut WebSocket<TcpStream>) -> Value {
     serde_json::from_str(socket.read().unwrap().to_text().unwrap()).unwrap()
 }
 
-fn serve_ws(socket: TcpStream, index: usize, report: mpsc::Sender<(String, String, usize)>) {
+// Tungstenite fixes the callback's rejection type to an HTTP response.
+#[allow(clippy::result_large_err)]
+fn serve_ws(
+    mut socket: TcpStream,
+    counter: &std::sync::atomic::AtomicUsize,
+    report: mpsc::Sender<(String, String, usize)>,
+) {
     socket.set_nonblocking(false).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
+    let request_line = peek_request_line(&socket);
+    if request_line.starts_with("GET /backend-api/wham/") {
+        let mut reader = BufReader::new(&mut socket);
+        let mut head = String::new();
+        while !head.ends_with("\r\n\r\n") {
+            if reader.read_line(&mut head).unwrap() == 0 {
+                return;
+            }
+        }
+        write_response(&mut socket, "200 OK", "application/json", "{}");
+        return;
+    }
+    let index = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let mut account = String::new();
     let mut socket = accept_hdr(
         socket,
@@ -942,6 +960,15 @@ fn serve_ws(socket: TcpStream, index: usize, report: mpsc::Sender<(String, Strin
 
 #[test]
 fn quota_management_and_http_priming_survive_gateway_restart() {
+    quota_management_and_priming_survive_gateway_restart("http");
+}
+
+#[test]
+fn quota_management_and_websocket_priming_survive_gateway_restart() {
+    quota_management_and_priming_survive_gateway_restart("websocket");
+}
+
+fn quota_management_and_priming_survive_gateway_restart(transport: &'static str) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let state = root.join("state");
@@ -953,7 +980,7 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
         &root.join("pool.json"),
         &json!({
             "models": [{"id":"synth-text", "inputMicrosPerMillion":1, "outputMicrosPerMillion":1}],
-            "reservedMicros":10, "upstreamTransport":"http"
+            "reservedMicros":10, "upstreamTransport":transport
         })
         .to_string(),
     );
@@ -994,7 +1021,7 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
         let mut consumed = Vec::new();
         while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
             match upstream.accept() {
-                Ok((socket, _)) => quota_upstream(socket, &mut consumed, &records),
+                Ok((socket, _)) => quota_upstream(socket, &mut consumed, &records, transport),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5))
                 }
@@ -1115,9 +1142,46 @@ fn quota_management_and_http_priming_survive_gateway_restart() {
     );
 }
 
-fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &mpsc::Sender<()>) {
+// Tungstenite fixes the callback's rejection type to an HTTP response.
+#[allow(clippy::result_large_err)]
+fn quota_upstream(
+    mut socket: TcpStream,
+    consumed: &mut Vec<Value>,
+    observed: &mpsc::Sender<()>,
+    transport: &str,
+) {
     socket.set_nonblocking(false).unwrap();
     socket.set_read_timeout(Some(WAIT)).unwrap();
+    if peek_request_line(&socket).starts_with("GET /backend-api/codex/responses ") {
+        assert_eq!(transport, "websocket");
+        let mut socket = accept_hdr(
+            socket,
+            |request: &server::Request, response: server::Response| {
+                assert_eq!(request.headers()["chatgpt-account-id"], "synth-quota");
+                assert!(
+                    request.headers()["user-agent"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with("codex_cli_rs/")
+                );
+                assert!(request.headers().contains_key("authorization"));
+                Ok(response)
+            },
+        )
+        .unwrap();
+        let body = ws_event(&mut socket);
+        assert_eq!(body["type"], "response.create");
+        assert!(
+            body.get("generate").is_none(),
+            "priming must run generation"
+        );
+        validate_priming_body(&body);
+        observed.send(()).unwrap();
+        socket
+            .send(Message::text(priming_completed().to_string()))
+            .unwrap();
+        return;
+    }
     let mut reader = BufReader::new(&mut socket);
     let mut head = String::new();
     while !head.ends_with("\r\n\r\n") {
@@ -1163,15 +1227,10 @@ fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &m
                 }
                 return;
             }
-            assert_eq!(body["input"][0]["content"], "start window");
-            assert_eq!(body["tools"], json!([]));
-            assert_eq!(body["store"], false);
-            assert_eq!(body["stream"], true);
+            assert_eq!(transport, "http");
+            validate_priming_body(&body);
             assert!(fields["user-agent"].starts_with("codex_cli_rs/"));
-            let completed = json!({"type":"response.completed","response":{
-                "id":"resp_synth_priming","status":"completed","model":"synth-text","output":[],
-                "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
-            }});
+            let completed = priming_completed();
             observed.send(()).unwrap();
             write_response(
                 &mut socket,
@@ -1182,4 +1241,31 @@ fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &m
         }
         _ => panic!("unexpected synthetic route {path}"),
     }
+}
+
+fn peek_request_line(socket: &TcpStream) -> String {
+    let deadline = Instant::now() + WAIT;
+    let mut bytes = [0; 1024];
+    loop {
+        let count = socket.peek(&mut bytes).unwrap();
+        if let Some(newline) = bytes[..count].iter().position(|&byte| byte == b'\n') {
+            return String::from_utf8(bytes[..newline].to_vec()).unwrap();
+        }
+        assert!(count > 0 && count < bytes.len() && Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn validate_priming_body(body: &Value) {
+    assert_eq!(body["input"][0]["content"], "start window");
+    assert_eq!(body["tools"], json!([]));
+    assert_eq!(body["store"], false);
+    assert_eq!(body["stream"], true);
+}
+
+fn priming_completed() -> Value {
+    json!({"type":"response.completed","response":{
+        "id":"resp_synth_priming","status":"completed","model":"synth-text","output":[],
+        "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
+    }})
 }

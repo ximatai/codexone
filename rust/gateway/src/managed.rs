@@ -23,7 +23,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     headers,
-    quota::{HttpPriming, Jobs, Worker},
+    quota::{Jobs, ResponsesPriming, Worker},
 };
 
 const SUBSCRIPTION_BASE: &str = "https://chatgpt.com/backend-api/codex";
@@ -128,7 +128,7 @@ impl Managed {
                 let (jobs, worker) = Jobs::new(
                     config,
                     &options,
-                    HttpPriming::new(config, &target.base, proxy)?,
+                    ResponsesPriming::new(config, &target.base, proxy)?,
                     writer,
                     store.clone(),
                     identity,

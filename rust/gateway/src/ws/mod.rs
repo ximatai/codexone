@@ -3,10 +3,12 @@ mod bridge;
 mod ingress;
 mod limits;
 mod native;
+mod priming;
 
 pub use bridge::{BridgeRequest, BridgeResult, forward};
 pub use limits::Path as SizePath;
 pub use native::{Session, Upgrade};
+pub use priming::discard_priming;
 
 use std::{sync::Arc, time::Duration};
 
@@ -62,7 +64,7 @@ impl Connector {
         })
     }
 
-    async fn connect(
+    pub(crate) async fn connect(
         &self,
         forwarded: &HeaderMap,
         provider: &Provider,
@@ -96,6 +98,13 @@ pub struct Provider {
 }
 
 impl Provider {
+    pub fn with_credentials(credentials: HeaderMap) -> Self {
+        Self {
+            credentials,
+            ownership: None,
+        }
+    }
+
     pub fn selected(
         pool: Option<&Arc<Pool>>,
         key: String,
