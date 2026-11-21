@@ -10,12 +10,15 @@ name = "codexone"
 path = "src/main.rs"
 
 [dependencies]
+async-stream = "0.3"
 bytes = "1"
 codexone-admin = { path = "../admin" }
 codexone-config = { path = "../config" }
 codexone-execution = { path = "../execution" }
 codexone-http-upstream = { path = "../http-upstream" }
 codexone-maintenance = { path = "../maintenance" }
+codexone-image-service = { path = "../image-service" }
+codexone-images = { path = "../images" }
 codexone-responses = { path = "../responses" }
 codexone-storage = { path = "../storage" }
 codexone-wire = { path = "../wire" }
@@ -27,6 +30,7 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 percent-encoding = "2"
 rusqlite = { version = "0.43", features = ["bundled"] }
+self_cell = "1"
 serde_json = "1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

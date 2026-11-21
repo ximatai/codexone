@@ -11,6 +11,7 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use codexone_config::Network;
+use codexone_image_service::DeliveryAbort;
 use http::{Request, Response, header};
 use http_body::Body;
 use http_body_util::BodyExt;
@@ -312,26 +313,44 @@ impl DownstreamIo {
         &mut self,
         context: &mut Context<'_>,
         poll: Poll<io::Result<usize>>,
+        image_limit: Option<Instant>,
     ) -> Poll<io::Result<usize>> {
+        if matches!(&poll, Poll::Ready(Err(_))) {
+            self.pending.abort_image_write(DeliveryAbort::Disconnected);
+            return poll;
+        }
         if self.entire_write || poll.is_pending() {
             let duration = if self.entire_write {
                 codexone_admin::RESPONSE_WRITE_DEADLINE
             } else {
                 DATA_WRITE_IDLE
             };
-            let timer = self
-                .deadline
-                .get_or_insert_with(|| Box::pin(sleep_until(Instant::now() + duration)));
+            let timer = self.deadline.get_or_insert_with(|| {
+                let idle = Instant::now() + duration;
+                Box::pin(sleep_until(
+                    image_limit.map_or(idle, |limit| limit.min(idle)),
+                ))
+            });
             if timer.as_mut().poll(context).is_ready() {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "downstream write timed out",
-                )));
+                return Poll::Ready(Err(self.timed_out()));
             }
         } else {
             self.deadline = None;
         }
         poll
+    }
+
+    fn image_write_limit(&self) -> io::Result<Option<Instant>> {
+        let deadline = self.pending.image_write_deadline();
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(self.timed_out());
+        }
+        Ok(deadline)
+    }
+
+    fn timed_out(&self) -> io::Error {
+        self.pending.abort_image_write(DeliveryAbort::WriteTimeout);
+        io::Error::new(io::ErrorKind::TimedOut, "downstream write timed out")
     }
 }
 
@@ -341,7 +360,15 @@ impl AsyncRead for DownstreamIo {
         context: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.socket).poll_read(context, buffer)
+        let before = buffer.filled().len();
+        let remaining = buffer.remaining();
+        let result = Pin::new(&mut self.socket).poll_read(context, buffer);
+        if matches!(&result, Poll::Ready(Err(_)))
+            || (remaining > 0 && result.is_ready() && buffer.filled().len() == before)
+        {
+            self.pending.abort_image_write(DeliveryAbort::Disconnected);
+        }
+        result
     }
 }
 
@@ -351,13 +378,15 @@ impl AsyncWrite for DownstreamIo {
         context: &mut Context<'_>,
         data: &[u8],
     ) -> Poll<io::Result<usize>> {
+        let image_limit = self.image_write_limit()?;
         let poll = Pin::new(&mut self.socket).poll_write(context, data);
-        self.write_deadline(context, poll)
+        self.write_deadline(context, poll, image_limit)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let image_limit = self.image_write_limit()?;
         let poll = Pin::new(&mut self.socket).poll_flush(context);
-        let poll = self.write_deadline(context, poll.map_ok(|()| 0));
+        let poll = self.write_deadline(context, poll.map_ok(|()| 0), image_limit);
         if matches!(poll, Poll::Ready(Ok(_))) {
             self.pending.submitted();
         }

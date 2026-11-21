@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use codexone_config::{
@@ -16,13 +16,14 @@ use uuid::Uuid;
 
 use crate::{
     catalog, headers,
+    image_route::NativeImages,
     listener::{DataBodies, ReadError},
     reply::{self, FlushDeliveries, Reply},
     response::{self, ResponseError, Transfer},
 };
 
 pub struct DataPlane {
-    configuration: ResponsesConfiguration,
+    images: Arc<NativeImages>,
     generation_url: Uri,
     compact_url: Uri,
     upstream_authorization: Option<HeaderValue>,
@@ -45,8 +46,14 @@ impl DataPlane {
             header.set_sensitive(true);
         }
         let base = config.upstream_base_url;
+        let upstream = upstream::HttpUpstream::new(proxy);
         Ok(Self {
-            configuration: config.responses,
+            images: Arc::new(NativeImages::new(
+                config.responses,
+                base.parse().map_err(|_| ())?,
+                upstream_authorization.as_ref(),
+                upstream.clone(),
+            )?),
             generation_url: format!("{base}/responses").parse().map_err(|_| ())?,
             compact_url: format!("{base}/responses/compact")
                 .parse()
@@ -56,13 +63,17 @@ impl DataPlane {
                 UpstreamContract::Responses => protocol::Contract::Responses,
                 UpstreamContract::CodexSubscription => protocol::Contract::CodexSubscription,
             },
-            upstream: upstream::HttpUpstream::new(proxy),
+            upstream,
             bodies: DataBodies::new(),
         })
     }
 
     pub fn max_connections(&self) -> usize {
-        self.configuration.data_connections.into()
+        self.configuration().data_connections.into()
+    }
+
+    fn configuration(&self) -> &ResponsesConfiguration {
+        self.images.configuration()
     }
 
     pub async fn handle(
@@ -72,6 +83,20 @@ impl DataPlane {
         pending: FlushDeliveries,
     ) -> Reply {
         let request_id = Uuid::new_v4().hyphenated().to_string().to_ascii_uppercase();
+        if let Some(route) = codexone_images::ImageRoute::from_path(request.uri().path()) {
+            return self
+                .images
+                .handle(
+                    route,
+                    request,
+                    execution,
+                    &self.bodies,
+                    &request_id,
+                    pending,
+                )
+                .await
+                .unwrap_or_else(|error| error.reply(&request_id, HeaderMap::new()));
+        }
         self.route(request, execution, &request_id, pending)
             .await
             .unwrap_or_else(|error| error.reply(&request_id, HeaderMap::new()))
@@ -84,6 +109,7 @@ impl DataPlane {
         request_id: &str,
         pending: FlushDeliveries,
     ) -> Result<Reply, ResponseError> {
+        let configuration = self.configuration();
         let endpoint = incoming
             .uri()
             .path()
@@ -98,10 +124,10 @@ impl DataPlane {
             headers::client(
                 incoming.headers(),
                 &JsonValue::Null,
-                &self.configuration.client_fingerprint,
-                &self.configuration.models,
+                &configuration.client_fingerprint,
+                &configuration.models,
             )?;
-            let document = catalog::document(&self.configuration, incoming.uri())?;
+            let document = catalog::document(configuration, incoming.uri())?;
             return Ok(reply::json(
                 StatusCode::OK,
                 Bytes::from(document.to_string()),
@@ -130,7 +156,7 @@ impl DataPlane {
                     ReadError::Interrupted => ProtocolError::new(400, "invalid_json"),
                     ReadError::Capacity => ProtocolError::new(503, "capacity_exceeded"),
                 })?;
-        let images = self.configuration.image_generation.as_ref();
+        let images = configuration.image_generation.as_ref();
         let image_ids: Vec<_> = images
             .iter()
             .flat_map(|images| &images.models)
@@ -150,8 +176,7 @@ impl DataPlane {
             image_models,
         )?;
         drop(body);
-        let model = self
-            .configuration
+        let model = configuration
             .models
             .iter()
             .find(|model| model.id.nfc().eq(request.model.nfc()))
@@ -212,8 +237,8 @@ impl DataPlane {
         let mut request_headers = headers::client(
             &parts.headers,
             request.document(),
-            &self.configuration.client_fingerprint,
-            &self.configuration.models,
+            &configuration.client_fingerprint,
+            &configuration.models,
         )?;
         let document = request.into_upstream_document(self.contract, false)?;
         let upstream_sse = !compact && document.get("stream") == Some(&JsonValue::Bool(true));
@@ -249,7 +274,7 @@ impl DataPlane {
         };
         *outbound.headers_mut() = request_headers;
 
-        let budget = self.configuration.budget;
+        let budget = configuration.budget;
         let seconds = |value: u16| Duration::from_secs(value.into());
         let deadline = began + seconds(budget.total_seconds);
         let first_response = if usage.image.is_some() {

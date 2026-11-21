@@ -2,6 +2,7 @@ mod catalog;
 mod data;
 mod gateway;
 mod headers;
+mod image_route;
 mod listener;
 mod reply;
 mod response;

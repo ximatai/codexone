@@ -2,7 +2,12 @@
 mod settlement;
 mod static_identity;
 
-use std::{fmt, future::Future, time::Duration};
+use std::{
+    fmt,
+    future::Future,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use codexone_config::{ExecutionBudget, ResponsesConfiguration};
 use codexone_execution::{
@@ -251,6 +256,7 @@ impl<'a> ImageService<'a> {
             started,
             deadline,
             cancellation,
+            delivery_abort: Arc::new(OnceLock::new()),
             eof: false,
             _permit: permit,
         };
@@ -345,13 +351,26 @@ pub struct ImageSession<'a> {
     started: Instant,
     deadline: Instant,
     cancellation: CancellationToken,
+    delivery_abort: Arc<OnceLock<DeliveryAbort>>,
     eof: bool,
     _permit: ImagePermit,
+}
+
+/// A downstream I/O failure detected before the connection drops the response body.
+#[derive(Clone, Copy)]
+pub enum DeliveryAbort {
+    Disconnected,
+    WriteTimeout,
 }
 
 impl ImageSession<'_> {
     pub fn deadline(&self) -> Instant {
         self.deadline
+    }
+
+    /// The downstream writer can record the first delivery failure before dropping the session.
+    pub fn delivery_abort(&self) -> Arc<OnceLock<DeliveryAbort>> {
+        self.delivery_abort.clone()
     }
 
     /// Safe upstream response headers, including the provider's image request ID on errors.
@@ -466,6 +485,12 @@ impl ImageSession<'_> {
 impl Drop for ImageSession<'_> {
     fn drop(&mut self) {
         self.cancellation.cancel();
-        let _ = self.settle(Some(Failure::ClientCancelled));
+        let failure = match self.delivery_abort.get() {
+            Some(DeliveryAbort::Disconnected) => Failure::ClientCancelled,
+            Some(DeliveryAbort::WriteTimeout) => Failure::DeadlineExceeded,
+            None if Instant::now() >= self.deadline => Failure::DeadlineExceeded,
+            None => Failure::ClientCancelled,
+        };
+        let _ = self.settle(Some(failure));
     }
 }

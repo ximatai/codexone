@@ -1,18 +1,20 @@
 use std::{
     convert::Infallible,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use codexone_execution::{Execution, Outcome};
+use codexone_image_service::DeliveryAbort;
 use codexone_responses::{self as protocol, ProtocolError, ProviderFailure};
 use codexone_wire::JsonValue;
 use futures_util::Stream;
 use http::{HeaderMap, HeaderValue, Response, StatusCode, header};
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::{Full, StreamBody};
+use tokio::{sync::oneshot, time::Instant};
 
 pub type ReplyBody = Pin<Box<dyn Body<Data = Bytes, Error = Infallible> + Send>>;
 pub type Reply = Response<ReplyBody>;
@@ -26,6 +28,7 @@ pub struct FlushDeliveries(Arc<FlushState>);
 struct FlushState {
     pending: Mutex<Vec<Delivery>>,
     flushed: tokio::sync::Notify,
+    image_write: Mutex<Option<ImageWrite>>,
 }
 
 impl FlushDeliveries {
@@ -34,6 +37,16 @@ impl FlushDeliveries {
     }
 
     pub fn submitted(&self) {
+        let image_frame = self
+            .0
+            .image_write
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|write| write.frame.take());
+        if let Some(frame) = image_frame {
+            let _ = frame.send(());
+        }
         let pending = std::mem::take(&mut *self.0.pending.lock().unwrap());
         if pending.is_empty() {
             return;
@@ -44,6 +57,35 @@ impl FlushDeliveries {
         self.0.flushed.notify_waiters();
     }
 
+    pub fn limit_image_write(
+        &self,
+        deadline: Option<Instant>,
+        abort: Arc<OnceLock<DeliveryAbort>>,
+    ) -> ImageWriteGuard {
+        let previous = self.0.image_write.lock().unwrap().replace(ImageWrite {
+            deadline,
+            abort,
+            frame: None,
+        });
+        debug_assert!(previous.is_none());
+        ImageWriteGuard(self.0.clone())
+    }
+
+    pub fn image_write_deadline(&self) -> Option<Instant> {
+        self.0
+            .image_write
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|write| write.deadline)
+    }
+
+    pub fn abort_image_write(&self, reason: DeliveryAbort) {
+        if let Some(write) = self.0.image_write.lock().unwrap().as_ref() {
+            let _ = write.abort.set(reason);
+        }
+    }
+
     pub async fn wait(&self) {
         loop {
             let flushed = self.0.flushed.notified();
@@ -52,6 +94,32 @@ impl FlushDeliveries {
             }
             flushed.await;
         }
+    }
+}
+
+struct ImageWrite {
+    deadline: Option<Instant>,
+    abort: Arc<OnceLock<DeliveryAbort>>,
+    frame: Option<oneshot::Sender<()>>,
+}
+
+pub struct ImageWriteGuard(Arc<FlushState>);
+
+impl ImageWriteGuard {
+    /// Register before returning a head or frame to Hyper. The socket flush acknowledges it.
+    pub fn flush_ticket(&self) -> oneshot::Receiver<()> {
+        let (send, receive) = oneshot::channel();
+        let mut active = self.0.image_write.lock().unwrap();
+        let write = active.as_mut().expect("guard owns the active Images write");
+        let previous = write.frame.replace(send);
+        debug_assert!(previous.is_none());
+        receive
+    }
+}
+
+impl Drop for ImageWriteGuard {
+    fn drop(&mut self) {
+        self.0.image_write.lock().unwrap().take();
     }
 }
 
@@ -180,7 +248,7 @@ pub fn encode(document: &JsonValue) -> Bytes {
     Bytes::from(document.encode(true))
 }
 
-fn response(
+pub fn response(
     status: StatusCode,
     mut headers: HeaderMap,
     request_id: &str,
