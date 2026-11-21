@@ -99,9 +99,12 @@ WORKDIR /build
 COPY rust/ rust/
 ARG TARGETPLATFORM
 ARG BUILD_JOBS=2
+# Git archives preserve source timestamps that can predate cached Cargo build artifacts.
+# When this source layer changes, refresh local inputs so Cargo recompiles the workspace crates.
 RUN --mount=type=cache,id=codexone-cargo-1.96-registry,sharing=locked,target=/usr/local/cargo/registry \
     --mount=type=cache,id=codexone-rust-1.96-amd64-release,sharing=locked,target=/build/target \
     set -eu; test "$TARGETPLATFORM" = linux/amd64; \
+    find rust -type f -exec touch {} +; \
     cargo vendor --locked --versioned-dirs --manifest-path rust/gateway/Cargo.toml /vendor > /tmp/vendor.toml; \
     cargo --config /tmp/vendor.toml build --locked --offline --release --jobs "$BUILD_JOBS" \
       --manifest-path rust/gateway/Cargo.toml --target-dir /build/target --bin codexone; \
