@@ -123,6 +123,7 @@ pub async fn forward(
     body_permit: BodyPermit,
 ) -> BridgeResult {
     let streaming = request.options.stream;
+    let stop = lease.account_stop_token().cloned().unwrap_or_default();
     let (sender, mut receiver) = mpsc::channel(1);
     let response_headers = Arc::new(Mutex::new(HeaderMap::new()));
     let mut exchange: Exchange = Box::pin(exchange(
@@ -135,10 +136,15 @@ pub async fn forward(
     ));
     let (end, headers) = tokio::select! {
             biased;
+            _ = stop.cancelled() => (&mut exchange).await,
             Some(first) = receiver.recv(), if streaming => {
+                if stop.is_cancelled() {
+                    (&mut exchange).await
+                } else {
                 let headers = response_headers.lock().unwrap().clone();
                 let stream = Output {
                     exchange: Some(exchange),
+                    stop,
                     receiver,
                     first: Some(first),
                     deferred_end: None,
@@ -147,12 +153,16 @@ pub async fn forward(
                     pending,
                 };
                 return BridgeResult::Reply(reply::sse(headers, &request_id, stream.frames()));
+                }
             }
             result = &mut exchange => result,
     };
-    if let Ok(first) = receiver.try_recv() {
+    if !stop.is_cancelled()
+        && let Ok(first) = receiver.try_recv()
+    {
         let stream = Output {
             exchange: None,
+            stop,
             receiver,
             first: Some(first),
             deferred_end: Some(end),
@@ -175,6 +185,7 @@ pub async fn forward(
         End::Terminal(terminal) => {
             let stream = Output {
                 exchange: None,
+                stop,
                 receiver,
                 first: None,
                 deferred_end: Some(End::Terminal(terminal)),
@@ -376,6 +387,7 @@ fn apply_turn_state(event: &protocol::JsonValue, headers: &Mutex<HeaderMap>) {
 
 struct Output {
     exchange: Option<Exchange>,
+    stop: websocket::CancellationToken,
     receiver: mpsc::Receiver<Bytes>,
     first: Option<Bytes>,
     deferred_end: Option<End>,
@@ -395,20 +407,29 @@ impl Output {
     }
 
     async fn next(&mut self) -> Option<Bytes> {
-        if let Some(first) = self.first.take() {
+        if let Some(first) = self.first.take()
+            && !self.stop.is_cancelled()
+        {
             return Some(first);
         }
         if let Some(exchange) = &mut self.exchange {
-            tokio::select! {
+            let (end, _) = tokio::select! {
                 biased;
-                Some(frame) = self.receiver.recv() => return Some(frame),
-                (end, _) = exchange => {
-                    self.exchange = None;
-                    self.deferred_end = Some(end);
+                _ = self.stop.cancelled() => (&mut *exchange).await,
+                Some(frame) = self.receiver.recv() => {
+                    if !self.stop.is_cancelled() {
+                        return Some(frame);
+                    }
+                    (&mut *exchange).await
                 }
-            }
+                result = &mut *exchange => result,
+            };
+            self.exchange = None;
+            self.deferred_end = Some(end);
         }
-        if let Ok(frame) = self.receiver.try_recv() {
+        if !self.stop.is_cancelled()
+            && let Ok(frame) = self.receiver.try_recv()
+        {
             return Some(frame);
         }
         match self.deferred_end.take() {
