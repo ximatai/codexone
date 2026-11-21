@@ -5,7 +5,9 @@ mod ledger;
 mod model;
 mod priming;
 mod reserve;
-pub use reserve::StoragePressure;
+pub use reserve::{
+    STORAGE_STOP_BYTES, STORAGE_WAL_STOP_BYTES, StorageObservation, StoragePressure,
+};
 mod static_identity;
 mod worker;
 

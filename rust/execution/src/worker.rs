@@ -14,7 +14,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::model::*;
-use crate::reserve::{StorageMonitor, StoragePressure, StorageReserve};
+use crate::reserve::{StorageMonitor, StorageObservation, StoragePressure, StorageReserve};
 use crate::{
     AccountIdentity, ExecutionError as Error, FixedIdentity, Result, StaticAdmissionRequest,
     StaticAuthorization, StaticIdentity, admission, ledger,
@@ -371,6 +371,16 @@ impl ExecutionService {
             self.storage.pressure()
         } else {
             StoragePressure::Unknown
+        }
+    }
+
+    /// Sample the same reserve and WAL used by admission without running SQLite.
+    /// Call from a blocking thread and treat absent metrics as unknown.
+    pub fn storage_observation(&self) -> StorageObservation {
+        if self.status() == ExecutionStatus::Accepting {
+            self.storage.observation()
+        } else {
+            StorageObservation::unavailable()
         }
     }
 

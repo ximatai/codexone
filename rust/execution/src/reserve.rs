@@ -19,6 +19,9 @@ const MIB: u64 = 1024 * 1024;
 const RESERVE_BYTES: u64 = 64 * MIB;
 const STOP_BYTES: u64 = 128 * MIB;
 const RESUME_BYTES: u64 = 192 * MIB;
+const WAL_SOFT_BYTES: u64 = 64 * MIB;
+pub const STORAGE_WAL_STOP_BYTES: u64 = 128 * MIB;
+pub const STORAGE_STOP_BYTES: u64 = STOP_BYTES;
 const MAGIC: &[u8] = b"CodexOneSettlementReserveV1\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +30,33 @@ pub enum StoragePressure {
     Degraded,
     Blocked,
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageObservation {
+    pub pressure: StoragePressure,
+    pub available_bytes: Option<u64>,
+    pub volume_total_bytes: Option<u64>,
+    pub database_bytes: Option<u64>,
+    pub wal_bytes: Option<u64>,
+    pub reserve_bytes: Option<u64>,
+    pub reserve_target_bytes: u64,
+    pub core_available: bool,
+}
+
+impl StorageObservation {
+    pub fn unavailable() -> Self {
+        Self {
+            pressure: StoragePressure::Unknown,
+            available_bytes: None,
+            volume_total_bytes: None,
+            database_bytes: None,
+            wal_bytes: None,
+            reserve_bytes: None,
+            reserve_target_bytes: RESERVE_BYTES,
+            core_available: false,
+        }
+    }
 }
 
 pub(crate) struct StorageReserve {
@@ -39,6 +69,7 @@ pub(crate) struct StorageMonitor(Arc<ReserveFiles>);
 struct ReserveFiles {
     file: File,
     directory: PathBuf,
+    database: PathBuf,
     wal: PathBuf,
     blocked: AtomicBool,
 }
@@ -49,7 +80,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     joined.into()
 }
 
-fn available(directory: &Path) -> Option<u64> {
+fn volume(directory: &Path) -> Option<(u64, Option<u64>)> {
     let directory = CString::new(directory.as_os_str().as_bytes()).ok()?;
     let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     // statvfs initializes the record on success. The C path lives through the call.
@@ -57,10 +88,15 @@ fn available(directory: &Path) -> Option<u64> {
         return None;
     }
     let info = unsafe { info.assume_init() };
-    let bytes = u128::from(info.f_bavail) * u128::from(info.f_frsize);
-    (info.f_frsize > 0)
-        .then(|| u64::try_from(bytes).ok())
-        .flatten()
+    if info.f_frsize == 0 {
+        return None;
+    }
+    let bytes = |blocks| u64::try_from(u128::from(blocks) * u128::from(info.f_frsize)).ok();
+    Some((bytes(info.f_bavail)?, bytes(info.f_blocks)))
+}
+
+fn available(directory: &Path) -> Option<u64> {
+    volume(directory).map(|(available, _)| available)
 }
 
 impl StorageReserve {
@@ -78,6 +114,7 @@ impl StorageReserve {
             monitor: StorageMonitor(Arc::new(ReserveFiles {
                 file,
                 directory,
+                database: path.to_owned(),
                 wal: sidecar(path, "-wal"),
                 blocked: AtomicBool::new(true),
             })),
@@ -151,7 +188,7 @@ impl StorageReserve {
         self.check_admission()?;
         let files = &self.monitor.0;
         if available(&files.directory).is_none_or(|bytes| bytes < 256 * MIB)
-            || files.wal_size()? >= 64 * MIB
+            || files.wal_size()? >= WAL_SOFT_BYTES
         {
             return Err(Error::StoragePressure);
         }
@@ -191,27 +228,60 @@ impl StorageMonitor {
     /// Samples the writer's reserve without changing admission hysteresis or queueing a job.
     pub(crate) fn pressure(&self) -> StoragePressure {
         let files = &self.0;
-        let (Some(available), Ok(wal), Ok(size)) =
-            (available(&files.directory), files.wal_size(), files.size())
-        else {
-            return StoragePressure::Unknown;
-        };
-        if files.blocks(available, wal, size) {
-            StoragePressure::Blocked
-        } else if available < 256 * MIB || wal >= 64 * MIB {
-            StoragePressure::Degraded
-        } else {
-            StoragePressure::Normal
+        files.pressure(
+            available(&files.directory),
+            files.wal_size().ok(),
+            files.size().ok(),
+        )
+    }
+
+    pub(crate) fn observation(&self) -> StorageObservation {
+        let files = &self.0;
+        let (available_bytes, volume_total_bytes) = volume(&files.directory)
+            .map_or((None, None), |(available, total)| (Some(available), total));
+        let wal_bytes = files.wal_size().ok();
+        let reserve_bytes = files.size().ok();
+        let database_bytes = fs::symlink_metadata(&files.database)
+            .ok()
+            .filter(|metadata| metadata.is_file())
+            .map(|metadata| metadata.len());
+        StorageObservation {
+            pressure: files.pressure(available_bytes, wal_bytes, reserve_bytes),
+            available_bytes,
+            volume_total_bytes,
+            database_bytes,
+            wal_bytes,
+            reserve_bytes,
+            reserve_target_bytes: RESERVE_BYTES,
+            core_available: true,
         }
     }
 }
 
 impl ReserveFiles {
+    fn pressure(
+        &self,
+        available: Option<u64>,
+        wal: Option<u64>,
+        reserve: Option<u64>,
+    ) -> StoragePressure {
+        let (Some(available), Some(wal), Some(reserve)) = (available, wal, reserve) else {
+            return StoragePressure::Unknown;
+        };
+        if self.blocks(available, wal, reserve) {
+            StoragePressure::Blocked
+        } else if available < 256 * MIB || wal >= WAL_SOFT_BYTES {
+            StoragePressure::Degraded
+        } else {
+            StoragePressure::Normal
+        }
+    }
+
     fn blocks(&self, available: u64, wal: u64, size: u64) -> bool {
         let blocked = self.blocked.load(Ordering::Relaxed);
         available < if blocked { RESUME_BYTES } else { STOP_BYTES }
             || size != RESERVE_BYTES
-            || wal >= 128 * MIB
+            || wal >= STORAGE_WAL_STOP_BYTES
             || (blocked && wal > 32 * MIB)
     }
 
