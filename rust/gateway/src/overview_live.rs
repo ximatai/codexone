@@ -87,18 +87,18 @@ impl OverviewHub {
         let Some(usage) = app.usage.as_ref() else {
             return;
         };
-        let mut revision = app
-            .execution
-            .as_ref()
-            .expect("usage writer")
-            .activity_revision();
-        let mut data_clients = app.data_clients.as_ref().map(|clients| clients.revision());
         let mut state = OverviewState::new(unix_now());
         loop {
             tokio::select! {
                 _ = stopping.cancelled() => return,
                 _ = self.wait_for_viewers(true) => {}
             }
+            let mut revision = app
+                .execution
+                .as_ref()
+                .expect("usage writer")
+                .activity_revision();
+            let mut data_clients = app.data_clients.as_ref().map(|clients| clients.revision());
             let sample = async {
                 let now = Instant::now();
                 let mut storage_due = now;
