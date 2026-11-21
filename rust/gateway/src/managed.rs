@@ -4,9 +4,10 @@ use bytes::Bytes;
 use codexone_admin::AdminRouter;
 use codexone_config::{MasterKeyring, ResponsesConfiguration};
 use codexone_execution::{
-    AccountCredentialRecord, AccountDispatch, AccountDispatchSnapshot, AccountIdentity, Execution,
-    ExecutionError, ExecutionService, GovernanceWork, ManagedAdmissionRequest, ObjectBinding,
-    PoolRouting, PreparedPool, SessionAffinity, SessionLabel, TurnStateOwners,
+    AccountCredentialRecord, AccountDispatch, AccountDispatchSnapshot, AccountIdentity,
+    AuthenticatedKey, Execution, ExecutionError, ExecutionService, GovernanceWork,
+    ManagedAdmissionRequest, ObjectBinding, PoolRouting, PreparedPool, SessionAffinity,
+    SessionLabel, StaticAdmissionRequest, TurnStateOwners,
 };
 use codexone_governance::{
     self as governance, AccountRuntime, Authorizations, Governance, GovernanceApi, KeyOptions,
@@ -226,6 +227,46 @@ pub struct Affinity<'a> {
     pub headers: &'a HeaderMap,
 }
 
+pub struct ManagedRoute {
+    pub pool: Arc<Pool>,
+    pub versions: (String, String),
+    pub reserved_micros: i64,
+}
+
+impl ManagedRoute {
+    pub async fn admit(
+        &self,
+        execution: &ExecutionService,
+        key: AuthenticatedKey,
+        request: StaticAdmissionRequest,
+        deadline: Instant,
+        affinity: Option<Affinity<'_>>,
+    ) -> codexone_execution::Result<(Execution, HeaderMap)> {
+        let request = ManagedAdmissionRequest {
+            key,
+            attempt: request.attempt,
+            request_id: request.request_id,
+            model: request.model,
+            mode: request.mode,
+            requirements: request.requirements,
+            references: request.references,
+            reasoning_effort: request.reasoning_effort,
+            service_tier: request.service_tier,
+            policy_version: self.versions.0.clone(),
+            pricing_version: self.versions.1.clone(),
+            reserved_micros: self.reserved_micros,
+        };
+        match affinity {
+            Some(affinity) => {
+                self.pool
+                    .admit_with_affinity(execution, request, deadline, Some(affinity))
+                    .await
+            }
+            None => self.pool.admit(execution, request, deadline).await,
+        }
+    }
+}
+
 impl Pool {
     pub fn base(&self) -> &str {
         &self.target.base
@@ -261,7 +302,6 @@ impl Pool {
             })
     }
 
-    #[allow(dead_code)] // Images uses the same admission path without HTTP Responses hints.
     pub async fn admit(
         &self,
         execution: &ExecutionService,

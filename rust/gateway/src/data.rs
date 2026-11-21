@@ -18,7 +18,7 @@ use crate::{
     catalog, headers,
     image_route::NativeImages,
     listener::{DataBodies, ReadError},
-    managed::{Affinity, Pool},
+    managed::{Affinity, ManagedRoute, Pool},
     reply::{self, FlushDeliveries, Reply},
     response::{self, ResponseError, Transfer},
 };
@@ -28,16 +28,10 @@ pub struct DataPlane {
     generation_url: Uri,
     compact_url: Uri,
     upstream_authorization: Option<HeaderValue>,
-    managed: Option<ManagedResponses>,
+    managed: Option<Arc<ManagedRoute>>,
     contract: protocol::Contract,
     upstream: upstream::HttpUpstream,
     bodies: DataBodies,
-}
-
-struct ManagedResponses {
-    pool: Arc<Pool>,
-    policy_version: String,
-    pricing_version: String,
 }
 
 impl DataPlane {
@@ -59,6 +53,7 @@ impl DataPlane {
             upstream_authorization,
             config.upstream_contract,
             proxy,
+            None,
         )
     }
 
@@ -68,19 +63,19 @@ impl DataPlane {
         (policy_version, pricing_version): (String, String),
         proxy: Option<upstream::Proxy>,
     ) -> Result<Self, ()> {
-        let mut plane = Self::with_upstream(
+        let managed = Arc::new(ManagedRoute {
+            pool: pool.clone(),
+            versions: (policy_version, pricing_version),
+            reserved_micros: configuration.reserved_micros,
+        });
+        Self::with_upstream(
             configuration,
             pool.base(),
             None,
             UpstreamContract::CodexSubscription,
             proxy,
-        )?;
-        plane.managed = Some(ManagedResponses {
-            pool,
-            policy_version,
-            pricing_version,
-        });
-        Ok(plane)
+            Some(managed),
+        )
     }
 
     fn with_upstream(
@@ -89,6 +84,7 @@ impl DataPlane {
         upstream_authorization: Option<HeaderValue>,
         contract: UpstreamContract,
         proxy: Option<upstream::Proxy>,
+        managed: Option<Arc<ManagedRoute>>,
     ) -> Result<Self, ()> {
         let upstream = upstream::HttpUpstream::new(proxy);
         Ok(Self {
@@ -97,13 +93,14 @@ impl DataPlane {
                 base.parse().map_err(|_| ())?,
                 upstream_authorization.as_ref(),
                 upstream.clone(),
+                managed.clone(),
             )?),
             generation_url: format!("{base}/responses").parse().map_err(|_| ())?,
             compact_url: format!("{base}/responses/compact")
                 .parse()
                 .map_err(|_| ())?,
             upstream_authorization,
-            managed: None,
+            managed,
             contract: match contract {
                 UpstreamContract::Responses => protocol::Contract::Responses,
                 UpstreamContract::CodexSubscription => protocol::Contract::CodexSubscription,
@@ -395,23 +392,10 @@ impl DataPlane {
             if let (Some(managed), Some(key)) = (&self.managed, authorization) {
                 let key_id = key.id().to_owned();
                 let (lease, upstream_headers) = managed
-                    .pool
-                    .admit_with_affinity(
+                    .admit(
                         execution,
-                        execution::ManagedAdmissionRequest {
-                            key,
-                            attempt: admission.attempt,
-                            request_id: admission.request_id,
-                            model: admission.model,
-                            mode: admission.mode,
-                            requirements: admission.requirements,
-                            references: admission.references,
-                            reasoning_effort: admission.reasoning_effort,
-                            service_tier: admission.service_tier,
-                            policy_version: managed.policy_version.clone(),
-                            pricing_version: managed.pricing_version.clone(),
-                            reserved_micros: configuration.reserved_micros,
-                        },
+                        key,
+                        admission,
                         deadline,
                         Some(Affinity {
                             hints: &hints,
