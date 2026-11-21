@@ -163,6 +163,14 @@
 
 在 `11e92c0` 基线上修复两项既有行为。HTTP 桥接按实际 WS 编码长度先拒绝超限续接，等于阈值时仍按订阅 HTTP 参数校验处理。原生定向验证确认超阈值一字节为 413，等于阈值为 400，两个拒绝均无新增派发和 attempt，原有原生 WS 续接仍可用。共享 WS 阈值冒烟套件在 Responses 与 Codex subscription 两种契约上通过。首页记录当前进程实际提交的速率样本，用于区分启动秒或历史时钟范围内的结算归属。原生定向验证收到已结算请求的 Key 聚合及匹配账本的近 60 秒和分日速率，Rust 用量及执行测试通过。共享管理 WSS 已通过通常的升级、结算推送及关闭检查，独立的 SQLite 故障用例重命名核心 attempts 表后连接关闭，尚未验证读源恢复快照。其余扩展分片差异继续独立跟进。[原生定向复查](https://github.com/ximatai/codexone/actions/runs/44868885506)
 
+## 管理读源降级与核心写入故障隔离
+
+固定 `a970e0f` 重新构建原生 amd64 Rust 归档，并让所有分片校验和加载同一归档。容量三轮回稳 RSS 为 17.44、17.50、17.54 MiB，最大增量 0.10 MiB；TLS、加密暂存、Compose 安装、SQLite 备份恢复及维护通过。保留共享只读夹具后，扩展分片 35 通过、1 失败、9 项因 Swift 专用探针或独立工具跳过。失败项为旧版管理 WSS 故障夹具。标准 Verify 的后端检查通过，Chromium 实时和 HTTP fallback 用例在布局偏移为零的断言失败。[原生集成镜像](https://github.com/ximatai/codexone/actions/runs/44869387725) · [标准 Verify](https://github.com/ximatai/codexone/actions/runs/44869344670)
+
+诊断镜像保留旧夹具的临时全表重命名。管理 usage reader 先报告缺表，WSS 首帧如实报告 unavailable。故障持续至下一次保留维护时，执行 writer 在 `ledger::maintain` 首次遇到致命缺表，进程约 60 秒后退出 1。Rust 管理脚本现单独注入已结算速率的读取类型错误，保留表与正常写入路径。未改动的 `a970e0f` 镜像在此故障中报告初始 unavailable/data:null，能继续派发并结算新的合成请求，恢复值后同一 WSS 报告 fresh。独立的核心绑定故障仍导致非零退出并释放两个 listener。[角色追踪与同归档验证](https://github.com/ximatai/codexone/actions/runs/44869728040)
+
+后续管理控制帧检查定位到 Rust 缺失既有的每连接每秒 64 帧限制。修正候选 `5f6d572` 对第 65 帧发出 1008。原生优化二进制通过完整管理 WSS，观测到超限关闭帧、健康 viewer 的后续更新、HTTP 会话和替补 viewer 正常。核心绑定故障退出、完整 WS 超限矩阵和真实 Nginx TLS 均通过。待最终整合 SHA 再构建与验收发行归档。[修正候选定向验证](https://github.com/ximatai/codexone/actions/runs/44870085027)
+
 ## 相关文档
 
 [架构提案](proposal.md)
