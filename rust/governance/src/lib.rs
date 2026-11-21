@@ -23,7 +23,7 @@ pub use authorization::{
     FailureCode, NoAuthorizationProvider, PollError, ProviderFailure, Started, Status, Target,
     VerifiedAuthorization,
 };
-pub use http_api::{AccountRuntime, GovernanceApi, KeyOptions, NoAccountRuntime};
+pub use http_api::{AccountRuntime, GovernanceApi, KeyOptions, NoAccountRuntime, QuotaCommand};
 pub use keys::{Key, KeyChange, KeyPolicy, Limits};
 pub use refresh::{RefreshFailure, RefreshProvider, RefreshService};
 

@@ -260,7 +260,7 @@ async fn run_configured(
         }
         None => (None, None),
     };
-    let (managed, pool) = if let Some(execution) = &execution
+    let (mut managed, pool) = if let Some(execution) = &execution
         && config.admin_digest.is_some()
     {
         let (managed, pool) = Managed::new(
@@ -268,6 +268,8 @@ async fn run_configured(
             config.master_keys,
             subscription.unwrap_or_else(|| SubscriptionTarget::production(proxy.clone())),
             key_options,
+            pool_config.as_deref(),
+            proxy.clone(),
         )
         .map_err(|_| Service)?;
         (Some(managed), pool)
@@ -291,6 +293,10 @@ async fn run_configured(
         None
     };
     let data_connections = data.as_ref().map_or(128, DataPlane::max_connections);
+    let mut managed_tasks = JoinSet::new();
+    if let Some(managed) = &mut managed {
+        managed.spawn_workers(&mut managed_tasks);
+    }
     let app = Arc::new(Application {
         admin: AdminRouter::new(
             admin_listener.port,
@@ -323,12 +329,6 @@ async fn run_configured(
         stopping.clone(),
         codexone_admin::MAX_CONNECTIONS,
     ));
-    let mut managed_tasks = JoinSet::new();
-    if let Some(managed) = &app.managed
-        && let Some(supervise) = managed.supervise()
-    {
-        managed_tasks.spawn(supervise);
-    }
     let mut failed = tokio::select! {
         _ = terminate.recv() => false,
         _ = interrupt.recv() => false,
@@ -342,6 +342,9 @@ async fn run_configured(
     }
     if let Some(execution) = &app.execution {
         execution.stop_admission();
+    }
+    if let Some(managed) = &app.managed {
+        managed.stop_quota();
     }
     stopping.cancel();
     while let Some(result) = listeners.join_next().await {

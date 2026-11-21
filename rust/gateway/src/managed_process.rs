@@ -629,3 +629,247 @@ fn serve(mut socket: TcpStream, capture: &Mutex<Vec<String>>) {
 fn write_response(socket: &mut TcpStream, status: &str, content_type: &str, body: &str) {
     write!(socket, "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
 }
+
+#[test]
+fn quota_management_and_http_priming_survive_gateway_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    let master = "55".repeat(32);
+    private(&root.join("master"), &master);
+    private(&root.join("admin"), ADMIN);
+    private(
+        &root.join("pool.json"),
+        &json!({
+            "models": [{"id":"synth-text", "inputMicrosPerMillion":1, "outputMicrosPerMillion":1}],
+            "reservedMicros":10, "upstreamTransport":"http"
+        })
+        .to_string(),
+    );
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    upstream.set_nonblocking(true).unwrap();
+    let port = upstream.local_addr().unwrap().port();
+    let path = state.join("core.sqlite");
+    let now = unix_time();
+    let account = "synth-quota";
+    let namespace = namespace(account, port);
+    let access = token(account, now + 7200);
+    let credential = AccountCredential::new(
+        access.clone(),
+        "synthetic-refresh".into(),
+        Some(access),
+        now + 7200,
+    )
+    .unwrap();
+    let cipher = AccountCredentialCipher::from_hex(&master, &[]).unwrap();
+    let sealed = cipher
+        .seal(
+            &credential,
+            &AccountCredentialContext::new(account, &namespace, 1).unwrap(),
+        )
+        .unwrap();
+    let db = Database::open_or_create(&path).unwrap();
+    db.connection()
+        .execute(
+            "INSERT INTO accounts VALUES(?,?,1,1,'enabled','ready',?,NULL,?,NULL)",
+            params![account, namespace, sealed, now],
+        )
+        .unwrap();
+    drop(db);
+
+    let (stop, stopping) = mpsc::channel::<()>();
+    let (records, observed) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let mut consumed = Vec::new();
+        while matches!(stopping.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            match upstream.accept() {
+                Ok((socket, _)) => quota_upstream(socket, &mut consumed, &records),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("synthetic quota upstream: {error}"),
+            }
+        }
+        consumed
+    });
+    let priming = "/api/accounts/synth-quota/quota-priming";
+    let reset = "/api/accounts/synth-quota/reset-credits";
+    let reset_status = format!("{reset}/state");
+    let reset_consume = format!("{reset}/consume");
+    let reset_settings = format!("{reset}/settings");
+    let (mut gateway, data, admin) = launch(root, port);
+    assert_eq!(request(admin, "GET", priming, None, None).0, 401);
+    assert_eq!(request(data, "GET", priming, Some(ADMIN), None).0, 404);
+    assert_eq!(
+        request(
+            admin,
+            "GET",
+            &format!("{priming}?unexpected=1"),
+            Some(ADMIN),
+            None
+        )
+        .0,
+        400
+    );
+    let (status, list) = request(admin, "GET", reset, Some(ADMIN), None);
+    assert_eq!(status, 200, "{list}");
+    assert_eq!(list["credits"][0]["id"], "synth-card");
+    let (status, saved) = request(
+        admin,
+        "PUT",
+        &reset_settings,
+        Some(ADMIN),
+        Some(json!({
+            "revision":list["state"]["revision"], "autoUseBeforeExpiry":false, "leadMinutes":10,"retryCount":2
+        })),
+    );
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!(saved["settings"]["leadHours"], 1);
+    let (status, result) = request(
+        admin,
+        "POST",
+        &reset_consume,
+        Some(ADMIN),
+        Some(json!({"creditID":"synth-card"})),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["code"], "unknown");
+    assert_eq!(
+        request(admin, "GET", &reset_status, Some(ADMIN), None).1["pending"],
+        true
+    );
+    let (status, configured) = request(
+        admin,
+        "PUT",
+        priming,
+        Some(ADMIN),
+        Some(json!({
+            "revision":saved["revision"],"enabled":true,"model":null,"message":"start window"
+        })),
+    );
+    assert_eq!(status, 200, "{configured}");
+    assert_eq!(configured["defaultModel"], "synth-text");
+    observed.recv_timeout(WAIT).unwrap();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let (status, saved) = request(admin, "GET", priming, Some(ADMIN), None);
+        assert_eq!(status, 200, "{saved}");
+        if saved["lastResult"] == "success" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "priming did not settle: {saved}");
+        thread::sleep(Duration::from_millis(10));
+    }
+    gateway.terminate();
+
+    let (mut gateway, _, admin) = launch(root, port);
+    assert_eq!(
+        request(admin, "GET", priming, Some(ADMIN), None).1["lastResult"],
+        "success"
+    );
+    let pending = request(admin, "GET", &reset_status, Some(ADMIN), None).1;
+    assert_eq!(pending["pending"], true);
+    assert_eq!(pending["pendingCreditID"], "synth-card");
+    assert!(pending.get("requestID").is_none());
+    assert_eq!(
+        request(
+            admin,
+            "POST",
+            &reset_consume,
+            Some(ADMIN),
+            Some(json!({"creditID":"synth-other"}))
+        )
+        .0,
+        409
+    );
+    let (status, recovered) = request(admin, "POST", &reset_consume, Some(ADMIN), Some(json!({})));
+    assert_eq!(status, 200, "{recovered}");
+    assert_eq!(recovered["code"], "already_redeemed");
+    gateway.terminate();
+    stop.send(()).unwrap();
+    let consumed = worker.join().unwrap();
+    assert_eq!(consumed.len(), 2);
+    assert_eq!(consumed[0], consumed[1]);
+    assert!(
+        observed.try_recv().is_err(),
+        "priming crossed the window barrier"
+    );
+    let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let (mode, state, input): (String, String, i64) = db.query_row(
+        "SELECT json_extract(admission_json,'$.mode'),state,json_extract(usage_json,'$.inputTokens') FROM attempts WHERE principal='internal:quota-priming'",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+    assert_eq!(
+        (mode.as_str(), state.as_str(), input),
+        ("priming", "settled", 5)
+    );
+}
+
+fn quota_upstream(mut socket: TcpStream, consumed: &mut Vec<Value>, observed: &mpsc::Sender<()>) {
+    socket.set_nonblocking(false).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    let mut reader = BufReader::new(&mut socket);
+    let mut head = String::new();
+    while !head.ends_with("\r\n\r\n") {
+        if reader.read_line(&mut head).unwrap() == 0 {
+            return;
+        }
+    }
+    let fields: std::collections::HashMap<_, _> = head
+        .lines()
+        .filter_map(|line| line.split_once(": "))
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
+        .collect();
+    assert_eq!(fields["chatgpt-account-id"], "synth-quota");
+    let path = head.split_ascii_whitespace().nth(1).unwrap();
+    match path {
+        "/backend-api/wham/usage" => {
+            write_response(&mut socket, "200 OK", "application/json", &json!({
+                "rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{
+                    "used_percent":0,"limit_window_seconds":18000,"reset_after_seconds":18000,"reset_at":unix_time()+18000
+                }}
+            }).to_string());
+        }
+        "/backend-api/wham/rate-limit-reset-credits" => {
+            write_response(&mut socket, "200 OK", "application/json", &json!({
+                "available_count":1,"credits":[{"id":"synth-card","status":"available","reset_type":"quota","granted_at":"2026-01-01T00:00:00Z"}]
+            }).to_string());
+        }
+        "/backend-api/wham/rate-limit-reset-credits/consume" | "/backend-api/codex/responses" => {
+            let mut bytes = vec![0; fields["content-length"].parse().unwrap()];
+            reader.read_exact(&mut bytes).unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            if path.ends_with("/consume") {
+                assert_eq!(body["credit_id"], "synth-card");
+                assert!(uuid::Uuid::parse_str(body["redeem_request_id"].as_str().unwrap()).is_ok());
+                consumed.push(body);
+                if consumed.len() > 1 {
+                    write_response(
+                        &mut socket,
+                        "200 OK",
+                        "application/json",
+                        r#"{"code":"already_redeemed","windows_reset":0}"#,
+                    );
+                }
+                return;
+            }
+            assert_eq!(body["input"][0]["content"], "start window");
+            assert_eq!(body["tools"], json!([]));
+            assert_eq!(body["store"], false);
+            assert_eq!(body["stream"], true);
+            assert!(fields["user-agent"].starts_with("codex_cli_rs/"));
+            let completed = json!({"type":"response.completed","response":{
+                "id":"resp_synth_priming","status":"completed","model":"synth-text","output":[],
+                "usage":{"input_tokens":5,"output_tokens":3,"input_tokens_details":{"cached_tokens":0}}
+            }});
+            observed.send(()).unwrap();
+            write_response(
+                &mut socket,
+                "200 OK",
+                "text/event-stream",
+                &format!("data: {completed}\n\n"),
+            );
+        }
+        _ => panic!("unexpected synthetic route {path}"),
+    }
+}

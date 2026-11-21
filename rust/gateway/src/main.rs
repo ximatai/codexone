@@ -7,6 +7,7 @@ mod image_route;
 mod listener;
 mod online_backup;
 mod managed;
+mod quota;
 mod reply;
 mod response;
 

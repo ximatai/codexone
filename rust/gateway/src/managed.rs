@@ -21,7 +21,10 @@ use rusqlite::Transaction;
 use tokio::time::{Instant, timeout_at};
 use zeroize::Zeroizing;
 
-use crate::headers;
+use crate::{
+    headers,
+    quota::{HttpPriming, Jobs, Worker},
+};
 
 const SUBSCRIPTION_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
@@ -90,6 +93,8 @@ pub struct Managed {
     api: GovernanceApi<GovernanceWriter, SubscriptionProvider, Runtime>,
     options: KeyOptions,
     runtime: Option<IdentityRuntime<GovernanceWriter>>,
+    jobs: Option<Arc<Jobs>>,
+    priming_worker: Option<Worker>,
 }
 
 impl Managed {
@@ -98,6 +103,8 @@ impl Managed {
         keyring: Option<MasterKeyring>,
         target: SubscriptionTarget,
         options: KeyOptions,
+        pool_config: Option<&ResponsesConfiguration>,
+        proxy: Option<Proxy>,
     ) -> Result<(Self, Option<Arc<Pool>>), ()> {
         let writer = GovernanceWriter(execution.clone());
         let keyring = keyring.map(Keyring::new);
@@ -108,7 +115,7 @@ impl Managed {
             .map(|_| Authorizations::new(store.clone(), target.provider.clone()));
         let runtime = if let Some(cipher) = cipher()? {
             Some(IdentityRuntime::new(
-                writer,
+                writer.clone(),
                 store.clone(),
                 cipher,
                 target.provider.clone(),
@@ -116,6 +123,21 @@ impl Managed {
         } else {
             None
         };
+        let (jobs, priming_worker) =
+            if let Some((config, identity)) = pool_config.zip(runtime.clone()) {
+                let (jobs, worker) = Jobs::new(
+                    config,
+                    &options,
+                    HttpPriming::new(config, &target.base, proxy)?,
+                    writer,
+                    store.clone(),
+                    identity,
+                    execution.clone(),
+                );
+                (Some(jobs), Some(worker))
+            } else {
+                (None, None)
+            };
         let pool = runtime.clone().zip(cipher()?).map(|(runtime, cipher)| {
             Arc::new(Pool {
                 runtime,
@@ -131,6 +153,7 @@ impl Managed {
             Runtime {
                 identity: runtime.clone(),
                 execution,
+                jobs: jobs.clone(),
             },
         );
         Ok((
@@ -138,6 +161,8 @@ impl Managed {
                 api,
                 options,
                 runtime,
+                jobs,
+                priming_worker,
             },
             pool,
         ))
@@ -158,14 +183,25 @@ impl Managed {
             .await
     }
 
-    pub fn supervise(
-        &self,
-    ) -> Option<impl Future<Output = governance::Result<()>> + Send + 'static> {
-        let runtime = self.runtime.clone()?;
-        Some(async move { runtime.run_periodic().await })
+    pub fn spawn_workers(&mut self, tasks: &mut tokio::task::JoinSet<governance::Result<()>>) {
+        if let Some(runtime) = self.runtime.clone() {
+            tasks.spawn(async move { runtime.run_periodic().await });
+        }
+        if let Some((jobs, worker)) = self.jobs.as_ref().zip(self.priming_worker.take()) {
+            jobs.spawn(worker, tasks);
+        }
+    }
+
+    pub fn stop_quota(&self) {
+        if let Some(jobs) = &self.jobs {
+            jobs.stop();
+        }
     }
 
     pub async fn shutdown(&self) {
+        if let Some(jobs) = &self.jobs {
+            jobs.drain().await;
+        }
         self.api.shutdown().await;
         if let Some(runtime) = &self.runtime {
             runtime.shutdown().await;
@@ -176,6 +212,7 @@ impl Managed {
 struct Runtime {
     identity: Option<IdentityRuntime<GovernanceWriter>>,
     execution: ExecutionService,
+    jobs: Option<Arc<Jobs>>,
 }
 
 impl AccountRuntime for Runtime {
@@ -196,6 +233,19 @@ impl AccountRuntime for Runtime {
             .as_ref()
             .ok_or(governance::Error::AuthorizationUnavailable)?
             .refresh(account, revision)
+            .await
+    }
+
+    async fn quota_command(
+        &self,
+        account: &str,
+        command: governance::QuotaCommand,
+        body: Option<codexone_responses::JsonValue>,
+    ) -> governance::Result<serde_json::Value> {
+        self.jobs
+            .as_ref()
+            .ok_or(governance::Error::AuthorizationUnavailable)?
+            .command(account, command, body)
             .await
     }
 

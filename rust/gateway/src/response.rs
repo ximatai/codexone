@@ -359,7 +359,7 @@ pub async fn forward(
             .and_then(|value| value.to_str().ok());
         protocol::validate_upstream_media_type(content_type, transfer.upstream_sse)?;
         if transfer.upstream_sse {
-            let mut reader = EventReader::new(upstream, &transfer, body_permit);
+            let mut reader = EventReader::new(upstream, &transfer, Some(body_permit));
             loop {
                 let Some(delivery) = reader
                     .next(&mut attempt, Some(&mut response_headers))
@@ -434,6 +434,81 @@ pub async fn forward(
     }
 }
 
+/// Observe the same protocol and usage records as a client stream, discarding its text.
+pub(crate) async fn discard_priming(
+    exchange: impl std::future::Future<Output = Result<upstream::Response, upstream::Error>>,
+    transfer: Transfer,
+    lease: &mut execution::Execution,
+) -> execution::Outcome {
+    let mut first_event = None;
+    let result = async {
+        let upstream = exchange.await?;
+        if upstream.status() != StatusCode::OK {
+            let error = refusal(upstream, false).await;
+            if let Some(usage) = error.http_rejection_usage(false) {
+                lease.observe(evidence(usage))?;
+            }
+            return Err(ResponseError::from(Box::new(error)));
+        }
+        let media = upstream
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        if let Err(error) = protocol::validate_upstream_media_type(media, true) {
+            upstream.close().await;
+            return Err(error.into());
+        }
+        let mut reader = EventReader::new(upstream, &transfer, None);
+        let result = async {
+            while let Some(observation) = reader.next_observation().await? {
+                first_event.get_or_insert_with(|| milliseconds(transfer.began));
+                for usage in observation.usage {
+                    lease.observe(evidence(usage))?;
+                }
+                let delivery = observation.result.map_err(|error| match error {
+                    protocol::EventFailure::Protocol(error) => ResponseError::from(error),
+                    protocol::EventFailure::Provider(error) => ResponseError::from(error),
+                })?;
+                reader.mark_progress(delivery.progress)?;
+                if let Some(terminal) = delivery.terminal {
+                    let failure = match terminal {
+                        protocol::Terminal::Completed => None,
+                        protocol::Terminal::Failed => Some(execution::Failure::UpstreamRejected),
+                        protocol::Terminal::Incomplete(_) => {
+                            Some(execution::Failure::Indeterminate)
+                        }
+                    };
+                    let mut outcome = execution::Outcome::new(failure, unix_time());
+                    outcome.actual_service_tier = delivery.actual_service_tier;
+                    return Ok(outcome);
+                }
+            }
+            Err(ProtocolError::new(502, "execution_indeterminate").into())
+        }
+        .await;
+        reader.upstream.close().await;
+        result
+    }
+    .await;
+    let mut outcome = result.unwrap_or_else(|error: ResponseError| {
+        let mut outcome = execution::Outcome::new(Some(error.failure), unix_time());
+        outcome.cooldown_seconds = error
+            .provider
+            .as_ref()
+            .filter(|_| {
+                matches!(
+                    error.failure,
+                    execution::Failure::RateLimited | execution::Failure::UpstreamUnavailable
+                )
+            })
+            .and_then(|provider| provider.account_cooldown(outcome.at_unix_seconds));
+        outcome
+    });
+    outcome.total_milliseconds = Some(milliseconds(transfer.began));
+    outcome.first_event_milliseconds = first_event;
+    outcome
+}
+
 fn json_delivery(
     attempt: &mut Attempt,
     delivery: protocol::Delivery,
@@ -470,6 +545,7 @@ async fn refusal(mut upstream: upstream::Response, compact: bool) -> ProviderFai
             }
         }
     }
+    upstream.close().await;
     protocol::http_provider_failure(
         status,
         complete.then_some(&body),
@@ -485,11 +561,15 @@ struct EventReader {
     parser: protocol::ResponseStream<'static>,
     effective_progress: bool,
     returned_turn_state: bool,
-    _body_permit: BodyPermit,
+    _body_permit: Option<BodyPermit>,
 }
 
 impl EventReader {
-    fn new(upstream: upstream::Response, transfer: &Transfer, body_permit: BodyPermit) -> Self {
+    fn new(
+        upstream: upstream::Response,
+        transfer: &Transfer,
+        body_permit: Option<BodyPermit>,
+    ) -> Self {
         Self {
             upstream,
             chunk: Bytes::new(),
@@ -505,6 +585,25 @@ impl EventReader {
         attempt: &mut Attempt,
         mut response_headers: Option<&mut HeaderMap>,
     ) -> Result<Option<protocol::Delivery>, ResponseError> {
+        let Some(observation) = self.next_observation().await? else {
+            return Ok(None);
+        };
+        if !self.returned_turn_state
+            && let Some(state) = observation.turn_state.as_deref()
+        {
+            self.returned_turn_state = true;
+            if let Some(headers) = response_headers.as_mut()
+                && let Ok(header) = state.parse()
+            {
+                headers.insert("x-codex-turn-state", header);
+            }
+        }
+        let delivery = attempt.apply(observation).await?;
+        self.mark_progress(delivery.progress)?;
+        Ok(Some(delivery))
+    }
+
+    async fn next_observation(&mut self) -> Result<Option<protocol::Observation>, ResponseError> {
         loop {
             if self.chunk.is_empty() {
                 let Some(chunk) = self.upstream.next_chunk().await? else {
@@ -519,26 +618,18 @@ impl EventReader {
             let Some(observation) = observation else {
                 continue;
             };
-            if !self.returned_turn_state
-                && let Some(state) = observation.turn_state.as_deref()
-            {
-                self.returned_turn_state = true;
-                if let Some(headers) = response_headers.as_mut()
-                    && let Ok(header) = state.parse()
-                {
-                    headers.insert("x-codex-turn-state", header);
-                }
-            }
-            let delivery = attempt.apply(observation).await?;
-            if delivery.progress == protocol::Progress::Activity
-                || (!self.effective_progress
-                    && delivery.progress == protocol::Progress::Acknowledgement)
-            {
-                self.upstream.mark_response_progress()?;
-                self.effective_progress = true;
-            }
-            return Ok(Some(delivery));
+            return Ok(Some(observation));
         }
+    }
+
+    fn mark_progress(&mut self, progress: protocol::Progress) -> Result<(), ResponseError> {
+        if progress == protocol::Progress::Activity
+            || (!self.effective_progress && progress == protocol::Progress::Acknowledgement)
+        {
+            self.upstream.mark_response_progress()?;
+            self.effective_progress = true;
+        }
+        Ok(())
     }
 }
 

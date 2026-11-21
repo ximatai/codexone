@@ -83,6 +83,15 @@ pub trait AccountRuntime: Send + Sync + 'static {
         async { Err(Error::AuthorizationUnavailable) }
     }
 
+    fn quota_command(
+        &self,
+        _account: &str,
+        _command: QuotaCommand,
+        _body: Option<JsonValue>,
+    ) -> impl Future<Output = Result<Value>> + Send {
+        async { Err(Error::AuthorizationUnavailable) }
+    }
+
     fn observability(&self, _account: &str) -> impl Future<Output = Result<Value>> + Send {
         async {
             Ok(json!({
@@ -99,6 +108,16 @@ pub trait AccountRuntime: Send + Sync + 'static {
             }))
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum QuotaCommand {
+    PrimingStatus,
+    PrimingSettings,
+    ResetList,
+    ResetStatus,
+    ResetSettings,
+    ResetConsume,
 }
 
 pub struct NoAccountRuntime;
@@ -145,6 +164,7 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
                 endpoint,
                 Endpoint::Accounts
                     | Endpoint::Account(..)
+                    | Endpoint::Quota(..)
                     | Endpoint::Begin
                     | Endpoint::Authorization(..)
             )
@@ -305,6 +325,27 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
                 };
                 json!({"account": self.account_metadata(&account).await?})
             }
+            Endpoint::Quota(id, command) => {
+                no_query(request)?;
+                use QuotaCommand::*;
+                let fields = match command {
+                    PrimingStatus | ResetList | ResetStatus => None,
+                    PrimingSettings => Some(quota_body(
+                        request,
+                        &["revision", "enabled", "model", "message"],
+                        &[],
+                    )?),
+                    ResetSettings => Some(quota_body(
+                        request,
+                        &["revision", "autoUseBeforeExpiry"],
+                        &["leadMinutes", "retryCount", "leadHours"],
+                    )?),
+                    ResetConsume => Some(quota_body(request, &[], &["creditID"])?),
+                };
+                self.runtime
+                    .quota_command(&decoded(id)?, command, fields.map(JsonValue::Object))
+                    .await?
+            }
             Endpoint::Begin | Endpoint::Authorization(_, _) => {
                 let auth = self
                     .authorization
@@ -378,6 +419,7 @@ enum Endpoint<'a> {
     ChangeKey(&'a str, KeyCommand),
     Accounts,
     Account(&'a str, AccountCommand),
+    Quota(&'a str, QuotaCommand),
     Begin,
     Authorization(&'a str, &'a Method),
 }
@@ -410,8 +452,23 @@ impl<'a> Endpoint<'a> {
             path.next(),
             path.next(),
         );
-        if prefix != "api" || extra.is_some() {
+        if prefix != "api" || path.next().is_some() {
             return None;
+        }
+        if let Some(extra) = extra {
+            use QuotaCommand::*;
+            return match (group, target, action, extra, request.method()) {
+                ("accounts", Some(id), Some("reset-credits"), "state", &M::GET) => {
+                    Some(Self::Quota(id, ResetStatus))
+                }
+                ("accounts", Some(id), Some("reset-credits"), "settings", &M::PUT) => {
+                    Some(Self::Quota(id, ResetSettings))
+                }
+                ("accounts", Some(id), Some("reset-credits"), "consume", &M::POST) => {
+                    Some(Self::Quota(id, ResetConsume))
+                }
+                _ => None,
+            };
         }
         Some(match (group, target, action, request.method()) {
             ("keys", Some("options"), None, &M::GET) => Self::KeyOptions,
@@ -439,6 +496,15 @@ impl<'a> Endpoint<'a> {
                 Some(id),
                 method @ (&M::GET | &M::POST | &M::DELETE),
             ) => Self::Authorization(id, method),
+            ("accounts", Some(id), Some("quota-priming"), &M::GET) => {
+                Self::Quota(id, QuotaCommand::PrimingStatus)
+            }
+            ("accounts", Some(id), Some("quota-priming"), &M::PUT) => {
+                Self::Quota(id, QuotaCommand::PrimingSettings)
+            }
+            ("accounts", Some(id), Some("reset-credits"), &M::GET) => {
+                Self::Quota(id, QuotaCommand::ResetList)
+            }
             ("accounts", Some(id), None, &M::PUT) => Self::Account(id, AccountCommand::Mode),
             ("accounts", Some(id), Some("display-name"), &M::PUT) => {
                 Self::Account(id, AccountCommand::DisplayName)
@@ -558,6 +624,25 @@ fn body(
     optional: &[&str],
     key: bool,
 ) -> Result<JsonObject> {
+    parse_body(request, required, optional, key, &[])
+}
+
+fn quota_body(
+    request: &Request<Bytes>,
+    required: &[&str],
+    optional: &[&str],
+) -> Result<JsonObject> {
+    let unique: Vec<_> = required.iter().chain(optional).copied().collect();
+    parse_body(request, required, optional, false, &unique)
+}
+
+fn parse_body(
+    request: &Request<Bytes>,
+    required: &[&str],
+    optional: &[&str],
+    key: bool,
+    unique: &[&str],
+) -> Result<JsonObject> {
     let mut values = request.headers().get_all(header::CONTENT_TYPE).iter();
     let content_type = values
         .next()
@@ -578,8 +663,8 @@ fn body(
     {
         return Err(Error::InvalidCommand);
     }
-    let JsonValue::Object(fields) =
-        JsonValue::decode(request.body()).map_err(|_| Error::InvalidCommand)?
+    let JsonValue::Object(fields) = JsonValue::decode_rejecting_duplicates(request.body(), unique)
+        .map_err(|_| Error::InvalidCommand)?
     else {
         return Err(Error::InvalidCommand);
     };
