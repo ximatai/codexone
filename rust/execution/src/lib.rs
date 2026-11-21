@@ -1,4 +1,4 @@
-//! Durable single-account execution for the Swift-compatible v19 ledger.
+//! Durable execution for the Swift-compatible v19 ledger.
 
 mod admission;
 mod ledger;
@@ -7,6 +7,9 @@ mod reserve;
 mod static_identity;
 mod worker;
 
+pub use codexone_account_pool::{
+    Identity as AccountIdentity, SessionAffinity, SessionLabel, TurnStateOwners,
+};
 pub use model::*;
 pub use static_identity::{
     StaticAdmissionRequest, StaticAuthorization, StaticIdentity, StaticIdentityConfig,
@@ -24,6 +27,8 @@ pub enum ExecutionError {
     KeyExpired,
     AccountUnavailable,
     AccountConcurrency,
+    AccountCooldown { retry_after_seconds: u64 },
+    ContinuationOwnerUnavailable,
     KeyLimit,
     UnknownObject,
     AmbiguousObject,
@@ -67,6 +72,31 @@ impl From<codexone_storage::DatabaseError> for ExecutionError {
         match error {
             DatabaseError::StorageUnavailable => Self::StorageUnavailable,
             other => Self::Database(other),
+        }
+    }
+}
+
+impl From<codexone_account_pool::Error> for ExecutionError {
+    fn from(error: codexone_account_pool::Error) -> Self {
+        use codexone_account_pool::Error;
+        match error {
+            Error::InvalidCommand => Self::InvalidCommand,
+            Error::StorageUnavailable => Self::StorageUnavailable,
+            Error::UnknownObject => Self::UnknownObject,
+            Error::AmbiguousObject => Self::AmbiguousObject,
+            Error::AccountUnavailable => Self::AccountUnavailable,
+            Error::AccountConcurrency => Self::AccountConcurrency,
+            Error::Wait(duration) => Self::AccountCooldown {
+                retry_after_seconds: duration.as_micros().div_ceil(1_000_000) as u64,
+            },
+            Error::Cooldown {
+                retry_after_seconds,
+            } => Self::AccountCooldown {
+                retry_after_seconds,
+            },
+            Error::Capacity => Self::Capacity,
+            Error::Closed => Self::Closed,
+            Error::ContinuationOwnerUnavailable => Self::ContinuationOwnerUnavailable,
         }
     }
 }

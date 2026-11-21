@@ -123,7 +123,7 @@ pub struct AccountDispatchSnapshot {
     pub revision: i64,
     pub credential_version: i64,
     pub access_expires_at_unix_seconds: i64,
-    /// True only when the transport has already established connection affinity.
+    /// For pool routing, true only for a confirmed hard object or connection owner.
     pub continuation: bool,
 }
 
@@ -135,7 +135,7 @@ pub struct AccountDispatch {
     pub(crate) snapshot: AccountDispatchSnapshot,
 }
 
-/// Encrypted material for the configured account. Decrypt through codexone-storage.
+/// Encrypted material for a stored account. Decrypt through codexone-storage.
 pub struct AccountCredentialRecord {
     pub(crate) id: String,
     pub(crate) namespace: String,
@@ -155,6 +155,13 @@ impl AccountCredentialRecord {
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
+    pub fn identity(&self) -> crate::AccountIdentity {
+        crate::AccountIdentity {
+            id: self.id.clone(),
+            namespace: self.namespace.clone(),
+        }
+    }
+
     pub fn credential_version(&self) -> i64 {
         self.credential_version
     }
@@ -228,8 +235,9 @@ impl AdmissionRequest {
     }
 }
 
-/// The Key and operation fields shared by managed admission paths.
-pub(crate) struct ManagedAdmissionRequest {
+/// Trusted operation classification shared by managed admission paths.
+#[derive(Clone, Debug)]
+pub struct ManagedAdmissionRequest {
     pub attempt: String,
     pub request_id: Option<String>,
     pub key: AuthenticatedKey,
@@ -242,6 +250,29 @@ pub(crate) struct ManagedAdmissionRequest {
     pub policy_version: String,
     pub pricing_version: String,
     pub reserved_micros: i64,
+}
+
+/// Affinity supplied by the request transport on each preparation pass.
+#[derive(Clone, Debug, Default)]
+pub struct PoolRouting {
+    /// Verified owner of the current upstream connection.
+    pub connection: Option<crate::AccountIdentity>,
+    /// Verified turn-state owner. This alone does not grant draining access.
+    pub required: Option<crate::AccountIdentity>,
+    /// Soft preference from history or session affinity.
+    pub preferred: Option<crate::AccountIdentity>,
+}
+
+/// Credential-dependent transport work stays outside the SQLite worker.
+pub struct PreparedPool<T> {
+    pub routing: PoolRouting,
+    pub candidates: Vec<(AccountDispatch, T)>,
+}
+
+/// Current credential record and the continuation bit required for its snapshot.
+pub struct PoolCredential {
+    pub record: AccountCredentialRecord,
+    pub continuation: bool,
 }
 
 impl ManagedAdmissionRequest {

@@ -1,6 +1,6 @@
 # CodexOne execution
 
-An independent crate for durable single-account execution on an existing Swift
+An independent crate for durable execution on an existing Swift
 v19 SQLite ledger. `ExecutionService::open` takes the database path and identity
 options, obtains the instance lock through `codexone-storage`, and marks old
 dispatch intents unknown before returning. It uses the Swift
@@ -44,12 +44,36 @@ Open with `Options::new(account_id)`.
    logical upstream operation. Admission commits the intent and verifies the
    current Key revision, account, model, reference ownership and limits.
 
-Future pool admission can use the same `submit_admission` worker path from a
-dedicated pool command. In its transaction, check the restore and duplicate
-barriers, verify the managed Key and its limits once, and resolve reference
-ownership and the selected account's snapshot, model and capacity. Extend the
-selected bindings and insert the intent and concurrency sample in that
-transaction. The low-level write stays private to the admission module.
+## Managed account pool
+
+Open with `Options::for_account_pool()` when the instance has no fixed account.
+Authenticate as for fixed managed admission and build a `ManagedAdmissionRequest`.
+Call `configure_health_models` with the complete configured set at startup and
+after changes to that set.
+
+Pass the request and an async preparation callback to `admit_pool`. Each pass:
+
+1. Supply a verified connection owner in `PoolRouting::connection` and a
+   verified turn-state owner in `required`, when applicable. Use `pool_hint`
+   to resolve recent soft reference hints before falling back to
+   `SessionAffinity`. Supply that result as `preferred`.
+2. Call `pool_credentials` to resolve hard reference/connection affinity and
+   read the current eligible encrypted credentials. Decrypt outside the
+   writer. Pair each record's `dispatch_snapshot` with its decrypted expiry,
+   the returned continuation bit, and its associated transport work.
+   Return the pairs and routing as `PreparedPool`.
+3. The writer rechecks hard ownership, available account capacity, health,
+   account revisions, the current directory and Key limits before committing
+   the selected intent, its concurrency sample and the renewal of its
+   reference bindings in one transaction. The caller receives a lease and
+   only the selected work. Call `begin_dispatch` before the upstream operation.
+
+A short pacing wait leaves no intent and releases the ticket and prepared
+work. The service acquires a new ticket and calls the preparation callback on
+wake. The request owns cancellation and the total deadline. Preserve the
+rounded seconds in `AccountCooldown` as `Retry-After`; other availability
+errors follow the gateway's normal mapping. Shutdown closes outstanding
+pacing waits.
 
 ## Execution lease and shutdown
 
@@ -70,17 +94,16 @@ transaction. The low-level write stays private to the admission module.
    status describes queue liveness, and each admission also checks storage and
    restore gates.
 
-Health writes for a matching credential version share the settlement
-transaction with the first recorded outcome and any usage evidence. They
-become visible to later admissions at commit. An identical outcome skips
-health writes, a different outcome conflicts, and late usage reconciliation
-supplies no outcome. Any future in-memory health publication belongs on
-the same writer after commit and should use only newly applied health changes.
+Health writes for the matching credential version share the settlement
+transaction with the first recorded outcome and any usage evidence. Account
+pacing is applied in memory after commit, with persisted deadlines honored
+after restart. Replaying an identical outcome skips health writes, a different
+outcome conflicts, and late usage reconciliation supplies no outcome.
 
 The async API uses one SQLite worker thread. It has 16 regular slots and at
 most 16 finalization tickets across active leases, queued settlements, and the
 current settlement. Request bodies, upstream responses, and transport buffers
-belong to the caller. The crate covers managed and static admission for generation, warmup,
+belong to the caller. The crate covers pool, fixed managed and static admission for generation, warmup,
 compact and Images. The application integration still owns provider
 routing and pacing, credential refresh, quota priming, detail retention and
 rollups, pricing inputs, and transport-specific continuation and retry rules.
@@ -91,6 +114,9 @@ Run `cargo test --locked --manifest-path rust/execution/Cargo.toml` from the rep
 root. The tests create isolated temporary databases using the Swift baseline's
 v19 initialization SQL. They inject transactional admission, binding, and
 settlement failures, and exercise cancellation, recovery, restore freeze,
-ownership, quotas, and cumulative evidence compaction. The static tests use
+ownership, quotas, and cumulative evidence compaction. Pool tests also verify
+selection with two encrypted synthetic accounts, hard continuation across
+Keys with the same principal, ticket release and repreparation during pacing,
+durable cooldown after restart, and exactly-once health updates. The static tests use
 empty governance tables and cover the first turn, restart with
 `previous_response_id`, and settlement under the same scoped owner.

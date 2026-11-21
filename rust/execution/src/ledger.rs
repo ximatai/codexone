@@ -1,9 +1,10 @@
+use codexone_account_pool::{Health, HealthObservation, HealthOutcome, HealthUpdate};
 use codexone_storage::Database;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::admission::record_concurrency;
 use crate::model::*;
-use crate::{ExecutionError as Error, Result};
+use crate::{AccountIdentity, ExecutionError as Error, Result};
 
 const HISTORY: i64 = 128;
 const MAINTENANCE_BATCH: i64 = 100;
@@ -227,10 +228,17 @@ fn save_evidence(
     Ok(())
 }
 
-fn save_outcome(tx: &Transaction<'_>, snapshot: &Snapshot, outcome: &Outcome) -> Result<()> {
+fn save_outcome(
+    tx: &Transaction<'_>,
+    snapshot: &Snapshot,
+    outcome: &Outcome,
+    health: &Health,
+    now_micros: i64,
+    overload_default: Option<i64>,
+) -> Result<Option<HealthUpdate>> {
     if let Some(old) = &snapshot.outcome {
         return if old == outcome {
-            Ok(())
+            Ok(None)
         } else {
             Err(Error::Conflict)
         };
@@ -241,59 +249,45 @@ fn save_outcome(tx: &Transaction<'_>, snapshot: &Snapshot, outcome: &Outcome) ->
         params![admission.attempt, serde_json::to_string(outcome)?],
     )?;
     let Some(captured) = &admission.account_snapshot else {
-        return Ok(());
+        return Ok(None);
     };
-    let account = &admission.owner.identity;
-    let current: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1 AND namespace=?2 AND credential_version=?3)",
-        params![account, admission.owner.namespace, captured.credential_version], |row| row.get(0),
-    )?;
-    if !current {
-        return Ok(());
-    }
-    if outcome.kind == OutcomeKind::Succeeded {
-        tx.execute(
-            "DELETE FROM account_model_health WHERE account_id=?1 AND model=?2 AND failure='upstream_unavailable'",
-            params![account, admission.model],
-        )?;
-    }
-    let (failure, rejected, default_seconds) = match outcome.failure {
-        Some(Failure::AuthenticationRejected) => (
-            "authentication_rejected",
-            Some(captured.credential_version),
-            0,
-        ),
-        Some(Failure::RateLimited) => ("rate_limited", None, 30),
-        Some(Failure::UpstreamUnavailable) => ("upstream_unavailable", None, 15),
-        _ => return Ok(()),
+    let cooldown_seconds = outcome.cooldown_seconds;
+    let observation = match outcome.failure {
+        None => HealthOutcome::Succeeded,
+        Some(Failure::AuthenticationRejected) => HealthOutcome::AuthenticationRejected,
+        Some(Failure::RateLimited) => HealthOutcome::RateLimited { cooldown_seconds },
+        Some(Failure::UpstreamUnavailable) => HealthOutcome::UpstreamUnavailable {
+            cooldown_seconds: cooldown_seconds.or(overload_default),
+        },
+        _ => return Ok(None),
     };
-    tx.execute(
-        "INSERT INTO account_health VALUES(?1,?2,?3,?4) ON CONFLICT(account_id) DO UPDATE SET
-            auth_rejected_version=COALESCE(excluded.auth_rejected_version,auth_rejected_version),
-            last_failure=CASE WHEN excluded.at_epoch>=at_epoch THEN excluded.last_failure ELSE last_failure END,
-            at_epoch=MAX(at_epoch,excluded.at_epoch)",
-        params![account, rejected, failure, outcome.at_unix_seconds],
-    )?;
-    if rejected.is_none() {
-        tx.execute(
-            "INSERT INTO account_model_health(account_id,model,until_epoch,failure)
-             SELECT ?1,model,?3,?4 FROM health_models WHERE model=?2
-             ON CONFLICT(account_id,model) DO UPDATE SET
-                failure=CASE WHEN excluded.until_epoch>=until_epoch THEN excluded.failure ELSE failure END,
-                until_epoch=MAX(until_epoch,excluded.until_epoch)",
-            params![account, admission.model, outcome.at_unix_seconds + outcome.cooldown_seconds.unwrap_or(default_seconds), failure],
-        )?;
-    }
-    Ok(())
+    let identity = AccountIdentity {
+        id: admission.owner.identity.clone(),
+        namespace: admission.owner.namespace.clone(),
+    };
+    Ok(Some(health.record(
+        tx,
+        HealthObservation {
+            identity: &identity,
+            credential_version: captured.credential_version,
+            model: admission.model.as_deref(),
+            outcome: observation,
+            at_unix_seconds: outcome.at_unix_seconds,
+        },
+        now_micros,
+    )?))
 }
 
 pub(crate) fn finalize(
     db: &mut Database,
+    health: &mut Health,
     attempt: &str,
     evidence: Option<&UsageEvidence>,
     outcome: Option<&Outcome>,
-    now: i64,
+    now_micros: i64,
+    overload_default: Option<i64>,
 ) -> Result<()> {
+    let now = now_micros.div_euclid(1_000_000);
     let tx = db.begin_immediate()?;
     let mut snapshot = snapshot(&tx, attempt)?;
     if snapshot.state == State::Intent {
@@ -305,10 +299,20 @@ pub(crate) fn finalize(
         )?;
         record_concurrency(&tx, &owner.namespace, &owner.identity, now, active)?;
     }
-    if let Some(outcome) = outcome {
-        save_outcome(&tx, &snapshot, outcome)?;
+    let health_update = if let Some(outcome) = outcome {
+        let update = save_outcome(
+            &tx,
+            &snapshot,
+            outcome,
+            health,
+            now_micros,
+            overload_default,
+        )?;
         snapshot.outcome = Some(outcome.clone());
-    }
+        update
+    } else {
+        None
+    };
     if let Some(evidence) = evidence {
         save_evidence(&tx, &snapshot, evidence, now)?;
     } else if snapshot.state == State::Intent {
@@ -318,6 +322,9 @@ pub(crate) fn finalize(
         )?;
     }
     tx.commit()?;
+    if let Some(update) = health_update {
+        health.apply(update);
+    }
     Ok(())
 }
 
@@ -365,4 +372,130 @@ pub(crate) fn release_unknown(
     }
     audit_release(tx, count, before, now, "manual")?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_terminal_outcome_does_not_record_health_again() {
+        const NOW: i64 = 1_728_000_000;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("synthetic.sqlite");
+        let seed = Connection::open(&path).unwrap();
+        seed.execute_batch(include_str!("../tests/swift_v19.sql"))
+            .unwrap();
+        seed.execute_batch(
+            "INSERT INTO metadata VALUES(1,'{}');
+             INSERT INTO accounts VALUES
+               ('synthetic-account','synthetic-namespace',1,1,'enabled','ready','synthetic-envelope',NULL,1728000000,NULL);
+             INSERT INTO health_models VALUES('synthetic-model');",
+        ).unwrap();
+        let admission = Admission {
+            attempt: "synthetic-attempt".into(),
+            owner: Owner {
+                principal: "synthetic-principal".into(),
+                key: "synthetic-key".into(),
+                namespace: "synthetic-namespace".into(),
+                identity: "synthetic-account".into(),
+            },
+            window: "synthetic-window".into(),
+            policy_version: "synthetic-policy".into(),
+            pricing_version: "synthetic-price".into(),
+            reserved_micros: 0,
+            request_id: None,
+            model: Some("synthetic-model".into()),
+            mode: Some(Mode::Generation),
+            key_revision: Some(1),
+            account_snapshot: Some(AccountDispatchSnapshot {
+                revision: 1,
+                credential_version: 1,
+                access_expires_at_unix_seconds: NOW + 3600,
+                continuation: false,
+            }),
+            requirements: None,
+            references: None,
+            reasoning_effort: None,
+            service_tier: None,
+            request_metadata_recorded: None,
+        };
+        seed.execute(
+            "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,
+                                 pricing_version,reserved,state,admission_json,created_at_epoch)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,0,'intent',?9,?10)",
+            params![
+                admission.attempt,
+                admission.owner.principal,
+                admission.owner.key,
+                admission.owner.namespace,
+                admission.owner.identity,
+                admission.window,
+                admission.policy_version,
+                admission.pricing_version,
+                serde_json::to_string(&admission).unwrap(),
+                NOW,
+            ],
+        )
+        .unwrap();
+        drop(seed);
+
+        let mut db = Database::open_existing(&path).unwrap();
+        let mut health = Health::default();
+        let outcome = Outcome::new(Some(Failure::UpstreamUnavailable), NOW);
+        let now_micros = NOW * 1_000_000 + 250_000;
+        finalize(
+            &mut db,
+            &mut health,
+            &admission.attempt,
+            None,
+            Some(&outcome),
+            now_micros,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot(db.connection(), &admission.attempt)
+                .unwrap()
+                .outcome,
+            Some(outcome.clone())
+        );
+        assert_eq!(
+            db.connection()
+                .query_row("SELECT until_epoch FROM account_model_health", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            NOW + 2
+        );
+        db.connection()
+            .execute_batch(
+                "CREATE TRIGGER reject_repeated_health BEFORE INSERT ON account_health
+             BEGIN SELECT RAISE(ABORT,'synthetic duplicate health write'); END;",
+            )
+            .unwrap();
+        finalize(
+            &mut db,
+            &mut health,
+            &admission.attempt,
+            None,
+            Some(&outcome),
+            now_micros + 1_000_000,
+            None,
+        )
+        .unwrap();
+        let conflicting = Outcome::new(Some(Failure::RateLimited), NOW);
+        assert_eq!(
+            finalize(
+                &mut db,
+                &mut health,
+                &admission.attempt,
+                None,
+                Some(&conflicting),
+                now_micros + 1_000_000,
+                None,
+            ),
+            Err(Error::Conflict)
+        );
+    }
 }

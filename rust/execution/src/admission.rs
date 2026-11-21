@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::ControlFlow, time::Duration};
 
+use codexone_account_pool::{self as pool, Candidate, Health, Reference, Selection};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Deserialize;
 
 use crate::model::*;
-use crate::{ExecutionError as Error, Result};
+use crate::{AccountIdentity, ExecutionError as Error, Result};
 
 const ACCOUNT_CONCURRENCY_LIMIT: i64 = 16;
 
@@ -267,27 +268,97 @@ fn reached_token_cap(
     Ok(false)
 }
 
-fn catalog_authorizes(
-    tx: &Transaction<'_>,
+fn catalog_allows(
+    db: &Connection,
     account: &str,
     request: &ManagedAdmissionRequest,
-) -> Result<()> {
-    if request.requirements.route == Route::Conversation {
-        let denied: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
-              AND NOT EXISTS (
-                SELECT 1 FROM model_directory_routes r WHERE model=?1 AND (account IS NULL OR account=?2)
-                 AND (?3 OR reasoning_efforts IS NULL OR EXISTS
-                   (SELECT 1 FROM json_each(r.reasoning_efforts) WHERE value=?4))
-              )",
-            params![request.model, account, request.mode == Mode::Warmup, request.reasoning_effort],
-            |row| row.get(0),
-        )?;
-        if denied {
-            return Err(Error::Unauthorized);
+) -> Result<bool> {
+    if request.requirements.route != Route::Conversation {
+        return Ok(true);
+    }
+    let denied: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM model_directory WHERE singleton=1)
+          AND NOT EXISTS (
+            SELECT 1 FROM model_directory_routes r WHERE model=?1 AND (account IS NULL OR account=?2)
+             AND (?3 OR reasoning_efforts IS NULL OR EXISTS
+               (SELECT 1 FROM json_each(r.reasoning_efforts) WHERE value=?4))
+          )",
+        params![request.model, account, request.mode == Mode::Warmup, request.reasoning_effort],
+        |row| row.get(0),
+    )?;
+    Ok(!denied)
+}
+
+fn references(objects: &[ObjectBinding]) -> Vec<Reference<'_>> {
+    objects
+        .iter()
+        .map(|object| Reference {
+            kind: &object.kind,
+            raw_id: &object.raw_id,
+        })
+        .collect()
+}
+
+pub(crate) fn resolve_hint(
+    db: &Connection,
+    key: &AuthenticatedKey,
+    hints: &[ObjectBinding],
+    now: i64,
+) -> Result<Option<AccountIdentity>> {
+    Ok(pool::resolve_hint(
+        db,
+        key.principal(),
+        &references(hints),
+        now,
+    )?)
+}
+
+pub(crate) fn pool_credentials(
+    db: &Connection,
+    request: &ManagedAdmissionRequest,
+    routing: &PoolRouting,
+    now: i64,
+) -> Result<Vec<PoolCredential>> {
+    let hard = pool::resolve_affinity(
+        db,
+        request.key.principal(),
+        &references(&request.references),
+        routing.connection.as_ref(),
+        now,
+    )?;
+    if let (Some(hard), Some(required)) = (&hard, &routing.required)
+        && hard != required
+    {
+        return Err(Error::ContinuationOwnerUnavailable);
+    }
+    let restricted = hard.as_ref().or(routing.required.as_ref());
+    let mut stmt = db.prepare_cached(
+        "SELECT id FROM accounts WHERE authorization='ready'
+           AND (mode='enabled' OR (mode='draining' AND ?1))
+           AND (?2 IS NULL OR (id=?2 AND namespace=?3)) ORDER BY id LIMIT 65",
+    )?;
+    let mut rows = stmt.query(params![
+        hard.is_some(),
+        restricted.map(|identity| identity.id.as_str()),
+        restricted.map(|identity| identity.namespace.as_str()),
+    ])?;
+    let mut eligible = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id = row.get::<_, String>(0)?;
+        if !valid_id(&id) {
+            return Err(Error::StorageUnavailable);
+        }
+        if catalog_allows(db, &id, request)? {
+            eligible.push(PoolCredential {
+                record: credential(db, &id)?,
+                continuation: hard.is_some(),
+            });
         }
     }
-    Ok(())
+    if eligible.len() > 64 {
+        return Err(Error::StorageUnavailable);
+    }
+    Ok(eligible)
 }
 
 pub(crate) fn resolve(
@@ -428,40 +499,131 @@ pub(crate) fn admit(
     let day = business_day_start(now, offset);
     check_intent(tx, &request.attempt, true, now)?;
     let namespace = account_namespace(tx, account, &dispatch, &request.model, now)?;
-    catalog_authorizes(tx, account, &request)?;
+    if !catalog_allows(tx, account, &request)? {
+        return Err(Error::Unauthorized);
+    }
     key_authorizes(tx, &request, now, day, offset)?;
 
-    let admission = managed_intent(request, dispatch, namespace, day);
+    let admission = managed_intent(&request, dispatch, namespace, day);
     insert_single_identity_intent(tx, admission, now)
 }
 
-fn managed_intent(
+pub(crate) fn admit_pool(
+    tx: &Transaction<'_>,
+    health: &Health,
+    offset: i64,
     request: ManagedAdmissionRequest,
+    routing: PoolRouting,
+    snapshots: Vec<AccountDispatch>,
+    now_micros: i64,
+) -> Result<ControlFlow<Duration, Admission>> {
+    let now = now_micros.div_euclid(1_000_000);
+    let day = business_day_start(now, offset);
+    check_intent(tx, &request.attempt, true, now)?;
+    if snapshots.is_empty() {
+        return Err(Error::AccountUnavailable);
+    }
+    let candidates: Vec<_> = snapshots
+        .into_iter()
+        .map(|dispatch| Candidate {
+            identity: AccountIdentity {
+                id: dispatch.id,
+                namespace: dispatch.namespace,
+            },
+            revision: dispatch.snapshot.revision,
+            credential_version: dispatch.snapshot.credential_version,
+            access_expires_at_unix_seconds: dispatch.snapshot.access_expires_at_unix_seconds,
+            continuation: dispatch.snapshot.continuation,
+        })
+        .collect();
+    let selection = Selection {
+        principal: request.key.principal(),
+        model: &request.model,
+        seed: request.request_id.as_deref().unwrap_or(&request.attempt),
+        candidates: &candidates,
+        references: &references(&request.references),
+        connection: routing.connection.as_ref(),
+        required: routing.required.as_ref(),
+        preferred: routing.preferred.as_ref(),
+    };
+    let result = pool::admit(
+        tx,
+        health,
+        selection,
+        now_micros,
+        |tx, now| Ok(key_authorizes(tx, &request, now, day, offset)?),
+        |tx, candidate| Ok(catalog_allows(tx, &candidate.identity.id, &request)?),
+        |tx, candidate, now| {
+            let identity = &candidate.identity;
+            let active = active_intents(tx, &identity.namespace, &identity.id)?;
+            let dispatch = AccountDispatch {
+                id: identity.id.clone(),
+                namespace: identity.namespace.clone(),
+                snapshot: AccountDispatchSnapshot {
+                    revision: candidate.revision,
+                    credential_version: candidate.credential_version,
+                    access_expires_at_unix_seconds: candidate.access_expires_at_unix_seconds,
+                    continuation: candidate.continuation,
+                },
+            };
+            let admission = managed_intent(&request, dispatch, identity.namespace.clone(), day);
+            Ok(insert_intent(tx, admission, now, active)?)
+        },
+    );
+    match result {
+        Ok(admission) => Ok(ControlFlow::Continue(admission)),
+        Err(PoolAdmissionError::Pacing(delay)) => Ok(ControlFlow::Break(delay)),
+        Err(PoolAdmissionError::Rejected(error)) => Err(error),
+    }
+}
+
+enum PoolAdmissionError {
+    Rejected(Error),
+    Pacing(Duration),
+}
+
+impl From<pool::Error> for PoolAdmissionError {
+    fn from(error: pool::Error) -> Self {
+        match error {
+            pool::Error::Wait(delay) => Self::Pacing(delay),
+            error => Self::Rejected(error.into()),
+        }
+    }
+}
+
+impl From<Error> for PoolAdmissionError {
+    fn from(error: Error) -> Self {
+        Self::Rejected(error)
+    }
+}
+
+fn managed_intent(
+    request: &ManagedAdmissionRequest,
     dispatch: AccountDispatch,
     namespace: String,
     day: i64,
 ) -> Admission {
     Admission {
-        attempt: request.attempt,
+        attempt: request.attempt.clone(),
         owner: Owner {
-            principal: request.key.principal,
-            key: request.key.id,
+            principal: request.key.principal.clone(),
+            key: request.key.id.clone(),
             namespace,
             identity: dispatch.id,
         },
         window: format!("business-day-{day}"),
-        policy_version: request.policy_version,
-        pricing_version: request.pricing_version,
+        policy_version: request.policy_version.clone(),
+        pricing_version: request.pricing_version.clone(),
         reserved_micros: request.reserved_micros,
-        request_id: request.request_id,
-        model: Some(request.model),
+        request_id: request.request_id.clone(),
+        model: Some(request.model.clone()),
         mode: Some(request.mode),
         key_revision: Some(request.key.revision),
         account_snapshot: Some(dispatch.snapshot),
-        requirements: Some(request.requirements),
-        references: Some(request.references),
-        reasoning_effort: request.reasoning_effort.map(sanitize_metadata),
-        service_tier: request.service_tier.map(sanitize_metadata),
+        requirements: Some(request.requirements.clone()),
+        references: Some(request.references.clone()),
+        reasoning_effort: request.reasoning_effort.clone().map(sanitize_metadata),
+        service_tier: request.service_tier.clone().map(sanitize_metadata),
         request_metadata_recorded: Some(true),
     }
 }

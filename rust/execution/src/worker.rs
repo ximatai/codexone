@@ -1,9 +1,13 @@
+use std::collections::HashSet;
+use std::future::Future;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use codexone_account_pool::{Health, PacingWaiters};
 use codexone_storage::{Database, bearer_digest};
 use rusqlite::Transaction;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
@@ -11,8 +15,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use crate::model::*;
 use crate::reserve::StorageReserve;
 use crate::{
-    ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization, StaticIdentity,
-    admission, ledger,
+    AccountIdentity, ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization,
+    StaticIdentity, admission, ledger,
 };
 
 const REGULAR_CAPACITY: usize = 16;
@@ -21,6 +25,7 @@ type Job = Box<dyn FnOnce(&mut Writer) + Send>;
 
 enum IdentitySource {
     Managed(String),
+    Pool,
     Static(Arc<StaticIdentity>),
 }
 
@@ -34,6 +39,10 @@ pub struct Options {
 impl Options {
     pub fn new(account_id: impl Into<String>) -> Self {
         Self::with_identity(IdentitySource::Managed(account_id.into()))
+    }
+
+    pub fn for_account_pool() -> Self {
+        Self::with_identity(IdentitySource::Pool)
     }
 
     pub fn for_static_identity(policy: StaticIdentity) -> Self {
@@ -61,7 +70,12 @@ impl Options {
         self
     }
 
-    pub fn with_clock(mut self, clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
+    pub fn with_clock(self, clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
+        self.with_clock_micros(move || clock().saturating_mul(1_000_000))
+    }
+
+    /// Wall-clock Unix microseconds, including the subsecond pacing boundary.
+    pub fn with_clock_micros(mut self, clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
         self.clock = Arc::new(clock);
         self
     }
@@ -71,7 +85,7 @@ fn system_time() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .and_then(|duration| i64::try_from(duration.as_micros()).ok())
         .unwrap_or(0)
 }
 
@@ -90,9 +104,11 @@ struct Gate {
 
 struct Inner {
     static_identity: Option<Arc<StaticIdentity>>,
+    pool_enabled: bool,
     gate: Mutex<Gate>,
     regular: Arc<Semaphore>,
     tickets: Arc<Semaphore>,
+    pacing: PacingWaiters,
     capacity: u32,
     done: watch::Receiver<bool>,
 }
@@ -153,6 +169,7 @@ struct Writer {
     db: Database,
     reserve: StorageReserve,
     options: Options,
+    health: Health,
 }
 
 impl Writer {
@@ -164,6 +181,7 @@ impl Writer {
             db,
             reserve,
             options,
+            health: Health::default(),
         };
         writer.reserve.maintain(writer.db.connection())?;
         writer.write(true, ledger::recover)?;
@@ -171,7 +189,35 @@ impl Writer {
     }
 
     fn now(&self) -> Result<i64> {
-        check_time((self.options.clock)())
+        Ok(self.now_micros()?.div_euclid(1_000_000))
+    }
+
+    fn now_micros(&self) -> Result<i64> {
+        let micros = (self.options.clock)();
+        check_time(micros.div_euclid(1_000_000))?;
+        Ok(micros)
+    }
+
+    fn finalize(
+        &mut self,
+        attempt: &str,
+        evidence: Option<&UsageEvidence>,
+        outcome: Option<&Outcome>,
+    ) -> Result<()> {
+        self.reserve.prepare_critical()?;
+        let now_micros = self.now_micros()?;
+        // Keep the fixed-account route's original cooldown when no hint was supplied.
+        let overload_default =
+            matches!(self.options.identity, IdentitySource::Managed(_)).then_some(15);
+        ledger::finalize(
+            &mut self.db,
+            &mut self.health,
+            attempt,
+            evidence,
+            outcome,
+            now_micros,
+            overload_default,
+        )
     }
 
     fn write<T>(
@@ -183,7 +229,7 @@ impl Writer {
             self.reserve.prepare_critical()?;
         }
         let tx = self.db.begin_immediate()?;
-        let now = check_time((self.options.clock)())?;
+        let now = check_time((self.options.clock)().div_euclid(1_000_000))?;
         let result = body(&tx, now)?;
         tx.commit()?;
         Ok(result)
@@ -212,14 +258,16 @@ impl ExecutionService {
         let inner = Arc::new(Inner {
             static_identity: match &options.identity {
                 IdentitySource::Static(policy) => Some(policy.clone()),
-                IdentitySource::Managed(_) => None,
+                IdentitySource::Managed(_) | IdentitySource::Pool => None,
             },
+            pool_enabled: matches!(options.identity, IdentitySource::Pool),
             gate: Mutex::new(Gate {
                 sender: Some(sender),
                 status: ExecutionStatus::Accepting,
             }),
             regular: Arc::new(Semaphore::new(REGULAR_CAPACITY)),
             tickets: Arc::new(Semaphore::new(capacity)),
+            pacing: PacingWaiters::default(),
             capacity: capacity as u32,
             done: done_rx,
         });
@@ -269,6 +317,7 @@ impl ExecutionService {
     /// shutdown deadline to this future, then call force_shutdown if the deadline elapses.
     pub async fn shutdown(&self) -> Result<()> {
         self.stop_admission();
+        self.inner.pacing.close().await;
         let _all = self
             .inner
             .tickets
@@ -289,6 +338,7 @@ impl ExecutionService {
             }
             gate.sender.take();
         }
+        self.inner.pacing.close().await;
         let mut done = self.inner.done.clone();
         done.wait_for(|done| *done)
             .await
@@ -360,7 +410,9 @@ impl ExecutionService {
         let (request, dispatch) = request.into_parts();
         request.validate()?;
         dispatch.validate()?;
-        self.submit_admission(move |tx, options, now| {
+        let ticket = self.admission_ticket()?;
+        self.submit_single_admission(ticket, move |tx, options, now_micros| {
+            let now = now_micros.div_euclid(1_000_000);
             let IdentitySource::Managed(account) = &options.identity else {
                 return Err(Error::Unauthorized);
             };
@@ -393,39 +445,199 @@ impl ExecutionService {
             return Err(Error::Unauthorized);
         }
         let authorized = policy.authorize(request)?;
-        self.submit_admission(move |tx, options, now| {
+        let ticket = self.admission_ticket()?;
+        self.submit_single_admission(ticket, move |tx, options, now_micros| {
+            let now = now_micros.div_euclid(1_000_000);
             admission::admit_static(tx, options.day_offset, authorized, now)
         })
         .await
     }
 
-    async fn submit_admission(
+    /// Resolve hard affinity and list current eligible credential records for this pass.
+    /// The writer checks affinity, catalog and all snapshots again at admission.
+    pub async fn pool_credentials(
         &self,
-        write_intent: impl FnOnce(&Transaction<'_>, &Options, i64) -> Result<Admission> + Send + 'static,
-    ) -> Result<Execution> {
-        let ticket = self
-            .inner
+        request: &ManagedAdmissionRequest,
+        routing: &PoolRouting,
+    ) -> Result<Vec<PoolCredential>> {
+        request.validate()?;
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        let request = request.clone();
+        let routing = routing.clone();
+        self.command(true, move |writer| {
+            admission::pool_credentials(writer.db.connection(), &request, &routing, writer.now()?)
+        })
+        .await
+    }
+
+    /// Resolve recent object history to a soft affinity for this Key's principal.
+    pub async fn pool_hint(
+        &self,
+        key: &AuthenticatedKey,
+        hints: &[ObjectBinding],
+    ) -> Result<Option<AccountIdentity>> {
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        let key = key.clone();
+        let recent = hints[hints.len().saturating_sub(64)..].to_vec();
+        self.command(true, move |writer| {
+            admission::resolve_hint(writer.db.connection(), &key, &recent, writer.now()?)
+        })
+        .await
+    }
+
+    /// Configure the complete health-tracked model set on the execution writer.
+    pub async fn configure_health_models(&self, models: Vec<String>) -> Result<()> {
+        let models: HashSet<_> = models.into_iter().collect();
+        if models.len() > 48 || models.iter().any(|model| !valid_model(model)) {
+            return Err(Error::InvalidCommand);
+        }
+        self.command(false, move |writer| {
+            writer.write(true, |tx, _| {
+                let mut stmt = tx.prepare("SELECT model FROM health_models")?;
+                let existing = stmt
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<HashSet<_>>>()?;
+                for removed in existing.difference(&models) {
+                    tx.execute("DELETE FROM health_models WHERE model=?1", [removed])?;
+                }
+                for added in models.difference(&existing) {
+                    tx.execute("INSERT INTO health_models VALUES(?1)", [added])?;
+                }
+                Ok(())
+            })?;
+            writer.health.retain_models(|model| models.contains(model));
+            Ok(())
+        })
+        .await
+    }
+
+    /// Prepare credentials on each pass and return only the selected transport work and lease.
+    /// The caller's deadline or cancellation owns this future, including any pacing wait.
+    pub async fn admit_pool<T, F, Fut>(
+        &self,
+        request: ManagedAdmissionRequest,
+        mut prepare: F,
+    ) -> Result<(Execution, T)>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<PreparedPool<T>>>,
+    {
+        request.validate()?;
+        if !self.inner.pool_enabled {
+            return Err(Error::Unauthorized);
+        }
+        loop {
+            let ticket = self.admission_ticket()?;
+            let PreparedPool {
+                routing,
+                candidates,
+            } = prepare().await?;
+            if candidates.len() > 64 {
+                return Err(Error::InvalidCommand);
+            }
+            let snapshots = candidates
+                .iter()
+                .map(|(dispatch, _)| dispatch.clone())
+                .collect();
+            let request = request.clone();
+            let admission = self
+                .submit_admission(ticket, move |tx, options, health, now_micros| {
+                    admission::admit_pool(
+                        tx,
+                        health,
+                        options.day_offset,
+                        request,
+                        routing,
+                        snapshots,
+                        now_micros,
+                    )
+                })
+                .await?;
+            match admission {
+                ControlFlow::Continue(execution) => {
+                    let owner = &execution.admission().owner;
+                    let (_, payload) = candidates
+                        .into_iter()
+                        .find(|(dispatch, _)| {
+                            dispatch.id == owner.identity && dispatch.namespace == owner.namespace
+                        })
+                        .ok_or(Error::StorageUnavailable)?;
+                    return Ok((execution, payload));
+                }
+                ControlFlow::Break(delay) => {
+                    drop(candidates);
+                    self.inner.pacing.wait(delay).await?;
+                }
+            }
+        }
+    }
+
+    fn admission_ticket(&self) -> Result<OwnedSemaphorePermit> {
+        match self.status() {
+            ExecutionStatus::Accepting => {}
+            ExecutionStatus::Failed => return Err(Error::StorageUnavailable),
+            _ => return Err(Error::Closed),
+        }
+        self.inner
             .tickets
             .clone()
             .try_acquire_owned()
-            .map_err(|_| Error::Capacity)?;
+            .map_err(|_| Error::Capacity)
+    }
+
+    async fn submit_single_admission(
+        &self,
+        ticket: OwnedSemaphorePermit,
+        write_intent: impl FnOnce(&Transaction<'_>, &Options, i64) -> Result<Admission> + Send + 'static,
+    ) -> Result<Execution> {
+        match self
+            .submit_admission(ticket, move |tx, options, _, micros| {
+                write_intent(tx, options, micros).map(ControlFlow::Continue)
+            })
+            .await?
+        {
+            ControlFlow::Continue(execution) => Ok(execution),
+            ControlFlow::Break(_) => unreachable!("single-account admission does not pace"),
+        }
+    }
+
+    async fn submit_admission(
+        &self,
+        ticket: OwnedSemaphorePermit,
+        write_intent: impl FnOnce(
+            &Transaction<'_>,
+            &Options,
+            &Health,
+            i64,
+        ) -> Result<ControlFlow<Duration, Admission>>
+        + Send
+        + 'static,
+    ) -> Result<ControlFlow<Duration, Execution>> {
         let service = self.clone();
         self.command(true, move |writer| {
             writer.reserve.check_admission()?;
             let tx = writer.db.begin_immediate()?;
-            let now = check_time((writer.options.clock)())?;
-            let admission = write_intent(&tx, &writer.options, now)?;
+            let now_micros = (writer.options.clock)();
+            check_time(now_micros.div_euclid(1_000_000))?;
+            let admission = match write_intent(&tx, &writer.options, &writer.health, now_micros)? {
+                ControlFlow::Continue(admission) => admission,
+                ControlFlow::Break(delay) => return Ok(ControlFlow::Break(delay)),
+            };
             tx.commit()?;
             // If the admission future is cancelled after commit, dropping the undelivered
             // lease transfers finalization to the worker just like any other cancellation.
-            Ok(Execution {
+            Ok(ControlFlow::Continue(Execution {
                 service,
                 admission,
                 ticket: Some(ticket),
                 evidence: None,
                 dispatched: false,
                 binding_failed: false,
-            })
+            }))
         })
         .await
     }
@@ -454,9 +666,7 @@ impl ExecutionService {
                 return Err(Error::Conflict);
             }
             evidence.validate_for(&snapshot.admission)?;
-            writer.reserve.prepare_critical()?;
-            let now = writer.now()?;
-            ledger::finalize(&mut writer.db, &attempt, Some(&evidence), None, now)
+            writer.finalize(&attempt, Some(&evidence), None)
         })
         .await
     }
@@ -603,17 +813,7 @@ impl Execution {
         self.service.inner.enqueue(
             Box::new(move |writer| {
                 let _ticket = ticket;
-                let result = (|| {
-                    writer.reserve.prepare_critical()?;
-                    let now = writer.now()?;
-                    ledger::finalize(
-                        &mut writer.db,
-                        &attempt,
-                        evidence.as_ref(),
-                        outcome.as_ref(),
-                        now,
-                    )
-                })();
+                let result = writer.finalize(&attempt, evidence.as_ref(), outcome.as_ref());
                 if let Err(error) = result {
                     // Evidence within a retired revision range cannot replace newer truth. An
                     // active lease's normal handoff cannot be stale; other failures close admission.
