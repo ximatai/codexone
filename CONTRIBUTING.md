@@ -10,24 +10,22 @@ Linux、macOS 都可以开发，Windows 请使用 WSL2 中的 Ubuntu。CI 使用
 
 | 平台 | 需要安装 |
 | --- | --- |
-| Linux（Ubuntu 24.04 等） | Swift 6.4（CI 固定 6.4.1）、`libsqlite3-dev`、Node.js 26.13.0 与 npm、Python 3、Git |
-| macOS 15+ | Xcode 或 Swift 6.4 工具链、Node.js 26.13.0 与 npm、Python 3（系统自带 SQLite） |
+| Linux（Ubuntu 24.04 等） | Rust 1.96.0、C 工具链（构建内置 SQLite 等依赖）、Node.js 26.13.0 与 npm、Python 3、Git |
+| macOS 15+ | Rust 1.96.0、Xcode Command Line Tools、Node.js 26.13.0 与 npm、Python 3、Git |
 | Windows | 安装 WSL2 与 Ubuntu 24.04，在其中按 Linux 准备；不支持原生 Windows 构建 |
 
-默认 Rust 网关的 CI 工具链为 Rust 1.96.0。安装后可在仓库根目录运行 `cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone`。表中的 Swift 工具链用于构建旧后端和运行兼容性探针。
-
-最省事的方式是使用仓库的[开发容器](.devcontainer/devcontainer.json)：VS Code Dev Containers 或 GitHub Codespaces 打开仓库即可得到与 CI 相同的 Swift 镜像、SQLite、固定版本 Node.js 和 Playwright Chromium，Mac、Windows、Linux 通用。容器运行目标仍是 Linux amd64 Docker Engine/Compose v2。浏览器验证使用独立 Chromium 或本机 Chrome，不读取个人浏览数据。
+也可在 VS Code Dev Containers 或 GitHub Codespaces 中打开[开发容器](.devcontainer/devcontainer.json)。镜像提供与 CI 同版本的 Rust 和 Node.js，打开容器时安装前端依赖和 Playwright Chromium。正式部署目标为 Linux amd64 Docker Engine/Compose v2。浏览器验证使用独立 Chromium 或本机 Chrome。
 
 ```sh
 npm --prefix web ci --ignore-scripts --no-audit --no-fund
-swift run codexone --check-config
-swift build --product codexone
+cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone
+rust/gateway/target/debug/codexone --check-config
 npm --prefix web run build
 ```
 
 ## 本地运行
 
-`swift run codexone` 默认仅提供健康入口，生成需配置。无凭证合成配置见[单身份验证](docs/development/single-identity.md)。不要为开发测试读取个人登录缓存或调用真实订阅。
+`rust/gateway/target/debug/codexone` 无身份配置时启动健康和管理入口，生成需配置。无凭证合成配置见[单身份验证](docs/development/single-identity.md)。不要为开发测试读取个人登录缓存或调用真实订阅。
 
 另一个终端执行 `npm --prefix web run dev`，浏览器使用 `http://127.0.0.1:5179`。开发代理指向管理默认端口 18081；后端须显式设置 `CODEXONE_ADMIN_PUBLIC_ORIGIN=http://127.0.0.1:5179` 和独立测试管理员秘密文件。保持 Origin/CSRF 验证，不通过改写 Origin 绕过。同源生产 SPA 由管理入口提供。
 
@@ -43,7 +41,7 @@ python3 scripts/check_docs.py
 
 定向前端检查为 `npm --prefix web run lint`、`npm --prefix web run format:check`、`npm --prefix web run typecheck` 和 `npm --prefix web test`。标准 Chromium 首次准备可在 web 下执行 `npx playwright install chromium --only-shell`。依赖/浏览器安装需要网络；离线环境缺依赖时报告限制，不声称通过。
 
-e2e 通过严格端口的 `vite preview` 测试生产 `web/dist`，不启动开发服务器。`verify.sh --web` 会构建一次（含 typecheck）；单独运行 `npm --prefix web run test:e2e:chrome -- ui-review-rework` 前，先执行 `npm --prefix web run build`，修改源码后也需重新构建。CI 分片及路径筛选见[验证约定](docs/development/verification.md)。
+完整浏览器套件使用上面构建的 debug 网关。通过 `CODEXONE_WEB_TEST_BINARY` 可指定其他可执行文件，建议使用绝对路径。e2e 通过严格端口的 `vite preview` 测试生产 `web/dist`，不启动开发服务器。`verify.sh --web` 会构建一次（含 typecheck）；单独运行 `npm --prefix web run test:e2e:chrome -- ui-review-rework` 前，先执行 `npm --prefix web run build`，修改源码后也需重新构建。CI 分片及路径筛选见[验证约定](docs/development/verification.md)。
 
 正式发版由 tag 工作流执行发布门禁。需要提前验证发布链路或制品时，见[可选的发布演练](docs/development/releasing.md)。
 

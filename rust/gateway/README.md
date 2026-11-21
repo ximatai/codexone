@@ -23,13 +23,9 @@ The native Images delivery check runs the Rust executable with a synthetic loopb
 python3 scripts/rust_compat/image_delivery.py --binary rust/gateway/target/debug/codexone
 ```
 
-Build the compatible Swift reference for the cross-backend comparisons.
+Run the process checks from the repository root. For optional Swift comparisons, use the [fixed archive and compatibility commands](../../scripts/rust_compat/README.md).
 
 ```sh
-swift build --product codexone
-python3 scripts/rust_compat/compare.py \
-  --reference .build/debug/codexone \
-  --candidate rust/gateway/target/debug/codexone
 python3 scripts/verify_protocol.py --binary rust/gateway/target/debug/codexone
 python3 scripts/verify_control.py --binary rust/gateway/target/debug/codexone
 cargo build --locked --release --manifest-path rust/gateway/Cargo.toml
@@ -41,9 +37,6 @@ python3 scripts/verify_upstream_ws_body_limit.py --binary rust/gateway/target/de
 python3 scripts/rust_compat/readiness.py --binary rust/gateway/target/debug/codexone
 python3 scripts/verify_pool_config.py --binary rust/gateway/target/debug/codexone
 cargo test --locked --manifest-path rust/gateway/Cargo.toml managed_process
-python3 rust/config/tests/compare_swift.py \
-  --reference .build/debug/codexone \
-  --candidate rust/gateway/target/debug/codexone
 ```
 
 ## Compatibility scope

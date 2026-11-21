@@ -90,8 +90,8 @@ codexone --maintenance-status
 ## 合成验证入口
 
 ```sh
-swift test --no-parallel --filter SnapshotMaintenance
-python3 scripts/verify_snapshot_restore.py --binary .build/debug/codexone
+cargo test --locked --manifest-path rust/maintenance/Cargo.toml snapshot
+python3 scripts/verify_snapshot_restore.py --binary rust/gateway/target/debug/codexone --linked-paths
 ```
 
 Python 场景覆盖真实 CLI/SQLite、锁冲突、快照后缺失执行、重启维护门禁、旧授权失效、错误基线、冻结与新窗口、只读备份源、损坏/部分/链接/权限拒绝，以及实际 SIGKILL 恢复屏障。全部使用临时合成资料；不代替掉电或真实旧服务切换验证。

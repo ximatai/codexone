@@ -4,30 +4,21 @@
 
 ## 定位与技术方向
 
-自托管的 Codex/Responses 网关，以身份隔离、协议连续性、可解释治理与故障恢复为重点。采用 Swift 模块化单体：NIO 数据面、Vapor 管理面、AHC 上游，SQLite 单节点；管理台 TS/React/Vite 静态 SPA，Linux amd64 OCI/Compose。理由见 [共识决策](decisions/README.md)，兼容边界见 [协议兼容](../reference/compatibility.md)。
+自托管的 Codex/Responses 网关，以身份隔离、协议连续性、可解释治理与故障恢复为重点。采用 Rust 模块化单体。Tokio 负责 I/O 与任务寿命，Hyper 提供 HTTP 传输，SQLite 保存单节点状态。管理台使用 TypeScript、React 与 Vite 构建静态 SPA，正式部署使用 Linux amd64 OCI/Compose。理由见 [共识决策](decisions/README.md)，兼容边界见 [协议兼容](../reference/compatibility.md)。
 
 原型的 Linux CI 和 macOS 真实 CLI 结果只属于原型，不能推导本项目通过。正式产品以 Desktop 为主要兼容验收对象，CLI 是补充外部测试客户端，服务器直接调用上游。原型特殊配置与双入口限制不作为生产默认。
 
 ## 模块与依赖
 
-```mermaid
-flowchart TD
-  Main[CodexOne 组装入口] --> Runtime[CodexOneRuntime 寿命监督]
-  Main --> Adapters[CodexOneAdapters 外部边界]
-  Main --> Core[CodexOneCore 业务核心]
-  Runtime --> Core
-  Adapters --> Core
-```
+`codexone` 由 `rust/gateway` 组装监听、请求处理、后台任务和关闭顺序。传输代码把已解析的请求交给协议和业务处理。执行 crate 管理准入、归属、结算与唯一 writer，存储 crate 封装 SQLite 初始化、实例锁和迁移。账号池在既有准入事务内选择账号，身份与配额任务各自持有网络工作，管理读取使用专门的只读连接。
 
-四个名称表达起始编译边界，具体 targets 在包功能中验证，不以空目录决定额外库。Core 内 Domain 表达状态与规则，Application 协调授权/准入/绑定/结算。Adapters 内分客户端协议、传输、上游 wire、持久化和管理 API；Runtime 管理有限任务、启动和关闭。入口注入具体实现，避免 Runtime/Adapters 互相 import。
-
-[目录约定](../development/layout.md) 定义文件归属；[owner 与端口](ownership.md) 定义谁调用谁、持有什么状态，以及结束责任。网络 channel、SQL row、Vapor Request 不进入核心签名；不预建通用 AI schema 或插件 DSL。
+[目录约定](../development/layout.md)记录 crate 和测试位置，[运行责任](ownership.md)描述资源 owner 和结束路径。传输、管理 DTO 与账本持久模型保持各自边界。
 
 ## 请求与数据流
 
-客户端解析/能力校验 → Core 应用命令 → 原子持久准入 → 提供者适配 → 语义证据 → 归属提交后输出 → 最终化/迟到证据。
+客户端解析/能力校验 → 执行用例 → 原子持久准入 → 提供者适配 → 语义证据 → 归属提交后输出 → 最终化/迟到证据。
 
-客户端 wire 和提供者 wire 分开演进：客户端扩展字段留在有界协议层，上游适配器提供对象/usage/终态/拒绝证据，Core 决定授权与结算。透明数据仍需能力分类，不能以透传绕过未知对象/控制语义。
+客户端 wire 和提供者 wire 分开演进：客户端扩展字段留在有界协议层，上游适配器提供对象/usage/终态/拒绝证据，执行用例决定授权与结算。透明数据仍需能力分类，不能以透传绕过未知对象/控制语义。
 
 执行/WS 状态机、ID 暴露屏障和最终化的完整条款见 [execution-lifecycle](../reference/specs/execution-lifecycle.md)；身份/刷新见 [identity](../reference/specs/identity.md)，重试/模式见 [protocol](../reference/specs/protocol.md)。本文件不复制第二份状态转移规则。
 

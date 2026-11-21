@@ -52,8 +52,8 @@ StorageMonitor 可清理允许过期的 30 日拒绝诊断，每次最多 100 �
 ## 合成验证
 
 ```sh
-swift test --no-parallel --filter 'storage|Storage|pinnedReader|sparseReserve|queuedAdmission|unknownSpace|actualSQLiteFull'
-python3 scripts/verify_storage_pressure.py --binary .build/debug/codexone
+cargo test --locked --manifest-path rust/execution/Cargo.toml reserve
+python3 scripts/verify_storage_pressure.py --binary rust/gateway/target/debug/codexone
 ```
 
 真实空间故障仅在显式提供的隔离 Linux tmpfs 上运行 `--space-root ABSOLUTE_PRIVATE_TMPFS`：脚本要求类型 tmpfs、容量 384—512 MiB，拒绝在普通宿主卷填充。覆盖低水位、实际 ENOSPC、已有流结算、拒绝新派发、回稳、离线空间拒绝，以及 SIGSTOP 暂停实际恢复进程后撤去目标空间、SIGCONT 后逐批拒绝。macOS 验证真实储备文件/SQLite FULL/WAL/认证 API，空间水位以内部测试注入；不填满宿主磁盘，不冒充掉电或目标容量证据。
