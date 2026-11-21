@@ -20,7 +20,7 @@ from check_ci import check_release, check_live_browser, workflow_jobs
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class LiveBrowserWorkflowTests(unittest.TestCase):
+class VerifyWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / '.github/workflows/verify.yml').read_text()
 
@@ -32,7 +32,7 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
             ('npm run test:e2e -- admin-live-real --workers=1', 'true'),
             ("required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})", "required.add('backend-build')"),
             ('if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then', 'if true; then'),
-            ('backend-build, backend-swift-tests, backend-scripts, frontend,', 'backend-build, backend-scripts, frontend,'),
+            ('backend-swift-tests, backend-scripts, backend-rust,', 'backend-scripts, backend-rust,'),
             ('--testing-library swift-testing --no-parallel', '--testing-library swift-testing'),
             ('./scripts/verify.sh --backend-compile', './scripts/verify.sh --backend-build'),
         ]
@@ -40,29 +40,52 @@ class LiveBrowserWorkflowTests(unittest.TestCase):
             with self.subTest(before=before), self.assertRaises(AssertionError):
                 check_live_browser(self.workflow.replace(before, after))
 
-    def test_actual_gate_requires_live_tests_for_backend_selection(self):
-        gate = workflow_jobs(self.workflow)['verify']
+    def test_actual_gate_requires_selected_jobs(self):
+        workflow = workflow_jobs(self.workflow)
+        gate = workflow['verify']
         script = re.search(r"python3 - <<'PY'\n(.*?)^          PY$", gate, re.M | re.S)
         self.assertIsNotNone(script)
         code = textwrap.dedent(script[1])
-        jobs = {'changes', 'docs', 'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend', 'frontend-live', 'devcontainer'}
-        for backend, frontend, devcontainer in [(False, False, False), (True, False, False), (False, True, False), (True, True, True)]:
+        jobs = set(workflow) - {'verify'}
+        selections = [(), ('backend',), ('rust',), ('frontend',), ('backend', 'rust', 'frontend', 'devcontainer')]
+        for selected in selections:
             required = {'changes', 'docs'}
-            if backend: required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
-            if frontend: required.add('frontend')
-            if devcontainer: required.add('devcontainer')
+            if 'backend' in selected: required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
+            if 'rust' in selected: required.add('backend-rust')
+            required.update({'frontend', 'devcontainer'}.intersection(selected))
             needs = {job: {'result': 'success' if job in required else 'skipped'} for job in jobs}
-            needs['changes']['outputs'] = {'backend': str(backend).lower(), 'frontend': str(frontend).lower(), 'devcontainer': str(devcontainer).lower()}
+            needs['changes']['outputs'] = {name: str(name in selected).lower()
+                                          for name in ('backend', 'rust', 'frontend', 'devcontainer')}
             def run(payload):
                 return subprocess.run([sys.executable, '-c', code], capture_output=True,
                                       env={**os.environ, 'RESULTS': json.dumps(payload)}).returncode
             self.assertEqual(run(needs), 0)
             for job in required:
                 for failed in ('failure', 'cancelled', 'skipped'):
-                    with self.subTest(backend=backend, frontend=frontend, job=job, failed=failed):
+                    with self.subTest(selected=selected, job=job, failed=failed):
                         payload = {name: dict(value) for name, value in needs.items()}
                         payload[job]['result'] = failed
                         self.assertNotEqual(run(payload), 0)
+
+
+class ChangedPathsTests(unittest.TestCase):
+    def test_selects_rust_for_code_and_shared_inputs(self):
+        cases = [
+            (['rust/gateway/README.md'], set()),
+            (['rust/gateway/Cargo.lock', 'rust/wire/src/With\nNewline.rs'], {'rust'}),
+            (['scripts/verify_rust.sh'], {'rust'}),
+            (['deploy/Dockerfile'], {'backend', 'rust'}),
+            (['scripts/verify_websocket.py'], {'backend', 'rust'}),
+            (['Tests/CodexOneAdaptersTests/Fixtures/system-status.json'], {'backend', 'rust'}),
+            (['Sources/CodexOne/main.swift', 'web/src/App.tsx'], {'backend', 'frontend'}),
+            ([f'docs/{index:03}.md' for index in range(320)] + ['rust/gateway/Cargo.toml'], {'rust'}),
+        ]
+        for paths, expected in cases:
+            with self.subTest(last_path=paths[-1]):
+                result = subprocess.run(['bash', 'scripts/ci_changes.sh'], cwd=ROOT, check=True,
+                                        input='\0'.join(paths) + '\0', capture_output=True, text=True)
+                self.assertEqual({line.removesuffix('=true') for line in result.stdout.splitlines()
+                                  if line.endswith('=true')}, expected)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):

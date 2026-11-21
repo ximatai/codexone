@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 3
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      rust: ${{ steps.filter.outputs.rust }}
       frontend: ${{ steps.filter.outputs.frontend }}
       devcontainer: ${{ steps.filter.outputs.devcontainer }}
     steps:
@@ -43,7 +44,7 @@ jobs:
           elif [[ "$EVENT" == push ]] &&
             git diff --name-only -z --no-renames "$PUSH_BEFORE" "$GITHUB_SHA" > "$RUNNER_TEMP/changed-paths" &&
             selection="$(bash scripts/ci_changes.sh < "$RUNNER_TEMP/changed-paths")" &&
-            [[ "$selection" == $'backend=false\nfrontend=false\ndevcontainer=false' ]] &&
+            [[ "$selection" == $'backend=false\nrust=false\nfrontend=false\ndevcontainer=false' ]] &&
             [[ "$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --branch main \
               --event push --commit "$PUSH_BEFORE" --status success --limit 1 \
               --json databaseId --jq 'length > 0')" == true ]]; then
@@ -189,6 +190,22 @@ jobs:
             args+=(--pr)
           fi
           ./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}"
+  backend-rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: 1.96.0
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Build the Rust gateway and verify crate and loopback tests
+        run: ./scripts/verify_rust.sh
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
@@ -284,7 +301,7 @@ jobs:
           npm --prefix web run typecheck'
   verify:
     if: always()
-    needs: [changes, docs, backend-build, backend-swift-tests, backend-scripts, frontend, frontend-live, devcontainer]
+    needs: [changes, docs, backend-build, backend-swift-tests, backend-scripts, backend-rust, frontend, frontend-live, devcontainer]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -299,6 +316,8 @@ jobs:
           required = {'changes', 'docs'}
           if selected.get('backend') == 'true':
               required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})
+          if selected.get('rust') == 'true':
+              required.add('backend-rust')
           if selected.get('frontend') == 'true':
               required.add('frontend')
           if selected.get('devcontainer') == 'true':

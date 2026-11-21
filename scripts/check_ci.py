@@ -107,6 +107,18 @@ def check_live_browser(workflow):
         'PRs and main pushes use quick checks; manual Verify uses the full matrix')
 
 
+def check_rust(workflow, dockerfile):
+    jobs = workflow_jobs(workflow)
+    rust = jobs['backend-rust']
+    version = re.search(r'^      RUSTUP_TOOLCHAIN: ([\d.]+)$', rust, re.M)
+    assert version and f'ARG RUST_BUILD_IMAGE=rust:{version[1]}-' in dockerfile, (
+        'Verify and the Rust candidate must use the same Rust version')
+    assert "    if: needs.changes.outputs.rust == 'true'\n" in rust, 'Rust job must follow Rust selection'
+    assert 'run: ./scripts/verify_rust.sh' in rust, 'Rust job must use the full verification entry point'
+    gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
+    assert gate_needs and 'backend-rust' in gate_needs[1].split(', '), 'Verify must await the Rust job'
+
+
 def check():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / '.github/workflows/verify.yml').read_text()
@@ -147,8 +159,9 @@ def check():
         'Dev container Node.js must match CI')
     check_release(release, dockerfile, tls, (root / 'scripts/verify.sh').read_text())
     check_live_browser(workflow)
+    check_rust(workflow, dockerfile)
     print(f'PASS: Playwright {image[0]} matches lockfile; Swift build/shards/cache and dev container pins match')
-    print('PASS: Actions pins, optimized release coverage, immutable artifacts, TLS and publication gate match policy')
+    print('PASS: Rust toolchain and Verify gate, Actions pins, optimized release coverage, immutable artifacts and TLS match policy')
 
 
 if __name__ == '__main__':

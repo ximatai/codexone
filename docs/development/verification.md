@@ -103,7 +103,9 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 ## 发版 CI 验证边界
 
-Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径。main 推送如果只涉及文档且推送前的提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
+Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，不受 Actions 工作流路径过滤的 300 文件限制。Markdown、docs 和 LICENSE 只跑基础检查，web 选前端，Sources、Tests、Package、scripts 和 deploy 通常选 Swift 后端，`.devcontainer` 选开发容器。Rust 源码、锁文件及 Rust 验证脚本选 Rust 后端。两种后端共用的回环脚本及 fixture、还有固定 Rust 工具链的 Dockerfile，选两种后端。`.github` 和路径筛选脚本选全部，未知路径选两种后端和前端。混合修改取并集，重命名检查旧、新路径。main 推送如果只涉及文档且推送前的提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片完整性及工具链版本一致性。最终 `verify` 始终运行，要求所有已选任务成功，未选任务可跳过。可将它设为稳定的 required check。
+
+Rust 的 `backend-rust` 在 Ubuntu 24.04 使用与 Rust 候选 Dockerfile 同版本的工具链。它通过 `./scripts/verify_rust.sh` 使用各 crate 的 Cargo.lock 构建网关并运行测试，随后用同次构建的可执行文件检查进程生命周期、Responses HTTP/SSE、原生 WebSocket、中断结算及离线备份恢复。托管进程测试同时覆盖 HTTP 到 WebSocket 桥接、重启及持久状态。回环验证使用临时合成配置、SQLite 数据和合成上游。候选镜像、容量和真实提供者验收仍分别执行。
 
 后端在 `changes → backend-build` 后并行运行 `backend-swift-tests`、四个 `backend-scripts` 分片和 `frontend-live`，普通前端在 changes 后独立运行。build 做格式检查及一次 `swift build --build-tests`；Swift 测试任务下载同次编译的 Linux 测试运行器、资源和 Swift 动态库，串行执行 XCTest 和 Swift Testing，最终门禁要求所有选中任务成功。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整编译，Swift 测试仍是合并门禁。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
 
