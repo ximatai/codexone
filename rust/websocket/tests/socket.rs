@@ -34,6 +34,8 @@ use tokio_tungstenite::{
 };
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(3);
+const WARMUP: &str = r#"{"type":"response.create","model":"example","generate":false,"input":[]}"#;
+const TIMING: &str = r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25}"#;
 const CREATE: &str = r#"{"type":"response.create","model":"synthetic-model","input":"check"}"#;
 const COMPLETED: &str = r#"{"type":"response.completed","response":{"id":"resp_case","status":"completed","usage":{"input_tokens":5,"output_tokens":2}}}"#;
 
@@ -705,12 +707,7 @@ async fn native_invalid_first_create_errors_without_connecting() {
 async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
     let app = Arc::new(TestApp::default());
     let (mut client, mut provider, task) = native_client(app.clone()).await;
-    client
-        .send(text(
-            r#"{"type":"response.create","model":"example","generate":false,"input":[]}"#,
-        ))
-        .await
-        .unwrap();
+    client.send(text(WARMUP)).await.unwrap();
     let mut provider = provider_ready(&mut provider).await;
     assert_eq!(
         read_json(&mut provider).await.get("generate"),
@@ -718,6 +715,9 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
     );
     let metadata = r#"{"type":"response.metadata","headers":{"x-codex-turn-state":"synthetic"}}"#;
     provider.send(text(metadata)).await.unwrap();
+    provider.send(text(TIMING)).await.unwrap();
+    assert_eq!(read_json(&mut client).await, json(metadata));
+    assert_eq!(read_json(&mut client).await, json(TIMING));
     for kind in [
         "response.created",
         "response.in_progress",
@@ -729,12 +729,6 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
             )))
             .await
             .unwrap();
-        if kind == "response.created" {
-            assert_eq!(
-                member(&read_json(&mut client).await, "type"),
-                "response.metadata"
-            );
-        }
         let event = read_json(&mut client).await;
         assert_eq!(member(&event, "type"), kind);
         assert_eq!(
@@ -815,7 +809,10 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
             .lock()
             .unwrap()
             .iter()
-            .any(|(_, event)| event == "response.interrupt.accepted")
+            .any(|(_, event)| matches!(
+                event.as_str(),
+                "response.interrupt.accepted" | "responsesapi.websocket_timing"
+            ))
     );
 }
 
@@ -839,7 +836,19 @@ async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
             "warmup_response_metadata",
         ),
         (
-            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25}"#,
+            r#"{"type":"responsesapi.websocket_timing","duration_ms":"synthetic"}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"output":[{"type":"message"}]}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"response":{"id":"resp_case","usage":{"input_tokens":9}}}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"data":{"delta":"synthetic"}}"#,
             "warmup_websocket_timing",
         ),
         (
@@ -849,12 +858,7 @@ async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
     ] {
         let app = Arc::new(TestApp::default());
         let (mut client, mut provider, task) = native_client(app.clone()).await;
-        client
-            .send(text(
-                r#"{"type":"response.create","model":"example","generate":false,"input":[]}"#,
-            ))
-            .await
-            .unwrap();
+        client.send(text(WARMUP)).await.unwrap();
         let mut provider = provider_ready(&mut provider).await;
         assert_eq!(
             read_json(&mut provider).await.get("generate"),
@@ -891,6 +895,53 @@ async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
             })] if *error == protocol
         ));
     }
+}
+
+#[tokio::test]
+async fn native_warmup_timing_before_1009_keeps_execution_indeterminate() {
+    let app = Arc::new(TestApp::default());
+    let (mut client, mut provider, task) = native_client(app.clone()).await;
+    let create = r#"{"type":"response.create","model":"example","generate":false,"input":[],"stream_id":"telemetry"}"#;
+    let timing =
+        r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25,"stream_id":"telemetry"}"#;
+    client.send(text(create)).await.unwrap();
+    let mut provider = provider_ready(&mut provider).await;
+    assert_eq!(
+        read_json(&mut provider).await.get("generate"),
+        Some(&JsonValue::Bool(false))
+    );
+    provider.send(text(timing)).await.unwrap();
+    assert_eq!(read_json(&mut client).await, json(timing));
+    provider
+        .close(Some(CloseFrame {
+            code: CloseCode::Size,
+            reason: Utf8Bytes::default(),
+        }))
+        .await
+        .unwrap();
+
+    let error = read_json(&mut client).await;
+    assert_eq!(
+        member(error.get("error").unwrap(), "code"),
+        "execution_indeterminate"
+    );
+    assert!(matches!(
+        timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+        NativeEnd::Upstream(SocketEnd::Close(1009))
+    ));
+    assert!(app.observations.lock().unwrap().is_empty());
+    assert_eq!(app.connects.load(Ordering::Relaxed), 1);
+    assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        app.finished.lock().unwrap().as_slice(),
+        [(
+            0,
+            NativeFinish::Indeterminate {
+                socket: Some(SocketEnd::Close(1009)),
+                ..
+            }
+        )]
+    ));
 }
 
 #[tokio::test]

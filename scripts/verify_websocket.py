@@ -167,13 +167,19 @@ class Provider(BaseHTTPRequestHandler):
                 if create['input'] == 'tool-namespaces':
                     assert create['tools'] == TOOLS
                     response['output'] = TOOL_OUTPUT
-                if create.get('generate') is False:
+                warmup = create.get('generate') is False
+                timed_warmup = warmup and getattr(self.server, 'warmup_timing', False)
+                if warmup:
                     response['output'] = None
                     response['usage'] = None
                 lane = {'stream_id': create['stream_id']} if 'stream_id' in create else {}
                 if create['input'] == 'invalid-upstream-lane':
                     lane = {'stream_id': 'invalid lane'}
+                if timed_warmup:
+                    send(self.connection, {'type': 'responsesapi.websocket_timing', 'duration_ms': 1.25, **lane})
                 send(self.connection, {'type': 'response.created', 'response': {**response, 'status': 'in_progress', 'usage': None}, **lane})
+                if timed_warmup:
+                    send(self.connection, {'type': 'responsesapi.websocket_timing', 'duration_ms': 2, **lane})
                 if create['input'] == 'barrier-failure':
                     # Keep this fixture free of terminal evidence regardless of CPU scheduling.
                     # The failed binding must close the upstream before any ID can be exposed.
@@ -345,20 +351,34 @@ def main():
                     assert events[-1]['error']['code'] == 'invalid_upstream_lane'
                     assert events[-1]['error']['type'] == 'server_error'
                 print('PASS: one lane EOF cannot erase another queued terminal; malformed provider lane is a server error')
-                with dial(ports['data']) as downstream:
-                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'warmup', 'generate': False})
-                    types = [event['type'] for event in events]
-                    assert types == ['response.created', 'response.completed'], types
-                    assert all(event['response']['output'] is None for event in events)
-                    assert latest(db, 'unknown') is None
-                    with sqlite3.connect(db) as connection:
-                        mode = json.loads(connection.execute('SELECT admission_json FROM attempts ORDER BY rowid DESC LIMIT 1').fetchone()[0])['mode']
-                    assert mode == 'warmup'
-                    previous = events[-1]['response']['id']
-                    events = turn(downstream, {'model': 'synthetic-text', 'input': 'post-warmup', 'previous_response_id': previous})
-                    assert events[-1]['type'] == 'response.completed'
-                    assert latest(db, 'settled')['inputTokens'] == 5
+                for timed in (False, True):
+                    provider.warmup_timing = timed
+                    with dial(ports['data']) as downstream:
+                        events = turn(downstream, {'model': 'synthetic-text', 'input': 'warmup', 'generate': False})
+                        types = [event['type'] for event in events]
+                        timing = 'responsesapi.websocket_timing'
+                        if timed:
+                            assert types == [timing, 'response.created', timing, 'response.completed'], types
+                            assert events[0] == {'type': timing, 'duration_ms': 1.25}
+                            assert events[2] == {'type': timing, 'duration_ms': 2}
+                        else:
+                            assert types == ['response.created', 'response.completed'], types
+                        assert all(event['response']['output'] is None
+                                   for event in events if event['type'] != timing)
+                        assert latest(db, 'unknown') is None
+                        with sqlite3.connect(db) as connection:
+                            warmup = connection.execute("""
+                                SELECT json_extract(admission_json,'$.mode'),state,
+                                       json_extract(outcome_json,'$.kind'),usage_json
+                                FROM attempts ORDER BY rowid DESC LIMIT 1
+                            """).fetchone()
+                        assert warmup == ('warmup', 'unknown', 'succeeded', None), warmup
+                        previous = events[-1]['response']['id']
+                        events = turn(downstream, {'model': 'synthetic-text', 'input': 'post-warmup', 'previous_response_id': previous})
+                        assert events[-1]['type'] == 'response.completed'
+                        assert latest(db, 'settled')['inputTokens'] == 5
                 print('PASS: WS generate:false preserves null output and its own persisted mode; absent usage stays unknown; same-socket continuation works')
+                print('PASS: known warmup timing is delivered in order before and after response.created')
                 for streaming in (False, True):
                     status, body = connect(ports['data'], 'POST', '/v1/responses', {'model': 'synthetic-text', 'input': 'bridge', 'stream': streaming})
                     assert status == 200 and b'completed' in body

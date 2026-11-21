@@ -15,6 +15,7 @@ use crate::{
 };
 
 const HISTORY_LIMIT: usize = 1024;
+const WEBSOCKET_TIMING: &str = "responsesapi.websocket_timing";
 
 pub(crate) struct Turns {
     pub active: HashMap<String, Turn>,
@@ -81,6 +82,7 @@ pub(crate) enum Route {
         lane: String,
         terminal: bool,
         provider_error: bool,
+        warmup_timing: bool,
     },
 }
 
@@ -238,9 +240,11 @@ impl Turns {
             return Ok(Route::Ignore);
         }
 
+        let warmup_timing = turn.warmup && kind == WEBSOCKET_TIMING && is_duration_frame(document);
         if turn.warmup
             && kind != "error"
             && !semantics.connection_metadata
+            && !warmup_timing
             && let Some(reason) = warmup_rejection(kind, semantics, response)
         {
             return Err(ProtocolError::new(502, "invalid_upstream_warmup").with_detail(reason));
@@ -264,6 +268,7 @@ impl Turns {
             lane,
             terminal,
             provider_error,
+            warmup_timing,
         })
     }
 }
@@ -276,7 +281,7 @@ fn warmup_rejection(
     if !semantics.lifecycle {
         return Some(match kind {
             "response.metadata" | "codex.response.metadata" => "warmup_response_metadata",
-            "responsesapi.websocket_timing" => "warmup_websocket_timing",
+            WEBSOCKET_TIMING => "warmup_websocket_timing",
             _ if semantics.carries_item || semantics.carries_item_id => "warmup_generated_event",
             _ => "warmup_non_lifecycle_event",
         });
@@ -287,6 +292,15 @@ fn warmup_rejection(
         Some(JsonValue::Array(_)) => Some("warmup_nonempty_output"),
         Some(_) => Some("warmup_invalid_output"),
     }
+}
+
+fn is_duration_frame(document: &JsonValue) -> bool {
+    matches!(document.get("duration_ms"), Some(JsonValue::Number(_)))
+        && document.as_object().is_some_and(|fields| {
+            fields
+                .iter()
+                .all(|(key, _)| matches!(key, "type" | "duration_ms" | "stream_id"))
+        })
 }
 
 fn id(value: &JsonValue) -> Option<&str> {

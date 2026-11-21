@@ -205,10 +205,21 @@ impl<A: NativeApplication> ReaderState<A> {
         match route {
             Ok(Route::Ignore) => Read::Ignore,
             Ok(route) => {
-                if let Route::Turn { lane, .. } = &route
+                if let Route::Turn {
+                    lane,
+                    warmup_timing,
+                    ..
+                } = &route
                     && let Some(attempt) = self.attempts.get(lane).and_then(Weak::upgrade)
                 {
-                    app.evidence(&attempt, NativeEvidence::Event(&document));
+                    // Warmup timing may precede the first lifecycle frame. Keep its
+                    // processing risk without treating it as a response observation.
+                    let evidence = if *warmup_timing {
+                        NativeEvidence::PossibleProcessing
+                    } else {
+                        NativeEvidence::Event(&document)
+                    };
+                    app.evidence(&attempt, evidence);
                 }
                 Read::Deliver(Ok(RoutedEvent { document, route }))
             }
@@ -848,6 +859,7 @@ impl<A: NativeApplication> Session<A> {
                 lane,
                 terminal,
                 provider_error,
+                ..
             } => {
                 self.turn_event(&lane, document, terminal, provider_error)
                     .await

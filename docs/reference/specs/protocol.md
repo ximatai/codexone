@@ -73,7 +73,7 @@ edits 必须支持已验证 Desktop 参考图编辑契约所需的图片输入�
 
 ## P14：单身份 WS 连接与 lane
 
-配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。固定身份上游 socket 因提供者关闭、网络断开或连接寿命到期而结束时，停止接受新 create；空闲时以 1000 正常关闭下游，有在途 turn 时先按已有证据结束执行并交接最终化责任（通常为 unknown），再以 1000 关闭下游。排队或在关闭后到达的 create 在 dispatch 前停止，不新增执行记录、额度占用或上游写入；连接 owner 释放 lane、请求体预留及 socket，不自动重建上游，客户端在新连接续接。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；只允许无生成内容的响应生命周期事件。response.interrupt 与未知控制按 P14a 转发；真实客户端仍按 P11/E10 验收，不从合成 WS 功能推导完整客户端支持。
+配置 websocket 上游后，原生 WS 与 HTTP→WS 桥接复用相同持久准入/屏障/用量用例。握手只本地授权/容量管理，首个有效 create 才建立固定身份 socket；同 lane 串行 FIFO、跨 lane 可并行，不重连重放。固定身份上游 socket 因提供者关闭、网络断开或连接寿命到期而结束时，停止接受新 create；空闲时以 1000 正常关闭下游，有在途 turn 时先按已有证据结束执行并交接最终化责任（通常为 unknown），再以 1000 关闭下游。排队或在关闭后到达的 create 在 dispatch 前停止，不新增执行记录、额度占用或上游写入；连接 owner 释放 lane、请求体预留及 socket，不自动重建上游，客户端在新连接续接。stream_id 为 1—256 字节 ASCII 字母/数字/下划线/点/连字符，最多 32 个命名 lane（另含默认 lane），最多 16 个在途 turn；超限终止连接，已 dispatch 执行按原证据最终化。generate:false 使用独立 warmup 模式，仍占准入与未知暴露，不假设免费；预热响应生命周期事件须无生成内容；原生 WS 的有限耗时帧例外见 P15。response.interrupt 与未知控制按 P14a 转发；真实客户端仍按 P11/E10 验收，不从合成 WS 功能推导完整客户端支持。
 
 下游 WS 消息/分片聚合为 64 MiB，单上游事件 8 MiB、累计执行 32 MiB；上游 peer 入站队列为 64 条/8 MiB，下游入站及原生请求调度队列各为 64 条/72 MiB，对齐共享正文池与小请求余量之和，单条仍受 64 MiB 入站上限约束，每 lane 最多排队 4 条，另持有一个有界 producer 消息；至多 33 个 lane worker，各自最多处理一个有界命令，5 秒拥塞终止连接；单 reader、串行 writer，校验 mask 角色/RSV/UTF-8，控制帧由帧读取层校验并本地处理 ping/pong。首 create 10 秒、后续请求仅在无执行/排队turn时计120秒空闲、连接寿命最多1小时；执行使用 P13 总期限，慢下游写 5 秒关闭。关闭 owner 覆盖未完成握手及已连接 socket，取消并等待子任务，不等待结算形成循环。
 
@@ -95,7 +95,7 @@ HTTP 桥接每执行新建上游 socket，不保证跨请求 store=false 连接�
 
 完整 inline 消息、function/custom tool 结果、additional_tools 包及携完整 encrypted_content 的 reasoning/compaction 中的 id 为客户端本地关联标签，发送上游前移除。只有能让提供者读取存储状态的引用是硬引用：previous_response_id、item_reference、仅凭 ID 指向的 image_generation_call（无 result）与 reasoning（无 encrypted_content）；它们必须已绑定到当前主体/身份，否则 dispatch 前拒绝。call_id、加密上下文指纹和其他条目 ID 是路由提示（最近 64 个）：账号池中已知时优先选择其账号，未知或属于他人时忽略，不拒绝也不建立读取权。加密内容只能由签发它的上游账号解密，跨账号时由提供者拒绝。
 
-WS generate:false 为独立 warmup 模式，普通 HTTP 不接受 generate 控制；预热生命周期事件只允许无生成内容的响应，`response.output` 可省略、为 null 或为空数组，沿用原封套形状。空输出不能替代可信用量；缺失用量仍为未知。Rust 在现有私有 `invalid_upstream_warmup` 拒绝日志中使用固定原因区分非空/畸形输出、已知生成事件、响应元数据、WebSocket 耗时事件和其他非生命周期事件。原因不带上游字段值。
+WS generate:false 为独立 warmup 模式，普通 HTTP 不接受 generate 控制；预热生命周期事件只允许无生成内容的响应，`response.output` 可省略、为 null 或为空数组，沿用原封套形状。空输出不能替代可信用量；缺失用量仍为未知。Rust 原生 WS 在预热期间可按既有归属及顺序规则透传 `responsesapi.websocket_timing`，封套限于事件名、JSON 数值 `duration_ms` 和可选的有效 `stream_id`。该帧不建立响应归属、进展或结算证据，仍关闭未处理的 1009 例外。Rust 在现有私有 `invalid_upstream_warmup` 拒绝日志中使用固定原因区分非空/畸形输出、已知生成事件、响应元数据、WebSocket 耗时事件和其他非生命周期事件。原因不带上游字段值。
 
 独立 HTTP POST /responses/compact 为 compact 模式，两个前缀共用授权/限额/屏障；即使生成走 WS，compact 仍走同可信 origin 的 HTTP 显式端点。返回 response.compaction 的完整 output 窗口不裁剪、不改写，不把 compaction ID 当 previous_response_id；窗口内对象先作为本执行的路由证据幂等绑定，再整体返回。压缩请求沿 64 MiB 请求、32 MiB 响应、总期限及失败语义；未支持模式/输入不发送。
 
