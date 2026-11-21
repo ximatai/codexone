@@ -124,6 +124,9 @@ impl DataBodies {
         let deadline = deadline.min(Instant::now() + WAIT);
         let id = {
             let mut state = self.0.state();
+            if Instant::now() >= deadline {
+                return Err(ReadError::Capacity);
+            }
             if let Some(reservation) = state.available(Reservation::default(), total, |small| {
                 state.is_turn(small, None)
             }) {
@@ -156,11 +159,11 @@ impl DataBodies {
         };
         loop {
             let changed = self.0.changed.notified();
-            if Instant::now() >= deadline {
-                return Err(ReadError::Capacity);
-            }
             if let Some(reservation) = {
                 let mut state = self.0.state();
+                if Instant::now() >= deadline {
+                    return Err(ReadError::Capacity);
+                }
                 let available = state.available(Reservation::default(), total, |small| {
                     state.is_turn(small, Some(id))
                 });
