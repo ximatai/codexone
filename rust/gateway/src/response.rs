@@ -17,10 +17,14 @@ pub struct ResponseError {
     pub protocol: ProtocolError,
     provider: Option<Box<ProviderFailure>>,
     failure: execution::Failure,
+    retry_after_seconds: Option<u64>,
 }
 
 impl ResponseError {
-    pub fn reply(&self, request_id: &str, headers: HeaderMap) -> Reply {
+    pub fn reply(&self, request_id: &str, mut headers: HeaderMap) -> Reply {
+        if let Some(seconds) = self.retry_after_seconds {
+            headers.insert(http::header::RETRY_AFTER, seconds.into());
+        }
         reply::error(self.protocol, self.provider.as_deref(), request_id, headers)
     }
 
@@ -52,6 +56,7 @@ impl From<ProtocolError> for ResponseError {
             protocol: error,
             provider: None,
             failure,
+            retry_after_seconds: None,
         }
     }
 }
@@ -77,6 +82,19 @@ impl From<execution::ExecutionError> for ResponseError {
                 (503, "maintenance_required", Failure::AccountUnavailable)
             }
             ExecutionError::Capacity => (503, "capacity_exceeded", Failure::LocalCapacity),
+            ExecutionError::AccountUnavailable | ExecutionError::AccountCooldown { .. } => {
+                (503, "account_unavailable", Failure::AccountUnavailable)
+            }
+            ExecutionError::ContinuationOwnerUnavailable => (
+                503,
+                "continuation_owner_unavailable",
+                Failure::AccountUnavailable,
+            ),
+            ExecutionError::DeadlineExceeded => (
+                504,
+                "execution_deadline_exceeded",
+                Failure::DeadlineExceeded,
+            ),
             ExecutionError::AccountConcurrency => {
                 (429, "account_concurrency_exceeded", Failure::LocalCapacity)
             }
@@ -90,6 +108,12 @@ impl From<execution::ExecutionError> for ResponseError {
             protocol: ProtocolError::new(status, code),
             provider: None,
             failure,
+            retry_after_seconds: match error {
+                ExecutionError::AccountCooldown {
+                    retry_after_seconds,
+                } => Some(retry_after_seconds),
+                _ => None,
+            },
         }
     }
 }
