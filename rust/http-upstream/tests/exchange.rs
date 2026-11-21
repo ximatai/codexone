@@ -7,7 +7,7 @@ use codexone_http_upstream::{
 use futures_util::stream;
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
     sync::oneshot,
     time::{sleep, timeout},
 };
@@ -316,17 +316,53 @@ async fn body_limits_and_disconnects_preserve_errors_without_replay() {
 }
 
 #[tokio::test]
+async fn tcp_retry_backoff_obeys_the_exchange_deadline_and_cancellation() {
+    let socket = TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let destination = format!("http://{}", socket.local_addr().unwrap());
+    let client = HttpUpstream::default().with_connection_establishment_retry();
+
+    let mut deadline = options(32);
+    deadline.deadline = Instant::now() + Duration::from_millis(25);
+    assert_eq!(
+        client
+            .send(post(&destination, RequestBody::default()), deadline)
+            .await
+            .unwrap_err(),
+        Error::DeadlineExceeded
+    );
+
+    let options = options(32);
+    let cancel = options.cancellation.clone();
+    let (response, ()) = tokio::join!(
+        client.send(post(&destination, RequestBody::default()), options),
+        async {
+            sleep(Duration::from_millis(25)).await;
+            cancel.cancel();
+        }
+    );
+    assert_eq!(response.unwrap_err(), Error::Cancelled);
+}
+
+#[tokio::test]
 async fn disconnect_before_headers_never_replays_the_request() {
     let (listener, destination) = loopback().await;
     let server = tokio::spawn(async move {
         let mut peer = accept(&listener).await;
         read_heads(&mut peer).await;
+        let mut body = [0; 2];
+        peer.read_exact(&mut body).await.unwrap();
+        assert_eq!(&body, b"{}");
         drop(peer);
         assert!(timeout(FIRST_RESPONSE, listener.accept()).await.is_err());
     });
     assert_eq!(
         HttpUpstream::default()
-            .send(post(&destination, RequestBody::default()), options(32))
+            .with_connection_establishment_retry()
+            .send(
+                post(&destination, RequestBody::bytes(Bytes::from_static(b"{}"))),
+                options(32)
+            )
             .await
             .unwrap_err(),
         Error::Transport
@@ -407,6 +443,7 @@ async fn https_uses_tls_with_verified_server_identity_directly_and_through_conne
             let tls = tls.accept(peer).await;
             if hostname != "localhost" {
                 assert!(tls.is_err());
+                assert!(timeout(FIRST_RESPONSE, listener.accept()).await.is_err());
                 return;
             }
             let mut peer = BufReader::new(tls.unwrap());
@@ -422,6 +459,7 @@ async fn https_uses_tls_with_verified_server_identity_directly_and_through_conne
 
         let proxy = tunnel.then(|| Proxy::parse(&proxy_url).unwrap());
         let result = HttpUpstream::new(proxy)
+            .with_connection_establishment_retry()
             .with_root_certificates(roots.clone())
             .send(post(&destination, RequestBody::default()), options(32))
             .await;
@@ -506,9 +544,14 @@ async fn refused_proxy_tunnel_cannot_fall_back_to_the_provider() {
         peer.write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
             .await
             .unwrap();
-        assert!(timeout(FIRST_RESPONSE, provider.accept()).await.is_err());
+        let (proxy_retry, direct_fallback) = tokio::join!(
+            timeout(FIRST_RESPONSE, listener.accept()),
+            timeout(FIRST_RESPONSE, provider.accept()),
+        );
+        assert!(proxy_retry.is_err() && direct_fallback.is_err());
     });
-    let client = HttpUpstream::new(Some(Proxy::parse(&proxy_url).unwrap()));
+    let client = HttpUpstream::new(Some(Proxy::parse(&proxy_url).unwrap()))
+        .with_connection_establishment_retry();
     assert_eq!(
         client
             .send(post(&destination, RequestBody::default()), options(8))

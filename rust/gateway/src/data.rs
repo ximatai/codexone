@@ -108,7 +108,7 @@ impl DataPlane {
         proxy: Option<upstream::Proxy>,
         managed: Option<Arc<ManagedRoute>>,
     ) -> Result<Self, ()> {
-        let upstream = upstream::HttpUpstream::new(proxy);
+        let upstream = upstream::HttpUpstream::new(proxy).with_connection_establishment_retry();
         let generation_url: Uri = format!("{base}/responses").parse().map_err(|_| ())?;
         let contract = match contract {
             UpstreamContract::Responses => protocol::Contract::Responses,

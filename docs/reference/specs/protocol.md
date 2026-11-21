@@ -35,6 +35,8 @@
 
 默认无输出也不等于可重试。未发送请求可有限重选；适配器明确证明未执行的拒绝可按总 deadline/attempt 预算重试；已发送后断线/超时、已返回 ID 或语义输出一律不透明重放。跨账号还需全部引用无归属冲突且主体允许。旧凭证 401 只有明确拒绝未执行时，单飞刷新后最多重试一次；429 尊重 Retry-After，固定谱系不跨账号。一般重试有独立 attempt 和上游成本记录。压缩 HTTP 的输出前 415 协商失败是例外：同账号、同 attempt，以原唯一编码 Data 明文重发且仅一次，不计协商拒绝的健康惩罚或 unknown；400、其他状态、断开与超时不因此重发。
 
+Rust 数据面 HTTP 在 TCP 建连失败后可在原有 10 秒连接预算及执行总期限内退避重试，最多三次重拨。使用显式代理时始终拨同一代理。代理 CONNECT、TLS 和首次 HTTP 派发都在 TCP 建连成功后进行，三者的失败不触发拨号重试。取消也会结束退避等待。
+
 排队、连接/TLS、响应头、首语义事件、活跃进展、下游写、总 turn 和连接寿命分别限时。NIO channel close 即使上游静默也必须触发下游取消；图片/思考可有较长 idle 策略，但不延长慢消费者期限。单调时钟用于 deadline，UTC 用于账期。
 
 Responses HTTP 与上游 WS 的首响应期限从上传完成边界开始：HTTP 明文使用已知 Content-Length 的 Data 流，zstd 使用 unknown 长度的 chunked 单帧流，每块最多 64 KiB，Swift HTTP 在 AHC 消费最后一块并请求 EOF 时启动，Rust 的 HTTP/1 定长上传在消费最后一块时启动，chunked 上传在消费 EOF 时启动；WS 在完整 frame 的 transport write future 成功后启动。两者都是本机传输边界，不是提供者收完/消费确认；NIO、TLS 和 socket 缓冲可能仍有尾部数据。总执行期限仍从执行开始覆盖路由、连接及上传，未完成上传由总期限取消，沿用 execution_deadline_exceeded / deadline_exceeded；请求 frame 不引入独立上游五秒写期限，控制帧仍沿既有五秒期限。上传后静默由 execution_first_response_timeout 结束，首事件后的 idle 不变；早到事件不会被上传完成信号重置。取消沿既有路径关闭 I/O、最终化未知/取消，不重试或重放。复用唯一最终编码 Data，不增加整份输入或压缩产物副本；压缩尾帧完全消费后才报告 EOF。2xx 响应头早于上传 EOF 时，压缩与明文均允许继续上传；压缩 owner 在 EOF 或 exchange 结束时关闭，非 2xx 仍立即停止，不能因 execute 返回响应头而取消成功请求的上传。初始化、worker 排队及压缩均计入总期限；415 明文重发的首响应期限从新上传 EOF 开始，总期限不重置。

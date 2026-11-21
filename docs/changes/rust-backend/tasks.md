@@ -9,6 +9,7 @@
 - [ ] 执行事务、准入、账号选择、结算、取消与启动恢复。
   - macOS arm64 合成验证已覆盖两端口的磁盘压力与恢复冻结、普通 writer 队列饱和、写入失败触发关闭，以及启动恢复期间的实例锁交接。
 - [ ] HTTP、SSE、WS、压缩、图片、身份刷新与额度任务。
+  - macOS arm64 的 Rust debug 网关通过完整 [迁移验收](../../../scripts/verify_migration_readiness.py)。延迟监听的合成 HTTP 提供者获得一次派发，已收到应用请求后的断开与超时保持 unknown，容量用例接受 64 条空闲 WS 和 8 条活跃 HTTP，普通连接达到上限后仍保留控制通道余量。
   - macOS arm64 合成进程验证覆盖托管及单身份原生 WS、HTTP JSON/SSE 桥接、正式共享正文预算、原生图片两种传输配置、固定池账号续接和强停，以及 HTTP/WS 配额预热的跨重启窗口屏障。
   - 额度任务已用 Swift v19 schema 和合成回环提供者验证重置卡丢响应、到期核对和预热 unknown 恢复。托管 HTTP 网关已验证 A18/A19 管理路由、周期观察触发的 HTTP 预热和重启后原操作核对。WebSocket 预热接线、真实订阅和前端联调另验。
   - Rust HTTP 已接入 zstd 流式上传、一次 415 明文协商和可选加密暂存。macOS arm64 的 release 网关通过 `verify_upstream_zstd.py` 完整合成矩阵和 `verify_protocol.py`。[暂存定向验收](../../../scripts/rust_compat/README.md#http-正文暂存故障)覆盖容量耗尽、TCP reset、半途 SIGKILL、目录清理及重启后的明文上传与租约归还。WS 回退接线随 WS 集成验收。

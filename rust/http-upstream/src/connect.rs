@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use http::{Method, Request, Uri, uri::Authority};
 use http_body_util::Empty;
@@ -7,6 +7,7 @@ use hyper_util::rt::TokioIo;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
+    time::sleep,
 };
 use tokio_rustls::{
     TlsConnector,
@@ -64,6 +65,7 @@ pub(crate) async fn connect(
     uri: &Uri,
     proxy: Option<&Proxy>,
     tls: Arc<ClientConfig>,
+    retry_tcp: bool,
 ) -> Result<Box<dyn Io>, Error> {
     let authority = uri.authority().ok_or(Error::InvalidRequest)?;
     let https = uri.scheme_str() == Some("https");
@@ -72,9 +74,7 @@ pub(crate) async fn connect(
         .map(|proxy| (host(&proxy.0), proxy.0.port_u16().unwrap()))
         .unwrap_or((host(authority), port));
 
-    let socket = TcpStream::connect((peer, peer_port))
-        .await
-        .map_err(|_| Error::Connect)?;
+    let socket = connect_tcp(peer, peer_port, retry_tcp).await?;
     socket.set_nodelay(true).map_err(|_| Error::Connect)?;
     let io: Box<dyn Io> = if proxy.is_some() {
         let target = format!("{}:{port}", authority.host());
@@ -92,6 +92,23 @@ pub(crate) async fn connect(
         .await
         .map_err(|_| Error::Tls)?;
     Ok(Box::new(tls))
+}
+
+const TCP_RETRY_DELAYS_MS: [u64; 3] = [100, 200, 400];
+
+async fn connect_tcp(peer: &str, port: u16, retry: bool) -> Result<TcpStream, Error> {
+    let delays = if retry { &TCP_RETRY_DELAYS_MS[..] } else { &[] };
+    // Reopen only TCP. CONNECT, TLS and application I/O all begin after this loop.
+    let mut delays = delays.iter();
+    loop {
+        match TcpStream::connect((peer, port)).await {
+            Ok(socket) => return Ok(socket),
+            Err(_) => match delays.next() {
+                Some(delay) => sleep(Duration::from_millis(*delay)).await,
+                None => return Err(Error::Connect),
+            },
+        }
+    }
 }
 
 fn host(authority: &Authority) -> &str {

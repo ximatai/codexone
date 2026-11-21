@@ -305,21 +305,33 @@ def main():
         # Refused TCP connection retries before dispatch, while post-send failures above never replay.
         with tempfile.TemporaryDirectory(prefix='codexone-connect-retry-') as temporary:
             root = Path(temporary)
-            reservation = socket.socket(); reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]; reservation.close()
-            config = configuration(root, port)
-            document = json.loads(config.read_text()); document['executionTimeoutSeconds'] = 8
-            config.write_text(json.dumps(document))
-            process, ports = launch(str(args.binary.resolve()), config, root)
-            delayed = ThreadingHTTPServer(('127.0.0.1', port), Provider, bind_and_activate=False)
-            delayed.guard = server.guard; delayed.calls = []; delayed.handshake = 0
-            def listen_later():
-                time.sleep(.5); delayed.server_bind(); delayed.server_activate(); delayed.serve_forever()
-            delayed_thread = threading.Thread(target=listen_later); delayed_thread.start()
-            try:
-                assert request(ports['data'])[0] == 200
-                assert len(delayed.calls) == 1
-            finally:
-                stop(process); delayed.shutdown(); delayed.server_close(); delayed_thread.join(3)
+            with ThreadingHTTPServer(('127.0.0.1', 0), Provider, bind_and_activate=False) as delayed:
+                delayed.server_bind()  # Reserve the port while leaving TCP connections refused.
+                delayed.guard = server.guard
+                delayed.calls = []
+                delayed.handshake = 0
+                config = configuration(root, delayed.server_port)
+                document = json.loads(config.read_text()); document['executionTimeoutSeconds'] = 8
+                config.write_text(json.dumps(document))
+                process, ports = launch(str(args.binary.resolve()), config, root)
+
+                def listen_later():
+                    time.sleep(.5)
+                    delayed.server_activate()
+                    delayed.serve_forever()
+
+                delayed_thread = threading.Thread(target=listen_later)
+                delayed_thread.start()
+                try:
+                    status, _ = request(ports['data'])
+                    assert status == 200, status
+                    assert len(delayed.calls) == 1
+                    with sqlite3.connect(root / 'state/core.sqlite') as db:
+                        assert db.execute('SELECT COUNT(*) FROM attempts').fetchone() == (1,)
+                finally:
+                    stop(process)
+                    delayed.shutdown()
+                    delayed_thread.join(3)
         print('PASS: connection failure retries before dispatch and sends once', flush=True)
         with tempfile.TemporaryDirectory(prefix='codexone-migration-capacity-') as temporary:
             root = Path(temporary)

@@ -127,6 +127,7 @@ impl ExchangeOptions {
 pub struct HttpUpstream {
     proxy: Option<Proxy>,
     tls: Arc<ClientConfig>,
+    retry_tcp: bool,
     #[cfg(feature = "test-support")]
     drivers: DriverProbe,
 }
@@ -136,16 +137,24 @@ impl HttpUpstream {
     /// The calling transport owns cancellation, timeouts and application headers.
     pub async fn connect_stream(&self, target: &Uri) -> Result<Box<dyn Io>, Error> {
         target_authority(target)?;
-        connect::connect(target, self.proxy.as_ref(), self.tls.clone()).await
+        connect::connect(target, self.proxy.as_ref(), self.tls.clone(), false).await
     }
 
     pub fn new(proxy: Option<Proxy>) -> Self {
         Self {
             proxy,
             tls: Arc::new(connect::tls_config()),
+            retry_tcp: false,
             #[cfg(feature = "test-support")]
             drivers: DriverProbe::default(),
         }
+    }
+
+    /// Retry failed TCP dials for HTTP exchanges within the original connection budget.
+    /// Once TCP connects, CONNECT, TLS and HTTP dispatch each proceed at most once.
+    pub fn with_connection_establishment_retry(mut self) -> Self {
+        self.retry_tcp = true;
+        self
     }
 
     /// Use a trusted explicit root store, for example when the platform supplies private CA roots.
@@ -255,7 +264,7 @@ impl HttpUpstream {
             _ = options.cancellation.cancelled() => return Err(Error::Cancelled),
             _ = sleep_until(options.deadline) => return Err(Error::DeadlineExceeded),
             error = progress.wait_for_expiry() => return Err(error),
-            io = timeout(CONNECT_TIMEOUT, connect::connect(&uri, self.proxy.as_ref(), self.tls.clone())) => {
+            io = timeout(CONNECT_TIMEOUT, connect::connect(&uri, self.proxy.as_ref(), self.tls.clone(), self.retry_tcp)) => {
                 io.map_err(|_| Error::ConnectTimeout)??
             }
         };
