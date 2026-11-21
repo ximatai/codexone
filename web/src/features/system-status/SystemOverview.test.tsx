@@ -6,10 +6,7 @@ import { SystemOverview } from "./SystemOverview";
 
 const fixture = JSON.parse(
   readFileSync(
-    resolve(
-      process.cwd(),
-      "../fixtures/system-status.json",
-    ),
+    resolve(process.cwd(), "../fixtures/system-status.json"),
     "utf8",
   ),
 );

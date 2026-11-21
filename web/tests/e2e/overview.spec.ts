@@ -3,10 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
 const fixture = readFileSync(
-  new URL(
-    "../../../fixtures/system-status.json",
-    import.meta.url,
-  ),
+  new URL("../../../fixtures/system-status.json", import.meta.url),
   "utf8",
 );
 
