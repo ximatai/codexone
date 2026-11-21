@@ -542,7 +542,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repeated_terminal_outcome_does_not_record_health_again() {
+    fn repeated_finalization_after_reopen_keeps_usage_and_health_unchanged() {
         const NOW: i64 = 1_728_000_000;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("synthetic.sqlite");
@@ -606,12 +606,20 @@ mod tests {
         let mut db = Database::open_existing(&path).unwrap();
         let mut health = Health::default();
         let outcome = Outcome::new(Some(Failure::UpstreamUnavailable), NOW);
+        let evidence = UsageEvidence {
+            revision: 1,
+            input_tokens: 10,
+            output_tokens: 5,
+            estimated_micros: 30,
+            completeness: Completeness::Complete,
+            ..UsageEvidence::default()
+        };
         let now_micros = NOW * 1_000_000 + 250_000;
         finalize(
             &mut db,
             &mut health,
             &admission.attempt,
-            None,
+            Some(&evidence),
             Some(&outcome),
             now_micros,
             None,
@@ -631,22 +639,40 @@ mod tests {
                 .unwrap(),
             NOW + 2
         );
+        drop(db);
+        let mut db = Database::open_existing(&path).unwrap();
+        let mut health = Health::default();
         db.connection()
             .execute_batch(
                 "CREATE TRIGGER reject_repeated_health BEFORE INSERT ON account_health
-             BEGIN SELECT RAISE(ABORT,'synthetic duplicate health write'); END;",
+                 BEGIN SELECT RAISE(ABORT,'synthetic duplicate health write'); END;
+                 CREATE TRIGGER reject_repeated_evidence BEFORE INSERT ON evidence
+                 BEGIN SELECT RAISE(ABORT,'synthetic duplicate evidence write'); END;",
             )
             .unwrap();
         finalize(
             &mut db,
             &mut health,
             &admission.attempt,
-            None,
+            Some(&evidence),
             Some(&outcome),
             now_micros + 1_000_000,
             None,
         )
         .unwrap();
+        let settled = snapshot(db.connection(), &admission.attempt).unwrap();
+        assert_eq!(settled.state, State::Settled);
+        assert_eq!(settled.usage, Some(evidence));
+        assert_eq!(
+            db.connection()
+                .query_row(
+                    "SELECT estimated, (SELECT count(*) FROM evidence) FROM attempts WHERE id=?1",
+                    [&admission.attempt],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap(),
+            (30, 1)
+        );
         let conflicting = Outcome::new(Some(Failure::RateLimited), NOW);
         assert_eq!(
             finalize(
