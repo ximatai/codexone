@@ -9,6 +9,7 @@
 - [ ] 执行事务、准入、账号选择、结算、取消与启动恢复。
   - macOS arm64 合成验证已覆盖两端口的磁盘压力与恢复冻结、普通 writer 队列饱和、写入失败触发关闭，以及启动恢复期间的实例锁交接。
 - [ ] HTTP、SSE、WS、压缩、图片、身份刷新与额度任务。
+  - macOS arm64 合成进程验证覆盖托管及单身份原生 WS、HTTP JSON/SSE 桥接、正式共享正文预算、原生图片两种传输配置、固定池账号续接和强停，以及 HTTP/WS 配额预热的跨重启窗口屏障。
   - 额度任务已用 Swift v19 schema 和合成回环提供者验证重置卡丢响应、到期核对和预热 unknown 恢复。托管 HTTP 网关已验证 A18/A19 管理路由、周期观察触发的 HTTP 预热和重启后原操作核对。WebSocket 预热接线、真实订阅和前端联调另验。
   - Rust HTTP 已接入 zstd 流式上传、一次 415 明文协商和可选加密暂存。macOS arm64 的 release 网关通过 `verify_upstream_zstd.py` 完整合成矩阵和 `verify_protocol.py`。独立合成进程验证覆盖暂存容量耗尽、半途 SIGKILL、目录清理及重启后明文上传。WS 回退接线随 WS 集成验收。
   - macOS arm64 同一 release 二进制的 `--memory-output` 压缩开关对照使用三类 30 MiB 单请求和四压缩加一明文并发场景，各运行三对进程。进程峰值 RSS 差值分别为 2.23–5.41 MiB 和 11.97–20.81 MiB。RSS 同时计入映射页、分配器、解析和网络缓冲。个别对照高于 5/20 MiB 编码工作区预留，原生 Linux RSS、发行许可归档和真实订阅的 chunked 兼容性仍待验收。
