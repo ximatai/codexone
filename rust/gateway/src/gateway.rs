@@ -214,7 +214,7 @@ async fn run_configured(
                 .filter_map(|model| {
                     Some((
                         model.id.clone(),
-                        model.catalog.as_ref()?.default_reasoning_effort.clone()?,
+                        model.effective_default_reasoning_effort()?.to_owned(),
                     ))
                 })
                 .collect();
@@ -243,19 +243,7 @@ async fn run_configured(
                 DataPlane::new(*identity, token, proxy.clone(), versions).map_err(|_| Service)?;
             (options, Some(data), None)
         }
-        Some(Source::AccountPool(pool)) => {
-            model_efforts = pool
-                .models
-                .iter()
-                .filter_map(|model| {
-                    Some((
-                        model.id.clone(),
-                        model.catalog.as_ref()?.default_reasoning_effort.clone()?,
-                    ))
-                })
-                .collect();
-            (Options::for_account_pool(), None, Some(pool))
-        }
+        Some(Source::AccountPool(pool)) => (Options::for_account_pool(), None, Some(pool)),
     };
     if config.master_keys.is_some() {
         options = options.with_governance_recovery(managed::recover);

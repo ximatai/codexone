@@ -1399,6 +1399,13 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
     let manage = |method, path, body| request(admin, method, path, Some(ADMIN), body);
     assert_eq!(request(admin, "GET", "/api/models", None, None).0, 401);
     assert_eq!(manage("GET", "/api/models", None).1["revision"], 0);
+    let (status, initial_usage) = manage("GET", "/api/usage/options", None);
+    assert_eq!(status, 200);
+    assert_eq!(
+        initial_usage["defaultReasoningEfforts"]["synth-text"],
+        "low"
+    );
+
     let (status, issued) = manage(
         "POST",
         "/api/keys",
@@ -1425,6 +1432,13 @@ fn directory_rates_and_control_health_survive_normal_entry_points() {
     );
     assert_eq!(status, 200, "{enabled}");
     assert_eq!(enabled["active"][1]["reasoningEfforts"], json!(["high"]));
+    let (status, enabled_usage) = manage("GET", "/api/usage/options", None);
+    assert_eq!(status, 200);
+    assert_eq!(
+        enabled_usage["defaultReasoningEfforts"]["synth-next"],
+        "high"
+    );
+
     let (status, revised) = manage(
         "PUT",
         "/api/models/rates",
