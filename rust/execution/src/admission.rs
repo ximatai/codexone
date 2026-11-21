@@ -291,13 +291,21 @@ pub(crate) fn resolve(
     db: &Connection,
     principal: &str,
     object: &ObjectBinding,
+    namespace: Option<&str>,
     now: i64,
 ) -> Result<Owner> {
     let mut query = db.prepare_cached(
         "SELECT b.namespace,b.identity,a.key_id FROM bindings b JOIN attempts a ON a.id=b.attempt
-         WHERE b.principal=?1 AND b.object_type=?2 AND b.raw_id=?3 AND b.expires_at_epoch>?4 LIMIT 2",
+         WHERE b.principal=?1 AND b.object_type=?2 AND b.raw_id=?3 AND b.expires_at_epoch>?4
+          AND (?5 IS NULL OR b.namespace=?5) LIMIT 2",
     )?;
-    let mut rows = query.query(params![principal, object.kind, object.raw_id, now])?;
+    let mut rows = query.query(params![
+        principal,
+        object.kind,
+        object.raw_id,
+        now,
+        namespace
+    ])?;
     let row = rows.next()?.ok_or(Error::UnknownObject)?;
     let owner = Owner {
         principal: principal.into(),
@@ -352,7 +360,7 @@ fn uuid_shape(value: &str) -> bool {
         })
 }
 
-fn restore_allows_admission(tx: &Transaction<'_>, now: i64) -> Result<()> {
+fn restore_allows_admission(tx: &Transaction<'_>, managed: bool, now: i64) -> Result<()> {
     let (present, record): (bool, Option<String>) = tx.query_row(
         "SELECT restore_json IS NOT NULL,
           CASE WHEN length(CAST(restore_json AS BLOB))<=16384 THEN restore_json END
@@ -362,6 +370,9 @@ fn restore_allows_admission(tx: &Transaction<'_>, now: i64) -> Result<()> {
     )?;
     if !present {
         return Ok(());
+    }
+    if !managed {
+        return Err(Error::MaintenanceRequired);
     }
     let record: RestoreRecord = serde_json::from_str(&record.ok_or(Error::StorageUnavailable)?)?;
     let baseline = record.baseline.ok_or(Error::MaintenanceRequired)?;
@@ -411,45 +422,10 @@ pub(crate) fn admit(
     now: i64,
 ) -> Result<Admission> {
     let day = (now + offset).div_euclid(DAY) * DAY - offset;
-    restore_allows_admission(tx, now)?;
-    let duplicate: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM attempts WHERE id=?1)",
-        [&request.attempt],
-        |row| row.get(0),
-    )?;
-    if duplicate {
-        return Err(Error::Conflict);
-    }
+    check_intent(tx, &request.attempt, true, now)?;
     let namespace = account_namespace(tx, account, &request, now)?;
     catalog_authorizes(tx, account, &request)?;
     key_authorizes(tx, &request, now, day, offset)?;
-    let active: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM attempts WHERE namespace=?1 AND identity=?2 AND state='intent'",
-        params![namespace, account],
-        |row| row.get(0),
-    )?;
-    if active >= 16 {
-        return Err(Error::AccountConcurrency);
-    }
-
-    for reference in &request.references {
-        let owner = resolve(tx, &request.key.principal, reference, now)?;
-        if owner.namespace != namespace || owner.identity != account {
-            return Err(Error::UnknownObject);
-        }
-        tx.execute(
-            "UPDATE bindings SET expires_at_epoch=?1
-             WHERE principal=?2 AND namespace=?3 AND identity=?4 AND object_type=?5 AND raw_id=?6",
-            params![
-                now + BINDING_TTL,
-                owner.principal,
-                namespace,
-                account,
-                reference.kind,
-                reference.raw_id
-            ],
-        )?;
-    }
 
     let admission = Admission {
         attempt: request.attempt,
@@ -474,7 +450,77 @@ pub(crate) fn admit(
         service_tier: request.service_tier.map(sanitize_metadata),
         request_metadata_recorded: Some(true),
     };
+    insert_intent(tx, admission, now)
+}
+
+pub(crate) fn admit_static(
+    tx: &Transaction<'_>,
+    offset: i64,
+    mut admission: Admission,
+    now: i64,
+) -> Result<Admission> {
+    check_intent(tx, &admission.attempt, false, now)?;
+    let collision: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1 AND namespace=?2)",
+        params![admission.owner.identity, admission.owner.namespace],
+        |row| row.get(0),
+    )?;
+    if collision {
+        return Err(Error::InvalidCommand);
+    }
+    let day = (now + offset).div_euclid(DAY) * DAY - offset;
+    admission.window = format!("business-day-{day}");
+    insert_intent(tx, admission, now)
+}
+
+fn check_intent(tx: &Transaction<'_>, attempt: &str, managed: bool, now: i64) -> Result<()> {
+    restore_allows_admission(tx, managed, now)?;
+    let duplicate: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM attempts WHERE id=?1)",
+        [attempt],
+        |row| row.get(0),
+    )?;
+    if duplicate {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+
+fn insert_intent(tx: &Transaction<'_>, admission: Admission, now: i64) -> Result<Admission> {
     let owner = &admission.owner;
+    let active: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM attempts WHERE namespace=?1 AND identity=?2 AND state='intent'",
+        params![owner.namespace, owner.identity],
+        |row| row.get(0),
+    )?;
+    if active >= 16 {
+        return Err(Error::AccountConcurrency);
+    }
+
+    // Swift's static gateway scopes references to the effective configured namespace;
+    // managed routing retains its existing cross-namespace ambiguity check.
+    let scope = admission
+        .key_revision
+        .is_none()
+        .then_some(owner.namespace.as_str());
+    for reference in admission.references.iter().flatten() {
+        let binding = resolve(tx, &owner.principal, reference, scope, now)?;
+        if binding.namespace != owner.namespace || binding.identity != owner.identity {
+            return Err(Error::UnknownObject);
+        }
+        tx.execute(
+            "UPDATE bindings SET expires_at_epoch=?1
+             WHERE principal=?2 AND namespace=?3 AND identity=?4 AND object_type=?5 AND raw_id=?6",
+            params![
+                now + BINDING_TTL,
+                owner.principal,
+                owner.namespace,
+                owner.identity,
+                reference.kind,
+                reference.raw_id
+            ],
+        )?;
+    }
     tx.execute(
         "INSERT INTO attempts(id,principal,key_id,namespace,identity,window_id,policy_version,pricing_version,
                               reserved,state,admission_json,created_at_epoch,request_id)

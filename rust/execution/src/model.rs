@@ -194,41 +194,65 @@ pub struct AdmissionRequest {
 impl AdmissionRequest {
     pub(crate) fn validate(&self) -> Result<()> {
         let account = &self.account.snapshot;
-        let requirements = &self.requirements;
-        if !valid_string(&self.attempt, 256)
+        validate_operation(
+            &self.attempt,
+            self.request_id.as_deref(),
+            &self.model,
+            self.mode,
+            &self.requirements,
+            &self.references,
+            [
+                self.reasoning_effort.as_deref(),
+                self.service_tier.as_deref(),
+            ],
+        )?;
+        if !valid_model(&self.model)
             || self
-                .request_id
-                .as_ref()
-                .is_some_and(|id| !valid_string(id, 256))
-            || !valid_model(&self.model)
+                .requirements
+                .image_model
+                .as_deref()
+                .is_some_and(|model| !valid_model(model))
             || !valid_string(&self.policy_version, 128)
             || !valid_string(&self.pricing_version, 128)
             || !(0..=MAX_AMOUNT).contains(&self.reserved_micros)
             || !(1..=1_000_000).contains(&account.revision)
             || !(1..=1_000_000).contains(&account.credential_version)
             || !(1..=MAX_AMOUNT).contains(&account.access_expires_at_unix_seconds)
-            || requirements
-                .image_model
-                .as_ref()
-                .is_some_and(|model| !valid_model(model))
-            || (requirements.route == Route::Images
-                && (requirements.vision_input
-                    || requirements.image_model.as_ref() != Some(&self.model)))
-            || self.references.len() > MAX_REFERENCES
-            || self.mode == Mode::Priming
-            || self
-                .reasoning_effort
-                .as_ref()
-                .is_some_and(|value| !valid_string(value, 32))
-            || self
-                .service_tier
-                .as_ref()
-                .is_some_and(|value| !valid_string(value, 32))
         {
             return Err(ExecutionError::InvalidCommand);
         }
-        self.references.iter().try_for_each(ObjectBinding::validate)
+        Ok(())
     }
+}
+
+pub(crate) fn validate_operation(
+    attempt: &str,
+    request_id: Option<&str>,
+    model: &str,
+    mode: Mode,
+    requirements: &Requirements,
+    references: &[ObjectBinding],
+    metadata: [Option<&str>; 2],
+) -> Result<()> {
+    if !valid_string(attempt, 256)
+        || request_id.is_some_and(|id| !valid_string(id, 256))
+        || !valid_string(model, 128)
+        || requirements
+            .image_model
+            .as_deref()
+            .is_some_and(|model| !valid_string(model, 128))
+        || (requirements.route == Route::Images
+            && (requirements.vision_input || requirements.image_model.as_deref() != Some(model)))
+        || references.len() > MAX_REFERENCES
+        || mode == Mode::Priming
+        || metadata
+            .into_iter()
+            .flatten()
+            .any(|value| !valid_string(value, 32))
+    {
+        return Err(ExecutionError::InvalidCommand);
+    }
+    references.iter().try_for_each(ObjectBinding::validate)
 }
 
 /// Optional fields preserve the shape of historical Swift admissions.

@@ -4,9 +4,13 @@ mod admission;
 mod ledger;
 mod model;
 mod reserve;
+mod static_identity;
 mod worker;
 
 pub use model::*;
+pub use static_identity::{
+    StaticAdmissionRequest, StaticAuthorization, StaticIdentity, StaticIdentityConfig,
+};
 pub use worker::{Execution, ExecutionService, ExecutionStatus, Options};
 
 use std::{error::Error, fmt};

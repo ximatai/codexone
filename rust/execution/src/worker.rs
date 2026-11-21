@@ -10,14 +10,22 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 
 use crate::model::*;
 use crate::reserve::StorageReserve;
-use crate::{ExecutionError as Error, Result, admission, ledger};
+use crate::{
+    ExecutionError as Error, Result, StaticAdmissionRequest, StaticAuthorization, StaticIdentity,
+    admission, ledger,
+};
 
 const REGULAR_CAPACITY: usize = 16;
 
 type Job = Box<dyn FnOnce(&mut Writer) + Send>;
 
+enum IdentitySource {
+    Managed(String),
+    Static(Arc<StaticIdentity>),
+}
+
 pub struct Options {
-    account_id: String,
+    identity: IdentitySource,
     day_offset: i64,
     capacity: usize,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -25,8 +33,16 @@ pub struct Options {
 
 impl Options {
     pub fn new(account_id: impl Into<String>) -> Self {
+        Self::with_identity(IdentitySource::Managed(account_id.into()))
+    }
+
+    pub fn for_static_identity(policy: StaticIdentity) -> Self {
+        Self::with_identity(IdentitySource::Static(Arc::new(policy)))
+    }
+
+    fn with_identity(identity: IdentitySource) -> Self {
         Self {
-            account_id: account_id.into(),
+            identity,
             day_offset: 0,
             capacity: 16,
             clock: Arc::new(system_time),
@@ -73,6 +89,7 @@ struct Gate {
 }
 
 struct Inner {
+    static_identity: Option<Arc<StaticIdentity>>,
     gate: Mutex<Gate>,
     regular: Arc<Semaphore>,
     tickets: Arc<Semaphore>,
@@ -182,7 +199,7 @@ pub struct ExecutionService {
 impl ExecutionService {
     /// Open a v19 database, acquire the instance lock and recover abandoned intents before returning.
     pub async fn open(path: impl AsRef<Path>, options: Options) -> Result<Self> {
-        if !valid_id(&options.account_id)
+        if matches!(&options.identity, IdentitySource::Managed(id) if !valid_id(id))
             || !(-12 * 3600..=14 * 3600).contains(&options.day_offset)
             || !(1..=16).contains(&options.capacity)
         {
@@ -193,6 +210,10 @@ impl ExecutionService {
         let (done_tx, done_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = oneshot::channel();
         let inner = Arc::new(Inner {
+            static_identity: match &options.identity {
+                IdentitySource::Static(policy) => Some(policy.clone()),
+                IdentitySource::Managed(_) => None,
+            },
             gate: Mutex::new(Gate {
                 sender: Some(sender),
                 status: ExecutionStatus::Accepting,
@@ -315,6 +336,9 @@ impl ExecutionService {
     }
 
     pub async fn authenticate(&self, headers: &[&str]) -> Result<AuthenticatedKey> {
+        if self.inner.static_identity.is_some() {
+            return Err(Error::Unauthorized);
+        }
         let digest = bearer_digest(headers).map_err(|_| Error::Unauthorized)?;
         self.command(false, move |writer| {
             admission::authenticate(writer.db.connection(), &digest, writer.now()?)
@@ -324,13 +348,59 @@ impl ExecutionService {
 
     pub async fn account_credential(&self) -> Result<AccountCredentialRecord> {
         self.command(false, |writer| {
-            admission::credential(writer.db.connection(), &writer.options.account_id)
+            let IdentitySource::Managed(account) = &writer.options.identity else {
+                return Err(Error::AccountUnavailable);
+            };
+            admission::credential(writer.db.connection(), account)
         })
         .await
     }
 
     pub async fn admit(&self, request: AdmissionRequest) -> Result<Execution> {
         request.validate()?;
+        self.submit_admission(move |tx, options, now| {
+            let IdentitySource::Managed(account) = &options.identity else {
+                return Err(Error::Unauthorized);
+            };
+            admission::admit(tx, account, options.day_offset, request, now)
+        })
+        .await
+    }
+
+    /// Authenticate a fixed Key with the policy supplied when opening this service.
+    pub fn authenticate_static(&self, headers: &[&str]) -> Result<StaticAuthorization> {
+        self.inner
+            .static_identity
+            .as_ref()
+            .ok_or(Error::Unauthorized)?
+            .authenticate(headers)
+    }
+
+    /// Validate a static turn with the fixed policy and commit the durable intent.
+    pub async fn admit_static(
+        &self,
+        authorization: &StaticAuthorization,
+        request: StaticAdmissionRequest,
+    ) -> Result<Execution> {
+        let policy = self
+            .inner
+            .static_identity
+            .as_ref()
+            .ok_or(Error::Unauthorized)?;
+        if !Arc::ptr_eq(policy, &authorization.0) {
+            return Err(Error::Unauthorized);
+        }
+        let authorized = policy.authorize(request)?;
+        self.submit_admission(move |tx, options, now| {
+            admission::admit_static(tx, options.day_offset, authorized, now)
+        })
+        .await
+    }
+
+    async fn submit_admission(
+        &self,
+        write_intent: impl FnOnce(&Transaction<'_>, &Options, i64) -> Result<Admission> + Send + 'static,
+    ) -> Result<Execution> {
         let ticket = self
             .inner
             .tickets
@@ -342,13 +412,7 @@ impl ExecutionService {
             writer.reserve.check_admission()?;
             let tx = writer.db.begin_immediate()?;
             let now = check_time((writer.options.clock)())?;
-            let admission = admission::admit(
-                &tx,
-                &writer.options.account_id,
-                writer.options.day_offset,
-                request,
-                now,
-            )?;
+            let admission = write_intent(&tx, &writer.options, now)?;
             tx.commit()?;
             // If the admission future is cancelled after commit, dropping the undelivered
             // lease transfers finalization to the worker just like any other cancellation.
