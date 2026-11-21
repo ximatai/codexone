@@ -129,7 +129,7 @@ def run(reference, candidate):
                            'generation', 'model_not_allowed', 'model_not_allowed', 'high')""", (now,))
                 key = dict(id="synthetic-managed", principal="synthetic-principal", enabled=False,
                            displayName="Synthetic managed", revision=1, archivedAtUnixSeconds=now,
-                           createdAtUnixSeconds=now, policy=dict(models=["synthetic-text"]))
+                           createdAtUnixSeconds=now, policy=dict(models=["synthetic-text"], limits={"tokens": None, "active": None}))
                 database.execute("INSERT INTO managed_keys VALUES (?,?,?)",
                                  (key["id"], "4" * 64, json.dumps(key)))
                 database.commit()
@@ -150,6 +150,7 @@ def run(reference, candidate):
                 history + "&rejectedOnly=true&reasoningEffort=high",
                 "/api/usage/daily?days=2", "/api/usage/in-flight", "/api/usage/options",
                 "/api/usage/keys", "/api/usage/keys?includeArchived=false", "/api/usage/headroom",
+                "/api/attention",
             ]
             with running_gateway(reference, source, env) as ports:
                 swift = probe(ports, token, paths)
@@ -161,11 +162,12 @@ def run(reference, candidate):
                 # Compare instance-specific observations in pressure_round, against the live filesystem.
                 del headroom["storage"], headroom["generatedAtUnixSeconds"]
                 del headroom["unknownReconciliation"]["beforeUnixSeconds"]
+                del reports["/api/attention"]["generatedAtUnixSeconds"]
             if swift != rust:
                 pretty = lambda value: json.dumps(value, sort_keys=True, indent=2).splitlines(True)
                 sys.stderr.writelines(unified_diff(pretty(swift), pretty(rust), "Swift", "Rust"))
                 raise AssertionError("management documents differ")
-            print("PASS: eight Swift/Rust usage responses, browser and bearer authorization, data-port status parity")
+            print("PASS: nine Swift/Rust reporting responses, browser and bearer authorization, data-port status parity")
             print("PASS: headroom observes WAL growth; reserve loss and recovery without restart")
 
 
