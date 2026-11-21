@@ -929,6 +929,15 @@ fn websocket_pool_keeps_connection_owner_and_force_stops_active_and_idle_work() 
         "a stopped request was replayed"
     );
     let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let late_bindings: i64 = db
+        .query_row(
+            "SELECT count(*) FROM bindings WHERE raw_id IN
+                ('item_late_terminal', 'call_late_terminal', 'item_late_event', 'call_late_event')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(late_bindings, 0);
     let mut rows = db
         .prepare("SELECT identity, state, json_extract(outcome_json, '$.failure') FROM attempts ORDER BY rowid")
         .unwrap();
@@ -1188,6 +1197,19 @@ fn serve_ws(
         }
         socket.send(Message::text(reply.to_string())).unwrap();
         if prompt == "initial" {
+            let late_item = json!({"type": "function_call", "id": "item_late_terminal",
+                "call_id": "call_late_terminal", "name": "synthetic", "arguments": "{}"});
+            let mut late_terminal = reply.clone();
+            late_terminal["response"]["output"] = json!([late_item]);
+            socket
+                .send(Message::text(late_terminal.to_string()))
+                .unwrap();
+            let late_output = json!({"type": "response.output_item.done",
+                "response_id": reply["response"]["id"], "item": {"type": "function_call",
+                    "id": "item_late_event", "call_id": "call_late_event",
+                    "name": "synthetic", "arguments": "{}"}});
+            socket.send(Message::text(late_output.to_string())).unwrap();
+
             let metadata = json!({"type": "response.metadata",
                 "response_id": reply["response"]["id"],
                 "headers": {"x-codex-turn-state": "state-late-ws"}});
