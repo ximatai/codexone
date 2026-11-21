@@ -157,3 +157,60 @@ func swiftRustStorageInteroperabilitySchema(_ version: Int) async throws {
   #expect(try backup.scalar("PRAGMA user_version") == version)
   #expect(try backup.scalar("SELECT count(*) FROM \(version == 9 ? "attempts" : "request_diagnostics")") == 1)
 }
+
+@Test(arguments: [true, false])
+func swiftRustStorageInteroperabilityV12Startup(_ incremental: Bool) async throws {
+  let rustPath = try temporaryExecutionPath()
+  let directory = URL(fileURLWithPath: rustPath).deletingLastPathComponent()
+  let manager = FileManager.default
+  defer { try? manager.removeItem(at: directory) }
+  let swiftPath = directory.appendingPathComponent("swift.sqlite").path
+
+  try SQLiteConnection(path: swiftPath).shutdown()
+  try rawSQL(
+    swiftPath,
+    removeOutputRateSchema + """
+      INSERT INTO usage_daily(day_epoch,key_id,model,mode,outcome,failure,completeness,
+        usage_unknown,requests,last_used_epoch)
+      VALUES(0,'synthetic-v12','synthetic-model','generation','succeeded','','complete',0,3,30);
+      PRAGMA user_version=12;
+      """ + (incremental ? "" : "PRAGMA journal_mode=DELETE; PRAGMA auto_vacuum=NONE; VACUUM;"))
+  try manager.copyItem(atPath: swiftPath, toPath: rustPath)
+
+  func startSwift() async throws {
+    let store = try await SQLiteExecutionStore.open(
+      path: swiftPath, limits: syntheticLimits, allowStartupMigration: true)
+    await store.close()
+  }
+
+  if incremental {
+    try await startSwift()
+    try runRust("startup", path: rustPath)
+  } else {
+    await #expect(throws: ExecutionError.incompatibleSchema) { try await startSwift() }
+    try runRust("startup-incompatible", path: rustPath)
+  }
+
+  let usage = "SELECT requests FROM usage_daily WHERE key_id='synthetic-v12'"
+  for path in [swiftPath, rustPath] {
+    let source =
+      if incremental { try SQLiteConnection(path: path, existingOnly: true) } else {
+        try SQLiteConnection(readOnlyPath: path)
+      }
+    defer { source.shutdown() }
+    #expect(try source.scalar("PRAGMA user_version") == (incremental ? 19 : 12))
+    #expect(try source.scalar("PRAGMA auto_vacuum") == (incremental ? 2 : 0))
+    #expect(try source.scalar(usage) == 3)
+    let prefix = URL(fileURLWithPath: path).lastPathComponent + ".pre-v13-"
+    let backups = try manager.contentsOfDirectory(atPath: directory.path)
+      .filter { $0.hasPrefix(prefix) }
+    #expect(backups.count == (incremental ? 1 : 0))
+    if incremental {
+      let name = try #require(backups.first)
+      let backup = try SQLiteConnection(readOnlyPath: directory.appendingPathComponent(name).path)
+      defer { backup.shutdown() }
+      #expect(try backup.scalar("PRAGMA user_version") == 12)
+      #expect(try backup.scalar(usage) == 3)
+    }
+  }
+}

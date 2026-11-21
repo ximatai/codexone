@@ -24,6 +24,10 @@ fn swift_database() {
             assert_eq!(Database::migrate(&path), Err(DatabaseError::InstanceLocked));
         }
         "startup" => drop(Database::open_or_create(&path).unwrap()),
+        "startup-incompatible" => assert_eq!(
+            Database::open_or_create(&path).err(),
+            Some(DatabaseError::IncompatibleSchema)
+        ),
         "migrate" => Database::migrate(&path).unwrap(),
         "rewrite" => rewrite(Path::new(&path)),
         _ => panic!("unknown interoperability phase"),

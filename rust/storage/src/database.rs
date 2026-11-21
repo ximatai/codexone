@@ -72,7 +72,7 @@ impl Database {
     }
 
     /// Create a v19 database or open an existing one for service startup.
-    /// Automatically upgrades v13–v18 when the Swift startup conditions are met.
+    /// Automatically upgrades v12–v18 when the Swift startup conditions are met.
     pub fn open_or_create(path: impl AsRef<Path>) -> Result<Self, DatabaseError> {
         Self::open(path.as_ref(), OpenMode::Startup)
     }
@@ -120,7 +120,7 @@ impl Database {
         let version = pragma_integer(&connection, "user_version")?;
         let supported = match mode {
             OpenMode::Existing => version == SCHEMA_VERSION,
-            OpenMode::Startup => version == 0 || (13..=SCHEMA_VERSION).contains(&version),
+            OpenMode::Startup => version == 0 || (12..=SCHEMA_VERSION).contains(&version),
             OpenMode::Migrate => (1..=SCHEMA_VERSION).contains(&version),
         };
         if !supported {
@@ -420,7 +420,7 @@ mod tests {
         for version in 1..SCHEMA_VERSION {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("source.sqlite");
-            let seed = legacy(&path, version, version >= 13);
+            let seed = legacy(&path, version, version >= 12);
             seed.execute("INSERT INTO metadata VALUES(1,'synthetic')", [])
                 .unwrap();
             drop(seed);
@@ -428,7 +428,7 @@ mod tests {
                 Database::open_existing(&path).err(),
                 Some(DatabaseError::IncompatibleSchema)
             );
-            if version < 13 {
+            if version < 12 {
                 assert_eq!(
                     Database::open_or_create(&path).err(),
                     Some(DatabaseError::IncompatibleSchema)
@@ -462,7 +462,7 @@ mod tests {
             assert_eq!(pragma_integer(&snapshot, "user_version").unwrap(), version);
             assert_eq!(
                 pragma_integer(&snapshot, "auto_vacuum").unwrap(),
-                if version < 13 { 0 } else { 2 }
+                if version < 12 { 0 } else { 2 }
             );
             assert_eq!(
                 snapshot
