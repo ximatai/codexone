@@ -74,7 +74,7 @@ Swift Testing 按 Core/Adapters/Runtime/EndToEnd targets 分组；NIOEmbedded �
 
 GitHub Actions 的 Verify 和 Release 通过 `CODEXONE_CI_APT_MIRROR` 使用 Kernel.org 的 Ubuntu HTTPS 镜像，APT 继续验证 Ubuntu 签名。相关容器构建仅在安装依赖时使用该镜像，默认的本地构建沿用基础镜像软件源。
 
-前端完整浏览器集合中的 `admin-live-real` 会启动实际网关，先构建 `.build/debug/codexone`。CI 的普通 `frontend` 通过 `CODEXONE_WEB_STUBS_ONLY=1` 只跑隔离的合成 API 浏览器场景；独立 `frontend-live` 使用固定 Playwright 镜像及同次 `backend-build` 产物运行真实网关/浏览器测试。PR 只有选中后端检查才构建网关并要求该任务成功。纯前端 PR 只跑合成浏览器，接受网关与 SPA 的联调回归在合并到 main 后才发现。需要合并前验收真实栈时，可手动运行 Verify；main 推送也总是运行。
+前端完整浏览器集合中的 `admin-live-real` 默认启动 `.build/debug/codexone`，也可通过 `CODEXONE_WEB_TEST_BINARY` 指定可执行文件。CI 的 `frontend` 仅跑合成 API 浏览器场景。`frontend-live` 为每个选中的后端运行生产 SPA 与真实网关的 Chromium 测试，覆盖实时 WebSocket 与 HTTP 回退。仅改动 web 时执行 Rust 联调。
 
 `scripts/verify_tls_proxy.py` 使用临时 CA、独立 Nginx prefix/端口及合成管理身份，实际验证管理 WSS 快照、退出登录关闭、精确 Host/Origin/路径/认证和监听面隔离。它只在临时代理删除 live upgrade 路径来验证旧模板仍可提供 HTTPS 管理，再恢复配置；分别以 30/60 秒 read idle 维持同一条连接越过窗口，响应心跳并验证双向控制帧。期间有 freshness 消息，不能声称只靠 ping 保活。`--browser` 另运行 Chrome 直连 HTTPS 的登录、实时连接、Key 创建/禁用/刷新及退出；只允许该临时证书的 SPKI，不改系统信任或绕过 Host/Origin。全部为合成接口检查，不代表已部署代理或真实提供者验收。
 
@@ -103,13 +103,15 @@ Rosetta 和 Docker VM 仅用于合成诊断；假上游无真实延迟/生成负
 
 ## 发版 CI 验证边界
 
-Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE 只跑快速检查；web 选前端；Sources、Tests、Package、scripts 和 deploy 选后端；`.devcontainer` 选开发容器检查（构建镜像，在其中编译 codexone 并做前端类型检查）；`.github`、`scripts/verify.sh` 或未知路径选全部。混合修改取并集，重命名同时检查旧/新路径。main 推送如果只涉及文档且推送前的提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片完整性和容器版本一致性，包括开发容器与 CI 的 Swift digest、Node.js 版本一致。最终 `verify` 始终运行，要求所有已选任务成功，筛选跳过算成功；可将它设为稳定的 required check。
+Verify 的 `changes` 读取完整的 Git diff。PR 比较 base 与 head 的合并基点，重命名检查旧、新路径，混合修改取并集。Markdown、docs 和 LICENSE 只跑基础检查。web 选合成浏览器、优化 Rust 构建及真实联调，Rust 源码通常只选 Rust，Swift 源码、包和测试通常只选 Swift。共享脚本与夹具、部署、SQLite 持久化和备份维护路径选两种后端。开发容器文件选开发容器。CI 工作流和筛选脚本选全部，未知路径选两种后端及前端。main 推送若只涉及文档且推送前一提交已有成功的 main Verify，只跑基础检查。其他 main 推送及手动 Verify 选择全部检查。独立 `docs` 始终检查文档、架构、分片及工具链一致性。最终 `verify` 始终运行，拒绝缺失或无效的筛选结果，要求全部已选任务成功。可将它设为稳定的 required check。
 
-后端在 `changes → backend-build` 后并行运行 `backend-swift-tests`、四个 `backend-scripts` 分片和 `frontend-live`，普通前端在 changes 后独立运行。build 做格式检查及一次 `swift build --build-tests`；Swift 测试任务下载同次编译的 Linux 测试运行器、资源和 Swift 动态库，串行执行 XCTest 和 Swift Testing，最终门禁要求所有选中任务成功。四个脚本分片下载同一次构建的 codexone/ExecutionProbe tar（保留执行权限，附带该构建链接的 Swift 动态库），其余脚本/合成 fixture 来自 checkout。分片在 Ubuntu runner 上执行，联调在 Playwright Noble 镜像中执行，均使用归档随附的 Swift 库和环境自带的系统库，不另装系统依赖。Swift 编译任务与 Dockerfile 固定相同的 6.4.1 digest；`.build` 缓存按容器 digest、锁文件和源码/测试散列区分，先恢复同锁文件、再恢复同工具链的增量缓存，未命中仍完整编译，Swift 测试仍是合并门禁。所有运行都读取缓存，只有 main 推送在缓存未命中时保存，避免 PR 推送占满仓库缓存额度。
+`backend-rust` 按各 crate 的 Cargo.lock 运行单元与托管进程测试。`backend-rust-build` 在 Ubuntu 24.04 使用与候选 Dockerfile 同版本的工具链构建优化版 codexone。四个 `backend-rust-scripts` 分片和真实浏览器下载同一次构建的二进制归档并校验摘要。分片运行 36 项回环套件，验证 Responses HTTP/SSE、原生 WebSocket、终态与不重放、鉴权、用量、管理 WSS 与 SQLite 恢复等契约。Rust 第三分片还在 intent、绑定和结算的四个边界验证 SIGKILL 后恢复、请求归属与无重派。两种后端均选中时，`backend-parity` 用同次工作流的两份产物验证同 schema 重启、双向切换、续接及账本结算。所有回环检查使用独立合成配置、SQLite 数据与临时端口。
+
+Swift 在一次编译中生成 codexone、ExecutionProbe 和测试运行器，供四个 `backend-scripts` 分片、真实浏览器和 `backend-swift-tests` 使用。后者串行运行 XCTest 和 Swift Testing。Swift 仍运行全部 45 项脚本，包括尚未迁移的六项账号、管理变更、执行生命周期、Key 维护、存储水位及上游代理检查，以及三个与网关成品无关的工具检查。Swift 构建使用与 Dockerfile 一致的固定镜像 digest，按工具链、锁文件及源码恢复增量缓存。只有 main 推送可保存新缓存。
 
 常规浏览器用例验证交互、可达性和窄屏溢出。侧栏与额度趋势不固定像素、颜色或动画时间。账号详情桌面覆盖草稿保留与滚动，窄屏检查关键控件可达。文档截图单独通过 `npm --prefix web run test:docs-screenshots` 生成，常规套件仍留存失败截图和 trace。
 
-后端分片保留全部 45 个脚本。PR 与 main 推送对其中六个脚本使用快速模式。WS 大正文保留真实 HTTP/WS 入口的路由临界点、超限拒绝、续接保护、取消和不重放验收，将多尺寸与多传输的组合、并发正文预算矩阵、详细诊断以及重复竞争验证留给完整模式。文本契约在两个上游传输上跑代表性成功、扩展、终态冲突、用量错误和响应身份场景，其余变体留给完整模式。上传截止保留 HTTP 慢上传后的首响应超时、WS 停滞与取消、图片上传停滞与持续滴流超时，完整模式覆盖逐传输组合。zstd 保留压缩阈值、415 单次回退、响应发出后不重放、取消和停滞；完整模式覆盖容量竞争、额外故障和关闭组合。响应收尾保留终态前后断开、未知结算与不重放、SSE DONE、连接复用及代表性上游连接错误。图片保留生成和编辑的 JSON/SSE、multipart、授权拒绝、用量缺失及断流结算；扩展格式、容量和完整传输组合留给完整模式。手动 Verify 与 Release 执行完整矩阵。需要在合并前覆盖完整矩阵时，可对 PR 分支手动运行 Verify。
+PR 与 main 推送对两种后端共用的六个脚本使用快速模式。WS 大正文保留真实 HTTP/WS 入口的路由临界点、超限拒绝、续接保护、取消和不重放验收，将多尺寸与多传输的组合、并发正文预算矩阵、详细诊断以及重复竞争验证留给完整模式。文本契约在两个上游传输上跑代表性成功、扩展、终态冲突、用量错误和响应身份场景，其余变体留给完整模式。上传截止保留 HTTP 慢上传后的首响应超时、WS 停滞与取消、图片上传停滞与持续滴流超时，完整模式覆盖逐传输组合。zstd 保留压缩阈值、415 单次回退、响应发出后不重放、取消和停滞；完整模式覆盖容量竞争、额外故障和关闭组合。响应收尾保留终态前后断开、未知结算与不重放、SSE DONE、连接复用及代表性上游连接错误。图片保留生成和编辑的 JSON/SSE、multipart、授权拒绝、用量缺失及断流结算；扩展格式、容量和完整传输组合留给完整模式。手动 Verify 与 Release 执行完整矩阵。需要在合并前覆盖完整矩阵时，可对 PR 分支手动运行 Verify。
 
 本地完整后端入口不变；单独复现分片需先构建，可覆盖二进制目录：
 
@@ -117,6 +119,8 @@ Verify 的 `changes` 用 Git diff 选择 PR 检查：Markdown、docs 和 LICENSE
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-build
 CODEXONE_BUILD_JOBS=12 ./scripts/verify.sh --backend-scripts 1/4
 CODEXONE_BACKEND_BIN_DIR=.build/debug ./scripts/verify.sh --backend-scripts 4/4 --pr
+./scripts/verify_rust.sh --release-build
+./scripts/verify.sh --backend-scripts 4/4 --pr --rust
 python3 scripts/backend_shards.py --check
 python3 scripts/check_ci.py
 ```
@@ -148,8 +152,9 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 | 产物名 | 上传内容 | 下载位置及消费者 |
 | --- | --- | --- |
 | `backend-swift-tests` | `backend-swift-tests.tar.gz` | 同次构建的 Swift 测试运行器、资源与动态库，解包到 `.build/debug` |
-| `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录；分片解包到 `.build/debug` |
-| `optimized-backend-binaries` | 候选镜像的 codexone 与同次构建的 ExecutionProbe tar | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
+| `backend-binaries` | `backend-binaries.tar.gz` | runner 临时目录，Swift 分片、真实浏览器与双向切换检查 |
+| `backend-rust-binaries` | `backend-rust-binaries.tar.gz` | runner 临时目录，Rust 分片、真实浏览器与双向切换检查 |
+| `optimized-backend-binaries` | 候选镜像的 Rust codexone 和 Swift 测试夹具 ExecutionProbe 的 tar 归档 | Release 四分片的 `binaries/`，先核对 build 输出的归档 hash |
 | `candidate-release-files` | `artifacts/` 下的发行说明、校验和等 | image-checks 和 verify gate 的 `artifacts/`，保留 1 天 |
 | `candidate-linux-amd64-image` | `image/codexone-linux-amd64.tar.gz` | image-checks 和 verify gate 的 `image/`，保留 1 天 |
 | `verified-release-files` | gate 校验后的发行说明、校验和等 | publish 的 `artifacts/`，保留 7 天 |
@@ -160,24 +165,25 @@ Actions 大版本升级的输入与行为边界如下；Action 自身使用 runn
 
 ### Release 验证
 
-Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (1/4…4/4) + image-checks (TLS、installation) → verify gate → publish → release`。build 先检查版本/主分支历史/CHANGELOG，解析一次 revision；后续检验 job 检出这个不可变提交，不再次解析分支或标签。dry-run 允许未发布 CHANGELOG，只运行到 gate 并上传产物；不登录 registry、不推送、不创建 Release。详见[发版规则](releasing.md)。
+Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (1/4…4/4) + image-checks (TLS、installation、capacity) → verify gate → publish → release`。build 先检查版本/主分支历史/CHANGELOG，解析一次 revision；后续检验 job 检出这个不可变提交，不再次解析分支或标签。dry-run 允许未发布 CHANGELOG，只运行到 gate 并上传产物；不登录 registry、不推送、不创建 Release。详见[发版规则](releasing.md)。
 
 | Job | 运行内容及制品 |
 | --- | --- |
-| build | `verification-export` 仅构建优化 codexone/ExecutionProbe，runtime 复用同一 backend；提取候选镜像中的 codexone，与构建输出逐字节比较；导出源码、许可、镜像及归档 hash |
-| backend-scripts 四分片 | 下载优化二进制 tar，核对 build 的 hash；只构建 `verification-tools`（固定 SDK、Python/OpenSSL/SQLite，不编译产品），在 `--network none` 容器中复用 `verify.sh --backend-scripts` |
+| build | `verification-export` 导出选中的 Rust codexone 及 Swift 专用 ExecutionProbe，runtime 复用同一 Rust 后端；提取候选镜像中的 codexone，与构建输出逐字节比较；导出源码、许可、镜像及归档 hash |
+| backend-scripts 四分片 | 下载优化二进制 tar，核对 build 的 hash；只构建 `verification-tools`（固定 SDK、Python/OpenSSL/SQLite，不编译产品），在 `--network none` 容器中执行 `verify.sh --backend-scripts i/4 --rust-release` |
 | image-checks TLS | 下载并校验候选镜像 hash/image ID；测试镜像直接复制候选二进制和 SPA，在原非 root、只读、无网络、768 MiB 约束下验证真实 Nginx TLS |
 | image-checks installation | 独立下载同一镜像，以不可变 image ID 执行原 `verify_installation.py` 的 OCI/Compose 安装检查 |
+| image-checks capacity | 使用同一 Rust 镜像跑原生 Linux 混合负载，另保留 Swift 专用的慢读者容量夹具 |
 | verify | `always()` gate 拒绝任一失败、取消或跳过；再次核对 build 输出的镜像归档 hash，才上传原名称的 `verified-*` 制品 |
 | publish / release | publish 仅消费 gate 的 verified 制品，校验 gate 输出的同一归档 hash，加载而不重建；推送后按 digest 回拉核对 image ID，对推送 digest attestation，最后创建 Release |
 
-四分片每次执行现有全部 34 项后端脚本，包含旧 Dockerfile verification target 的全部 18 项；`check_ci.py` 检查这层覆盖和所有分片入口，`backend_shards.py --check` 保证每项恰好归属一个分片。优化 codexone 来自候选镜像，ExecutionProbe 为同次 release 配置构建的测试程序，不进入产品镜像。传统 `docker build --target verification` 仍保留原检查供源码验收使用。Release 原本没有 Swift 单元测试/格式检查或前端完整测试，本次仍由常规 Verify 承担，不声称 Release 已增加这些证据。
+发行的四分片沿用共享脚本清单，`backend_shards.py --check` 核对各项归属。Rust 模式启用客户端上游 EOF 诊断、快照链接路径和管理推送读源故障的专用断言。`verify_execution.py`、`verify_accounts.py`、`verify_admin_round2.py` 及其他调用 Swift ExecutionProbe 的子用例继续验证各自的 Swift 夹具。其余网关进程由候选镜像内的 Rust 二进制启动。ExecutionProbe 不进入产品镜像。仍可用 `docker build --target verification` 单独验收 Swift 源码。
 
 安装检查覆盖非 root/只读运行、SPA/auth/Key、锁、备份迁移与重启，使用合成数据和 loopback 上游。实际旧镜像检查按需运行，见[发版规则](releasing.md#dry-run)。
 
 2026-11-08 的 Linux 候选安装使用正式 v0.26.15 镜像生成的 v12 账本，验证了启动自动迁移、迁移后启动及旧镜像拒绝打开新库。请求输出速率的定向验收覆盖事务提交与回滚、重复结算和修订、跨业务日重启恢复、小时空档，以及浏览器实时更新与业务时区展示。
 
-成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Dockerfile 的弱机器默认仍为 1，优化选项与每批 1 文件不变），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
+成功基线 [dry-run 41308814290](https://github.com/ximatai/codexone/actions/runs/41308814290) 的验证 job 为 23分51秒：优化编译 822.4秒、probe 10秒、串行脚本 429.4秒、runtime 25秒、TLS 26秒、安装 44秒。仅把脚本拆分仍受约 14 分钟的编译限制。Release 显式采用 `BUILD_JOBS=2`（Swift 构建默认 1 个任务，Rust 默认 2 个任务），能否降低到约 10 分钟及内存峰值须在 CI 测量。四分片 PR 基线 [41314784465](https://github.com/ximatai/codexone/actions/runs/41314784465) 的纯脚本约 104–159秒，可作为调度参考，不能代替优化二进制实测；新增制品传输、重复 SDK 拉取和 gate 交接也计入总耗时。
 
 候选制品保留 1 天，过期后重试须重新运行 build；成功 gate 的 verified 制品仍保留 7 天。2026-11-01 实测：原串行发行验证约 24 分钟；冷缓存 dry-run 约 14.5 分钟（build 10.7 分钟，四分片与 TLS/安装并行约 3.5 分钟），同一 ref 热缓存约 6 分钟（build 2 分钟）；v0.26.4 tag 发布约 16 分钟，镜像 revision、registry digest 与来源证明核对通过。检查失败/取消与摘要篡改阻断 gate 由 `scripts/test_check_ci.py` 覆盖。
 
@@ -185,7 +191,7 @@ Release 的 tag 和手动 dry-run 共用同一图：`build → backend-scripts (
 
 Release 复用现有 SHA pin 的 `actions/cache/restore` / `save` 保存 BuildKit 的 [local cache](https://docs.docker.com/build/cache/backends/local/)。使用临时 `docker-container` builder（BuildKit v0.33.1 固定 registry digest），避免依赖 runner 默认 Docker driver 是否开启 containerd image store；两个顺序构建共享同一 builder，结束或失败均清理。优化二进制用 scratch `verification-export` 直接导出，不把 SDK 镜像作为验证制品上传；runtime 单独 `--load`，发布来源证明仍只在 publish 对推送 digest 生成。
 
-缓存 key 为 runner OS、独立 `release-buildkit-v1` 命名空间、`deploy/Dockerfile` 与 Release workflow 的组合 hash（包含 Swift/Node/runtime/BuildKit pins、构建命令与参数）和解析后的源码 revision；前缀只回退相同 Dockerfile/workflow。BuildKit 继续按 COPY 输入、命令和 build args 匹配层，不能因为 Actions 前缀命中而跳过源码失效；参见[缓存失效规则](https://docs.docker.com/build/cache/invalidation/)。不复用 PR 的 debug `.build`，不导出 SwiftPM 可写 cache mount。许可证与 codexone 必须在同一 RUN 从构建结果导出，否则层命中后空 mount 会丢失许可证；probe 依赖也可从空 mount 重建。
+缓存 key 为 runner OS、独立 `release-buildkit-v1` 命名空间、`deploy/Dockerfile` 与 Release workflow 的组合 hash（包含 Rust/Swift/Node/runtime/BuildKit pins、构建命令与参数）和解析后的源码 revision；前缀只回退相同 Dockerfile/workflow。BuildKit 继续按 COPY 输入、命令和 build args 匹配层，不能因为 Actions 前缀命中而跳过源码失效；参见[缓存失效规则](https://docs.docker.com/build/cache/invalidation/)。不复用 PR 的 debug `.build`，不导出 Cargo 或 SwiftPM 的可写 cache mount。许可证与 codexone 必须在同一 RUN 从构建结果导出，否则层命中后空 mount 会丢失许可证；probe 依赖也可从空 mount 重建。
 
 只导出 `verification-export` 和 runtime 两张构建图，绝不构建或缓存 `verification` 的测试 RUN 层，也不缓存分片/TLS/安装结果。即使所有编译层命中，本次四分片、TLS、安装及 gate 仍完整执行；命中不成为发布条件。缓存仍在 GitHub Actions 的分支/tag 访问边界内，仅受信 tag push 或手动 Release 可以写入该命名空间；不扩大 PR 缓存权限，不使用 registry 凭证构建。SHA256SUMS 不能证明缓存未被污染，来源证明也不表示无缓存、可复现编译或真实提供者兼容；缓存输出必须经过同一次完整验证。
 
@@ -193,7 +199,7 @@ Release 复用现有 SHA pin 的 `actions/cache/restore` / `save` 保存 BuildKi
 
 手动 dry-run 的 `build_cache` 默认开启，关闭时既不恢复也不导出/保存缓存，便于同一 revision 比较；tag 流程默认使用缓存。[GitHub 缓存访问范围](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache) 仍适用：在 main 上运行的 dry-run 可为 tag 提供热缓存，tag 自身写入的缓存不会自动变成以后新 tag 的可见缓存。维护者应分别记录未命中、同源码精确命中、源码变化后前缀命中的耗时，不能只看 `cache-hit` 判断编译是否实际复用。
 
-预计关键路径为“构建 + 最长验证分片 + 制品/gate 交接”：两并发冷构建以约 10–13 分钟为待测目标，同源码完整层命中预计约 4–7 分钟；这是依据旧编译时间和 PR 分片时间的估算，尚无本分支 Linux 实测，源码变化、编译串行段、内存压力、网络和并发排队可能使结果更慢。缓存开销若抵消收益，可用 `build_cache=false` 比较；编译内存不足则将 Release 的两处 `BUILD_JOBS=2` 同步改回 1。回退这些优化不能移除 gate 或任何验证。
+切换到 Rust 后按本次构建、最慢分片及制品交接重新测量 Release 耗时。两处 `BUILD_JOBS` 须使用同一值，以便两个构建复用优化后的后端。
 
 工作流/版本政策修改的本地检查：
 

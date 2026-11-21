@@ -11,7 +11,7 @@
 
 ## 获取镜像
 
-从 GHCR 拉取精确版本并解析本机不可变 ID，也可以按下节从源码构建 candidate：
+发布说明会标明后端切换。采用 Rust 的版本沿用原 GHCR 仓库、版本标签和 Compose 安装命令。从 GHCR 拉取对应版本并解析本机不可变 ID。下例用历史版本演示，实际安装请替换为目标版本：
 
 ```sh
 docker pull ghcr.io/ximatai/codexone:0.26.9
@@ -22,25 +22,37 @@ docker image inspect ghcr.io/ximatai/codexone:0.26.9 --format '{{.Id}}'
 
 ## 从源码构建
 
-在干净源码提交上构建，不把账号、安装目录或构建缓存放进上下文：
+在干净源码提交上构建，保持账号、安装目录和构建缓存位于上下文之外。默认构建 Rust：
 
 ```sh
-docker build --platform linux/amd64 --target verification -f deploy/Dockerfile .
 docker build --platform linux/amd64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
-  --build-arg VERSION=0.26.9 -f deploy/Dockerfile -t codexone:candidate .
+  --build-arg VERSION=0.0.0-dev -f deploy/Dockerfile -t codexone:candidate .
 python3 scripts/verify_installation.py --image codexone:candidate
 # 本机有 Chrome 且已安装 web 锁文件依赖时，可增加 --browser 验收打包界面。
 # python3 scripts/verify_installation.py --image codexone:candidate --browser
-docker image inspect codexone:candidate --format '{{.Id}}'
+docker image inspect codexone:candidate --format '{{.Id}} {{index .Config.Labels "net.ximatai.codexone.backend"}}'
 ```
 
 `--browser` 使用临时 Chrome 上下文实际操作镜像中的 SPA 和管理 API，经隔离 curl relay 转发 HTTPS 路由以检查浏览器 cookie；它不证明宿主 TLS/Nginx 配置。截图仅含合成资料，凭证控件遮罩，保存在忽略的 artifacts 目录。
 
-GitHub 访问受限时，可预先按 `Package.resolved` 的 revision 把依赖取成 `OWNER/REPO.git` 布局的本地裸仓库目录，构建时追加 `--build-context swiftpm-mirrors=<该目录>`；仅这两次 Swift 构建把 GitHub 地址改写到只读挂载的镜像，不写入镜像层，锁定版本不变。默认上下文为空，行为与直接联网相同。npm 官方源受限时同理可加 `--build-arg NPM_REGISTRY=<镜像源>`，lockfile 完整性哈希仍逐包校验。Ubuntu 源受限时可加 `--build-arg APT_MIRROR=<镜像源 /ubuntu 地址>`，仅在安装期间替换，结束后恢复原源配置。
+镜像标签 `net.ximatai.codexone.backend` 可用于确认后端。安装时传入该镜像的不可变 ID 或 registry digest。镜像标签和 `/opt/release.json` 记录 revision/version，清单的 schema 版本由镜像内二进制报告。Rust 构建使用固定工具链和 `Cargo.lock`，前端使用固定 Node 和 npm 锁文件。运行镜像包含剥离调试段的优化二进制、SPA 和运行所需系统工具。项目 LICENSE 位于 `/opt/codexone/LICENSE`，依赖许可按来源收录于 `/opt/codexone/licenses/rust` 和 `/opt/codexone/licenses/npm`。
 
-镜像标签和 `/opt/release.json` 保存源码 revision/version，镜像清单从构建出的二进制读取并记录 schema 版本；安装时使用镜像 ID 或 registry digest，不能用可变 tag。`.dockerignore` 只允许产品源码、锁文件、测试 target、合成验证脚本和构建文件进入上下文。多阶段构建分别使用锁定 Node/Swift 工具链；Swift release 保留 `-O` 和单并发、默认每批1文件（SWIFT_BATCH_LIMIT），仅大型 Adapters target 关闭 whole-module optimization 以减少单次编译峰值（不代表运行容量）；verification target 在无网络环境检查优化后二进制的 HTTP/SSE/WS/Images、快照/主密钥/存储观测及合成迁移切回失败路径，之后组装运行层。运行候选在优化构建后剥离DWARF调试段，保留可执行代码和普通符号表，验证/归档以剥离后的同一程序为准。运行层没有编译器、Node、Python 或源码测试。
+npm 官方源受限时可加 `--build-arg NPM_REGISTRY=<镜像源>`，完整性哈希仍逐包校验。Ubuntu 源受限时可加 `--build-arg APT_MIRROR=<镜像源 /ubuntu 地址>`，仅在安装期间替换源配置。
 
-项目 LICENSE 位于 `/opt/codexone/LICENSE`；Swift checkouts 与 npm 生产依赖自带的 LICENSE/NOTICE/COPYING 文件按包路径分别收集到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，与最终产物一同交付。
+### 过渡期间构建 Swift 镜像
+
+在需要验证同版本回退时，显式选择 Swift。安装仍使用该镜像的不可变 ID，已部署实例按[备份和回退](backup-upgrade.md#回退)操作：
+
+```sh
+docker build --platform linux/amd64 --build-arg CODEXONE_BACKEND=swift \
+  --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" --build-arg VERSION=0.0.0-dev \
+  -f deploy/Dockerfile -t codexone:swift-transition .
+python3 scripts/verify_installation.py --image codexone:swift-transition --backend swift
+```
+
+Swift 依赖许可位于 `/opt/codexone/licenses/swift`。SwiftPM 访问受限时，可将 `Package.resolved` 的锁定 revision 预取到 `OWNER/REPO.git` 布局的本地裸仓库，再追加 `--build-context swiftpm-mirrors=<该目录>`。只读镜像目录仅在构建期使用。专门验收 Swift 时可另行构建 Dockerfile 的 `verification` target，它在无网络环境运行 Swift 的优化二进制验证。
+
+### 发行验收
 
 Release 工作流的手动 dry-run 接受 ref，构建并执行 Linux 合成 socket、TLS 反代与真实安装验证，上传源码、二进制、许可、镜像 ID、校验和与独立镜像归档，不登录 registry 或推送/发布。将两个验证产物分别解压到 `verified-release-files/` 与 `verified-linux-amd64-image/` 后，在前者执行 `sha256sum --check SHA256SUMS`，再在后者用 `sha256sum --check ../verified-release-files/image-archive-sha256.txt` 核对归档，然后 `docker load --input codexone-linux-amd64.tar.gz`。正式 tag 流程验证后才推送同一镜像、生成来源证明并创建 Release；附件清单和 `gh attestation verify` 命令见[发版规则](../development/releasing.md)。校验和验证完整性，不能单独证明来源，仍需核对受信工作流和源码 revision。安装工具和文档随源码归档提供。
 

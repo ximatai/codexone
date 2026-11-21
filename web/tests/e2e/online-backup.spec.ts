@@ -7,10 +7,19 @@ test("backup attention opens storage details with last success on desktop and mo
   page,
 }) => {
   const lastSuccess = Math.floor(Date.now() / 1000) - 80 * 3600;
-  let mode: "backup" | "blocked" | "normal" = "backup";
+  let mode: "backup" | "blocked" | "disabled" | "normal" = "backup";
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.routeWebSocket("**/api/overview/live", (socket) =>
+    socket.close({ code: 1013 }),
+  );
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/attention" && mode === "disabled") {
+      return route.fulfill({
+        status: 429,
+        json: { error: { code: "attention_query_capacity" } },
+      });
+    }
     const data: Record<string, unknown> = {
       "/api/session": { authenticated: true, csrf: "ac1_" + "a".repeat(43) },
       "/api/system": { service: "codexone", ready: true, checks: [] },
@@ -61,17 +70,21 @@ test("backup attention opens storage details with last success on desktop and mo
         databaseBytes: 1000000,
         walBytes: 0,
         reserveBytes: 67108864,
-        backup: {
-          enabled: true,
-          lastSuccessUnixSeconds: lastSuccess,
-          retainedCount: 7,
-        },
+        backup:
+          mode === "disabled"
+            ? { enabled: false, retainedCount: 0 }
+            : {
+                enabled: true,
+                lastSuccessUnixSeconds: lastSuccess,
+                retainedCount: 7,
+              },
       },
     };
     return route.fulfill({ json: data[path] ?? {} });
   });
   await page.goto("/");
   await expect(page.getByText("备份超时，请检查磁盘空间。")).toBeVisible();
+  await expect(page.getByText(/备份占用已超过提醒阈值/)).toBeVisible();
   await expect(page.getByRole("link", { name: "查看备份" })).toBeVisible();
   await page.getByRole("link", { name: "查看备份" }).click();
   const drawer = page.getByRole("dialog", { name: "存储与准入详情" });
@@ -99,6 +112,10 @@ test("backup attention opens storage details with last success on desktop and mo
     page.getByText("存储保护已暂停接收新请求。", { exact: false }),
   ).toHaveCount(1);
   await expectNoHorizontalOverflow(page);
+  mode = "disabled";
+  await page.reload();
+  await expect(page.getByLabel("概览连接状态")).toContainText("运行提醒");
+  await expect(reminders.getByText("在线定时备份未启用。")).toBeVisible();
   mode = "normal";
   await page.reload();
   await expect(page.getByRole("group", { name: "数据盘可用" })).toContainText(

@@ -129,6 +129,15 @@ export function AdminOverview() {
     if (unauthorized) owner.invalidate();
   }, [unauthorized, owner]);
   if (!owner.session) return null;
+  // Report backup configuration from storage even if the attention read is busy.
+  const backupEnabled = storage.isError
+    ? undefined
+    : storage.data?.backup?.enabled;
+  const backupDisabled =
+    backupEnabled === undefined
+      ? !attention.isError &&
+        attention.data?.items.some((item) => item.kind === "backup_disabled")
+      : !backupEnabled;
   const protocolItems = (attention.data?.items ?? [])
     .filter((item) => item.kind === "client_protocol_extension")
     .sort((a, b) => (b.sinceUnixSeconds ?? 0) - (a.sinceUnixSeconds ?? 0));
@@ -171,6 +180,10 @@ export function AdminOverview() {
                 storageError={storage.isError}
                 backupOverdue={attention.data?.items.find(
                   (item) => item.kind === "backup_stale",
+                )}
+                backupDisabled={backupDisabled}
+                backupSizeWarning={attention.data?.items.some(
+                  (item) => item.kind === "backup_size",
                 )}
                 backupUnconfirmed={attention.isError}
                 availability={availabilityBlocker({

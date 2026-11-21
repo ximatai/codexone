@@ -58,6 +58,8 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                  'default_reasoning_level': 'high'},
                 {'slug': 'synthetic-incomplete', 'visibility': 'list'},
             ]})
+        if self.path == '/backend-api/wham/rate-limit-reset-credits' and self.server.rust:
+            return self.reply({'available_count': 0, 'credits': []})
         if self.path == '/backend-api/wham/usage':
             with self.server.guard:
                 assert self.headers.get('Authorization', '').removeprefix('Bearer ') in self.server.issued
@@ -69,7 +71,9 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 return self.reply({'rate_limit': {'allowed': False, 'limit_reached': True}})
             if mode == 'fail':
                 return self.reply({'error': 'synthetic-private-quota-marker'}, status=500)
-            return self.reply({'private_field': 'synthetic-private-quota-marker', 'rate_limit': {
+            return self.reply({'private_field': 'synthetic-private-quota-marker',
+                **({'credits': {'balance': '12.500', 'unlimited': False}} if self.server.rust else {}),
+                'rate_limit': {
                 'allowed': True, 'limit_reached': False,
                 'primary_window': {'used_percent': 25, 'limit_window_seconds': 18000, 'reset_at': int(time.time()) + 3600},
                 'secondary_window': {'used_percent': 45, 'limit_window_seconds': 604800, 'reset_at': int(time.time()) + 86400}},
@@ -126,6 +130,11 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
                 assert encoded(hashlib.sha256(value['code_verifier'].encode()).digest()) == control['challenge']
         else:
             assert value['grant_type'] == 'refresh_token' and value['refresh_token'].startswith('synthetic-refresh-')
+            if control.get('mode') == 'timeout':
+                # Leave the dispatched refresh without a terminal response.
+                time.sleep(12)
+                self.close_connection = True
+                return
             if control.get('mode') == 'reject':
                 return self.reply({'error': 'invalid_grant'}, status=400)
         scope = {'chatgpt_account_id': 'synthetic-account', 'chatgpt_user_id': 'synthetic-user'}
@@ -137,11 +146,12 @@ class SyntheticOAuth(BaseHTTPRequestHandler):
             self.server.issued.extend(tokens[key] for key in ['access_token', 'id_token', 'refresh_token'])
         self.reply(tokens)
 
-def verify(binary, usage=False):
+def verify(binary, usage=False, rust=False):
     root = Path(__file__).resolve().parents[1]
     provider = ThreadingHTTPServer(('127.0.0.1', 0), SyntheticOAuth)
     provider.daemon_threads = True
     provider.guard = threading.Lock()
+    provider.rust = rust
     provider.control = {}
     provider.calls = 0
     provider.quota_calls = 0
@@ -153,23 +163,51 @@ def verify(binary, usage=False):
             for name, value in [('admin', ADMIN), ('master', '6b' * 32)]:
                 (work / name).write_text(value)
                 (work / name).chmod(0o600)
-            process = subprocess.Popen([binary, '--usage-admin-ui' if usage else '--account-admin-ui', str(work), str(root / 'web/dist'), str(provider.server_port)],
-                                       env={'PATH': os.defpath}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            environment = {'PATH': os.defpath}
+            if rust:
+                (work / 'state').mkdir()
+                pool = work / 'pool.json'
+                pool.write_text(json.dumps({
+                    'models': [{'id': 'synth-text', 'inputMicrosPerMillion': 0, 'outputMicrosPerMillion': 0}],
+                    'reservedMicros': 10,
+                }))
+                pool.chmod(0o600)
+                environment.update({
+                    'CODEXONE_MANAGED_TEST_PORT': str(provider.server_port),
+                    'CODEXONE_ACCOUNT_POOL_CONFIG': str(pool),
+                    'CODEXONE_ACCOUNT_MASTER_KEY_FILE': str(work / 'master'),
+                    'CODEXONE_ADMIN_TOKEN_FILE': str(work / 'admin'),
+                    'CODEXONE_DATA_DIRECTORY': str(work / 'state'),
+                    'CODEXONE_DATA_PORT': '0',
+                    'CODEXONE_ADMIN_PORT': '0',
+                    'CODEXONE_WEB_DIRECTORY': str(root / 'web/dist'),
+                })
+                command = [binary, '--exact', 'managed_process::child', '--nocapture']
+                listening = rb'LISTENING admin 127\.0\.0\.1:(\d+)'
+            else:
+                command = [binary, '--usage-admin-ui' if usage else '--account-admin-ui',
+                           str(work), str(root / 'web/dist'), str(provider.server_port)]
+                listening = rb'ADMIN_PORT (\d+)'
+            process = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             output = b''
             try:
                 with selectors.DefaultSelector() as selector:
                     selector.register(process.stdout, selectors.EVENT_READ)
                     deadline = time.monotonic() + 10
-                    while b'ADMIN_PORT ' not in output:
+                    while not re.search(listening, output):
                         assert time.monotonic() < deadline and process.poll() is None, 'Synthetic UI assembly did not start'
                         if selector.select(.1):
                             chunk = os.read(process.stdout.fileno(), 4096)
                             assert chunk
                             output += chunk
-                port = int(re.search(rb'ADMIN_PORT (\d+)', output)[1])
-                result = subprocess.run(['node', str(root / ('web/scripts/live-usage.mjs' if usage else 'web/scripts/live-accounts.mjs')), str(port), str(provider.server_port), str(root / ('artifacts/usage-ui' if usage else 'artifacts/account-management-ui'))],
-                                        input=json.dumps({'credential': ADMIN}).encode(), capture_output=True, timeout=120,
-                                        env=browser_env())
+                port = int(re.search(listening, output)[1])
+                script = 'live-usage.mjs' if usage else 'live-accounts.mjs'
+                artifact_dir = work / 'browser' if rust else root / ('artifacts/usage-ui' if usage else 'artifacts/account-management-ui')
+                command = ['node', str(root / 'web/scripts' / script), str(port), str(provider.server_port), str(artifact_dir)]
+                if rust:
+                    command.append('--rust')
+                result = subprocess.run(command, input=json.dumps({'credential': ADMIN}).encode(),
+                                        capture_output=True, timeout=120, env=browser_env())
                 browser_output = result.stdout + result.stderr
                 assert len(browser_output) < 65536 and ADMIN.encode() not in browser_output and str(work).encode() not in browser_output
                 assert re.search(rb'(?:co1_|as1_|ac1_)[A-Za-z0-9_-]{43}', browser_output) is None
@@ -177,7 +215,8 @@ def verify(binary, usage=False):
                 print(browser_output.decode(), end='')
                 with provider.guard:
                     issued = list(provider.issued)
-                    assert (provider.calls == 0 and provider.quota_calls == 0) if usage else (provider.calls == 3 and provider.quota_calls >= 3)
+                    expected_calls = 5 if rust else 3
+                    assert (provider.calls == 0 and provider.quota_calls == 0) if usage else (provider.calls == expected_calls and provider.quota_calls >= 3)
                 for file in (work / 'state').glob('core.sqlite*'):
                     assert all(value.encode() not in file.read_bytes() for value in issued + [ADMIN, '6b' * 32, 'synthetic-private-quota-marker', 'SYNTH-CODE', 'synthetic-device-id-private'])
             finally:
@@ -198,6 +237,8 @@ def verify(binary, usage=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    parser.add_argument('--usage', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--usage', action='store_true')
+    mode.add_argument('--rust', action='store_true', help='Run a Rust gateway cargo test executable')
     args = parser.parse_args()
-    verify(str(args.binary.resolve()), usage=args.usage)
+    verify(str(args.binary.resolve()), usage=args.usage, rust=args.rust)

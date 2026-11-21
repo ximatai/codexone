@@ -1,0 +1,20 @@
+[package]
+name = "codexone-image-service"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+codexone-config = { path = "../config" }
+codexone-execution = { path = "../execution" }
+codexone-http-upstream = { path = "../http-upstream" }
+codexone-images = { path = "../images" }
+http = "1"
+tokio = { version = "1", features = ["macros"] }
+
+[dev-dependencies]
+rusqlite = { version = "0.43", features = ["bundled", "wal"] }
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "time"] }

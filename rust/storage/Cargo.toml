@@ -1,0 +1,17 @@
+[package]
+name = "codexone-storage"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
+hex = "0.4"
+libc = "0.2"
+rusqlite = { version = "0.43", features = ["backup", "bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+zeroize = { version = "1", features = ["alloc"] }

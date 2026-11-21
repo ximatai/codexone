@@ -1,0 +1,21 @@
+[package]
+name = "codexone-wire"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+indexmap = "2"
+memchr = "2"
+serde_json = "1"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
+[[example]]
+name = "wire-oracle"
+path = "tools/oracle.rs"
+
+[[example]]
+name = "wire-sse-benchmark"
+path = "tools/sse_benchmark.rs"

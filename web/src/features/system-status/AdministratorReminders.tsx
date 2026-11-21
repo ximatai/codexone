@@ -8,12 +8,16 @@ export function AdministratorReminders({
   storage,
   storageError,
   backupOverdue,
+  backupDisabled,
+  backupSizeWarning,
   backupUnconfirmed,
   availability,
 }: {
   storage?: ReturnType<typeof parseStorage>;
   storageError: boolean;
   backupOverdue?: AttentionItem;
+  backupDisabled?: boolean;
+  backupSizeWarning?: boolean;
   backupUnconfirmed: boolean;
   availability: ReturnType<typeof availabilityBlocker>;
 }) {
@@ -28,7 +32,9 @@ export function AdministratorReminders({
   const free = storage?.availableBytes;
   const service =
     availability?.to === "/?storage=details" ? null : availability;
-  if (!disk && !service && !backupOverdue) return null;
+  const showBackupSize = backupSizeWarning && !backupUnconfirmed;
+  if (!disk && !service && !backupOverdue && !backupDisabled && !showBackupSize)
+    return null;
 
   return (
     <Paper
@@ -74,6 +80,12 @@ export function AdministratorReminders({
             <Anchor component={Link} to="/?storage=details" size="sm">
               查看备份
             </Anchor>
+          </Alert>
+        )}
+        {backupDisabled && <Alert color="orange">在线定时备份未启用。</Alert>}
+        {showBackupSize && (
+          <Alert color="orange">
+            备份占用已超过提醒阈值，请检查存储容量，并将备份和主密钥分别异地保存。
           </Alert>
         )}
       </Stack>

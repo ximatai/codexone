@@ -5,8 +5,11 @@ export function money(
   unlimited = false,
 ): string {
   if (value == null) return unlimited ? "不限" : "不可用";
+  return `估算 ${dollarAmount(value)}`;
+}
+export function dollarAmount(value: string | number): string {
   const cents = (BigInt(value) + 5000n) / 10000n;
-  return `估算 $${(cents / 100n).toLocaleString("en-US")}.${(cents % 100n).toString().padStart(2, "0")}`;
+  return `$${(cents / 100n).toLocaleString("en-US")}.${(cents % 100n).toString().padStart(2, "0")}`;
 }
 export function dollarsToMicros(value: string | number): number {
   const raw = String(value);

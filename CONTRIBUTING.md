@@ -14,6 +14,8 @@ Linux、macOS 都可以开发，Windows 请使用 WSL2 中的 Ubuntu。CI 使用
 | macOS 15+ | Xcode 或 Swift 6.4 工具链、Node.js 26.13.0 与 npm、Python 3（系统自带 SQLite） |
 | Windows | 安装 WSL2 与 Ubuntu 24.04，在其中按 Linux 准备；不支持原生 Windows 构建 |
 
+默认 Rust 网关的 CI 工具链为 Rust 1.96.0。安装后可在仓库根目录运行 `cargo build --locked --manifest-path rust/gateway/Cargo.toml --bin codexone`。表中的 Swift 工具链用于构建旧后端和运行兼容性探针。
+
 最省事的方式是使用仓库的[开发容器](.devcontainer/devcontainer.json)：VS Code Dev Containers 或 GitHub Codespaces 打开仓库即可得到与 CI 相同的 Swift 镜像、SQLite、固定版本 Node.js 和 Playwright Chromium，Mac、Windows、Linux 通用。容器运行目标仍是 Linux amd64 Docker Engine/Compose v2。浏览器验证使用独立 Chromium 或本机 Chrome，不读取个人浏览数据。
 
 ```sh

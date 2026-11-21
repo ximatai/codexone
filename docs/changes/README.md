@@ -6,6 +6,8 @@
 
 ## 活动提案
 
+- [原生 WebSocket 预热的空输出](native-ws-warmup/proposal.md) · [任务](native-ws-warmup/tasks.md)
+
 - [首页 Key 今日估算费用](overview-key-estimated-cost/proposal.md) · [任务](overview-key-estimated-cost/tasks.md)
 
 - [编辑已启用文本模型费率](active-model-rates/proposal.md) · [任务](active-model-rates/tasks.md)

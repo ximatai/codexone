@@ -1,5 +1,6 @@
 import { DonutChart } from "@mantine/charts";
 import { Box, Paper, Text, VisuallyHidden } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { compactKeyTokens } from "../compact-count";
 import { PrivateName, usePrivacyMask } from "../privacy-mask";
 import { UsageChartCard } from "./UsageChartCard";
@@ -44,6 +45,7 @@ export function KeyUsageShare({
   }[];
 }) {
   const masked = usePrivacyMask();
+  const narrow = useMediaQuery("(max-width: 767px)");
   const entries = [...usage];
   entries.sort((a, b) => {
     const left = a.tokens ?? -1n;
@@ -61,7 +63,7 @@ export function KeyUsageShare({
         ...entries.slice(0, compactRows - 1),
         {
           keyID: null,
-          name: `其他（${remaining.length} 个 Key）`,
+          name: `其他（${remaining.length}）`,
           incomplete: unrecorded > 0 || remaining.some((row) => row.incomplete),
           tokens:
             unrecorded === remaining.length
@@ -113,8 +115,8 @@ export function KeyUsageShare({
             <div aria-hidden="true" className={styles.keySharePlot}>
               <DonutChart
                 data={wedges}
-                size={compact ? 88 : 144}
-                thickness={compact ? 20 : 32}
+                size={compact ? (narrow ? 88 : 104) : 144}
+                thickness={compact ? (narrow ? 20 : 24) : 32}
                 tooltipProps={{
                   content: ({ active, payload }) => {
                     const index = payload?.[0]?.payload?.name;

@@ -99,6 +99,7 @@ test("quota trend spans the full cycle without inventing early history", async (
   await page.clock.setFixedTime(now);
   const state = await reviewFixture(page);
   state.alerts = 0;
+  state.keys.splice(1);
   state.accounts.splice(1);
   const observation = state.accounts[0].observability.quota;
   const at = now.getTime() / 1000;

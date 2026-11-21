@@ -1,20 +1,62 @@
 #!/usr/bin/env python3
 """Actual pre-admission HTTP/WS rejection, bounded diagnostics and no-payload logging."""
 import argparse
+from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
 import socket
 import sqlite3
 import tempfile
+import time
 from verify_protocol import TOKEN, connect, start, stop
 from verify_websocket import dial, receive, send
+
+
+def storage_bounds(root, port, request):
+    database = root / 'state/core.sqlite'
+
+    def reject():
+        status, body = connect(port, 'POST', '/v1/responses', request)
+        assert status == 400
+        return json.loads(body)['error']['request_id']
+
+    with closing(sqlite3.connect(database)) as db:
+        # Raise the optional-work WAL watermark with valid SQLite data inside the fixture.
+        db.execute('PRAGMA wal_autocheckpoint=0')
+        with db:
+            db.execute('CREATE TABLE synthetic_wal_pressure(body BLOB)')
+            db.execute('INSERT INTO synthetic_wal_pressure VALUES(zeroblob(68 * 1024 * 1024))')
+        assert (root / 'state/core.sqlite-wal').stat().st_size >= 64 * 1024 * 1024
+        shed = reject()
+        assert db.execute('SELECT 1 FROM request_diagnostics WHERE request_id=?', (shed,)).fetchone() is None
+        assert db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0] == 0
+        assert (root / 'state/core.sqlite-wal').stat().st_size < 64 * 1024 * 1024
+
+        now = int(time.time())
+        with db:
+            db.execute("""WITH RECURSIVE seq(n) AS (
+                VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<10000
+            )
+            INSERT INTO request_diagnostics(request_id,at_epoch,key_id,mode,failure)
+            SELECT 'synthetic-retention-' || n, ? - n, 'synthetic-key', 'generation', 'invalid_request'
+            FROM seq""", (now,))
+            db.execute("""INSERT INTO request_diagnostics(request_id,at_epoch,key_id,mode,failure)
+                VALUES('synthetic-expired',?,'synthetic-key','generation','invalid_request')""",
+                (now - 31 * 86400,))
+        recorded = reject()
+        assert db.execute('SELECT COUNT(*) FROM request_diagnostics').fetchone()[0] <= 10000
+        assert db.execute("SELECT 1 FROM request_diagnostics WHERE request_id='synthetic-expired'").fetchone() is None
+        assert db.execute('SELECT failure FROM request_diagnostics WHERE request_id=?',
+            (recorded,)).fetchone() == ('invalid_request',)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    binary = str(parser.parse_args().binary.resolve())
+    parser.add_argument('--storage-bounds', action='store_true', help='Also verify optional writes under WAL pressure and row retention')
+    args = parser.parse_args()
+    binary = str(args.binary.resolve())
     secret = 'synthetic-private-payload-never-log'
     with tempfile.TemporaryDirectory(prefix='codexone-rejection-') as temporary, socket.socket() as upstream:
         upstream.bind(('127.0.0.1', 0))
@@ -51,6 +93,9 @@ def main():
                 assert status == 400 and error['code'] == code and 'reason' not in error, (extra, body)
             for _ in range(30):
                 assert connect(ports['data'], 'POST', '/backend-api/codex/responses', request)[0] == 400
+            if args.storage_bounds:
+                storage_bounds(root, ports['data'], request)
+                print('PASS: pressure can drop diagnostics; normal storage retains diagnostics within 30 days and 10000 rows')
             with sqlite3.connect(root / 'state/core.sqlite') as db:
                 assert db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == 0
                 assert db.execute('SELECT COUNT(*) FROM bindings').fetchone()[0] == 0

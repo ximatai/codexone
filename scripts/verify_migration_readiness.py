@@ -134,7 +134,7 @@ def request(port, scenario='ok', path='/v1/responses', native=False, stream=Fals
 
 def dial(port, native=False):
     sock = socket.create_connection(('127.0.0.1', port), timeout=5)
-    key = base64.b64encode(b'synthetic-ws-key!').decode()
+    key = base64.b64encode(b'synthetic-ws-key').decode()
     fields = {**headers(native), 'host': 'localhost', 'connection': 'Upgrade', 'upgrade': 'websocket',
               'sec-websocket-version': '13', 'sec-websocket-key': key}
     sock.sendall(('GET /v1/responses HTTP/1.1\r\n' + ''.join(f'{k}: {v}\r\n' for k, v in fields.items()) + '\r\n').encode())
@@ -193,10 +193,10 @@ def configuration(root, port, transport='http', limit=128):
     return config
 
 
-def launch(binary, config, root):
+def launch(binary, config, root, **kwargs):
     global TOKEN, ADMIN_PORT
     admin = root / 'admin'; admin.write_text(ADMIN); admin.chmod(0o600)
-    process, ports = start(binary, config, root, admin_token_file=admin)
+    process, ports = start(binary, config, root, admin_token_file=admin, **kwargs)
     try:
         status, document = call(ports['admin'], 'POST', '/api/keys', dict(principal='synthetic',
             models=['synthetic-text'], imageGeneration=True, imageModels=['synthetic-image'],
@@ -230,6 +230,7 @@ def sample(pid, label):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--refusals-only', action='store_true', help='Run the provider and CONNECT refusal matrices')
     args = parser.parse_args()
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     server.daemon_threads = True
@@ -267,31 +268,70 @@ def main():
                             ledger(root, 'settled' if scenario in ('error', 'failed') else 'unknown')
                         for status in (400, 403, 429, 503):
                             server.handshake = status
+                            before = len(server.calls)
                             request(ports['data'])
                             ledger(root, 'unknown' if status == 503 else 'settled')
+                            assert len(server.calls) == before + 1
                             with dial(ports['data']) as sock: turn(sock)
                             ledger(root, 'unknown' if status == 503 else 'settled')
+                            assert len(server.calls) == before + 2
                         server.handshake = 0
                 finally: stop(process)
             print('PASS: migration fingerprint and refusal socket matrix ' + transport, flush=True)
+        from verify_upstream_proxy import Proxy
+        with tempfile.TemporaryDirectory(prefix='codexone-migration-connect-') as temporary, Proxy(server.server_port) as proxy:
+            root = Path(temporary)
+            proxy.mode = 'reject'
+            proxy_thread = threading.Thread(target=proxy.serve_forever)
+            proxy_thread.start()
+            before = len(server.calls)
+            try:
+                process, ports = launch(str(args.binary.resolve()),
+                    configuration(root, server.server_port, 'websocket'), root,
+                    upstream_proxy=f'http://127.0.0.1:{proxy.server_address[1]}')
+                try:
+                    status, body = request(ports['data'])
+                    assert status == 502 and json.loads(body)['error']['code'] == 'upstream_proxy_authentication_required'
+                    assert ledger(root, 'unknown') is None and proxy.requests == 1
+                    with dial(ports['data']) as sock:
+                        assert turn(sock)['error']['code'] == 'upstream_proxy_authentication_required'
+                    assert ledger(root, 'unknown') is None and proxy.requests == 2
+                    assert len(server.calls) == before
+                finally: stop(process)
+            finally: proxy.shutdown(); proxy_thread.join(3)
+        print('PASS: CONNECT refusal stays unknown for bridged and native WS without provider dispatch', flush=True)
+        if args.refusals_only:
+            return
         # Refused TCP connection retries before dispatch, while post-send failures above never replay.
         with tempfile.TemporaryDirectory(prefix='codexone-connect-retry-') as temporary:
             root = Path(temporary)
-            reservation = socket.socket(); reservation.bind(('127.0.0.1', 0)); port = reservation.getsockname()[1]; reservation.close()
-            config = configuration(root, port)
-            document = json.loads(config.read_text()); document['executionTimeoutSeconds'] = 8
-            config.write_text(json.dumps(document))
-            process, ports = launch(str(args.binary.resolve()), config, root)
-            delayed = ThreadingHTTPServer(('127.0.0.1', port), Provider, bind_and_activate=False)
-            delayed.guard = server.guard; delayed.calls = []; delayed.handshake = 0
-            def listen_later():
-                time.sleep(.5); delayed.server_bind(); delayed.server_activate(); delayed.serve_forever()
-            delayed_thread = threading.Thread(target=listen_later); delayed_thread.start()
-            try:
-                assert request(ports['data'])[0] == 200
-                assert len(delayed.calls) == 1
-            finally:
-                stop(process); delayed.shutdown(); delayed.server_close(); delayed_thread.join(3)
+            with ThreadingHTTPServer(('127.0.0.1', 0), Provider, bind_and_activate=False) as delayed:
+                delayed.server_bind()  # Reserve the port while leaving TCP connections refused.
+                delayed.guard = server.guard
+                delayed.calls = []
+                delayed.handshake = 0
+                config = configuration(root, delayed.server_port)
+                document = json.loads(config.read_text()); document['executionTimeoutSeconds'] = 8
+                config.write_text(json.dumps(document))
+                process, ports = launch(str(args.binary.resolve()), config, root)
+
+                def listen_later():
+                    time.sleep(.5)
+                    delayed.server_activate()
+                    delayed.serve_forever()
+
+                delayed_thread = threading.Thread(target=listen_later)
+                delayed_thread.start()
+                try:
+                    status, _ = request(ports['data'])
+                    assert status == 200, status
+                    assert len(delayed.calls) == 1
+                    with sqlite3.connect(root / 'state/core.sqlite') as db:
+                        assert db.execute('SELECT COUNT(*) FROM attempts').fetchone() == (1,)
+                finally:
+                    stop(process)
+                    delayed.shutdown()
+                    delayed_thread.join(3)
         print('PASS: connection failure retries before dispatch and sends once', flush=True)
         with tempfile.TemporaryDirectory(prefix='codexone-migration-capacity-') as temporary:
             root = Path(temporary)

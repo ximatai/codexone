@@ -16,30 +16,48 @@ backend_build() {
 
 backend_scripts() {
   python3 scripts/backend_shards.py --check
-  local backend_selected backend_bin_dir
-  local shard_args=() smoke_args=()
+  local backend_selected backend_bin_dir binary
+  local default_bin_dir=.build/debug
+  local shard_args=() smoke_args=() snapshot_args=() client_args=() admin_live_args=()
+  local binaries=(codexone)
   case "${2:-}" in
     --pr) shard_args+=(--pr); smoke_args+=(--smoke) ;;
+    --rust-release)
+      snapshot_args+=(--linked-paths)
+      client_args+=(--expect-provider-eof)
+      admin_live_args+=(--backend rust)
+      ;;
     "") ;;
     *) echo "Unknown backend scripts mode: $2" >&2; return 64 ;;
   esac
+  case "${3:-}" in
+    --rust)
+      shard_args+=(--rust)
+      default_bin_dir=rust/gateway/target/release
+      snapshot_args+=(--linked-paths)
+      client_args+=(--expect-provider-eof)
+      admin_live_args+=(--backend rust)
+      ;;
+    "") binaries+=(ExecutionProbe) ;;
+    *) echo "Unknown backend scripts implementation: $3" >&2; return 64 ;;
+  esac
   backend_selected="$(python3 scripts/backend_shards.py --list "${1:-all}" ${shard_args[@]+"${shard_args[@]}"})"
-  backend_bin_dir="${CODEXONE_BACKEND_BIN_DIR:-.build/debug}"
-  for binary in codexone ExecutionProbe; do
+  backend_bin_dir="${CODEXONE_BACKEND_BIN_DIR:-$default_bin_dir}"
+  for binary in "${binaries[@]}"; do
     if [[ ! -x "$backend_bin_dir/$binary" ]]; then
-      echo "Missing executable: $backend_bin_dir/$binary; run $0 --backend-build first" >&2
+      echo "Missing executable: $backend_bin_dir/$binary" >&2
       return 1
     fi
   done
   run_check scripts/verify_storage_pressure.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_key_maintenance.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_snapshot_restore.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_snapshot_restore.py --binary "$backend_bin_dir/codexone" ${snapshot_args[@]+"${snapshot_args[@]}"}
   run_check scripts/verify_process.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_execution.py --binary "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_accounts.py --binary "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_protocol.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_gateway_diagnostics.py
-  run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone"
+  run_check scripts/verify_client_protocol.py --binary "$backend_bin_dir/codexone" ${client_args[@]+"${client_args[@]}"}
   run_check scripts/verify_websocket.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_upstream_ws_body_limit.py --binary "$backend_bin_dir/codexone" ${smoke_args[@]+"${smoke_args[@]}"}
   run_check scripts/verify_upload_deadline.py --binary "$backend_bin_dir/codexone" ${smoke_args[@]+"${smoke_args[@]}"}
@@ -70,7 +88,10 @@ backend_scripts() {
   run_check scripts/verify_key_import.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_trial_provider.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_lite.py --binary "$backend_bin_dir/codexone"
-  run_check scripts/verify_admin_live.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
+  if [[ "${3:-}" != --rust ]]; then
+    admin_live_args+=(--probe "$backend_bin_dir/ExecutionProbe")
+  fi
+  run_check scripts/verify_admin_live.py --binary "$backend_bin_dir/codexone" "${admin_live_args[@]}"
   run_check scripts/verify_admin.py --binary "$backend_bin_dir/codexone"
   run_check scripts/verify_admin_round2.py --binary "$backend_bin_dir/codexone" --probe "$backend_bin_dir/ExecutionProbe"
   run_check scripts/verify_admin_assets.py --binary "$backend_bin_dir/codexone"
@@ -117,8 +138,17 @@ case "${1:-all}" in
   --backend) backend ;;
   --backend-build) backend_build ;;
   --backend-compile) backend_build --compile-only ;;
-  --backend-scripts) backend_scripts "${2:?Expected shard i/4}" "${3:-}" ;;
+  --backend-scripts)
+    shard="${2:?Expected shard i/4}"
+    shift 2
+    mode=''
+    case "${1:-}" in
+      --pr|--rust-release) mode=$1; shift ;;
+    esac
+    if (( $# > 1 )); then echo "Unexpected backend scripts arguments: $*" >&2; exit 64; fi
+    backend_scripts "$shard" "$mode" "${1:-}"
+    ;;
   --web) frontend "${2:-}" ;;
   all) backend; frontend ;;
-  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
+  *) echo "Usage: $0 [--backend | --backend-build | --backend-compile | --backend-scripts i/4 [--pr|--rust-release] [--rust] | --web [--chrome] | --client --binary PATH --codex PATH --expected-version VERSION [--require-lite]]" >&2; exit 64 ;;
 esac

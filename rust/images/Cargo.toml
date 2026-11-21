@@ -1,0 +1,22 @@
+[package]
+name = "codexone-images"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+codexone-http-upstream = { path = "../http-upstream" }
+codexone-wire = { path = "../wire" }
+crc32fast = "1"
+http = "1"
+httpdate = "1"
+memchr = "2"
+regex = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "net", "rt", "test-util"] }

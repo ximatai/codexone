@@ -185,8 +185,8 @@ class Provider(BaseHTTPRequestHandler):
             return
 
 
-def native(port, request):
-    with dial(port) as client:
+def native(port, request, token=TOKEN):
+    with dial(port, token=token) as client:
         send(client, {'type': 'response.create', **request}, masked=True)
         events = []
         while True:
@@ -199,10 +199,11 @@ def native(port, request):
             assert len(events) < 20
 
 
-def call(port, route, request):
+def call(port, route, request, token=TOKEN):
     if route == 'native':
-        return native(port, request)
-    status, body = connect(port, 'POST', '/v1/responses', {**request, 'stream': route == 'sse'})
+        return native(port, request, token)
+    status, body = connect(port, 'POST', '/v1/responses', {**request, 'stream': route == 'sse'},
+        authorization=False, client_headers={'Authorization': 'Bearer ' + token})
     if route == 'json' or status != 200:
         return status, [json.loads(body)]
     return status, [json.loads(line[6:]) for line in body.splitlines()

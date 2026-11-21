@@ -32,9 +32,7 @@ test("live metadata preserves content, invalid sections fall back, and revocatio
     "live",
   );
   const keyPanel = page.getByRole("region", { name: "今日 Key 请求汇总" });
-  await expect(
-    keyPanel.getByText("≥ 估算 $1.75", { exact: true }),
-  ).toBeVisible();
+  await expect(keyPanel.getByText("≥ $1.75", { exact: true })).toBeVisible();
   const protocol = page.getByRole("region", { name: "协议观测" });
   await expect(protocol).toHaveCount(0);
   const previous =

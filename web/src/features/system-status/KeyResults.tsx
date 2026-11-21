@@ -19,7 +19,7 @@ import { DataTable, type DataColumn } from "../../shared/ui/DataTable";
 import { businessDate, businessTime } from "../../shared/business-day";
 import type { KeySummary, KeySummaryReport } from "./round2-api";
 import { compactCount, compactKeyTokens } from "../../shared/compact-count";
-import { estimateNote, money } from "../../shared/presentation";
+import { dollarAmount, estimateNote } from "../../shared/presentation";
 import styles from "./overview.module.css";
 
 export function highFailure(
@@ -313,7 +313,7 @@ export function KeyResults({
               text={
                 row.estimatedMicros == null
                   ? "—"
-                  : `${incomplete ? "≥ " : ""}${money(row.estimatedMicros)}`
+                  : `${incomplete ? "≥ " : ""}${dollarAmount(row.estimatedMicros)}`
               }
             />
           </Text>

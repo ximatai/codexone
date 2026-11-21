@@ -1,0 +1,24 @@
+# Responses 推理档位授权任务
+
+记录提案评审、实现和行为验收的完成条件。
+
+- [x] 核查固定基线的 Rust 请求校验、准入记账，以及官方 CLI 0.171.0 的历史更新和 WS 序列化条件。
+- [x] 整理当前 Key 每轮重新校验的授权不变量、默认拒绝原则、纯策略函数期望值和恢复边界。
+- [x] 评审 [I05](../../reference/specs/identity.md)、[P10](../../reference/specs/protocol.md#p10重试超时与外部错误)、[U10](../../reference/specs/usage.md#u10-补充请求参数观察) 的拟议契约与兼容影响。
+- [x] 实现纯策略校验、原生 WS 有界活动上下文和事务复核。旧 Key revision 拒绝后可按新策略重新请求。
+- [x] 定向覆盖有序和相邻更新、未知档位字段、完整可见历史、显式允许全部目录档位和无限制透明转发的纯策略结果。
+- [x] 定向覆盖无更新继承、降权、缺少续接证据、预热和不透明上下文的纯策略结果。在进程内验证事务拒绝不写新 intent，允许的请求沿用顶层账本字段。
+- [x] 同步 Rust 能力规范与回退影响。有效授权值仅用于准入。
+- [x] 用合成回环传输确认 WS 续接和上游换连接、HTTP 全历史、上下文压缩、重启及授权拒绝后零派发。
+
+## 验证状态
+
+2026-11-21 在 macOS arm64 观察到固定基线的 Rust 网关按顶层档位校验和记账。官方 CLI 0.171.0 可在原生 WS 上提交不同于顶层值的有序档位更新，基线仍使用顶层值。提供者与 Key 均为本机合成数据。
+
+实现验收在 macOS arm64 通过 15 项 Responses 纯策略与协议测试、3 项进程内准入事务回归、网关测试目标编译检查及 Markdown 检查。
+
+macOS arm64 的合成回环用例通过。运行 `cargo test --locked --offline --manifest-path rust/gateway/Cargo.toml managed_process::cli_effort::effort_policy_on_real_sockets -- --exact`，覆盖原生 WS、HTTP 到 WS 桥接、普通 HTTP 直连、上下文压缩与重启。八次授权拒绝均无上游派发或账本 attempt。真实提供者、Desktop、真实订阅池和 Linux 的该项验收仍待验证。
+
+## 相关文档
+
+[提案](proposal.md) · [变更约定](../README.md)

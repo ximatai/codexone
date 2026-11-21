@@ -85,6 +85,8 @@
 
 准入将 Responses 的 reasoning.effort 与 service_tier 记录为现有 admission JSON 的 reasoningEffort、serviceTier；字符串须匹配 `[a-z0-9_-]{1,32}`，非法/超长/非字符串（含显式 null）记为 other，缺失语义为 null。requestMetadataRecorded=true 区分新请求未指定与历史无字段；可空值在持久 JSON 中可省略，管理 DTO 显式返回 null。原生 Images、预热与压缩无对应字段时同样为 null，不补写历史，不改 schema。此元数据仅观察，不改变转发内容、权限、准入判定或结算。
 
+Rust 网关按 [P16](protocol.md#p16受控模型目录) 授权时使用经校验的有序档位事实。有效授权值只用于准入，`admission.reasoningEffort` 继续记录顶层请求值。上游实际推理档位须有独立可信证据，目前无账本字段。现有诊断、历史记录与 schema 延续既有格式。
+
 可信上游终态提供 service_tier 时，按相同规则记录 outcome JSON 的 actualServiceTier；缺失为 null，与请求值独立，不从请求推导。查询字段/筛选与界面默认说明见 A13 补充。记录中不包含正文或任意参数对象。
 
 ## U15：保留、汇总与参考阈值

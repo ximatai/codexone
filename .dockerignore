@@ -6,6 +6,13 @@
 !Sources/**
 !Tests/
 !Tests/**
+!rust/
+!rust/**/
+!rust/**/Cargo.toml
+!rust/**/Cargo.lock
+!rust/**/*.rs
+!rust/**/*.sql
+rust/**/target/
 !web/
 !web/package.json
 !web/package-lock.json
@@ -22,6 +29,7 @@
 !web/licenses/**
 !deploy/
 !deploy/Dockerfile
+!deploy/assemble-runtime-root.sh
 !deploy/licenses/
 !deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt
 !scripts/

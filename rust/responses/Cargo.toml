@@ -1,0 +1,16 @@
+[package]
+name = "codexone-responses"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+codexone-wire = { path = "../wire" }
+base64 = "0.22"
+crc32fast = "1"
+hex = "0.4"
+regex = "1"
+sha2 = "0.10"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"

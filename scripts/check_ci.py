@@ -25,6 +25,14 @@ def check_release(release, dockerfile, tls, backend_scripts):
     assert re.search(r'^    needs: verify$', jobs['publish'], re.M), 'Publish must depend on the gate'
     for name in ('publish', 'release'):
         assert "if: github.event_name == 'push'" in jobs[name], 'Dry-runs must never publish'
+    assert re.search(r'^ARG CODEXONE_BACKEND=rust$', dockerfile, re.M), 'Docker builds must default to Rust'
+    assert '''FROM scratch AS verification-export
+COPY --from=selected-backend /output/codexone /
+COPY --from=swift-probe /output/ExecutionProbe /''' in dockerfile, (
+        'Extract the selected gateway and the separate Swift fixture')
+    assert 'CODEXONE_BACKEND=' not in jobs['build'], 'Release must exercise the default backend'
+    assert '''test "$(docker image inspect codexone:candidate --format '{{index .Config.Labels "net.ximatai.codexone.backend"}}')" = rust''' in jobs['build'], (
+        'Check the candidate backend before exporting')
     assert 'shard: [1/4, 2/4, 3/4, 4/4]' in jobs['backend-scripts'], 'Release must run all four shards'
     assert 'suite: [tls, installation, capacity]' in jobs['image-checks'], 'Release must run TLS, installation and mixed capacity'
     assert 'scripts/verify_mixed_capacity.py --image' in jobs['image-checks'], 'Run capacity against the exact candidate image'
@@ -35,7 +43,7 @@ def check_release(release, dockerfile, tls, backend_scripts):
         assert 'needs: build' in jobs[name], 'Checks must consume the current build'
         assert 'ref: ${{ needs.build.outputs.revision }}' in jobs[name], 'Checkout the resolved build commit'
     shards = jobs['backend-scripts']
-    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}'"
+    shard_command = "codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}' --rust-release"
     assert shard_command in {line.strip() for line in shards.splitlines()}, 'Use the complete shard entry point'
     assert '--network none' in shards and 'CODEXONE_BACKEND_BIN_DIR=/binaries' in shards, (
         'Optimized shard checks must run offline against the downloaded executables')
@@ -83,7 +91,7 @@ def check_live_browser(workflow):
     jobs = workflow_jobs(workflow)
     live = jobs['frontend-live']
     compiled_tests = jobs['backend-swift-tests']
-    downstream = ('backend-swift-tests', 'backend-scripts', 'frontend-live')
+    downstream = ('backend-swift-tests', 'backend-scripts')
     for name in downstream:
         assert '    needs: [changes, backend-build]\n' in jobs[name], (
             f'{name} must start after the matching build, independently of the other tests')
@@ -93,18 +101,54 @@ def check_live_browser(workflow):
     assert '--testing-library xctest' in compiled_tests and '--testing-library swift-testing --no-parallel' in compiled_tests, (
         'Retain both Swift test libraries and their serial execution')
     gate_needs = re.search(r'^    needs: \[([^\n]+)\]$', jobs['verify'], re.M)
-    assert gate_needs and set(downstream) <= set(gate_needs[1].split(', ')), 'Verify must await all three test jobs'
-    assert 'name: backend-binaries' in live and 'digest-mismatch: error' in live, 'Real browser must restore verified artifacts'
+    assert gate_needs and set(gate_needs[1].split(', ')) == jobs.keys() - {'verify'}, 'Verify must await every job'
+    assert 'needs: [changes, backend-build, backend-rust-build]' in live, 'Real browser must depend on both build jobs'
+    assert all(result in live for result in ('needs.backend-build.result', 'needs.backend-rust-build.result')), (
+        'Real browser must run when either backend is selected and require the selected build results')
+    matrix = ' '.join(live.split())
+    assert ("""fromJSON(needs.changes.outputs.backend == 'true' && ((needs.changes.outputs.rust == 'true' || """
+            """needs.changes.outputs.frontend == 'true') && '["swift","rust"]' || '["swift"]') || '["rust"]')""") in matrix, (
+        'Live browser matrix must contain one run per selected backend')
+    assert "matrix.backend == 'rust' && 'backend-rust-binaries' || 'backend-binaries'" in live, (
+        'Real browser must select the matching gateway artifact')
+    assert 'name: ${{ env.GATEWAY_ARTIFACT }}' in live and 'digest-mismatch: error' in live, (
+        'Real browser must restore the matching gateway artifact')
+    assert 'CODEXONE_WEB_TEST_BINARY: ../.build/live/codexone' in live, 'Real browser must use the restored gateway'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'0\'' in live, 'Real browser must never skip its gateway tests'
     assert 'npm run test:e2e -- admin-live-real --workers=1' in live, 'Real gateway/browser tests must keep their full entry point'
     assert 'CODEXONE_WEB_STUBS_ONLY: \'1\'' in jobs['frontend'], 'Keep isolated frontend separate from real gateway tests'
     condition = "    if: needs.changes.outputs.backend == 'true'\n"
     assert condition in jobs['backend-build'], 'Backend build must follow backend selection'
-    assert condition in live, 'Real browser must follow backend selection'
-    assert "required.update({'backend-build', 'backend-swift-tests', 'backend-scripts', 'frontend-live'})" in jobs['verify'], (
-        'Final gate must require all real backend checks together')
     assert 'if [[ "$VERIFY_EVENT" == pull_request || "$VERIFY_EVENT" == push ]]; then\n            args+=(--pr)' in jobs['backend-scripts'], (
         'PRs and main pushes use quick checks; manual Verify uses the full matrix')
+
+
+def check_rust(workflow, dockerfile):
+    jobs = workflow_jobs(workflow)
+    tests, build, shards, parity = (jobs[name] for name in (
+        'backend-rust', 'backend-rust-build', 'backend-rust-scripts', 'backend-parity'))
+    for job in (tests, build):
+        version = re.search(r'^      RUSTUP_TOOLCHAIN: ([\d.]+)$', job, re.M)
+        assert version and f'ARG RUST_BUILD_IMAGE=rust:{version[1]}-' in dockerfile, (
+            'Verify and the Rust candidate must use the same Rust version')
+    for job in (tests, shards):
+        assert "    if: needs.changes.outputs.rust == 'true'\n" in job, 'Rust jobs must follow Rust selection'
+    assert "    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'\n" in build, (
+        'Rust protocol and frontend-only changes must both build the optimized gateway')
+    assert 'run: ./scripts/verify_rust.sh --crate-tests' in tests, 'Retain Rust crate tests'
+    assert './scripts/verify_rust.sh --release-build' in build and '-C rust/gateway/target/release codexone' in build, (
+        'Package the optimized gateway executable from the selected commit')
+    assert 'needs: [changes, backend-rust-build]' in shards, 'Rust protocol checks need the matching build'
+    assert 'shard: [1/4, 2/4, 3/4, 4/4]' in shards, 'Rust must run all four protocol shards'
+    assert 'name: backend-rust-binaries' in shards and 'digest-mismatch: error' in shards, (
+        'Rust protocol checks must restore the matching gateway artifact')
+    assert """./scripts/verify.sh --backend-scripts '${{ matrix.shard }}' "${args[@]}" --rust""" in shards, (
+        'Use the Rust protocol shard entry point')
+    assert ("if: matrix.shard == '3/4'\n"
+            '        run: python3 scripts/rust_compat/execution_recovery.py --binary "$CODEXONE_BACKEND_BIN_DIR/codexone"'
+            ) in shards, 'Run execution recovery once against the matching optimized binary'
+    assert 'needs: [changes, backend-build, backend-rust-build]' in parity and 'scripts/rust_compat/compare.py' in parity, (
+        'Cross-backend checks must exercise both matching binaries')
 
 
 def check():
@@ -147,8 +191,9 @@ def check():
         'Dev container Node.js must match CI')
     check_release(release, dockerfile, tls, (root / 'scripts/verify.sh').read_text())
     check_live_browser(workflow)
+    check_rust(workflow, dockerfile)
     print(f'PASS: Playwright {image[0]} matches lockfile; Swift build/shards/cache and dev container pins match')
-    print('PASS: Actions pins, optimized release coverage, immutable artifacts, TLS and publication gate match policy')
+    print('PASS: Rust toolchain and Verify gate, Actions pins, optimized release coverage, immutable artifacts and TLS match policy')
 
 
 if __name__ == '__main__':

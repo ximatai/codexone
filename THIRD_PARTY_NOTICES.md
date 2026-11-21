@@ -8,6 +8,8 @@
 
 容器构建在 `deploy/Dockerfile` 中收集 Swift checkouts 与 npm 生产依赖的 LICENSE/NOTICE/COPYING，分发到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，项目 LICENSE 在 `/opt/codexone/LICENSE`；系统包原有版权材料须保留。安装验证要求运行依赖具有许可正文，不能因清单存在就声称实际镜像已验收。
 
+Rust 候选构建从网关 `Cargo.lock` 对应的 vendored crates 收集 LICENSE、NOTICE、COPYING、COPYRIGHT 和 UNLICENSE，保留 crate 版本与文件路径，放在 `/opt/codexone/licenses/rust`。包含各 crate 随包分发的多选许可文本。
+
 独立二进制和 SPA 分发也必须附上适用 LICENSE、版权与 NOTICE，参见[发版规则](docs/development/releasing.md)。`web/licenses` 为漏带许可正文的锁定包提供补充。
 
 ## npm 锁定依赖
@@ -314,3 +316,13 @@
 ## 相关文档
 
 [项目许可](LICENSE) · [来源声明](docs/reference/provenance.md) · [npm 补充许可](web/licenses/README.md)
+
+## Rust HTTP 压缩依赖
+
+Rust 网关的锁文件记录以下压缩依赖。分发 Rust 二进制时随附对应锁定包的许可正文和版权材料。
+
+| 包 | 版本 | 声明许可 | 随包正文 |
+|---|---|---|---|
+| `zstd` | 0.13.5 | BSD-3-Clause | `LICENSE` |
+| `zstd-safe` | 7.4.1 | BSD-3-Clause | `LICENSE` |
+| `zstd-sys` | 2.1.3+zstd.1.5.7 | BSD-3-Clause AND BSD-2-Clause | `LICENSE`、`LICENSE.BSD-2-Clause`、`LICENSE.BSD-3-Clause`，以及内置 zstd 1.5.7 的版权与许可材料 |
