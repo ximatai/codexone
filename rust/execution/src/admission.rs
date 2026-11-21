@@ -434,8 +434,8 @@ fn uuid_shape(value: &str) -> bool {
         })
 }
 
-fn restore_allows_admission(tx: &Transaction<'_>, managed: bool, now: i64) -> Result<()> {
-    let (present, record): (bool, Option<String>) = tx.query_row(
+pub(crate) fn restore_allows_admission(db: &Connection, managed: bool, now: i64) -> Result<()> {
+    let (present, record): (bool, Option<String>) = db.query_row(
         "SELECT restore_json IS NOT NULL,
           CASE WHEN length(CAST(restore_json AS BLOB))<=16384 THEN restore_json END
          FROM maintenance_state WHERE id=1",

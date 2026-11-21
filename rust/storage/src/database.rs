@@ -54,6 +54,7 @@ impl From<rusqlite::Error> for DatabaseError {
 pub struct Database {
     connection: Connection,
     _lock: File,
+    path: PathBuf,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -189,7 +190,13 @@ impl Database {
         Ok(Self {
             connection,
             _lock: lock,
+            path,
         })
+    }
+
+    /// The canonical path protected by this database's instance lock.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Borrow the locked writer for adapter queries.

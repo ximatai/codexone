@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
@@ -99,7 +99,13 @@ pub enum ExecutionStatus {
 
 struct Gate {
     sender: Option<SyncSender<Job>>,
-    status: ExecutionStatus,
+    status: watch::Sender<ExecutionStatus>,
+}
+
+impl Gate {
+    fn status(&self) -> ExecutionStatus {
+        *self.status.borrow()
+    }
 }
 
 struct Inner {
@@ -121,13 +127,13 @@ impl Inner {
     }
 
     fn fail(&self) {
-        self.gate().status = ExecutionStatus::Failed;
+        self.gate().status.send_replace(ExecutionStatus::Failed);
     }
 
     fn enqueue(&self, job: Job, admission: bool) -> Result<()> {
-        let mut gate = self.gate();
+        let gate = self.gate();
         if admission {
-            match gate.status {
+            match gate.status() {
                 ExecutionStatus::Accepting => {}
                 ExecutionStatus::Failed => return Err(Error::StorageUnavailable),
                 _ => return Err(Error::Closed),
@@ -135,7 +141,7 @@ impl Inner {
         }
         let sender = gate.sender.as_ref().ok_or(Error::Closed)?;
         if let Err(error) = sender.try_send(job) {
-            gate.status = ExecutionStatus::Failed;
+            gate.status.send_replace(ExecutionStatus::Failed);
             // A rejected job can own a semaphore permit. Drop after releasing the gate.
             drop(gate);
             return match error {
@@ -158,7 +164,7 @@ impl Drop for WorkerExit {
             let mut gate = inner.gate();
             gate.sender.take();
             if thread::panicking() {
-                gate.status = ExecutionStatus::Failed;
+                gate.status.send_replace(ExecutionStatus::Failed);
             }
         }
         self.done.send_replace(true);
@@ -173,10 +179,8 @@ struct Writer {
 }
 
 impl Writer {
-    fn open(path: PathBuf, options: Options) -> Result<Self> {
-        let path = path.canonicalize().map_err(|_| Error::StorageUnavailable)?;
-        let db = Database::open_existing(&path)?;
-        let reserve = StorageReserve::open(&path)?;
+    fn open(db: Database, options: Options) -> Result<Self> {
+        let reserve = StorageReserve::open(db.path())?;
         let mut writer = Self {
             db,
             reserve,
@@ -245,6 +249,19 @@ pub struct ExecutionService {
 impl ExecutionService {
     /// Open a v19 database, acquire the instance lock and recover abandoned intents before returning.
     pub async fn open(path: impl AsRef<Path>, options: Options) -> Result<Self> {
+        let path = path.as_ref().to_owned();
+        Self::start(move || Ok(Database::open_existing(path)?), options).await
+    }
+
+    /// Transfer an initialized writer and its instance lock, then recover abandoned intents.
+    pub async fn open_database(db: Database, options: Options) -> Result<Self> {
+        Self::start(move || Ok(db), options).await
+    }
+
+    async fn start(
+        open: impl FnOnce() -> Result<Database> + Send + 'static,
+        options: Options,
+    ) -> Result<Self> {
         if matches!(&options.identity, IdentitySource::Managed(id) if !valid_id(id))
             || !(-12 * 3600..=14 * 3600).contains(&options.day_offset)
             || !(1..=16).contains(&options.capacity)
@@ -263,7 +280,7 @@ impl ExecutionService {
             pool_enabled: matches!(options.identity, IdentitySource::Pool),
             gate: Mutex::new(Gate {
                 sender: Some(sender),
-                status: ExecutionStatus::Accepting,
+                status: watch::Sender::new(ExecutionStatus::Accepting),
             }),
             regular: Arc::new(Semaphore::new(REGULAR_CAPACITY)),
             tickets: Arc::new(Semaphore::new(capacity)),
@@ -275,12 +292,11 @@ impl ExecutionService {
             inner: Arc::downgrade(&inner),
             done: done_tx,
         };
-        let path = path.as_ref().to_owned();
         thread::Builder::new()
             .name("codexone-execution".into())
             .spawn(move || {
                 let _exit = exit;
-                match Writer::open(path, options) {
+                match open().and_then(|db| Writer::open(db, options)) {
                     Ok(mut writer) => {
                         if ready_tx.send(Ok(())).is_ok() {
                             for job in receiver {
@@ -299,7 +315,28 @@ impl ExecutionService {
     }
 
     pub fn status(&self) -> ExecutionStatus {
-        self.inner.gate().status
+        self.inner.gate().status()
+    }
+
+    /// Resolve on a fatal command or an unexpected writer panic, including prior failures.
+    pub async fn wait_until_failed(&self) {
+        let mut status = self.inner.gate().status.subscribe();
+        let _ = status
+            .wait_for(|status| *status == ExecutionStatus::Failed)
+            .await;
+    }
+
+    /// Use the same storage and restore admission gates as the writer. The existing command
+    /// budget bounds concurrent probes, which report unavailable when the queue is saturated.
+    pub async fn admission_ready(&self) -> bool {
+        self.command(true, |writer| {
+            writer.reserve.check_admission()?;
+            let managed = !matches!(writer.options.identity, IdentitySource::Static(_));
+            admission::restore_allows_admission(writer.db.connection(), managed, writer.now()?)
+        })
+        .await
+        .is_ok()
+            && self.status() == ExecutionStatus::Accepting
     }
 
     pub fn outstanding(&self) -> usize {
@@ -307,9 +344,9 @@ impl ExecutionService {
     }
 
     pub fn stop_admission(&self) {
-        let mut gate = self.inner.gate();
-        if gate.status == ExecutionStatus::Accepting {
-            gate.status = ExecutionStatus::Draining;
+        let gate = self.inner.gate();
+        if gate.status() == ExecutionStatus::Accepting {
+            gate.status.send_replace(ExecutionStatus::Draining);
         }
     }
 
@@ -333,8 +370,8 @@ impl ExecutionService {
     pub async fn force_shutdown(&self) -> Result<()> {
         {
             let mut gate = self.inner.gate();
-            if gate.status != ExecutionStatus::Failed {
-                gate.status = ExecutionStatus::Closed;
+            if gate.status() != ExecutionStatus::Failed {
+                gate.status.send_replace(ExecutionStatus::Closed);
             }
             gate.sender.take();
         }
@@ -369,7 +406,7 @@ impl ExecutionService {
                 if reply.is_closed() {
                     return;
                 }
-                let status = inner.gate().status;
+                let status = inner.gate().status();
                 let result = match (opening_attempt, status) {
                     (true, ExecutionStatus::Accepting) | (false, _) => body(writer),
                     (true, ExecutionStatus::Failed) => Err(Error::StorageUnavailable),

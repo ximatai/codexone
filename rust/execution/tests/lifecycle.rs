@@ -512,6 +512,9 @@ async fn failure_before_commit_or_during_settlement_never_loses_the_intent_barri
         Some(ExecutionError::StorageUnavailable)
     );
     assert_eq!(service.status(), ExecutionStatus::Failed);
+    tokio::time::timeout(Duration::from_secs(1), service.wait_until_failed())
+        .await
+        .unwrap();
     assert_eq!(
         service.snapshot("rollback").await.err(),
         Some(ExecutionError::UnknownAttempt)
@@ -534,11 +537,20 @@ async fn failure_before_commit_or_during_settlement_never_loses_the_intent_barri
          BEGIN SELECT RAISE(ABORT,'synthetic settlement failure'); END;",
     )
     .unwrap();
+    let failed = tokio::spawn({
+        let service = service.clone();
+        async move { service.wait_until_failed().await }
+    });
+    tokio::task::yield_now().await;
     turn.finish(Some(Outcome::new(
         Some(Failure::AuthenticationRejected),
         NOW,
     )))
     .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), failed)
+        .await
+        .unwrap()
+        .unwrap();
     let intent = service.snapshot("interrupted").await.unwrap();
     assert_eq!(intent.state, State::Intent);
     assert_eq!(intent.outcome, None);
@@ -689,6 +701,7 @@ async fn capacity_and_shutdown_keep_unhanded_leases_recoverable() {
 async fn restore_freeze_is_enforced_in_the_admission_transaction() {
     let fixture = Fixture::new(None, None);
     let service = fixture.open(1, 0).await;
+    assert!(service.admission_ready().await);
     let db = fixture.raw();
     let id = "00000000-0000-0000-0000-000000000001";
     let mut record = json!({
@@ -705,6 +718,7 @@ async fn restore_freeze_is_enforced_in_the_admission_transaction() {
         .unwrap()
     };
     set(&record);
+    assert!(!service.admission_ready().await);
     assert_eq!(
         service
             .admit(request(&service, "unreconciled", SECRET).await)
@@ -719,6 +733,7 @@ async fn restore_freeze_is_enforced_in_the_admission_transaction() {
         "missingUnresolvedRequests": 0, "missingUnresolvedMicros": 0, "freezeUntilUnixSeconds": NOW + 86_400
     });
     set(&record);
+    assert!(!service.admission_ready().await);
     assert_eq!(
         service
             .admit(request(&service, "frozen", SECRET).await)
@@ -727,6 +742,7 @@ async fn restore_freeze_is_enforced_in_the_admission_transaction() {
         Some(ExecutionError::MaintenanceRequired)
     );
     fixture.advance(86_400);
+    assert!(service.admission_ready().await);
     drop(
         service
             .admit(request(&service, "thawed", SECRET).await)
@@ -778,6 +794,7 @@ async fn native_image_lower_bound_and_disk_reserve_gate_admission() {
         .unwrap()
         .set_len(0)
         .unwrap();
+    assert!(!service.admission_ready().await);
     let available_key = request(&service, "pressure", SECOND).await;
     assert_eq!(
         service.admit(available_key.clone()).await.err(),
@@ -788,8 +805,41 @@ async fn native_image_lower_bound_and_disk_reserve_gate_admission() {
         Some(ExecutionError::UnknownAttempt)
     );
     service.maintain_storage().await.unwrap();
+    assert!(service.admission_ready().await);
     drop(service.admit(available_key).await.unwrap());
     service.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn transferring_the_database_keeps_the_instance_locked_until_shutdown() {
+    let fixture = Fixture::new(None, None);
+    let database = Database::open_or_create(&fixture.db).unwrap();
+    let (entered, ready_to_check) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let ready_hook = std::sync::Mutex::new(Some((entered, wait)));
+    let opening = tokio::spawn(ExecutionService::open_database(
+        database,
+        Options::new(ACCOUNT).with_clock(move || {
+            if let Some((entered, wait)) = ready_hook.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(3)).unwrap();
+            }
+            NOW
+        }),
+    ));
+    ready_to_check.await.unwrap();
+    assert_eq!(
+        Database::migrate(&fixture.db),
+        Err(DatabaseError::InstanceLocked)
+    );
+    release.send(()).unwrap();
+    let service = opening.await.unwrap().unwrap();
+    assert_eq!(
+        Database::migrate(&fixture.db),
+        Err(DatabaseError::InstanceLocked)
+    );
+    service.shutdown().await.unwrap();
+    Database::migrate(&fixture.db).unwrap();
 }
 
 #[tokio::test]
@@ -825,6 +875,25 @@ async fn cancelling_admission_while_committing_hands_off_the_undelivered_lease()
         tokio::spawn(async move { service.admit(request).await })
     };
     reached_transaction.await.unwrap();
+    let mut probes = Vec::new();
+    // The blocked admission occupies one of the 16 regular command slots.
+    for _ in 0..15 {
+        let mut probe = Box::pin(service.admission_ready());
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(probe.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        // Keep ownership of the queued command until the queue-full probe completes.
+        probes.push(probe);
+    }
+    assert!(
+        !tokio::time::timeout(Duration::from_millis(100), service.admission_ready())
+            .await
+            .unwrap()
+    );
+    assert_eq!(service.status(), ExecutionStatus::Accepting);
+    drop(probes);
     task.abort();
     assert!(task.await.err().unwrap().is_cancelled());
     release.send(()).unwrap();
