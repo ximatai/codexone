@@ -716,11 +716,32 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
         read_json(&mut provider).await.get("generate"),
         Some(&JsonValue::Bool(false))
     );
-    provider.send(text(COMPLETED)).await.unwrap();
-    assert_eq!(
-        member(&read_json(&mut client).await, "type"),
-        "response.completed"
-    );
+    let metadata = r#"{"type":"response.metadata","headers":{"x-codex-turn-state":"synthetic"}}"#;
+    provider.send(text(metadata)).await.unwrap();
+    for kind in [
+        "response.created",
+        "response.in_progress",
+        "response.completed",
+    ] {
+        provider
+            .send(text(&format!(
+                r#"{{"type":"{kind}","response":{{"id":"resp_warmup","output":null}}}}"#
+            )))
+            .await
+            .unwrap();
+        if kind == "response.created" {
+            assert_eq!(
+                member(&read_json(&mut client).await, "type"),
+                "response.metadata"
+            );
+        }
+        let event = read_json(&mut client).await;
+        assert_eq!(member(&event, "type"), kind);
+        assert_eq!(
+            event.get("response").unwrap().get("output"),
+            Some(&JsonValue::Null)
+        );
+    }
 
     for (lane, input) in [("alpha", "one"), ("alpha", "next"), ("beta", "parallel")] {
         client.send(text(&format!(r#"{{"type":"response.create","model":"example","stream_id":"{lane}","input":"{input}"}}"#))).await.unwrap();
@@ -796,6 +817,80 @@ async fn native_warmup_and_overlapping_lanes_preserve_fifo_and_late_controls() {
             .iter()
             .any(|(_, event)| event == "response.interrupt.accepted")
     );
+}
+
+#[tokio::test]
+async fn native_warmup_rejects_generated_content_and_reports_fixed_reasons() {
+    for (event, reason) in [
+        (
+            r#"{"type":"response.completed","response":{"id":"resp_case","output":[{"type":"message"}]}}"#,
+            "warmup_nonempty_output",
+        ),
+        (
+            r#"{"type":"response.completed","response":{"id":"resp_case","output":{}}}"#,
+            "warmup_invalid_output",
+        ),
+        (
+            r#"{"type":"response.output_text.delta","response_id":"resp_case","delta":"synthetic"}"#,
+            "warmup_generated_event",
+        ),
+        (
+            r#"{"type":"response.metadata","response_id":"resp_case","metadata":{}}"#,
+            "warmup_response_metadata",
+        ),
+        (
+            r#"{"type":"responsesapi.websocket_timing","duration_ms":1.25}"#,
+            "warmup_websocket_timing",
+        ),
+        (
+            r#"{"type":"synthetic.unknown","response_id":"resp_case"}"#,
+            "warmup_non_lifecycle_event",
+        ),
+    ] {
+        let app = Arc::new(TestApp::default());
+        let (mut client, mut provider, task) = native_client(app.clone()).await;
+        client
+            .send(text(
+                r#"{"type":"response.create","model":"example","generate":false,"input":[]}"#,
+            ))
+            .await
+            .unwrap();
+        let mut provider = provider_ready(&mut provider).await;
+        assert_eq!(
+            read_json(&mut provider).await.get("generate"),
+            Some(&JsonValue::Bool(false))
+        );
+        provider
+            .send(text(
+                r#"{"type":"response.created","response":{"id":"resp_case","output":[]}}"#,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            member(&read_json(&mut client).await, "type"),
+            "response.created"
+        );
+        provider.send(text(event)).await.unwrap();
+        let error = read_json(&mut client).await;
+        let error = error.get("error").unwrap();
+        let protocol = ProtocolError::new(502, "invalid_upstream_warmup").with_detail(reason);
+        assert_eq!(member(error, "code"), protocol.code);
+        assert!(error.get("reason").is_none());
+        assert!(matches!(
+            timeout(TEST_TIMEOUT, task).await.unwrap().unwrap(),
+            NativeEnd::Protocol(error) if error == protocol
+        ));
+        assert_eq!(app.connects.load(Ordering::Relaxed), 1);
+        assert_eq!(app.admissions.load(Ordering::Relaxed), 1);
+        assert!(matches!(
+            app.finished.lock().unwrap().as_slice(),
+            [(0, NativeFinish::Indeterminate {
+                protocol: error,
+                client_cancelled: false,
+                socket: None,
+            })] if *error == protocol
+        ));
+    }
 }
 
 #[tokio::test]

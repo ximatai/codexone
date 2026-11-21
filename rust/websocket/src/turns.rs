@@ -241,9 +241,9 @@ impl Turns {
         if turn.warmup
             && kind != "error"
             && !semantics.connection_metadata
-            && (!semantics.lifecycle || response.is_some_and(has_output))
+            && let Some(reason) = warmup_rejection(kind, semantics, response)
         {
-            return Err(ProtocolError::new(502, "invalid_upstream_warmup"));
+            return Err(ProtocolError::new(502, "invalid_upstream_warmup").with_detail(reason));
         }
         turn.bytes = turn.bytes.saturating_add(bytes);
         if turn.bytes > MAX_RESPONSE_BYTES {
@@ -268,10 +268,25 @@ impl Turns {
     }
 }
 
-fn has_output(response: &JsonValue) -> bool {
-    response
-        .get("output")
-        .is_some_and(|output| !output.as_array().is_some_and(<[_]>::is_empty))
+fn warmup_rejection(
+    kind: &str,
+    semantics: EventSemantics,
+    response: Option<&JsonValue>,
+) -> Option<&'static str> {
+    if !semantics.lifecycle {
+        return Some(match kind {
+            "response.metadata" | "codex.response.metadata" => "warmup_response_metadata",
+            "responsesapi.websocket_timing" => "warmup_websocket_timing",
+            _ if semantics.carries_item || semantics.carries_item_id => "warmup_generated_event",
+            _ => "warmup_non_lifecycle_event",
+        });
+    }
+    match response.and_then(|response| response.get("output")) {
+        None | Some(JsonValue::Null) => None,
+        Some(JsonValue::Array(items)) if items.is_empty() => None,
+        Some(JsonValue::Array(_)) => Some("warmup_nonempty_output"),
+        Some(_) => Some("warmup_invalid_output"),
+    }
 }
 
 fn id(value: &JsonValue) -> Option<&str> {
