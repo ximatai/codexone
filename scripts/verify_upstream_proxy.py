@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Explicit proxy sockets, no fallback/credential leak, bounded failure diagnostics and durable unknown."""
+"""Verify data-plane proxies. The identity-runtime TLS contract covers OAuth and quota CONNECT."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import select
-import selectors
 import os
-import http.client
-import re
 import ssl
 import subprocess
 import socket
@@ -17,9 +14,6 @@ import sqlite3
 import tempfile
 import threading
 import time
-from urllib.parse import parse_qs,urlsplit,urlencode
-from http.server import ThreadingHTTPServer
-from verify_account_admin_ui import SyntheticOAuth,ADMIN
 from trial_provider import Handler, Server
 from verify_protocol import TOKEN, connect, start, stop
 from verify_websocket import dial, turn
@@ -118,54 +112,6 @@ def ledger(root):
 
 
 
-def authorization_and_quota(binary):
-    provider=ThreadingHTTPServer(('127.0.0.1',0),SyntheticOAuth)
-    provider.rust=False
-    provider.guard=threading.Lock();provider.control={};provider.calls=0;provider.quota_calls=0;provider.issued=[]
-    provider_thread=threading.Thread(target=provider.serve_forever);provider_thread.start()
-    proxy=Proxy(provider.server_port);proxy_thread=threading.Thread(target=proxy.serve_forever);proxy_thread.start()
-    try:
-        with tempfile.TemporaryDirectory(prefix='codexone-proxy-auth-') as temporary:
-            root=Path(temporary);root.chmod(0o700);web=root/'web';web.mkdir(mode=0o700)
-            (web/'assets').mkdir(mode=0o700);(web/'index.html').write_text('Synthetic API-only proxy fixture');(web/'assets/app.js').write_text('console.log("synthetic");')
-            for name,value in [('admin',ADMIN),('master','6b'*32)]:
-                path=root/name;path.write_text(value);path.chmod(0o600)
-            process=subprocess.Popen([str(Path(binary).with_name('ExecutionProbe')),'--account-admin-ui',str(root),str(web),str(provider.server_port)],
-                env=dict(PATH=os.defpath,CODEXONE_UPSTREAM_HTTP_PROXY=f'http://127.0.0.1:{proxy.server_address[1]}'),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-            output=b''
-            try:
-                with selectors.DefaultSelector() as selector:
-                    selector.register(process.stdout,selectors.EVENT_READ);deadline=time.monotonic()+12
-                    while b'ADMIN_PORT ' not in output:
-                        assert time.monotonic()<deadline and process.poll() is None
-                        if selector.select(.1):output+=os.read(process.stdout.fileno(),4096)
-                port=int(re.search(rb'ADMIN_PORT (\d+)',output)[1])
-                def api(path,body):
-                    connection=http.client.HTTPConnection('127.0.0.1',port,timeout=8)
-                    try:
-                        connection.request('POST','/api/accounts/'+path,json.dumps(body),{'Authorization':'Bearer '+ADMIN,'Content-Type':'application/json'})
-                        response=connection.getresponse();payload=response.read();assert response.status==200
-                        return json.loads(payload)
-                    finally:connection.close()
-                flow=api('authorization',dict(target=None, method="callback"));query=parse_qs(urlsplit(flow['authorizationURL']).query)
-                provider.control.update(challenge=query['code_challenge'][0],nonce=query['nonce'][0])
-                callback='http://localhost:1455/auth/callback?'+urlencode(dict(state=query['state'][0],code='synthetic-code+/='))
-                account=api('authorization/'+flow['flowID'],dict(callbackURL=callback))['account']
-                assert provider.calls==1 and proxy.requests==1
-                api(account['id']+'/observe',{});assert provider.quota_calls==1 and proxy.requests==2
-                api(account['id']+'/refresh',dict(revision=account['revision']))
-                assert provider.calls==2 and proxy.requests==3
-                process.terminate();process.wait(10);output+=process.stdout.read()
-                assert process.returncode==0
-                for secret in [ADMIN,'6b'*32,*provider.issued,'synthetic-private-quota-marker']:
-                    assert secret.encode() not in output
-                    for file in (root/'state').glob('core.sqlite*'):assert secret.encode() not in file.read_bytes()
-            finally:stop(process)
-    finally:
-        proxy.close_owned();proxy_thread.join(5);provider.shutdown();provider.server_close();provider_thread.join(5)
-    print('PASS: OAuth code exchange, refresh and quota GET traverse the explicit proxy; secrets stay out of CONNECT/logs/ledger',flush=True)
-
-
 def stream_media_cases(binary,provider,proxy,owner,source):
     for media in ['missing','empty','typed','json','html','prefix','empty-essence','missing-html','missing-json','missing-partial','missing-malformed','missing-oversized']:
         root=owner/('media-'+media);root.mkdir(mode=0o700)
@@ -207,7 +153,7 @@ def stream_media_cases(binary,provider,proxy,owner,source):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',type=Path,required=True)
-    parser.add_argument('--rust', action='store_true', help='Use the Rust identity-runtime TLS contract for OAuth and quota proxying')
+    parser.add_argument('--rust', action='store_true', help='Compatibility flag for Rust verification callers')
     args = parser.parse_args()
     binary = str(args.binary.resolve())
     with tempfile.TemporaryDirectory(prefix='codexone-proxy-config-') as temporary:
@@ -332,9 +278,6 @@ def main():
     finally:
         proxy.close_owned();proxy_thread.join(5);provider.interrupt();provider.server_close();upstream_thread.join(5)
     assert not proxy_thread.is_alive() and not upstream_thread.is_alive() and not proxy.connections
-    # In Rust, the identity-runtime test-support TLS contract covers OAuth and quota CONNECT.
-    if not args.rust:
-        authorization_and_quota(binary)
 
 
 if __name__=='__main__':main()

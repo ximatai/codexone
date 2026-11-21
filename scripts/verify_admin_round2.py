@@ -19,9 +19,9 @@ def port_line(process, pattern):
     return port
 
 
-def verify_accounts(probe, binary, *, rust=False):
+def verify_accounts(probe, binary):
     schema = current_schema_version(binary)
-    with oauth_provider(rust=rust) as server:
+    with oauth_provider() as server:
         with tempfile.TemporaryDirectory(prefix='codexone-round2-') as directory:
             root = Path(directory)
             database = prepare(root)
@@ -30,7 +30,7 @@ def verify_accounts(probe, binary, *, rust=False):
             (web / 'index.html').write_text('<!doctype html><html><head><script type="module" src="/assets/entry.js"></script></head><body>synthetic</body></html>')
             (web / 'assets/entry.js').write_text('window.synthetic=true;')
             def start():
-                process, port, _ = start_gateway(probe, root, server, rust=rust, web=web)
+                process, port, _ = start_gateway(probe, root, server, web=web)
                 return process, port
             process, port = start()
             auth = AUTH
@@ -209,11 +209,9 @@ def verify_previous(binary, previous):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
-    probes = parser.add_mutually_exclusive_group(required=True)
-    probes.add_argument('--probe', type=Path)
-    probes.add_argument('--rust-probe', type=Path)
+    parser.add_argument('--rust-probe', type=Path, required=True)
     parser.add_argument('--previous-binary', type=Path)
     args = parser.parse_args()
-    verify_accounts(str((args.rust_probe or args.probe).resolve()), str(args.binary.resolve()), rust=args.rust_probe is not None)
+    verify_accounts(str(args.rust_probe.resolve()), str(args.binary.resolve()))
     if args.previous_binary:
         verify_previous(str(args.binary.resolve()), str(args.previous_binary.resolve()))

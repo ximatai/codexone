@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Verify offline keyring maintenance and backup retirement with synthetic credentials."""
 import argparse
-from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -12,9 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from verify_accounts import send, start
 from verify_admin import document, request
-from verify_execution import line, dispose
 from verify_managed_fixture import (
     AUTH, assert_disconnected, assert_refresh_denied, authorize, dispatched_refresh,
     kill, oauth_provider, prepare, refresh, start_gateway,
@@ -43,26 +40,8 @@ def metadata(database):
         return db.execute('SELECT id,namespace,revision,credential_version,mode,authorization,refresh_intent,created_at_epoch FROM accounts ORDER BY id').fetchall()
 
 
-def seed_swift(binary, probe, root, database, state, admin, old, ring):
-    process = start(probe, database, old)
-    try:
-        send(process, 'account-seed-maintenance', 'accounts_seeded')
-        command(binary, state, admin, ring, '--reencrypt-credentials', root/'online', ok=False)
-        assert not (root/'online').exists()
-        send(process, 'close', 'closed');assert process.wait(timeout=5) == 0
-    finally:dispose(process)
-    # A real refresh writes the active key while 19 credentials retain their legacy version.
-    process = start(probe, database, ring)
-    try:
-        send(process, 'account-refresh', 'refresh_started')
-        send(process, 'account-commit', 'refresh_committed')
-        send(process, 'account-refresh', 'refresh_started')
-        send(process, 'close', 'closed');assert process.wait(timeout=5) == 0
-    finally:dispose(process)
-
-
-def seed_rust(binary, probe, provider, root, database, state, admin, ring):
-    process, port, _ = start_gateway(probe, root, provider, rust=True)
+def seed_accounts(binary, probe, provider, root, database, state, admin, ring):
+    process, port, _ = start_gateway(probe, root, provider)
     try:
         legacy = authorize(port, provider, identity='synthetic-legacy-account')
         account = authorize(port, provider)
@@ -73,7 +52,7 @@ def seed_rust(binary, probe, provider, root, database, state, admin, ring):
         assert process.wait(timeout=5) == 0
     finally:
         release(process)
-    process, port, _ = start_gateway(probe, root, provider, rust=True, master=ring)
+    process, port, _ = start_gateway(probe, root, provider, master=ring)
     try:
         account = document(refresh(port, account))['account']
         assert (account['authorization'], account['credentialVersion']) == ('ready', 2)
@@ -88,24 +67,16 @@ def seed_rust(binary, probe, provider, root, database, state, admin, ring):
     return account['id']
 
 
-def verify(binary, probe, *, rust=False):
+def verify(binary, probe):
     with (tempfile.TemporaryDirectory(prefix='codexone-key-maintenance-') as temporary,
-          (oauth_provider(rust=True) if rust else nullcontext()) as provider):
-        root = Path(temporary).resolve();root.chmod(0o700)
-        state = root / 'state'
-        database = state / 'core.sqlite'
-        old, ring, reduced, wrong, admin = [root / name for name in ('master', 'ring', 'candidate', 'wrong-active', 'admin')]
+          oauth_provider() as provider):
+        root = Path(temporary).resolve()
+        database = prepare(root, '6a' * 32)
+        state = database.parent
+        ring, reduced, admin = [root / name for name in ('ring', 'candidate', 'admin')]
         private_json(ring, {'format':1, 'active':'7b'*32, 'decryptOnly':['6a'*32]})
         private_json(reduced, {'format':1, 'active':'7b'*32, 'decryptOnly':[]})
-        private_json(wrong, {'format':1, 'active':'6a'*32, 'decryptOnly':['7b'*32]})
-        if rust:
-            prepare(root, '6a'*32)
-            interrupted_id = seed_rust(binary, probe, provider, root, database, state, admin, ring)
-        else:
-            state.mkdir(mode=0o700)
-            old.write_text('6a'*32);old.chmod(0o600)
-            admin.write_text('synthetic-independent-administrator-' + 'a'*40);admin.chmod(0o600)
-            seed_swift(binary, probe, root, database, state, admin, old, ring)
+        interrupted_id = seed_accounts(binary, probe, provider, root, database, state, admin, ring)
         original_metadata = metadata(database)
         before = command(binary, state, admin, ring, '--key-status')
         assert len(before['requiredCurrentKeyIDs']) == 2 and before.get('checkpoint') is None
@@ -125,25 +96,8 @@ def verify(binary, probe, *, rust=False):
         command(binary, state, admin, reduced, '--reencrypt-credentials', root/'missing-key', ok=False)
         assert not (root/'missing-key').exists()
         bundle = root / 'pre-rotation'
-        if rust:
-            # The maintenance crate exercises interruption at its private post-commit boundary.
-            complete = command(binary, state, admin, ring, '--reencrypt-credentials', bundle)
-        else:
-            process = subprocess.Popen([probe, '--key-maintenance-probe', str(database), str(ring), str(bundle)],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0, env={'PATH':os.defpath})
-            try:
-                assert line(process) == 'page_committed:8'
-                process.kill();process.wait(timeout=5)
-            finally:dispose(process)
-            progress = command(binary, state, admin, ring, '--key-status')
-            assert progress['checkpoint']['rewritten'] == 8 and not progress['checkpoint']['complete']
-            assert len(progress['requiredCurrentKeyIDs']) == 2 and metadata(database) == original_metadata
-            refused = command(binary, state, admin, ring, ok=False)
-            assert b'Incomplete credential reencryption' in refused.stderr and b'LISTENING' not in refused.stdout
-            command(binary, state, admin, wrong, '--resume-reencryption', ok=False)
-            command(binary, state, admin, reduced, '--resume-reencryption', ok=False)
-            command(binary, state, admin, ring, '--backup', root/'pending-backup', ok=False)
-            assert not (root/'pending-backup').exists()
+        # The maintenance crate exercises interruption at its private post-commit boundary.
+        complete = command(binary, state, admin, ring, '--reencrypt-credentials', bundle)
         for path in bundle.iterdir():path.chmod(0o400)
         bundle.chmod(0o500)
         manifest = command(binary, state, admin, ring, '--verify-backup', bundle)
@@ -154,9 +108,7 @@ def verify(binary, probe, *, rust=False):
         assert restored['state'] == 'restored_unreconciled'
         bundle.chmod(0o700)
         for path in bundle.iterdir():path.chmod(0o600)
-        if not rust:
-            complete = command(binary, state, admin, ring, '--resume-reencryption')
-        assert complete['checkpoint']['complete'] and complete['checkpoint']['rewritten'] == (1 if rust else 19)
+        assert complete['checkpoint']['complete'] and complete['checkpoint']['rewritten'] == 1
         assert complete['requiredCurrentKeyIDs'] == [complete['activeKeyID']]
         assert command(binary, state, admin, ring, '--resume-reencryption') == complete
         assert metadata(database) == original_metadata
@@ -183,31 +135,21 @@ def verify(binary, probe, *, rust=False):
                                 'retainedBackups':[str(fresh)], 'restoreDrills':[str(new_drill)]})
         evidence = command(binary, state, admin, reduced, '--check-key-retirement', inventory)
         assert evidence['requiredBackupKeyIDs'] == [complete['activeKeyID']]
-        if rust:
-            process, port, _ = start_gateway(probe, root, provider, rust=True, master=reduced)
-            try:
-                accounts = document(request(port, 'GET', '/api/accounts', **AUTH))['accounts']
-                account, = [account for account in accounts if account['id'] == interrupted_id]
-                assert (account['authorization'], account['credentialVersion'], account['mode']) == ('auth_uncertain', 2, 'disabled')
-                calls = provider.calls
-                assert_refresh_denied(port, account)
-                assert provider.calls == calls
-                process.terminate()
-                assert process.wait(timeout=5) == 0
-            finally:
-                release(process)
-        else:
-            process = start(probe, database, reduced)
-            try:
-                send(process, 'account-state', 'auth_uncertain:2:disabled')
-                send(process, 'account-refresh', 'refresh_denied')
-                send(process, 'close', 'closed');assert process.wait(timeout=5) == 0
-            finally:dispose(process)
+        process, port, _ = start_gateway(probe, root, provider, master=reduced)
+        try:
+            accounts = document(request(port, 'GET', '/api/accounts', **AUTH))['accounts']
+            account, = [account for account in accounts if account['id'] == interrupted_id]
+            assert (account['authorization'], account['credentialVersion'], account['mode']) == ('auth_uncertain', 2, 'disabled')
+            calls = provider.calls
+            assert_refresh_denied(port, account)
+            assert provider.calls == calls
+            process.terminate()
+            assert process.wait(timeout=5) == 0
+        finally:
+            release(process)
+        secrets = [b'6a' * 32, b'7b' * 32, str(root).encode(), *(value.encode() for value in provider.issued)]
         for path in state.glob('core.sqlite*'):
             content = path.read_bytes()
-            secrets = [b'6a'*32,b'7b'*32,b'synthetic-access-1',b'synthetic-refresh-1',str(root).encode()]
-            if rust:
-                secrets += [value.encode() for value in provider.issued]
             assert all(secret not in content for secret in secrets)
         print('PASS: keyring legacy/mixed active writes, live lock, pre-backup and CLI resume preserve context and refresh state')
         print('PASS: read-only old backup dependencies/restore, candidate-key retirement inventory and drill checks, explicit old-copy disposal, new-key-only reopen and secret-free storage/output')
@@ -216,12 +158,10 @@ def verify(binary, probe, *, rust=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',type=Path,required=True)
-    probes = parser.add_mutually_exclusive_group()
-    probes.add_argument('--probe',type=Path)
-    probes.add_argument('--rust-probe',type=Path)
+    parser.add_argument('--rust-probe', type=Path, required=True)
     args = parser.parse_args()
-    try:verify(str(args.binary.resolve()),str((args.rust_probe or args.probe or args.binary.parent/'ExecutionProbe').resolve()),
-               rust=args.rust_probe is not None)
+    try:
+        verify(str(args.binary.resolve()), str(args.rust_probe.resolve()))
     except Exception:
         print('FAIL: key maintenance verification; private diagnostics withheld',file=sys.stderr)
         raise SystemExit(1)
