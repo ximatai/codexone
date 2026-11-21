@@ -121,6 +121,8 @@ pub trait NativeApplication: Send + Sync + 'static {
 
     fn upstream_event(&self, _document: &JsonValue) {}
 
+    fn detached_event(&self, _identity: &Self::Identity, _document: &JsonValue) {}
+
     fn upstream_closed(&self, _attempt: &Self::Attempt, _socket: SocketEnd) {}
 
     fn upstream_reset(&self) {}
@@ -192,7 +194,13 @@ impl<A: NativeApplication> ReaderState<A> {
         }
     }
 
-    fn inspect(&mut self, app: &A, document: JsonValue, bytes: usize) -> Read<UpstreamPacket> {
+    fn inspect(
+        &mut self,
+        app: &A,
+        identity: &A::Identity,
+        document: JsonValue,
+        bytes: usize,
+    ) -> Read<UpstreamPacket> {
         app.upstream_event(&document);
         let route = self.turns.observe(&document, bytes);
         for (lane, turn) in &mut self.turns.active {
@@ -205,6 +213,9 @@ impl<A: NativeApplication> ReaderState<A> {
         match route {
             Ok(Route::Ignore) => Read::Ignore,
             Ok(route) => {
+                if matches!(&route, Route::Detached(_)) {
+                    app.detached_event(identity, &document);
+                }
                 if let Route::Turn {
                     lane,
                     warmup_timing,
@@ -674,6 +685,7 @@ impl<A: NativeApplication> Session<A> {
                 Ok(socket) => {
                     let reader = self.reader.clone();
                     let app = self.app.clone();
+                    let reader_identity = identity.clone();
                     self.upstream = Some(Peer::provider(
                         socket,
                         MAX_EVENT_BYTES,
@@ -685,6 +697,7 @@ impl<A: NativeApplication> Session<A> {
                             };
                             reader.lock().expect("provider reader state").inspect(
                                 app.as_ref(),
+                                &reader_identity,
                                 document,
                                 text.len(),
                             )

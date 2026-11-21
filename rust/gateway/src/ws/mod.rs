@@ -132,9 +132,13 @@ impl Provider {
     }
 
     pub fn observe_event(&self, event: &JsonValue) {
-        if let Some((pool, key, owner)) = &self.ownership
-            && let Some(token) = protocol::response_metadata_turn_state(event)
-        {
+        if let Some(token) = protocol::response_metadata_turn_state(event) {
+            self.observe_turn_token(token);
+        }
+    }
+
+    pub fn observe_turn_token(&self, token: &str) {
+        if let Some((pool, key, owner)) = &self.ownership {
             pool.observe_turn_token(key, owner, token);
         }
     }

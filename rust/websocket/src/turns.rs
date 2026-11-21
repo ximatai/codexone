@@ -4,8 +4,9 @@ use std::{
 };
 
 use codexone_responses::{
-    EventFailure, EventSemantics, JsonValue, MAX_RESPONSE_BYTES, Progress, ProtocolError,
-    ProviderFailure, Rates, ResponseStream, UsageConfig, event_type,
+    BindingKind, EventFailure, EventSemantics, JsonValue, MAX_RESPONSE_BYTES, Progress,
+    ProtocolError, ProviderFailure, Rates, ResponseStream, UsageConfig, correlated_bindings,
+    event_type,
 };
 use tokio::time::Instant;
 
@@ -165,8 +166,20 @@ impl Turns {
             return Err(INVALID_TURN.with_detail("upstream_turn_response_id"));
         }
         let identity = correlated.or(embedded);
-        if let Some(owner) = identity.and_then(|identity| self.ended.get(identity)) {
+        if let Some(identity) = identity
+            && let Some(owner) = self.ended.get(identity)
+        {
+            // A detached frame cannot go through the attempt's output binding barrier.
+            // A repeated lifecycle frame can only carry the already known response.
+            let has_unbound_output = semantics.carries_item
+                || semantics.carries_item_id
+                || (semantics.lifecycle
+                    && !correlated_bindings(document, false).is_ok_and(|bindings| {
+                        matches!(bindings.as_slice(), [binding]
+                            if binding.kind == BindingKind::Response && binding.raw_id == identity)
+                    }));
             if kind == "response.created"
+                || has_unbound_output
                 || (owner.warmup && is_timing && has_timing_business_members(document))
             {
                 return Ok(Route::Ignore);

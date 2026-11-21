@@ -29,6 +29,12 @@ http_headers = { "x-openai-actor-authorization" = "codexone" }
 
 provider 名称和本地门控值是兼容设置，不代表官方授权；网关以 Codex 官方客户端标识和官方 OAuth 客户端 ID 访问上游，存在[条款与账号风险](../reference/compatibility.md)。
 
+## CLI 0.171.0 的模型选择
+
+示例中的 `model` 应填写网关已启用且该 Key 获准使用的模型。CLI 0.171.0 在未指定模型且使用内置目录时默认选择 `gpt-6.2-sol`。若网关只启用了 `gpt-6.1-sol`，保留示例中的显式配置即可；省略它可能使首轮请求返回 403。
+
+如果希望 CLI 从网关目录选择模型，删除顶层的 `model`，在已有的 `[model_providers.codexone]` 段添加 `model_catalog_url = "https://<网关域名>/backend-api/codex/models"`。CLI 0.171.0 默认启用 API Key 模型发现；如果此前手动关闭过，请在 `[features]` 段将 `api_key_model_discovery` 恢复为 `true`。此路径已用 CLI 0.171.0 和合成目录验证。
+
 ## 会话和图片工具并发
 
 Codex 可能在会话流收尾前发起原生图片请求。Key 的最大并发按实际在途请求计数，会话和图片共享这个上限。要允许一个会话和一个图片请求重叠，给该用途的 Key 至少两个并发名额。
@@ -44,7 +50,7 @@ HTTP SSE 与 `ws://` 入口由同一来源网段规则保护。2026-11-01 已用
 - `http_headers` 必须写在 `[model_providers.<名称>]` 段内。TOML 中一行属于其上方最近的段，写在文件末尾会被其他段吸收并被忽略。
 - 改配置后需彻底退出 Desktop（含托盘）并新开会话，工具在会话开始时注册。
 - 只把带门控头的 provider 指向 CodexOne 或同类网关。网关不会把这个头转发给上游提供者（见[协议规范](../reference/specs/protocol.md)）；不要把带这个头的配置直接指向官方端点。
-- Key 需开通对应图片模型（如 `gpt-image-2`）才能生图。用 Key 连接时客户端使用内置模型目录，不读取网关 `/models`。
+- Key 需开通对应图片模型（如 `gpt-image-2`）才能生图。默认使用内置目录；CLI 0.171.0 可按上文显式启用网关目录发现。
 
 ## 排查
 
