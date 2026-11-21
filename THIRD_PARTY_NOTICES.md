@@ -314,3 +314,13 @@
 ## 相关文档
 
 [项目许可](LICENSE) · [来源声明](docs/reference/provenance.md) · [npm 补充许可](web/licenses/README.md)
+
+## Rust HTTP 压缩依赖
+
+Rust 网关的锁文件记录以下压缩依赖。分发 Rust 二进制时随附对应锁定包的许可正文和版权材料。
+
+| 包 | 版本 | 声明许可 | 随包正文 |
+|---|---|---|---|
+| `zstd` | 0.13.5 | BSD-3-Clause | `LICENSE` |
+| `zstd-safe` | 7.4.1 | BSD-3-Clause | `LICENSE` |
+| `zstd-sys` | 2.1.3+zstd.1.5.7 | BSD-3-Clause AND BSD-2-Clause | `LICENSE`、`LICENSE.BSD-2-Clause`、`LICENSE.BSD-3-Clause`，以及内置 zstd 1.5.7 的版权与许可材料 |
