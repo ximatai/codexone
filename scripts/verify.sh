@@ -142,7 +142,9 @@ case "${1:-all}" in
     shard="${2:?Expected shard i/4}"
     shift 2
     mode=''
-    if [[ "${1:-}" == --pr ]]; then mode=$1; shift; fi
+    case "${1:-}" in
+      --pr|--rust-release) mode=$1; shift ;;
+    esac
     if (( $# > 1 )); then echo "Unexpected backend scripts arguments: $*" >&2; exit 64; fi
     backend_scripts "$shard" "$mode" "${1:-}"
     ;;

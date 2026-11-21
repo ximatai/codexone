@@ -156,7 +156,7 @@ class ChangedPathsTests(unittest.TestCase):
             self.assertLessEqual(swift_only, swift)
             self.assertEqual(rust, swift - swift_only)
 
-    def test_quick_rust_shards_call_the_selected_binary_and_protocol_modes(self):
+    def test_rust_pr_and_release_shards_dispatch_their_protocol_modes(self):
         # Run the shell dispatcher without starting any gateway or provider.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -191,6 +191,19 @@ with open(os.environ['CALL_LOG'], 'a') as output:
                 'verify_images.py', 'verify_response_finish.py', 'verify_text_contract.py',
                 'verify_upload_deadline.py', 'verify_upstream_ws_body_limit.py', 'verify_upstream_zstd.py',
             })
+
+            log.unlink()
+            (root / 'ExecutionProbe').touch(mode=0o755)
+            subprocess.run(cmd[:-2] + ['--rust-release'], cwd=ROOT, env=env,
+                           check=True, capture_output=True)
+            release_calls = [json.loads(line) for line in log.read_text().splitlines()]
+            full = subprocess.check_output(
+                [sys.executable, 'scripts/backend_shards.py', '--list', 'all'],
+                cwd=ROOT, text=True).split()
+            self.assertCountEqual([call[0] for call in release_calls], full)
+            self.assertTrue(all('--smoke' not in call for call in release_calls))
+            self.assertIn(['scripts/verify_client_protocol.py', '--binary', str(binary),
+                           '--expect-provider-eof'], release_calls)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
