@@ -63,7 +63,7 @@ jobs:
           python3 scripts/prepare_release.py "${args[@]}" --output-dir artifacts --github-output "$GITHUB_OUTPUT"
           python3 scripts/check_docs.py
           python3 scripts/check_ci.py
-      # This namespace is separate from PR debug .build caches. No verification results are cached.
+      # This namespace is separate from Verify Cargo builds. No verification results are cached.
       - name: Restore optimized BuildKit layers
         if: github.event_name == 'push' || inputs.build_cache
         id: build-cache
@@ -97,7 +97,7 @@ jobs:
               runtime_cache_to+=(--cache-to "type=local,dest=$RUNNER_TEMP/release-buildkit-next/runtime,mode=max,ignore-error=true")
             fi
           fi
-          # Export the selected gateway and the Swift-only fixture, without verification RUN layers.
+          # Export the product gateway and separate Rust test harness, without verification RUN layers.
           docker buildx build --builder codexone-release --platform linux/amd64 --progress plain \
             "${cache_from[@]}" "${optimized_cache_to[@]}" --target verification-export \
             --build-arg APT_MIRROR="$CODEXONE_CI_APT_MIRROR" \
@@ -129,11 +129,11 @@ jobs:
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
           mkdir binaries
           docker cp "$container:/usr/local/bin/codexone" binaries/codexone
-          cp optimized-output/ExecutionProbe binaries/ExecutionProbe
+          cp optimized-output/RustGatewayProbe binaries/RustGatewayProbe
           cmp binaries/codexone optimized-output/codexone
           # Publish the digest of the executable shipped inside the image.
           sha256sum binaries/codexone | sed 's|binaries/codexone|codexone-linux-amd64|' > artifacts/binary-sha256.txt
-          tar -czf binaries/backend-binaries.tar.gz -C binaries codexone ExecutionProbe
+          tar -czf binaries/backend-binaries.tar.gz -C binaries codexone RustGatewayProbe
           printf 'binaries_archive_sha256=%s\n' "$(sha256sum binaries/backend-binaries.tar.gz | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/licenses"
           docker cp "$container:/opt/codexone/licenses/." "$RUNNER_TEMP/licenses/"
@@ -220,9 +220,11 @@ jobs:
         run: |
           docker run --rm --platform linux/amd64 --network none \
             --env PYTHONDONTWRITEBYTECODE=1 --env CODEXONE_BACKEND_BIN_DIR=/binaries \
+            --env CODEXONE_STORAGE_PRESSURE_ROOT=/pressure \
+            --tmpfs /pressure:rw,noexec,nosuid,size=448m,mode=0700 \
             --mount "type=bind,src=$PWD,dst=/build,readonly" \
             --mount "type=bind,src=$PWD/binaries,dst=/binaries,readonly" \
-            codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}' --rust-release
+            codexone:verification-tools bash scripts/verify.sh --backend-scripts '${{ matrix.shard }}' --release
   image-checks:
     needs: build
     runs-on: ubuntu-24.04

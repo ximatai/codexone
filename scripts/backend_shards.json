@@ -29,6 +29,8 @@
   ],
   [
     "verify_protocol.py",
+    "rust_compat/execution_recovery.py",
+    "rust_compat/readiness.py",
     "verify_gateway_diagnostics.py",
     "verify_client_protocol.py",
     "verify_websocket.py",
@@ -44,7 +46,6 @@
     "verify_key_maintenance.py",
     "verify_snapshot_restore.py",
     "verify_process.py",
-    "verify_execution.py",
     "verify_accounts.py",
     "verify_migration_readiness.py",
     "verify_lite.py",

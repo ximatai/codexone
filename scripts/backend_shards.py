@@ -8,22 +8,11 @@ from pathlib import Path
 import re
 
 
-# Six suites still depend on Swift implementation details or the Swift probe.
-# The other three verify tooling or diagnostics independently of the gateway.
-SWIFT_ONLY = {
-    'verify_accounts.py', 'verify_admin_round2.py', 'verify_execution.py',
-    'verify_key_maintenance.py', 'verify_storage_pressure.py', 'verify_upstream_proxy.py',
-}
-GATEWAY_INDEPENDENT = {
-    'verify_gateway_diagnostics.py', 'verify_key_export.py', 'verify_model_profiles_import.py',
-}
-
-
 def checked_groups():
     directory = Path(__file__).resolve().parent
     groups = json.loads((directory / 'backend_shards.json').read_text())
     source = (directory / 'verify.sh').read_text()
-    commands = re.findall(r'^  run_check scripts/(verify_\w+\.py)(?: |$)', source, re.M)
+    commands = re.findall(r'^  run_check scripts/([\w/]+\.py)(?: |$)', source, re.M)
     assigned = [name for group in groups for name in group]
     assert len(groups) == 4 and all(groups), 'Expected four nonempty shards'
     assert commands and len(commands) == len(set(commands)), 'Duplicate backend invocation'
@@ -31,7 +20,6 @@ def checked_groups():
         f'Shard mismatch: missing={list((Counter(commands) - Counter(assigned)).elements())}, '
         f'extra/duplicate={list((Counter(assigned) - Counter(commands)).elements())}'
     )
-    assert SWIFT_ONLY | GATEWAY_INDEPENDENT <= set(assigned), 'A retained verification suite was removed'
     assert not re.search(r'^  python3 scripts/verify_.*\.py', source, re.M), (
         'Backend verification must go through run_check'
     )
@@ -43,7 +31,6 @@ def checked_groups():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pr', action='store_true', help='Use the quick protocol shard distribution')
-    parser.add_argument('--rust', action='store_true', help='List suites supported by the Rust gateway')
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--check', action='store_true')
     action.add_argument('--list', metavar='i/4')
@@ -61,9 +48,6 @@ def main():
         ):
             groups[source].remove(name)
             groups[target].append(name)
-    if args.rust:
-        groups = [[name for name in group if name not in SWIFT_ONLY | GATEWAY_INDEPENDENT]
-                  for group in groups]
     if args.check:
         print(f'PASS: {sum(map(len, groups))} backend scripts belong to exactly one of {len(groups)} shards')
     elif args.list == 'all':
