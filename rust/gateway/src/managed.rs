@@ -248,6 +248,17 @@ impl AccountRuntime for Runtime {
         Ok(self.execution.stop_account_executions(account))
     }
 
+    async fn release_unknown(&self, before: i64, expected: i64) -> governance::Result<usize> {
+        self.execution
+            .release_unknown(before, expected)
+            .await
+            .map_err(|error| match error {
+                ExecutionError::InvalidCommand => governance::Error::InvalidCommand,
+                ExecutionError::Conflict => governance::Error::Conflict,
+                _ => governance::Error::Unavailable,
+            })
+    }
+
     async fn refresh(
         &self,
         account: String,

@@ -75,6 +75,14 @@ pub trait AccountRuntime: Send + Sync + 'static {
         Err(Error::Unavailable)
     }
 
+    fn release_unknown(
+        &self,
+        _before: i64,
+        _expected: i64,
+    ) -> impl Future<Output = Result<usize>> + Send {
+        async { Err(Error::Unavailable) }
+    }
+
     fn refresh(
         &self,
         _account: String,
@@ -269,6 +277,14 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
                     .await?;
                 json!({"key": key_metadata(&key)})
             }
+            Endpoint::ReleaseUnknown => {
+                no_query(request)?;
+                let required = ["beforeUnixSeconds", "expectedCount"];
+                let fields = parse_body(request, &required, &[], false, &required)?;
+                let before = number(&fields, "beforeUnixSeconds")?;
+                let expected = number(&fields, "expectedCount")?;
+                json!({"released": self.runtime.release_unknown(before, expected).await?})
+            }
             Endpoint::Accounts => {
                 let mut query = query(request, &["after"])?;
                 self.accounts_document(query.remove("after"), false).await?
@@ -435,6 +451,7 @@ enum Endpoint<'a> {
     Issue,
     Rotate(&'a str),
     ChangeKey(&'a str, KeyCommand),
+    ReleaseUnknown,
     Accounts,
     Account(&'a str, AccountCommand),
     Quota(&'a str, QuotaCommand),
@@ -506,6 +523,7 @@ impl<'a> Endpoint<'a> {
             ("keys", Some(id), Some("unarchive"), &M::PUT) => {
                 Self::ChangeKey(id, KeyCommand::Archive(false))
             }
+            ("executions", Some("unknown"), Some("release"), &M::POST) => Self::ReleaseUnknown,
             ("accounts", None, None, &M::GET) => Self::Accounts,
             ("accounts", Some("authorization"), None, &M::POST) => Self::Begin,
             (

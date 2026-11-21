@@ -514,16 +514,21 @@ pub(crate) fn reclaim_free_pages(db: &Connection) -> Result<()> {
 pub(crate) fn release_unknown(
     tx: &Transaction<'_>,
     before: i64,
-    expected: usize,
+    expected: i64,
     now: i64,
 ) -> Result<usize> {
-    let count = tx.execute(
-        "UPDATE attempts SET state='settled', closed_unknown_at_epoch=?1 WHERE state='unknown' AND created_at_epoch<?2",
-        params![now, before],
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM attempts WHERE state='unknown' AND created_at_epoch<?1",
+        [before],
+        |row| row.get(0),
     )?;
     if count != expected {
         return Err(Error::Conflict);
     }
+    let count = tx.execute(
+        "UPDATE attempts SET state='settled', closed_unknown_at_epoch=?1 WHERE state='unknown' AND created_at_epoch<?2",
+        params![now, before],
+    )?;
     audit_release(tx, count, before, now, "manual")?;
     Ok(count)
 }

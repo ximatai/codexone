@@ -1147,8 +1147,8 @@ impl ExecutionService {
         .await
     }
 
-    pub async fn release_unknown(&self, before: i64, expected: usize) -> Result<usize> {
-        if !(0..=MAX_AMOUNT).contains(&before) {
+    pub async fn release_unknown(&self, before: i64, expected: i64) -> Result<usize> {
+        if before < 0 || expected < 0 {
             return Err(Error::InvalidCommand);
         }
         self.command(false, move |writer| {
