@@ -26,6 +26,15 @@ impl Record {
     }
 }
 
+pub(crate) fn require_account(db: &Connection, id: &str) -> Result<()> {
+    let exists = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?)",
+        [id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    exists.then_some(()).ok_or(Error::UnknownAccount)
+}
+
 pub(crate) fn load(db: &Connection, id: &str) -> Result<Record> {
     let mut query = db.prepare(
         "SELECT namespace, revision, credential_version, mode, authorization, sealed_credential,

@@ -104,7 +104,7 @@ pub enum UsageCredits {
     Unlimited {},
 }
 
-fn valid_balance(text: &str) -> bool {
+pub(crate) fn valid_balance(text: &str) -> bool {
     let digits =
         |text: &str| (1..=18).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_digit());
     let (whole, fraction) = text

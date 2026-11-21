@@ -100,6 +100,14 @@ pub trait AccountRuntime: Send + Sync + 'static {
         async { Err(Error::AuthorizationUnavailable) }
     }
 
+    fn observation(
+        &self,
+        _account: &str,
+        _command: ObservationCommand,
+    ) -> impl Future<Output = Result<Value>> + Send {
+        async { Err(Error::AuthorizationUnavailable) }
+    }
+
     fn observability(&self, _account: &str) -> impl Future<Output = Result<Value>> + Send {
         async {
             Ok(json!({
@@ -116,6 +124,20 @@ pub trait AccountRuntime: Send + Sync + 'static {
             }))
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum ObservationCommand {
+    Detail,
+    Observe,
+    Trend,
+    CreditHistory(CreditHistoryRange),
+}
+
+#[derive(Clone, Copy)]
+pub enum CreditHistoryRange {
+    Day,
+    Week,
 }
 
 #[derive(Clone, Copy)]
@@ -173,6 +195,8 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
                 Endpoint::Accounts
                     | Endpoint::Account(..)
                     | Endpoint::Quota(..)
+                    | Endpoint::Observation(..)
+                    | Endpoint::CreditHistory(..)
                     | Endpoint::Begin
                     | Endpoint::Authorization(..)
             )
@@ -334,6 +358,25 @@ impl<W: Writer, P: AuthorizationProvider, R: AccountRuntime> GovernanceApi<W, P,
                 };
                 json!({"account": self.account_metadata(&account).await?})
             }
+            Endpoint::Observation(id, command) => {
+                if matches!(command, ObservationCommand::Observe) {
+                    quota_body(request, &[], &[])?;
+                } else {
+                    no_query(request)?;
+                }
+                self.runtime.observation(&decoded(id)?, command).await?
+            }
+            Endpoint::CreditHistory(id) => {
+                let query = query(request, &["range"])?;
+                let range = match query.get("range").map(String::as_str) {
+                    Some("24h") => CreditHistoryRange::Day,
+                    Some("7d") => CreditHistoryRange::Week,
+                    _ => return Err(Error::InvalidCommand),
+                };
+                self.runtime
+                    .observation(&decoded(id)?, ObservationCommand::CreditHistory(range))
+                    .await?
+            }
             Endpoint::Quota(id, command) => {
                 no_query(request)?;
                 use QuotaCommand::*;
@@ -455,6 +498,8 @@ enum Endpoint<'a> {
     Accounts,
     Account(&'a str, AccountCommand),
     Quota(&'a str, QuotaCommand),
+    Observation(&'a str, ObservationCommand),
+    CreditHistory(&'a str),
     Begin,
     Authorization(&'a str, &'a Method),
 }
@@ -532,6 +577,18 @@ impl<'a> Endpoint<'a> {
                 Some(id),
                 method @ (&M::GET | &M::POST | &M::DELETE),
             ) => Self::Authorization(id, method),
+            ("accounts", Some(id), Some("observation"), &M::GET) => {
+                Self::Observation(id, ObservationCommand::Detail)
+            }
+            ("accounts", Some(id), Some("observe"), &M::POST) => {
+                Self::Observation(id, ObservationCommand::Observe)
+            }
+            ("accounts", Some(id), Some("quota-trend"), &M::GET) => {
+                Self::Observation(id, ObservationCommand::Trend)
+            }
+            ("accounts", Some(id), Some("usage-credit-history"), &M::GET) => {
+                Self::CreditHistory(id)
+            }
             ("accounts", Some(id), Some("quota-priming"), &M::GET) => {
                 Self::Quota(id, QuotaCommand::PrimingStatus)
             }
@@ -817,6 +874,8 @@ pub fn error_response(error: Error) -> Response<Bytes> {
         Error::KeyArchived => (S::CONFLICT, "key_archived"),
         Error::KeyNotArchived => (S::CONFLICT, "key_not_archived"),
         Error::AuthorizationUnavailable => (S::SERVICE_UNAVAILABLE, "account_unavailable"),
+        Error::ObservationCapacity => (S::SERVICE_UNAVAILABLE, "observation_capacity"),
+        Error::QuotaTrendCapacity => (S::TOO_MANY_REQUESTS, "quota_trend_capacity"),
         Error::AccountStorageUnavailable => (S::SERVICE_UNAVAILABLE, "account_storage_unavailable"),
         _ => (S::SERVICE_UNAVAILABLE, "management_unavailable"),
     };

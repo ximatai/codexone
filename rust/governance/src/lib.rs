@@ -24,8 +24,9 @@ pub use authorization::{
     VerifiedAuthorization,
 };
 pub use http_api::{
-    AccountRuntime, GovernanceApi, KeyOptions, NoAccountRuntime, QuotaCommand, error_response as admin_error,
-    failure as admin_failure, response as admin_response,
+    AccountRuntime, CreditHistoryRange, GovernanceApi, KeyOptions, NoAccountRuntime,
+    ObservationCommand, QuotaCommand, error_response as admin_error, failure as admin_failure,
+    response as admin_response,
 };
 pub use keys::{Key, KeyChange, KeyPolicy, Limits};
 pub use refresh::{RefreshFailure, RefreshProvider, RefreshService};
@@ -50,6 +51,8 @@ pub enum Error {
     Unavailable,
     Capacity,
     StoragePressure,
+    ObservationCapacity,
+    QuotaTrendCapacity,
 }
 
 impl fmt::Display for Error {

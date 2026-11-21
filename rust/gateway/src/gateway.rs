@@ -320,6 +320,7 @@ async fn run_configured(
     {
         let (managed, pool) = Managed::new(
             execution.clone(),
+            usage.as_ref().ok_or(Service)?.reader(),
             config.master_keys,
             subscription.unwrap_or_else(|| SubscriptionTarget::production(proxy.clone())),
             key_options,

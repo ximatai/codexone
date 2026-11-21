@@ -104,6 +104,7 @@ pub struct Managed {
 impl Managed {
     pub fn new(
         execution: ExecutionService,
+        history_reader: codexone_usage::Reader,
         keyring: Option<MasterKeyring>,
         target: SubscriptionTarget,
         options: KeyOptions,
@@ -159,6 +160,7 @@ impl Managed {
                 identity: runtime.clone(),
                 execution,
                 jobs: jobs.clone(),
+                history_reader,
             },
         );
         Ok((
@@ -237,6 +239,7 @@ struct Runtime {
     identity: Option<IdentityRuntime<GovernanceWriter>>,
     execution: ExecutionService,
     jobs: Option<Arc<Jobs>>,
+    history_reader: codexone_usage::Reader,
 }
 
 impl AccountRuntime for Runtime {
@@ -282,6 +285,40 @@ impl AccountRuntime for Runtime {
             .ok_or(governance::Error::AuthorizationUnavailable)?
             .command(account, command, body)
             .await
+    }
+
+    async fn observation(
+        &self,
+        account: &str,
+        command: governance::ObservationCommand,
+    ) -> governance::Result<serde_json::Value> {
+        use governance::ObservationCommand::*;
+        if matches!(command, Detail | Observe) {
+            return self
+                .identity
+                .as_ref()
+                .ok_or(governance::Error::AuthorizationUnavailable)?
+                .observation_detail(account, matches!(command, Observe))
+                .await;
+        }
+        let id = account.to_owned();
+        let now = crate::management_usage::unix_now();
+        self.history_reader
+            .read(move |db| {
+                use codexone_identity_runtime::history;
+                Ok(match command {
+                    Trend => history::quota_trend(db, &id).map(|trend| serde_json::json!(trend)),
+                    CreditHistory(range) => history::credit_history(db, &id, range, now)
+                        .map(|history| serde_json::json!(history)),
+                    _ => unreachable!(),
+                })
+            })
+            .await
+            .map_err(|error| match (command, error) {
+                (Trend, codexone_usage::Error::Capacity) => governance::Error::QuotaTrendCapacity,
+                (_, codexone_usage::Error::Capacity) => governance::Error::Capacity,
+                _ => governance::Error::Unavailable,
+            })?
     }
 
     async fn observability(&self, account: &str) -> governance::Result<serde_json::Value> {

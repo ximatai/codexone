@@ -88,6 +88,10 @@ impl ManagementUsage {
         Ok(management)
     }
 
+    pub fn reader(&self) -> Reader {
+        self.reader.clone()
+    }
+
     pub fn attach_model_efforts(
         &mut self,
         current: impl Fn() -> BTreeMap<String, String> + Send + Sync + 'static,

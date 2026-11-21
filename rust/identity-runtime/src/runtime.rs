@@ -255,6 +255,42 @@ impl<W: Writer> IdentityRuntime<W> {
         wait(self.enqueue(id, true)?).await
     }
 
+    pub async fn observation_detail(&self, id: &str, observe: bool) -> Result<Value> {
+        if observe {
+            self.observe_account(id)
+                .await
+                .map_err(|error| match error {
+                    Error::Capacity | Error::StoragePressure => Error::ObservationCapacity,
+                    _ => error,
+                })?;
+        }
+        self.observation_dto(id, true).await
+    }
+
+    async fn observation_dto(&self, account: &str, detail: bool) -> Result<Value> {
+        validate_id(account)?;
+        let id = account.to_owned();
+        let (quota, mut health, now) = self
+            .read(move |db, now, _| {
+                store::require_account(db.connection(), &id)?;
+                let quota = store::load_quota(db.connection(), &id)?;
+                let health = store::health(db.connection(), &id, now)?;
+                Ok((quota, health, now))
+            })
+            .await?;
+        if !detail {
+            health
+                .as_object_mut()
+                .expect("health DTO")
+                .remove("cooldowns");
+        }
+        Ok(json!({
+            "quota": quota_dto(quota, now, detail),
+            "health": health,
+            "observing": !self.inner.stop.is_cancelled(),
+        }))
+    }
+
     pub async fn quota(&self, id: &str) -> Result<Observation> {
         validate_id(id)?;
         let id = id.to_owned();
@@ -602,7 +638,7 @@ async fn wait(mut reply: Reply) -> Result<Observation> {
         .clone()
 }
 
-fn validate_id(id: &str) -> Result<()> {
+pub(crate) fn validate_id(id: &str) -> Result<()> {
     if !(1..=64).contains(&id.len())
         || !id
             .bytes()
@@ -619,26 +655,12 @@ impl<W: Writer> AccountRuntime for IdentityRuntime<W> {
     }
 
     async fn observability(&self, account: &str) -> Result<Value> {
-        validate_id(account)?;
-        let id = account.to_owned();
-        let (quota, health, now) = self
-            .read(move |db, now, _| {
-                let quota = store::load_quota(db.connection(), &id)?;
-                let health = store::health(db.connection(), &id, now)?;
-                Ok((quota, health, now))
-            })
-            .await?;
-        let observing = self
-            .inner
-            .jobs
-            .lock()
-            .expect("observation jobs")
-            .contains_key(account);
-        Ok(json!({ "quota": quota_dto(quota, now), "health": health, "observing": observing }))
+        self.observation_dto(account, false).await
     }
 }
 
-fn quota_dto(observation: Observation, now: i64) -> Value {
+
+fn quota_dto(observation: Observation, now: i64, detail: bool) -> Value {
     let limits = observation
         .quota
         .as_ref()
@@ -673,11 +695,14 @@ fn quota_dto(observation: Observation, now: i64) -> Value {
         "attemptedAtUnixSeconds": observation.attempted_at_unix_seconds, "ageSeconds": age,
         "freshForSeconds": age.map_or(0, |age| (300 - age).max(0)), "failure": observation.failure,
         "additionalCount": limits.iter().filter(|limit| limit.id != "codex").count(),
-        "limits": limits.iter().map(|limit| json!({
+        "limits": limits.iter().filter(|limit| detail || limit.id == "codex").map(|limit| json!({
             "id": limit.id, "allowed": limit.allowed, "limitReached": limit.limit_reached,
             "primary": window(limit.primary.as_ref()), "secondary": window(limit.secondary.as_ref()),
         })).collect::<Vec<_>>(),
     });
+    if !detail {
+        return dto;
+    }
     match observation.quota.and_then(|quota| quota.usage_credits) {
         Some(UsageCredits::Balance { _0: balance }) => {
             dto["usageCredits"] = json!({"balance": balance, "unlimited": false})
