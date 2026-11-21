@@ -361,13 +361,21 @@ impl DataPlane {
     ) -> Result<Reply, ResponseError> {
         let configuration = self.configuration();
         let (parts, incoming) = incoming.into_parts();
+        let declared_length = incoming.size_hint().exact();
+        if let Some(length) = declared_length
+            && length > protocol::MAX_REQUEST_BYTES as u64
+        {
+            ws::record_size(
+                ws::SizePath::Ingress,
+                usize::try_from(length).unwrap_or(usize::MAX),
+            );
+            return Err(bad_read(ReadError::TooLarge));
+        }
         protocol::validate_request_media_type(
             &headers::values(&parts.headers, "content-type"),
             &headers::values(&parts.headers, "content-encoding"),
         )?;
-        let staged_length = incoming
-            .size_hint()
-            .exact()
+        let staged_length = declared_length
             .and_then(|length| usize::try_from(length).ok())
             .filter(|length| *length > THRESHOLD);
         let (body, mut body_permit, mut staged) = if let Some(staging) = &self.staging
