@@ -9,13 +9,15 @@
 - [x] 定向覆盖有序和相邻更新、未知档位字段、完整可见历史、显式允许全部目录档位和无限制透明转发的纯策略结果。
 - [x] 定向覆盖无更新继承、降权、缺少续接证据、预热和不透明上下文的纯策略结果。在进程内验证事务拒绝不写新 intent，允许的请求沿用顶层账本字段。
 - [x] 同步 Rust 能力规范与回退影响。有效授权值仅用于准入。
-- [ ] 在独立获授权验收中确认真实传输行为，包括 WS 续接和上游换连接、HTTP 全历史、压缩、重启及拒绝后零派发。
+- [x] 用合成回环传输确认 WS 续接和上游换连接、HTTP 全历史、上下文压缩、重启及授权拒绝后零派发。
 
 ## 验证状态
 
 2026-11-21 在 macOS arm64 观察到固定基线的 Rust 网关按顶层档位校验和记账。官方 CLI 0.171.0 可在原生 WS 上提交不同于顶层值的有序档位更新，基线仍使用顶层值。提供者与 Key 均为本机合成数据。
 
-实现验收在 macOS arm64 通过 15 项 Responses 纯策略与协议测试、3 项进程内准入事务回归、网关测试目标编译检查及 Markdown 检查。降权后同一 WS 的端到端行为、HTTP 全历史线协议、重启恢复、零派发、真实提供者、Desktop、订阅池端到端和 Linux 尚未验证。
+实现验收在 macOS arm64 通过 15 项 Responses 纯策略与协议测试、3 项进程内准入事务回归、网关测试目标编译检查及 Markdown 检查。
+
+macOS arm64 的合成回环用例通过。运行 `cargo test --locked --offline --manifest-path rust/gateway/Cargo.toml managed_process::cli_effort::effort_policy_on_real_sockets -- --exact`，覆盖原生 WS、HTTP 到 WS 桥接、普通 HTTP 直连、上下文压缩与重启。八次授权拒绝均无上游派发或账本 attempt。真实提供者、Desktop、真实订阅池和 Linux 的该项验收仍待验证。
 
 ## 相关文档
 

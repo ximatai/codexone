@@ -2030,3 +2030,5 @@ fn directory_updates_apply_to_native_ws_and_http_bridge_without_repricing_admitt
     assert_ne!(rows[0].2, rows[1].2);
     assert_eq!(rows[1].2, rows[2].2);
 }
+
+mod cli_effort;
