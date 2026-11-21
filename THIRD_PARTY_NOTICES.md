@@ -8,6 +8,8 @@
 
 容器构建在 `deploy/Dockerfile` 中收集 Swift checkouts 与 npm 生产依赖的 LICENSE/NOTICE/COPYING，分发到 `/opt/codexone/licenses/swift`、`/opt/codexone/licenses/npm`，项目 LICENSE 在 `/opt/codexone/LICENSE`；系统包原有版权材料须保留。安装验证要求运行依赖具有许可正文，不能因清单存在就声称实际镜像已验收。
 
+Rust 候选构建从网关 `Cargo.lock` 对应的 vendored crates 收集 LICENSE/NOTICE/COPYING，保留 crate 版本与文件路径，放在 `/opt/codexone/licenses/rust`。正式分发前须逐项核对适用许可、版权材料和缺失正文。
+
 独立二进制和 SPA 分发也必须附上适用 LICENSE、版权与 NOTICE，参见[发版规则](docs/development/releasing.md)。`web/licenses` 为漏带许可正文的锁定包提供补充。
 
 ## npm 锁定依赖

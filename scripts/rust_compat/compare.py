@@ -44,8 +44,8 @@ def json_object(raw, source):
 
 
 @contextmanager
-def synthetic_upstream(handler=Upstream):
-    with ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+def synthetic_upstream(handler=Upstream, *, port=0):
+    with ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
         server.guard = threading.Lock()
         server.calls = 0
         thread = threading.Thread(target=server.serve_forever, args=(0.05,))

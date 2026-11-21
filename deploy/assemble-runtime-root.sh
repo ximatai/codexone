@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-# Use the pinned Ubuntu Swift image as the file and ABI source.
+# Use the pinned Ubuntu runtime base as the file and ABI source.
 # Resolve ELF dependencies before copying the filesystem into the final image.
 root=/runtime-root
 binary=$1

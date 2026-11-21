@@ -2,6 +2,9 @@
 ARG SWIFT_BUILD_IMAGE=swift:6.4.1-noble@sha256:19cbe56bdaec1918f7cf5fdeba42b9bd55bdd8a6149c9990d0e0e3a89a127d63
 ARG SWIFT_RUNTIME_IMAGE=swift:6.4.1-noble-slim@sha256:46c3f2b7b5f9ad083a941af264fec95b3dcd66e41885d6458606316c62e0d5c8
 ARG NODE_IMAGE=node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
+ARG RUST_BUILD_IMAGE=rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950
+ARG RUST_RUNTIME_IMAGE=ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+ARG CODEXONE_BACKEND=swift
 # Optional pinned dependency mirrors: --build-context swiftpm-mirrors=<dir of OWNER/REPO.git>.
 # Empty by default; Package.resolved revisions still select the exact sources.
 FROM scratch AS swiftpm-mirrors
@@ -91,19 +94,48 @@ RUN --network=none python3 scripts/verify_key_maintenance.py --binary /output/co
     && python3 scripts/verify_storage_pressure.py --binary /output/codexone \
     && python3 scripts/verify_migration_cutback.py --binary /output/codexone
 
-FROM ${SWIFT_RUNTIME_IMAGE} AS runtime-files
+FROM ${RUST_BUILD_IMAGE} AS backend-rust
+WORKDIR /build
+COPY rust/ rust/
+ARG TARGETPLATFORM
+ARG BUILD_JOBS=2
+RUN --mount=type=cache,id=codexone-cargo-1.96-registry,sharing=locked,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=codexone-rust-1.96-amd64-release,sharing=locked,target=/build/target \
+    set -eu; test "$TARGETPLATFORM" = linux/amd64; \
+    cargo vendor --locked --versioned-dirs --manifest-path rust/gateway/Cargo.toml /vendor > /tmp/vendor.toml; \
+    cargo --config /tmp/vendor.toml build --locked --offline --release --jobs "$BUILD_JOBS" \
+      --manifest-path rust/gateway/Cargo.toml --target-dir /build/target --bin codexone; \
+    mkdir -p /output/licenses/rust; \
+    strip --strip-debug -o /output/codexone /build/target/release/codexone; \
+    cd /vendor; \
+    find . -type f \( -iname 'license*' -o -iname 'licence*' -o -iname 'notice*' -o -iname 'copying*' \) \
+      -exec cp --parents --target-directory=/output/licenses/rust -- {} +; \
+    rm -rf /vendor /tmp/vendor.toml
+
+FROM backend AS backend-swift
+RUN mv /output/licenses /output/swift-licenses \
+    && mkdir /output/licenses && mv /output/swift-licenses /output/licenses/swift
+COPY deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt /output/licenses/swift/BoringSSL-LICENSE.txt
+
+FROM backend-${CODEXONE_BACKEND} AS selected-backend
+FROM ${SWIFT_RUNTIME_IMAGE} AS runtime-base-swift
+FROM ${RUST_RUNTIME_IMAGE} AS runtime-base-rust
+FROM runtime-base-${CODEXONE_BACKEND} AS runtime-files
 # Optional Ubuntu mirror for this install only; the original sources are restored afterwards.
 ARG APT_MIRROR=
+ARG CODEXONE_BACKEND
 RUN src=/etc/apt/sources.list.d/ubuntu.sources && cp "$src" /tmp/ubuntu.sources \
     && if [ -n "$APT_MIRROR" ]; then sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://security.ubuntu.com/ubuntu|$APT_MIRROR|g" "$src"; fi \
-    && (apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=15 update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates \
-        || { cp /tmp/ubuntu.sources "$src"; rm -rf /var/lib/apt/lists/*; apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends libsqlite3-0 sqlite3 curl ca-certificates; }) \
+    && (packages='libsqlite3-0 sqlite3 curl ca-certificates'; \
+        if [ "$CODEXONE_BACKEND" = rust ]; then packages="$packages tzdata"; export DEBIAN_FRONTEND=noninteractive; fi; \
+        apt-get -o APT::Update::Error-Mode=any -o Acquire::https::Timeout=15 update && apt-get install -y --no-install-recommends $packages \
+        || { cp /tmp/ubuntu.sources "$src"; rm -rf /var/lib/apt/lists/*; apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends $packages; }) \
     && rm -rf /var/lib/apt/lists/* && mv /tmp/ubuntu.sources "$src" \
     && groupadd --gid 10001 codexone && useradd --uid 10001 --gid 10001 --no-create-home codexone \
     && mkdir -p /var/lib/codexone /run/codexone /opt/codexone/web \
     && chown 10001:10001 /var/lib/codexone && chmod 700 /var/lib/codexone
 COPY deploy/assemble-runtime-root.sh /assemble-runtime-root.sh
-RUN --mount=type=bind,from=backend,source=/output/codexone,target=/codexone \
+RUN --mount=type=bind,from=selected-backend,source=/output/codexone,target=/codexone \
     sh /assemble-runtime-root.sh /codexone
 
 FROM scratch AS runtime
@@ -117,7 +149,7 @@ LABEL org.opencontainers.image.title="CodexOne" \
       org.opencontainers.image.version=${VERSION} \
       org.opencontainers.image.revision=${SOURCE_REVISION} \
       org.opencontainers.image.licenses="MIT"
-COPY --from=backend /output/codexone /usr/local/bin/codexone
+COPY --from=selected-backend /output/codexone /usr/local/bin/codexone
 RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
     && test "${#SOURCE_REVISION}" = 40 \
     && case "${VERSION}" in *[!A-Za-z0-9._-]*|'') exit 1;; esac \
@@ -126,8 +158,7 @@ RUN case "${SOURCE_REVISION}" in *[!0-9a-f]*|'') exit 1;; esac \
       "$SOURCE_REVISION" "$VERSION" "$schema_version" > /opt/release.json
 COPY --from=web /build/web/dist/ /opt/codexone/web/
 COPY LICENSE /opt/codexone/LICENSE
-COPY --from=backend /output/licenses/ /opt/codexone/licenses/swift/
-COPY deploy/licenses/boringssl-8eb25be6fa18d475291122887a7bccd3762ff236-LICENSE.txt /opt/codexone/licenses/swift/BoringSSL-LICENSE.txt
+COPY --from=selected-backend /output/licenses/ /opt/codexone/licenses/
 COPY --from=web /licenses/ /opt/codexone/licenses/npm/
 # Bound glibc arena growth and return large request allocations on multi-core hosts.
 ENV MALLOC_ARENA_MAX=1 \
